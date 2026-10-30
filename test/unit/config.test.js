@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'child_process';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, readFileSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { fakePagers, withEnv } from '../helpers/fake-pagers.js';
 import {
   parseFrontmatter,
   parseFrontmatterOf,
@@ -19,7 +19,6 @@ import {
   parseArgs,
   shellQuote,
   runPager,
-  showText,
   runEditor,
   exitStatus,
   slugify,
@@ -532,36 +531,6 @@ test('shellQuote handles double quotes, dollars, and backticks as literals', () 
 // runPager / runEditor (S-1109)
 // ---------------------------------------------------------------------------
 
-/**
- * A temp dir on PATH holding fake `less` and `mypager` scripts. Each writes
- * its name, its arguments, `LESS` (or `unset`) and its stdin to `record`.
- */
-function fakePagers() {
-  const dir = mkTempDir('bl-pager-');
-  const record = join(dir, 'record');
-  for (const name of ['less', 'mypager']) {
-    const bin = join(dir, name);
-    writeFileSync(
-      bin,
-      `#!/bin/sh\nprintf '%s|%s|%s|' "$(basename "$0")" "$*" "\${LESS-unset}" > '${record}'\ncat >> '${record}'\n`,
-    );
-    chmodSync(bin, 0o755);
-  }
-  return { dir, record };
-}
-
-/** Run `fn` with `vars` set (`undefined` = unset), restoring them after. */
-function withEnv(vars, fn) {
-  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
-  const set = (k, v) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
-  try {
-    for (const [k, v] of Object.entries(vars)) set(k, v);
-    return fn();
-  } finally {
-    for (const [k, v] of Object.entries(saved)) set(k, v);
-  }
-}
-
 for (const [label, PAGER] of [
   ['unset', undefined],
   ['empty', ''],
@@ -594,122 +563,6 @@ test("runPager passes the operator's LESS through untouched", () => {
 });
 
 // ---------------------------------------------------------------------------
-// showText: the one paging policy (S-1139)
-// ---------------------------------------------------------------------------
-
-/**
- * Run `fn` with stdout faked as a terminal of `rows` rows (`isTTY` false when
- * `tty` is), its writes captured instead of printed; restores all three.
- * @returns {{ result: any, written: string }}
- */
-function withTerminal({ tty, rows }, fn) {
-  const out = process.stdout;
-  const saved = ['isTTY', 'rows'].map((k) => [k, Object.getOwnPropertyDescriptor(out, k)]);
-  const write = out.write;
-  let written = '';
-  try {
-    Object.defineProperty(out, 'isTTY', { value: tty, configurable: true, writable: true });
-    Object.defineProperty(out, 'rows', { value: rows, configurable: true, writable: true });
-    out.write = (chunk) => ((written += String(chunk)), true);
-    return { result: fn(), written };
-  } finally {
-    out.write = write;
-    for (const [k, d] of saved) {
-      if (d) Object.defineProperty(out, k, d);
-      else delete out[k];
-    }
-  }
-}
-
-/** A temp dir holding a fake `more` that records its stdin, and nothing else. */
-function fakeMore() {
-  const dir = mkTempDir('bl-more-');
-  const record = join(dir, 'record');
-  const bin = join(dir, 'more');
-  writeFileSync(bin, `#!/bin/sh\nPATH=/usr/bin:/bin\nprintf 'more|' > '${record}'\ncat >> '${record}'\n`);
-  chmodSync(bin, 0o755);
-  return { dir, record };
-}
-
-const tall = Array.from({ length: 30 }, (_, i) => `line ${i}\n`).join('');
-
-test('showText prints text unchanged when stdout is not a terminal, even when tall', () => {
-  const { dir, record } = fakePagers();
-  const { result, written } = withEnv({ PATH: `${dir}${delimiter}${process.env.PATH}`, PAGER: undefined }, () =>
-    withTerminal({ tty: false, rows: 5 }, () => showText(tall)),
-  );
-  assert.deepEqual(result, { status: 0 });
-  assert.equal(written, tall);
-  assert.equal(existsSync(record), false, 'no pager ran');
-});
-
-test('showText prints short text on a terminal; a trailing newline is no extra line', () => {
-  const { dir, record } = fakePagers();
-  const text = Array.from({ length: 24 }, (_, i) => `l${i}\n`).join('');
-  const { result, written } = withEnv({ PATH: `${dir}${delimiter}${process.env.PATH}`, PAGER: undefined }, () =>
-    withTerminal({ tty: true, rows: undefined }, () => showText(text)),
-  );
-  assert.deepEqual(result, { status: 0 });
-  assert.equal(written, text);
-  assert.equal(existsSync(record), false, 'no pager ran');
-  const empty = withTerminal({ tty: true, rows: 1 }, () => showText(''));
-  assert.equal(empty.written, '');
-});
-
-test('showText pages text taller than the terminal through runPager', () => {
-  const { dir, record } = fakePagers();
-  const { result, written } = withEnv(
-    { PATH: `${dir}${delimiter}${process.env.PATH}`, PAGER: undefined, LESS: undefined },
-    () => withTerminal({ tty: true, rows: 10 }, () => showText(tall)),
-  );
-  assert.equal(result.status, 0);
-  assert.equal(written, '');
-  assert.equal(readFileSync(record, 'utf8'), `less||unset|${tall}`);
-});
-
-test('showText pages a { path } source by descriptor, and prints it byte for byte when short', () => {
-  const { dir, record } = fakePagers();
-  const file = join(mkTempDir('bl-show-'), 'f.md');
-  writeFileSync(file, tall);
-  withEnv({ PATH: `${dir}${delimiter}${process.env.PATH}`, PAGER: undefined, LESS: undefined }, () =>
-    withTerminal({ tty: true, rows: 10 }, () => showText({ path: file })),
-  );
-  assert.equal(readFileSync(record, 'utf8'), `less||unset|${tall}`);
-  const short = withTerminal({ tty: false }, () => showText({ path: file }));
-  assert.equal(short.written, tall);
-});
-
-for (const [label, PAGER] of [
-  ['unset', undefined],
-  ['blank', '  '],
-]) {
-  test(`showText falls back to more when less cannot launch and PAGER is ${label}`, () => {
-    const { dir, record } = fakeMore();
-    const { result } = withEnv({ PATH: dir, PAGER }, () => withTerminal({ tty: true, rows: 10 }, () => showText(tall)));
-    assert.equal(result.status, 0);
-    assert.equal(result.error, undefined, "the fallback's result, not the pager's");
-    assert.equal(readFileSync(record, 'utf8'), `more|${tall}`);
-  });
-}
-
-test('showText falls back to more for a { path } source too', () => {
-  const { dir, record } = fakeMore();
-  const file = join(mkTempDir('bl-show-'), 'f.md');
-  writeFileSync(file, tall);
-  withEnv({ PATH: dir, PAGER: undefined }, () => withTerminal({ tty: true, rows: 10 }, () => showText({ path: file })));
-  assert.equal(readFileSync(record, 'utf8'), `more|${tall}`);
-});
-
-test('showText runs no more fallback when PAGER is set, and returns the pager result', () => {
-  const { dir, record } = fakeMore();
-  const { result } = withEnv({ PATH: dir, PAGER: 'no-such-pager-bl-test 2>/dev/null' }, () =>
-    withTerminal({ tty: true, rows: 10 }, () => showText(tall)),
-  );
-  assert.equal(result.status, 127);
-  assert.equal(existsSync(record), false, 'more did not run');
-});
-
-// ---------------------------------------------------------------------------
 // exitStatus (S-1110, F-70 D3)
 // ---------------------------------------------------------------------------
 
@@ -724,36 +577,6 @@ test('exitStatus: 127 on a launch error, 128 + n on a signal, else the status', 
   // A result that reports none of them (a test fake) is 0.
   assert.equal(exitStatus({}), 0);
   assert.equal(exitStatus(undefined), 0);
-});
-
-test('exitStatus of a real child killed by a signal', () => {
-  const r = spawnSync('sh', ['-c', 'kill -TERM $$'], { stdio: 'ignore' });
-  assert.equal(r.signal, 'SIGTERM');
-  assert.equal(exitStatus(r), 143);
-});
-
-test('showText returns the more fallback status, and a failed fallback is 127 with one stderr line', () => {
-  const dir = mkTempDir('bl-more-');
-  writeFileSync(join(dir, 'more'), '#!/bin/sh\nexit 7\n');
-  chmodSync(join(dir, 'more'), 0o755);
-  const seven = withEnv({ PATH: dir, PAGER: undefined }, () =>
-    withTerminal({ tty: true, rows: 10 }, () => showText(tall)),
-  );
-  assert.equal(exitStatus(seven.result), 7);
-
-  const errors = [];
-  const error = console.error;
-  console.error = (line) => errors.push(line);
-  try {
-    const none = withEnv({ PATH: mkTempDir('bl-empty-path-'), PAGER: undefined }, () =>
-      withTerminal({ tty: true, rows: 10 }, () => showText(tall)),
-    );
-    assert.equal(exitStatus(none.result), 127);
-  } finally {
-    console.error = error;
-  }
-  assert.equal(errors.length, 1, errors.join('\n'));
-  assert.match(errors[0], /^bl: could not start more: /);
 });
 
 test('runEditor runs VISUAL with its arguments and a path with a space and a quote intact', () => {
