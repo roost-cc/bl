@@ -1671,7 +1671,9 @@ export function runForgeOp(opName, vars = {}, opts = {}) {
     // which git allows in branch names and which would undo the quoting.
     cmd = cmd.replaceAll(`{{${k}}}`, () => shellQuoteForgeVar(v));
   }
-  const result = spawnSync(cmd, {
+  // Through files: the configured command may be a Node program, whose
+  // output on a socket is lost inside Codex's sandbox (F-70 D1).
+  const result = spawnSyncFiles(cmd, {
     cwd: repoPath,
     shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
