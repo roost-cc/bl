@@ -13,7 +13,12 @@ import { GIT_ENV } from './git-backlog.js';
 import { mkTempBacklog } from './tempdir.js';
 
 export function git(dir, args, env = {}) {
-  const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { ...process.env, ...GIT_ENV, ...env } });
+  const r = spawnSync('git', args, {
+    cwd: dir,
+    encoding: 'utf8',
+    env: { ...process.env, ...GIT_ENV, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
 }

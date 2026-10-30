@@ -11,8 +11,7 @@
  *   bl list --epic <E-id>       An epic's features, with their progress
  */
 
-import { spawnSync } from 'child_process';
-import { loadConfig, parseArgs, runPager, info, buildHighlightRegex, highlightMatches } from './config.js';
+import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
 import { readAllStories, readBacklogOrder, activeWorktreesByStory } from './story.js';
 import { filterFromArgs, filterStories, storyThemes } from './filter.js';
 
@@ -136,16 +135,5 @@ Filters combine: every one given must match.`);
     summary,
   ];
 
-  const totalLines = rows.length + 3;
-  const termRows = process.stdout.rows || 24;
-
-  if (process.stdout.isTTY && totalLines > termRows) {
-    const text = output.join('\n') + '\n';
-    const pagerResult = runPager(text);
-    if (pagerResult.error && !process.env.PAGER) {
-      spawnSync('more', { input: text, stdio: ['pipe', 'inherit', 'inherit'] });
-    }
-  } else {
-    for (const l of output) console.log(l);
-  }
+  process.exitCode = exitStatus(showText(output.join('\n') + '\n'));
 }

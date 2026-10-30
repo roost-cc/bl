@@ -22,7 +22,12 @@ import { writeBlockers } from '../../src/blockers.js';
 const ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 
 function g(cwd, ...args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...ENV } });
+  const r = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, ...ENV },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
 }

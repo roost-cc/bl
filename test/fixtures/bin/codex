@@ -7,20 +7,20 @@
 // error), exit (exits 3 instead of answering), hang (never answers). It
 // writes its pid to FAKE_CODEX_PIDFILE, when set, so a test can check it was
 // stopped.
-import { writeFileSync } from "fs";
+import { readSync, writeFileSync, writeSync } from 'fs';
 
-if (process.argv[2] !== "app-server") {
-  console.error("fake codex: only app-server");
+if (process.argv[2] !== 'app-server') {
+  console.error('fake codex: only app-server');
   process.exit(1);
 }
 if (process.env.FAKE_CODEX_PIDFILE) writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(process.pid));
-const mode = process.env.FAKE_CODEX_MODE ?? "open";
+const mode = process.env.FAKE_CODEX_MODE ?? 'open';
 
 // 2026-10-29T07:52:54Z and 2026-11-04T14:38:36Z.
 const PRIMARY_RESET = 1793260374;
 const SECONDARY_RESET = 1793803116;
 const bucket = (primaryUsed, extra = {}) => ({
-  limitId: "codex",
+  limitId: 'codex',
   limitName: null,
   normalModelSlug: null,
   primary: { usedPercent: primaryUsed, windowDurationMins: 300, resetsAt: PRIMARY_RESET },
@@ -33,28 +33,51 @@ const results = {
   exhausted: { rateLimits: bucket(100), rateLimitsByLimitId: { codex: bucket(100) } },
   spend: { rateLimitsByLimitId: { codex: bucket(20, { spendControlReached: true }) } },
   legacy: { rateLimits: bucket(20) },
-  empty: { accountId: "a" },
+  empty: { accountId: 'a' },
 };
 
-const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
-let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
+// Raw descriptors, never process.stdin/process.stdout (F-70 D1): the parent
+// talks to this Node child over a socket, and inside Codex's sandbox a Node
+// child's stream objects on a socket are dummies (writes vanish, stdin ends at
+// once). fs.readSync(0) and fs.writeSync(1) on the same socket work.
+const reply = (message) => {
+  const bytes = Buffer.from(`${JSON.stringify(message)}\n`);
+  for (let off = 0; off < bytes.length;) off += retry(() => writeSync(1, bytes, off));
+};
+
+/** `fn()`, again after 10 ms while the descriptor says EAGAIN (a non-blocking socket). */
+function retry(fn) {
+  for (;;) {
+    try {
+      return fn();
+    } catch (err) {
+      if (err.code !== 'EAGAIN') throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+}
+
+const chunk = Buffer.alloc(65536);
+let buffer = '';
+const decoder = new TextDecoder();
+for (;;) {
+  const n = retry(() => readSync(0, chunk));
+  if (n === 0) break;
+  buffer += decoder.decode(chunk.subarray(0, n), { stream: true });
   let nl;
-  while ((nl = buffer.indexOf("\n")) >= 0) {
+  while ((nl = buffer.indexOf('\n')) >= 0) {
     const message = JSON.parse(buffer.slice(0, nl));
     buffer = buffer.slice(nl + 1);
-    if (message.method === "initialize") {
-      reply({ method: "remoteControl/status/changed", params: { status: "disabled" } });
-      reply({ id: message.id, result: { userAgent: "fake" } });
-    } else if (message.method === "account/rateLimits/read") {
-      if (mode === "hang") continue;
-      if (mode === "exit") process.exit(3);
-      if (mode === "error") reply({ id: message.id, error: { code: -32603, message: "not logged in" } });
+    if (message.method === 'initialize') {
+      reply({ method: 'remoteControl/status/changed', params: { status: 'disabled' } });
+      reply({ id: message.id, result: { userAgent: 'fake' } });
+    } else if (message.method === 'account/rateLimits/read') {
+      if (mode === 'hang') continue;
+      if (mode === 'exit') process.exit(3);
+      if (mode === 'error') reply({ id: message.id, error: { code: -32603, message: 'not logged in' } });
       else reply({ id: message.id, result: results[mode] });
     }
   }
-});
+}
 // Held open like the real one, until stopped.
 setInterval(() => {}, 60_000);

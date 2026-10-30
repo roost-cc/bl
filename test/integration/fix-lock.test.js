@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { mkTempBacklog } from '../helpers/tempdir.js';
+import { spawnToFiles } from '../helpers/spawn-files.js';
 import { BL_BIN, lockOwnerVisible, startBlBehindLock } from '../helpers/run-bl.js';
 import { acquireLock, LOCK_FILE, releaseLock } from '../../src/lock.js';
 import { parseFrontmatter } from '../../src/config.js';
@@ -29,16 +29,9 @@ function backlog() {
 }
 
 function blAsync(args, cwd) {
-  return new Promise((resolve) => {
-    const child = spawn(BL_BIN, args, {
-      cwd,
-      env: { ...process.env, BL_BACKLOG_DIR: cwd },
-    });
-    let stderr = '';
-    child.stderr.on('data', (d) => (stderr += d));
-    child.stdout.resume();
-    child.on('close', (status) => resolve({ status, stderr }));
-  });
+  return spawnToFiles(BL_BIN, args, { cwd, env: { ...process.env, BL_BACKLOG_DIR: cwd } }).closed.then(
+    ({ status, stderr }) => ({ status, stderr }),
+  );
 }
 
 /** Reject after `ms` so a regression fails the test instead of hanging it. */

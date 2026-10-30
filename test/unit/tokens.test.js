@@ -575,7 +575,7 @@ test('token_lock_reclaim_cannot_remove_new_live_holder', async () => {
   const { syncBuiltinESMExports } = await import('module');
   const { spawnSync } = await import('child_process');
   const { specLockPath, withSpecLock, SpecLockError } = await import('../../src/spec-file.js');
-  const deadPid = spawnSync('true').pid;
+  const deadPid = spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
   const dir = mkTempDir('bl-tokens-reclaim-');
   const path = join(dir, 'index.md');
   writeFileSync(path, '---\nstory_id: S-1\n---\n\nBody\n');

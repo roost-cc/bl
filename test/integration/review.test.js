@@ -51,15 +51,15 @@ const GIT = 'git -c user.email=t@t -c user.name=t';
 
 function initRepo(path) {
   mkdirSync(path, { recursive: true });
-  execSync('git init -q -b main', { cwd: path });
-  execSync(`${GIT} commit --allow-empty -q -m init`, { cwd: path });
+  execSync('git init -q -b main', { cwd: path, stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`${GIT} commit --allow-empty -q -m init`, { cwd: path, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 function addWorktree(repoPath, worktreePath, branchName) {
   mkdirSync(worktreePath, { recursive: true });
   execSync(`git worktree add -q -b "${branchName}" "${worktreePath}" main`, {
     cwd: repoPath,
-    stdio: 'pipe',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
 
@@ -424,10 +424,10 @@ test('bl review S-n: a branch with commits and no PR gets one opened through cha
     },
   });
   const upstream = join(tmp, 'upstream-repoA.git');
-  execSync(`git init -q --bare "${upstream}"`);
-  execSync(`git -C "${repos.repoA}" remote add origin "${upstream}"`);
+  execSync(`git init -q --bare "${upstream}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git -C "${repos.repoA}" remote add origin "${upstream}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
   writeFileSync(join(worktrees.repoA, 'work.txt'), 'work\n');
-  execSync(`git add work.txt && ${GIT} commit -q -m work`, { cwd: worktrees.repoA });
+  execSync(`git add work.txt && ${GIT} commit -q -m work`, { cwd: worktrees.repoA, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = join(SHIM_DIR, `open-${Date.now()}-${Math.random()}.log`);
   const runner = reviewRunner(storyPath);
   const { exit, stderr } = await review(backlog, { env: { RECORDER_STDOUT: '[]', OPEN_LOG: log }, runner });
@@ -438,8 +438,15 @@ test('bl review S-n: a branch with commits and no PR gets one opened through cha
   assert.match(body, /^Story S-99: Test Review \(3 pts\)\n\nStory file: stories\/S99-test-review\/index\.md\n/);
   // The branch was pushed first, and the PR is recorded and reviewed.
   assert.equal(
-    execSync(`git -C "${upstream}" rev-parse ${branch}`, { encoding: 'utf8' }).trim(),
-    execSync('git rev-parse HEAD', { cwd: worktrees.repoA, encoding: 'utf8' }).trim(),
+    execSync(`git -C "${upstream}" rev-parse ${branch}`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim(),
+    execSync('git rev-parse HEAD', {
+      cwd: worktrees.repoA,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim(),
   );
   assert.deepEqual(
     parseChange(readFileSync(changeOf(storyPath), 'utf8')).repos.map((r) => [r.repo, r.pr, r.url]),
@@ -472,9 +479,9 @@ test('bl review S-n: missing worktree for a found PR is a fatal error naming the
 test('bl review S-n: a branch that conflicts with main exits pointing at bl implement', async () => {
   const { backlog, repos, worktrees, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
   writeFileSync(join(worktrees.repoA, 'a.txt'), 'branch\n');
-  execSync(`git add a.txt && ${GIT} commit -q -m branch`, { cwd: worktrees.repoA });
+  execSync(`git add a.txt && ${GIT} commit -q -m branch`, { cwd: worktrees.repoA, stdio: ['ignore', 'pipe', 'pipe'] });
   writeFileSync(join(repos.repoA, 'a.txt'), 'main\n');
-  execSync(`git add a.txt && ${GIT} commit -q -m main`, { cwd: repos.repoA });
+  execSync(`git add a.txt && ${GIT} commit -q -m main`, { cwd: repos.repoA, stdio: ['ignore', 'pipe', 'pipe'] });
   const runner = reviewRunner(storyPath);
   const { exit, stderr } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
   assert.equal(exit, 1);

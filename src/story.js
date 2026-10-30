@@ -289,7 +289,7 @@ export function listWorktrees(repoPath) {
     const output = execSync('git worktree list --porcelain', {
       cwd: repoPath,
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     for (const entry of output.split('\n\n').filter(Boolean)) {
       const lines = entry.split('\n');

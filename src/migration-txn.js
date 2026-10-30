@@ -58,6 +58,7 @@ export async function applyMigration(
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
   const refusal = refuse(config, git);

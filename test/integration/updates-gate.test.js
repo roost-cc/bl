@@ -9,7 +9,7 @@ import { BRANCHES, fakeRunner, gitCalls, mkReport, run, setup, shellCalls } from
 // counterpart with an injected runner is in test/unit/updates-run.test.js.
 test('bootstrap changing tracked state cannot produce a green merge of the original commit', async () => {
   const git = (cwd, args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     assert.equal(r.status, 0, r.stderr);
     return r;
   };
@@ -44,7 +44,7 @@ test('bootstrap changing tracked state cannot produce a green merge of the origi
         }
         if (cwd === wt && ['rev-parse', 'status'].includes(args[0])) {
           runner.calls.push({ type: 'git', args, cwd });
-          return spawnSync('git', args, { cwd, encoding: 'utf8' });
+          return spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
         }
         return fake(args, cwd);
       };

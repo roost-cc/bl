@@ -8,12 +8,14 @@
  * spawnSync.
  */
 
-import { spawn, spawnSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { spawnSync } from 'child_process';
+import { readFileSync, watch } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { withNoAgent } from './fake-agent.js';
+import { spawnToFiles } from './spawn-files.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(__dirname, '..', '..');
@@ -47,12 +49,9 @@ export function runBl(args, opts = {}) {
     BL_BACKLOG_DIR: cwd,
     ...(opts.env ?? {}),
   });
-  const result = spawnSync(BL_BIN, args, {
-    cwd,
-    env,
-    encoding: 'utf8',
-    ...(opts.input != null ? { input: opts.input } : {}),
-  });
+  // Files, not pipes, for the child's stdio (F-70 D1): inside Codex's
+  // sandbox bl's stdout on a socket vanishes and `input:` never ends.
+  const result = spawnSyncFiles(BL_BIN, args, { cwd, env, encoding: 'utf8', input: opts.input });
   return {
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
@@ -116,31 +115,16 @@ export function startBlBehindLock(args, opts = {}) {
       `startBlBehindLock: ${lockPath} must name this process (pid ${process.pid}), found ${JSON.stringify(lockText())}`,
     );
   }
-  const child = spawn(bin, args, {
-    cwd,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  // Decode as a stream so a multi-byte character split across chunks (the
-  // "…" in the announcement) is not mangled into replacement characters.
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  let stdout = '';
-  let stderr = '';
-  // A child that cannot start emits "error" and never "close"; record it (and
-  // any stream error) instead of letting it crash the test runner.
+  // The child writes to files this process watches, not to pipes (F-70 D1):
+  // inside Codex's sandbox a Node child's writes to a socket vanish, so the
+  // announcement would never arrive. A whole-file read decodes the "…" in it
+  // intact however the writes were split.
+  const run = spawnToFiles(bin, args, { cwd, env });
+  const { child } = run;
   let failure = null;
-  const noteFailure = (err) => (failure ??= err);
-  child.stdout.on('error', noteFailure);
-  child.stderr.on('error', noteFailure);
-  child.stdout.on('data', (b) => (stdout += b));
-  const closed = new Promise((resolve) => {
-    const finish = (status, signal) => resolve({ stdout, stderr, status, signal: signal ?? null });
-    child.on('close', finish);
-    child.on('error', (err) => {
-      noteFailure(err);
-      if (child.pid === undefined) finish(null, null);
-    });
+  const closed = run.closed.then(({ stdout, stderr, status, signal, error }) => {
+    failure = error;
+    return { stdout, stderr, status, signal };
   });
   const waiting = new RegExp(`^Waiting for lock \\(\\.bl-new\\.lock\\) held by pid ${process.pid}…$`, 'm');
   let announced = false;
@@ -152,16 +136,30 @@ export function startBlBehindLock(args, opts = {}) {
       child.kill();
       force = setTimeout(() => child.kill('SIGKILL'), 1000);
     }, timeoutMs);
-    child.stderr.on('data', (b) => {
-      stderr += b;
-      if (announced || !waiting.test(stderr)) return;
+    const announce = () => {
+      if (announced) return;
       announced = true;
       clearTimeout(timer);
       resolve();
-    });
-    closed.then(({ status, signal }) => {
+    };
+    const check = () => {
+      if (waiting.test(run.read().stderr)) announce();
+    };
+    // fs.watch alone misses writes on some filesystems; the interval backs it up.
+    let watcher = null;
+    try {
+      watcher = watch(run.stderrPath, check);
+      watcher.on('error', () => {});
+    } catch {
+      // the interval alone will do
+    }
+    const poll = setInterval(check, 50);
+    closed.then(({ stderr, status, signal }) => {
       clearTimeout(timer);
       clearTimeout(force);
+      clearInterval(poll);
+      watcher?.close();
+      if (waiting.test(stderr)) announce();
       if (announced) return;
       if (failure) why += ` (${failure.message})`;
       reject(new Error(`${why}, status ${status}, signal ${signal}: ${stderr}`));

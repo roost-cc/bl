@@ -4,10 +4,14 @@
  *
  * `BL_VIEW_FAULT` picks them (comma-separated):
  *
- * - `chmod`: making the copy read-only throws, so bl falls back to paging.
+ * - `tty`: stdout reads as a terminal (`isTTY` true, `rows` unset, so 24), so
+ *   bl takes the editor path although the test captures stdout in a file.
+ * - `chmod`: making the copy read-only throws, so bl falls back to showing the
+ *   file (`showText`).
  * - `rm`: removing the copy's `bl-view-*` temp directory throws.
  *
- * Only `bl view` processes are touched.
+ * Only `bl view` processes are touched, and for `tty` the other verbs that
+ * page through `showText` (`list`, `grep`, `tree`, `agents`).
  */
 
 import fs from 'fs';
@@ -19,6 +23,12 @@ const faults = new Set(
     .filter(Boolean),
 );
 const view = process.argv[2] === 'view';
+const pages = view || ['list', 'grep', 'tree', 'agents'].includes(process.argv[2]);
+
+if (pages && faults.has('tty')) {
+  Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
+  Object.defineProperty(process.stdout, 'rows', { value: undefined, configurable: true });
+}
 
 if (view && faults.has('chmod')) {
   fs.chmodSync = () => {

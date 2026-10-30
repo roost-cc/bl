@@ -26,6 +26,7 @@ export function git(cwd, ...args) {
     cwd,
     encoding: 'utf8',
     env: { ...process.env, ...GIT_ENV },
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
@@ -79,7 +80,11 @@ export function dirtyBystanders(dir, bystanderIndex) {
  * `git()` trims, which would eat the first line's leading status column.
  */
 export function statusLines(dir) {
-  const r = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: dir, encoding: 'utf8' });
+  const r = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+    cwd: dir,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   if (r.status !== 0) throw new Error(`git status: ${r.stderr}`);
   return r.stdout.split('\n').filter(Boolean).sort();
 }

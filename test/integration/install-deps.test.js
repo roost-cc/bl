@@ -23,7 +23,7 @@ function buildTwoRepoStory() {
   mkdirSync(worktreesBase, { recursive: true });
   for (const r of [codeRepo, goRepo]) {
     mkdirSync(r, { recursive: true });
-    execSync('git init -q', { cwd: r });
+    execSync('git init -q', { cwd: r, stdio: ['ignore', 'pipe', 'pipe'] });
   }
 
   // Pre-create both worktrees so installDeps doesn't skip them.
@@ -98,7 +98,7 @@ test('installDeps emits a hint when no bootstrap plugin is configured', () => {
   mkdirSync(backlog, { recursive: true });
   mkdirSync(worktreesBase, { recursive: true });
   mkdirSync(codeRepo, { recursive: true });
-  execSync('git init -q', { cwd: codeRepo });
+  execSync('git init -q', { cwd: codeRepo, stdio: ['ignore', 'pipe', 'pipe'] });
   const codeWt = join(worktreesBase, 's1-test', 'code');
   mkdirSync(codeWt, { recursive: true });
 

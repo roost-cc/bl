@@ -581,6 +581,7 @@ export function cleanupOneRepo({ parsed, storyEntry, repoName, repoPath, keepBra
   const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', {
     cwd: repoPath,
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   if (currentBranch !== 'main') {
     console.error(`${repoName}: must be on main to cleanup. Currently on '${currentBranch}'.`);
@@ -600,7 +601,7 @@ export function cleanupOneRepo({ parsed, storyEntry, repoName, repoPath, keepBra
     try {
       execSync(`git rev-parse --verify "${branchName}"`, {
         cwd: repoPath,
-        stdio: 'pipe',
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
       return true;
     } catch {
@@ -622,6 +623,7 @@ export function cleanupOneRepo({ parsed, storyEntry, repoName, repoPath, keepBra
     const unmergedCommits = execSync(`git rev-list main..${branchName} --count`, {
       cwd: repoPath,
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
 
     if (parseInt(unmergedCommits, 10) > 0) {
@@ -642,6 +644,7 @@ export function cleanupOneRepo({ parsed, storyEntry, repoName, repoPath, keepBra
       mergeCommitHash = execSync('git rev-parse --short HEAD', {
         cwd: repoPath,
         encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
       }).trim();
     } catch {
       // ignore
@@ -655,6 +658,7 @@ export function cleanupOneRepo({ parsed, storyEntry, repoName, repoPath, keepBra
       mergeCommitHash = execSync('git rev-parse --short HEAD', {
         cwd: repoPath,
         encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
       }).trim();
     } catch {
       // ignore
@@ -798,7 +802,7 @@ function worktreeChanges(worktreePath) {
  */
 function removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists, keepBranch, config }) {
   try {
-    execSync('git worktree prune', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git worktree prune', { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch {
     // non-fatal
   }
@@ -832,7 +836,7 @@ function removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists,
     try {
       execSync(`git push origin --delete "${branchName}"`, {
         cwd: repoPath,
-        stdio: 'pipe',
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
       info(`Deleted remote branch: origin/${branchName}`);
     } catch {
@@ -842,14 +846,14 @@ function removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists,
       try {
         execSync(`git branch -d "${branchName}"`, {
           cwd: repoPath,
-          stdio: 'pipe',
+          stdio: ['ignore', 'pipe', 'pipe'],
         });
         info(`Deleted branch: ${branchName}`);
       } catch {
         try {
           execSync(`git branch -D "${branchName}"`, {
             cwd: repoPath,
-            stdio: 'pipe',
+            stdio: ['ignore', 'pipe', 'pipe'],
           });
           info(`Deleted branch: ${branchName} (force — squash merge)`);
         } catch {

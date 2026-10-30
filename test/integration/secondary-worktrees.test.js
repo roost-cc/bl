@@ -12,7 +12,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, unlinkSync } from 'fs';
-import { execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 import { join } from 'path';
 import { loadConfig, normalizeId } from '../../src/config.js';
 import { findStoryDir, findExistingWorktree } from '../../src/story.js';
@@ -24,6 +24,7 @@ import { loadPrompt } from '../../src/session.js';
 import { defaultRunner } from '../../src/feature-run.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
 import { AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
+import { spawnToFiles } from '../helpers/spawn-files.js';
 
 const git = (cwd, cmd) =>
   execSync(`git -c user.email=t@t -c user.name=t ${cmd}`, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -656,14 +657,10 @@ test("prepareFeatureWorktree retries another repo's failed workon plugin before 
 // comes next, whatever the order and whichever repo (primary or secondary) fails.
 const worker = new URL('../helpers/prepare-worker.js', import.meta.url).pathname;
 const runWorker = (kind, backlog) =>
-  new Promise((resolve) => {
-    const child = spawn(process.execPath, [worker, kind, backlog], { stdio: ['ignore', 'ignore', 'pipe'] });
-    let err = '';
-    child.stderr.on('data', (d) => {
-      err += d;
-    });
-    child.on('close', (code) => resolve({ code, err }));
-  });
+  spawnToFiles(process.execPath, [worker, kind, backlog]).closed.then(({ status, stderr }) => ({
+    code: status,
+    err: stderr,
+  }));
 const countLines = (path) => (existsSync(path) ? readFileSync(path, 'utf8').split('\n').length - 1 : 0);
 
 test('concurrent worktree preparation preserves failed workon debt and runs the plugin once', async () => {

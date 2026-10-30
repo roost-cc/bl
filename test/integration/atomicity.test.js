@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'child_process';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync, readdirSync, readFileSync, unlinkSync } from 'fs';
 import { join, relative } from 'path';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl, BL_BIN } from '../helpers/run-bl.js';
+import { spawnToFiles } from '../helpers/spawn-files.js';
 
 function seedStory(dir) {
   const r = runBl(['new', 'C00', '--title', 'Seed', '--points', '1'], { cwd: dir });
@@ -167,15 +167,10 @@ test('new --feature serializes eligibility validation and preserves bidirectiona
     try {
       writeFileSync(lock, `${process.pid}\n${new Date().toISOString()}\n`);
       const run = (title) =>
-        new Promise((done) => {
-          const p = spawn(BL_BIN, ['new', '--feature', '--theme', 'demo', '--title', title, 'S-1', '--no-sync'], {
-            cwd: dir,
-            env: { ...process.env, BL_BACKLOG_DIR: dir },
-          });
-          let stderr = '';
-          p.stderr.on('data', (b) => (stderr += b));
-          p.on('close', (status) => done({ status, stderr }));
-        });
+        spawnToFiles(BL_BIN, ['new', '--feature', '--theme', 'demo', '--title', title, 'S-1', '--no-sync'], {
+          cwd: dir,
+          env: { ...process.env, BL_BACKLOG_DIR: dir },
+        }).closed.then(({ status, stderr }) => ({ status, stderr }));
       const both = Promise.all([run('Alpha'), run('Beta')]);
       await new Promise((r) => setTimeout(r, 1500));
       unlinkSync(lock);

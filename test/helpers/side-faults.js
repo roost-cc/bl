@@ -31,6 +31,7 @@ import fs from 'fs';
 import { join } from 'path';
 import { syncBuiltinESMExports } from 'module';
 import { spawnSync } from 'child_process';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const faults = new Set(
   String(process.env.BL_SIDE_FAULT ?? '')
@@ -96,7 +97,7 @@ if (side && faults.has('adopt') && process.env.BL_SIDE_FAULT_OUT) {
     if (!done && String(path) === join(root, '.bl-new.lock')) {
       done = true;
       const env = { ...process.env, BL_SIDE_FAULT: '' };
-      const r = spawnSync(
+      const r = spawnSyncFiles(
         process.execPath,
         [process.argv[1], 'side', 'repoB', '--from', 'F-1', '--title', 'Survivor', '--points', '1', '--json'],
         { cwd: root, env, encoding: 'utf8' },
@@ -115,10 +116,14 @@ if (side && faults.has('gone') && process.env.BL_SIDE_FAULT_REPO) {
   fs.writeFileSync = (path, ...rest) => {
     if (!done && String(path) === join(root, '.bl-new.lock')) {
       done = true;
-      const list = spawnSync('git', ['-C', repo, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' }).stdout;
+      const list = spawnSync('git', ['-C', repo, 'worktree', 'list', '--porcelain'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).stdout;
       const block = list.split('\n\n').find((b) => b.includes(`branch refs/heads/${process.env.BL_SIDE_FAULT_BRANCH}`));
       const wt = block?.match(/^worktree (.*)$/m)?.[1];
-      if (wt) spawnSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt]);
+      if (wt)
+        spawnSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt], { stdio: ['ignore', 'pipe', 'pipe'] });
     }
     return inner(path, ...rest);
   };

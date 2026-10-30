@@ -326,7 +326,7 @@ test('tagRepos tags every repo before pushing any, keeps a tag on the same commi
     GIT_COMMITTER_EMAIL: 't@t',
   };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -344,7 +344,7 @@ test('tagRepos tags every repo before pushing any, keeps a tag on the same commi
   const calls = [];
   const run = (cwd, args) => {
     calls.push(args[0]);
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
     return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
   };
   const res = tagRepos(repos, 'F-9', 'F-9: Title\n\nChange: features/F9-x/change.md', run);
@@ -428,7 +428,7 @@ test('tagRepos later push failure leaves no partial remote release', () => {
     GIT_COMMITTER_EMAIL: 't@t',
   };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -444,7 +444,7 @@ test('tagRepos later push failure leaves no partial remote release', () => {
     return { repoName: name, repoPath, origin, commit: g(repoPath, 'rev-parse', 'HEAD') };
   });
   const run = (cwd, args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
     return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
   };
   const hook = join(repos[1].origin, 'hooks', 'pre-receive');
@@ -486,7 +486,7 @@ test('tagRepos_rollback_does_not_delete_a_concurrent_publishers_tag', () => {
     GIT_COMMITTER_EMAIL: 't@t',
   };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -518,7 +518,7 @@ test('tagRepos_rollback_does_not_delete_a_concurrent_publishers_tag', () => {
         if (how === 'republishes') g(repos[0].origin, 'tag', '-d', 'F-9');
         g(other, 'push', '-q', '-f', 'origin', 'refs/tags/F-9');
       }
-      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
       return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
     };
     const res = tagRepos(repos, 'F-9', 'F-9: Title', run);
@@ -534,13 +534,19 @@ test('tagRepos_rollback_does_not_delete_a_concurrent_publishers_tag', () => {
       `${how}: the other caller's tag stays`,
     );
     assert.equal(
-      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-9'], { cwd: repos[1].origin }).status,
+      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-9'], {
+        cwd: repos[1].origin,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).status,
       1,
       how,
     );
     for (const r of repos)
       assert.equal(
-        spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-9'], { cwd: r.repoPath }).status,
+        spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-9'], {
+          cwd: r.repoPath,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }).status,
         1,
         how,
       );
@@ -552,10 +558,15 @@ test('tagRepos_rollback_does_not_delete_a_concurrent_publishers_tag', () => {
     if (cwd === repos[1].repoPath && args[0] === 'push' && args.at(-1) === 'refs/tags/F-9') {
       g(repos[0].repoPath, 'tag', '-f', '-a', 'F-9', 'HEAD', '-m', "the operator's own");
     }
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
     return { status: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
   };
-  const mine = (cwd) => spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-9'], { cwd, encoding: 'utf8' });
+  const mine = (cwd) =>
+    spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-9'], {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
   const res = tagRepos(repos, 'F-9', 'F-9: Title', run);
   assert.equal(res.ok, false);
   assert.match(res.error, /; rollback left tag F-9 on: a local \(/);

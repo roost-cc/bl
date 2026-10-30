@@ -31,6 +31,7 @@
  */
 
 import { spawnSync } from 'child_process';
+import { spawnSyncFiles } from './child-stdio.js';
 import { existsSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { join, relative } from 'path';
 import { fileURLToPath } from 'url';
@@ -212,6 +213,8 @@ function readSideBody(bodyFile) {
 /**
  * Run `bl new … --no-sync --json` as a child, under this process's backlog
  * lock (`BL_LOCK_HOLDER`), the body on its stdin, and return its JSON record.
+ * The body and the JSON go through files: a Node child cannot use a socket
+ * for its stdio inside Codex's sandbox (`spawnSyncFiles`, F-70 D1).
  */
 function newStory({ feature, component, title, points, type, body }) {
   const argv = [
@@ -226,7 +229,7 @@ function newStory({ feature, component, title, points, type, body }) {
     '--no-sync',
     '--json',
   ];
-  const res = spawnSync(process.execPath, argv, {
+  const res = spawnSyncFiles(process.execPath, argv, {
     stdio: [body != null ? 'pipe' : 'ignore', 'pipe', 'inherit'],
     ...(body != null ? { input: body } : {}),
     env: { ...process.env, BL_LOCK_HOLDER: String(process.pid) },
@@ -303,7 +306,7 @@ async function exitOnThrow(fn) {
 }
 
 function git(cwd, ...args) {
-  return spawnSync('git', args, { cwd, encoding: 'utf8' });
+  return spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 /**

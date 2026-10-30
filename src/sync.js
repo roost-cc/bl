@@ -950,6 +950,7 @@ function stageablePaths(root, paths) {
     const r = spawnSync('git', ['ls-files', '--with-tree=HEAD', '--', p], {
       cwd: root,
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     return r.status === 0 && r.stdout.trim() !== '';
   });
@@ -1114,6 +1115,7 @@ export async function syncAndCommit(config, { message, storyIds = [], extraPaths
     const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
       cwd: root,
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     if (inRepo.status !== 0 || inRepo.stdout.trim() !== 'true') {
       return {
@@ -1127,6 +1129,7 @@ export async function syncAndCommit(config, { message, storyIds = [], extraPaths
     const status = spawnSync('git', ['status', '--porcelain', '--untracked-files=all', '--', ...paths], {
       cwd: root,
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     if (status.status !== 0) {
       return {

@@ -7,7 +7,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync,
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { checkModel, info, isBlBranchPath, worktreeRoot } from '../config.js';
+import { spawnSyncFiles } from '../child-stdio.js';
+import { checkModel, exitStatus, info, isBlBranchPath, worktreeRoot } from '../config.js';
 import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider } from './provider.js';
@@ -695,9 +696,10 @@ export class CodexProvider extends AgentProvider {
    * quota is one for every model, so every answer is `account`-scoped. Any
    * failure (no `codex`, an exit, a JSON-RPC error, the deadline, output
    * that is not the helper's) is `unknown` with the reason; never throws.
-   * `run`, `env` and `timeoutMs` are for tests.
+   * `run`, `env` and `timeoutMs` are for tests. The helper is a Node child,
+   * so its answer comes back through a file (F-70 D1).
    */
-  capacity({ run = spawnSync, env = process.env, timeoutMs = CODEX_CAPACITY_TIMEOUT_MS } = {}) {
+  capacity({ run = spawnSyncFiles, env = process.env, timeoutMs = CODEX_CAPACITY_TIMEOUT_MS } = {}) {
     const unknown = (message) => ({ state: 'unknown', scope: 'account', until: null, windows: [], message });
     let r;
     try {
@@ -888,11 +890,14 @@ export class CodexProvider extends AgentProvider {
       }
       if (r.error) return r;
       const events = parseCodexJsonEvents(r.stdout);
+      // A codex killed by a signal has `status: null`: 128 + n, a failure.
+      const status = exitStatus(r);
       return {
         ...r,
+        status,
         output: output.trim() || String(r.stdout ?? '').trim(),
         usage: events.usage,
-        isError: (r.status ?? 0) !== 0 || events.isError,
+        isError: status !== 0 || events.isError,
         refusal: events.refusal,
         sessionId: null,
         parsed: true,

@@ -19,7 +19,7 @@ function getGitRoot() {
   try {
     return execSync('git rev-parse --show-toplevel', {
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
   } catch {
     return null;
@@ -30,11 +30,11 @@ function isWorktree() {
   try {
     const commonDir = execSync('git rev-parse --git-common-dir', {
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     const gitDir = execSync('git rev-parse --git-dir', {
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     return commonDir !== gitDir;
   } catch {
@@ -47,7 +47,7 @@ function getBranch(cwd) {
     return execSync('git rev-parse --abbrev-ref HEAD', {
       cwd,
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
   } catch {
     return 'unknown';

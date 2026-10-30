@@ -5,7 +5,7 @@
 import { existsSync } from 'fs';
 import { dirname, relative } from 'path';
 import { spawnSync } from 'child_process';
-import { loadConfig, parseArgs, runPager, info, buildHighlightRegex, highlightMatches } from './config.js';
+import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
 import { readAllStories, readBacklogOrder, activeWorktreesByStory, storiesRoot } from './story.js';
 
 const STATUS_ORDER = {
@@ -62,6 +62,7 @@ stories in the same table format as bl list.`);
     const result = spawnSync('rg', ['--files-with-matches', '--no-messages', '--hidden', '-i', pattern, root], {
       encoding: 'utf8',
       cwd: cfg.backlogRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     for (const file of (result.stdout || '').trim().split('\n').filter(Boolean)) {
       const rel = relative(cfg.backlogRoot, file);
@@ -118,16 +119,5 @@ stories in the same table format as bl list.`);
     `\n${filtered.length} matching stories`,
   ];
 
-  const totalLines = rows.length + 3;
-  const termRows = process.stdout.rows || 24;
-
-  if (process.stdout.isTTY && totalLines > termRows) {
-    const text = output.join('\n') + '\n';
-    const pagerResult = runPager(text);
-    if (pagerResult.error && !process.env.PAGER) {
-      spawnSync('more', { input: text, stdio: ['pipe', 'inherit', 'inherit'] });
-    }
-  } else {
-    for (const l of output) console.log(l);
-  }
+  process.exitCode = exitStatus(showText(output.join('\n') + '\n'));
 }

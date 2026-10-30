@@ -317,7 +317,10 @@ test("bl block add and remove on two clones merge without a conflict wherever th
           assert.equal(pulled.status, 0, `${at}: ${pulled.stderr}`);
           // The pull rebased onto Bob's commit, not a warning and a local add.
           assert.doesNotMatch(pulled.stderr, /backlog pull|backlog fetch/, `${at}: ${pulled.stderr}`);
-          const rebased = spawnSync('git', ['merge-base', '--is-ancestor', bobs, 'HEAD'], { cwd: alice });
+          const rebased = spawnSync('git', ['merge-base', '--is-ancestor', bobs, 'HEAD'], {
+            cwd: alice,
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
           assert.equal(rebased.status, 0, `${at}: Alice's HEAD has Bob's commit: ${pulled.stderr}`);
           want = [...want, 'S-2'];
         }

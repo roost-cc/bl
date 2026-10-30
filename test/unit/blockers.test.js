@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
-import { spawnSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { loadFlow } from '../../src/flow.js';
@@ -28,6 +27,7 @@ import {
   writeBlockers,
 } from '../../src/blockers.js';
 import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 // templates/ holds bl init's flow.json, so it reads as a backlog root.
 const flow = loadFlow(dirname(FLOW_TEMPLATE));
@@ -501,7 +501,7 @@ test('merge_driver_rejects_blank_existing_sides_without_dropping_holds: only a z
     for (const c of cases) {
       const paths = ['base', 'ours', 'theirs'].map((p) => join(dir, p));
       [c.base, c.ours, c.theirs].forEach((text, i) => writeFileSync(paths[i], text));
-      const r = spawnSync(process.execPath, [driver, ...paths], { encoding: 'utf8' });
+      const r = spawnSyncFiles(process.execPath, [driver, ...paths], { encoding: 'utf8' });
       assert.equal(r.status, c.exit, `${c.name}: ${r.stderr}`);
       const out = readFileSync(paths[1], 'utf8');
       if (c.want) {

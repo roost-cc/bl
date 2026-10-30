@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { spawn } from 'child_process';
 import { mkTempBacklog } from '../helpers/tempdir.js';
+import { spawnToFiles } from '../helpers/spawn-files.js';
 import { BL_BIN, lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
 import { GIT_ENV, git, headFiles, initGitBacklog } from '../helpers/git-backlog.js';
 import { loadConfig } from '../../src/config.js';
@@ -45,16 +45,9 @@ function setField(dir, storyDir, key, value) {
 }
 
 function blAsync(args, cwd) {
-  return new Promise((resolve) => {
-    const child = spawn(BL_BIN, args, {
-      cwd,
-      env: { ...process.env, ...GIT_ENV, BL_BACKLOG_DIR: cwd },
-    });
-    let stderr = '';
-    child.stderr.on('data', (d) => (stderr += d));
-    child.stdout.resume();
-    child.on('close', (status) => resolve({ status, stderr }));
-  });
+  return spawnToFiles(BL_BIN, args, { cwd, env: { ...process.env, ...GIT_ENV, BL_BACKLOG_DIR: cwd } }).closed.then(
+    ({ status, stderr }) => ({ status, stderr }),
+  );
 }
 
 test('(a) runSync inside a held lock does not block and leaves the outer hold in place', async () => {

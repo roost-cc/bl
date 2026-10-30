@@ -39,7 +39,10 @@ export function formatGhCredentialHelperAdvisory(detection) {
 }
 
 function defaultRun() {
-  return spawnSync('git', ['config', '--get-regexp', '^credential(\\..*)?\\.helper$'], { encoding: 'utf8' });
+  return spawnSync('git', ['config', '--get-regexp', '^credential(\\..*)?\\.helper$'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 }
 
 function parseConfigLine(rawLine) {

@@ -48,12 +48,18 @@ const ENV = {
 Object.assign(process.env, ENV);
 
 function g(cwd, ...args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...ENV } });
+  const r = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, ...ENV },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
 }
 
-const ok = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8' }).status === 0;
+const ok = (cwd, ...args) =>
+  spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).status === 0;
 
 const SESSION =
   '### Session 2026-10-20 (PR #4)\n\n**Must fix**\n\nNone.\n\n**Should fix**\n\nNone.\n\n**Nits**\n\nNone.';

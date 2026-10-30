@@ -50,7 +50,7 @@ Per-command stdout contracts:
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
 | `bl agents`          | the AGENTS.md content                                     |
-| `bl view`            | nothing (opens a read-only copy in the editor)            |
+| `bl view`            | the file as it is when redirected; else nothing (editor)  |
 | `bl edit`            | nothing (opens editor)                                    |
 | `bl init`            | nothing (status → stderr)                                 |
 | `bl sync`            | nothing                                                   |
@@ -470,7 +470,7 @@ component_id: C32
 title: bl Tool Enhancements
 repo: bl # a repo registered in backlog.json
 home: true # this repo's home component; work with no better component lands here
-paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D2)
+paths: ["src/**", "test/**"] # optional: globs relative to the repo root (F-61 D2)
 ---
 ```
 
@@ -1363,6 +1363,31 @@ touched. Each removal is a `hygiene:containers` history entry;
 so a non-compose container started by anything else during the step (another
 feature run's test gate, a manual `docker run`) is removed too; set the opt-out
 when running loops side by side.
+
+Processes get the same hygiene (F-70 D4, `src/process-scope.js`). Every
+headless session `runSession` starts and every test-gate command runs in a user
+systemd scope (`systemd-run --user --scope --collect`), named
+`bl-<unit id, lowercased>-<bl pid>-<n>`. A scope's cgroup keeps every process
+the step started, whatever it did with `setsid` or reparenting. After the step,
+whether it succeeded, failed or threw, and before its containers are listed (a
+hung test can hold a container), each of its scopes still running is stopped
+with `systemctl --user stop`. What was in it (pid and command) goes into one
+`hygiene:processes` history entry and one log line. A scope that is already
+gone adds no entry; one whose processes cannot be listed is stopped anyway. If
+a stop fails, or a scope is still active after it or systemctl cannot say, the
+run escalates with the processes and the `systemctl --user stop <unit>.scope`
+to run. At `bl run` start and `--resume`, `bl review` and `bl merge`'s
+integration, the unit's scopes whose `bl` pid is dead (a crashed or killed
+`bl`'s leftovers) are stopped and recorded the same way; when systemctl cannot
+list them, the run escalates before the first step with the
+`systemctl --user list-units` to run. Interactive sessions
+are not scoped: the operator owns them. Without user systemd (macOS, a host or
+guest whose probe `systemd-run --user --scope --quiet --collect true` fails,
+`bl` inside a sandbox), steps run unscoped, the run records one
+`hygiene:processes` entry (`ok: true`) saying process hygiene is unavailable and
+why, and nothing is killed (decision D4-a: no fallback by working directory,
+which could kill the operator's editor or dev server). A runner without the
+scope methods (the unit tests' fake) skips the hygiene.
 
 The fix self-review's diff starts at the commit the last review saw
 (`reviewBaseSha` in the run state), or, when none is recorded (a session
@@ -2463,8 +2488,14 @@ path, `-d` its directory; a task's directory is `tasks/`):
 ```bash
 bl edit S34                   # opens in $VISUAL / $EDITOR / vi
 bl view T5                    # read-only copy in $VISUAL / $EDITOR / vi
+bl view T5 > t5.md            # stdout not a terminal: the file, byte for byte
 bl which -d C10               # prints the component's directory
 ```
+
+Both exit with the editor's status: 127 when it cannot be launched, 128 + n when
+signal n kills it. When `bl view` cannot make its copy it shows the file instead
+(printed when it fits the terminal, else `$PAGER` → `less` → `more`) and exits
+with the pager's status the same way.
 
 ### `bl done`
 
@@ -3417,6 +3448,22 @@ them.
   approvals or inside another request. Without all three, use the standard format and its
   library, dependency or not. "It already exists" or "it is small" is not an argument; say
   what the standard format and its library fail to do here.
+- **A child's stdin text, and any captured stream of a Node child, go through files**
+  (F-70 D1): call `spawnSyncFiles` (`src/child-stdio.js`), a drop-in for `spawnSync`, never
+  `child_process` with an `input:` option or a `'pipe'` stream to a Node child
+  (`process.execPath`, `node`, `bl`). Node connects `'pipe'` and `input:` over a socketpair.
+  Inside Codex's sandbox `shutdown(2)` is refused, so `input:` never reaches EOF and the call
+  hangs, and a Node child on a socket gets dummy stdio: its output vanishes and the parent
+  reads `""` from a child that exited 0. Non-Node children (`git`, `rg`) may keep `'pipe'`
+  for stdout and stderr: they work there. A synchronous call never leaves stdin `'pipe'`
+  (its default) either: Node ends it with the same refused `shutdown`, the call reports
+  `EPERM` from a child that succeeded, and `execFileSync`/`execSync` throw it. Give it
+  `stdio: ['ignore', 'pipe', 'pipe']`. A command whose output `bl` reads and that may be a
+  Node program (a configured forge op) goes through `spawnSyncFiles`. Tests start an asynchronous Node child with
+  `spawnToFiles` (`test/helpers/spawn-files.js`) and watch its files; a live two-way
+  protocol with a Node child (the fake `codex app-server`) uses `fs.readSync(0)` and
+  `fs.writeSync(1)` in the child. `test/unit/child-stdio-guard.test.js` parses `src/` and
+  `test/` with `acorn` and fails on each of these shapes at a `child_process` call.
 - Frontmatter is YAML (failsafe schema), read and written only by `parseFrontmatter` and
   `serializeFrontmatter` (see **Frontmatter is YAML**). Never read a frontmatter line with a
   regex or write one as text.

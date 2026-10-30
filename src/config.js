@@ -18,9 +18,11 @@
  *     `worktreePathFor`.
  */
 
-import { existsSync, readFileSync, realpathSync } from 'fs';
+import { closeSync, existsSync, openSync, readFileSync, realpathSync } from 'fs';
+import { constants as osConstants } from 'os';
 import { join, resolve, basename, dirname, relative, isAbsolute, sep } from 'path';
 import { spawnSync } from 'child_process';
+import { spawnSyncFiles } from './child-stdio.js';
 import { Document, LineCounter, Scalar, isMap, isScalar, parseDocument, visit } from 'yaml';
 import { getProvider, hasProvider, PROVIDER_NAMES } from './agents/index.js';
 import { sessionStackOf } from './session-stack.js';
@@ -1558,6 +1560,7 @@ export function captureTmuxWindowId() {
   if (!process.env.TMUX || process.env.BL_TMUX_WINDOW_ID) return;
   const res = spawnSync('tmux', ['display-message', '-p', '#{window_id}'], {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (res.status === 0 && res.stdout) {
     process.env.BL_TMUX_WINDOW_ID = res.stdout.trim();
@@ -1576,7 +1579,7 @@ export function renameTmuxWindow(label) {
   if (id) args.push('-t', id);
   args.push(label);
   try {
-    spawnSync('tmux', args, { stdio: 'pipe' });
+    spawnSync('tmux', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   } catch {
     // not fatal
   }
@@ -1669,7 +1672,9 @@ export function runForgeOp(opName, vars = {}, opts = {}) {
     // which git allows in branch names and which would undo the quoting.
     cmd = cmd.replaceAll(`{{${k}}}`, () => shellQuoteForgeVar(v));
   }
-  const result = spawnSync(cmd, {
+  // Through files: the configured command may be a Node program, whose
+  // output on a socket is lost inside Codex's sandbox (F-70 D1).
+  const result = spawnSyncFiles(cmd, {
     cwd: repoPath,
     shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -1692,7 +1697,8 @@ export function runForgeOp(opName, vars = {}, opts = {}) {
     configured: true,
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
-    status: result.status ?? 0,
+    // A forge command killed by a signal is a failure, not a 0.
+    status: exitStatus(result),
     repoPath,
     repoName,
   };
@@ -1747,20 +1753,74 @@ export function findChange(branch, { config, repoPath, runOp = runForgeOp }) {
 /**
  * Run text through $PAGER exactly as set, through the shell (default `less`).
  * bl adds no flags of its own: how less behaves is the operator's `$LESS`.
+ * The text reaches the pager through a file (`spawnSyncFiles`, F-70 D1).
+ * `{ path }` pages that file as it is, on the pager's stdin, with no temp file:
+ * `bl view` falls back to it exactly when a temp file cannot be made.
+ * @param {string | { path: string }} source
  */
-export function runPager(text) {
-  const pager = process.env.PAGER?.trim();
-  if (pager) {
-    return spawnSync(pager, {
-      input: text,
-      stdio: ['pipe', 'inherit', 'inherit'],
-      shell: true,
-    });
+export function runPager(source) {
+  const fd = typeof source === 'string' ? null : openSync(source.path, 'r');
+  const opts =
+    fd == null ? { input: source, stdio: ['pipe', 'inherit', 'inherit'] } : { stdio: [fd, 'inherit', 'inherit'] };
+  try {
+    const pager = process.env.PAGER?.trim();
+    if (pager) return spawnSyncFiles(pager, { ...opts, shell: true });
+    return spawnSyncFiles('less', [], opts);
+  } finally {
+    if (fd != null) closeSync(fd);
   }
-  return spawnSync('less', [], {
-    input: text,
-    stdio: ['pipe', 'inherit', 'inherit'],
-  });
+}
+
+/**
+ * The lines `text` fills on a terminal: a trailing newline ends the last line
+ * and adds none; empty text fills none.
+ * @param {string} text
+ */
+function lineCount(text) {
+  if (text === '') return 0;
+  const lines = text.split('\n').length;
+  return text.endsWith('\n') ? lines - 1 : lines;
+}
+
+/**
+ * Bl's one paging policy (S-1139): when stdout is a terminal and the text is
+ * taller than it (`process.stdout.rows`, 24 when unknown), page it with
+ * `runPager`, falling back to `more` when the pager cannot be launched and
+ * `$PAGER` is unset or blank; otherwise write it to stdout unchanged. `{ path }`
+ * shows that file byte for byte and pages it by descriptor, with no temp file
+ * (`bl view`'s fallback for when a temp file cannot be made). Returns the
+ * result of what ran last (`{ status: 0 }` when it printed), having said on
+ * stderr when that could not start or was killed (`reportExit`); the caller
+ * exits with `exitStatus` of it (S-1110), so this never exits.
+ * @param {string | { path: string }} source
+ * @returns {{ status: number | null, signal?: string | null, error?: Error }}
+ */
+export function showText(source) {
+  const content = typeof source === 'string' ? source : readFileSync(source.path);
+  const lines = lineCount(typeof content === 'string' ? content : content.toString('utf8'));
+  if (!process.stdout.isTTY || lines <= (process.stdout.rows || 24)) {
+    process.stdout.write(content);
+    return { status: 0 };
+  }
+  const pager = process.env.PAGER?.trim();
+  const result = runPager(source);
+  if (!result.error || pager) {
+    reportExit(pager || 'less', result);
+    return result;
+  }
+  if (typeof source === 'string') {
+    const more = spawnSyncFiles('more', [], { input: source, stdio: ['pipe', 'inherit', 'inherit'] });
+    reportExit('more', more);
+    return more;
+  }
+  const fd = openSync(source.path, 'r');
+  try {
+    const more = spawnSyncFiles('more', [], { stdio: [fd, 'inherit', 'inherit'] });
+    reportExit('more', more);
+    return more;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1783,4 +1843,34 @@ export function runEditor(path) {
     stdio: 'inherit',
     shell: true,
   });
+}
+
+/**
+ * The exit status a `spawnSync` result stands for, as a shell reports it
+ * (F-70 D3): 127 when the child could not be launched (`error`), 128 + the
+ * signal's number when a signal killed it (128 for a name this platform does
+ * not know), else its `status`. A result with none of the three (a test fake)
+ * is 0. Every caller that turns a child's result into bl's exit status or an
+ * `isError` goes through this, never `status ?? 0`, which reads a launch
+ * failure or a kill as success.
+ * @param {{ status?: number | null, signal?: string | null, error?: Error } | null | undefined} result
+ * @returns {number}
+ */
+export function exitStatus(result) {
+  if (result?.error) return 127;
+  if (result?.signal) return 128 + (osConstants.signals[result.signal] ?? 0);
+  return result?.status ?? 0;
+}
+
+/**
+ * Say on stderr why a child failed when its status alone would not: it could
+ * not be launched, or a signal killed it. A plain nonzero exit says nothing,
+ * since the child spoke for itself. Returns `exitStatus(result)`.
+ * @param {string} cmd — the command, as the operator would recognise it
+ * @param {{ status?: number | null, signal?: string | null, error?: Error }} result
+ */
+export function reportExit(cmd, result) {
+  if (result?.error) console.error(`bl: could not start ${cmd}: ${result.error.message}`);
+  else if (result?.signal) console.error(`bl: ${cmd} was killed by ${result.signal}`);
+  return exitStatus(result);
 }

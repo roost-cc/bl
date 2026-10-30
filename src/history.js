@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { spawnSync } from 'child_process';
+import { spawnSyncFiles } from './child-stdio.js';
 import { parse } from 'yaml';
 import { normalizeId, parseFrontmatter } from './config.js';
 import { atomicWriteFile } from './atomic-write.js';
@@ -29,8 +29,6 @@ export const CACHE_VERSION = 3;
 const BLOCK_RE = /^---\n([\s\S]*?)\n---(?:\n|$)/;
 const STORY_ID_RE = /^S-\d+$/;
 const FEATURE_ID_RE = /^F-\d+$/;
-// Commands that read many blobs print a lot; the limit is a guard, not a size.
-const MAX_BUFFER = 1 << 30;
 
 /**
  * @typedef {{ status: string, points: number }} StorySnap
@@ -42,11 +40,12 @@ const MAX_BUFFER = 1 << 30;
  *   features: Record<string, { epic: string, theme: string }> }} Groups
  */
 
+// Through files, not sockets: `cat-file --batch` reads its stdin to EOF, which a
+// socket never delivers inside Codex's sandbox (`spawnSyncFiles`, F-70 D1).
 function git(root, args, input) {
-  const r = spawnSync('git', args, {
+  const r = spawnSyncFiles('git', args, {
     cwd: root,
     input,
-    maxBuffer: MAX_BUFFER,
     // With input, stdout stays a Buffer: cat-file's sizes count bytes.
     ...(input === undefined ? { encoding: 'utf8' } : {}),
   });

@@ -40,12 +40,18 @@ const ENV = {
 Object.assign(process.env, ENV);
 
 function g(cwd, ...args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...ENV } });
+  const r = spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    env: { ...process.env, ...ENV },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
 }
 
-const ok = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8' }).status === 0;
+const ok = (cwd, ...args) =>
+  spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).status === 0;
 
 const SESSION =
   '### Session 2026-10-20 (PR #4)\n\n**Must fix**\n\nNone.\n\n**Should fix**\n\nNone.\n\n**Nits**\n\nNone.';
@@ -271,7 +277,11 @@ test('the failing command puts the conflict back, markers and all, before the ab
       // The escalation reads both sides' logs once the stage is done.
       if (afterRegen == null && cmd.startsWith('git merge-base HEAD')) {
         afterRegen = {
-          unmerged: spawnSync('git', ['ls-files', '-u', '--', LOCK], { cwd, encoding: 'utf8' }).stdout,
+          unmerged: spawnSync('git', ['ls-files', '-u', '--', LOCK], {
+            cwd,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+          }).stdout,
           text: readFileSync(join(cwd, LOCK), 'utf8'),
         };
       }
@@ -336,7 +346,7 @@ function regenRepo({
   const shell = (cmd, cwd) => {
     const stub = fails(cmd, cwd);
     if (stub) return stub === true ? { status: 1, output: `injected: ${cmd}` } : stub;
-    const r = spawnSync('/bin/sh', ['-c', cmd], { cwd, encoding: 'utf8' });
+    const r = spawnSync('/bin/sh', ['-c', cmd], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return { status: r.status, output: `${r.stdout}${r.stderr}` };
   };
   const result = regenerateConflicts({

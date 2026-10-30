@@ -44,7 +44,7 @@ const steps =
 const stage = (dir, extraPaths) => git(dir, 'add', '-A', '--', ...extraPaths);
 
 /** A pid no process holds: a child's, after it exits. */
-const deadPid = () => spawnSync('true').pid;
+const deadPid = () => spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
 
 test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', async () => {
   const cases = [

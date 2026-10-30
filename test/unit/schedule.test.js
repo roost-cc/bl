@@ -187,7 +187,7 @@ test("unitFiles: with no branch commits, a feature's files are its stories' plan
 
 test("branchFiles lists what a worktree's branch changes against main", () => {
   const root = mkTempDir('bl-schedule-git-');
-  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' });
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
   try {
     const repo = join(root, 'repo');
     mkdirSync(repo);
@@ -223,7 +223,7 @@ test("branchFiles lists what a worktree's branch changes against main", () => {
 
 test('unitFiles does not schedule from a partial multi-repository branch diff', () => {
   const root = mkTempDir('bl-schedule-partial-');
-  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe' });
+  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
   const commit = (cwd, msg) =>
     git(cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', msg);
   // Repo `a` holds the branch's commit; the story's plan names `b:shared.js`.
@@ -342,7 +342,8 @@ const PATH_CASES = [
 
 test('planFiles preserves valid repository paths with spaces and punctuation and schedule defers their overlaps', () => {
   const root = mkTempDir('bl-schedule-paths-');
-  const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'pipe', encoding: 'utf8' });
+  const git = (cwd, ...args) =>
+    execFileSync('git', ['-C', cwd, ...args], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
   try {
     const make = (id, spans) => {
       const indexPath = join(root, `${id}.md`);

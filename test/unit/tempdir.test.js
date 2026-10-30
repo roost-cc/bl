@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, rmSync, statSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { spawn, spawnSync } from 'child_process';
 import { once } from 'events';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
+import { spawnToFiles } from '../helpers/spawn-files.js';
 
 test('mkTempBacklog creates a usable backlog and cleanup removes it', () => {
   const { dir, cleanup } = mkTempBacklog();
@@ -49,7 +50,7 @@ test("mkTempDir dirs, and mkTempBacklog's, are removed when the process exits", 
     const { dir } = mkTempBacklog();
     console.log(JSON.stringify([kept, gone, dir]));
   `;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+  const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
     encoding: 'utf8',
   });
   assert.equal(r.status, 0, r.stderr);
@@ -79,12 +80,12 @@ for (const [name, end, signal] of endings) {
       process.stdout.write(JSON.stringify(dirs) + "\\n");
       ${end}
     `;
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    const run = spawnToFiles(process.execPath, ['--input-type=module', '-e', script]);
+    const { child } = run;
     const exited = once(child, 'exit');
-    child.stdout.setEncoding('utf8');
-    const [line] = await once(child.stdout, 'data');
+    // The line is on a file, not a pipe (F-70 D1): poll until it is whole.
+    let line;
+    while (!(line = run.read().stdout).endsWith('\n')) await new Promise((r) => setTimeout(r, 10));
     const dirs = JSON.parse(line);
     if (signal) child.kill(signal);
     const [, gotSignal] = await exited;
@@ -107,7 +108,7 @@ test('mkTempDir removes the other dirs when one cannot be removed', (t) => {
     const after = mkTempDir("bl-tempdir-test-");
     console.log(JSON.stringify([stuck, after]));
   `;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+  const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
     encoding: 'utf8',
   });
   const [stuck, after] = JSON.parse(r.stdout);

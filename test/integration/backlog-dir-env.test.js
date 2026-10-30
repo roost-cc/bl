@@ -7,10 +7,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'child_process';
 import { BL_BIN } from '../helpers/run-bl.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 // The pre-S-581 name, built so the public-release check (a grep for the old
 // prefix) stays empty.
@@ -21,7 +21,7 @@ function listFrom(cwd, extra) {
   const env = withNoAgent({ ...process.env });
   delete env.BL_BACKLOG_DIR;
   delete env[LEGACY];
-  return spawnSync(BL_BIN, ['list'], { cwd, env: { ...env, ...extra }, encoding: 'utf8' });
+  return spawnSyncFiles(BL_BIN, ['list'], { cwd, env: { ...env, ...extra }, encoding: 'utf8' });
 }
 
 test('BL_BACKLOG_DIR finds the backlog from a cwd outside it', () => {

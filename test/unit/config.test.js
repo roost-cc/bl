@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, readFileSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { fakePagers, withEnv } from '../helpers/fake-pagers.js';
 import {
   parseFrontmatter,
   parseFrontmatterOf,
@@ -19,6 +20,7 @@ import {
   shellQuote,
   runPager,
   runEditor,
+  exitStatus,
   slugify,
   captureTmuxWindowId,
   renameTmuxWindow,
@@ -529,36 +531,6 @@ test('shellQuote handles double quotes, dollars, and backticks as literals', () 
 // runPager / runEditor (S-1109)
 // ---------------------------------------------------------------------------
 
-/**
- * A temp dir on PATH holding fake `less` and `mypager` scripts. Each writes
- * its name, its arguments, `LESS` (or `unset`) and its stdin to `record`.
- */
-function fakePagers() {
-  const dir = mkTempDir('bl-pager-');
-  const record = join(dir, 'record');
-  for (const name of ['less', 'mypager']) {
-    const bin = join(dir, name);
-    writeFileSync(
-      bin,
-      `#!/bin/sh\nprintf '%s|%s|%s|' "$(basename "$0")" "$*" "\${LESS-unset}" > '${record}'\ncat >> '${record}'\n`,
-    );
-    chmodSync(bin, 0o755);
-  }
-  return { dir, record };
-}
-
-/** Run `fn` with `vars` set (`undefined` = unset), restoring them after. */
-function withEnv(vars, fn) {
-  const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
-  const set = (k, v) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
-  try {
-    for (const [k, v] of Object.entries(vars)) set(k, v);
-    return fn();
-  } finally {
-    for (const [k, v] of Object.entries(saved)) set(k, v);
-  }
-}
-
 for (const [label, PAGER] of [
   ['unset', undefined],
   ['empty', ''],
@@ -588,6 +560,23 @@ test("runPager passes the operator's LESS through untouched", () => {
   const { dir, record } = fakePagers();
   withEnv({ PATH: `${dir}${delimiter}${process.env.PATH}`, PAGER: 'less -R', LESS: '-S' }, () => runPager('t'));
   assert.equal(readFileSync(record, 'utf8'), 'less|-R|-S|t');
+});
+
+// ---------------------------------------------------------------------------
+// exitStatus (S-1110, F-70 D3)
+// ---------------------------------------------------------------------------
+
+test('exitStatus: 127 on a launch error, 128 + n on a signal, else the status', () => {
+  assert.equal(exitStatus({ error: new Error('spawn x ENOENT'), status: null, signal: null }), 127);
+  assert.equal(exitStatus({ status: null, signal: 'SIGTERM' }), 143);
+  assert.equal(exitStatus({ status: null, signal: 'SIGKILL' }), 137);
+  assert.equal(exitStatus({ status: 7, signal: null }), 7);
+  assert.equal(exitStatus({ status: 0, signal: null }), 0);
+  // A name this platform does not know is still a failure, never 0.
+  assert.equal(exitStatus({ status: null, signal: 'SIGNOTREAL' }), 128);
+  // A result that reports none of them (a test fake) is 0.
+  assert.equal(exitStatus({}), 0);
+  assert.equal(exitStatus(undefined), 0);
 });
 
 test('runEditor runs VISUAL with its arguments and a path with a space and a quote intact', () => {

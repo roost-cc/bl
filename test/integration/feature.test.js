@@ -935,7 +935,12 @@ test('bl merge lands the branch, marks work done, and commits only what it chang
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1075,7 +1080,12 @@ test('feature merge tag push failure writes no manifest or merged completion sta
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1096,12 +1106,18 @@ test('feature merge tag push failure writes no manifest or merged completion sta
     assert.match(r.stderr, /Tagging F-1 failed: code: git push of tag F-1 failed: .*injected tag refusal/);
     assert.equal(g(origin, 'show', 'main:a.txt'), 'feature', 'the merge is pushed');
     assert.equal(
-      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], { cwd: origin }).status,
+      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], {
+        cwd: origin,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).status,
       1,
       'no remote tag',
     );
     assert.equal(
-      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], { cwd: repo }).status,
+      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], {
+        cwd: repo,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).status,
       1,
       'no local tag',
     );
@@ -1156,7 +1172,12 @@ test('feature merge main lookup failure writes no manifest or merged completion 
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1176,12 +1197,18 @@ test('feature merge main lookup failure writes no manifest or merged completion 
     assert.match(r.stderr, /release manifest: other: origin main unreadable/);
     assert.equal(g(origin, 'show', 'main:a.txt'), 'feature', 'the merge is pushed');
     assert.equal(
-      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], { cwd: origin }).status,
+      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], {
+        cwd: origin,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).status,
       1,
       'no remote tag',
     );
     assert.equal(
-      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], { cwd: repo }).status,
+      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], {
+        cwd: repo,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).status,
       1,
       'no local tag',
     );
@@ -1240,7 +1267,12 @@ test('bl merge F-n refuses before merging anything when a repos entry has no val
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1448,7 +1480,12 @@ for (const [name, repos, recorded, commitFm, expected] of [
     });
     const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
     const g = (cwd, ...args) => {
-      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+      const r = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
       return r.stdout.trim();
     };
@@ -1523,7 +1560,12 @@ async function mergeFixture(repos, { deps = {}, extraRepos = [] } = {}) {
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1605,9 +1647,10 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
   // exact merge SHA (another merge landing it) before releasing the lock.
   // The merge decides under the lock, so it must find that SHA and keep it
   // instead of installing main's tip.
-  const { spawn, spawnSync } = await import('child_process');
+  const { spawnSync } = await import('child_process');
   const { unlinkSync } = await import('fs');
   const { BL_BIN } = await import('../helpers/run-bl.js');
+  const { spawnToFiles } = await import('../helpers/spawn-files.js');
   const { LOCK_FILE } = await import('../../src/lock.js');
   const { dir, cleanup } = mkTempBacklog({
     repos: { code: { path: './code', deployable: true } },
@@ -1639,7 +1682,12 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1653,17 +1701,13 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
 
     const lockPath = join(dir, LOCK_FILE);
     writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n`, { flag: 'wx' });
-    const child = spawn(BL_BIN, ['merge', 'F-1'], {
+    const run = spawnToFiles(BL_BIN, ['merge', 'F-1'], {
       cwd: dir,
       env: { ...process.env, BL_BACKLOG_DIR: dir, ...env },
-      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let stdout = '';
-    let stderr = '';
     let exitCode = null;
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
-    const exited = new Promise((resolve) => child.once('exit', (code) => resolve((exitCode = code))));
+    const exited = new Promise((resolve) => run.child.once('exit', (code) => resolve((exitCode = code))));
+    let { stdout, stderr } = run.read();
     // The no-branch path reports main's tip (`info` writes to stderr) before
     // its last git calls; the merge then blocks on the lock the test holds,
     // which is when its stderr goes quiet. Injecting only then puts the SHA
@@ -1673,6 +1717,7 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
     let quietSince = null;
     let seen = stderr;
     for (;;) {
+      ({ stdout, stderr } = run.read());
       if (exitCode !== null || Date.now() > deadline) {
         throw new Error(
           `merge never blocked on the lock after the no-branch path (exit ${exitCode}):\n${stdout}\n${stderr}`,
@@ -1688,7 +1733,7 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
     const fpath = join(dir, 'features', 'F1-feat', 'index.md');
     writeFileSync(fpath, readFileSync(fpath, 'utf8').replace(/^stories:/m, 'commit:\n  code: exact111\nstories:'));
     unlinkSync(lockPath);
-    assert.equal(await exited, 0, stderr);
+    assert.equal(await exited, 0, (await run.closed).stderr);
 
     assert.notEqual(g(origin, 'rev-parse', '--short', 'main'), 'exact111', "main's tip is not the SHA on record");
     assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).commit, 'exact111');
@@ -1753,7 +1798,12 @@ test('feature_merge_refuses_any_story_without_component_repo_before_mutation', a
     });
     const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
     const g = (cwd, ...args) => {
-      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+      const r = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
       return r.stdout.trim();
     };
@@ -1823,7 +1873,12 @@ for (const missing of [false, true]) {
     });
     const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
     const g = (cwd, ...args) => {
-      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+      const r = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
       return r.stdout.trim();
     };
@@ -1910,7 +1965,7 @@ test('concurrent_feature_merges_fold_each_story_once', async () => {
     GIT_COMMITTER_EMAIL: 't@t',
   });
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     if (r.status !== 0) throw new Error(r.stderr);
     return r.stdout.trim();
   };
@@ -1970,7 +2025,7 @@ test('concurrent_feature_merges_with_transcripts_preserve_folded_totals', async 
   const { ClaudeProvider } = await import('../../src/agents/claude.js');
   const kinds = (input) => ({ input: String(input), output: '0', cache_creation: '0', cache_read: '0' });
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     if (r.status !== 0) throw new Error(r.stderr);
     return r.stdout.trim();
   };

@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { BL_BIN, runBl } from '../helpers/run-bl.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
 import { capacityRows } from '../../src/capacity.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 // F-64 D6: `bl capacity` prints every configuration of both roles from its
 // adapter's capacity(), asking each agent once, and exits 0 whatever the
@@ -30,7 +30,7 @@ const CONFIG = {
 function blCapacity(dir, args, mode = 'open') {
   const env = withNoAgent({ ...process.env, BL_BACKLOG_DIR: dir, FAKE_CODEX_MODE: mode });
   env.PATH = `${FAKE_BIN}:${env.PATH}`;
-  return spawnSync(BL_BIN, ['capacity', ...args], { cwd: dir, env, encoding: 'utf8' });
+  return spawnSyncFiles(BL_BIN, ['capacity', ...args], { cwd: dir, env, encoding: 'utf8' });
 }
 
 test("bl capacity prints a row per configuration of both roles, with Codex's windows and local reset times", () => {
