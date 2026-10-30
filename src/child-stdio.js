@@ -47,7 +47,8 @@ import { join } from 'path';
  */
 export function spawnSyncFiles(command, args, options) {
   const withArgs = Array.isArray(args);
-  const opts = (withArgs ? options : args) ?? {};
+  // `(command, undefined, options)` is spawnSync's no-arguments form too.
+  const opts = (withArgs || args == null ? options : args) ?? {};
   const { input, maxBuffer: _maxBuffer, ...rest } = opts;
   const stdio = normalizeStdio(opts.stdio);
 

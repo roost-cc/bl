@@ -159,6 +159,13 @@ console.log(JSON.stringify({
   }
 });
 
+test('the (command, undefined, options) form keeps its options, as spawnSync does', () => {
+  const r = spawnSyncFiles('cat', undefined, { input: 'kept', encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, 'kept');
+  assert.deepEqual(leftovers(), []);
+});
+
 test('the (command, { shell: true }) form works', () => {
   const r = spawnSyncFiles('tr a-z A-Z && echo "$S1141" >&2', {
     shell: true,
