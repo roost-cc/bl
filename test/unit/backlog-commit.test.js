@@ -35,7 +35,7 @@ const ENV = {
   GIT_COMMITTER_EMAIL: 't@t',
 };
 function g(cwd, ...args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: ENV });
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: ENV, stdio: ['ignore', 'pipe', 'pipe'] });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
 }
@@ -77,7 +77,12 @@ test('commits only what changed after the snapshot; pre-existing edits and stage
     assert.deepEqual(files, ['feature.md', 'index.md', 'stories/.completed/a.md', 'stories/a.md']);
     // The operator's edit, scratch file, and staged change are untouched.
     // Untrimmed: the leading space of " M" is significant.
-    const status = spawnSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8', env: ENV }).stdout;
+    const status = spawnSync('git', ['status', '--porcelain'], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: ENV,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).stdout;
     assert.match(status, /^ M stories\/b\.md$/m);
     assert.match(status, /^\?\? notes\.md$/m);
     assert.match(status, /^M  stories\/c\.md$/m);
@@ -125,7 +130,12 @@ test("commitPaths commits a git rm'd path without staging the rest of the tree",
     assert.equal(res.committed, true, res.error);
     const files = g(dir, 'show', '--name-status', '--format=', 'HEAD').split('\n');
     assert.deepEqual(files, ['D\tstories/a.md']);
-    const status = spawnSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8', env: ENV }).stdout;
+    const status = spawnSync('git', ['status', '--porcelain'], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: ENV,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).stdout;
     assert.equal(status, ' M bystander.md\n');
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -246,7 +256,10 @@ test('commitPaths waits while a pull holds the main sync lock, then commits and 
   try {
     // A holder outside this process that lives about a second: the shell
     // exits at once, so init reaps the sleep and its PID goes dead.
-    const pid = spawnSync('sh', ['-c', 'sleep 1 >/dev/null 2>&1 & echo $!'], { encoding: 'utf8' }).stdout.trim();
+    const pid = spawnSync('sh', ['-c', 'sleep 1 >/dev/null 2>&1 & echo $!'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).stdout.trim();
     const lockPath = join(alice, '.git', 'bl-main-sync.lock');
     writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\nbl main sync ${alice}\n`);
     writeFileSync(join(alice, STORY), 'a, edited\n');
@@ -305,7 +318,11 @@ test('a dirty tree is autostashed and restored around the pull', () => {
     assert.equal(res.message, undefined);
     assert.equal(readFileSync(join(alice, 'other.md'), 'utf8'), 'bob\n');
     assert.equal(readFileSync(join(alice, STORY), 'utf8'), 'alice, uncommitted\n');
-    const status = spawnSync('git', ['status', '--porcelain'], { cwd: alice, encoding: 'utf8' }).stdout;
+    const status = spawnSync('git', ['status', '--porcelain'], {
+      cwd: alice,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).stdout;
     assert.match(status, new RegExp(`^ M ${STORY}$`, 'm'));
     assert.match(status, /^\?\? scratch\.md$/m);
     assert.equal(g(alice, 'stash', 'list'), '');
@@ -485,7 +502,10 @@ test('bl inbox pulls; a generated-index conflict is regenerated, committed and p
 // A pull that does not go through puts the checkout back, or stops the command
 // ---------------------------------------------------------------------------
 
-const REAL_GIT = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+const REAL_GIT = spawnSync('sh', ['-c', 'command -v git'], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'pipe'],
+}).stdout.trim();
 const BACKLOG_COMMIT = new URL('../../src/backlog-commit.js', import.meta.url).href;
 
 /**
@@ -522,7 +542,11 @@ function pullWithFailingGit(root, failing) {
 /** Branch, HEAD, rebase state, unmerged paths, stash and uncommitted edits. */
 function checkoutState(root) {
   return {
-    branch: spawnSync('git', ['symbolic-ref', '--short', '-q', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(),
+    branch: spawnSync('git', ['symbolic-ref', '--short', '-q', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).stdout.trim(),
     head: g(root, 'rev-parse', 'HEAD'),
     rebasing: existsSync(join(root, '.git', 'rebase-merge')) || existsSync(join(root, '.git', 'rebase-apply')),
     unmerged: g(root, 'diff', '--name-only', '--diff-filter=U'),

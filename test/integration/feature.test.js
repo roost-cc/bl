@@ -935,7 +935,12 @@ test('bl merge lands the branch, marks work done, and commits only what it chang
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1075,7 +1080,12 @@ test('feature merge tag push failure writes no manifest or merged completion sta
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1096,12 +1106,18 @@ test('feature merge tag push failure writes no manifest or merged completion sta
     assert.match(r.stderr, /Tagging F-1 failed: code: git push of tag F-1 failed: .*injected tag refusal/);
     assert.equal(g(origin, 'show', 'main:a.txt'), 'feature', 'the merge is pushed');
     assert.equal(
-      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], { cwd: origin }).status,
+      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], {
+        cwd: origin,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).status,
       1,
       'no remote tag',
     );
     assert.equal(
-      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], { cwd: repo }).status,
+      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], {
+        cwd: repo,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).status,
       1,
       'no local tag',
     );
@@ -1156,7 +1172,12 @@ test('feature merge main lookup failure writes no manifest or merged completion 
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1176,12 +1197,18 @@ test('feature merge main lookup failure writes no manifest or merged completion 
     assert.match(r.stderr, /release manifest: other: origin main unreadable/);
     assert.equal(g(origin, 'show', 'main:a.txt'), 'feature', 'the merge is pushed');
     assert.equal(
-      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], { cwd: origin }).status,
+      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], {
+        cwd: origin,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).status,
       1,
       'no remote tag',
     );
     assert.equal(
-      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], { cwd: repo }).status,
+      spawnSync('git', ['rev-parse', '-q', '--verify', 'refs/tags/F-1'], {
+        cwd: repo,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).status,
       1,
       'no local tag',
     );
@@ -1240,7 +1267,12 @@ test('bl merge F-n refuses before merging anything when a repos entry has no val
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1448,7 +1480,12 @@ for (const [name, repos, recorded, commitFm, expected] of [
     });
     const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
     const g = (cwd, ...args) => {
-      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+      const r = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
       return r.stdout.trim();
     };
@@ -1523,7 +1560,12 @@ async function mergeFixture(repos, { deps = {}, extraRepos = [] } = {}) {
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1640,7 +1682,12 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
   });
   const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
     return r.stdout.trim();
   };
@@ -1751,7 +1798,12 @@ test('feature_merge_refuses_any_story_without_component_repo_before_mutation', a
     });
     const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
     const g = (cwd, ...args) => {
-      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+      const r = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
       return r.stdout.trim();
     };
@@ -1821,7 +1873,12 @@ for (const missing of [false, true]) {
     });
     const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
     const g = (cwd, ...args) => {
-      const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+      const r = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
       if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
       return r.stdout.trim();
     };
@@ -1908,7 +1965,7 @@ test('concurrent_feature_merges_fold_each_story_once', async () => {
     GIT_COMMITTER_EMAIL: 't@t',
   });
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     if (r.status !== 0) throw new Error(r.stderr);
     return r.stdout.trim();
   };
@@ -1968,7 +2025,7 @@ test('concurrent_feature_merges_with_transcripts_preserve_folded_totals', async 
   const { ClaudeProvider } = await import('../../src/agents/claude.js');
   const kinds = (input) => ({ input: String(input), output: '0', cache_creation: '0', cache_read: '0' });
   const g = (cwd, ...args) => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     if (r.status !== 0) throw new Error(r.stderr);
     return r.stdout.trim();
   };

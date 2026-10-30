@@ -63,6 +63,7 @@ stories in the same table format as bl list.`);
     const result = spawnSync('rg', ['--files-with-matches', '--no-messages', '--hidden', '-i', pattern, root], {
       encoding: 'utf8',
       cwd: cfg.backlogRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     for (const file of (result.stdout || '').trim().split('\n').filter(Boolean)) {
       const rel = relative(cfg.backlogRoot, file);

@@ -116,10 +116,14 @@ if (side && faults.has('gone') && process.env.BL_SIDE_FAULT_REPO) {
   fs.writeFileSync = (path, ...rest) => {
     if (!done && String(path) === join(root, '.bl-new.lock')) {
       done = true;
-      const list = spawnSync('git', ['-C', repo, 'worktree', 'list', '--porcelain'], { encoding: 'utf8' }).stdout;
+      const list = spawnSync('git', ['-C', repo, 'worktree', 'list', '--porcelain'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).stdout;
       const block = list.split('\n\n').find((b) => b.includes(`branch refs/heads/${process.env.BL_SIDE_FAULT_BRANCH}`));
       const wt = block?.match(/^worktree (.*)$/m)?.[1];
-      if (wt) spawnSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt]);
+      if (wt)
+        spawnSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt], { stdio: ['ignore', 'pipe', 'pipe'] });
     }
     return inner(path, ...rest);
   };

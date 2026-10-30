@@ -20,8 +20,11 @@ function build({ status = 'refined', dependsOn = null } = {}) {
   const backlog = join(tmp, 'backlog');
   const repo = join(tmp, 'repoA');
   mkdirSync(repo, { recursive: true });
-  execSync('git init -q -b main', { cwd: repo });
-  execSync('git -c user.email=t@t -c user.name=t commit --allow-empty -q -m init', { cwd: repo });
+  execSync('git init -q -b main', { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync('git -c user.email=t@t -c user.name=t commit --allow-empty -q -m init', {
+    cwd: repo,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   mkdirSync(join(backlog, 'stories', 'S7-loose'), { recursive: true });
   mkdirSync(join(backlog, 'stories', 'S6-dep'), { recursive: true });
   writeFileSync(
@@ -92,7 +95,11 @@ test("prepareStoryRun: the story's own branch and worktree, in prepareFeatureWor
     assert.equal(prep.branchName, 's7-loose');
     assert.equal(prep.worktreePath, join(tmp, 'worktrees', 's7-loose', 'repoA'));
     assert.ok(existsSync(prep.worktreePath));
-    assert.ok(execSync('git worktree list', { cwd: repo, encoding: 'utf8' }).includes('[s7-loose]'));
+    assert.ok(
+      execSync('git worktree list', { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).includes(
+        '[s7-loose]',
+      ),
+    );
     assert.equal(prep.cfg.repoName, 'repoA', "the story's repo's config (F-51 D4)");
     assert.equal(prep.cfg.backlogRoot, config.backlogRoot);
     assert.deepEqual(prep.parsed, parsed);
@@ -122,7 +129,12 @@ test("bl run S-n --plan prints the loop's steps for the story and touches nothin
   const { exit, out } = await run(backlog, { plan: true });
   assert.equal(exit, null);
   assert.match(out, /^S-7 · Loose — run plan\n 1\. setup\n 2\. implement S-7\n 3\. test/);
-  assert.ok(!execSync('git worktree list', { cwd: repo, encoding: 'utf8' }).includes('s7-loose'), 'no worktree');
+  assert.ok(
+    !execSync('git worktree list', { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).includes(
+      's7-loose',
+    ),
+    'no worktree',
+  );
 });
 
 test('bl run S-n refuses a backlog story, pointing at bl refine', async () => {
@@ -146,7 +158,12 @@ test('bl run S-n refuses an open ## Escalation before any worktree is made', asy
   const { exit, err } = await run(backlog, {});
   assert.equal(exit, 1);
   assert.match(err, /Story S-7 has an open ## Escalation/);
-  assert.ok(!execSync('git worktree list', { cwd: repo, encoding: 'utf8' }).includes('s7-loose'), 'no worktree');
+  assert.ok(
+    !execSync('git worktree list', { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).includes(
+      's7-loose',
+    ),
+    'no worktree',
+  );
 });
 
 test('bl run S-n rejects a bad --max-rounds', async () => {

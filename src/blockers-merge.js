@@ -40,8 +40,14 @@ const SCRIPT = fileURLToPath(import.meta.url);
 export function configureMergeDriver(root) {
   const quote = (s) => `'${s.replaceAll("'", `'\\''`)}'`;
   const driver = `${quote(process.execPath)} ${quote(SCRIPT)} %O %A %B`;
-  spawnSync('git', ['config', `merge.${MERGE_DRIVER}.name`, 'bl blockers.json, merged by edge'], { cwd: root });
-  spawnSync('git', ['config', `merge.${MERGE_DRIVER}.driver`, driver], { cwd: root });
+  spawnSync('git', ['config', `merge.${MERGE_DRIVER}.name`, 'bl blockers.json, merged by edge'], {
+    cwd: root,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  spawnSync('git', ['config', `merge.${MERGE_DRIVER}.driver`, driver], {
+    cwd: root,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 }
 
 async function main([basePath, oursPath, theirsPath]) {
@@ -61,7 +67,9 @@ async function main([basePath, oursPath, theirsPath]) {
     writeFileSync(oursPath, formatBlockers(merged));
     return 0;
   }
-  spawnSync('git', ['merge-file', '-L', 'ours', '-L', 'base', '-L', 'theirs', oursPath, basePath, theirsPath]);
+  spawnSync('git', ['merge-file', '-L', 'ours', '-L', 'base', '-L', 'theirs', oursPath, basePath, theirsPath], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   return 1;
 }
 

@@ -33,7 +33,7 @@ import { findExistingWorktree } from './story.js';
  *             ref: string, pushed?: boolean }}
  */
 export function syncBranchWithMain(worktreePath) {
-  const run = (cmd) => execSync(cmd, { cwd: worktreePath, stdio: 'pipe', encoding: 'utf8' });
+  const run = (cmd) => execSync(cmd, { cwd: worktreePath, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
 
   // Prefer the freshest remote main; fall back to local main when offline or
   // there's no origin (local-only development).

@@ -136,7 +136,7 @@ function stackWorkspace(name = 'backlog') {
   const ws = mkTempDir('bl-bash-guard-stack-');
   const backlog = join(ws, name);
   mkdirSync(join(backlog, 'stack'), { recursive: true });
-  spawnSync('git', ['init', '-q', backlog]);
+  spawnSync('git', ['init', '-q', backlog], { stdio: ['ignore', 'pipe', 'pipe'] });
   writeFileSync(join(backlog, 'backlog.json'), JSON.stringify({ session_stack: { guide: 'stack' } }));
   writeFileSync(
     join(backlog, 'stack', 'docker-guard-deny.md'),
@@ -199,7 +199,8 @@ for (const name of ['queue', 'acme workspace', 'it$s', "o'brien", 'a;b&c', 'x$&y
       ).hookSpecificOutput.permissionDecisionReason;
     // The word each slot became reads back, through a shell, as the path itself;
     // a path with nothing the shell would change stays bare.
-    const echo = (w) => spawnSync('sh', ['-c', `printf %s ${w}`], { encoding: 'utf8' }).stdout;
+    const echo = (w) =>
+      spawnSync('sh', ['-c', `printf %s ${w}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).stdout;
     assert.equal(echo(shellWord(backlog)), backlog);
     assert.equal(echo(shellWord(parent)), parent);
     if (name === 'queue') assert.equal(shellWord(backlog), backlog);
@@ -360,6 +361,7 @@ function gitRepos() {
         GIT_CONFIG_GLOBAL: '/dev/null',
         GIT_CONFIG_SYSTEM: '/dev/null',
       },
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     assert.equal(r.status, 0, r.stderr);
   };

@@ -1331,7 +1331,7 @@ test('story without an Acceptance Criteria section is implemented, not skipped',
 });
 
 test('second bl run on the same feature refuses while the first is alive', async () => {
-  const deadPid = spawnSync('true').pid;
+  const deadPid = spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
   // Nested: the first run's first session starts a second run in-process.
   {
     const { dir, cleanup, config, feature, prep } = setup();
@@ -2179,7 +2179,7 @@ test('a worktree that stays dirty after fix-tests escalates without running the 
 // ---------------------------------------------------------------------------
 
 function git(wt, ...args) {
-  const r = spawnSync('git', args, { cwd: wt, encoding: 'utf8' });
+  const r = spawnSync('git', args, { cwd: wt, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout;
 }
@@ -2205,7 +2205,7 @@ function realGitRunner(args, wt) {
   runner.shell = (cmd, cwd) => {
     if (cwd === wt && cmd.startsWith('git ') && !/^git (push|rev-list --count origin)/.test(cmd)) {
       runner.calls.push({ type: 'shell', cmd, cwd });
-      const r = spawnSync(cmd, { cwd, shell: true, encoding: 'utf8' });
+      const r = spawnSync(cmd, { cwd, shell: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
       return { status: r.status ?? 1, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
     }
     return fake(cmd, cwd);
@@ -2646,7 +2646,7 @@ test('the test gate refuses a dirty tree with no test plugin configured', async 
 });
 
 test('two runs reclaiming the same stale lock cannot both acquire it', () => {
-  const deadPid = spawnSync('true').pid;
+  const deadPid = spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
   // The run lock, and the helper the headless `.workon.lock` uses.
   const { dir, cleanup, config } = setup();
   try {
@@ -3882,7 +3882,12 @@ test("bl run's own backlog commits are pushed to origin main (F-50 D4)", async (
         shell: (cmd) =>
           /^git (add --|commit -q -m) /.test(cmd)
             ? (({ status, stdout, stderr }) => ({ status, output: stdout + stderr }))(
-                spawnSync('sh', ['-c', cmd], { cwd: dir, encoding: 'utf8', env: { ...process.env, ...GIT_ENV } }),
+                spawnSync('sh', ['-c', cmd], {
+                  cwd: dir,
+                  encoding: 'utf8',
+                  env: { ...process.env, ...GIT_ENV },
+                  stdio: ['ignore', 'pipe', 'pipe'],
+                }),
               )
             : null,
       },

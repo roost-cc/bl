@@ -95,7 +95,11 @@ export function rootOfTemplate(value) {
 
 /** The linked worktrees of the repo at `repoPath`: `{ path, branch|null }`, the main one left out. */
 export function linkedWorktrees(repoPath) {
-  const r = spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repoPath, encoding: 'utf8' });
+  const r = spawnSync('git', ['worktree', 'list', '--porcelain'], {
+    cwd: repoPath,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   if (r.status !== 0) throw new Error(`git worktree list failed in ${repoPath}: ${(r.stderr || '').trim()}`);
   const entries = r.stdout.split('\n\n').filter((e) => e.trim());
   return entries.slice(1).map((entry) => {
@@ -390,7 +394,11 @@ function moveWorktree(m, runDir, backlogRoot) {
   const parent = dirname(m.to);
   const made = !existsSync(parent);
   mkdirSync(parent, { recursive: true });
-  const r = spawnSync('git', ['worktree', 'move', m.from, m.to], { cwd: m.repoPath, encoding: 'utf8' });
+  const r = spawnSync('git', ['worktree', 'move', m.from, m.to], {
+    cwd: m.repoPath,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   if (r.status !== 0) {
     if (made && readdirSync(parent).length === 0) rmdirSync(parent);
     throw new Error(`git worktree move ${m.from} ${m.to} failed: ${(r.stderr || '').trim()}`);

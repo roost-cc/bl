@@ -37,19 +37,23 @@ const GIT_ENV = '-c user.email=t@t -c user.name=t';
 function initRepoWithUpstream(workPath, upstreamPath) {
   mkdirSync(workPath, { recursive: true });
   mkdirSync(upstreamPath, { recursive: true });
-  execSync(`git init -q --bare -b main "${upstreamPath}"`);
-  execSync(`git init -q -b main "${workPath}"`);
-  execSync(`git ${GIT_ENV} -C "${workPath}" commit --allow-empty -q -m init`);
-  execSync(`git -C "${workPath}" remote add origin "${upstreamPath}"`);
-  execSync(`git -C "${workPath}" push -q origin main`);
+  execSync(`git init -q --bare -b main "${upstreamPath}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git init -q -b main "${workPath}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git ${GIT_ENV} -C "${workPath}" commit --allow-empty -q -m init`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git -C "${workPath}" remote add origin "${upstreamPath}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git -C "${workPath}" push -q origin main`, { stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 function addStoryWorktreeWithCommit(repoPath, worktreePath, branchName) {
   mkdirSync(worktreePath, { recursive: true });
-  execSync(`git -C "${repoPath}" worktree add -q -b "${branchName}" "${worktreePath}" main`);
+  execSync(`git -C "${repoPath}" worktree add -q -b "${branchName}" "${worktreePath}" main`, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   writeFileSync(join(worktreePath, 'marker.txt'), `${branchName}\n`);
-  execSync(`git ${GIT_ENV} -C "${worktreePath}" add marker.txt`);
-  execSync(`git ${GIT_ENV} -C "${worktreePath}" commit -q -m "work on ${branchName}"`);
+  execSync(`git ${GIT_ENV} -C "${worktreePath}" add marker.txt`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git ${GIT_ENV} -C "${worktreePath}" commit -q -m "work on ${branchName}"`, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 }
 
 /**
@@ -98,7 +102,9 @@ function buildStoryBacklog({
     const broken = Array.isArray(pushBroken) ? pushBroken.includes(name) : pushBroken;
     if (broken) {
       // Point origin at a non-existent path so `git push origin main` fails.
-      execSync(`git -C "${work}" remote set-url origin "${tmp}/missing-${name}.git"`);
+      execSync(`git -C "${work}" remote set-url origin "${tmp}/missing-${name}.git"`, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
     }
     repos[name] = work;
   }
@@ -177,14 +183,14 @@ ${reviewLog ?? ''}
     // lets the commit succeed without relying on ambient global git identity.
     const backlogUpstream = join(tmp, 'upstream', 'backlog.git');
     mkdirSync(backlogUpstream, { recursive: true });
-    execSync(`git init -q --bare -b main "${backlogUpstream}"`);
-    execSync(`git init -q -b main "${backlog}"`);
-    execSync(`git -C "${backlog}" config user.email t@t`);
-    execSync(`git -C "${backlog}" config user.name t`);
-    execSync(`git -C "${backlog}" add -A`);
-    execSync(`git ${GIT_ENV} -C "${backlog}" commit -q -m init`);
-    execSync(`git -C "${backlog}" remote add origin "${backlogUpstream}"`);
-    execSync(`git -C "${backlog}" push -q origin main`);
+    execSync(`git init -q --bare -b main "${backlogUpstream}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    execSync(`git init -q -b main "${backlog}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    execSync(`git -C "${backlog}" config user.email t@t`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    execSync(`git -C "${backlog}" config user.name t`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    execSync(`git -C "${backlog}" add -A`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    execSync(`git ${GIT_ENV} -C "${backlog}" commit -q -m init`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    execSync(`git -C "${backlog}" remote add origin "${backlogUpstream}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    execSync(`git -C "${backlog}" push -q origin main`, { stdio: ['ignore', 'pipe', 'pipe'] });
   }
 
   if (prePushHook) {
@@ -380,6 +386,7 @@ test("cleanup's merge commit subject leans on commitlint's default merge-ignore"
   }
   const subject = execSync(`git -C "${repos.bl}" log -1 --format=%s main`, {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   // Carries the story id, greppable via \(S-\d+\).
   assert.match(subject, /^Merge branch '.*' into main \(S-99\)$/);
@@ -401,6 +408,7 @@ test("cleanup's backlog-sync commit uses a Conventional-Commits chore subject", 
   }
   const subject = execSync(`git -C "${backlog}" log -1 --format=%s`, {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   assert.equal(subject, 'chore: mark S-99 done, sync backlog');
   // Valid Conventional Commits type, so the backlog repo can adopt the
@@ -427,6 +435,7 @@ test('cleanup refuses when review_status is pending', async () => {
   // Nothing merged: main still has only the init commit.
   const mainCount = execSync(`git -C "${repos.bl}" rev-list --count main`, {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   assert.equal(mainCount, '1', 'story branch must not be merged into main');
   // Story untouched at its original location.
@@ -452,6 +461,7 @@ test('cleanup refuses when review_status is addressed but items are unchecked', 
   assert.notEqual(exitCode, 0, 'cleanup must exit non-zero with unchecked review items');
   const mainCount = execSync(`git -C "${repos.bl}" rev-list --count main`, {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   assert.equal(mainCount, '1', 'story branch must not be merged into main');
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
@@ -476,6 +486,7 @@ test('cleanup refuses when review_status is fixed (awaiting re-review)', async (
   assert.notEqual(exitCode, 0, 'cleanup must exit non-zero until a re-review signs off');
   const mainCount = execSync(`git -C "${repos.bl}" rev-list --count main`, {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   assert.equal(mainCount, '1', 'story branch must not be merged into main');
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
@@ -509,6 +520,7 @@ test('cleanup proceeds when the latest review session is fully addressed', async
   assert.ok(!existsSync(join(backlog, 'releases')), 'a story merged alone gets no release manifest');
   const tags = execSync(`git -C "${repos.bl}" tag`, {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   assert.equal(tags, '', 'and no tag');
 });
@@ -617,11 +629,11 @@ test("cleanup's backlog commit holds only the story and the synced paths", async
     bystander,
     '---\ncomponent: C00\nstory_id: S-7\ntitle: Bystander\ntype: chore\npoints: 1\nstatus: backlog\n---\n\n# Bystander\n',
   );
-  execSync(`git -C "${backlog}" add -A`);
-  execSync(`git ${GIT_ENV} -C "${backlog}" commit -q -m bystander`);
+  execSync(`git -C "${backlog}" add -A`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git ${GIT_ENV} -C "${backlog}" commit -q -m bystander`, { stdio: ['ignore', 'pipe', 'pipe'] });
   writeFileSync(bystander, '\nIn-progress edit.\n', { flag: 'a' });
   writeFileSync(join(backlog, 'staged.txt'), 'pre-staged\n');
-  execSync(`git -C "${backlog}" add staged.txt`);
+  execSync(`git -C "${backlog}" add staged.txt`, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   process.env.BL_BACKLOG_DIR = backlog;
   try {
@@ -629,7 +641,10 @@ test("cleanup's backlog commit holds only the story and the synced paths", async
   } finally {
     delete process.env.BL_BACKLOG_DIR;
   }
-  const files = execSync(`git -C "${backlog}" show --name-status --no-renames --format= HEAD`, { encoding: 'utf8' })
+  const files = execSync(`git -C "${backlog}" show --name-status --no-renames --format= HEAD`, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
     .trim()
     .split('\n');
   assert.ok(files.includes('M\tstories/S99-test-cleanup/index.md'), files.join('\n'));
@@ -637,6 +652,7 @@ test("cleanup's backlog commit holds only the story and the synced paths", async
   assert.ok(!files.some((f) => f.includes('staged.txt')), files.join('\n'));
   const status = execSync(`git -C "${backlog}" status --porcelain`, {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   assert.match(status, / M stories\/S7-bystander\/index\.md/);
   assert.match(status, /A {2}staged\.txt/);
@@ -650,6 +666,7 @@ test("cleanup's backlog commit holds only the story and the synced paths", async
 function upstreamMain(tmp, name) {
   return execSync(`git -C "${join(tmp, 'upstream', `${name}.git`)}" rev-parse --short main`, {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
 }
 
@@ -672,9 +689,9 @@ function installBlShim(work, logPath) {
       '',
     ].join('\n'),
   );
-  execSync(`git ${GIT_ENV} -C "${work}" add package.json src/bl.js`);
-  execSync(`git ${GIT_ENV} -C "${work}" commit -q -m "bl shim"`);
-  execSync(`git -C "${work}" push -q origin main`);
+  execSync(`git ${GIT_ENV} -C "${work}" add package.json src/bl.js`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git ${GIT_ENV} -C "${work}" commit -q -m "bl shim"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git -C "${work}" push -q origin main`, { stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 test('a bl story runs the mark-done sync as a child of its merged checkout', async () => {
@@ -718,13 +735,20 @@ test('a bl story runs the mark-done sync as a child of its merged checkout', asy
   // `--story` staged the done edit.
   const subjects = execSync(`git -C "${backlog}" log --format=%s`, {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
     .trim()
     .split('\n');
   assert.deepEqual(subjects, ['chore: mark S-99 done, sync backlog', 'init']);
-  const done = execSync(`git -C "${backlog}" show --name-status --no-renames --format= HEAD`, { encoding: 'utf8' });
+  const done = execSync(`git -C "${backlog}" show --name-status --no-renames --format= HEAD`, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   assert.match(done, /stories\/S99-test-cleanup\/index\.md$/m, done);
-  assert.equal(execSync(`git -C "${backlog}" status --porcelain`, { encoding: 'utf8' }), '');
+  assert.equal(
+    execSync(`git -C "${backlog}" status --porcelain`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+    '',
+  );
   assert.equal(existsSync(join(backlog, '.bl-new.lock')), false);
 
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
@@ -747,16 +771,18 @@ test('a bl story runs the mark-done sync as a child of its merged checkout', asy
 function mergeOnForge({ tmp, repos, branchName }, name) {
   const work = repos[name];
   const wt = join(tmp, 'worktrees', branchName, name);
-  execSync(`git -C "${work}" worktree remove --force "${wt}"`);
-  execSync(`git -C "${work}" branch -D "${branchName}"`, { stdio: 'pipe' });
+  execSync(`git -C "${work}" worktree remove --force "${wt}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git -C "${work}" branch -D "${branchName}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
   const upstream = join(tmp, 'upstream', `${name}.git`);
   const scratch = join(tmp, 'scratch', name);
   mkdirSync(scratch, { recursive: true });
-  execSync(`git clone -q "${upstream}" "${scratch}"`);
+  execSync(`git clone -q "${upstream}" "${scratch}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
   writeFileSync(join(scratch, 'forge-merge.txt'), `${branchName}\n`);
-  execSync(`git ${GIT_ENV} -C "${scratch}" add forge-merge.txt`);
-  execSync(`git ${GIT_ENV} -C "${scratch}" commit -q -m "Merge pull request from ${branchName}"`);
-  execSync(`git -C "${scratch}" push -q origin main`);
+  execSync(`git ${GIT_ENV} -C "${scratch}" add forge-merge.txt`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git ${GIT_ENV} -C "${scratch}" commit -q -m "Merge pull request from ${branchName}"`, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  execSync(`git -C "${scratch}" push -q origin main`, { stdio: ['ignore', 'pipe', 'pipe'] });
   return upstreamMain(tmp, name);
 }
 
@@ -815,7 +841,7 @@ test('a repo with no local branch whose push fails records nothing', async () =>
  * SHA with, on both the local-branch and the no-branch path.
  */
 function gitWithBrokenShortHead(dir) {
-  const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
+  const realGit = execSync('command -v git', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'git'),
@@ -864,7 +890,7 @@ for (const [name, absent] of [
  * would; every call then goes to the real git.
  */
 function gitThatLandsConcurrently(dir, storyIndexPath) {
-  const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
+  const realGit = execSync('command -v git', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   mkdirSync(dir, { recursive: true });
   const fired = join(dir, 'fired');
   writeFileSync(

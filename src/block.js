@@ -48,7 +48,11 @@ import {
  * @returns {string[] | null}
  */
 function prepareCommit(root) {
-  const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: root, encoding: 'utf8' });
+  const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   if (inRepo.status !== 0 || inRepo.stdout.trim() !== 'true') return null;
   configureMergeDriver(root);
   const mapped = (text) => text.split('\n').includes(GITATTRIBUTES_LINE);
@@ -61,7 +65,11 @@ function prepareCommit(root) {
       `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}${GITATTRIBUTES_LINE}\n`,
     );
   }
-  const head = spawnSync('git', ['show', 'HEAD:.gitattributes'], { cwd: root, encoding: 'utf8' });
+  const head = spawnSync('git', ['show', 'HEAD:.gitattributes'], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   return head.status === 0 && mapped(head.stdout) ? [BLOCKERS_FILE] : [BLOCKERS_FILE, '.gitattributes'];
 }
 

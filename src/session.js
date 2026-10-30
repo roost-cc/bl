@@ -287,11 +287,13 @@ export function newWorktreeGuards(repoPath) {
   const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', {
     cwd: repoPath,
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
 
   const status = execSync('git status --porcelain', {
     cwd: repoPath,
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   if (status) {
     console.error(`Error: ${repoPath} has uncommitted changes. They will NOT be in the worktree.`);
@@ -349,7 +351,7 @@ export function ensureWorktree(repoPath, branchName, worktreePath) {
       try {
         execSync(`git rev-parse --verify "${branchName}"`, {
           cwd: repoPath,
-          stdio: 'pipe',
+          stdio: ['ignore', 'pipe', 'pipe'],
         });
         return true;
       } catch {
@@ -381,6 +383,7 @@ export function ensureWorktree(repoPath, branchName, worktreePath) {
       const worktreeGitDir = execSync('git rev-parse --absolute-git-dir', {
         cwd: worktreePath,
         encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
       }).trim();
       const linkPath = join(worktreeGitDir, 'git-crypt');
       if (!existsSync(linkPath)) {
@@ -492,6 +495,7 @@ function workonMarker(worktreePath) {
   const gitDir = execSync('git rev-parse --absolute-git-dir', {
     cwd: worktreePath,
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   return join(gitDir, 'bl-workon-pending');
 }
@@ -527,6 +531,7 @@ export function prepareWorktreeOnce(repoPath, branchName, fn) {
   const commonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
     cwd: repoPath,
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   const lockPath = join(commonDir, `bl-prepare-${branchName.replace(/[^\w.-]/g, '_')}.lock`);
   const content = `${process.pid}\n${new Date().toISOString()}\nprepare ${branchName}\n`;

@@ -13,7 +13,12 @@ test('repo_guard_counts_git_names_for_all_filename_classes_and_warns_per_repo_on
   // gets one, and a worktree path holding a newline stays whole.
   const repo = mkTempDir('bl-guard-names-');
   const g = (...args) => {
-    const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: { ...process.env, ...GIT_ENV } });
+    const r = spawnSync('git', args, {
+      cwd: repo,
+      encoding: 'utf8',
+      env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     assert.equal(r.status, 0, r.stderr);
   };
   g('init', '-q', '-b', 'main');

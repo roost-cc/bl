@@ -158,7 +158,7 @@ function firstContentLine(text) {
 
 /** A git command's stdout in `cwd`; throws with its stderr when it fails. */
 function gitOut(cwd, args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   if (r.error) throw r.error;
   if (r.status !== 0) throw new Error(`git ${args[0]}: ${(r.stderr ?? '').trim() || `exit ${r.status}`}`);
   return r.stdout;

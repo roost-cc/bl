@@ -1559,6 +1559,7 @@ export function captureTmuxWindowId() {
   if (!process.env.TMUX || process.env.BL_TMUX_WINDOW_ID) return;
   const res = spawnSync('tmux', ['display-message', '-p', '#{window_id}'], {
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (res.status === 0 && res.stdout) {
     process.env.BL_TMUX_WINDOW_ID = res.stdout.trim();
@@ -1577,7 +1578,7 @@ export function renameTmuxWindow(label) {
   if (id) args.push('-t', id);
   args.push(label);
   try {
-    spawnSync('tmux', args, { stdio: 'pipe' });
+    spawnSync('tmux', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   } catch {
     // not fatal
   }

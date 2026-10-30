@@ -306,7 +306,7 @@ async function exitOnThrow(fn) {
 }
 
 function git(cwd, ...args) {
-  return spawnSync('git', args, { cwd, encoding: 'utf8' });
+  return spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 /**

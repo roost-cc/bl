@@ -62,7 +62,11 @@ function captureStderr(fn) {
 }
 
 function git(cwd, ...args) {
-  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   assert.equal(r.status, 0, r.stderr);
   return r.stdout;
 }

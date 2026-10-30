@@ -599,7 +599,7 @@ test('headless session does not clobber a live worktree lock', () => {
     assert.equal(readFileSync(lockPath, 'utf8'), own);
 
     // A stale lock (dead pid) is reclaimed, and released after the session.
-    writeFileSync(lockPath, `${spawnSync('true').pid}\n`);
+    writeFileSync(lockPath, `${spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid}\n`);
     assert.equal(runHeadlessSession(common).isError, false);
     assert.equal(existsSync(lockPath), false);
     assert.equal(spawned, 2);

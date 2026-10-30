@@ -5,6 +5,9 @@
 // `input`, and no Node child (process.execPath, 'node', BL_BIN, BL_PATH) is
 // started with a 'pipe' stream outside src/child-stdio.js: text for a stdin and
 // a captured output go through `spawnSyncFiles`, a live stream through a file.
+// And no synchronous call leaves stdin 'pipe' (its default): Node ends that
+// stdin with the same refused shutdown, and the call reports EPERM, which
+// makes execFileSync and execSync throw, from a child that succeeded.
 //
 // The check parses each file with acorn: an `input` key across lines or as a
 // `{ input }` shorthand needs a JavaScript parser, and acorn is the standard
@@ -15,11 +18,12 @@ import { readdirSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { parse } from 'acorn';
-import { simple } from 'acorn-walk';
+import { ancestor, simple } from 'acorn-walk';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const EXEMPT = new Set(['src/child-stdio.js']);
-const CALLS = new Set(['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync']);
+const SYNC_CALLS = new Set(['spawnSync', 'execFileSync', 'execSync']);
+const CALLS = new Set([...SYNC_CALLS, 'spawn', 'execFile', 'exec']);
 const NODE_IDS = new Set(['BL_BIN', 'BL_PATH']);
 
 /** The name a call's callee ends in: `spawnSync` for `spawnSync(…)` and `cp.spawnSync(…)`. */
@@ -126,6 +130,83 @@ function nodeAliases(ast) {
   return aliases;
 }
 
+/** The synchronous `child_process` function a value names (`spawnSync`, `cp.execSync`), or null. */
+function syncTarget(node) {
+  const name = node && (node.type === 'Identifier' || node.type === 'MemberExpression') ? calleeName(node) : null;
+  return SYNC_CALLS.has(name) ? name : null;
+}
+
+/** The names a source declares as a synchronous `child_process` function (`const sh = cp.execSync`). */
+function declaredSyncAliases(ast) {
+  const aliases = new Map();
+  simple(ast, {
+    VariableDeclarator(d) {
+      if (d.id.type === 'Identifier' && syncTarget(d.init)) aliases.set(d.id.name, syncTarget(d.init));
+    },
+  });
+  return aliases;
+}
+
+/**
+ * What a parameter list binds `name` to: the sync function its default names
+ * (`run = spawnSync`, `{ run = execFileSync }`), `null` for another binding,
+ * or undefined when the list does not bind it.
+ */
+function paramBinding(params, name) {
+  for (const param of params) {
+    const found = patternBinding(param, name);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function patternBinding(p, name) {
+  if (!p) return undefined;
+  switch (p.type) {
+    case 'Identifier':
+      return p.name === name ? null : undefined;
+    case 'AssignmentPattern':
+      if (p.left.type === 'Identifier') return p.left.name === name ? syncTarget(p.right) : undefined;
+      return patternBinding(p.left, name);
+    case 'ObjectPattern':
+      return paramBinding(
+        p.properties.map((q) => (q.type === 'RestElement' ? q.argument : q.value)),
+        name,
+      );
+    case 'ArrayPattern':
+      return paramBinding(p.elements, name);
+    case 'RestElement':
+      return patternBinding(p.argument, name);
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The sync function an identifier callee stands for at a call: the nearest
+ * enclosing function parameter that binds it decides; else a declaration.
+ */
+function syncAliasAt(name, ancestors, declared) {
+  for (let i = ancestors.length - 2; i >= 0; i--) {
+    const a = ancestors[i];
+    if (!/Function/.test(a.type)) continue;
+    const found = paramBinding(a.params, name);
+    if (found !== undefined) return found;
+  }
+  return declared.get(name) ?? null;
+}
+
+/** Whether a `stdio` value leaves stdin a socket: absent, `'pipe'`, or a first entry of `'pipe'`. */
+function stdinPipes(value) {
+  if (!value) return true;
+  if (value.type === 'Literal') return value.value === 'pipe' || value.value === 'overlapped';
+  if (value.type !== 'ArrayExpression') return false;
+  const first = value.elements[0];
+  if (!first) return true;
+  if (first.type === 'Literal') return first.value === null || first.value === 'pipe' || first.value === 'overlapped';
+  return first.type === 'Identifier' && first.name === 'undefined';
+}
+
 /**
  * The guard's findings in one source: `[{ line, what }]`.
  * @param {string} source
@@ -133,15 +214,27 @@ function nodeAliases(ast) {
 export function childStdioViolations(source) {
   const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
   const aliases = nodeAliases(ast);
+  const declared = declaredSyncAliases(ast);
   const out = [];
-  simple(ast, {
-    CallExpression(call) {
-      const name = calleeName(call.callee);
+  ancestor(ast, {
+    CallExpression(call, _state, ancestors) {
+      const called = calleeName(call.callee);
+      const alias = call.callee.type === 'Identifier' ? syncAliasAt(called, ancestors, declared) : null;
+      const name = alias ?? called;
       if (!CALLS.has(name)) return;
       const options = optionsArgument(name, call.arguments);
       const props = optionObjects(options).flatMap((o) => o.properties);
-      if (props.some((p) => keyName(p) === 'input')) {
+      const input = props.some((p) => keyName(p) === 'input');
+      if (input) {
         out.push({ line: call.loc.start.line, what: `${name}() passes input: (use spawnSyncFiles)` });
+      }
+      // A synchronous call ends a 'pipe' stdin with shutdown(2) even without
+      // input; the sandbox refuses it, and the call reports EPERM (execFileSync
+      // and execSync throw it) from a child that succeeded.
+      const stdioValue = props.find((p) => keyName(p) === 'stdio')?.value;
+      const seeable = options == null || optionObjects(options).length > 0;
+      if (SYNC_CALLS.has(name) && !input && seeable && stdinPipes(stdioValue)) {
+        out.push({ line: call.loc.start.line, what: `${name}() leaves stdin 'pipe' (give it 'ignore')` });
       }
       if (!isNodeCommand(call.arguments[0], aliases)) return;
       // An options value the guard cannot see into counts as piping.
@@ -166,7 +259,7 @@ function jsFiles(dir) {
   });
 }
 
-test('no input: and no piped Node child in src/ or test/ outside src/child-stdio.js', () => {
+test('no input:, no piped Node child and no piped synchronous stdin in src/ or test/ outside src/child-stdio.js', () => {
   const found = [];
   for (const file of [...jsFiles(join(ROOT, 'src')), ...jsFiles(join(ROOT, 'test'))]) {
     const rel = relative(ROOT, file);
@@ -187,7 +280,12 @@ const CASES = [
   },
   { name: 'input: spread in under a condition', src: `spawnSync('cat', [], { ...(x ? { input: x } : {}) })`, hits: 1 },
   { name: 'input: in the (command, options) form', src: `execSync('cat', { input: 'x' })`, hits: 1 },
-  { name: 'process.execPath piped by default', src: `spawnSync(process.execPath, ['-e', '1'])`, hits: 1 },
+  { name: 'process.execPath piped by default', src: `spawn(process.execPath, ['-e', '1'])`, hits: 1 },
+  {
+    name: 'a synchronous Node child piped by default is two findings',
+    src: `spawnSync(process.execPath, ['-e', '1'])`,
+    hits: 2,
+  },
   { name: "'node' with stdio 'pipe'", src: `spawn('node', ['x'], { stdio: 'pipe' })`, hits: 1 },
   { name: 'BL_BIN with one piped stream', src: `spawn(BL_BIN, [], { stdio: ['ignore', 'pipe', 'inherit'] })`, hits: 1 },
   { name: 'BL_PATH with a short stdio array', src: `spawnSync(BL_PATH, [], { stdio: ['ignore'] })`, hits: 1 },
@@ -197,7 +295,7 @@ const CASES = [
     hits: 1,
   },
   { name: 'a Node child with a member stdio entry', src: `spawn('node', [], { stdio: [fd, o.mode, fd] })`, hits: 1 },
-  { name: 'an alias of process.execPath', src: `const node = process.execPath;\nspawnSync(node, ['x'])`, hits: 1 },
+  { name: 'an alias of process.execPath', src: `const node = process.execPath;\nspawn(node, ['x'])`, hits: 1 },
   {
     name: 'a parameter defaulting to BL_BIN',
     src: `function f({ bin = BL_BIN }) { return spawn(bin, [], { stdio: ['ignore', 'pipe', 'pipe'] }) }`,
@@ -213,9 +311,39 @@ const CASES = [
   { name: 'a Node child on descriptors', src: `spawnSync(process.execPath, ['x'], { stdio: [fd, fd, fd] })`, hits: 0 },
   { name: 'a Node child inheriting', src: `spawnSync(BL_BIN, [], { stdio: 'inherit' })`, hits: 0 },
   { name: 'a Node child ignoring', src: `spawn('node', [], { stdio: ['ignore', 'ignore', 'inherit'] })`, hits: 0 },
-  { name: 'a non-Node child capturing output', src: `spawnSync('git', ['status'], { encoding: 'utf8' })`, hits: 0 },
+  {
+    name: 'a non-Node child capturing output, stdin ignored',
+    src: `spawnSync('git', ['status'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })`,
+    hits: 0,
+  },
   { name: 'spawnSyncFiles with input', src: `spawnSyncFiles(BL_BIN, [], { input: 'x' })`, hits: 0 },
   { name: 'an input key outside a child_process call', src: `run({ input: 'x' })`, hits: 0 },
+  // Rule (c): a synchronous call ends a 'pipe' stdin with shutdown(2).
+  { name: 'spawnSync with stdin piped by default', src: `spawnSync('git', ['status'], { encoding: 'utf8' })`, hits: 1 },
+  { name: 'execSync with no options', src: `execSync('git status')`, hits: 1 },
+  { name: "execFileSync with stdio 'pipe'", src: `execFileSync('git', ['x'], { stdio: 'pipe' })`, hits: 1 },
+  {
+    name: "a stdio array opening with 'pipe'",
+    src: `spawnSync('git', [], { stdio: ['pipe', 'pipe', 'inherit'] })`,
+    hits: 1,
+  },
+  {
+    name: 'a runner defaulting to spawnSync',
+    src: `function f(run = spawnSync) { return run('git', ['x']) }`,
+    hits: 1,
+  },
+  {
+    name: 'a runner destructured with a spawnSync default',
+    src: `function f({ run = cp.spawnSync } = {}) { return run('git', ['x'], { cwd: '/' }) }`,
+    hits: 1,
+  },
+  {
+    name: 'a runner defaulting to spawnSyncFiles, in a file where another defaults to spawnSync',
+    src: `function f(run = spawnSync) { return run('git', [], { stdio: 'inherit' }) }\nfunction g(run = spawnSyncFiles) { return run('git', ['x']) }`,
+    hits: 0,
+  },
+  { name: 'an async spawn of a non-Node child', src: `spawn('git', ['x'])`, hits: 0 },
+  { name: 'spawnSync with opaque options', src: `spawnSync('git', ['x'], opts)`, hits: 0 },
 ];
 
 for (const c of CASES) {

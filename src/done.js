@@ -39,6 +39,7 @@ function resolveCommitHash(config, primaryRepoName, rawCommit) {
       return execSync('git rev-parse --short HEAD', {
         cwd: repoPath,
         encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
       }).trim();
     } catch {
       // fall through
@@ -47,6 +48,7 @@ function resolveCommitHash(config, primaryRepoName, rawCommit) {
   try {
     return execSync('git rev-parse --short HEAD', {
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
   } catch {
     return null;

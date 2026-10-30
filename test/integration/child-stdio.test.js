@@ -125,6 +125,8 @@ function onPath(name) {
 // stdout is empty. Through the helper both come back.
 test("inside Codex's sandbox, cat and a Node child get their stdin and return their stdout", (t) => {
   if (!onPath('codex')) return t.skip('codex is not on PATH');
+  // Codex sets this in its sandbox, where a second sandbox cannot start.
+  if (process.env.CODEX_SANDBOX_NETWORK_DISABLED) return t.skip('already inside a Codex sandbox');
   const work = mkTempDir('bl-child-stdio-sandbox-');
   const script = join(work, 'probe.mjs');
   const helper = new URL('../../src/child-stdio.js', import.meta.url).href;

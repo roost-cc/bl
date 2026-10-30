@@ -32,20 +32,12 @@ function fixture(edges) {
     ],
   });
   const repo = join(dir, 'code');
-  spawnSync('git', ['init', '-q', '-b', 'main', repo]);
-  spawnSync('git', [
-    '-C',
-    repo,
-    '-c',
-    'user.email=t@t',
-    '-c',
-    'user.name=t',
-    'commit',
-    '--allow-empty',
-    '-q',
-    '-m',
-    'init',
-  ]);
+  spawnSync('git', ['init', '-q', '-b', 'main', repo], { stdio: ['ignore', 'pipe', 'pipe'] });
+  spawnSync(
+    'git',
+    ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-q', '-m', 'init'],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
   writeBlockers(dir, edges);
   return { dir, cleanup };
 }

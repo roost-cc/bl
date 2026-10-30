@@ -31,7 +31,13 @@ import { configureMergeDriver } from './blockers-merge.js';
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' };
 
 function git(root, args) {
-  return spawnSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: GIT_ENV });
+  return spawnSync('git', args, {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    env: GIT_ENV,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 }
 
 /** What git had to say, or a fallback naming the exit status. */
