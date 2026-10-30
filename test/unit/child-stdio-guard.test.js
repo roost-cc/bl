@@ -53,62 +53,110 @@ function isNodeCommand(node, aliases = new Set()) {
  * A call's options argument, or undefined: the third argument, or a second
  * that is not an argument list (`spawnSync(cmd, { shell: true })`,
  * `execSync(cmd, opts)`). A lone identifier second argument is read as the
- * argument list, except for `exec` and `execSync`, which take none.
+ * argument list, except for `exec` and `execSync`, which take none, and one
+ * bound to an object literal.
  */
-function optionsArgument(name, args) {
+function optionsArgument(name, args, bindings) {
   const isOptions = (a) => a != null && !/Function/.test(a.type) && a.type !== 'ArrayExpression';
   if (isOptions(args[2])) return args[2];
   const second = args[1];
   if (!isOptions(second)) return undefined;
-  return second.type !== 'Identifier' || name === 'exec' || name === 'execSync' ? second : undefined;
+  if (second.type !== 'Identifier' || name === 'exec' || name === 'execSync') return second;
+  return resolve(second, bindings).some((v) => v.type === 'ObjectExpression') ? second : undefined;
+}
+
+/**
+ * The values a source assigns to each name: `const x = …`, `x = …`. A name
+ * bound more than once (in two scopes, or reassigned) keeps every value.
+ */
+function bindingsOf(ast) {
+  const bindings = new Map();
+  const add = (name, value) => bindings.set(name, [...(bindings.get(name) ?? []), value]);
+  simple(ast, {
+    VariableDeclarator(d) {
+      if (d.id.type === 'Identifier' && d.init) add(d.id.name, d.init);
+    },
+    AssignmentExpression(a) {
+      if (a.operator === '=' && a.left.type === 'Identifier') add(a.left.name, a.right);
+    },
+  });
+  return bindings;
+}
+
+/**
+ * The values an expression may stand for: itself, or every value bound to an
+ * identifier (`const opts = {…}; spawnSync(cmd, [], opts)`), alias of an alias
+ * included.
+ */
+function resolve(node, bindings, seen = new Set()) {
+  if (node?.type !== 'Identifier' || !bindings.has(node.name)) return node ? [node] : [];
+  if (seen.has(node.name)) return [];
+  seen.add(node.name);
+  return bindings.get(node.name).flatMap((v) => resolve(v, bindings, seen));
 }
 
 /**
  * The object literals that make up an options argument: the literal itself and
- * any literal spread into it, through `a ? {…} : {…}` and `a && {…}`.
+ * any literal spread into it, through `a ? {…} : {…}`, `a && {…}` and the
+ * values an identifier is bound to.
  */
-function optionObjects(node) {
-  if (!node) return [];
-  switch (node.type) {
-    case 'ObjectExpression':
-      return [
-        node,
-        ...node.properties.filter((p) => p.type === 'SpreadElement').flatMap((p) => optionObjects(p.argument)),
-      ];
-    case 'ConditionalExpression':
-      return [...optionObjects(node.consequent), ...optionObjects(node.alternate)];
-    case 'LogicalExpression':
-      return [...optionObjects(node.left), ...optionObjects(node.right)];
-    default:
-      return [];
-  }
+function optionObjects(node, bindings) {
+  return resolve(node, bindings).flatMap((n) => {
+    switch (n.type) {
+      case 'ObjectExpression':
+        return [
+          n,
+          ...n.properties.filter((p) => p.type === 'SpreadElement').flatMap((p) => optionObjects(p.argument, bindings)),
+        ];
+      case 'ConditionalExpression':
+        return [...optionObjects(n.consequent, bindings), ...optionObjects(n.alternate, bindings)];
+      case 'LogicalExpression':
+        return [...optionObjects(n.left, bindings), ...optionObjects(n.right, bindings)];
+      default:
+        return [];
+    }
+  });
 }
 
+/**
+ * A property's key: `input` for `input:`, `'input':`, `['input']:` and
+ * `` [`input`]: ``. A computed key the guard cannot read is `?`, which the
+ * input rule counts as `input`.
+ */
 function keyName(prop) {
   if (prop.type !== 'Property') return null;
   if (!prop.computed && prop.key.type === 'Identifier') return prop.key.name;
   if (prop.key.type === 'Literal') return String(prop.key.value);
-  return null;
+  if (prop.key.type === 'TemplateLiteral' && prop.key.expressions.length === 0) return prop.key.quasis[0].value.cooked;
+  return prop.computed ? '?' : null;
 }
 
 /**
- * Whether a `stdio` value leaves any of the first three streams a socket. An
- * entry the guard cannot read counts as one, except an identifier (taken for
- * a descriptor), `process.stdin`/`stdout`/`stderr` and an `openSync(…)` call.
+ * Whether a `stdio` value leaves any stream a socket: one of the first three,
+ * or a descriptor after them. An entry the guard cannot read counts as one,
+ * except an identifier (taken for a descriptor), `process.stdin`/`stdout`/
+ * `stderr` and an `openSync(…)` call. After stderr an absent entry is
+ * `'ignore'`, as Node reads it.
  */
-function stdioPipes(value) {
-  if (value.type === 'Literal') return value.value === 'pipe' || value.value === 'overlapped';
-  if (value.type !== 'ArrayExpression') return true;
-  if (value.elements.length < 3) return true;
-  return value.elements.slice(0, 3).some((e) => {
-    if (!e) return true;
-    if (e.type === 'Literal') return e.value === null || e.value === 'pipe' || e.value === 'overlapped';
-    if (e.type === 'Identifier') return e.name === 'undefined';
-    if (e.type === 'MemberExpression' && !e.computed && e.object.type === 'Identifier') {
-      return !(e.object.name === 'process' && /^std(in|out|err)$/.test(e.property.name));
-    }
-    if (e.type === 'CallExpression') return calleeName(e.callee) !== 'openSync';
-    return true;
+function stdioPipes(value, bindings) {
+  return resolve(value, bindings).some((v) => {
+    if (v.type === 'Literal') return v.value === 'pipe' || v.value === 'overlapped';
+    if (v.type !== 'ArrayExpression') return true;
+    if (v.elements.length < 3) return true;
+    const entryPipes = (e, i) => {
+      const absent =
+        !e || (e.type === 'Literal' && e.value === null) || (e.type === 'Identifier' && e.name === 'undefined');
+      if (absent) return i < 3;
+      if (e.type === 'Literal') return e.value === 'pipe' || e.value === 'overlapped';
+      // A bound name is what it is bound to; an unbound one a descriptor.
+      if (e.type === 'Identifier') return bindings.has(e.name) && resolve(e, bindings).some((x) => entryPipes(x, i));
+      if (e.type === 'MemberExpression' && !e.computed && e.object.type === 'Identifier') {
+        return !(e.object.name === 'process' && /^std(in|out|err)$/.test(e.property.name));
+      }
+      if (e.type === 'CallExpression') return calleeName(e.callee) !== 'openSync';
+      return true;
+    };
+    return v.elements.some(entryPipes);
   });
 }
 
@@ -197,14 +245,18 @@ function syncAliasAt(name, ancestors, declared) {
 }
 
 /** Whether a `stdio` value leaves stdin a socket: absent, `'pipe'`, or a first entry of `'pipe'`. */
-function stdinPipes(value) {
+function stdinPipes(value, bindings) {
   if (!value) return true;
-  if (value.type === 'Literal') return value.value === 'pipe' || value.value === 'overlapped';
-  if (value.type !== 'ArrayExpression') return false;
-  const first = value.elements[0];
-  if (!first) return true;
-  if (first.type === 'Literal') return first.value === null || first.value === 'pipe' || first.value === 'overlapped';
-  return first.type === 'Identifier' && first.name === 'undefined';
+  return resolve(value, bindings).some((v) => {
+    if (v.type === 'Literal') return v.value === 'pipe' || v.value === 'overlapped';
+    if (v.type !== 'ArrayExpression') return false;
+    const first = v.elements[0];
+    if (!first) return true;
+    return resolve(first, bindings).some((e) => {
+      if (e.type === 'Literal') return e.value === null || e.value === 'pipe' || e.value === 'overlapped';
+      return e.type === 'Identifier' && e.name === 'undefined';
+    });
+  });
 }
 
 /**
@@ -215,6 +267,7 @@ export function childStdioViolations(source) {
   const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
   const aliases = nodeAliases(ast);
   const declared = declaredSyncAliases(ast);
+  const bindings = bindingsOf(ast);
   const out = [];
   ancestor(ast, {
     CallExpression(call, _state, ancestors) {
@@ -222,9 +275,10 @@ export function childStdioViolations(source) {
       const alias = call.callee.type === 'Identifier' ? syncAliasAt(called, ancestors, declared) : null;
       const name = alias ?? called;
       if (!CALLS.has(name)) return;
-      const options = optionsArgument(name, call.arguments);
-      const props = optionObjects(options).flatMap((o) => o.properties);
-      const input = props.some((p) => keyName(p) === 'input');
+      const options = optionsArgument(name, call.arguments, bindings);
+      const objects = optionObjects(options, bindings);
+      const props = objects.flatMap((o) => o.properties);
+      const input = props.some((p) => keyName(p) === 'input' || keyName(p) === '?');
       if (input) {
         out.push({ line: call.loc.start.line, what: `${name}() passes input: (use spawnSyncFiles)` });
       }
@@ -232,15 +286,15 @@ export function childStdioViolations(source) {
       // input; the sandbox refuses it, and the call reports EPERM (execFileSync
       // and execSync throw it) from a child that succeeded.
       const stdioValue = props.find((p) => keyName(p) === 'stdio')?.value;
-      const seeable = options == null || optionObjects(options).length > 0;
-      if (SYNC_CALLS.has(name) && !input && seeable && stdinPipes(stdioValue)) {
+      const seeable = options == null || objects.length > 0;
+      if (SYNC_CALLS.has(name) && !input && seeable && stdinPipes(stdioValue, bindings)) {
         out.push({ line: call.loc.start.line, what: `${name}() leaves stdin 'pipe' (give it 'ignore')` });
       }
       if (!isNodeCommand(call.arguments[0], aliases)) return;
       // An options value the guard cannot see into counts as piping.
-      const opaque = options != null && optionObjects(options).length === 0;
+      const opaque = options != null && objects.length === 0;
       const stdio = props.filter((p) => keyName(p) === 'stdio').map((p) => p.value);
-      if (opaque || stdio.length === 0 || stdio.some(stdioPipes)) {
+      if (opaque || stdio.length === 0 || stdio.some((s) => stdioPipes(s, bindings))) {
         out.push({
           line: call.loc.start.line,
           what: `${name}() starts a Node child with a 'pipe' stream (use spawnSyncFiles or a file)`,
@@ -351,6 +405,79 @@ for (const c of CASES) {
     assert.equal(childStdioViolations(c.src).length, c.hits, JSON.stringify(childStdioViolations(c.src)));
   });
 }
+
+// Options reached through a name, and descriptors after stderr (F-70 review r1).
+const INDIRECT = [
+  { name: 'input: in a named options object', src: `const opts = { input: 'x' }; spawnSync('cat', [], opts)`, hits: 1 },
+  {
+    name: 'input: through an alias of an alias',
+    src: `const a = { input: 'x' }; const b = a; execFileSync('cat', [], b)`,
+    hits: 1,
+  },
+  { name: 'input: in a spread named object', src: `const o = { input: 'x' }; spawnSync('cat', [], { ...o })`, hits: 1 },
+  { name: 'input: in a reassigned options name', src: `let o; o = { input: 'x' }; spawnSync('cat', [], o)`, hits: 1 },
+  { name: 'input: in a named (command, options) form', src: `const o = { input: 'x' }; spawnSync('cat', o)`, hits: 1 },
+  { name: "a computed 'input' key", src: `spawnSync('cat', [], { ['input']: 'x' })`, hits: 1 },
+  { name: 'a computed template input key', src: 'spawnSync(`cat`, [], { [`input`]: `x` })', hits: 1 },
+  { name: 'an unreadable computed key', src: `spawnSync('cat', [], { [k]: 'x' })`, hits: 1 },
+  {
+    name: 'stdin left pipe in a named options object',
+    src: `const o = { encoding: 'utf8' }; spawnSync('git', [], o)`,
+    hits: 1,
+  },
+  {
+    name: 'stdin ignored in a named options object',
+    src: `const o = { stdio: ['ignore', 'pipe', 'pipe'] }; spawnSync('git', [], o)`,
+    hits: 0,
+  },
+  {
+    name: 'a named stdio array opening with pipe',
+    src: `const s = ['pipe', 'pipe', 'pipe']; spawnSync('git', [], { stdio: s })`,
+    hits: 1,
+  },
+  {
+    name: 'a Node child with a piped descriptor after stderr',
+    src: `spawnSync(process.execPath, [], { stdio: ['ignore', 'ignore', 'ignore', 'pipe'] })`,
+    hits: 1,
+  },
+  {
+    name: "a Node child with an 'overlapped' descriptor after stderr",
+    src: `spawn('node', [], { stdio: ['ignore', 'ignore', 'ignore', 'ignore', 'overlapped'] })`,
+    hits: 1,
+  },
+  {
+    name: 'a Node child with an absent descriptor after stderr',
+    src: `spawn('node', [], { stdio: ['ignore', 'ignore', 'ignore', undefined, null, , 'ipc'] })`,
+    hits: 0,
+  },
+  {
+    name: 'a Node child with a named piped entry',
+    src: `const m = 'pipe'; spawn('node', [], { stdio: ['ignore', m, 'ignore'] })`,
+    hits: 1,
+  },
+  {
+    name: 'a Node child with named stdio piping after stderr',
+    src: `const stdio = ['ignore', 'ignore', 'ignore', 'pipe']; spawn(BL_BIN, [], { stdio })`,
+    hits: 1,
+  },
+  {
+    name: 'a Node child with named options piping after stderr',
+    src: `const o = { stdio: ['ignore', 'ignore', 'ignore', 'pipe'] }; spawn(BL_BIN, [], o)`,
+    hits: 1,
+  },
+  {
+    name: 'a Node child on named descriptors',
+    src: `const fd = openSync(p, 'r'); spawn(process.execPath, [], { stdio: [fd, fd, fd, fd] })`,
+    hits: 0,
+  },
+];
+
+test('child_stdio_guard_indirect_options_and_extra_descriptors', () => {
+  for (const c of INDIRECT) {
+    const found = childStdioViolations(c.src);
+    assert.equal(found.length, c.hits, `${c.name}: ${JSON.stringify(found)}`);
+  }
+});
 
 test('guard: a finding names its line', () => {
   assert.deepEqual(
