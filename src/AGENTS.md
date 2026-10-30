@@ -470,7 +470,7 @@ component_id: C32
 title: bl Tool Enhancements
 repo: bl # a repo registered in backlog.json
 home: true # this repo's home component; work with no better component lands here
-paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D2)
+paths: ["src/**", "test/**"] # optional: globs relative to the repo root (F-61 D2)
 ---
 ```
 
@@ -1373,11 +1373,14 @@ whether it succeeded, failed or threw, and before its containers are listed (a
 hung test can hold a container), each of its scopes still running is stopped
 with `systemctl --user stop`. What was in it (pid and command) goes into one
 `hygiene:processes` history entry and one log line. A scope that is already
-gone adds no entry. If a stop fails, or a scope is still active after it, the
+gone adds no entry; one whose processes cannot be listed is stopped anyway. If
+a stop fails, or a scope is still active after it or systemctl cannot say, the
 run escalates with the processes and the `systemctl --user stop <unit>.scope`
 to run. At `bl run` start and `--resume`, `bl review` and `bl merge`'s
 integration, the unit's scopes whose `bl` pid is dead (a crashed or killed
-`bl`'s leftovers) are stopped and recorded the same way. Interactive sessions
+`bl`'s leftovers) are stopped and recorded the same way; when systemctl cannot
+list them, the run escalates before the first step with the
+`systemctl --user list-units` to run. Interactive sessions
 are not scoped: the operator owns them. Without user systemd (macOS, a host or
 guest whose probe `systemd-run --user --scope --quiet --collect true` fails,
 `bl` inside a sandbox), steps run unscoped, the run records one
