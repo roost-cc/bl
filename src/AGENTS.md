@@ -50,7 +50,7 @@ Per-command stdout contracts:
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
 | `bl agents`          | the AGENTS.md content                                     |
-| `bl view`            | nothing (opens a read-only copy in the editor)            |
+| `bl view`            | the file as it is when redirected; else nothing (editor)  |
 | `bl edit`            | nothing (opens editor)                                    |
 | `bl init`            | nothing (status → stderr)                                 |
 | `bl sync`            | nothing                                                   |
@@ -2485,8 +2485,14 @@ path, `-d` its directory; a task's directory is `tasks/`):
 ```bash
 bl edit S34                   # opens in $VISUAL / $EDITOR / vi
 bl view T5                    # read-only copy in $VISUAL / $EDITOR / vi
+bl view T5 > t5.md            # stdout not a terminal: the file, byte for byte
 bl which -d C10               # prints the component's directory
 ```
+
+Both exit with the editor's status: 127 when it cannot be launched, 128 + n when
+signal n kills it. When `bl view` cannot make its copy it shows the file instead
+(printed when it fits the terminal, else `$PAGER` → `less` → `more`) and exits
+with the pager's status the same way.
 
 ### `bl done`
 
