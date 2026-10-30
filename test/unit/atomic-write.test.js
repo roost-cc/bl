@@ -25,6 +25,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { _hooks, STAGING_ATTEMPTS, STAGING_DIR, atomicWriteFile } from '../../src/atomic-write.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const MODULE_URL = pathToFileURL(join(import.meta.dirname, '../../src/atomic-write.js')).href;
 
@@ -135,7 +136,7 @@ test('atomicWriteFile: a process killed between staging and rename leaves its st
     atomicWriteFile(${JSON.stringify(root)}, ${JSON.stringify(target)}, "replacement\\n");
   `;
   try {
-    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+    const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
     assert.equal(r.signal, 'SIGKILL', r.stderr);
     assert.equal(readFileSync(target, 'utf8'), 'initial\n', 'target intact');
     const left = readdirSync(staging);

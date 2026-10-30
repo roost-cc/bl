@@ -25,6 +25,7 @@ import {
   GENERATOR_VERSION,
   regenReason,
 } from '../../src/allowed-tools.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const ENV = {
   ...process.env,
@@ -505,7 +506,7 @@ function fakeGitBin(dir, failing) {
 /** `pullBacklog(root)` in a child process whose git fails `failing`. */
 function pullWithFailingGit(root, failing) {
   const bin = fakeGitBin(join(root, '..'), failing);
-  const r = spawnSync(
+  const r = spawnSyncFiles(
     process.execPath,
     [
       '--input-type=module',
@@ -951,7 +952,7 @@ const PENDING = '.bl/run/pull-regenerate.json';
 function pullBeforeCommandIn(root, bin) {
   const src = `const s = await import(${JSON.stringify(SYNC)}); const c = await import(${JSON.stringify(CONFIG)});
 console.log(JSON.stringify(await s.pullBeforeCommand(c.loadConfig({ backlogRoot: ${JSON.stringify(root)} }))));`;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', src], {
+  const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', src], {
     encoding: 'utf8',
     env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH}` } : {}) },
   });

@@ -7,7 +7,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -15,6 +14,7 @@ import { loadConfig, configForRepo } from '../../src/config.js';
 import { findAgentConfigFindings, runAll } from '../../src/validate.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '../../scripts/migrate-agent-configurations.js');
 
@@ -73,7 +73,7 @@ test("the migration script turns Roost's four keys into the list shape, leaves e
   try {
     const before = JSON.parse(readFileSync(cfgPath, 'utf8'));
     assert.throws(() => loadConfig({ backlogRoot: dir }), /retired agent shape/);
-    const r = spawnSync(process.execPath, [SCRIPT, cfgPath], { encoding: 'utf8' });
+    const r = spawnSyncFiles(process.execPath, [SCRIPT, cfgPath], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /rewritten/);
     const after = JSON.parse(readFileSync(cfgPath, 'utf8'));
@@ -94,7 +94,7 @@ test("the migration script turns Roost's four keys into the list shape, leaves e
     assert.equal(cfg.reviewAgentModel, null);
 
     // A second run has nothing to do.
-    const again = spawnSync(process.execPath, [SCRIPT, cfgPath], { encoding: 'utf8' });
+    const again = spawnSyncFiles(process.execPath, [SCRIPT, cfgPath], { encoding: 'utf8' });
     assert.equal(again.status, 0, again.stderr);
     assert.match(again.stdout, /nothing to do/);
   } finally {
@@ -106,13 +106,13 @@ test('--dry-run prints the change and writes nothing; bad arguments exit 2; a ha
   const { cleanup, cfgPath } = backlog(LEGACY_KEYS);
   try {
     const text = readFileSync(cfgPath, 'utf8');
-    const dry = spawnSync(process.execPath, [SCRIPT, '--dry-run', cfgPath], { encoding: 'utf8' });
+    const dry = spawnSyncFiles(process.execPath, [SCRIPT, '--dry-run', cfgPath], { encoding: 'utf8' });
     assert.equal(dry.status, 0, dry.stderr);
     assert.match(dry.stdout, /agent \[\{"agent":"claude","model":"opus"\},\{"agent":"claude","model":"sonnet"\}\]/);
     assert.equal(readFileSync(cfgPath, 'utf8'), text);
-    assert.equal(spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' }).status, 2);
+    assert.equal(spawnSyncFiles(process.execPath, [SCRIPT], { encoding: 'utf8' }).status, 2);
     writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(text), agent: [{ agent: 'claude' }], agent_model: 'opus' }));
-    const half = spawnSync(process.execPath, [SCRIPT, cfgPath], { encoding: 'utf8' });
+    const half = spawnSyncFiles(process.execPath, [SCRIPT, cfgPath], { encoding: 'utf8' });
     assert.equal(half.status, 1);
     assert.match(half.stderr, /half migrated/);
   } finally {
@@ -125,7 +125,7 @@ test('a migrated backlog with overrides loads, and each repo resolves the lists 
     repos: { 'demo-repo': { path: '../demo-repo', overrides: { review_agent: 'claude' } } },
   });
   try {
-    assert.equal(spawnSync(process.execPath, [SCRIPT, cfgPath], { encoding: 'utf8' }).status, 0);
+    assert.equal(spawnSyncFiles(process.execPath, [SCRIPT, cfgPath], { encoding: 'utf8' }).status, 0);
     const repo = configForRepo(loadConfig({ backlogRoot: dir }), 'demo-repo');
     assert.deepEqual(repo.reviewAgents, [{ agent: 'claude', model: 'opus' }]);
     assert.deepEqual(repo.agents, [

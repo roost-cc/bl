@@ -31,6 +31,7 @@ import fs from 'fs';
 import { join } from 'path';
 import { syncBuiltinESMExports } from 'module';
 import { spawnSync } from 'child_process';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const faults = new Set(
   String(process.env.BL_SIDE_FAULT ?? '')
@@ -96,7 +97,7 @@ if (side && faults.has('adopt') && process.env.BL_SIDE_FAULT_OUT) {
     if (!done && String(path) === join(root, '.bl-new.lock')) {
       done = true;
       const env = { ...process.env, BL_SIDE_FAULT: '' };
-      const r = spawnSync(
+      const r = spawnSyncFiles(
         process.execPath,
         [process.argv[1], 'side', 'repoB', '--from', 'F-1', '--title', 'Survivor', '--points', '1', '--json'],
         { cwd: root, env, encoding: 'utf8' },

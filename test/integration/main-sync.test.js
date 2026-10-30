@@ -11,9 +11,10 @@ import assert from 'node:assert/strict';
 import { existsSync, rmSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync } from 'child_process';
 import { syncMain, mainSyncLockPath, reportMainSync, MAIN_SYNC_LOCK } from '../../src/main-sync.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { spawnToFiles } from '../helpers/spawn-files.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '../../src/main-sync.js');
 
@@ -62,18 +63,11 @@ function advanceOrigin(root, origin, name = 'upstream') {
 function syncInChild(repo) {
   const script = `import { syncMain } from ${JSON.stringify(pathToFileURL(SRC).href)};
 process.stdout.write(JSON.stringify(syncMain(process.env.BL_TEST_REPO)));`;
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
-      env: { ...process.env, BL_TEST_REPO: repo },
-    });
-    let out = '';
-    let err = '';
-    child.stdout.on('data', (d) => (out += d));
-    child.stderr.on('data', (d) => (err += d));
-    child.on('close', (status) => {
-      if (status !== 0) return reject(new Error(`child exited ${status}: ${err}`));
-      resolve(JSON.parse(out));
-    });
+  return spawnToFiles(process.execPath, ['--input-type=module', '-e', script], {
+    env: { ...process.env, BL_TEST_REPO: repo },
+  }).closed.then(({ stdout, stderr, status }) => {
+    if (status !== 0) throw new Error(`child exited ${status}: ${stderr}`);
+    return JSON.parse(stdout);
   });
 }
 

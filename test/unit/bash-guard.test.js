@@ -13,6 +13,7 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { checkCommand, commitTakesWholeIndex, isUnattended, runHook, shellWord } from '../../src/hooks/bash-guard.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const HOOK = fileURLToPath(new URL('../../src/hooks/bash-guard.js', import.meta.url));
 const W = '/home/alice/work/acme/worktrees/app.acme.com/f8-x';
@@ -91,7 +92,7 @@ function hook(input, backlogDir = null, env = HEADLESS) {
   const full = { ...process.env, ...env };
   delete full.BL_BACKLOG_DIR;
   if (backlogDir) full.BL_BACKLOG_DIR = backlogDir;
-  return spawnSync('node', [HOOK], { input, encoding: 'utf8', env: full });
+  return spawnSyncFiles('node', [HOOK], { input, encoding: 'utf8', env: full });
 }
 
 const DOCKER_STOP = JSON.stringify({
@@ -494,7 +495,7 @@ test('ClaudeProvider.init installs the bash-shape guard once, idempotently', asy
     // The shared settings name no backlog; each launch brings its own.
     assert.match(guards[0].command, /bash-guard\.js'$/);
     // The installed command, run through a shell, denies an env prefix.
-    const r = spawnSync('sh', ['-c', guards[0].command], {
+    const r = spawnSyncFiles('sh', ['-c', guards[0].command], {
       input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'NODE_ENV=test node --test' } }),
       encoding: 'utf8',
       env: { ...process.env, ...HEADLESS },
@@ -547,7 +548,7 @@ test('two_backlogs_keep_per_launch_bash_guard', async () => {
           assert.equal(launched.env.BL_BACKLOG_DIR, own.backlog);
           // The installed hook, run in the session's env as Claude Code runs it.
           const probe = (cwd, command) =>
-            spawnSync('sh', ['-c', guard.command], {
+            spawnSyncFiles('sh', ['-c', guard.command], {
               input: JSON.stringify({ tool_name: 'Bash', cwd, tool_input: { command } }),
               encoding: 'utf8',
               env: { ...launched.env, ...HEADLESS },

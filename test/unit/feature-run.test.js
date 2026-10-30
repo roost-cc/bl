@@ -58,6 +58,7 @@ import { accumulateTokensOnFile } from '../../src/tokens.js';
 import { _hooks as atomicHooks } from '../../src/atomic-write.js';
 import { installPartialWrites } from '../helpers/partial-write.js';
 import { startTokenWriter } from '../helpers/token-writer.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const AC_BODY = '## Acceptance Criteria\n\n- [ ] one works\n- [ ] two works\n';
 
@@ -2796,7 +2797,7 @@ test('a review round locks every scoped worktree and aborts without verification
 const t = acquirePidLock(${JSON.stringify(lockOf(wt))}, process.pid + "\\n");
 if (t.content) releasePidLock(${JSON.stringify(lockOf(wt))}, t.content);
 console.log(t.content ? "taken" : "held by " + t.holder);`;
-    return spawnSync(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8' }).stdout.trim();
+    return spawnSyncFiles(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8' }).stdout.trim();
   };
   const PASSES = ['review-correctness', 'review-failure-paths', 'review-verify'];
   const scenario = async ({

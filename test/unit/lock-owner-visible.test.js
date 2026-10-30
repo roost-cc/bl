@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { PID_ISOLATED, childSeesPid, lockOwnerVisible } from '../helpers/run-bl.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 // S-877: a lock-wait test first probes whether a child can see this process
 // as a live lock owner. It runs when the probe passes, skips when it fails,
@@ -18,7 +18,7 @@ test('the skip reason names the PID-isolated runner', () => {
 });
 
 test('childSeesPid reports a process that has exited as not live', () => {
-  const { pid } = spawnSync(process.execPath, ['-e', '']);
+  const { pid } = spawnSyncFiles(process.execPath, ['-e', '']);
   assert.equal(childSeesPid(pid), false);
 });
 

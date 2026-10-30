@@ -14,12 +14,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { commitFmShape, persistLandedCommits } from '../../src/cleanup.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { spawnToFiles } from '../helpers/spawn-files.js';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 
@@ -199,18 +199,10 @@ test('persistLandedCommits: the real write stages in .bl/tmp and leaves no temp 
  * wait for every exit code.
  */
 async function raceWorkers(root, landings) {
-  const children = landings.map(([repo, sha, fail]) =>
-    spawn(process.execPath, [THIS_FILE, 'worker', root, repo, sha, ...(fail ? ['fail'] : [])], {
-      stdio: ['ignore', 'ignore', 'pipe'],
-    }),
-  );
-  const exits = children.map(
-    (child) =>
-      new Promise((resolve) => {
-        let stderr = '';
-        child.stderr.on('data', (d) => (stderr += d));
-        child.once('exit', (code) => resolve({ code, stderr }));
-      }),
+  const exits = landings.map(([repo, sha, fail]) =>
+    spawnToFiles(process.execPath, [THIS_FILE, 'worker', root, repo, sha, ...(fail ? ['fail'] : [])]).closed.then(
+      ({ status, stderr }) => ({ code: status, stderr }),
+    ),
   );
   writeFileSync(join(root, 'go'), 'go\n');
   return Promise.all(exits);

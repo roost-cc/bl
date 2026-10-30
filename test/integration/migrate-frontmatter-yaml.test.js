@@ -2,13 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { migrate } from '../../src/migrate-frontmatter-yaml.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { addOrigin, git, statusLines } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const SCRIPT = fileURLToPath(new URL('../../scripts/migrate-frontmatter-yaml.js', import.meta.url));
 
@@ -135,7 +135,8 @@ repos:
 const read = (dir, rel) => readFileSync(join(dir, rel), 'utf8');
 const fm = (dir, rel) => parseFrontmatter(read(dir, rel)).fm;
 const head = (dir) => git(dir, 'rev-parse', 'HEAD');
-const script = (dir, ...args) => spawnSync(process.execPath, [SCRIPT, '--backlog', dir, ...args], { encoding: 'utf8' });
+const script = (dir, ...args) =>
+  spawnSyncFiles(process.execPath, [SCRIPT, '--backlog', dir, ...args], { encoding: 'utf8' });
 const COUNTS =
   'blocks rewritten: 4; titles quoted: 2; list strings turned into sequences: 3; ' +
   'blocks read by the legacy reader: 3; list keys left for a hand fix: 0';

@@ -1605,9 +1605,10 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
   // exact merge SHA (another merge landing it) before releasing the lock.
   // The merge decides under the lock, so it must find that SHA and keep it
   // instead of installing main's tip.
-  const { spawn, spawnSync } = await import('child_process');
+  const { spawnSync } = await import('child_process');
   const { unlinkSync } = await import('fs');
   const { BL_BIN } = await import('../helpers/run-bl.js');
+  const { spawnToFiles } = await import('../helpers/spawn-files.js');
   const { LOCK_FILE } = await import('../../src/lock.js');
   const { dir, cleanup } = mkTempBacklog({
     repos: { code: { path: './code', deployable: true } },
@@ -1653,17 +1654,13 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
 
     const lockPath = join(dir, LOCK_FILE);
     writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n`, { flag: 'wx' });
-    const child = spawn(BL_BIN, ['merge', 'F-1'], {
+    const run = spawnToFiles(BL_BIN, ['merge', 'F-1'], {
       cwd: dir,
       env: { ...process.env, BL_BACKLOG_DIR: dir, ...env },
-      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let stdout = '';
-    let stderr = '';
     let exitCode = null;
-    child.stdout.on('data', (d) => (stdout += d));
-    child.stderr.on('data', (d) => (stderr += d));
-    const exited = new Promise((resolve) => child.once('exit', (code) => resolve((exitCode = code))));
+    const exited = new Promise((resolve) => run.child.once('exit', (code) => resolve((exitCode = code))));
+    let { stdout, stderr } = run.read();
     // The no-branch path reports main's tip (`info` writes to stderr) before
     // its last git calls; the merge then blocks on the lock the test holds,
     // which is when its stderr goes quiet. Injecting only then puts the SHA
@@ -1673,6 +1670,7 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
     let quietSince = null;
     let seen = stderr;
     for (;;) {
+      ({ stdout, stderr } = run.read());
       if (exitCode !== null || Date.now() > deadline) {
         throw new Error(
           `merge never blocked on the lock after the no-branch path (exit ${exitCode}):\n${stdout}\n${stderr}`,
@@ -1688,7 +1686,7 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
     const fpath = join(dir, 'features', 'F1-feat', 'index.md');
     writeFileSync(fpath, readFileSync(fpath, 'utf8').replace(/^stories:/m, 'commit:\n  code: exact111\nstories:'));
     unlinkSync(lockPath);
-    assert.equal(await exited, 0, stderr);
+    assert.equal(await exited, 0, (await run.closed).stderr);
 
     assert.notEqual(g(origin, 'rev-parse', '--short', 'main'), 'exact111', "main's tip is not the SHA on record");
     assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).commit, 'exact111');
