@@ -6,7 +6,8 @@
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync } from 'fs';
+import { accessSync, constants, readdirSync, writeFileSync } from 'fs';
+import { delimiter, join } from 'path';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
@@ -105,6 +106,55 @@ test('a timeout kills the child and leaves no directory', () => {
 test('a spawn that throws leaves no directory', () => {
   assert.throws(() => spawnSyncFiles('cat\0bad', [], { input: 'x' }));
   assert.deepEqual(leftovers(), []);
+});
+
+/** Whether `name` is an executable on PATH. */
+function onPath(name) {
+  return (process.env.PATH ?? '').split(delimiter).some((dir) => {
+    try {
+      accessSync(join(dir, name), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// The case the helper exists for (F-70 Premise 1 and 2): inside Codex's
+// sandbox, `cat` fed through `input:` never sees EOF and a Node child's piped
+// stdout is empty. Through the helper both come back.
+test("inside Codex's sandbox, cat and a Node child get their stdin and return their stdout", (t) => {
+  if (!onPath('codex')) return t.skip('codex is not on PATH');
+  const work = mkTempDir('bl-child-stdio-sandbox-');
+  const script = join(work, 'probe.mjs');
+  const helper = new URL('../../src/child-stdio.js', import.meta.url).href;
+  writeFileSync(
+    script,
+    `import { spawnSyncFiles } from ${JSON.stringify(helper)};
+const run = (cmd, args, input) => {
+  const started = Date.now();
+  const r = spawnSyncFiles(cmd, args, { input, encoding: 'utf8', timeout: 5000 });
+  return { status: r.status, signal: r.signal, stdout: r.stdout, ms: Date.now() - started };
+};
+console.log(JSON.stringify({
+  cat: run('cat', [], 'to cat\\n'),
+  node: run(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], 'to node\\n'),
+}));
+`,
+  );
+  const r = spawnSyncFiles('codex', ['sandbox', '-P', ':workspace', '-C', work, '--', process.execPath, script], {
+    cwd: work,
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+  assert.equal(r.status, 0, `codex sandbox: status ${r.status}, signal ${r.signal}: ${r.stderr}`);
+  const out = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.deepEqual(out.cat.stdout, 'to cat\n', JSON.stringify(out));
+  assert.deepEqual(out.node.stdout, 'to node\n', JSON.stringify(out));
+  for (const k of ['cat', 'node']) {
+    assert.equal(out[k].status, 0, JSON.stringify(out));
+    assert.ok(out[k].ms < 5000, `${k} took ${out[k].ms} ms`);
+  }
 });
 
 test('the (command, { shell: true }) form works', () => {
