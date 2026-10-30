@@ -178,15 +178,27 @@ export function scopeProcesses(unit) {
 }
 
 /**
+ * Whether systemd says scope `unit` is not running: `inactive` (also what it
+ * says of a unit `--collect` has removed) or `failed`. False when systemctl
+ * itself cannot answer, so a broken user manager is never read as "gone".
+ */
+function scopeGone(unit) {
+  const r = systemctl(['is-active', `${unit}.scope`]);
+  return !r.error && ['inactive', 'failed'].includes(String(r.stdout ?? '').trim());
+}
+
+/**
  * Stop scope `unit`: SIGTERM to what is left, SIGKILL after the stop timeout.
  * `{ ok: true }` once the scope is no longer active; otherwise `{ ok: false,
- * output }` with why.
+ * output }` with why. A scope whose last process exited between the listing
+ * and the stop is gone, and `systemctl stop` fails with "not loaded": that is
+ * a success, not a reason to escalate.
  *
  * @returns {{ ok: boolean, output?: string }}
  */
 export function stopScope(unit) {
   const r = systemctl(['stop', `${unit}.scope`], 60_000);
-  if (r.error || r.status !== 0) return { ok: false, output: failureText(r) };
+  if (r.error || r.status !== 0) return scopeGone(unit) ? { ok: true } : { ok: false, output: failureText(r) };
   if (scopeActive(unit)) return { ok: false, output: `${unit}.scope is still active after the stop` };
   return { ok: true };
 }

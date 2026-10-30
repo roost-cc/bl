@@ -96,6 +96,13 @@ test('a scope whose command left nothing is gone at once and lists nothing', { s
   assert.deepEqual(scopeProcesses(unit), []);
 });
 
+test('stopping a scope that ended on its own after it was listed is a success', { skip }, () => {
+  // Its last process exits between the listing and the stop: `systemctl stop`
+  // then fails with "not loaded", and the step must not escalate for it.
+  const unit = scopeUnitName(UNIT, 7);
+  assert.deepEqual(stopScope(unit), { ok: true });
+});
+
 test("staleScopes finds a dead bl's scope of the unit, not this bl's", { skip }, () => {
   // Above any pid_max (at most 2^22), so no process has it.
   const dead = scopeUnitName(UNIT, 3, 4_999_999);
