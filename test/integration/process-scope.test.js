@@ -5,6 +5,8 @@
 // a host without a user manager).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { chmodSync, writeFileSync } from 'fs';
+import { delimiter, join } from 'path';
 import { isPidAlive } from '../../src/lock.js';
 import { shellMerged } from '../../src/feature-run.js';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -101,6 +103,84 @@ test('stopping a scope that ended on its own after it was listed is a success', 
   // then fails with "not loaded", and the step must not escalate for it.
   const unit = scopeUnitName(UNIT, 7);
   assert.deepEqual(stopScope(unit), { ok: true });
+});
+
+// A systemctl that fails or answers nonsense is never read as "gone", "no
+// processes" or "stopped" (F-70 review r1). A fake `systemctl` on PATH plays
+// each answer: `is-active` prints FAKE_STATE (nothing when unset) and exits
+// FAKE_ACTIVE_EXIT; `show -p ControlGroup` prints FAKE_CG and exits FAKE_CG_EXIT;
+// `stop` exits FAKE_STOP_EXIT; `show -p Id` exits FAKE_ID_EXIT.
+test('scope_management_query_failure_escalates: process-scope.js', { skip: process.platform !== 'linux' }, () => {
+  const bin = mkTempDir('bl-fake-systemctl-');
+  writeFileSync(
+    join(bin, 'systemctl'),
+    `#!/bin/sh
+case "$2" in
+  is-active) [ -n "$FAKE_STATE" ] && echo "$FAKE_STATE"; exit "\${FAKE_ACTIVE_EXIT:-0}" ;;
+  stop) exit "\${FAKE_STOP_EXIT:-0}" ;;
+  show) case "$4" in
+    ControlGroup) printf '%s\\n' "$FAKE_CG"; exit "\${FAKE_CG_EXIT:-0}" ;;
+    Id) exit "\${FAKE_ID_EXIT:-0}" ;;
+  esac ;;
+esac
+exit 1
+`,
+  );
+  chmodSync(join(bin, 'systemctl'), 0o755);
+  const unit = 'bl-t-fake-1-1';
+  const saved = { ...process.env };
+  const as = (env, fn) => {
+    for (const k of Object.keys(process.env)) if (k.startsWith('FAKE_')) delete process.env[k];
+    Object.assign(process.env, env, { PATH: `${bin}${delimiter}${saved.PATH}` });
+    try {
+      return fn();
+    } finally {
+      process.env.PATH = saved.PATH;
+    }
+  };
+  const missing = join(bin, 'no-such-cgroup');
+  const cases = [
+    // [what, env, call, expected: 'throws' | value]
+    ['is-active fails with no state', { FAKE_ACTIVE_EXIT: '1' }, () => scopeActive(unit), 'throws'],
+    ['is-active says inactive', { FAKE_STATE: 'inactive', FAKE_ACTIVE_EXIT: '4' }, () => scopeActive(unit), false],
+    ['is-active says failed', { FAKE_STATE: 'failed', FAKE_ACTIVE_EXIT: '3' }, () => scopeActive(unit), false],
+    ['is-active says active', { FAKE_STATE: 'active' }, () => scopeActive(unit), true],
+    ['is-active exits 0 with no state', {}, () => scopeActive(unit), true],
+    [
+      'is-active says unknown, exits 3',
+      { FAKE_STATE: 'deactivating', FAKE_ACTIVE_EXIT: '3' },
+      () => scopeActive(unit),
+      true,
+    ],
+    ['listing of a gone scope', { FAKE_STATE: 'inactive', FAKE_ACTIVE_EXIT: '3' }, () => scopeProcesses(unit), []],
+    ['listing, is-active fails', { FAKE_ACTIVE_EXIT: '1' }, () => scopeProcesses(unit), 'throws'],
+    ['listing, ControlGroup fails', { FAKE_STATE: 'active', FAKE_CG_EXIT: '1' }, () => scopeProcesses(unit), 'throws'],
+    ['listing, ControlGroup empty', { FAKE_STATE: 'active', FAKE_CG: '' }, () => scopeProcesses(unit), 'throws'],
+    ['listing, ControlGroup malformed', { FAKE_STATE: 'active', FAKE_CG: 'n/a' }, () => scopeProcesses(unit), 'throws'],
+    [
+      'listing, cgroup unreadable',
+      { FAKE_STATE: 'active', FAKE_CG: `/../../..${missing}` },
+      () => scopeProcesses(unit),
+      'throws',
+    ],
+    ['stop ok, check fails', { FAKE_ACTIVE_EXIT: '1' }, () => stopScope(unit).ok, false],
+    ['stop ok, still active', { FAKE_STATE: 'active' }, () => stopScope(unit).ok, false],
+    ['stop fails, check fails', { FAKE_STOP_EXIT: '1', FAKE_ACTIVE_EXIT: '1' }, () => stopScope(unit).ok, false],
+    ['stop fails, still active', { FAKE_STOP_EXIT: '1', FAKE_STATE: 'active' }, () => stopScope(unit).ok, false],
+    [
+      'stop fails, scope gone',
+      { FAKE_STOP_EXIT: '5', FAKE_STATE: 'inactive', FAKE_ACTIVE_EXIT: '4' },
+      () => stopScope(unit).ok,
+      true,
+    ],
+    ['stop ok, scope gone', { FAKE_STATE: 'inactive', FAKE_ACTIVE_EXIT: '3' }, () => stopScope(unit).ok, true],
+    ['stale discovery fails', { FAKE_ID_EXIT: '1' }, () => staleScopes('T-fake'), 'throws'],
+    ['stale discovery finds none', {}, () => staleScopes('T-fake'), []],
+  ];
+  for (const [what, env, call, want] of cases) {
+    if (want === 'throws') assert.throws(() => as(env, call), Error, what);
+    else assert.deepEqual(as(env, call), want, what);
+  }
 });
 
 test("staleScopes finds a dead bl's scope of the unit, not this bl's", { skip }, () => {

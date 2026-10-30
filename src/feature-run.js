@@ -1061,13 +1061,16 @@ function removeLeftoverProcesses(ctx, label, scopes) {
   const stopped = [];
   const failed = [];
   for (const unit of scopes) {
+    // `[]` is the one answer that means the scope is gone; a listing that
+    // failed or is malformed still gets the stop, and its verification.
     let procs;
     try {
       procs = runner.scopeProcesses(unit);
+      if (!Array.isArray(procs)) throw new Error(`malformed listing: ${JSON.stringify(procs)}`);
     } catch (e) {
       procs = [{ pid: '?', command: `(could not list: ${describeThrown(e)})` }];
     }
-    if (!Array.isArray(procs) || procs.length === 0) continue;
+    if (procs.length === 0) continue;
     const named = procs.map((p) => `${p?.pid ?? '?'} ${p?.command ?? '?'}`);
     let r;
     try {
@@ -1098,20 +1101,31 @@ function removeLeftoverProcesses(ctx, label, scopes) {
  * Stop the scopes of this unit that a bl no longer running left behind (one
  * that crashed or was killed mid-step), at `bl run` start and `--resume`, `bl
  * review` and `bl merge`'s integration; recorded as a step's are. Throws
- * ProcessCleanupError after escalating when a stop fails.
+ * ProcessCleanupError after escalating when a stop fails, or when the scopes
+ * cannot be listed: they may be running and would collide with the next step.
  */
 function reapStaleScopes(ctx) {
   if (!processHygiene(ctx)) return;
+  const label = 'an earlier bl that is no longer running';
   let stale;
+  let failure = null;
   try {
     stale = ctx.runner.staleScopes(ctx.feature.id);
+    if (!Array.isArray(stale)) throw new Error(`malformed listing: ${JSON.stringify(stale)}`);
   } catch (e) {
-    safeLog(ctx.runner, `  (could not list earlier bl runs' process scopes: ${describeThrown(e)})`);
-    return;
+    const why = describeThrown(e);
+    const pattern = `${processScope.scopeUnitName(ctx.feature.id, '*', '*')}.scope`;
+    failure = [
+      `Could not list the process scopes earlier bl runs of ${ctx.feature.id} may have left (${why}).`,
+      `List them with \`systemctl --user list-units '${pattern}'\` and stop each with \`systemctl --user stop <unit>\`.`,
+    ].join('\n');
+    record(ctx, { step: 'hygiene:processes', ok: false, note: `could not list scopes left by ${label}: ${why}` });
+    safeLog(ctx.runner, `  (could not list earlier bl runs' process scopes: ${why})`);
   }
-  if (!Array.isArray(stale) || stale.length === 0) return;
-  const label = 'an earlier bl that is no longer running';
-  const failure = removeLeftoverProcesses(ctx, label, stale);
+  if (!failure) {
+    if (stale.length === 0) return;
+    failure = removeLeftoverProcesses(ctx, label, stale);
+  }
   if (!failure) return;
   finish(ctx, 'escalated', `process cleanup after ${label} failed`, failure);
   throw new ProcessCleanupError(failure, ctx.state);

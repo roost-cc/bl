@@ -3525,6 +3525,71 @@ test('scopes a dead bl left are stopped at run start, at --resume and by bl revi
   }
 });
 
+// A management query that fails is never read as "no processes" or "gone"
+// (F-70 review r1): a step's scope whose listing fails or is malformed is
+// still stopped, and earlier runs' scopes that cannot be listed escalate
+// before the first step.
+test('scope_management_query_failure_escalates', async () => {
+  const listings = [
+    [
+      'throws',
+      () => {
+        throw new Error('Failed to connect to bus');
+      },
+    ],
+    ['malformed', () => 'garbage'],
+    ['null', () => null],
+  ];
+  for (const [name, listing] of listings) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const runner = withScopes(fakeRunner({ dir, feature }));
+      runner.scopeProcesses = listing;
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'clean', name);
+      // Every scope the run started was stopped, since none could be listed.
+      assert.ok(runner.scopes.length > 0, name);
+      assert.deepEqual(runner.stopped, runner.scopes.filter(Boolean), name);
+      const notes = state.history.filter((h) => h.step === 'hygiene:processes').map((h) => h.note);
+      assert.ok(notes.length > 0 && notes.every((n) => n.includes('could not list')), `${name}: ${notes}`);
+    } finally {
+      cleanup();
+    }
+  }
+  // A listing that fails and a stop whose check fails escalates.
+  {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const runner = withScopes(fakeRunner({ dir, feature }), { stopFails: true });
+      runner.scopeProcesses = () => {
+        throw new Error('Failed to connect to bus');
+      };
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'escalated');
+      assert.match(state.lastError, /process cleanup after .* failed/);
+    } finally {
+      cleanup();
+    }
+  }
+  for (const [name, discovery] of listings) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const runner = withScopes(fakeRunner({ dir, feature }));
+      runner.staleScopes = discovery;
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'escalated', name);
+      assert.match(state.lastError, /process cleanup after an earlier bl that is no longer running failed/, name);
+      assert.deepEqual(runner.scopes, [], `${name}: no step ran`);
+      const entry = state.history.find((h) => h.step === 'hygiene:processes');
+      assert.equal(entry?.ok, false, name);
+      assert.match(entry.note, /could not list scopes left by an earlier bl/, name);
+      assert.match(readFileSync(feature.indexPath, 'utf8'), /systemctl --user list-units 'bl-f-1-\*-\*\.scope'/, name);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
 test('an initial container snapshot that throws or is malformed skips the cleanup', async () => {
   for (const initial of [
     () => {

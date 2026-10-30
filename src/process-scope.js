@@ -124,28 +124,37 @@ export function scopedSpawn(unit) {
   };
 }
 
-/** Whether scope `unit` is active (running processes). */
+/**
+ * Whether scope `unit` is active (running processes). systemd says
+ * `inactive` of a unit `--collect` has removed, and `failed` of one that
+ * ended badly: both are false. Throws when systemctl cannot answer or answers
+ * with no state, so a broken user manager is never read as "gone".
+ */
 export function scopeActive(unit) {
-  return systemctl(['is-active', '--quiet', `${unit}.scope`]).status === 0;
+  const r = systemctl(['is-active', `${unit}.scope`]);
+  if (!r.error && r.status === 0) return true;
+  const state = String(r.stdout ?? '').trim();
+  if (r.error || !state) throw new Error(`could not tell whether ${unit}.scope is active: ${failureText(r)}`);
+  return !['inactive', 'failed'].includes(state);
 }
 
-/** Every pid in cgroup `dir` and the cgroups below it. */
+/**
+ * Every pid in cgroup `dir` and the cgroups below it. A sub-cgroup that is
+ * gone (ENOENT) has no processes; any other read failure throws.
+ */
 function cgroupPids(dir) {
   const pids = [];
-  try {
-    for (const l of readFileSync(join(dir, 'cgroup.procs'), 'utf8').split('\n')) {
-      const pid = Number.parseInt(l, 10);
-      if (Number.isInteger(pid) && pid > 0) pids.push(pid);
-    }
-  } catch {
-    return pids;
+  for (const l of readFileSync(join(dir, 'cgroup.procs'), 'utf8').split('\n')) {
+    const pid = Number.parseInt(l, 10);
+    if (Number.isInteger(pid) && pid > 0) pids.push(pid);
   }
-  try {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      if (e.isDirectory()) pids.push(...cgroupPids(join(dir, e.name)));
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    try {
+      pids.push(...cgroupPids(join(dir, e.name)));
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
     }
-  } catch {
-    // no sub-cgroups to read
   }
   return pids;
 }
@@ -165,7 +174,9 @@ function processCommand(pid) {
 /**
  * The processes still running in scope `unit`: `[{ pid, command }]`, `[]`
  * when the scope is gone (its command and everything it started exited, and
- * `--collect` removed it).
+ * `--collect` removed it). Throws when the scope may still be running but its
+ * processes cannot be listed: a failed or empty `ControlGroup` query, or an
+ * unreadable cgroup. A cgroup gone by the time it is read is rechecked.
  *
  * @returns {{ pid: number, command: string }[]}
  */
@@ -173,18 +184,18 @@ export function scopeProcesses(unit) {
   if (!scopeActive(unit)) return [];
   const r = systemctl(['show', '-p', 'ControlGroup', '--value', `${unit}.scope`]);
   const cg = String(r.stdout ?? '').trim();
-  if (r.status !== 0 || !cg) return [];
-  return cgroupPids(`/sys/fs/cgroup${cg}`).map((pid) => ({ pid, command: processCommand(pid) }));
-}
-
-/**
- * Whether systemd says scope `unit` is not running: `inactive` (also what it
- * says of a unit `--collect` has removed) or `failed`. False when systemctl
- * itself cannot answer, so a broken user manager is never read as "gone".
- */
-function scopeGone(unit) {
-  const r = systemctl(['is-active', `${unit}.scope`]);
-  return !r.error && ['inactive', 'failed'].includes(String(r.stdout ?? '').trim());
+  if (r.error || r.status !== 0 || !cg.startsWith('/')) {
+    if (!scopeActive(unit)) return [];
+    throw new Error(`could not read ${unit}.scope's control group: ${cg ? `\`${cg}\`` : failureText(r)}`);
+  }
+  let pids;
+  try {
+    pids = cgroupPids(`/sys/fs/cgroup${cg}`);
+  } catch (e) {
+    if (e?.code === 'ENOENT' && !scopeActive(unit)) return [];
+    throw new Error(`could not list ${unit}.scope's processes: ${e?.message ?? e}`);
+  }
+  return pids.map((pid) => ({ pid, command: processCommand(pid) }));
 }
 
 /**
@@ -192,28 +203,36 @@ function scopeGone(unit) {
  * `{ ok: true }` once the scope is no longer active; otherwise `{ ok: false,
  * output }` with why. A scope whose last process exited between the listing
  * and the stop is gone, and `systemctl stop` fails with "not loaded": that is
- * a success, not a reason to escalate.
+ * a success, not a reason to escalate. A check after the stop that cannot
+ * answer is a failure, whatever the stop returned.
  *
  * @returns {{ ok: boolean, output?: string }}
  */
 export function stopScope(unit) {
   const r = systemctl(['stop', `${unit}.scope`], 60_000);
-  if (r.error || r.status !== 0) return scopeGone(unit) ? { ok: true } : { ok: false, output: failureText(r) };
-  if (scopeActive(unit)) return { ok: false, output: `${unit}.scope is still active after the stop` };
-  return { ok: true };
+  const stopFailed = r.error || r.status !== 0;
+  let active;
+  try {
+    active = scopeActive(unit);
+  } catch (e) {
+    return { ok: false, output: stopFailed ? `${failureText(r)}; ${e.message}` : e.message };
+  }
+  if (!active) return { ok: true };
+  return { ok: false, output: stopFailed ? failureText(r) : `${unit}.scope is still active after the stop` };
 }
 
 /**
  * The scopes of `unitId` whose bl is no longer running: leftovers of a bl that
  * crashed or was killed before it could stop them. The run's lock means no
- * live bl other than this one owns a scope of the unit.
+ * live bl other than this one owns a scope of the unit. Throws when systemctl
+ * cannot list them: an unknown list is not an empty one.
  *
  * @returns {string[]}
  */
 export function staleScopes(unitId) {
   const prefix = `bl-${unitSlug(unitId)}-`;
   const r = systemctl(['show', '-p', 'Id', '--value', `${prefix}*.scope`]);
-  if (r.error || r.status !== 0) return [];
+  if (r.error || r.status !== 0) throw new Error(`could not list ${prefix}*.scope: ${failureText(r)}`);
   const re = /^(\d+)-\d+\.scope$/;
   const out = [];
   for (const line of String(r.stdout ?? '').split('\n')) {
