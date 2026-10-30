@@ -1,0 +1,1 @@
+Don't `cd` before a command: pass the directory to the command instead (`git -C <path> …`, `pnpm --dir <path> …`, `npm --prefix <path> …`, `node <abs-path>/file.js`, `rg <pattern> <path>`, absolute file paths). Every part of a compound command must be allowlisted on its own, so `cd <path> && <cmd>` is denied in headless sessions.

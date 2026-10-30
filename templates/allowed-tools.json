@@ -1,0 +1,26 @@
+{
+  "base": [
+    "agent:spawn",
+    "plan:exit",
+    "fs:read",
+    "fs:edit",
+    "fs:write",
+    "fs:glob",
+    "fs:grep",
+    "git:*",
+    "find:*",
+    "grep:*",
+    "mkdir:*",
+    "ls:*",
+    "cat:*",
+    "cd:*",
+    "awk:*",
+    "head:*",
+    "echo:*",
+    "curl:*"
+  ],
+  "workon": [],
+  "refine": ["bl new:*"],
+  "review": [],
+  "triage": ["bl new:*"]
+}

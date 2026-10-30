@@ -1,0 +1,356 @@
+#!/usr/bin/env zsh
+# Zsh completions for the bl (backlog) CLI.
+# Source this file or add to ~/.zshrc:
+#   source /path/to/bl/completions/backlog.zsh
+
+_roost_repo_root() {
+  git rev-parse --show-toplevel 2>/dev/null
+}
+
+_roost_backlog_dir() {
+  local root="$1"
+  [[ -z "$root" ]] && return
+  local rel
+  if [[ -f "$root/backlog.json" ]]; then
+    rel="$(node -e "console.log(JSON.parse(require('fs').readFileSync('$root/backlog.json','utf8')).backlog??'backlog')" 2>/dev/null)"
+  fi
+  echo "$root/${rel:-backlog}"
+}
+
+_roost_story_ids() {
+  local root bldir
+  root="$(_roost_repo_root)"
+  bldir="$(_roost_backlog_dir "$root")"
+  [[ -d "$bldir" ]] || return
+  find "$bldir" -maxdepth 3 -type d -name 'S*' 2>/dev/null \
+    | sed -nE 's|^.*/S([0-9]+)-[^/]+$|S-\1|p' \
+    | sort -t- -k2 -n \
+    | uniq
+}
+
+_roost_worktree_story_ids() {
+  local root
+  root="$(_roost_repo_root)"
+  [[ -z "$root" ]] && return
+  git -C "$root" worktree list --porcelain 2>/dev/null \
+    | sed -nE 's|^branch refs/heads/s([0-9]+)-.+$|S-\1|p' \
+    | sort -t- -k2 -n
+}
+
+_roost_component_ids() {
+  local root bldir
+  root="$(_roost_repo_root)"
+  bldir="$(_roost_backlog_dir "$root")"
+  [[ -d "$bldir/components" ]] || return
+  find "$bldir/components" -maxdepth 1 -type d -name 'C*' 2>/dev/null \
+    | sed -nE 's|^.*/C([0-9]+)-[^/]+$|C\1|p' \
+    | sort
+}
+
+_roost_feature_ids() {
+  local root bldir
+  root="$(_roost_repo_root)"
+  bldir="$(_roost_backlog_dir "$root")"
+  [[ -d "$bldir/features" ]] || return
+  find "$bldir/features" -maxdepth 1 -type d -name 'F*' 2>/dev/null \
+    | sed -nE 's|^.*/F([0-9]+)-[^/]+$|F-\1|p' \
+    | sort -t- -k2 -n
+}
+
+# Collect theme ids (slugs) from themes/ directory names
+_roost_theme_ids() {
+  local root bldir
+  root="$(_roost_repo_root)"
+  bldir="$(_roost_backlog_dir "$root")"
+  [[ -d "$bldir/themes" ]] || return
+  find "$bldir/themes" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+    | sed -nE 's|^.*/([a-z][a-z0-9-]*)$|\1|p' \
+    | sort
+}
+
+# Collect epic ids (E50, E51, ...) from epics/ directory names
+_roost_epic_ids() {
+  local root bldir
+  root="$(_roost_repo_root)"
+  bldir="$(_roost_backlog_dir "$root")"
+  [[ -d "$bldir/epics" ]] || return
+  find "$bldir/epics" -maxdepth 1 -type d -name 'E*' 2>/dev/null \
+    | sed -nE 's|^.*/E([0-9]+)-[^/]+$|E\1|p' \
+    | sort -k1.2 -n
+}
+
+# Collect the open task ids (T-7, ...) bl inbox lists
+_roost_inbox_task_ids() {
+  bl inbox --json 2>/dev/null \
+    | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{for(const e of JSON.parse(s||"[]"))if(e.kind==="task")console.log(e.id)})' 2>/dev/null
+}
+
+# ── bl ───────────────────────────────────────────────────────────────────
+
+_roost_bl() {
+  local -a subcmds
+  subcmds=(
+    'init:Initialize backlog in a repo'
+    'new:Create a new story'
+    'side:A change to another repo: a story in its component, with its worktree'
+    'attach:List an existing story in a feature'
+    'move:Move backlog stories to another component'
+    'next-id:Print the next available story, component or epic ID'
+    'run:The loop for a feature or story: implement, test gate, review, PR'
+    'implement:Start/resume an interactive session on a story or feature'
+    'approve:Approve a refined feature: the human gate before run'
+    'status:A feature, story or component: stories, review and run state'
+    'refine:Refine a story for implementation'
+    'review:Review an open PR for a story'
+    'pr:Alias for review'
+    'edit:Open a story file in $EDITOR'
+    'view:Open a read-only copy of a story file in $EDITOR'
+    'list:List backlog stories'
+    'ls:Alias for list'
+    'tree:Show dependency trees'
+    'history:Daily backlog snapshots from git: weeks by points per status'
+    'report:Write the backlog progress report to reports/'
+    'next:Print the next feature by the feature order (feature-order.md)'
+    'what-next:Suggest the next story to start by walking the dep graph'
+    'done:Mark a story as done'
+    'inbox:Everything waiting on you: escalations, tasks, update decisions'
+    'block:Holds between units in blockers.json: add, remove, list'
+    'task:An action for the operator in tasks/: file one, done, list'
+    'sync:Regenerate backlog index files'
+    'merge:Merge a story or feature: gates, merge, sync, push, remove worktrees'
+    'log:Show bl activity log'
+    'allow:Add permission patterns from agent logs'
+    'capacity:Whether each agent configuration can take work now'
+    'help:Show help'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe 'command' subcmds
+    return
+  fi
+
+  local subcmd="${words[2]}"
+
+  # Shift words so _arguments sees subcommand args, not "bl <subcmd> ..."
+  (( CURRENT-- ))
+  shift words
+
+  case "$subcmd" in
+    implement|run)
+      local -a ids
+      ids=( ${(f)"$(_roost_story_ids)"} ${(f)"$(_roost_feature_ids)"} )
+      _arguments -s '1:story or feature id:(${ids})'
+      ;;
+    status)
+      local -a ids
+      ids=( ${(f)"$(_roost_story_ids)"} ${(f)"$(_roost_feature_ids)"} ${(f)"$(_roost_component_ids)"} )
+      _arguments -s '1:story, feature or component id:(${ids})'
+      ;;
+    approve)
+      local -a features
+      features=( ${(f)"$(_roost_feature_ids)"} )
+      _arguments -s '1:feature id:(${features})'
+      ;;
+    refine)
+      local -a stories
+      stories=( ${(f)"$(_roost_story_ids)"} )
+      _arguments -s '1:story id:(${stories})'
+      ;;
+    edit)
+      local -a stories
+      stories=( ${(f)"$(_roost_story_ids)"} )
+      _arguments -s '1:story id:(${stories})'
+      ;;
+    view)
+      local -a stories
+      stories=( ${(f)"$(_roost_story_ids)"} )
+      _arguments -s '1:story id:(${stories})'
+      ;;
+    review|pr)
+      local -a stories
+      stories=( ${(f)"$(_roost_worktree_story_ids)"} )
+      _arguments -s '1:story id:(${stories})'
+      ;;
+    merge)
+      local -a ids
+      ids=( ${(f)"$(_roost_worktree_story_ids)"} ${(f)"$(_roost_feature_ids)"} )
+      _arguments -s \
+        '--keep[Keep the branch after merging]' \
+        '1:story or feature id:(${ids})'
+      ;;
+    capacity)
+      _arguments -s '--json[Print the configurations as JSON (bl-capacity-json/v1)]'
+      ;;
+    inbox)
+      if [[ "${words[2]}" == done ]]; then
+        local -a ops
+        ops=( ${(f)"$(_roost_inbox_task_ids)"} )
+        _arguments -s '2:item id:(${ops})'
+      else
+        _arguments -s \
+          '--json[Print the items as a JSON array]' \
+          '1:subcommand:(done)'
+      fi
+      ;;
+    block)
+      local -a ids
+      ids=( ${(f)"$(_roost_story_ids)"} ${(f)"$(_roost_feature_ids)"} )
+      _arguments -s \
+        '--gate[The gate held]:gate:(run merge)' \
+        '--unit[The unit held, or *]:unit:(${ids} \*)' \
+        '--until[The blocker status that lifts the hold]:status:' \
+        '--active-when[Hold only once this unit meets --active-status]:unit:(${ids})' \
+        '--active-status[The status --active-when must meet]:status:' \
+        '--fix[list: rewrite blockers.json sorted]' \
+        '1:subcommand:(add remove list)' \
+        '2:blocker or unit id:(${ids})'
+      ;;
+    task)
+      local -a ids
+      ids=( ${(f)"$(_roost_story_ids)"} ${(f)"$(_roost_feature_ids)"} )
+      _arguments -s \
+        '--title[What to do, in a few words]:title:' \
+        '--gate[What the task holds until done]:gate:(merge next none)' \
+        '--body-file[The task body ("-" for stdin)]:file:_files' \
+        '--json[Emit JSON to stdout (schema bl-task-json/v1)]' \
+        '--open[list: only open tasks]' \
+        '1:unit or subcommand:(done list ${ids})' \
+        '2:task or unit id:'
+      ;;
+    done)
+      local -a ids
+      ids=( ${(f)"$(_roost_story_ids)"} ${(f)"$(_roost_component_ids)"} )
+      _arguments -s \
+        '--superseded[Mark as superseded instead of done]' \
+        '1:story or component id:(${ids})'
+      ;;
+    sync|s)
+      local -a stories
+      stories=( ${(f)"$(_roost_story_ids)"} )
+      _arguments -s \
+        '--commit[Commit the sync and named stories under the backlog lock]' \
+        '*'{-m,--message}'[Commit message; repeat for body paragraphs]:message:' \
+        '*--story[A story you created or edited]:story id:(${stories})'
+      ;;
+    list|ls)
+      local -a themes epics features components
+      themes=( ${(f)"$(_roost_theme_ids)"} )
+      epics=( ${(f)"$(_roost_epic_ids)"} )
+      features=( ${(f)"$(_roost_feature_ids)"} )
+      components=( ${(f)"$(_roost_component_ids)"} )
+      _arguments -s \
+        '(-a --all)'{-a,--all}'[Include done and superseded]' \
+        '--features[List features instead]' \
+        '--theme[Stories (or features) in a theme]:theme:(${themes})' \
+        '--epic[An epic'"'"'s features, with their progress]:epic id:(${epics})' \
+        '--feature[Stories of one feature]:feature id:(${features})' \
+        '--component[Stories in one component]:component id:(${components})'
+      ;;
+    tree)
+      local -a stories themes epics features components
+      stories=( ${(f)"$(_roost_story_ids)"} )
+      themes=( ${(f)"$(_roost_theme_ids)"} )
+      epics=( ${(f)"$(_roost_epic_ids)"} )
+      features=( ${(f)"$(_roost_feature_ids)"} )
+      components=( ${(f)"$(_roost_component_ids)"} )
+      _arguments -s \
+        '(-a --all)'{-a,--all}'[Include trees where every story is done]' \
+        '--theme[Trees reaching a theme'"'"'s pending stories]:theme:(${themes})' \
+        '--epic[Trees reaching an epic'"'"'s pending stories]:epic id:(${epics})' \
+        '--feature[Trees reaching a feature'"'"'s pending stories]:feature id:(${features})' \
+        '--component[Trees reaching a component'"'"'s pending stories]:component id:(${components})' \
+        '1:story id:(${stories})'
+      ;;
+    history)
+      local -a scopes
+      scopes=( ${(f)"$(_roost_theme_ids)"} ${(f)"$(_roost_epic_ids)"} ${(f)"$(_roost_feature_ids)"} ${(f)"$(_roost_component_ids)"} )
+      _arguments -s \
+        '--json[Every day'"'"'s stories and features as JSON]' \
+        '--since[Only days from this date]:date (YYYY-MM-DD):' \
+        '--scope[A theme, epic, feature or component]:scope:(${scopes})'
+      ;;
+    report)
+      _arguments -s \
+        '--out[Write the report to this directory]:directory:_files -/' \
+        '--since[Only history from this date]:date (YYYY-MM-DD):' \
+        '--charts[The chart adapter]:adapter:(vega-lite)' \
+        '--json[Print data.json and write nothing]'
+      ;;
+    next)
+      local -a themes epics
+      themes=( ${(f)"$(_roost_theme_ids)"} )
+      epics=( ${(f)"$(_roost_epic_ids)"} )
+      _arguments -s \
+        '--theme[First ranked feature in a theme]:theme:(${themes})' \
+        '--epic[First ranked feature of an epic]:epic id:(${epics})'
+      ;;
+    what-next)
+      local -a themes epics features components
+      themes=( ${(f)"$(_roost_theme_ids)"} )
+      epics=( ${(f)"$(_roost_epic_ids)"} )
+      features=( ${(f)"$(_roost_feature_ids)"} )
+      components=( ${(f)"$(_roost_component_ids)"} )
+      _arguments -s \
+        '--theme[Next startable story in a theme]:theme:(${themes})' \
+        '--epic[Next startable story of an epic]:epic id:(${epics})' \
+        '--feature[Next startable story of a feature]:feature id:(${features})' \
+        '--component[Next startable story in a component]:component id:(${components})'
+      ;;
+    side)
+      local -a components units
+      components=( ${(f)"$(_roost_component_ids)"} )
+      units=( ${(f)"$(_roost_feature_ids)"} ${(f)"$(_roost_story_ids)"} )
+      _arguments -s \
+        '1:repo or component id:(${components})' \
+        '--from[The unit the session is working on]:unit id:(${units})' \
+        '--title[Story title]:title:' \
+        '--points[Story points]:points:(1 2 3 5 8 13)' \
+        '--type[Story type]:type:(chore bug feature)' \
+        '--body-file[The story body]:file:_files' \
+        '--json[Emit JSON to stdout (schema bl-side-json/v1)]'
+      ;;
+    attach)
+      local -a units
+      units=( ${(f)"$(_roost_story_ids)"} ${(f)"$(_roost_feature_ids)"} )
+      _arguments -s \
+        '*:story or feature id:(${units})' \
+        '--no-sync[Write both files, commit nothing]' \
+        '--json[Emit JSON to stdout (schema bl-attach-json/v1)]' \
+        '--help[Show help]'
+      ;;
+    move)
+      local -a units
+      units=( ${(f)"$(_roost_story_ids)"} ${(f)"$(_roost_component_ids)"} )
+      _arguments -s \
+        '*:story or component id:(${units})' \
+        '--no-sync[Write the stories, commit nothing]' \
+        '--json[Emit JSON to stdout (schema bl-move-json/v1)]' \
+        '--help[Show help]'
+      ;;
+    new)
+      local -a components
+      components=( ${(f)"$(_roost_component_ids)"} )
+      _arguments -s \
+        '--component[Component ID; alone, create a component]:component id:(${components})' \
+        '--repo[Repo (picks its home component)]:repo:' \
+        '--home[With --component: the repo'"'"'s home component]' \
+        '--title[Story title]:title:' \
+        '--points[Story points]:points:(1 2 3 5 8 13)' \
+        '--type[Story type]:type:(feature bug chore)' \
+        '--theme[A new feature'"'"'s or epic'"'"'s theme; alone, create a theme]:theme:' \
+        '--epic[A new feature'"'"'s epic (E50 up); alone, create an epic]:epic id:' \
+        '*--depends-on[Story IDs this depends on]:ids:' \
+        '*--required-for[Story IDs this unblocks]:ids:' \
+        '--json[Emit JSON to stdout (schema bl-new-json/v2)]'
+      ;;
+    next-id)
+      _arguments -s \
+        '--count[Number of consecutive IDs to print]:count:' \
+        '1:kind:(story component epic)'
+      ;;
+  esac
+}
+
+# ── Register completions ─────────────────────────────────────────────────
+
+compdef _roost_bl bl 2>/dev/null

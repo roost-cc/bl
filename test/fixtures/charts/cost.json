@@ -1,0 +1,93 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "title": "Agent cost",
+  "description": "Output tokens of the 20 units with the most, coloured by unit type.",
+  "width": "container",
+  "data": {
+    "values": [
+      {
+        "series": "feature",
+        "x": "F-1",
+        "y": 22000,
+        "order": 0
+      },
+      {
+        "series": "feature",
+        "x": "S-4",
+        "y": 5000,
+        "order": 0
+      }
+    ]
+  },
+  "layer": [
+    {
+      "transform": [
+        {
+          "filter": {
+            "field": "series",
+            "oneOf": [
+              "feature"
+            ]
+          }
+        }
+      ],
+      "mark": {
+        "type": "bar"
+      },
+      "encoding": {
+        "x": {
+          "field": "x",
+          "type": "ordinal",
+          "title": null,
+          "sort": null
+        },
+        "y": {
+          "field": "y",
+          "type": "quantitative",
+          "title": "Output tokens",
+          "scale": {
+            "zero": true
+          },
+          "stack": "zero"
+        },
+        "color": {
+          "field": "series",
+          "type": "nominal",
+          "title": null,
+          "scale": {
+            "domain": [
+              "feature"
+            ],
+            "range": [
+              "#0072B2"
+            ]
+          },
+          "legend": {
+            "orient": "bottom"
+          }
+        },
+        "order": {
+          "field": "order",
+          "type": "quantitative"
+        },
+        "tooltip": [
+          {
+            "field": "series",
+            "type": "nominal",
+            "title": "Series"
+          },
+          {
+            "field": "x",
+            "type": "ordinal",
+            "title": ""
+          },
+          {
+            "field": "y",
+            "type": "quantitative",
+            "title": "Output tokens"
+          }
+        ]
+      }
+    }
+  ]
+}

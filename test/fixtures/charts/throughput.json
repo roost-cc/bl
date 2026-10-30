@@ -1,0 +1,504 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "title": "Throughput",
+  "description": "Points reaching done per ISO week, with the trailing 4-week average.",
+  "width": "container",
+  "data": {
+    "values": [
+      {
+        "series": "points done",
+        "x": "2025-11-03",
+        "x2": "2025-11-10",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2025-11-10",
+        "x2": "2025-11-17",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2025-11-17",
+        "x2": "2025-11-24",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2025-11-24",
+        "x2": "2025-12-01",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2025-12-01",
+        "x2": "2025-12-08",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2025-12-08",
+        "x2": "2025-12-15",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2025-12-15",
+        "x2": "2025-12-22",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2025-12-22",
+        "x2": "2025-12-29",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2025-12-29",
+        "x2": "2026-01-05",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-01-05",
+        "x2": "2026-01-12",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-01-12",
+        "x2": "2026-01-19",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-01-19",
+        "x2": "2026-01-26",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-01-26",
+        "x2": "2026-02-02",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-02-02",
+        "x2": "2026-02-09",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-02-09",
+        "x2": "2026-02-16",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-02-16",
+        "x2": "2026-02-23",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-02-23",
+        "x2": "2026-03-02",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-03-02",
+        "x2": "2026-03-09",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-03-09",
+        "x2": "2026-03-16",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-03-16",
+        "x2": "2026-03-23",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-03-23",
+        "x2": "2026-03-30",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-03-30",
+        "x2": "2026-04-06",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-04-06",
+        "x2": "2026-04-13",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-04-13",
+        "x2": "2026-04-20",
+        "y": 1,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-04-20",
+        "x2": "2026-04-27",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "points done",
+        "x": "2026-04-27",
+        "x2": "2026-05-04",
+        "y": 3,
+        "order": 0
+      },
+      {
+        "series": "4-week average",
+        "x": "2025-11-03",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2025-11-10",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2025-11-17",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2025-11-24",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2025-12-01",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2025-12-08",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2025-12-15",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2025-12-22",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2025-12-29",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-01-05",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-01-12",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-01-19",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-01-26",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-02-02",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-02-09",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-02-16",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-02-23",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-03-02",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-03-09",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-03-16",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-03-23",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-03-30",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-04-06",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-04-13",
+        "y": 0.3,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-04-20",
+        "y": 0.3,
+        "order": 1
+      },
+      {
+        "series": "4-week average",
+        "x": "2026-04-27",
+        "y": 1,
+        "order": 1
+      }
+    ]
+  },
+  "layer": [
+    {
+      "transform": [
+        {
+          "filter": {
+            "field": "series",
+            "oneOf": [
+              "points done"
+            ]
+          }
+        }
+      ],
+      "mark": {
+        "type": "bar"
+      },
+      "encoding": {
+        "x": {
+          "field": "x",
+          "type": "temporal",
+          "title": null,
+          "scale": {
+            "type": "utc"
+          },
+          "axis": {
+            "format": "%b %Y",
+            "tickCount": "month"
+          }
+        },
+        "x2": {
+          "field": "x2"
+        },
+        "y": {
+          "field": "y",
+          "type": "quantitative",
+          "title": "Points",
+          "scale": {
+            "zero": true
+          },
+          "stack": null
+        },
+        "color": {
+          "field": "series",
+          "type": "nominal",
+          "title": null,
+          "scale": {
+            "domain": [
+              "points done",
+              "4-week average"
+            ],
+            "range": [
+              "#0072B2",
+              "#E69F00"
+            ]
+          },
+          "legend": {
+            "orient": "bottom"
+          }
+        },
+        "tooltip": [
+          {
+            "field": "series",
+            "type": "nominal",
+            "title": "Series"
+          },
+          {
+            "field": "x",
+            "type": "temporal",
+            "timeUnit": "utcyearmonthdate",
+            "title": "Week of",
+            "format": "%Y-%m-%d"
+          },
+          {
+            "field": "y",
+            "type": "quantitative",
+            "title": "Points"
+          }
+        ]
+      }
+    },
+    {
+      "transform": [
+        {
+          "filter": {
+            "field": "series",
+            "oneOf": [
+              "4-week average"
+            ]
+          }
+        }
+      ],
+      "mark": {
+        "type": "line",
+        "point": true
+      },
+      "encoding": {
+        "x": {
+          "field": "x",
+          "type": "temporal",
+          "title": null,
+          "scale": {
+            "type": "utc"
+          },
+          "axis": {
+            "format": "%b %Y",
+            "tickCount": "month"
+          }
+        },
+        "y": {
+          "field": "y",
+          "type": "quantitative",
+          "title": "Points",
+          "scale": {
+            "zero": true
+          },
+          "stack": null
+        },
+        "color": {
+          "field": "series",
+          "type": "nominal",
+          "title": null,
+          "scale": {
+            "domain": [
+              "points done",
+              "4-week average"
+            ],
+            "range": [
+              "#0072B2",
+              "#E69F00"
+            ]
+          },
+          "legend": {
+            "orient": "bottom"
+          }
+        },
+        "tooltip": [
+          {
+            "field": "series",
+            "type": "nominal",
+            "title": "Series"
+          },
+          {
+            "field": "x",
+            "type": "temporal",
+            "timeUnit": "utcyearmonthdate",
+            "title": "Week of",
+            "format": "%Y-%m-%d"
+          },
+          {
+            "field": "y",
+            "type": "quantitative",
+            "title": "Points"
+          }
+        ]
+      }
+    }
+  ]
+}

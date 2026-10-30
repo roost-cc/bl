@@ -1,0 +1,60 @@
+#!/usr/bin/env node
+// A fake `codex app-server` for CodexProvider.capacity() tests (F-64 D5). It
+// answers `initialize`, then `account/rateLimits/read` as FAKE_CODEX_MODE
+// says: open (both windows have quota), exhausted (the 5-hour window used
+// up), spend (spendControlReached), legacy (`rateLimits` with no
+// `rateLimitsByLimitId`), empty (a result with neither), error (a JSON-RPC
+// error), exit (exits 3 instead of answering), hang (never answers). It
+// writes its pid to FAKE_CODEX_PIDFILE, when set, so a test can check it was
+// stopped.
+import { writeFileSync } from "fs";
+
+if (process.argv[2] !== "app-server") {
+  console.error("fake codex: only app-server");
+  process.exit(1);
+}
+if (process.env.FAKE_CODEX_PIDFILE) writeFileSync(process.env.FAKE_CODEX_PIDFILE, String(process.pid));
+const mode = process.env.FAKE_CODEX_MODE ?? "open";
+
+// 2026-10-29T07:52:54Z and 2026-11-04T14:38:36Z.
+const PRIMARY_RESET = 1793260374;
+const SECONDARY_RESET = 1793803116;
+const bucket = (primaryUsed, extra = {}) => ({
+  limitId: "codex",
+  limitName: null,
+  normalModelSlug: null,
+  primary: { usedPercent: primaryUsed, windowDurationMins: 300, resetsAt: PRIMARY_RESET },
+  secondary: { usedPercent: 13, windowDurationMins: 10080, resetsAt: SECONDARY_RESET },
+  spendControlReached: false,
+  ...extra,
+});
+const results = {
+  open: { rateLimits: bucket(20), rateLimitsByLimitId: { codex: bucket(20) } },
+  exhausted: { rateLimits: bucket(100), rateLimitsByLimitId: { codex: bucket(100) } },
+  spend: { rateLimitsByLimitId: { codex: bucket(20, { spendControlReached: true }) } },
+  legacy: { rateLimits: bucket(20) },
+  empty: { accountId: "a" },
+};
+
+const reply = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  let nl;
+  while ((nl = buffer.indexOf("\n")) >= 0) {
+    const message = JSON.parse(buffer.slice(0, nl));
+    buffer = buffer.slice(nl + 1);
+    if (message.method === "initialize") {
+      reply({ method: "remoteControl/status/changed", params: { status: "disabled" } });
+      reply({ id: message.id, result: { userAgent: "fake" } });
+    } else if (message.method === "account/rateLimits/read") {
+      if (mode === "hang") continue;
+      if (mode === "exit") process.exit(3);
+      if (mode === "error") reply({ id: message.id, error: { code: -32603, message: "not logged in" } });
+      else reply({ id: message.id, result: results[mode] });
+    }
+  }
+});
+// Held open like the real one, until stopped.
+setInterval(() => {}, 60_000);

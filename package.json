@@ -1,0 +1,26 @@
+{
+  "name": "bl",
+  "version": "0.1.0",
+  "description": "A file-based backlog CLI: theme, epic, feature and story workflow over a single shared backlog repo, with headless agent runs",
+  "type": "module",
+  "bin": {
+    "bl": "./bin/bl"
+  },
+  "scripts": {
+    "test": "npm run test:unit && npm run test:integration && npm run test:cli",
+    "test:unit": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" node --test 'test/unit/*.test.js'",
+    "test:integration": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" node --test 'test/integration/*.test.js'",
+    "test:cli": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" bash test/cli/run-all.sh",
+    "test:e2e": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" bash test/e2e/run-all.sh",
+    "test:all": "npm test && npm run test:e2e"
+  },
+  "private": true,
+  "license": "ISC",
+  "engines": {
+    "node": ">=26"
+  },
+  "dependencies": {
+    "mdast-util-from-markdown": "2.1.0",
+    "yaml": "2.9.1"
+  }
+}

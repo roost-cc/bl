@@ -1,0 +1,1 @@
+Pass the search root as an argument (e.g. `rg <pattern> <path>`, `fdfind <pattern> <path>`, `ast-grep -p ... <path>`) instead of `cd <path> && <tool> ...`. The cd-then-search pattern triggers an untrusted-hooks permission prompt; passing the path as an argument runs the tool against that directory without changing the shell cwd.

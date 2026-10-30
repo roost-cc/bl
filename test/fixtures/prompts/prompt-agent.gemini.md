@@ -1,0 +1,1 @@
+prompt gemini {{toolGuide}}

@@ -1,0 +1,35 @@
+/**
+ * view-faults.js — faults injected into a `bl view` process, preloaded with
+ * `NODE_OPTIONS=--import=<this file>`.
+ *
+ * `BL_VIEW_FAULT` picks them (comma-separated):
+ *
+ * - `chmod`: making the copy read-only throws, so bl falls back to paging.
+ * - `rm`: removing the copy's `bl-view-*` temp directory throws.
+ *
+ * Only `bl view` processes are touched.
+ */
+
+import fs from 'fs';
+import { syncBuiltinESMExports } from 'module';
+
+const faults = new Set(
+  String(process.env.BL_VIEW_FAULT ?? '')
+    .split(',')
+    .filter(Boolean),
+);
+const view = process.argv[2] === 'view';
+
+if (view && faults.has('chmod')) {
+  fs.chmodSync = () => {
+    throw new Error('injected chmod failure');
+  };
+}
+if (view && faults.has('rm')) {
+  const rm = fs.rmSync;
+  fs.rmSync = (path, ...rest) => {
+    if (/\/bl-view-[^/]+$/.test(String(path))) throw new Error('injected rm failure');
+    return rm(path, ...rest);
+  };
+}
+syncBuiltinESMExports();

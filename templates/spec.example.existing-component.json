@@ -1,0 +1,22 @@
+{
+  "component": "C32",
+  "stories": [
+    {
+      "id": "metrics",
+      "title": "Add latency metrics to ingest pipeline",
+      "type": "feature",
+      "points": 3,
+      "body_file": "stories/metrics.md",
+      "required_for": ["@dashboard"]
+    },
+    {
+      "id": "dashboard",
+      "title": "Grafana dashboard for ingest latency",
+      "type": "feature",
+      "points": 2,
+      "component": "C31",
+      "body_file": "stories/dashboard.md",
+      "depends_on": ["@metrics", "S-379"]
+    }
+  ]
+}

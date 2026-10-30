@@ -1,0 +1,196 @@
+{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "title": "Cumulative flow",
+  "description": "Points by status per week, stacked: done, in progress, refined and backlog. A band that widens is work piling up in that status.",
+  "width": "container",
+  "data": {
+    "values": [
+      {
+        "series": "done",
+        "x": "2026-04-06",
+        "y": 0,
+        "order": 0
+      },
+      {
+        "series": "done",
+        "x": "2026-04-13",
+        "y": 1,
+        "order": 0
+      },
+      {
+        "series": "done",
+        "x": "2026-04-20",
+        "y": 1,
+        "order": 0
+      },
+      {
+        "series": "done",
+        "x": "2026-04-27",
+        "y": 4,
+        "order": 0
+      },
+      {
+        "series": "in progress",
+        "x": "2026-04-06",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "in progress",
+        "x": "2026-04-13",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "in progress",
+        "x": "2026-04-20",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "in progress",
+        "x": "2026-04-27",
+        "y": 0,
+        "order": 1
+      },
+      {
+        "series": "refined",
+        "x": "2026-04-06",
+        "y": 0,
+        "order": 2
+      },
+      {
+        "series": "refined",
+        "x": "2026-04-13",
+        "y": 0,
+        "order": 2
+      },
+      {
+        "series": "refined",
+        "x": "2026-04-20",
+        "y": 3,
+        "order": 2
+      },
+      {
+        "series": "refined",
+        "x": "2026-04-27",
+        "y": 0,
+        "order": 2
+      },
+      {
+        "series": "backlog",
+        "x": "2026-04-06",
+        "y": 4,
+        "order": 3
+      },
+      {
+        "series": "backlog",
+        "x": "2026-04-13",
+        "y": 8,
+        "order": 3
+      },
+      {
+        "series": "backlog",
+        "x": "2026-04-20",
+        "y": 13,
+        "order": 3
+      },
+      {
+        "series": "backlog",
+        "x": "2026-04-27",
+        "y": 8,
+        "order": 3
+      }
+    ]
+  },
+  "layer": [
+    {
+      "transform": [
+        {
+          "filter": {
+            "field": "series",
+            "oneOf": [
+              "done",
+              "in progress",
+              "refined",
+              "backlog"
+            ]
+          }
+        }
+      ],
+      "mark": {
+        "type": "area",
+        "opacity": 0.85,
+        "line": true
+      },
+      "encoding": {
+        "x": {
+          "field": "x",
+          "type": "temporal",
+          "title": null,
+          "scale": {
+            "type": "utc"
+          },
+          "axis": {
+            "format": "%b %Y",
+            "tickCount": "month"
+          }
+        },
+        "y": {
+          "field": "y",
+          "type": "quantitative",
+          "title": "Points",
+          "scale": {
+            "zero": true
+          },
+          "stack": "zero"
+        },
+        "color": {
+          "field": "series",
+          "type": "nominal",
+          "title": null,
+          "scale": {
+            "domain": [
+              "done",
+              "in progress",
+              "refined",
+              "backlog"
+            ],
+            "range": [
+              "#0072B2",
+              "#E69F00",
+              "#009E73",
+              "#999999"
+            ]
+          },
+          "legend": {
+            "orient": "bottom"
+          }
+        },
+        "order": {
+          "field": "order",
+          "type": "quantitative"
+        },
+        "tooltip": [
+          {
+            "field": "series",
+            "type": "nominal",
+            "title": "Series"
+          },
+          {
+            "field": "x",
+            "type": "temporal",
+            "timeUnit": "utcyearmonthdate",
+            "title": "Week of",
+            "format": "%Y-%m-%d"
+          },
+          {
+            "field": "y",
+            "type": "quantitative",
+            "title": "Points"
+          }
+        ]
+      }
+    }
+  ]
+}

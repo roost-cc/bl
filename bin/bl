@@ -1,0 +1,12 @@
+#!/bin/sh
+# bl — file-based backlog CLI.
+# Self-locating: follows symlinks to find its installation directory,
+# so this works whether invoked via PATH, symlink, or absolute path.
+SELF="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
+BL_ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+# bl's one runtime dependency (yaml, F-62 D1) is installed from the lockfile.
+if [ ! -d "$BL_ROOT/node_modules/yaml" ]; then
+  echo "bl: $BL_ROOT/node_modules is missing; install bl's dependencies: npm ci --prefix $BL_ROOT" >&2
+  exit 1
+fi
+exec node "$BL_ROOT/src/bl.js" "$@"

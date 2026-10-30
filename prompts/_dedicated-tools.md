@@ -1,0 +1,6 @@
+- Use the dedicated tools instead of shell equivalents:
+  - `{{readTool}}` not `cat`/`head`/`tail`
+  - `rg` not `grep` (text search)
+  - `fdfind` not `find`/`ls` (file finding)
+  - `ast-grep` for AST/structural code search
+  - `{{editTool}}` not `sed`/`awk`

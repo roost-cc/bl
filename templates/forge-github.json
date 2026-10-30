@@ -1,0 +1,8 @@
+{
+  "change.open": "gh pr create --title {{title}} --body {{body}}",
+  "change.describe": "gh pr edit {{number}} --body {{body}}",
+  "change.find": "gh pr list --head {{branch}} --state all --json number,url,state,headRefOid,labels --limit 1",
+  "change.close": "gh pr close {{number}} --comment {{comment}}",
+  "change.ready": "gh pr ready {{number}}",
+  "update.notes": "gh pr view {{number}} --json body --jq .body"
+}

@@ -1,0 +1,1 @@
+Use `git -C <path> <subcommand>` instead of `cd <path> && git ...`. The cd-then-git pattern triggers an untrusted-hooks permission prompt; `git -C <path>` runs git with that working directory without changing the shell cwd.

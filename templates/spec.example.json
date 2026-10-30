@@ -1,0 +1,32 @@
+{
+  "component": {
+    "repo": "shared-config",
+    "title": "Cross-Repo Standards",
+    "paths": ["**"],
+    "body_file": "component-body.md"
+  },
+  "stories": [
+    {
+      "id": "bootstrap",
+      "title": "Bootstrap shared-config repo",
+      "type": "feature",
+      "points": 3,
+      "body_file": "stories/bootstrap.md"
+    },
+    {
+      "id": "ci",
+      "title": "Add reusable CI workflow",
+      "type": "feature",
+      "points": 3,
+      "body_file": "stories/ci.md"
+    },
+    {
+      "id": "template",
+      "title": "Repo template wired to standards",
+      "type": "feature",
+      "points": 2,
+      "depends_on": ["@bootstrap", "@ci"],
+      "body_file": "stories/template.md"
+    }
+  ]
+}
