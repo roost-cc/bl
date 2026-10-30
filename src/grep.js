@@ -5,7 +5,7 @@
 import { existsSync } from 'fs';
 import { dirname, relative } from 'path';
 import { spawnSync } from 'child_process';
-import { loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
+import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
 import { readAllStories, readBacklogOrder, activeWorktreesByStory, storiesRoot } from './story.js';
 
 const STATUS_ORDER = {
@@ -119,5 +119,5 @@ stories in the same table format as bl list.`);
     `\n${filtered.length} matching stories`,
   ];
 
-  showText(output.join('\n') + '\n');
+  process.exitCode = exitStatus(showText(output.join('\n') + '\n'));
 }

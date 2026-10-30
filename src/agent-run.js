@@ -7,7 +7,7 @@
  */
 
 import { spawnSync } from 'child_process';
-import { loadConfig, parseArgs, worktreeRoot } from './config.js';
+import { exitStatus, loadConfig, parseArgs, worktreeRoot } from './config.js';
 import { getAllowedTools, loadPrompt } from './session.js';
 import { resolvePermissionScopes } from './permissions.js';
 import { getProvider } from './agents/index.js';
@@ -58,5 +58,5 @@ Aliases: claude`);
     model: config.agentModel,
   });
 
-  process.exit(result.status ?? 0);
+  process.exit(exitStatus(result));
 }

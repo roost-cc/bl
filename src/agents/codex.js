@@ -8,7 +8,7 @@ import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../child-stdio.js';
-import { checkModel, info, isBlBranchPath, worktreeRoot } from '../config.js';
+import { checkModel, exitStatus, info, isBlBranchPath, worktreeRoot } from '../config.js';
 import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider } from './provider.js';
@@ -890,11 +890,14 @@ export class CodexProvider extends AgentProvider {
       }
       if (r.error) return r;
       const events = parseCodexJsonEvents(r.stdout);
+      // A codex killed by a signal has `status: null`: 128 + n, a failure.
+      const status = exitStatus(r);
       return {
         ...r,
+        status,
         output: output.trim() || String(r.stdout ?? '').trim(),
         usage: events.usage,
-        isError: (r.status ?? 0) !== 0 || events.isError,
+        isError: status !== 0 || events.isError,
         refusal: events.refusal,
         sessionId: null,
         parsed: true,

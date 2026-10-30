@@ -23,6 +23,7 @@
 
 import { readFileSync } from 'fs';
 import {
+  exitStatus,
   loadConfig,
   parseFrontmatter,
   parseArgs,
@@ -344,5 +345,5 @@ Notes:
     output = highlightMatches(output, new RegExp(`\\b(?:${alt})\\b`, 'g'));
   }
 
-  showText(output);
+  process.exitCode = exitStatus(showText(output));
 }

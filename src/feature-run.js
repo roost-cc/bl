@@ -547,7 +547,8 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
           tokensIndexPath: usageIndexPath,
           model,
         });
-        return { ok: (status ?? 0) === 0, output: '', isError: (status ?? 0) !== 0, usage: null, refusal: null };
+        // launchSession returns exitStatus of the agent: a kill is nonzero.
+        return { ok: status === 0, output: '', isError: status !== 0, usage: null, refusal: null };
       }
       const r = runHeadlessSession({
         mode,

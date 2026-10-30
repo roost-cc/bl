@@ -2,7 +2,7 @@
  * edit.js — open a story, component, feature or task file in $VISUAL/$EDITOR/vi.
  */
 
-import { editorCommand, loadConfig, parseArgs, runEditor } from './config.js';
+import { editorCommand, loadConfig, parseArgs, reportExit, runEditor } from './config.js';
 import { findUnitFile } from './unit-file.js';
 
 export async function main(argv) {
@@ -34,6 +34,6 @@ Opens the file in ${editor} ($VISUAL → $EDITOR → vi).`);
     process.exit(1);
   }
 
-  const result = runEditor(hit.indexPath);
-  process.exit(result.status ?? 0);
+  // exitCode, not exit(): exit() right after a write to a pipe can drop it.
+  process.exitCode = reportExit(editorCommand(), runEditor(hit.indexPath));
 }

@@ -19,6 +19,7 @@ import { homedir, tmpdir } from 'os';
 import assert from 'node:assert';
 import { appendTo as logAppendTo } from './log.js';
 import {
+  exitStatus,
   resolvePlugins,
   repoOf,
   runPlugins,
@@ -781,7 +782,9 @@ export function runHeadlessSession({
       error: result.error.message ?? String(result.error),
     };
   }
-  const status = result?.status ?? 0;
+  // A killed agent (`signal`, `status: null`) is 128 + n, so it is an
+  // error whatever its output said (F-70 D3).
+  const status = exitStatus(result);
   const out = {
     status,
     output: result?.output ?? '',
@@ -978,6 +981,7 @@ export function launchSession({
     }
   }
 
-  if (returnOnExit) return result.status ?? 0;
-  process.exit(result.status ?? 0);
+  const status = exitStatus(result);
+  if (returnOnExit) return status;
+  process.exit(status);
 }

@@ -9,7 +9,7 @@
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { basename, dirname, join } from 'path';
-import { editorCommand, loadConfig, parseArgs, runEditor, showText } from './config.js';
+import { editorCommand, exitStatus, loadConfig, parseArgs, reportExit, runEditor, showText } from './config.js';
 import { findUnitFile } from './unit-file.js';
 
 /**
@@ -65,7 +65,7 @@ terminal, else paged ($PAGER → less → more).`);
   // terminal). exitCode, not exit(): exit() right after a write to a pipe can
   // drop the write.
   if (!process.stdout.isTTY) {
-    process.exitCode = showText({ path: indexPath }).status ?? 0;
+    process.exitCode = exitStatus(showText({ path: indexPath }));
     return;
   }
 
@@ -84,7 +84,7 @@ terminal, else paged ($PAGER → less → more).`);
     if (tmp) removeCopy(tmp);
     console.error(`bl view: cannot make a read-only copy (${err.message}); showing it instead`);
     // By path, so paging needs no temp file: a temp file is what just failed.
-    process.exitCode = showText({ path: indexPath }).status ?? 0;
+    process.exitCode = exitStatus(showText({ path: indexPath }));
     return;
   }
 
@@ -94,5 +94,5 @@ terminal, else paged ($PAGER → less → more).`);
   } finally {
     removeCopy(tmp);
   }
-  process.exit(result.status ?? 0);
+  process.exitCode = reportExit(editorCommand(), result);
 }

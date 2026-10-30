@@ -420,7 +420,8 @@ function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     tokensIndexPath: prep.indexPath,
   });
   if (!status) info(implementNextSteps(parsed.id));
-  process.exit(status ?? 0);
+  // launchSession returns exitStatus of the agent: a kill is nonzero.
+  process.exit(status);
 }
 
 /**

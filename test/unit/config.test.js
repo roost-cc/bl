@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'child_process';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -20,6 +21,7 @@ import {
   runPager,
   showText,
   runEditor,
+  exitStatus,
   slugify,
   captureTmuxWindowId,
   renameTmuxWindow,
@@ -705,6 +707,53 @@ test('showText runs no more fallback when PAGER is set, and returns the pager re
   );
   assert.equal(result.status, 127);
   assert.equal(existsSync(record), false, 'more did not run');
+});
+
+// ---------------------------------------------------------------------------
+// exitStatus (S-1110, F-70 D3)
+// ---------------------------------------------------------------------------
+
+test('exitStatus: 127 on a launch error, 128 + n on a signal, else the status', () => {
+  assert.equal(exitStatus({ error: new Error('spawn x ENOENT'), status: null, signal: null }), 127);
+  assert.equal(exitStatus({ status: null, signal: 'SIGTERM' }), 143);
+  assert.equal(exitStatus({ status: null, signal: 'SIGKILL' }), 137);
+  assert.equal(exitStatus({ status: 7, signal: null }), 7);
+  assert.equal(exitStatus({ status: 0, signal: null }), 0);
+  // A name this platform does not know is still a failure, never 0.
+  assert.equal(exitStatus({ status: null, signal: 'SIGNOTREAL' }), 128);
+  // A result that reports none of them (a test fake) is 0.
+  assert.equal(exitStatus({}), 0);
+  assert.equal(exitStatus(undefined), 0);
+});
+
+test('exitStatus of a real child killed by a signal', () => {
+  const r = spawnSync('sh', ['-c', 'kill -TERM $$'], { stdio: 'ignore' });
+  assert.equal(r.signal, 'SIGTERM');
+  assert.equal(exitStatus(r), 143);
+});
+
+test('showText returns the more fallback status, and a failed fallback is 127 with one stderr line', () => {
+  const dir = mkTempDir('bl-more-');
+  writeFileSync(join(dir, 'more'), '#!/bin/sh\nexit 7\n');
+  chmodSync(join(dir, 'more'), 0o755);
+  const seven = withEnv({ PATH: dir, PAGER: undefined }, () =>
+    withTerminal({ tty: true, rows: 10 }, () => showText(tall)),
+  );
+  assert.equal(exitStatus(seven.result), 7);
+
+  const errors = [];
+  const error = console.error;
+  console.error = (line) => errors.push(line);
+  try {
+    const none = withEnv({ PATH: mkTempDir('bl-empty-path-'), PAGER: undefined }, () =>
+      withTerminal({ tty: true, rows: 10 }, () => showText(tall)),
+    );
+    assert.equal(exitStatus(none.result), 127);
+  } finally {
+    console.error = error;
+  }
+  assert.equal(errors.length, 1, errors.join('\n'));
+  assert.match(errors[0], /^bl: could not start more: /);
 });
 
 test('runEditor runs VISUAL with its arguments and a path with a space and a quote intact', () => {

@@ -5,7 +5,7 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { showText } from './config.js';
+import { exitStatus, showText } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -17,5 +17,5 @@ Prints the backlog system reference (AGENTS.md) for agents and humans.`);
     process.exit(0);
   }
 
-  showText(readFileSync(join(__dirname, 'AGENTS.md'), 'utf8'));
+  process.exitCode = exitStatus(showText(readFileSync(join(__dirname, 'AGENTS.md'), 'utf8')));
 }

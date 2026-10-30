@@ -11,7 +11,7 @@
  *   bl list --epic <E-id>       An epic's features, with their progress
  */
 
-import { loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
+import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
 import { readAllStories, readBacklogOrder, activeWorktreesByStory } from './story.js';
 import { filterFromArgs, filterStories, storyThemes } from './filter.js';
 
@@ -135,5 +135,5 @@ Filters combine: every one given must match.`);
     summary,
   ];
 
-  showText(output.join('\n') + '\n');
+  process.exitCode = exitStatus(showText(output.join('\n') + '\n'));
 }

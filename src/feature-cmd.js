@@ -1140,7 +1140,8 @@ export async function cmdWorkon(args, config, feature) {
   });
   recordFeatureTokens(feature, cfg);
   if (!status) info(implementNextSteps(feature.id));
-  process.exit(status ?? 0);
+  // launchSession returns exitStatus of the agent: a kill is nonzero.
+  process.exit(status);
 }
 
 // ---------------------------------------------------------------------------

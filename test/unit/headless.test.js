@@ -643,6 +643,44 @@ test('runHeadlessSession maps a spawn error and a non-zero exit to isError', () 
   }
 });
 
+test('runHeadlessSession counts an agent killed by a signal as a failed session, for Claude and Codex (F-70 D3)', () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const cfg = loadConfig({ backlogRoot: dir });
+    // What spawnSync returns for a child killed by SIGKILL; the output looks like a success.
+    const run = (cmd) => ({
+      status: null,
+      signal: 'SIGKILL',
+      stdout:
+        cmd === 'claude'
+          ? JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok' })
+          : JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }),
+    });
+    const killed = (Base) =>
+      new (class extends Base {
+        spawn(opts) {
+          return super.spawn({ ...opts, run, ensureApprovedCommandPrefixes: () => ({ added: 0 }) });
+        }
+      })();
+    for (const Provider of [ClaudeProvider, CodexProvider]) {
+      const r = runHeadlessSession({
+        mode: 'review',
+        parsed: { id: 'F-1' },
+        prompt: 'p',
+        worktreePath: mkTempDir('bl-wt-'),
+        config: cfg,
+        roostDir: cfg.roostDir,
+        backlogRoot: dir,
+        provider: killed(Provider),
+      });
+      assert.equal(r.isError, true, Provider.name);
+      assert.equal(r.status, 137, Provider.name);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('parseClaudeJsonResult surfaces permission denials, and runHeadlessSession passes them through', () => {
   const r = parseClaudeJsonResult(
     JSON.stringify({

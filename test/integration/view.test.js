@@ -10,8 +10,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
-import { chmodSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { chmodSync, existsSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'fs';
+import { delimiter, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
@@ -229,6 +229,104 @@ test('view_cleanup_failure_preserves_primary_outcome_and_reports_retained_path',
       assert.equal(existsSync(kept[1]), true, 'the reported directory is the one left behind');
     });
   }
+});
+
+/** An executable `#!/bin/sh` script `name` in `dir` with `body`. */
+function script(dir, name, body) {
+  const bin = join(dir, name);
+  writeFileSync(bin, `#!/bin/sh\n${body}\n`);
+  chmodSync(bin, 0o755);
+  return bin;
+}
+
+/**
+ * A PATH directory holding only what bin/bl needs to start (node, readlink, dirname) and
+ * `extra` scripts, so `less` and `more` are missing unless a test adds them.
+ * @param {Record<string, string>} extra — script name → body
+ */
+function barePath(extra = {}) {
+  const dir = mkTempDir('bl-view-path-');
+  symlinkSync(process.execPath, join(dir, 'node'));
+  for (const tool of ['readlink', 'dirname']) {
+    const found = process.env.PATH.split(delimiter)
+      .map((d) => join(d, tool))
+      .find((p) => existsSync(p));
+    symlinkSync(found, join(dir, tool));
+  }
+  for (const [name, body] of Object.entries(extra)) script(dir, name, body);
+  return dir;
+}
+
+test('view_primary_and_fallback_failures_exit_nonzero', async (t) => {
+  const tall = (dir) => {
+    const real = join(dir, 'stories', 'S1', 'index.md');
+    writeFileSync(real, readFileSync(real, 'utf8') + Array.from({ length: 40 }, (_, i) => `line ${i}\n`).join(''));
+  };
+  const tools = mkTempDir('bl-view-tools-');
+  const killed = script(tools, 'killed', 'kill -TERM $$');
+
+  await t.test('an editor missing from PATH', () => {
+    const r = bl(['view', 'S-1'], backlog(), {
+      ...tty(),
+      VISUAL: 'no-such-editor-bl-test',
+      TMPDIR: mkTempDir('bl-v-'),
+    });
+    assert.equal(r.status, 127, r.stderr);
+    assert.match(r.stderr, /no-such-editor-bl-test/);
+  });
+
+  await t.test('an editor killed by a signal', () => {
+    const r = bl(['view', 'S-1'], backlog(), { ...tty(), VISUAL: killed, TMPDIR: mkTempDir('bl-v-') });
+    assert.equal(r.signal, null);
+    assert.equal(r.status, 143, r.stderr);
+    // Through the shell, which reports the kill and exits 128 + 15 itself.
+    assert.match(r.stderr, /Terminated/);
+  });
+
+  // The copy fails (`chmod`), so bl pages the file; it is taller than the terminal.
+  await t.test('a PAGER killed by a signal', () => {
+    const dir = backlog();
+    tall(dir);
+    const r = bl(['view', 'S-1'], dir, { ...tty('chmod'), PAGER: killed });
+    assert.equal(r.status, 143, r.stderr);
+    // Through the shell, which reports the kill and exits 128 + 15 itself.
+    assert.match(r.stderr, /Terminated/);
+  });
+
+  await t.test("less missing, the more fallback's exit 7 is bl's", () => {
+    const dir = backlog();
+    tall(dir);
+    const PATH = barePath({ more: 'cat > /dev/null; exit 7' });
+    const r = bl(['view', 'S-1'], dir, { ...tty('chmod'), PAGER: undefined, PATH });
+    assert.equal(r.status, 7, r.stderr);
+  });
+
+  await t.test('less missing, the more fallback killed by a signal', () => {
+    const dir = backlog();
+    tall(dir);
+    const PATH = barePath({ more: 'kill -TERM $$' });
+    const r = bl(['view', 'S-1'], dir, { ...tty('chmod'), PAGER: undefined, PATH });
+    assert.equal(r.status, 143, r.stderr);
+    assert.match(r.stderr, /bl: more was killed by SIGTERM/);
+  });
+
+  await t.test('less and more both missing', () => {
+    const dir = backlog();
+    tall(dir);
+    const r = bl(['view', 'S-1'], dir, { ...tty('chmod'), PAGER: undefined, PATH: barePath() });
+    assert.equal(r.status, 127, r.stderr);
+    assert.match(r.stderr, /bl: could not start more: /);
+  });
+
+  // The paging verbs exit with the shared function's status the same way. bl agents pages
+  // AGENTS.md, far taller than a terminal.
+  await t.test('bl agents with a PAGER killed by a signal, and with the more fallback exiting 7', () => {
+    const dir = backlog();
+    const a = bl(['agents'], dir, { ...tty(), PAGER: killed });
+    assert.equal(a.status, 143, a.stderr);
+    const b = bl(['agents'], dir, { ...tty(), PAGER: undefined, PATH: barePath({ more: 'cat > /dev/null; exit 7' }) });
+    assert.equal(b.status, 7, b.stderr);
+  });
 });
 
 test('bl view --help names the editor chain, the read-only copy, the wait flag and redirection', () => {
