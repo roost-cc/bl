@@ -159,6 +159,56 @@ console.log(JSON.stringify({
   }
 });
 
+// Every 'pipe' descriptor is a file and comes back in `output`, after stderr
+// too (F-70 review r1, spawnSyncFiles_extra_pipe_descriptors_use_files).
+test('spawnSyncFiles_extra_pipe_descriptors_use_files', () => {
+  // The child reports, per descriptor 0..4, whether it is a file, and writes
+  // `fd<n>` to each writable one it was given.
+  const probe = `const fs = require('fs');
+const kinds = [];
+for (let fd = 0; fd < 5; fd++) {
+  let kind = 'closed';
+  try { kind = fs.fstatSync(fd).isFile() ? 'file' : 'other'; } catch {}
+  kinds.push(kind);
+}
+for (let fd = 3; fd < 5; fd++) { try { fs.writeSync(fd, 'fd' + fd); } catch {} }
+fs.writeSync(1, JSON.stringify(kinds));`;
+  const cases = [
+    { name: 'default stdio', stdio: undefined, kinds: ['file', 'file', 'file'], output: [null, true, ''] },
+    { name: "string 'pipe'", stdio: 'pipe', kinds: ['file', 'file', 'file'], output: [null, true, ''] },
+    { name: 'short array', stdio: ['ignore'], kinds: ['other', 'file', 'file'], output: [null, true, ''] },
+    {
+      name: 'extended array, pipe after stderr',
+      stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+      kinds: ['other', 'file', 'file', 'file'],
+      output: [null, true, '', 'fd3'],
+    },
+    {
+      name: "extended array, 'overlapped' and a gap",
+      stdio: ['pipe', 'pipe', 'ignore', undefined, 'overlapped'],
+      kinds: ['file', 'file', 'other', 'other', 'file'],
+      output: [null, true, null, null, 'fd4'],
+    },
+  ];
+  for (const c of cases) {
+    const r = spawnSyncFiles(process.execPath, ['-e', probe], { encoding: 'utf8', stdio: c.stdio, timeout: 10_000 });
+    assert.equal(r.status, 0, `${c.name}: ${r.stderr}`);
+    const kinds = JSON.parse(r.stdout);
+    for (const [fd, kind] of c.kinds.entries()) {
+      // 'other' is a passthrough ('ignore' is /dev/null, a gap is closed).
+      if (kind === 'file') assert.equal(kinds[fd], 'file', `${c.name}: fd ${fd} is ${kinds[fd]}`);
+      else assert.notEqual(kinds[fd], 'file', `${c.name}: fd ${fd} is a file`);
+    }
+    assert.equal(r.output.length, c.output.length, `${c.name}: output ${JSON.stringify(r.output)}`);
+    for (const [i, want] of c.output.entries()) {
+      if (want === true) assert.equal(r.output[i], r.stdout, `${c.name}: output[${i}]`);
+      else assert.equal(r.output[i], want, `${c.name}: output[${i}]`);
+    }
+    assert.equal(r.stderr, c.output[2], `${c.name}: stderr`);
+    assert.deepEqual(leftovers(), [], c.name);
+  }
+});
+
 test('the (command, undefined, options) form keeps its options, as spawnSync does', () => {
   const r = spawnSyncFiles('cat', undefined, { input: 'kept', encoding: 'utf8' });
   assert.equal(r.status, 0);

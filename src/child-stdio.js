@@ -29,8 +29,9 @@ import { join } from 'path';
  * - `options.input` (string, Buffer or other ArrayBufferView) is written to a
  *   file that becomes the child's stdin. A `'pipe'` stdin without `input` is an
  *   empty file: the child reads EOF, as with `spawnSync`.
- * - Each of stdout and stderr that `options.stdio` leaves `'pipe'` (the
- *   default) is a file, read back after the child exits and decoded per
+ * - Every other descriptor that `options.stdio` leaves `'pipe'` (stdout and
+ *   stderr by default, and any after them) is a file, read back after the
+ *   child exits into `output[i]` (and `stdout`, `stderr`) and decoded per
  *   `options.encoding`; without one it is a Buffer, as `spawnSync` returns it.
  *   An uncaptured stream is `null`.
  * - `'inherit'`, `'ignore'`, descriptors and streams pass through untouched.
@@ -64,13 +65,14 @@ export function spawnSyncFiles(command, args, options) {
   };
 
   try {
-    const captured = [null, null, null];
+    const captured = stdio.map(() => null);
     if (stdio[0] === 'pipe') {
       stdio[0] = fileFor('stdin', 'r', stdinBytes(input, opts.encoding)).fd;
     }
-    for (const i of [1, 2]) {
+    for (let i = 1; i < stdio.length; i++) {
       if (stdio[i] !== 'pipe') continue;
-      const file = fileFor(i === 1 ? 'stdout' : 'stderr', 'w');
+      // A pipe after stderr is two-way, so its file is opened for both.
+      const file = i < 3 ? fileFor(i === 1 ? 'stdout' : 'stderr', 'w') : fileFor(`fd${i}`, 'w+');
       stdio[i] = file.fd;
       captured[i] = file.path;
     }
@@ -86,9 +88,10 @@ export function spawnSyncFiles(command, args, options) {
       const enc = opts.encoding;
       return enc && enc !== 'buffer' ? bytes.toString(enc) : bytes;
     };
-    const stdout = decode(captured[1]);
-    const stderr = decode(captured[2]);
-    return { ...result, stdout, stderr, output: [null, stdout, stderr, ...result.output.slice(3)] };
+    const output = captured.map((path, i) =>
+      i === 0 ? null : path == null ? (result.output[i] ?? null) : decode(path),
+    );
+    return { ...result, stdout: output[1], stderr: output[2], output };
   } finally {
     for (const fd of opened) {
       try {
@@ -102,14 +105,15 @@ export function spawnSyncFiles(command, args, options) {
 }
 
 /**
- * `options.stdio` as an array of at least three entries, `null`/`undefined`
- * and `'overlapped'` read as `'pipe'` for the first three, as Node reads them.
+ * `options.stdio` as an array of at least three entries, as Node reads it:
+ * `'overlapped'` is `'pipe'` everywhere, and `null`/`undefined` is `'pipe'`
+ * for the first three and `'ignore'` after them.
  */
 function normalizeStdio(stdio) {
   const list = typeof stdio === 'string' ? [stdio, stdio, stdio] : Array.isArray(stdio) ? [...stdio] : [];
   while (list.length < 3) list.push(undefined);
-  for (let i = 0; i < 3; i++) {
-    if (list[i] == null || list[i] === 'overlapped') list[i] = 'pipe';
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] === 'overlapped' || (i < 3 && list[i] == null)) list[i] = 'pipe';
   }
   return list;
 }
