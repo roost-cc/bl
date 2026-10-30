@@ -5,8 +5,7 @@
 import { existsSync } from 'fs';
 import { dirname, relative } from 'path';
 import { spawnSync } from 'child_process';
-import { spawnSyncFiles } from './child-stdio.js';
-import { loadConfig, parseArgs, runPager, info, buildHighlightRegex, highlightMatches } from './config.js';
+import { loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
 import { readAllStories, readBacklogOrder, activeWorktreesByStory, storiesRoot } from './story.js';
 
 const STATUS_ORDER = {
@@ -120,16 +119,5 @@ stories in the same table format as bl list.`);
     `\n${filtered.length} matching stories`,
   ];
 
-  const totalLines = rows.length + 3;
-  const termRows = process.stdout.rows || 24;
-
-  if (process.stdout.isTTY && totalLines > termRows) {
-    const text = output.join('\n') + '\n';
-    const pagerResult = runPager(text);
-    if (pagerResult.error && !process.env.PAGER) {
-      spawnSyncFiles('more', { input: text, stdio: ['pipe', 'inherit', 'inherit'] });
-    }
-  } else {
-    for (const l of output) console.log(l);
-  }
+  showText(output.join('\n') + '\n');
 }

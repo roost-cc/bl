@@ -1769,6 +1769,49 @@ export function runPager(source) {
   }
 }
 
+/**
+ * The lines `text` fills on a terminal: a trailing newline ends the last line
+ * and adds none; empty text fills none.
+ * @param {string} text
+ */
+function lineCount(text) {
+  if (text === '') return 0;
+  const lines = text.split('\n').length;
+  return text.endsWith('\n') ? lines - 1 : lines;
+}
+
+/**
+ * Bl's one paging policy (S-1139): when stdout is a terminal and the text is
+ * taller than it (`process.stdout.rows`, 24 when unknown), page it with
+ * `runPager`, falling back to `more` when the pager cannot be launched and
+ * `$PAGER` is unset or blank; otherwise write it to stdout unchanged. `{ path }`
+ * shows that file byte for byte and pages it by descriptor, with no temp file
+ * (`bl view`'s fallback for when a temp file cannot be made). Returns the
+ * result of what ran last (`{ status: 0 }` when it printed); the caller owns
+ * the exit status (S-1110), so this never exits.
+ * @param {string | { path: string }} source
+ * @returns {{ status: number | null, signal?: string | null, error?: Error }}
+ */
+export function showText(source) {
+  const content = typeof source === 'string' ? source : readFileSync(source.path);
+  const lines = lineCount(typeof content === 'string' ? content : content.toString('utf8'));
+  if (!process.stdout.isTTY || lines <= (process.stdout.rows || 24)) {
+    process.stdout.write(content);
+    return { status: 0 };
+  }
+  const result = runPager(source);
+  if (!result.error || process.env.PAGER?.trim()) return result;
+  if (typeof source === 'string') {
+    return spawnSyncFiles('more', [], { input: source, stdio: ['pipe', 'inherit', 'inherit'] });
+  }
+  const fd = openSync(source.path, 'r');
+  try {
+    return spawnSyncFiles('more', [], { stdio: [fd, 'inherit', 'inherit'] });
+  } finally {
+    closeSync(fd);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------

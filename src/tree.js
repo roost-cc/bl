@@ -22,12 +22,11 @@
  */
 
 import { readFileSync } from 'fs';
-import { spawnSyncFiles } from './child-stdio.js';
 import {
   loadConfig,
   parseFrontmatter,
   parseArgs,
-  runPager,
+  showText,
   info,
   highlightMatches,
   colorEnabled,
@@ -345,17 +344,5 @@ Notes:
     output = highlightMatches(output, new RegExp(`\\b(?:${alt})\\b`, 'g'));
   }
 
-  const termRows = process.stdout.rows || 24;
-  const lineCount = output.split('\n').length;
-  if (process.stdout.isTTY && lineCount > termRows) {
-    const result = runPager(output);
-    if (result.error && !process.env.PAGER) {
-      spawnSyncFiles('more', {
-        input: output,
-        stdio: ['pipe', 'inherit', 'inherit'],
-      });
-    }
-  } else {
-    process.stdout.write(output);
-  }
+  showText(output);
 }
