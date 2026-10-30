@@ -674,9 +674,12 @@ export function runHeadlessSession({
   usageStep = null,
   logCommand = null,
   model = null,
+  run = undefined,
   provider: providerOverride = null,
 }) {
-  // `provider` is a test seam; production resolves it from `agent`.
+  // `provider` is a test seam; production resolves it from `agent`. `run`,
+  // when given, replaces the adapter's `spawnSync` for the agent itself: `bl
+  // run` passes one that starts it in a user systemd scope (F-70 D4).
   const provider = providerOverride ?? getProvider(agent);
   const cwd = unitDir ?? worktreePath;
   if (typeof provider.supportsHeadless !== 'function' || !provider.supportsHeadless()) {
@@ -761,6 +764,7 @@ export function runHeadlessSession({
       // The configuration's own model, which the walk always passes (F-64
       // D3); no implementing default, so a review never runs on it.
       model: model == null ? null : checkModel(model, 'model'),
+      ...(run ? { run } : {}),
     });
   } finally {
     // Only the lock this call wrote, and only while it is still ours.

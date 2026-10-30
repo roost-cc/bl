@@ -504,7 +504,8 @@ test('the test gate asks the runner for merged streams', async () => {
     })(runner.shell);
     await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.ok(opts.length > 0);
-    for (const o of opts) assert.deepEqual(o, { mergeStreams: true });
+    // No scope: this runner has no scope methods (F-70 D4).
+    for (const o of opts) assert.deepEqual(o, { mergeStreams: true, scope: null });
   } finally {
     cleanup();
   }
@@ -3288,6 +3289,239 @@ test('container cleanup snapshot and removal failures stop safely without maskin
         cleanup();
       }
     }
+  }
+});
+
+/**
+ * Give a fake runner the process-hygiene methods (F-70 D4) over a table of
+ * scopes. `leave` maps a prompt name (or `gate` for the test command) to the
+ * processes that step leaves in its scope; `stale` are scopes of a dead bl,
+ * already in the table; `stopFails` makes every stop fail.
+ */
+function withScopes(runner, { available = true, leave = {}, stale = [], stopFails = false } = {}) {
+  const table = new Map(stale.map((s) => [s.unit, s.procs]));
+  const stopped = [];
+  const scopes = [];
+  const probes = [];
+  const staleAsked = [];
+  return {
+    ...runner,
+    session(o) {
+      scopes.push(o.scope ?? null);
+      const r = runner.session(o);
+      if (o.scope && leave[o.promptName]) table.set(o.scope, leave[o.promptName]);
+      return r;
+    },
+    shell(cmd, cwd, opts) {
+      const r = runner.shell(cmd, cwd, opts);
+      if (cmd === 'npm test') scopes.push(opts?.scope ?? null);
+      if (cmd === 'npm test' && opts?.scope && leave.gate) table.set(opts.scope, leave.gate);
+      return r;
+    },
+    scopeAvailable() {
+      probes.push(1);
+      return available ? { ok: true } : { ok: false, why: 'no user systemd manager' };
+    },
+    scopeProcesses(unit) {
+      return table.get(unit) ?? [];
+    },
+    stopScope(unit) {
+      stopped.push(unit);
+      if (stopFails) return { ok: false, output: 'Failed to stop unit: access denied' };
+      table.delete(unit);
+      return { ok: true };
+    },
+    staleScopes(unitId) {
+      staleAsked.push(unitId);
+      return stale.map((s) => s.unit).filter((u) => table.has(u));
+    },
+    stopped,
+    scopes,
+    probes,
+    staleAsked,
+  };
+}
+
+const LEFT = [{ pid: 4242, command: 'node --test test/unit/bash-guard.test.js' }];
+
+test('processes a session leaves in its scope are stopped and recorded before its containers are removed', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = withContainers(withScopes(fakeRunner({ dir, feature }), { leave: { 'review-correctness': LEFT } }), {
+      during: { 'review-correctness': [{ id: 'ggg', name: 'minio-in-memory', compose: false }] },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean', JSON.stringify(state.history.slice(-4)));
+    // Every headless session and every gate command ran in a scope of its own.
+    assert.ok(runner.scopes.length > 0);
+    for (const s of runner.scopes) assert.match(s, /^bl-f-1-\d+-\d+$/);
+    assert.equal(new Set(runner.scopes).size, runner.scopes.length);
+    // One entry per correctness pass (one a round); scopes already gone add none.
+    const passes = runner.calls.filter((c) => c.prompt === 'review-correctness').length;
+    const hygiene = state.history.filter((h) => h.step === 'hygiene:processes');
+    assert.ok(passes >= 1);
+    assert.equal(hygiene.length, passes);
+    for (const h of hygiene) {
+      assert.ok(h.ok);
+      assert.equal(h.note, `stopped 1 process left by review:correctness: 4242 ${LEFT[0].command}`);
+    }
+    assert.equal(runner.stopped.length, passes);
+    const at = (step) => state.history.findIndex((h) => h.step === step);
+    assert.ok(at('hygiene:processes') < at('hygiene:containers'), 'processes before containers');
+  } finally {
+    cleanup();
+  }
+});
+
+test("the test gate's command runs in a scope, and what it leaves is stopped", async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = withScopes(fakeRunner({ dir, feature }), { leave: { gate: LEFT } });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    const notes = state.history.filter((h) => h.step === 'hygiene:processes').map((h) => h.note);
+    assert.ok(notes.length >= 1);
+    assert.ok(notes.every((n) => /^stopped 1 process left by test gate: 4242 /.test(n)));
+  } finally {
+    cleanup();
+  }
+});
+
+test('a scope stop that fails escalates with the processes and the systemctl command, whether or not the step threw', async () => {
+  for (const stepThrows of [false, true]) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const runner = withScopes(fakeRunner({ dir, feature }), {
+        leave: { 'review-correctness': LEFT },
+        stopFails: true,
+      });
+      const session = runner.session;
+      runner.session = (o) => {
+        const r = session(o);
+        if (stepThrows && o.promptName === 'review-correctness') throw new Error('agent crashed');
+        return r;
+      };
+      if (stepThrows) {
+        await assert.rejects(runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } }), /agent crashed/);
+      } else {
+        const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+        assert.equal(state.status, 'escalated');
+        assert.match(state.lastError, /process cleanup after review:correctness failed/);
+      }
+      const saved = loadRunState(config, 'F-1');
+      assert.equal(saved.status, 'escalated');
+      const failed = saved.history.find((h) => h.step === 'hygiene:processes');
+      assert.equal(failed.ok, false);
+      assert.match(failed.note, /could not stop 1 process left by review:correctness: 4242 node --test/);
+      const text = readFileSync(feature.indexPath, 'utf8');
+      assert.match(text, /`systemctl --user stop bl-f-1-\d+-\d+\.scope` \(Failed to stop unit: access denied\)/);
+      assert.match(text, /4242 node --test test\/unit\/bash-guard\.test\.js/);
+      assert.ok(!runner.calls.some((x) => x.prompt === 'review-failure-paths'), 'no step after it');
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+test('a step that throws still has its scope stopped, and its error propagates', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = withScopes(fakeRunner({ dir, feature }), { leave: { 'review-correctness': LEFT } });
+    const session = runner.session;
+    let scope = null;
+    runner.session = (o) => {
+      const r = session(o);
+      if (o.promptName === 'review-correctness') {
+        scope = o.scope;
+        throw new Error('agent crashed');
+      }
+      return r;
+    };
+    await assert.rejects(runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } }), /agent crashed/);
+    assert.ok(scope);
+    assert.deepEqual(runner.stopped, [scope]);
+    const saved = loadRunState(config, 'F-1');
+    assert.ok(saved.history.some((h) => h.step === 'hygiene:processes' && h.ok && h.note.includes('4242')));
+  } finally {
+    cleanup();
+  }
+});
+
+test('a runner without scope methods runs every step unscoped and records no process hygiene', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const base = fakeRunner({ dir, feature });
+    const scopes = [];
+    const session = base.session;
+    base.session = (o) => {
+      scopes.push(o.scope);
+      return session(o);
+    };
+    const state = await runFeature({ feature, config, prep, runner: base, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    assert.ok(scopes.length > 0);
+    assert.ok(scopes.every((s) => s == null));
+    assert.ok(!state.history.some((h) => h.step === 'hygiene:processes'));
+  } finally {
+    cleanup();
+  }
+});
+
+test('without user systemd the run records once that process hygiene is unavailable, and stops nothing', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = withScopes(fakeRunner({ dir, feature }), {
+      available: false,
+      leave: { 'review-correctness': LEFT, gate: LEFT },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    const hygiene = state.history.filter((h) => h.step === 'hygiene:processes');
+    assert.equal(hygiene.length, 1);
+    assert.equal(hygiene[0].ok, true);
+    assert.match(hygiene[0].note, /process hygiene unavailable: no user systemd manager; .*no process is stopped/);
+    assert.equal(runner.probes.length, 1, 'probed once per run');
+    assert.deepEqual(runner.stopped, []);
+    assert.ok(
+      runner.scopes.every((s) => s == null),
+      'every step ran unscoped',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('scopes a dead bl left are stopped at run start, at --resume and by bl review', async () => {
+  const stale = [{ unit: 'bl-f-1-999999-2', procs: [{ pid: 5151, command: 'codex-linux-sandbox node --test' }] }];
+  const entries = (state) => state.history.filter((h) => h.step === 'hygiene:processes');
+  for (const opts of [{}, { resume: true }]) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const runner = withScopes(fakeRunner({ dir, feature }), { stale });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2, ...opts } });
+      assert.equal(state.status, 'clean');
+      assert.deepEqual(runner.staleAsked, ['F-1']);
+      assert.deepEqual(runner.stopped, ['bl-f-1-999999-2']);
+      const [first] = entries(state);
+      assert.equal(
+        first.note,
+        'stopped 1 process left by an earlier bl that is no longer running: 5151 codex-linux-sandbox node --test',
+      );
+      // It comes before the first step.
+      const at = state.history.indexOf(first);
+      assert.ok(state.history.slice(0, at).every((h) => h.step === 'setup'));
+    } finally {
+      cleanup();
+    }
+  }
+  const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
+  try {
+    const runner = withScopes(fakeRunner({ dir, feature }), { stale });
+    await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
+    assert.deepEqual(runner.stopped, ['bl-f-1-999999-2']);
+    assert.match(entries(loadRunState(config, 'F-1'))[0].note, /left by an earlier bl that is no longer running: 5151/);
+  } finally {
+    cleanup();
   }
 });
 

@@ -91,6 +91,7 @@ import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
 import { hasOriginRemote, pushBacklog } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt } from './test-excerpt.js';
+import * as processScope from './process-scope.js';
 import { regenerateConflicts, regeneratePlugins } from './regenerate.js';
 
 export { liveLockHolder };
@@ -521,6 +522,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       usageIndexPath,
       tokensStep = null,
       model = undefined,
+      scope = null,
     }) {
       const base = loadPrompt(promptName, vars, { agent, config });
       const prompt = extraPrompt ? `${base}\n\n## Additional instructions from the operator\n\n${extraPrompt}\n` : base;
@@ -565,6 +567,8 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         usageStep: tokensStep,
         logCommand: `feature ${mode}`,
         model,
+        // The agent and all it starts live in the step's scope (F-70 D4).
+        run: scope ? processScope.scopedSpawn(scope) : undefined,
       });
       return {
         ok: !r.isError,
@@ -576,14 +580,15 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         refusal: r.refusal ?? null,
       };
     },
-    shell(cmd, cwd, { mergeStreams = false } = {}) {
-      if (mergeStreams) return shellMerged(cmd, cwd);
-      const r = spawnSync(cmd, {
+    /** `scope`: run `cmd` as `sh -c <cmd>` inside that user systemd scope (F-70 D4). */
+    shell(cmd, cwd, { mergeStreams = false, scope = null } = {}) {
+      if (mergeStreams) return shellMerged(cmd, cwd, { scope });
+      const r = spawnShell(cmd, scope, {
         cwd,
-        shell: true,
         encoding: 'utf8',
         env: { CI: 'true', ...process.env },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdout: 'pipe',
+        stderr: 'pipe',
         maxBuffer: 64 * 1024 * 1024,
       });
       return {
@@ -625,6 +630,21 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         timeout: 60_000,
       });
       return { status: r.error ? 127 : (r.status ?? 1), output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    },
+    // Process hygiene (F-70 D4, src/process-scope.js). A runner without these
+    // methods (the unit tests' fake) skips it, as one without listContainers
+    // skips the container cleanup.
+    scopeAvailable() {
+      return processScope.scopeAvailable();
+    },
+    scopeProcesses(unit) {
+      return processScope.scopeProcesses(unit);
+    },
+    stopScope(unit) {
+      return processScope.stopScope(unit);
+    },
+    staleScopes(unitId) {
+      return processScope.staleScopes(unitId);
     },
     notify(label) {
       renameTmuxWindow(label);
@@ -899,6 +919,9 @@ export class RunStoppedError extends Error {
 
 export class ContainerCleanupError extends RunStoppedError {}
 
+/** A step's processes could not be stopped (F-70 D4). */
+export class ProcessCleanupError extends RunStoppedError {}
+
 /** The agent refused for a usage limit the loop could not wait out. */
 export class AgentUnavailableError extends RunStoppedError {}
 
@@ -949,19 +972,175 @@ function removeFreshContainers(ctx, label, before) {
   return null;
 }
 
+/** The runner methods process hygiene needs (F-70 D4); a runner without them skips it. */
+const SCOPE_METHODS = ['scopeAvailable', 'scopeProcesses', 'stopScope', 'staleScopes'];
+
+/** Scope names are numbered per bl process, so two units' runs in one process never share one. */
+let scopeCount = 0;
+
+/**
+ * Whether this run's steps run in user systemd scopes. The runner's probe is
+ * read once per context; when it fails, the run records one
+ * `hygiene:processes` entry (`ok: true`) and one log line saying process
+ * hygiene is unavailable and why, and nothing is ever killed (decision D4-a).
+ */
+function processHygiene(ctx) {
+  const { runner } = ctx;
+  if (!SCOPE_METHODS.every((m) => typeof runner[m] === 'function')) return false;
+  if (ctx.processHygiene !== undefined) return ctx.processHygiene;
+  let probe;
+  try {
+    probe = runner.scopeAvailable();
+  } catch (e) {
+    probe = { ok: false, why: describeThrown(e) };
+  }
+  const ok = probe?.ok === true;
+  ctx.processHygiene = ok;
+  if (!ok) {
+    const why = typeof probe?.why === 'string' && probe.why ? probe.why : 'the probe gave no reason';
+    const note = `process hygiene unavailable: ${why}; steps run unscoped and no process is stopped`;
+    record(ctx, { step: 'hygiene:processes', ok: true, note });
+    safeLog(runner, `  (${note})`);
+  }
+  return ok;
+}
+
+/**
+ * A new scope name for a command of the current step, or null when the step
+ * is not scoped (no hygiene, or outside `withProcessCleanup`). The step's
+ * cleanup stops every name handed out here.
+ */
+function newScope(ctx) {
+  if (!Array.isArray(ctx.scopes)) return null;
+  scopeCount += 1;
+  const unit = processScope.scopeUnitName(ctx.feature.id, scopeCount);
+  ctx.scopes.push(unit);
+  return unit;
+}
+
+/**
+ * Run `fn` with its commands in user systemd scopes (`newScope`), then stop
+ * every scope of the step still active and record what was left in it, as
+ * `withContainerCleanup` does for containers. Called inside
+ * `withContainerCleanup`, so processes are stopped before containers are
+ * listed: a hung test can hold a container.
+ *
+ * A stop that fails, or a scope still active after it, escalates the run: the
+ * processes may still be running and would collide with the next step. `fn`'s
+ * own error, when it threw, is rethrown; otherwise a ProcessCleanupError
+ * unwinds to runFeature / reviewFeature / integrateUnit.
+ */
+function withProcessCleanup(ctx, label, fn) {
+  if (!processHygiene(ctx)) return fn();
+  const outer = ctx.scopes;
+  ctx.scopes = [];
+  let result;
+  let thrown = null;
+  try {
+    result = fn();
+  } catch (e) {
+    thrown = { e };
+  }
+  const scopes = ctx.scopes;
+  ctx.scopes = outer;
+  const failure = removeLeftoverProcesses(ctx, label, scopes);
+  if (failure) finish(ctx, 'escalated', `process cleanup after ${label} failed`, failure);
+  if (thrown) throw thrown.e;
+  if (failure) throw new ProcessCleanupError(failure, ctx.state);
+  return result;
+}
+
+/**
+ * Stop each of `scopes` that still has processes, and record them in one
+ * `hygiene:processes` entry and one log line. A scope already gone means none
+ * were left: no entry. Returns why a stop failed (the details for the
+ * escalation), or null. Never throws.
+ */
+function removeLeftoverProcesses(ctx, label, scopes) {
+  const { runner } = ctx;
+  const stopped = [];
+  const failed = [];
+  for (const unit of scopes) {
+    let procs;
+    try {
+      procs = runner.scopeProcesses(unit);
+    } catch (e) {
+      procs = [{ pid: '?', command: `(could not list: ${describeThrown(e)})` }];
+    }
+    if (!Array.isArray(procs) || procs.length === 0) continue;
+    const named = procs.map((p) => `${p?.pid ?? '?'} ${p?.command ?? '?'}`);
+    let r;
+    try {
+      r = runner.stopScope(unit);
+    } catch (e) {
+      r = { ok: false, output: describeThrown(e) };
+    }
+    if (r?.ok === true) stopped.push(...named);
+    else failed.push({ unit, named, why: typeof r?.output === 'string' && r.output ? r.output : 'the stop failed' });
+  }
+  if (stopped.length === 0 && failed.length === 0) return null;
+  const left = [...stopped, ...failed.flatMap((f) => f.named)];
+  const count = `${left.length} process${left.length === 1 ? '' : 'es'}`;
+  const note = failed.length
+    ? `could not stop ${count} left by ${label}: ${left.join('; ')}`
+    : `stopped ${count} left by ${label}: ${left.join('; ')}`;
+  record(ctx, { step: 'hygiene:processes', ok: failed.length === 0, note });
+  safeLog(runner, `  (${note})`);
+  if (!failed.length) return null;
+  return [
+    `Processes left by ${label} may still be running. Stop them with:`,
+    '',
+    ...failed.flatMap((f) => [`- \`systemctl --user stop ${f.unit}.scope\` (${f.why}): ${f.named.join('; ')}`]),
+  ].join('\n');
+}
+
+/**
+ * Stop the scopes of this unit that a bl no longer running left behind (one
+ * that crashed or was killed mid-step), at `bl run` start and `--resume`, `bl
+ * review` and `bl merge`'s integration; recorded as a step's are. Throws
+ * ProcessCleanupError after escalating when a stop fails.
+ */
+function reapStaleScopes(ctx) {
+  if (!processHygiene(ctx)) return;
+  let stale;
+  try {
+    stale = ctx.runner.staleScopes(ctx.feature.id);
+  } catch (e) {
+    safeLog(ctx.runner, `  (could not list earlier bl runs' process scopes: ${describeThrown(e)})`);
+    return;
+  }
+  if (!Array.isArray(stale) || stale.length === 0) return;
+  const label = 'an earlier bl that is no longer running';
+  const failure = removeLeftoverProcesses(ctx, label, stale);
+  if (!failure) return;
+  finish(ctx, 'escalated', `process cleanup after ${label} failed`, failure);
+  throw new ProcessCleanupError(failure, ctx.state);
+}
+
+/**
+ * `spawnSync` of shell command `cmd`; with `scope`, as `sh -c <cmd>` inside
+ * that user systemd scope (F-70 D4). stdin is 'ignore'; `stdout` and
+ * `stderr` are the other two streams.
+ */
+function spawnShell(cmd, scope, { stdout, stderr, ...options }) {
+  if (!scope) return spawnSync(cmd, { ...options, shell: true, stdio: ['ignore', stdout, stderr] });
+  // Through the scope's files, so a leftover holding stdout cannot hang it.
+  return processScope.scopedSpawn(scope)('sh', ['-c', cmd], { ...options, stdio: ['ignore', stdout, stderr] });
+}
+
 /**
  * Run `cmd` with stdout and stderr on one file descriptor, so the output
  * keeps the order the command printed it: a pipe per stream would put every
  * stderr line after all of stdout, and a runner's error would land below its
  * teardown noise in the gate log. Returns the runner's `{ status, output }`.
  */
-export function shellMerged(cmd, cwd) {
+export function shellMerged(cmd, cwd, { scope = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'bl-gate-'));
   const file = join(dir, 'output');
   let fd = null;
   try {
     fd = openSync(file, 'a');
-    const r = spawnSync(cmd, { cwd, shell: true, env: { CI: 'true', ...process.env }, stdio: ['ignore', fd, fd] });
+    const r = spawnShell(cmd, scope, { cwd, env: { CI: 'true', ...process.env }, stdout: fd, stderr: fd });
     closeSync(fd);
     fd = null;
     const output = readFileSync(file, 'utf8');
@@ -1291,113 +1470,119 @@ function runSession(ctx, { step, mode, role = 'implement', promptName, vars, lab
   const { runner, prep, config, feature } = ctx;
   const unitDir = prepUnitDir(prep);
   // The session is recorded before its containers are cleaned, so a failed
-  // cleanup cannot hide what the session did.
-  return withContainerCleanup(ctx, step, () => {
-    const list = roleConfigurations(ctx, role);
-    const excluded = role === 'review' ? implementers(ctx) : [];
-    let waitedUntil = null;
-    for (;;) {
-      pruneOutList(ctx, runnerNow(runner).getTime());
-      // A fresh walk after a wait asks again: the reading before it is stale.
-      const asked = new Map();
-      for (const c of list) {
-        const name = configurationLabel(c);
-        const implemented = excluded.find((x) => sameConfiguration(x, c));
-        if (implemented) {
-          runner.log(
-            `  ${step}: skipping ${name}: it ran ${implemented.steps.join(', ')} in this run, and the reviewer is never the implementer`,
-          );
-          continue;
-        }
-        if (!runner.interactive) {
-          const out = outEntry(ctx, c);
-          const skip = out
-            ? `out ${out.until == null ? 'for the rest of the run' : `until ${localTime(out.until)}`} (${out.kind}: ${out.message})`
-            : !headlessAgent(c.agent)
-              ? 'its agent has no headless mode'
-              : null;
-          if (skip) {
-            runner.log(`  ${step}: skipping ${name}: ${skip}`);
+  // cleanup cannot hide what the session did. A headless session runs in a
+  // user systemd scope stopped afterwards (F-70 D4); an interactive one is
+  // the operator's.
+  const scoped = (fn) => (runner.interactive ? fn() : withProcessCleanup(ctx, step, fn));
+  return withContainerCleanup(ctx, step, () =>
+    scoped(() => {
+      const list = roleConfigurations(ctx, role);
+      const excluded = role === 'review' ? implementers(ctx) : [];
+      let waitedUntil = null;
+      for (;;) {
+        pruneOutList(ctx, runnerNow(runner).getTime());
+        // A fresh walk after a wait asks again: the reading before it is stale.
+        const asked = new Map();
+        for (const c of list) {
+          const name = configurationLabel(c);
+          const implemented = excluded.find((x) => sameConfiguration(x, c));
+          if (implemented) {
+            runner.log(
+              `  ${step}: skipping ${name}: it ran ${implemented.steps.join(', ')} in this run, and the reviewer is never the implementer`,
+            );
             continue;
           }
-          const reading = readCapacity(runner, c, asked);
-          if (reading.state === 'unavailable') {
-            const until = reading.until == null ? NaN : new Date(reading.until).getTime();
+          if (!runner.interactive) {
+            const out = outEntry(ctx, c);
+            const skip = out
+              ? `out ${out.until == null ? 'for the rest of the run' : `until ${localTime(out.until)}`} (${out.kind}: ${out.message})`
+              : !headlessAgent(c.agent)
+                ? 'its agent has no headless mode'
+                : null;
+            if (skip) {
+              runner.log(`  ${step}: skipping ${name}: ${skip}`);
+              continue;
+            }
+            const reading = readCapacity(runner, c, asked);
+            if (reading.state === 'unavailable') {
+              const until = reading.until == null ? NaN : new Date(reading.until).getTime();
+              markOut(ctx, {
+                step,
+                configuration: c,
+                kind: 'quota',
+                scope: reading.scope,
+                message: reading.message,
+                until: Number.isFinite(until) ? until + LIMIT_WAIT_MARGIN_MS : null,
+              });
+              continue;
+            }
+          }
+          const started = new Date().toISOString();
+          const r = runner.session({
+            mode,
+            agent: c.agent,
+            promptName,
+            vars: {
+              ...prep.baseVars,
+              unitDir,
+              changeAbsPath: changeFile(ctx),
+              changeRelPath: changeRelPath(ctx),
+              ...(typeof vars === 'function' ? vars(c) : vars),
+            },
+            worktreePath: prep.worktreePath,
+            unitDir,
+            config: prep.cfg ?? config,
+            parsed: prep.parsed,
+            label,
+            usageIndexPath: feature.indexPath,
+            tokensStep: tokensStepKey(step, ctx.state.round),
+            model: c.model ?? null,
+            scope: newScope(ctx),
+          });
+          // Usage first, on every spawn: the provider has already added it to the
+          // unit file, and the run state must agree even when the spawn was a
+          // refusal (marked out, waited out or escalated, all of which save it).
+          if (r?.usage) {
+            for (const k of Object.keys(ctx.state.usage)) ctx.state.usage[k] += r.usage[k] ?? 0;
+          }
+          if (r?.refusal && r.isError) {
+            const reset = r.refusal.resetsAt == null ? NaN : new Date(r.refusal.resetsAt).getTime();
             markOut(ctx, {
               step,
               configuration: c,
-              kind: 'quota',
-              scope: reading.scope,
-              message: reading.message,
-              until: Number.isFinite(until) ? until + LIMIT_WAIT_MARGIN_MS : null,
+              kind: r.refusal.kind,
+              scope: r.refusal.scope,
+              message: r.refusal.message,
+              until: Number.isFinite(reset) ? reset + LIMIT_WAIT_MARGIN_MS : null,
             });
             continue;
           }
-        }
-        const started = new Date().toISOString();
-        const r = runner.session({
-          mode,
-          agent: c.agent,
-          promptName,
-          vars: {
-            ...prep.baseVars,
-            unitDir,
-            changeAbsPath: changeFile(ctx),
-            changeRelPath: changeRelPath(ctx),
-            ...(typeof vars === 'function' ? vars(c) : vars),
-          },
-          worktreePath: prep.worktreePath,
-          unitDir,
-          config: prep.cfg ?? config,
-          parsed: prep.parsed,
-          label,
-          usageIndexPath: feature.indexPath,
-          tokensStep: tokensStepKey(step, ctx.state.round),
-          model: c.model ?? null,
-        });
-        // Usage first, on every spawn: the provider has already added it to the
-        // unit file, and the run state must agree even when the spawn was a
-        // refusal (marked out, waited out or escalated, all of which save it).
-        if (r?.usage) {
-          for (const k of Object.keys(ctx.state.usage)) ctx.state.usage[k] += r.usage[k] ?? 0;
-        }
-        if (r?.refusal && r.isError) {
-          const reset = r.refusal.resetsAt == null ? NaN : new Date(r.refusal.resetsAt).getTime();
-          markOut(ctx, {
+          // A denied tool does not fail the session (the agent sees a tool error and
+          // carries on), but the operator must see it in `bl status`.
+          const denials = Array.isArray(r.denials) ? r.denials : [];
+          // The agent's last line (DONE S-1, FIXED, UNRELATED: …, REVIEW pending …)
+          // is the cheapest diagnostic when a step goes wrong; keep it in history.
+          const said = lastLine(r.output);
+          const notes = [
+            r.error ?? (r.isError ? 'agent reported an error' : ''),
+            denials.length ? `denied: ${denials.join('; ')}` : '',
+            said ? `said: ${said.slice(0, 160)}` : '',
+          ];
+          record(ctx, {
             step,
-            configuration: c,
-            kind: r.refusal.kind,
-            scope: r.refusal.scope,
-            message: r.refusal.message,
-            until: Number.isFinite(reset) ? reset + LIMIT_WAIT_MARGIN_MS : null,
+            promptName,
+            startedAt: started,
+            agent: c.agent,
+            model: c.model ?? null,
+            ok: r.ok && denials.length === 0,
+            note: notes.filter(Boolean).join(' — '),
           });
-          continue;
+          return { ...r, configuration: { agent: c.agent, model: c.model ?? null } };
         }
-        // A denied tool does not fail the session (the agent sees a tool error and
-        // carries on), but the operator must see it in `bl status`.
-        const denials = Array.isArray(r.denials) ? r.denials : [];
-        // The agent's last line (DONE S-1, FIXED, UNRELATED: …, REVIEW pending …)
-        // is the cheapest diagnostic when a step goes wrong; keep it in history.
-        const said = lastLine(r.output);
-        const notes = [
-          r.error ?? (r.isError ? 'agent reported an error' : ''),
-          denials.length ? `denied: ${denials.join('; ')}` : '',
-          said ? `said: ${said.slice(0, 160)}` : '',
-        ];
-        record(ctx, {
-          step,
-          promptName,
-          startedAt: started,
-          agent: c.agent,
-          model: c.model ?? null,
-          ok: r.ok && denials.length === 0,
-          note: notes.filter(Boolean).join(' — '),
-        });
-        return { ...r, configuration: { agent: c.agent, model: c.model ?? null } };
+        waitedUntil = waitOrEscalate(ctx, { step, role, list, excluded, waitedUntil });
       }
-      waitedUntil = waitOrEscalate(ctx, { step, role, list, excluded, waitedUntil });
-    }
-  });
+    }),
+  );
 }
 
 // Added to the reset time the agent named: the limit lifts on the minute, and
@@ -1858,7 +2043,10 @@ function notRestored(ctx, wt, snap) {
 }
 
 function runTestGate(ctx) {
-  const gate = withContainerCleanup(ctx, 'test gate', () => runTestGateInner(ctx));
+  // The gate's test commands run in user systemd scopes too (decision D4-b).
+  const gate = withContainerCleanup(ctx, 'test gate', () =>
+    withProcessCleanup(ctx, 'test gate', () => runTestGateInner(ctx)),
+  );
   recordGateLine(ctx, gate);
   return gate;
 }
@@ -2509,7 +2697,7 @@ function runTestGateInner(ctx) {
       runner.log(`  ${t.repo} · test plugin ${name}: ${cmd}`);
       // Merged streams: an error printed on stderr stays next to the stdout
       // lines around it (runners without the option ignore it).
-      const r = runner.shell(cmd, t.worktreePath, { mergeStreams: true });
+      const r = runner.shell(cmd, t.worktreePath, { mergeStreams: true, scope: newScope(ctx) });
       const output = String(r.output ?? '');
       log += `── ${t.repo} · ${name}: ${cmd}\n${output}${output.endsWith('\n') || !output ? '' : '\n'}`;
       if (r.status !== 0) {
@@ -3207,6 +3395,7 @@ export function integrateUnit({ unit, config, prep, runner }) {
     const ctx = { feature: unit, config, prep, runner, state, resumeHint: `bl merge ${unit.id}`, repos: [] };
     clearUntimedOut(ctx);
     try {
+      reapStaleScopes(ctx);
       return integrateLocked(ctx);
     } catch (e) {
       return integrationThrew(ctx, e);
@@ -3893,6 +4082,7 @@ export async function reviewFeature({
     }
     let result;
     try {
+      reapStaleScopes(ctx);
       result = reviewRound(ctx, { reReview: fm.review_status === 'fixed', closing: owed && round >= maxRounds });
     } catch (e) {
       if (!(e instanceof RunStoppedError)) throw e;
@@ -4033,6 +4223,8 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     ok: true,
     note: `${prep.branchName} @ ${prep.worktreePath}${resumeNote || (opts.resume ? ' (resumed)' : '')}`,
   });
+  // What a crashed or killed bl left running for this unit (F-70 D4).
+  reapStaleScopes(ctx);
 
   // An escalation left open by a previous run (or an operator) blocks a
   // restart until it is cleared — that is the point of the section.

@@ -1364,6 +1364,28 @@ so a non-compose container started by anything else during the step (another
 feature run's test gate, a manual `docker run`) is removed too; set the opt-out
 when running loops side by side.
 
+Processes get the same hygiene (F-70 D4, `src/process-scope.js`). Every
+headless session `runSession` starts and every test-gate command runs in a user
+systemd scope (`systemd-run --user --scope --collect`), named
+`bl-<unit id, lowercased>-<bl pid>-<n>`. A scope's cgroup keeps every process
+the step started, whatever it did with `setsid` or reparenting. After the step,
+whether it succeeded, failed or threw, and before its containers are listed (a
+hung test can hold a container), each of its scopes still running is stopped
+with `systemctl --user stop`. What was in it (pid and command) goes into one
+`hygiene:processes` history entry and one log line. A scope that is already
+gone adds no entry. If a stop fails, or a scope is still active after it, the
+run escalates with the processes and the `systemctl --user stop <unit>.scope`
+to run. At `bl run` start and `--resume`, `bl review` and `bl merge`'s
+integration, the unit's scopes whose `bl` pid is dead (a crashed or killed
+`bl`'s leftovers) are stopped and recorded the same way. Interactive sessions
+are not scoped: the operator owns them. Without user systemd (macOS, a host or
+guest whose probe `systemd-run --user --scope --quiet --collect true` fails,
+`bl` inside a sandbox), steps run unscoped, the run records one
+`hygiene:processes` entry (`ok: true`) saying process hygiene is unavailable and
+why, and nothing is killed (decision D4-a: no fallback by working directory,
+which could kill the operator's editor or dev server). A runner without the
+scope methods (the unit tests' fake) skips the hygiene.
+
 The fix self-review's diff starts at the commit the last review saw
 (`reviewBaseSha` in the run state), or, when none is recorded (a session
 written by hand or by a run whose state is gone), at the commit the fix
