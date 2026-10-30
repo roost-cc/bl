@@ -3424,11 +3424,15 @@ them.
   Inside Codex's sandbox `shutdown(2)` is refused, so `input:` never reaches EOF and the call
   hangs, and a Node child on a socket gets dummy stdio: its output vanishes and the parent
   reads `""` from a child that exited 0. Non-Node children (`git`, `rg`) may keep `'pipe'`
-  for stdout and stderr: they work there. Tests start an asynchronous Node child with
+  for stdout and stderr: they work there. A synchronous call never leaves stdin `'pipe'`
+  (its default) either: Node ends it with the same refused `shutdown`, the call reports
+  `EPERM` from a child that succeeded, and `execFileSync`/`execSync` throw it. Give it
+  `stdio: ['ignore', 'pipe', 'pipe']`. A command whose output `bl` reads and that may be a
+  Node program (a configured forge op) goes through `spawnSyncFiles`. Tests start an asynchronous Node child with
   `spawnToFiles` (`test/helpers/spawn-files.js`) and watch its files; a live two-way
   protocol with a Node child (the fake `codex app-server`) uses `fs.readSync(0)` and
   `fs.writeSync(1)` in the child. `test/unit/child-stdio-guard.test.js` parses `src/` and
-  `test/` with `acorn` and fails on either shape at a `child_process` call.
+  `test/` with `acorn` and fails on each of these shapes at a `child_process` call.
 - Frontmatter is YAML (failsafe schema), read and written only by `parseFrontmatter` and
   `serializeFrontmatter` (see **Frontmatter is YAML**). Never read a frontmatter line with a
   regex or write one as text.
