@@ -18,9 +18,10 @@
  *     `worktreePathFor`.
  */
 
-import { existsSync, readFileSync, realpathSync } from 'fs';
+import { closeSync, existsSync, openSync, readFileSync, realpathSync } from 'fs';
 import { join, resolve, basename, dirname, relative, isAbsolute, sep } from 'path';
 import { spawnSync } from 'child_process';
+import { spawnSyncFiles } from './child-stdio.js';
 import { Document, LineCounter, Scalar, isMap, isScalar, parseDocument, visit } from 'yaml';
 import { getProvider, hasProvider, PROVIDER_NAMES } from './agents/index.js';
 import { sessionStackOf } from './session-stack.js';
@@ -1747,20 +1748,22 @@ export function findChange(branch, { config, repoPath, runOp = runForgeOp }) {
 /**
  * Run text through $PAGER exactly as set, through the shell (default `less`).
  * bl adds no flags of its own: how less behaves is the operator's `$LESS`.
+ * The text reaches the pager through a file (`spawnSyncFiles`, F-70 D1).
+ * `{ path }` pages that file as it is, on the pager's stdin, with no temp file:
+ * `bl view` falls back to it exactly when a temp file cannot be made.
+ * @param {string | { path: string }} source
  */
-export function runPager(text) {
-  const pager = process.env.PAGER?.trim();
-  if (pager) {
-    return spawnSync(pager, {
-      input: text,
-      stdio: ['pipe', 'inherit', 'inherit'],
-      shell: true,
-    });
+export function runPager(source) {
+  const fd = typeof source === 'string' ? null : openSync(source.path, 'r');
+  const opts =
+    fd == null ? { input: source, stdio: ['pipe', 'inherit', 'inherit'] } : { stdio: [fd, 'inherit', 'inherit'] };
+  try {
+    const pager = process.env.PAGER?.trim();
+    if (pager) return spawnSyncFiles(pager, { ...opts, shell: true });
+    return spawnSyncFiles('less', [], opts);
+  } finally {
+    if (fd != null) closeSync(fd);
   }
-  return spawnSync('less', [], {
-    input: text,
-    stdio: ['pipe', 'inherit', 'inherit'],
-  });
 }
 
 // ---------------------------------------------------------------------------

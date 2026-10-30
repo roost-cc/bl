@@ -22,7 +22,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { spawnSync } from 'child_process';
+import { spawnSyncFiles } from './child-stdio.js';
 import {
   loadConfig,
   parseFrontmatter,
@@ -350,7 +350,7 @@ Notes:
   if (process.stdout.isTTY && lineCount > termRows) {
     const result = runPager(output);
     if (result.error && !process.env.PAGER) {
-      spawnSync('more', {
+      spawnSyncFiles('more', {
         input: output,
         stdio: ['pipe', 'inherit', 'inherit'],
       });

@@ -3417,6 +3417,14 @@ them.
   approvals or inside another request. Without all three, use the standard format and its
   library, dependency or not. "It already exists" or "it is small" is not an argument; say
   what the standard format and its library fail to do here.
+- **A child's stdin text, and any captured stream of a Node child, go through files**
+  (F-70 D1): call `spawnSyncFiles` (`src/child-stdio.js`), a drop-in for `spawnSync`, never
+  `child_process` with an `input:` option or a `'pipe'` stream to a Node child
+  (`process.execPath`, `node`, `bl`). Node connects `'pipe'` and `input:` over a socketpair.
+  Inside Codex's sandbox `shutdown(2)` is refused, so `input:` never reaches EOF and the call
+  hangs, and a Node child on a socket gets dummy stdio: its output vanishes and the parent
+  reads `""` from a child that exited 0. Non-Node children (`git`, `rg`) may keep `'pipe'`
+  for stdout and stderr: they work there.
 - Frontmatter is YAML (failsafe schema), read and written only by `parseFrontmatter` and
   `serializeFrontmatter` (see **Frontmatter is YAML**). Never read a frontmatter line with a
   regex or write one as text.

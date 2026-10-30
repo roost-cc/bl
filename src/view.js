@@ -4,7 +4,7 @@
  * and is removed when the editor exits, so the real file cannot be touched.
  */
 
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { basename, dirname, join } from 'path';
 import { spawnSync } from 'child_process';
@@ -72,8 +72,8 @@ When the copy cannot be made, the file is paged instead ($PAGER → less → mor
   } catch (err) {
     if (tmp) removeCopy(tmp);
     console.error(`bl view: cannot make a read-only copy (${err.message}); paging instead`);
-    const content = readFileSync(indexPath, 'utf8');
-    const result = runPager(content);
+    // The file itself on the pager's stdin: a temp file is what just failed.
+    const result = runPager({ path: indexPath });
     if (result.error && !process.env.PAGER) {
       spawnSync('more', [indexPath], { stdio: 'inherit' });
     }

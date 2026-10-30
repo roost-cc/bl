@@ -4,7 +4,7 @@
 
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
-import { spawnSync } from 'child_process';
+import { spawnSyncFiles } from './child-stdio.js';
 import { fileURLToPath } from 'url';
 import { runPager } from './config.js';
 
@@ -26,7 +26,7 @@ Prints the backlog system reference (AGENTS.md) for agents and humans.`);
   if (process.stdout.isTTY && lines > termRows) {
     const pagerResult = runPager(content);
     if (pagerResult.error && !process.env.PAGER) {
-      spawnSync('more', {
+      spawnSyncFiles('more', {
         input: content,
         stdio: ['pipe', 'inherit', 'inherit'],
       });
