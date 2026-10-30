@@ -54,7 +54,8 @@ function isNodeCommand(node, aliases = new Set()) {
  * that is not an argument list (`spawnSync(cmd, { shell: true })`,
  * `execSync(cmd, opts)`). A lone identifier second argument is read as the
  * argument list, except for `exec` and `execSync`, which take none, and one
- * bound to an object literal.
+ * bound to options (an object literal, directly or through `a ? {…} : {…}`,
+ * `a && {…}` or another name).
  */
 function optionsArgument(name, args, bindings) {
   const isOptions = (a) => a != null && !/Function/.test(a.type) && a.type !== "ArrayExpression";
@@ -62,7 +63,7 @@ function optionsArgument(name, args, bindings) {
   const second = args[1];
   if (!isOptions(second)) return undefined;
   if (second.type !== "Identifier" || name === "exec" || name === "execSync") return second;
-  return resolve(second, bindings).some((v) => v.type === "ObjectExpression") ? second : undefined;
+  return optionObjects(second, bindings).length > 0 ? second : undefined;
 }
 
 /**
@@ -483,6 +484,58 @@ test("child_stdio_guard_indirect_options_and_extra_descriptors", () => {
     const found = childStdioViolations(c.src);
     assert.equal(found.length, c.hits, `${c.name}: ${JSON.stringify(found)}`);
   }
+});
+
+// A named options value reads the same in `(command, options)` as in
+// `(command, args, options)`, through conditionals, logicals, spreads and
+// aliases (F-70 review r2). `input`, `node` and `stdin` are the findings each
+// shape should give: input:, a piped Node child, a piped synchronous stdin
+// (`stdin` only on a synchronous call).
+const RESOLVED = [
+  { name: "conditional with input:", bind: `const o = f ? { input: 'x' } : { stdio: 'inherit' };`, input: true },
+  { name: "logical with input:", bind: `const o = f && { input: 'x' };`, input: true },
+  { name: "spread conditional with input:", bind: `const o = { ...(f ? { input: 'x' } : {}) };`, input: true },
+  { name: "alias of a conditional", bind: `const c = f ? { input: 'x' } : {}; const o = c;`, input: true },
+  { name: "spread of a named conditional", bind: `const c = f ? { input: 'x' } : {}; const o = { ...c };`, input: true },
+  {
+    name: "Node child, conditional piping",
+    cmd: "process.execPath",
+    bind: `const o = f ? { stdio: 'pipe' } : { stdio: 'inherit' };`,
+    node: true,
+    stdin: true,
+  },
+  {
+    name: "Node child, conditional on descriptors",
+    cmd: "BL_BIN",
+    bind: `const o = f ? { stdio: 'inherit' } : { stdio: [fd, fd, fd] };`,
+  },
+  { name: "logical with stdin ignored", bind: `const o = f && { stdio: ['ignore', 'pipe', 'pipe'] };` },
+  {
+    name: "conditional with stdin piped in one branch",
+    bind: `const o = f ? { stdio: 'pipe' } : { stdio: 'ignore' };`,
+    stdin: true,
+  },
+];
+
+test("child_stdio_guard_conditional_options_in_both_call_forms", () => {
+  const kinds = (found) =>
+    found.map(({ what }) => (what.includes("passes input:") ? "input" : what.includes("Node child") ? "node" : "stdin"));
+  for (const call of ["spawnSync", "execFileSync", "spawn", "execFile"]) {
+    for (const c of RESOLVED) {
+      const want = [
+        ...(c.input ? ["input"] : []),
+        ...(c.stdin && SYNC_CALLS.has(call) ? ["stdin"] : []),
+        ...(c.node ? ["node"] : []),
+      ];
+      for (const args of ["o", "[], o"]) {
+        const found = childStdioViolations(`${c.bind} ${call}(${c.cmd ?? "'cat'"}, ${args})`);
+        assert.deepEqual(kinds(found), want, `${call}(…, ${args}) ${c.name}: ${JSON.stringify(found)}`);
+      }
+    }
+  }
+  // A name bound only to argument lists stays the argument list.
+  assert.deepEqual(kinds(childStdioViolations(`const o = f ? ['a'] : ['b']; spawn('git', o)`)), []);
+  assert.deepEqual(kinds(childStdioViolations(`const o = f ? ['a'] : ['b']; spawnSync('git', o)`)), ["stdin"]);
 });
 
 test("guard: a finding names its line", () => {
