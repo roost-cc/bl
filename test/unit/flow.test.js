@@ -48,6 +48,37 @@ test('meets: a status meets itself and what it implies, on both types (F-66 A4)'
   assert.equal(flow.meets('story', 'wrong', 'wrong'), false);
 });
 
+test('openStatusesOf: what does not meet done, most implies first', () => {
+  const flow = loadFlow(FIXTURE_DIR);
+  assert.deepEqual(flow.openStatusesOf('story'), ['in_progress', 'refined', 'backlog']);
+  assert.deepEqual(flow.openStatusesOf('feature'), ['escalated', 'running', 'approved', 'refined', 'draft']);
+  assert.deepEqual(flow.openStatusesOf('task'), ['open']);
+});
+
+test("openStatusesOf: order is implies, not the file's; a tie keeps the file's order", () => {
+  const flow = fixture();
+  flow.types.story.statuses = {
+    done: { implies: ['in_progress', 'blocked', 'backlog'] },
+    backlog: { implies: [] },
+    in_progress: { implies: ['backlog'] },
+    blocked: { implies: ['backlog'] },
+    wontfix: { implies: ['done', 'in_progress', 'blocked', 'backlog'] },
+  };
+  const dir = backlogWith(flow);
+  assert.deepEqual(loadFlow(dir).openStatusesOf('story'), ['in_progress', 'blocked', 'backlog']);
+});
+
+test('meets: a status that is not a string meets nothing, though its text names one', () => {
+  const flow = loadFlow(FIXTURE_DIR);
+  for (const status of [['superseded'], ['done'], 7, true, null, undefined]) {
+    assert.equal(flow.meets('story', status, 'done'), false, JSON.stringify(status));
+  }
+});
+
+test('openStatusesOf: a type the flow lacks throws', () => {
+  assert.throws(() => loadFlow(FIXTURE_DIR).openStatusesOf('nope'), FlowError);
+});
+
 test('gatesOf names each gate with the verbs that check it', () => {
   const flow = loadFlow(FIXTURE_DIR);
   const gates = { run: ['run', 'implement'], merge: ['merge'] };

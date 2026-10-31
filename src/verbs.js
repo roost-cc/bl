@@ -4,7 +4,8 @@
  *   bl run|implement|review|merge|refine|status|approve|done <id...>
  *
  * Each id resolves to a story, a feature or a component (targets.js), and the verb
- * calls that kind's handler (F-35 Design §1).
+ * calls that kind's handler (F-35 Design §1). `bl status` with no arguments at
+ * all has no target: it lists the open stories by status (list.js).
  *
  * Several ids (Design §5): `run` and `implement` start only the units that
  * neither depend on nor overlap another (schedule.js) and list the rest first;
@@ -163,17 +164,21 @@ Options:
 Launches an agent session in the backlog repo to refine and plan the work.
 Several stories go to one orchestrator session with a sub-agent each. With a
 feature among the targets, each target opens in its own tmux window.`,
-  status: `Usage: bl status <id...>
+  status: `Usage: bl status [<id...>]
 
 Arguments:
-  <id...>              A feature (F-3): its stories in dependency order,
+  [<id...>]            A feature (F-3): its stories in dependency order,
                        review state, blockers, deferred items, escalation and
                        run state. A story (S-34): its status, branch, PR,
                        review state and round, escalation and run state. A
                        component (C01): its open stories.
 
 Options:
-  --help               Show this help`,
+  --help               Show this help
+
+With no id it lists the open stories, furthest along first as flow.json has it
+(in_progress then refined then backlog by default), stack rank within each, in
+the table bl list prints.`,
   approve: `Usage: bl approve <id...> [options]
 
 Arguments:
@@ -258,6 +263,11 @@ export async function dispatch(verb, argv) {
   }
   const ids = idsOf(verb, args.positional);
   if (ids.length === 0) {
+    // Only a truly empty argv lists: a flag with no id stays a usage error.
+    if (verb === 'status' && argv.length === 0) {
+      const { listByStatus } = await import('./list.js');
+      return listByStatus();
+    }
     console.error(VERB_HELP[verb].split('\n')[0]);
     process.exit(1);
   }

@@ -41,6 +41,7 @@ Per-command stdout contracts:
 | `bl next-id`         | one ID per line                                           |
 | `bl which`           | one line: absolute path                                   |
 | `bl list` / `ls`     | the table                                                 |
+| `bl status` (no ids) | the table, as `bl list`                                   |
 | `bl tree`            | the rendered tree                                         |
 | `bl history`         | the week table (`--json`: one object)                     |
 | `bl report`          | one line: the path of `index.md` (`--json`: one object)   |
@@ -470,7 +471,7 @@ component_id: C32
 title: bl Tool Enhancements
 repo: bl # a repo registered in backlog.json
 home: true # this repo's home component; work with no better component lands here
-paths: ["src/**", "test/**"] # optional: globs relative to the repo root (F-61 D2)
+paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D2)
 ---
 ```
 
@@ -651,7 +652,8 @@ status implies, and the gates a unit of each type can be held at. It is plain JS
 - **Gates** name what a unit of the type can be held at and the verbs that check each. bl
   checks gates only at `run`, `implement` and `merge`.
 - **`src/flow.js`.** `loadFlow(backlogRoot)` returns the parsed flow (cached while the file's
-  mtime and size are unchanged) with `statusesOf(type)`, `meets(type, status, wanted)` and
+  mtime and size are unchanged) with `statusesOf(type)`, `openStatusesOf(type)` (those that do
+  not meet `done`, most `implies` first, ties in file order), `meets(type, status, wanted)` and
   `gatesOf(type)`. It throws a `FlowError` whose message starts with the file's path when the
   file is missing, not JSON, has a `schema` other than `bl-flow/v1`, lacks the `story`,
   `feature` or `task` type (`FLOW_TYPES`), or has a `statuses` or `gates` of the wrong shape;
@@ -661,7 +663,8 @@ status implies, and the gates a unit of each type can be held at. It is plain JS
 - **The `task` type** (F-65 D1): `open` (implies nothing) and `done` (implies `open`), with
   `gates: {}`. A task can block a unit; nothing holds a task.
 - **Who reads it.** `bl validate` takes story, feature and task statuses from it (`bad-status`,
-  `task-field`), and reports `flow-json` for the file's own faults (see **`bl validate`**). bl's other status
+  `task-field`), and reports `flow-json` for the file's own faults (see **`bl validate`**). The
+  bare `bl status` takes which stories are open and their order from it. bl's other status
   comparisons (`"done"`, `"superseded"`, `FEATURE_WORKABLE_STATUSES`, `bl sync`'s
   unknown-status warning) still live in code and move later.
 
@@ -2311,6 +2314,15 @@ bl what-next --theme backlog  # next startable story in the theme
 A Theme column leads once the backlog has a theme. `bl tree` and `bl what-next` take the same
 filters; a component argument (`bl tree C32`) is the `--component` filter, and a story id with
 a filter is refused.
+
+`bl status` with no arguments prints the same table for the open stories, in a different order:
+strictly by status, furthest along first as `flow.json` has it (`Flow.openStatusesOf('story')`:
+`in_progress`, then `refined`, then `backlog` in the shipped flow), stack rank then numeric id
+within each. A story is open when its status does not meet `done`; a status `flow.json` does not
+name meets nothing, so it stays listed, last. A `flow.json` bl cannot read stops the command with
+its `FlowError`, even with no stories. `bl list` keeps its own constants: it puts worktree stories first and
+ranks `backlog` and `refined` equally; here a story with a worktree keeps its status group and
+shows the `*`. Any flag with no id is a usage error, not a filter.
 
 ### `bl history`
 
