@@ -392,7 +392,58 @@ const NOT_THE_HEADING = [
   ['another level', '#### Sources of truth'],
   ['longer text', '### Sources of truth and more'],
   ['an escaped marker', String.raw`\### Sources of truth`],
+  ['another title in bold', '### **Sources of truth and more**'],
+  ['another title after a comment', '### Sources <!-- of truth --> of lies'],
 ];
+
+const FORMATTED_TITLES = [
+  ['bold', '**Sources of truth**'],
+  ['bold with underscores', '__Sources of truth__'],
+  ['emphasis', '*Sources of truth*'],
+  ['partial emphasis', 'Sources of *truth*'],
+  ['partial bold', '**Sources** of truth'],
+  ['nested emphasis', '***Sources*** of _truth_'],
+  ['a link', '[Sources of truth](docs/guide.md)'],
+  ['a partial link', 'Sources of [truth](docs/guide.md)'],
+  ['a reference link', '[Sources of truth][guide]'],
+  ['inline code', '`Sources of truth`'],
+  ['partial inline code', 'Sources of `truth`'],
+  ['an image', '![Sources of truth](truth.png)'],
+  ['inline HTML', '<b>Sources of truth</b>'],
+  ['a trailing HTML comment', 'Sources of truth <!-- note -->'],
+  ['a leading HTML comment', '<!-- note --> Sources of truth'],
+  ['an HTML comment inside', 'Sources <!-- note --> of truth'],
+  ['a character reference', 'Sources&#32;of truth'],
+  ['closing hashes', '**Sources of truth** ###'],
+];
+
+test('planFiles_skips_formatted_sources_of_truth_headings', () => {
+  const REF = '[guide]: docs/guide.md';
+  const twin = '### Other\n\n1. Change `src/twin-after.js`.\n\n### *Sources* of truth\n\n- Read `src/twin.js`.';
+  const stories = FORMATTED_TITLES.flatMap(([, title], i) => [
+    story(`S-${i + 1}`, { body: plan(`### ${title}`, '', READ, '', '### Steps', '', AFTER, '', REF) }),
+    // The next heading ends the section whatever its own formatting.
+    story(`S-${i + 101}`, { body: plan(`### ${title}`, '', READ, '', '# **Next**', '', AFTER, '', REF) }),
+    story(`S-${i + 201}`, { body: plan(`### ${title}`, '', READ, '', '### [Steps](a.md)', '', AFTER, '', REF) }),
+    story(`S-${i + 301}`, { body: plan(`### ${title}`, '', READ, '', twin, '', '### `Steps`', '', AFTER, '', REF) }),
+  ]);
+  const { dir, cleanup } = mkTempBacklog({
+    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
+    stories,
+  });
+  try {
+    const all = readAllStories(loadConfig({ backlogRoot: dir }));
+    const files = (id) => [...planFiles([all.find((s) => s.id === id)])].sort();
+    FORMATTED_TITLES.forEach(([name], i) => {
+      assert.deepEqual(files(`S-${i + 1}`), ['bl:src/after.js'], name);
+      assert.deepEqual(files(`S-${i + 101}`), ['bl:src/after.js'], `${name}, level-one next heading`);
+      assert.deepEqual(files(`S-${i + 201}`), ['bl:src/after.js'], `${name}, linked next heading`);
+      assert.deepEqual(files(`S-${i + 301}`), ['bl:src/after.js', 'bl:src/twin-after.js'], `${name}, repeated`);
+    });
+  } finally {
+    cleanup();
+  }
+});
 
 test('planFiles_handles_valid_atx_heading_forms_and_next_sections', () => {
   const stories = [
