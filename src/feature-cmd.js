@@ -328,7 +328,7 @@ export function featureProgress(stories, flow) {
 
 /**
  * The features that pass `filter`, grouped by epic in id order, then those
- * with no epic. Without `-a`, done and superseded features are left out of
+ * with no epic. Without `-a`, closed features are left out of
  * the tables; an epic's header still counts them.
  */
 function listByEpic(args, config, filter, ctx) {

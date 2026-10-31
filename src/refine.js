@@ -29,7 +29,7 @@ import { flowForHelp, loadFlow } from './flow.js';
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
  * `status: backlog` stories; explicitly-named story IDs are always included
- * (only `done`/`superseded` are rejected). Results are deduped by story ID —
+ * (only closed ones are rejected). Results are deduped by story ID —
  * an explicitly-named story wins over the same story pulled in via a component, so
  * an already-refined story named on the command line is still re-refined.
  *

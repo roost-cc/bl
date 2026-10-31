@@ -154,8 +154,8 @@ export function lastRun(config) {
 }
 
 /**
- * `bl updates status`: every open update story (status `refined` or
- * `in_progress`), by repo name, security first, then oldest first, each
+ * `bl updates status`: every open update story (`Flow.isRunnable`),
+ * by repo name, security first, then oldest first, each
  * with its state, and the last report.
  *
  * @returns {{ stories: Array<{ id: string, repo: string, update_repo: string,

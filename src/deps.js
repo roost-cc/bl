@@ -29,7 +29,7 @@ function idCompare(a, b) {
 /**
  * Transitive dependency closure of `targetId`, pruned at closed stories.
  *
- * A `done`/`superseded` story is neither included nor descended through — its
+ * A closed story is neither included nor descended through — its
  * own dependencies are irrelevant to work that remains. The consequence worth
  * remembering downstream: every unfinished dependency of a cone node is itself
  * in the cone, so readiness can be decided purely against the cone.
@@ -134,8 +134,8 @@ export function orderCone(cone, graph, counts, targetId) {
  * Render the annotated plan rows: `  <id>  <status>  unblocks N  <title>`.
  *
  * ID and status are padded to the widest value in the plan so both columns can
- * be scanned down the left edge. `done`/`superseded` never appear — `collectCone`
- * prunes closed stories — so in practice the status cell is at most 11 wide.
+ * be scanned down the left edge. Closed stories never appear — `collectCone`
+ * prunes them — so in practice the status cell is at most 11 wide.
  *
  * Kept separate from `main()` so alignment is testable without spawning the CLI.
  * Returns an array of strings, one per story in `order`.

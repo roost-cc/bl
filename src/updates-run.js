@@ -132,8 +132,8 @@ export function orderStories(stories, config) {
 }
 
 /**
- * The stories a run takes: every update story with status `refined` or
- * `in_progress`, or exactly the ids given. An id that is not an update
+ * The stories a run takes: every update story `Flow.isRunnable` accepts,
+ * or exactly the ids given. An id that is not an update
  * story, or whose story is closed, throws: the operator named it.
  */
 export function selectStories(stories, ids, flow) {

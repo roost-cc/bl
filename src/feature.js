@@ -188,7 +188,7 @@ export function closedFeatureRefusal(feature, flow) {
 /**
  * Why the existing story `id` (frontmatter `fm`) cannot move into the feature
  * `featureId`, or null when it can: it names another feature, or it is not
- * `backlog` or `refined` (an `in_progress` story is someone's work in flight,
+ * unstarted (`Flow.isUnstarted`; a started story is someone's work in flight,
  * and the feature's merge would mark it done). A story that already names
  * `featureId` is the feature's and is never refused. `bl new --feature`
  * passes a null `featureId`: its feature is new, so any `feature:` refuses.

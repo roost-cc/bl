@@ -680,7 +680,8 @@ status implies, and the gates a unit of each type can be held at. It is plain JS
   the check for an active feature with no stories in `src/validate.js`), comparisons that name the one
   status a line acts on (`s.status === 'superseded'` in `progress()`), and the writes that choose a
   closing status (`src/done.js`, `src/updates.js`), which S-1130 moves.
-  `test/unit/status-literals.test.js` counts every set of story statuses in `src/`.
+  `test/unit/status-literals.test.js` counts every set of story statuses in `src/`. Status names in
+  this document are the shipped flow's; messages and help name the running backlog's.
 
 ## Holds between units (`blockers.json`, F-66 D2)
 

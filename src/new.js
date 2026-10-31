@@ -330,7 +330,7 @@ function foldPositionals(args, config) {
  * `bl new --feature --title t [S-1 S-2 …]`: scaffold a feature
  * (`cmdNew`) and move the listed stories into it: `feature:` on each, and
  * appended to its `stories:`. Every story is checked under the backlog lock,
- * before anything is written: it must be `backlog` or `refined` and in no
+ * before anything is written: it must be unstarted (`Flow.isUnstarted`) and in no
  * other feature. A repair record (feature-links.js) is written before the
  * first story, so a failure the rollback cannot undo is settled by the next
  * bl command.

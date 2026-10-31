@@ -12,7 +12,7 @@
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written, and the whole call is refused when any
  * story is: an unknown story or component, a target component with no repo,
- * a story that is not `backlog` or `refined` (an `in_progress` story has a
+ * a story that is not unstarted (`Flow.isUnstarted`; a started story has a
  * worktree in its current repo), and a story whose repo would change while
  * a feature it is in is `running` or `escalated` (that feature's branches
  * span a fixed set of repos, as `bl attach` refuses it). A story is in the

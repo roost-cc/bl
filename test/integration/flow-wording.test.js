@@ -95,6 +95,7 @@ test('help words its status lists from the flow, and from the template outside a
   const dir = (raw) => committedBacklog([['S-1', 'backlog']], raw);
   const closedQuoted = { shipped: '`done` and\n`superseded`', custom: '`done`, `superseded` and\n`closed_early`' };
   const cases = (name) => [
+    [['--help'], `a story not ${UNSTARTED[name].replace(/, | or /g, '/')}, and a`],
     [['tree', '--help'], `every story is ${CLOSED_SLASHED[name]}`],
     [['deps', '--help'], closedQuoted[name]],
     [['next', '--help'], `is not ${CLOSED_FEATURES[name]} and`],
@@ -132,7 +133,7 @@ test('no message in src names a fixed runnable, unstarted or closed set', () => 
   for (const file of readdirSync(src).filter((f) => f.endsWith('.js'))) {
     assert.doesNotMatch(
       readFileSync(join(src, file), 'utf8'),
-      /only a (backlog|refined)|done\/superseded|not done or superseded|`?refined`? or `?in.progress|backlog or\s+refined/,
+      /only a (backlog|refined)|.?done.?\/.?superseded|not .?done.? or .?superseded|done and superseded|.?refined.? or\s+.?in.progress|.?backlog.?(\/| or\s+).?refined/,
       file,
     );
   }

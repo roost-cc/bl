@@ -13,7 +13,7 @@
  *
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written. A story in another feature, or one that
- * is not `backlog` or `refined`, is refused as `bl new --feature … S-<n>`
+ * has started (`Flow.isUnstarted`), is refused as `bl new --feature … S-<n>`
  * refuses it; a closed feature as `bl new F-<n>` refuses it. A running or
  * escalated feature has branches and worktrees only in its stories' repos,
  * so a story in another repo is refused there: `bl side` brings a repo in.
