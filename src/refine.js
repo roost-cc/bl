@@ -24,6 +24,7 @@ import {
 } from './config.js';
 import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { launchSession, loadPrompt, spillSubagentPrompts } from './session.js';
+import { loadFlow } from './flow.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
@@ -87,7 +88,7 @@ export function resolveRefineTargets(positionals, config) {
       continue;
     }
     const { fm } = parseFrontmatter(readFileSync(found.indexPath, 'utf8'));
-    if (fm.status === 'done' || fm.status === 'superseded') {
+    if (loadFlow(config.backlogRoot).meets('story', fm.status, 'done')) {
       notices.push(`Story ${parsed.id} has status '${fm.status}' — skipping (cannot refine).`);
       continue;
     }

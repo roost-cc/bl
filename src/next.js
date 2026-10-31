@@ -15,6 +15,7 @@
 import { loadConfig, parseArgs, info } from './config.js';
 import { filterFromArgs, filterLabel, featureEpicId } from './filter.js';
 import { readFeatureOrder, rankedFeatures, unrankedFeatures, FEATURE_ORDER_FILE } from './feature-order.js';
+import { loadFlow } from './flow.js';
 
 const HELP = `Usage: bl next [--theme <slug>] [--epic <E-id>]
 
@@ -63,6 +64,7 @@ export async function main(argv) {
   }
 
   const config = loadConfig();
+  const flow = loadFlow(config.backlogRoot);
   const { filter, ctx } = filterFromArgs(args, config, 'bl next');
   let order;
   try {
@@ -74,9 +76,9 @@ export async function main(argv) {
   if (!order) info(`bl next: no ${FEATURE_ORDER_FILE} in the backlog, so no feature is ranked`);
 
   const scope = filterLabel(filter);
-  const ranked = rankedFeatures(order, ctx.features, filter);
+  const ranked = rankedFeatures(order, ctx.features, flow, filter);
   if (ranked.length === 0) {
-    const unranked = unrankedFeatures(order, ctx.features, filter);
+    const unranked = unrankedFeatures(order, ctx.features, flow, filter);
     info(`No ranked feature${scope ? ` matches ${scope}` : ' is open'}.`);
     if (unranked.length > 0) {
       info(`Not yet ranked${scope ? ` (${scope})` : ''}:`);

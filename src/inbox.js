@@ -63,8 +63,6 @@ const PENDING_STATES = new Set(['approve pending', 'drop pending']);
 /** Twice the runner's 4 h cadence: a newer `## Run` means it is alive. */
 export const STALE_RUN_HOURS = 8;
 
-const CLOSED = new Set(['done', 'superseded']);
-
 /** A file's text with LF line ends. */
 function readLf(path) {
   return { text: readFileSync(path, 'utf8').replace(/\r\n/g, '\n') };
@@ -78,6 +76,7 @@ function readUnits(config) {
     const { fm, body } = parseFrontmatter(text);
     if (!fm.feature_id) continue;
     out.push({
+      kind: 'feature',
       id: fm.feature_id,
       title: fm.title ?? '',
       feature: '',
@@ -91,6 +90,7 @@ function readUnits(config) {
     const { text } = readLf(s.indexPath);
     const { body } = parseFrontmatter(text);
     out.push({
+      kind: 'story',
       id: s.id,
       title: s.title ?? '',
       feature: s.feature ?? '',
@@ -172,7 +172,7 @@ function gitOut(cwd, args) {
  * for a branch that exists. A repo or a document that cannot be read is a
  * warning; the other items are still listed.
  */
-function changeItems(config, units, warnings) {
+function changeItems(config, units, warnings, flow) {
   const items = [];
   const branches = new Map();
   const branchesOf = (repo) => {
@@ -192,7 +192,7 @@ function changeItems(config, units, warnings) {
     return branches.get(repo);
   };
   for (const u of units) {
-    if (CLOSED.has(u.status) || u.feature) continue;
+    if (flow.meets(u.kind, u.status, 'done') || u.feature) continue;
     let cur;
     try {
       cur = currentChange(dirname(u.indexPath));
@@ -249,6 +249,7 @@ function byUnitNewest(a, b) {
  *   warnings: string[] }}
  */
 export function collectInbox(config, { now = Date.now() } = {}) {
+  const flow = loadFlow(config.backlogRoot);
   const items = [];
   const warnings = [];
   let run = null;
@@ -271,7 +272,7 @@ export function collectInbox(config, { now = Date.now() } = {}) {
   const units = readUnits(config);
   for (const u of units) {
     const path = relative(config.backlogRoot, u.indexPath);
-    if (!CLOSED.has(u.status)) {
+    if (!flow.meets(u.kind, u.status, 'done')) {
       const esc = extractSection(u.body, 'Escalation');
       if (sectionHasContent(esc)) {
         items.push({
@@ -286,7 +287,7 @@ export function collectInbox(config, { now = Date.now() } = {}) {
     }
   }
   items.push(...taskItems(config, warnings));
-  items.push(...changeItems(config, units, warnings));
+  items.push(...changeItems(config, units, warnings, flow));
   try {
     for (const s of statusUpdates(config).stories) {
       const path = relative(config.backlogRoot, units.find((u) => u.id === s.id)?.indexPath ?? '');

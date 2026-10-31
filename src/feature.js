@@ -38,8 +38,6 @@ export const FEATURE_WORKABLE_STATUSES = new Set(['approved', 'running', 'escala
 
 export const DEFAULT_REVIEW_ROUNDS_MAX = 2;
 
-const isClosed = (s) => s === 'done' || s === 'superseded';
-
 /** Normalise a feature ID like "F1", "F-1", "f-1". */
 export function normalizeFeatureId(raw) {
   const m = String(raw).match(/^[Ff]-?(\d+)$/);
@@ -180,8 +178,10 @@ export function nextFeatureId(config) {
  * Why no story can be added to `feature`, or null when one can: a `done` or
  * `superseded` feature is closed (`bl new F-<n>`, `bl attach`).
  */
-export function closedFeatureRefusal(feature) {
-  return isClosed(feature.status) ? `Feature ${feature.id} is ${feature.status}; stories can't be added.` : null;
+export function closedFeatureRefusal(feature, flow) {
+  return flow.meets('feature', feature.status, 'done')
+    ? `Feature ${feature.id} is ${feature.status}; stories can't be added.`
+    : null;
 }
 
 /**
@@ -192,13 +192,13 @@ export function closedFeatureRefusal(feature) {
  * `featureId` is the feature's and is never refused. `bl new --feature`
  * passes a null `featureId`: its feature is new, so any `feature:` refuses.
  */
-export function storyMoveRefusal(id, fm, featureId) {
+export function storyMoveRefusal(id, fm, featureId, flow) {
   const named = String(fm.feature ?? '').trim();
   if (named) {
     if (featureId != null && (normalizeFeatureId(named)?.id ?? named) === featureId) return null;
     return `${id} is already in ${named}.`;
   }
-  if (fm.status !== 'backlog' && fm.status !== 'refined') {
+  if (!flow.isUnstarted('story', fm.status)) {
     return `${id} is ${fm.status}; only a backlog or refined story moves into a feature.`;
   }
   return null;
@@ -284,7 +284,7 @@ export function orderStoriesByDeps(stories) {
  * feature story that is neither part of the feature nor already closed.
  * @returns {{ story: string, dep: string, status: string }[]}
  */
-export function outsideBlockers(stories, allStories) {
+export function outsideBlockers(stories, allStories, flow) {
   const inFeature = new Set(stories.map((s) => s.id));
   const byId = new Map(allStories.map((s) => [s.id, s]));
   const out = [];
@@ -293,7 +293,7 @@ export function outsideBlockers(stories, allStories) {
       if (inFeature.has(dep)) continue;
       const target = byId.get(dep);
       const status = target?.status ?? 'missing';
-      if (target && isClosed(status)) continue;
+      if (target && flow.meets('story', status, 'done')) continue;
       out.push({ story: s.id, dep, status });
     }
   }

@@ -29,6 +29,7 @@ cat > "$TMPDIR_ROOT/backlog.json" <<'JSON'
   }
 }
 JSON
+cp "$REPO_ROOT/templates/flow.json" "$TMPDIR_ROOT/flow.json"
 
 write_components() {
   mkdir -p "$1/components/C00-core"

@@ -2,13 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { loadConfig } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
 import { resolveTargets } from '../../src/targets.js';
 import { schedule, dependencyOrder, planFiles, branchFiles, unitFiles } from '../../src/schedule.js';
 import { reposForFeature } from '../../src/feature.js';
-import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { loadFlow } from '../../src/flow.js';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 const plan = (...lines) => `## Summary\n\nx\n\n## Implementation Plan\n\n${lines.join('\n')}\n`;
 const story = (id, extra = {}) => ({
@@ -64,7 +67,7 @@ const noFiles = () => new Set();
 
 test('a dependency that is done does not hold back its dependent, even when it is a target', () => {
   withBacklog(({ config, all, units }) => {
-    const { start, deferred } = schedule(units('S-5', 'S-8'), all, { config, files: noFiles });
+    const { start, deferred } = schedule(units('S-5', 'S-8'), all, flow, { config, files: noFiles });
     assert.deepEqual(
       start.map((u) => u.id),
       ['S-5', 'S-8'],
@@ -75,7 +78,7 @@ test('a dependency that is done does not hold back its dependent, even when it i
 
 test('a target that depends on another target waits for it to merge', () => {
   withBacklog(({ config, all, units }) => {
-    const { start, deferred } = schedule(units('S-2', 'S-1'), all, { config, files: noFiles });
+    const { start, deferred } = schedule(units('S-2', 'S-1'), all, flow, { config, files: noFiles });
     assert.deepEqual(
       start.map((u) => u.id),
       ['S-1'],
@@ -88,7 +91,7 @@ test('a target that depends on another target waits for it to merge', () => {
 
 test('a dependency outside the targets blocks until it is done', () => {
   withBacklog(({ config, all, units }) => {
-    const { start, deferred } = schedule(units('S-3', 'S-5'), all, { config, files: noFiles });
+    const { start, deferred } = schedule(units('S-3', 'S-5'), all, flow, { config, files: noFiles });
     assert.deepEqual(
       start.map((u) => u.id),
       ['S-5'],
@@ -103,7 +106,7 @@ test("a feature's stories carry its dependencies, both ways", () => {
   withBacklog(({ config, all, units }) => {
     // F-2's S-12 depends on target S-1; S-4 depends on S-10, inside target F-1.
     // S-10 → S-11 stays inside F-1 and blocks nothing.
-    const { start, deferred } = schedule(units('F-2', 'S-1', 'S-4', 'F-1'), all, { config, files: noFiles });
+    const { start, deferred } = schedule(units('F-2', 'S-1', 'S-4', 'F-1'), all, flow, { config, files: noFiles });
     assert.deepEqual(start.map((u) => u.id).sort(), ['F-1', 'S-1']);
     assert.deepEqual(
       deferred.map((d) => d.reason),
@@ -121,7 +124,7 @@ test('overlapping targets: the lowest id starts, the rest wait naming the shared
       'F-1': ['bl:src/z.js'],
     };
     const outside = all.map((s) => (s.id === 'S-9' ? { ...s, status: 'done' } : s));
-    const { start, deferred } = schedule(units('S-5', 'S-3', 'S-1', 'F-1'), outside, {
+    const { start, deferred } = schedule(units('S-5', 'S-3', 'S-1', 'F-1'), outside, flow, {
       config,
       files: (u) => new Set(files[u.id]),
     });
@@ -145,7 +148,7 @@ test('a target overlapping only a waiting target starts', () => {
   withBacklog(({ config, all, units }) => {
     // S-2 waits on its dependency S-1; S-5 shares a file with S-2 only.
     const files = { 'S-1': ['bl:src/a.js'], 'S-2': ['bl:src/b.js'], 'S-5': ['bl:src/b.js'] };
-    const { start, deferred } = schedule(units('S-2', 'S-1', 'S-5'), all, {
+    const { start, deferred } = schedule(units('S-2', 'S-1', 'S-5'), all, flow, {
       config,
       files: (u) => new Set(files[u.id]),
     });
@@ -163,7 +166,7 @@ test('a target overlapping only a waiting target starts', () => {
 test('shared files in several repos keep their repo names', () => {
   withBacklog(({ config, all, units }) => {
     const files = { 'S-1': ['bl:a.js', 'tools:b.js'], 'S-5': ['bl:a.js', 'tools:b.js'] };
-    const { deferred } = schedule(units('S-1', 'S-5'), all, { config, files: (u) => new Set(files[u.id]) });
+    const { deferred } = schedule(units('S-1', 'S-5'), all, flow, { config, files: (u) => new Set(files[u.id]) });
     assert.equal(deferred[0].reason, 'S-5 overlaps S-1 on bl:a.js, tools:b.js; run it after S-1 merges');
   });
 });
@@ -278,7 +281,7 @@ test('unitFiles does not schedule from a partial multi-repository branch diff', 
       if (row.complete) return;
       // A target planning b:shared.js waits for F-1 even though F-1's readable diff never names it.
       const s2 = { kind: 'story', id: 'S-2', record: { id: 'S-2', status: 'refined' } };
-      const { start, deferred } = schedule([f1, s2], [...all, s2.record], {
+      const { start, deferred } = schedule([f1, s2], [...all, s2.record], flow, {
         files: (u) => (u === f1 ? unitFiles(f1, config, all) : new Set(['b:shared.js'])),
       });
       assert.deepEqual(
@@ -489,7 +492,7 @@ test('planFiles preserves valid repository paths with spaces and punctuation and
       const a = make('S-1', ['src/unrelated.js', span]);
       const b = make('S-2', [span.trim()]);
       const units = [a, b].map((record) => ({ kind: 'story', id: record.id, record }));
-      const { start, deferred } = schedule(units, [a, b], { files: (u) => planFiles([u.record]) });
+      const { start, deferred } = schedule(units, [a, b], flow, { files: (u) => planFiles([u.record]) });
       assert.deepEqual(
         start.map((u) => u.id),
         ['S-1'],
@@ -505,6 +508,7 @@ test('planFiles preserves valid repository paths with spaces and punctuation and
     const { deferred } = schedule(
       [dir, file].map((record) => ({ kind: 'story', id: record.id, record })),
       [dir, file],
+      flow,
       { files: (u) => planFiles([u.record]) },
     );
     assert.deepEqual(

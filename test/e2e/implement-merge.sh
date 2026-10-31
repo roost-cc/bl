@@ -62,6 +62,7 @@ mkdir -p "$ROOT/backlog"
 # the agent. Copy the repo template in so the test exercises the
 # real path without relying on the interactive `bl init`.
 cp "$REPO_ROOT/templates/allowed-tools.json" "$ROOT/backlog/allowed-tools.json"
+cp "$REPO_ROOT/templates/flow.json" "$ROOT/backlog/flow.json"
 
 cat > "$ROOT/backlog/backlog.json" <<JSON
 {

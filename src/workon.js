@@ -48,8 +48,7 @@ import { featureSessionVars } from './feature.js';
 import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { openUnitChange, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
-
-const isDoneStatus = (s) => s === 'done' || s === 'superseded';
+import { loadFlow } from './flow.js';
 
 export function idNum(id) {
   return parseInt(String(id).replace(/\D/g, ''), 10) || 0;
@@ -75,6 +74,8 @@ export function idNum(id) {
  *             notices: string[] }}
  */
 export function resolveWorkonTargets(positionals, config) {
+  const flow = loadFlow(config.backlogRoot);
+  const closed = (s) => flow.meets('story', s, 'done');
   const errors = [];
   const notices = [];
   const byId = new Map();
@@ -115,11 +116,11 @@ export function resolveWorkonTargets(positionals, config) {
       errors.push(`Story ${parsed.id} not found in backlog`);
       continue;
     }
-    if (isDoneStatus(story.status)) {
+    if (closed(story.status)) {
       notices.push(`Story ${parsed.id} has status '${story.status}' — skipping (already complete).`);
       continue;
     }
-    if (story.status !== 'refined' && story.status !== 'in_progress') {
+    if (!flow.isRunnable('story', story.status)) {
       notices.push(
         `Story ${parsed.id} has status '${story.status}' — must be refined first (run: bl refine ${parsed.id}).`,
       );
@@ -132,7 +133,7 @@ export function resolveWorkonTargets(positionals, config) {
   const deferred = [];
   for (const t of byId.values()) {
     const deps = parseIdList(t.depends_on);
-    const blockers = deps.filter((d) => !isDoneStatus(statusById.get(d)));
+    const blockers = deps.filter((d) => !closed(statusById.get(d)));
     if (blockers.length === 0) startable.push(t);
     else deferred.push({ ...t, blockers });
   }

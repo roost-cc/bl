@@ -37,6 +37,7 @@ import { releasePidLock } from './pid-lock.js';
 import { updateSpecFile } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { syncAndCommit, reportBacklogCommit, exitOnSyncError } from './sync.js';
+import { loadFlow } from './flow.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -55,7 +56,6 @@ export const CONFLICT_NOTE = 'conflict, left for Renovate';
  */
 export const RUN_LOCK_ID = 'updates';
 
-const CLOSED = new Set(['done', 'superseded']);
 const TABLE_HEADER = ['Package', 'Manager', 'Current', 'New', 'Type', 'File'];
 
 // ---------------------------------------------------------------------------
@@ -456,6 +456,8 @@ function fmt(action, id, b) {
  *   skippedRepos: string[], commit: object | null }>}
  */
 export async function syncUpdates(config, opts = {}) {
+  const flow = loadFlow(config.backlogRoot);
+  const closed = (s) => flow.meets('story', s, 'done');
   const reportPath = opts.reportPath ?? configuredReportPath(config);
   const out = opts.out ?? ((line) => process.stdout.write(`${line}\n`));
   const result = {
@@ -548,7 +550,7 @@ export async function syncUpdates(config, opts = {}) {
       // same PR: Renovate recreates a closed PR when the update changes, and
       // that new PR gets a new story.
       const story =
-        matches.find((s) => !CLOSED.has(s.fm.status)) ?? matches.find((s) => String(s.fm.update_pr) === String(b.prNo));
+        matches.find((s) => !closed(s.fm.status)) ?? matches.find((s) => String(s.fm.update_pr) === String(b.prNo));
       const heads = headsOf(repo.repoPath);
       const head = heads?.get(b.branchName) ?? null;
       const plugins = testPluginsFor(repo.name, config);
@@ -585,7 +587,7 @@ export async function syncUpdates(config, opts = {}) {
         continue;
       }
 
-      if (CLOSED.has(story.fm.status)) {
+      if (closed(story.fm.status)) {
         // Merged or dropped already; the report drops the branch next cycle.
         out(fmt('unchanged', story.id, b));
         result.unchanged.push(story.id);
@@ -652,7 +654,7 @@ export async function syncUpdates(config, opts = {}) {
     // this cycle keeps its stories as they are.
     const reported = new Set(Object.keys(report?.repositories ?? {}));
     for (const s of stories) {
-      if (CLOSED.has(s.fm.status)) continue;
+      if (closed(s.fm.status)) continue;
       if (openKeys.has(`${s.fm.update_repo}\n${s.fm.update_branch}`)) continue;
       const b = {
         slug: s.fm.update_repo,

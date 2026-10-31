@@ -23,8 +23,6 @@ import { featureEpicId } from './filter.js';
 /** The file's name, at the backlog root. */
 export const FEATURE_ORDER_FILE = 'feature-order.md';
 
-const CLOSED = (s) => s === 'done' || s === 'superseded';
-
 export function featureOrderPath(config) {
   return join(config.backlogRoot, FEATURE_ORDER_FILE);
 }
@@ -104,14 +102,14 @@ function featureNumber(f) {
  * @param {object[]} features  feature records (`id`, `title`, `theme`, `epic`, `status`)
  * @param {{ theme?: string | null, epic?: string | null }} [filter]
  */
-export function rankedFeatures(order, features, filter = {}) {
+export function rankedFeatures(order, features, flow, filter = {}) {
   const byId = new Map(features.map((f) => [f.id, f]));
   const seen = new Set();
   const out = [];
   for (const entry of order?.ranked ?? []) {
     const id = normalizeFeatureId(entry.feature)?.id;
     const f = id && byId.get(id);
-    if (!f || CLOSED(f.status) || seen.has(id)) continue;
+    if (!f || flow.meets('feature', f.status, 'done') || seen.has(id)) continue;
     seen.add(id);
     if (matches(f, filter)) out.push({ id, why: entry.why, position: entry.position, feature: f });
   }
@@ -122,10 +120,10 @@ export function rankedFeatures(order, features, filter = {}) {
  * The features that are not done, not superseded and not in `ranked:`, and
  * pass `filter`, in id order.
  */
-export function unrankedFeatures(order, features, filter = {}) {
+export function unrankedFeatures(order, features, flow, filter = {}) {
   const ranked = new Set((order?.ranked ?? []).map((e) => normalizeFeatureId(e.feature)?.id).filter(Boolean));
   return features
-    .filter((f) => !CLOSED(f.status) && !ranked.has(f.id) && matches(f, filter))
+    .filter((f) => !flow.meets('feature', f.status, 'done') && !ranked.has(f.id) && matches(f, filter))
     .sort((a, b) => featureNumber(a) - featureNumber(b));
 }
 
@@ -138,8 +136,9 @@ export function unrankedFeatures(order, features, filter = {}) {
  *     done or superseded one, or one ranked twice.
  * @param {object} config
  * @param {object[]} features  `readAllFeatures` records
+ * @param {import("./flow.js").Flow} flow
  */
-export function findFeatureOrderFindings(config, features) {
+export function findFeatureOrderFindings(config, features, flow) {
   const findings = [];
   const err = (code, message) => findings.push({ severity: 'error', code, message, location: FEATURE_ORDER_FILE });
   let order;
@@ -171,7 +170,8 @@ export function findFeatureOrderFindings(config, features) {
       continue;
     }
     first.set(id, entry.position);
-    if (CLOSED(f.status)) err('feature-order-feature', `${at} is ${f.status}; remove it from "ranked:"`);
+    if (flow.meets('feature', f.status, 'done'))
+      err('feature-order-feature', `${at} is ${f.status}; remove it from "ranked:"`);
   }
   return findings;
 }

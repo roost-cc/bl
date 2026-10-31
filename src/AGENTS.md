@@ -655,8 +655,11 @@ status implies, and the gates a unit of each type can be held at. It is plain JS
   mtime and size are unchanged) with `statusesOf(type)`, `openStatusesOf(type)` (those that do
   not meet `done`, most `implies` first, ties in file order), `listRankOf(type, status)` (the
   sort rank of `bl list` and `bl grep`: open statuses that meet `in_progress`, then the other open
-  statuses with any unknown one, then closed statuses in file order), `meets(type, status, wanted)`
-  and `gatesOf(type)`. It throws a `FlowError` whose message starts with the file's path when the
+  statuses with any unknown one, then closed statuses in file order), `meets(type, status, wanted)`,
+  `isRunnable(type, status)` (meets `refined` and not `done`), `isUnstarted(type, status)` (a status
+  of the type that does not meet `in_progress`; an unknown one is neither) and `gatesOf(type)`. A
+  backlog's flow is its own: code reads the running backlog's file through `loadFlow`, never the
+  template, and a pure function takes `flow` as a parameter. It throws a `FlowError` whose message starts with the file's path when the
   file is missing, not JSON, has a `schema` other than `bl-flow/v1`, lacks the `story`,
   `feature` or `task` type (`FLOW_TYPES`), or has a `statuses` or `gates` of the wrong shape;
   a command that reads it
@@ -665,10 +668,14 @@ status implies, and the gates a unit of each type can be held at. It is plain JS
 - **The `task` type** (F-65 D1): `open` (implies nothing) and `done` (implies `open`), with
   `gates: {}`. A task can block a unit; nothing holds a task.
 - **Who reads it.** `bl validate` takes story, feature and task statuses from it (`bad-status`,
-  `task-field`), and reports `flow-json` for the file's own faults (see **`bl validate`**). The
-  bare `bl status` takes which stories are open and their order from it. bl's other status
-  comparisons (`"done"`, `"superseded"`, `FEATURE_WORKABLE_STATUSES`, `bl sync`'s
-  unknown-status warning) still live in code and move later.
+  `task-field`), and reports `flow-json` for the file's own faults (see **`bl validate`**). Story
+  status sets, closed checks and status tables all derive from it (S-1166), so a command that
+  reads a status stops on a `flow.json` it cannot read. What still lives in code: the feature-only
+  tables (`FEATURE_WORKABLE_STATUSES`, `BRANCHED` in `src/move.js`, `ESCALATION_GATED_STATUSES`,
+  the check for an active feature with no stories in `src/validate.js`), comparisons that name the one
+  status a line acts on (`s.status === 'superseded'` in `progress()`), and the writes that choose a
+  closing status (`src/done.js`, `src/updates.js`), which S-1130 moves.
+  `test/unit/status-literals.test.js` counts every set of story statuses in `src/`.
 
 ## Holds between units (`blockers.json`, F-66 D2)
 
@@ -2443,7 +2450,7 @@ own `index.md`, `data.json`, `.gitignore`) are written there, under their normal
 (`outputPath`); two that name one file, or a file and a directory holding it, throw.
 `registerAdapter` adds one by name, `adapter(name)` looks one up and
 `renderCharts(charts, name)` renders them all to
-`{ markdownById, files }`; `renderMarkdown(data, markdownById)` leaves a
+`{ markdownById, files }`; `renderMarkdown(data, markdownById, flow)` leaves a
 `<!-- chart: <id> -->` line for a chart it was not given. The one adapter, `vega-lite`
 (`src/chart-adapters/vega-lite.js`), writes a ` ```vega-lite ` fence holding a Vega-Lite v5 spec
 (data inline, `width: "container"`, UTC time axis by month, weekly bars from their ISO Monday

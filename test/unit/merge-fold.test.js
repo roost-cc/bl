@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { FrontmatterError, parseFrontmatter } from '../../src/config.js';
 import { markFeatureMerged, updateFeature } from '../../src/feature-cmd.js';
 import { accumulateStepTokensOnFile } from '../../src/tokens.js';
 import { withPartialWrites } from '../helpers/partial-write.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 
 // F-67 S-1097: `bl merge`'s fold and `updateFeature` write through
 // `updateSpecFile`, and the fold sums `tokens_*` as BigInt counts.
@@ -22,6 +22,7 @@ function backlog({
   b = story('S-2', 'done', '1000000000000000000000'),
 } = {}) {
   const dir = mkTempDir('bl-merge-fold-');
+  copyFileSync(FLOW_TEMPLATE, join(dir, 'flow.json'));
   const file = (name, text) => {
     const path = join(dir, `${name}.md`);
     writeFileSync(path, text);

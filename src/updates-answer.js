@@ -20,11 +20,10 @@ import { syncAndCommit } from './sync.js';
 import { RUN_LOCK_ID, foreignCheckout, readUpdateStories, repoForSlug, tableRows } from './updates.js';
 import { REPORT_DIR, REQUESTS, parseGateRecord, storyIsMajor, storyNum, storyRequest } from './updates-run.js';
 import { updateRequestProblem } from './validate.js';
+import { loadFlow } from './flow.js';
 
 /** The states `bl updates status` shows. */
 export const STATES = ['new', 'green', 'held', 'decision needed', 'skipped', 'approve pending', 'drop pending'];
-
-const OPEN = new Set(['refined', 'in_progress']);
 
 // ---------------------------------------------------------------------------
 // Status
@@ -166,8 +165,9 @@ export function lastRun(config) {
  *   lastReport: { date: string, path: string, entry: string | null } | null }}
  */
 export function statusUpdates(config) {
+  const flow = loadFlow(config.backlogRoot);
   const stories = readUpdateStories(config)
-    .filter((s) => OPEN.has(s.fm.status))
+    .filter((s) => flow.isRunnable('story', s.fm.status))
     .map((s) => {
       const repo = repoForSlug(s.fm.update_repo, config);
       const major = storyIsMajor(s.body);
@@ -284,7 +284,7 @@ export async function requestUpdate(config, opts) {
   try {
     const s = readUpdateStories(config).find((x) => x.id === parsed.id);
     if (!s) throw new Error(`${parsed.id} is not an update story`);
-    if (!OPEN.has(s.fm.status)) {
+    if (!loadFlow(config.backlogRoot).isRunnable('story', s.fm.status)) {
       throw new Error(
         `${parsed.id} is ${s.fm.status}; only a refined or in_progress story can be ${request === 'drop' ? 'dropped' : 'approved'}`,
       );

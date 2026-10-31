@@ -6,14 +6,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
+import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { loadConfig, normalizeId } from '../../src/config.js';
 import { findStoryDir, readAllStories } from '../../src/story.js';
 import { prepareStoryRun } from '../../src/workon.js';
 import { cmdRunStory } from '../../src/feature-cmd.js';
-import { AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 
 function build({ status = 'refined', dependsOn = null } = {}) {
   const tmp = mkTempDir('bl-story-run-');
@@ -27,6 +27,7 @@ function build({ status = 'refined', dependsOn = null } = {}) {
   });
   mkdirSync(join(backlog, 'stories', 'S7-loose'), { recursive: true });
   mkdirSync(join(backlog, 'stories', 'S6-dep'), { recursive: true });
+  copyFileSync(FLOW_TEMPLATE, join(backlog, 'flow.json'));
   writeFileSync(
     join(backlog, 'backlog.json'),
     JSON.stringify({

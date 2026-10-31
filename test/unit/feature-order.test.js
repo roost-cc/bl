@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { dirname, join } from 'path';
+import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 import { serializeFrontmatter } from '../../src/config.js';
 import { withPartialWrites } from '../helpers/partial-write.js';
 import {
@@ -15,6 +15,9 @@ import {
   recordFeatureOrderMerge,
   unrankedFeatures,
 } from '../../src/feature-order.js';
+import { loadFlow } from '../../src/flow.js';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 // F-53 D1: the feature order is `feature-order.md`'s `ranked:` frontmatter.
 
@@ -112,22 +115,22 @@ test('rankedFeatures keeps rank order, skips closed and unknown ids, and filters
     ]),
   };
   const ids = (list) => list.map((r) => `${r.position}:${r.id}`);
-  assert.deepEqual(ids(rankedFeatures(order, FEATURES)), ['1:F-3', '4:F-2', '6:F-1']);
-  assert.deepEqual(ids(rankedFeatures(order, FEATURES, { theme: 'accounts' })), ['4:F-2']);
-  assert.deepEqual(ids(rankedFeatures(order, FEATURES, { epic: 'E50' })), ['6:F-1']);
-  assert.deepEqual(ids(rankedFeatures(order, FEATURES, { theme: 'backlog', epic: 'E51' })), ['1:F-3']);
-  assert.deepEqual(rankedFeatures(order, FEATURES, { theme: 'backlog', epic: 'E52' }), []);
-  assert.equal(rankedFeatures(order, FEATURES)[0].why, 'a');
-  assert.equal(rankedFeatures(order, FEATURES)[0].feature.title, 'Three');
-  assert.deepEqual(rankedFeatures(null, FEATURES), []);
+  assert.deepEqual(ids(rankedFeatures(order, FEATURES, flow)), ['1:F-3', '4:F-2', '6:F-1']);
+  assert.deepEqual(ids(rankedFeatures(order, FEATURES, flow, { theme: 'accounts' })), ['4:F-2']);
+  assert.deepEqual(ids(rankedFeatures(order, FEATURES, flow, { epic: 'E50' })), ['6:F-1']);
+  assert.deepEqual(ids(rankedFeatures(order, FEATURES, flow, { theme: 'backlog', epic: 'E51' })), ['1:F-3']);
+  assert.deepEqual(rankedFeatures(order, FEATURES, flow, { theme: 'backlog', epic: 'E52' }), []);
+  assert.equal(rankedFeatures(order, FEATURES, flow)[0].why, 'a');
+  assert.equal(rankedFeatures(order, FEATURES, flow)[0].feature.title, 'Three');
+  assert.deepEqual(rankedFeatures(null, FEATURES, flow), []);
 });
 
 test('unrankedFeatures lists the open features not in ranked:, by id, filtered', () => {
   const order = { ranked: parseRanked([{ feature: 'F-3', why: 'a' }]) };
   const ids = (list) => list.map((f) => f.id);
-  assert.deepEqual(ids(unrankedFeatures(order, FEATURES)), ['F-1', 'F-2', 'F-6']);
-  assert.deepEqual(ids(unrankedFeatures(order, FEATURES, { theme: 'backlog' })), ['F-1', 'F-6']);
-  assert.deepEqual(ids(unrankedFeatures(null, FEATURES, { epic: 'E51' })), ['F-3']);
+  assert.deepEqual(ids(unrankedFeatures(order, FEATURES, flow)), ['F-1', 'F-2', 'F-6']);
+  assert.deepEqual(ids(unrankedFeatures(order, FEATURES, flow, { theme: 'backlog' })), ['F-1', 'F-6']);
+  assert.deepEqual(ids(unrankedFeatures(null, FEATURES, flow, { epic: 'E51' })), ['F-3']);
 });
 
 test('appendHistory appends to the end of ## History, creates it when absent, and adds a line once', () => {
@@ -147,7 +150,7 @@ function codes(findings) {
 test('validate: a clean feature order has no finding', () => {
   const b = backlogWith('---\nranked:\n  - feature: F-1\n    why: x\n---\n');
   try {
-    assert.deepEqual(findFeatureOrderFindings(b.config, FEATURES), []);
+    assert.deepEqual(findFeatureOrderFindings(b.config, FEATURES, flow), []);
   } finally {
     b.cleanup();
   }
@@ -156,7 +159,7 @@ test('validate: a clean feature order has no finding', () => {
 test('validate: feature-order-file when the file is missing', () => {
   const b = backlogWith(null);
   try {
-    const f = findFeatureOrderFindings(b.config, FEATURES);
+    const f = findFeatureOrderFindings(b.config, FEATURES, flow);
     assert.deepEqual(codes(f), [
       `feature-order-file: feature-order.md is missing; the feature order lives in its "ranked:" frontmatter`,
     ]);
@@ -170,7 +173,7 @@ test('validate: feature-order-file when the file is missing', () => {
 test('validate: feature-order-file when the frontmatter is not YAML', () => {
   const b = backlogWith('---\nranked: [\n---\n');
   try {
-    const f = findFeatureOrderFindings(b.config, FEATURES);
+    const f = findFeatureOrderFindings(b.config, FEATURES, flow);
     assert.equal(f.length, 1);
     assert.equal(f[0].code, 'feature-order-file');
     assert.match(f[0].message, /frontmatter is not YAML/);
@@ -182,7 +185,7 @@ test('validate: feature-order-file when the frontmatter is not YAML', () => {
 test('validate: feature-order-file when ranked: is not a list', () => {
   const b = backlogWith('---\nranked: F-1\n---\n');
   try {
-    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES)), [
+    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES, flow)), [
       'feature-order-file: "ranked:" is not a list',
     ]);
   } finally {
@@ -193,7 +196,7 @@ test('validate: feature-order-file when ranked: is not a list', () => {
 test('validate: feature-order-file when an entry is not a mapping', () => {
   const b = backlogWith('---\nranked:\n  - F-1\n---\n');
   try {
-    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES)), [
+    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES, flow)), [
       'feature-order-file: "ranked:" entry 1 is not a mapping with "feature" and "why"',
     ]);
   } finally {
@@ -208,7 +211,7 @@ test('validate: feature-order-file when an entry lacks feature or why', () => {
   ]) {
     const b = backlogWith(`---\nranked:\n  - ${entry}\n---\n`);
     try {
-      assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES)), [
+      assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES, flow)), [
         `feature-order-file: "ranked:" entry 1 has no "${key}"`,
       ]);
     } finally {
@@ -220,7 +223,7 @@ test('validate: feature-order-file when an entry lacks feature or why', () => {
 test('validate: feature-order-feature when a ranked id has no feature', () => {
   const b = backlogWith('---\nranked:\n  - feature: F-99\n    why: x\n  - feature: nonsense\n    why: y\n---\n');
   try {
-    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES)), [
+    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES, flow)), [
       'feature-order-feature: "ranked:" entry 1 (F-99) names no feature under features/',
       'feature-order-feature: "ranked:" entry 2 (nonsense) names no feature under features/',
     ]);
@@ -232,7 +235,7 @@ test('validate: feature-order-feature when a ranked id has no feature', () => {
 test('validate: feature-order-feature when a ranked feature is done or superseded', () => {
   const b = backlogWith('---\nranked:\n  - feature: F-4\n    why: x\n  - feature: F-5\n    why: y\n---\n');
   try {
-    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES)), [
+    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES, flow)), [
       'feature-order-feature: "ranked:" entry 1 (F-4) is done; remove it from "ranked:"',
       'feature-order-feature: "ranked:" entry 2 (F-5) is superseded; remove it from "ranked:"',
     ]);
@@ -246,7 +249,7 @@ test('validate: feature-order-feature when a feature is ranked twice', () => {
     '---\nranked:\n  - feature: F-1\n    why: x\n  - feature: F-2\n    why: y\n  - feature: f1\n    why: z\n---\n',
   );
   try {
-    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES)), [
+    assert.deepEqual(codes(findFeatureOrderFindings(b.config, FEATURES, flow)), [
       'feature-order-feature: "ranked:" entry 3 (f1) is ranked twice (first at entry 1)',
     ]);
   } finally {
@@ -287,7 +290,7 @@ test('merge removes all feature spellings accepted by the reader', () => {
       }) + '\n## History\n';
     const b = backlogWith(text);
     try {
-      assert.equal(rankedFeatures(readFeatureOrder(b.config), FEATURES)[0]?.id, 'F-3', JSON.stringify(spelling));
+      assert.equal(rankedFeatures(readFeatureOrder(b.config), FEATURES, flow)[0]?.id, 'F-3', JSON.stringify(spelling));
       assert.equal(recordFeatureOrderMerge(b.config, { id: 'F-3', title: 'Three' }, '2026-10-25'), true);
       assert.deepEqual(
         readFeatureOrder(b.config).ranked.map((e) => e.feature),

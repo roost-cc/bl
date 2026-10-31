@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import { loadConfig } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
 import { buildGraph, findOldestStartable, pickNextInComponent } from '../../src/what-next.js';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
+import { loadFlow } from '../../src/flow.js';
+import { dirname } from 'path';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 function withGraph(builder, fn) {
   const { dir, cleanup } = builder();
@@ -33,7 +37,7 @@ function withBacklog(builder, fn) {
 test('findOldestStartable returns the next unblocked descendant in a chain', () => {
   withGraph(buildSampleBacklog, (graph) => {
     // S-4 ← S-3 ← S-2 ← S-1 (done). Only S-2 is unblocked.
-    assert.equal(findOldestStartable('S-4', graph), 'S-2');
+    assert.equal(findOldestStartable('S-4', graph, flow), 'S-2');
   });
 });
 
@@ -70,7 +74,7 @@ test('findOldestStartable returns null when the entire subtree is done', () => {
         ],
       }),
     (graph) => {
-      assert.equal(findOldestStartable('S-2', graph), null);
+      assert.equal(findOldestStartable('S-2', graph, flow), null);
     },
   );
 });
@@ -107,8 +111,8 @@ test('findOldestStartable terminates on a dependency cycle (does not infinite lo
     (graph) => {
       // No node is startable (every node has an unfinished dep), so we should
       // bottom out at null rather than spin.
-      assert.equal(findOldestStartable('S-1', graph), null);
-      assert.equal(findOldestStartable('S-2', graph), null);
+      assert.equal(findOldestStartable('S-1', graph, flow), null);
+      assert.equal(findOldestStartable('S-2', graph, flow), null);
     },
   );
 });
@@ -174,7 +178,7 @@ test('pickNextInComponent returns next startable story by priority', () => {
     ({ stories, graph }) => {
       // No priority entries → falls back to oldest leaf, which is S-2
       // (S-3 has unfinished dep S-2).
-      const r = pickNextInComponent('C00', stories, graph, new Map());
+      const r = pickNextInComponent('C00', stories, graph, new Map(), flow);
       assert.equal(r.kind, 'next');
       assert.equal(r.story.id, 'S-2');
       assert.equal(r.method, 'oldest-leaf');
@@ -209,7 +213,7 @@ test('pickNextInComponent priority rank beats lower numeric ID', () => {
         ['S-2', 0],
         ['S-1', 1],
       ]);
-      const r = pickNextInComponent('C00', stories, graph, priority);
+      const r = pickNextInComponent('C00', stories, graph, priority, flow);
       assert.equal(r.kind, 'next');
       assert.equal(r.story.id, 'S-2');
       assert.equal(r.method, 'priority');
@@ -238,7 +242,7 @@ test('pickNextInComponent falls back to oldest leaf when none in priority table'
         ],
       }),
     ({ stories, graph }) => {
-      const r = pickNextInComponent('C00', stories, graph, new Map());
+      const r = pickNextInComponent('C00', stories, graph, new Map(), flow);
       assert.equal(r.kind, 'next');
       assert.equal(r.story.id, 'S-2');
       assert.equal(r.method, 'oldest-leaf');
@@ -270,7 +274,7 @@ test('pickNextInComponent returns all-done when every story is closed', () => {
         ],
       }),
     ({ stories, graph }) => {
-      const r = pickNextInComponent('C00', stories, graph, new Map());
+      const r = pickNextInComponent('C00', stories, graph, new Map(), flow);
       assert.equal(r.kind, 'all-done');
     },
   );
@@ -301,7 +305,7 @@ test('pickNextInComponent returns blocked when only open story has unfinished ou
         ],
       }),
     ({ stories, graph }) => {
-      const r = pickNextInComponent('C00', stories, graph, new Map());
+      const r = pickNextInComponent('C00', stories, graph, new Map(), flow);
       assert.equal(r.kind, 'blocked');
       assert.equal(r.open.length, 1);
       assert.equal(r.open[0].id, 'S-2');

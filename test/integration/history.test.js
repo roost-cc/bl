@@ -11,7 +11,8 @@ import { loadConfig } from '../../src/config.js';
 import { buildHistory, CACHE_FILE, CACHE_VERSION, scopeStories } from '../../src/history.js';
 import { buildReport } from '../../src/report.js';
 import { runBl } from '../helpers/run-bl.js';
-import { commitAt, feature, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
+import { commitAt, committedBacklog, feature, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
+import { blockedFlow } from '../helpers/tempdir.js';
 
 const byDate = (h) => new Map(h.days.map((d) => [d.date, d]));
 
@@ -235,4 +236,47 @@ test('bl history prints ISO weeks by points per status; an unknown scope exits 1
   assert.equal(bad.status, 1);
   assert.equal(bad.stdout, '');
   assert.match(bad.stderr, /unknown scope F-99/);
+});
+
+/** The header cells of `bl history`'s table. */
+const historyColumns = (dir) => {
+  const r = runBl(['history'], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout
+    .split('\n')[0]
+    .split('|')
+    .map((c) => c.trim())
+    .filter(Boolean);
+};
+
+test('bl history shows a story status flow.json adds as a column, in the file order', () => {
+  const dir = committedBacklog([['S-1', 'blocked']], blockedFlow());
+  assert.deepEqual(historyColumns(dir), [
+    'Week',
+    'Date',
+    'backlog',
+    'blocked',
+    'refined',
+    'in_progress',
+    'done',
+    'superseded',
+    'scope',
+  ]);
+});
+
+test("bl history keeps a status only an old commit holds, after the statuses today's flow.json defines", () => {
+  const dir = committedBacklog([['S-1', 'triage']]);
+  put(dir, 'stories/S1-x/index.md', story('S-1', { status: 'backlog', points: 2, added: '2026-04-01' }));
+  commitAt(dir, '2026-05-05T09:00:00', 'triage retired');
+  assert.deepEqual(historyColumns(dir), [
+    'Week',
+    'Date',
+    'backlog',
+    'refined',
+    'in_progress',
+    'done',
+    'superseded',
+    'triage',
+    'scope',
+  ]);
 });

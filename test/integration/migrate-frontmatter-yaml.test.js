@@ -5,7 +5,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { migrate } from '../../src/migrate-frontmatter-yaml.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 import { addOrigin, git, statusLines } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
@@ -61,6 +61,7 @@ function oldBacklog() {
   const dir = mkTempDir('bl-migrate-fm-yaml-');
   const files = {
     '.gitignore': '.workon.lock\n.bl/\n',
+    'flow.json': readFileSync(FLOW_TEMPLATE, 'utf8'),
     'backlog.json': `${JSON.stringify({ agent: [{ agent: 'claude' }], review_agent: [{ agent: 'claude' }], worktrees: '../worktrees', repos: { bl: { path: '../bl', deployable: false, update_tests: [] } } }, null, 2)}\n`,
     'index.md': '# Backlog\n',
     'components/C32-bl/index.md': `---

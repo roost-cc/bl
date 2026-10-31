@@ -15,10 +15,7 @@
 import { loadConfig, parseArgs, normalizeId, info, componentIdHint } from './config.js';
 import { readAllStories } from './story.js';
 import { buildGraph } from './what-next.js';
-
-function isDone(status) {
-  return status === 'done' || status === 'superseded';
-}
+import { loadFlow } from './flow.js';
 
 function idNum(id) {
   const m = String(id).match(/^S-(\d+)$/);
@@ -39,14 +36,14 @@ function idCompare(a, b) {
  *
  * Returns a Set of story IDs (including the target, unless it is closed).
  */
-export function collectCone(targetId, graph) {
+export function collectCone(targetId, graph, flow) {
   const cone = new Set();
   const stack = [targetId];
   while (stack.length > 0) {
     const id = stack.pop();
     if (cone.has(id)) continue;
     const story = graph.byId.get(id);
-    if (!story || isDone(story.status)) continue;
+    if (!story || flow.meets('story', story.status, 'done')) continue;
     cone.add(id);
     for (const dep of graph.children.get(id) ?? []) stack.push(dep);
   }
@@ -215,6 +212,7 @@ leaf sitting at \`backlog\` needs \`bl refine\` first. \`done\` and
   }
 
   const cfg = loadConfig();
+  const flow = loadFlow(cfg.backlogRoot);
   const stories = readAllStories(cfg);
   const target = stories.find((s) => s.id === parsed.id);
   if (!target) {
@@ -222,13 +220,13 @@ leaf sitting at \`backlog\` needs \`bl refine\` first. \`done\` and
     process.exit(1);
   }
 
-  if (isDone(target.status)) {
+  if (flow.meets('story', target.status, 'done')) {
     info(`${target.id} is ${target.status} — nothing to plan.`);
     return;
   }
 
   const graph = buildGraph(stories);
-  const cone = collectCone(target.id, graph);
+  const cone = collectCone(target.id, graph, flow);
   const counts = unblockCounts(cone, graph);
   const { order, cycle } = orderCone(cone, graph, counts, target.id);
 

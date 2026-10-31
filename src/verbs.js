@@ -24,6 +24,7 @@ import { readAllStories } from './story.js';
 import { classifyId, resolveTargets } from './targets.js';
 import { schedule, dependencyOrder, byId } from './schedule.js';
 import { heldBy, readBlockers, readUnits } from './blockers.js';
+import { loadFlow } from './flow.js';
 import { RUN_DIR, ensureRunDir, escalationOpen } from './feature-run.js';
 import { changeNextVerb, currentChange } from './change-doc.js';
 
@@ -380,6 +381,7 @@ async function dispatchSeveral(verb, argv, args, config, targets, held = []) {
       const { start, deferred } = schedule(
         targets.filter((t) => !heldIds.has(t.id)),
         all,
+        loadFlow(config.backlogRoot),
         { config },
       );
       for (const h of held) deferred.push({ id: h.id, kind: h.kind, reason: h.lines.join('; '), blockers: h.blockers });

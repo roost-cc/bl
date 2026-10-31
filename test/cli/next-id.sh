@@ -40,7 +40,7 @@ cat > "$TMPDIR_ROOT/backlog.json" <<'JSON'
   }
 }
 JSON
-
+cp "$REPO_ROOT/templates/flow.json" "$TMPDIR_ROOT/flow.json"
 
 export BL_BACKLOG_DIR="$TMPDIR_ROOT"
 

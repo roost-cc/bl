@@ -11,13 +11,14 @@ import fs, { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } f
 import { syncBuiltinESMExports } from 'module';
 import { basename, join } from 'path';
 import { loadConfig } from '../../src/config.js';
+import { loadFlow } from '../../src/flow.js';
 import { addDays, buildHistory } from '../../src/history.js';
 import { buildReport, readTree, renderMarkdown, units } from '../../src/report.js';
 import { registerAdapter } from '../../src/chart.js';
 import { writeReport } from '../../src/report-cmd.js';
 import { runBl } from '../helpers/run-bl.js';
-import { commitAt, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
-import { CHANGE_TEMPLATE } from '../helpers/tempdir.js';
+import { commitAt, committedBacklog, feature, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
+import { blockedFlow, CHANGE_TEMPLATE } from '../helpers/tempdir.js';
 
 const FORMATTED = '<!-- formatted -->';
 
@@ -253,7 +254,7 @@ test('report since preserves first transitions and open ages across cutoff bound
 
 test('renderMarkdown lays the sections out in Design D5 order, a placeholder for each chart it was not given', () => {
   const { dir } = reportBacklog();
-  const page = renderMarkdown(report(dir));
+  const page = renderMarkdown(report(dir), {}, loadFlow(dir));
   const headings = page.split('\n').filter((l) => /^#{1,3} /.test(l));
   assert.deepEqual(headings, [
     '# Backlog progress report',
@@ -612,4 +613,63 @@ test("bl report --out writes elsewhere, and refuses a directory that is not a re
   assert.equal(bad.stdout, '');
   assert.match(bad.stderr, /not a report directory/);
   assert.equal(readFileSync(join(notOurs, 'keep.md'), 'utf8'), 'mine\n');
+});
+
+/** The rows of the Summary's status table, by their first cell. */
+const statusRows = (page) =>
+  page
+    .slice(page.indexOf('| Status'), page.indexOf('## Backlog'))
+    .split('\n')
+    .slice(2)
+    .filter(Boolean)
+    .map((row) => row.split('|')[1].trim());
+
+test('a story status flow.json adds shows in the status table and the flow chart, in the file order', () => {
+  const dir = committedBacklog(
+    [
+      ['S-1', 'done'],
+      ['S-2', 'blocked'],
+      ['S-3', 'backlog'],
+      ['S-4', 'refined'],
+    ],
+    blockedFlow(),
+  );
+  const data = report(dir);
+  assert.deepEqual(statusRows(renderMarkdown(data, {}, loadFlow(dir))), ['backlog', 'blocked', 'refined', 'done']);
+  const chart = data.charts.find((c) => c.id === 'flow');
+  assert.deepEqual(
+    chart.series.map((s) => s.name),
+    ['done', 'in progress', 'refined', 'blocked', 'backlog'],
+  );
+  assert.equal(chart.series.find((s) => s.name === 'blocked').values.at(-1).y, 2);
+  assert.match(chart.desc, /stacked: done, in progress, refined, blocked and backlog\./);
+});
+
+test("the flow chart's description reads as it always did on the template flow", () => {
+  const { dir } = scriptedBacklog();
+  assert.equal(
+    report(dir).charts.find((c) => c.id === 'flow').desc,
+    'Points by status per week, stacked: done, in progress, refined and backlog. A band that widens is work piling up in that status.',
+  );
+});
+
+test("a status today's flow.json lacks stays in the status table, after the statuses it defines", () => {
+  const dir = committedBacklog([
+    ['S-1', 'triage'],
+    ['S-2', 'superseded'],
+    ['S-3', 'backlog'],
+    ['S-4', 'done'],
+    ['S-5', 'parked'],
+  ]);
+  const page = renderMarkdown(report(dir), {}, loadFlow(dir));
+  assert.deepEqual(statusRows(page), ['backlog', 'done', 'superseded', 'parked', 'triage']);
+});
+
+test('the Summary lists an escalated feature in file order, between running and done', () => {
+  const { dir } = scriptedBacklog();
+  const other = (id, status) => feature('[S-3]', status).replaceAll('F-1', id);
+  put(dir, 'features/F2-two/index.md', other('F-2', 'escalated'));
+  put(dir, 'features/F3-three/index.md', other('F-3', 'done'));
+  commitAt(dir, '2026-04-29T09:00:00', 'day 5');
+  assert.match(renderMarkdown(report(dir), {}, loadFlow(dir)), /- Features: 3 \(1 running, 1 escalated, 1 done\)/);
 });

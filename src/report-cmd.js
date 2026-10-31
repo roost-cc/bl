@@ -24,6 +24,7 @@ import { acquirePidLock, releasePidLock } from './pid-lock.js';
 import { formatBacklogMarkdown } from './sync.js';
 import { adapter, adapterNames, DEFAULT_ADAPTER, pathsClash, renderCharts } from './chart.js';
 import './chart-adapters/vega-lite.js';
+import { loadFlow } from './flow.js';
 import { buildHistory } from './history.js';
 import { buildReport, renderMarkdown } from './report.js';
 
@@ -112,7 +113,7 @@ export function writeReport(config, dir, data, charts = DEFAULT_ADAPTER) {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, file.content);
     }
-    writeFileSync(join(stage, 'index.md'), renderMarkdown(data, markdownById));
+    writeFileSync(join(stage, 'index.md'), renderMarkdown(data, markdownById, loadFlow(config.backlogRoot)));
     formatBacklogMarkdown(config, new Set([join(stage, 'index.md')]));
 
     if (existsSync(dir)) renameSync(dir, old);

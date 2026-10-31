@@ -24,8 +24,7 @@ import { parseFrontmatter } from './config.js';
 import { parseIdList, reposForStory } from './story.js';
 import { resolveFeatureStories, reposForFeature, featureRepoOrder, extractSection } from './feature.js';
 import { idNum } from './workon.js';
-
-const isDone = (s) => s === 'done' || s === 'superseded';
+import { loadFlow } from './flow.js';
 
 /**
  * The stories a unit carries: a story itself, a feature its listed stories.
@@ -191,7 +190,7 @@ function storyOwners(units, config, all) {
  * @returns {{ start: object[], deferred: Array<{ id: string, reason: string,
  *             blockers: string[] }> }}
  */
-export function schedule(units, all, { config = null, files = (u) => unitFiles(u, config, all) } = {}) {
+export function schedule(units, all, flow, { config = null, files = (u) => unitFiles(u, config, all) } = {}) {
   const sorted = [...units].sort(byId);
   const statusById = new Map(all.map((s) => [s.id, s.status]));
   const { owner, storiesOf } = storyOwners(sorted, config, all);
@@ -205,7 +204,7 @@ export function schedule(units, all, { config = null, files = (u) => unitFiles(u
       for (const dep of parseIdList(s.depends_on)) {
         const other = owner.get(dep);
         // A merged dependency blocks nothing, even when it is among the targets.
-        if (other === u || isDone(statusById.get(dep))) continue;
+        if (other === u || flow.meets('story', statusById.get(dep), 'done')) continue;
         const via = s.id === u.id ? u.id : `${u.id}: ${s.id}`;
         if (other) {
           const name = other.id === dep ? dep : `${dep} (in ${other.id})`;

@@ -42,7 +42,7 @@ import {
   storyTypes,
 } from '../../src/updates-answer.js';
 import { updateRequestProblem, validateFrontmatter } from '../../src/validate.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 import { REPO_ROOT } from '../helpers/run-bl.js';
 import { MALFORMED_UPDATE_REQUESTS } from '../helpers/update-requests.js';
 import {
@@ -55,6 +55,9 @@ import {
   setup,
   shellCalls,
 } from '../helpers/updates-run-fixture.js';
+import { loadFlow } from '../../src/flow.js';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 // ---------------------------------------------------------------------------
 // Fixtures: a backlog with update stories made by `bl updates sync`
@@ -437,7 +440,7 @@ test('stories are ordered security first, then repo by repo, oldest first; selec
   try {
     const all = [...stories(t).values()];
     // S-1 vitest (bl), S-2 glob (bl, security), S-3 koa (app), S-4 lfm (tools).
-    const ordered = orderStories(selectStories(all), t.config());
+    const ordered = orderStories(selectStories(all, [], flow), t.config());
     assert.deepEqual(
       ordered.map((s) => s.id),
       ['S-2', 'S-3', 'S-1', 'S-4'],
@@ -450,19 +453,19 @@ test('stories are ordered security first, then repo by repo, oldest first; selec
     assert.deepEqual(storyPackages(ordered[3].body), ['(lock file)']);
 
     assert.deepEqual(
-      selectStories(all, ['S3', 's-1']).map((s) => s.id),
+      selectStories(all, ['S3', 's-1'], flow).map((s) => s.id),
       ['S-3', 'S-1'],
     );
-    assert.throws(() => selectStories(all, ['S-99']), /S-99 is not an update story/);
+    assert.throws(() => selectStories(all, ['S-99'], flow), /S-99 is not an update story/);
     editStory(all.find((s) => s.id === 'S-4').indexPath, (fm) => {
       fm.status = 'done';
     });
     const now = [...stories(t).values()];
     assert.deepEqual(
-      selectStories(now).map((s) => s.id),
+      selectStories(now, [], flow).map((s) => s.id),
       ['S-1', 'S-2', 'S-3'],
     );
-    assert.throws(() => selectStories(now, ['S-4']), /S-4 is done/);
+    assert.throws(() => selectStories(now, ['S-4'], flow), /S-4 is done/);
   } finally {
     t.cleanup();
   }

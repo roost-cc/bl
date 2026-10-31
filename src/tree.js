@@ -35,21 +35,19 @@ import {
 } from './config.js';
 import { readAllStories, normalizeId, normalizeComponentId, findComponentDir, parseIdList } from './story.js';
 import { filterFromArgs, filterStories, hasFilter, filterLabel } from './filter.js';
+import { loadFlow } from './flow.js';
 
-function isDone(status) {
-  return status === 'done' || status === 'superseded';
-}
-
-function formatNode(story, extra = '', color = false) {
+function formatNode(story, flow, extra = '', color = false) {
   const status = story.status ?? 'backlog';
-  const marker = isDone(status) ? ' (done)' : ` (${status})`;
+  const closed = flow.meets('story', status, 'done');
+  const marker = closed ? ' (done)' : ` (${status})`;
   const title = story.title ? ` ${story.title}` : '';
   const text = `${story.id}${title}${marker}${extra}`;
   // Dim done/superseded nodes so completed work recedes. Only the node text is
   // wrapped — tree connectors are added by walk() outside this function and
   // stay at normal brightness. Faint (\x1b[2m) reads as darker against both
   // light and dark terminal themes.
-  return color && isDone(status) ? `\x1b[2m${text}\x1b[0m` : text;
+  return color && closed ? `\x1b[2m${text}\x1b[0m` : text;
 }
 
 /**
@@ -116,7 +114,7 @@ function descendantsOf(rootId, graph) {
  * Render a single rooted subtree as ASCII lines.
  * Tracks globally-seen nodes so DAG repeats are collapsed into a back-reference.
  */
-export function renderTree(rootId, graph, byId, globallySeen, color = colorEnabled()) {
+export function renderTree(rootId, graph, byId, globallySeen, flow, color = colorEnabled()) {
   const lines = [];
   const stats = { total: 0, done: 0 };
 
@@ -135,12 +133,12 @@ export function renderTree(rootId, graph, byId, globallySeen, color = colorEnabl
     if (isCycle) extra = ' (↻ cycle)';
     else if (isRepeat) extra = ' (↑ see above)';
 
-    lines.push((prefix ?? '') + connector + formatNode(story, extra, color));
+    lines.push((prefix ?? '') + connector + formatNode(story, flow, extra, color));
 
     if (isCycle || isRepeat) return;
 
     stats.total += 1;
-    if (isDone(story.status)) stats.done += 1;
+    if (flow.meets('story', story.status, 'done')) stats.done += 1;
 
     const kids = graph.children.get(id) ?? [];
     const childPrefix = prefix === null ? '' : prefix + (isLast ? '    ' : '│   ');
@@ -219,6 +217,8 @@ Notes:
   }
 
   const cfg = loadConfig();
+  const flow = loadFlow(cfg.backlogRoot);
+  const closed = (s) => flow.meets('story', s.status, 'done');
   const { filter, ctx } = filterFromArgs(args, cfg, 'bl tree');
   const showAll = args.all;
   const stories = readAllStories(cfg);
@@ -274,7 +274,7 @@ Notes:
       info(label === filter.component ? `Component ${label} has no stories.` : `No stories in ${label}.`);
       return;
     }
-    const seedStories = showAll ? matched : matched.filter((s) => !isDone(s.status));
+    const seedStories = showAll ? matched : matched.filter((s) => !closed(s));
     const seedIds = seedStories.map((s) => s.id);
     if (seedIds.length === 0) {
       // Every matched story is done/superseded (only reachable when --all is
@@ -318,10 +318,10 @@ Notes:
 
   for (const rootId of roots) {
     const descendants = descendantsOf(rootId, graph);
-    const allDone = [...descendants].every((id) => isDone(byId.get(id).status));
+    const allDone = [...descendants].every((id) => closed(byId.get(id)));
     if (allDone && !showAll) continue;
 
-    const { lines, stats } = renderTree(rootId, graph, byId, globallySeen);
+    const { lines, stats } = renderTree(rootId, graph, byId, globallySeen, flow);
     treeBlocks.push(lines.join('\n'));
     shownTrees += 1;
     totalStoriesShown += stats.total;

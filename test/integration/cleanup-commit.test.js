@@ -22,7 +22,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync, readFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -30,7 +30,7 @@ import { main as cleanupMain } from '../../src/cleanup.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
 import { extractSection } from '../../src/feature.js';
-import { AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 
 const GIT_ENV = '-c user.email=t@t -c user.name=t';
 
@@ -109,6 +109,7 @@ function buildStoryBacklog({
     repos[name] = work;
   }
 
+  copyFileSync(FLOW_TEMPLATE, join(backlog, 'flow.json'));
   writeFileSync(
     join(backlog, 'backlog.json'),
     JSON.stringify({

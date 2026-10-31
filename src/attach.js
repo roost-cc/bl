@@ -43,6 +43,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
+import { loadFlow } from './flow.js';
 
 export const ATTACH_JSON_SCHEMA = 'bl-attach-json/v1';
 
@@ -146,13 +147,14 @@ export async function main(argv) {
   // hand-written `story_id: S2` would miss the dedupe and be listed twice.
   const storyId = storyRef.id;
 
-  const closed = closedFeatureRefusal(feature);
+  const flow = loadFlow(config.backlogRoot);
+  const closed = closedFeatureRefusal(feature, flow);
   if (closed) fail(closed);
   const listed = feature.stories.includes(storyId);
   const named = String(fm.feature ?? '').trim();
   // Listed with no `feature:` is the feature's already (half-attached), so
   // the status rule, which keeps out someone else's work, does not apply.
-  const refusal = listed && !named ? null : storyMoveRefusal(storyId, fm, feature.id);
+  const refusal = listed && !named ? null : storyMoveRefusal(storyId, fm, feature.id, flow);
   if (refusal) fail(refusal);
   // A story's repo is its component's, in every feature status.
   const repo = storyRepoOrExit(storyRef, found);

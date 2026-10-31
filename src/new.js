@@ -67,6 +67,7 @@ import { resolveTargets } from './targets.js';
 import { failPoint, settle, writeRecord } from './feature-links.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
+import { loadFlow } from './flow.js';
 
 const FIBONACCI = new Set([1, 2, 3, 5, 8, 13]);
 
@@ -256,7 +257,7 @@ function resolveFeatureRef(raw, config, { onError } = {}) {
   if (!parsed) fail(`invalid feature id: '${raw}' (expected F-<n>)`);
   const feature = findFeature(parsed, config);
   if (!feature) fail(`Feature ${parsed.id} not found under features/.`);
-  const closed = closedFeatureRefusal(feature);
+  const closed = closedFeatureRefusal(feature, loadFlow(config.backlogRoot));
   if (closed) fail(closed);
   return feature;
 }
@@ -349,7 +350,7 @@ async function newFeature(args, stories) {
       const refusals = [];
       for (const s of stories) {
         const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
-        const refusal = storyMoveRefusal(s.id, fm, null);
+        const refusal = storyMoveRefusal(s.id, fm, null, loadFlow(config.backlogRoot));
         if (refusal) refusals.push(refusal);
       }
       for (const r of refusals) console.error(r);
