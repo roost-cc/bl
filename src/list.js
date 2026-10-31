@@ -16,19 +16,25 @@ import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex,
 import { readAllStories, readBacklogOrder, activeWorktreesByStory } from './story.js';
 import { filterContext, filterFromArgs, filterStories, storyThemes } from './filter.js';
 
-const STATUS_ORDER = {
-  in_progress: 1,
-  backlog: 2,
-  refined: 2,
-  done: 3,
-  superseded: 4,
-};
+// Maps, not objects: a status is free frontmatter, and `constructor` or
+// `__proto__` would find an inherited property on an object.
+const STATUS_ORDER = new Map([
+  ['in_progress', 1],
+  ['backlog', 2],
+  ['refined', 2],
+  ['done', 3],
+  ['superseded', 4],
+]);
 
 /**
  * The bare `bl status` order: strictly by status, whatever has a worktree. A
  * status outside the map stays listed, after `backlog`.
  */
-const OPEN_STATUS_ORDER = { in_progress: 1, refined: 2, backlog: 3 };
+const OPEN_STATUS_ORDER = new Map([
+  ['in_progress', 1],
+  ['refined', 2],
+  ['backlog', 3],
+]);
 
 /** A story still open: neither done nor superseded. */
 const isOpen = (s) => s.status !== 'done' && s.status !== 'superseded';
@@ -47,8 +53,8 @@ function byRankThenId(priorityMap) {
 export function byOpenStatus(priorityMap) {
   const tiebreak = byRankThenId(priorityMap);
   return (a, b) => {
-    const sa = OPEN_STATUS_ORDER[a.status] ?? 4;
-    const sb = OPEN_STATUS_ORDER[b.status] ?? 4;
+    const sa = OPEN_STATUS_ORDER.get(a.status) ?? 4;
+    const sb = OPEN_STATUS_ORDER.get(b.status) ?? 4;
     return sa !== sb ? sa - sb : tiebreak(a, b);
   };
 }
@@ -105,8 +111,8 @@ Filters combine: every one given must match.`);
     const aa = wtsByStory.has(a.id) ? 0 : 1;
     const ab = wtsByStory.has(b.id) ? 0 : 1;
     if (aa !== ab) return aa - ab;
-    const sa = STATUS_ORDER[a.status] ?? 2;
-    const sb = STATUS_ORDER[b.status] ?? 2;
+    const sa = STATUS_ORDER.get(a.status) ?? 2;
+    const sb = STATUS_ORDER.get(b.status) ?? 2;
     if (sa !== sb) return sa - sb;
     return tiebreak(a, b);
   });

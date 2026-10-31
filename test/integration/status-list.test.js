@@ -151,6 +151,30 @@ test('a status outside the three stays listed, after backlog', () => {
   assert.deepEqual(ids(r.stdout), ['S-3', 'S-2', 'S-1']);
 });
 
+test('bl status sorts every unknown status after backlog including prototype keys', () => {
+  const unknown = ['blocked', '__proto__', 'constructor', 'toString', 'hasOwnProperty', 7, true, ['refined']];
+  for (const status of unknown) {
+    const { dir } = mkTempBacklog({
+      components: [{ id: 'C00', title: 'Work' }],
+      stories: [
+        { id: 'S-1', status: 'backlog', component: 'C00', title: 'Plain' },
+        { id: 'S-2', status, component: 'C00', title: 'Odd' },
+        { id: 'S-3', status: 'refined', component: 'C00', title: 'Ready' },
+        { id: 'S-4', status: 'in_progress', component: 'C00', title: 'Active' },
+        { id: 'S-5', status: 'done', component: 'C00', title: 'Closed', completed: '2026-01-01' },
+      ],
+    });
+    const r = runBl(['status'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(ids(r.stdout), ['S-4', 'S-3', 'S-1', 'S-2'], JSON.stringify(status));
+
+    // `bl list` keeps ranking an unknown status with backlog and refined.
+    const list = runBl(['list', '-a'], { cwd: dir });
+    assert.equal(list.status, 0, list.stderr);
+    assert.deepEqual(ids(list.stdout), ['S-4', 'S-1', 'S-2', 'S-3', 'S-5'], JSON.stringify(status));
+  }
+});
+
 test('the Feature column comes along when a listed story has a feature', () => {
   const { dir } = mkTempBacklog({
     components: [{ id: 'C00', title: 'Work' }],
