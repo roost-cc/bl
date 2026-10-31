@@ -51,6 +51,34 @@ test('bl grep: in_progress; backlog, refined and unknown together by rank; done;
   assert.deepEqual(ids(dir, '-a'), ['S-6', 'S-5', 'S-3', 'S-4', 'S-2', 'S-1']);
 });
 
+test('bl grep ranks a prototype-key status like any other unknown status', () => {
+  for (const status of ['blocked', '__proto__', 'constructor', 'toString', 'hasOwnProperty', 7, true, ['done']]) {
+    const dir = fixture(
+      [
+        story('S-1', 'backlog'),
+        story('S-2', status),
+        story('S-3', 'refined'),
+        story('S-4', 'in_progress'),
+        story('S-5', 'done', { completed: '2026-01-01' }),
+      ],
+      ['S-1', 'S-2', 'S-3'],
+    );
+    const label = JSON.stringify(status);
+    assert.deepEqual(ids(dir), ['S-4', 'S-1', 'S-2', 'S-3'], label);
+    assert.deepEqual(ids(dir, '-a'), ['S-4', 'S-1', 'S-2', 'S-3', 'S-5'], label);
+  }
+});
+
+test('bl grep keeps ranks 9999 and later ahead of unranked stories', () => {
+  const stories = ['S-10', 'S-9', 'S-3', 'S-2', 'S-1'].map((id) => story(id, 'refined'));
+  // S-3 lands on rank 9999, S-2 on 10000, S-1 on 10001; S-9 and S-10 have none.
+  const filler = Array.from({ length: 9999 }, (_, i) => `S-${100 + i}`);
+  const dir = fixture(stories, [...filler, 'S-3', 'S-2', 'S-1']);
+  const order = ids(dir);
+  assert.deepEqual(order.slice(0, 3), ['S-3', 'S-2', 'S-1']);
+  assert.deepEqual(order.slice(3).sort(), ['S-10', 'S-9']);
+});
+
 test('a closed status added to flow.json is filtered out and sorts last', () => {
   const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
   flow.types.story.statuses.wontfix = { implies: ['done', 'in_progress', 'refined', 'backlog'] };
