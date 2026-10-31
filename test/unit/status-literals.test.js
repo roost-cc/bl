@@ -3,8 +3,9 @@
 // (`flow.meets(type, status, 'done')`); a set of statuses restated in code
 // drifts from the file. So no array, object or condition outside `src/flow.js`
 // names two or more story statuses, unless `ALLOWED` counts it. A condition is
-// a logical or ternary expression, a regular expression, a `switch`, or an
-// `if`/`else if` chain; separate `if` statements are separate conditions.
+// a logical or ternary expression, a regular expression (a literal, or `RegExp`
+// or `new RegExp` over a static string), a `switch`, or an `if`/`else if` chain;
+// separate `if` statements are separate conditions.
 //
 // `ALLOWED` holds what predates this guard and only shrinks: S-1166 drains it.
 // A count is exact, so removing a restatement must lower it too, and adding an
@@ -65,7 +66,9 @@ function setParts(node) {
     case 'ConditionalExpression':
       return [node];
     case 'Literal':
-      return node.regex ? [node] : [];
+    case 'NewExpression':
+    case 'CallExpression':
+      return regexOf(node) ? [node] : [];
     case 'SwitchStatement':
       return [node.discriminant, ...node.cases.flatMap((c) => c.test ?? [])];
     case 'IfStatement':
@@ -73,6 +76,59 @@ function setParts(node) {
     default:
       return [];
   }
+}
+
+/** The value of a static string: a literal, a template, `String.raw`, or a `+` of those; else null. */
+function staticString(n) {
+  if (n.type === 'Literal' && typeof n.value === 'string') return n.value;
+  if (n.type === 'TemplateLiteral' && n.expressions.length === 0) return n.quasis[0].value.cooked;
+  if (n.type === 'TaggedTemplateExpression' && n.quasi.expressions.length === 0) {
+    const raw = n.tag.type === 'MemberExpression' && n.tag.object.name === 'String' && n.tag.property.name === 'raw';
+    return raw ? n.quasi.quasis[0].value.raw : null;
+  }
+  if (n.type !== 'BinaryExpression' || n.operator !== '+') return null;
+  const [left, right] = [staticString(n.left), staticString(n.right)];
+  return left === null || right === null ? null : left + right;
+}
+
+/** The pattern and flags of a regular expression literal or a static `RegExp` build; else null. */
+function regexOf(n) {
+  if (n.regex) return n.regex;
+  if (n.type !== 'NewExpression' && n.type !== 'CallExpression') return null;
+  const global = n.callee.type === 'MemberExpression' && n.callee.object.name === 'globalThis';
+  if ((global ? n.callee.property : n.callee).name !== 'RegExp' || !n.arguments.length) return null;
+  const pattern = staticString(n.arguments[0]);
+  const flags = n.arguments[1] ? staticString(n.arguments[1]) : '';
+  return pattern === null ? null : { pattern, flags: flags ?? '' };
+}
+
+/**
+ * The story statuses a regular expression names, however it spells them. The
+ * JavaScript engine does the reading, so there is no pattern parser here: each
+ * piece of the source that compiles alone is tried against each status, which
+ * sees an escape, a character class or a group and keeps a status found amid
+ * other text. A piece that also matches the status reversed is a general
+ * shape (`[a-z_]+`), not a name.
+ */
+function statusesInRegex({ pattern, flags }) {
+  const named = new Set();
+  const stateless = flags.replace(/[gy]/g, '');
+  for (let from = 0; from < pattern.length; from++) {
+    for (let to = from + 1; to <= pattern.length; to++) {
+      const piece = pattern.slice(from, to);
+      let whole;
+      try {
+        new RegExp(piece, stateless);
+        whole = new RegExp(`^(?:${piece})$`, stateless);
+      } catch {
+        continue;
+      }
+      for (const s of STATUSES) {
+        if (whole.test(s) && !whole.test([...s].reverse().join(''))) named.add(s);
+      }
+    }
+  }
+  return named;
 }
 
 /** The story statuses some nodes name in strings, static templates, regular expressions and object keys. */
@@ -84,7 +140,8 @@ function statusesNamed(nodes) {
   for (const node of nodes) {
     full(node, (n) => {
       if (n.type === 'Literal') add(n.value);
-      if (n.regex) n.regex.pattern.replace(/\\./g, ' ').match(/\w+/g)?.forEach(add);
+      const regex = regexOf(n);
+      if (regex) statusesInRegex(regex).forEach(add);
       if (n.type === 'TemplateLiteral' && n.expressions.length === 0) add(n.quasis[0].value.cooked);
       if (n.type !== 'Property' || n.computed) return;
       add(n.key.type === 'Identifier' ? n.key.name : n.key.value);
@@ -207,6 +264,54 @@ const CASES = [
   { name: 'a static template in a condition', src: 'const c = a === `done` || a === `superseded`;', hits: 1 },
   { name: 'a regular expression', src: `const c = /^(done|superseded)$/.test(s);`, hits: 1 },
   { name: 'a regular expression with word boundaries', src: String.raw`/\bdone\b|\brefined\b/.test(s);`, hits: 1 },
+  { name: 'hex escapes in a regular expression', src: String.raw`/\x64one|\x72efined/.test(s);`, hits: 1 },
+  { name: 'Unicode escapes in a regular expression', src: String.raw`/\u0064one|\u0072efined/.test(s);`, hits: 1 },
+  { name: 'code point escapes', src: String.raw`/\u{64}one|\u{72}efined/u.test(s);`, hits: 1 },
+  { name: 'octal and identity escapes', src: String.raw`/d\157ne|r\efined/.test(s);`, hits: 1 },
+  { name: 'a character class with one member', src: `/[d]one|re[f]ined/.test(s);`, hits: 1 },
+  { name: 'a character class with several members', src: `/d[ou]ne|refined/.test(s);`, hits: 1 },
+  { name: 'a class of hex escapes', src: String.raw`/[\x64]one|refined/.test(s);`, hits: 1 },
+  { name: 'a shared suffix in a group', src: `/^(?:don|refin)e/.test(s);`, hits: 0 },
+  { name: 'a suffix group that spells two statuses', src: `/^(?:do|supersede)(?:ne|d)$/.test(s);`, hits: 1 },
+  { name: 'a quantified letter', src: `/^do{1}ne$|^refined$/.test(s);`, hits: 1 },
+  { name: 'upper case with the i flag', src: `/^(DONE|REFINED)$/i.test(s);`, hits: 1 },
+  { name: 'upper case without the i flag', src: `/^(DONE|REFINED)$/.test(s);`, hits: 0 },
+  { name: 'statuses amid other text', src: String.raw`/^status:\s*(d\x6fne|s[u]perseded)\s*$/m.test(t);`, hits: 1 },
+  { name: 'the g and y flags', src: `/done|refined/gy.test(s);`, hits: 1 },
+  { name: 'a general word shape', src: `/^[a-z_]+$/.test(s);`, hits: 0 },
+  { name: 'a word character run', src: String.raw`/\w+/.test(s);`, hits: 0 },
+  { name: 'an any-character run', src: `/.+/.test(s);`, hits: 0 },
+  { name: 'one letter of each status', src: `/e/.test(s);`, hits: 0 },
+  { name: 'a regular expression and a string', src: `const c = /done/.test(s) || s === 'refined';`, hits: 1 },
+  { name: 'new RegExp', src: `const c = new RegExp('^(done|superseded)$').test(s);`, hits: 1 },
+  { name: 'a RegExp call', src: `const c = RegExp('^(done|superseded)$').test(s);`, hits: 1 },
+  { name: 'globalThis.RegExp', src: `const c = new globalThis.RegExp('done|refined').test(s);`, hits: 1 },
+  { name: 'new RegExp over a template', src: 'const c = new RegExp(`done|refined`).test(s);', hits: 1 },
+  { name: 'a RegExp call over a template', src: 'const c = RegExp(`done|refined`).test(s);', hits: 1 },
+  { name: 'new RegExp over String.raw', src: 'new RegExp(String.raw`\\bdone\\b|\\brefined\\b`);', hits: 1 },
+  { name: 'new RegExp over a concatenation', src: `new RegExp('^(done|' + 'superseded)$');`, hits: 1 },
+  { name: 'a RegExp call with escapes', src: String.raw`RegExp('\\x64one|\\x72efined').test(s);`, hits: 1 },
+  { name: 'new RegExp with a flags argument', src: `new RegExp('DONE|REFINED', 'i');`, hits: 1 },
+  { name: 'new RegExp over a regular expression', src: `new RegExp(/done|refined/, 'i');`, hits: 1 },
+  {
+    name: 'constructed regular expressions in conditions',
+    src: `if (new RegExp('^(done|superseded)$').test(s)) f();`,
+    hits: 1,
+  },
+  { name: 'a RegExp call in a ternary', src: `const x = RegExp('done|refined').test(s) ? 1 : 2;`, hits: 1 },
+  { name: 'a RegExp call in an else if', src: `if (a) f();\nelse if (RegExp('done|refined').test(s)) g();`, hits: 1 },
+  {
+    name: 'a RegExp call in a switch case',
+    src: `switch (true) { case RegExp('done|refined').test(s): f(); }`,
+    hits: 1,
+  },
+  { name: 'a RegExp and a string in a condition', src: `RegExp('^done$').test(s) || s === 'refined';`, hits: 1 },
+  { name: 'new RegExp with one status', src: `new RegExp('^done$');`, hits: 0 },
+  { name: 'new RegExp over a variable', src: `new RegExp(pattern);`, hits: 0 },
+  { name: 'new RegExp with a substitution', src: 'new RegExp(`done${x}`);', hits: 0 },
+  { name: 'new RegExp with an invalid static pattern', src: `new RegExp('(done|refined');`, hits: 1 },
+  { name: 'another function called with statuses', src: `f('done|refined');`, hits: 0 },
+  { name: 'another global method', src: `new other.RegExp2('done|refined');`, hits: 0 },
   { name: 'a template with a substitution names nothing', src: 'const a = [`done${x}`, `refined${x}`];', hits: 0 },
   { name: 'a regular expression with one status', src: `/^done$/.test(s);`, hits: 0 },
   { name: 'one-status branches in an if body', src: `if (a) f('done');\nelse g('superseded');`, hits: 0 },
