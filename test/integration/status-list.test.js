@@ -175,6 +175,26 @@ test('bl status sorts every unknown status after backlog including prototype key
   }
 });
 
+test('bl status keeps ranks 10000 and later ahead of unranked stories', () => {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C00', title: 'Work' }],
+    stories: ['S-10', 'S-9', 'S-3', 'S-2', 'S-1'].map((id) => ({
+      id,
+      status: 'refined',
+      component: 'C00',
+      title: `Story ${id}`,
+    })),
+  });
+  // S-3 lands on rank 9999, S-2 on 10000, S-1 on 10001; S-9 and S-10 have none.
+  const filler = Array.from({ length: 9999 }, (_, i) => `S-${100 + i}`);
+  writeRanks(dir, [...filler, 'S-3', 'S-2', 'S-1']);
+  for (const verb of ['status', 'list']) {
+    const r = runBl([verb], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(ids(r.stdout), ['S-3', 'S-2', 'S-1', 'S-9', 'S-10'], verb);
+  }
+});
+
 test('the Feature column comes along when a listed story has a feature', () => {
   const { dir } = mkTempBacklog({
     components: [{ id: 'C00', title: 'Work' }],

@@ -42,8 +42,8 @@ const isOpen = (s) => s.status !== 'done' && s.status !== 'superseded';
 /** Comparator: stack rank (unranked last), then numeric id. */
 function byRankThenId(priorityMap) {
   return (a, b) => {
-    const pa = priorityMap.get(a.id) ?? 9999;
-    const pb = priorityMap.get(b.id) ?? 9999;
+    const pa = priorityMap.get(a.id) ?? Infinity;
+    const pb = priorityMap.get(b.id) ?? Infinity;
     if (pa !== pb) return pa - pb;
     return a.id.localeCompare(b.id, undefined, { numeric: true });
   };
