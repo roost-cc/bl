@@ -138,8 +138,8 @@ export class Flow {
 
   /**
    * The type's open statuses (those that do not meet `done`), furthest along
-   * first: most `implies` entries first, which `bl validate` keeps closed where
-   * it does not check the file's order. Ties keep the file's order.
+   * first: most `implies` entries first, since `bl validate` keeps `implies`
+   * closed but does not check the file's order. Ties keep the file's order.
    * @param {string} type
    * @returns {string[]}
    */
@@ -160,7 +160,8 @@ export class Flow {
    */
   meets(type, status, wanted) {
     const { statuses } = this.typeOf(type);
-    if (!Object.hasOwn(statuses, status)) return false;
+    // `hasOwn` coerces its key: frontmatter's `[superseded]` is no status.
+    if (typeof status !== 'string' || !Object.hasOwn(statuses, status)) return false;
     return status === wanted || statuses[status].implies.includes(wanted);
   }
 

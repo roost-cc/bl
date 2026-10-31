@@ -68,6 +68,13 @@ test("openStatusesOf: order is implies, not the file's; a tie keeps the file's o
   assert.deepEqual(loadFlow(dir).openStatusesOf('story'), ['in_progress', 'blocked', 'backlog']);
 });
 
+test('meets: a status that is not a string meets nothing, though its text names one', () => {
+  const flow = loadFlow(FIXTURE_DIR);
+  for (const status of [['superseded'], ['done'], 7, true, null, undefined]) {
+    assert.equal(flow.meets('story', status, 'done'), false, JSON.stringify(status));
+  }
+});
+
 test('openStatusesOf: a type the flow lacks throws', () => {
   assert.throws(() => loadFlow(FIXTURE_DIR).openStatusesOf('nope'), FlowError);
 });

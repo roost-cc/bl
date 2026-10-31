@@ -179,6 +179,8 @@ test('a closed status added to flow.json is not listed', () => {
   const r = runBl(['status'], { cwd: dir });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(ids(r.stdout), ['S-1']);
+  // `bl list` keeps its own constants, not flow.json.
+  assert.deepEqual(ids(runBl(['list'], { cwd: dir }).stdout), ['S-1', 'S-2']);
 });
 
 test('a flow.json bl cannot read stops bare bl status naming the file', () => {
@@ -194,6 +196,14 @@ test('a flow.json bl cannot read stops bare bl status naming the file', () => {
   assert.equal(broken.status, 1);
   assert.equal(broken.stdout, '');
   assert.match(broken.stderr, /flow\.json: not valid JSON/);
+
+  // `bl list` does not read it; bare `bl status` stops even with no stories.
+  assert.equal(runBl(['list'], { cwd: dir }).status, 0);
+  const { dir: empty } = mkTempBacklog({ flow: null });
+  const none = runBl(['status'], { cwd: empty });
+  assert.equal(none.status, 1);
+  assert.equal(none.stdout, '');
+  assert.match(none.stderr, /flow\.json: missing/);
 });
 
 test('a status outside flow.json stays listed, after backlog', () => {
@@ -211,7 +221,7 @@ test('a status outside flow.json stays listed, after backlog', () => {
 });
 
 test('bl status sorts every unknown status after backlog including prototype keys', () => {
-  const unknown = ['blocked', '__proto__', 'constructor', 'toString', 'hasOwnProperty', 7, true, ['refined']];
+  const unknown = ['blocked', '__proto__', 'constructor', 'toString', 'hasOwnProperty', 7, true, ['refined'], ['superseded'], ['done']];
   for (const status of unknown) {
     const { dir } = mkTempBacklog({
       components: [{ id: 'C00', title: 'Work' }],
