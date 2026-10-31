@@ -548,7 +548,9 @@ export function burnupChart(history, scope, label) {
  */
 export function flowChart(history, flow) {
   const statuses = [...flow.statusesOf('story')].reverse().filter((s) => s !== 'superseded');
-  const names = statuses.map((s) => s.replaceAll('_', ' '));
+  const spaced = (s) => s.replaceAll('_', ' ');
+  // A name is its series' key, so statuses that would read alike keep their own.
+  const names = statuses.map((s) => (statuses.filter((o) => spaced(o) === spaced(s)).length > 1 ? s : spaced(s)));
   const stacked = [names.slice(0, -1).join(', '), ...names.slice(-1)].filter(Boolean).join(' and ');
   const weeks = weeklyDays(history.days).map(({ day }) => ({ x: weekStart(day.date), points: pointsByStatus(day) }));
   return {

@@ -5,10 +5,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { narrowHistory } from '../../src/history.js';
+import { toSpec } from '../../src/chart-adapters/vega-lite.js';
 import {
   ages,
   daysBetween,
   firstSeen,
+  flowChart,
   leadCycle,
   percentile,
   progress,
@@ -16,7 +18,8 @@ import {
   weekStart,
 } from '../../src/report.js';
 import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
-import { loadFlow } from '../../src/flow.js';
+import { Flow, loadFlow } from '../../src/flow.js';
+import { readFileSync } from 'fs';
 import { dirname } from 'path';
 
 const flow = loadFlow(dirname(FLOW_TEMPLATE));
@@ -178,5 +181,36 @@ test('leadCycle_returns_empty_when_since_excludes_all_days', () => {
     leadCycle(history([]), { seen: new Map() }),
     { from: '', to: '', lead: empty, cycle: empty, items: [] },
     'a wholly empty history',
+  );
+});
+
+test('flowChart_keeps_distinct_statuses_with_equal_display_names', () => {
+  const add = (names) => {
+    const raw = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
+    for (const name of names) raw.types.story.statuses[name] = { implies: ['refined', 'backlog'] };
+    return new Flow('flow.json', raw);
+  };
+  const shapes = [
+    ['one spelled with a space', ['in progress']],
+    ['a pair apart from the template', ['on_hold', 'on hold']],
+  ];
+  for (const [label, names] of shapes) {
+    const custom = add(names);
+    const statuses = custom.statusesOf('story').filter((s) => s !== 'superseded');
+    const stories = Object.fromEntries(statuses.map((s, i) => [`S-${i}`, [s, i + 1]]));
+    const chart = flowChart(history([['2026-04-21', stories]]), custom);
+    const domain = toSpec(chart).layer[0].encoding.color.scale.domain;
+    assert.equal(new Set(domain).size, statuses.length, `${label}: a band each`);
+    const total = (name) => chart.series.find((s) => s.name === name).values[0].y;
+    statuses.forEach((s, i) => {
+      const name = domain.find((n) => n === s) ?? s.replaceAll('_', ' ');
+      assert.equal(total(name), i + 1, `${label}: ${s} keeps its own points`);
+    });
+  }
+  // A name nothing shares still reads with spaces.
+  const { series } = flowChart(history([]), flow);
+  assert.deepEqual(
+    series.map((s) => s.name),
+    ['done', 'in progress', 'refined', 'backlog'],
   );
 });
