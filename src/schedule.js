@@ -94,17 +94,16 @@ function sameFiles(a, b) {
  * form of one counts and a `#` line in a code block does not.
  */
 function withoutSourcesOfTruth(plan) {
-  const lf = plan.replace(/\r\n/g, '\n');
-  const headings = fromMarkdown(lf).children.filter((n) => n.type === 'heading' && n.depth <= 3);
+  const headings = fromMarkdown(plan).children.filter((n) => n.type === 'heading' && n.depth <= 3);
   let kept = '';
   let from = 0;
   headings.forEach((h, i) => {
     const [only, more] = h.children;
     if (h.depth !== 3 || more || only?.value !== 'Sources of truth') return;
-    kept += lf.slice(from, h.position.start.offset);
-    from = headings[i + 1]?.position.start.offset ?? lf.length;
+    kept += plan.slice(from, h.position.start.offset);
+    from = headings[i + 1]?.position.start.offset ?? plan.length;
   });
-  return kept + lf.slice(from);
+  return kept + plan.slice(from);
 }
 
 /**
