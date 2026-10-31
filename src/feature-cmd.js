@@ -118,7 +118,7 @@ import {
   updateChange,
 } from './change-doc.js';
 import { deployableRepos, mainCommits, tagRepos, writeReleaseManifest } from './release.js';
-import { loadFlow } from './flow.js';
+import { loadFlow, statusWords } from './flow.js';
 
 const POINTS_GUIDELINE = { min: 8, max: 20 };
 
@@ -858,7 +858,7 @@ export function cmdStatusStory(args, config, story) {
 }
 
 /**
- * `bl status C01`: the component's open stories (not done or superseded),
+ * `bl status C01`: the component's open stories (not closed),
  * one row each, in id order. `component` is a `findComponentDir` hit.
  */
 export function cmdStatusComponent(args, config, component) {
@@ -1459,7 +1459,7 @@ export async function cmdRun(args, config, feature) {
 }
 
 /**
- * `bl run S-n`: a refined (or in-progress) story through the feature loop,
+ * `bl run S-n`: a runnable story (`Flow.isRunnable`) through the feature loop,
  * as a one-story unit on its own branch (F-35 Design §3).
  */
 export async function cmdRunStory(args, baseConfig, story) {
@@ -1467,8 +1467,8 @@ export async function cmdRunStory(args, baseConfig, story) {
   const { config, unit, found, parsed } = loadStoryUnit(story, baseConfig);
   const flow = loadFlow(config.backlogRoot);
   if (!flow.isRunnable('story', unit.status)) {
-    const hint =
-      unit.status === 'backlog' ? `run \`bl refine ${unit.id}\` first` : 'only a refined or in-progress story runs';
+    const runnable = statusWords(flow.runnableStatusesOf('story')).replaceAll('_', '-');
+    const hint = unit.status === 'backlog' ? `run \`bl refine ${unit.id}\` first` : `only a ${runnable} story runs`;
     console.error(`Story ${unit.id} is ${unit.status} — ${hint}.`);
     process.exit(1);
   }

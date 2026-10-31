@@ -21,7 +21,9 @@
  */
 
 import { readFileSync, statSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+import { findBacklogRoot } from './config.js';
 
 /** The file's name, at the backlog root. */
 export const FLOW_FILE = 'flow.json';
@@ -78,6 +80,31 @@ export function loadFlow(backlogRoot) {
   const flow = new Flow(path, raw);
   cache.set(path, { key, flow });
   return flow;
+}
+
+/**
+ * The flow `--help` words its status lists from: the backlog's, or `bl init`'s
+ * template where there is none to read, since help works anywhere.
+ * @returns {Flow}
+ */
+export function flowForHelp() {
+  try {
+    return loadFlow(findBacklogRoot());
+  } catch {
+    return loadFlow(join(dirname(fileURLToPath(import.meta.url)), '..', 'templates'));
+  }
+}
+
+/**
+ * `names` as prose: `a`, `a or b`, `a, b or c`, for a message about a set of
+ * statuses. `(none)` when a flow has none.
+ * @param {string[]} names
+ * @param {string} [word]  what joins the last two
+ * @returns {string}
+ */
+export function statusWords(names, word = 'or') {
+  if (names.length === 0) return '(none)';
+  return [names.slice(0, -1).join(', '), names.at(-1)].filter(Boolean).join(` ${word} `);
 }
 
 const isObject = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
@@ -148,6 +175,33 @@ export class Flow {
     return this.statusesOf(type)
       .filter((status) => !this.meets(type, status, 'done'))
       .sort((a, b) => statuses[b].implies.length - statuses[a].implies.length);
+  }
+
+  /**
+   * The type's closed statuses (those that meet `done`), in the file's order.
+   * @param {string} type
+   * @returns {string[]}
+   */
+  closedStatusesOf(type) {
+    return this.statusesOf(type).filter((status) => this.meets(type, status, 'done'));
+  }
+
+  /**
+   * The statuses `isRunnable` accepts, in the file's order.
+   * @param {string} type
+   * @returns {string[]}
+   */
+  runnableStatusesOf(type) {
+    return this.statusesOf(type).filter((status) => this.isRunnable(type, status));
+  }
+
+  /**
+   * The statuses `isUnstarted` accepts, in the file's order.
+   * @param {string} type
+   * @returns {string[]}
+   */
+  unstartedStatusesOf(type) {
+    return this.statusesOf(type).filter((status) => this.isUnstarted(type, status));
   }
 
   /**

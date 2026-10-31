@@ -788,7 +788,7 @@ export function findEscalationNotNone(f) {
 
 /**
  * The rules of a unit's `## Deferred` (feature) or `## To Do` (story), F-65
- * D4, on a unit that is not done or superseded (a closed unit's section is
+ * D4, on a unit that is not closed (a closed unit's section is
  * history and keeps its notes and operator items as written). One finding
  * per line:
  *

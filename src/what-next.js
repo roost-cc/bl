@@ -124,7 +124,7 @@ export function pickNextInComponent(componentId, stories, graph, priorityMap, fl
  *
  * Return shapes:
  *   - `{ kind: "missing" }`   — the set is empty
- *   - `{ kind: "all-done" }`  — every story in the set is done/superseded
+ *   - `{ kind: "all-done" }`  — every story in the set is closed
  *   - `{ kind: "next", story, method }` — `method` is `"priority"` or
  *     `"oldest-leaf"`
  *   - `{ kind: "blocked", open }` — open stories exist but every one of

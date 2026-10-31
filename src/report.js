@@ -27,6 +27,7 @@ import { readAllStories, readComponents } from './story.js';
 import { readAllEpics, readAllThemes } from './theme.js';
 import { formatTable } from './sync.js';
 import { addDays, isoWeek, pointsByStatus, scopeStories, weeklyDays } from './history.js';
+import { statusWords } from './flow.js';
 
 /** Bumped whenever `data.json`'s shape changes. */
 export const REPORT_VERSION = 3;
@@ -835,6 +836,8 @@ export function renderMarkdown(data, markdownById, flow) {
       : 'No snapshots: the backlog has no commits and no dated stories.',
   );
 
+  const quoted = (statuses) => statusWords(statuses.map((st) => `\`${st}\``));
+  const runnable = quoted(flow.runnableStatusesOf('story'));
   const byStatus = (counts, order) =>
     ordered(counts, order)
       .map((st) => `${counts[st]} ${st}`)
@@ -846,7 +849,7 @@ export function renderMarkdown(data, markdownById, flow) {
       `- Epics: ${s.epics.total} (${byStatus(s.epics.byStatus, ['open', 'done'])})`,
       `- Features: ${s.features.total} (${byStatus(s.features.byStatus, flow.statusesOf('feature'))})`,
       `- Stories: ${s.stories.total}, ${s.points.total} points`,
-      `- Open (not done or superseded): ${s.open.stories} stories, ${s.open.points} points`,
+      `- Open (not ${statusWords(flow.closedStatusesOf('story'))}): ${s.open.stories} stories, ${s.open.points} points`,
       `- Progress: ${s.progress.done} of ${s.progress.scope} points done (${pct(s.progress.percent)})`,
       ...(data.unreadable > 0
         ? [`- Unreadable: ${data.unreadable} \`index.md\` blob(s) in the history were skipped`]
@@ -879,7 +882,7 @@ export function renderMarkdown(data, markdownById, flow) {
   const lc = data.leadCycle;
   section(
     'Lead and cycle time',
-    `Stories first done from ${lc.from || '—'} to ${lc.to || '—'}, in days. Lead time runs from \`added\` to the first snapshot showing \`done\`; cycle time from the first snapshot showing \`refined\` or \`in_progress\`.`,
+    `Stories first done from ${lc.from || '—'} to ${lc.to || '—'}, in days. Lead time runs from \`added\` to the first snapshot showing \`done\`; cycle time from the first snapshot showing ${runnable}.`,
     formatTable(
       ['Measure', 'Stories', 'Median', '85th percentile'],
       [
@@ -889,7 +892,7 @@ export function renderMarkdown(data, markdownById, flow) {
     ),
     '### Work item age',
     data.ages.length === 0
-      ? 'No story is `refined` or `in_progress`.'
+      ? `No story is ${runnable}.`
       : formatTable(
           ['Story', 'Title', 'Status', 'Points', 'Since', 'Age (days)'],
           data.ages.map((a) => [ref(a.id, a.link), cell(a.title), a.status, a.points, a.since, a.days]),

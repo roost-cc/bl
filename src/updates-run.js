@@ -64,7 +64,7 @@ import {
   renderTable,
   tableRows,
 } from './updates.js';
-import { loadFlow } from './flow.js';
+import { loadFlow, statusWords } from './flow.js';
 
 // `DEFAULT_MAX_MERGES`, `CONFLICT_NOTE`, `RUN_LOCK_ID` and `checkCriteria`
 // live in updates.js, whose CLI help and sync use them without importing
@@ -144,7 +144,7 @@ export function selectStories(stories, ids, flow) {
     const s = stories.find((x) => x.id === parsed.id);
     if (!s) throw new Error(`${parsed.id} is not an update story`);
     if (!flow.isRunnable('story', s.fm.status)) {
-      throw new Error(`${parsed.id} is ${s.fm.status}; only a refined or in_progress story runs`);
+      throw new Error(`${parsed.id} is ${s.fm.status}; only a ${statusWords(flow.runnableStatusesOf('story'))} story runs`);
     }
     return s;
   });

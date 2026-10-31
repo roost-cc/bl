@@ -15,7 +15,7 @@
 import { loadConfig, parseArgs, normalizeId, info, componentIdHint } from './config.js';
 import { readAllStories } from './story.js';
 import { buildGraph } from './what-next.js';
-import { loadFlow } from './flow.js';
+import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 function idNum(id) {
   const m = String(id).match(/^S-(\d+)$/);
@@ -156,6 +156,12 @@ export async function main(argv) {
   const args = parseArgs(argv);
 
   if (args.help) {
+    const closedWords = statusWords(
+      flowForHelp()
+        .closedStatusesOf('story')
+        .map((s) => `\`${s}\``),
+      'and',
+    );
     console.log(`Usage: bl deps <story-id>
 
 Arguments:
@@ -166,7 +172,7 @@ transitive \`depends_on\` closure, leaf-first, ending with the story
 itself. No story is listed before one of its own dependencies; within
 that constraint, stories that unblock more of the plan come first.
 
-\`done\` and \`superseded\` stories are omitted, and the walk does not
+${closedWords} stories are omitted, and the walk does not
 descend through them.
 
 stdout is one story ID per line and nothing else, so it composes:
@@ -181,8 +187,7 @@ counts — goes to stderr:
 
 The status column shows each story's current status, so you can see at a
 glance which leaves are startable: \`bl implement\` requires \`refined\`, so a
-leaf sitting at \`backlog\` needs \`bl refine\` first. \`done\` and
-\`superseded\` never appear, since closed stories are pruned from the plan.`);
+leaf sitting at \`backlog\` needs \`bl refine\` first. ${closedWords.replace(' and ', ' and\n')} never appear, since closed stories are pruned from the plan.`);
     process.exit(0);
   }
 

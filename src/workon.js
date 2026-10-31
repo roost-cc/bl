@@ -10,7 +10,7 @@
  * started story (F-35 decision J); this module works on one story.
  *
  * Dependency gating: a story is only launched when every `depends_on` is
- * already `done`/`superseded` (i.e. merged).
+ * already closed (i.e. merged).
  */
 
 import { existsSync, readFileSync } from 'fs';
@@ -59,13 +59,13 @@ export function idNum(id) {
  * readiness.
  *
  * Component IDs expand to their `status: refined` stories (backlog stories must be
- * refined first; done/superseded are complete). An explicitly-named story is
- * included when its status is `refined` or `in_progress`; backlog/done/
- * superseded are reported as notices. Named targets outrank component-expanded ones
+ * refined first; closed ones are complete). An explicitly-named story is
+ * included when `Flow.isRunnable` accepts its status; any other is reported as
+ * a notice. Named targets outrank component-expanded ones
  * on dedup.
  *
  * Each resolved target is then classified:
- *   - `startable` — every `depends_on` is already `done`/`superseded`.
+ *   - `startable` — every `depends_on` is already closed.
  *   - `deferred`  — at least one `depends_on` is unmet; `blockers` lists them.
  * A dependency that is itself a not-yet-merged story (even one in the same
  * batch) is unmet, so the dependent defers.

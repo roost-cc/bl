@@ -27,6 +27,7 @@ import {
   repoOf,
   warn,
 } from './config.js';
+import { statusWords } from './flow.js';
 import { parseIdList, readAllStories } from './story.js';
 import { unitChange } from './change-doc.js';
 import { updateSpecFile } from './spec-file.js';
@@ -199,7 +200,7 @@ export function storyMoveRefusal(id, fm, featureId, flow) {
     return `${id} is already in ${named}.`;
   }
   if (!flow.isUnstarted('story', fm.status)) {
-    return `${id} is ${fm.status}; only a backlog or refined story moves into a feature.`;
+    return `${id} is ${fm.status}; only a ${statusWords(flow.unstartedStatusesOf('story'))} story moves into a feature.`;
   }
   return null;
 }

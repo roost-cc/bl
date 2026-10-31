@@ -15,12 +15,12 @@
 import { loadConfig, parseArgs, info } from './config.js';
 import { filterFromArgs, filterLabel, featureEpicId } from './filter.js';
 import { readFeatureOrder, rankedFeatures, unrankedFeatures, FEATURE_ORDER_FILE } from './feature-order.js';
-import { loadFlow } from './flow.js';
+import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
-const HELP = `Usage: bl next [--theme <slug>] [--epic <E-id>]
+const help = (flow) => `Usage: bl next [--theme <slug>] [--epic <E-id>]
 
 Print the next feature to run, by the operator's feature order: the first
-feature in ${FEATURE_ORDER_FILE}'s "ranked:" that is not done or superseded and
+feature in ${FEATURE_ORDER_FILE}'s "ranked:" that is not ${statusWords(flow.closedStatusesOf('feature'))} and
 matches every filter given.
 
 Options:
@@ -49,7 +49,7 @@ function describe(f) {
 export async function main(argv) {
   const args = parseArgs(argv);
   if (args.help) {
-    console.log(HELP);
+    console.log(help(flowForHelp()));
     process.exit(0);
   }
   for (const flag of ['feature', 'component']) {

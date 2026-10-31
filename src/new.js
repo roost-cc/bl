@@ -67,7 +67,7 @@ import { resolveTargets } from './targets.js';
 import { failPoint, settle, writeRecord } from './feature-links.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
-import { loadFlow } from './flow.js';
+import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 const FIBONACCI = new Set([1, 2, 3, 5, 8, 13]);
 
@@ -824,8 +824,7 @@ export async function main(argv) {
 Arguments:
   F-id                 The story's feature, as --feature F-<n>
   C-id                 The story's component, as --component C<n>
-  S-id…                With the --feature switch: stories (backlog or
-                       refined, in no feature) to move into the new feature
+  S-id…                With the --feature switch: stories (${statusWords(flowForHelp().unstartedStatusesOf('story')).replace(' or ', ' or\n                       ')}, in no feature) to move into the new feature
 
 Options:
   --component <id>     The story's component (C<n>): its code boundary. The

@@ -93,7 +93,7 @@ function featureNumber(f) {
 }
 
 /**
- * The ranked features that exist, are not done or superseded, and pass
+ * The ranked features that exist, are not closed, and pass
  * `filter` (`theme`, `epic`), in rank order: `{ id, why, position, feature }`
  * with `feature` the feature record and `position` its place in `ranked:`.
  * A ranked id with no feature, a closed one or a repeat is `bl validate`'s
@@ -117,7 +117,7 @@ export function rankedFeatures(order, features, flow, filter = {}) {
 }
 
 /**
- * The features that are not done, not superseded and not in `ranked:`, and
+ * The features that are not closed and not in `ranked:`, and
  * pass `filter`, in id order.
  */
 export function unrankedFeatures(order, features, flow, filter = {}) {
@@ -133,7 +133,7 @@ export function unrankedFeatures(order, features, flow, filter = {}) {
  *     not YAML, or `ranked:` is not a list of mappings each with `feature`
  *     and `why`.
  *   - `feature-order-feature` (error): a ranked id that names no feature, a
- *     done or superseded one, or one ranked twice.
+ *     closed one, or one ranked twice.
  * @param {object} config
  * @param {object[]} features  `readAllFeatures` records
  * @param {import("./flow.js").Flow} flow

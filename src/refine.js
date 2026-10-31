@@ -24,7 +24,7 @@ import {
 } from './config.js';
 import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { launchSession, loadPrompt, spillSubagentPrompts } from './session.js';
-import { loadFlow } from './flow.js';
+import { flowForHelp, loadFlow } from './flow.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
@@ -233,7 +233,7 @@ Arguments:
   <id...>              One or more story IDs (S34, S-34) and/or component IDs (C01).
                        A component expands to every 'backlog' story it contains.
                        Naming a story directly refines it even if already
-                       refined (only done/superseded are skipped).
+                       refined (only ${flowForHelp().closedStatusesOf('story').join('/')} are skipped).
 
 Options:
   -A, --agent <id>     Agent provider (e.g. "claude", "codex", "gemini")

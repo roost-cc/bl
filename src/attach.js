@@ -43,14 +43,14 @@ import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
-import { loadFlow } from './flow.js';
+import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 export const ATTACH_JSON_SCHEMA = 'bl-attach-json/v1';
 
 /** Feature statuses with branches and worktrees, so a fixed set of repos. */
 const BRANCHED = new Set(['running', 'escalated']);
 
-const HELP = `Usage: bl attach <S-n> <F-n> [options]
+const help = (flow) => `Usage: bl attach <S-n> <F-n> [options]
 
 List an existing story in a feature: set the story's feature: and append it
 to the feature's stories:, then sync and commit both files by path. The ids
@@ -63,9 +63,9 @@ Refused, with nothing written:
   - a story or feature that does not exist
   - a feature file whose feature_id: is another feature
   - a story whose component has no repo
-  - a feature that is done or superseded
+  - a feature that is ${statusWords(flow.closedStatusesOf('feature'))}
   - a story whose feature: names another feature
-  - a story that is not backlog or refined
+  - a story that is not ${statusWords(flow.unstartedStatusesOf('story'))}
   - for a running or escalated feature, a story whose component's repo the
     feature's branches do not span (bl side <repo> --from F-<n> brings a
     repo in)
@@ -111,7 +111,7 @@ function classify(positional) {
 export async function main(argv) {
   const args = parseArgs(argv);
   if (args.help) {
-    console.log(HELP);
+    console.log(help(flowForHelp()));
     process.exit(0);
   }
   const { storyRef, featureRef } = classify(args.positional);

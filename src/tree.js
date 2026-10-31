@@ -15,7 +15,7 @@
  *   bl tree                 Show every non-trivial tree
  *   bl tree <story-id>      Show the tree(s) containing <story-id>
  *   bl tree <component-id>       Show trees containing pending stories in the component
- *   bl tree -a | --all      Include trees where every story is done/superseded
+ *   bl tree -a | --all      Include trees where every story is closed
  *   bl tree --theme <slug>  Trees containing pending stories in a theme;
  *                           likewise --epic, --feature, --component
  *                           (filter.js, F-51 D2)
@@ -35,7 +35,7 @@ import {
 } from './config.js';
 import { readAllStories, normalizeId, normalizeComponentId, findComponentDir, parseIdList } from './story.js';
 import { filterFromArgs, filterStories, hasFilter, filterLabel } from './filter.js';
-import { loadFlow } from './flow.js';
+import { flowForHelp, loadFlow } from './flow.js';
 
 function formatNode(story, flow, extra = '', color = false) {
   const status = story.status ?? 'backlog';
@@ -43,7 +43,7 @@ function formatNode(story, flow, extra = '', color = false) {
   const marker = closed ? ' (done)' : ` (${status})`;
   const title = story.title ? ` ${story.title}` : '';
   const text = `${story.id}${title}${marker}${extra}`;
-  // Dim done/superseded nodes so completed work recedes. Only the node text is
+  // Dim closed nodes so completed work recedes. Only the node text is
   // wrapped — tree connectors are added by walk() outside this function and
   // stay at normal brightness. Faint (\x1b[2m) reads as darker against both
   // light and dark terminal themes.
@@ -199,7 +199,7 @@ Arguments:
   [component-id]            Show trees containing pending stories in this component
 
 Options:
-  -a, --all            Include trees where every story is done/superseded
+  -a, --all            Include trees where every story is ${flowForHelp().closedStatusesOf('story').join('/')}
   --theme <slug>       Trees containing pending stories in a theme
   --epic <E-id>        Trees containing pending stories of an epic's features
   --feature <F-id>     Trees containing pending stories of a feature
@@ -277,7 +277,7 @@ Notes:
     const seedStories = showAll ? matched : matched.filter((s) => !closed(s));
     const seedIds = seedStories.map((s) => s.id);
     if (seedIds.length === 0) {
-      // Every matched story is done/superseded (only reachable when --all is
+      // Every matched story is closed (only reachable when --all is
       // off, since showAll seeds every match).
       info(`All stories in ${label} are done. Use -a/--all to include them.`);
       return;

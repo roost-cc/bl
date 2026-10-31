@@ -428,7 +428,7 @@ function featuresOfEpic(features, epicId) {
 
 /**
  * An epic's derived status: `done` once it has features and every one is
- * done or superseded, else `open`.
+ * closed (meets `done`), else `open`.
  */
 export function epicStatus(epicFeatures, flow) {
   return epicFeatures.length > 0 && epicFeatures.every((f) => flow.meets('feature', f.status, 'done'))
@@ -837,7 +837,7 @@ async function regenerate(config) {
 
   const closedCount = allStories.filter((s) => flow.meets('story', s.status, 'done')).length;
   info(
-    `backlog-sync: ${storyMap.size} stories (${storyMap.size - closedCount} active, ${closedCount} done/superseded)`,
+    `backlog-sync: ${storyMap.size} stories (${storyMap.size - closedCount} active, ${closedCount} ${flow.closedStatusesOf('story').join('/')})`,
   );
 
   const backlogIds = readBacklogOrder(config.backlogRoot);

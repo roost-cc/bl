@@ -37,7 +37,7 @@ import { releasePidLock } from './pid-lock.js';
 import { updateSpecFile } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { syncAndCommit, reportBacklogCommit, exitOnSyncError } from './sync.js';
-import { loadFlow } from './flow.js';
+import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -717,7 +717,7 @@ export async function syncUpdates(config, opts = {}) {
 // CLI
 // ---------------------------------------------------------------------------
 
-const HELP = `Usage: bl updates <verb> [options]
+const help = (flow) => `Usage: bl updates <verb> [options]
 
 Renovate's dependency updates as backlog stories (F-32). Renovate opens the
 branch and the PR and writes a per-cycle report; bl turns the report into
@@ -729,8 +729,7 @@ Verbs:
                                 backlog.json "updates": { "report" } names
                --dry-run        Print what would change; write nothing
   run        Rebase, gate and merge the open update stories (F-32 Design D4)
-               [S-id...]         Only these stories (else every refined or
-                                 in_progress update story)
+               [S-id...]         Only these stories (else every ${statusWords(flow.runnableStatusesOf('story')).replace(' or ', ' or\n                                 ')} update story)
                --dry-run         Print the order and what each would get
                --max-merges <n>  Merges per repo this run (default ${DEFAULT_MAX_MERGES})
   status     Open update stories by repo and state
@@ -787,7 +786,7 @@ backlog/updates/<YYYY-MM-DD>.md and committed
 with the story changes. run prints one line per story to stdout: merged,
 held, decision, skipped (or "would run" with --dry-run).
 
-status lists every refined or in_progress update story by repo, security
+status lists every ${statusWords(flow.runnableStatusesOf('story'))} update story by repo, security
 first, then oldest first: id, state, update type, PR number, title and a
 detail. States: new (no run yet), green (gate green, still open: a failed
 merge), held (gate red or rebase
@@ -955,7 +954,7 @@ export async function main(argv) {
   const args = parseArgs(argv);
   const verb = args.positional[0];
   if (args.help || !verb) {
-    console.log(HELP);
+    console.log(help(flowForHelp()));
     process.exit(verb || args.help ? 0 : 1);
   }
   switch (verb) {

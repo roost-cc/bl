@@ -251,7 +251,7 @@ export function addDays(date, n) {
 /**
  * The days before `firstDate` projected from the current stories: one per
  * calendar day from the earliest `added`, a story in scope from its `added`
- * and done (or superseded) from its `completed`, with its current points;
+ * and closed from its `completed`, with its current points;
  * every other status is unknown and reads `backlog`.
  * @param {Groups} groups
  * @param {Map<string, { status: string, points: number }>} current  the stories' current status and points
