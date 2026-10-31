@@ -6,9 +6,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
-import { writeFileSync } from 'fs';
+import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 
 const STORIES = [
@@ -137,7 +137,66 @@ test('a backlog of only closed stories says so on stderr', () => {
   assert.match(r.stderr, /^No stories found\.$/m);
 });
 
-test('a status outside the three stays listed, after backlog', () => {
+/** The shipped flow with `in_review` after `in_progress`, written last in the file. */
+function flowWithInReview() {
+  const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
+  const { statuses } = flow.types.story;
+  statuses.in_review = { implies: ['in_progress', 'refined', 'backlog'] };
+  statuses.done.implies.unshift('in_review');
+  statuses.superseded.implies.unshift('in_review');
+  return flow;
+}
+
+test('a status added to flow.json sorts by what it implies, with no code change', () => {
+  const { dir } = mkTempBacklog({
+    flow: flowWithInReview(),
+    components: [{ id: 'C00', title: 'Work' }],
+    stories: [
+      { id: 'S-1', status: 'backlog', component: 'C00', title: 'Plain' },
+      { id: 'S-2', status: 'in_progress', component: 'C00', title: 'Active' },
+      { id: 'S-3', status: 'in_review', component: 'C00', title: 'Reviewing' },
+      { id: 'S-4', status: 'refined', component: 'C00', title: 'Ready' },
+      { id: 'S-5', status: 'blocked', component: 'C00', title: 'Odd' },
+    ],
+  });
+  const r = runBl(['status'], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr, '');
+  assert.deepEqual(ids(r.stdout), ['S-3', 'S-2', 'S-4', 'S-1', 'S-5']);
+});
+
+test('a closed status added to flow.json is not listed', () => {
+  const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
+  flow.types.story.statuses.wontfix = { implies: ['done', 'in_progress', 'refined', 'backlog'] };
+  const { dir } = mkTempBacklog({
+    flow,
+    components: [{ id: 'C00', title: 'Work' }],
+    stories: [
+      { id: 'S-1', status: 'backlog', component: 'C00', title: 'Plain' },
+      { id: 'S-2', status: 'wontfix', component: 'C00', title: 'Dropped' },
+    ],
+  });
+  const r = runBl(['status'], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(ids(r.stdout), ['S-1']);
+});
+
+test('a flow.json bl cannot read stops bare bl status naming the file', () => {
+  const dir = fixture();
+  rmSync(join(dir, 'flow.json'));
+  const missing = runBl(['status'], { cwd: dir });
+  assert.equal(missing.status, 1);
+  assert.equal(missing.stdout, '');
+  assert.match(missing.stderr, /flow\.json: missing/);
+
+  writeFileSync(join(dir, 'flow.json'), '{');
+  const broken = runBl(['status'], { cwd: dir });
+  assert.equal(broken.status, 1);
+  assert.equal(broken.stdout, '');
+  assert.match(broken.stderr, /flow\.json: not valid JSON/);
+});
+
+test('a status outside flow.json stays listed, after backlog', () => {
   const { dir } = mkTempBacklog({
     components: [{ id: 'C00', title: 'Work' }],
     stories: [

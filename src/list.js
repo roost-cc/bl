@@ -15,6 +15,7 @@
 import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
 import { readAllStories, readBacklogOrder, activeWorktreesByStory } from './story.js';
 import { filterContext, filterFromArgs, filterStories, storyThemes } from './filter.js';
+import { loadFlow } from './flow.js';
 
 // Maps, not objects: a status is free frontmatter, and `constructor` or
 // `__proto__` would find an inherited property on an object.
@@ -26,17 +27,7 @@ const STATUS_ORDER = new Map([
   ['superseded', 4],
 ]);
 
-/**
- * The bare `bl status` order: strictly by status, whatever has a worktree. A
- * status outside the map stays listed, after `backlog`.
- */
-const OPEN_STATUS_ORDER = new Map([
-  ['in_progress', 1],
-  ['refined', 2],
-  ['backlog', 3],
-]);
-
-/** A story still open: neither done nor superseded. */
+/** `bl list`'s open story: neither done nor superseded. */
 const isOpen = (s) => s.status !== 'done' && s.status !== 'superseded';
 
 /** Comparator: stack rank (unranked last), then numeric id. */
@@ -49,12 +40,20 @@ function byRankThenId(priorityMap) {
   };
 }
 
-/** Comparator for the bare `bl status`: OPEN_STATUS_ORDER, then rank and id. */
-export function byOpenStatus(priorityMap) {
+/**
+ * Comparator for the bare `bl status`: strictly by status, whatever has a
+ * worktree, in `openStatuses` order (`Flow.openStatusesOf`), then rank and id.
+ * A status outside the list stays listed, last.
+ *
+ * @param {Map<string, number>} priorityMap
+ * @param {string[]} openStatuses
+ */
+export function byOpenStatus(priorityMap, openStatuses) {
   const tiebreak = byRankThenId(priorityMap);
+  const order = new Map(openStatuses.map((status, i) => [status, i]));
   return (a, b) => {
-    const sa = OPEN_STATUS_ORDER.get(a.status) ?? 4;
-    const sb = OPEN_STATUS_ORDER.get(b.status) ?? 4;
+    const sa = order.get(a.status) ?? order.size;
+    const sb = order.get(b.status) ?? order.size;
     return sa !== sb ? sa - sb : tiebreak(a, b);
   };
 }
@@ -123,13 +122,16 @@ Filters combine: every one given must match.`);
 /**
  * The bare `bl status`: every open story in the table `bl list` prints, sorted
  * strictly by status (`byOpenStatus`), so a story with a worktree keeps its
- * group.
+ * group. Which statuses are open, and their order, come from `flow.json`; a
+ * status it does not name meets nothing, so reads as open. A `flow.json` bl
+ * cannot read stops here with its `FlowError`.
  */
 export function listByStatus() {
   const cfg = loadConfig();
+  const flow = loadFlow(cfg.backlogRoot);
   const stories = readAllStories(cfg)
-    .filter(isOpen)
-    .sort(byOpenStatus(readPriorityMap(cfg)));
+    .filter((s) => !flow.meets('story', s.status, 'done'))
+    .sort(byOpenStatus(readPriorityMap(cfg), flow.openStatusesOf('story')));
   printStories(stories, { ctx: filterContext(cfg), wtsByStory: activeWorktreesByStory(cfg), showAll: false });
 }
 

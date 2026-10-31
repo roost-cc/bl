@@ -137,6 +137,20 @@ export class Flow {
   }
 
   /**
+   * The type's open statuses (those that do not meet `done`), furthest along
+   * first: most `implies` entries first, which `bl validate` keeps closed where
+   * it does not check the file's order. Ties keep the file's order.
+   * @param {string} type
+   * @returns {string[]}
+   */
+  openStatusesOf(type) {
+    const { statuses } = this.typeOf(type);
+    return this.statusesOf(type)
+      .filter((status) => !this.meets(type, status, 'done'))
+      .sort((a, b) => statuses[b].implies.length - statuses[a].implies.length);
+  }
+
+  /**
    * Whether a unit of `type` at `status` meets `wanted`: it is `wanted` or
    * lists it in `implies`. An unknown `status` meets nothing.
    * @param {string} type

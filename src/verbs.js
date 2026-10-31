@@ -176,8 +176,9 @@ Arguments:
 Options:
   --help               Show this help
 
-With no id it lists the open stories, in_progress then refined then backlog,
-stack rank within each, in the table bl list prints.`,
+With no id it lists the open stories, furthest along first as flow.json has it
+(in_progress then refined then backlog by default), stack rank within each, in
+the table bl list prints.`,
   approve: `Usage: bl approve <id...> [options]
 
 Arguments:

@@ -37,6 +37,8 @@ cat > "$TMPDIR_ROOT/backlog.json" <<'JSON'
 }
 JSON
 
+# The statuses and gates per type (F-66 D1): bl init's template.
+cp "$REPO_ROOT/templates/flow.json" "$TMPDIR_ROOT/flow.json"
 
 # demo-repo's home component, which the stories below go in.
 mkdir -p "$TMPDIR_ROOT/components/C00-core"
