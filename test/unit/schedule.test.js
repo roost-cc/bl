@@ -370,6 +370,49 @@ test('planFiles skips paths under ### Sources of truth and keeps those after it'
   }
 });
 
+const READ = '- Read `src/read-only.js`.';
+const AFTER = '1. Change `src/after.js`.';
+const HEADING_FORMS = [
+  ['plain', ['### Sources of truth', READ, '### Steps', AFTER]],
+  ['closing hashes', ['### Sources of truth ###', READ, '### Steps ###', AFTER]],
+  ['closing hashes of another length', ['### Sources of truth #', READ, '### Steps ##########', AFTER]],
+  ['tab after the marker', ['###\tSources of truth', READ, '###\tSteps', AFTER]],
+  ['several spaces', ['###   Sources of truth   ', READ, '###   Steps', AFTER]],
+  ['up to three leading spaces', ['   ### Sources of truth', 'Read `src/read-only.js`.', '  ### Steps', AFTER]],
+  ['next heading level one', ['### Sources of truth', READ, '# Steps', AFTER]],
+  ['next heading setext', ['### Sources of truth', READ, 'Steps\n---', AFTER]],
+  ['an empty next heading', ['### Sources of truth', READ, '###', AFTER]],
+  ['a twin section', ['### Sources of truth', READ, '### Sources of truth', READ, '### Steps', AFTER]],
+  ['a deeper heading stays inside', ['### Sources of truth', '#### Detail', READ, '### Steps', AFTER]],
+  ['a fenced heading stays inside', ['### Sources of truth', '```\n### Steps\n```', READ, '### Steps', AFTER]],
+];
+const NOT_THE_HEADING = [
+  ['seven hashes', '####### Sources of truth'],
+  ['no space after the marker', '###Sources of truth'],
+  ['another level', '#### Sources of truth'],
+  ['longer text', '### Sources of truth and more'],
+  ['an escaped marker', String.raw`\### Sources of truth`],
+];
+
+test('planFiles_handles_valid_atx_heading_forms_and_next_sections', () => {
+  const stories = [
+    ...HEADING_FORMS.map(([, lines], i) => story(`S-${i + 1}`, { body: plan(...lines.join('\n\n').split('\n')) })),
+    ...NOT_THE_HEADING.map(([, heading], i) => story(`S-${i + 101}`, { body: plan(heading, '', READ) })),
+  ];
+  const { dir, cleanup } = mkTempBacklog({
+    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
+    stories,
+  });
+  try {
+    const all = readAllStories(loadConfig({ backlogRoot: dir }));
+    const files = (id) => [...planFiles([all.find((s) => s.id === id)])];
+    HEADING_FORMS.forEach(([name], i) => assert.deepEqual(files(`S-${i + 1}`), ['bl:src/after.js'], name));
+    NOT_THE_HEADING.forEach(([name], i) => assert.deepEqual(files(`S-${i + 101}`), ['bl:src/read-only.js'], name));
+  } finally {
+    cleanup();
+  }
+});
+
 test('planFiles preserves valid repository paths with spaces and punctuation and schedule defers their overlaps', () => {
   const root = mkTempDir('bl-schedule-paths-');
   const git = (cwd, ...args) =>

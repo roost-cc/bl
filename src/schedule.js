@@ -18,6 +18,7 @@
 
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 import { parseFrontmatter } from './config.js';
 import { parseIdList, reposForStory } from './story.js';
 import { resolveFeatureStories, reposForFeature, featureRepoOrder, extractSection } from './feature.js';
@@ -88,6 +89,25 @@ function sameFiles(a, b) {
 }
 
 /**
+ * A plan without its `### Sources of truth` subsections, each running to the
+ * next heading of level 1 to 3. Headings are mdast nodes, so every Markdown
+ * form of one counts and a `#` line in a code block does not.
+ */
+function withoutSourcesOfTruth(plan) {
+  const lf = plan.replace(/\r\n/g, '\n');
+  const headings = fromMarkdown(lf).children.filter((n) => n.type === 'heading' && n.depth <= 3);
+  let kept = '';
+  let from = 0;
+  headings.forEach((h, i) => {
+    const [only, more] = h.children;
+    if (h.depth !== 3 || more || only?.value !== 'Sources of truth') return;
+    kept += lf.slice(from, h.position.start.offset);
+    from = headings[i + 1]?.position.start.offset ?? lf.length;
+  });
+  return kept + lf.slice(from);
+}
+
+/**
  * `repo:path` for every backticked path in the stories' `## Implementation
  * Plan`, keyed by each story's repo (`unitRepo`, its component's; else
  * `defaultRepo`). A path that is not backticked is not seen, and neither is
@@ -106,8 +126,7 @@ export function planFiles(stories, defaultRepo = '') {
     const plan = extractSection(body, 'Implementation Plan');
     if (!plan) continue;
     const repo = s.unitRepo || defaultRepo;
-    const changed = plan.replace(/^### Sources of truth[ \t]*\r?$[^]*?(?=^#{1,3} |(?![^]))/gm, '');
-    for (const [, span] of changed.matchAll(/`([^`\n]+)`/g)) {
+    for (const [, span] of withoutSourcesOfTruth(plan).matchAll(/`([^`\n]+)`/g)) {
       const p = asPath(span);
       if (p) out.add(`${repo}:${p}`);
     }
