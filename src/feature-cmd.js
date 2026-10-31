@@ -1467,7 +1467,9 @@ export async function cmdRunStory(args, baseConfig, story) {
   const { config, unit, found, parsed } = loadStoryUnit(story, baseConfig);
   const flow = loadFlow(config.backlogRoot);
   if (!flow.isRunnable('story', unit.status)) {
-    const runnable = statusWords(flow.runnableStatusesOf('story')).replaceAll('_', '-');
+    // Only the shipped key keeps its prose spelling; any other is named as flow.json has it.
+    const named = flow.runnableStatusesOf('story').map((s) => (s === 'in_progress' ? 'in-progress' : s));
+    const runnable = statusWords(named);
     const hint = unit.status === 'backlog' ? `run \`bl refine ${unit.id}\` first` : `only a ${runnable} story runs`;
     console.error(`Story ${unit.id} is ${unit.status} — ${hint}.`);
     process.exit(1);

@@ -80,14 +80,24 @@ test('flow_derived_diagnostics_match_decisions', () => {
   }
 });
 
-test('bl run names the statuses it would have taken', () => {
-  for (const [name, raw] of flows) {
+test('bl_run_refusal_names_custom_status_keys_exactly', () => {
+  const withPlainKey = () => {
+    const raw = customFlow();
+    raw.types.story.statuses.qa = { implies: ['in_progress', 'refined', 'backlog'] };
+    return raw;
+  };
+  const cases = [
+    ['shipped', () => undefined, 'refined or in-progress'],
+    ['underscore key', customFlow, 'refined, in-progress or in_review'],
+    ['plain key too', withPlainKey, 'refined, in-progress, in_review or qa'],
+  ];
+  for (const [name, raw, wanted] of cases) {
     const dir = committedBacklog([['S-1', 'done']], raw());
     put(dir, 'stories/S1-x/index.md', story('S-1', { status: 'done', points: 2, added: '2026-04-01', feature: '' }));
     commitAt(dir, '2026-04-22T09:00:00', 'no feature');
     const r = runBl(['run', 'S-1'], { cwd: dir });
-    assert.notEqual(r.status, 0);
-    assert.ok(r.stderr.includes(`only a ${RUNNABLE[name].replaceAll('_', '-')} story runs`), r.stderr);
+    assert.notEqual(r.status, 0, name);
+    assert.ok(r.stderr.includes(`Story S-1 is done — only a ${wanted} story runs.\n`), `${name}: ${r.stderr}`);
   }
 });
 
