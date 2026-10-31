@@ -1,7 +1,7 @@
 /**
  * report.js — the backlog progress report's numbers (F-40 Design D3, D5).
  *
- * `buildReport(history, config)` turns `buildHistory`'s snapshots and the
+ * `buildReport(history, config, flow)` turns `buildHistory`'s snapshots and the
  * current tree into one plain data object (what `reports/data.json` holds);
  * `renderMarkdown(data, markdownById, flow)` turns that into `reports/index.md`. The parts are
  * exported one by one (`latest`, `series`, `firstSeen`, `throughput`,
@@ -27,7 +27,6 @@ import { readAllStories, readComponents } from './story.js';
 import { readAllEpics, readAllThemes } from './theme.js';
 import { formatTable } from './sync.js';
 import { addDays, isoWeek, pointsByStatus, scopeStories, weeklyDays } from './history.js';
-import { loadFlow } from './flow.js';
 
 /** Bumped whenever `data.json`'s shape changes. */
 export const REPORT_VERSION = 3;
@@ -640,11 +639,11 @@ const link = (dir, entry) => `../${dir}/${entry}/index.md`;
  * The report's data: everything `data.json` holds and `renderMarkdown` draws.
  * @param {History} history  `buildHistory`'s result
  * @param {object} config  `loadConfig()`
+ * @param {import("./flow.js").Flow} flow  the run's one flow, which `renderMarkdown` gets too
  * @param {ReturnType<typeof readTree>} [tree]  the current tree, when already read
  */
-export function buildReport(history, config, tree = readTree(config)) {
+export function buildReport(history, config, flow, tree = readTree(config)) {
   const last = latest(history) ?? { date: '', commit: null, backfilled: false, stories: {}, features: {} };
-  const flow = loadFlow(config.backlogRoot);
   const seen = firstSeen(history, flow);
   const storiesById = new Map(tree.stories.map((s) => [s.id, s]));
   const snaps = (ids) => ids.map((id) => last.stories[id]);

@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadConfig } from '../../src/config.js';
+import { loadFlow } from '../../src/flow.js';
 import { buildHistory, CACHE_FILE, CACHE_VERSION, scopeStories } from '../../src/history.js';
 import { buildReport } from '../../src/report.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -100,7 +101,7 @@ test('historical membership normalizes all supported story references in sequenc
     assert.deepEqual(scopeStories(day, { kind: 'feature', id: 'F-1' }, h.groups), ['S-1', 'S-3'], list);
   });
   // The feature's progress row reads the normalized members: 3 + 8 points.
-  assert.equal(buildReport(h, config).features.find((f) => f.id === 'F-1').scope, 11);
+  assert.equal(buildReport(h, config, loadFlow(dir)).features.find((f) => f.id === 'F-1').scope, 11);
 });
 
 test('buildHistory backfills the days before the first commit from added and completed', () => {
@@ -195,7 +196,7 @@ test('cache rejects malformed day and snapshot shapes and rebuilds them', () => 
     writeFileSync(cachePath, JSON.stringify({ version: CACHE_VERSION, days: { [sha]: bad } }));
     const h = buildHistory(config);
     assert.deepEqual(h.days, good.days, `${label}: rebuilt from git`);
-    assert.doesNotThrow(() => buildReport(h, config), label);
+    assert.doesNotThrow(() => buildReport(h, config, loadFlow(dir)), label);
     assert.deepEqual(JSON.parse(readFileSync(cachePath, 'utf8')).days[sha], day, `${label}: and cached again`);
   }
   // Empty story and feature maps are a valid day, kept as cached.

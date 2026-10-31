@@ -102,8 +102,10 @@ export async function main(argv) {
     process.exit(1);
   }
   let history;
+  let flow;
   try {
-    history = narrowHistory(buildHistory(config, { since: args.since ?? '' }), scope);
+    flow = loadFlow(config.backlogRoot);
+    history = narrowHistory(buildHistory(config, { since: args.since ?? '', flow }), scope);
   } catch (e) {
     console.error(`bl history: ${e.message}`);
     process.exit(1);
@@ -113,6 +115,6 @@ export async function main(argv) {
     const { earlier, ...shown } = history;
     console.log(JSON.stringify(shown, null, 2));
   } else {
-    console.log(weekTable(history, loadFlow(config.backlogRoot)));
+    console.log(weekTable(history, flow));
   }
 }

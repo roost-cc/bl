@@ -17,6 +17,7 @@ import { join } from 'path';
 import { registerAdapter, renderCharts } from '../../src/chart.js';
 import { COLOURS, SCHEMA, toSpec } from '../../src/chart-adapters/vega-lite.js';
 import { loadConfig } from '../../src/config.js';
+import { loadFlow } from '../../src/flow.js';
 import { buildHistory } from '../../src/history.js';
 import { buildReport } from '../../src/report.js';
 import { writeReport } from '../../src/report-cmd.js';
@@ -30,7 +31,8 @@ function fixtureReport() {
   if (!fixture) {
     const { dir } = scriptedBacklog();
     const config = loadConfig({ backlogRoot: dir });
-    fixture = { dir, config, data: buildReport(buildHistory(config), config) };
+    const flow = loadFlow(dir);
+    fixture = { dir, config, flow, data: buildReport(buildHistory(config), config, flow) };
   }
   return fixture;
 }
@@ -155,9 +157,9 @@ test('every spec has $schema, inline data.values, title and description, fenced 
 
 test("a stub adapter's markdown takes each chart's place in index.md and its files are written", () => {
   registerAdapter(stub);
-  const { dir, config, data } = fixtureReport();
+  const { dir, config, flow, data } = fixtureReport();
   const out = join(dir, '.bl', 'stub-report');
-  const page = writeReport(config, out, data, 'stub');
+  const page = writeReport(config, out, data, flow, 'stub');
   const text = readFileSync(page, 'utf8');
   for (const chart of data.charts) {
     assert.ok(text.includes(`STUB ${chart.id}`), chart.id);
@@ -168,7 +170,7 @@ test("a stub adapter's markdown takes each chart's place in index.md and its fil
 
   // The next run removes the last run's files first.
   registerAdapter({ name: 'stub-2', render: (chart) => ({ markdown: `TWO ${chart.id}`, files: [] }) });
-  writeReport(config, out, data, 'stub-2');
+  writeReport(config, out, data, flow, 'stub-2');
   assert.ok(!existsSync(join(out, 'charts')));
   assert.match(readFileSync(page, 'utf8'), /TWO flow/);
 
@@ -177,6 +179,6 @@ test("a stub adapter's markdown takes each chart's place in index.md and its fil
     name: 'clash',
     render: (chart) => ({ markdown: '', files: chart.id === 'flow' ? [{ path: './data.json', content: '{}' }] : [] }),
   });
-  assert.throws(() => writeReport(config, out, data, 'clash'), /would replace the report's own/);
+  assert.throws(() => writeReport(config, out, data, flow, 'clash'), /would replace the report's own/);
   assert.match(readFileSync(page, 'utf8'), /TWO flow/, 'and the last report stays');
 });

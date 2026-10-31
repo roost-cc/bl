@@ -83,15 +83,15 @@ export function checkReportDir(dir) {
  * stages. `.<dir>.lock` keeps a second run from writing until the first is
  * done; that run fails naming the holder. The lock is released whatever
  * cleanup throws.
+ * @param {import("./flow.js").Flow} flow  the flow `data` was built from
  * @returns {string} the path of `index.md`
  */
-export function writeReport(config, dir, data, charts = DEFAULT_ADAPTER) {
+export function writeReport(config, dir, data, flow, charts = DEFAULT_ADAPTER) {
   const { markdownById, files } = renderCharts(data.charts, charts);
   // `renderCharts` returns normalized paths, as `OWN_FILES` names them.
   const clash = files.find((f) => [...OWN_FILES].some((own) => pathsClash(f.path, own)));
   if (clash) throw new Error(`chart adapter ${charts}: file ${clash.path} would replace the report's own`);
   checkReportDir(dir);
-  const flow = loadFlow(config.backlogRoot);
   const beside = (suffix) => join(dirname(dir), `.${basename(dir)}.${suffix}`);
   mkdirSync(dirname(dir), { recursive: true });
   const lock = beside('lock');
@@ -191,8 +191,11 @@ export async function main(argv) {
   }
   const config = loadConfig();
   let data;
+  let flow;
   try {
-    data = buildReport(buildHistory(config, { since: args.since ?? '' }), config);
+    // One read for the whole run: an edit made during it reaches no part of the report.
+    flow = loadFlow(config.backlogRoot);
+    data = buildReport(buildHistory(config, { since: args.since ?? '', flow }), config, flow);
   } catch (e) {
     console.error(`bl report: ${e.message}`);
     process.exit(1);
@@ -205,7 +208,7 @@ export async function main(argv) {
   const dir = args.out != null ? resolve(String(args.out)) : join(config.backlogRoot, REPORTS_DIR);
   let page;
   try {
-    page = writeReport(config, dir, data, charts);
+    page = writeReport(config, dir, data, flow, charts);
   } catch (e) {
     console.error(`bl report: ${e.message}`);
     process.exit(1);
