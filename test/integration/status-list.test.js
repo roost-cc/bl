@@ -195,6 +195,33 @@ test('bl status keeps ranks 10000 and later ahead of unranked stories', () => {
   }
 });
 
+test('bl list rejects malformed pattern even when no stories are available', () => {
+  const closed = STORIES.filter((s) => s.status === 'done' || s.status === 'superseded');
+  const stories = { empty: [], closed, open: STORIES };
+  for (const [name, list] of Object.entries(stories)) {
+    const { dir } = mkTempBacklog({ components: [{ id: 'C00', title: 'Work' }], stories: list });
+    const r = runBl(['list', '['], { cwd: dir });
+    assert.notEqual(r.status, 0, name);
+    assert.equal(r.stdout, '', name);
+    assert.match(r.stderr, /Invalid regular expression/, name);
+    assert.doesNotMatch(r.stderr, /No stories found/, name);
+  }
+  // A filter that leaves no stories, and a valid pattern matching no row.
+  const { dir } = mkTempBacklog({
+    components: [
+      { id: 'C00', title: 'Work' },
+      { id: 'C01', title: 'Idle' },
+    ],
+    stories: STORIES,
+  });
+  const filtered = runBl(['list', '[', '--component', 'C01'], { cwd: dir });
+  assert.notEqual(filtered.status, 0);
+  assert.match(filtered.stderr, /Invalid regular expression/);
+  const nomatch = runBl(['list', 'no-such-row'], { cwd: dir });
+  assert.equal(nomatch.status, 0, nomatch.stderr);
+  assert.match(nomatch.stderr, /No matching stories\./);
+});
+
 test('the Feature column comes along when a listed story has a feature', () => {
   const { dir } = mkTempBacklog({
     components: [{ id: 'C00', title: 'Work' }],

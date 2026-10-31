@@ -141,12 +141,13 @@ export function listByStatus() {
  * @param {{ ctx: object, wtsByStory: Map<string, object[]>, patternSource?: string, showAll: boolean }} opts
  */
 function printStories(filtered, { ctx, wtsByStory, patternSource, showAll }) {
+  // Before the empty check: a malformed pattern is an error with no rows too.
+  const pattern = patternSource ? new RegExp(patternSource, 'i') : null;
+
   if (filtered.length === 0) {
     info('No stories found.');
     return;
   }
-
-  const pattern = patternSource ? new RegExp(patternSource, 'i') : null;
 
   // The Theme column (F-51 D2) appears once the backlog has a theme: a story
   // in several themes shows them joined, one in none shows `-`.
