@@ -194,6 +194,18 @@ err=$(cat "$se")
 assert_empty "bl list stderr empty (with stories present)" "$err"
 
 # ---------------------------------------------------------------------------
+# bl status (no ids) — the same table on stdout; stderr empty in normal case
+# ---------------------------------------------------------------------------
+
+so=$(mktemp); se=$(mktemp)
+"$BL" status >"$so" 2>"$se"
+out=$(cat "$so")
+assert_nonempty "bl status stdout non-empty" "$out"
+assert_contains "bl status stdout has S-1" "S-1" "$out"
+err=$(cat "$se")
+assert_empty "bl status stderr empty (with stories present)" "$err"
+
+# ---------------------------------------------------------------------------
 # bl tree — stdout empty when no deps recorded; explanation on stderr
 # ---------------------------------------------------------------------------
 

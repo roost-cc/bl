@@ -99,7 +99,7 @@ _roost_bl() {
     'run:The loop for a feature or story: implement, test gate, review, PR'
     'implement:Start/resume an interactive session on a story or feature'
     'approve:Approve a refined feature: the human gate before run'
-    'status:A feature, story or component: stories, review and run state'
+    'status:A feature, story or component: stories, review and run state; no id: open stories by status'
     'refine:Refine a story for implementation'
     'review:Review an open PR for a story'
     'pr:Alias for review'

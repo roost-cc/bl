@@ -74,7 +74,8 @@ Commands:
                -P, --prompt <text>  Discuss <text> with the agent first
   review     Review the open PR(s) of a story or feature
                --repo <name>  Feature: restrict the review to one repo's PR
-  status     A feature's stories, review state and run state
+  status     A feature's stories, review state and run state; with no id, the
+             open stories by status
   merge      Merge a story or feature: gates, merge, sync, push, remove
                worktrees
                --keep         Keep the branch after merging

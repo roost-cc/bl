@@ -41,6 +41,7 @@ Per-command stdout contracts:
 | `bl next-id`         | one ID per line                                           |
 | `bl which`           | one line: absolute path                                   |
 | `bl list` / `ls`     | the table                                                 |
+| `bl status` (no ids) | the table, as `bl list`                                   |
 | `bl tree`            | the rendered tree                                         |
 | `bl history`         | the week table (`--json`: one object)                     |
 | `bl report`          | one line: the path of `index.md` (`--json`: one object)   |
@@ -470,7 +471,7 @@ component_id: C32
 title: bl Tool Enhancements
 repo: bl # a repo registered in backlog.json
 home: true # this repo's home component; work with no better component lands here
-paths: ["src/**", "test/**"] # optional: globs relative to the repo root (F-61 D2)
+paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D2)
 ---
 ```
 
@@ -2311,6 +2312,12 @@ bl what-next --theme backlog  # next startable story in the theme
 A Theme column leads once the backlog has a theme. `bl tree` and `bl what-next` take the same
 filters; a component argument (`bl tree C32`) is the `--component` filter, and a story id with
 a filter is refused.
+
+`bl status` with no arguments prints the same table for the open stories, in a different order:
+strictly `in_progress`, then `refined`, then `backlog` (a status outside those three after
+`backlog`), stack rank then numeric id within each. `bl list` puts worktree stories first and
+ranks `backlog` and `refined` equally; here a story with a worktree keeps its status group and
+shows the `*`. Any flag with no id is a usage error, not a filter.
 
 ### `bl history`
 
