@@ -340,6 +340,36 @@ const PATH_CASES = [
   ['', null, 'empty'],
 ];
 
+test('planFiles skips paths under ### Sources of truth and keeps those after it', () => {
+  const sources = '### Sources of truth\n\n- Statuses: `src/flow.js`, read through `src/read-only.js`.\n';
+  const bodies = {
+    'S-1': plan('`src/before.js`', '', sources, '### Steps', '', '1. `src/after.js`'),
+    'S-2': plan(sources),
+    'S-3': plan(
+      '`src/before.js`',
+      '',
+      sources.replace('\n\n', ' \r\n\r\n'),
+      '#### Detail',
+      '`src/deep.js`',
+      '',
+      '## Next',
+    ),
+  };
+  const { dir, cleanup } = mkTempBacklog({
+    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
+    stories: Object.entries(bodies).map(([id, body]) => story(id, { body })),
+  });
+  try {
+    const stories = readAllStories(loadConfig({ backlogRoot: dir }));
+    const files = (id) => [...planFiles([stories.find((s) => s.id === id)])].sort();
+    assert.deepEqual(files('S-1'), ['bl:src/after.js', 'bl:src/before.js']);
+    assert.deepEqual(files('S-2'), []);
+    assert.deepEqual(files('S-3'), ['bl:src/before.js']);
+  } finally {
+    cleanup();
+  }
+});
+
 test('planFiles preserves valid repository paths with spaces and punctuation and schedule defers their overlaps', () => {
   const root = mkTempDir('bl-schedule-paths-');
   const git = (cwd, ...args) =>

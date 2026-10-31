@@ -89,7 +89,9 @@ function sameFiles(a, b) {
 /**
  * `repo:path` for every backticked path in the stories' `## Implementation
  * Plan`, keyed by each story's repo (`unitRepo`, its component's; else
- * `defaultRepo`). A path that is not backticked is not seen.
+ * `defaultRepo`). A path that is not backticked is not seen, and neither is
+ * one under `### Sources of truth`: those files are read, not changed, so
+ * they hold back no other target.
  *
  * @param {{ indexPath: string, unitRepo?: string }[]} stories
  * @param {string} [defaultRepo]
@@ -103,7 +105,8 @@ export function planFiles(stories, defaultRepo = '') {
     const plan = extractSection(body, 'Implementation Plan');
     if (!plan) continue;
     const repo = s.unitRepo || defaultRepo;
-    for (const [, span] of plan.matchAll(/`([^`\n]+)`/g)) {
+    const changed = plan.replace(/^### Sources of truth[ \t]*\r?$[^]*?(?=^#{1,3} |(?![^]))/gm, '');
+    for (const [, span] of changed.matchAll(/`([^`\n]+)`/g)) {
       const p = asPath(span);
       if (p) out.add(`${repo}:${p}`);
     }

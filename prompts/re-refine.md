@@ -13,14 +13,19 @@ Backlog repo : {{backlogDir}}
 
 1. {{readTool}} the story file directly at `{{storyRelPath}}`. Do not search for it.
 
-2. Explore the code in `{{primaryRepoPath}}` to understand the current state
-   and why a re-refinement is being requested.
+2. Explore the code in `{{primaryRepoPath}}` to understand the current state,
+   why a re-refinement is being requested, and where the system already
+   defines each concept the story touches (see **Self-consistent designs**
+   below).
 
 3. Update the implementation plan, acceptance criteria, or design notes in
    the story file based on your findings. Put each file path in the plan in
    backticks (`src/x.js`): when several targets run at once, `bl run` reads
    the backticked paths to hold back a target that touches the same file as
-   another. A path that is not backticked is not seen.
+   another. A path that is not backticked is not seen. The plan needs a
+   `### Sources of truth` part: for each concept the story touches, where it
+   is defined and how the code reaches it. Paths there are read, not changed,
+   so `bl run` does not hold a target back for them.
 
 4. If the story is too large, use `bl new` to split it into smaller stories.
 
@@ -39,6 +44,8 @@ Backlog repo : {{backlogDir}}
    Pass `--story {{storyId}}`, plus one `--story` for each child story you
    created with `bl new`. The backlog workflow commits to its `main` branch
    directly; do NOT branch first.
+
+{{selfConsistencyGuide}}
 
 {{validateBeforeSync}}
 
