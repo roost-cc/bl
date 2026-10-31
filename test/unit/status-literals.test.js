@@ -97,8 +97,9 @@ function regexOf(n) {
   if (n.type !== 'NewExpression' && n.type !== 'CallExpression') return null;
   const global = n.callee.type === 'MemberExpression' && n.callee.object.name === 'globalThis';
   if ((global ? n.callee.property : n.callee).name !== 'RegExp' || !n.arguments.length) return null;
-  const pattern = staticString(n.arguments[0]);
-  const flags = n.arguments[1] ? staticString(n.arguments[1]) : '';
+  const [source, flagArg] = n.arguments;
+  const pattern = source.regex?.pattern ?? staticString(source);
+  const flags = flagArg ? staticString(flagArg) : source.regex?.flags;
   return pattern === null ? null : { pattern, flags: flags ?? '' };
 }
 
@@ -107,8 +108,9 @@ function regexOf(n) {
  * JavaScript engine does the reading, so there is no pattern parser here: each
  * piece of the source that compiles alone is tried against each status, which
  * sees an escape, a character class or a group and keeps a status found amid
- * other text. A piece that also matches the status reversed is a general
- * shape (`[a-z_]+`), not a name.
+ * other text. The expression as written is tried too, since it may match a
+ * status by its start alone (`^(?:don|refin)e`). A piece that also matches the
+ * status reversed is a general shape (`[a-z_]+`), not a name.
  */
 function statusesInRegex({ pattern, flags }) {
   const named = new Set();
@@ -116,15 +118,18 @@ function statusesInRegex({ pattern, flags }) {
   for (let from = 0; from < pattern.length; from++) {
     for (let to = from + 1; to <= pattern.length; to++) {
       const piece = pattern.slice(from, to);
-      let whole;
+      let readings;
       try {
-        new RegExp(piece, stateless);
-        whole = new RegExp(`^(?:${piece})$`, stateless);
+        const bare = new RegExp(piece, stateless);
+        const whole = new RegExp(`^(?:${piece})$`, stateless);
+        readings = piece === pattern ? [bare, whole] : [whole];
       } catch {
         continue;
       }
-      for (const s of STATUSES) {
-        if (whole.test(s) && !whole.test([...s].reverse().join(''))) named.add(s);
+      for (const re of readings) {
+        for (const s of STATUSES) {
+          if (re.test(s) && !re.test([...s].reverse().join(''))) named.add(s);
+        }
       }
     }
   }
@@ -271,7 +276,10 @@ const CASES = [
   { name: 'a character class with one member', src: `/[d]one|re[f]ined/.test(s);`, hits: 1 },
   { name: 'a character class with several members', src: `/d[ou]ne|refined/.test(s);`, hits: 1 },
   { name: 'a class of hex escapes', src: String.raw`/[\x64]one|refined/.test(s);`, hits: 1 },
-  { name: 'a shared suffix in a group', src: `/^(?:don|refin)e/.test(s);`, hits: 0 },
+  { name: 'a shared suffix in a group', src: `/^(?:don|refin)e/.test(s);`, hits: 1 },
+  { name: 'statuses matched by their starts', src: `/^(?:do|ref)/.test(s);`, hits: 1 },
+  { name: 'one status matched by its start', src: `/^do/.test(s);`, hits: 0 },
+  { name: 'a first-letter shape', src: `/^[a-z]/.test(s);`, hits: 0 },
   { name: 'a suffix group that spells two statuses', src: `/^(?:do|supersede)(?:ne|d)$/.test(s);`, hits: 1 },
   { name: 'a quantified letter', src: `/^do{1}ne$|^refined$/.test(s);`, hits: 1 },
   { name: 'upper case with the i flag', src: `/^(DONE|REFINED)$/i.test(s);`, hits: 1 },
@@ -293,6 +301,8 @@ const CASES = [
   { name: 'a RegExp call with escapes', src: String.raw`RegExp('\\x64one|\\x72efined').test(s);`, hits: 1 },
   { name: 'new RegExp with a flags argument', src: `new RegExp('DONE|REFINED', 'i');`, hits: 1 },
   { name: 'new RegExp over a regular expression', src: `new RegExp(/done|refined/, 'i');`, hits: 1 },
+  { name: 'new RegExp adding a flag to a literal', src: `new RegExp(/DONE|REFINED/, 'i');`, hits: 1 },
+  { name: 'new RegExp over a literal with its flag', src: `new RegExp(/DONE|REFINED/i);`, hits: 1 },
   {
     name: 'constructed regular expressions in conditions',
     src: `if (new RegExp('^(done|superseded)$').test(s)) f();`,
