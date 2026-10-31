@@ -102,6 +102,30 @@ test('listRankOf: a type the flow lacks throws', () => {
   assert.throws(() => loadFlow(FIXTURE_DIR).listRankOf('nope', 'done'), FlowError);
 });
 
+const UNKNOWN = ['blocked', '__proto__', 'constructor', ['refined'], ['backlog'], 7, true, null, undefined];
+
+test('isRunnable: refined and in_progress in the shipped flow; an unknown or non-string status is not', () => {
+  const flow = loadFlow(FIXTURE_DIR);
+  const runnable = (statuses) => statuses.filter((s) => flow.isRunnable('story', s));
+  assert.deepEqual(runnable(flow.statusesOf('story')), ['refined', 'in_progress']);
+  assert.deepEqual(runnable(UNKNOWN), []);
+});
+
+test('isUnstarted: backlog and refined in the shipped flow; an unknown or non-string status is not', () => {
+  const flow = loadFlow(FIXTURE_DIR);
+  const unstarted = (statuses) => statuses.filter((s) => flow.isUnstarted('story', s));
+  assert.deepEqual(unstarted(flow.statusesOf('story')), ['backlog', 'refined']);
+  assert.deepEqual(unstarted(UNKNOWN), []);
+});
+
+test('isRunnable, isUnstarted: a custom open status implying in_progress is runnable and started', () => {
+  const flow = fixture();
+  flow.types.story.statuses.in_review = { implies: ['in_progress', 'refined', 'backlog'] };
+  const loaded = loadFlow(backlogWith(flow));
+  assert.equal(loaded.isRunnable('story', 'in_review'), true);
+  assert.equal(loaded.isUnstarted('story', 'in_review'), false);
+});
+
 test('meets: a status that is not a string meets nothing, though its text names one', () => {
   const flow = loadFlow(FIXTURE_DIR);
   for (const status of [['superseded'], ['done'], 7, true, null, undefined]) {

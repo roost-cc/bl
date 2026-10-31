@@ -187,6 +187,28 @@ export class Flow {
   }
 
   /**
+   * Whether a unit of `type` at `status` is ready to run or already running: it
+   * meets `refined` and does not meet `done`. An unknown `status` is neither.
+   * @param {string} type
+   * @param {string} status
+   * @returns {boolean}
+   */
+  isRunnable(type, status) {
+    return this.meets(type, status, 'refined') && !this.meets(type, status, 'done');
+  }
+
+  /**
+   * Whether `status` is a status of `type` that does not meet `in_progress`. It
+   * checks the status exists, since `!meets` alone accepts an unknown one.
+   * @param {string} type
+   * @param {string} status
+   * @returns {boolean}
+   */
+  isUnstarted(type, status) {
+    return this.statusesOf(type).includes(status) && !this.meets(type, status, 'in_progress');
+  }
+
+  /**
    * The type's gates: each name with the verbs that check it.
    * @param {string} type
    * @returns {Record<string, string[]>}
