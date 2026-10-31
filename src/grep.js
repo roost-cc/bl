@@ -7,14 +7,7 @@ import { dirname, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
 import { readAllStories, readBacklogOrder, activeWorktreesByStory, storiesRoot } from './story.js';
-
-const STATUS_ORDER = {
-  in_progress: 1,
-  backlog: 2,
-  refined: 2,
-  done: 3,
-  superseded: 4,
-};
+import { loadFlow } from './flow.js';
 
 export async function main(argv) {
   const args = parseArgs(argv);
@@ -42,6 +35,7 @@ stories in the same table format as bl list.`);
 
   const showAll = args.all;
   const cfg = loadConfig();
+  const flow = loadFlow(cfg.backlogRoot);
   const stories = readAllStories(cfg);
   const backlogIds = readBacklogOrder(cfg.backlogRoot);
   const priorityMap = new Map(backlogIds.map((id, i) => [id, i]));
@@ -79,7 +73,7 @@ stories in the same table format as bl list.`);
 
   let filtered = stories.filter((s) => matchedIds.has(s.id));
   if (!showAll) {
-    filtered = filtered.filter((s) => s.status !== 'done' && s.status !== 'superseded');
+    filtered = filtered.filter((s) => !flow.meets('story', s.status, 'done'));
   }
 
   if (filtered.length === 0) {
@@ -91,8 +85,8 @@ stories in the same table format as bl list.`);
     const aa = wtsByStory.has(a.id) ? 0 : 1;
     const ab = wtsByStory.has(b.id) ? 0 : 1;
     if (aa !== ab) return aa - ab;
-    const sa = STATUS_ORDER[a.status] ?? 2;
-    const sb = STATUS_ORDER[b.status] ?? 2;
+    const sa = flow.listRankOf('story', a.status);
+    const sb = flow.listRankOf('story', b.status);
     if (sa !== sb) return sa - sb;
     const pa = priorityMap.get(a.id) ?? 9999;
     const pb = priorityMap.get(b.id) ?? 9999;

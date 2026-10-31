@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'fs';
+import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
@@ -16,6 +18,47 @@ test('bl list emits a table containing every active story', () => {
     assert.match(r.stdout, /\bS-3\b/);
     assert.match(r.stdout, /\bS-4\b/);
     assert.doesNotMatch(r.stdout, /\bS-1\b/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl list sorts by flow.json: in_progress; backlog, refined and unknown together by rank; done; superseded', () => {
+  const stories = [
+    { id: 'S-1', status: 'superseded' },
+    { id: 'S-2', status: 'done', completed: '2026-01-01' },
+    { id: 'S-3', status: 'blocked' },
+    { id: 'S-4', status: 'refined' },
+    { id: 'S-5', status: 'backlog' },
+    { id: 'S-6', status: 'in_progress' },
+  ].map((s) => ({ ...s, component: 'C00', title: 'A story' }));
+  const { dir, cleanup } = mkTempBacklog({ components: [{ id: 'C00', title: 'Work' }], stories });
+  try {
+    const ids = (args) => {
+      const r = runBl(['list', ...args], { cwd: dir });
+      assert.equal(r.status, 0, r.stderr);
+      return listedIds(r.stdout);
+    };
+    assert.deepEqual(ids([]), ['S-6', 'S-3', 'S-4', 'S-5']);
+    assert.deepEqual(ids(['-a']), ['S-6', 'S-3', 'S-4', 'S-5', 'S-2', 'S-1']);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a flow.json bl cannot read stops bl list naming the file, even with no stories', () => {
+  const { dir, cleanup } = mkTempBacklog({ flow: null });
+  try {
+    const missing = runBl(['list'], { cwd: dir });
+    assert.equal(missing.status, 1);
+    assert.equal(missing.stdout, '');
+    assert.match(missing.stderr, /flow\.json: missing/);
+
+    writeFileSync(join(dir, 'flow.json'), '{');
+    const broken = runBl(['list', '-a'], { cwd: dir });
+    assert.equal(broken.status, 1);
+    assert.equal(broken.stdout, '');
+    assert.match(broken.stderr, /flow\.json: not valid JSON/);
   } finally {
     cleanup();
   }

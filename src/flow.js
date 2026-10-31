@@ -151,6 +151,27 @@ export class Flow {
   }
 
   /**
+   * Where `bl list` and `bl grep` sort a unit at `status`, lowest first: open
+   * statuses that meet `in_progress`; the other open statuses together, an
+   * unknown one among them since it meets nothing; then closed statuses (those
+   * that meet `done`), in the file's order.
+   * @param {string} type
+   * @param {string} status
+   * @returns {number}
+   */
+  listRankOf(type, status) {
+    if (this.meets(type, status, 'done')) {
+      return (
+        2 +
+        this.statusesOf(type)
+          .filter((s) => this.meets(type, s, 'done'))
+          .indexOf(status)
+      );
+    }
+    return this.meets(type, status, 'in_progress') ? 0 : 1;
+  }
+
+  /**
    * Whether a unit of `type` at `status` meets `wanted`: it is `wanted` or
    * lists it in `implies`. An unknown `status` meets nothing.
    * @param {string} type

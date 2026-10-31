@@ -68,6 +68,40 @@ test("openStatusesOf: order is implies, not the file's; a tie keeps the file's o
   assert.deepEqual(loadFlow(dir).openStatusesOf('story'), ['in_progress', 'blocked', 'backlog']);
 });
 
+test('listRankOf: the shipped order, with an unknown status among the open ones', () => {
+  const flow = loadFlow(FIXTURE_DIR);
+  const ranks = (statuses) => statuses.map((s) => flow.listRankOf('story', s));
+  const [inProgress, backlog, refined, done, superseded] = ranks([
+    'in_progress',
+    'backlog',
+    'refined',
+    'done',
+    'superseded',
+  ]);
+  assert.ok(inProgress < backlog);
+  assert.equal(backlog, refined);
+  assert.ok(refined < done);
+  assert.ok(done < superseded);
+  for (const unknown of ['blocked', '__proto__', 'constructor', ['done'], ['superseded'], 7, true, null, undefined]) {
+    assert.equal(flow.listRankOf('story', unknown), backlog, JSON.stringify(unknown));
+  }
+});
+
+test('listRankOf: a custom open status that implies in_progress sorts with it; a closed one by file order', () => {
+  const flow = fixture();
+  const { statuses } = flow.types.story;
+  statuses.in_review = { implies: ['in_progress', 'refined', 'backlog'] };
+  statuses.wontfix = { implies: ['done', 'in_progress', 'refined', 'backlog'] };
+  const loaded = loadFlow(backlogWith(flow));
+  assert.equal(loaded.listRankOf('story', 'in_review'), loaded.listRankOf('story', 'in_progress'));
+  assert.ok(loaded.listRankOf('story', 'in_review') < loaded.listRankOf('story', 'refined'));
+  assert.ok(loaded.listRankOf('story', 'wontfix') > loaded.listRankOf('story', 'superseded'));
+});
+
+test('listRankOf: a type the flow lacks throws', () => {
+  assert.throws(() => loadFlow(FIXTURE_DIR).listRankOf('nope', 'done'), FlowError);
+});
+
 test('meets: a status that is not a string meets nothing, though its text names one', () => {
   const flow = loadFlow(FIXTURE_DIR);
   for (const status of [['superseded'], ['done'], 7, true, null, undefined]) {
