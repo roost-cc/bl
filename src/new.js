@@ -347,10 +347,11 @@ async function newFeature(args, stories) {
     beforeCreate: () => {
       // Each story file is read again here: a record read before the lock
       // may already be in a feature another `bl new --feature` made.
+      const flow = loadFlow(config.backlogRoot);
       const refusals = [];
       for (const s of stories) {
         const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
-        const refusal = storyMoveRefusal(s.id, fm, null, loadFlow(config.backlogRoot));
+        const refusal = storyMoveRefusal(s.id, fm, null, flow);
         if (refusal) refusals.push(refusal);
       }
       for (const r of refusals) console.error(r);

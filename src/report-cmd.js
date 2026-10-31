@@ -91,6 +91,7 @@ export function writeReport(config, dir, data, charts = DEFAULT_ADAPTER) {
   const clash = files.find((f) => [...OWN_FILES].some((own) => pathsClash(f.path, own)));
   if (clash) throw new Error(`chart adapter ${charts}: file ${clash.path} would replace the report's own`);
   checkReportDir(dir);
+  const flow = loadFlow(config.backlogRoot);
   const beside = (suffix) => join(dirname(dir), `.${basename(dir)}.${suffix}`);
   mkdirSync(dirname(dir), { recursive: true });
   const lock = beside('lock');
@@ -113,7 +114,7 @@ export function writeReport(config, dir, data, charts = DEFAULT_ADAPTER) {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, file.content);
     }
-    writeFileSync(join(stage, 'index.md'), renderMarkdown(data, markdownById, loadFlow(config.backlogRoot)));
+    writeFileSync(join(stage, 'index.md'), renderMarkdown(data, markdownById, flow));
     formatBacklogMarkdown(config, new Set([join(stage, 'index.md')]));
 
     if (existsSync(dir)) renameSync(dir, old);

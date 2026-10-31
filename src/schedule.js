@@ -185,6 +185,7 @@ function storyOwners(units, config, all) {
  *
  * @param {Array<{ kind: string, id: string, record: object }>} units
  * @param {object[]} all  every story (`readAllStories`)
+ * @param {import("./flow.js").Flow} flow
  * @param {{ config?: object, files?: (unit) => Set<string> }} [opts]
  *   `files` defaults to `unitFiles`; a test seam.
  * @returns {{ start: object[], deferred: Array<{ id: string, reason: string,

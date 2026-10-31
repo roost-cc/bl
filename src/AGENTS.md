@@ -657,13 +657,14 @@ status implies, and the gates a unit of each type can be held at. It is plain JS
   sort rank of `bl list` and `bl grep`: open statuses that meet `in_progress`, then the other open
   statuses with any unknown one, then closed statuses in file order), `meets(type, status, wanted)`,
   `isRunnable(type, status)` (meets `refined` and not `done`), `isUnstarted(type, status)` (a status
-  of the type that does not meet `in_progress`; an unknown one is neither) and `gatesOf(type)`. A
-  backlog's flow is its own: code reads the running backlog's file through `loadFlow`, never the
-  template, and a pure function takes `flow` as a parameter. It throws a `FlowError` whose message starts with the file's path when the
+  of the type that does not meet `in_progress`; an unknown one is neither) and `gatesOf(type)`. It
+  throws a `FlowError` whose message starts with the file's path when the
   file is missing, not JSON, has a `schema` other than `bl-flow/v1`, lacks the `story`,
   `feature` or `task` type (`FLOW_TYPES`), or has a `statuses` or `gates` of the wrong shape;
   a command that reads it
-  stops there. `bl init` writes `templates/flow.json` into a backlog that has none and leaves an
+  stops there. A backlog's flow is its own: code reads the running backlog's file through
+  `loadFlow`, never the template, and a pure function takes `flow` as a parameter. `bl init`
+  writes `templates/flow.json` into a backlog that has none and leaves an
   existing one alone; test fixtures (`mkTempBacklog`, `mk_temp_backlog`) copy the same file.
 - **The `task` type** (F-65 D1): `open` (implies nothing) and `done` (implies `open`), with
   `gates: {}`. A task can block a unit; nothing holds a task.

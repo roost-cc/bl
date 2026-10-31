@@ -211,7 +211,7 @@ test('holdsText names an edge by the verbs of its gate in flow.json', () => {
     holdsText(edge('T-1', 'run', '*', 'done', { unit: 'F-54', status: 'done' }), flow),
     'bl run, bl implement (every unit) once F-54 is done',
   );
-  assert.equal(holdsText(edge('T-1', 'merge', 'F-3'), null), 'merge F-3', "no flow: the gate's name");
+  assert.equal(holdsText(edge('T-1', 'gone', 'F-3'), flow), 'gone F-3', "a gate the flow lacks: the gate's name");
 });
 
 test("taskTableRows: ID linked, Title, Holds from the task's edges, Status, Done", () => {

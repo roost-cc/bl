@@ -1465,7 +1465,8 @@ export async function cmdRun(args, config, feature) {
 export async function cmdRunStory(args, baseConfig, story) {
   refuseStoryRepo('run', args);
   const { config, unit, found, parsed } = loadStoryUnit(story, baseConfig);
-  if (!loadFlow(config.backlogRoot).isRunnable('story', unit.status)) {
+  const flow = loadFlow(config.backlogRoot);
+  if (!flow.isRunnable('story', unit.status)) {
     const hint =
       unit.status === 'backlog' ? `run \`bl refine ${unit.id}\` first` : 'only a refined or in-progress story runs';
     console.error(`Story ${unit.id} is ${unit.status} — ${hint}.`);
@@ -1473,7 +1474,7 @@ export async function cmdRunStory(args, baseConfig, story) {
   }
   const ordered = [storyAsOrdered(unit)];
   if (!args.plan) {
-    const blockers = outsideBlockers(ordered, readAllStories(config), loadFlow(config.backlogRoot));
+    const blockers = outsideBlockers(ordered, readAllStories(config), flow);
     if (blockers.length > 0) {
       console.error(`Story ${unit.id} is blocked on unmerged work:`);
       for (const b of blockers) console.error(`  ${b.story} depends on ${b.dep} (${b.status})`);

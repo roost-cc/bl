@@ -113,7 +113,8 @@ export function parseMoveIds(positional) {
  * (`storyFeatures`). Pure; the caller has already set aside a story that is
  * in `to`.
  * @param {{ id: string, fm: object, fromRepo: string, to: string, toRepo: string,
- *   features: Array<{ id: string, status: string }> }} story
+ *   features: Array<{ id: string, status: string }>,
+ *   flow: import("./flow.js").Flow }} story
  * @returns {string | null}
  */
 export function moveRefusal({ id, fm, fromRepo, to, toRepo, features, flow }) {

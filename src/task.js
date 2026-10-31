@@ -375,14 +375,14 @@ function typeOfId(id) {
 /**
  * What one edge of a task holds, in the words `bl inbox` and the `## Tasks`
  * table use: `bl merge F-3`, `bl run, bl implement (every unit) once F-54 is
- * done`. The verbs are the gate's in `flow.json`; without a flow, the gate's
- * name.
+ * done`. The verbs are the gate's in `flow.json`; a gate the flow does not
+ * name shows as itself.
  * @param {import("./blockers.js").Edge} edge
- * @param {import("./flow.js").Flow | null} flow
+ * @param {import("./flow.js").Flow} flow
  */
 export function holdsText(edge, flow) {
   const verbs = new Set();
-  for (const [type, def] of Object.entries(flow?.types ?? {})) {
+  for (const [type, def] of Object.entries(flow.types)) {
     if (edge.unit !== '*' && type !== typeOfId(edge.unit)) continue;
     if (Object.hasOwn(def.gates, edge.gate)) for (const v of def.gates[edge.gate].verbs) verbs.add(v);
   }
@@ -406,7 +406,7 @@ function cell(text) {
  * `holdsText`, `none` when it has none.
  * @param {Task[]} tasks
  * @param {import("./blockers.js").Edge[]} edges
- * @param {import("./flow.js").Flow | null} flow
+ * @param {import("./flow.js").Flow} flow
  * @param {(rootRelPath: string) => string} link
  * @returns {{ headers: string[], rows: string[][] }}
  */

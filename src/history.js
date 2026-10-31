@@ -256,6 +256,7 @@ export function addDays(date, n) {
  * @param {Groups} groups
  * @param {Map<string, { status: string, points: number }>} current  the stories' current status and points
  * @param {string} firstDate  the first commit's date
+ * @param {import("./flow.js").Flow} flow
  * @returns {Day[]}
  */
 export function backfill(groups, current, firstDate, flow) {

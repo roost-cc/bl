@@ -107,10 +107,10 @@ function readUnits(config) {
  * The `task` items (F-65 D3): one per open task, its title as the line and
  * a `holds` entry per edge it is the blocker of that holds now (active and
  * unmet), named by `holdsText` without the `once …` its `active_when` met.
- * Task files that cannot be read, or a `blockers.json` or `flow.json` that
- * cannot, are a warning; the tasks are still listed, without what they hold.
+ * Task files that cannot be read, or a `blockers.json` that cannot, are a
+ * warning; the tasks are still listed, without what they hold.
  */
-function taskItems(config, warnings) {
+function taskItems(config, warnings, flow) {
   let tasks;
   try {
     tasks = readAllTasks(config).filter((t) => t.status === 'open');
@@ -123,7 +123,6 @@ function taskItems(config, warnings) {
   try {
     const { edges } = readBlockers(config.backlogRoot);
     if (edges.length > 0) {
-      const flow = loadFlow(config.backlogRoot);
       const units = readGraphUnits(config);
       holdsOf = (id) =>
         edges
@@ -240,7 +239,8 @@ function byUnitNewest(a, b) {
  * Everything in the inbox, grouped by kind (KINDS order) and by unit id,
  * newest first. `warnings` names a source that could not be read (the
  * update stories, when `backlog.json` has no `updates.namespace`; a repo
- * whose branches git cannot read); the other sources are still listed.
+ * whose branches git cannot read); the other sources are still listed. A
+ * `flow.json` that cannot be read throws: closed units cannot be told apart.
  *
  * @param {object} config
  * @param {{ now?: number }} [opts]  the clock the stale-run line reads
@@ -286,7 +286,7 @@ export function collectInbox(config, { now = Date.now() } = {}) {
       }
     }
   }
-  items.push(...taskItems(config, warnings));
+  items.push(...taskItems(config, warnings, flow));
   items.push(...changeItems(config, units, warnings, flow));
   try {
     for (const s of statusUpdates(config).stories) {

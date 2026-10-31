@@ -803,6 +803,8 @@ export function findEscalationNotNone(f) {
  * @param {string} text  the whole file (its line numbers are the file's)
  * @param {string} heading  `Deferred` or `To Do`
  * @param {string} location
+ * @param {import("./flow.js").Flow} flow
+ * @param {string} type  the flow type: `story` or `feature`
  * @returns {Finding[]}
  */
 export function findDeferredErrors(id, status, text, heading, location, flow, type) {
@@ -946,6 +948,7 @@ export function findFoundByFindings(features, storyMap) {
  * `--skip verification-only-title`.
  *
  * @param {Iterable<any>} stories
+ * @param {import("./flow.js").Flow} flow
  * @returns {Finding[]}
  */
 export function findVerificationOnlyTitles(stories, flow) {
