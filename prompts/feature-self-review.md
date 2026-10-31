@@ -41,8 +41,6 @@ The stories on this branch:
    finding, with `Class: restated source of truth` and a `Repro:` showing the
    definition: derive from the definition instead.
 
-{{selfConsistencyGuide}}
-
 Fix in place with Conventional Commits messages ending in ` ({{featureId}})`,
 run the tests that cover what you changed (see **Tests** below; the loop's
 test gate runs the full suite after this session), and format changed files.
@@ -55,6 +53,8 @@ bl sync --commit -m "chore: self-review notes for {{featureId}}" --path {{featur
 
 Never run `git add` or `git commit` in the backlog repo ({{backlogDir}}): its
 index is shared, and a raw commit takes along what other sessions have staged.
+
+{{selfConsistencyGuide}}
 
 {{blockedByBug}}
 

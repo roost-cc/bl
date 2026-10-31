@@ -70,7 +70,7 @@ function statusesNamed(node) {
  * @param {string} source
  * @returns {{ line: number, statuses: string[] }[]}
  */
-export function restatedStatusSets(source) {
+function restatedStatusSets(source) {
   const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
   const out = [];
   const visit = (node, _state, ancestors) => {

@@ -12,7 +12,8 @@
  *
  * A unit's files are its branch diff against main once the branch has
  * commits, else the backticked paths in its stories' Implementation Plans
- * (a feature: the union over its stories), each keyed by repo.
+ * outside `### Sources of truth` (a feature: the union over its stories), each
+ * keyed by repo.
  */
 
 import { execFileSync } from 'child_process';

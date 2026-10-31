@@ -2220,8 +2220,8 @@ outside the targets that is not done, waits; so does a target whose files
 overlap a lower-numbered started target's. A target's files are its branch diff
 against main (`git diff --name-only main...HEAD` in each worktree) once the
 branch has commits, else the backticked paths in its stories' Implementation
-Plans, keyed by repo; a path that is not backticked is not seen. When a repo's
-worktree is missing or its diff fails, the plan paths count too. The waiting
+Plans, keyed by repo; a path that is not backticked is not seen, nor is one under
+`### Sources of truth`, which is read, not changed. When a repo's worktree is missing or its diff fails, the plan paths count too. The waiting
 targets are listed first, each naming its blocker or the shared files.
 
 - `run`, `review`: each started target runs as a child `bl run <id>` /
