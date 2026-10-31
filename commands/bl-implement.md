@@ -41,7 +41,8 @@ A story is only launched when every `depends_on` is already `done`/`superseded`
 (i.e. **merged**). A dependency that is itself one of the targets counts as
 unmet until its PR merges, so the dependent is **deferred** and reported, not
 launched. So is a target whose files (its branch diff, else the backticked paths
-in its Implementation Plan) overlap a lower-numbered target's. After you review
+in its Implementation Plan, outside `### Sources of truth`) overlap a
+lower-numbered target's. After you review
 and merge the launched PRs, re-run the same command and the newly-unblocked
 targets start.
 

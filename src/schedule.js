@@ -12,11 +12,14 @@
  *
  * A unit's files are its branch diff against main once the branch has
  * commits, else the backticked paths in its stories' Implementation Plans
- * (a feature: the union over its stories), each keyed by repo.
+ * outside `### Sources of truth` (a feature: the union over its stories), each
+ * keyed by repo.
  */
 
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { toString } from 'mdast-util-to-string';
 import { parseFrontmatter } from './config.js';
 import { parseIdList, reposForStory } from './story.js';
 import { resolveFeatureStories, reposForFeature, featureRepoOrder, extractSection } from './feature.js';
@@ -87,9 +90,31 @@ function sameFiles(a, b) {
 }
 
 /**
+ * A plan without its `### Sources of truth` subsections, each running to the
+ * next heading of level 1 to 3. Headings are mdast nodes, so every Markdown
+ * form of one counts and a `#` line in a code block does not. A heading's
+ * title is its text as read: inline formatting does not change it, and an
+ * HTML comment is not part of it.
+ */
+function withoutSourcesOfTruth(plan) {
+  const headings = fromMarkdown(plan).children.filter((n) => n.type === 'heading' && n.depth <= 3);
+  let kept = '';
+  let from = 0;
+  headings.forEach((h, i) => {
+    const title = toString(h, { includeHtml: false }).replace(/\s+/g, ' ').trim();
+    if (h.depth !== 3 || title !== 'Sources of truth') return;
+    kept += plan.slice(from, h.position.start.offset);
+    from = headings[i + 1]?.position.start.offset ?? plan.length;
+  });
+  return kept + plan.slice(from);
+}
+
+/**
  * `repo:path` for every backticked path in the stories' `## Implementation
  * Plan`, keyed by each story's repo (`unitRepo`, its component's; else
- * `defaultRepo`). A path that is not backticked is not seen.
+ * `defaultRepo`). A path that is not backticked is not seen, and neither is
+ * one under `### Sources of truth`: those files are read, not changed, so
+ * they hold back no other target.
  *
  * @param {{ indexPath: string, unitRepo?: string }[]} stories
  * @param {string} [defaultRepo]
@@ -103,7 +128,7 @@ export function planFiles(stories, defaultRepo = '') {
     const plan = extractSection(body, 'Implementation Plan');
     if (!plan) continue;
     const repo = s.unitRepo || defaultRepo;
-    for (const [, span] of plan.matchAll(/`([^`\n]+)`/g)) {
+    for (const [, span] of withoutSourcesOfTruth(plan).matchAll(/`([^`\n]+)`/g)) {
       const p = asPath(span);
       if (p) out.add(`${repo}:${p}`);
     }

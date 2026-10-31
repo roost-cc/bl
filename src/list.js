@@ -17,19 +17,6 @@ import { readAllStories, readBacklogOrder, activeWorktreesByStory } from './stor
 import { filterContext, filterFromArgs, filterStories, storyThemes } from './filter.js';
 import { loadFlow } from './flow.js';
 
-// Maps, not objects: a status is free frontmatter, and `constructor` or
-// `__proto__` would find an inherited property on an object.
-const STATUS_ORDER = new Map([
-  ['in_progress', 1],
-  ['backlog', 2],
-  ['refined', 2],
-  ['done', 3],
-  ['superseded', 4],
-]);
-
-/** `bl list`'s open story: neither done nor superseded. */
-const isOpen = (s) => s.status !== 'done' && s.status !== 'superseded';
-
 /** Comparator: stack rank (unranked last), then numeric id. */
 function byRankThenId(priorityMap) {
   return (a, b) => {
@@ -97,6 +84,7 @@ Filters combine: every one given must match.`);
     return cmdList(args, cfg, { filter, ctx });
   }
 
+  const flow = loadFlow(cfg.backlogRoot);
   const showAll = args.all;
   const stories = filterStories(readAllStories(cfg), filter, ctx);
 
@@ -104,19 +92,19 @@ Filters combine: every one given must match.`);
 
   const wtsByStory = activeWorktreesByStory(cfg);
 
-  const filtered = showAll ? stories : stories.filter(isOpen);
+  const filtered = showAll ? stories : stories.filter((s) => !flow.meets('story', s.status, 'done'));
 
   filtered.sort((a, b) => {
     const aa = wtsByStory.has(a.id) ? 0 : 1;
     const ab = wtsByStory.has(b.id) ? 0 : 1;
     if (aa !== ab) return aa - ab;
-    const sa = STATUS_ORDER.get(a.status) ?? 2;
-    const sb = STATUS_ORDER.get(b.status) ?? 2;
+    const sa = flow.listRankOf('story', a.status);
+    const sb = flow.listRankOf('story', b.status);
     if (sa !== sb) return sa - sb;
     return tiebreak(a, b);
   });
 
-  printStories(filtered, { ctx, wtsByStory, patternSource: args.positional[0], showAll });
+  printStories(filtered, { flow, ctx, wtsByStory, patternSource: args.positional[0], showAll });
 }
 
 /**
@@ -132,7 +120,7 @@ export function listByStatus() {
   const stories = readAllStories(cfg)
     .filter((s) => !flow.meets('story', s.status, 'done'))
     .sort(byOpenStatus(readPriorityMap(cfg), flow.openStatusesOf('story')));
-  printStories(stories, { ctx: filterContext(cfg), wtsByStory: activeWorktreesByStory(cfg), showAll: false });
+  printStories(stories, { flow, ctx: filterContext(cfg), wtsByStory: activeWorktreesByStory(cfg), showAll: false });
 }
 
 /**
@@ -140,9 +128,9 @@ export function listByStatus() {
  * is already sorted. An empty list or a pattern matching nothing says so on stderr.
  *
  * @param {object[]} filtered
- * @param {{ ctx: object, wtsByStory: Map<string, object[]>, patternSource?: string, showAll: boolean }} opts
+ * @param {{ flow: import('./flow.js').Flow, ctx: object, wtsByStory: Map<string, object[]>, patternSource?: string, showAll: boolean }} opts
  */
-function printStories(filtered, { ctx, wtsByStory, patternSource, showAll }) {
+function printStories(filtered, { flow, ctx, wtsByStory, patternSource, showAll }) {
   // Before the empty check: a malformed pattern is an error with no rows too.
   const pattern = patternSource ? new RegExp(patternSource, 'i') : null;
 
@@ -182,9 +170,7 @@ function printStories(filtered, { ctx, wtsByStory, patternSource, showAll }) {
   const hlRe = buildHighlightRegex(patternSource);
 
   const activeCount = filtered.filter((s) => wtsByStory.has(s.id)).length;
-  const backlogCount = filtered.filter(
-    (s) => !wtsByStory.has(s.id) && s.status !== 'done' && s.status !== 'superseded',
-  ).length;
+  const backlogCount = filtered.filter((s) => !wtsByStory.has(s.id) && !flow.meets('story', s.status, 'done')).length;
   const completedCount = filtered.length - activeCount - backlogCount;
   const summary = `\n${filtered.length} stories (${activeCount} active, ${backlogCount} backlog${
     showAll ? `, ${completedCount} completed` : ''

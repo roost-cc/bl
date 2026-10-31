@@ -15,7 +15,8 @@ Backlog repo : {{backlogDir}}
    backlog root). Do not search for it.
 
 2. Explore the codebase in `{{primaryRepoPath}}` to understand the scope and
-   requirements.
+   requirements, and where the system already defines each concept the story
+   touches (see **Self-consistent designs** below).
 
 3. Fill in the **## Summary**, **## Acceptance Criteria**, and
    **## Implementation Plan** sections in the story file.
@@ -29,6 +30,9 @@ Backlog repo : {{backlogDir}}
    - New tests to add
    - Edge cases to handle
    - Any architectural changes required
+   - A `### Sources of truth` part: for each concept the story touches, where
+     it is defined and how the code reaches it. Paths here are read, not
+     changed, so `bl run` does not hold a target back for them.
 
 5. Update the story frontmatter:
    - Check `component:` names the code boundary of the main work. The story's repo is that
@@ -58,6 +62,8 @@ Backlog repo : {{backlogDir}}
     plus one `--story` for each child story you created with `bl new`. The
     backlog workflow commits to its `main` branch directly; do NOT branch
     first.
+
+{{selfConsistencyGuide}}
 
 {{validateBeforeSync}}
 

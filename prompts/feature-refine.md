@@ -40,8 +40,10 @@ in order without asking anyone.
 1. {{readTool}} the feature file. Do not search for it.
 
 2. Explore every repo the work touches (under {{roostDir}}) until you can
-   name the files, contracts, and tests involved. Ground every claim below in
-   something you read. A feature's repos are derived from its stories: a
+   name the files, contracts, and tests involved, and where the system
+   already defines each concept the work touches (see **Self-consistent
+   designs** below). Ground every claim below in something you read. A
+   feature's repos are derived from its stories: a
    story's repo is its component's, and that is what puts the repo in the
    feature, so work in another repo needs a story in a component of that repo
    (one story per repo). bl orders them `bl` first, then by first story in
@@ -77,7 +79,10 @@ in order without asking anyone.
      Design section instead of repeating it. Write every file path in it in
      backticks (`src/x.js`): when several targets run at once, `bl run` reads
      them to hold back a target that touches the same file as another. A path
-     that is not backticked is not seen.
+     that is not backticked is not seen. It has a `### Sources of truth` part:
+     for each concept the story touches, where it is defined and how the code
+     reaches it. Paths there are read, not changed, so `bl run` does not hold a
+     target back for them.
    - Order matters: declare `depends_on` between stories so `bl implement`
      runs them in sequence. Declare each edge on both sides: `depends_on` on
      the later story and `required_for` on the earlier one. `bl new --from`
@@ -157,6 +162,8 @@ in order without asking anyone.
   the section back to `None.`.
 - Any other text in **## Escalation** blocks `bl run`, and
   `bl approve` refuses the feature.
+
+{{selfConsistencyGuide}}
 
 {{sideChangeGuide}}
 

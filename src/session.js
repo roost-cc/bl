@@ -137,13 +137,17 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * `sideChangeGuide` is the side-change rule (a change outside your own
  * unit's repos is a story made with `bl side`, never a hand-made worktree or
  * PR) carried by every refine and workon prompt, the feature's story session
- * and the story run; the other loop prompts do not.
+ * and the story run; the other loop prompts do not. `selfConsistencyGuide` is
+ * the rule that a change derives from what the system already defines rather
+ * than restating it, carried by every refine and implementation prompt and by
+ * the two prompts that review for it.
  */
 const PROMPT_PARTIALS = {
   blockedByBug: '_blocked-by-bug',
   escalationGuide: '_escalation',
   validateBeforeSync: '_validate-before-sync',
   sideChangeGuide: '_side-changes',
+  selfConsistencyGuide: '_self-consistency',
 };
 
 /**

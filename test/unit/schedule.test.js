@@ -340,6 +340,130 @@ const PATH_CASES = [
   ['', null, 'empty'],
 ];
 
+test('planFiles skips paths under ### Sources of truth and keeps those after it', () => {
+  const sources = '### Sources of truth\n\n- Statuses: `src/flow.js`, read through `src/read-only.js`.\n';
+  const bodies = {
+    'S-1': plan('`src/before.js`', '', sources, '### Steps', '', '1. `src/after.js`'),
+    'S-2': plan(sources),
+    'S-3': plan(
+      '`src/before.js`',
+      '',
+      sources.replace('\n\n', ' \r\n\r\n'),
+      '#### Detail',
+      '`src/deep.js`',
+      '',
+      '## Next',
+    ),
+  };
+  const { dir, cleanup } = mkTempBacklog({
+    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
+    stories: Object.entries(bodies).map(([id, body]) => story(id, { body })),
+  });
+  try {
+    const stories = readAllStories(loadConfig({ backlogRoot: dir }));
+    const files = (id) => [...planFiles([stories.find((s) => s.id === id)])].sort();
+    assert.deepEqual(files('S-1'), ['bl:src/after.js', 'bl:src/before.js']);
+    assert.deepEqual(files('S-2'), []);
+    assert.deepEqual(files('S-3'), ['bl:src/before.js']);
+  } finally {
+    cleanup();
+  }
+});
+
+const READ = '- Read `src/read-only.js`.';
+const AFTER = '1. Change `src/after.js`.';
+const HEADING_FORMS = [
+  ['plain', ['### Sources of truth', READ, '### Steps', AFTER]],
+  ['closing hashes', ['### Sources of truth ###', READ, '### Steps ###', AFTER]],
+  ['closing hashes of another length', ['### Sources of truth #', READ, '### Steps ##########', AFTER]],
+  ['tab after the marker', ['###\tSources of truth', READ, '###\tSteps', AFTER]],
+  ['several spaces', ['###   Sources of truth   ', READ, '###   Steps', AFTER]],
+  ['up to three leading spaces', ['   ### Sources of truth', 'Read `src/read-only.js`.', '  ### Steps', AFTER]],
+  ['next heading level one', ['### Sources of truth', READ, '# Steps', AFTER]],
+  ['next heading setext', ['### Sources of truth', READ, 'Steps\n---', AFTER]],
+  ['an empty next heading', ['### Sources of truth', READ, '###', AFTER]],
+  ['a twin section', ['### Sources of truth', READ, '### Sources of truth', READ, '### Steps', AFTER]],
+  ['a deeper heading stays inside', ['### Sources of truth', '#### Detail', READ, '### Steps', AFTER]],
+  ['a fenced heading stays inside', ['### Sources of truth', '```\n### Steps\n```', READ, '### Steps', AFTER]],
+];
+const NOT_THE_HEADING = [
+  ['seven hashes', '####### Sources of truth'],
+  ['no space after the marker', '###Sources of truth'],
+  ['another level', '#### Sources of truth'],
+  ['longer text', '### Sources of truth and more'],
+  ['an escaped marker', String.raw`\### Sources of truth`],
+  ['another title in bold', '### **Sources of truth and more**'],
+  ['another title after a comment', '### Sources <!-- of truth --> of lies'],
+];
+
+const FORMATTED_TITLES = [
+  ['bold', '**Sources of truth**'],
+  ['bold with underscores', '__Sources of truth__'],
+  ['emphasis', '*Sources of truth*'],
+  ['partial emphasis', 'Sources of *truth*'],
+  ['partial bold', '**Sources** of truth'],
+  ['nested emphasis', '***Sources*** of _truth_'],
+  ['a link', '[Sources of truth](docs/guide.md)'],
+  ['a partial link', 'Sources of [truth](docs/guide.md)'],
+  ['a reference link', '[Sources of truth][guide]'],
+  ['inline code', '`Sources of truth`'],
+  ['partial inline code', 'Sources of `truth`'],
+  ['an image', '![Sources of truth](truth.png)'],
+  ['inline HTML', '<b>Sources of truth</b>'],
+  ['a trailing HTML comment', 'Sources of truth <!-- note -->'],
+  ['a leading HTML comment', '<!-- note --> Sources of truth'],
+  ['an HTML comment inside', 'Sources <!-- note --> of truth'],
+  ['a character reference', 'Sources&#32;of truth'],
+  ['closing hashes', '**Sources of truth** ###'],
+];
+
+test('planFiles_skips_formatted_sources_of_truth_headings', () => {
+  const REF = '[guide]: docs/guide.md';
+  const twin = '### Other\n\n1. Change `src/twin-after.js`.\n\n### *Sources* of truth\n\n- Read `src/twin.js`.';
+  const stories = FORMATTED_TITLES.flatMap(([, title], i) => [
+    story(`S-${i + 1}`, { body: plan(`### ${title}`, '', READ, '', '### Steps', '', AFTER, '', REF) }),
+    // The next heading ends the section whatever its own formatting.
+    story(`S-${i + 101}`, { body: plan(`### ${title}`, '', READ, '', '# **Next**', '', AFTER, '', REF) }),
+    story(`S-${i + 201}`, { body: plan(`### ${title}`, '', READ, '', '### [Steps](a.md)', '', AFTER, '', REF) }),
+    story(`S-${i + 301}`, { body: plan(`### ${title}`, '', READ, '', twin, '', '### `Steps`', '', AFTER, '', REF) }),
+  ]);
+  const { dir, cleanup } = mkTempBacklog({
+    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
+    stories,
+  });
+  try {
+    const all = readAllStories(loadConfig({ backlogRoot: dir }));
+    const files = (id) => [...planFiles([all.find((s) => s.id === id)])].sort();
+    FORMATTED_TITLES.forEach(([name], i) => {
+      assert.deepEqual(files(`S-${i + 1}`), ['bl:src/after.js'], name);
+      assert.deepEqual(files(`S-${i + 101}`), ['bl:src/after.js'], `${name}, level-one next heading`);
+      assert.deepEqual(files(`S-${i + 201}`), ['bl:src/after.js'], `${name}, linked next heading`);
+      assert.deepEqual(files(`S-${i + 301}`), ['bl:src/after.js', 'bl:src/twin-after.js'], `${name}, repeated`);
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+test('planFiles_handles_valid_atx_heading_forms_and_next_sections', () => {
+  const stories = [
+    ...HEADING_FORMS.map(([, lines], i) => story(`S-${i + 1}`, { body: plan(...lines.join('\n\n').split('\n')) })),
+    ...NOT_THE_HEADING.map(([, heading], i) => story(`S-${i + 101}`, { body: plan(heading, '', READ) })),
+  ];
+  const { dir, cleanup } = mkTempBacklog({
+    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
+    stories,
+  });
+  try {
+    const all = readAllStories(loadConfig({ backlogRoot: dir }));
+    const files = (id) => [...planFiles([all.find((s) => s.id === id)])];
+    HEADING_FORMS.forEach(([name], i) => assert.deepEqual(files(`S-${i + 1}`), ['bl:src/after.js'], name));
+    NOT_THE_HEADING.forEach(([name], i) => assert.deepEqual(files(`S-${i + 101}`), ['bl:src/read-only.js'], name));
+  } finally {
+    cleanup();
+  }
+});
+
 test('planFiles preserves valid repository paths with spaces and punctuation and schedule defers their overlaps', () => {
   const root = mkTempDir('bl-schedule-paths-');
   const git = (cwd, ...args) =>

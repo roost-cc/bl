@@ -68,8 +68,11 @@ runs and merges it. If this story cannot be finished without that change, escala
    changes**). Phrase a bullet or task that depends on a merge as "after review and merge, …",
    never "after <repo>#<pr> merges".
 
-6. If the plan is wrong, correct it briefly in the story file and continue. If the story's
-   **Summary** turns out to be false — it rests on something the code does not support — stop:
+6. If the plan is wrong, correct it briefly in the story file and continue. A plan that restates
+   a source of truth is corrected, not followed: fix it in the story file, with the reason, and
+   build the corrected plan (see **Self-consistent designs** below). An entry added to a guard's
+   allowlist needs the same stated reason. If the story's **Summary** turns out to be false — it
+   rests on something the code does not support — stop:
    write what you found under **## Escalation** in the story file, as **Writing an escalation**
    below describes, commit the backlog, and end the session. That is the right outcome.
 
@@ -95,6 +98,8 @@ A path you name in the plan or the To Do is read by the scheduler only when it i
 Write diagnostics (probe scripts, redirected test output, scratch configs) under
 `{{scratchDir}}`, never in the worktree. The test gate refuses a dirty worktree, and a
 headless session cannot remove files.
+
+{{selfConsistencyGuide}}
 
 {{blockedByBug}}
 

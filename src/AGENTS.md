@@ -653,8 +653,10 @@ status implies, and the gates a unit of each type can be held at. It is plain JS
   checks gates only at `run`, `implement` and `merge`.
 - **`src/flow.js`.** `loadFlow(backlogRoot)` returns the parsed flow (cached while the file's
   mtime and size are unchanged) with `statusesOf(type)`, `openStatusesOf(type)` (those that do
-  not meet `done`, most `implies` first, ties in file order), `meets(type, status, wanted)` and
-  `gatesOf(type)`. It throws a `FlowError` whose message starts with the file's path when the
+  not meet `done`, most `implies` first, ties in file order), `listRankOf(type, status)` (the
+  sort rank of `bl list` and `bl grep`: open statuses that meet `in_progress`, then the other open
+  statuses with any unknown one, then closed statuses in file order), `meets(type, status, wanted)`
+  and `gatesOf(type)`. It throws a `FlowError` whose message starts with the file's path when the
   file is missing, not JSON, has a `schema` other than `bl-flow/v1`, lacks the `story`,
   `feature` or `task` type (`FLOW_TYPES`), or has a `statuses` or `gates` of the wrong shape;
   a command that reads it
@@ -2218,8 +2220,8 @@ outside the targets that is not done, waits; so does a target whose files
 overlap a lower-numbered started target's. A target's files are its branch diff
 against main (`git diff --name-only main...HEAD` in each worktree) once the
 branch has commits, else the backticked paths in its stories' Implementation
-Plans, keyed by repo; a path that is not backticked is not seen. When a repo's
-worktree is missing or its diff fails, the plan paths count too. The waiting
+Plans, keyed by repo; a path that is not backticked is not seen, nor is one under
+`### Sources of truth`, which is read, not changed. When a repo's worktree is missing or its diff fails, the plan paths count too. The waiting
 targets are listed first, each naming its blocker or the shared files.
 
 - `run`, `review`: each started target runs as a child `bl run <id>` /
@@ -2320,9 +2322,11 @@ strictly by status, furthest along first as `flow.json` has it (`Flow.openStatus
 `in_progress`, then `refined`, then `backlog` in the shipped flow), stack rank then numeric id
 within each. A story is open when its status does not meet `done`; a status `flow.json` does not
 name meets nothing, so it stays listed, last. A `flow.json` bl cannot read stops the command with
-its `FlowError`, even with no stories. `bl list` keeps its own constants: it puts worktree stories first and
-ranks `backlog` and `refined` equally; here a story with a worktree keeps its status group and
-shows the `*`. Any flag with no id is a usage error, not a filter.
+its `FlowError`, even with no stories. `bl list` and `bl grep` read `flow.json` the same way, and
+stop the same way, but sort differently: worktree stories first, then `Flow.listRankOf('story', …)`
+(`in_progress`; then `backlog`, `refined` and any status `flow.json` does not name, equally; then
+`done`, then `superseded`). Here a story with a worktree keeps its status group and shows the `*`.
+Any flag with no id is a usage error, not a filter.
 
 ### `bl history`
 
@@ -3535,6 +3539,7 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_escalation.md`                 | `{{escalationGuide}}`: the shape of an escalation the operator can read at a glance.                                                                                                                 |
 | `_validate-before-sync.md`       | `{{validateBeforeSync}}`: `bl validate` until clean, then a locked `bl sync --commit`. Every story-editing prompt carries it.                                                                        |
 | `_side-changes.md`               | `{{sideChangeGuide}}`: a change outside the unit's repos is a `bl side --from {{sideFrom}}` story, never a hand-made worktree, PR or operator task. Refine, workon, `feature-story` and `story-run`. |
+| `_self-consistency.md`           | `{{selfConsistencyGuide}}`: derive from what the system already defines, never restate it. Refine, workon, `feature-story`, `story-run`, `review-correctness` and `feature-self-review`.             |
 | `_cd-git-guard-deny.md`          | Deny message for the cd-then-git Claude hook.                                                                                                                                                        |
 | `_cd-search-guard-deny.md`       | Deny message for the cd-then-search Claude hook.                                                                                                                                                     |
 | `_cd-guard-deny.md`              | Bash-shape hook: `cd <path> && <cmd>` (cmd not git or a search tool).                                                                                                                                |

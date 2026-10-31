@@ -35,6 +35,11 @@ The stories on this branch:
 6. **Premise.** Does what you built still rest on {{premise}}? If
    not, write **## Escalation** in the {{unitKind}} file, as **Writing an
    escalation** below describes, instead of patching around it.
+7. **Sources of truth.** For every new literal, constant or map in the diff,
+   search the repo, outside the diff too, for what already defines it, and read
+   the plan's `### Sources of truth` part where it has one. A restatement is a
+   finding, with `Class: restated source of truth` and a `Repro:` showing the
+   definition: derive from the definition instead.
 
 Fix in place with Conventional Commits messages ending in ` ({{featureId}})`,
 run the tests that cover what you changed (see **Tests** below; the loop's
@@ -48,6 +53,8 @@ bl sync --commit -m "chore: self-review notes for {{featureId}}" --path {{featur
 
 Never run `git add` or `git commit` in the backlog repo ({{backlogDir}}): its
 index is shared, and a raw commit takes along what other sessions have staged.
+
+{{selfConsistencyGuide}}
 
 {{blockedByBug}}
 

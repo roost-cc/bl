@@ -72,6 +72,14 @@ line so the implementer can run it too.
    diff never touches the file: name the file and where it belongs, with
    `Class: code left in a package of its old role`. The `Repro:` is a command
    that shows it (`rg -ln <module> <old package>`).
+9. **Check every new definition against the system.** For every new literal,
+   constant or map in the diff, search the repo, outside the diff too, for what
+   already defines it, and read the plan's `### Sources of truth` part where it
+   has one. A restatement is a finding even when it is correct today and every
+   test passes, with `Class: restated source of truth`. The `Repro:` is a
+   command that shows the definition (`rg -n <value> <where it is defined>`).
+
+{{selfConsistencyGuide}}
 
 ## Steps
 

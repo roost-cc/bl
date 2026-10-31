@@ -21,8 +21,9 @@ summarize them — let each sub-agent read its own file.
 
 Each sub-agent independently refines exactly one story: it reads the story file,
 explores the relevant repo(s), fills in the summary / acceptance criteria /
-implementation plan, updates the frontmatter (type, points, depends_on,
-component), formats any files it changed, sets `status: refined`, and
+implementation plan with its `### Sources of truth` part, updates the frontmatter
+(type, points, depends_on, component), formats any files it changed, sets
+`status: refined`, and
 commits its story through the locked `bl validate` → `bl sync --commit` flow its
 file describes.
 
@@ -43,6 +44,14 @@ Each sub-agent's file ends with this flow, written to that sub-agent. It is here
 them to it. You make no backlog commit yourself.
 
 {{validateBeforeSync}}
+
+## The design rule each sub-agent follows
+
+Each sub-agent's file also carries this rule. A plan without a `### Sources of truth` part is not
+finished: for each concept the story touches, it says where that is defined and how the code
+reaches it.
+
+{{selfConsistencyGuide}}
 
 ## The side-PR rule each sub-agent follows
 

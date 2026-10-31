@@ -112,7 +112,8 @@ Before anything starts, `bl run` lists the targets that wait: one that depends o
 target (or on a story outside them that is not done), naming the blocker, and one whose files
 overlap a lower-numbered target's, naming the shared files. A target's files are its branch
 diff once it has commits, else the backticked paths in its Implementation Plan; a path that is
-not backticked is not seen. The rest run in parallel, each as a child `bl run <id>` with its
+not backticked is not seen, nor is one under `### Sources of truth`, which is read, not changed.
+The rest run in parallel, each as a child `bl run <id>` with its
 output in `.bl/run/<id>.out`, and one line per target is printed when all are done. Re-run the
 same command after the first ones merge.
 

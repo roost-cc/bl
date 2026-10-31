@@ -34,6 +34,11 @@ The backlog is a **separate git repo** from the code. That means:
    valid type (`feat`, `fix`, `chore`, …), the subject ending in
    ` ({{storyId}})`, and body lines wrapped at 100 columns.
 
+   A plan that restates a source of truth is corrected, not followed: fix it in
+   the story file, with the reason, and build the corrected plan (see
+   **Self-consistent designs** below). An entry added to a guard's allowlist
+   needs the same stated reason.
+
    As you satisfy each acceptance criterion, mark it done in the story file
    (`- [ ]` → `- [x]`) in the backlog repo. Commit each batch of criterion
    updates separately through **Backlog commits** below, using the same
@@ -108,6 +113,8 @@ The backlog is a **separate git repo** from the code. That means:
    goes through `bl review` first, and you do not know when it will merge.
 
 {{sessionStack}}
+
+{{selfConsistencyGuide}}
 
 {{validateBeforeSync}}
 

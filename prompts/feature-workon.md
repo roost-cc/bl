@@ -86,7 +86,11 @@ Backlog repo : {{backlogDir}}
    <repo>#<pr> merges": the PR goes through `bl review` first.
 
 4. If a story's plan turns out wrong, correct the plan briefly in the story
-   file and continue. If the **Premise** turns out to be false — the feature is
+   file and continue. A plan that restates a source of truth is corrected, not
+   followed: fix it in the story file, with the reason, and build the corrected
+   plan (see **Self-consistent designs** below). An entry added to a guard's
+   allowlist needs the same stated reason. If the **Premise** turns out to be
+   false — the feature is
    built on an assumption the code does not support — stop: write what you
    found under **## Escalation** in the feature file, as **Writing an
    escalation** below describes, commit that to the backlog
@@ -126,6 +130,8 @@ Backlog repo : {{backlogDir}}
    create a worktree yourself or edit a repo's main checkout.
 
 {{sessionStack}}
+
+{{selfConsistencyGuide}}
 
 {{blockedByBug}}
 
