@@ -126,6 +126,49 @@ test('an empty backlog says so on stderr, as bl list does', () => {
   assert.match(r.stderr, /^No stories found\.$/m);
 });
 
+test('a backlog of only closed stories says so on stderr', () => {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C00', title: 'Work' }],
+    stories: STORIES.filter((s) => s.status === 'done' || s.status === 'superseded'),
+  });
+  const r = runBl(['status'], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /^No stories found\.$/m);
+});
+
+test('a status outside the three stays listed, after backlog', () => {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C00', title: 'Work' }],
+    stories: [
+      { id: 'S-1', status: 'blocked', component: 'C00', title: 'Odd' },
+      { id: 'S-2', status: 'backlog', component: 'C00', title: 'Plain' },
+      { id: 'S-3', status: 'refined', component: 'C00', title: 'Ready' },
+    ],
+  });
+  const r = runBl(['status'], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(ids(r.stdout), ['S-3', 'S-2', 'S-1']);
+});
+
+test('the Feature column comes along when a listed story has a feature', () => {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C00', title: 'Work' }],
+    features: [{ id: 'F-1', title: 'A feature', status: 'draft' }],
+    stories: [
+      { id: 'S-1', status: 'backlog', component: 'C00', title: 'Plain' },
+      { id: 'S-2', status: 'refined', component: 'C00', title: 'Member', feature: 'F-1' },
+    ],
+  });
+  const status = runBl(['status'], { cwd: dir });
+  const list = runBl(['list'], { cwd: dir });
+  assert.equal(status.status, 0, status.stderr);
+  const lines = status.stdout.split('\n');
+  assert.match(lines[0], /\bFeature\b/);
+  assert.match(lines[2], /S-2\s+F-1\b/);
+  assert.deepEqual([...lines].sort(), list.stdout.split('\n').sort());
+});
+
 test('bl status --help shows the bare form', () => {
   const { dir } = mkTempBacklog();
   const r = runBl(['status', '--help'], { cwd: dir });
