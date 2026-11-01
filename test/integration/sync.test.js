@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs, { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
 import { dirname, join, resolve } from 'path';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { blockedFlow, mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { readBacklogOrder } from '../../src/story.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
@@ -853,6 +853,42 @@ test('syncFeature_keeps_a_token_step_entry_written_after_collection', async () =
   } finally {
     fs.readFileSync = read;
     syncBuiltinESMExports();
+    cleanup();
+  }
+});
+
+test('bl sync warns on a status only when the backlog flow.json lacks it', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    flow: blockedFlow(),
+    components: [{ id: 'C00', title: 'Foundation', dirSuffix: 'foundation' }],
+    stories: [
+      { id: 'S-1', component: 'C00', title: 'Held', status: 'blocked', dirSuffix: 'held' },
+      { id: 'S-2', component: 'C00', title: 'Wrong', status: 'nonsense', dirSuffix: 'wrong' },
+    ],
+  });
+  try {
+    const r = runBl(['sync'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /unknown status "blocked"/);
+    assert.match(r.stderr, /unknown status "nonsense"/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a missing flow.json stops the commands that read it, naming the file', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    flow: null,
+    components: [{ id: 'C00', title: 'Foundation', dirSuffix: 'foundation' }],
+    stories: [{ id: 'S-1', component: 'C00', title: 'One', dirSuffix: 'one' }],
+  });
+  try {
+    for (const argv of [['sync'], ['inbox'], ['tree'], ['deps', 'S-1'], ['next'], ['what-next']]) {
+      const r = runBl(argv, { cwd: dir });
+      assert.equal(r.status, 1, argv.join(' '));
+      assert.match(r.stderr, /flow\.json: missing/, argv.join(' '));
+    }
+  } finally {
     cleanup();
   }
 });

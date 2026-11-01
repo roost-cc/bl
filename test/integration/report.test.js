@@ -11,13 +11,14 @@ import fs, { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } f
 import { syncBuiltinESMExports } from 'module';
 import { basename, join } from 'path';
 import { loadConfig } from '../../src/config.js';
+import { loadFlow } from '../../src/flow.js';
 import { addDays, buildHistory } from '../../src/history.js';
 import { buildReport, readTree, renderMarkdown, units } from '../../src/report.js';
 import { registerAdapter } from '../../src/chart.js';
-import { writeReport } from '../../src/report-cmd.js';
+import { main as reportMain, writeReport } from '../../src/report-cmd.js';
 import { runBl } from '../helpers/run-bl.js';
-import { commitAt, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
-import { CHANGE_TEMPLATE } from '../helpers/tempdir.js';
+import { commitAt, committedBacklog, feature, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
+import { blockedFlow, CHANGE_TEMPLATE } from '../helpers/tempdir.js';
 
 const FORMATTED = '<!-- formatted -->';
 
@@ -51,7 +52,7 @@ function reportBacklog() {
 
 const report = (dir, since = '') => {
   const config = loadConfig({ backlogRoot: dir });
-  return buildReport(buildHistory(config, { since }), config);
+  return buildReport(buildHistory(config, { since }), config, loadFlow(dir));
 };
 
 test("buildReport counts the last snapshot's units by status", () => {
@@ -253,7 +254,7 @@ test('report since preserves first transitions and open ages across cutoff bound
 
 test('renderMarkdown lays the sections out in Design D5 order, a placeholder for each chart it was not given', () => {
   const { dir } = reportBacklog();
-  const page = renderMarkdown(report(dir));
+  const page = renderMarkdown(report(dir), {}, loadFlow(dir));
   const headings = page.split('\n').filter((l) => /^#{1,3} /.test(l));
   assert.deepEqual(headings, [
     '# Backlog progress report',
@@ -444,7 +445,8 @@ function failing(name, when, fn, times = 1) {
 test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publish', () => {
   const { dir } = reportBacklog();
   const config = loadConfig({ backlogRoot: dir });
-  const data = buildReport(buildHistory(config), config);
+  const flow = loadFlow(dir);
+  const data = buildReport(buildHistory(config), config, flow);
   const out = join(dir, 'reports');
   // An adapter with a file in a directory of its own, so every kind of write is reached.
   registerAdapter({
@@ -455,7 +457,7 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
     }),
   });
   const next = (total) => ({ ...data, summary: { ...data.summary, stories: { ...data.summary.stories, total } } });
-  writeReport(config, out, next(111), 'with-file');
+  writeReport(config, out, next(111), flow, 'with-file');
   const before = snapshot(out);
   assert.match(before['index.md'], /- Stories: 111,/);
   const siblings = () => readdirSync(dir).filter((n) => n.startsWith(`.${basename(out)}.`));
@@ -472,7 +474,7 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
     ['renameSync', (_, to) => to === out],
   ]) {
     assert.throws(
-      () => failing(name, when, () => writeReport(config, out, next(222), 'with-file')),
+      () => failing(name, when, () => writeReport(config, out, next(222), flow, 'with-file')),
       /injected/,
       `${name} ${when}`,
     );
@@ -488,7 +490,7 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
     (p) => {
       if (inner === null && String(p).endsWith('/data.json')) {
         try {
-          writeReport(config, out, next(333), 'with-file');
+          writeReport(config, out, next(333), flow, 'with-file');
           inner = 'published';
         } catch (e) {
           inner = e.message;
@@ -496,7 +498,7 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
       }
       return false;
     },
-    () => writeReport(config, out, next(222), 'with-file'),
+    () => writeReport(config, out, next(222), flow, 'with-file'),
   );
   assert.match(inner, /another bl report \(pid \d+\) is writing/);
   const after = snapshot(out);
@@ -509,12 +511,13 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
 test('writeReport_rollback_and_cleanup_failures_preserve_recovery_and_release_lock', () => {
   const { dir } = reportBacklog();
   const config = loadConfig({ backlogRoot: dir });
-  const data = buildReport(buildHistory(config), config);
+  const flow = loadFlow(dir);
+  const data = buildReport(buildHistory(config), config, flow);
   const out = join(dir, 'reports');
   const old = join(dir, '.reports.old');
   const stage = join(dir, '.reports.new');
   const next = (total) => ({ ...data, summary: { ...data.summary, stories: { ...data.summary.stories, total } } });
-  const write = (total) => writeReport(config, out, next(total));
+  const write = (total) => writeReport(config, out, next(total), flow);
   const siblings = () => readdirSync(dir).filter((n) => n.startsWith('.reports.'));
   write(111);
   const before = snapshot(out);
@@ -612,4 +615,116 @@ test("bl report --out writes elsewhere, and refuses a directory that is not a re
   assert.equal(bad.stdout, '');
   assert.match(bad.stderr, /not a report directory/);
   assert.equal(readFileSync(join(notOurs, 'keep.md'), 'utf8'), 'mine\n');
+});
+
+/** The rows of the Summary's status table, by their first cell. */
+const statusRows = (page) =>
+  page
+    .slice(page.indexOf('| Status'), page.indexOf('## Backlog'))
+    .split('\n')
+    .slice(2)
+    .filter(Boolean)
+    .map((row) => row.split('|')[1].trim());
+
+test('a story status flow.json adds shows in the status table and the flow chart, in the file order', () => {
+  const dir = committedBacklog(
+    [
+      ['S-1', 'done'],
+      ['S-2', 'blocked'],
+      ['S-3', 'backlog'],
+      ['S-4', 'refined'],
+    ],
+    blockedFlow(),
+  );
+  const data = report(dir);
+  assert.deepEqual(statusRows(renderMarkdown(data, {}, loadFlow(dir))), ['backlog', 'blocked', 'refined', 'done']);
+  const chart = data.charts.find((c) => c.id === 'flow');
+  assert.deepEqual(
+    chart.series.map((s) => s.name),
+    ['done', 'in progress', 'refined', 'blocked', 'backlog'],
+  );
+  assert.equal(chart.series.find((s) => s.name === 'blocked').values.at(-1).y, 2);
+  assert.match(chart.desc, /stacked: done, in progress, refined, blocked and backlog\./);
+});
+
+test("the flow chart's description reads as it always did on the template flow", () => {
+  const { dir } = scriptedBacklog();
+  assert.equal(
+    report(dir).charts.find((c) => c.id === 'flow').desc,
+    'Points by status per week, stacked: done, in progress, refined and backlog. A band that widens is work piling up in that status.',
+  );
+});
+
+test("a status today's flow.json lacks stays in the status table, after the statuses it defines", () => {
+  const dir = committedBacklog([
+    ['S-1', 'triage'],
+    ['S-2', 'superseded'],
+    ['S-3', 'backlog'],
+    ['S-4', 'done'],
+    ['S-5', 'parked'],
+  ]);
+  const page = renderMarkdown(report(dir), {}, loadFlow(dir));
+  assert.deepEqual(statusRows(page), ['backlog', 'done', 'superseded', 'parked', 'triage']);
+});
+
+test('the Summary lists an escalated feature in file order, between running and done', () => {
+  const { dir } = scriptedBacklog();
+  const other = (id, status) => feature('[S-3]', status).replaceAll('F-1', id);
+  put(dir, 'features/F2-two/index.md', other('F-2', 'escalated'));
+  put(dir, 'features/F3-three/index.md', other('F-3', 'done'));
+  commitAt(dir, '2026-04-29T09:00:00', 'day 5');
+  assert.match(renderMarkdown(report(dir), {}, loadFlow(dir)), /- Features: 3 \(1 running, 1 escalated, 1 done\)/);
+});
+
+test('report_uses_one_flow_snapshot_when_flow_changes_during_write', async () => {
+  const { dir } = scriptedBacklog();
+  const path = join(dir, 'flow.json');
+  let edited = false;
+  // Runs inside writeReport: the edit lands after the chart data was built, before the page is.
+  registerAdapter({
+    name: 'edits-flow',
+    render: () => {
+      if (!edited) {
+        const raw = JSON.parse(readFileSync(path, 'utf8'));
+        raw.types.story.statuses = Object.fromEntries(Object.entries(raw.types.story.statuses).reverse());
+        writeFileSync(path, JSON.stringify(raw));
+        edited = true;
+      }
+      return { markdown: '', files: [] };
+    },
+  });
+  const held = process.env.BL_BACKLOG_DIR;
+  process.env.BL_BACKLOG_DIR = dir;
+  const out = join(dir, 'reports');
+  try {
+    await reportMain(['--out', out, '--charts', 'edits-flow']);
+  } finally {
+    if (held === undefined) delete process.env.BL_BACKLOG_DIR;
+    else process.env.BL_BACKLOG_DIR = held;
+  }
+  assert.ok(edited);
+  const page = readFileSync(join(out, 'index.md'), 'utf8');
+  const chart = JSON.parse(readFileSync(join(out, 'data.json'), 'utf8')).charts.find((c) => c.id === 'flow');
+  const rows = statusRows(page);
+  const bands = chart.series.map((s) => s.name.replaceAll(' ', '_')).reverse();
+  assert.deepEqual(
+    rows.filter((s) => bands.includes(s)),
+    bands.filter((s) => rows.includes(s)),
+    'the table and the chart share one order',
+  );
+});
+
+test('a report or history run reads flow.json once, in the command', () => {
+  const src = (file) => readFileSync(join(import.meta.dirname, '..', '..', 'src', file), 'utf8');
+  const reads = (file) => src(file).split('loadFlow(').length - 1;
+  for (const [file, count] of [
+    ['report-cmd.js', 1],
+    ['history-cmd.js', 1],
+    ['report.js', 0],
+  ]) {
+    assert.equal(reads(file), count, file);
+  }
+  for (const file of ['report-cmd.js', 'history-cmd.js']) {
+    assert.match(src(file), /buildHistory\(config, \{ since: args\.since \?\? '', flow \}\)/, file);
+  }
 });

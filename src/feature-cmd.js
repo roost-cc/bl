@@ -118,10 +118,10 @@ import {
   updateChange,
 } from './change-doc.js';
 import { deployableRepos, mainCommits, tagRepos, writeReleaseManifest } from './release.js';
+import { loadFlow, statusWords } from './flow.js';
 
 const POINTS_GUIDELINE = { min: 8, max: 20 };
 
-const isClosed = (s) => s === 'done' || s === 'superseded';
 const today = () => new Date().toISOString().slice(0, 10);
 
 /**
@@ -146,6 +146,7 @@ export function updateFeature(config, feature, mutate) {
  * yet closed. `decided` is the `commit:` shape to record, or null.
  */
 export function markFeatureMerged(config, feature, stories, { decided, stamp }) {
+  const flow = loadFlow(config.backlogRoot);
   const tokens = { input: 0n, output: 0n, cache_creation: 0n, cache_read: 0n };
   let anyTokens = false;
   let storySteps = {};
@@ -154,7 +155,7 @@ export function markFeatureMerged(config, feature, stories, { decided, stamp }) 
     const wrote = updateSpecFile(config.backlogRoot, s.indexPath, (fm) => {
       if (addTokenTotals(tokens, fm)) anyTokens = true;
       storySteps = mergeStepTokens(storySteps, fm.tokens_by_step);
-      if (isClosed(fm.status)) return false;
+      if (flow.meets('story', fm.status, 'done')) return false;
       fm.status = 'done';
       if (decided !== null) fm.commit = decided;
       fm.completed = stamp;
@@ -167,7 +168,7 @@ export function markFeatureMerged(config, feature, stories, { decided, stamp }) 
     // The stories are folded in once, by the merge that marks the feature
     // done: a caller that loaded it before another merge finished finds it
     // closed here, under the lock, and adds nothing again.
-    if (!isClosed(fm.status)) {
+    if (!flow.meets('feature', fm.status, 'done')) {
       if (addTokenTotals(tokens, fm)) anyTokens = true;
       if (anyTokens) applyTokensToFrontmatter(fm, tokens);
       // Per step as well, key by key (S-904): the feature's own keys first.
@@ -257,7 +258,7 @@ export function recordFeatureTokens(feature, config) {
       updateFeature(config, feature, (fm) => {
         // A merged feature's totals hold its stories' too, folded in once by
         // `bl merge`: a re-read of its own transcripts must not replace them.
-        if (!isClosed(fm.status)) applyFeatureTokens(fm, totals);
+        if (!loadFlow(config.backlogRoot).meets('feature', fm.status, 'done')) applyFeatureTokens(fm, totals);
       });
     });
   } catch {
@@ -292,8 +293,9 @@ function printTable(headers, rows) {
  * @param {{ filter?: object, ctx?: object }} [opts]  from `filter.js` `filterFromArgs`
  */
 export function cmdList(args, config, { filter = null, ctx = null } = {}) {
+  const flow = loadFlow(config.backlogRoot);
   if (filter && hasFilter(filter)) return listByEpic(args, config, filter, ctx);
-  const features = readAllFeatures(config).filter((f) => args.all || !isClosed(f.status));
+  const features = readAllFeatures(config).filter((f) => args.all || !flow.meets('feature', f.status, 'done'));
   if (features.length === 0) {
     info('No features found.');
     return;
@@ -301,7 +303,7 @@ export function cmdList(args, config, { filter = null, ctx = null } = {}) {
   const all = readAllStories(config);
   const rows = features.map((f) => {
     const { stories } = resolveFeatureStories(f, config, all);
-    const done = stories.filter((s) => isClosed(s.status)).length;
+    const done = stories.filter((s) => flow.meets('story', s.status, 'done')).length;
     return [
       f.id,
       f.status,
@@ -315,8 +317,8 @@ export function cmdList(args, config, { filter = null, ctx = null } = {}) {
 }
 
 /** Stories and points, done and total, over a feature's resolved stories. */
-export function featureProgress(stories) {
-  const closed = stories.filter((s) => isClosed(s.status));
+export function featureProgress(stories, flow) {
+  const closed = stories.filter((s) => flow.meets('story', s.status, 'done'));
   const pts = (list) => list.reduce((sum, s) => sum + (parseInt(s.points, 10) || 0), 0);
   return {
     stories: `${closed.length}/${stories.length}`,
@@ -326,15 +328,16 @@ export function featureProgress(stories) {
 
 /**
  * The features that pass `filter`, grouped by epic in id order, then those
- * with no epic. Without `-a`, done and superseded features are left out of
+ * with no epic. Without `-a`, closed features are left out of
  * the tables; an epic's header still counts them.
  */
 function listByEpic(args, config, filter, ctx) {
+  const flow = loadFlow(config.backlogRoot);
   const all = readAllStories(config);
   const matching = ctx.features
     .map((f) => ({ f, stories: resolveFeatureStories(f, config, all).stories }))
     .filter(({ f, stories }) => featureMatches(f, stories, filter));
-  const shown = matching.filter(({ f }) => args.all || !isClosed(f.status));
+  const shown = matching.filter(({ f }) => args.all || !flow.meets('feature', f.status, 'done'));
   if (shown.length === 0) {
     info(matching.length > 0 ? 'No open features match. Use -a/--all to include done ones.' : 'No features match.');
     return;
@@ -353,7 +356,7 @@ function listByEpic(args, config, filter, ctx) {
     if (epicId) {
       const epic = ctx.epics.find((e) => e.id === epicId);
       const members = matching.filter(({ f }) => featureEpicId(f) === epicId);
-      const done = members.filter(({ f }) => isClosed(f.status)).length;
+      const done = members.filter(({ f }) => flow.meets('feature', f.status, 'done')).length;
       const name = epic ? ` · ${epic.title} [${epic.status}]` : ' (no directory)';
       console.log(`${epicId}${name} — ${done}/${members.length} features done`);
     } else {
@@ -363,7 +366,7 @@ function listByEpic(args, config, filter, ctx) {
       .get(epicId)
       .sort((a, b) => featureNum(a.f.id) - featureNum(b.f.id))
       .map(({ f, stories }) => {
-        const p = featureProgress(stories);
+        const p = featureProgress(stories, flow);
         return [f.id, f.status, p.stories, p.points, f.theme || '-', f.title];
       });
     printTable(['ID', 'Status', 'Stories', 'Points', 'Theme', 'Title'], rows);
@@ -524,7 +527,7 @@ export async function cmdNew(args, config, { beforeCreate = null, afterCreate = 
 // ---------------------------------------------------------------------------
 
 export function cmdRefine(args, config, feature) {
-  if (isClosed(feature.status)) {
+  if (loadFlow(config.backlogRoot).meets('feature', feature.status, 'done')) {
     console.error(`Feature ${feature.id} is ${feature.status}; nothing to refine.`);
     process.exit(1);
   }
@@ -587,7 +590,7 @@ export function cmdRefine(args, config, feature) {
 // ---------------------------------------------------------------------------
 
 export async function cmdApprove(args, config, feature) {
-  if (isClosed(feature.status)) {
+  if (loadFlow(config.backlogRoot).meets('feature', feature.status, 'done')) {
     console.error(`Feature ${feature.id} is ${feature.status}.`);
     process.exit(1);
   }
@@ -638,7 +641,7 @@ export async function cmdApprove(args, config, feature) {
       `note: ${feature.id} is ${points} points; the guideline is ${POINTS_GUIDELINE.min}–${POINTS_GUIDELINE.max} per feature.`,
     );
   }
-  const blockers = outsideBlockers(stories, all);
+  const blockers = outsideBlockers(stories, all, loadFlow(config.backlogRoot));
   if (blockers.length > 0) {
     info(`note: ${feature.id} depends on work outside the feature that is not done yet:`);
     for (const b of blockers) info(`  ${b.story} depends on ${b.dep} (${b.status})`);
@@ -830,7 +833,7 @@ export function cmdStatus(args, config, feature) {
   if (unlisted.length > 0) {
     console.log(`\ntagged but not listed: ${unlisted.map((s) => s.id).join(', ')}`);
   }
-  const blockers = outsideBlockers(stories, all);
+  const blockers = outsideBlockers(stories, all, loadFlow(config.backlogRoot));
   if (blockers.length > 0) {
     console.log('\nblocked on:');
     for (const b of blockers) console.log(`  ${b.story} depends on ${b.dep} (${b.status})`);
@@ -846,7 +849,7 @@ export function cmdStatusStory(args, config, story) {
   const { unit } = loadStoryUnit(story, config);
   printUnitHead(unit, unit.primaryRepo);
   const all = readAllStories(config);
-  const blockers = outsideBlockers([storyAsOrdered(unit)], all);
+  const blockers = outsideBlockers([storyAsOrdered(unit)], all, loadFlow(config.backlogRoot));
   if (blockers.length > 0) {
     console.log('\nblocked on:');
     for (const b of blockers) console.log(`  ${b.story} depends on ${b.dep} (${b.status})`);
@@ -855,12 +858,13 @@ export function cmdStatusStory(args, config, story) {
 }
 
 /**
- * `bl status C01`: the component's open stories (not done or superseded),
+ * `bl status C01`: the component's open stories (not closed),
  * one row each, in id order. `component` is a `findComponentDir` hit.
  */
 export function cmdStatusComponent(args, config, component) {
+  const flow = loadFlow(config.backlogRoot);
   const stories = readAllStories(config)
-    .filter((s) => s.componentId === component.id && !isClosed(s.status))
+    .filter((s) => s.componentId === component.id && !flow.meets('story', s.status, 'done'))
     .sort((a, b) => parseInt(a.id.slice(2), 10) - parseInt(b.id.slice(2), 10));
   console.log(`${component.id} · ${component.componentEntry}${component.repo ? ` (${component.repo})` : ''}\n`);
   if (stories.length === 0) {
@@ -995,7 +999,7 @@ export function prepareFeatureWorktree(config, feature) {
     process.exit(1);
   }
   const ordered = orderStoriesByDeps(stories);
-  const blockers = outsideBlockers(ordered, all);
+  const blockers = outsideBlockers(ordered, all, loadFlow(config.backlogRoot));
   if (blockers.length > 0) {
     console.error(`Feature ${feature.id} is blocked on work outside the feature:`);
     for (const b of blockers) console.error(`  ${b.story} depends on ${b.dep} (${b.status})`);
@@ -1292,7 +1296,7 @@ function openMissingPRs(config, unit, found, branchName, ordered) {
 export async function cmdReviewStory(args, baseConfig, story, opts = {}) {
   refuseStoryRepo('review', args);
   const { config, unit } = loadStoryUnit(story, baseConfig);
-  if (isClosed(unit.status)) {
+  if (loadFlow(config.backlogRoot).meets('story', unit.status, 'done')) {
     console.error(`Story ${unit.id} is ${unit.status}; nothing to review.`);
     process.exit(1);
   }
@@ -1455,21 +1459,24 @@ export async function cmdRun(args, config, feature) {
 }
 
 /**
- * `bl run S-n`: a refined (or in-progress) story through the feature loop,
+ * `bl run S-n`: a runnable story (`Flow.isRunnable`) through the feature loop,
  * as a one-story unit on its own branch (F-35 Design §3).
  */
 export async function cmdRunStory(args, baseConfig, story) {
   refuseStoryRepo('run', args);
   const { config, unit, found, parsed } = loadStoryUnit(story, baseConfig);
-  if (unit.status !== 'refined' && unit.status !== 'in_progress') {
-    const hint =
-      unit.status === 'backlog' ? `run \`bl refine ${unit.id}\` first` : 'only a refined or in-progress story runs';
+  const flow = loadFlow(config.backlogRoot);
+  if (!flow.isRunnable('story', unit.status)) {
+    // Only the shipped key keeps its prose spelling; any other is named as flow.json has it.
+    const named = flow.runnableStatusesOf('story').map((s) => (s === 'in_progress' ? 'in-progress' : s));
+    const runnable = statusWords(named);
+    const hint = unit.status === 'backlog' ? `run \`bl refine ${unit.id}\` first` : `only a ${runnable} story runs`;
     console.error(`Story ${unit.id} is ${unit.status} — ${hint}.`);
     process.exit(1);
   }
   const ordered = [storyAsOrdered(unit)];
   if (!args.plan) {
-    const blockers = outsideBlockers(ordered, readAllStories(config));
+    const blockers = outsideBlockers(ordered, readAllStories(config), flow);
     if (blockers.length > 0) {
       console.error(`Story ${unit.id} is blocked on unmerged work:`);
       for (const b of blockers) console.error(`  ${b.story} depends on ${b.dep} (${b.status})`);
@@ -1563,7 +1570,7 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
 // ---------------------------------------------------------------------------
 
 export async function cmdMerge(args, config, feature) {
-  if (isClosed(feature.status)) {
+  if (loadFlow(config.backlogRoot).meets('feature', feature.status, 'done')) {
     console.error(`Feature ${feature.id} is already ${feature.status}.`);
     process.exit(1);
   }

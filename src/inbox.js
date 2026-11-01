@@ -63,8 +63,6 @@ const PENDING_STATES = new Set(['approve pending', 'drop pending']);
 /** Twice the runner's 4 h cadence: a newer `## Run` means it is alive. */
 export const STALE_RUN_HOURS = 8;
 
-const CLOSED = new Set(['done', 'superseded']);
-
 /** A file's text with LF line ends. */
 function readLf(path) {
   return { text: readFileSync(path, 'utf8').replace(/\r\n/g, '\n') };
@@ -78,6 +76,7 @@ function readUnits(config) {
     const { fm, body } = parseFrontmatter(text);
     if (!fm.feature_id) continue;
     out.push({
+      kind: 'feature',
       id: fm.feature_id,
       title: fm.title ?? '',
       feature: '',
@@ -91,6 +90,7 @@ function readUnits(config) {
     const { text } = readLf(s.indexPath);
     const { body } = parseFrontmatter(text);
     out.push({
+      kind: 'story',
       id: s.id,
       title: s.title ?? '',
       feature: s.feature ?? '',
@@ -107,10 +107,10 @@ function readUnits(config) {
  * The `task` items (F-65 D3): one per open task, its title as the line and
  * a `holds` entry per edge it is the blocker of that holds now (active and
  * unmet), named by `holdsText` without the `once …` its `active_when` met.
- * Task files that cannot be read, or a `blockers.json` or `flow.json` that
- * cannot, are a warning; the tasks are still listed, without what they hold.
+ * Task files that cannot be read, or a `blockers.json` that cannot, are a
+ * warning; the tasks are still listed, without what they hold.
  */
-function taskItems(config, warnings) {
+function taskItems(config, warnings, flow) {
   let tasks;
   try {
     tasks = readAllTasks(config).filter((t) => t.status === 'open');
@@ -123,7 +123,6 @@ function taskItems(config, warnings) {
   try {
     const { edges } = readBlockers(config.backlogRoot);
     if (edges.length > 0) {
-      const flow = loadFlow(config.backlogRoot);
       const units = readGraphUnits(config);
       holdsOf = (id) =>
         edges
@@ -172,7 +171,7 @@ function gitOut(cwd, args) {
  * for a branch that exists. A repo or a document that cannot be read is a
  * warning; the other items are still listed.
  */
-function changeItems(config, units, warnings) {
+function changeItems(config, units, warnings, flow) {
   const items = [];
   const branches = new Map();
   const branchesOf = (repo) => {
@@ -192,7 +191,7 @@ function changeItems(config, units, warnings) {
     return branches.get(repo);
   };
   for (const u of units) {
-    if (CLOSED.has(u.status) || u.feature) continue;
+    if (flow.meets(u.kind, u.status, 'done') || u.feature) continue;
     let cur;
     try {
       cur = currentChange(dirname(u.indexPath));
@@ -240,7 +239,8 @@ function byUnitNewest(a, b) {
  * Everything in the inbox, grouped by kind (KINDS order) and by unit id,
  * newest first. `warnings` names a source that could not be read (the
  * update stories, when `backlog.json` has no `updates.namespace`; a repo
- * whose branches git cannot read); the other sources are still listed.
+ * whose branches git cannot read); the other sources are still listed. A
+ * `flow.json` that cannot be read throws: closed units cannot be told apart.
  *
  * @param {object} config
  * @param {{ now?: number }} [opts]  the clock the stale-run line reads
@@ -249,6 +249,7 @@ function byUnitNewest(a, b) {
  *   warnings: string[] }}
  */
 export function collectInbox(config, { now = Date.now() } = {}) {
+  const flow = loadFlow(config.backlogRoot);
   const items = [];
   const warnings = [];
   let run = null;
@@ -271,7 +272,7 @@ export function collectInbox(config, { now = Date.now() } = {}) {
   const units = readUnits(config);
   for (const u of units) {
     const path = relative(config.backlogRoot, u.indexPath);
-    if (!CLOSED.has(u.status)) {
+    if (!flow.meets(u.kind, u.status, 'done')) {
       const esc = extractSection(u.body, 'Escalation');
       if (sectionHasContent(esc)) {
         items.push({
@@ -285,8 +286,8 @@ export function collectInbox(config, { now = Date.now() } = {}) {
       }
     }
   }
-  items.push(...taskItems(config, warnings));
-  items.push(...changeItems(config, units, warnings));
+  items.push(...taskItems(config, warnings, flow));
+  items.push(...changeItems(config, units, warnings, flow));
   try {
     for (const s of statusUpdates(config).stories) {
       const path = relative(config.backlogRoot, units.find((u) => u.id === s.id)?.indexPath ?? '');

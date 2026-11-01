@@ -74,13 +74,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { RUN_STATE_KEYS } from './change-doc.js';
 import { findStoryDir, readAllStories, readBacklogOrder, readComponents } from './story.js';
-import {
-  VALID_STATUSES,
-  VALID_STORY_KEYS,
-  VALID_COMPONENT_KEYS,
-  VALID_FEATURE_KEYS,
-  findDuplicateIds,
-} from './validate.js';
+import { VALID_STORY_KEYS, VALID_COMPONENT_KEYS, VALID_FEATURE_KEYS, findDuplicateIds } from './validate.js';
 import { readAllEpics, readAllThemes, normalizeEpicId } from './theme.js';
 import { readAllTasks, tasksOf, taskTableRows } from './task.js';
 import { readBlockers } from './blockers.js';
@@ -177,12 +171,12 @@ function writeFileIfChanged(backlogRoot, path, content, previous, touchedMarkdow
  * frontmatter. Unknown statuses and keys are warnings, as `bl validate` makes
  * them errors.
  */
-function readStoriesForSync(config) {
+function readStoriesForSync(config, flow) {
   const stories = [];
   for (const s of readAllStories(config)) {
     const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
     const status = fm.status ?? 'backlog';
-    if (!VALID_STATUSES.has(status)) {
+    if (!flow.statusesOf('story').includes(status)) {
       console.warn(`  warning: ${s.storyRelPath} has unknown status "${status}"`);
     }
     // Run-state keys left in an index.md are `bl validate`'s
@@ -211,8 +205,6 @@ function readStoriesForSync(config) {
   }
   return stories;
 }
-
-const CLOSED = (s) => s === 'done' || s === 'superseded';
 
 // ---------------------------------------------------------------------------
 // Link helpers
@@ -321,8 +313,10 @@ function featureLinkFromTop(f) {
   return `${FEATURES_DIR}/${f.featureEntry}/index.md`;
 }
 
-function featuresTouchingComponent(features, componentId) {
-  return features.filter((f) => !CLOSED(f.status) && f.storyRecords.some((s) => s.componentId === componentId));
+function featuresTouchingComponent(features, componentId, flow) {
+  return features.filter(
+    (f) => !flow.meets('feature', f.status, 'done') && f.storyRecords.some((s) => s.componentId === componentId),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -332,23 +326,17 @@ function featuresTouchingComponent(features, componentId) {
 /**
  * What the `## Tasks` tables are built from: every task, the edges in
  * `blockers.json` and the flow, for the verbs a hold names. A
- * `blockers.json` or `flow.json` that cannot be read is `bl validate`'s to
- * report; the table then shows no holds, or each hold by its gate.
+ * `blockers.json` that cannot be read is `bl validate`'s to report; the table
+ * then shows no holds.
  */
-function readTaskContext(config) {
+function readTaskContext(config, flow) {
   const tasks = readAllTasks(config);
-  if (tasks.length === 0) return { tasks, edges: [], flow: null };
+  if (tasks.length === 0) return { tasks, edges: [], flow };
   let edges = [];
-  let flow = null;
   try {
     edges = readBlockers(config.backlogRoot).edges;
   } catch {
     // Reported by bl validate (blockers-json).
-  }
-  try {
-    flow = loadFlow(config.backlogRoot);
-  } catch {
-    // Reported by every command that reads it.
   }
   return { tasks, edges, flow };
 }
@@ -440,33 +428,35 @@ function featuresOfEpic(features, epicId) {
 
 /**
  * An epic's derived status: `done` once it has features and every one is
- * done or superseded, else `open`.
+ * closed (meets `done`), else `open`.
  */
-export function epicStatus(epicFeatures) {
-  return epicFeatures.length > 0 && epicFeatures.every((f) => CLOSED(f.status)) ? 'done' : 'open';
+export function epicStatus(epicFeatures, flow) {
+  return epicFeatures.length > 0 && epicFeatures.every((f) => flow.meets('feature', f.status, 'done'))
+    ? 'done'
+    : 'open';
 }
 
-/** `<closed>/<total>` over `items` by their `status`. */
-function doneOfTotal(items) {
-  return `${items.filter((i) => CLOSED(i.status)).length}/${items.length}`;
+/** `<closed>/<total>` over `items` of the flow type `type`, by their `status`. */
+function doneOfTotal(items, type, flow) {
+  return `${items.filter((i) => flow.meets(type, i.status, 'done')).length}/${items.length}`;
 }
 
 /** `<closed points>/<total points>` over a feature's story records. */
-function pointsDoneOfTotal(stories) {
-  const done = stories.filter((s) => CLOSED(s.status)).reduce((sum, s) => sum + s.points, 0);
+function pointsDoneOfTotal(stories, flow) {
+  const done = stories.filter((s) => flow.meets('story', s.status, 'done')).reduce((sum, s) => sum + s.points, 0);
   return `${done}/${stories.reduce((sum, s) => sum + s.points, 0)}`;
 }
 
 /** The Features table of an epic or theme index (links from two levels down). */
-function valueFeaturesTable(features) {
+function valueFeaturesTable(features, flow) {
   return formatTable(
     ['ID', 'Title', 'Status', 'Stories', 'Points'],
     features.map((f) => [
       `[${f.id}](${fromUnit(featureLinkFromTop(f))})`,
       f.title,
       f.status,
-      doneOfTotal(f.storyRecords),
-      pointsDoneOfTotal(f.storyRecords),
+      doneOfTotal(f.storyRecords, 'story', flow),
+      pointsDoneOfTotal(f.storyRecords, flow),
     ]),
   );
 }
@@ -475,13 +465,13 @@ function valueFeaturesTable(features) {
  * Regenerate one epic's index: `features:` and `status:` derived from the
  * features naming it, and its Features table after `## Outcome`.
  */
-function syncEpic(backlogRoot, epic, features, touchedMarkdown) {
+function syncEpic(backlogRoot, epic, features, touchedMarkdown, flow) {
   const content = readFileSync(epic.indexPath, 'utf8');
   const { fm, body } = parseFrontmatter(content);
   const own = featuresOfEpic(features, epic.id);
   fm.features = own.map((f) => f.id);
-  fm.status = epicStatus(own);
-  const newBody = upsertSection(body, 'Features', valueFeaturesTable(own), {
+  fm.status = epicStatus(own, flow);
+  const newBody = upsertSection(body, 'Features', valueFeaturesTable(own, flow), {
     after: 'Outcome',
   });
   const changed = writeFileIfChanged(
@@ -499,7 +489,7 @@ function syncEpic(backlogRoot, epic, features, touchedMarkdown) {
  * Regenerate one theme's index: its epics (id, title, status, features
  * done/total), then its features that have no epic.
  */
-function syncTheme(backlogRoot, theme, epics, features, touchedMarkdown) {
+function syncTheme(backlogRoot, theme, epics, features, touchedMarkdown, flow) {
   const content = readFileSync(theme.indexPath, 'utf8');
   const { fm, body } = parseFrontmatter(content);
   const own = epics.filter((e) => e.theme === theme.id);
@@ -508,10 +498,15 @@ function syncTheme(backlogRoot, theme, epics, features, touchedMarkdown) {
     .sort((a, b) => featureNum(a) - featureNum(b));
   const epicsTable = formatTable(
     ['ID', 'Title', 'Status', 'Features'],
-    own.map((e) => [`[${e.id}](${fromUnit(epicLinkFromTop(e))})`, e.title, e.status, doneOfTotal(e.featureRecords)]),
+    own.map((e) => [
+      `[${e.id}](${fromUnit(epicLinkFromTop(e))})`,
+      e.title,
+      e.status,
+      doneOfTotal(e.featureRecords, 'feature', flow),
+    ]),
   );
   let newBody = upsertSection(body, 'Epics', epicsTable, { after: 'Overview' });
-  newBody = upsertSection(newBody, 'Features', valueFeaturesTable(loose), {
+  newBody = upsertSection(newBody, 'Features', valueFeaturesTable(loose, flow), {
     after: 'Epics',
   });
   const changed = writeFileIfChanged(
@@ -545,7 +540,7 @@ function cell(text) {
  * atomically: it holds the operator's ranking and History. No file is a warning, not an error: until the
  * F-53 migration has run, `bl validate` reports it.
  */
-function syncFeatureOrder(config, features, touchedMarkdown) {
+function syncFeatureOrder(config, features, touchedMarkdown, flow) {
   let order;
   try {
     order = readFeatureOrder(config);
@@ -554,8 +549,8 @@ function syncFeatureOrder(config, features, touchedMarkdown) {
     return;
   }
   if (!order) return;
-  const ranked = rankedFeatures(order, features);
-  const unranked = unrankedFeatures(order, features);
+  const ranked = rankedFeatures(order, features, flow);
+  const unranked = unrankedFeatures(order, features, flow);
   const featureRef = (f) => `[${f.id}](${featureLinkFromTop(f)})`;
   const nextUp = formatTable(
     ['#', 'Feature', 'Title', 'Theme', 'Epic', 'Why'],
@@ -616,7 +611,7 @@ function sortByGlobal(stories, globalOrder) {
  * the active features touching it. A component has no points or status
  * (F-49 D4), so its frontmatter is left as it is.
  */
-function syncComponent(backlogRoot, component, stories, globalOrder, touchedMarkdown, features) {
+function syncComponent(backlogRoot, component, stories, globalOrder, touchedMarkdown, features, flow) {
   const content = readFileSync(component.indexPath, 'utf8');
   const { fm, body } = parseFrontmatter(content);
   const rel = `${COMPONENTS_DIR}/${component.componentEntry}/index.md`;
@@ -628,7 +623,7 @@ function syncComponent(backlogRoot, component, stories, globalOrder, touchedMark
   }
 
   const sorted = sortByGlobal(stories, globalOrder);
-  const active = sorted.filter((s) => !CLOSED(s.status));
+  const active = sorted.filter((s) => !flow.meets('story', s.status, 'done'));
   const done = sorted.length - active.length;
 
   const storiesTable = formatTable(
@@ -641,7 +636,7 @@ function syncComponent(backlogRoot, component, stories, globalOrder, touchedMark
 
   // Features touching this component. The section is only created once a
   // feature references a story here, so other components keep their shape.
-  const touching = featuresTouchingComponent(features, component.id);
+  const touching = featuresTouchingComponent(features, component.id, flow);
   if (touching.length > 0 || hasSection(newBody, 'Features')) {
     const featuresTable = formatTable(
       ['ID', 'Title', 'Status', 'Stories here'],
@@ -725,13 +720,14 @@ function syncTopLevel(config, ctx, backlogIds, touchedMarkdown, features) {
     new Map(),
   ).map((s) => s.id);
   const ordered = [...backlogIds, ...unseen].map((id) => storyMap.get(id)).filter((s) => s != null);
-  const active = ordered.filter((s) => !CLOSED(s.status));
+  const closed = (s) => ctx.flow.meets('story', s.status, 'done');
+  const active = ordered.filter((s) => !closed(s));
   const done = ordered.length - active.length;
 
   // No points: a component is a label and never finishes (F-49 D4).
   const componentRows = components.map((c) => {
     const stories = [...storyMap.values()].filter((s) => s.componentId === c.id);
-    const open = stories.filter((s) => !CLOSED(s.status)).length;
+    const open = stories.filter((s) => !closed(s)).length;
     return [`[${c.id}](${componentLinkFromTop(c)})`, c.title, c.repo, c.home ? 'yes' : '', open, stories.length - open];
   });
 
@@ -768,7 +764,7 @@ function syncTopLevel(config, ctx, backlogIds, touchedMarkdown, features) {
         `[${t.id}](${themeLinkFromTop(t)})`,
         t.title,
         epics.filter((e) => e.theme === t.id).length,
-        features.filter((f) => f.theme === t.id && !CLOSED(f.status)).length,
+        features.filter((f) => f.theme === t.id && !ctx.flow.meets('feature', f.status, 'done')).length,
       ]),
     );
     const anchor = ['Components', 'Features', 'Backlog'].find((h) => hasSection(newContent, h));
@@ -782,7 +778,7 @@ function syncTopLevel(config, ctx, backlogIds, touchedMarkdown, features) {
 
   // Features table (active only) between Components and Backlog. Created on
   // first use so backlogs without features keep their exact current index.
-  const activeFeatures = features.filter((f) => !CLOSED(f.status));
+  const activeFeatures = features.filter((f) => !ctx.flow.meets('feature', f.status, 'done'));
   if (activeFeatures.length > 0 || hasSection(newContent, 'Features')) {
     const featuresTable = formatTable(
       ['ID', 'Title', 'Status', 'Points', 'Stories', 'Repo'],
@@ -827,8 +823,9 @@ export async function runSync(config) {
 
 async function regenerate(config) {
   const touchedMarkdown = new Set();
+  const flow = loadFlow(config.backlogRoot);
 
-  const allStories = readStoriesForSync(config);
+  const allStories = readStoriesForSync(config, flow);
   const dupes = findDuplicateIds(allStories);
   if (dupes.length > 0) {
     const err = new Error(dupes.map((d) => d.message).join('; '));
@@ -838,9 +835,9 @@ async function regenerate(config) {
   }
   const storyMap = new Map(allStories.map((s) => [s.id, s]));
 
-  const closedCount = allStories.filter((s) => CLOSED(s.status)).length;
+  const closedCount = allStories.filter((s) => flow.meets('story', s.status, 'done')).length;
   info(
-    `backlog-sync: ${storyMap.size} stories (${storyMap.size - closedCount} active, ${closedCount} done/superseded)`,
+    `backlog-sync: ${storyMap.size} stories (${storyMap.size - closedCount} active, ${closedCount} ${flow.closedStatusesOf('story').join('/')})`,
   );
 
   const backlogIds = readBacklogOrder(config.backlogRoot);
@@ -855,11 +852,11 @@ async function regenerate(config) {
     componentsById.set(c.id, c);
     components.push(c);
   }
-  const ctx = { storyMap, components, componentsById, globalOrder };
+  const ctx = { storyMap, components, componentsById, globalOrder, flow };
 
   // Features: resolve story records, regenerate tables. Then the stories'
   // Tasks tables (F-65 D1).
-  const taskCtx = readTaskContext(config);
+  const taskCtx = readTaskContext(config, flow);
   const features = readFeaturesForSync(config, storyMap);
   if (features.length > 0) {
     info(`backlog-sync: ${features.length} feature(s)`);
@@ -875,19 +872,20 @@ async function regenerate(config) {
       globalOrder,
       touchedMarkdown,
       features,
+      flow,
     );
   }
 
   // Epics before themes: a theme's Epics table shows each epic's derived
   // status.
-  const epics = readAllEpics(config).map((e) => syncEpic(config.backlogRoot, e, features, touchedMarkdown));
+  const epics = readAllEpics(config).map((e) => syncEpic(config.backlogRoot, e, features, touchedMarkdown, flow));
   const themes = readAllThemes(config);
-  for (const t of themes) syncTheme(config.backlogRoot, t, epics, features, touchedMarkdown);
+  for (const t of themes) syncTheme(config.backlogRoot, t, epics, features, touchedMarkdown, flow);
   ctx.epics = epics;
   ctx.themes = themes;
 
   syncTopLevel(config, ctx, backlogIds, touchedMarkdown, features);
-  syncFeatureOrder(config, features, touchedMarkdown);
+  syncFeatureOrder(config, features, touchedMarkdown, flow);
 
   formatBacklogMarkdown(config, touchedMarkdown);
   info('done.');

@@ -15,6 +15,7 @@ import { hasFrontmatter } from './body.js';
 import { normalizeFeatureId, findFeature } from './feature.js';
 import { normalizeComponentId, componentIdHint } from './config.js';
 import { findComponentDir, pathEntryProblem } from './story.js';
+import { loadFlow } from './flow.js';
 
 function checkBodyFile(specDir, bodyFile, push, path) {
   const p = resolveBodyPath(specDir, bodyFile);
@@ -181,7 +182,7 @@ export function validateSpec(spec, specDir, config) {
       const feature = findFeature(parsed, config);
       if (!feature) {
         push('feature', `feature '${parsed.id}' not found under features/`);
-      } else if (feature.status === 'done' || feature.status === 'superseded') {
+      } else if (loadFlow(config.backlogRoot).meets('feature', feature.status, 'done')) {
         push('feature', `feature '${parsed.id}' is ${feature.status}`);
       } else {
         featureId = parsed.id;

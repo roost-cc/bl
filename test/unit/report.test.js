@@ -5,16 +5,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { narrowHistory } from '../../src/history.js';
+import { toSpec } from '../../src/chart-adapters/vega-lite.js';
 import {
   ages,
   daysBetween,
   firstSeen,
+  flowChart,
   leadCycle,
   percentile,
   progress,
   throughput,
   weekStart,
 } from '../../src/report.js';
+import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
+import { Flow, loadFlow } from '../../src/flow.js';
+import { readFileSync } from 'fs';
+import { dirname } from 'path';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 /** A history from `[date, { id: [status, points] }]` pairs; `added` per story id. */
 function history(days, added = {}) {
@@ -70,7 +78,7 @@ test('firstSeen keeps the first started and the first done day; a reopened story
     ['2026-04-22', { 'S-1': ['refined', 3], 'S-2': ['backlog', 1] }],
     ['2026-04-24', { 'S-1': ['done', 3], 'S-2': ['done', 1] }],
   ]);
-  const seen = firstSeen(h);
+  const seen = firstSeen(h, flow);
   assert.deepEqual(seen.get('S-1'), { started: '2026-04-21', done: '2026-04-24', points: 3 });
   assert.deepEqual(seen.get('S-2'), { started: '', done: '2026-04-21', points: 1 });
 });
@@ -81,7 +89,7 @@ test("throughput sums each week's first-done points with the trailing four-week 
     ['2026-04-21', { 'S-1': ['done', 4], 'S-2': ['done', 2], 'S-3': ['done', 1] }],
     ['2026-04-28', { 'S-1': ['done', 4], 'S-2': ['done', 2], 'S-3': ['done', 1], 'S-4': ['refined', 5] }],
   ]);
-  const t = throughput(h, { weeks: 4 });
+  const t = throughput(h, { weeks: 4, seen: firstSeen(h, flow) });
   assert.deepEqual(
     t.weeks.map((w) => [w.week, w.points, w.stories, w.avgPoints]),
     [
@@ -92,7 +100,7 @@ test("throughput sums each week's first-done points with the trailing four-week 
     ],
   );
   assert.equal(t.averagePoints, 1.8);
-  assert.deepEqual(throughput(history([])), { weeks: [], averagePoints: 0, averageStories: 0 });
+  assert.deepEqual(throughput(history([]), { seen: new Map() }), { weeks: [], averagePoints: 0, averageStories: 0 });
 });
 
 test('leadCycle covers the stories first done in the window; ages lists the started ones, oldest first', () => {
@@ -105,7 +113,7 @@ test('leadCycle covers the stories first done in the window; ages lists the star
     ],
     { 'S-1': '2025-12-30', 'S-2': '2026-01-01' },
   );
-  const lc = leadCycle(h);
+  const lc = leadCycle(h, { seen: firstSeen(h, flow) });
   assert.equal(lc.from, '2026-01-12');
   assert.deepEqual(
     lc.items.map((i) => [i.id, i.lead, i.cycle]),
@@ -114,7 +122,7 @@ test('leadCycle covers the stories first done in the window; ages lists the star
   );
   assert.deepEqual(lc.lead, { count: 1, median: 99, p85: 99 });
   assert.deepEqual(
-    ages(h).map((a) => [a.id, a.status, a.since, a.days]),
+    ages(h, flow).map((a) => [a.id, a.status, a.since, a.days]),
     [
       ['S-3', 'in_progress', '2026-01-05', 97],
       ['S-4', 'refined', '2026-04-10', 2],
@@ -160,7 +168,7 @@ test('leadCycle_returns_empty_when_since_excludes_all_days', () => {
       unreadable: 0,
     };
     for (const scope of scopes) {
-      const lc = leadCycle(narrowHistory(h, scope));
+      const lc = leadCycle(narrowHistory(h, scope), { seen: firstSeen(narrowHistory(h, scope), flow) });
       const label = `${since || 'no cutoff'} ${scope.kind}`;
       assert.deepEqual(lc.items, items, label);
       assert.deepEqual(lc.lead, lead, label);
@@ -170,8 +178,39 @@ test('leadCycle_returns_empty_when_since_excludes_all_days', () => {
   }
   const empty = { count: 0, median: null, p85: null };
   assert.deepEqual(
-    leadCycle(history([])),
+    leadCycle(history([]), { seen: new Map() }),
     { from: '', to: '', lead: empty, cycle: empty, items: [] },
     'a wholly empty history',
+  );
+});
+
+test('flowChart_keeps_distinct_statuses_with_equal_display_names', () => {
+  const add = (names) => {
+    const raw = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
+    for (const name of names) raw.types.story.statuses[name] = { implies: ['refined', 'backlog'] };
+    return new Flow('flow.json', raw);
+  };
+  const shapes = [
+    ['one spelled with a space', ['in progress']],
+    ['a pair apart from the template', ['on_hold', 'on hold']],
+  ];
+  for (const [label, names] of shapes) {
+    const custom = add(names);
+    const statuses = custom.statusesOf('story').filter((s) => s !== 'superseded');
+    const stories = Object.fromEntries(statuses.map((s, i) => [`S-${i}`, [s, i + 1]]));
+    const chart = flowChart(history([['2026-04-21', stories]]), custom);
+    const domain = toSpec(chart).layer[0].encoding.color.scale.domain;
+    assert.equal(new Set(domain).size, statuses.length, `${label}: a band each`);
+    const total = (name) => chart.series.find((s) => s.name === name).values[0].y;
+    statuses.forEach((s, i) => {
+      const name = domain.find((n) => n === s) ?? s.replaceAll('_', ' ');
+      assert.equal(total(name), i + 1, `${label}: ${s} keeps its own points`);
+    });
+  }
+  // A name nothing shares still reads with spaces.
+  const { series } = flowChart(history([]), flow);
+  assert.deepEqual(
+    series.map((s) => s.name),
+    ['done', 'in progress', 'refined', 'backlog'],
   );
 });

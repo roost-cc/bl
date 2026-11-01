@@ -12,6 +12,7 @@
 
 import { append as logAppend } from './log.js';
 import { info, captureTmuxWindowId, editorCommand, openTmuxWindow } from './config.js';
+import { flowForHelp } from './flow.js';
 
 // Grab the window id the moment bl starts, before any async work, so later
 // `tmux rename-window` calls target this window even if the user has switched
@@ -24,6 +25,7 @@ const subArgv = argv.slice(1);
 
 function printHelp() {
   const editor = editorCommand();
+  const unstarted = flowForHelp().unstartedStatusesOf('story').join('/');
   console.log(`Usage: bl <command> [args...]
 
 Global Options:
@@ -47,12 +49,12 @@ Commands:
                --no-sync      Write both files, commit nothing
                --json         Print {schema, story, feature, changed}
                Refuses a closed feature, a story in another feature or not
-               backlog/refined, and a repo a running feature does not span
+               ${unstarted}, and a repo a running feature does not span
   move       Move stories to another component (<S-n>… <C-n>, any order):
                sets each story's component:, commits
                --no-sync      Write the stories, commit nothing
                --json         Print {schema, component, moved, unchanged}
-               Refuses an unknown id, a story not backlog/refined, and a
+               Refuses an unknown id, a story not ${unstarted}, and a
                repo change for a story in a running or escalated feature
   task       An action for the operator, with no branch, in tasks/ (F-65)
                <F-n|S-n> --title <t> --gate <merge|next|none>

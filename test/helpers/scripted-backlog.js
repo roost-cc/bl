@@ -77,6 +77,25 @@ export function feature(stories, status = 'running', extra = []) {
   ].join('\n');
 }
 
+/**
+ * A one-commit fixture repo (2026-04-21) holding `stories`, each `[id, status]`
+ * at 2 points, under `flow` (`undefined` for the template).
+ */
+export function committedBacklog(stories, flow) {
+  const { dir } = mkTempBacklog({
+    flow,
+    repos: { 'demo-repo': '../demo-repo' },
+    components: [{ id: 'C01', title: 'Core', repo: 'demo-repo', home: true, dirSuffix: 'core' }],
+  });
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
+  git(dir, ['init', '-q', '-b', 'main']);
+  for (const [id, status] of stories) {
+    put(dir, `stories/${id.replace('-', '')}-x/index.md`, story(id, { status, points: 2, added: '2026-04-01' }));
+  }
+  commitAt(dir, '2026-04-21T09:00:00', 'day 1');
+  return dir;
+}
+
 const OLD = 'projects/demo/E01-core';
 const S1 = { title: 'A: b', points: 3, added: '2026-04-10' };
 const S2 = { points: 2, added: '2026-04-15' };

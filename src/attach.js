@@ -13,7 +13,7 @@
  *
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written. A story in another feature, or one that
- * is not `backlog` or `refined`, is refused as `bl new --feature … S-<n>`
+ * has started (`Flow.isUnstarted`), is refused as `bl new --feature … S-<n>`
  * refuses it; a closed feature as `bl new F-<n>` refuses it. A running or
  * escalated feature has branches and worktrees only in its stories' repos,
  * so a story in another repo is refused there: `bl side` brings a repo in.
@@ -43,13 +43,14 @@ import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
+import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 export const ATTACH_JSON_SCHEMA = 'bl-attach-json/v1';
 
 /** Feature statuses with branches and worktrees, so a fixed set of repos. */
 const BRANCHED = new Set(['running', 'escalated']);
 
-const HELP = `Usage: bl attach <S-n> <F-n> [options]
+const help = (flow) => `Usage: bl attach <S-n> <F-n> [options]
 
 List an existing story in a feature: set the story's feature: and append it
 to the feature's stories:, then sync and commit both files by path. The ids
@@ -62,9 +63,9 @@ Refused, with nothing written:
   - a story or feature that does not exist
   - a feature file whose feature_id: is another feature
   - a story whose component has no repo
-  - a feature that is done or superseded
+  - a feature that is ${statusWords(flow.closedStatusesOf('feature'))}
   - a story whose feature: names another feature
-  - a story that is not backlog or refined
+  - a story that is not ${statusWords(flow.unstartedStatusesOf('story'))}
   - for a running or escalated feature, a story whose component's repo the
     feature's branches do not span (bl side <repo> --from F-<n> brings a
     repo in)
@@ -110,7 +111,7 @@ function classify(positional) {
 export async function main(argv) {
   const args = parseArgs(argv);
   if (args.help) {
-    console.log(HELP);
+    console.log(help(flowForHelp()));
     process.exit(0);
   }
   const { storyRef, featureRef } = classify(args.positional);
@@ -146,13 +147,14 @@ export async function main(argv) {
   // hand-written `story_id: S2` would miss the dedupe and be listed twice.
   const storyId = storyRef.id;
 
-  const closed = closedFeatureRefusal(feature);
+  const flow = loadFlow(config.backlogRoot);
+  const closed = closedFeatureRefusal(feature, flow);
   if (closed) fail(closed);
   const listed = feature.stories.includes(storyId);
   const named = String(fm.feature ?? '').trim();
   // Listed with no `feature:` is the feature's already (half-attached), so
   // the status rule, which keeps out someone else's work, does not apply.
-  const refusal = listed && !named ? null : storyMoveRefusal(storyId, fm, feature.id);
+  const refusal = listed && !named ? null : storyMoveRefusal(storyId, fm, feature.id, flow);
   if (refusal) fail(refusal);
   // A story's repo is its component's, in every feature status.
   const repo = storyRepoOrExit(storyRef, found);

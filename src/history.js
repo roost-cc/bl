@@ -19,6 +19,7 @@ import { legacyRepaired, listOfString } from './migrate-frontmatter-yaml.js';
 import { readAllStories } from './story.js';
 import { readAllFeatures, normalizeFeatureId } from './feature.js';
 import { normalizeEpicId } from './theme.js';
+import { loadFlow } from './flow.js';
 
 /** The cache file, under the backlog's git-ignored `.bl/`. */
 export const CACHE_FILE = join('.bl', 'report-cache.json');
@@ -250,14 +251,15 @@ export function addDays(date, n) {
 /**
  * The days before `firstDate` projected from the current stories: one per
  * calendar day from the earliest `added`, a story in scope from its `added`
- * and done (or superseded) from its `completed`, with its current points;
+ * and closed from its `completed`, with its current points;
  * every other status is unknown and reads `backlog`.
  * @param {Groups} groups
  * @param {Map<string, { status: string, points: number }>} current  the stories' current status and points
  * @param {string} firstDate  the first commit's date
+ * @param {import("./flow.js").Flow} flow
  * @returns {Day[]}
  */
-export function backfill(groups, current, firstDate) {
+export function backfill(groups, current, firstDate, flow) {
   const added = Object.values(groups.stories)
     .map((s) => s.added)
     .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d < firstDate)
@@ -269,7 +271,7 @@ export function backfill(groups, current, firstDate) {
     for (const [id, g] of Object.entries(groups.stories)) {
       if (!g.added || g.added > date) continue;
       const now = current.get(id) ?? { status: 'backlog', points: 0 };
-      const closed = (now.status === 'done' || now.status === 'superseded') && g.completed && g.completed <= date;
+      const closed = flow.meets('story', now.status, 'done') && g.completed && g.completed <= date;
       stories[id] = { status: closed ? now.status : 'backlog', points: now.points };
     }
     days.push({ date, commit: null, backfilled: true, stories, features: {} });
@@ -322,13 +324,14 @@ export function saveCache(root, days) {
 /**
  * The backlog's daily snapshots, oldest first.
  * @param {object} config  `loadConfig()`
- * @param {{ since?: string }} [opts]  `since`: the first date kept (YYYY-MM-DD)
+ * @param {{ since?: string, flow?: import("./flow.js").Flow }} [opts]  `since`: the first
+ *   date kept (YYYY-MM-DD); `flow`: the caller's, when it reads one for a whole run
  * @returns {{ days: Day[], earlier: Day[], groups: Groups, unreadable: number }}
  *   `earlier`: the days before `since`, which only `firstSeen` reads, so a
  *   story's first transitions keep their dates across the cutoff;
  *   `unreadable`: distinct `index.md` blobs no reader could parse, over `days`
  */
-export function buildHistory(config, { since = '' } = {}) {
+export function buildHistory(config, { since = '', flow = loadFlow(config.backlogRoot) } = {}) {
   const root = config.backlogRoot;
   const stories = readAllStories(config);
   const groups = currentGroups(config, stories);
@@ -353,7 +356,7 @@ export function buildHistory(config, { since = '' } = {}) {
 
   const current = new Map(stories.map((s) => [s.id, { status: s.status, points: parseInt(str(s.points), 10) || 0 }]));
   const firstDate = commits[0]?.date ?? addDays(new Date().toISOString().slice(0, 10), 1);
-  const all = [...backfill(groups, current, firstDate), ...gitDays];
+  const all = [...backfill(groups, current, firstDate, flow), ...gitDays];
   const kept = all.findIndex((d) => !since || d.date >= since);
   const cut = kept === -1 ? all.length : kept;
   return { days: all.slice(cut), earlier: all.slice(0, cut), groups, unreadable: unreadable.size };

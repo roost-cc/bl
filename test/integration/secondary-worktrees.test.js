@@ -11,7 +11,7 @@
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, unlinkSync } from 'fs';
+import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { loadConfig, normalizeId } from '../../src/config.js';
@@ -23,7 +23,7 @@ import { cleanupOneRepo } from '../../src/cleanup.js';
 import { loadPrompt } from '../../src/session.js';
 import { defaultRunner } from '../../src/feature-run.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
-import { AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
 
 const git = (cwd, cmd) =>
@@ -64,6 +64,7 @@ function build({
   }
   const story = join(backlog, 'stories', 'S7-two');
   mkdirSync(story, { recursive: true });
+  copyFileSync(FLOW_TEMPLATE, join(backlog, 'flow.json'));
   writeFileSync(
     join(backlog, 'backlog.json'),
     JSON.stringify({

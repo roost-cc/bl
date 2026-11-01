@@ -30,6 +30,7 @@ import { summarizeLatestReviewSession } from './review-log.js';
 import { unitChange } from './change-doc.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit, exitOnSyncError } from './sync.js';
+import { loadFlow } from './flow.js';
 
 function resolveCommitHash(config, primaryRepoName, rawCommit) {
   if (rawCommit) return rawCommit;
@@ -172,6 +173,7 @@ async function doneStory(parsed, status, rawCommit, config, commitMap = null) {
 }
 
 async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
+  const flow = loadFlow(config.backlogRoot);
   const found = findStoryDir(parsed, config);
   if (!found || !existsSync(found.indexPath)) {
     console.error(`Story ${parsed.id} not found under stories/.`);
@@ -184,7 +186,7 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   const content = readFileSync(indexPath, 'utf8');
   const { fm } = parseFrontmatter(content);
 
-  if (fm.status === 'done' || fm.status === 'superseded') {
+  if (flow.meets('story', fm.status, 'done')) {
     console.error(`Story ${parsed.id} is already marked ${fm.status}.`);
     process.exit(1);
   }
@@ -243,7 +245,7 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   try {
     updateSpecFile(config.backlogRoot, indexPath, (fm) => {
       // Re-checked on the file read in the hold.
-      if (fm.status === 'done' || fm.status === 'superseded') {
+      if (flow.meets('story', fm.status, 'done')) {
         closedAs = fm.status;
         return false;
       }

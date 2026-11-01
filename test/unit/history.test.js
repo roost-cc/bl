@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { addDays, backfill, isoWeek, parseBlob, pointsByStatus, scopeStories, weeklyDays } from '../../src/history.js';
+import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
+import { loadFlow } from '../../src/flow.js';
+import { dirname } from 'path';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 test('parseBlob reads YAML, the legacy dialect, and refuses what neither reads', () => {
   assert.deepEqual(parseBlob('---\nstory_id: S-1\ntitle: "A: b"\n---\nbody\n'), { story_id: 'S-1', title: 'A: b' });
@@ -60,7 +65,7 @@ test('backfill projects added and completed with current points; open statuses r
     ['S-2', { status: 'refined', points: 5 }],
     ['S-3', { status: 'backlog', points: 1 }],
   ]);
-  const days = backfill(groups, current, '2026-04-04');
+  const days = backfill(groups, current, '2026-04-04', flow);
   assert.deepEqual(
     days.map((d) => d.date),
     ['2026-04-01', '2026-04-02', '2026-04-03'],
@@ -68,7 +73,7 @@ test('backfill projects added and completed with current points; open statuses r
   assert.ok(days.every((d) => d.backfilled && d.commit === null));
   assert.deepEqual(days[0].stories, { 'S-1': { status: 'backlog', points: 2 } });
   assert.deepEqual(days[1].stories, { 'S-1': { status: 'done', points: 2 }, 'S-2': { status: 'backlog', points: 5 } });
-  assert.deepEqual(backfill(groups, current, '2026-04-01'), [], 'nothing before the first commit');
+  assert.deepEqual(backfill(groups, current, '2026-04-01', flow), [], 'nothing before the first commit');
 });
 
 test("scopeStories: a feature's listed stories that day, its epic and theme; a component; current stories only", () => {

@@ -67,6 +67,7 @@ import { resolveTargets } from './targets.js';
 import { failPoint, settle, writeRecord } from './feature-links.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
+import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 const FIBONACCI = new Set([1, 2, 3, 5, 8, 13]);
 
@@ -256,7 +257,7 @@ function resolveFeatureRef(raw, config, { onError } = {}) {
   if (!parsed) fail(`invalid feature id: '${raw}' (expected F-<n>)`);
   const feature = findFeature(parsed, config);
   if (!feature) fail(`Feature ${parsed.id} not found under features/.`);
-  const closed = closedFeatureRefusal(feature);
+  const closed = closedFeatureRefusal(feature, loadFlow(config.backlogRoot));
   if (closed) fail(closed);
   return feature;
 }
@@ -329,7 +330,7 @@ function foldPositionals(args, config) {
  * `bl new --feature --title t [S-1 S-2 …]`: scaffold a feature
  * (`cmdNew`) and move the listed stories into it: `feature:` on each, and
  * appended to its `stories:`. Every story is checked under the backlog lock,
- * before anything is written: it must be `backlog` or `refined` and in no
+ * before anything is written: it must be unstarted (`Flow.isUnstarted`) and in no
  * other feature. A repair record (feature-links.js) is written before the
  * first story, so a failure the rollback cannot undo is settled by the next
  * bl command.
@@ -346,10 +347,11 @@ async function newFeature(args, stories) {
     beforeCreate: () => {
       // Each story file is read again here: a record read before the lock
       // may already be in a feature another `bl new --feature` made.
+      const flow = loadFlow(config.backlogRoot);
       const refusals = [];
       for (const s of stories) {
         const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
-        const refusal = storyMoveRefusal(s.id, fm, null);
+        const refusal = storyMoveRefusal(s.id, fm, null, flow);
         if (refusal) refusals.push(refusal);
       }
       for (const r of refusals) console.error(r);
@@ -822,8 +824,7 @@ export async function main(argv) {
 Arguments:
   F-id                 The story's feature, as --feature F-<n>
   C-id                 The story's component, as --component C<n>
-  S-id…                With the --feature switch: stories (backlog or
-                       refined, in no feature) to move into the new feature
+  S-id…                With the --feature switch: stories (${statusWords(flowForHelp().unstartedStatusesOf('story')).replace(' or ', ' or\n                       ')}, in no feature) to move into the new feature
 
 Options:
   --component <id>     The story's component (C<n>): its code boundary. The

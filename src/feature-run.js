@@ -93,6 +93,7 @@ import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt } from './test-excerpt.js';
 import * as processScope from './process-scope.js';
 import { regenerateConflicts, regeneratePlugins } from './regenerate.js';
+import { loadFlow } from './flow.js';
 
 export { liveLockHolder };
 
@@ -442,7 +443,7 @@ function recordGateLine(ctx, gate) {
 }
 
 function storyComplete(story, backlogRoot) {
-  if (story.status === 'done' || story.status === 'superseded') return true;
+  if (loadFlow(backlogRoot).meets('story', story.status, 'done')) return true;
   const path = join(backlogRoot, story.storyRelPath);
   const fm = readFm(path);
   if (fm.status === 'done') return true;
@@ -2509,7 +2510,9 @@ function refreshedStories(ctx) {
   }
   const unknown = featureRepoOrder(added).filter((name) => !config.reposByName?.[name]);
   if (unknown.length > 0) return { error: `unknown repo ${unknown.join(', ')} (not in backlog.json)` };
-  const blockers = outsideBlockers(added, all).filter((b) => !stories.some((s) => s.id === b.dep));
+  const blockers = outsideBlockers(added, all, loadFlow(config.backlogRoot)).filter(
+    (b) => !stories.some((s) => s.id === b.dep),
+  );
   if (blockers.length > 0) {
     return {
       error: `blocked on work outside the feature: ${blockers.map((b) => `${b.story} depends on ${b.dep} (${b.status})`).join(', ')}`,

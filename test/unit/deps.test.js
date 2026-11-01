@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { collectCone, unblockCounts, orderCone, formatPlanRows } from '../../src/deps.js';
+import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
+import { loadFlow } from '../../src/flow.js';
+import { dirname } from 'path';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 /**
  * Build the subset of a `buildGraph()` result that deps.js reads, from a
@@ -31,7 +36,7 @@ function mkGraph(spec) {
 
 function plan(spec, targetId) {
   const graph = mkGraph(spec);
-  const cone = collectCone(targetId, graph);
+  const cone = collectCone(targetId, graph, flow);
   const counts = unblockCounts(cone, graph);
   return { cone, counts, ...orderCone(cone, graph, counts, targetId) };
 }

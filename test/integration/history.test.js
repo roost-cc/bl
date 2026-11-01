@@ -8,10 +8,12 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadConfig } from '../../src/config.js';
+import { loadFlow } from '../../src/flow.js';
 import { buildHistory, CACHE_FILE, CACHE_VERSION, scopeStories } from '../../src/history.js';
 import { buildReport } from '../../src/report.js';
 import { runBl } from '../helpers/run-bl.js';
-import { commitAt, feature, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
+import { commitAt, committedBacklog, feature, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
+import { blockedFlow } from '../helpers/tempdir.js';
 
 const byDate = (h) => new Map(h.days.map((d) => [d.date, d]));
 
@@ -99,7 +101,7 @@ test('historical membership normalizes all supported story references in sequenc
     assert.deepEqual(scopeStories(day, { kind: 'feature', id: 'F-1' }, h.groups), ['S-1', 'S-3'], list);
   });
   // The feature's progress row reads the normalized members: 3 + 8 points.
-  assert.equal(buildReport(h, config).features.find((f) => f.id === 'F-1').scope, 11);
+  assert.equal(buildReport(h, config, loadFlow(dir)).features.find((f) => f.id === 'F-1').scope, 11);
 });
 
 test('buildHistory backfills the days before the first commit from added and completed', () => {
@@ -194,7 +196,7 @@ test('cache rejects malformed day and snapshot shapes and rebuilds them', () => 
     writeFileSync(cachePath, JSON.stringify({ version: CACHE_VERSION, days: { [sha]: bad } }));
     const h = buildHistory(config);
     assert.deepEqual(h.days, good.days, `${label}: rebuilt from git`);
-    assert.doesNotThrow(() => buildReport(h, config), label);
+    assert.doesNotThrow(() => buildReport(h, config, loadFlow(dir)), label);
     assert.deepEqual(JSON.parse(readFileSync(cachePath, 'utf8')).days[sha], day, `${label}: and cached again`);
   }
   // Empty story and feature maps are a valid day, kept as cached.
@@ -235,4 +237,47 @@ test('bl history prints ISO weeks by points per status; an unknown scope exits 1
   assert.equal(bad.status, 1);
   assert.equal(bad.stdout, '');
   assert.match(bad.stderr, /unknown scope F-99/);
+});
+
+/** The header cells of `bl history`'s table. */
+const historyColumns = (dir) => {
+  const r = runBl(['history'], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout
+    .split('\n')[0]
+    .split('|')
+    .map((c) => c.trim())
+    .filter(Boolean);
+};
+
+test('bl history shows a story status flow.json adds as a column, in the file order', () => {
+  const dir = committedBacklog([['S-1', 'blocked']], blockedFlow());
+  assert.deepEqual(historyColumns(dir), [
+    'Week',
+    'Date',
+    'backlog',
+    'blocked',
+    'refined',
+    'in_progress',
+    'done',
+    'superseded',
+    'scope',
+  ]);
+});
+
+test("bl history keeps a status only an old commit holds, after the statuses today's flow.json defines", () => {
+  const dir = committedBacklog([['S-1', 'triage']]);
+  put(dir, 'stories/S1-x/index.md', story('S-1', { status: 'backlog', points: 2, added: '2026-04-01' }));
+  commitAt(dir, '2026-05-05T09:00:00', 'triage retired');
+  assert.deepEqual(historyColumns(dir), [
+    'Week',
+    'Date',
+    'backlog',
+    'refined',
+    'in_progress',
+    'done',
+    'superseded',
+    'triage',
+    'scope',
+  ]);
 });

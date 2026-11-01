@@ -15,10 +15,7 @@
 import { loadConfig, parseArgs, normalizeId, info, componentIdHint } from './config.js';
 import { readAllStories } from './story.js';
 import { buildGraph } from './what-next.js';
-
-function isDone(status) {
-  return status === 'done' || status === 'superseded';
-}
+import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 function idNum(id) {
   const m = String(id).match(/^S-(\d+)$/);
@@ -32,21 +29,21 @@ function idCompare(a, b) {
 /**
  * Transitive dependency closure of `targetId`, pruned at closed stories.
  *
- * A `done`/`superseded` story is neither included nor descended through — its
+ * A closed story is neither included nor descended through — its
  * own dependencies are irrelevant to work that remains. The consequence worth
  * remembering downstream: every unfinished dependency of a cone node is itself
  * in the cone, so readiness can be decided purely against the cone.
  *
  * Returns a Set of story IDs (including the target, unless it is closed).
  */
-export function collectCone(targetId, graph) {
+export function collectCone(targetId, graph, flow) {
   const cone = new Set();
   const stack = [targetId];
   while (stack.length > 0) {
     const id = stack.pop();
     if (cone.has(id)) continue;
     const story = graph.byId.get(id);
-    if (!story || isDone(story.status)) continue;
+    if (!story || flow.meets('story', story.status, 'done')) continue;
     cone.add(id);
     for (const dep of graph.children.get(id) ?? []) stack.push(dep);
   }
@@ -137,8 +134,8 @@ export function orderCone(cone, graph, counts, targetId) {
  * Render the annotated plan rows: `  <id>  <status>  unblocks N  <title>`.
  *
  * ID and status are padded to the widest value in the plan so both columns can
- * be scanned down the left edge. `done`/`superseded` never appear — `collectCone`
- * prunes closed stories — so in practice the status cell is at most 11 wide.
+ * be scanned down the left edge. Closed stories never appear — `collectCone`
+ * prunes them — so in practice the status cell is at most 11 wide.
  *
  * Kept separate from `main()` so alignment is testable without spawning the CLI.
  * Returns an array of strings, one per story in `order`.
@@ -159,6 +156,12 @@ export async function main(argv) {
   const args = parseArgs(argv);
 
   if (args.help) {
+    const closedWords = statusWords(
+      flowForHelp()
+        .closedStatusesOf('story')
+        .map((s) => `\`${s}\``),
+      'and',
+    );
     console.log(`Usage: bl deps <story-id>
 
 Arguments:
@@ -169,7 +172,7 @@ transitive \`depends_on\` closure, leaf-first, ending with the story
 itself. No story is listed before one of its own dependencies; within
 that constraint, stories that unblock more of the plan come first.
 
-\`done\` and \`superseded\` stories are omitted, and the walk does not
+${closedWords} stories are omitted, and the walk does not
 descend through them.
 
 stdout is one story ID per line and nothing else, so it composes:
@@ -184,8 +187,7 @@ counts — goes to stderr:
 
 The status column shows each story's current status, so you can see at a
 glance which leaves are startable: \`bl implement\` requires \`refined\`, so a
-leaf sitting at \`backlog\` needs \`bl refine\` first. \`done\` and
-\`superseded\` never appear, since closed stories are pruned from the plan.`);
+leaf sitting at \`backlog\` needs \`bl refine\` first. ${closedWords.replace(' and ', ' and\n')} never appear, since closed stories are pruned from the plan.`);
     process.exit(0);
   }
 
@@ -215,6 +217,7 @@ leaf sitting at \`backlog\` needs \`bl refine\` first. \`done\` and
   }
 
   const cfg = loadConfig();
+  const flow = loadFlow(cfg.backlogRoot);
   const stories = readAllStories(cfg);
   const target = stories.find((s) => s.id === parsed.id);
   if (!target) {
@@ -222,13 +225,13 @@ leaf sitting at \`backlog\` needs \`bl refine\` first. \`done\` and
     process.exit(1);
   }
 
-  if (isDone(target.status)) {
+  if (flow.meets('story', target.status, 'done')) {
     info(`${target.id} is ${target.status} — nothing to plan.`);
     return;
   }
 
   const graph = buildGraph(stories);
-  const cone = collectCone(target.id, graph);
+  const cone = collectCone(target.id, graph, flow);
   const counts = unblockCounts(cone, graph);
   const { order, cycle } = orderCone(cone, graph, counts, target.id);
 

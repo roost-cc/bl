@@ -1,9 +1,9 @@
 /**
  * report.js — the backlog progress report's numbers (F-40 Design D3, D5).
  *
- * `buildReport(history, config)` turns `buildHistory`'s snapshots and the
+ * `buildReport(history, config, flow)` turns `buildHistory`'s snapshots and the
  * current tree into one plain data object (what `reports/data.json` holds);
- * `renderMarkdown(data)` turns that into `reports/index.md`. The parts are
+ * `renderMarkdown(data, markdownById, flow)` turns that into `reports/index.md`. The parts are
  * exported one by one (`latest`, `series`, `firstSeen`, `throughput`,
  * `leadCycle`, `ages`, `percentile`, `units`, `cost`, `efficiency`) so
  * `bl retro` (S-905) computes the same figures. `bl report`
@@ -27,6 +27,7 @@ import { readAllStories, readComponents } from './story.js';
 import { readAllEpics, readAllThemes } from './theme.js';
 import { formatTable } from './sync.js';
 import { addDays, isoWeek, pointsByStatus, scopeStories, weeklyDays } from './history.js';
+import { statusWords } from './flow.js';
 
 /** Bumped whenever `data.json`'s shape changes. */
 export const REPORT_VERSION = 3;
@@ -37,21 +38,6 @@ export const AVERAGE_WEEKS = 4;
 
 /** Days before the last snapshot that lead and cycle time cover. */
 export const LEAD_CYCLE_DAYS = 90;
-
-/** Story statuses in table order; any other status a snapshot holds follows them. */
-export const STORY_STATUS_ORDER = ['backlog', 'refined', 'in_progress', 'done', 'superseded'];
-const FEATURE_STATUS_ORDER = ['draft', 'refined', 'approved', 'running', 'done', 'superseded'];
-
-/** The statuses that start a story's cycle time, and that a work item's age counts from. */
-const STARTED = new Set(['refined', 'in_progress']);
-
-/** The cumulative flow chart's statuses, bottom of the stack first, with their legend names. */
-const FLOW_STATUSES = [
-  ['done', 'done'],
-  ['in_progress', 'in progress'],
-  ['refined', 'refined'],
-  ['backlog', 'backlog'],
-];
 
 /**
  * @typedef {import("./history.js").Day} Day
@@ -152,21 +138,23 @@ function cutoff(history) {
 }
 
 /**
- * Each story's first day in a started status (`refined` or `in_progress`)
- * and its first day `done`, with its points that day, read over the days
+ * Each story's first day in a started status (one `Flow.isRunnable` accepts:
+ * this starts its cycle time and a work item's age) and its first day `done`,
+ * with its points that day, read over the days
  * before a `--since` cutoff too (`history.earlier`). A backfilled day shows
  * `done` from the story's `completed` date, so that date stands in before the
  * first commit (Design D3).
  * @param {History} history
+ * @param {import("./flow.js").Flow} flow
  * @returns {Map<string, { started: string, done: string, points: number }>}
  */
-export function firstSeen(history) {
+export function firstSeen(history, flow) {
   const out = new Map();
   for (const day of [...(history.earlier ?? []), ...history.days]) {
     for (const [id, s] of Object.entries(day.stories)) {
       let seen = out.get(id);
       if (!seen) out.set(id, (seen = { started: '', done: '', points: 0 }));
-      if (!seen.started && !seen.done && STARTED.has(s.status)) seen.started = day.date;
+      if (!seen.started && !seen.done && flow.isRunnable('story', s.status)) seen.started = day.date;
       if (!seen.done && s.status === 'done') {
         seen.done = day.date;
         seen.points = s.points;
@@ -182,8 +170,9 @@ export function firstSeen(history) {
  * each with the trailing `AVERAGE_WEEKS` average (the week and the ones
  * before it, across the cutoff).
  * @param {History} history
+ * @param {{ weeks?: number, seen: ReturnType<typeof firstSeen> }} options
  */
-export function throughput(history, { weeks = THROUGHPUT_WEEKS, seen = firstSeen(history) } = {}) {
+export function throughput(history, { weeks = THROUGHPUT_WEEKS, seen }) {
   const last = latest(history);
   if (!last) return { weeks: [], averagePoints: 0, averageStories: 0 };
   const perWeek = new Map();
@@ -214,13 +203,14 @@ export function throughput(history, { weeks = THROUGHPUT_WEEKS, seen = firstSeen
 }
 
 /**
- * Lead time (`added` → first `done`) and cycle time (first `refined` or
- * `in_progress` → first `done`) in days, over the stories first done in the
+ * Lead time (`added` → first `done`) and cycle time (first started day, as
+ * `firstSeen` reads it → first `done`) in days, over the stories first done in the
  * `days` days up to the last snapshot, and not before a `--since` cutoff:
  * count, median and 85th percentile, to a tenth of a day.
  * @param {History} history
+ * @param {{ days?: number, seen: ReturnType<typeof firstSeen> }} options
  */
-export function leadCycle(history, { days = LEAD_CYCLE_DAYS, seen = firstSeen(history) } = {}) {
+export function leadCycle(history, { days = LEAD_CYCLE_DAYS, seen }) {
   const last = latest(history);
   const window = last ? addDays(last.date, -days) : '';
   const from = cutoff(history) > window ? cutoff(history) : window;
@@ -250,15 +240,16 @@ export function leadCycle(history, { days = LEAD_CYCLE_DAYS, seen = firstSeen(hi
 }
 
 /**
- * Work item age: each story `refined` or `in_progress` in the last snapshot,
- * with the day it first showed one of them and the days since, oldest first.
+ * Work item age: each runnable story (`Flow.isRunnable`) in the last snapshot,
+ * with the day it was first started and the days since, oldest first.
  * @param {History} history
+ * @param {import("./flow.js").Flow} flow
  */
-export function ages(history, { seen = firstSeen(history) } = {}) {
+export function ages(history, flow, { seen = firstSeen(history, flow) } = {}) {
   const last = latest(history);
   if (!last) return [];
   return Object.entries(last.stories)
-    .filter(([, s]) => STARTED.has(s.status))
+    .filter(([, s]) => flow.isRunnable('story', s.status))
     .map(([id, s]) => {
       const since = seen.get(id)?.started || last.date;
       return { id, status: s.status, points: s.points, since, days: daysBetween(since, last.date) };
@@ -549,21 +540,27 @@ export function burnupChart(history, scope, label) {
 
 /**
  * The cumulative flow chart: the backlog's points by status per week, as
- * stacked areas (done at the bottom, then in progress, refined, backlog).
- * Superseded stories are out of scope and left out.
+ * stacked areas, the last status in `flow.json` at the bottom. Superseded
+ * stories are out of scope and left out.
  * @param {History} history
+ * @param {import("./flow.js").Flow} flow
  * @returns {Chart}
  */
-export function flowChart(history) {
+export function flowChart(history, flow) {
+  const statuses = [...flow.statusesOf('story')].reverse().filter((s) => s !== 'superseded');
+  const spaced = (s) => s.replaceAll('_', ' ');
+  // A name is its series' key, so statuses that would read alike keep their own.
+  const names = statuses.map((s) => (statuses.filter((o) => spaced(o) === spaced(s)).length > 1 ? s : spaced(s)));
+  const stacked = [names.slice(0, -1).join(', '), ...names.slice(-1)].filter(Boolean).join(' and ');
   const weeks = weeklyDays(history.days).map(({ day }) => ({ x: weekStart(day.date), points: pointsByStatus(day) }));
   return {
     id: 'flow',
     title: 'Cumulative flow',
-    desc: 'Points by status per week, stacked: done, in progress, refined and backlog. A band that widens is work piling up in that status.',
+    desc: `Points by status per week, stacked: ${stacked}. A band that widens is work piling up in that status.`,
     x: 'time',
     yTitle: 'Points',
-    series: FLOW_STATUSES.map(([status, name]) => ({
-      name,
+    series: statuses.map((status, i) => ({
+      name: names[i],
       kind: 'area',
       stack: 'status',
       values: weeks.map((w) => ({ x: w.x, y: w.points[status] ?? 0 })),
@@ -643,11 +640,12 @@ const link = (dir, entry) => `../${dir}/${entry}/index.md`;
  * The report's data: everything `data.json` holds and `renderMarkdown` draws.
  * @param {History} history  `buildHistory`'s result
  * @param {object} config  `loadConfig()`
+ * @param {import("./flow.js").Flow} flow  the run's one flow, which `renderMarkdown` gets too
  * @param {ReturnType<typeof readTree>} [tree]  the current tree, when already read
  */
-export function buildReport(history, config, tree = readTree(config)) {
+export function buildReport(history, config, flow, tree = readTree(config)) {
   const last = latest(history) ?? { date: '', commit: null, backfilled: false, stories: {}, features: {} };
-  const seen = firstSeen(history);
+  const seen = firstSeen(history, flow);
   const storiesById = new Map(tree.stories.map((s) => [s.id, s]));
   const snaps = (ids) => ids.map((id) => last.stories[id]);
   const scoped = (kind, id) => scopeStories(last, { kind, id }, history.groups);
@@ -662,13 +660,14 @@ export function buildReport(history, config, tree = readTree(config)) {
   }
   const features = {};
   for (const f of Object.values(last.features)) features[f.status] = (features[f.status] ?? 0) + 1;
-  const open = Object.values(last.stories).filter((s) => s.status !== 'done' && s.status !== 'superseded');
+  const isOpen = (s) => !flow.meets('story', s.status, 'done');
+  const open = Object.values(last.stories).filter(isOpen);
 
   const epicRows = [...tree.epics]
     .sort((a, b) => byNum(a.id, b.id))
     .map((e) => {
       const own = tree.features.filter((f) => history.groups.features[f.id]?.epic === e.id);
-      const closed = own.length > 0 && own.every((f) => ['done', 'superseded'].includes(featureStatus(f)));
+      const closed = own.length > 0 && own.every((f) => flow.meets('feature', featureStatus(f), 'done'));
       return {
         id: e.id,
         title: e.title,
@@ -719,22 +718,20 @@ export function buildReport(history, config, tree = readTree(config)) {
       ...progress(snaps(scoped('component', c.id))),
     }));
 
-  const isOpen = (s) => s.status !== 'done' && s.status !== 'superseded';
   const tp = throughput(history, { seen });
   const label = (kind, r) => `${kind} ${r.id} · ${r.title}`;
   const unitList = units(tree);
   const costData = cost(unitList);
+  const openFeatureRows = featureRows.filter((f) => !flow.meets('feature', f.status, 'done'));
   const charts = [
     burnupChart(history, { kind: 'backlog' }, 'the backlog'),
-    flowChart(history),
+    flowChart(history, flow),
     throughputChart(tp),
     ...themeRows.map((t) => burnupChart(history, { kind: 'theme', id: t.id }, label('theme', t))),
     ...epicRows
       .filter((e) => snaps(scoped('epic', e.id)).some(isOpen))
       .map((e) => burnupChart(history, { kind: 'epic', id: e.id }, label('epic', e))),
-    ...featureRows
-      .filter((f) => f.status !== 'done' && f.status !== 'superseded')
-      .map((f) => burnupChart(history, { kind: 'feature', id: f.id }, label('feature', f))),
+    ...openFeatureRows.map((f) => burnupChart(history, { kind: 'feature', id: f.id }, label('feature', f))),
     costChart(costData),
   ];
 
@@ -761,7 +758,7 @@ export function buildReport(history, config, tree = readTree(config)) {
     series: { backlog: series(history) },
     throughput: tp,
     leadCycle: { ...lc, items: lc.items.map((i) => ({ ...i, ...storyRef(i.id) })) },
-    ages: ages(history, { seen }).map((a) => ({ ...a, ...storyRef(a.id) })),
+    ages: ages(history, flow, { seen }).map((a) => ({ ...a, ...storyRef(a.id) })),
     themes: themeRows,
     epics: epicRows,
     features: featureRows,
@@ -816,10 +813,11 @@ function progressTable(rows, first, extra = []) {
  * epic or feature chart follows its section's table under a heading of its
  * own.
  * @param {ReturnType<typeof buildReport>} data
- * @param {Record<string, string>} [markdownById]
+ * @param {Record<string, string>} markdownById
+ * @param {import("./flow.js").Flow} flow  orders the status lists; a status it lacks follows them
  * @returns {string}
  */
-export function renderMarkdown(data, markdownById = {}) {
+export function renderMarkdown(data, markdownById, flow) {
   const s = data.summary;
   const out = [];
   const chart = (id) => markdownById[id] ?? chartPlaceholder(id);
@@ -838,6 +836,8 @@ export function renderMarkdown(data, markdownById = {}) {
       : 'No snapshots: the backlog has no commits and no dated stories.',
   );
 
+  const quoted = (statuses) => statusWords(statuses.map((st) => `\`${st}\``));
+  const runnable = quoted(flow.runnableStatusesOf('story'));
   const byStatus = (counts, order) =>
     ordered(counts, order)
       .map((st) => `${counts[st]} ${st}`)
@@ -847,9 +847,9 @@ export function renderMarkdown(data, markdownById = {}) {
     [
       `- Themes: ${s.themes}`,
       `- Epics: ${s.epics.total} (${byStatus(s.epics.byStatus, ['open', 'done'])})`,
-      `- Features: ${s.features.total} (${byStatus(s.features.byStatus, FEATURE_STATUS_ORDER)})`,
+      `- Features: ${s.features.total} (${byStatus(s.features.byStatus, flow.statusesOf('feature'))})`,
       `- Stories: ${s.stories.total}, ${s.points.total} points`,
-      `- Open (not done or superseded): ${s.open.stories} stories, ${s.open.points} points`,
+      `- Open (not ${statusWords(flow.closedStatusesOf('story'))}): ${s.open.stories} stories, ${s.open.points} points`,
       `- Progress: ${s.progress.done} of ${s.progress.scope} points done (${pct(s.progress.percent)})`,
       ...(data.unreadable > 0
         ? [`- Unreadable: ${data.unreadable} \`index.md\` blob(s) in the history were skipped`]
@@ -857,7 +857,7 @@ export function renderMarkdown(data, markdownById = {}) {
     ].join('\n'),
     formatTable(
       ['Status', 'Stories', 'Points'],
-      ordered(s.stories.byStatus, STORY_STATUS_ORDER).map((st) => [
+      ordered(s.stories.byStatus, flow.statusesOf('story')).map((st) => [
         st,
         s.stories.byStatus[st],
         s.points.byStatus[st] ?? 0,
@@ -882,7 +882,7 @@ export function renderMarkdown(data, markdownById = {}) {
   const lc = data.leadCycle;
   section(
     'Lead and cycle time',
-    `Stories first done from ${lc.from || '—'} to ${lc.to || '—'}, in days. Lead time runs from \`added\` to the first snapshot showing \`done\`; cycle time from the first snapshot showing \`refined\` or \`in_progress\`.`,
+    `Stories first done from ${lc.from || '—'} to ${lc.to || '—'}, in days. Lead time runs from \`added\` to the first snapshot showing \`done\`; cycle time from the first snapshot showing ${runnable}.`,
     formatTable(
       ['Measure', 'Stories', 'Median', '85th percentile'],
       [
@@ -892,7 +892,7 @@ export function renderMarkdown(data, markdownById = {}) {
     ),
     '### Work item age',
     data.ages.length === 0
-      ? 'No story is `refined` or `in_progress`.'
+      ? `No story is ${runnable}.`
       : formatTable(
           ['Story', 'Title', 'Status', 'Points', 'Since', 'Age (days)'],
           data.ages.map((a) => [ref(a.id, a.link), cell(a.title), a.status, a.points, a.since, a.days]),

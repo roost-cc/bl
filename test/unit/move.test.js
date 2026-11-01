@@ -5,6 +5,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMoveIds, moveRefusal, storyFeatures } from '../../src/move.js';
+import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
+import { loadFlow } from '../../src/flow.js';
+import { dirname } from 'path';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 test('parseMoveIds: one component and the stories, in any order and form, a repeat once', () => {
   const ids = (p) => {
@@ -30,7 +35,7 @@ test('parseMoveIds: refuses no story, no component, two components and a foreign
 });
 
 test('moveRefusal: backlog and refined move; every other status is refused', () => {
-  const base = { id: 'S-2', fromRepo: 'a', to: 'C01', toRepo: 'a', features: [] };
+  const base = { id: 'S-2', fromRepo: 'a', to: 'C01', toRepo: 'a', features: [], flow };
   for (const status of ['backlog', 'refined']) assert.equal(moveRefusal({ ...base, fm: { status } }), null, status);
   for (const status of ['in_progress', 'done', 'superseded']) {
     assert.equal(
@@ -42,7 +47,7 @@ test('moveRefusal: backlog and refined move; every other status is refused', () 
 });
 
 test('moveRefusal: a repo change is refused only in a running or escalated feature', () => {
-  const base = { id: 'S-2', fm: { status: 'refined' }, fromRepo: 'a', to: 'C02', toRepo: 'b' };
+  const base = { id: 'S-2', fm: { status: 'refined' }, fromRepo: 'a', to: 'C02', toRepo: 'b', flow };
   assert.equal(moveRefusal({ ...base, features: [] }), null);
   for (const status of ['draft', 'refined', 'approved', 'done']) {
     assert.equal(moveRefusal({ ...base, features: [{ id: 'F-1', status }] }), null, status);
@@ -64,7 +69,7 @@ test('moveRefusal: a repo change is refused only in a running or escalated featu
 });
 
 test('moveRefusal: any running or escalated feature among several refuses a repo change', () => {
-  const base = { id: 'S-2', fm: { status: 'refined' }, fromRepo: 'a', to: 'C02', toRepo: 'b' };
+  const base = { id: 'S-2', fm: { status: 'refined' }, fromRepo: 'a', to: 'C02', toRepo: 'b', flow };
   const features = [
     { id: 'F-2', status: 'draft' },
     { id: 'F-1', status: 'running' },

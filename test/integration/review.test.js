@@ -13,7 +13,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { dirname, join } from 'path';
 import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
@@ -22,7 +22,7 @@ import { extractSection, readAllFeatures } from '../../src/feature.js';
 import { defaultRunner, REVIEW_DIMENSIONS } from '../../src/feature-run.js';
 import { appendSection, parseChange, serializeChange } from '../../src/change-doc.js';
 import { cmdReview, cmdReviewStory } from '../../src/feature-cmd.js';
-import { AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 
 function writeJsonShim(dir) {
   const path = join(dir, 'shim.mjs');
@@ -77,6 +77,7 @@ function buildBacklog({ repoNames, plugins, withWorktreeFor = repoNames, backlog
     repos[name] = p;
   }
 
+  copyFileSync(FLOW_TEMPLATE, join(backlog, 'flow.json'));
   writeFileSync(
     join(backlog, 'backlog.json'),
     JSON.stringify({

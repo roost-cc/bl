@@ -24,11 +24,12 @@ import {
 } from './config.js';
 import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { launchSession, loadPrompt, spillSubagentPrompts } from './session.js';
+import { flowForHelp, loadFlow } from './flow.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
  * `status: backlog` stories; explicitly-named story IDs are always included
- * (only `done`/`superseded` are rejected). Results are deduped by story ID —
+ * (only closed ones are rejected). Results are deduped by story ID —
  * an explicitly-named story wins over the same story pulled in via a component, so
  * an already-refined story named on the command line is still re-refined.
  *
@@ -87,7 +88,7 @@ export function resolveRefineTargets(positionals, config) {
       continue;
     }
     const { fm } = parseFrontmatter(readFileSync(found.indexPath, 'utf8'));
-    if (fm.status === 'done' || fm.status === 'superseded') {
+    if (loadFlow(config.backlogRoot).meets('story', fm.status, 'done')) {
       notices.push(`Story ${parsed.id} has status '${fm.status}' — skipping (cannot refine).`);
       continue;
     }
@@ -232,7 +233,7 @@ Arguments:
   <id...>              One or more story IDs (S34, S-34) and/or component IDs (C01).
                        A component expands to every 'backlog' story it contains.
                        Naming a story directly refines it even if already
-                       refined (only done/superseded are skipped).
+                       refined (only ${flowForHelp().closedStatusesOf('story').join('/')} are skipped).
 
 Options:
   -A, --agent <id>     Agent provider (e.g. "claude", "codex", "gemini")

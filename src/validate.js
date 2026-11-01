@@ -40,12 +40,6 @@ import { TASKS_DIR, TASK_FILE_RE, findTaskFindings, readAllTasks } from './task.
 // Constants (reused by sync.js)
 // ---------------------------------------------------------------------------
 
-/**
- * Story statuses as `bl sync` warns on them. `bl validate` reads the
- * statuses from `flow.json` instead (F-66 D1); sync moves there later.
- */
-export const VALID_STATUSES = new Set(['backlog', 'refined', 'in_progress', 'done', 'superseded']);
-
 export const VALID_STORY_KEYS = new Set([
   'component',
   'story_id',
@@ -792,12 +786,9 @@ export function findEscalationNotNone(f) {
   ];
 }
 
-/** Units whose body is history: the Deferred rules do not run on them. */
-const CLOSED_STATUSES = new Set(['done', 'superseded']);
-
 /**
  * The rules of a unit's `## Deferred` (feature) or `## To Do` (story), F-65
- * D4, on a unit that is not done or superseded (a closed unit's section is
+ * D4, on a unit that is not closed (a closed unit's section is
  * history and keeps its notes and operator items as written). One finding
  * per line:
  *
@@ -812,10 +803,13 @@ const CLOSED_STATUSES = new Set(['done', 'superseded']);
  * @param {string} text  the whole file (its line numbers are the file's)
  * @param {string} heading  `Deferred` or `To Do`
  * @param {string} location
+ * @param {import("./flow.js").Flow} flow
+ * @param {string} type  the flow type: `story` or `feature`
  * @returns {Finding[]}
  */
-export function findDeferredErrors(id, status, text, heading, location) {
-  if (CLOSED_STATUSES.has(status)) return [];
+export function findDeferredErrors(id, status, text, heading, location, flow, type) {
+  // A closed unit's body is history: the Deferred rules do not run on it.
+  if (flow.meets(type, status, 'done')) return [];
   const { items, retired } = scanDeferred(text, heading);
   const finding = (code, line, message) => ({
     severity: 'error',
@@ -954,12 +948,13 @@ export function findFoundByFindings(features, storyMap) {
  * `--skip verification-only-title`.
  *
  * @param {Iterable<any>} stories
+ * @param {import("./flow.js").Flow} flow
  * @returns {Finding[]}
  */
-export function findVerificationOnlyTitles(stories) {
+export function findVerificationOnlyTitles(stories, flow) {
   const findings = [];
   for (const s of stories) {
-    if (s.status !== 'backlog' && s.status !== 'refined') continue;
+    if (!flow.isUnstarted('story', s.status)) continue;
     if (!VERIFICATION_TITLE_RE.test(s.title ?? '')) continue;
     findings.push({
       severity: 'warning',
@@ -1468,7 +1463,7 @@ export function runAll(config, opts = {}) {
     );
     findings.push(...findRunStateInSpec(fm, body, s.storyRelPath));
     findings.push(...validateChanges(config.backlogRoot, dirname(s.indexPath), frontmatter.invalid));
-    findings.push(...findDeferredErrors(s.id, fm.status, text, 'To Do', s.storyRelPath));
+    findings.push(...findDeferredErrors(s.id, fm.status, text, 'To Do', s.storyRelPath, flow, 'story'));
   }
 
   // 2. Frontmatter checks for components.
@@ -1500,7 +1495,15 @@ export function runAll(config, opts = {}) {
     findings.push(...validateChanges(config.backlogRoot, f.featureDir, frontmatter.invalid));
     findings.push(...findEscalationNotNone(f));
     findings.push(
-      ...findDeferredErrors(f.id, f.fm.status, readFileSync(f.indexPath, 'utf8'), 'Deferred', f.featureRelPath),
+      ...findDeferredErrors(
+        f.id,
+        f.fm.status,
+        readFileSync(f.indexPath, 'utf8'),
+        'Deferred',
+        f.featureRelPath,
+        flow,
+        'feature',
+      ),
     );
   }
 
@@ -1533,7 +1536,7 @@ export function runAll(config, opts = {}) {
 
   const featureLinks = findFeatureFindings(allFeatures, fullMap);
   const foundBy = findFoundByFindings(allFeatures, fullMap);
-  const verificationTitles = skip.has('verification-only-title') ? [] : findVerificationOnlyTitles(allStories);
+  const verificationTitles = skip.has('verification-only-title') ? [] : findVerificationOnlyTitles(allStories, flow);
   findings.push(
     ...dupes,
     ...danglings,
@@ -1554,7 +1557,7 @@ export function runAll(config, opts = {}) {
   // The task files (F-65 D1): `task-unit`, `task-field`.
   findings.push(...findTaskFindings(allTasks, units, flow));
 
-  findings.push(...findFeatureOrderFindings(config, allFeatures));
+  findings.push(...findFeatureOrderFindings(config, allFeatures, flow));
   findings.push(...findRoadmapFindings(config));
   findings.push(...findThemeBriefFindings(allThemes, config.roostDir));
 

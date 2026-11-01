@@ -12,7 +12,7 @@
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written, and the whole call is refused when any
  * story is: an unknown story or component, a target component with no repo,
- * a story that is not `backlog` or `refined` (an `in_progress` story has a
+ * a story that is not unstarted (`Flow.isUnstarted`; a started story has a
  * worktree in its current repo), and a story whose repo would change while
  * a feature it is in is `running` or `escalated` (that feature's branches
  * span a fixed set of repos, as `bl attach` refuses it). A story is in the
@@ -35,16 +35,14 @@ import { failPoint } from './feature-links.js';
 import { updateSpecFile } from './spec-file.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
+import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 export const MOVE_JSON_SCHEMA = 'bl-move-json/v1';
 
 /** Feature statuses with branches and worktrees, so a fixed set of repos. */
 const BRANCHED = new Set(['running', 'escalated']);
 
-/** The statuses a story moves in: nothing has a branch for it yet. */
-const MOVABLE = new Set(['backlog', 'refined']);
-
-const HELP = `Usage: bl move <S-n>… <C-n> [options]
+const help = (flow) => `Usage: bl move <S-n>… <C-n> [options]
 
 Move backlog stories to another component: set each story's component:,
 then sync and commit the story directories and the regenerated component
@@ -57,7 +55,7 @@ Refused, with nothing written, naming every offending story:
   - anything other than one component id and at least one story id
   - a story or component that does not exist
   - a component that names no repo
-  - a story that is not backlog or refined
+  - a story that is not ${statusWords(flow.unstartedStatusesOf('story'))}
   - a story whose repo would change while a feature it is in (the one its
     feature: names, or any whose stories: lists it) is running or
     escalated (the feature's branches span a fixed set of repos)
@@ -115,12 +113,14 @@ export function parseMoveIds(positional) {
  * (`storyFeatures`). Pure; the caller has already set aside a story that is
  * in `to`.
  * @param {{ id: string, fm: object, fromRepo: string, to: string, toRepo: string,
- *   features: Array<{ id: string, status: string }> }} story
+ *   features: Array<{ id: string, status: string }>,
+ *   flow: import("./flow.js").Flow }} story
  * @returns {string | null}
  */
-export function moveRefusal({ id, fm, fromRepo, to, toRepo, features }) {
-  if (!MOVABLE.has(fm.status)) {
-    return `${id} is ${fm.status ?? '(no status)'}; only a backlog or refined story moves to another component.`;
+export function moveRefusal({ id, fm, fromRepo, to, toRepo, features, flow }) {
+  // An unstarted story has no branch yet, so it can move.
+  if (!flow.isUnstarted('story', fm.status)) {
+    return `${id} is ${fm.status ?? '(no status)'}; only a ${statusWords(flow.unstartedStatusesOf('story'))} story moves to another component.`;
   }
   const feature = features.find((f) => BRANCHED.has(f.status));
   if (feature && fromRepo !== toRepo) {
@@ -151,7 +151,7 @@ export function storyFeatures(id, fm, allFeatures) {
 export async function main(argv) {
   const args = parseArgs(argv);
   if (args.help) {
-    console.log(HELP);
+    console.log(help(flowForHelp()));
     process.exit(0);
   }
   let ids;
@@ -165,6 +165,7 @@ export async function main(argv) {
   const jsonMode = args.json === true;
 
   const config = loadConfig();
+  const flow = loadFlow(config.backlogRoot);
   await acquireLock(config.backlogRoot);
 
   // Everything is read here, under the lock: what another bl wrote while
@@ -218,6 +219,7 @@ export async function main(argv) {
       to,
       toRepo: target.repo,
       features: storyFeatures(ref.id, fm, allFeatures),
+      flow,
     });
     if (refusal) refusals.push(refusal);
     else

@@ -1,10 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { scanDeferred } from '../../src/deferred.js';
 import { findDeferredErrors } from '../../src/validate.js';
 import { deferredCountLine } from '../../src/feature-cmd.js';
+import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
+import { loadFlow } from '../../src/flow.js';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 // F-65 D4: a unit's `## Deferred` (`## To Do`) holds sized follow-up code
 // work only; records and hand-offs are `## Notes`, operator work a task.
@@ -54,7 +58,7 @@ test('scanDeferred: top-level items with their file lines; a retired sub-list is
 
 test('findDeferredErrors: deferred-unsized and operator-tasks-retired on an open unit, by line', () => {
   const text = unitText('Deferred', MIXED);
-  const found = findDeferredErrors('F-1', 'running', text, 'Deferred', 'x');
+  const found = findDeferredErrors('F-1', 'running', text, 'Deferred', 'x', flow, 'feature');
   const lines = text.split('\n');
   assert.deepEqual(
     found.map((f) => [f.code, lines[f.line - 1]]),
@@ -70,7 +74,15 @@ test('findDeferredErrors: deferred-unsized and operator-tasks-retired on an open
   assert.match(found[0].message, /^F-1: line \d+ \(## Deferred\): .* has no \[points: N\].*## Notes.*bl task/);
   assert.match(found[2].message, /bl task F-1 --title <t> --gate <merge\|next\|none>/);
   assert.deepEqual(
-    findDeferredErrors('F-1', 'running', unitText('Deferred', '- [points: 3] one\n- [points: 1] two'), 'Deferred', 'x'),
+    findDeferredErrors(
+      'F-1',
+      'running',
+      unitText('Deferred', '- [points: 3] one\n- [points: 1] two'),
+      'Deferred',
+      'x',
+      flow,
+      'feature',
+    ),
     [],
   );
 });
@@ -84,11 +96,11 @@ test('operator_actions_are_retired_independently_of_estimate_on_open_units', () 
         const bullet = `- ${estimate}${action}`;
         for (const eol of ['\n', '\r\n']) {
           const text = unitText(heading, bullet).replace(/\n/g, eol);
-          const codes = findDeferredErrors('F-1', 'running', text, heading, 'x').map((f) => f.code);
+          const codes = findDeferredErrors('F-1', 'running', text, heading, 'x', flow, 'feature').map((f) => f.code);
           assert.deepEqual(codes, ['operator-tasks-retired'], `${heading}: ${bullet}`);
           for (const status of ['done', 'superseded']) {
             assert.deepEqual(
-              findDeferredErrors('F-1', status, text, heading, 'x'),
+              findDeferredErrors('F-1', status, text, heading, 'x', flow, 'feature'),
               [],
               `${status} ${heading}: ${bullet}`,
             );
@@ -110,6 +122,8 @@ test('operator_actions_are_retired_independently_of_estimate_on_open_units', () 
       unitText('Deferred', '- [points: 2] operator tooling: a flag'),
       'Deferred',
       'x',
+      flow,
+      'feature',
     ),
     [],
   );
@@ -117,7 +131,11 @@ test('operator_actions_are_retired_independently_of_estimate_on_open_units', () 
 
 test('findDeferredErrors: a done or superseded unit is history and has no finding', () => {
   for (const status of ['done', 'superseded']) {
-    assert.deepEqual(findDeferredErrors('S-1', status, unitText('To Do', MIXED), 'To Do', 'x'), [], status);
+    assert.deepEqual(
+      findDeferredErrors('S-1', status, unitText('To Do', MIXED), 'To Do', 'x', flow, 'story'),
+      [],
+      status,
+    );
   }
 });
 

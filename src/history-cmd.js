@@ -12,6 +12,7 @@
 import { loadConfig, parseArgs, warn } from './config.js';
 import { formatTable } from './sync.js';
 import { filterContext, parseFilter, unknownFilterTargets } from './filter.js';
+import { loadFlow } from './flow.js';
 import { buildHistory, narrowHistory, pointsByStatus, weeklyDays } from './history.js';
 
 const HELP = `Usage: bl history [--json] [--since <YYYY-MM-DD>] [--scope <id>]
@@ -29,9 +30,6 @@ Options:
 
 Without --json, prints a table of ISO weeks (the last snapshot in each) by
 points per status, with the scope (every status but superseded).`;
-
-/** The statuses in table order; any other status a snapshot holds follows them. */
-const STATUS_ORDER = ['backlog', 'refined', 'in_progress', 'done', 'superseded'];
 
 /**
  * `--scope`'s value as a scope, or throws naming it. An id that names no unit
@@ -60,11 +58,12 @@ export function parseScope(raw, config) {
   return { kind, id: filter[kind] };
 }
 
-/** The week table of `history`. */
-export function weekTable(history) {
+/** The week table of `history`: `flow`'s statuses, then any other a snapshot holds. */
+export function weekTable(history, flow) {
   const weeks = weeklyDays(history.days).map(({ week, day }) => ({ week, day, points: pointsByStatus(day) }));
   const seen = new Set(weeks.flatMap((w) => Object.keys(w.points)));
-  const statuses = [...STATUS_ORDER, ...[...seen].filter((s) => !STATUS_ORDER.includes(s)).sort()];
+  const known = flow.statusesOf('story');
+  const statuses = [...known, ...[...seen].filter((s) => !known.includes(s)).sort()];
   const headers = ['Week', 'Date', ...statuses, 'scope'];
   const rows = weeks.map(({ week, day, points }) => {
     const scope = Object.entries(points).reduce((sum, [s, p]) => (s === 'superseded' ? sum : sum + p), 0);
@@ -103,8 +102,10 @@ export async function main(argv) {
     process.exit(1);
   }
   let history;
+  let flow;
   try {
-    history = narrowHistory(buildHistory(config, { since: args.since ?? '' }), scope);
+    flow = loadFlow(config.backlogRoot);
+    history = narrowHistory(buildHistory(config, { since: args.since ?? '', flow }), scope);
   } catch (e) {
     console.error(`bl history: ${e.message}`);
     process.exit(1);
@@ -114,6 +115,6 @@ export async function main(argv) {
     const { earlier, ...shown } = history;
     console.log(JSON.stringify(shown, null, 2));
   } else {
-    console.log(weekTable(history));
+    console.log(weekTable(history, flow));
   }
 }

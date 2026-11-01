@@ -10,7 +10,7 @@
  * started story (F-35 decision J); this module works on one story.
  *
  * Dependency gating: a story is only launched when every `depends_on` is
- * already `done`/`superseded` (i.e. merged).
+ * already closed (i.e. merged).
  */
 
 import { existsSync, readFileSync } from 'fs';
@@ -48,8 +48,7 @@ import { featureSessionVars } from './feature.js';
 import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { openUnitChange, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
-
-const isDoneStatus = (s) => s === 'done' || s === 'superseded';
+import { loadFlow } from './flow.js';
 
 export function idNum(id) {
   return parseInt(String(id).replace(/\D/g, ''), 10) || 0;
@@ -60,13 +59,13 @@ export function idNum(id) {
  * readiness.
  *
  * Component IDs expand to their `status: refined` stories (backlog stories must be
- * refined first; done/superseded are complete). An explicitly-named story is
- * included when its status is `refined` or `in_progress`; backlog/done/
- * superseded are reported as notices. Named targets outrank component-expanded ones
+ * refined first; closed ones are complete). An explicitly-named story is
+ * included when `Flow.isRunnable` accepts its status; any other is reported as
+ * a notice. Named targets outrank component-expanded ones
  * on dedup.
  *
  * Each resolved target is then classified:
- *   - `startable` — every `depends_on` is already `done`/`superseded`.
+ *   - `startable` — every `depends_on` is already closed.
  *   - `deferred`  — at least one `depends_on` is unmet; `blockers` lists them.
  * A dependency that is itself a not-yet-merged story (even one in the same
  * batch) is unmet, so the dependent defers.
@@ -75,6 +74,8 @@ export function idNum(id) {
  *             notices: string[] }}
  */
 export function resolveWorkonTargets(positionals, config) {
+  const flow = loadFlow(config.backlogRoot);
+  const closed = (s) => flow.meets('story', s, 'done');
   const errors = [];
   const notices = [];
   const byId = new Map();
@@ -115,11 +116,11 @@ export function resolveWorkonTargets(positionals, config) {
       errors.push(`Story ${parsed.id} not found in backlog`);
       continue;
     }
-    if (isDoneStatus(story.status)) {
+    if (closed(story.status)) {
       notices.push(`Story ${parsed.id} has status '${story.status}' — skipping (already complete).`);
       continue;
     }
-    if (story.status !== 'refined' && story.status !== 'in_progress') {
+    if (!flow.isRunnable('story', story.status)) {
       notices.push(
         `Story ${parsed.id} has status '${story.status}' — must be refined first (run: bl refine ${parsed.id}).`,
       );
@@ -132,7 +133,7 @@ export function resolveWorkonTargets(positionals, config) {
   const deferred = [];
   for (const t of byId.values()) {
     const deps = parseIdList(t.depends_on);
-    const blockers = deps.filter((d) => !isDoneStatus(statusById.get(d)));
+    const blockers = deps.filter((d) => !closed(statusById.get(d)));
     if (blockers.length === 0) startable.push(t);
     else deferred.push({ ...t, blockers });
   }

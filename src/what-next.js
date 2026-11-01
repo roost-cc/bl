@@ -28,10 +28,7 @@ import {
 } from './config.js';
 import { readAllStories, parseIdList, readBacklogOrder, findComponentDir } from './story.js';
 import { filterFromArgs, filterStories, hasFilter, filterLabel } from './filter.js';
-
-function isDone(status) {
-  return status === 'done' || status === 'superseded';
-}
+import { loadFlow } from './flow.js';
 
 function idNum(id) {
   const m = String(id).match(/^S-(\d+)$/);
@@ -83,19 +80,20 @@ export function buildGraph(stories) {
  * when it isn't done and all of its `depends_on` are done.
  * Returns null if every node in the subtree is done.
  */
-export function findOldestStartable(rootId, graph, visited = new Set()) {
+export function findOldestStartable(rootId, graph, flow, visited = new Set()) {
   if (visited.has(rootId)) return null;
   visited.add(rootId);
   const story = graph.byId.get(rootId);
   if (!story) return null;
-  if (isDone(story.status)) return null;
+  const closed = (s) => flow.meets('story', s, 'done');
+  if (closed(story.status)) return null;
 
   const deps = graph.children.get(rootId) ?? [];
-  const unfinishedDeps = deps.filter((d) => !isDone(graph.byId.get(d)?.status));
+  const unfinishedDeps = deps.filter((d) => !closed(graph.byId.get(d)?.status));
   if (unfinishedDeps.length === 0) return rootId;
 
   for (const dep of unfinishedDeps) {
-    const found = findOldestStartable(dep, graph, visited);
+    const found = findOldestStartable(dep, graph, flow, visited);
     if (found) return found;
   }
   return null;
@@ -105,11 +103,12 @@ export function findOldestStartable(rootId, graph, visited = new Set()) {
  * Pick the next startable story inside a single component
  * (`pickNextIn` over the component's stories).
  */
-export function pickNextInComponent(componentId, stories, graph, priorityMap) {
+export function pickNextInComponent(componentId, stories, graph, priorityMap, flow) {
   return pickNextIn(
     stories.filter((s) => s.componentId === componentId),
     graph,
     priorityMap,
+    flow,
   );
 }
 
@@ -125,21 +124,22 @@ export function pickNextInComponent(componentId, stories, graph, priorityMap) {
  *
  * Return shapes:
  *   - `{ kind: "missing" }`   — the set is empty
- *   - `{ kind: "all-done" }`  — every story in the set is done/superseded
+ *   - `{ kind: "all-done" }`  — every story in the set is closed
  *   - `{ kind: "next", story, method }` — `method` is `"priority"` or
  *     `"oldest-leaf"`
  *   - `{ kind: "blocked", open }` — open stories exist but every one of
  *     them has an unfinished `depends_on`
  */
-export function pickNextIn(inSet, graph, priorityMap) {
+export function pickNextIn(inSet, graph, priorityMap, flow) {
   if (inSet.length === 0) return { kind: 'missing' };
 
-  const open = inSet.filter((s) => !isDone(s.status));
+  const closed = (s) => flow.meets('story', s, 'done');
+  const open = inSet.filter((s) => !closed(s.status));
   if (open.length === 0) return { kind: 'all-done' };
 
   const startable = open.filter((s) => {
     const deps = graph.children.get(s.id) ?? [];
-    return deps.every((d) => isDone(graph.byId.get(d)?.status));
+    return deps.every((d) => closed(graph.byId.get(d)?.status));
   });
   if (startable.length === 0) return { kind: 'blocked', open };
 
@@ -158,8 +158,8 @@ export function pickNextIn(inSet, graph, priorityMap) {
   return { kind: 'next', story: sorted[0], method: 'oldest-leaf' };
 }
 
-function pickMostRecentlyClosed(stories) {
-  const closed = stories.filter((s) => isDone(s.status));
+function pickMostRecentlyClosed(stories, flow) {
+  const closed = stories.filter((s) => flow.meets('story', s.status, 'done'));
   if (closed.length === 0) return null;
   // Read `completed` from frontmatter; fall back to "" (sorts oldest).
   const withDate = closed.map((s) => {
@@ -214,6 +214,8 @@ Suggests the next story to start by walking the dependency graph:
   }
 
   const cfg = loadConfig();
+  const flow = loadFlow(cfg.backlogRoot);
+  const closed = (s) => flow.meets('story', s, 'done');
   const { filter, ctx } = filterFromArgs(args, cfg, 'bl what-next');
   const stories = readAllStories(cfg);
   if (stories.length === 0) {
@@ -252,7 +254,7 @@ Suggests the next story to start by walking the dependency graph:
     const graph = buildGraph(stories);
     const priorityIds = readBacklogOrder(cfg.backlogRoot);
     const priorityMap = new Map(priorityIds.map((id, i) => [id, i]));
-    const result = pickNextIn(filterStories(stories, filter, ctx), graph, priorityMap);
+    const result = pickNextIn(filterStories(stories, filter, ctx), graph, priorityMap, flow);
     if (result.kind === 'missing') {
       if (onlyComponent) {
         console.error(`bl what-next: component not found: ${label}`);
@@ -270,7 +272,7 @@ Suggests the next story to start by walking the dependency graph:
       const sortedOpen = [...result.open].sort((a, b) => idCompare(a.id, b.id));
       for (const s of sortedOpen) {
         const deps = graph.children.get(s.id) ?? [];
-        const blockers = deps.filter((d) => !isDone(graph.byId.get(d)?.status));
+        const blockers = deps.filter((d) => !closed(graph.byId.get(d)?.status));
         info(`  ${describe(s)} — blocked on: ${blockers.join(', ') || '(none)'}`);
       }
       return;
@@ -305,7 +307,7 @@ Suggests the next story to start by walking the dependency graph:
     }
     referenceFromArg = true;
   } else {
-    const pick = pickMostRecentlyClosed(stories);
+    const pick = pickMostRecentlyClosed(stories, flow);
     if (!pick) {
       info('No closed stories yet — nothing to suggest from.');
       return;
@@ -331,9 +333,9 @@ Suggests the next story to start by walking the dependency graph:
   // done, that parent itself is the next story.
   for (const parentId of parents) {
     const parent = graph.byId.get(parentId);
-    if (!parent || isDone(parent.status)) continue;
+    if (!parent || closed(parent.status)) continue;
     const parentDeps = graph.children.get(parentId) ?? [];
-    const allDone = parentDeps.every((d) => isDone(graph.byId.get(d)?.status));
+    const allDone = parentDeps.every((d) => closed(graph.byId.get(d)?.status));
     if (allDone) {
       info(`\nNext: ${describe(parent)}`);
       info(`Why: all dependencies of ${parent.id} (${parentDeps.join(', ')}) are done; ${parent.id} is unblocked.`);
@@ -354,7 +356,7 @@ Suggests the next story to start by walking the dependency graph:
 
   const sortedPeers = [...peerCandidates].sort(idCompare);
   for (const peerId of sortedPeers) {
-    const startable = findOldestStartable(peerId, graph);
+    const startable = findOldestStartable(peerId, graph, flow);
     if (startable) {
       const next = graph.byId.get(startable);
       const note =
@@ -376,12 +378,12 @@ Suggests the next story to start by walking the dependency graph:
   for (const parentId of parents) {
     const parent = graph.byId.get(parentId);
     if (!parent) continue;
-    if (isDone(parent.status)) {
+    if (closed(parent.status)) {
       info(`  ${describe(parent)} [${parent.status}]`);
       continue;
     }
     const parentDeps = graph.children.get(parentId) ?? [];
-    const blockers = parentDeps.filter((d) => !isDone(graph.byId.get(d)?.status));
+    const blockers = parentDeps.filter((d) => !closed(graph.byId.get(d)?.status));
     info(`  ${describe(parent)} — blocked on: ${blockers.join(', ') || '(none)'}`);
   }
 }

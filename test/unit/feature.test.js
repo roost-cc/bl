@@ -18,7 +18,11 @@ import {
   featureBranchName,
   featureSessionVars,
 } from '../../src/feature.js';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
+import { loadFlow } from '../../src/flow.js';
+import { dirname } from 'path';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 test('normalizeFeatureId accepts F1 / F-1 / f-1 and rejects others', () => {
   assert.deepEqual(normalizeFeatureId('F1'), { num: '1', id: 'F-1', dirPrefix: 'F1' });
@@ -234,10 +238,10 @@ test('outsideBlockers ignores done and in-feature deps, flags open ones', () => 
     const all = readAllStories(cfg);
     const f1 = findFeature(normalizeFeatureId('F-1'), cfg);
     const { stories } = resolveFeatureStories(f1, cfg, all);
-    assert.deepEqual(outsideBlockers(stories, all), []);
+    assert.deepEqual(outsideBlockers(stories, all, flow), []);
     // Add an open outside dependency.
     const withBlocker = stories.map((s) => (s.id === 'S-4' ? { ...s, depends_on: ['S-2'] } : s));
-    assert.deepEqual(outsideBlockers(withBlocker, all), [{ story: 'S-4', dep: 'S-2', status: 'backlog' }]);
+    assert.deepEqual(outsideBlockers(withBlocker, all, flow), [{ story: 'S-4', dep: 'S-2', status: 'backlog' }]);
   } finally {
     cleanup();
   }

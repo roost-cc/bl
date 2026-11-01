@@ -96,7 +96,7 @@ test('adapter normalized paths cannot alias another output or a reserved report 
     files([path]);
     // The clash is found before anything is written: neither the config nor the directory is touched.
     assert.throws(
-      () => writeReport({}, '/nonexistent/report', { charts: [chart] }, 'paths'),
+      () => writeReport({}, '/nonexistent/report', { charts: [chart] }, null, 'paths'),
       /would replace the report's own/,
       path,
     );

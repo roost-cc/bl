@@ -7,9 +7,9 @@
 // or `new RegExp` over a static string), a `switch`, or an `if`/`else if` chain;
 // separate `if` statements are separate conditions.
 //
-// `ALLOWED` holds what predates this guard and only shrinks: S-1166 drains it.
-// A count is exact, so removing a restatement must lower it too, and adding an
-// entry needs a stated reason in the change that adds it.
+// `ALLOWED` holds the findings that do not restate `flow.json`, each under a
+// comment saying why. A count is exact, so removing a finding must lower it
+// too, and adding an entry needs a stated reason in the change that adds it.
 //
 // The check parses with acorn: the case that motivated it, a multi-line `Map`,
 // has one status per line, which a line scan misses.
@@ -27,29 +27,12 @@ const EXEMPT = new Set(['src/flow.js']);
 const STATUSES = new Set(loadFlow(join(ROOT, 'templates')).statusesOf('story'));
 
 const ALLOWED = {
-  'src/deps.js': 1,
-  'src/done.js': 3,
-  'src/feature-cmd.js': 2,
-  'src/feature-order.js': 1,
-  'src/feature-run.js': 1,
-  'src/feature.js': 2,
-  'src/history-cmd.js': 1,
-  'src/history.js': 1,
-  'src/inbox.js': 1,
-  'src/move.js': 1,
-  'src/refine.js': 1,
-  'src/report.js': 8,
+  // A ternary choosing which closing status a write sets, not a set of statuses.
+  'src/done.js': 1,
+  // `ROADMAP_STATUSES` is `roadmap.md`'s own vocabulary; it shares two words with story statuses.
   'src/roadmap.js': 1,
-  'src/schedule.js': 1,
-  'src/spec.js': 1,
-  'src/sync.js': 1,
-  'src/tree.js': 1,
-  'src/updates-answer.js': 1,
-  'src/updates-run.js': 1,
-  'src/updates.js': 2,
-  'src/validate.js': 3,
-  'src/what-next.js': 1,
-  'src/workon.js': 2,
+  // A ternary choosing which closing status a write sets, not a set of statuses.
+  'src/updates.js': 1,
 };
 
 /**

@@ -4,6 +4,11 @@ import { loadConfig } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
 import { ancestorsOf, buildGraph, renderTree, rootsWithin } from '../../src/tree.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
+import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
+import { loadFlow } from '../../src/flow.js';
+import { dirname } from 'path';
+
+const flow = loadFlow(dirname(FLOW_TEMPLATE));
 
 function loadGraph() {
   const { dir, cleanup } = buildSampleBacklog();
@@ -43,7 +48,7 @@ test('rootsWithin picks ids whose parents lie outside the candidate set', () => 
 test('renderTree renders a chain root-down with status markers', () => {
   const { graph, byId, cleanup } = loadGraph();
   try {
-    const { lines, stats } = renderTree('S-4', graph, byId, new Set());
+    const { lines, stats } = renderTree('S-4', graph, byId, new Set(), flow);
     // Root line: S-4 (backlog)
     assert.match(lines[0], /^S-4 Fourth \(backlog\)$/);
     // Should include a "(done)" marker for S-1.
@@ -61,7 +66,7 @@ test('renderTree renders a chain root-down with status markers', () => {
 test('renderTree dims done nodes when color is on', () => {
   const { graph, byId, cleanup } = loadGraph();
   try {
-    const { lines } = renderTree('S-4', graph, byId, new Set(), true);
+    const { lines } = renderTree('S-4', graph, byId, new Set(), flow, true);
     // The done S-1 line is wrapped in faint (\x1b[2m … \x1b[0m).
     const doneLine = lines.find((l) => /S-1 First \(done\)/.test(l));
     assert.ok(doneLine, 'expected a (done) S-1 line, got:\n' + lines.join('\n'));
@@ -79,7 +84,7 @@ test('renderTree emits no dim escapes when color is off', () => {
   const { graph, byId, cleanup } = loadGraph();
   try {
     // The NO_COLOR / piped path: color=false yields plain text everywhere.
-    const { lines } = renderTree('S-4', graph, byId, new Set(), false);
+    const { lines } = renderTree('S-4', graph, byId, new Set(), flow, false);
     assert.ok(
       lines.every((l) => !l.includes('\x1b[2m')),
       'no line should contain a dim escape, got:\n' + lines.join('\n'),

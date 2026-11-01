@@ -9,7 +9,7 @@ import { collectInbox, doneRefusal, inboxCountLine, renderInbox } from '../../sr
 import { writeBlockers } from '../../src/blockers.js';
 import { formatTask } from '../../src/task.js';
 import { runBl } from '../helpers/run-bl.js';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -195,6 +195,27 @@ test('collectInbox: escalations of active units only, with their first line and 
     );
   } finally {
     t.cleanup();
+  }
+});
+
+test("collectInbox: a unit is closed by its own type's statuses", () => {
+  const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
+  const { statuses } = flow.types.feature;
+  statuses.cancelled = { implies: ['done', ...statuses.done.implies] };
+  const { dir, cleanup } = mkTempBacklog({
+    flow,
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [{ id: 'S-1', component: 'C01', title: 'Open', status: 'cancelled', body: STORY_ESCALATED }],
+    features: [{ id: 'F-1', title: 'Closed', status: 'cancelled', escalation: ESCALATION }],
+  });
+  try {
+    const { items } = collectInbox(loadConfig({ backlogRoot: dir }));
+    assert.deepEqual(
+      items.filter((e) => e.kind === 'escalation').map((e) => e.unit),
+      ['S-1'],
+    );
+  } finally {
+    cleanup();
   }
 });
 

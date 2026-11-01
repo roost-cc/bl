@@ -64,6 +64,7 @@ import {
   renderTable,
   tableRows,
 } from './updates.js';
+import { loadFlow, statusWords } from './flow.js';
 
 // `DEFAULT_MAX_MERGES`, `CONFLICT_NOTE`, `RUN_LOCK_ID` and `checkCriteria`
 // live in updates.js, whose CLI help and sync use them without importing
@@ -73,8 +74,6 @@ export { DEFAULT_MAX_MERGES, CONFLICT_NOTE, RUN_LOCK_ID, checkCriteria };
 export const GATE_TAIL_LINES = 30;
 /** The report directory under the backlog root, next to `vulns/`. */
 export const REPORT_DIR = 'updates';
-
-const RUNNABLE = new Set(['refined', 'in_progress']);
 
 /** The requests the operator can leave on an update story (F-50 D8). */
 export const REQUESTS = UPDATE_REQUESTS;
@@ -133,19 +132,19 @@ export function orderStories(stories, config) {
 }
 
 /**
- * The stories a run takes: every update story with status `refined` or
- * `in_progress`, or exactly the ids given. An id that is not an update
+ * The stories a run takes: every update story `Flow.isRunnable` accepts,
+ * or exactly the ids given. An id that is not an update
  * story, or whose story is closed, throws: the operator named it.
  */
-export function selectStories(stories, ids = []) {
-  if (!ids.length) return stories.filter((s) => RUNNABLE.has(s.fm.status));
+export function selectStories(stories, ids, flow) {
+  if (!ids.length) return stories.filter((s) => flow.isRunnable('story', s.fm.status));
   return ids.map((raw) => {
     const parsed = normalizeId(raw);
     if (!parsed) throw new Error(`Invalid story id: ${raw}`);
     const s = stories.find((x) => x.id === parsed.id);
     if (!s) throw new Error(`${parsed.id} is not an update story`);
-    if (!RUNNABLE.has(s.fm.status)) {
-      throw new Error(`${parsed.id} is ${s.fm.status}; only a refined or in_progress story runs`);
+    if (!flow.isRunnable('story', s.fm.status)) {
+      throw new Error(`${parsed.id} is ${s.fm.status}; only a ${statusWords(flow.runnableStatusesOf('story'))} story runs`);
     }
     return s;
   });
@@ -1189,7 +1188,10 @@ export async function runUpdates(config, opts = {}) {
     };
   }
   try {
-    const stories = orderStories(selectStories(readUpdateStories(config), opts.ids ?? []), config);
+    const stories = orderStories(
+      selectStories(readUpdateStories(config), opts.ids ?? [], loadFlow(config.backlogRoot)),
+      config,
+    );
     if (stories.length === 0) {
       runner.log('updates run: no open update stories');
       if (opts.dryRun) return result;
