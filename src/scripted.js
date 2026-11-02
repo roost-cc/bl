@@ -14,10 +14,10 @@
  */
 
 import { createHash } from 'crypto';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { atomicWriteFile } from './atomic-write.js';
 import { appendSection, updateChange } from './change-doc.js';
-import { parsePluginList } from './config.js';
+import { parsePluginList, warn } from './config.js';
 import { appendSectionLine, checkCriteria, extractSection, replaceSection } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
 
@@ -256,35 +256,47 @@ export function scriptedEscalation(id, r, rerun) {
  * Record a scripted run on the story and in the change document. `changed`
  * leaves the story `in_progress` with its criteria checked, what an implementer
  * leaves, so a resumed run skips it. `unchanged` marks it done with a note.
- * `failed` touches the story not at all: it stays runnable. The story and the
- * change document change together: a change document that cannot be written puts
- * the story back, so a retry starts from what it read.
+ * `failed` touches the story not at all: it stays runnable.
+ *
+ * The change document goes first, and the story last, as the story is what a
+ * retry reads: while it has not moved, the run is not recorded and a retry records
+ * it again. So a change document that cannot be written has changed nothing, and a
+ * story that cannot be written puts the change document back. If that fails too,
+ * the story's error is the one thrown, and all that is left is an extra `## Gate`
+ * line, which is true: the run happened.
  *
  * @param {{ backlogRoot: string, indexPath: string, changePath: string|null, id: string,
  *   repo: string, date: string, result: object }} opts
  */
 export function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo, date, result }) {
-  const story = result.kind === 'failed' ? null : readFileSync(indexPath, 'utf8');
-  if (result.kind === 'changed') {
-    updateSpecFile(backlogRoot, indexPath, (fm, body) => {
-      fm.status = 'in_progress';
-      return checkCriteria(body);
-    });
-  } else if (result.kind === 'unchanged') {
-    updateSpecFile(backlogRoot, indexPath, (fm, body) => {
-      fm.status = 'done';
-      fm.completed = date;
-      fm.commit = result.sha;
-      return appendSectionLine(checkCriteria(body), 'Notes', `- ${date}: no change needed (\`${result.plugin}\`).`);
-    });
-  }
-  if (!changePath) return;
-  try {
+  const change = changePath && existsSync(changePath) ? readFileSync(changePath, 'utf8') : null;
+  if (changePath) {
     updateChange(backlogRoot, changePath, (doc) => {
       doc.body = appendSection(doc.body, 'Gate', scriptedGateEntry(date, repo, id, result));
     });
+  }
+  try {
+    if (result.kind === 'changed') {
+      updateSpecFile(backlogRoot, indexPath, (fm, body) => {
+        fm.status = 'in_progress';
+        return checkCriteria(body);
+      });
+    } else if (result.kind === 'unchanged') {
+      updateSpecFile(backlogRoot, indexPath, (fm, body) => {
+        fm.status = 'done';
+        fm.completed = date;
+        fm.commit = result.sha;
+        return appendSectionLine(checkCriteria(body), 'Notes', `- ${date}: no change needed (\`${result.plugin}\`).`);
+      });
+    }
   } catch (e) {
-    if (story != null) atomicWriteFile(backlogRoot, indexPath, story);
+    if (change != null) {
+      try {
+        atomicWriteFile(backlogRoot, changePath, change);
+      } catch (restore) {
+        warn(`${id}: ${changePath} keeps a ## Gate line for a run not yet recorded: ${restore.message}`);
+      }
+    }
     throw e;
   }
 }

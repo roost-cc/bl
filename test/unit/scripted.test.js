@@ -26,6 +26,7 @@ import { storyAsOrdered, storyUnit } from '../../src/unit.js';
 import { findImplementPluginFindings } from '../../src/validate.js';
 import { implementScripted } from '../../src/workon.js';
 import { mergeGates } from '../../src/merge-gates.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { git, GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -149,6 +150,51 @@ test('recordScriptedRun preserves paired story and change state when the second 
     record(root, changePath, kind);
     assert.notEqual(readFileSync(join(root, 'index.md'), 'utf8'), story, kind);
     assert.match(readFileSync(changePath, 'utf8'), /scripted S-1/, kind);
+  }
+});
+
+test('record-scripted-run-rollback-failure-preserves-recovery-state', () => {
+  const story = '---\nstory_id: S-1\nstatus: refined\n---\n\n## Acceptance Criteria\n\n- [ ] Done\n';
+  const scripted = new URL('../../src/scripted.js', import.meta.url).href;
+  // In a process of its own, as the failing rename is counted per process.
+  const record = (root, changePath, kind, failOnRename) => {
+    const opts = { backlogRoot: root, indexPath: join(root, 'index.md'), changePath, id: 'S-1', repo: 'x' };
+    const result = { kind, sha: 'abc1234', plugin: 'relock', command: 'relock', tail: '' };
+    const code = `
+      import { recordScriptedRun } from ${JSON.stringify(scripted)};
+      try {
+        recordScriptedRun({ ...${JSON.stringify(opts)}, date: '2026-11-01', result: ${JSON.stringify(result)} });
+      } catch (e) {
+        console.log('THROWN ' + e.message);
+      }`;
+    const env = { ...process.env, BL_INTERNAL_TEST_FAIL_ON_RENAME: String(failOnRename ?? '') };
+    return spawnSyncFiles(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8', env });
+  };
+  for (const kind of ['changed', 'unchanged']) {
+    // Nothing to roll back: the first failure is the only one, and it is the one thrown.
+    const missing = mkTempDir('bl-scripted-record-');
+    writeFileSync(join(missing, 'index.md'), story);
+    const absent = record(missing, join(missing, 'absent.md'), kind, 2);
+    assert.match(absent.stdout, /THROWN .*no change document/, kind);
+    assert.equal(readFileSync(join(missing, 'index.md'), 'utf8'), story, kind);
+
+    // The story fails, then so does putting the change document back.
+    const root = mkTempDir('bl-scripted-record-');
+    const changePath = join(root, 'change.md');
+    writeChange(root, changePath, newChange({ changeOf: 'S-1' }));
+    writeFileSync(join(root, 'index.md'), 'no frontmatter\n');
+    const both = record(root, changePath, kind, 2);
+    assert.match(both.stdout, /THROWN .*(frontmatter|---)/, `${kind}: the story's error, not the restore's`);
+    assert.doesNotMatch(both.stdout, /BL_INTERNAL_TEST_FAIL_ON_RENAME/, kind);
+    assert.match(both.stderr, /keeps a ## Gate line/, kind);
+    assert.equal(readFileSync(join(root, 'index.md'), 'utf8'), 'no frontmatter\n', kind);
+    assert.equal(readFileSync(changePath, 'utf8').match(/scripted S-1/g).length, 1, kind);
+
+    // The cause gone, a retry records the run.
+    writeFileSync(join(root, 'index.md'), story);
+    assert.equal(record(root, changePath, kind).stdout, '', kind);
+    const { fm } = parseFrontmatter(readFileSync(join(root, 'index.md'), 'utf8'));
+    assert.equal(fm.status, kind === 'changed' ? 'in_progress' : 'done', kind);
   }
 });
 
