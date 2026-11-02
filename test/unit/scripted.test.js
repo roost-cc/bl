@@ -152,16 +152,70 @@ test('recordScriptedRun preserves paired story and change state when the second 
   }
 });
 
-test('a retry after a failed record finds its commit: changed, not no-change-needed', () => {
+/** A command that is not idempotent: each run moves the counter. */
+const COUNT = 'echo x >> counter';
+const counted = (dir) => readFileSync(join(dir, 'counter'), 'utf8').trim().split('\n').length;
+
+test('retry-after-record-failure-does-not-rerun-command', () => {
   const dir = repo();
-  const fixes = 'grep -q new lock || echo new > lock';
-  assert.equal(run(dir, fixes).kind, 'changed');
+  const first = run(dir, COUNT);
+  assert.equal(first.kind, 'changed');
   const head = git(dir, 'rev-parse', 'HEAD');
-  const again = run(dir, fixes);
-  assert.equal(again.kind, 'changed');
+
+  const again = run(dir, COUNT);
+  assert.equal(again.kind, 'changed', 'changed, not no-change-needed');
+  assert.equal(again.sha, first.sha);
+  assert.equal(counted(dir), 1, 'the command did not run again');
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'no second commit');
+
+  // Another commit on top: the attempt is still in history.
   git(dir, 'commit', '-q', '--allow-empty', '-m', 'something else');
-  assert.equal(run(dir, fixes).kind, 'unchanged');
+  const later = run(dir, COUNT);
+  assert.equal(later.kind, 'changed');
+  assert.equal(later.sha, first.sha);
+  assert.equal(counted(dir), 1);
+});
+
+test('no_op_scripted_run_with_matching_prior_commit_subject_is_unchanged', () => {
+  const quiet = 'true';
+  // The same subject, written by someone else.
+  const dir = repo();
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'chore: Relock (S-1)');
+  assert.equal(run(dir, quiet).kind, 'unchanged');
+
+  // The same subject, naming the story in its body.
+  const body = repo();
+  git(body, 'commit', '-q', '--allow-empty', '-m', 'chore: Relock (S-1)', '-m', 'Scripted-Run: S-1');
+  assert.equal(run(body, quiet).kind, 'unchanged');
+
+  // The story's own commit from another command, and another story's.
+  const other = repo();
+  assert.equal(run(other, COUNT).kind, 'changed');
+  assert.equal(run(other, quiet).kind, 'unchanged');
+  const story = (id) =>
+    runImplementPlugin({
+      id,
+      title: 'Relock',
+      fm: FM,
+      plugins: { relock: { implement: COUNT } },
+      vars: {},
+      worktreePath: other,
+      runner: realRunner(),
+    });
+  assert.equal(story('S-11').kind, 'changed', 'S-1 is not S-11');
+  assert.equal(counted(other), 2);
+});
+
+test('a retry from the callers: bl implement runs the command once and records it', async () => {
+  const { status, wt, record, calls, retry } = await implement(FM, COUNT, { breakChange: true });
+  assert.equal(status, 'threw');
+  assert.notEqual(parseFrontmatter(textOf(record.indexPath)).fm.status, 'in_progress', 'no record yet');
+  assert.equal(counted(wt), 1);
+  assert.equal(await retry(), 0);
+  assert.equal(counted(wt), 1, 'the retry did not run it');
+  assert.equal(calls.filter((c) => c === COUNT).length, 1);
+  assert.equal(parseFrontmatter(textOf(record.indexPath)).fm.status, 'in_progress');
+  assert.match(textOf(join(dirname(record.indexPath), 'change.md')), /already committed as/);
 });
 
 test('an unresolved placeholder is an error and the command never runs', () => {
@@ -497,13 +551,14 @@ test('a resumed run does not run a finished scripted story again', async () => {
 // `bl implement`, `bl merge`
 // ---------------------------------------------------------------------------
 
-async function implement(storyFm, plugin) {
+async function implement(storyFm, plugin, { breakChange = false } = {}) {
   const { dir, config } = backlog(storyFm, plugin);
   initGitBacklog(dir);
   const wt = repo();
   const record = readAllStories(config).find((s) => s.id === 'S-3');
   const changePath = join(dirname(record.indexPath), 'change.md');
-  writeFileSync(changePath, '---\nchange_of: S-3\ntitle: Solo\nstatus: open\n---\n\n## Description\n\nx\n');
+  const change = '---\nchange_of: S-3\ntitle: Solo\nstatus: open\n---\n\n## Description\n\nx\n';
+  if (!breakChange) writeFileSync(changePath, change);
   const prep = {
     title: 'Solo',
     branchName: 's3-solo',
@@ -518,8 +573,14 @@ async function implement(storyFm, plugin) {
       return realRunner().shell(cmd, cwd, o);
     },
   };
-  const status = await implementScripted({ id: 'S-3', num: '3' }, record, config, prep, runner);
-  return { status, dir, wt, record, calls };
+  const go = () => implementScripted({ id: 'S-3', num: '3' }, record, config, prep, runner);
+  // The record fails with the commit made: a retry has to find that commit.
+  const retry = () => (writeFileSync(changePath, change), go());
+  const status = await go().catch((e) => {
+    if (breakChange) return 'threw';
+    throw e;
+  });
+  return { status, dir, wt, record, calls, retry };
 }
 
 test('bl implement commits, records and commits the backlog; exit 0', async () => {

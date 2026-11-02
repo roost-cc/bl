@@ -13,6 +13,7 @@
  * `runner.shell`, as in the two state machines this serves.
  */
 
+import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { atomicWriteFile } from './atomic-write.js';
 import { appendSection, updateChange } from './change-doc.js';
@@ -113,11 +114,21 @@ export function implementPluginProblem(fm, plugins) {
 }
 
 /**
+ * The commit trailer that names one scripted attempt: this story, this command.
+ * A subject cannot: anyone may write the same one.
+ */
+function attemptTrailer(id, command) {
+  return `Scripted-Run: ${id} ${createHash('sha256').update(command).digest('hex').slice(0, 16)}`;
+}
+
+/**
  * Run a scripted story's command in `worktreePath` and commit what it changed
- * as `chore: <title> (<id>)`. A worktree already dirty is refused before the
- * command runs: its changes would land in the story's commit unseen. No agent
- * is involved on any path, and the worktree is left as the command left it
- * when it fails, for the operator to read.
+ * as `chore: <title> (<id>)`, with a `Scripted-Run` trailer. A worktree already
+ * dirty is refused before the command runs: its changes would land in the
+ * story's commit unseen. History with that trailer means this attempt was
+ * already committed, so the command does not run again and the result is
+ * `changed`, with that commit's sha. No agent is involved on any path, and the
+ * worktree is left as the command left it when it fails, for the operator to read.
  *
  * @param {{ id: string, title: string, fm: object, plugins: Record<string, object>,
  *   vars: Record<string, unknown>, worktreePath: string,
@@ -126,7 +137,7 @@ export function implementPluginProblem(fm, plugins) {
  *   exit?: number, tail: string, sha?: string, error?: string }}
  *   `exit` is the command's status, absent when it never ran or `error` is a
  *   later step's; `error` says what stopped a run that was not the command's
- *   exit; `sha` is the worktree's short HEAD
+ *   exit; `sha` is the commit's, or the worktree's short HEAD when nothing changed
  */
 export function runImplementPlugin({ id, title, fm, plugins, vars, worktreePath, runner }) {
   const problem = implementPluginProblem(fm, plugins);
@@ -152,6 +163,17 @@ export function runImplementPlugin({ id, title, fm, plugins, vars, worktreePath,
     };
   }
 
+  // A retry after `recordScriptedRun` failed: the command's commit is already
+  // here, so it must not run twice.
+  const trailer = attemptTrailer(id, command);
+  const earlier = shell(`git log -1 --format=%h --fixed-strings --grep='${trailer}'`);
+  if (earlier.status !== 0) {
+    return { ...base, kind: 'failed', error: 'git log failed in the worktree', tail: tail(earlier.output) };
+  }
+  const committed = String(earlier.output ?? '').trim();
+  if (committed)
+    return { ...base, kind: 'changed', exit: 0, tail: `already committed as ${committed}`, sha: committed };
+
   const ran = shell(command);
   const out = { ...base, exit: ran.status, tail: tail(ran.output) };
   if (ran.status !== 0) return { ...out, kind: 'failed' };
@@ -159,17 +181,12 @@ export function runImplementPlugin({ id, title, fm, plugins, vars, worktreePath,
   const after = status();
   if (after.status !== 0) return { ...out, kind: 'failed', error: 'git status failed after the command' };
   const sha = () => String(shell('git rev-parse --short HEAD').output ?? '').trim();
-  const subject = `chore: ${title} (${id})`;
-  if (!String(after.output ?? '').trim()) {
-    // A retry after `recordScriptedRun` failed: the command's commit is already here.
-    const last = String(shell('git log -1 --format=%s').output ?? '').trim();
-    return { ...out, kind: last === subject ? 'changed' : 'unchanged', sha: sha() };
-  }
+  if (!String(after.output ?? '').trim()) return { ...out, kind: 'unchanged', sha: sha() };
 
   const add = shell('git add -A');
   if (add.status !== 0) return { ...out, kind: 'failed', error: `git add failed: ${tail(add.output, 5)}` };
-  const message = subject.replace(/'/g, "'\\''");
-  const commit = shell(`git commit -q -m '${message}'`);
+  const message = `chore: ${title} (${id})`.replace(/'/g, "'\\''");
+  const commit = shell(`git commit -q -m '${message}' -m '${trailer}'`);
   if (commit.status !== 0) return { ...out, kind: 'failed', error: `git commit failed: ${tail(commit.output, 5)}` };
   return { ...out, kind: 'changed', sha: sha() };
 }

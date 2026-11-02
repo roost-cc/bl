@@ -244,6 +244,7 @@ export function fakeRunner(opts = {}) {
       if (cmd === 'git status --porcelain') {
         return { status: 0, output: implemented && implementChanges ? ' M package-lock.json\n' : '' };
       }
+      if (cmd.startsWith('git log')) return { status: 0, output: '' };
       if (cmd.startsWith('git rev-parse')) return { status: 0, output: `${wtHead}\n` };
       if (cmd === 'git add -A') return { status: 0, output: '' };
       if (cmd.startsWith('git commit')) {
