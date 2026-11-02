@@ -144,11 +144,19 @@ test('groupFindings-shared-alias: one advisory is one decide group, however its 
         decide('d', ['GHSA-C', 'GHSA-B']),
       ],
     ],
+    [
+      'chain through a finding in another state',
+      [
+        decide('a', ['GHSA-A']),
+        finding({ package: 'b', ids: ['GHSA-A', 'GHSA-B', 'CVE-X'], fix_state: 'young' }),
+        decide('c', ['GHSA-B']),
+      ],
+    ],
   ];
   for (const [name, findings] of cases) {
     const { decides } = groupFindings(findings);
     assert.equal(decides.length, 1, name);
-    assert.equal(decides[0].findings.length, findings.length, name);
+    assert.equal(decides[0].findings.length, findings.filter((f) => f.fix_state === 'decide').length, name);
     assert.deepEqual(decides[0].advisories, [...new Set(findings.flatMap((f) => f.ids))].sort(), name);
   }
   const apart = groupFindings([
@@ -228,11 +236,13 @@ test('scanRepo-rejects-invalid-findings: only a report a finished scan can write
     ['string findings', { status: 'findings', findings: 'invalid' }],
     ['null entry', { status: 'findings', findings: [null] }],
     ['text entry', { status: 'findings', findings: ['x'] }],
-    ...['lockfile', 'package', 'version', 'fix_state', 'ids', 'at_fail_on', 'blocking'].map((key) => [
-      `entry without ${key}`,
-      { status: 'findings', findings: [without(key)] },
-    ]),
+    ...['lockfile', 'package', 'version', 'severity', 'fix_state', 'ids', 'fixed', 'at_fail_on', 'blocking'].map(
+      (key) => [`entry without ${key}`, { status: 'findings', findings: [without(key)] }],
+    ),
     ['ids not a list', { status: 'findings', findings: [finding({ ids: 'GHSA-a' })] }],
+    ['fixed not a list', { status: 'findings', findings: [finding({ fixed: '4.17.21' })] }],
+    ['severity not text', { status: 'findings', findings: [finding({ severity: 7 })] }],
+    ['a fix_state the schema does not have', { status: 'findings', findings: [finding({ fix_state: 'bogus' })] }],
     ['empty ids', { status: 'findings', findings: [finding({ ids: [] })] }],
     ['blank id', { status: 'findings', findings: [finding({ ids: [''] })] }],
     ['findings status with none at fail_on', { status: 'findings', findings: [low] }],

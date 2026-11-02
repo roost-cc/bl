@@ -48,6 +48,8 @@ import { appendReport } from './updates-run.js';
 const SCANNED = new Set(['findings', 'clean', 'no-lockfiles']);
 /** A `fix_state` that says a fix exists, so a `decide` story's question is over. */
 const FIX_EXISTS = new Set(['ready', 'young', 'overdue']);
+/** Every `fix_state` of `ci-cd-vulns/v1`. Any other would read as a finding that is gone. */
+const FIX_STATES = new Set([...FIX_EXISTS, 'decide', 'watching', 'unknown', 'no-age']);
 /**
  * Room for a title in a commit header: commitlint's 100 columns less
  * `chore: ` and ` (S-1234)`. A scripted story's title is its commit's subject.
@@ -131,21 +133,23 @@ export function groupFindings(findings) {
   const fixes = new Map();
   const decides = [];
   const reported = [];
-  const deciding = findings.filter((f) => f.at_fail_on && f.fix_state === 'decide');
+  const deciding = (f) => f.at_fail_on && f.fix_state === 'decide';
   const grouped = new Set();
   for (const f of findings) {
     if (f.at_fail_on && f.fix_state === 'ready') {
       fixes.set(f.lockfile, [...(fixes.get(f.lockfile) ?? []), f]);
-    } else if (f.at_fail_on && f.fix_state === 'decide') {
+    } else if (deciding(f)) {
       if (grouped.has(f)) continue;
-      // Two packages under one advisory are one question. The ids are sorted, so
-      // a scan that lists them in another order names the same advisory.
-      const group = linked(
-        deciding.filter((d) => d.lockfile === f.lockfile),
+      // Two packages under one advisory are one question, and a finding in any
+      // other state can be the alias that joins them. The ids are sorted, so a
+      // scan that lists them in another order names the same advisory.
+      const chain = linked(
+        findings.filter((d) => d.lockfile === f.lockfile),
         f.ids,
       );
+      const group = chain.filter(deciding);
       for (const member of group) grouped.add(member);
-      const advisories = [...new Set(group.flatMap((g) => g.ids))].sort();
+      const advisories = [...new Set(chain.flatMap((g) => g.ids))].sort();
       decides.push({ lockfile: f.lockfile, advisories, findings: group });
     } else {
       reported.push(f);
@@ -228,10 +232,12 @@ export function defaultVulnsRunner() {
 
 const isText = (v) => typeof v === 'string' && v !== '';
 const isFinding = (f) =>
-  [f?.lockfile, f?.package, f?.version, f?.fix_state].every(isText) &&
+  [f?.lockfile, f?.package, f?.version, f?.severity].every(isText) &&
+  FIX_STATES.has(f.fix_state) &&
   Array.isArray(f.ids) &&
   f.ids.length > 0 &&
   f.ids.every(isText) &&
+  Array.isArray(f.fixed) &&
   typeof f.at_fail_on === 'boolean' &&
   typeof f.blocking === 'boolean';
 
