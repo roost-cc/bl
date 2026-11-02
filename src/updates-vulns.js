@@ -66,7 +66,26 @@ const loadTemplate = (kind) => readFileSync(new URL(`../templates/${TEMPLATES[ki
 
 const pkgAt = (f) => `${f.package}@${f.version}`;
 const advisoryOf = (f) => f.ids?.[0] ?? '?';
-const sameAdvisory = (f, advisory) => (f.ids ?? []).includes(advisory);
+/** Every id a decide story knows its advisory by; `update_advisory` is a list. */
+const advisoryIds = (fm) => [fm.update_advisory ?? []].flat();
+
+/**
+ * The findings joined to `ids`, directly or through a chain of shared aliases:
+ * scanners group an advisory's ids differently per finding, so no one id, and
+ * no one finding's list, names the advisory.
+ */
+function linked(findings, ids) {
+  const known = new Set(ids);
+  const group = [];
+  let rest = findings;
+  for (;;) {
+    const hits = rest.filter((f) => f.ids.some((id) => known.has(id)));
+    if (hits.length === 0) return group;
+    for (const f of hits) for (const id of f.ids) known.add(id);
+    group.push(...hits);
+    rest = rest.filter((f) => !hits.includes(f));
+  }
+}
 
 /** The findings table of a story, in a stable order so a rescan compares equal. */
 export function findingsTable(findings) {
@@ -74,7 +93,7 @@ export function findingsTable(findings) {
     .map((f) => [
       f.package,
       f.version,
-      (f.ids ?? []).join(', '),
+      [...(f.ids ?? [])].sort().join(', '),
       f.severity ?? '',
       (f.fixed ?? []).join(', ') || '(none)',
     ])
@@ -105,21 +124,29 @@ export function decideTitle(repoName, lockfile, findings, advisory) {
  * reported.
  *
  * @returns {{ fixes: Map<string, object[]>,
- *   decides: Array<{ lockfile: string, advisory: string, findings: object[] }>,
+ *   decides: Array<{ lockfile: string, advisories: string[], findings: object[] }>,
  *   reported: object[] }}
  */
 export function groupFindings(findings) {
   const fixes = new Map();
   const decides = [];
   const reported = [];
+  const deciding = findings.filter((f) => f.at_fail_on && f.fix_state === 'decide');
+  const grouped = new Set();
   for (const f of findings) {
     if (f.at_fail_on && f.fix_state === 'ready') {
       fixes.set(f.lockfile, [...(fixes.get(f.lockfile) ?? []), f]);
     } else if (f.at_fail_on && f.fix_state === 'decide') {
-      // Two packages under one advisory are one question.
-      const group = decides.find((d) => d.lockfile === f.lockfile && (f.ids ?? []).includes(d.advisory));
-      if (group) group.findings.push(f);
-      else decides.push({ lockfile: f.lockfile, advisory: advisoryOf(f), findings: [f] });
+      if (grouped.has(f)) continue;
+      // Two packages under one advisory are one question. The ids are sorted, so
+      // a scan that lists them in another order names the same advisory.
+      const group = linked(
+        deciding.filter((d) => d.lockfile === f.lockfile),
+        f.ids,
+      );
+      for (const member of group) grouped.add(member);
+      const advisories = [...new Set(group.flatMap((g) => g.ids))].sort();
+      decides.push({ lockfile: f.lockfile, advisories, findings: group });
     } else {
       reported.push(f);
     }
@@ -139,7 +166,7 @@ export function closeReason(story, findings) {
   if (isScripted(fm)) {
     return onLock.some((f) => f.at_fail_on && unresolved(f)) ? null : 'no ready finding is left on this lock file';
   }
-  const mine = onLock.filter((f) => sameAdvisory(f, fm.update_advisory));
+  const mine = linked(onLock, advisoryIds(fm));
   if (mine.length === 0) return 'the finding is gone';
   if (mine.some((f) => FIX_EXISTS.has(f.fix_state))) return 'a fix appeared';
   if (mine.some((f) => !f.at_fail_on)) return 'the finding is below fail_on';
@@ -152,7 +179,7 @@ export function closeReason(story, findings) {
  * `renderUpdateStory`.
  *
  * @param {{ kind: "fix"|"decide", componentId: string, storyId: string, today: string,
- *   slug: string, lockfile: string, advisory?: string, title: string, findings: object[],
+ *   slug: string, lockfile: string, advisories?: string[], title: string, findings: object[],
  *   plugins?: string[] | null }} v
  * @returns {{ fm: object, body: string, text: string }}
  */
@@ -162,7 +189,7 @@ export function renderVulnsStory(v) {
     title: v.title,
     lockfile: v.lockfile,
     updateRepo: v.slug,
-    advisory: v.advisory ?? '',
+    advisory: v.advisories?.[0] ?? '',
     findingsTable: findingsTable(v.findings),
   };
   const { fm: templateFm, body: template } = parseFrontmatter(loadTemplate(v.kind));
@@ -177,7 +204,7 @@ export function renderVulnsStory(v) {
     update_repo: v.slug,
     update_lockfile: v.lockfile,
   };
-  if (v.advisory) fm.update_advisory = v.advisory;
+  if (v.advisories) fm.update_advisory = v.advisories;
   if (v.plugins) fm.plugins = v.plugins;
   return { fm, body, text: serializeFrontmatter(fm) + body };
 }
@@ -292,6 +319,7 @@ function applyRepo(ctx, repo, report) {
   const open = mine.filter((s) => !closed(s.fm.status));
   const actions = [];
   const taken = new Set();
+  const duplicateOf = new Map();
 
   // A story the operator dropped stays dropped while its findings are the same.
   const droppedFor = (lockfile, rows, matches) =>
@@ -305,14 +333,14 @@ function applyRepo(ctx, repo, report) {
     );
 
   const keep = (want) => {
-    const { kind, lockfile, advisory, title, group } = want;
-    const matches = (s) => (kind === 'fix' ? isScripted(s.fm) : !isScripted(s.fm));
-    const story = open.find(
-      (s) =>
-        s.fm.update_lockfile === lockfile &&
-        matches(s) &&
-        (kind === 'fix' || group.some((f) => sameAdvisory(f, s.fm.update_advisory))),
+    const { kind, lockfile, advisories, title, group } = want;
+    const matches = (s) =>
+      kind === 'fix' ? isScripted(s.fm) : !isScripted(s.fm) && advisoryIds(s.fm).some((id) => advisories.includes(id));
+    // A new alias can join two advisories that had a story each: the first stays.
+    const [story, ...duplicates] = open.filter(
+      (s) => s.fm.update_lockfile === lockfile && !taken.has(s.id) && matches(s),
     );
+    for (const d of duplicates) duplicateOf.set(d.id, story.id);
     const fresh = (storyId) =>
       renderVulnsStory({
         kind,
@@ -321,7 +349,7 @@ function applyRepo(ctx, repo, report) {
         today,
         slug,
         lockfile,
-        advisory,
+        advisories,
         title,
         findings: group,
         plugins: kind === 'fix' ? testPluginsFor(repoName, config) : null,
@@ -329,7 +357,7 @@ function applyRepo(ctx, repo, report) {
 
     if (!story) {
       const rows = rowsOf(fresh('S-0').body);
-      if (droppedFor(lockfile, rows, (s) => matches(s) && (kind === 'fix' || s.fm.update_advisory === advisory))) {
+      if (droppedFor(lockfile, rows, matches)) {
         actions.push({ action: 'unchanged', id: '-', repoName, lockfile, title, why: 'dropped by the operator' });
         return;
       }
@@ -354,6 +382,7 @@ function applyRepo(ctx, repo, report) {
     if (!dryRun) {
       updateSpecFile(config.backlogRoot, story.indexPath, (fm, body) => {
         fm.title = title;
+        if (advisories) fm.update_advisory = advisories;
         const summary = extractSection(next.body, 'Summary') ?? '';
         let b = replaceSection(body, 'Summary', summary.trim()).replace(/^# .*$/m, `# ${story.id} · ${title}`);
         // The last gate saw other findings: the run may try again.
@@ -367,15 +396,16 @@ function applyRepo(ctx, repo, report) {
   for (const [lockfile, group] of fixes) {
     keep({ kind: 'fix', lockfile, group, title: fixTitle(repoName, lockfile, group) });
   }
-  for (const { lockfile, advisory, findings: group } of decides) {
-    keep({ kind: 'decide', lockfile, advisory, group, title: decideTitle(repoName, lockfile, group, advisory) });
+  for (const { lockfile, advisories, findings: group } of decides) {
+    keep({ kind: 'decide', lockfile, advisories, group, title: decideTitle(repoName, lockfile, group, advisories[0]) });
   }
 
   for (const s of open) {
     // Merged, but the run stopped before closing it: the next run marks it done.
     if (taken.has(s.id) || s.fm.commit) continue;
     const lockfile = s.fm.update_lockfile;
-    const why = closeReason(s, findings);
+    const twin = duplicateOf.get(s.id);
+    const why = twin ? `the same advisory as ${twin}` : closeReason(s, findings);
     if (!why) {
       actions.push({ action: 'unchanged', id: s.id, repoName, lockfile, title: s.fm.title, why: 'state unknown' });
       continue;

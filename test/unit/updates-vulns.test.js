@@ -121,12 +121,50 @@ test('groupFindings: ready and decide at fail_on act; every other state, and bel
   );
 });
 
+test('groupFindings-shared-alias: one advisory is one decide group, however its ids connect', () => {
+  const decide = (package_, ids) => finding({ package: package_, ids, fix_state: 'decide', fixed: [] });
+  const cases = [
+    ['same primary', [decide('a', ['GHSA-A', 'CVE-X']), decide('b', ['GHSA-A'])]],
+    ['different primaries, shared alias', [decide('a', ['GHSA-A', 'CVE-X']), decide('b', ['GHSA-B', 'CVE-X'])]],
+    ['alias order', [decide('a', ['CVE-X', 'GHSA-A']), decide('b', ['GHSA-A', 'CVE-X'])]],
+    [
+      'chain, the link last',
+      [decide('a', ['GHSA-A']), decide('b', ['GHSA-B']), decide('c', ['GHSA-A', 'GHSA-C']), decide('d', ['GHSA-C', 'GHSA-B'])],
+    ],
+  ];
+  for (const [name, findings] of cases) {
+    const { decides } = groupFindings(findings);
+    assert.equal(decides.length, 1, name);
+    assert.equal(decides[0].findings.length, findings.length, name);
+    assert.deepEqual(decides[0].advisories, [...new Set(findings.flatMap((f) => f.ids))].sort(), name);
+  }
+  const apart = groupFindings([
+    decide('a', ['GHSA-A']),
+    decide('b', ['GHSA-B']),
+    { ...decide('a', ['GHSA-A']), lockfile: 'mcp/package-lock.json' },
+  ]);
+  assert.equal(apart.decides.length, 3, 'other advisories and other lock files stay apart');
+});
+
 test('fixTitle fits a commit header, and always names one package', () => {
   const many = Array.from({ length: 30 }, (_, i) => finding({ package: `p${String(i).padStart(2, '0')}` }));
   const title = fixTitle('tools', 'mcp/package-lock.json', many);
   assert.ok(title.length <= 84, title);
   assert.match(title, /^vulns: tools mcp\/package-lock\.json: p00@4\.17\.20 p01@4\.17\.20 .* …$/);
   assert.equal(fixTitle('bl', 'a', [finding()]), 'vulns: bl a: lodash@4.17.20');
+});
+
+test('closeReason reads a decide story by every id it holds, and through a chain', () => {
+  const fm = { update_lockfile: 'package-lock.json', update_advisory: ['CVE-X', 'GHSA-A'] };
+  const unread = { fix_state: 'unknown' };
+  assert.equal(closeReason({ fm }, [finding({ ids: ['GHSA-B', 'CVE-X'], ...unread })]), null, 'the other id');
+  assert.equal(closeReason({ fm }, [finding({ ids: ['CVE-X', 'GHSA-A'], ...unread })]), null, 'another order');
+  assert.equal(
+    closeReason({ fm }, [finding({ ids: ['GHSA-A', 'GHSA-M'], ...unread }), finding({ ids: ['GHSA-M'], fix_state: 'young' })]),
+    'a fix appeared',
+    'through a chain',
+  );
+  assert.equal(closeReason({ fm }, [finding({ ids: ['GHSA-OTHER'], ...unread })]), 'the finding is gone');
 });
 
 test('closeReason: gone closes, a fix closes a decide, an unread state leaves it', () => {
@@ -157,7 +195,7 @@ test('both templates render stories bl validate accepts', () => {
       today: '2026-11-01',
       slug: 'roost-cc/tools',
       lockfile: 'package-lock.json',
-      advisory: kind === 'decide' ? 'GHSA-bbbb' : undefined,
+      advisories: kind === 'decide' ? ['GHSA-bbbb'] : undefined,
       title: 'vulns: tools package-lock.json: lodash@4.17.20',
       findings: [finding()],
     });
@@ -188,7 +226,7 @@ test('a lock file with ready findings gets one scripted story, in the home compo
     assert.equal(s.fm.update_lockfile, 'package-lock.json');
     assert.equal(s.fm.update_branch, undefined);
     const summary = extractSection(s.body, 'Summary');
-    assert.match(summary, /\| lodash +\| 4\.17\.20 \| GHSA-aaaa, CVE-2026-1 \| high +\| 4\.17\.21 \|/);
+    assert.match(summary, /\| lodash +\| 4\.17\.20 \| CVE-2026-1, GHSA-aaaa \| high +\| 4\.17\.21 \|/);
     assert.match(lines.join('\n'), /created +S-1 +tools package-lock\.json/);
   } finally {
     t.cleanup();
@@ -249,7 +287,7 @@ test('a decide finding gets one agent story with both outcomes, and no plugin', 
     await vulns(t, { tools: report([finding({ fix_state: 'decide', fixed: [], ids: ['GHSA-bbbb'] })]) });
     const [s] = [...stories(t).values()];
     assert.equal(s.fm.title, 'vulns: decide tools package-lock.json: lodash@4.17.20 GHSA-bbbb');
-    assert.equal(s.fm.update_advisory, 'GHSA-bbbb');
+    assert.deepEqual(s.fm.update_advisory, ['GHSA-bbbb']);
     assert.equal(s.fm['plugins-implement'], undefined);
     assert.equal(s.fm.plugins, undefined);
     const outcomes = extractSection(s.body, 'Outcomes');
@@ -257,6 +295,64 @@ test('a decide finding gets one agent story with both outcomes, and no plugin', 
     assert.match(outcomes, /\*\*Stronger evaluation:\*\*.*reachable/s);
     assert.match(outcomes, /`bl task`/);
     assert.match(outcomes, /\[\[IgnoredVulns\]\].*expiry/s);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('later scans keep one decide story by the full advisory, and two joined advisories become one', async () => {
+  const t = await backlog();
+  try {
+    const decide = (over) => finding({ fix_state: 'decide', fixed: [], ...over });
+    await vulns(t, {
+      tools: report([decide({ ids: ['GHSA-A', 'CVE-X'] }), decide({ package: 'beta', ids: ['GHSA-B', 'CVE-X'] })]),
+    });
+    assert.equal(stories(t).size, 1);
+    assert.deepEqual(stories(t).get('S-1').fm.update_advisory, ['CVE-X', 'GHSA-A', 'GHSA-B']);
+
+    // The same advisory, its ids in another order: nothing happens.
+    const { res: reordered } = await vulns(t, {
+      tools: report([decide({ ids: ['CVE-X', 'GHSA-A'] }), decide({ package: 'beta', ids: ['CVE-X', 'GHSA-B'] })]),
+    });
+    assert.deepEqual(reordered.actions.map((a) => a.action), ['unchanged']);
+
+    // The story's first id is gone: another of its ids keeps it.
+    await vulns(t, { tools: report([decide({ ids: ['GHSA-B'] })]) });
+    assert.equal(stories(t).size, 1);
+    assert.deepEqual(stories(t).get('S-1').fm.update_advisory, ['GHSA-B']);
+
+    // A second advisory, then an alias that joins the two.
+    const other = decide({ package: 'gamma', ids: ['GHSA-C'] });
+    await vulns(t, { tools: report([decide({ ids: ['GHSA-B'] }), other]) });
+    assert.equal(stories(t).size, 2);
+    await vulns(t, { tools: report([decide({ ids: ['GHSA-B', 'CVE-Y'] }), { ...other, ids: ['GHSA-C', 'CVE-Y'] }]) });
+    const all = stories(t);
+    assert.deepEqual(all.get('S-1').fm.update_advisory, ['CVE-Y', 'GHSA-B', 'GHSA-C']);
+    assert.equal(all.get('S-2').fm.status, 'superseded');
+    assert.match(all.get('S-2').body, /the same advisory as S-1/);
+
+    // One story's ids split into two advisories: each gets its own story, once.
+    const split = report([decide({ ids: ['GHSA-B'] }), { ...other, ids: ['GHSA-C'] }]);
+    await vulns(t, { tools: split });
+    const { res } = await vulns(t, { tools: split });
+    assert.deepEqual(res.actions.map((a) => a.action), ['unchanged', 'unchanged']);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('a dropped decide story stays dropped when its ids come back in another order', async () => {
+  const t = await backlog();
+  try {
+    const decide = (ids) => finding({ fix_state: 'decide', fixed: [], ids });
+    await vulns(t, { tools: report([decide(['GHSA-A', 'CVE-X'])]) });
+    editStory(stories(t).get('S-1').indexPath, (fm) => {
+      fm.status = 'superseded';
+      fm.update_dropped = '2026-11-01';
+    });
+    const { res } = await vulns(t, { tools: report([decide(['CVE-X', 'GHSA-A'])]) });
+    assert.equal(stories(t).size, 1);
+    assert.equal(res.actions[0].why, 'dropped by the operator');
   } finally {
     t.cleanup();
   }

@@ -462,7 +462,7 @@ positional `[commit-hash]` and `--commit` are mutually exclusive.
 | `update_head`       | no       | commit sha                                            | The branch head the last sync saw; `bl updates run` skips a known-red head      |
 | `update_security`   | no       | `true`, else absent                                   | A vulnerability-alert update; `bl updates run` takes it first                   |
 | `update_lockfile`   | no       | path in the repo, e.g. `mcp/package-lock.json`        | Written by `bl updates vulns`; with `update_repo` the key of a vulns story      |
-| `update_advisory`   | no       | advisory id                                           | Written by `bl updates vulns` on a `decide` story; any id of the finding matches |
+| `update_advisory`   | no       | advisory ids (list)                                   | Written by `bl updates vulns` on a `decide` story, sorted; any id matches, directly or through a chain of aliases |
 | `update_dropped`    | no       | date                                                  | The operator dropped this vulns story: the same findings file no new one        |
 
 ## Component Frontmatter
