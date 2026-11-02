@@ -35,6 +35,7 @@ import { CHANGE_STATUSES, RUN_STATE_KEYS, listChanges, readChange, unitIdOfDir }
 import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { TASKS_DIR, TASK_FILE_RE, findTaskFindings, readAllTasks } from './task.js';
+import { implementPluginProblem } from './scripted.js';
 
 // ---------------------------------------------------------------------------
 // Constants (reused by sync.js)
@@ -64,6 +65,8 @@ export const VALID_STORY_KEYS = new Set([
   // A story run (`bl run S-<n>`) writes this, as `bl new` does for features.
   // The branch, PR and review state live in the change document (change.md).
   'review_rounds_max',
+  // A scripted story's opt-in to `bl review` (F-71 D3).
+  'review',
   'tokens_input',
   'tokens_output',
   'tokens_cache_creation',
@@ -941,6 +944,35 @@ export function findFoundByFindings(features, storyMap) {
 }
 
 /**
+ * A scripted story (F-71 D3) names exactly one plugin with an `implement`
+ * command in its repo's plugin registry (`implementPluginProblem`), and
+ * `review` is a boolean, so `review: "yes"` cannot read as absent.
+ *
+ * @param {Iterable<any>} stories story records
+ * @param {any} config
+ * @returns {Finding[]}
+ */
+export function findImplementPluginFindings(stories, config) {
+  const findings = [];
+  for (const s of stories) {
+    const location = s.storyRelPath;
+    const problem = implementPluginProblem(s, configForRepo(config, s.unitRepo).plugins);
+    if (problem) {
+      findings.push({ severity: 'error', code: 'implement-plugin', message: `story ${s.id}: ${problem}`, location });
+    }
+    if (s.review != null && !['true', 'false'].includes(String(s.review))) {
+      findings.push({
+        severity: 'error',
+        code: 'implement-plugin',
+        message: `story ${s.id}: review must be true or false, not ${JSON.stringify(s.review)}`,
+        location,
+      });
+    }
+  }
+  return findings;
+}
+
+/**
  * Warn on active stories whose title reads like a verification step
  * ("Confirm …", "Verify …", "Re-run …"). Verification belongs in the
  * acceptance criteria of the story that made the change. Only backlog and
@@ -1536,6 +1568,7 @@ export function runAll(config, opts = {}) {
 
   const featureLinks = findFeatureFindings(allFeatures, fullMap);
   const foundBy = findFoundByFindings(allFeatures, fullMap);
+  const implementPlugins = findImplementPluginFindings(fullMap.values(), config);
   const verificationTitles = skip.has('verification-only-title') ? [] : findVerificationOnlyTitles(allStories, flow);
   findings.push(
     ...dupes,
@@ -1544,6 +1577,7 @@ export function runAll(config, opts = {}) {
     ...asymmetrics,
     ...featureLinks,
     ...foundBy,
+    ...implementPlugins,
     ...verificationTitles,
     ...componentFindings,
     ...valueAxisFindings,

@@ -30,7 +30,7 @@ import {
   warn,
 } from './config.js';
 import { readAllStories, findMaxStoryNum, homeComponent, storiesRoot } from './story.js';
-import { extractSection, replaceSection } from './feature.js';
+import { checkCriteria, extractSection, replaceSection } from './feature.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { acquireRunLock, runLockPath } from './feature-run.js';
 import { releasePidLock } from './pid-lock.js';
@@ -340,24 +340,6 @@ export function lookupPr(config, repoPath, branchName) {
 export function testPluginsFor(repoName, config) {
   const list = config.repos?.[repoName]?.updateTests ?? [];
   return list.length ? [...list] : null;
-}
-
-/**
- * Check the acceptance boxes a merge satisfies: every one, except "Remote
- * branch deleted" when the deletion failed.
- */
-export function checkCriteria(body, { branchDeleted = true } = {}) {
-  const section = extractSection(body, 'Acceptance Criteria');
-  if (section == null) return body;
-  const checked = section
-    .split('\n')
-    .map((l) => {
-      if (!/^\s*[-*+]\s+\[ \]/.test(l)) return l;
-      if (!branchDeleted && /remote branch deleted/i.test(l)) return l;
-      return l.replace('[ ]', '[x]');
-    })
-    .join('\n');
-  return replaceSection(body, 'Acceptance Criteria', checked.replace(/^\n+|\n+$/g, ''));
 }
 
 /**

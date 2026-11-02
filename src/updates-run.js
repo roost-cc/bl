@@ -46,7 +46,7 @@ import {
   renameTmuxWindow,
 } from './config.js';
 import { removeUnitDirIfEmpty } from './story.js';
-import { extractSection, replaceSection, sectionHasContent } from './feature.js';
+import { checkCriteria, extractSection, replaceSection, sectionHasContent } from './feature.js';
 import { RUN_DIR, ensureRunDir, acquireRunLock, runLockPath, shellMerged } from './feature-run.js';
 import { releasePidLock } from './pid-lock.js';
 import { updateSpecFile } from './spec-file.js';
@@ -57,7 +57,6 @@ import {
   CONFLICT_NOTE,
   DEFAULT_MAX_MERGES,
   RUN_LOCK_ID,
-  checkCriteria,
   foreignCheckout,
   readUpdateStories,
   repoForSlug,
@@ -65,13 +64,13 @@ import {
   tableRows,
 } from './updates.js';
 import { loadFlow, statusWords } from './flow.js';
+import { GATE_TAIL_LINES, fenced, interpolateCommand, tail } from './scripted.js';
 
-// `DEFAULT_MAX_MERGES`, `CONFLICT_NOTE`, `RUN_LOCK_ID` and `checkCriteria`
-// live in updates.js, whose CLI help and sync use them without importing
-// this module; re-exported for the run's callers.
+// `DEFAULT_MAX_MERGES`, `CONFLICT_NOTE` and `RUN_LOCK_ID` live in updates.js,
+// whose CLI help and sync use them without importing this module, and
+// `checkCriteria` in feature.js; re-exported for the run's callers.
 export { DEFAULT_MAX_MERGES, CONFLICT_NOTE, RUN_LOCK_ID, checkCriteria };
-/** Lines of a gate's output kept under `## Gate result`. */
-export const GATE_TAIL_LINES = 30;
+export { GATE_TAIL_LINES, tail };
 /** The report directory under the backlog root, next to `vulns/`. */
 export const REPORT_DIR = 'updates';
 
@@ -155,22 +154,6 @@ export function parseMaxMerges(raw) {
   if (raw == null) return DEFAULT_MAX_MERGES;
   const s = String(raw).trim();
   return raw !== true && /^\d+$/.test(s) && parseInt(s, 10) >= 1 ? parseInt(s, 10) : NaN;
-}
-
-/** The last `n` lines of `text`, trailing blanks dropped. */
-export function tail(text, n = GATE_TAIL_LINES) {
-  const lines = String(text ?? '')
-    .replace(/\s+$/, '')
-    .split('\n');
-  return lines.slice(Math.max(0, lines.length - n)).join('\n');
-}
-
-/** A fence longer than any backtick run in `text`, so the text cannot close it. */
-function fenced(text, lang = 'text') {
-  const s = String(text ?? '');
-  const longest = Math.max(2, ...(s.match(/`+/g) ?? []).map((m) => m.length));
-  const f = '`'.repeat(longest + 1);
-  return `${f}${lang}\n${s}\n${f}`;
 }
 
 /**
@@ -305,27 +288,6 @@ export function gateSteps({ config, ciBin }, s, worktreePath) {
     repoPath: s.repo?.repoPath,
     repoName: s.repo?.name ?? s.fm.update_repo,
   };
-  /**
-   * The command with `vars` filled in, or the error an unresolved one is.
-   * One pass over every `{{…}}`, values inserted literally (a function
-   * replacement reads no `$&` in a path), so a value is never rescanned and
-   * any placeholder that is not a set variable (`{{repo.name}}`, `{{9}}`) is
-   * an error.
-   */
-  const interpolate = (kind, name, command) => {
-    let left = null;
-    const cmd = String(command ?? '').replace(/\{\{[^{}]*\}\}/g, (m) => {
-      const k = m.slice(2, -2);
-      const v = Object.hasOwn(vars, k) ? vars[k] : null;
-      if (v != null) return String(v);
-      left ??= m;
-      return m;
-    });
-    if (!left) return { cmd };
-    return {
-      error: `unresolved placeholder ${left} in ${kind} plugin ${name}: \`${cmd}\``,
-    };
-  };
   const unknownError = (kind, unknown) =>
     `unknown ${kind} plugin${unknown.length === 1 ? '' : 's'}: ${unknown.join(', ')} (not defined in backlog.json plugins)`;
 
@@ -340,7 +302,7 @@ export function gateSteps({ config, ciBin }, s, worktreePath) {
     notes.push(`no bootstrap plugin for ${vars.repoName}: stage skipped`);
   }
   for (const { name, command } of boot.plugins) {
-    const r = interpolate('bootstrap', name, command);
+    const r = interpolateCommand(vars, 'bootstrap', name, command);
     if (r.error) return { steps, notes, error: r.error };
     steps.push({ name: `bootstrap plugin ${name}`, cmd: r.cmd });
   }
@@ -362,7 +324,7 @@ export function gateSteps({ config, ciBin }, s, worktreePath) {
     return { steps, notes, error: unknownError('test', unknown) };
   }
   for (const { name, command } of plugins) {
-    const r = interpolate('test', name, command);
+    const r = interpolateCommand(vars, 'test', name, command);
     if (r.error) return { steps, notes, error: r.error };
     steps.push({ name: `test plugin ${name}`, cmd: r.cmd });
   }

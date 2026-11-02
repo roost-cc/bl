@@ -49,6 +49,16 @@ import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { openUnitChange, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
 import { loadFlow } from './flow.js';
+import { acquireLock, releaseLock } from './lock.js';
+import { syncAndCommit } from './sync.js';
+import {
+  isScripted,
+  recordScriptedRun,
+  runImplementPlugin,
+  scriptedEscalation,
+  scriptedSummary,
+  writeStoryEscalation,
+} from './scripted.js';
 
 export function idNum(id) {
   return parseInt(String(id).replace(/\D/g, ''), 10) || 0;
@@ -367,8 +377,66 @@ export function prepareStoryRun(parsed, found, config, { unit = storyUnit(found,
   };
 }
 
+/**
+ * `bl implement` of a scripted story (F-71 D3): its command in the worktree in
+ * place of a session, recorded on the story and committed to the backlog.
+ * `runner` needs `shell`.
+ *
+ * @returns {Promise<number>} the exit status
+ */
+export async function implementScripted(parsed, found, config, prep, runner) {
+  const { fm } = parseFrontmatter(readFileSync(prep.indexPath, 'utf8'));
+  const repo = prep.promptVars.primaryRepo;
+  const session = featureSessionVars(storyUnit(found, config));
+  const result = runImplementPlugin({
+    id: parsed.id,
+    title: prep.title,
+    fm,
+    plugins: config.plugins,
+    vars: {
+      ...session,
+      storyId: parsed.id,
+      worktreePath: prep.effectiveWorktreePath,
+      branchName: prep.branchName,
+      repoPath: config.reposByName[repo],
+      repoName: repo,
+      roostDir: config.roostDir,
+      backlogDir: config.backlogRoot,
+    },
+    worktreePath: prep.effectiveWorktreePath,
+    runner,
+  });
+  const summary = scriptedSummary(parsed.id, result);
+  await acquireLock(config.backlogRoot);
+  try {
+    recordScriptedRun({
+      backlogRoot: config.backlogRoot,
+      indexPath: prep.indexPath,
+      changePath: prep.promptVars.changeAbsPath,
+      id: parsed.id,
+      repo,
+      date: new Date().toISOString().slice(0, 10),
+      result,
+    });
+    if (result.kind === 'failed') {
+      const { reason, details } = scriptedEscalation(parsed.id, result, `bl implement ${parsed.id}`);
+      writeStoryEscalation(config.backlogRoot, prep.indexPath, `${reason}\n\n${details}`);
+    }
+    await syncAndCommit(config, { message: `chore: ${summary.split('\n')[0].slice(0, 120)}`, storyIds: [parsed.id] });
+  } finally {
+    releaseLock(config.backlogRoot);
+  }
+  info(summary);
+  if (result.kind === 'failed') {
+    console.error(`See ## Escalation in ${prep.promptVars.storyRelPath}.`);
+    return 1;
+  }
+  if (result.kind === 'changed') info(`\nNext: bl run ${parsed.id}: the test gate, the push and the PR.`);
+  return 0;
+}
+
 /** Single-story interactive workon: `bl implement <story>`. */
-function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
+async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   const found = findStoryDir(parsed, baseConfig);
   if (!found) {
     console.error(`Story ${parsed.id} not found in backlog`);
@@ -388,6 +456,11 @@ function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
         ` bl review if you actually need a feedback cycle.`,
     );
     process.exit(1);
+  }
+
+  if (!prep.reviewPending && isScripted(parseFrontmatter(readFileSync(prep.indexPath, 'utf8')).fm)) {
+    const { defaultRunner } = await import('./feature-run.js');
+    process.exit(await implementScripted(parsed, found, config, prep, defaultRunner()));
   }
 
   const sessionPrompt = loadPrompt(prep.promptName, prep.promptVars, {
@@ -449,8 +522,9 @@ Options:
   --help               Show this help
 
 Creates/resumes the story's worktree in its repo (its component's) and
-launches an interactive agent session. Several targets (bl implement S-1 S-2)
-open one tmux window each.`);
+launches an interactive agent session. A scripted story (plugins-implement)
+runs its command there instead and commits the result; no agent starts.
+Several targets (bl implement S-1 S-2) open one tmux window each.`);
     process.exit(0);
   }
   refuseStoryRepo('implement', args);

@@ -1,0 +1,538 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
+import {
+  orderStoriesByDeps,
+  extractSection,
+  findFeature,
+  normalizeFeatureId,
+  resolveFeatureStories,
+} from '../../src/feature.js';
+import { runFeature, shellMerged } from '../../src/feature-run.js';
+import {
+  implementPluginProblem,
+  interpolateCommand,
+  isScripted,
+  reviewSkipped,
+  runImplementPlugin,
+  scriptedEscalation,
+  scriptedGateEntry,
+} from '../../src/scripted.js';
+import { readAllStories } from '../../src/story.js';
+import { storyAsOrdered, storyUnit } from '../../src/unit.js';
+import { findImplementPluginFindings } from '../../src/validate.js';
+import { implementScripted } from '../../src/workon.js';
+import { mergeGates } from '../../src/merge-gates.js';
+import { git, GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { runBl } from '../helpers/run-bl.js';
+
+const AC = '## Acceptance Criteria\n\n- [ ] the lock is fresh\n';
+const PLUGINS = { relock: { implement: 'relock {{storyId}}' }, other: { test: 'npm test' } };
+const FM = { 'plugins-implement': ['relock'] };
+
+/** A real git worktree with one commit. */
+function repo() {
+  const dir = mkTempDir('bl-scripted-');
+  git(dir, 'init', '-q', '-b', 'main');
+  writeFileSync(join(dir, 'lock'), 'old\n');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-q', '-m', 'base');
+  return dir;
+}
+
+/** A runner over the real shell, git's identity set. */
+const realRunner = () => {
+  const saved = {};
+  for (const [k, v] of Object.entries(GIT_ENV)) {
+    saved[k] = process.env[k];
+    process.env[k] = v;
+  }
+  return { shell: (cmd, cwd) => shellMerged(cmd, cwd) };
+};
+
+function run(worktreePath, command, { title = 'Relock', fm = FM, vars = { storyId: 'S-1' } } = {}) {
+  return runImplementPlugin({
+    id: 'S-1',
+    title,
+    fm,
+    plugins: { relock: { implement: command } },
+    vars,
+    worktreePath,
+    runner: realRunner(),
+  });
+}
+
+test('exit 0 with changes commits them as chore: <title> (<id>), untracked files included', () => {
+  const dir = repo();
+  const r = run(dir, 'echo new > lock; echo added > extra; echo did {{storyId}}');
+  assert.equal(r.kind, 'changed');
+  assert.equal(r.exit, 0);
+  assert.equal(r.command, 'echo new > lock; echo added > extra; echo did S-1');
+  assert.equal(r.tail, 'did S-1');
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: Relock (S-1)');
+  assert.equal(git(dir, 'rev-parse', '--short', 'HEAD'), r.sha);
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+  assert.equal(git(dir, 'show', '--format=', '--name-only', 'HEAD'), 'extra\nlock');
+});
+
+test('a title with a quote reaches the commit message intact', () => {
+  const dir = repo();
+  run(dir, 'echo new > lock', { title: "Don't `run` $this" });
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), "chore: Don't `run` $this (S-1)");
+});
+
+test('exit 0 with no changes commits nothing', () => {
+  const dir = repo();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const r = run(dir, 'true');
+  assert.equal(r.kind, 'unchanged');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+});
+
+test('a non-zero exit commits nothing and leaves the worktree as the command left it', () => {
+  const dir = repo();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const r = run(dir, 'echo half > lock; echo broke; exit 3');
+  assert.equal(r.kind, 'failed');
+  assert.equal(r.exit, 3);
+  assert.equal(r.tail, 'broke');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  assert.equal(readFileSync(join(dir, 'lock'), 'utf8'), 'half\n');
+});
+
+test('a dirty worktree is refused before the command runs', () => {
+  const dir = repo();
+  writeFileSync(join(dir, 'lock'), 'dirty\n');
+  const r = run(dir, 'echo ran > marker');
+  assert.equal(r.kind, 'failed');
+  assert.equal(r.exit, undefined);
+  assert.match(r.error, /uncommitted changes/);
+  assert.equal(git(dir, 'status', '--porcelain', 'marker'), '');
+});
+
+test('an unresolved placeholder is an error and the command never runs', () => {
+  const calls = [];
+  const r = runImplementPlugin({
+    id: 'S-1',
+    title: 'T',
+    fm: FM,
+    plugins: { relock: { implement: 'relock {{nope}}' } },
+    vars: {},
+    worktreePath: '/x',
+    runner: { shell: (c) => (calls.push(c), { status: 0, output: '' }) },
+  });
+  assert.equal(r.kind, 'failed');
+  assert.match(r.error, /unresolved placeholder \{\{nope\}\} in implement plugin relock/);
+  assert.deepEqual(calls, []);
+});
+
+test('interpolateCommand inserts values literally and never rescans them', () => {
+  assert.deepEqual(interpolateCommand({ a: '$& {{b}}', b: 'x' }, 'test', 'p', '{{a}} {{b}}'), { cmd: '$& {{b}} x' });
+  assert.match(interpolateCommand({}, 'test', 'p', '{{toString}}').error, /unresolved/);
+});
+
+test('implementPluginProblem: one defined plugin with an implement command, nothing else', () => {
+  assert.equal(implementPluginProblem({}, PLUGINS), null);
+  assert.equal(implementPluginProblem(FM, PLUGINS), null);
+  assert.match(implementPluginProblem({ 'plugins-implement': ['nope'] }, PLUGINS), /unknown plugin nope/);
+  assert.match(implementPluginProblem({ 'plugins-implement': ['other'] }, PLUGINS), /no implement command/);
+  assert.match(
+    implementPluginProblem({ 'plugins-implement': ['relock', 'other'] }, PLUGINS),
+    /exactly one plugin, not 2/,
+  );
+  assert.match(implementPluginProblem({ 'plugins-implement': [] }, PLUGINS), /exactly one plugin, not 0/);
+  assert.match(implementPluginProblem({ 'plugins-implement': 'relock' }, PLUGINS), /plugins-implement: /);
+});
+
+test('reviewSkipped: a scripted story unless review: true', () => {
+  assert.equal(isScripted({}), false);
+  assert.equal(reviewSkipped({}), false);
+  assert.equal(reviewSkipped(FM), true);
+  assert.equal(reviewSkipped({ ...FM, review: true }), false);
+  assert.equal(reviewSkipped({ ...FM, review: 'true' }), false, 'parseFrontmatter gives scalars as strings');
+});
+
+test('the escalation has the _escalation.md shape and names command, exit code and tail', () => {
+  const { reason, details } = scriptedEscalation(
+    'S-1',
+    { kind: 'failed', plugin: 'relock', command: 'relock S-1', exit: 3, tail: 'broke' },
+    'bl run S-1 --resume',
+  );
+  assert.match(reason, /exited 3/);
+  for (const h of [
+    'The rule at stake',
+    'How it works',
+    'The problem',
+    "Why the agents can't fix it",
+    'The decision',
+    'Details',
+  ]) {
+    assert.match(details, new RegExp(`\\*\\*${h}:\\*\\*`));
+  }
+  assert.match(details, /`relock S-1`/);
+  assert.match(details, /Exit code: 3/);
+  assert.match(details, /broke/);
+  assert.match(details, /bl run S-1 --resume/);
+});
+
+test('the gate entry holds the command and its last lines', () => {
+  const entry = scriptedGateEntry('2026-11-01', 'demo', 'S-1', {
+    kind: 'changed',
+    command: 'relock',
+    tail: 'one\ntwo',
+  });
+  assert.match(entry, /^- 2026-11-01 · demo · `relock` · pass \(scripted S-1\)/);
+  assert.match(entry, /  one\n  two\n/);
+});
+
+test('validate fails an invalid plugins-implement and a review that is not a boolean', () => {
+  const config = { plugins: PLUGINS, repos: {} };
+  const story = (extra) => ({ id: 'S-1', storyRelPath: 's.md', ...extra });
+  assert.deepEqual(findImplementPluginFindings([story(FM), story({})], config), []);
+  const codes = findImplementPluginFindings(
+    [story({ 'plugins-implement': ['nope'] }), story({ review: 'yes' })],
+    config,
+  );
+  assert.deepEqual(
+    codes.map((f) => f.code),
+    ['implement-plugin', 'implement-plugin'],
+  );
+  assert.match(codes[1].message, /review must be true or false/);
+});
+
+// ---------------------------------------------------------------------------
+// The loop
+// ---------------------------------------------------------------------------
+
+function setFm(path, extra) {
+  const { fm, body } = parseFrontmatter(readFileSync(path, 'utf8'));
+  writeFileSync(path, serializeFrontmatter({ ...fm, ...extra }) + body);
+}
+
+/** A backlog with S-1 (scripted) in F-1 and S-2 standalone-scripted, on `demo-repo`. */
+function backlog(storyFm = FM, implement = 'relock {{storyId}} {{repoName}} {{sessionNum}} {{worktreePath}}') {
+  const { dir } = mkTempBacklog({
+    repos: ['../demo-repo'],
+    components: [{ id: 'C00', title: 'Core', dirSuffix: 'core', repo: 'demo-repo' }],
+    stories: [
+      { id: 'S-1', component: 'C00', title: 'Relock', dirSuffix: 'relock', points: 1, feature: 'F-1', body: AC },
+      { id: 'S-2', component: 'C00', title: 'Agent', dirSuffix: 'agent', points: 1, feature: 'F-1', body: AC },
+      { id: 'S-3', component: 'C00', title: 'Solo', dirSuffix: 'solo', points: 1, body: AC },
+    ],
+    features: [
+      { id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'running', stories: ['S-1', 'S-2'], branch: 'f1' },
+    ],
+    config: { plugins: { relock: { implement } } },
+  });
+  const config = loadConfig({ backlogRoot: dir });
+  for (const s of readAllStories(config)) if (s.id !== 'S-2') setFm(s.indexPath, storyFm);
+  return { dir, config: loadConfig({ backlogRoot: dir }) };
+}
+
+/**
+ * A runner whose shell plays the worktree: `git status` is clean until the
+ * plugin ran, then `dirty` says what it shows. `exit` is the plugin's status.
+ */
+function loopRunner({ exit = 0, dirty = ' M lock\n', sessions = {}, testExits = [] } = {}) {
+  const calls = [];
+  let ran = false;
+  return {
+    calls,
+    session(o) {
+      calls.push({ type: 'session', prompt: o.promptName });
+      if (sessions[o.promptName]) sessions[o.promptName](o);
+      return { ok: true, output: '', isError: false, usage: null };
+    },
+    shell(cmd, cwd) {
+      calls.push({ type: 'shell', cmd, cwd });
+      if (cmd.startsWith('relock')) {
+        ran = true;
+        return { status: exit, output: exit ? 'it broke\n' : 'relocked\n' };
+      }
+      if (cmd === 'git status --porcelain') return { status: 0, output: ran ? dirty : '' };
+      if (cmd.startsWith('git commit')) ran = false;
+      if (cmd.startsWith('git rev-parse')) return { status: 0, output: 'abc1234\n' };
+      if (cmd.startsWith('git rev-list --count')) return { status: 0, output: '0\n' };
+      if (cmd === 'npm test') return { status: testExits.shift() ?? 0, output: 'ok\n' };
+      return { status: 0, output: '' };
+    },
+    forge() {
+      return { configured: true, status: 0, stdout: 'https://github.com/x/y/pull/7\n' };
+    },
+    testPlugins() {
+      return { plugins: [{ name: 'node', command: 'npm test' }], unknown: [] };
+    },
+    notify() {},
+    log() {},
+    now: () => new Date('2026-11-01T12:00:00Z'),
+    sleep() {},
+  };
+}
+
+function storyPrep(config, id, worktreePath) {
+  const record = readAllStories(config).find((s) => s.id === id);
+  const unit = storyUnit(record, config);
+  return {
+    unit,
+    prep: {
+      cfg: config,
+      parsed: { id, num: id.slice(2) },
+      worktreePath,
+      branchName: 's3-solo',
+      isNewWorktree: false,
+      ordered: [storyAsOrdered(unit)],
+      baseVars: {
+        featureId: id,
+        storyId: id,
+        title: unit.title,
+        sessionNum: '3',
+        sessionId: 's3',
+        branchName: 's3-solo',
+      },
+      reviewPending: false,
+      targetRepoName: record.unitRepo,
+    },
+  };
+}
+
+const agentCalls = (runner) => runner.calls.filter((c) => c.type === 'session');
+const shellCmds = (runner) => runner.calls.filter((c) => c.type === 'shell').map((c) => c.cmd);
+const textOf = (p) => readFileSync(p, 'utf8');
+
+test('a story run: command, commit, gate, push, PR, clean, and the agent provider is never called', async () => {
+  const { config } = backlog();
+  const wt = mkTempDir('bl-wt-');
+  const { unit, prep } = storyPrep(config, 'S-3', wt);
+  const runner = loopRunner();
+  const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+  assert.equal(state.status, 'clean', state.lastError);
+  assert.deepEqual(agentCalls(runner), []);
+  const cmds = shellCmds(runner);
+  assert.ok(cmds.includes(`relock S-3 demo-repo 3 ${wt}`), cmds.join('\n'));
+  assert.ok(cmds.some((c) => c.startsWith("git commit -q -m 'chore: Solo (S-3)'")));
+  assert.ok(cmds.indexOf('npm test') > cmds.findIndex((c) => c.startsWith('git commit')));
+  assert.ok(cmds.some((c) => c.startsWith('git push')));
+  const h = state.history.find((e) => e.scripted);
+  assert.equal(h.scripted.command, `relock S-3 demo-repo 3 ${wt}`);
+  assert.equal(h.scripted.tail, 'relocked');
+  assert.ok(state.history.some((e) => e.step === 'review' && /skipped: scripted/.test(e.note)));
+  const change = textOf(join(dirname(unit.indexPath), 'change.md'));
+  assert.match(extractSection(change, 'Gate'), /· pass \(scripted S-3\)[\s\S]*relocked/);
+  const { fm, body } = parseFrontmatter(textOf(unit.indexPath));
+  assert.equal(fm.status, 'in_progress');
+  assert.match(body, /- \[x\] the lock is fresh/);
+});
+
+test('review: true opts in to the self-review and the review', async () => {
+  const { config } = backlog({ ...FM, review: true });
+  const { unit, prep } = storyPrep(config, 'S-3', mkTempDir('bl-wt-'));
+  const runner = loopRunner({
+    sessions: {
+      'review-verify': () => {
+        throw new Error('reached review');
+      },
+    },
+  });
+  await assert.rejects(runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } }), /reached review/);
+  assert.ok(agentCalls(runner).some((c) => c.prompt === 'feature-self-review'));
+  assert.ok(!agentCalls(runner).some((c) => c.prompt === 'story-run'));
+});
+
+test('exit 0 with no change: the story is done with a note and nothing is pushed', async () => {
+  const { config } = backlog();
+  const { unit, prep } = storyPrep(config, 'S-3', mkTempDir('bl-wt-'));
+  const runner = loopRunner({ dirty: '' });
+  const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+  assert.equal(state.status, 'no-change');
+  assert.deepEqual(agentCalls(runner), []);
+  const cmds = shellCmds(runner);
+  assert.ok(!cmds.some((c) => c.startsWith('git push') || c.startsWith("git commit -q -m 'chore: Solo")));
+  assert.ok(!cmds.includes('npm test'));
+  const { fm, body } = parseFrontmatter(textOf(unit.indexPath));
+  assert.equal(fm.status, 'done');
+  assert.equal(fm.completed, '2026-11-01');
+  assert.equal(fm.commit, 'abc1234');
+  assert.match(extractSection(body, 'Notes'), /no change needed/);
+});
+
+test('a non-zero exit stops with an escalation and launches no agent', async () => {
+  const { config } = backlog();
+  const { unit, prep } = storyPrep(config, 'S-3', mkTempDir('bl-wt-'));
+  const runner = loopRunner({ exit: 3 });
+  const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+  assert.equal(state.status, 'escalated');
+  assert.deepEqual(agentCalls(runner), []);
+  assert.ok(!shellCmds(runner).includes('npm test'));
+  const { fm, body } = parseFrontmatter(textOf(unit.indexPath));
+  assert.notEqual(fm.status, 'in_progress');
+  const esc = extractSection(body, 'Escalation');
+  assert.match(esc, /exited 3/);
+  assert.match(esc, /it broke/);
+  assert.match(esc, /\*\*The decision:\*\*/);
+  assert.match(esc, /bl run S-3 --resume/);
+});
+
+test('in a feature the command runs in its repo, the agent takes the next story, and review runs', async () => {
+  const { config } = backlog();
+  const feature = findFeature(normalizeFeatureId('F-1'), config);
+  const ordered = orderStoriesByDeps(resolveFeatureStories(feature, config, readAllStories(config)).stories);
+  const wt = mkTempDir('bl-wt-');
+  const prep = {
+    cfg: config,
+    parsed: { id: 'F-1', num: '1' },
+    worktreePath: wt,
+    branchName: 'f1',
+    isNewWorktree: false,
+    ordered,
+    baseVars: { featureId: 'F-1', storyId: 'F-1', title: 'Feat', branchName: 'f1', sessionNum: '1', sessionId: 's1' },
+    reviewPending: false,
+    targetRepoName: ordered[0].unitRepo,
+  };
+  const runner = loopRunner({
+    sessions: {
+      'feature-story': (o) => {
+        setFm(o.vars.storyAbsPath, { status: 'in_progress' });
+        writeFileSync(o.vars.storyAbsPath, textOf(o.vars.storyAbsPath).replaceAll('- [ ]', '- [x]'));
+      },
+      'review-verify': () => {
+        throw new Error('reached review');
+      },
+    },
+  });
+  await assert.rejects(runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } }), /reached review/);
+  const prompts = agentCalls(runner).map((c) => c.prompt);
+  assert.equal(prompts.filter((p) => p === 'feature-story').length, 1, 'S-2 only');
+  assert.ok(prompts.includes('feature-self-review'));
+  assert.ok(runner.calls.some((c) => c.type === 'shell' && c.cmd.startsWith('relock S-1') && c.cwd === wt));
+});
+
+test('a scripted story a fix session touched is reviewed: an agent wrote part of it', async () => {
+  const { config } = backlog();
+  const { unit, prep } = storyPrep(config, 'S-3', mkTempDir('bl-wt-'));
+  const runner = loopRunner({
+    testExits: [1, 0],
+    sessions: {
+      'review-verify': () => {
+        throw new Error('reached review');
+      },
+    },
+  });
+  await assert.rejects(runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } }), /reached review/);
+  assert.ok(agentCalls(runner).some((c) => c.prompt === 'feature-fix-tests'));
+});
+
+test('a resumed run does not run a finished scripted story again', async () => {
+  const { config } = backlog();
+  const wt = mkTempDir('bl-wt-');
+  const first = storyPrep(config, 'S-3', wt);
+  await runFeature({ feature: first.unit, config, prep: first.prep, runner: loopRunner(), opts: { maxRounds: 2 } });
+  const again = storyPrep(config, 'S-3', wt);
+  const runner = loopRunner();
+  const state = await runFeature({
+    feature: again.unit,
+    config,
+    prep: again.prep,
+    runner,
+    opts: { resume: true, maxRounds: 2 },
+  });
+  assert.equal(state.status, 'clean', state.lastError);
+  assert.ok(!shellCmds(runner).some((c) => c.startsWith('relock')));
+});
+
+// ---------------------------------------------------------------------------
+// `bl implement`, `bl merge`
+// ---------------------------------------------------------------------------
+
+async function implement(storyFm, plugin) {
+  const { dir, config } = backlog(storyFm, plugin);
+  initGitBacklog(dir);
+  const wt = repo();
+  const record = readAllStories(config).find((s) => s.id === 'S-3');
+  const changePath = join(dirname(record.indexPath), 'change.md');
+  writeFileSync(changePath, '---\nchange_of: S-3\ntitle: Solo\nstatus: open\n---\n\n## Description\n\nx\n');
+  const prep = {
+    title: 'Solo',
+    branchName: 's3-solo',
+    effectiveWorktreePath: wt,
+    indexPath: record.indexPath,
+    promptVars: { primaryRepo: record.unitRepo, changeAbsPath: changePath, storyRelPath: record.storyRelPath },
+  };
+  const calls = [];
+  const runner = {
+    shell: (cmd, cwd, o) => {
+      calls.push(cmd);
+      return realRunner().shell(cmd, cwd, o);
+    },
+  };
+  const status = await implementScripted({ id: 'S-3', num: '3' }, record, config, prep, runner);
+  return { status, dir, wt, record, calls };
+}
+
+test('bl implement commits, records and commits the backlog; exit 0', async () => {
+  const { status, dir, wt, record } = await implement(FM, 'echo new > lock; echo sess {{sessionNum}}');
+  assert.equal(status, 0);
+  assert.equal(git(wt, 'log', '-1', '--format=%s'), 'chore: Solo (S-3)');
+  assert.equal(parseFrontmatter(textOf(record.indexPath)).fm.status, 'in_progress');
+  assert.equal(git(dir, 'status', '--porcelain', '--', 'stories'), '');
+  assert.match(textOf(join(dirname(record.indexPath), 'change.md')), /sess 3/);
+});
+
+test('bl implement of a failing command writes the escalation; exit 1', async () => {
+  const { status, wt, record } = await implement(FM, 'echo nope; exit 4');
+  assert.equal(status, 1);
+  assert.equal(git(wt, 'log', '-1', '--format=%s'), 'base');
+  assert.match(extractSection(parseFrontmatter(textOf(record.indexPath)).body, 'Escalation'), /exited 4/);
+});
+
+test('bl implement with no change marks the story done; exit 0', async () => {
+  const { status, record } = await implement(FM, 'true');
+  assert.equal(status, 0);
+  assert.equal(parseFrontmatter(textOf(record.indexPath)).fm.status, 'done');
+});
+
+test('bl merge does not ask a scripted story for a review, unless review: true', () => {
+  const unit = (fm) => ({ id: 'S-7', kind: 'story', fm, branch: 's7', featureEntry: 'S7-x', storyEntry: 'S7-x', reviewStatus: '', changeBody: '', body: '' });
+  const gates = (u) =>
+    mergeGates(u, {
+      config: { reposByName: {} },
+      repos: ['code'],
+      find: () => ({ ok: true, prs: [] }),
+      preflight: () => ({ ok: true }),
+      held: () => [],
+    }).findings.map((f) => f.gate);
+  assert.deepEqual(gates(unit(FM)), []);
+  assert.deepEqual(gates(unit({ ...FM, review: 'true' })), ['never-reviewed']);
+  assert.deepEqual(gates(unit({})), ['never-reviewed']);
+});
+
+// ---------------------------------------------------------------------------
+// The CLI
+// ---------------------------------------------------------------------------
+
+test('bl new --implement sets the key, refuses what validate fails, and validate reads it', () => {
+  const { dir } = backlog({});
+  const made = runBl(['new', 'C00', '--title', 'Scripted', '--points', '1', '--implement', 'relock', '--no-sync'], {
+    cwd: dir,
+  });
+  assert.equal(made.status, 0, made.stderr);
+  const story = readAllStories(loadConfig({ backlogRoot: dir })).find((s) => s.title === 'Scripted');
+  assert.deepEqual(parseFrontmatter(textOf(story.indexPath)).fm['plugins-implement'], ['relock']);
+
+  const bad = runBl(['new', 'C00', '--title', 'Bad', '--points', '1', '--implement', 'nope', '--no-sync'], { cwd: dir });
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /unknown plugin nope/);
+
+  setFm(story.indexPath, { 'plugins-implement': ['relock', 'relock2'] });
+  const v = runBl(['validate', '--json'], { cwd: dir });
+  assert.match(v.stdout, /implement-plugin/);
+});
+
+test('bl review of a scripted story skips and exits 0; no agent is asked', () => {
+  const { dir } = backlog();
+  const r = runBl(['review', 'S-3'], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(`${r.stdout}${r.stderr}`, /scripted story.*review is skipped/);
+});

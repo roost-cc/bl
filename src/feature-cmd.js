@@ -72,6 +72,7 @@ import { featureUnit, storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
 import { integrateForMerge } from './merge-integrate.js';
 import { prepareStoryRun, otherWorktreesLine, implementNextSteps } from './workon.js';
+import { reviewSkipped } from './scripted.js';
 import { chooseSyncRunner, cleanupOneRepo, commitFmShape, runBacklogSync, unionLandedCommits } from './cleanup.js';
 import { summarizeLatestReviewSession } from './review-log.js';
 import {
@@ -1300,6 +1301,10 @@ export async function cmdReviewStory(args, baseConfig, story, opts = {}) {
     console.error(`Story ${unit.id} is ${unit.status}; nothing to review.`);
     process.exit(1);
   }
+  if (reviewSkipped(unit.fm)) {
+    info(`${unit.id} is a scripted story: nothing an agent wrote, so review is skipped (review: true opts in).`);
+    return;
+  }
   reviewAgentOrExit(config);
   const branchName = unit.branch || unit.featureEntry.toLowerCase();
   const ordered = [storyAsOrdered(unit)];
@@ -1562,7 +1567,7 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
   if (interactive) recordFeatureTokens(unit, prep.cfg);
   const { printInboxCount } = await import('./inbox.js');
   printInboxCount(config);
-  process.exit(state.status === 'clean' ? 0 : 1);
+  process.exit(state.status === 'clean' || state.status === 'no-change' ? 0 : 1);
 }
 
 // ---------------------------------------------------------------------------

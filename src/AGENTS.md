@@ -3850,6 +3850,7 @@ plugins: [session-stack]
 | `cleanup`    | During `bl merge`, before worktree removal                                                                                                                                  |
 | `done`       | After `bl done` marks the story complete and syncs                                                                                                                          |
 | `test`       | The test gate of `bl run`, in each prepared repo's worktree with that repo's config (`plugins-test: [<name>]`); each attempt's output goes to `.bl/run/<F-id>.test-<n>.log` |
+| `implement`  | In place of the agent session, for a story with `plugins-implement: [<name>]` (scripted stories, below)                                                                     |
 | `regenerate` | During `bl merge`'s integration, in a worktree whose merge with main conflicts: regenerates the conflicted files its `paths` match (F-36 D5; see below)                     |
 
 A `regenerate` plugin names the generated files it rebuilds: `regenerate` (the
@@ -3879,6 +3880,43 @@ paths back as conflicted (`git checkout -m`, or the one side left when the other
 deleted the path) and reports the plugin failed. With no
 conflicted path left, `bl` commits the merge (`git commit --no-edit`) and the
 repo counts as `merged`: gated, pushed, and never re-reviewed.
+
+#### Scripted stories (F-71 D3)
+
+A story whose work has a known command (a lock relock, a generated-file refresh) can declare it,
+and no agent is launched for it. It stays an ordinary story for list, tree and reporting; only its
+`implement` step differs:
+
+```json
+"plugins": { "relock": { "implement": "npm install --package-lock-only" } }
+```
+
+```yaml
+plugins-implement: [relock]
+```
+
+`bl new --implement relock` writes the key. It is read from the story alone: there is no cascade, and
+it names exactly one plugin with an `implement` command. `bl validate` fails anything else with
+`implement-plugin`, and with a `review` that is not `true` or `false`. `bl implement` and the `implement`
+step of `bl run` call `src/scripted.js` where they would start a session (`bl updates vulns`'s
+branchless path, S-901, too). The command runs in the story's repo's worktree, with `{{worktreePath}}`,
+`{{repoPath}}` (the main checkout, so a command works in `{{worktreePath}}`), `{{repoName}}`,
+`{{storyId}}`, `{{sessionId}}`, `{{sessionNum}}`, `{{branchName}}`, `{{roostDir}}` and `{{backlogDir}}`
+set. Interpolation is `interpolateCommand`, the gate's: an unresolved placeholder is an error.
+
+| Result                           | What happens                                                                                                                                                                                                                                                  |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exit 0 with changes              | Committed as `chore: <title> (<id>)`; the story goes `in_progress` with its criteria checked; the command and its last lines go to the run state and `change.md`'s `## Gate`. The run goes on as for an agent's story. After `bl implement`, `bl run` does it. |
+| Exit 0 with no changes           | The story is marked done, with "no change needed" under `## Notes`. A story run stops there with status `no-change`, exit 0, and pushes nothing. A feature's run goes on to its next story.                                                                     |
+| Non-zero exit, or a worktree already dirty, or an invalid plugin | The run stops with an `## Escalation` in the `_escalation.md` shape, naming the command, the exit code and the output tail. The story stays runnable. No agent is launched.                                                                     |
+
+A red test gate after a commit is handled as for any story, by the `feature-fix-tests` session, and
+that is the one case where an agent can touch a scripted story.
+
+**Review.** A story unit that is scripted skips the self-review and the review, `bl review S-n` says
+so and exits 0, and `bl merge` does not ask for one. `review: true` on the story opts in to all of
+it. A run in which an agent did touch the story, a fix session after a red gate, reviews as usual. A
+feature is always reviewed, whatever its stories are: its review covers the whole branch.
 
 For feature commands (`bl implement`, `bl run` or `bl merge` on an F-id) the cascade is
 **root → repo → feature**, the repo being each worktree's: a feature has no
