@@ -182,7 +182,7 @@ test('closeReason reads a decide story by every id it holds, and through a chain
   assert.equal(closeReason({ fm }, [finding({ ids: ['CVE-X', 'GHSA-A'], ...unread })]), null, 'another order');
   assert.equal(
     closeReason({ fm }, [
-      finding({ ids: ['GHSA-A', 'GHSA-M'], ...unread }),
+      finding({ ids: ['GHSA-A', 'GHSA-M'], fix_state: 'ready' }),
       finding({ ids: ['GHSA-M'], fix_state: 'young' }),
     ]),
     'a fix appeared',
@@ -208,6 +208,40 @@ test('closeReason: gone closes, a fix closes a decide, an unread state leaves it
     closeReason(decide, [finding({ ids, fix_state: 'decide', at_fail_on: false })]),
     'the finding is below fail_on',
   );
+});
+
+test('decide-story-stays-open-when-only-another-package-is-fixable-through-aliases', () => {
+  const story = { fm: { update_lockfile: 'package-lock.json', update_advisory: ['A'] } };
+  const state = (fix_state, over = {}) => finding({ ids: ['A', 'B'], fix_state, ...over });
+  const low = (fix_state) => state(fix_state, { package: 'low', severity: 'low', at_fail_on: false });
+  const open = ['decide', 'watching', 'unknown', 'no-age'];
+  const fix = ['ready', 'young', 'overdue'];
+  const cases = [
+    ...open.flatMap((still) => fix.map((other) => [`${still} beside ${other}`, [state(still), state(other)], null])),
+    ...open.map((still) => [`${still} beside a finding below fail_on`, [state(still), low('decide')], null]),
+    ...open.map((still) => [
+      `${still} reached only through a chain`,
+      [
+        finding({ ids: ['A', 'B'], fix_state: 'young' }),
+        finding({ ids: ['B', 'C'], fix_state: 'ready' }),
+        finding({ ids: ['C'], fix_state: still }),
+      ],
+      null,
+    ]),
+    ...fix.map((other) => [`${other}, every other one below fail_on`, [state(other), low('decide')], 'a fix appeared']),
+    ['every one has a fix', fix.map((s) => state(s)), 'a fix appeared'],
+    ['every one below fail_on', [low('decide'), low('ready')], 'the finding is below fail_on'],
+    ['another lock file does not hold it', [state('decide', { lockfile: 'b.json' }), state('ready')], 'a fix appeared'],
+  ];
+  for (const [name, findings, want] of cases) assert.equal(closeReason(story, findings), want, name);
+
+  const mixed = [
+    finding({ ids: ['A'], fix_state: 'decide', fixed: [] }),
+    finding({ package: 'bridge', ids: ['A', 'B'], fix_state: 'young' }),
+    finding({ package: 'other', ids: ['B'], fix_state: 'ready' }),
+  ];
+  assert.equal(groupFindings(mixed).decides.length, 1, 'the scan and the close read the group alike');
+  assert.equal(closeReason(story, mixed), null);
 });
 
 test('scanRepo-rejects-invalid-findings: only a report a finished scan can write is taken', () => {
@@ -432,6 +466,29 @@ test('decide_story_updates_aliases_even_when_summary_rows_and_title_are_unchange
     const left = await vulns(t, { tools: report([{ ...decide, ids: ['GHSA-X'] }, bridge(['GHSA-Z'])]) });
     assert.deepEqual(actions(left.res), ['updated S-1']);
     assert.deepEqual(held(), ['GHSA-X']);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('a mixed group keeps its decide story and files the fix beside it', async () => {
+  const t = await backlog();
+  try {
+    const decide = finding({ ids: ['GHSA-A'], fix_state: 'decide', fixed: [] });
+    await vulns(t, { tools: report([decide]) });
+    const { res } = await vulns(t, {
+      tools: report([
+        decide,
+        finding({ package: 'bridge', ids: ['GHSA-A', 'GHSA-B'], fix_state: 'young' }),
+        finding({ package: 'other', ids: ['GHSA-B'], fix_state: 'ready' }),
+      ]),
+    });
+    assert.deepEqual(
+      res.actions.map((a) => `${a.action} ${a.id}`),
+      ['created S-2', 'updated S-1'],
+    );
+    assert.equal(stories(t).get('S-1').fm.status, 'refined');
+    assert.deepEqual(stories(t).get('S-1').fm.update_advisory, ['GHSA-A', 'GHSA-B']);
   } finally {
     t.cleanup();
   }

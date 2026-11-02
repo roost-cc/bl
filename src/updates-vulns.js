@@ -161,7 +161,9 @@ export function groupFindings(findings) {
 /**
  * Why an open vulns story closes given a repo's findings, or null when it
  * stays. A finding whose state could not be read this cycle (`unknown`,
- * `no-age`) says nothing either way, so its story stays.
+ * `no-age`) says nothing either way, so its story stays. A decide story speaks
+ * for every finding linked to it, so it stays while any one of them at
+ * `fail_on` has no fix: another package's fix answers only that package.
  */
 export function closeReason(story, findings) {
   const { fm } = story;
@@ -172,9 +174,9 @@ export function closeReason(story, findings) {
   }
   const mine = linked(onLock, advisoryIds(fm));
   if (mine.length === 0) return 'the finding is gone';
-  if (mine.some((f) => FIX_EXISTS.has(f.fix_state))) return 'a fix appeared';
-  if (mine.some((f) => !f.at_fail_on)) return 'the finding is below fail_on';
-  return null;
+  const atFailOn = mine.filter((f) => f.at_fail_on);
+  if (atFailOn.length === 0) return 'the finding is below fail_on';
+  return atFailOn.every((f) => FIX_EXISTS.has(f.fix_state)) ? 'a fix appeared' : null;
 }
 
 /**
