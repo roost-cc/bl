@@ -244,6 +244,20 @@ test('decide-story-stays-open-when-only-another-package-is-fixable-through-alias
   assert.equal(closeReason(story, mixed), null);
 });
 
+/** Findings no finished scan writes, as `[name, findings, exit]`: mirrored in vulns-dir.test.mjs. */
+const inconsistentFindings = [
+  ['blocking below fail_on', [finding({ at_fail_on: false, severity: 'low', blocking: true })], 1],
+  ['at_fail_on below the threshold', [finding({ severity: 'low' })]],
+  ['not at_fail_on at the threshold', [finding({ at_fail_on: false })]],
+  ['a severity the schema does not have', [finding({ severity: 'urgent' })]],
+  ['a status the schema does not have', [finding({ status: 'old' })]],
+  ['no status', [finding({ status: undefined })]],
+  ['existing and blocking without overdue', [finding({ blocking: true })], 1],
+  ['new at fail_on, not blocking', [finding({ status: 'new' })]],
+  ['overdue below fail_on', [finding({ fix_state: 'overdue', at_fail_on: false, severity: 'low' })]],
+  ...['ready', 'young', 'overdue'].map((fix_state) => [`${fix_state} with no fix`, [finding({ fix_state, fixed: [] })]]),
+];
+
 test('scanRepo-rejects-invalid-findings: only a report a finished scan can write is taken', () => {
   const blocking = finding({ blocking: true, fix_state: 'overdue' });
   const low = finding({ at_fail_on: false, severity: 'low' });
@@ -256,7 +270,7 @@ test('scanRepo-rejects-invalid-findings: only a report a finished scan can write
     const jsonPath = join(mkTempDir('bl-vulns-scan-'), 'scan.json');
     const runner = {
       exec() {
-        writeFileSync(jsonPath, JSON.stringify({ schema: 'ci-cd-vulns/v1', ...body }));
+        writeFileSync(jsonPath, JSON.stringify({ schema: 'ci-cd-vulns/v1', fail_on: 'high', ...body }));
         return { status, output: '' };
       },
     };
@@ -287,6 +301,14 @@ test('scanRepo-rejects-invalid-findings: only a report a finished scan can write
     ['no-lockfiles, exit 1', { status: 'no-lockfiles', findings: [] }, 1],
     ['exit 1 with nothing blocking', { status: 'findings', findings: [finding()] }, 1],
     ['exit 0 with a blocking finding', { status: 'findings', findings: [blocking] }, 0],
+    ...inconsistentFindings.map(([name, findings, exit]) => [
+      name,
+      { status: findings.some((f) => f.at_fail_on) ? 'findings' : 'clean', findings },
+      exit,
+    ]),
+    ['fixed holds a non-text', { status: 'findings', findings: [finding({ fixed: [7] })] }],
+    ['no fail_on with findings', { status: 'findings', fail_on: null, findings: [finding()] }],
+    ['fail_on is none', { status: 'findings', fail_on: 'none', findings: [finding()] }],
   ];
   for (const [name, body, status] of invalid) assert.match(scan(body, status).error ?? '', /invalid report/, name);
   const valid = [
@@ -295,8 +317,30 @@ test('scanRepo-rejects-invalid-findings: only a report a finished scan can write
     [{ status: 'no-lockfiles', findings: [] }, 0],
     [{ status: 'findings', findings: [finding()] }, 0],
     [{ status: 'findings', findings: [blocking] }, 1],
+    [{ status: 'findings', findings: [finding({ status: 'new', blocking: true })] }, 1],
+    [{ status: 'clean', findings: [finding({ status: 'new', at_fail_on: false, severity: 'low' })] }, 0],
+    [{ status: 'clean', findings: [finding({ at_fail_on: false, severity: 'none' })] }, 0],
+    // A branch that removes a finding: overdue, and not blocking.
+    [{ status: 'findings', findings: [finding({ fix_state: 'overdue' })] }, 0],
+    [{ status: 'findings', findings: [finding({ fix_state: 'decide', fixed: ['1.0.0'] })] }, 0],
+    [{ status: 'findings', findings: [finding({ severity: 'critical' })] }, 0],
   ];
   for (const [body, status] of valid) assert.ok(scan(body, status).report, JSON.stringify(body));
+});
+
+test('reject-inconsistent-finding-flags-in-both-consumers: a contradiction closes no story', async () => {
+  for (const [name, findings, exit] of inconsistentFindings) {
+    const t = await backlog();
+    try {
+      await vulns(t, { tools: report([finding({ ids: ['GHSA-A'], fix_state: 'decide', fixed: [] })]) });
+      const before = readFileSync(stories(t).get('S-1').indexPath, 'utf8');
+      const { res } = await vulns(t, { tools: { ...report(findings), ...(exit ? { exit } : {}) } });
+      assert.match(res.failures[0]?.reason ?? '', /invalid report \(finding 0 contradicts itself\)/, name);
+      assert.equal(readFileSync(stories(t).get('S-1').indexPath, 'utf8'), before, name);
+    } finally {
+      t.cleanup();
+    }
+  }
 });
 
 test("an invalid report leaves the repo's stories alone", async () => {

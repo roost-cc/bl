@@ -50,6 +50,10 @@ const SCANNED = new Set(['findings', 'clean', 'no-lockfiles']);
 const FIX_EXISTS = new Set(['ready', 'young', 'overdue']);
 /** Every `fix_state` of `ci-cd-vulns/v1`. Any other would read as a finding that is gone. */
 const FIX_STATES = new Set([...FIX_EXISTS, 'decide', 'watching', 'unknown', 'no-age']);
+/** `ci-cd-vulns/v1`'s severities, lowest first, and the values a finding's `status` takes. */
+const SEVERITIES = ['none', 'low', 'medium', 'high', 'critical'];
+const FAIL_ON_LEVELS = new Set(SEVERITIES.slice(1));
+const STATUSES = new Set(['new', 'existing']);
 /**
  * Room for a title in a commit header: commitlint's 100 columns less
  * `chore: ` and ` (S-1234)`. A scripted story's title is its commit's subject.
@@ -240,23 +244,47 @@ const isFinding = (f) =>
   f.ids.length > 0 &&
   f.ids.every(isText) &&
   Array.isArray(f.fixed) &&
+  f.fixed.every(isText) &&
   typeof f.at_fail_on === 'boolean' &&
   typeof f.blocking === 'boolean';
 
 /**
+ * Whether a finding's flags agree with each other and with `failOn`, as
+ * `runVulns` sets them: `at_fail_on` follows from the severity, a `new` finding
+ * at `fail_on` blocks, and only that or an `overdue` one can (an `overdue` one
+ * need not: a branch that removes a finding passes).
+ */
+function isConsistent(f, failOn) {
+  const atFailOn = SEVERITIES.indexOf(f.severity) >= SEVERITIES.indexOf(failOn);
+  const mustBlock = f.status === 'new' && atFailOn;
+  const overdue = f.fix_state === 'overdue';
+  return (
+    STATUSES.has(f.status) &&
+    SEVERITIES.includes(f.severity) &&
+    f.at_fail_on === atFailOn &&
+    (!FIX_EXISTS.has(f.fix_state) || f.fixed.length > 0) &&
+    (!overdue || atFailOn) &&
+    (f.blocking ? mustBlock || overdue : !mustBlock)
+  );
+}
+
+/**
  * What in a report a finished `bin/ci vulns --ages` cannot have written, or
- * null. Reconciling closes stories, so a report is taken only when its findings
- * are whole and agree with its status and exit: `findings` means one is at
- * `fail_on`, and exit 1 means one is blocking.
+ * null. Reconciling closes stories, so a report is taken only when each finding
+ * is whole and agrees with itself, and all of them with the status and exit:
+ * `findings` means one is at `fail_on`, and exit 1 means one is blocking.
  *
  * @returns {string | null}
  */
 export function reportProblem(report, exit) {
-  const { status, findings } = report;
+  const { status, findings, fail_on: failOn } = report;
   if (!Array.isArray(findings)) return 'findings is not a list';
   const bad = findings.findIndex((f) => !isFinding(f));
   if (bad !== -1) return `finding ${bad} is malformed`;
   if (status === 'no-lockfiles' && findings.length > 0) return 'no-lockfiles with findings';
+  if (findings.length > 0 && !FAIL_ON_LEVELS.has(failOn)) return `fail_on ${failOn} is not a level`;
+  const wrong = findings.findIndex((f) => !isConsistent(f, failOn));
+  if (wrong !== -1) return `finding ${wrong} contradicts itself`;
   if ((status === 'findings') !== findings.some((f) => f.at_fail_on))
     return `status ${status} disagrees with its findings`;
   if ((exit === 1) !== findings.some((f) => f.blocking)) return `exit ${exit} disagrees with its findings`;
