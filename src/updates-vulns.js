@@ -411,7 +411,10 @@ function applyRepo(ctx, repo, report) {
 
     taken.add(story.id);
     const next = fresh(story.id);
-    if (sameRows(rowsOf(story.body), rowsOf(next.body)) && story.fm.title === title) {
+    // An alias on a finding outside the rows is still this advisory's: the next
+    // scan may name it by that id alone.
+    const sameIds = !advisories || sameRows([...advisoryIds(story.fm)].sort(), advisories);
+    if (sameIds && sameRows(rowsOf(story.body), rowsOf(next.body)) && story.fm.title === title) {
       actions.push({ action: 'unchanged', id: story.id, repoName, lockfile, title });
       return;
     }

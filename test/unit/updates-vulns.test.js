@@ -392,6 +392,51 @@ test('a decide finding gets one agent story with both outcomes, and no plugin', 
   }
 });
 
+test('decide_story_updates_aliases_even_when_summary_rows_and_title_are_unchanged', async () => {
+  const t = await backlog();
+  try {
+    const decide = finding({ ids: ['GHSA-A'], fix_state: 'decide', fixed: [] });
+    const bridge = (ids) => finding({ package: 'bridge', ids, fix_state: 'unknown' });
+    const held = () => stories(t).get('S-1').fm.update_advisory;
+    const actions = (res) => res.actions.map((a) => `${a.action} ${a.id}`);
+    await vulns(t, { tools: report([decide]) });
+    const rows = extractSection(stories(t).get('S-1').body, 'Summary');
+    const title = stories(t).get('S-1').fm.title;
+
+    // A new alias, on a finding that is not in the rows.
+    const added = await vulns(t, { tools: report([decide, bridge(['GHSA-A', 'GHSA-X'])]) });
+    assert.deepEqual(actions(added.res), ['updated S-1']);
+    assert.deepEqual(held(), ['GHSA-A', 'GHSA-X']);
+    assert.equal(stories(t).get('S-1').fm.title, title);
+    assert.equal(extractSection(stories(t).get('S-1').body, 'Summary'), rows);
+
+    // The same ids in another order change nothing.
+    const reordered = await vulns(t, { tools: report([decide, bridge(['GHSA-X', 'GHSA-A'])]) });
+    assert.deepEqual(actions(reordered.res), ['unchanged S-1']);
+
+    // A dry run says so, and writes nothing.
+    const dry = await vulns(t, { tools: report([decide, bridge(['GHSA-A', 'GHSA-Y'])]) }, { dryRun: true });
+    assert.deepEqual(actions(dry.res), ['updated S-1']);
+    assert.deepEqual(held(), ['GHSA-A', 'GHSA-X']);
+
+    // A story's rows stay; only the new alias is left to name the advisory.
+    const named = await vulns(t, { tools: report([{ ...decide, ids: ['GHSA-X'] }]) });
+    assert.deepEqual(actions(named.res), ['updated S-1']);
+    assert.equal(stories(t).size, 1, 'the same story, no replacement');
+    assert.equal(stories(t).get('S-1').fm.status, 'refined');
+    assert.deepEqual(held(), ['GHSA-X']);
+
+    // An alias that leaves goes too: the split in the test below relies on it.
+    await vulns(t, { tools: report([{ ...decide, ids: ['GHSA-X'] }, bridge(['GHSA-X', 'GHSA-Z'])]) });
+    assert.deepEqual(held(), ['GHSA-X', 'GHSA-Z']);
+    const left = await vulns(t, { tools: report([{ ...decide, ids: ['GHSA-X'] }, bridge(['GHSA-Z'])]) });
+    assert.deepEqual(actions(left.res), ['updated S-1']);
+    assert.deepEqual(held(), ['GHSA-X']);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('later scans keep one decide story by the full advisory, and two joined advisories become one', async () => {
   const t = await backlog();
   try {
