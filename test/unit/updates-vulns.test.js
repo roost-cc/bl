@@ -8,9 +8,17 @@ import { extractSection } from '../../src/feature.js';
 import { syncUpdates } from '../../src/updates.js';
 import { reportPath } from '../../src/updates-run.js';
 import { approveUpdate, dropUpdate, renderStatus, statusUpdates } from '../../src/updates-answer.js';
-import { closeReason, fixTitle, groupFindings, renderVulnsStory, vulnsUpdates } from '../../src/updates-vulns.js';
+import {
+  closeReason,
+  fixTitle,
+  groupFindings,
+  renderVulnsStory,
+  scanRepo,
+  vulnsUpdates,
+} from '../../src/updates-vulns.js';
 import { validateFrontmatter } from '../../src/validate.js';
 import { fakeRunner, gitCalls, mkReport, run, setup, shellCalls } from '../helpers/updates-run-fixture.js';
+import { mkTempDir } from '../helpers/tempdir.js';
 
 const CI = 'ci vulns --fix --lockfile {{lockfile}} --working-directory {{worktreePath}}';
 
@@ -35,7 +43,7 @@ function finding(over = {}) {
 
 const report = (findings, over = {}) => ({
   schema: 'ci-cd-vulns/v1',
-  status: findings.length ? 'findings' : 'clean',
+  status: findings.some((f) => f.at_fail_on) ? 'findings' : 'clean',
   fail_on: 'high',
   findings,
   ...over,
@@ -129,7 +137,12 @@ test('groupFindings-shared-alias: one advisory is one decide group, however its 
     ['alias order', [decide('a', ['CVE-X', 'GHSA-A']), decide('b', ['GHSA-A', 'CVE-X'])]],
     [
       'chain, the link last',
-      [decide('a', ['GHSA-A']), decide('b', ['GHSA-B']), decide('c', ['GHSA-A', 'GHSA-C']), decide('d', ['GHSA-C', 'GHSA-B'])],
+      [
+        decide('a', ['GHSA-A']),
+        decide('b', ['GHSA-B']),
+        decide('c', ['GHSA-A', 'GHSA-C']),
+        decide('d', ['GHSA-C', 'GHSA-B']),
+      ],
     ],
   ];
   for (const [name, findings] of cases) {
@@ -160,7 +173,10 @@ test('closeReason reads a decide story by every id it holds, and through a chain
   assert.equal(closeReason({ fm }, [finding({ ids: ['GHSA-B', 'CVE-X'], ...unread })]), null, 'the other id');
   assert.equal(closeReason({ fm }, [finding({ ids: ['CVE-X', 'GHSA-A'], ...unread })]), null, 'another order');
   assert.equal(
-    closeReason({ fm }, [finding({ ids: ['GHSA-A', 'GHSA-M'], ...unread }), finding({ ids: ['GHSA-M'], fix_state: 'young' })]),
+    closeReason({ fm }, [
+      finding({ ids: ['GHSA-A', 'GHSA-M'], ...unread }),
+      finding({ ids: ['GHSA-M'], fix_state: 'young' }),
+    ]),
     'a fix appeared',
     'through a chain',
   );
@@ -184,6 +200,72 @@ test('closeReason: gone closes, a fix closes a decide, an unread state leaves it
     closeReason(decide, [finding({ ids, fix_state: 'decide', at_fail_on: false })]),
     'the finding is below fail_on',
   );
+});
+
+test('scanRepo-rejects-invalid-findings: only a report a finished scan can write is taken', () => {
+  const blocking = finding({ blocking: true, fix_state: 'overdue' });
+  const low = finding({ at_fail_on: false, severity: 'low' });
+  const without = (key) => {
+    const f = finding();
+    delete f[key];
+    return f;
+  };
+  const scan = (body, status = 0) => {
+    const jsonPath = join(mkTempDir('bl-vulns-scan-'), 'scan.json');
+    const runner = {
+      exec() {
+        writeFileSync(jsonPath, JSON.stringify({ schema: 'ci-cd-vulns/v1', ...body }));
+        return { status, output: '' };
+      },
+    };
+    return scanRepo({ runner, ciBin: '/ci', repoPath: '/r', jsonPath });
+  };
+  const invalid = [
+    ['missing findings', { status: 'findings' }],
+    ['missing findings on clean', { status: 'clean' }],
+    ['null findings', { status: 'clean', findings: null }],
+    ['object findings', { status: 'findings', findings: {} }],
+    ['string findings', { status: 'findings', findings: 'invalid' }],
+    ['null entry', { status: 'findings', findings: [null] }],
+    ['text entry', { status: 'findings', findings: ['x'] }],
+    ...['lockfile', 'package', 'version', 'fix_state', 'ids', 'at_fail_on', 'blocking'].map((key) => [
+      `entry without ${key}`,
+      { status: 'findings', findings: [without(key)] },
+    ]),
+    ['ids not a list', { status: 'findings', findings: [finding({ ids: 'GHSA-a' })] }],
+    ['empty ids', { status: 'findings', findings: [finding({ ids: [] })] }],
+    ['blank id', { status: 'findings', findings: [finding({ ids: [''] })] }],
+    ['findings status with none at fail_on', { status: 'findings', findings: [low] }],
+    ['findings status with none', { status: 'findings', findings: [] }],
+    ['clean with one at fail_on', { status: 'clean', findings: [finding()] }],
+    ['no-lockfiles with findings', { status: 'no-lockfiles', findings: [low] }],
+    ['clean, exit 1', { status: 'clean', findings: [] }, 1],
+    ['no-lockfiles, exit 1', { status: 'no-lockfiles', findings: [] }, 1],
+    ['exit 1 with nothing blocking', { status: 'findings', findings: [finding()] }, 1],
+    ['exit 0 with a blocking finding', { status: 'findings', findings: [blocking] }, 0],
+  ];
+  for (const [name, body, status] of invalid) assert.match(scan(body, status).error ?? '', /invalid report/, name);
+  const valid = [
+    [{ status: 'clean', findings: [] }, 0],
+    [{ status: 'clean', findings: [low] }, 0],
+    [{ status: 'no-lockfiles', findings: [] }, 0],
+    [{ status: 'findings', findings: [finding()] }, 0],
+    [{ status: 'findings', findings: [blocking] }, 1],
+  ];
+  for (const [body, status] of valid) assert.ok(scan(body, status).report, JSON.stringify(body));
+});
+
+test("an invalid report leaves the repo's stories alone", async () => {
+  const t = await backlog();
+  try {
+    await vulns(t, { tools: report([finding()]) });
+    const before = readFileSync(stories(t).get('S-1').indexPath, 'utf8');
+    const { res } = await vulns(t, { tools: { schema: 'ci-cd-vulns/v1', status: 'clean', findings: [], exit: 1 } });
+    assert.match(res.failures[0].reason, /invalid report/);
+    assert.equal(readFileSync(stories(t).get('S-1').indexPath, 'utf8'), before);
+  } finally {
+    t.cleanup();
+  }
 });
 
 test('both templates render stories bl validate accepts', () => {
@@ -314,7 +396,10 @@ test('later scans keep one decide story by the full advisory, and two joined adv
     const { res: reordered } = await vulns(t, {
       tools: report([decide({ ids: ['CVE-X', 'GHSA-A'] }), decide({ package: 'beta', ids: ['CVE-X', 'GHSA-B'] })]),
     });
-    assert.deepEqual(reordered.actions.map((a) => a.action), ['unchanged']);
+    assert.deepEqual(
+      reordered.actions.map((a) => a.action),
+      ['unchanged'],
+    );
 
     // The story's first id is gone: another of its ids keeps it.
     await vulns(t, { tools: report([decide({ ids: ['GHSA-B'] })]) });
@@ -335,7 +420,10 @@ test('later scans keep one decide story by the full advisory, and two joined adv
     const split = report([decide({ ids: ['GHSA-B'] }), { ...other, ids: ['GHSA-C'] }]);
     await vulns(t, { tools: split });
     const { res } = await vulns(t, { tools: split });
-    assert.deepEqual(res.actions.map((a) => a.action), ['unchanged', 'unchanged']);
+    assert.deepEqual(
+      res.actions.map((a) => a.action),
+      ['unchanged', 'unchanged'],
+    );
   } finally {
     t.cleanup();
   }

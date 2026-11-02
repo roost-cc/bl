@@ -226,6 +226,35 @@ export function defaultVulnsRunner() {
   };
 }
 
+const isText = (v) => typeof v === 'string' && v !== '';
+const isFinding = (f) =>
+  [f?.lockfile, f?.package, f?.version, f?.fix_state].every(isText) &&
+  Array.isArray(f.ids) &&
+  f.ids.length > 0 &&
+  f.ids.every(isText) &&
+  typeof f.at_fail_on === 'boolean' &&
+  typeof f.blocking === 'boolean';
+
+/**
+ * What in a report a finished `bin/ci vulns --ages` cannot have written, or
+ * null. Reconciling closes stories, so a report is taken only when its findings
+ * are whole and agree with its status and exit: `findings` means one is at
+ * `fail_on`, and exit 1 means one is blocking.
+ *
+ * @returns {string | null}
+ */
+export function reportProblem(report, exit) {
+  const { status, findings } = report;
+  if (!Array.isArray(findings)) return 'findings is not a list';
+  const bad = findings.findIndex((f) => !isFinding(f));
+  if (bad !== -1) return `finding ${bad} is malformed`;
+  if (status === 'no-lockfiles' && findings.length > 0) return 'no-lockfiles with findings';
+  if ((status === 'findings') !== findings.some((f) => f.at_fail_on))
+    return `status ${status} disagrees with its findings`;
+  if ((exit === 1) !== findings.some((f) => f.blocking)) return `exit ${exit} disagrees with its findings`;
+  return null;
+}
+
 /**
  * Scan one repo. Exit 1 with a report is a scan: `--ages` exits 1 on an
  * `overdue` finding. Anything else without a usable report is a failed scan.
@@ -251,7 +280,8 @@ export function scanRepo({ runner, ciBin, repoPath, jsonPath }) {
   if (report?.schema !== 'ci-cd-vulns/v1') return failed(`unknown report schema ${report?.schema}`);
   if (!SCANNED.has(report.status)) return { error: `scan ${report.status}: ${report.error ?? 'no detail'}` };
   if (r.status > 1) return failed(`exit ${r.status}`);
-  return { report };
+  const problem = reportProblem(report, r.status);
+  return problem ? failed(`invalid report (${problem})`) : { report };
 }
 
 // ---------------------------------------------------------------------------
@@ -313,7 +343,7 @@ function scanTargets(config, only) {
 function applyRepo(ctx, repo, report) {
   const { config, dryRun, today, stories, closed } = ctx;
   const { slug, name: repoName, componentId } = repo;
-  const findings = report.findings ?? [];
+  const { findings } = report;
   const { fixes, decides } = groupFindings(findings);
   const mine = stories.filter((s) => s.fm.update_repo === slug);
   const open = mine.filter((s) => !closed(s.fm.status));
@@ -498,7 +528,7 @@ export async function vulnsUpdates(config, opts = {}) {
           `${a.action.padEnd(10)} ${a.id.padEnd(6)} ${a.repoName} ${a.lockfile}  ${a.title}${a.why ? ` (${a.why})` : ''}`,
         );
       }
-      for (const f of groupFindings(report.findings ?? []).reported) {
+      for (const f of groupFindings(report.findings).reported) {
         const state = `${f.fix_state ?? 'unknown'}${f.at_fail_on ? '' : ', below fail_on'}`;
         result.reported.push({ ...f, repoName: repo.name, state });
         out(`${'reported'.padEnd(10)} ${repo.name} ${f.lockfile}  ${pkgAt(f)} ${advisoryOf(f)} ${state}`);
