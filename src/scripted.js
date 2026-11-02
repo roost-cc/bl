@@ -13,6 +13,8 @@
  * `runner.shell`, as in the two state machines this serves.
  */
 
+import { readFileSync } from 'fs';
+import { atomicWriteFile } from './atomic-write.js';
 import { appendSection, updateChange } from './change-doc.js';
 import { parsePluginList } from './config.js';
 import { appendSectionLine, checkCriteria, extractSection, replaceSection } from './feature.js';
@@ -157,11 +159,16 @@ export function runImplementPlugin({ id, title, fm, plugins, vars, worktreePath,
   const after = status();
   if (after.status !== 0) return { ...out, kind: 'failed', error: 'git status failed after the command' };
   const sha = () => String(shell('git rev-parse --short HEAD').output ?? '').trim();
-  if (!String(after.output ?? '').trim()) return { ...out, kind: 'unchanged', sha: sha() };
+  const subject = `chore: ${title} (${id})`;
+  if (!String(after.output ?? '').trim()) {
+    // A retry after `recordScriptedRun` failed: the command's commit is already here.
+    const last = String(shell('git log -1 --format=%s').output ?? '').trim();
+    return { ...out, kind: last === subject ? 'changed' : 'unchanged', sha: sha() };
+  }
 
   const add = shell('git add -A');
   if (add.status !== 0) return { ...out, kind: 'failed', error: `git add failed: ${tail(add.output, 5)}` };
-  const message = `chore: ${title} (${id})`.replace(/'/g, "'\\''");
+  const message = subject.replace(/'/g, "'\\''");
   const commit = shell(`git commit -q -m '${message}'`);
   if (commit.status !== 0) return { ...out, kind: 'failed', error: `git commit failed: ${tail(commit.output, 5)}` };
   return { ...out, kind: 'changed', sha: sha() };
@@ -232,12 +239,15 @@ export function scriptedEscalation(id, r, rerun) {
  * Record a scripted run on the story and in the change document. `changed`
  * leaves the story `in_progress` with its criteria checked, what an implementer
  * leaves, so a resumed run skips it. `unchanged` marks it done with a note.
- * `failed` touches the story not at all: it stays runnable.
+ * `failed` touches the story not at all: it stays runnable. The story and the
+ * change document change together: a change document that cannot be written puts
+ * the story back, so a retry starts from what it read.
  *
  * @param {{ backlogRoot: string, indexPath: string, changePath: string|null, id: string,
  *   repo: string, date: string, result: object }} opts
  */
 export function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo, date, result }) {
+  const story = result.kind === 'failed' ? null : readFileSync(indexPath, 'utf8');
   if (result.kind === 'changed') {
     updateSpecFile(backlogRoot, indexPath, (fm, body) => {
       fm.status = 'in_progress';
@@ -252,9 +262,14 @@ export function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo
     });
   }
   if (!changePath) return;
-  updateChange(backlogRoot, changePath, (doc) => {
-    doc.body = appendSection(doc.body, 'Gate', scriptedGateEntry(date, repo, id, result));
-  });
+  try {
+    updateChange(backlogRoot, changePath, (doc) => {
+      doc.body = appendSection(doc.body, 'Gate', scriptedGateEntry(date, repo, id, result));
+    });
+  } catch (e) {
+    if (story != null) atomicWriteFile(backlogRoot, indexPath, story);
+    throw e;
+  }
 }
 
 /** Write a story's `## Escalation`, adding the section when the story has none. */

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import {
@@ -15,6 +15,7 @@ import {
   implementPluginProblem,
   interpolateCommand,
   isScripted,
+  recordScriptedRun,
   reviewSkipped,
   runImplementPlugin,
   scriptedEscalation,
@@ -28,6 +29,7 @@ import { mergeGates } from '../../src/merge-gates.js';
 import { git, GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
+import { newChange, writeChange } from '../../src/change-doc.js';
 
 const AC = '## Acceptance Criteria\n\n- [ ] the lock is fresh\n';
 const PLUGINS = { relock: { implement: 'relock {{storyId}}' }, other: { test: 'npm test' } };
@@ -111,6 +113,55 @@ test('a dirty worktree is refused before the command runs', () => {
   assert.equal(r.exit, undefined);
   assert.match(r.error, /uncommitted changes/);
   assert.equal(git(dir, 'status', '--porcelain', 'marker'), '');
+});
+
+test('recordScriptedRun preserves paired story and change state when the second write fails', () => {
+  const story = '---\nstory_id: S-1\nstatus: refined\n---\n\n## Acceptance Criteria\n\n- [ ] Done\n';
+  const result = (kind) => ({ kind, sha: 'abc1234', plugin: 'relock', command: 'relock', tail: '' });
+  const record = (root, changePath, kind) =>
+    recordScriptedRun({
+      backlogRoot: root,
+      indexPath: join(root, 'index.md'),
+      changePath,
+      id: 'S-1',
+      repo: 'x',
+      date: '2026-11-01',
+      result: result(kind),
+    });
+  for (const kind of ['changed', 'unchanged']) {
+    // The change document cannot be written: the story reads as it did.
+    const root = mkTempDir('bl-scripted-record-');
+    writeFileSync(join(root, 'index.md'), story);
+    assert.throws(() => record(root, join(root, 'missing-change.md'), kind), /no change document/, kind);
+    assert.equal(readFileSync(join(root, 'index.md'), 'utf8'), story, kind);
+    assert.equal(existsSync(join(root, 'missing-change.md')), false, kind);
+
+    // The story cannot be written: the change document reads as it did.
+    const changePath = join(root, 'change.md');
+    writeChange(root, changePath, newChange({ changeOf: 'S-1' }));
+    const change = readFileSync(changePath, 'utf8');
+    writeFileSync(join(root, 'index.md'), 'no frontmatter\n');
+    assert.throws(() => record(root, changePath, kind), /frontmatter|---/, kind);
+    assert.equal(readFileSync(changePath, 'utf8'), change, kind);
+
+    // Both can: both change.
+    writeFileSync(join(root, 'index.md'), story);
+    record(root, changePath, kind);
+    assert.notEqual(readFileSync(join(root, 'index.md'), 'utf8'), story, kind);
+    assert.match(readFileSync(changePath, 'utf8'), /scripted S-1/, kind);
+  }
+});
+
+test('a retry after a failed record finds its commit: changed, not no-change-needed', () => {
+  const dir = repo();
+  const fixes = 'grep -q new lock || echo new > lock';
+  assert.equal(run(dir, fixes).kind, 'changed');
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const again = run(dir, fixes);
+  assert.equal(again.kind, 'changed');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'no second commit');
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'something else');
+  assert.equal(run(dir, fixes).kind, 'unchanged');
 });
 
 test('an unresolved placeholder is an error and the command never runs', () => {
@@ -494,7 +545,17 @@ test('bl implement with no change marks the story done; exit 0', async () => {
 });
 
 test('bl merge does not ask a scripted story for a review, unless review: true', () => {
-  const unit = (fm) => ({ id: 'S-7', kind: 'story', fm, branch: 's7', featureEntry: 'S7-x', storyEntry: 'S7-x', reviewStatus: '', changeBody: '', body: '' });
+  const unit = (fm) => ({
+    id: 'S-7',
+    kind: 'story',
+    fm,
+    branch: 's7',
+    featureEntry: 'S7-x',
+    storyEntry: 'S7-x',
+    reviewStatus: '',
+    changeBody: '',
+    body: '',
+  });
   const gates = (u) =>
     mergeGates(u, {
       config: { reposByName: {} },
@@ -521,7 +582,9 @@ test('bl new --implement sets the key, refuses what validate fails, and validate
   const story = readAllStories(loadConfig({ backlogRoot: dir })).find((s) => s.title === 'Scripted');
   assert.deepEqual(parseFrontmatter(textOf(story.indexPath)).fm['plugins-implement'], ['relock']);
 
-  const bad = runBl(['new', 'C00', '--title', 'Bad', '--points', '1', '--implement', 'nope', '--no-sync'], { cwd: dir });
+  const bad = runBl(['new', 'C00', '--title', 'Bad', '--points', '1', '--implement', 'nope', '--no-sync'], {
+    cwd: dir,
+  });
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /unknown plugin nope/);
 
