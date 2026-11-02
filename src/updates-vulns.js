@@ -372,7 +372,8 @@ function applyRepo(ctx, repo, report) {
   }
 
   for (const s of open) {
-    if (taken.has(s.id)) continue;
+    // Merged, but the run stopped before closing it: the next run marks it done.
+    if (taken.has(s.id) || s.fm.commit) continue;
     const lockfile = s.fm.update_lockfile;
     const why = closeReason(s, findings);
     if (!why) {

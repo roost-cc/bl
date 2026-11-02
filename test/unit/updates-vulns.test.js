@@ -552,6 +552,21 @@ test('a merge the run could not record is finished from origin/main, not merged 
   }
 });
 
+test('a merged story the run did not close is left for the run, not superseded', async () => {
+  const t = await withStory();
+  try {
+    editStory(stories(t).get('S-1').indexPath, (fm) => {
+      fm.commit = 'abc1234';
+    });
+    await vulns(t, {});
+    assert.equal(stories(t).get('S-1').fm.status, 'refined');
+    await run(t, fakeRunner());
+    assert.equal(stories(t).get('S-1').fm.status, 'done');
+  } finally {
+    t.cleanup();
+  }
+});
+
 test('the run does not take an agent story', async () => {
   const t = await withStory([finding({ fix_state: 'decide', fixed: [], ids: ['GHSA-bbbb'] })]);
   try {
@@ -561,6 +576,12 @@ test('the run does not take an agent story', async () => {
     assert.equal(shellCalls(runner).length, 0);
     await assert.rejects(run(t, fakeRunner(), { ids: ['S-1'] }), /not an update story/);
     await assert.rejects(approveUpdate(t.config(), { id: 'S-1', out: () => {} }), /agent story/);
+    // An approve written by hand gets no further than `bl updates approve`.
+    editStory(stories(t).get('S-1').indexPath, (fm) => {
+      fm.update_request = 'approve';
+    });
+    assert.equal((await run(t, runner)).res.outcomes.length, 0);
+    assert.equal(stories(t).get('S-1').fm.status, 'refined');
   } finally {
     t.cleanup();
   }

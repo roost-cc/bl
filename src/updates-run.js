@@ -152,7 +152,9 @@ export function selectStories(stories, ids, flow) {
     const s = stories.find((x) => x.id === parsed.id);
     if (!s) throw new Error(`${parsed.id} is not an update story`);
     if (!flow.isRunnable('story', s.fm.status)) {
-      throw new Error(`${parsed.id} is ${s.fm.status}; only a ${statusWords(flow.runnableStatusesOf('story'))} story runs`);
+      throw new Error(
+        `${parsed.id} is ${s.fm.status}; only a ${statusWords(flow.runnableStatusesOf('story'))} story runs`,
+      );
     }
     return s;
   });
@@ -1244,7 +1246,9 @@ function plannedRun(s) {
   const flags = `${s.request === 'approve' ? 'approve requested, ' : ''}${s.security ? 'security, ' : ''}${s.major ? 'major, ' : ''}`;
   if (isVulnsStory(s.fm)) {
     if (s.fm.commit) return `merged earlier as ${s.fm.commit}: close the story`;
-    return s.request === 'drop' ? 'drop requested: supersede the story' : `${flags}run its plugin, gate, merge when green`;
+    return s.request === 'drop'
+      ? 'drop requested: supersede the story'
+      : `${flags}run its plugin, gate, merge when green`;
   }
   if (s.request === 'drop' && !s.fm.commit) return 'drop requested: close the PR, supersede the story';
   if (s.fm.commit) return `merged earlier as ${s.fm.commit}: delete the remote branch`;
@@ -1295,8 +1299,8 @@ export async function runUpdates(config, opts = {}) {
     };
   }
   try {
-    // A vulns agent story is the operator's to `bl run`; only a request on it is the run's.
-    const vulns = readVulnsStories(config).filter((s) => isScripted(s.fm) || storyRequest(s.fm));
+    // A vulns agent story is the operator's to `bl run`; only a drop on it is the run's.
+    const vulns = readVulnsStories(config).filter((s) => isScripted(s.fm) || storyRequest(s.fm) === 'drop');
     const stories = orderStories(
       selectStories([...readUpdateStories(config), ...vulns], opts.ids ?? [], loadFlow(config.backlogRoot)),
       config,
@@ -1361,9 +1365,7 @@ export async function runUpdates(config, opts = {}) {
             reason: `merge cap reached for ${repoName} (--max-merges ${maxMerges})`,
           };
         } else {
-          runner.log(
-            `\n── ${s.id} ${storyLabel(s)}${s.major ? ' (major)' : ''}${s.security ? ' (security)' : ''}`,
-          );
+          runner.log(`\n── ${s.id} ${storyLabel(s)}${s.major ? ' (major)' : ''}${s.security ? ' (security)' : ''}`);
           try {
             o = isVulnsStory(s.fm) ? processVulnsStory(ctx, s) : processStory(ctx, s);
           } catch (e) {
