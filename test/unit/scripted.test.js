@@ -220,6 +220,13 @@ test('retry-after-record-failure-does-not-rerun-command', () => {
   assert.equal(later.kind, 'changed');
   assert.equal(later.sha, first.sha);
   assert.equal(counted(dir), 1);
+
+  // Another caller fills in another session: still this story's command.
+  const session = repo();
+  const each = 'echo {{sessionId}} >> counter';
+  assert.equal(run(session, each, { vars: { sessionId: 's1' } }).kind, 'changed');
+  assert.equal(run(session, each, { vars: { sessionId: 's2' } }).kind, 'changed');
+  assert.equal(counted(session), 1);
 });
 
 test('no_op_scripted_run_with_matching_prior_commit_subject_is_unchanged', () => {
@@ -573,6 +580,23 @@ test('a scripted story a fix session touched is reviewed: an agent wrote part of
   });
   await assert.rejects(runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } }), /reached review/);
   assert.ok(agentCalls(runner).some((c) => c.prompt === 'feature-fix-tests'));
+});
+
+test('a retry from the callers: a feature run finds its commit, runs nothing and records it', async () => {
+  const { config } = backlog();
+  const { unit, prep } = storyPrep(config, 'S-3', mkTempDir('bl-wt-'));
+  const runner = loopRunner();
+  const { shell } = runner;
+  runner.shell = (cmd, cwd) =>
+    cmd.includes('--grep=') && cmd.includes('Scripted-Run: S-3') ? { status: 0, output: 'abc1234\n' } : shell(cmd, cwd);
+  const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+  assert.equal(state.status, 'clean', state.lastError);
+  assert.ok(!shellCmds(runner).some((c) => c.startsWith('relock')));
+  assert.equal(parseFrontmatter(textOf(unit.indexPath)).fm.status, 'in_progress');
+  assert.match(
+    extractSection(textOf(join(dirname(unit.indexPath), 'change.md')), 'Gate'),
+    /already committed as abc1234/,
+  );
 });
 
 test('a resumed run does not run a finished scripted story again', async () => {

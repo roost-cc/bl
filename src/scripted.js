@@ -114,8 +114,9 @@ export function implementPluginProblem(fm, plugins) {
 }
 
 /**
- * The commit trailer that names one scripted attempt: this story, this command.
- * A subject cannot: anyone may write the same one.
+ * The commit trailer that names one scripted attempt: this story, this command
+ * as the plugin writes it. Filled in, it would change with the caller's session
+ * variables. A subject cannot name it: anyone may write the same one.
  */
 function attemptTrailer(id, command) {
   return `Scripted-Run: ${id} ${createHash('sha256').update(command).digest('hex').slice(0, 16)}`;
@@ -165,7 +166,7 @@ export function runImplementPlugin({ id, title, fm, plugins, vars, worktreePath,
 
   // A retry after `recordScriptedRun` failed: the command's commit is already
   // here, so it must not run twice.
-  const trailer = attemptTrailer(id, command);
+  const trailer = attemptTrailer(id, plugins[plugin].implement);
   const earlier = shell(`git log -1 --format=%h --fixed-strings --grep='${trailer}'`);
   if (earlier.status !== 0) {
     return { ...base, kind: 'failed', error: 'git log failed in the worktree', tail: tail(earlier.output) };

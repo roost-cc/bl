@@ -3289,11 +3289,12 @@ no age and no ecosystem. The scan reads the checkout as it stands: on the guest,
   stronger evaluation that reaches the operator as a `bl task`), one story when
   several packages share the advisory. Every other finding (`young`, `watching`,
   `no-age`, `unknown`, `overdue`, or below `fail_on`) is reported and makes no story.
-- **Idempotent.** An open story with the same findings is left byte for byte. Changed
-  findings rewrite its Summary and title and clear `## Gate result`, so the run tries
-  again. A `decide` story matches through any of the finding's ids, since an
-  advisory's ids regroup. A story whose findings are gone is superseded with the
-  reason, and a `decide` story when a fix appears. A finding this cycle could not read
+- **Idempotent.** An open story with the same findings and ids is left byte for byte.
+  Changed findings or ids rewrite its Summary, title and `update_advisory` and clear
+  `## Gate result`, so the run tries again. A `decide` story matches through any of the
+  finding's ids, since an advisory's ids regroup. A story whose findings are gone is
+  superseded with the reason, and a `decide` story when every linked finding at
+  `fail_on` has a fix, or none is left at `fail_on`. A finding this cycle could not read
   (`unknown`, `no-age`) leaves its story open, so a registry outage closes nothing.
 - **No `update_branch`,** so `readUpdateStories` leaves these stories out and `sync`
   can never supersede them. `readVulnsStories` reads them. `bl updates status` shows
@@ -3310,9 +3311,9 @@ it is refused by name; the operator runs it with `bl run`.
 2. A `Red` record on the same `origin/main` is skipped, unless the operator approved.
 3. A detached worktree at `origin/main`. `runImplementPlugin` runs the plugin with
    `{{lockfile}}` added, shell-quoted, to the gate's variables, and commits
-   `chore: <title> (<id>)` with a `Scripted-Run: <id> <command hash>` trailer; every
-   caller's retry finds that trailer before the command runs, and does not run it
-   again. No change: `superseded`, "no change needed". A failed
+   `chore: <title> (<id>)`. This worktree goes when the run ends, so a commit that was
+   not merged goes with it and the next run starts from `origin/main`. No change:
+   `superseded`, "no change needed". A failed
    command: held, with a `Red` record and the output under `## Gate result`; the record's
    head is `origin/main`, since no commit exists. `writeOutcome`, not `recordScriptedRun`,
    writes the story, so a held story has no box checked.
@@ -3976,6 +3977,12 @@ set. Interpolation is `interpolateCommand`, the gate's: an unresolved placeholde
 | Exit 0 with changes                                              | Committed as `chore: <title> (<id>)`; the story goes `in_progress` with its criteria checked; the command and its last lines go to the run state and `change.md`'s `## Gate`. The run goes on as for an agent's story. After `bl implement`, `bl run` does it. |
 | Exit 0 with no changes                                           | The story is marked done, with "no change needed" under `## Notes`. A story run stops there with status `no-change`, exit 0, and pushes nothing. A feature's run goes on to its next story.                                                                    |
 | Non-zero exit, or a worktree already dirty, or an invalid plugin | The run stops with an `## Escalation` in the `_escalation.md` shape, naming the command, the exit code and the output tail. The story stays runnable. No agent is launched.                                                                                    |
+
+The commit carries a `Scripted-Run: <id> <hash of the plugin's command>` trailer. Before the command
+runs, `runImplementPlugin` searches the worktree's history for it: found, the attempt is already
+committed (its record failed), so the command does not run again and the result is `changed` with
+that commit. The record writes `change.md` first and the story last, so a story that has not moved
+means a retry records the run.
 
 A red test gate after a commit is handled as for any story, by the `feature-fix-tests` session, and
 that is the one case where an agent can touch a scripted story.

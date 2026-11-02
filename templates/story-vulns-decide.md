@@ -14,8 +14,8 @@ added:
 
 `{{lockfile}}` in `{{updateRepo}}` has an advisory on `main`, `{{advisory}}`, with no fixed version
 past the release age, so no upgrade can close it. Created by `bl updates vulns`, which also updates
-this story and supersedes it when a fix appears (F-71 D4). `bl updates run` does not take it; run
-it with `bl run`.
+this story and supersedes it when every package the advisory reaches has a fix (F-71 D4).
+`bl updates run` does not take it; run it with `bl run`.
 
 {{findingsTable}}
 

@@ -67,8 +67,9 @@ there. For each `backlog.json` repo with a `.ci-cd.json` it runs ci-cd's
 
 A failed scan is reported and leaves that repo's stories as they are. An open story with the same
 findings is left alone, changed findings update it, and one whose findings are gone is superseded
-with the reason (a `decide` story too when a fix appears). `bl updates sync` never touches these
-stories: they have no `update_branch`. `--repo <name>` scans one repo and `--dry-run` writes nothing.
+with the reason (a `decide` story too when every linked finding at `fail_on` has a fix, or none is
+left at `fail_on`). `bl updates sync` never touches these stories: they have no `update_branch`.
+`--repo <name>` scans one repo and `--dry-run` writes nothing.
 
 A scripted story has no branch and no PR. `bl updates run` takes it in a detached worktree at
 `origin/main`: the `vulns-fix` plugin, a commit, the same gate, a `--no-ff` merge and a push of
