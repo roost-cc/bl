@@ -87,6 +87,12 @@ export const VALID_STORY_KEYS = new Set([
   // next `bl updates run` (F-50 D8).
   'update_request',
   'update_request_reason',
+  // A vulns story, written by `bl updates vulns`, keyed by `update_repo` and
+  // `update_lockfile` with no `update_branch` (F-71 D4). `update_dropped` is the
+  // date of the operator's drop.
+  'update_lockfile',
+  'update_advisory',
+  'update_dropped',
 ]);
 
 export const VALID_REVIEW_STATUSES = new Set(['pending', 'fixed', 'addressed']);

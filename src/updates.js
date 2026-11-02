@@ -347,14 +347,39 @@ export function testPluginsFor(repoName, config) {
  * set), with its parsed frontmatter, body and text, wherever it lives.
  */
 export function readUpdateStories(config) {
+  return storiesWhere(config, (fm) => fm.update_repo && fm.update_branch);
+}
+
+/** Whether a story is one of `bl updates vulns`' (F-71 D4): a lock file, and no branch. */
+export function isVulnsStory(fm) {
+  return Boolean(fm.update_repo && fm.update_lockfile && !fm.update_branch);
+}
+
+/**
+ * Every story `bl updates vulns` keeps, scripted and agent alike, with its
+ * parsed frontmatter, body and text. They have no `update_branch`, so
+ * `readUpdateStories`, and with it `bl updates sync`, never sees them.
+ */
+export function readVulnsStories(config) {
+  return storiesWhere(config, isVulnsStory);
+}
+
+function storiesWhere(config, wanted) {
   const out = [];
   for (const s of readAllStories(config)) {
     const text = readFileSync(s.indexPath, 'utf8');
     const { fm, body } = parseFrontmatter(text);
-    if (!fm.update_repo || !fm.update_branch) continue;
-    out.push({ ...s, fm, body, text });
+    if (wanted(fm)) out.push({ ...s, fm, body, text });
   }
   return out;
+}
+
+/** `note` as the last paragraph of `## Summary`, or of the body without one. */
+export function noteUnderSummary(body, note) {
+  const summary = extractSection(body, 'Summary');
+  return summary == null
+    ? `${body.replace(/\n+$/, '\n')}\n${note}\n`
+    : replaceSection(body, 'Summary', `${summary.trim()}\n\n${note}`);
 }
 
 function loadTemplate() {
@@ -662,11 +687,7 @@ export async function syncUpdates(config, opts = {}) {
         updateSpecFile(config.backlogRoot, s.indexPath, (fm, body) => {
           fm.status = merged ? 'done' : 'superseded';
           fm.completed = today;
-          const summary = extractSection(body, 'Summary');
-          const b =
-            summary == null
-              ? `${body.replace(/\n+$/, '\n')}\n${note}\n`
-              : replaceSection(body, 'Summary', `${summary.trim()}\n\n${note}`);
+          const b = noteUnderSummary(body, note);
           return merged ? checkCriteria(b) : b;
         });
       }
@@ -714,6 +735,9 @@ Verbs:
                [S-id...]         Only these stories (else every ${statusWords(flow.runnableStatusesOf('story')).replace(' or ', ' or\n                                 ')} update story)
                --dry-run         Print the order and what each would get
                --max-merges <n>  Merges per repo this run (default ${DEFAULT_MAX_MERGES})
+  vulns      Stories from the local scanner's findings on main (F-71 D4)
+               --repo <name>     Only this repo
+               --dry-run         Print what would change; write nothing
   status     Open update stories by repo and state
                --json            Emit { stories, last_report } instead
   approve    Request that the runner gate the story again and merge on green
@@ -768,13 +792,24 @@ backlog/updates/<YYYY-MM-DD>.md and committed
 with the story changes. run prints one line per story to stdout: merged,
 held, decision, skipped (or "would run" with --dry-run).
 
+vulns runs ci-cd's bin/ci vulns --ages in every backlog.json repo with a
+.ci-cd.json. At or above the repo's fail_on, a lock file with ready findings
+gets one scripted story, and a decide advisory one agent story; every other
+finding is reported in the day's report and makes no story. A failed scan is
+reported and leaves its repo's stories as they are. run takes a scripted vulns
+story in a detached worktree at origin/main: the vulns-fix plugin, a commit,
+the gate, a --no-ff merge and a push of main, with no branch and no PR. No
+change supersedes it, and a failed command or a red gate holds it. run does
+not take an agent story: run that with bl run. sync never touches either kind.
+
 status lists every ${statusWords(flow.runnableStatusesOf('story'))} update story by repo, security
 first, then oldest first: id, state, update type, PR number, title and a
 detail. States: new (no run yet), green (gate green, still open: a failed
 merge), held (gate red or rebase
 conflict), decision needed (## Decision needed has content), skipped (the
 repo is not in backlog.json), approve pending and drop pending (a request
-the runner has not executed yet). The last line names the newest report
+the runner has not executed yet), and agent (a vulns story for bl run). Vulns
+stories come last, in their own group. The last line names the newest report
 under updates/ and its last entry.
 
 approve S-<n> and drop S-<n> --reason <text> are requests: each writes
@@ -870,6 +905,35 @@ async function cmdRun(args) {
   if (res.commit) reportBacklogCommit(res.commit, 'bl updates run');
 }
 
+async function cmdVulns(args) {
+  const { vulnsUpdates } = await import('./updates-vulns.js');
+  const config = loadConfig();
+  if (args.repo === true) {
+    console.error('--repo requires a repo name');
+    process.exit(1);
+  }
+  const dryRun = args['dry-run'] === true;
+  let res;
+  try {
+    res = await vulnsUpdates(config, { repo: args.repo, dryRun });
+  } catch (err) {
+    if (err.code === 'DUPLICATE_STORY_IDS') exitOnSyncError(err);
+    console.error(`bl updates vulns: ${err.message}`);
+    process.exit(1);
+  }
+  if (res.refused) {
+    console.error(`bl updates vulns: ${res.refused}`);
+    process.exit(1);
+  }
+  const count = (k) => res.actions.filter((a) => a.action === k).length;
+  info(
+    `updates vulns: ${count('created')} created, ${count('updated')} updated, ${count('superseded')} superseded, ` +
+      `${res.reported.length} reported, ${res.failures.length} failed` +
+      (dryRun ? ' (dry run: nothing written)' : ''),
+  );
+  if (res.commit) reportBacklogCommit(res.commit, 'bl updates vulns');
+}
+
 async function cmdStatus(args) {
   const { statusUpdates, renderStatus } = await import('./updates-answer.js');
   const config = loadConfig();
@@ -944,6 +1008,8 @@ export async function main(argv) {
       return cmdSync(args);
     case 'run':
       return cmdRun(args);
+    case 'vulns':
+      return cmdVulns(args);
     case 'status':
       return cmdStatus(args);
     case 'approve':

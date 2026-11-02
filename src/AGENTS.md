@@ -70,6 +70,7 @@ Per-command stdout contracts:
 | `bl agent`           | passes through to the configured agent                    |
 | `bl updates sync`    | one line per story: created, updated, closed or unchanged |
 | `bl updates run`     | one line per story: merged, held, decision or skipped     |
+| `bl updates vulns`   | one line per story, reported finding and failed scan      |
 | `bl updates status`  | the open update stories by repo and state (`--json`)      |
 | `bl updates approve` | one line: requested                                       |
 | `bl updates drop`    | one line: requested                                       |
@@ -460,6 +461,9 @@ positional `[commit-hash]` and `--commit` are mutually exclusive.
 | `update_pr`         | no       | PR number                                             | Written by `bl updates sync`                                                    |
 | `update_head`       | no       | commit sha                                            | The branch head the last sync saw; `bl updates run` skips a known-red head      |
 | `update_security`   | no       | `true`, else absent                                   | A vulnerability-alert update; `bl updates run` takes it first                   |
+| `update_lockfile`   | no       | path in the repo, e.g. `mcp/package-lock.json`        | Written by `bl updates vulns`; with `update_repo` the key of a vulns story      |
+| `update_advisory`   | no       | advisory id                                           | Written by `bl updates vulns` on a `decide` story; any id of the finding matches |
+| `update_dropped`    | no       | date                                                  | The operator dropped this vulns story: the same findings file no new one        |
 
 ## Component Frontmatter
 
@@ -3099,6 +3103,8 @@ bl updates sync --dry-run                    # print the plan, write nothing
 bl updates run                               # every refined/in_progress update story
 bl updates run S-840 S-841 --max-merges 3    # only these; at most 3 merges per repo
 bl updates run --dry-run                     # print the order, touch nothing
+bl updates vulns                             # stories from the scanner's findings on main
+bl updates vulns --repo tools --dry-run      # one repo; print the plan, write nothing
 bl updates status                            # open update stories by repo and state
 bl updates status --json                     # the same as JSON
 bl updates approve S-840                     # request: the run regates it, merges on green
@@ -3259,6 +3265,64 @@ Renovate does not reopen a PR a user closed, and the sync keeps the
 superseded story for that PR number. A drop on a story already merged
 (`commit` set) only finishes the merge.
 
+`bl updates vulns` (`src/updates-vulns.js`, F-71 D4) does for the local scanner
+what `sync` does for Renovate. Since S-1147 a finding on `main` blocks nothing,
+so this verb keeps it from sitting unnoticed. It takes the run lock, runs
+`<roostDir>/ci-cd/bin/ci vulns --ages --json <file> --working-directory <repoPath>`
+for each `backlog.json` repo with a `.ci-cd.json` (`--repo <name>` for one), then
+takes the backlog lock and writes the stories. It reads `ci-cd-vulns/v1` and knows
+no age and no ecosystem. The scan reads the checkout as it stands: on the guest,
+`roost-update.service` has fast-forwarded it to `main`.
+
+- **A failed scan** (no report, an unreadable or unknown one, `status` other than
+  `findings`, `clean` or `no-lockfiles`, or an exit above 1) is reported and leaves
+  that repo's stories as they are. Exit 1 with a report is a scan: `--ages` exits 1
+  on an `overdue` finding. So is a repo with no home component reported, not filed.
+- **Only a finding with `at_fail_on` acts,** since only that one is `--fix`'s to
+  upgrade. A lock file with `ready` findings gets one story from
+  `templates/story-vulns.md`: `type: chore`, 1 point, `status: refined`, in the repo's
+  home component, `plugins-implement: [vulns-fix]`, `plugins` from `update_tests`,
+  titled `vulns: <repo> <lockfile>: <pkg>@<ver> …`, cut with `…` to fit commitlint's
+  100-column header in the commit it becomes. Its Summary lists the findings. A
+  `decide` advisory gets one agent story from `templates/story-vulns-decide.md`, 2
+  points and no plugin, with `update_advisory` and the two outcomes (pivot, or a
+  stronger evaluation that reaches the operator as a `bl task`), one story when
+  several packages share the advisory. Every other finding (`young`, `watching`,
+  `no-age`, `unknown`, `overdue`, or below `fail_on`) is reported and makes no story.
+- **Idempotent.** An open story with the same findings is left byte for byte. Changed
+  findings rewrite its Summary and title and clear `## Gate result`, so the run tries
+  again. A `decide` story matches through any of the finding's ids, since an
+  advisory's ids regroup. A story whose findings are gone is superseded with the
+  reason, and a `decide` story when a fix appears. A finding this cycle could not read
+  (`unknown`, `no-age`) leaves its story open, so a registry outage closes nothing.
+- **No `update_branch`,** so `readUpdateStories` leaves these stories out and `sync`
+  can never supersede them. `readVulnsStories` reads them. `bl updates status` shows
+  them last, in a `vulns` group, with an `agent` state for a `decide` story.
+- The report gets `## Vulns <at>` (`### Stories`, `### Reported`, `### Failed scans`),
+  committed with the stories. A dry run prints the same lines and writes nothing.
+
+`bl updates run` takes a scripted vulns story through a branchless path
+(`processVulnsStory`) beside `processStory`. An agent story it never takes, and
+it is refused by name; the operator runs it with `bl run`.
+
+1. `git fetch origin main`. `commit` set, or a merge commit `Merge '<id>' into main`
+   on `origin/main` (`mergeOnMain`), closes the story and does nothing else.
+2. A `Red` record on the same `origin/main` is skipped, unless the operator approved.
+3. A detached worktree at `origin/main`. `runImplementPlugin` runs the plugin with
+   `{{lockfile}}` added, shell-quoted, to the gate's variables, and commits
+   `chore: <title> (<id>)`. No change: `superseded`, "no change needed". A failed
+   command: held, with a `Red` record and the output under `## Gate result`; the record's
+   head is `origin/main`, since no commit exists. `writeOutcome`, not `recordScriptedRun`,
+   writes the story, so a held story has no box checked.
+4. `runGate`, then `mergeBranch` with `branch: null`: the same checks, merge and push of
+   `main`, with no branch pushed or deleted and no forge call. Red: held.
+
+A `bl implement` or `bl run` of a scripted vulns story stops on the unresolved
+`{{lockfile}}`: `bl updates run` is its one path. `approve` regates a held story; on an
+agent story it is refused. `drop` on either kind only supersedes it (`dropVulnsStory`:
+no PR) and writes `update_dropped`, so the next tick does not file the same findings
+again. Other findings file a new story.
+
 The operator's answer (`src/updates-answer.js`, D4's last step):
 
 - `bl updates status [--json]` lists every open update story (`refined` or
@@ -3271,7 +3335,8 @@ The operator's answer (`src/updates-answer.js`, D4's last step):
   was green but the story is open: a failed merge, or a merge whose remote
   branch is still to delete, with the commit
   in the detail), `held` (the last gate was red or the rebase conflicted;
-  the detail says whether the branch has moved since). The last line names the newest
+  the detail says whether the branch has moved since), `agent` (a vulns story for
+  `bl run`). The last line names the newest
   report under `updates/` and its last entry. `--json` emits
   `{ stories, last_report }` with the same fields.
 - `bl updates approve S-<n>` and `bl updates drop S-<n> --reason <text>`
@@ -3289,7 +3354,7 @@ Changes are synced and committed on the backlog's current branch
 A second sync on the same report changes nothing.
 
 A `bl` that runs from a bl worktree (`<root>/<branch>/bl` or a path in it,
-`foreignCheckout` through `isBlBranchPath`) refuses `sync`, `run`, `approve` and `drop` against the
+`foreignCheckout` through `isBlBranchPath`) refuses `sync`, `run`, `vulns`, `approve` and `drop` against the
 backlog it found; a dry run is allowed. Every test and every check of a
 branch uses a temporary backlog (`mkTempBacklog`, or `runBl` with
 `BL_BACKLOG_DIR`) with the runner, git and the forge stubbed, never the

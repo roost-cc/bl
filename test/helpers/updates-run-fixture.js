@@ -160,12 +160,15 @@ export function fakeRunner(opts = {}) {
     mergedOnMain = {},
     throwOn = null,
     notes = 'ok',
+    /** A scripted story's command leaves changes for `git status` to see. */
+    implementChanges = true,
     prBody = '## v3.0.0\n\n### Breaking changes\n\n- `ctx.request` renamed',
   } = opts;
   const calls = [];
   const gateResults = [...gate];
   let wtHead = null;
   let merges = 0;
+  let implemented = false;
   const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
   const fail = (stderr) => ({ status: 1, stdout: '', stderr });
   const inWorktree = (cwd) => cwd.includes('/worktrees/');
@@ -189,7 +192,9 @@ export function fakeRunner(opts = {}) {
             ? { status: 2, stdout: '', stderr: '' }
             : ok(`${remoteHeads.get(rest.at(-1)) ?? '?'}\trefs/heads/${rest.at(-1)}\n`);
         case 'worktree':
-          if (rest[0] === 'add') wtHead = remoteHeads.get(rest[3].replace(/^origin\//, '')) ?? null;
+          if (rest[0] === 'add') {
+            wtHead = rest[3] === 'origin/main' ? mainHead : (remoteHeads.get(rest[3].replace(/^origin\//, '')) ?? null);
+          }
           return ok();
         case 'rev-parse': {
           const ref = rest[rest.length - 1];
@@ -235,7 +240,19 @@ export function fakeRunner(opts = {}) {
     },
     shell(cmd, cwd) {
       calls.push({ type: 'shell', cmd, cwd });
+      // `scripted.js`'s own git steps, around the plugin's command.
+      if (cmd === 'git status --porcelain') {
+        return { status: 0, output: implemented && implementChanges ? ' M package-lock.json\n' : '' };
+      }
+      if (cmd.startsWith('git rev-parse')) return { status: 0, output: `${wtHead}\n` };
+      if (cmd === 'git add -A') return { status: 0, output: '' };
+      if (cmd.startsWith('git commit')) {
+        wtHead = 'fix0000000';
+        implemented = false;
+        return { status: 0, output: '' };
+      }
       const r = gateResults.shift() ?? 0;
+      if (cmd.includes(' vulns --fix ')) implemented = true;
       return {
         status: r,
         output: r ? `running ${cmd}\n1) fails\nError: boom\n` : `running ${cmd}\nok\n`,

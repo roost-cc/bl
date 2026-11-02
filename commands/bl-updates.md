@@ -8,6 +8,7 @@ dashboard issue, no checkboxes, no PR-by-PR review (F-32).
 ```bash
 bl updates sync                         # one story per open Renovate branch, from the report
 bl updates run                          # rebase, gate, merge green branches (majors too)
+bl updates vulns                        # stories from the local scanner's findings on main
 bl updates status                       # where every open update story stands
 bl updates approve S-840                # request: the runner regates and merges it on green
 bl updates drop S-841 --reason "..."    # request: the runner closes the PR, supersedes the story
@@ -51,6 +52,37 @@ worktree refuses the four mutating verbs against the real backlog (a dry run is 
 branch is tried against a temporary backlog (`BL_BACKLOG_DIR=<tmp>`) with the forge and git
 stubbed, as its tests do.
 
+## Vulnerabilities on `main`
+
+Since F-71 the gate blocks only what a branch adds, so `bl updates vulns` owns what is already
+there. For each `backlog.json` repo with a `.ci-cd.json` it runs ci-cd's
+`bin/ci vulns --ages --json <file>` and acts on each finding's `fix_state`, at or above the repo's
+`fail_on`:
+
+| `fix_state`                                         | What happens                                                      |
+| --------------------------------------------------- | ----------------------------------------------------------------- |
+| `ready`                                             | one scripted story per lock file; `bl updates run` merges the fix |
+| `decide`                                            | one agent story per advisory; the operator runs it with `bl run`  |
+| `young`, `watching`, `no-age`, `unknown`, `overdue` | reported in the day's report, no story                            |
+
+A failed scan is reported and leaves that repo's stories as they are. An open story with the same
+findings is left alone, changed findings update it, and one whose findings are gone is superseded
+with the reason (a `decide` story too when a fix appears). `bl updates sync` never touches these
+stories: they have no `update_branch`. `--repo <name>` scans one repo and `--dry-run` writes nothing.
+
+A scripted story has no branch and no PR. `bl updates run` takes it in a detached worktree at
+`origin/main`: the `vulns-fix` plugin, a commit, the same gate, a `--no-ff` merge and a push of
+`main`. No change supersedes it ("no change needed"). A failed command or a red gate holds it with
+the output under `## Gate result`, and it is skipped until `main` moves, the findings change or
+you `approve` it. `drop` supersedes either kind and the same findings file no new story. The
+`vulns-fix` plugin is `backlog.json` config:
+
+```json
+"vulns-fix": {
+  "implement": "{{roostDir}}/ci-cd/bin/ci vulns --fix --lockfile {{lockfile}} --working-directory {{worktreePath}}"
+}
+```
+
 ## The operator's verbs
 
 ```bash
@@ -69,8 +101,10 @@ States, read from the story file alone:
 | `skipped`         | Its repo is not in `backlog.json`; the run cannot take it.                                                                                                                                                                           |
 | `approve pending` | The operator's approve waits on the runner's next run.                                                                                                                                                                               |
 | `drop pending`    | The operator's drop waits on the runner's next run; the detail is the reason.                                                                                                                                                        |
+| `agent`           | A vulns story no run takes: the operator runs it with `bl run`.                                                                                                                                                                      |
 
-The last line names the newest report and its last entry.
+Vulns stories come last, in their own `vulns` group. The last line names the newest report and its
+last entry.
 
 ```bash
 bl updates approve S-840
@@ -110,15 +144,18 @@ lock the sync and the run hold, before reading the story, so a local sync is nev
 ```
 backlog/
   stories/S<n>-…/index.md                # one story per Renovate branch, in its repo's home component (update_repo, update_branch, update_pr, update_head)
-  updates/<YYYY-MM-DD>.md                # the day's report: runs, approves, drops
+  updates/<YYYY-MM-DD>.md                # the day's report: runs, approves, drops, vulns scans
   .bl/run/updates.lock                   # the run lock
   .bl/run/updates.<S-id>.gate-<n>.log    # a gate's whole output
 bl/
   src/updates.js                         # sync and the CLI
   src/updates-run.js                     # the run machine
   src/updates-answer.js                  # status, approve, drop
+  src/updates-vulns.js                   # the vulns verb
 
   templates/story-update.md              # the update story
+  templates/story-vulns.md               # a lock file's scripted vulns story
+  templates/story-vulns-decide.md        # an advisory's agent story
 ```
 
 Configure once in `backlog.json`: `"updates": { "namespace": "acme",
