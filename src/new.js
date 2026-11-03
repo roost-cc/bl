@@ -52,6 +52,7 @@ import {
   pathEntryProblem,
 } from './story.js';
 import { renderTemplate, templatePath } from './template.js';
+import { implementPluginProblem } from './scripted.js';
 import {
   normalizeFeatureId,
   findFeature,
@@ -217,6 +218,28 @@ function pluginsFrom(source, primaryRepo) {
     return {};
   }
   return source.plugins;
+}
+
+/**
+ * `--implement <plugin>` as frontmatter, or `{}` without the flag: makes the
+ * story scripted (F-71 D3). Exits 1 on a name `bl validate` would fail.
+ *
+ * @returns {object} `plugins-implement`, or nothing
+ */
+function implementKey(args, cfg, primaryRepo) {
+  const raw = args.implement;
+  if (!isFlagSet(raw)) return {};
+  if (raw === true) {
+    console.error('--implement requires a plugin name');
+    process.exit(1);
+  }
+  const key = { 'plugins-implement': [String(raw).trim()] };
+  const problem = implementPluginProblem(key, configForRepo(cfg, primaryRepo).plugins);
+  if (problem) {
+    console.error(problem);
+    process.exit(1);
+  }
+  return key;
 }
 
 /**
@@ -422,7 +445,16 @@ async function newFeature(args, stories) {
 }
 
 /** Flags `bl new --component` refuses: they describe a story, not a component. */
-const COMPONENT_DISALLOWED_FLAGS = ['points', 'type', 'feature', 'depends-on', 'required-for', 'plugins-from', 'from'];
+const COMPONENT_DISALLOWED_FLAGS = [
+  'points',
+  'type',
+  'feature',
+  'depends-on',
+  'required-for',
+  'plugins-from',
+  'implement',
+  'from',
+];
 
 /**
  * The globs of a `--paths <glob,…>` argument: split at each comma outside a
@@ -870,6 +902,9 @@ Options:
   --epic               With no E-id: create an epic under --theme
                        (epics/E<n>-<slug>/index.md, the next number from
                        E50). Takes --title, --body-file, --no-sync.
+  --implement <plugin> Make the story scripted: plugins-implement names the
+                       plugin whose implement command does the work, in
+                       place of an agent.
   --plugins-from <id>  Copy the plugins / plugins-<stage> frontmatter keys
                        (e.g. plugins-test) of story S-<n> into the new
                        story when both have the same primary repo. Without
@@ -1195,7 +1230,7 @@ Example:
   }
 
   const primaryRepo = component.repo;
-  const plugins = pluginsFrom(pluginsSource, primaryRepo);
+  const plugins = { ...pluginsFrom(pluginsSource, primaryRepo), ...implementKey(args, cfg, primaryRepo) };
 
   const nextNum = findMaxStoryNum(cfg) + 1;
   const storyId = `S-${nextNum}`;
@@ -1333,6 +1368,7 @@ const BATCH_DISALLOWED_FLAGS = [
   'repo',
   'feature',
   'plugins-from',
+  'implement',
   'theme',
   'epic',
 ];

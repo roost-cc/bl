@@ -76,6 +76,15 @@ import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-fil
 import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE, readComponents, parseIdList, readAllStories } from './story.js';
 import { otherWorktreesLine } from './workon.js';
+import {
+  codeSpan,
+  isScripted,
+  recordScriptedRun,
+  reviewSkipped,
+  runImplementPlugin,
+  scriptedEscalation,
+  scriptedSummary,
+} from './scripted.js';
 import { parseLatestSession, extractReviewLog, featureReviewGate, openCheckboxItems } from './review-log.js';
 import {
   appendSection,
@@ -399,13 +408,6 @@ function setupChange(ctx) {
   res.doc.body = appendSection(res.doc.body, 'Description', describeUnit(ctx));
   writeChange(config.backlogRoot, res.path, res.doc);
   return true;
-}
-
-/** `text` as an inline code span, its fence longer than any backtick run inside. */
-function codeSpan(text) {
-  const s = String(text ?? '');
-  const fence = '`'.repeat(Math.max(0, ...(s.match(/`+/g) ?? []).map((m) => m.length)) + 1);
-  return fence.length > 1 ? `${fence} ${s} ${fence}` : `${fence}${s}${fence}`;
 }
 
 /**
@@ -769,7 +771,9 @@ function finish(ctx, status, reason = null, details = '') {
   ctx.runner.notify(`${ctx.feature.id} ${status}`);
   const log = ctx.runner.log;
   log('');
-  if (status === 'clean') {
+  if (status === 'no-change') {
+    log(`${ctx.feature.id} needed no change: marked done, nothing pushed.`);
+  } else if (status === 'clean') {
     log(`${ctx.feature.id} is reviewed clean${ctx.state.pr?.url ? `: ${ctx.state.pr.url}` : ''}.`);
     log(`Next: bl merge ${ctx.feature.id}`);
   } else if (status === 'escalated') {
@@ -2337,6 +2341,13 @@ function implementStories(ctx) {
     ctx.implementedThisRun = true;
     setStep(ctx, 'implement', { story: s.id, storyIndex: i });
     const storyAbsPath = join(config.backlogRoot, s.storyRelPath);
+    if (isScripted(readFm(storyAbsPath))) {
+      const stopped = implementScripted(ctx, s, storyAbsPath);
+      if (stopped) return stopped;
+      state.storyIndex = i + 1;
+      saveRunState(config, state);
+      continue;
+    }
     const storyVars = {
       storyId: s.id,
       storyTitle: s.title,
@@ -2392,6 +2403,77 @@ function implementStories(ctx) {
     saveRunState(config, state);
   }
   return null;
+}
+
+/**
+ * The `implement` step of a scripted story (F-71 D3): its command in its
+ * repo's worktree, in place of a session. Returns the final state when the
+ * run stopped, else null.
+ */
+function implementScripted(ctx, s, storyAbsPath) {
+  const { config, prep, feature } = ctx;
+  const fm = readFm(storyAbsPath);
+  const target = gateTargets(ctx).find((t) => t.repo === s.unitRepo);
+  if (!target) {
+    return finish(ctx, 'escalated', `${s.id}: ${s.unitRepo} has no worktree on ${prep.branchName}`);
+  }
+  const result = runImplementPlugin({
+    id: s.id,
+    title: s.title,
+    fm,
+    plugins: target.cfg.plugins,
+    vars: {
+      sessionId: prep.baseVars.sessionId,
+      sessionNum: prep.baseVars.sessionNum,
+      storyId: s.id,
+      worktreePath: target.worktreePath,
+      branchName: prep.branchName,
+      repoPath: config.reposByName?.[target.repo],
+      repoName: target.repo,
+      roostDir: config.roostDir,
+      backlogDir: config.backlogRoot,
+    },
+    worktreePath: target.worktreePath,
+    runner: ctx.runner,
+  });
+  const date = runnerNow(ctx.runner).toISOString().slice(0, 10);
+  recordScriptedRun({
+    backlogRoot: config.backlogRoot,
+    indexPath: storyAbsPath,
+    changePath: existsSync(changeFile(ctx)) ? changeFile(ctx) : null,
+    id: s.id,
+    repo: target.repo,
+    date,
+    result,
+  });
+  const note = scriptedSummary(s.id, result);
+  record(ctx, {
+    step: 'implement',
+    story: s.id,
+    ok: result.kind !== 'failed',
+    scripted: { plugin: result.plugin ?? null, command: result.command ?? null, exit: result.exit ?? null, tail: result.tail },
+    note,
+  });
+  ctx.runner.log(`  ${note}`);
+  commitUnitPaths(ctx, 'implement', [s.storyRelPath, changeRelPath(ctx)], `chore: ${note.split('\n')[0].slice(0, 120)}`);
+  if (result.kind === 'failed') {
+    const { reason, details } = scriptedEscalation(s.id, result, ctx.resumeHint);
+    return finish(ctx, 'escalated', reason, details);
+  }
+  if (result.kind === 'unchanged' && isStory(feature)) return finish(ctx, 'no-change');
+  return null;
+}
+
+/**
+ * Whether this run skips review: a story unit that is scripted, without
+ * `review: true`, and that no agent has touched. A fix session after a red gate
+ * is agent work, so it gets reviewed. A feature always is: its review covers
+ * the whole branch.
+ */
+function skipsReview(ctx) {
+  return (
+    isStory(ctx.feature) && reviewSkipped(readFm(ctx.feature.indexPath)) && !ctx.state.history.some((h) => h.agent)
+  );
 }
 
 /** The run's stories and repos, as `{ stories, repos }` id lists. */
@@ -4259,7 +4341,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   if (!testGateWithFix(ctx)) return state;
 
   // 3. Self-review, then the gate again if the tree changed.
-  if (!reachedReview) {
+  if (!reachedReview && !skipsReview(ctx)) {
     setStep(ctx, 'self-review');
     const beforeSelf = targetHeads(ctx);
     runSession(ctx, {
@@ -4293,6 +4375,11 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   saveRunState(config, state);
   const others = openOtherPullRequests(ctx);
   if (others.error) return finish(ctx, 'escalated', 'no pull request could be opened', others.error);
+
+  if (skipsReview(ctx)) {
+    record(ctx, { step: 'review', ok: true, note: 'skipped: scripted story, nothing an agent wrote' });
+    return finishClean(ctx);
+  }
 
   // 5. Review loop. A session already pending (a resumed run, or a review
   // written before this run) is fixed first: re-reviewing unfixed code would

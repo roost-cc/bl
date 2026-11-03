@@ -70,6 +70,7 @@ Per-command stdout contracts:
 | `bl agent`           | passes through to the configured agent                    |
 | `bl updates sync`    | one line per story: created, updated, closed or unchanged |
 | `bl updates run`     | one line per story: merged, held, decision or skipped     |
+| `bl updates vulns`   | one line per story, reported finding and failed scan      |
 | `bl updates status`  | the open update stories by repo and state (`--json`)      |
 | `bl updates approve` | one line: requested                                       |
 | `bl updates drop`    | one line: requested                                       |
@@ -439,27 +440,30 @@ positional `[commit-hash]` and `--commit` are mutually exclusive.
 
 ### Field Reference
 
-| Field               | Required | Values                                                | Notes                                                                           |
-| ------------------- | -------- | ----------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `component`         | yes      | `C<nn>`                                               | The code boundary; the story's repo is its `repo` (F-49 D4, F-52 D1)            |
-| `story_id`          | yes      | `S-<nn>` (dash required)                              | Unique across the entire backlog                                                |
-| `title`             | yes      | short string                                          | Appears in all index tables                                                     |
-| `type`              | yes      | `feature` `bug` `chore`                               | Story type                                                                      |
-| `points`            | yes      | 1 2 3 5 8 13                                          | Fibonacci; feature and backlog totals roll up                                   |
-| `status`            | yes      | `backlog` `refined` `in_progress` `done` `superseded` | Drives table placement and gates                                                |
-| `added`             | yes      | `YYYY-MM-DD`                                          | Set once, never changed                                                         |
-| `parent`            | no       | `S-<nn>`                                              | Parent story if this was split from one                                         |
-| `superseded_by`     | no       | `S-<nn>`                                              | Replacement story ID                                                            |
-| `commit`            | on done  | short hash _or_ map `<repo>: <sha>`                   | String for single-repo stories; map for multi-repo                              |
-| `completed`         | on done  | `YYYY-MM-DD`                                          | Set with `status: done`                                                         |
-| `feature`           | no       | `F-<n>`                                               | The feature this story is part of (see **Features**); set by `bl new --feature` |
-| `found_by`          | no       | `F-<n>` or `S-<n>`                                    | The unit whose work found a side story; set by `bl side --from` (F-48 D2)       |
-| `review_rounds_max` | no       | integer                                               | Written by a story run; caps review rounds                                      |
-| `update_repo`       | no       | forge slug, e.g. `acme/tools`                         | Written by `bl updates sync`; with `update_branch` the key of an update story   |
-| `update_branch`     | no       | branch name, e.g. `renovate/koa-3.x`                  | Written by `bl updates sync`                                                    |
-| `update_pr`         | no       | PR number                                             | Written by `bl updates sync`                                                    |
-| `update_head`       | no       | commit sha                                            | The branch head the last sync saw; `bl updates run` skips a known-red head      |
-| `update_security`   | no       | `true`, else absent                                   | A vulnerability-alert update; `bl updates run` takes it first                   |
+| Field               | Required | Values                                                | Notes                                                                                                             |
+| ------------------- | -------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `component`         | yes      | `C<nn>`                                               | The code boundary; the story's repo is its `repo` (F-49 D4, F-52 D1)                                              |
+| `story_id`          | yes      | `S-<nn>` (dash required)                              | Unique across the entire backlog                                                                                  |
+| `title`             | yes      | short string                                          | Appears in all index tables                                                                                       |
+| `type`              | yes      | `feature` `bug` `chore`                               | Story type                                                                                                        |
+| `points`            | yes      | 1 2 3 5 8 13                                          | Fibonacci; feature and backlog totals roll up                                                                     |
+| `status`            | yes      | `backlog` `refined` `in_progress` `done` `superseded` | Drives table placement and gates                                                                                  |
+| `added`             | yes      | `YYYY-MM-DD`                                          | Set once, never changed                                                                                           |
+| `parent`            | no       | `S-<nn>`                                              | Parent story if this was split from one                                                                           |
+| `superseded_by`     | no       | `S-<nn>`                                              | Replacement story ID                                                                                              |
+| `commit`            | on done  | short hash _or_ map `<repo>: <sha>`                   | String for single-repo stories; map for multi-repo                                                                |
+| `completed`         | on done  | `YYYY-MM-DD`                                          | Set with `status: done`                                                                                           |
+| `feature`           | no       | `F-<n>`                                               | The feature this story is part of (see **Features**); set by `bl new --feature`                                   |
+| `found_by`          | no       | `F-<n>` or `S-<n>`                                    | The unit whose work found a side story; set by `bl side --from` (F-48 D2)                                         |
+| `review_rounds_max` | no       | integer                                               | Written by a story run; caps review rounds                                                                        |
+| `update_repo`       | no       | forge slug, e.g. `acme/tools`                         | Written by `bl updates sync`; with `update_branch` the key of an update story                                     |
+| `update_branch`     | no       | branch name, e.g. `renovate/koa-3.x`                  | Written by `bl updates sync`                                                                                      |
+| `update_pr`         | no       | PR number                                             | Written by `bl updates sync`                                                                                      |
+| `update_head`       | no       | commit sha                                            | The branch head the last sync saw; `bl updates run` skips a known-red head                                        |
+| `update_security`   | no       | `true`, else absent                                   | A vulnerability-alert update; `bl updates run` takes it first                                                     |
+| `update_lockfile`   | no       | path in the repo, e.g. `mcp/package-lock.json`        | Written by `bl updates vulns`; with `update_repo` the key of a vulns story                                        |
+| `update_advisory`   | no       | advisory ids (list)                                   | Written by `bl updates vulns` on a `decide` story, sorted; any id matches, directly or through a chain of aliases |
+| `update_dropped`    | no       | date                                                  | The operator dropped this vulns story: the same findings file no new one                                          |
 
 ## Component Frontmatter
 
@@ -3099,6 +3103,8 @@ bl updates sync --dry-run                    # print the plan, write nothing
 bl updates run                               # every refined/in_progress update story
 bl updates run S-840 S-841 --max-merges 3    # only these; at most 3 merges per repo
 bl updates run --dry-run                     # print the order, touch nothing
+bl updates vulns                             # stories from the scanner's findings on main
+bl updates vulns --repo tools --dry-run      # one repo; print the plan, write nothing
 bl updates status                            # open update stories by repo and state
 bl updates status --json                     # the same as JSON
 bl updates approve S-840                     # request: the run regates it, merges on green
@@ -3259,6 +3265,67 @@ Renovate does not reopen a PR a user closed, and the sync keeps the
 superseded story for that PR number. A drop on a story already merged
 (`commit` set) only finishes the merge.
 
+`bl updates vulns` (`src/updates-vulns.js`, F-71 D4) does for the local scanner
+what `sync` does for Renovate. Since S-1147 a finding on `main` blocks nothing,
+so this verb keeps it from sitting unnoticed. It takes the run lock, runs
+`<roostDir>/ci-cd/bin/ci vulns --ages --json <file> --working-directory <repoPath>`
+for each `backlog.json` repo with a `.ci-cd.json` (`--repo <name>` for one), then
+takes the backlog lock and writes the stories. It reads `ci-cd-vulns/v1` and knows
+no age and no ecosystem. The scan reads the checkout as it stands: on the guest,
+`roost-update.service` has fast-forwarded it to `main`.
+
+- **A failed scan** (no report, an unreadable or unknown one, `status` other than
+  `findings`, `clean` or `no-lockfiles`, or an exit above 1) is reported and leaves
+  that repo's stories as they are. Exit 1 with a report is a scan: `--ages` exits 1
+  on an `overdue` finding. So is a repo with no home component reported, not filed.
+- **Only a finding with `at_fail_on` acts,** since only that one is `--fix`'s to
+  upgrade. A lock file with `ready` findings gets one story from
+  `templates/story-vulns.md`: `type: chore`, 1 point, `status: refined`, in the repo's
+  home component, `plugins-implement: [vulns-fix]`, `plugins` from `update_tests`,
+  titled `vulns: <repo> <lockfile>: <pkg>@<ver> …`, cut with `…` to fit commitlint's
+  100-column header in the commit it becomes. Its Summary lists the findings. A
+  `decide` advisory gets one agent story from `templates/story-vulns-decide.md`, 2
+  points and no plugin, with `update_advisory` and the two outcomes (pivot, or a
+  stronger evaluation that reaches the operator as a `bl task`), one story when
+  several packages share the advisory. Every other finding (`young`, `watching`,
+  `no-age`, `unknown`, `overdue`, or below `fail_on`) is reported and makes no story.
+- **Idempotent.** An open story with the same findings and ids is left byte for byte.
+  Changed findings or ids rewrite its Summary, title and `update_advisory` and clear
+  `## Gate result`, so the run tries again. A `decide` story matches through any of the
+  finding's ids, since an advisory's ids regroup. A story whose findings are gone is
+  superseded with the reason, and a `decide` story when every linked finding at
+  `fail_on` has a fix, or none is left at `fail_on`. A finding this cycle could not read
+  (`unknown`, `no-age`) leaves its story open, so a registry outage closes nothing.
+- **No `update_branch`,** so `readUpdateStories` leaves these stories out and `sync`
+  can never supersede them. `readVulnsStories` reads them. `bl updates status` shows
+  them last, in a `vulns` group, with an `agent` state for a `decide` story.
+- The report gets `## Vulns <at>` (`### Stories`, `### Reported`, `### Failed scans`),
+  committed with the stories. A dry run prints the same lines and writes nothing.
+
+`bl updates run` takes a scripted vulns story through a branchless path
+(`processVulnsStory`) beside `processStory`. An agent story it never takes, and
+it is refused by name; the operator runs it with `bl run`.
+
+1. `git fetch origin main`. `commit` set, or a merge commit `Merge '<id>' into main`
+   on `origin/main` (`mergeOnMain`), closes the story and does nothing else.
+2. A `Red` record on the same `origin/main` is skipped, unless the operator approved.
+3. A detached worktree at `origin/main`. `runImplementPlugin` runs the plugin with
+   `{{lockfile}}` added, shell-quoted, to the gate's variables, and commits
+   `chore: <title> (<id>)`. This worktree goes when the run ends, so a commit that was
+   not merged goes with it and the next run starts from `origin/main`. No change:
+   `superseded`, "no change needed". A failed
+   command: held, with a `Red` record and the output under `## Gate result`; the record's
+   head is `origin/main`, since no commit exists. `writeOutcome`, not `recordScriptedRun`,
+   writes the story, so a held story has no box checked.
+4. `runGate`, then `mergeBranch` with `branch: null`: the same checks, merge and push of
+   `main`, with no branch pushed or deleted and no forge call. Red: held.
+
+A `bl implement` or `bl run` of a scripted vulns story stops on the unresolved
+`{{lockfile}}`: `bl updates run` is its one path. `approve` regates a held story; on an
+agent story it is refused. `drop` on either kind only supersedes it (`dropVulnsStory`:
+no PR) and writes `update_dropped`, so the next tick does not file the same findings
+again. Other findings file a new story.
+
 The operator's answer (`src/updates-answer.js`, D4's last step):
 
 - `bl updates status [--json]` lists every open update story (`refined` or
@@ -3271,7 +3338,8 @@ The operator's answer (`src/updates-answer.js`, D4's last step):
   was green but the story is open: a failed merge, or a merge whose remote
   branch is still to delete, with the commit
   in the detail), `held` (the last gate was red or the rebase conflicted;
-  the detail says whether the branch has moved since). The last line names the newest
+  the detail says whether the branch has moved since), `agent` (a vulns story for
+  `bl run`). The last line names the newest
   report under `updates/` and its last entry. `--json` emits
   `{ stories, last_report }` with the same fields.
 - `bl updates approve S-<n>` and `bl updates drop S-<n> --reason <text>`
@@ -3289,7 +3357,7 @@ Changes are synced and committed on the backlog's current branch
 A second sync on the same report changes nothing.
 
 A `bl` that runs from a bl worktree (`<root>/<branch>/bl` or a path in it,
-`foreignCheckout` through `isBlBranchPath`) refuses `sync`, `run`, `approve` and `drop` against the
+`foreignCheckout` through `isBlBranchPath`) refuses `sync`, `run`, `vulns`, `approve` and `drop` against the
 backlog it found; a dry run is allowed. Every test and every check of a
 branch uses a temporary backlog (`mkTempBacklog`, or `runBl` with
 `BL_BACKLOG_DIR`) with the runner, git and the forge stubbed, never the
@@ -3850,6 +3918,7 @@ plugins: [session-stack]
 | `cleanup`    | During `bl merge`, before worktree removal                                                                                                                                  |
 | `done`       | After `bl done` marks the story complete and syncs                                                                                                                          |
 | `test`       | The test gate of `bl run`, in each prepared repo's worktree with that repo's config (`plugins-test: [<name>]`); each attempt's output goes to `.bl/run/<F-id>.test-<n>.log` |
+| `implement`  | In place of the agent session, for a story with `plugins-implement: [<name>]` (scripted stories, below)                                                                     |
 | `regenerate` | During `bl merge`'s integration, in a worktree whose merge with main conflicts: regenerates the conflicted files its `paths` match (F-36 D5; see below)                     |
 
 A `regenerate` plugin names the generated files it rebuilds: `regenerate` (the
@@ -3879,6 +3948,49 @@ paths back as conflicted (`git checkout -m`, or the one side left when the other
 deleted the path) and reports the plugin failed. With no
 conflicted path left, `bl` commits the merge (`git commit --no-edit`) and the
 repo counts as `merged`: gated, pushed, and never re-reviewed.
+
+#### Scripted stories (F-71 D3)
+
+A story whose work has a known command (a lock relock, a generated-file refresh) can declare it,
+and no agent is launched for it. It stays an ordinary story for list, tree and reporting; only its
+`implement` step differs:
+
+```json
+"plugins": { "relock": { "implement": "npm install --package-lock-only" } }
+```
+
+```yaml
+plugins-implement: [relock]
+```
+
+`bl new --implement relock` writes the key. It is read from the story alone: there is no cascade, and
+it names exactly one plugin with an `implement` command. `bl validate` fails anything else with
+`implement-plugin`, and with a `review` that is not `true` or `false`. `bl implement` and the `implement`
+step of `bl run` call `src/scripted.js` where they would start a session (`bl updates vulns`'s
+branchless path, S-901, too). The command runs in the story's repo's worktree, with `{{worktreePath}}`,
+`{{repoPath}}` (the main checkout, so a command works in `{{worktreePath}}`), `{{repoName}}`,
+`{{storyId}}`, `{{sessionId}}`, `{{sessionNum}}`, `{{branchName}}`, `{{roostDir}}` and `{{backlogDir}}`
+set. Interpolation is `interpolateCommand`, the gate's: an unresolved placeholder is an error.
+
+| Result                                                           | What happens                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exit 0 with changes                                              | Committed as `chore: <title> (<id>)`; the story goes `in_progress` with its criteria checked; the command and its last lines go to the run state and `change.md`'s `## Gate`. The run goes on as for an agent's story. After `bl implement`, `bl run` does it. |
+| Exit 0 with no changes                                           | The story is marked done, with "no change needed" under `## Notes`. A story run stops there with status `no-change`, exit 0, and pushes nothing. A feature's run goes on to its next story.                                                                    |
+| Non-zero exit, or a worktree already dirty, or an invalid plugin | The run stops with an `## Escalation` in the `_escalation.md` shape, naming the command, the exit code and the output tail. The story stays runnable. No agent is launched.                                                                                    |
+
+The commit carries a `Scripted-Run: <id> <hash of the plugin's command>` trailer. Before the command
+runs, `runImplementPlugin` searches the worktree's history for it: found, the attempt is already
+committed (its record failed), so the command does not run again and the result is `changed` with
+that commit. The record writes `change.md` first and the story last, so a story that has not moved
+means a retry records the run.
+
+A red test gate after a commit is handled as for any story, by the `feature-fix-tests` session, and
+that is the one case where an agent can touch a scripted story.
+
+**Review.** A story unit that is scripted skips the self-review and the review, `bl review S-n` says
+so and exits 0, and `bl merge` does not ask for one. `review: true` on the story opts in to all of
+it. A run in which an agent did touch the story, a fix session after a red gate, reviews as usual. A
+feature is always reviewed, whatever its stories are: its review covers the whole branch.
 
 For feature commands (`bl implement`, `bl run` or `bl merge` on an F-id) the cascade is
 **root → repo → feature**, the repo being each worktree's: a feature has no

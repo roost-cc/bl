@@ -14,6 +14,7 @@ import { featureReviewGate } from './review-log.js';
 import { extractSection, sectionHasContent, featureBranchName } from './feature.js';
 import { preflightMainCheckouts } from './cleanup.js';
 import { heldBy } from './blockers.js';
+import { reviewSkipped } from './scripted.js';
 
 /**
  * The branch a unit merges: a story's is its directory name, lower case; a
@@ -70,7 +71,8 @@ function prLine(p) {
  * `review_status` is `pending` or `fixed` or the latest Review Log session has
  * an open Must or Should box; open nits pass. A unit with no Review Log session
  * is refused unless `args["no-review"]`; then `unreviewed` carries what the
- * change document's `## Merge` records (`noReviewLines`).
+ * change document's `## Merge` records (`noReviewLines`). A scripted story
+ * without `review: true` is not refused: it has no review to wait for (F-71 D3).
  *
  * @param {object} unit — a `storyUnit` or `featureUnit`
  * @param {{ config: object, args?: object, repos: string[], find?: Function, preflight?: Function, held?: Function }} opts
@@ -112,7 +114,7 @@ export function mergeGates(
       gate: 'review',
       message: `${id} has unresolved review state (review_status: ${unit.reviewStatus || 'unset'}, latest session ${review?.date ?? 'unknown'}, ${review?.blocking ?? 0} unchecked Must/Should).\n${next} before merging, or edit its change document to override.`,
     });
-  } else if (!review) {
+  } else if (!review && !(unit.kind === 'story' && reviewSkipped(unit.fm))) {
     // Never reviewed (D3). The PR lookup only sharpens the message; a forge
     // without `change.find` still gets the refusal.
     const prs = forgeMergedPRs(repos, branchName, config, find);

@@ -13,17 +13,35 @@ import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { normalizeId } from './config.js';
 import { extractSection, sectionHasContent } from './feature.js';
+import { isScripted } from './scripted.js';
 import { acquireRunLock, runLockPath } from './feature-run.js';
 import { releasePidLock } from './pid-lock.js';
 import { updateSpecFile } from './spec-file.js';
 import { syncAndCommit } from './sync.js';
-import { RUN_LOCK_ID, foreignCheckout, readUpdateStories, repoForSlug, tableRows } from './updates.js';
+import {
+  RUN_LOCK_ID,
+  foreignCheckout,
+  isVulnsStory,
+  readUpdateStories,
+  readVulnsStories,
+  repoForSlug,
+  tableRows,
+} from './updates.js';
 import { REPORT_DIR, REQUESTS, parseGateRecord, storyIsMajor, storyNum, storyRequest } from './updates-run.js';
 import { updateRequestProblem } from './validate.js';
 import { loadFlow, statusWords } from './flow.js';
 
 /** The states `bl updates status` shows. */
-export const STATES = ['new', 'green', 'held', 'decision needed', 'skipped', 'approve pending', 'drop pending'];
+export const STATES = [
+  'new',
+  'green',
+  'held',
+  'decision needed',
+  'skipped',
+  'approve pending',
+  'drop pending',
+  'agent',
+];
 
 // ---------------------------------------------------------------------------
 // Status
@@ -48,7 +66,8 @@ function lastLine(text) {
  * last gate was green and the story is still open (a merge that failed, or
  * a merge whose remote branch is still to delete: `commit` set, the next
  * run finishes it), `held` when it was
- * red or a rebase conflict. `detail` says why in a few words.
+ * red or a rebase conflict, `agent` for a vulns story no run takes, which the
+ * operator runs. `detail` says why in a few words.
  *
  * @param {{ fm: object, body: string, repo: object | null, major: boolean }} s
  * @returns {{ state: string, detail: string }}
@@ -71,10 +90,13 @@ export function storyState(s) {
       detail: `waiting on the runner's next bl updates run${request === 'drop' && reason ? `: ${reason}` : ''}`,
     };
   }
+  if (isVulnsStory(s.fm) && !isScripted(s.fm)) return { state: 'agent', detail: 'run it with bl run' };
   if (s.fm.commit) {
     return {
       state: 'green',
-      detail: `merged \`${s.fm.commit}\`; remote branch not deleted: retried next run`,
+      detail: isVulnsStory(s.fm)
+        ? `merged \`${s.fm.commit}\`; the next run closes the story`
+        : `merged \`${s.fm.commit}\`; remote branch not deleted: retried next run`,
     };
   }
   const decision = extractSection(s.body, 'Decision needed');
@@ -156,22 +178,24 @@ export function lastRun(config) {
 /**
  * `bl updates status`: every open update story (`Flow.isRunnable`),
  * by repo name, security first, then oldest first, each
- * with its state, and the last report.
+ * with its state, then the vulns stories (`vulns: true`) the same way, and
+ * the last report.
  *
  * @returns {{ stories: Array<{ id: string, repo: string, update_repo: string,
  *   branch: string, pr: string | null, title: string, status: string,
  *   state: string, detail: string, types: string[], security: boolean,
- *   major: boolean, head: string | null }>,
+ *   major: boolean, head: string | null, vulns: boolean }>,
  *   lastReport: { date: string, path: string, entry: string | null } | null }}
  */
 export function statusUpdates(config) {
   const flow = loadFlow(config.backlogRoot);
-  const stories = readUpdateStories(config)
+  const stories = [...readUpdateStories(config), ...readVulnsStories(config)]
     .filter((s) => flow.isRunnable('story', s.fm.status))
     .map((s) => {
       const repo = repoForSlug(s.fm.update_repo, config);
       const major = storyIsMajor(s.body);
       const security = s.fm.update_security === 'true';
+      const vulns = isVulnsStory(s.fm);
       const { state, detail } = storyState({ ...s, repo, major });
       return {
         id: s.id,
@@ -183,15 +207,18 @@ export function statusUpdates(config) {
         status: s.fm.status,
         state,
         detail,
-        types: storyTypes(s.body),
+        types: vulns ? [isScripted(s.fm) ? 'fix' : 'decide'] : storyTypes(s.body),
         security,
         major,
         head: s.fm.update_head || null,
+        vulns,
       };
     })
     .sort(
       (a, b) =>
-        a.repo.localeCompare(b.repo) || Number(b.security) - Number(a.security) || storyNum(a.id) - storyNum(b.id),
+        Number(a.vulns) - Number(b.vulns) ||
+        a.repo.localeCompare(b.repo) ||
+        Number(b.security) - Number(a.security) || storyNum(a.id) - storyNum(b.id),
     );
   return { stories, lastReport: lastReport(config) };
 }
@@ -203,7 +230,7 @@ function typeText(e) {
 
 /**
  * The lines `bl updates status` prints: a heading per repo with its count,
- * one line per story (id, state, type, PR, title, then the detail), and the
+ * then one `vulns` heading for every vulns story, one line per story (id, state, type, PR, title, then the detail), and the
  * last report.
  */
 export function renderStatus({ stories, lastReport }) {
@@ -213,20 +240,22 @@ export function renderStatus({ stories, lastReport }) {
   const idW = width((e) => e.id);
   const stateW = width((e) => e.state);
   const typeW = width(typeText);
-  const prW = width((e) => `#${e.pr ?? '?'}`);
+  const prText = (e) => (e.vulns ? '-' : `#${e.pr ?? '?'}`);
+  const prW = width(prText);
+  const groupOf = (e) => (e.vulns ? 'vulns' : e.repo);
   let current = null;
   for (const e of stories) {
-    if (e.repo !== current) {
+    if (groupOf(e) !== current) {
       if (current != null) lines.push('');
-      const n = stories.filter((x) => x.repo === e.repo).length;
-      lines.push(`${e.repo} (${n})`);
-      current = e.repo;
+      current = groupOf(e);
+      const n = stories.filter((x) => groupOf(x) === current).length;
+      lines.push(`${current} (${n})`);
     }
     const cols = [
       e.id.padEnd(idW),
       e.state.padEnd(stateW),
       typeText(e).padEnd(typeW),
-      `#${e.pr ?? '?'}`.padEnd(prW),
+      prText(e).padEnd(prW),
       e.title,
     ];
     lines.push(`  ${cols.join('  ')}${e.detail ? ` · ${e.detail}` : ''}`.trimEnd());
@@ -282,7 +311,7 @@ export async function requestUpdate(config, opts) {
     };
   }
   try {
-    const s = readUpdateStories(config).find((x) => x.id === parsed.id);
+    const s = [...readUpdateStories(config), ...readVulnsStories(config)].find((x) => x.id === parsed.id);
     if (!s) throw new Error(`${parsed.id} is not an update story`);
     const flow = loadFlow(config.backlogRoot);
     if (!flow.isRunnable('story', s.fm.status)) {
@@ -296,8 +325,12 @@ export async function requestUpdate(config, opts) {
         `${parsed.id}: ${s.fm.update_repo} is not a repo in backlog.json repos; the runner cannot take it`,
       );
     }
+    const vulns = isVulnsStory(s.fm);
+    if (request === 'approve' && vulns && !isScripted(s.fm)) {
+      throw new Error(`${parsed.id} is an agent story: the runner never merges it; run it with bl run`);
+    }
     const pr = String(s.fm.update_pr ?? '').trim();
-    if (request === 'drop' && !pr) {
+    if (request === 'drop' && !pr && !vulns) {
       throw new Error(`${parsed.id} has no update_pr`);
     }
     if (request === 'drop' && s.fm.commit) {
@@ -317,7 +350,7 @@ export async function requestUpdate(config, opts) {
       storyIds: [s.id],
     });
     out(
-      `${'requested'.padEnd(9)} ${s.id.padEnd(6)} ${s.fm.update_repo} ${s.fm.update_branch} #${pr || '?'}  ${request}${reason && request === 'drop' ? `: ${reason}` : ''}${replaced && replaced !== request ? ` (replaces ${replaced})` : ''}`,
+      `${'requested'.padEnd(9)} ${s.id.padEnd(6)} ${s.fm.update_repo} ${vulns ? s.fm.update_lockfile : `${s.fm.update_branch} #${pr || '?'}`}  ${request}${reason && request === 'drop' ? `: ${reason}` : ''}${replaced && replaced !== request ? ` (replaces ${replaced})` : ''}`,
     );
     return { id: s.id, request, replaced, pr, commit };
   } finally {

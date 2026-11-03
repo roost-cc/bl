@@ -454,6 +454,24 @@ export function appendSectionLine(body, heading, line) {
   return replaceSection(body, heading, kept ? `${kept}\n${line}` : line);
 }
 
+/**
+ * Check the acceptance boxes a merge satisfies: every one, except "Remote
+ * branch deleted" when the deletion failed.
+ */
+export function checkCriteria(body, { branchDeleted = true } = {}) {
+  const section = extractSection(body, 'Acceptance Criteria');
+  if (section == null) return body;
+  const checked = section
+    .split('\n')
+    .map((l) => {
+      if (!/^\s*[-*+]\s+\[ \]/.test(l)) return l;
+      if (!branchDeleted && /remote branch deleted/i.test(l)) return l;
+      return l.replace('[ ]', '[x]');
+    })
+    .join('\n');
+  return replaceSection(body, 'Acceptance Criteria', checked.replace(/^\n+|\n+$/g, ''));
+}
+
 function sectionRe(heading) {
   return new RegExp(
     `^(##[ \\t]+${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \\t]*\\r?\\n)([\\s\\S]*?)(?=^##[ \\t]|$(?![\\s\\S]))`,

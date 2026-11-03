@@ -539,6 +539,9 @@ export function readAllStories(config) {
       found_by: fm.found_by ?? '',
       added: fm.added ?? '',
       completed: fm.completed ?? '',
+      // Present only on a scripted story: `isScripted` reads the key (F-71 D3).
+      ...(Object.hasOwn(fm, 'plugins-implement') ? { 'plugins-implement': fm['plugins-implement'] } : {}),
+      review: fm.review,
       storyEntry: entry,
       indexPath,
       storyRelPath: indexPath.slice(config.backlogRoot.length + 1),

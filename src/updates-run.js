@@ -42,11 +42,12 @@ import {
   worktreePathFor,
   runForgeOp,
   normalizeId,
+  shellQuote,
   info,
   renameTmuxWindow,
 } from './config.js';
 import { removeUnitDirIfEmpty } from './story.js';
-import { extractSection, replaceSection, sectionHasContent } from './feature.js';
+import { checkCriteria, extractSection, replaceSection, sectionHasContent } from './feature.js';
 import { RUN_DIR, ensureRunDir, acquireRunLock, runLockPath, shellMerged } from './feature-run.js';
 import { releasePidLock } from './pid-lock.js';
 import { updateSpecFile } from './spec-file.js';
@@ -57,21 +58,23 @@ import {
   CONFLICT_NOTE,
   DEFAULT_MAX_MERGES,
   RUN_LOCK_ID,
-  checkCriteria,
   foreignCheckout,
+  isVulnsStory,
+  noteUnderSummary,
   readUpdateStories,
+  readVulnsStories,
   repoForSlug,
   renderTable,
   tableRows,
 } from './updates.js';
 import { loadFlow, statusWords } from './flow.js';
+import { GATE_TAIL_LINES, fenced, interpolateCommand, isScripted, runImplementPlugin, tail } from './scripted.js';
 
-// `DEFAULT_MAX_MERGES`, `CONFLICT_NOTE`, `RUN_LOCK_ID` and `checkCriteria`
-// live in updates.js, whose CLI help and sync use them without importing
-// this module; re-exported for the run's callers.
+// `DEFAULT_MAX_MERGES`, `CONFLICT_NOTE` and `RUN_LOCK_ID` live in updates.js,
+// whose CLI help and sync use them without importing this module, and
+// `checkCriteria` in feature.js; re-exported for the run's callers.
 export { DEFAULT_MAX_MERGES, CONFLICT_NOTE, RUN_LOCK_ID, checkCriteria };
-/** Lines of a gate's output kept under `## Gate result`. */
-export const GATE_TAIL_LINES = 30;
+export { GATE_TAIL_LINES, tail };
 /** The report directory under the backlog root, next to `vulns/`. */
 export const REPORT_DIR = 'updates';
 
@@ -104,6 +107,11 @@ export function storyPackages(body) {
   return tableRows(extractSection(body, 'Upgrades') ?? '')
     .filter((r) => r[0] && r[0] !== '(none listed)')
     .map((r) => (r[3] ? `${r[0]}@${r[3]}` : r[0]));
+}
+
+/** `name@version` for every row of a vulns story's findings table. */
+export function findingPackages(body) {
+  return [...new Set(tableRows(extractSection(body, 'Summary') ?? '').map((r) => `${r[0]}@${r[1]}`))];
 }
 
 /**
@@ -144,7 +152,9 @@ export function selectStories(stories, ids, flow) {
     const s = stories.find((x) => x.id === parsed.id);
     if (!s) throw new Error(`${parsed.id} is not an update story`);
     if (!flow.isRunnable('story', s.fm.status)) {
-      throw new Error(`${parsed.id} is ${s.fm.status}; only a ${statusWords(flow.runnableStatusesOf('story'))} story runs`);
+      throw new Error(
+        `${parsed.id} is ${s.fm.status}; only a ${statusWords(flow.runnableStatusesOf('story'))} story runs`,
+      );
     }
     return s;
   });
@@ -155,22 +165,6 @@ export function parseMaxMerges(raw) {
   if (raw == null) return DEFAULT_MAX_MERGES;
   const s = String(raw).trim();
   return raw !== true && /^\d+$/.test(s) && parseInt(s, 10) >= 1 ? parseInt(s, 10) : NaN;
-}
-
-/** The last `n` lines of `text`, trailing blanks dropped. */
-export function tail(text, n = GATE_TAIL_LINES) {
-  const lines = String(text ?? '')
-    .replace(/\s+$/, '')
-    .split('\n');
-  return lines.slice(Math.max(0, lines.length - n)).join('\n');
-}
-
-/** A fence longer than any backtick run in `text`, so the text cannot close it. */
-function fenced(text, lang = 'text') {
-  const s = String(text ?? '');
-  const longest = Math.max(2, ...(s.match(/`+/g) ?? []).map((m) => m.length));
-  const f = '`'.repeat(longest + 1);
-  return `${f}${lang}\n${s}\n${f}`;
 }
 
 /**
@@ -282,6 +276,21 @@ export function storyBootstrapPlugins(s, config) {
   return { plugins, unknown };
 }
 
+/** The session variables a plugin stage of an update story gets. */
+function storyVars(config, s, worktreePath) {
+  return {
+    sessionId: `s${s.num}`,
+    sessionNum: String(s.num),
+    storyId: s.id,
+    worktreePath,
+    branchName: s.fm.update_branch,
+    backlogDir: config.backlogRoot,
+    roostDir: config.roostDir,
+    repoPath: s.repo?.repoPath,
+    repoName: s.repo?.name ?? s.fm.update_repo,
+  };
+}
+
 /**
  * The gate's steps for a story's worktree: the frozen install, the repo's
  * bootstrap plugins, its `ci gate` when it has a `.ci-cd.json`, then the
@@ -294,38 +303,7 @@ export function storyBootstrapPlugins(s, config) {
 export function gateSteps({ config, ciBin }, s, worktreePath) {
   const steps = [];
   const notes = [];
-  const vars = {
-    sessionId: `s${s.num}`,
-    sessionNum: String(s.num),
-    storyId: s.id,
-    worktreePath,
-    branchName: s.fm.update_branch,
-    backlogDir: config.backlogRoot,
-    roostDir: config.roostDir,
-    repoPath: s.repo?.repoPath,
-    repoName: s.repo?.name ?? s.fm.update_repo,
-  };
-  /**
-   * The command with `vars` filled in, or the error an unresolved one is.
-   * One pass over every `{{…}}`, values inserted literally (a function
-   * replacement reads no `$&` in a path), so a value is never rescanned and
-   * any placeholder that is not a set variable (`{{repo.name}}`, `{{9}}`) is
-   * an error.
-   */
-  const interpolate = (kind, name, command) => {
-    let left = null;
-    const cmd = String(command ?? '').replace(/\{\{[^{}]*\}\}/g, (m) => {
-      const k = m.slice(2, -2);
-      const v = Object.hasOwn(vars, k) ? vars[k] : null;
-      if (v != null) return String(v);
-      left ??= m;
-      return m;
-    });
-    if (!left) return { cmd };
-    return {
-      error: `unresolved placeholder ${left} in ${kind} plugin ${name}: \`${cmd}\``,
-    };
-  };
+  const vars = storyVars(config, s, worktreePath);
   const unknownError = (kind, unknown) =>
     `unknown ${kind} plugin${unknown.length === 1 ? '' : 's'}: ${unknown.join(', ')} (not defined in backlog.json plugins)`;
 
@@ -340,7 +318,7 @@ export function gateSteps({ config, ciBin }, s, worktreePath) {
     notes.push(`no bootstrap plugin for ${vars.repoName}: stage skipped`);
   }
   for (const { name, command } of boot.plugins) {
-    const r = interpolate('bootstrap', name, command);
+    const r = interpolateCommand(vars, 'bootstrap', name, command);
     if (r.error) return { steps, notes, error: r.error };
     steps.push({ name: `bootstrap plugin ${name}`, cmd: r.cmd });
   }
@@ -362,7 +340,7 @@ export function gateSteps({ config, ciBin }, s, worktreePath) {
     return { steps, notes, error: unknownError('test', unknown) };
   }
   for (const { name, command } of plugins) {
-    const r = interpolate('test', name, command);
+    const r = interpolateCommand(vars, 'test', name, command);
     if (r.error) return { steps, notes, error: r.error };
     steps.push({ name: `test plugin ${name}`, cmd: r.cmd });
   }
@@ -398,7 +376,7 @@ export function reportPath(config, date) {
 }
 
 function reportRow(o, extra) {
-  return [o.id, o.repoName, `#${o.pr}`, ...extra];
+  return [o.id, o.repoName, o.pr ? `#${o.pr}` : '-', ...extra];
 }
 
 /**
@@ -411,6 +389,7 @@ export function renderRunReport({ at, outcomes }) {
   const held = by('held');
   const decisions = by('decision');
   const skipped = by('skipped');
+  const superseded = by('superseded');
   const table = (header, rows) => (rows.length ? renderTable(header, rows) : 'None.');
   const n = (list, word) => `${list.length} ${word}`;
   return [
@@ -446,6 +425,17 @@ export function renderRunReport({ at, outcomes }) {
       skipped.map((o) => reportRow(o, [o.reason])),
     ),
     '',
+    ...(superseded.length
+      ? [
+          '### Superseded',
+          '',
+          table(
+            ['Story', 'Repo', 'PR', 'Reason'],
+            superseded.map((o) => reportRow(o, [o.reason])),
+          ),
+          '',
+        ]
+      : []),
   ].join('\n');
 }
 
@@ -690,9 +680,9 @@ function releaseNotesSection(ctx, s, repoPath) {
     .join('\n');
 }
 
-/** The merge commit's message: it names the branch and the story. */
+/** The merge commit's message: it names the branch, if any, and the story. */
 function mergeMessage(s, branch) {
-  return `Merge branch '${branch}' into main (${s.id})`;
+  return branch ? `Merge branch '${branch}' into main (${s.id})` : `Merge '${s.id}' into main`;
 }
 
 /**
@@ -783,6 +773,9 @@ function finishMerge(ctx, s, { repoPath, branch }) {
  * what the checkout still holds), write the merge commit to the story (`recordMerge`), delete the remote
  * branch.
  *
+ * A vulns story has no branch (`branch` null): the merge steps alone run, with
+ * no push of a branch, no PR and no deletion.
+ *
  * @returns {{ ok: true, commit: string, branchDeleted: boolean,
  *             deleteError: string | null, readyError: string | null } |
  *           { ok: false, reason: string }}
@@ -818,7 +811,7 @@ function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
   }
   const before = g(['rev-parse', 'HEAD']);
   if (before.status !== 0) return { ok: false, reason: "cannot read main's HEAD" };
-  if (finalSha !== remoteHead) {
+  if (branch && finalSha !== remoteHead) {
     const push = g([
       'push',
       `--force-with-lease=refs/heads/${branch}:${remoteHead}`,
@@ -842,7 +835,7 @@ function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
       }`,
     };
   }
-  const readyError = markReady(ctx, s, repoPath);
+  const readyError = branch ? markReady(ctx, s, repoPath) : null;
   const pushMain = g(['push', 'origin', 'main']);
   if (pushMain.status !== 0) {
     const back = rollback(g, ['reset', '--hard', before.stdout.trim()]);
@@ -855,6 +848,7 @@ function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
   }
   const commit = g(['rev-parse', '--short', 'HEAD']).stdout.trim() || '?';
   recordMerge(ctx, s, commit);
+  if (!branch) return { ok: true, commit, branchDeleted: true, deleteError: null, readyError };
   const del = g(['push', 'origin', '--delete', branch]);
   return {
     ok: true,
@@ -1016,6 +1010,101 @@ function processStory(ctx, s) {
 }
 
 /**
+ * One scripted vulns story through the branchless path (F-71 D4): a detached
+ * worktree at `origin/main`, the plugin through `scripted.js`, its commit, the
+ * gate, then the merge steps of `mergeBranch` with no branch to push or delete.
+ * The worktree has no remote head, so a red is known by `origin/main` alone: a
+ * story `bl updates vulns` changes has its `## Gate result` cleared, and runs.
+ */
+function processVulnsStory(ctx, s) {
+  const { runner, config, at } = ctx;
+  const approve = s.request === 'approve';
+  if (!s.repo) return { kind: 'skipped', reason: `${s.fm.update_repo} is not a repo in backlog.json repos` };
+  const { repoPath } = s.repo;
+  const g = gitIn(runner, repoPath);
+  const finished = (commit) => ({
+    kind: 'merged',
+    finished: true,
+    commit,
+    branchDeleted: true,
+    reason: `merged earlier as \`${commit}\``,
+  });
+  if (s.fm.commit) return finished(s.fm.commit);
+
+  const fetch = g(['fetch', 'origin', 'main']);
+  const earlier = mergeOnMain(g, s, null);
+  if (earlier) return finished(earlier);
+  if (fetch.status !== 0) return held(`fetch failed: ${firstLine(fetch.stderr) || `git fetch exited ${fetch.status}`}`);
+  const mainRes = g(['rev-parse', 'origin/main']);
+  if (mainRes.status !== 0) return held('origin/main not found after fetch');
+  const mainSha = mainRes.stdout.trim();
+
+  const last = parseGateRecord(extractSection(s.body, 'Gate result'));
+  if (!approve && last?.verdict === 'red' && last.main === mainSha) {
+    return { kind: 'skipped', reason: `unchanged since the red gate on main ${mainSha.slice(0, 7)} (${last.at})` };
+  }
+
+  const worktreePath = worktreePathFor(config, s.repo.name, basename(dirname(s.indexPath)).toLowerCase());
+  removeWorktree(runner, repoPath, worktreePath);
+  const add = g(['worktree', 'add', '--detach', worktreePath, 'origin/main']);
+  if (add.status !== 0) return held(`worktree add failed: ${firstLine(add.stderr)}`);
+  try {
+    const result = runImplementPlugin({
+      id: s.id,
+      title: s.fm.title,
+      fm: s.fm,
+      plugins: config.plugins,
+      vars: { ...storyVars(config, s, worktreePath), lockfile: shellQuote(s.fm.update_lockfile) },
+      worktreePath,
+      runner,
+    });
+    if (result.kind === 'unchanged') return { kind: 'superseded', reason: 'no change needed' };
+    if (result.kind === 'failed') {
+      const exited = result.exit != null && result.exit !== 0;
+      const detail = exited ? `\`${result.command}\` exited ${result.exit}` : result.error;
+      const line = gateRecordLine({ verdict: 'Red', at, head: mainSha, main: mainSha, detail });
+      return held(`command failed: ${detail}`, { gateSection: `${line}\n\n${fenced(result.tail)}` });
+    }
+    const headRes = gitIn(runner, worktreePath)(['rev-parse', 'HEAD']);
+    if (headRes.status !== 0) return held('cannot read the fix commit');
+    const finalSha = headRes.stdout.trim();
+    const gate = runGate(ctx, s, worktreePath, 1, finalSha);
+    const base = { gateSection: gateSection(gate.ok ? 'Green' : 'Red', at, finalSha, mainSha, gate) };
+    if (!gate.ok) return held(gate.config ? gate.detail : `gate red: ${gate.detail}`, base);
+    const merge = mergeBranch(ctx, s, { repoPath, branch: null, finalSha });
+    if (!merge.ok) return held(merge.reason, base);
+    const why = `gate green (${gate.detail})`;
+    return {
+      kind: 'merged',
+      reason: approve ? `${why}, approved by the operator` : why,
+      commit: merge.commit,
+      branchDeleted: true,
+      ...base,
+    };
+  } finally {
+    removeWorktree(runner, repoPath, worktreePath);
+  }
+}
+
+/**
+ * Execute a drop on a vulns story: it has no PR, so it is only superseded.
+ * `update_dropped` tells `bl updates vulns` not to file the same findings again.
+ */
+function dropVulnsStory(ctx, s) {
+  const reason = String(s.fm.update_request_reason).trim();
+  updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm, body) => {
+    fm.status = 'superseded';
+    fm.completed = ctx.today;
+    fm.update_dropped = ctx.today;
+    delete fm.update_request;
+    delete fm.update_request_reason;
+    return noteUnderSummary(body, `${ctx.today}: dropped by the operator: ${reason}.`);
+  });
+  const repo = s.repo?.name ?? s.fm.update_repo;
+  return { kind: 'dropped', reason, written: true, text: `${repo} story superseded. Reason: ${reason}` };
+}
+
+/**
  * Execute a drop the operator requested: mark the story `superseded` with
  * the reason under its Summary (and under `## Decision needed` when one was
  * asked), clear the request, then close the PR through the forge op
@@ -1027,6 +1116,7 @@ function processStory(ctx, s) {
  * keeps the superseded story for that PR number, so nothing recreates it.
  */
 function dropStory(ctx, s) {
+  if (isVulnsStory(s.fm)) return dropVulnsStory(ctx, s);
   const reason = String(s.fm.update_request_reason).trim();
   const pr = String(s.fm.update_pr ?? '').trim();
   if (!s.repo) {
@@ -1044,12 +1134,7 @@ function dropStory(ctx, s) {
     fm.completed = ctx.today;
     delete fm.update_request;
     delete fm.update_request_reason;
-    const note = `${ctx.today}: dropped by the operator: ${reason}. PR #${pr} closed.`;
-    const summary = extractSection(body, 'Summary');
-    const b =
-      summary == null
-        ? `${body.replace(/\n+$/, '\n')}\n${note}\n`
-        : replaceSection(body, 'Summary', `${summary.trim()}\n\n${note}`);
+    const b = noteUnderSummary(body, `${ctx.today}: dropped by the operator: ${reason}. PR #${pr} closed.`);
     return answerDecision(b, ctx.today, `dropped by the operator (\`bl updates drop\`): ${reason}`);
   });
 
@@ -1103,14 +1188,20 @@ function writeOutcome(ctx, o, approve, fm, body) {
   // conflict): the request is cleared. One that never reached the gate (a
   // failed fetch, a dirty main checkout) stays for the next run. A merged
   // story is past any request: a drop that crossed the merge (written on
-  // another clone before it pulled the merge) has nothing left to drop.
-  if (o.kind === 'merged' || (approve && o.gateSection != null)) {
+  // another clone before it pulled the merge) has nothing left to drop. A
+  // story the run superseded is past it too.
+  if (o.kind === 'merged' || o.kind === 'superseded' || (approve && o.gateSection != null)) {
     delete fm.update_request;
     delete fm.update_request_reason;
   }
   if (o.head) fm.update_head = o.head;
   if (o.gateSection != null) b = setSection(b, 'Gate result', o.gateSection);
   if (o.releaseNotes != null) b = setSection(b, 'Release notes', o.releaseNotes);
+  if (o.kind === 'superseded') {
+    fm.status = 'superseded';
+    fm.completed = ctx.today;
+    return noteUnderSummary(b, `${ctx.today}: ${o.reason}.`);
+  }
   if (o.kind === 'merged') {
     fm.commit = o.commit;
     b = checkCriteria(b, { branchDeleted: o.branchDeleted });
@@ -1140,8 +1231,28 @@ function writeOutcome(ctx, o, approve, fm, body) {
   return b;
 }
 
+/** A story's repo and what it changes there: its branch and PR, or its lock file. */
+function storyLabel({ fm }) {
+  const what = isVulnsStory(fm) ? fm.update_lockfile : `${fm.update_branch} #${fm.update_pr}`;
+  return `${fm.update_repo} ${what}`;
+}
+
 function fmtLine(kind, s, text) {
-  return `${kind.padEnd(9)} ${s.id.padEnd(6)} ${s.fm.update_repo} ${s.fm.update_branch} #${s.fm.update_pr}  ${text}`;
+  return `${kind.padEnd(9)} ${s.id.padEnd(6)} ${storyLabel(s)}  ${text}`;
+}
+
+/** What a dry run says about a story with no request problem. */
+function plannedRun(s) {
+  const flags = `${s.request === 'approve' ? 'approve requested, ' : ''}${s.security ? 'security, ' : ''}${s.major ? 'major, ' : ''}`;
+  if (isVulnsStory(s.fm)) {
+    if (s.fm.commit) return `merged earlier as ${s.fm.commit}: close the story`;
+    return s.request === 'drop'
+      ? 'drop requested: supersede the story'
+      : `${flags}run its plugin, gate, merge when green`;
+  }
+  if (s.request === 'drop' && !s.fm.commit) return 'drop requested: close the PR, supersede the story';
+  if (s.fm.commit) return `merged earlier as ${s.fm.commit}: delete the remote branch`;
+  return `${flags}gate, merge when green`;
 }
 
 /**
@@ -1188,8 +1299,10 @@ export async function runUpdates(config, opts = {}) {
     };
   }
   try {
+    // A vulns agent story is the operator's to `bl run`; only a drop on it is the run's.
+    const vulns = readVulnsStories(config).filter((s) => isScripted(s.fm) || storyRequest(s.fm) === 'drop');
     const stories = orderStories(
-      selectStories(readUpdateStories(config), opts.ids ?? [], loadFlow(config.backlogRoot)),
+      selectStories([...readUpdateStories(config), ...vulns], opts.ids ?? [], loadFlow(config.backlogRoot)),
       config,
     );
     if (stories.length === 0) {
@@ -1210,11 +1323,7 @@ export async function runUpdates(config, opts = {}) {
           ? 'skip: repo not in backlog.json'
           : problem
             ? `skip: malformed request: ${problem}`
-            : s.request === 'drop' && !s.fm.commit
-              ? 'drop requested: close the PR, supersede the story'
-              : s.fm.commit
-                ? `merged earlier as ${s.fm.commit}: delete the remote branch`
-                : `${s.request === 'approve' ? 'approve requested, ' : ''}${s.security ? 'security, ' : ''}${s.major ? 'major, ' : ''}gate, merge when green`;
+            : plannedRun(s);
         out(fmtLine('would run', s, what));
       }
       return result;
@@ -1244,7 +1353,7 @@ export async function runUpdates(config, opts = {}) {
             reason: `malformed request: ${problem}; fix the story's frontmatter (bl validate)`,
           };
         } else if (drop) {
-          runner.log(`\n── ${s.id} ${s.fm.update_repo} ${s.fm.update_branch} (drop requested)`);
+          runner.log(`\n── ${s.id} ${storyLabel(s)} (drop requested)`);
           try {
             o = dropStory(ctx, s);
           } catch (e) {
@@ -1256,11 +1365,9 @@ export async function runUpdates(config, opts = {}) {
             reason: `merge cap reached for ${repoName} (--max-merges ${maxMerges})`,
           };
         } else {
-          runner.log(
-            `\n── ${s.id} ${s.fm.update_repo} ${s.fm.update_branch}${s.major ? ' (major)' : ''}${s.security ? ' (security)' : ''}`,
-          );
+          runner.log(`\n── ${s.id} ${storyLabel(s)}${s.major ? ' (major)' : ''}${s.security ? ' (security)' : ''}`);
           try {
-            o = processStory(ctx, s);
+            o = isVulnsStory(s.fm) ? processVulnsStory(ctx, s) : processStory(ctx, s);
           } catch (e) {
             o = held(`run error: ${e.message}`);
           }
@@ -1280,7 +1387,7 @@ export async function runUpdates(config, opts = {}) {
           repoName,
           pr: s.fm.update_pr,
           branch: s.fm.update_branch,
-          packages: storyPackages(s.body),
+          packages: isVulnsStory(s.fm) ? findingPackages(s.body) : storyPackages(s.body),
           // A request the run acted on gets its own report entry.
           answer:
             !s.request || o.kind === 'skipped' || (s.request === 'drop' && finishing)
@@ -1297,7 +1404,7 @@ export async function runUpdates(config, opts = {}) {
             o.kind === 'merged'
               ? `merged ${o.commit}: ${o.reason}`
               : o.kind === 'dropped'
-                ? `PR closed: ${o.reason}`
+                ? `${isVulnsStory(s.fm) ? 'superseded' : 'PR closed'}: ${o.reason}`
                 : o.reason,
           ),
         );
@@ -1307,7 +1414,7 @@ export async function runUpdates(config, opts = {}) {
     }
     if (failure && result.outcomes.length === 0) throw failure;
 
-    const counts = ['merged', 'dropped', 'held', 'decision', 'skipped']
+    const counts = ['merged', 'dropped', 'superseded', 'held', 'decision', 'skipped']
       .map((k) => [k, result.outcomes.filter((o) => o.kind === k).length])
       .filter(([, n]) => n > 0)
       .map(([k, n]) => `${n} ${k}`);
