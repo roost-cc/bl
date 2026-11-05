@@ -2593,7 +2593,10 @@ D1). When that rebase settled generated paths, their regeneration is left pendin
 `.bl/run/pull-regenerate.json` for the next command that pulls (`leaveRegenerationPending`,
 which writes `null` there: no snapshot yet, so edits made before that command stay out of the
 regeneration's commit; `markRegenerationPending` takes the snapshot when the regeneration
-starts; the two are the file's only writers); it never regenerates under the lock. A push that still fails (a
+starts; the two are the file's only writers); it never regenerates under the lock. The marker is
+written before the rebase and removed when it settled nothing, so a marker that cannot be read or
+written stops the retry before anything moves, and a push never publishes settled paths without
+it. A push that still fails (a
 conflict outside the generated paths, a hook, auth, offline: the last three get no rebase) is
 one warning (`pushWarning`) naming the conflicting paths, if any, and the command to retry, and
 the command exits as it would have. With an `origin` remote the

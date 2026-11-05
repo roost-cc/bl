@@ -1381,6 +1381,54 @@ test("an edit made after the retry left a regeneration pending stays out of the 
   }
 });
 
+test('push_retry_cannot_report_success_when_regeneration_marker_fails', async () => {
+  const runDir = (r) => join(r, '.bl', 'run');
+  const cases = [
+    { name: 'the marker path is a directory', marker: (r) => mkdirSync(join(r, PENDING), { recursive: true }) },
+    { name: 'the marker holds no JSON', marker: (r) => writeFileSync(join(r, PENDING), 'not json') },
+    {
+      name: 'the marker cannot be written',
+      marker: (r) => {
+        mkdirSync(runDir(r), { recursive: true });
+        chmodSync(runDir(r), 0o555);
+      },
+    },
+    { name: 'a snapshot is already pending', marker: (r) => writeFileSync(join(r, PENDING), '[]'), ok: true },
+  ];
+  for (const c of cases) {
+    const { alice, bob, remote, done } = backlogClones();
+    try {
+      const generated = readFileSync(join(alice, 'index.md'), 'utf8');
+      bobPushes(bob, { 'index.md': `${generated}\nbob's line\n` });
+      const origin = g(remote, 'rev-parse', 'main');
+      writeFileSync(join(alice, 'index.md'), `${generated}\nalice's line\n`);
+      mkdirSync(runDir(alice), { recursive: true });
+      c.marker(alice);
+      const [res, err] = captureStderr(() => commitPaths(alice, ['index.md'], 'chore: alice'));
+      assert.equal(res.committed, true, `${c.name}: ${res.error}`);
+      if (c.ok) {
+        assert.equal(res.pushed, true, `${c.name}: ${res.pushError}`);
+        assert.deepEqual(res.pushResolved, ['index.md'], c.name);
+        assert.equal(readFileSync(join(alice, PENDING), 'utf8'), '[]', `${c.name}: the pending snapshot is kept`);
+        continue;
+      }
+      assert.equal(res.pushed, false, `${c.name}: no success without a marker`);
+      assert.equal(res.pushResolved, undefined, `${c.name}: nothing settled`);
+      assert.equal(g(remote, 'rev-parse', 'main'), origin, `${c.name}: origin keeps bob's index`);
+      assert.equal(g(alice, 'rev-parse', 'HEAD~1'), g(bob, 'rev-parse', 'HEAD~1'), `${c.name}: not rebased`);
+      assert.match(err, /^warning: backlog commit not pushed \(origin\/main moved and the regeneration marker/, c.name);
+      // The next command that pulls cannot regenerate either: it stops, it
+      // does not push the commit as it is.
+      const [pull] = await pullBeforeCommandCaptured(alice);
+      assert.equal(pull.state, 'unsafe', `${c.name}: ${pull.message}`);
+      assert.equal(g(remote, 'rev-parse', 'main'), origin, `${c.name}: still not pushed`);
+    } finally {
+      if (existsSync(runDir(alice))) chmodSync(runDir(alice), 0o755);
+      done();
+    }
+  }
+});
+
 test('a pulling command pushes a main still ahead: 1 ahead and N behind, and 1 ahead and 0 behind', async () => {
   for (const behind of [2, 0]) {
     const { alice, bob, remote, done } = backlogClones();

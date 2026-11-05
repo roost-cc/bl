@@ -21,7 +21,7 @@
  */
 
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 import { warn } from './config.js';
@@ -218,7 +218,10 @@ export function isNonFastForwardRejection(stderr) {
  * holds the main sync lock (`withMainSyncLock`), so no commit lands
  * mid-rebase. When the rebase settled generated paths, their regeneration is
  * left pending for the next command that pulls (`leaveRegenerationPending`,
- * which takes no snapshot yet); it never runs here, under the lock. Without an `origin` remote there is
+ * which takes no snapshot yet); it never runs here, under the lock. The
+ * marker is written before the rebase and removed when nothing was settled,
+ * so a marker that cannot be written fails the retry before anything moves
+ * and `pushed` never holds settled paths without it. Without an `origin` remote there is
  * nothing to push (`skipped`).
  * @param {string} root
  * @returns {BacklogPush}
@@ -231,7 +234,26 @@ export function pushBacklog(root) {
   const branch = git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).stdout?.trim() ?? '';
   // The rebase moves the checked-out branch: only retry when that is `main`.
   if (!isNonFastForwardRejection(r.stderr) || branch !== 'main') return { pushed: false, error };
+  // The marker goes down before the rebase: a rebase that settles generated
+  // paths is only ever pushed with their regeneration recorded, and a marker
+  // that cannot be written stops the retry before anything moves.
+  let wrote;
+  try {
+    wrote = leaveRegenerationPending(root);
+  } catch (err) {
+    return {
+      pushed: false,
+      error: `origin/main moved and the regeneration marker ${PULL_REGEN_PENDING} cannot be written (${err.message}); not rebased\n${error}`,
+    };
+  }
   const pull = pullLocked(root);
+  if (wrote && !(pull.state === 'pulled' && pull.resolved.length > 0)) {
+    try {
+      rmSync(join(root, PULL_REGEN_PENDING), { force: true });
+    } catch {
+      // Left behind, it costs the next command that pulls one regeneration.
+    }
+  }
   if (pull.state !== 'pulled') {
     const why = pull.paths?.length
       ? `conflicts in ${pull.paths.join(', ')}`
@@ -246,18 +268,10 @@ export function pushBacklog(root) {
     };
   }
   const resolved = pull.resolved;
-  let pendingError = '';
-  if (resolved.length > 0) {
-    try {
-      leaveRegenerationPending(root);
-    } catch (err) {
-      pendingError = `\n(could not leave the regeneration pending: ${err.message})`;
-    }
-  }
   const again = git(root, ['push', '-q', 'origin', 'main']);
   return again.status === 0
     ? { pushed: true, retry: 'pulled', resolved }
-    : { pushed: false, error: gitMessage(again, 'git push') + pendingError, retry: 'pulled', resolved };
+    : { pushed: false, error: gitMessage(again, 'git push'), retry: 'pulled', resolved };
 }
 
 /**
@@ -343,10 +357,13 @@ export function markRegenerationPending(root) {
  * A regeneration already pending is left as it is. Throws when the pending
  * file cannot be read or written.
  * @param {string} root
+ * @returns {boolean} whether it wrote the file (none was pending)
  */
 export function leaveRegenerationPending(root) {
   const path = join(root, PULL_REGEN_PENDING);
-  if (readPending(path) === undefined) writePending(root, path, null);
+  if (readPending(path) !== undefined) return false;
+  writePending(root, path, null);
+  return true;
 }
 
 /**
