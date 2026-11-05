@@ -16,7 +16,7 @@ import {
 } from '../../src/backlog-commit.js';
 import { mkTempDir, mkTempBacklog } from '../helpers/tempdir.js';
 import { initGitBacklog } from '../helpers/git-backlog.js';
-import { runBl } from '../helpers/run-bl.js';
+import { REPO_ROOT, runBl } from '../helpers/run-bl.js';
 import { pullBeforeCommand } from '../../src/sync.js';
 import { loadConfig } from '../../src/config.js';
 import {
@@ -1425,6 +1425,70 @@ test('push_retry_cannot_report_success_when_regeneration_marker_fails', async ()
     } finally {
       if (existsSync(runDir(alice))) chmodSync(runDir(alice), 0o755);
       done();
+    }
+  }
+});
+
+test('push_if_ahead_reports_count_query_failure', () => {
+  // Run in a child so a fake `git` on PATH can answer the count with something else.
+  const pushIfAheadIn = (root, path = process.env.PATH) => {
+    const r = spawnSyncFiles(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `import { pushIfAhead, pushWarning } from ${JSON.stringify(join(REPO_ROOT, 'src', 'backlog-commit.js'))};
+         const p = pushIfAhead(process.argv[1]);
+         console.log(JSON.stringify({ p, warning: p && !p.pushed ? pushWarning(process.argv[1], p) : null }));`,
+        root,
+      ],
+      { encoding: 'utf8', env: { ...process.env, PATH: path } },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  const cases = [
+    { name: 'origin/main is missing', setup: ({ alice }) => g(alice, 'update-ref', '-d', 'refs/remotes/origin/main') },
+    {
+      name: 'the count is not a number',
+      fakeGit:
+        '#!/bin/sh\ncase "$*" in *\'rev-list --count origin/main..HEAD\'*) echo many; exit 0;; esac\nexec /usr/bin/git "$@"\n',
+    },
+    { name: 'nothing ahead', none: true },
+    { name: 'one commit ahead', ahead: true, pushed: true },
+  ];
+  for (const c of cases) {
+    const { tmp, remote, alice } = twoClones({ [STORY]: 'a\n' });
+    try {
+      g(alice, 'fetch', '-q', 'origin');
+      if (!c.none) {
+        writeFileSync(join(alice, 'notes.md'), 'alice\n');
+        g(alice, 'add', 'notes.md');
+        g(alice, 'commit', '-q', '-m', 'alice, unpushed');
+      }
+      c.setup?.({ alice });
+      let path;
+      if (c.fakeGit) {
+        const bin = join(tmp, 'bin');
+        mkdirSync(bin);
+        writeFileSync(join(bin, 'git'), c.fakeGit, { mode: 0o755 });
+        path = `${bin}:${process.env.PATH}`;
+      }
+      const { p, warning } = pushIfAheadIn(alice, path);
+      if (c.none) {
+        assert.equal(p, null, c.name);
+      } else if (c.pushed) {
+        assert.equal(p.pushed, true, `${c.name}: ${p.error}`);
+        assert.equal(g(remote, 'rev-parse', 'main'), g(alice, 'rev-parse', 'HEAD'), c.name);
+      } else {
+        assert.notEqual(p, null, `${c.name}: a failed count is not "nothing ahead"`);
+        assert.equal(p.pushed, false, c.name);
+        assert.match(p.error, /^cannot count the commits origin\/main lacks \(/, c.name);
+        assert.doesNotMatch(p.error, /\n/, c.name);
+        assert.match(warning, /^backlog commit not pushed \(cannot count the commits origin\/main lacks/, c.name);
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
   }
 });

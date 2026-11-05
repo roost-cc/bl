@@ -279,7 +279,8 @@ export function pushBacklog(root) {
  * ahead of the `origin/main` that pull fetched (F-74 D1, Decision A1), under
  * the main sync lock and with `pushBacklog`'s retry. So a commit whose push
  * failed is carried by the next command that pulls, not only by the next one
- * that commits. Null when `main` holds nothing origin lacks.
+ * that commits. Null when `main` holds nothing origin lacks; a count that
+ * cannot be read is a failed push (`pushed: false`), never taken as zero.
  * @param {string} root
  * @param {{ lockTimeoutMs?: number, pollMs?: number }} [opts]
  * @returns {BacklogPush | { state: "lock-timeout", holder: number|string, lockPath: string } | null}
@@ -289,7 +290,17 @@ export function pushIfAhead(root, opts = {}) {
     root,
     () => {
       const ahead = git(root, ['rev-list', '--count', 'origin/main..HEAD']);
-      if (ahead.status !== 0 || parseInt(ahead.stdout, 10) === 0) return null;
+      const count = String(ahead.stdout ?? '').trim();
+      // A query that fails or answers something else is not "nothing ahead".
+      if (ahead.status !== 0 || !/^\d+$/.test(count)) {
+        const why = ahead.status !== 0 ? gitMessage(ahead, 'git rev-list') : `git rev-list answered '${count}'`;
+        // One line: `pushWarning` would otherwise pick git's `fatal:` line alone.
+        return {
+          pushed: false,
+          error: `cannot count the commits origin/main lacks (${why.replace(/\s*\n\s*/g, '; ')})`,
+        };
+      }
+      if (count === '0') return null;
       return pushBacklog(root);
     },
     opts,
