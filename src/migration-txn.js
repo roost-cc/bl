@@ -21,6 +21,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE } from './lock.js';
 import { MAIN_REFSPEC } from './main-sync.js';
 import { liveLockHolder } from './pid-lock.js';
+import { RUN_DIR } from './run-lock.js';
 import { allActiveWorktrees, LOCK_FILE as SESSION_LOCK_FILE } from './story.js';
 
 /**
@@ -155,7 +156,7 @@ function refuse(config, git) {
 function activeRuns(config) {
   const root = config.backlogRoot;
   const out = [];
-  const runDir = join(root, '.bl', 'run');
+  const runDir = join(root, RUN_DIR);
   for (const f of existsSync(runDir) ? readdirSync(runDir) : []) {
     if (!f.endsWith('.json')) continue;
     let state;
@@ -166,7 +167,7 @@ function activeRuns(config) {
     }
     if (state?.status !== 'running') continue;
     const pid = liveLockHolder(join(runDir, f.replace(/\.json$/, '.lock')));
-    if (pid != null && pid !== process.pid) out.push(`a bl run is active (${join('.bl', 'run', f)}, pid ${pid})`);
+    if (pid != null && pid !== process.pid) out.push(`a bl run is active (${join(RUN_DIR, f)}, pid ${pid})`);
   }
   // An unmigrated backlog.json registers its repos under `projects`.
   const repos = { ...config.repos };

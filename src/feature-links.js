@@ -34,7 +34,7 @@ import { parseIdList } from './story.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 
-const RUN_DIR = join('.bl', 'run');
+import { RUN_DIR } from './run-lock.js';
 const SUFFIX = '.links.json';
 
 /**

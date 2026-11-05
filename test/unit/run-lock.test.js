@@ -21,14 +21,12 @@ test('updates_lock_path_contract: run-lock.js and pid-lock.js import only node b
   assert.equal(typeof pidLock.acquirePidLock, 'function');
 });
 
-// Restatements of `.bl/run` older than F-74, in code it does not change (deferred).
-const PRE_EXISTING_RUN_DIRS = ['feature-links.js', 'migration-txn.js', 'migrate-worktree-layout.js'];
 
 test('regeneration_marker_uses_RUN_DIR: the marker and every other run path derive from run-lock.js', () => {
   assert.equal(dirname(backlogCommit.PULL_REGEN_PENDING), runLock.RUN_DIR);
   const dir = join(REPO_ROOT, 'src');
   for (const file of readdirSync(dir).filter((f) => f.endsWith('.js'))) {
-    if (file === 'run-lock.js' || PRE_EXISTING_RUN_DIRS.includes(file)) continue;
+    if (file === 'run-lock.js') continue;
     const src = readFileSync(join(dir, file), 'utf8');
     assert.doesNotMatch(src, /['"]\.bl['"],\s*['"]run['"]|['"]\.bl\/run\b/, `${file} restates the run directory`);
   }
