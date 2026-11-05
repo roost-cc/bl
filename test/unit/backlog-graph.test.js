@@ -10,12 +10,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { epicStatus, loadBacklog, loadStats, resetLoadStats } from '../../src/backlog-graph.js';
+import { epicStatus, loadBacklog, loadStats, resetLoadStats, unitFiles } from '../../src/backlog-graph.js';
 import { FrontmatterError, FrontmatterListError } from '../../src/config.js';
-import { loadFlow } from '../../src/flow.js';
+import { FlowError, loadFlow } from '../../src/flow.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'backlog-graph');
@@ -475,6 +475,67 @@ test('a tolerant and a strict load keep a snapshot each', () => {
   assert.equal(loadBacklog(config), strict);
   assert.equal(loadBacklog(config, { tolerant: true }), tolerant);
   assert.equal(loadStats.parses, 0);
+});
+
+test('a same-size rewrite in place within one clock tick is seen: a racy file is read again (S-1259)', () => {
+  const { root, config } = fixture();
+  const s4 = join(root, 'stories', 'S4-fourth', 'index.md');
+  // One recent mtime before and after the write, as one clock tick gives both.
+  const tick = Date.now() / 1000;
+  utimesSync(s4, tick, tick);
+  const g1 = loadBacklog(config, { reload: true });
+  const before = statSync(s4, { bigint: true });
+  // In place (same inode), same size, same mtime: the stat key cannot tell.
+  writeFileSync(s4, readFileSync(s4, 'utf8').replace('points: "2"', 'points: "8"'));
+  utimesSync(s4, tick, tick);
+  const after = statSync(s4, { bigint: true });
+  assert.deepEqual([after.ino, after.size, after.mtimeNs], [before.ino, before.size, before.mtimeNs]);
+  const g2 = loadBacklog(config);
+  assert.notEqual(g2, g1);
+  assert.equal(g2.get('S-4').points, 8);
+  // The tolerant snapshot sees it too, though it was built from the same records.
+  assert.equal(loadBacklog(config, { tolerant: true }).get('S-4').points, 8);
+  // Unchanged text: the same snapshot.
+  assert.equal(loadBacklog(config), g2);
+});
+
+test('with no flow.json the units still load; done and an epic status throw the FlowError when asked', () => {
+  const { root, config } = fixture();
+  rmSync(join(root, 'flow.json'));
+  const g = loadBacklog(config, { reload: true });
+  assert.equal(g.flow, null);
+  assert.equal(g.get('S-1').title, 'First');
+  assert.deepEqual(ids(g.get('F-1').stories), ids(loadBacklog(fixture().config).get('F-1').stories));
+  assert.throws(() => g.get('S-1').done, FlowError);
+  assert.throws(() => g.get('E50').status, FlowError);
+  assert.ok(Object.isFrozen(g.get('S-1')));
+});
+
+test('text() is the whole file; files lists every file, readable or not, with its unit', () => {
+  const { root, config } = fixture();
+  replace(join(root, 'stories', 'S12-broken', 'index.md'), '---\nstory_id: S-12\ntitle: [unclosed\n---\n');
+  replace(join(root, 'features', 'F2-beta', 'change.md'), '---\nchange_of: F-2\nrepos: []\n---\n');
+  const g = loadBacklog(config, { tolerant: true });
+  const s1 = g.get('S-1');
+  assert.equal(s1.text(), readFileSync(s1.file, 'utf8').replace(/\r\n/g, '\n'));
+  assert.ok(s1.text().endsWith(s1.body()));
+  const rel = (p) => (p == null ? null : p.slice(root.length + 1));
+  const files = g.files.map((f) => [rel(f.path), rel(f.unitIndex)]);
+  assert.deepEqual(files[0], ['index.md', null]);
+  assert.ok(
+    files.some(([p, u]) => p === 'stories/S12-broken/index.md' && u === p),
+    'an unreadable unit is listed',
+  );
+  assert.ok(files.some(([p, u]) => p === 'features/F2-beta/change.md' && u === 'features/F2-beta/index.md'));
+  assert.ok(files.some(([p, u]) => p === 'tasks/T1-check-alpha.md' && u === p));
+  // unitFiles lists one kind and reads nothing.
+  resetLoadStats();
+  assert.deepEqual(
+    unitFiles(config, 'feature').map((u) => u.entry),
+    ['F1-alpha', 'F2-beta', 'F3-gamma'],
+  );
+  assert.equal(loadStats.parses, 0);
+  assert.throws(() => unitFiles(config, 'nope'), /not a unit kind/);
 });
 
 test('a backlog with no unit directories is an empty graph', () => {

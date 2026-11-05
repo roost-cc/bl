@@ -35,8 +35,15 @@
  * reads. Nothing
  * changed: the same snapshot. Anything changed: only the new or changed files
  * are reparsed and the link pass reruns, giving a new snapshot; a caller
- * holding the old one keeps its consistent view. `{ reload: true }` drops the
- * memo.
+ * holding the old one keeps its consistent view. A file read within 100 ms
+ * of its mtime is read again on the next call and its text compared, since a
+ * same-size rewrite in place within one clock tick keeps its stat key
+ * (`settleRacy`). `{ reload: true }` drops the memo.
+ *
+ * It is the one way in (F-77 D2): no other module lists or reads the unit
+ * directories. The readers (`readAllStories` and the rest) project its units
+ * into their record shapes through `graphOf`; a writer that must list unit
+ * files without reading them uses `unitFiles`.
  */
 
 import { readFileSync, readdirSync, statSync } from 'fs';
@@ -56,7 +63,7 @@ import {
   normalizeId,
   parseFrontmatter,
 } from './config.js';
-import { loadFlow } from './flow.js';
+import { FlowError, loadFlow } from './flow.js';
 import { FEATURES_DIR, extractSection, normalizeFeatureId, orderStoriesByDeps } from './feature.js';
 import { parseIdList } from './story.js';
 import { THEME_ID_RE, normalizeEpicId } from './theme.js';
@@ -86,7 +93,9 @@ import { listChanges, unitChange } from './change-doc.js';
  * @property {string} status      story `backlog` and feature `draft` when unset;
  *                                an epic's is derived (`epicStatus`); a component and a theme have none
  * @property {string} added
- * @property {boolean} done       whether `flow.meets(kind, status, 'done')` (an epic: status `done`)
+ * @property {boolean} done       whether `flow.meets(kind, status, 'done')` (an epic: status `done`);
+ *                                with no readable `flow.json` it throws the `FlowError`, as an epic's `status` does
+ * @property {() => string} text  the whole file as read, LF line ends (its line numbers are the file's)
  * @property {() => string} body  the text after the frontmatter, sliced on first call and cached
  * @property {(name: string) => string | null} section  one `## <name>` section of the body, cached
  */
@@ -187,7 +196,7 @@ import { listChanges, unitChange } from './change-doc.js';
 /**
  * @typedef {object} BacklogGraph
  * @property {string} root  the backlog root
- * @property {import("./flow.js").Flow} flow
+ * @property {import("./flow.js").Flow | null} flow  null when `flow.json` is missing or unreadable
  * @property {ReadonlyMap<string, StoryUnit>} stories
  * @property {ReadonlyMap<string, FeatureUnit>} features
  * @property {ReadonlyMap<string, ComponentUnit>} components
@@ -199,6 +208,10 @@ import { listChanges, unitChange } from './change-doc.js';
  *           kind's directory or file names, readable or not, and readable ids; null when none
  * @property {(kind: UnitKind) => readonly Unit[]} list  every readable unit of the kind
  *           in directory order, a duplicate's later copies and id-less ones included
+ * @property {ReadonlyArray<{ path: string, unitIndex: string | null }>} files  every file
+ *           listed, readable or not, in `bl validate`'s order: each unit's file, then (a
+ *           tolerant load) its change documents, after the root `index.md`; `unitIndex` is
+ *           the file of the unit it belongs to (null for the root `index.md`)
  * @property {readonly Problem[]} problems
  */
 
@@ -206,21 +219,28 @@ import { listChanges, unitChange } from './change-doc.js';
 // Layout
 // ---------------------------------------------------------------------------
 
-/**
- * The unit roots, in the order `bl validate` reports their files. `num` is
- * the number a directory or file name carries; `accept` whether a name is a
- * unit of the kind at all.
- */
-const KINDS = Object.freeze([
-  { kind: 'story', dir: STORIES_DIR, num: /^S(\d+)/, changes: true },
-  { kind: 'component', dir: COMPONENTS_DIR, num: /^C(\d+)/ },
-  { kind: 'feature', dir: FEATURES_DIR, num: /^F(\d+)/, changes: true },
-  { kind: 'theme', dir: THEMES_DIR, accept: (e) => THEME_ID_RE.test(e) },
-  { kind: 'epic', dir: EPICS_DIR, num: /^E(\d+)/ },
-  { kind: 'task', dir: TASKS_DIR, num: TASK_FILE_RE, files: true },
-]);
+/** The unit kinds, in the order `bl validate` reports their files. */
+const KIND_NAMES = Object.freeze(['story', 'component', 'feature', 'theme', 'epic', 'task']);
 
-const KIND_NAMES = KINDS.map((k) => k.kind);
+/**
+ * The unit roots, in `KIND_NAMES` order. `num` is the number a directory or
+ * file name carries; `accept` whether a name is a unit of the kind at all.
+ * Built on first use, not at load: the readers this module projects
+ * (`story.js`, `feature.js`, `theme.js`, `task.js`) import it, and their
+ * constants are not initialised yet while that import cycle loads.
+ */
+let kindTable;
+function kinds() {
+  kindTable ??= Object.freeze([
+    { kind: 'story', dir: STORIES_DIR, num: /^S(\d+)/, changes: true },
+    { kind: 'component', dir: COMPONENTS_DIR, num: /^C(\d+)/ },
+    { kind: 'feature', dir: FEATURES_DIR, num: /^F(\d+)/, changes: true },
+    { kind: 'theme', dir: THEMES_DIR, accept: (e) => THEME_ID_RE.test(e) },
+    { kind: 'epic', dir: EPICS_DIR, num: /^E(\d+)/ },
+    { kind: 'task', dir: TASKS_DIR, num: TASK_FILE_RE, files: true },
+  ]);
+  return kindTable;
+}
 
 /** The id a unit's directory or file name gives, for a problem on an unread unit. */
 function idOfEntry(kind, entry) {
@@ -271,6 +291,7 @@ const memos = new Map();
  * @property {Readonly<Record<string, any>> | null} fm  null when unreadable
  * @property {number} bodyStart  where the body starts in `text`
  * @property {Array<Omit<Problem, "unit"|"file">>} faults  its frontmatter problems
+ * @property {boolean} racy      read too soon after its mtime to trust its stat key (`isRacy`)
  */
 
 /** `mtimeNs:size:ino`, or null when `path` is not a file. */
@@ -306,6 +327,55 @@ function changeKeys(unitDir) {
 }
 
 /**
+ * The units of one kind under `root`, in name order, each with its file's
+ * stat key: a directory whose name the kind takes and that holds an
+ * `index.md` (a task: a file whose name it takes). `bump(kind, digits)` hears
+ * every number a name takes, a directory's whether or not it holds a unit.
+ * @returns {{ entry: string, dir: string, path: string, key: string }[]}
+ */
+function listKind(root, k, bump = () => {}) {
+  const out = [];
+  const base = join(root, k.dir);
+  for (const ent of entriesOf(base)) {
+    const entry = ent.name;
+    const path = join(base, entry);
+    if (k.files) {
+      const m = entry.match(k.num);
+      if (!m) continue;
+      const key = statKey(path);
+      if (!key) continue;
+      bump(k.kind, m[1]);
+      out.push({ entry, dir: base, path, key });
+      continue;
+    }
+    const m = k.num ? entry.match(k.num) : null;
+    if (k.num ? !m : !k.accept(entry)) continue;
+    if (!isDirEntry(ent, path)) continue;
+    // A number is taken by its directory, whether or not it holds a readable unit.
+    if (m) bump(k.kind, m[1]);
+    const index = join(path, 'index.md');
+    const key = statKey(index);
+    if (key) out.push({ entry, dir: path, path: index, key });
+  }
+  return out;
+}
+
+/**
+ * The files of every unit of `kind`, listed and never read: `entry` (the
+ * directory's or task file's name), `dir` and `file`, in name order. For a
+ * writer that must snapshot or compare the unit files themselves (`bl side`'s
+ * undo); a reader uses `loadBacklog`.
+ * @param {{ backlogRoot: string }} config
+ * @param {UnitKind} kind
+ * @returns {{ entry: string, dir: string, file: string }[]}
+ */
+export function unitFiles(config, kind) {
+  const k = kinds().find((x) => x.kind === kind);
+  if (!k) throw new Error(`unitFiles: "${kind}" is not a unit kind (${KIND_NAMES.join(', ')})`);
+  return listKind(resolve(config.backlogRoot), k).map(({ entry, dir, path }) => ({ entry, dir, file: path }));
+}
+
+/**
  * List the backlog: every unit file with its stat key (a tolerant listing:
  * the root `index.md` and every change document too), and the highest number
  * per kind among the directory and file names.
@@ -326,30 +396,10 @@ function listBacklog(root, tolerant) {
     const key = statKey(path);
     if (key) slots.push({ kind: 'root', entry: 'index.md', dir: root, path, key, changes: [] });
   }
-  for (const k of KINDS) {
-    const base = join(root, k.dir);
-    for (const ent of entriesOf(base)) {
-      const entry = ent.name;
-      const path = join(base, entry);
-      if (k.files) {
-        const m = entry.match(k.num);
-        if (!m) continue;
-        const key = statKey(path);
-        if (!key) continue;
-        bump(k.kind, m[1]);
-        slots.push({ kind: k.kind, entry, dir: base, path, key, changes: [] });
-        continue;
-      }
-      const m = k.num ? entry.match(k.num) : null;
-      if (k.num ? !m : !k.accept(entry)) continue;
-      if (!isDirEntry(ent, path)) continue;
-      // A number is taken by its directory, whether or not it holds a readable unit.
-      if (m) bump(k.kind, m[1]);
-      const index = join(path, 'index.md');
-      const key = statKey(index);
-      if (!key) continue;
-      const changes = k.changes && tolerant ? changeKeys(path) : [];
-      slots.push({ kind: k.kind, entry, dir: path, path: index, key, changes });
+  for (const k of kinds()) {
+    for (const u of listKind(root, k, bump)) {
+      const changes = k.changes && tolerant ? changeKeys(u.dir) : [];
+      slots.push({ kind: k.kind, ...u, changes });
     }
   }
   const sig = slots
@@ -368,13 +418,69 @@ function deepFreeze(v) {
 }
 
 /**
+ * How long after its last change a file's stat key is not trusted. The
+ * kernel stamps mtimes from a coarse clock, so a file rewritten in place at
+ * the same size within one tick (a few ms) keeps its key. A file read that
+ * soon after its mtime is "racy", as git calls such an index entry: the next
+ * call reads it again and compares the text (`settleRacy`).
+ */
+const RACY_NS = 100_000_000n;
+
+const nowNs = () => BigInt(Date.now()) * 1_000_000n;
+
+/** Whether a file with stat key `key`, read at `readAt`, may change unseen. */
+function isRacy(key, readAt) {
+  return readAt - BigInt(key.slice(0, key.indexOf(':'))) < RACY_NS;
+}
+
+/** A file's text, LF line ends, and whether its stat key can be trusted after this read. */
+function readText(path, key) {
+  const readAt = nowNs();
+  const text = readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+  return { text, racy: isRacy(key, readAt) };
+}
+
+/**
+ * Read the racy records of `files` again: one whose text is unchanged is
+ * kept (and trusted once it is old enough), one whose text changed is
+ * dropped, so the next build parses it.
+ * @returns {boolean} whether any text changed
+ */
+function settleRacy(files) {
+  let changed = false;
+  for (const [path, rec] of files) {
+    if (!rec.racy) continue;
+    let now;
+    try {
+      now = readText(path, rec.key);
+    } catch {
+      now = null;
+    }
+    if (now?.text === rec.text) {
+      rec.racy = now.racy;
+    } else {
+      files.delete(path);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
  * Read and parse one file: its frontmatter, where its body starts, and its
  * frontmatter problems, as `findFrontmatterFindings` finds them.
  * @returns {FileRecord}
  */
 function parseFile(path, key, { changeDoc = false } = {}) {
   loadStats.parses++;
-  const text = readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+  const { text, racy } = readText(path, key);
+  const rec = parseText(path, key, text, changeDoc);
+  rec.racy = racy;
+  return rec;
+}
+
+/** `parseFile` of a text already read. */
+function parseText(path, key, text, changeDoc) {
   let parsed;
   try {
     parsed = parseFrontmatter(text);
@@ -516,7 +622,7 @@ function canonicalId(kind, fm, entry) {
 const unitText = new WeakMap();
 
 /** A unit with its common fields and its lazy readers; links are filled by `linkUnits`. */
-function makeUnit(kind, slot, rec, root, flow) {
+function makeUnit(kind, slot, rec, root, flow, flowError) {
   const { fm } = rec;
   const id = canonicalId(kind, fm, slot.entry);
   let status = '';
@@ -525,6 +631,7 @@ function makeUnit(kind, slot, rec, root, flow) {
   else if (kind === 'task') status = str(fm.status);
   let body;
   const sections = new Map();
+  const hasFlow = kind === 'story' || kind === 'feature' || kind === 'task';
   /** @type {any} */
   const unit = {
     id,
@@ -537,7 +644,10 @@ function makeUnit(kind, slot, rec, root, flow) {
     title: str(fm.title),
     status,
     added: str(fm.added),
-    done: kind === 'story' || kind === 'feature' || kind === 'task' ? flow.meets(kind, status, 'done') : false,
+    done: hasFlow && flow ? flow.meets(kind, status, 'done') : false,
+    text() {
+      return rec.text;
+    },
     body() {
       if (body === undefined) {
         loadStats.bodies++;
@@ -599,6 +709,14 @@ function makeUnit(kind, slot, rec, root, flow) {
     const n = Number(slot.entry.match(TASK_FILE_RE)[1]);
     Object.assign(unit, { num: Number.isSafeInteger(n) ? n : null, unit: null });
   }
+  // No flow: what needs one throws the flow's error when asked (`flowOf`).
+  if (!flow) {
+    const fail = () => {
+      throw flowError;
+    };
+    if (hasFlow || kind === 'epic') Object.defineProperty(unit, 'done', { get: fail, enumerable: true });
+    if (kind === 'epic') Object.defineProperty(unit, 'status', { get: fail, enumerable: true });
+  }
   unitText.set(unit, rec.text);
   return unit;
 }
@@ -608,8 +726,9 @@ function makeUnit(kind, slot, rec, root, flow) {
  * units, link them, collect the problems, freeze it all.
  * @returns {BacklogGraph}
  */
-function buildGraph(root, flow, listing, files, tolerant) {
+function buildGraph(root, flow, flowError, listing, files, tolerant) {
   const problems = [];
+  const listed = [];
   const problem = (p) => problems.push({ field: null, ref: null, line: 0, ...p });
   /** @type {Record<string, any[]>} */
   const lists = Object.fromEntries(KIND_NAMES.map((k) => [k, []]));
@@ -618,6 +737,9 @@ function buildGraph(root, flow, listing, files, tolerant) {
   const nums = new Map(listing.nums);
 
   for (const slot of listing.slots) {
+    const unitIndex = slot.kind === 'root' ? null : slot.path;
+    listed.push(Object.freeze({ path: slot.path, unitIndex }));
+    for (const c of slot.changes) listed.push(Object.freeze({ path: c.path, unitIndex }));
     const rec = recordOf(files, slot.path, slot.key);
     const unitId = () => (slot.kind === 'root' ? null : idOfEntry(slot.kind, slot.entry));
     let readable = rec.fm != null && rec.faults.length === 0;
@@ -632,7 +754,7 @@ function buildGraph(root, flow, listing, files, tolerant) {
       }
     }
     if (slot.kind === 'root' || !readable) continue;
-    const unit = makeUnit(slot.kind, slot, rec, root, flow);
+    const unit = makeUnit(slot.kind, slot, rec, root, flow, flowError);
     lists[slot.kind].push(unit);
     if (!unit.id) continue;
     const digits = String(unit.id).match(/^[A-Z]-?(\d+)$/)?.[1];
@@ -665,7 +787,10 @@ function buildGraph(root, flow, listing, files, tolerant) {
 
   for (const list of Object.values(lists)) {
     for (const u of list) {
-      for (const v of Object.values(u)) if (Array.isArray(v)) Object.freeze(v);
+      // Descriptors, not values: with no flow, `done` is a getter that throws.
+      for (const d of Object.values(Object.getOwnPropertyDescriptors(u))) {
+        if (Array.isArray(d.value)) Object.freeze(d.value);
+      }
       Object.freeze(u);
     }
     Object.freeze(list);
@@ -706,6 +831,7 @@ function buildGraph(root, flow, listing, files, tolerant) {
       if (!KIND_NAMES.includes(kind)) throw new Error(`list: "${kind}" is not a unit kind (${KIND_NAMES.join(', ')})`);
       return lists[kind];
     },
+    files: Object.freeze(listed),
     problems: Object.freeze(problems),
   };
   return Object.freeze(graph);
@@ -839,8 +965,10 @@ function linkUnits(maps, flow, problem) {
       }
     }
     e.theme?.epics.push(e);
-    e.status = epicStatus(e.features, flow);
-    e.done = e.status === 'done';
+    if (flow) {
+      e.status = epicStatus(e.features, flow);
+      e.done = e.status === 'done';
+    }
   }
 
   for (const t of [...tasks.values()].sort(byNum)) {
@@ -857,6 +985,35 @@ function linkUnits(maps, flow, problem) {
 // ---------------------------------------------------------------------------
 // The entry point
 // ---------------------------------------------------------------------------
+
+/**
+ * The backlog's flow, or null with the `FlowError` that says why there is
+ * none. The units and their links need no flow; only `done` and an epic's
+ * `status` do, and they throw that error when asked (`makeUnit`), so a
+ * reader of titles and links works on a backlog whose `flow.json` is missing,
+ * as the readers did before the graph.
+ */
+function flowOf(root) {
+  try {
+    return { flow: loadFlow(root), flowError: null };
+  } catch (e) {
+    if (!(e instanceof FlowError)) throw e;
+    return { flow: null, flowError: e };
+  }
+}
+
+/**
+ * The graph the backlog readers project (`readAllStories` and the rest,
+ * F-77 D2): `config.backlogGraph` when the caller pinned one, else
+ * `loadBacklog(config)`. Only `bl validate` pins one, its tolerant graph, so
+ * every reader it calls sees the units that graph could read and none it
+ * could not, in one consistent view.
+ * @param {{ backlogRoot: string, backlogGraph?: BacklogGraph }} config
+ * @returns {BacklogGraph}
+ */
+export function graphOf(config) {
+  return config.backlogGraph ?? loadBacklog(config);
+}
 
 /**
  * The backlog as a graph (F-77 D1), memoized per process and backlog root
@@ -876,15 +1033,18 @@ export function loadBacklog(config, opts = {}) {
   if (opts.reload) memos.delete(root);
   let memo = memos.get(root);
   if (!memo) {
-    memo = { files: new Map(), snaps: {} };
+    memo = { files: new Map(), snaps: {}, generation: 0 };
     memos.set(root, memo);
   }
   const mode = tolerant ? 'tolerant' : 'strict';
-  const flow = loadFlow(root);
+  const { flow, flowError } = flowOf(root);
   const listing = listBacklog(root, tolerant);
+  // A racy file whose text changed under an unchanged stat key outdates
+  // every snapshot, of either mode.
+  if (settleRacy(memo.files)) memo.generation++;
   const prev = memo.snaps[mode];
   let graph;
-  if (prev && prev.sig === listing.sig && prev.flow === flow) {
+  if (prev && prev.sig === listing.sig && prev.flow === flow && prev.generation === memo.generation) {
     graph = prev.graph;
   } else {
     // Drop the records of files that are gone, so a removed unit's text is not kept.
@@ -894,8 +1054,8 @@ export function loadBacklog(config, opts = {}) {
       for (const c of s.changes) live.add(c.path);
     }
     for (const path of memo.files.keys()) if (!live.has(path)) memo.files.delete(path);
-    graph = buildGraph(root, flow, listing, memo.files, tolerant);
-    memo.snaps[mode] = { sig: listing.sig, flow, graph };
+    graph = buildGraph(root, flow, flowError, listing, memo.files, tolerant);
+    memo.snaps[mode] = { sig: listing.sig, flow, graph, generation: memo.generation };
   }
   if (!tolerant) {
     const first = graph.problems.find((p) => p.error);
