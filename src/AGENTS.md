@@ -3261,11 +3261,14 @@ produced. Per story:
    held with reason, decisions needed, skipped). Each story is committed
    and pushed through `syncAndCommit` as it finishes (F-74 D2), with the
    message `chore: updates run: <id> <kind>`, its directory, and the block
-   rewritten in place from the outcomes so far (`writeRunReport`): the final
-   file reads as one append, and a run that dies keeps what it recorded. An
-   outcome written but not committed when something stops the run is
+   rewritten in place from the outcomes so far (`writeRunReport`, which
+   finds the run's earlier sections by their whole text, never by heading
+   alone): the final file reads as one append, and a run that dies keeps
+   what it recorded. A commit that fails leaves its paths for the next one.
+   An outcome written but not committed when something stops the run is
    committed (the counts as message) before the error surfaces; then the
-   tmux bell. A run with nothing open still writes `## Run <time>` (`No open update stories.`): it is the
+   tmux bell. One still uncommitted after that fails the run, naming the
+   paths to commit by hand. A run with nothing open still writes `## Run <time>` (`No open update stories.`): it is the
    heartbeat `bl inbox` reads. stdout: one line per story (`merged`,
    `dropped`, `held`, `decision`, `skipped`, or `would run` with
    `--dry-run`).
