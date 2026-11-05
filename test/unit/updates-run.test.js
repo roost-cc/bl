@@ -2636,3 +2636,116 @@ test('two_runs_in_one_second_keep_both_report_blocks / writeRunReport_preserves_
     }
   }
 });
+
+/**
+ * A pre-commit hook that fails on the commits whose 1-based numbers are in
+ * `fail` (`'all'`: every one), counting in `.git/commit-count`.
+ */
+function failingCommitHook(dir, fail) {
+  const cases = fail === 'all' ? 'exit 19' : `case "$n" in ${fail.join('|')}) exit 19;; esac`;
+  writeFileSync(
+    join(dir, '.git', 'hooks', 'pre-commit'),
+    `#!/bin/sh\nf="$(git rev-parse --git-dir)/commit-count"\nn=$(( $(cat "$f" 2>/dev/null || echo 0) + 1 ))\necho "$n" > "$f"\n${cases}\nexit 0\n`,
+    { mode: 0o755 },
+  );
+}
+
+test('run_updates_last_story_commit_failure_remains_pending_and_fails: a failed backlog commit stays on disk, rides with the next and fails the run when none commits it', async () => {
+  const cases = [
+    {
+      name: 'every commit fails',
+      fail: 'all',
+      rejects: true,
+      subjects: [],
+    },
+    {
+      name: "the last story's commit fails, the final retry commits it",
+      fail: [3],
+      rejects: false,
+      subjects: [
+        'chore: updates run: S-2 dropped',
+        'chore: updates run: S-1 merged',
+        'chore: updates run: 2 merged, 1 dropped',
+      ],
+    },
+    {
+      name: "the last story's commit and the final retry fail",
+      fail: [3, 4],
+      rejects: true,
+      subjects: ['chore: updates run: S-2 dropped', 'chore: updates run: S-1 merged'],
+    },
+    {
+      name: "an earlier story's commit fails, the next carries it",
+      fail: [1],
+      rejects: false,
+      subjects: ['chore: updates run: S-1 merged', 'chore: updates run: S-3 merged'],
+    },
+  ];
+  for (const c of cases) {
+    const s = await committedRunSetup();
+    try {
+      const { t } = s;
+      failingCommitHook(t.dir, c.fail);
+      let res = null;
+      let err = null;
+      try {
+        ({ res } = await run(t, fakeRunner({ gate: [0] })));
+      } catch (e) {
+        err = e;
+      }
+      assert.equal(Boolean(err), c.rejects, `${c.name}: ${err?.message}`);
+      if (err) {
+        assert.match(
+          err.message,
+          /backlog commit failed: .*commit these backlog paths by hand: .*updates\/2026-10-14\.md/,
+          c.name,
+        );
+        assert.ok(err.commit.error, c.name);
+      } else {
+        assert.ok(!res.commit.error, c.name);
+      }
+      assert.deepEqual(s.subjects(), c.subjects, c.name);
+      // Every story's outcome and the whole report are in HEAD, or still on disk.
+      const report = readFileSync(reportPath(t.config(), '2026-10-14'), 'utf8');
+      for (const id of ['S-1', 'S-2', 'S-3'])
+        assert.match(report, new RegExp(`\\b${id}\\b`), `${c.name}: ${id} on disk`);
+      const dirty = statusLines(t.dir).filter((l) => !l.includes('.bl/'));
+      if (c.rejects) {
+        assert.ok(
+          dirty.some((l) => l.endsWith('updates/2026-10-14.md')),
+          `${c.name}: report pending`,
+        );
+        assert.ok(
+          dirty.some((l) => l.includes(dirname(stories(t).get('S-3').storyRelPath))),
+          `${c.name}: S-3 pending`,
+        );
+      } else {
+        assert.deepEqual(dirty, [], `${c.name}: nothing left uncommitted`);
+        assert.equal(backlogGit(t.dir, 'show', 'HEAD:updates/2026-10-14.md'), report.replace(/\s+$/, ''), c.name);
+      }
+      assert.ok(!existsSync(runLockPath(t.config(), RUN_LOCK_ID)), `${c.name}: lock released`);
+    } finally {
+      s.cleanup();
+    }
+  }
+});
+
+test('an empty run whose heartbeat commit fails fails the run, the report left on disk', async () => {
+  const t = await setup(mkReport({}));
+  const saved = Object.fromEntries(Object.keys(GIT_ENV).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, GIT_ENV);
+  try {
+    initGitBacklog(t.dir);
+    addOrigin(t.dir);
+    failingCommitHook(t.dir, 'all');
+    await assert.rejects(run(t, fakeRunner({ gate: [0] })), /backlog commit failed: /);
+    assert.match(readFileSync(reportPath(t.config(), '2026-10-14'), 'utf8'), /No open update stories\./);
+    assert.ok(statusLines(t.dir).some((l) => l.endsWith('updates/2026-10-14.md')));
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    t.cleanup();
+  }
+});

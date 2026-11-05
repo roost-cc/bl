@@ -1343,6 +1343,20 @@ function plannedRun(s) {
 }
 
 /**
+ * A run's backlog commit that failed is the run's failure: the story files
+ * and the report stay on disk for the next commit, and the error names them.
+ * The error carries the commit result as `commit`.
+ */
+function throwIfUncommitted(commit) {
+  if (!commit?.error) return;
+  const err = new Error(
+    `bl updates run: backlog commit failed: ${commit.error}; commit these backlog paths by hand: ${(commit.paths ?? []).join(', ')}`,
+  );
+  err.commit = commit;
+  throw err;
+}
+
+/**
  * `bl updates run`. See the module comment for the machine.
  *
  * Every live run appends a `## Run <at>` entry to the day's report, even
@@ -1403,6 +1417,7 @@ export async function runUpdates(config, opts = {}) {
         message: 'chore: updates run: nothing open',
         extraPaths: [result.report],
       });
+      throwIfUncommitted(result.commit);
       return result;
     }
     if (opts.dryRun) {
@@ -1427,12 +1442,26 @@ export async function runUpdates(config, opts = {}) {
     // along with the next.
     let previous = null;
     let committed = 0;
+    // The paths of a commit that failed (the indexes its sync regenerated
+    // among them, which the next sync finds current and does not report).
+    let pending = [];
     const commitRun = async (message) => {
       const block = runReportSections(at, result.outcomes).join('\n');
       result.report = writeRunReport(config, today, previous, block);
       previous = block;
-      committed = result.outcomes.length;
-      result.commit = await syncAndCommit(config, { message, storyIds: changed, extraPaths: [result.report] });
+      const n = result.outcomes.length;
+      result.commit = await syncAndCommit(config, {
+        message,
+        storyIds: changed,
+        extraPaths: [...new Set([result.report, ...pending])],
+      });
+      // A failed commit leaves the outcomes pending: the next one carries them.
+      if (result.commit.error) {
+        pending = result.commit.paths ?? pending;
+      } else {
+        committed = n;
+        pending = [];
+      }
     };
     // Whatever stops a later story, what already happened (a merge is on
     // origin/main, stories were written) is reported and committed before
@@ -1523,10 +1552,18 @@ export async function runUpdates(config, opts = {}) {
       .filter(([, n]) => n > 0)
       .map(([k, n]) => `${n} ${k}`);
     // An outcome recorded but not committed (what failed came between the
-    // two) is committed now, before the error surfaces.
-    if (committed < result.outcomes.length) await commitRun(`chore: updates run: ${counts.join(', ')}`);
+    // two, or its commit failed) is committed now, before the error surfaces;
+    // one that still is not committed fails the run.
+    if (committed < result.outcomes.length) {
+      try {
+        await commitRun(`chore: updates run: ${counts.join(', ')}`);
+      } catch (e) {
+        failure ??= e;
+      }
+    }
     runner.notify(`updates run: ${counts.join(', ')}`);
     if (failure) throw failure;
+    throwIfUncommitted(result.commit);
   } finally {
     releasePidLock(runLockPath(config, RUN_LOCK_ID), lock.content);
   }
