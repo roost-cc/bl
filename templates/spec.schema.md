@@ -45,8 +45,8 @@ A spec with an `epic` block is refused: it is the pre-F-49 name of
 ## `feature`
 
 Optional `F-<n>` of a live feature. Every story is tagged `feature: F-<n>`,
-appended to the feature's `stories:`, and written from the shorter
-`story-feature` template.
+which makes it the feature's (its only statement of membership), and written
+from the shorter `story-feature` template.
 
 ## `stories[i]`
 

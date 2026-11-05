@@ -389,9 +389,8 @@ backlog lock and need `atomicWriteFile` only.
   `requestUpdate`, and `syncUpdates`' refresh and close, which apply their change to the spec
   read under the lock, inside the backlog lock) write through it too; a new update story, and
   `dropStory`'s restore after a failed PR close, are written with `atomicWriteFile`. `bl new`'s
-  feature links (`appendStoriesToFeature`, each story's `feature:` in `bl new --feature`),
-  `bl side`'s `markSideStory` and the repair record's relink (`settle` in `feature-links.js`)
-  write through it too, each inside the backlog lock; `bl new`'s new story, component, theme and
+  feature links (each story's `feature:` in `bl new --feature`), `bl attach`'s and `bl side`'s
+  `markSideStory` write through it too, each inside the backlog lock; `bl new`'s new story, component, theme and
   epic files, and the snapshot restores of `bl side`, `bl task` and `settle`, are written with
   `atomicWriteFile`. No spec in `src/` is written in place any more (`bl new --from` stages its
   stories in a temp directory and renames it into place; `bl migrate-*` is out of scope).
@@ -547,10 +546,12 @@ brief: # required, non-empty: what an agent reads before working in the theme
 epic_id: E62 # E50 upward; E00–E49 were components (F-49 D2)
 title: Backlog taxonomy
 theme: backlog
-status: open # derived by bl sync: done once every feature is done or superseded
-features: [F-49, F-51] # derived by bl sync; nobody edits it
 ---
 ```
+
+An epic stores no `features:` or `status:` (F-77 D3): its features are the features whose
+`epic:` names it, and its status is `done` once it has features and every one is done or
+superseded, else `open` (`epicStatus`, `backlog-graph.js`).
 
 A theme's body is an `## Overview` paragraph, the tables `bl sync` writes, and a `## State`
 (F-53 D4): a hand-readable log, newest last, that `bl merge F-<n>` appends
@@ -610,9 +611,8 @@ A backlog with no `roadmap.md` reports `roadmap-file`, and a theme with no `brie
 alone (S-581). (F-53's one-off migration that wrote them for the first backlog has run; S-581
 removed it, and it is in git history.)
 
-`bl sync` derives each epic's `features:` (the features naming it) and `status:` (`done` once
-it has features and every one is done or superseded, else `open`), so nobody edits them, and
-writes the theme and epic tables (see `bl sync`). `bl list`, `bl tree` and `bl what-next`
+The graph derives each epic's features and status (above), and `bl sync` writes the theme
+and epic tables from them (see `bl sync`). `bl list`, `bl tree` and `bl what-next`
 filter by the value axis and the code axis with one filter (`src/filter.js`):
 
 - `--theme <slug>`: stories in the theme by the membership rule above;
@@ -801,13 +801,19 @@ a feature may span components and repos:
   stories/S53-…/index.md            ← its stories, each naming its component
 ```
 
-Stories point at their feature with `feature: F-<n>`; the feature lists them
-in order under `stories:`. `bl validate` flags drift in either direction
-(`feature-story-missing`, `feature-story-mismatch`, `dangling-feature`,
-`feature-story-unlisted`, `feature-no-stories`). The `feature-story-unlisted`
-message ends with the command that fixes it, `(bl attach S-<n> F-<n> lists it)`:
-membership is the feature's `stories:` list, so a story that only names the
-feature is not run, counted or marked done with it. It also warns
+Stories name their feature with `feature: F-<n>`, and that is the only
+statement of membership (F-77 D3): a feature's stories are the stories whose
+`feature:` names it, in dependency order (`orderStoriesByDeps`, ties by
+number), and they are what `bl run` runs, `bl sync` counts and `bl merge`
+marks done. The order carries no meaning: the feature is the unit that gets
+prioritized. A feature stores no `stories:`, `points:` or `components:`, and
+an epic no `features:` or `status:`; the graph (`loadBacklog`, `DERIVED_KEYS`
+in `backlog-graph.js`) derives all five, and `bl validate` reports one found
+in a file as `derived-key` (error), naming what it is derived from.
+`scripts/migrate-derived-keys.js` removes them from every file in one commit
+(`--dry-run` prints the per-kind counts). `bl validate` reports a story naming
+a feature that does not exist (`dangling-feature`) and warns
+`feature-no-stories` for an approved or running feature no story names. It also warns
 `escalation-not-none` for a `refined`, `approved` or `running` feature whose
 `## Escalation` is not `None.`, since approve and run both refuse it. A story
 with no `feature:` goes through the same loop on its own branch (`bl run S-n`,
@@ -823,9 +829,7 @@ title: Invite codes & redemption engine
 status: draft # draft | refined | approved | running | escalated | done | superseded
 theme: residence # required: the theme it serves (see **Themes and Epics**)
 epic: E52 # optional: the epic it belongs to, in the same theme
-stories: [S-53, S-596, S-597] # ordered; bl new --feature / --from append here
-points: 13 # rolled up by bl sync
-components: [C01, C35] # rolled up by bl sync
+# no stories:, points: or components: — derived from the stories naming it (F-77 D3)
 review_rounds_max: 2
 added: 2026-09-24
 approved:
@@ -1855,7 +1859,7 @@ bl side <repo|C-id> --from <F-n|S-n> --title <t> --points <n> [--type chore|bug|
   "current unit". The story records it as `found_by:` (F-48 D2).
 - **Attach rule.** The story joins a feature when `--from` is a feature in
   `FEATURE_WORKABLE_STATUSES` (`approved`, `running`, `escalated`) or a story
-  of one: `feature:` is set, it is appended to the feature's `stories:`, its
+  of one: `feature:` is set (which makes it the feature's, F-77 D3), its
   worktree is on the feature's branch (`prepareFeatureRepo`, prepared before
   the story is written) and the feature's change document gets the repo, in
   `featureRepoOrder`. Otherwise (a draft or refined feature, a standalone
@@ -1869,7 +1873,7 @@ side` then sets `status: in_progress` and `found_by:` through
   `bl new` on its stdin.
 - **Commit.** One hold of the backlog lock covers `bl new`, the marks, the
   change document and one `syncAndCommit` of the story directory, the
-  feature file (attached) and the change document, plus the indexes the sync
+  feature file (attached: its Stories table) and the change document, plus the indexes the sync
   regenerated: `chore: add S-<n> (bl side, found by <id>)`. The `bl new`
   child works under the parent's lock (`BL_LOCK_HOLDER`, `lock.js`), so no
   other bl commits a half-made story.
@@ -1902,25 +1906,23 @@ side` then sets `status: in_progress` and `found_by:` through
 
 ### `bl attach`
 
-List an existing story in a feature (S-1095, `src/attach.js`):
+Put an existing story in a feature (S-1095, `src/attach.js`):
 
 ```bash
 bl attach <S-n> <F-n> [--no-sync] [--json]
 ```
 
-- **Membership.** The feature's `stories:` list is where membership is
-  decided (`bl run` orders from it, `bl sync` sums its points, `bl merge`
-  marks exactly its stories done); the story's `feature:` points back.
-  `bl attach` sets `feature:` (an empty key filled in place, a missing one
-  last) and appends the id to `stories:` through `appendStoriesToFeature`
-  (`src/feature.js`), the writes `bl new F-<n>` makes for a story it creates.
-  It does not change `status:`, `found_by:` or the story's sections.
+- **Membership.** A story's `feature:` is the only statement of membership
+  (F-77 D3): `bl run` runs, `bl sync` counts and `bl merge` marks done the
+  stories naming the feature. `bl attach` sets it (an empty key filled in
+  place, a missing one last), the write `bl new F-<n>` makes for a story it
+  creates, and writes nothing to the feature. It does not change `status:`,
+  `found_by:` or the story's sections.
 - **Ids** in either order, in any form `normalizeId` / `normalizeFeatureId`
   accept; anything other than one of each exits 1.
-- **Half-attached** stories get the missing half only: one that names the
-  feature but is not listed, or is listed with no `feature:`. A story with
-  both is a no-op: exit 0, nothing written or committed, stderr says so,
-  `--json` says `changed: false`.
+- **No-op.** A story that already names the feature (in any form
+  `normalizeFeatureId` accepts) is left alone: exit 0, nothing written or
+  committed, stderr says so, `--json` says `changed: false`.
 - **Refusals** (exit 1, nothing written), checked under the backlog lock on
   the files as they are then: a missing story or feature; a feature file
   whose `feature_id:` is not its directory's feature; a story whose
@@ -1930,22 +1932,18 @@ bl attach <S-n> <F-n> [--no-sync] [--json]
   whose `feature:` names another feature, or that is not `backlog` or
   `refined` (`storyMoveRefusal`, as `bl new --feature … S-<n>`: an
   `in_progress` story is someone's work in flight, and this feature's merge
-  would mark it done; a half-attached story is the feature's already and
-  skips the status rule); and, for a `running` or `escalated` feature, a
+  would mark it done); and, for a `running` or `escalated` feature, a
   story whose component's repo is not in `reposForFeature`. Only those have
   branches and worktrees, so before the feature runs a story in a new repo
   simply joins it. The message names `bl side <repo> --from F-<n>` as the way
   to bring a repo in; attach prepares no worktree and stays a backlog edit.
 - **Commit.** `syncAndCommit` of the story directory and the feature's
-  `index.md`, plus the regenerated indexes: `chore: attach S-<n> to F-<n>`.
-  `--no-sync` writes the two files under the lock and commits nothing, as
-  `bl new --no-sync` does.
-- **Failure.** Attach creates nothing, so there is no repair record
-  (`feature-links.js`): when the feature write fails after the story was
-  written, the story's bytes from before are written back and the command
-  exits 1 naming the failure. `BL_INTERNAL_TEST_FAIL_ON_LINK=list` reaches it.
-  Every write, the restore too, goes through `atomicWriteFile`, so a write
-  that fails part way leaves its file whole.
+  `index.md` (its Stories table, which the sync regenerates), plus the
+  regenerated indexes: `chore: attach S-<n> to F-<n>`. `--no-sync` writes the
+  story under the lock and commits nothing, as `bl new --no-sync` does.
+- **Failure.** Attach creates nothing and writes one file, so there is no
+  repair record (`feature-links.js`): the story is written through
+  `updateSpecFile`, and a write that fails part way leaves it whole.
 - **In the blocked-by-bug prompt** (`prompts/_blocked-by-bug.md`), an agent
   whose bug already has a story runs `bl attach S-<id> <F-n> --no-sync` in
   place of `bl new`. A repo outside the feature goes through `bl side`
@@ -1978,11 +1976,10 @@ bl move <S-n>… <C-n> [--no-sync] [--json]
   write: an unknown component, or one that names no repo; an unknown story;
   a story that is not `backlog` or `refined` (an `in_progress` story has a
   worktree in its current repo); and a story whose repo would change while
-  a feature it is in is `running` or `escalated` (that feature's branches
-  span a fixed set of repos, as `bl attach` refuses a story in another
-  repo). A story is in the feature its `feature:` names and in every feature
-  whose `stories:` lists it, so a missing or broken backlink does not let it
-  leave its repo. A move within the repo is fine there. A story whose
+  its feature is `running` or `escalated` (that feature's branches span a
+  fixed set of repos, as `bl attach` refuses a story in another repo). A
+  story is in the feature its `feature:` names (F-77 D3). A move within the
+  repo is fine there. A story whose
   component is unknown is moved, not refused: `bl move` is how it is fixed.
 - **Commit.** `syncAndCommit` of the moved stories' directories, plus the
   regenerated indexes (the old and the new component's tables):
@@ -2182,7 +2179,8 @@ repo the config does not know, stops the prep naming the story.
 **Repos added during a run (F-48 D3).** After every agent session (each
 story and its retry, fix-tests, the self-review, each review round, the fix
 and its self-review) `bl run F-n` calls `refreshRepos` (`feature-run.js`):
-it re-reads the feature's `stories:`, adds any new story to `prep.ordered`
+it re-reads the feature's stories (every story whose `feature:` names it),
+adds any new story to `prep.ordered`
 after the stories the run has taken and puts those not taken yet in
 dependency order again (`orderStoriesByDeps` on their current `depends_on`,
 as at the start), so the implement loop reaches each after its prerequisites
@@ -2381,7 +2379,8 @@ bl history --scope F-40       # a theme (slug), an epic (E<n>), a feature or a c
   not already parsed in the run. A blob is a story when its frontmatter has `story_id`, a
   feature when it has `feature_id`; the path is ignored, so the pre-F-49
   `projects/<p>/E<nn>-…/[.completed/]S<n>-…/` layout reads like `stories/`. A day records each
-  story's `status` and `points` and each feature's `status` and `stories:`, nothing else.
+  story's `status`, `points` and `feature` and each feature's `status` and `stories:` (which a
+  commit from before F-77 D3 stored), nothing else.
 - **Parsing.** `parseFrontmatter`; a block it rejects goes through `legacyRepaired` and `yaml`
   (failsafe), for the pre-F-62 blobs only (Decision A1, argued at the call in `parseBlob`). A
   blob that still fails is skipped; `unreadable` counts the distinct ones over the days shown,
@@ -2392,7 +2391,9 @@ bl history --scope F-40       # a theme (slug), an epic (E<n>), a feature or a c
   is projected from the current stories: in scope from `added`, `done` (or `superseded`) from
   `completed`, current points, any other status `backlog`, no features. Such a day has
   `backfilled: true` and `commit: null`; the table marks it `(backfilled)`.
-- **Scope.** A feature's stories are the `stories:` it listed that day; an epic's, its current
+- **Scope.** A feature's stories are the union of the stories whose `feature:` named it that
+  day and the `stories:` it listed that day (a commit before F-77 D3; a backfilled day has
+  neither); an epic's, its current
   features'; a theme's, its current features' (its epics' and those with no epic); a
   component's, the current stories in it. A scope holds only stories in the current tree; a
   story with no feature is in no theme. An unknown scope exits 1 naming it.
@@ -2652,16 +2653,17 @@ What the sync writes (F-49 D7, F-51 D3), every link pointing into `stories/`, `c
   `## Projects` table an older sync wrote is removed, and no project page is written
   (F-51 D3). The Backlog order is the global priority
   (`story.js` `readBacklogOrder`); stories not in it follow in id order.
-- each `epics/E<nn>-*/index.md`: the derived `features:` and `status:` frontmatter and
-  `## Features` (id, title, status, stories done/total, points done/total) after
-  `## Outcome`.
+- each `epics/E<nn>-*/index.md`: `## Features` (id, title, status, stories done/total,
+  points done/total) after `## Outcome`, from the graph's derived features; its frontmatter
+  is left as it is (F-77 D3).
 - each `themes/<slug>/index.md`: `## Epics` (id, title, status, features done/total), then
   `## Features`, its features with no epic.
 - each `components/C<nn>-*/index.md`: `## Stories` (its open stories in priority order, with
   their status) and `## Features` (active features touching it). Its frontmatter is left as it
   is: no points.
-- each feature: its `## Stories` table (with a `Component` column), `points:` and the derived
-  `components:` roll-up, which replaces the old `epics:`.
+- each feature: its `## Stories` table (with a `Component` column), its stories in the
+  graph's order; it drops a pre-F-49 `epics:` and writes no `points:` or `components:`
+  (F-77 D3).
 - `feature-order.md` (F-53 D1, `syncFeatureOrder`): `## Next up` (#, Feature, Title, Theme,
   Epic, Why: each open ranked feature, numbered by its place in `ranked:`, title, theme and
   epic from the feature's frontmatter) and `## Not yet ranked` (every feature that is not
@@ -2719,7 +2721,15 @@ feature-order-feature, roadmap-file, roadmap-section, theme-brief, found-by,
 flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
 task-unit, task-field, deferred-unsized, operator-tasks-retired,
-bad-tokens-by-step, agent-config
+bad-tokens-by-step, agent-config, derived-key, dangling-feature,
+feature-no-stories
+
+`derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a feature's
+`stories:`, `points:` or `components:`, or an epic's `features:` or `status:` (`DERIVED_KEYS`
+in `backlog-graph.js`, the one table of them). It is never also `unknown-fm-key`, and an
+epic's stored `status:` is not checked against a set. `scripts/migrate-derived-keys.js`
+removes every one; `feature-story-missing`, `feature-story-mismatch` and
+`feature-story-unlisted`, which compared the stored list with the stories, are gone.
 
 `agent-config` (F-64 D2, `findAgentConfigFindings`, error at `backlog.json`) is the error
 `loadConfig` would throw for `agent` or `review_agent`, at the top level or under a repo's
@@ -4051,9 +4061,9 @@ component before the story file.
 
 #### A feature's session number
 
-A feature has one test-session number `N`: the number of the **first** story in
-its `stories:` list (listed order, not the lowest; F-4 with `[S-596, …]` gets
-596). A story belongs to one feature, so two features never share a number.
+A feature has one test-session number `N`: the number of the **first** of its
+stories in the graph's order (dependency order, ties by number; F-4 whose S-12
+depends on S-596 gets 596). A story belongs to one feature, so two features never share a number.
 Feature commands pass it in two forms, because the consumers need both:
 
 | Variable         | Value  | Used by                                                          |
@@ -4067,7 +4077,7 @@ Both reach the prompts (`baseVars`), the feature's `bootstrap` / `workon` /
 **Session stack**) can name this number instead of asking the agent to pick one, and the
 implementers of a feature's stories run in sequence, so they share it. A
 `test` plugin command still holding a `{{…}}` after interpolation (a typo, or
-a feature whose first `stories:` entry is not a story ID) fails the gate as
+a feature with no story) fails the gate as
 `test gate misconfigured`, naming the placeholder, and is never run.
 
 Operator rollout after `bl merge F-5`: set `backlog.json`

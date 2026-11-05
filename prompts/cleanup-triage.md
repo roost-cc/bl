@@ -58,9 +58,8 @@ To Do section :
      bl new --feature --title "<what they change together>" --theme <slug> [--epic <E-id>] S-<a> S-<b> …
      ```
 
-     List the stories in run order (each after the ones it depends on). It
-     sets `feature:` on each story and lists them in the feature's
-     `stories:`. Its last stdout line is the new feature's `index.md` path,
+     It sets `feature:` on each story, which makes it the feature's; the
+     feature runs its stories in dependency order. Its last stdout line is the new feature's `index.md` path,
      relative to `{{backlogDir}}`; keep its directory for the commit step.
 
    - Theme: read the frontmatter of the file `bl which {{storyId}}` prints.

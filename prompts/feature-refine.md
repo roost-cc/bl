@@ -109,8 +109,9 @@ in order without asking anyone.
    afterwards with `bl new {{featureId}} <C-id> --title … --points …`.
    The schema is in `{{roostDir}}/bl/templates/spec.schema.md`; body files use
    the `story-feature` template (`bl new --print-template story-feature`).
-   Every created story is tagged `feature: {{featureId}}` and appended to this
-   feature's `stories:` list automatically.
+   Every created story is tagged `feature: {{featureId}}`, which makes it this
+   feature's: a feature's stories, points and components are derived from its
+   stories, never written in the feature file.
 
    If stories are already linked (listed above), update or supersede them
    rather than duplicating them.

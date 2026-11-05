@@ -10,7 +10,7 @@
  * (`report-cmd.js`) writes the files.
  *
  * Counts and tables are the last snapshot's: each story's status and points,
- * each feature's status and `stories:` as committed that day. Titles, links
+ * each feature's status and its stories that day (`scopeStories`). Titles, links
  * and grouping come from the current tree (Design D2). Charts are `Chart`
  * models (`src/chart.js`, Design D4) in `data.charts`; this module imports
  * no adapter. `renderMarkdown` takes each chart's markdown by id from the
@@ -334,7 +334,7 @@ const total = (t) => TOKEN_KINDS.reduce((sum, k) => sum + t[k], 0);
 /**
  * The units `bl run` runs, from the current tree: every feature, and every
  * story with no feature (or one naming a feature the tree does not hold, so
- * its tokens are not lost). A feature's points are its listed stories' that
+ * its tokens are not lost). A feature's points are its stories' that
  * are not superseded; its type is `feature`, a story's its `type`.
  * @param {ReturnType<typeof readTree>} tree
  * @returns {Unit[]}

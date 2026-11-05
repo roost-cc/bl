@@ -27,7 +27,7 @@ import { idNum } from './workon.js';
 import { loadFlow } from './flow.js';
 
 /**
- * The stories a unit carries: a story itself, a feature its listed stories.
+ * The stories a unit carries: a story itself, a feature the stories naming it.
  * @param {{ kind: string, id: string, record: object }} unit
  */
 export function unitStories(unit, config, all) {

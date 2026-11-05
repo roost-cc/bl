@@ -202,8 +202,8 @@ export function resolveFeatureStories(feature, config, allStories = null) {
 
 /**
  * Order a feature's stories so that every in-feature dependency comes before
- * its dependents. Stable: ties keep the listed order. A dependency cycle
- * inside the set falls back to listed order for the stuck remainder.
+ * its dependents. Stable: ties keep the given order. A dependency cycle
+ * inside the set falls back to the given order for the stuck remainder.
  */
 export function orderStoriesByDeps(stories) {
   const ids = new Set(stories.map((s) => s.id));
