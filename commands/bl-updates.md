@@ -37,7 +37,9 @@ bl updates drop S-841 --reason "..."    # request: the runner closes the PR, sup
    moves. `[S-id...]` runs only those stories; `--dry-run` prints the order;
    `--max-merges <n>` caps merges per repo (default 10).
 4. **The report**: one file per day, `backlog/updates/<YYYY-MM-DD>.md`, with a section per run
-   (merged, held, decisions needed, skipped) and one per request it executed. A run with
+   (merged, held, decisions needed, skipped) and one per request it executed. The run commits
+   and pushes the backlog after each story, rewriting its section, so a run that stops midway
+   keeps what it already merged on record (F-74 D2). A run with
    nothing open still writes its `## Run <time>` heading: `bl inbox` prints one `runner:` line
    when the newest one is more than 8 h old, so a runner gone quiet is visible (F-50 D7). The
    tmux bell rings after a run.

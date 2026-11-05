@@ -3250,12 +3250,17 @@ produced. Per story:
    options A approve / B drop, the question).
    `--max-merges <n>` (default 10) caps merges per repo per run; a story past
    the cap is skipped untouched.
-7. One report per run is appended to `updates/<YYYY-MM-DD>.md`: an
+7. One report block per run in `updates/<YYYY-MM-DD>.md`: an
    `## Approve S-<n> · <time>` or `## Drop S-<n> · <time>` entry per request
    the run executed, then `## Run <time>` (merged with packages and commit,
-   held with reason, decisions needed, skipped), committed with the changed
-   stories through `syncAndCommit`; then the tmux bell. A run with nothing
-   open still writes `## Run <time>` (`No open update stories.`): it is the
+   held with reason, decisions needed, skipped). Each story is committed
+   and pushed through `syncAndCommit` as it finishes (F-74 D2), with the
+   message `chore: updates run: <id> <kind>`, its directory, and the block
+   rewritten in place from the outcomes so far (`writeRunReport`): the final
+   file reads as one append, and a run that dies keeps what it recorded. An
+   outcome written but not committed when something stops the run is
+   committed (the counts as message) before the error surfaces; then the
+   tmux bell. A run with nothing open still writes `## Run <time>` (`No open update stories.`): it is the
    heartbeat `bl inbox` reads. stdout: one line per story (`merged`,
    `dropped`, `held`, `decision`, `skipped`, or `would run` with
    `--dry-run`).

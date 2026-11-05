@@ -20,8 +20,9 @@
  * F-50 D6), push, delete the remote branch. Everything else stays on the
  * story as `in_progress` with the evidence; a red major also gets Renovate's
  * release notes under `## Release notes`, the start of its migration story.
- * One report per run under `<backlog>/updates/<YYYY-MM-DD>.md`, committed
- * with the story changes.
+ * One report section per run under `<backlog>/updates/<YYYY-MM-DD>.md`,
+ * rewritten and committed (and pushed) with each story's changes as the
+ * story finishes (F-74 D2), so a run that dies keeps what it recorded.
  *
  * The operator's `bl updates approve` and `drop` (updates-answer.js) only
  * write a request on the story (`update_request`, F-50 D8); the run executes
@@ -448,6 +449,32 @@ export function renderAnswerReport({ verb, id, at, text }) {
 }
 
 /**
+ * A run's block of the day's report, as sections: the requests first, each
+ * as the answer entry the operator's own approve or drop used to write, then
+ * the run's `## Run <at>` section for the rest.
+ */
+function runReportSections(at, outcomes) {
+  return [
+    ...outcomes
+      .filter((o) => o.answer)
+      .map((o) =>
+        renderAnswerReport({
+          verb: o.answer,
+          id: o.id,
+          at,
+          text:
+            o.kind === 'merged'
+              ? `merged \`${o.commit}\`: ${o.reason}`
+              : o.kind === 'dropped'
+                ? o.text
+                : `${o.kind}: ${o.reason}`,
+        }),
+      ),
+    renderRunReport({ at, outcomes: outcomes.filter((o) => !o.answer) }),
+  ];
+}
+
+/**
  * Append a section to the day's report, creating the file (with its title)
  * and the directory when needed. Returns the backlog-relative path.
  */
@@ -457,6 +484,44 @@ export function appendReport(config, date, text) {
   const existing = existsSync(path) ? readFileSync(path, 'utf8') : null;
   const head = existing == null ? `# Dependency updates · ${date}\n\n` : `${existing.replace(/\s+$/, '')}\n\n`;
   writeFileSync(path, `${head}${text.replace(/\s+$/, '')}\n`);
+  return relative(config.backlogRoot, path);
+}
+
+/**
+ * Put a run's block into the day's report, or replace it there (F-74 D2).
+ * `ownHeadings` holds the `## ` heading lines the run wrote earlier (its
+ * answer entries and its `## Run <at>`): each of those sections, up to the
+ * next `## ` heading, is taken out, and `text` goes where the first of them
+ * stood. A run that wrote nothing yet appends, so the final file reads as
+ * `appendReport`'s single write of the same text. Returns the backlog-relative
+ * path.
+ *
+ * @param {object} config
+ * @param {string} date
+ * @param {Set<string>} ownHeadings
+ * @param {string} text
+ */
+export function writeRunReport(config, date, ownHeadings, text) {
+  const path = reportPath(config, date);
+  const existing = existsSync(path) ? readFileSync(path, 'utf8') : null;
+  const lines = existing?.split('\n') ?? [];
+  const starts = lines.flatMap((l, i) => (l.startsWith('## ') ? [i] : []));
+  const sections = starts.map((s, k) => ({
+    own: ownHeadings.has(lines[s]),
+    from: s,
+    to: starts[k + 1] ?? lines.length,
+  }));
+  const first = sections.find((s) => s.own);
+  if (!first) return appendReport(config, date, text);
+  // Everything before the first own section is someone else's; after it,
+  // the sections that are not the run's keep their order.
+  const before = lines.slice(0, first.from).join('\n').replace(/\s+$/, '');
+  const after = sections
+    .filter((s) => s.from > first.from && !s.own)
+    .map((s) => lines.slice(s.from, s.to).join('\n'))
+    .join('\n')
+    .replace(/\s+$/, '');
+  writeFileSync(path, `${before}\n\n${text.replace(/\s+$/, '')}\n${after ? `\n${after}\n` : ''}`);
   return relative(config.backlogRoot, path);
 }
 
@@ -1260,7 +1325,9 @@ function plannedRun(s) {
  *
  * Every live run appends a `## Run <at>` entry to the day's report, even
  * one with nothing open: `bl inbox` reads the newest one to see that the
- * runner is alive (F-50 D7).
+ * runner is alive (F-50 D7). With stories, each one's outcome is committed
+ * and pushed as it finishes, with the run's report block rewritten in place
+ * (F-74 D2); `result.commit` is the last of those commits.
  *
  * @param {object} config
  * @param {{ ids?: string[], dryRun?: boolean, maxMerges?: number,
@@ -1331,9 +1398,23 @@ export async function runUpdates(config, opts = {}) {
 
     const mergesByRepo = new Map();
     const changed = [];
+    // Each finished story is committed and pushed at once (F-74 D2): its
+    // directory, the regenerated indexes and the run's report block, which
+    // is rewritten in place from every outcome so far. Every commit names
+    // all the stories the run changed, so one whose commit failed rides
+    // along with the next.
+    const own = new Set();
+    let committed = 0;
+    const commitRun = async (message) => {
+      const sections = runReportSections(at, result.outcomes);
+      result.report = writeRunReport(config, today, own, sections.join('\n'));
+      for (const s of sections) own.add(s.slice(0, s.indexOf('\n')));
+      committed = result.outcomes.length;
+      result.commit = await syncAndCommit(config, { message, storyIds: changed, extraPaths: [result.report] });
+    };
     // Whatever stops a later story, what already happened (a merge is on
-    // origin/main, stories were written) is reported and committed below
-    // before the error surfaces.
+    // origin/main, stories were written) is reported and committed before
+    // the error surfaces.
     let failure = null;
     try {
       for (const s of stories) {
@@ -1408,6 +1489,7 @@ export async function runUpdates(config, opts = {}) {
                 : o.reason,
           ),
         );
+        await commitRun(`chore: updates run: ${s.id} ${o.kind}`);
       }
     } catch (e) {
       failure = e;
@@ -1418,34 +1500,9 @@ export async function runUpdates(config, opts = {}) {
       .map((k) => [k, result.outcomes.filter((o) => o.kind === k).length])
       .filter(([, n]) => n > 0)
       .map(([k, n]) => `${n} ${k}`);
-    // The requests first, each as the answer entry the operator's own
-    // approve or drop used to write, then the run's section for the rest.
-    const answers = result.outcomes.filter((o) => o.answer);
-    const sections = [
-      ...answers.map((o) =>
-        renderAnswerReport({
-          verb: o.answer,
-          id: o.id,
-          at,
-          text:
-            o.kind === 'merged'
-              ? `merged \`${o.commit}\`: ${o.reason}`
-              : o.kind === 'dropped'
-                ? o.text
-                : `${o.kind}: ${o.reason}`,
-        }),
-      ),
-      renderRunReport({
-        at,
-        outcomes: result.outcomes.filter((o) => !o.answer),
-      }),
-    ];
-    result.report = appendReport(config, today, sections.join('\n'));
-    result.commit = await syncAndCommit(config, {
-      message: `chore: updates run: ${counts.join(', ')}`,
-      storyIds: changed,
-      extraPaths: [result.report],
-    });
+    // An outcome recorded but not committed (what failed came between the
+    // two) is committed now, before the error surfaces.
+    if (committed < result.outcomes.length) await commitRun(`chore: updates run: ${counts.join(', ')}`);
     runner.notify(`updates run: ${counts.join(', ')}`);
     if (failure) throw failure;
   } finally {

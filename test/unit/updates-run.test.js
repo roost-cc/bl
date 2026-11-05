@@ -14,6 +14,7 @@ import {
   DEFAULT_MAX_MERGES,
   RUN_LOCK_ID,
   answerDecision,
+  appendReport,
   checkCriteria,
   gateRecordLine,
   gateSteps,
@@ -32,7 +33,9 @@ import {
   storyPackages,
   storyTestPlugins,
   tail,
+  writeRunReport,
 } from '../../src/updates-run.js';
+import { GIT_ENV, addOrigin, git as backlogGit, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import {
   approveUpdate,
   dropUpdate,
@@ -2408,5 +2411,148 @@ test('a malformed request is neither executed nor taken as absent: the run skips
     } finally {
       t.cleanup();
     }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// One backlog commit per story (F-74 D2)
+// ---------------------------------------------------------------------------
+
+/**
+ * A run's fixture on a git backlog with an origin, the day's report already
+ * holding an earlier run's heartbeat, and S-2 (glob) with a drop requested:
+ * the run drops S-2 (an answer entry), then merges S-1 (bl) and S-3 (tools).
+ * Commits run with a fixed identity, without the developer's git config.
+ */
+async function committedRunSetup() {
+  const t = await setup(
+    mkReport({
+      'roost-cc/bl': [BRANCHES.vitest, BRANCHES.glob],
+      'roost-cc/tools': [BRANCHES.lfm],
+    }),
+  );
+  const saved = Object.fromEntries(Object.keys(GIT_ENV).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, GIT_ENV);
+  await dropUpdate(t.config(), { id: 'S-2', reason: 'not now', out: () => {} });
+  appendReport(t.config(), '2026-10-14', '## Run 2026-10-14T11:00:00Z\n\nNo open update stories.\n');
+  initGitBacklog(t.dir);
+  addOrigin(t.dir);
+  const base = backlogGit(t.dir, 'rev-parse', 'HEAD');
+  return {
+    t,
+    base,
+    /** The subjects of the commits since the base, oldest first. */
+    subjects: () => backlogGit(t.dir, 'log', '--reverse', '--format=%s', `${base}..HEAD`).split('\n').filter(Boolean),
+    cleanup() {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      t.cleanup();
+    },
+  };
+}
+
+test('a run commits and pushes each story as it finishes: its directory, the indexes and the report (F-74 D2)', async () => {
+  const c = await committedRunSetup();
+  try {
+    const { t } = c;
+    const before = readFileSync(reportPath(t.config(), '2026-10-14'), 'utf8');
+    const { res } = await run(t, fakeRunner({ gate: [0] }));
+    assert.deepEqual(
+      res.outcomes.map((o) => [o.id, o.kind]),
+      [
+        ['S-2', 'dropped'],
+        ['S-1', 'merged'],
+        ['S-3', 'merged'],
+      ],
+    );
+    assert.deepEqual(c.subjects(), [
+      'chore: updates run: S-2 dropped',
+      'chore: updates run: S-1 merged',
+      'chore: updates run: S-3 merged',
+    ]);
+    const head = backlogGit(t.dir, 'rev-parse', 'HEAD');
+    assert.equal(backlogGit(t.dir, 'ls-remote', 'origin', 'main').split('\t')[0], head, 'all pushed');
+    const dirs = Object.fromEntries([...stories(t)].map(([id, s]) => [id, dirname(s.storyRelPath)]));
+    const shas = backlogGit(t.dir, 'log', '--reverse', '--format=%H', `${c.base}..HEAD`).split('\n');
+    for (const [i, id] of ['S-2', 'S-1', 'S-3'].entries()) {
+      const files = backlogGit(t.dir, 'show', '--name-only', '--format=', shas[i]).split('\n');
+      assert.ok(files.includes('updates/2026-10-14.md'), `${id}: the report`);
+      assert.ok(
+        files.some((f) => f.startsWith(`${dirs[id]}/`)),
+        `${id}: its story directory`,
+      );
+      assert.ok(files.includes('index.md'), `${id}: the regenerated index`);
+    }
+    assert.equal(res.commit.committed, true);
+    assert.equal(res.commit.pushed, true);
+
+    // The final report is today's single write of the same outcomes.
+    const at = '2026-10-14T12:00:00Z';
+    const block = [
+      renderAnswerReport({ verb: 'Drop', id: 'S-2', at, text: res.outcomes[0].text }),
+      renderRunReport({ at, outcomes: res.outcomes.slice(1) }),
+    ].join('\n');
+    assert.equal(
+      readFileSync(reportPath(t.config(), '2026-10-14'), 'utf8'),
+      `${before.replace(/\s+$/, '')}\n\n${block.replace(/\s+$/, '')}\n`,
+    );
+    assert.deepEqual(
+      statusLines(t.dir).filter((l) => !l.includes('.bl/')),
+      [],
+      'nothing left uncommitted',
+    );
+  } finally {
+    c.cleanup();
+  }
+});
+
+test('a run killed after two stories leaves both committed and pushed, the report listing them; the error surfaces (F-74 D2)', async () => {
+  const c = await committedRunSetup();
+  try {
+    const { t } = c;
+    const runner = fakeRunner({ gate: [0] });
+    // Dies as it starts the third story (S-3, tools), outside any story's own catch.
+    runner.log = (line) => {
+      if (line.includes('S-3')) throw new Error('killed');
+    };
+    await assert.rejects(run(t, runner), /killed/);
+    assert.deepEqual(c.subjects(), ['chore: updates run: S-2 dropped', 'chore: updates run: S-1 merged']);
+    const head = backlogGit(t.dir, 'rev-parse', 'HEAD');
+    assert.equal(backlogGit(t.dir, 'ls-remote', 'origin', 'main').split('\t')[0], head, 'both pushed');
+    const report = backlogGit(t.dir, 'show', `${head}:updates/2026-10-14.md`);
+    assert.match(report, /\n## Drop S-2 · 2026-10-14T12:00:00Z\n/);
+    assert.match(report, /\n## Run 2026-10-14T12:00:00Z\n\n1 merged, 0 held/);
+    assert.match(report, /\| S-1 +\| bl +\| #7 /);
+    assert.doesNotMatch(report, /S-3/);
+    assert.equal(stories(t).get('S-3').fm.status, 'refined', 'S-3 untouched');
+    assert.deepEqual(
+      runner.calls.filter((x) => x.type === 'notify').map((x) => x.label),
+      ['updates run: 1 merged, 1 dropped'],
+    );
+    assert.ok(!existsSync(runLockPath(t.config(), RUN_LOCK_ID)), 'lock released');
+  } finally {
+    c.cleanup();
+  }
+});
+
+test("writeRunReport replaces only the run's own sections, wherever they stand", async () => {
+  const t = await setup(mkReport({}));
+  try {
+    const config = t.config();
+    const own = new Set();
+    const day = '2026-10-14';
+    writeRunReport(config, day, own, '## Run A\n\nfirst\n');
+    own.add('## Run A');
+    // Another writer's section lands after the run's block (a pull).
+    appendReport(config, day, '## Approve S-9 · B\n\nheld: red\n');
+    writeRunReport(config, day, own, '## Drop S-1 · A\n\nclosed\n\n## Run A\n\nsecond\n');
+    assert.equal(
+      readFileSync(reportPath(config, day), 'utf8'),
+      `# Dependency updates · ${day}\n\n## Drop S-1 · A\n\nclosed\n\n## Run A\n\nsecond\n\n## Approve S-9 · B\n\nheld: red\n`,
+    );
+  } finally {
+    t.cleanup();
   }
 });
