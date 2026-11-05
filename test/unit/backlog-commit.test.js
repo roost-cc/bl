@@ -13,6 +13,9 @@ import {
   isNonFastForwardRejection,
   pullBacklog,
   reportBacklogPull,
+  leaveRegenerationPending,
+  markRegenerationPending,
+  PULL_REGEN_PENDING,
 } from '../../src/backlog-commit.js';
 import { mkTempDir, mkTempBacklog } from '../helpers/tempdir.js';
 import { initGitBacklog } from '../helpers/git-backlog.js';
@@ -1526,5 +1529,30 @@ test("a pulling command's push that is rejected again is a warning, and the comm
     assert.notEqual(g(remote, 'rev-parse', 'main'), g(alice, 'rev-parse', 'HEAD'));
   } finally {
     done();
+  }
+});
+
+test('regeneration_marker_self_ignores_fresh_run_directory: both marker writers leave .bl/run self-ignoring', () => {
+  const writers = [
+    ['leaveRegenerationPending', leaveRegenerationPending],
+    ['markRegenerationPending', markRegenerationPending],
+  ];
+  for (const [name, write] of writers) {
+    const root = mkTempDir('bl-marker-');
+    try {
+      assert.equal(spawnSync('git', ['init', '-q'], { cwd: root, stdio: 'ignore' }).status, 0);
+      assert.ok(!existsSync(join(root, '.bl')), `${name}: a fresh backlog has no run directory`);
+      write(root);
+      assert.ok(existsSync(join(root, PULL_REGEN_PENDING)), `${name}: marker written`);
+      assert.equal(readFileSync(join(root, '.bl', 'run', '.gitignore'), 'utf8'), '*\n', name);
+      const status = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      assert.equal(status.stdout.trim(), '', `${name}: nothing under .bl/run is untracked`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });

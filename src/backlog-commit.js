@@ -21,14 +21,14 @@
  */
 
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { warn } from './config.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { MAIN_REFSPEC, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
-import { RUN_DIR } from './run-lock.js';
+import { RUN_DIR, ensureRunDir } from './run-lock.js';
 
 // Never wait on a credential prompt; `GIT_EDITOR=true` keeps
 // `git rebase --continue` from opening an editor for the message.
@@ -338,7 +338,8 @@ function readPending(path) {
 }
 
 function writePending(root, path, value) {
-  mkdirSync(dirname(path), { recursive: true });
+  // The run directory ignores itself, so the marker never shows as untracked.
+  ensureRunDir({ backlogRoot: root });
   atomicWriteFile(root, path, JSON.stringify(value));
 }
 
