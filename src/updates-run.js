@@ -496,6 +496,12 @@ export function appendReport(config, date, text) {
  * `appendReport`'s single write of the same text. Returns the backlog-relative
  * path.
  *
+ * A heading names a run's section only at its last occurrence: an earlier
+ * run that started in the same second wrote the same `## Run <at>` (and
+ * answer headings) before this run appended its own, so the earlier
+ * occurrences are that run's and are kept. Within one run every heading is
+ * unique (one answer per story, one `## Run`).
+ *
  * @param {object} config
  * @param {string} date
  * @param {Set<string>} ownHeadings
@@ -506,8 +512,9 @@ export function writeRunReport(config, date, ownHeadings, text) {
   const existing = existsSync(path) ? readFileSync(path, 'utf8') : null;
   const lines = existing?.split('\n') ?? [];
   const starts = lines.flatMap((l, i) => (l.startsWith('## ') ? [i] : []));
+  const last = new Map(starts.map((s) => [lines[s], s]));
   const sections = starts.map((s, k) => ({
-    own: ownHeadings.has(lines[s]),
+    own: ownHeadings.has(lines[s]) && last.get(lines[s]) === s,
     from: s,
     to: starts[k + 1] ?? lines.length,
   }));

@@ -2556,3 +2556,50 @@ test("writeRunReport replaces only the run's own sections, wherever they stand",
     t.cleanup();
   }
 });
+
+test('two_runs_in_one_second_keep_both_report_blocks: a heading the run shares with an earlier run is its own only at the last occurrence', async () => {
+  const cases = [
+    {
+      name: 'the ## Run heading collides',
+      earlier: '## Run A\n\nfirst run\n',
+      writes: ['## Run A\n\nsecond, one\n', '## Run A\n\nsecond, two\n'],
+      foreign: null,
+      want: '## Run A\n\nfirst run\n\n## Run A\n\nsecond, two\n',
+    },
+    {
+      name: 'an answer heading and the ## Run heading collide',
+      earlier: '## Approve S-1 · A\n\nheld: red\n\n## Run A\n\nfirst run\n',
+      writes: [
+        '## Approve S-1 · A\n\nmerged\n\n## Run A\n\nsecond, one\n',
+        '## Approve S-1 · A\n\nmerged x\n\n## Run A\n\nsecond, two\n',
+      ],
+      foreign: null,
+      want: '## Approve S-1 · A\n\nheld: red\n\n## Run A\n\nfirst run\n\n## Approve S-1 · A\n\nmerged x\n\n## Run A\n\nsecond, two\n',
+    },
+    {
+      name: 'a foreign section lands between the rewrites',
+      earlier: '## Run A\n\nfirst run\n',
+      writes: ['## Run A\n\nsecond, one\n', '## Drop S-2 · A\n\nclosed\n\n## Run A\n\nsecond, two\n'],
+      foreign: '## Approve S-9 · B\n\nheld: red\n',
+      want: '## Run A\n\nfirst run\n\n## Drop S-2 · A\n\nclosed\n\n## Run A\n\nsecond, two\n\n## Approve S-9 · B\n\nheld: red\n',
+    },
+  ];
+  for (const c of cases) {
+    const t = await setup(mkReport({}));
+    try {
+      const config = t.config();
+      const day = '2026-10-14';
+      // The earlier run, finished: its own set is gone with it.
+      writeRunReport(config, day, new Set(), c.earlier);
+      const own = new Set();
+      for (const [i, text] of c.writes.entries()) {
+        writeRunReport(config, day, own, text);
+        for (const l of text.split('\n')) if (l.startsWith('## ')) own.add(l);
+        if (i === 0 && c.foreign) appendReport(config, day, c.foreign);
+      }
+      assert.equal(readFileSync(reportPath(config, day), 'utf8'), `# Dependency updates · ${day}\n\n${c.want}`, c.name);
+    } finally {
+      t.cleanup();
+    }
+  }
+});
