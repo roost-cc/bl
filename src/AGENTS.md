@@ -2584,9 +2584,22 @@ Nothing to commit exits 0; `--commit` without `-m` or `--story`, `--path` withou
 **Pull before, push after (F-50 D4).** The backlog is shared through its `origin` remote, so
 every clone (the operator's, the update runner's) sees the others' work. Every commit
 `commitPaths` makes, and each step commit of `bl run`'s loop (`feature-run.js`
-`commitBacklog`), is followed by `git push origin main`; a failed push (offline, or `origin`
-moved on) is one warning naming the command to retry, and the command exits as it would have,
-since the next committing command's push carries the commit. With an `origin` remote the
+`commitBacklog`), is followed by `git push origin main` (`backlog-commit.js` `pushBacklog`).
+A push rejected because `origin` moved on (git's `[rejected] … (fetch first)` or
+`(non-fast-forward)`, `isNonFastForwardRejection`) is rebased onto `origin/main` with the pull's
+own rebase (`pullLocked`, below, which settles generated paths and puts everything back when it
+cannot finish), under the main sync lock the commit already holds, and pushed once more (F-74
+D1). When that rebase settled generated paths, their regeneration is left pending in
+`.bl/run/pull-regenerate.json` for the next command that pulls (`leaveRegenerationPending`,
+which writes `null` there: no snapshot yet, so edits made before that command stay out of the
+regeneration's commit; `markRegenerationPending` takes the snapshot when the regeneration
+starts; the two are the file's only writers); it never regenerates under the lock. The marker is
+written before the rebase and removed when it settled nothing, so a marker that cannot be read or
+written stops the retry before anything moves, and a push never publishes settled paths without
+it. A push that still fails (a
+conflict outside the generated paths, a hook, auth, offline: the last three get no rebase) is
+one warning (`pushWarning`) naming the conflicting paths, if any, and the command to retry, and
+the command exits as it would have. With an `origin` remote the
 commit and its push hold the main sync lock the pull holds, so a commit from a process without
 the backlog lock (`openUnitChange`, the loop) never lands mid-rebase or loses its file to a
 pull's autostash. Every command that commits the
@@ -2605,8 +2618,12 @@ generated files (the top-level and component `index.md` files and `allowed-tools
 keeps the local side, and the regeneration that follows every pull that brought anything
 (`sync.js` `pullBeforeCommand`) rebuilds them and commits and pushes what changed. A
 regeneration that cannot be built or committed stops the command and stays pending in
-`.bl/run/pull-regenerate.json`; the next command that pulls finishes it first. A backlog with no `origin` remote neither
-pulls nor pushes.
+`.bl/run/pull-regenerate.json`; the next command that pulls finishes it first. After a pull
+that ended `pulled` or `current` and made no regeneration commit (whose push carries `main`), a
+`main` still ahead of `origin/main` is pushed, with the same retry (`pushIfAhead`, F-74
+Decision A1): a commit whose push failed is carried by the next command of any kind that pulls,
+not only the next one that commits, and `bl updates status` is the running-man guest's way to
+push an unpushed backlog. A backlog with no `origin` remote neither pulls nor pushes.
 
 What the sync writes (F-49 D7, F-51 D3), every link pointing into `stories/`, `components/`,
 `features/`, `epics/` or `themes/`:
@@ -3238,12 +3255,20 @@ produced. Per story:
    options A approve / B drop, the question).
    `--max-merges <n>` (default 10) caps merges per repo per run; a story past
    the cap is skipped untouched.
-7. One report per run is appended to `updates/<YYYY-MM-DD>.md`: an
+7. One report block per run in `updates/<YYYY-MM-DD>.md`: an
    `## Approve S-<n> · <time>` or `## Drop S-<n> · <time>` entry per request
    the run executed, then `## Run <time>` (merged with packages and commit,
-   held with reason, decisions needed, skipped), committed with the changed
-   stories through `syncAndCommit`; then the tmux bell. A run with nothing
-   open still writes `## Run <time>` (`No open update stories.`): it is the
+   held with reason, decisions needed, skipped). Each story is committed
+   and pushed through `syncAndCommit` as it finishes (F-74 D2), with the
+   message `chore: updates run: <id> <kind>`, its directory, and the block
+   rewritten in place from the outcomes so far (`writeRunReport`, which
+   finds the run's earlier sections by their whole text, never by heading
+   alone): the final file reads as one append, and a run that dies keeps
+   what it recorded. A commit that fails leaves its paths for the next one.
+   An outcome written but not committed when something stops the run is
+   committed (the counts as message) before the error surfaces; then the
+   tmux bell. One still uncommitted after that fails the run, naming the
+   paths to commit by hand. A run with nothing open still writes `## Run <time>` (`No open update stories.`): it is the
    heartbeat `bl inbox` reads. stdout: one line per story (`merged`,
    `dropped`, `held`, `decision`, `skipped`, or `would run` with
    `--dry-run`).

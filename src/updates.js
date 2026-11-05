@@ -33,6 +33,7 @@ import { readAllStories, findMaxStoryNum, homeComponent, storiesRoot } from './s
 import { checkCriteria, extractSection, replaceSection } from './feature.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { acquireRunLock, runLockPath } from './feature-run.js';
+import { RUN_LOCK_ID } from './run-lock.js';
 import { releasePidLock } from './pid-lock.js';
 import { updateSpecFile } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
@@ -52,9 +53,11 @@ export const CONFLICT_NOTE = 'conflict, left for Renovate';
 /**
  * The one lock `sync`, `run`, `approve` and `drop` share:
  * `<backlog>/.bl/run/updates.lock`, taken before any story is read, so one
- * command at a time rewrites stories or touches the forge.
+ * command at a time rewrites stories or touches the forge. Defined in the
+ * dependency-free run-lock.js, where running-man's update.sh takes it too
+ * (F-74 D4).
  */
-export const RUN_LOCK_ID = 'updates';
+export { RUN_LOCK_ID };
 
 const TABLE_HEADER = ['Package', 'Manager', 'Current', 'New', 'Type', 'File'];
 

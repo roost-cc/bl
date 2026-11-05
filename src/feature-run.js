@@ -97,7 +97,8 @@ import {
   writeChange,
 } from './change-doc.js';
 import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
-import { hasOriginRemote, pushBacklog } from './backlog-commit.js';
+import { RUN_DIR, runLockPath, ensureRunDir } from './run-lock.js';
+import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt } from './test-excerpt.js';
 import * as processScope from './process-scope.js';
@@ -106,7 +107,10 @@ import { loadFlow } from './flow.js';
 
 export { liveLockHolder };
 
-export const RUN_DIR = join('.bl', 'run');
+// The run directory, its locks and its self-ignoring setup live in the
+// dependency-free run-lock.js (F-74 D4: running-man takes the updates run lock
+// with them); re-exported for the loop's callers.
+export { RUN_DIR, runLockPath, ensureRunDir };
 export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 // ---------------------------------------------------------------------------
@@ -115,19 +119,6 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 export function runStatePath(config, featureId) {
   return join(config.backlogRoot, RUN_DIR, `${featureId}.json`);
-}
-
-export function runLockPath(config, featureId) {
-  return join(config.backlogRoot, RUN_DIR, `${featureId}.lock`);
-}
-
-export function ensureRunDir(config) {
-  const dir = join(config.backlogRoot, RUN_DIR);
-  mkdirSync(dir, { recursive: true });
-  // Self-ignoring directory: run state is machine-local scratch and must never
-  // ride along with a backlog commit.
-  const gi = join(dir, '.gitignore');
-  if (!existsSync(gi)) writeFileSync(gi, '*\n');
 }
 
 /**
@@ -688,8 +679,9 @@ function setStep(ctx, step, extra = {}) {
 /**
  * Commit `paths` in the backlog and, with an `origin` remote, push (F-50
  * D4), holding the main sync lock a backlog pull takes (see
- * `backlog-commit.js` `commitPaths`). A failed push is a log line: the next
- * committing command's push carries the commit.
+ * `backlog-commit.js` `commitPaths`); a push rejected because origin moved
+ * is rebased and retried (`pushBacklog`). A failed push is a log line: the
+ * next bl command that pulls pushes the commit.
  */
 function commitBacklog(ctx, paths, message) {
   const root = ctx.config.backlogRoot;
@@ -704,10 +696,7 @@ function commitBacklog(ctx, paths, message) {
   const done = withMainSyncLock(root, () => {
     if (!commit()) return false;
     const p = pushBacklog(root);
-    if (!p.pushed)
-      ctx.runner.log(
-        `  (backlog commit not pushed: ${p.error.split('\n')[0]}; the next committing bl command pushes it)`,
-      );
+    if (!p.pushed) ctx.runner.log(`  (${pushWarning(root, p)})`);
     return true;
   });
   return done === true;
@@ -2451,11 +2440,21 @@ function implementScripted(ctx, s, storyAbsPath) {
     step: 'implement',
     story: s.id,
     ok: result.kind !== 'failed',
-    scripted: { plugin: result.plugin ?? null, command: result.command ?? null, exit: result.exit ?? null, tail: result.tail },
+    scripted: {
+      plugin: result.plugin ?? null,
+      command: result.command ?? null,
+      exit: result.exit ?? null,
+      tail: result.tail,
+    },
     note,
   });
   ctx.runner.log(`  ${note}`);
-  commitUnitPaths(ctx, 'implement', [s.storyRelPath, changeRelPath(ctx)], `chore: ${note.split('\n')[0].slice(0, 120)}`);
+  commitUnitPaths(
+    ctx,
+    'implement',
+    [s.storyRelPath, changeRelPath(ctx)],
+    `chore: ${note.split('\n')[0].slice(0, 120)}`,
+  );
   if (result.kind === 'failed') {
     const { reason, details } = scriptedEscalation(s.id, result, ctx.resumeHint);
     return finish(ctx, 'escalated', reason, details);

@@ -39,7 +39,7 @@
  * directories the caller names, inside the same lock hold.
  */
 
-import { readFileSync, statSync, existsSync, mkdirSync, rmSync } from 'fs';
+import { readFileSync, statSync, existsSync, rmSync } from 'fs';
 import { join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { stringify as stringifyYaml } from 'yaml';
@@ -52,6 +52,7 @@ import {
   bucketByPlugin,
   runPluginBatch,
   info,
+  warn,
   normalizeId,
   STORIES_DIR,
   COMPONENTS_DIR,
@@ -65,8 +66,12 @@ import {
   commitPaths,
   dirtySnapshot,
   hasOriginRemote,
+  markRegenerationPending,
   pathsChangedSince,
+  PULL_REGEN_PENDING,
   pullBacklog,
+  pushIfAhead,
+  pushWarning,
   reportBacklogPull,
 } from './backlog-commit.js';
 import { ensureAllowedTools } from './allowed-tools.js';
@@ -985,12 +990,6 @@ export function extraPathProblem(p) {
 }
 
 /**
- * Where a regeneration after a pull that has not been committed yet keeps
- * the dirty snapshot it started from, so the next command finishes it.
- */
-const PULL_REGEN_PENDING = join('.bl', 'run', 'pull-regenerate.json');
-
-/**
  * Rebase the backlog onto `origin/main` before a command (F-50 D4; see
  * `backlog-commit.js` `pullBacklog`), under the backlog lock so no other `bl`
  * process commits mid-rebase. A pull that brought anything is followed by a
@@ -1003,7 +1002,10 @@ const PULL_REGEN_PENDING = join('.bl', 'run', 'pull-regenerate.json');
  * the next command that pulls finishes it before it runs, pulled or not. A
  * push that fails after the commit is only a warning (`commitPaths`). An
  * interrupted `bl new --feature` is settled after the pull and before the
- * regeneration (`feature-links.js` `settlePending`).
+ * regeneration (`feature-links.js` `settlePending`). After a pull that ended
+ * `pulled` or `current` and made no regeneration commit (whose own push
+ * carries `main`), a `main` still ahead of `origin/main` is pushed
+ * (`pushIfAhead`, F-74 D1); a failed push is a warning (`pushWarning`).
  *
  * @param {object} config
  * @returns {Promise<import("./backlog-commit.js").BacklogPull>}
@@ -1019,19 +1021,32 @@ export async function pullBeforeCommand(config) {
     reportBacklogPull(res, root);
     const pendingPath = join(root, PULL_REGEN_PENDING);
     const pending = existsSync(pendingPath);
-    if (res.state !== 'pulled' && !(pending && res.state !== 'unsafe' && res.state !== 'not-main')) {
-      return res;
+    let committed = false;
+    if (res.state === 'pulled' || (pending && res.state !== 'unsafe' && res.state !== 'not-main')) {
+      // The regeneration reads membership: settle an interrupted
+      // `bl new --feature` first, so its half-made links are not committed.
+      const { settlePending } = await import('./feature-links.js');
+      await settlePending(root);
+      const regen = await regenerateAfterPull(root, config, pendingPath);
+      if (regen.problem) {
+        process.stderr.write(
+          `error: the backlog regeneration after the pull did not finish (${regen.problem}); not running the command. The next bl command that pulls retries it.\n`,
+        );
+        return { ...res, state: 'unsafe', message: regen.problem };
+      }
+      committed = regen.committed;
     }
-    // The regeneration reads membership: settle an interrupted
-    // `bl new --feature` first, so its half-made links are not committed.
-    const { settlePending } = await import('./feature-links.js');
-    await settlePending(root);
-    const problem = await regenerateAfterPull(root, config, pendingPath, pending);
-    if (!problem) return res;
-    process.stderr.write(
-      `error: the backlog regeneration after the pull did not finish (${problem}); not running the command. The next bl command that pulls retries it.\n`,
-    );
-    return { ...res, state: 'unsafe', message: problem };
+    if ((res.state === 'pulled' || res.state === 'current') && !committed) {
+      const p = pushIfAhead(root);
+      if (p?.state === 'lock-timeout') {
+        warn(
+          `backlog push timed out waiting for ${p.lockPath} (PID ${p.holder}); the next bl command that pulls pushes it`,
+        );
+      } else if (p && !p.pushed) {
+        warn(pushWarning(root, p));
+      }
+    }
+    return res;
   } finally {
     releaseLock(root);
   }
@@ -1040,19 +1055,17 @@ export async function pullBeforeCommand(config) {
 /**
  * Rebuild the generated files for the pulled backlog and commit what that
  * changed since the regeneration began (`pendingPath` holds that snapshot
- * while it is unfinished). Null when done, else what failed.
+ * while it is unfinished). `problem` is what failed, if anything;
+ * `committed` says whether a regeneration commit was made (its push carried
+ * `main`). When that push's retry settled generated paths, the regeneration
+ * stays pending for the next command (`pushBacklog`).
+ * @returns {Promise<{ problem?: string, committed?: boolean }>}
  */
-async function regenerateAfterPull(root, config, pendingPath, pending) {
+async function regenerateAfterPull(root, config, pendingPath) {
   let before;
   try {
-    if (pending) {
-      before = new Map(JSON.parse(readFileSync(pendingPath, 'utf8')));
-    } else {
-      before = dirtySnapshot(root);
-      if (!before) return 'git status failed';
-      mkdirSync(join(pendingPath, '..'), { recursive: true });
-      atomicWriteFile(root, pendingPath, JSON.stringify([...before]));
-    }
+    before = markRegenerationPending(root);
+    if (!before) return { problem: 'git status failed' };
     // The pull may have brought a new backlog.json.
     const flag = agentFlagOf(config);
     const fresh = configForRepo(
@@ -1068,17 +1081,19 @@ async function regenerateAfterPull(root, config, pendingPath, pending) {
     // A no-op when the file is current for the pulled configuration.
     ensureAllowedTools(root, fresh);
   } catch (err) {
-    return err.message;
+    return { problem: err.message };
   }
   const after = dirtySnapshot(root);
-  if (!after) return 'git status failed';
+  if (!after) return { problem: 'git status failed' };
   const touched = pathsChangedSince(before, after).filter((p) => p !== PULL_REGEN_PENDING);
-  if (touched.length > 0) {
-    const c = commitPaths(root, touched, 'chore: regenerate backlog indexes after pull');
-    if (!c.committed) return `commit failed: ${c.error ?? 'nothing to commit'}`;
+  if (touched.length === 0) {
+    rmSync(pendingPath, { force: true });
+    return { committed: false };
   }
-  rmSync(pendingPath, { force: true });
-  return null;
+  const c = commitPaths(root, touched, 'chore: regenerate backlog indexes after pull');
+  if (!c.committed) return { problem: `commit failed: ${c.error ?? 'nothing to commit'}` };
+  if (!c.pushResolved) rmSync(pendingPath, { force: true });
+  return { committed: true };
 }
 
 /**

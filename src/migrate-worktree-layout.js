@@ -57,6 +57,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { loadConfig } from './config.js';
 import { withLock } from './lock.js';
 import { applyMigration } from './migration-txn.js';
+import { RUN_DIR } from './run-lock.js';
 import { isSessionRunning } from './story.js';
 
 /** What `worktrees` meant before F-60 when `backlog.json` left it unset. */
@@ -299,7 +300,7 @@ export function planWorktreeLayout(config) {
   }
 
   const runStates = [];
-  const runDir = join(backlogRoot, '.bl', 'run');
+  const runDir = join(backlogRoot, RUN_DIR);
   for (const f of existsSync(runDir) ? readdirSync(runDir).sort() : []) {
     if (!f.endsWith('.json')) continue;
     const path = join(runDir, f);
@@ -443,7 +444,7 @@ export async function migrate(config, { dryRun = false, log = console.log, commi
     if (plan.refusals.length > 0) throw refused();
     if (dryRun) return { plan, commit: null };
 
-    const runDir = join(backlogRoot, '.bl', 'run');
+    const runDir = join(backlogRoot, RUN_DIR);
     const journalPath = join(backlogRoot, '.bl', JOURNAL);
     if (plan.moves.length === 0 && !plan.backlogJson) {
       rewriteRunStates(plan.done, runDir, backlogRoot);
