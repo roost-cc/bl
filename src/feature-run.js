@@ -97,6 +97,7 @@ import {
   writeChange,
 } from './change-doc.js';
 import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
+import { RUN_DIR, runLockPath, ensureRunDir } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt } from './test-excerpt.js';
@@ -106,7 +107,10 @@ import { loadFlow } from './flow.js';
 
 export { liveLockHolder };
 
-export const RUN_DIR = join('.bl', 'run');
+// The run directory, its locks and its self-ignoring setup live in the
+// dependency-free run-lock.js (F-74 D4: running-man takes the updates run lock
+// with them); re-exported for the loop's callers.
+export { RUN_DIR, runLockPath, ensureRunDir };
 export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 // ---------------------------------------------------------------------------
@@ -115,19 +119,6 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 export function runStatePath(config, featureId) {
   return join(config.backlogRoot, RUN_DIR, `${featureId}.json`);
-}
-
-export function runLockPath(config, featureId) {
-  return join(config.backlogRoot, RUN_DIR, `${featureId}.lock`);
-}
-
-export function ensureRunDir(config) {
-  const dir = join(config.backlogRoot, RUN_DIR);
-  mkdirSync(dir, { recursive: true });
-  // Self-ignoring directory: run state is machine-local scratch and must never
-  // ride along with a backlog commit.
-  const gi = join(dir, '.gitignore');
-  if (!existsSync(gi)) writeFileSync(gi, '*\n');
 }
 
 /**
