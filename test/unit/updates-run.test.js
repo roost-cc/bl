@@ -2541,13 +2541,11 @@ test("writeRunReport replaces only the run's own sections, wherever they stand",
   const t = await setup(mkReport({}));
   try {
     const config = t.config();
-    const own = new Set();
     const day = '2026-10-14';
-    writeRunReport(config, day, own, '## Run A\n\nfirst\n');
-    own.add('## Run A');
+    writeRunReport(config, day, null, '## Run A\n\nfirst\n');
     // Another writer's section lands after the run's block (a pull).
     appendReport(config, day, '## Approve S-9 · B\n\nheld: red\n');
-    writeRunReport(config, day, own, '## Drop S-1 · A\n\nclosed\n\n## Run A\n\nsecond\n');
+    writeRunReport(config, day, '## Run A\n\nfirst\n', '## Drop S-1 · A\n\nclosed\n\n## Run A\n\nsecond\n');
     assert.equal(
       readFileSync(reportPath(config, day), 'utf8'),
       `# Dependency updates · ${day}\n\n## Drop S-1 · A\n\nclosed\n\n## Run A\n\nsecond\n\n## Approve S-9 · B\n\nheld: red\n`,
@@ -2557,8 +2555,43 @@ test("writeRunReport replaces only the run's own sections, wherever they stand",
   }
 });
 
-test('two_runs_in_one_second_keep_both_report_blocks: a heading the run shares with an earlier run is its own only at the last occurrence', async () => {
+test('two_runs_in_one_second_keep_both_report_blocks / writeRunReport_preserves_later_foreign_same_heading_after_pull: a section is the run own only by its whole text, never by its heading', async () => {
   const cases = [
+    {
+      name: 'a later foreign ## Run with the same heading (pulled after the first write)',
+      earlier: null,
+      writes: ['## Run A\n\nown one\n', '## Run A\n\nown two\n'],
+      foreign: '## Run A\n\nforeign run\n',
+      want: '## Run A\n\nown two\n\n## Run A\n\nforeign run\n',
+    },
+    {
+      name: 'a later foreign answer and ## Run with the same headings',
+      earlier: null,
+      writes: [
+        '## Approve S-1 · A\n\nheld: red\n\n## Run A\n\nown one\n',
+        '## Approve S-1 · A\n\nmerged x\n\n## Run A\n\nown two\n',
+      ],
+      foreign: '## Approve S-1 · A\n\nforeign answer\n\n## Run A\n\nforeign run\n',
+      want: '## Approve S-1 · A\n\nmerged x\n\n## Run A\n\nown two\n\n## Approve S-1 · A\n\nforeign answer\n\n## Run A\n\nforeign run\n',
+    },
+    {
+      name: 'same-heading foreign runs both before and after, three writes',
+      earlier: '## Run A\n\nfirst run\n',
+      writes: [
+        '## Run A\n\nown one\n',
+        '## Drop S-2 · A\n\nclosed\n\n## Run A\n\nown two\n',
+        '## Drop S-2 · A\n\nclosed\n\n## Run A\n\nown three\n',
+      ],
+      foreign: '## Run A\n\nforeign run\n',
+      want: '## Run A\n\nfirst run\n\n## Drop S-2 · A\n\nclosed\n\n## Run A\n\nown three\n\n## Run A\n\nforeign run\n',
+    },
+    {
+      name: 'a foreign section byte-identical to the run own: one copy of each is kept',
+      earlier: null,
+      writes: ['## Run A\n\nsame\n', '## Run A\n\nown two\n'],
+      foreign: '## Run A\n\nsame\n',
+      want: '## Run A\n\nsame\n\n## Run A\n\nown two\n',
+    },
     {
       name: 'the ## Run heading collides',
       earlier: '## Run A\n\nfirst run\n',
@@ -2589,12 +2622,12 @@ test('two_runs_in_one_second_keep_both_report_blocks: a heading the run shares w
     try {
       const config = t.config();
       const day = '2026-10-14';
-      // The earlier run, finished: its own set is gone with it.
-      writeRunReport(config, day, new Set(), c.earlier);
-      const own = new Set();
+      // The earlier run, finished: what it wrote is gone with it.
+      if (c.earlier) writeRunReport(config, day, null, c.earlier);
+      let previous = null;
       for (const [i, text] of c.writes.entries()) {
-        writeRunReport(config, day, own, text);
-        for (const l of text.split('\n')) if (l.startsWith('## ')) own.add(l);
+        writeRunReport(config, day, previous, text);
+        previous = text;
         if (i === 0 && c.foreign) appendReport(config, day, c.foreign);
       }
       assert.equal(readFileSync(reportPath(config, day), 'utf8'), `# Dependency updates · ${day}\n\n${c.want}`, c.name);

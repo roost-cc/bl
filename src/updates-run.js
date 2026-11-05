@@ -489,35 +489,38 @@ export function appendReport(config, date, text) {
 
 /**
  * Put a run's block into the day's report, or replace it there (F-74 D2).
- * `ownHeadings` holds the `## ` heading lines the run wrote earlier (its
- * answer entries and its `## Run <at>`): each of those sections, up to the
- * next `## ` heading, is taken out, and `text` goes where the first of them
- * stood. A run that wrote nothing yet appends, so the final file reads as
- * `appendReport`'s single write of the same text. Returns the backlog-relative
- * path.
+ * `previous` is the block the run wrote last time (null before its first
+ * write): each of its `## ` sections is found in the file by its whole text,
+ * heading to the next `## ` heading, taken out, and `text` goes where the
+ * first of them stood. A run that wrote nothing yet appends, so the final
+ * file reads as `appendReport`'s single write of the same text. Returns the
+ * backlog-relative path.
  *
- * A heading names a run's section only at its last occurrence: an earlier
- * run that started in the same second wrote the same `## Run <at>` (and
- * answer headings) before this run appended its own, so the earlier
- * occurrences are that run's and are kept. Within one run every heading is
- * unique (one answer per story, one `## Run`).
+ * A heading alone does not say whose a section is: another run (an earlier
+ * one in the same second, or another clone's, pulled in before or after
+ * this block) may write the same `## Run <at>` or answer heading. A section
+ * is the run's only when its whole text is what the run wrote; a foreign
+ * section with the same text is indistinguishable from the run's, so
+ * whichever copy is taken, the file keeps one of each.
  *
  * @param {object} config
  * @param {string} date
- * @param {Set<string>} ownHeadings
+ * @param {string | null} previous
  * @param {string} text
  */
-export function writeRunReport(config, date, ownHeadings, text) {
+export function writeRunReport(config, date, previous, text) {
   const path = reportPath(config, date);
   const existing = existsSync(path) ? readFileSync(path, 'utf8') : null;
   const lines = existing?.split('\n') ?? [];
   const starts = lines.flatMap((l, i) => (l.startsWith('## ') ? [i] : []));
-  const last = new Map(starts.map((s) => [lines[s], s]));
-  const sections = starts.map((s, k) => ({
-    own: ownHeadings.has(lines[s]) && last.get(lines[s]) === s,
-    from: s,
-    to: starts[k + 1] ?? lines.length,
-  }));
+  const sections = starts.map((s, k) => {
+    const to = starts[k + 1] ?? lines.length;
+    return { own: false, from: s, to, text: lines.slice(s, to).join('\n').replace(/\s+$/, '') };
+  });
+  for (const mine of reportSections(previous ?? '')) {
+    const hit = sections.findLast((s) => !s.own && s.text === mine);
+    if (hit) hit.own = true;
+  }
   const first = sections.find((s) => s.own);
   if (!first) return appendReport(config, date, text);
   // Everything before the first own section is someone else's; after it,
@@ -530,6 +533,18 @@ export function writeRunReport(config, date, ownHeadings, text) {
     .replace(/\s+$/, '');
   writeFileSync(path, `${before}\n\n${text.replace(/\s+$/, '')}\n${after ? `\n${after}\n` : ''}`);
   return relative(config.backlogRoot, path);
+}
+
+/** A block's `## ` sections, each heading to the next, trailing space trimmed. */
+function reportSections(block) {
+  const lines = block.split('\n');
+  const starts = lines.flatMap((l, i) => (l.startsWith('## ') ? [i] : []));
+  return starts.map((s, k) =>
+    lines
+      .slice(s, starts[k + 1] ?? lines.length)
+      .join('\n')
+      .replace(/\s+$/, ''),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1410,12 +1425,12 @@ export async function runUpdates(config, opts = {}) {
     // is rewritten in place from every outcome so far. Every commit names
     // all the stories the run changed, so one whose commit failed rides
     // along with the next.
-    const own = new Set();
+    let previous = null;
     let committed = 0;
     const commitRun = async (message) => {
-      const sections = runReportSections(at, result.outcomes);
-      result.report = writeRunReport(config, today, own, sections.join('\n'));
-      for (const s of sections) own.add(s.slice(0, s.indexOf('\n')));
+      const block = runReportSections(at, result.outcomes).join('\n');
+      result.report = writeRunReport(config, today, previous, block);
+      previous = block;
       committed = result.outcomes.length;
       result.commit = await syncAndCommit(config, { message, storyIds: changed, extraPaths: [result.report] });
     };
