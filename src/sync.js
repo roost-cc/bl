@@ -43,6 +43,7 @@ import { readFileSync, statSync, existsSync, rmSync } from 'fs';
 import { join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { stringify as stringifyYaml } from 'yaml';
+import { epicStatus } from './backlog-graph.js';
 import {
   loadConfig,
   configForRepo,
@@ -429,16 +430,6 @@ function featureNum(f) {
 /** The features naming epic `epicId` (`E50`), in id order. */
 function featuresOfEpic(features, epicId) {
   return features.filter((f) => normalizeEpicId(f.epic)?.id === epicId).sort((a, b) => featureNum(a) - featureNum(b));
-}
-
-/**
- * An epic's derived status: `done` once it has features and every one is
- * closed (meets `done`), else `open`.
- */
-export function epicStatus(epicFeatures, flow) {
-  return epicFeatures.length > 0 && epicFeatures.every((f) => flow.meets('feature', f.status, 'done'))
-    ? 'done'
-    : 'open';
 }
 
 /** `<closed>/<total>` over `items` of the flow type `type`, by their `status`. */
