@@ -21,7 +21,6 @@ test('updates_lock_path_contract: run-lock.js and pid-lock.js import only node b
   assert.equal(typeof pidLock.acquirePidLock, 'function');
 });
 
-
 test('regeneration_marker_uses_RUN_DIR: the marker and every other run path derive from run-lock.js', () => {
   assert.equal(dirname(backlogCommit.PULL_REGEN_PENDING), runLock.RUN_DIR);
   const dir = join(REPO_ROOT, 'src');

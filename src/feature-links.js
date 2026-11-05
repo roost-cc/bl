@@ -30,11 +30,11 @@ import {
 import { basename, join, normalize, relative, sep } from 'path';
 import { findBacklogRoot, parseFrontmatter } from './config.js';
 import { withLock } from './lock.js';
+import { RUN_DIR } from './run-lock.js';
 import { parseIdList } from './story.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 
-import { RUN_DIR } from './run-lock.js';
 const SUFFIX = '.links.json';
 
 /**
