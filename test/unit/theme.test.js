@@ -175,12 +175,8 @@ test("findValueAxisFindings: each rule's cases, and nothing when every link hold
         ['bl'],
       ),
     ),
+    // The second E64 is the graph's duplicate-id (validate.test.js, findDuplicateFindings).
     [
-      [
-        'duplicate-id',
-        'epics/E64-again/index.md',
-        'duplicate epic ID E64 across directories: epics/E64-site/index.md, epics/E64-again/index.md',
-      ],
       ['feature-theme', 'features/F4/index.md', 'F-4 has no "theme:"; every feature names its theme'],
       ['feature-theme', 'features/F5/index.md', 'F-5 names theme "money", which has no themes/money/index.md'],
       ['feature-epic', 'features/F6/index.md', 'F-6 names epic "E70", which has no epics/E70-*/index.md'],

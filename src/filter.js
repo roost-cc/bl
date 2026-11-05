@@ -159,7 +159,7 @@ export function filterStories(stories, filter, ctx) {
 /**
  * True when feature `f` passes every filter that is set: its own theme,
  * epic and id, and, for `--component`, a story in the component.
- * @param {object} f  `readFeature` record
+ * @param {object} f  `readAllFeatures` record
  * @param {object[]} featureStories  the feature's stories (`componentId`)
  */
 export function featureMatches(f, featureStories, filter) {

@@ -169,19 +169,21 @@ export async function main(argv) {
   await acquireLock(config.backlogRoot);
 
   // Everything is read here, under the lock: what another bl wrote while
-  // this one waited is what the refusals see.
-  const target = findComponentDir(componentRef, config);
+  // this one waited is what the refusals see. The first read loads the
+  // whole backlog (`loadBacklog`), so a unit file that is not YAML, a named
+  // story's or any other's, stops the move here, naming the file.
+  let target;
+  let allFeatures;
+  try {
+    target = findComponentDir(componentRef, config);
+    allFeatures = readAllFeatures(config);
+  } catch (e) {
+    fail(`bl move: nothing was moved:\n  ${e.message}`);
+  }
   if (!target) fail(`bl move: component ${componentRef.id} not found under components/.`);
   const to = componentRef.id;
   if (!target.repo) {
     fail(`bl move: component ${to} names no repo, and a story's repo is its component's; set repo: on ${to} first.`);
-  }
-
-  let allFeatures;
-  try {
-    allFeatures = readAllFeatures(config);
-  } catch (e) {
-    fail(`bl move: nothing was moved: ${e.message}`);
   }
   const refusals = [];
   const moves = [];

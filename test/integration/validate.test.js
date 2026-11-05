@@ -829,12 +829,14 @@ test("bl validate reports frontmatter-yaml at the parser's line and frontmatter-
     'nothing else is reported from a file that is not read',
   );
 
-  // Every other command stops at the first such file it reads, naming it and the line.
+  // Every other command stops at the first such file it reads, naming it and
+  // the line or key: its one read of the backlog (`loadBacklog`, F-77 D1)
+  // meets S-2's list before S-3.
   const list = await runBl(['list'], { cwd: td.dir });
   assert.equal(list.status, 1);
   assert.match(
     list.stderr,
-    /(stories\/S3-colon\/index\.md|features\/F1-feat\/change\.md): frontmatter is not YAML at line [48], column \d+: /,
+    /(stories\/S3-colon\/index\.md|features\/F1-feat\/change\.md): frontmatter is not YAML at line [48], column \d+: |stories\/S2-lists\/index\.md: "depends_on:" is "S-1", not a list/,
   );
   td.cleanup();
 });

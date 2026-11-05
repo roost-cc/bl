@@ -310,6 +310,23 @@ document's `repos:`) is not read: the reader throws `FrontmatterListError` (`lis
 rather than drop a blocker or a plugin as if it were never written. `bl validate` reports
 both shapes it will not read: `frontmatter-yaml` and `frontmatter-list` (see **bl validate**).
 
+### Reading the backlog: `loadBacklog()` is the one way in (F-77 D2)
+
+Every command reads the backlog through `loadBacklog(config)` (`src/backlog-graph.js`): one
+read of every unit file into a typed, linked graph, memoized per process and revalidated by
+stat, so a command reads each unit file once however many readers it calls. The readers
+(`readAllStories`, `readAllFeatures`, `readComponents`, `readAllThemes`, `readAllEpics`,
+`readAllTasks`, `readUnits` and the `find*` lookups) are projections of its units into their
+record shapes, each record's `fm` a copy the caller may change; the next-id lookups use its
+`maxNum`, which counts every unit directory, readable or not, so `bl new` never reuses a
+number. Use a unit's `text()`, `body()` or `section()` rather than reading its file again. No
+other module lists or reads the unit directories (`test/unit/one-way-in.test.js` fails on a
+`readdirSync` of a unit root, `scanFeatureDirs` or `unitDirs`); a writer that must list unit
+files without reading them, such as `bl side`'s undo, uses `unitFiles`. A strict load (every
+command but `bl validate`) throws the first frontmatter problem of any unit file, a
+`frontmatter-yaml` or a `frontmatter-list`, naming the file. A missing `flow.json` does not
+stop a read: a unit's `done` (and an epic's `status`) throws the `FlowError` when asked.
+
 The backlog was moved to this format by the one-off `scripts/migrate-frontmatter-yaml.js`
 (logic in `src/migrate-frontmatter-yaml.js`, F-62 D5): every file `bl validate` reads is read
 with `parseFrontmatter`, after `legacyRepaired` double-quotes, whole, the value of each
@@ -2761,16 +2778,25 @@ non-empty `feature` and `why`; the second when a ranked id names no feature, a d
 superseded one, or one already ranked. A backlog with no `feature-order.md` reports
 `feature-order-file`; `bl merge`, `bl sync` and `bl next` still work.
 
-`frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) run first,
-over the root `index.md`, every unit's `index.md` and change documents, and every task file
-under `tasks/` (`frontmatterFiles`). A block that is
-not YAML is `frontmatter-yaml` (error) at the parser's line and column, and the file is not
-read any further: the readers skip it (`config.invalidFrontmatter`), and a change document
-takes its unit's `index.md` with it, so nothing else is reported from a half-read file. A
-list key that holds a non-empty scalar or a mapping, or a member that is not a string (not a
-mapping, for a change document's `repos:`), is `frontmatter-list` (error) at the key's line,
-and that file is skipped the same way. Every other command reads such a file and stops at its
-`FrontmatterError` or `FrontmatterListError`.
+`frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first,
+from the problems of the tolerant graph `bl validate` loads once (`loadBacklog(config,
+{ tolerant: true })`, F-77 D2) over the root `index.md`, every unit's `index.md` and change
+documents, and every task file under `tasks/` (`frontmatterFiles`, the graph's `files`). A
+block that is not YAML is `frontmatter-yaml` (error) at the parser's line and column, and the
+file is not read any further: the graph leaves its unit out, so no reader sees it, and a
+change document takes its unit's `index.md` with it, so nothing else is reported from a
+half-read file. A list key that holds a non-empty scalar or a mapping, or a member that is
+not a string (not a mapping, for a change document's `repos:`), is `frontmatter-list` (error)
+at the key's line, and that unit is left out the same way. `bl validate` pins its graph on
+the config it hands its checks (`config.backlogGraph`, `graphOf`), so every reader it calls
+projects that one graph. Every other command loads the graph strictly and stops at the first
+such unit file, any unit's, with its `FrontmatterError` or `FrontmatterListError`.
+
+`duplicate-id`, `dangling-dep` and `dangling-feature` are the graph's problems too
+(`findDuplicateFindings`, `findDanglingFindings`), in the words `bl validate` always used:
+a story's duplicate once per id at its first file listing every copy and title, a
+component's once per id at its second directory, an epic's or a feature's once per later
+copy. A task's duplicate id stays `findTaskFindings`'s `task-field`.
 
 `repo-key` (F-52 D5, `validateFrontmatter`) is an error on a story or a
 feature that still sets `primary_repo` or `secondary_repos`, once per key

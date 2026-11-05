@@ -12,12 +12,14 @@
  * Stories live in `stories/` and point back with a `feature: F-<n>`
  * frontmatter key; the feature lists them in order under `stories:`.
  * `bl sync` cross-checks the two and renders the tables.
+ *
+ * `readAllFeatures` and `findFeature` project `loadBacklog()`'s feature
+ * units into the record shape (F-77 D2); nothing here lists `features/`.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import {
-  frontmatterSkipped,
   info,
   parseFrontmatterOf,
   parsePluginList,
@@ -28,8 +30,8 @@ import {
   warn,
 } from './config.js';
 import { statusWords } from './flow.js';
-import { parseIdList, readAllStories } from './story.js';
-import { unitChange } from './change-doc.js';
+import { entryMatches, ownFm, parseIdList, readAllStories } from './story.js';
+import { graphOf } from './backlog-graph.js';
 import { updateSpecFile } from './spec-file.js';
 
 export const FEATURES_DIR = 'features';
@@ -69,45 +71,24 @@ export function featureSessionVars(feature) {
   return m ? { sessionId: `s${m[1]}`, sessionNum: m[1] } : {};
 }
 
-/**
- * Enumerate feature directories under `features/`, sorted. Nothing below a
- * feature directory's siblings (a `.completed/` left by hand) is read.
- * @returns {{ featureEntry, featureDir, indexPath }[]}
- */
-export function scanFeatureDirs(config) {
-  const root = featuresRoot(config);
-  const out = [];
-  if (!existsSync(root)) return out;
-  for (const entry of readdirSync(root).sort()) {
-    if (!/^F\d+/.test(entry)) continue;
-    const featureDir = join(root, entry);
-    if (!statSync(featureDir).isDirectory()) continue;
-    const indexPath = join(featureDir, 'index.md');
-    if (!existsSync(indexPath)) continue;
-    out.push({ featureEntry: entry, featureDir, indexPath });
-  }
-  return out;
-}
-
 function toInt(v, fallback = 0) {
   const n = parseInt(String(v ?? ''), 10);
   return Number.isFinite(n) ? n : fallback;
 }
 
 /**
- * Parse one feature index file into the record shape used across bl. The
- * branch, PR, review state and Review Log (`changeBody`) come from the
- * feature's current change document (change-doc.js), not its spec.
+ * One feature unit of the graph (`loadBacklog`) in the record shape used
+ * across bl, or null when it has no `feature_id`. The branch, PR, review
+ * state and Review Log (`changeBody`) come from the feature's current change
+ * document (`unit.change()`, read now), not its spec. The text is the
+ * graph's, CRLF read as LF (S-896).
  */
-export function readFeature(entry, config) {
-  // CRLF read as LF, as the story reader does (S-896): a CRLF file's `---\r\n`
-  // block is not a frontmatter block to the parser, so the feature went missing.
-  const content = readFileSync(entry.indexPath, 'utf8').replace(/\r\n/g, '\n');
-  const { fm, body } = parseFrontmatterOf(content, entry.indexPath);
-  if (!fm.feature_id) return null;
+function featureRecord(unit, config) {
+  if (!unit.fm.feature_id) return null;
+  const fm = ownFm(unit);
   // No repo of its own (F-52 D3): the branch and PR are read off the change
   // document's first `repos:` entry, which is the lead repo's.
-  const change = unitChange(entry.featureDir);
+  const change = unit.change();
   return {
     id: fm.feature_id,
     title: fm.title ?? '',
@@ -126,49 +107,40 @@ export function readFeature(entry, config) {
     changePath: change.changePath,
     change: change.change,
     changeBody: change.changeBody,
-    indexPath: entry.indexPath,
-    featureRelPath: relative(config.backlogRoot, entry.indexPath),
-    featureEntry: entry.featureEntry,
-    featureDir: entry.featureDir,
+    indexPath: unit.file,
+    featureRelPath: relative(config.backlogRoot, unit.file),
+    featureEntry: unit.entry,
+    featureDir: unit.dir,
     fm,
-    body,
-    content,
+    body: unit.body(),
+    content: unit.text(),
   };
 }
 
 /** Read every feature, whatever its status. */
 export function readAllFeatures(config) {
   const out = [];
-  for (const entry of scanFeatureDirs(config)) {
-    if (frontmatterSkipped(config, entry.indexPath)) continue;
-    const f = readFeature(entry, config);
+  for (const unit of graphOf(config).list('feature')) {
+    const f = featureRecord(unit, config);
     if (f) out.push(f);
   }
   return out;
 }
 
 /**
- * Find a feature by parsed ID.
- * @returns {ReturnType<typeof readFeature> | null}
+ * Find a feature by parsed ID: the first directory named for it.
+ * @returns {ReturnType<typeof featureRecord> | null}
  */
 export function findFeature(parsed, config) {
-  for (const entry of scanFeatureDirs(config)) {
-    const e = entry.featureEntry;
-    if (e !== parsed.dirPrefix && !e.startsWith(parsed.dirPrefix + '-')) {
-      continue;
-    }
-    return readFeature(entry, config);
-  }
-  return null;
+  const unit = graphOf(config)
+    .list('feature')
+    .find((u) => entryMatches(u.entry, parsed));
+  return unit ? featureRecord(unit, config) : null;
 }
 
+/** The highest feature number: every feature directory's, readable or not (`maxNum`). */
 export function findMaxFeatureNum(config) {
-  let max = 0;
-  for (const entry of scanFeatureDirs(config)) {
-    const m = entry.featureEntry.match(/^F(\d+)/);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
-  return max;
+  return Number(graphOf(config).maxNum('feature') ?? 0);
 }
 
 export function nextFeatureId(config) {

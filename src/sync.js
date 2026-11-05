@@ -43,7 +43,7 @@ import { readFileSync, statSync, existsSync, rmSync } from 'fs';
 import { join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { stringify as stringifyYaml } from 'yaml';
-import { epicStatus } from './backlog-graph.js';
+import { epicStatus, graphOf } from './backlog-graph.js';
 import {
   loadConfig,
   configForRepo,
@@ -86,15 +86,7 @@ import { readAllTasks, tasksOf, taskTableRows } from './task.js';
 import { readBlockers } from './blockers.js';
 import { loadFlow } from './flow.js';
 import { readFeatureOrder, rankedFeatures, unrankedFeatures, FEATURE_ORDER_FILE } from './feature-order.js';
-import {
-  FEATURES_DIR,
-  featuresRoot,
-  scanFeatureDirs,
-  readFeature,
-  storyLinkFromFeature,
-  featureRepoOrder,
-  LEAD_REPO,
-} from './feature.js';
+import { FEATURES_DIR, readAllFeatures, storyLinkFromFeature, featureRepoOrder, LEAD_REPO } from './feature.js';
 
 // ---------------------------------------------------------------------------
 // Markdown tables
@@ -174,13 +166,16 @@ function writeFileIfChanged(backlogRoot, path, content, previous, touchedMarkdow
 /**
  * Every story under `stories/` as a sync record: its component comes from
  * `readAllStories` (`story.js` `placeStory`), the rest from its
- * frontmatter. Unknown statuses and keys are warnings, as `bl validate` makes
- * them errors.
+ * frontmatter, the graph's (`loadBacklog`), so no story is read twice.
+ * Unknown statuses and keys are warnings, as `bl validate` makes them errors.
  */
 function readStoriesForSync(config, flow) {
   const stories = [];
-  for (const s of readAllStories(config)) {
-    const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
+  // One snapshot for both, so every record has its unit.
+  const graph = graphOf(config);
+  const units = new Map(graph.list('story').map((u) => [u.file, u]));
+  for (const s of readAllStories({ ...config, backlogGraph: graph })) {
+    const { fm } = units.get(s.indexPath);
     const status = fm.status ?? 'backlog';
     if (!flow.statusesOf('story').includes(status)) {
       console.warn(`  warning: ${s.storyRelPath} has unknown status "${status}"`);
@@ -294,13 +289,8 @@ function hasSection(body, heading) {
  * Nothing moves: a closed feature stays in `features/` (F-49 D3).
  */
 function readFeaturesForSync(config, storyMap) {
-  const root = featuresRoot(config);
-  if (!existsSync(root)) return [];
-
   const features = [];
-  for (const entry of scanFeatureDirs(config)) {
-    const f = readFeature(entry, config);
-    if (!f) continue;
+  for (const f of readAllFeatures(config)) {
     for (const key of Object.keys(f.fm)) {
       if (!VALID_FEATURE_KEYS.has(key) && !key.startsWith('plugins-') && !RUN_STATE_KEYS.includes(key)) {
         console.warn(`  warning: ${f.featureRelPath} has unknown frontmatter key "${key}"`);

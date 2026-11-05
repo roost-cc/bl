@@ -27,13 +27,12 @@
  * nothing: each kind is answered by its own verb, and it refuses naming it.
  */
 
-import { readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { dirname, relative } from 'path';
-import { info, loadConfig, parseFrontmatter } from './config.js';
+import { info, loadConfig } from './config.js';
 import { changeNextVerb, currentChange } from './change-doc.js';
-import { extractSection, scanFeatureDirs, sectionHasContent } from './feature.js';
-import { readAllStories } from './story.js';
+import { extractSection, sectionHasContent } from './feature.js';
+import { loadBacklog } from './backlog-graph.js';
 import { loadFlow } from './flow.js';
 import { BLOCKERS_FILE, isActive, isMet, readBlockers, readUnits as readGraphUnits } from './blockers.js';
 import { holdsText, readAllTasks } from './task.js';
@@ -63,17 +62,16 @@ const PENDING_STATES = new Set(['approve pending', 'drop pending']);
 /** Twice the runner's 4 h cadence: a newer `## Run` means it is alive. */
 export const STALE_RUN_HOURS = 8;
 
-/** A file's text with LF line ends. */
-function readLf(path) {
-  return { text: readFileSync(path, 'utf8').replace(/\r\n/g, '\n') };
-}
-
-/** Every unit, features then stories, open and closed, with its parsed file. */
+/**
+ * Every unit, features then stories, open and closed, with its file's text
+ * (LF line ends) and body, from the graph (`loadBacklog`), so no unit file is
+ * read again.
+ */
 function readUnits(config) {
+  const graph = loadBacklog(config);
   const out = [];
-  for (const e of scanFeatureDirs(config)) {
-    const { text } = readLf(e.indexPath);
-    const { fm, body } = parseFrontmatter(text);
+  for (const u of graph.list('feature')) {
+    const { fm } = u;
     if (!fm.feature_id) continue;
     out.push({
       kind: 'feature',
@@ -81,23 +79,23 @@ function readUnits(config) {
       title: fm.title ?? '',
       feature: '',
       status: fm.status ?? 'draft',
-      indexPath: e.indexPath,
-      text,
-      body,
+      indexPath: u.file,
+      text: u.text(),
+      body: u.body(),
     });
   }
-  for (const s of readAllStories(config)) {
-    const { text } = readLf(s.indexPath);
-    const { body } = parseFrontmatter(text);
+  for (const u of graph.list('story')) {
+    const { fm } = u;
+    if (!fm.story_id) continue;
     out.push({
       kind: 'story',
-      id: s.id,
-      title: s.title ?? '',
-      feature: s.feature ?? '',
-      status: s.status,
-      indexPath: s.indexPath,
-      text,
-      body,
+      id: fm.story_id,
+      title: fm.title ?? '',
+      feature: fm.feature ?? '',
+      status: fm.status ?? 'backlog',
+      indexPath: u.file,
+      text: u.text(),
+      body: u.body(),
     });
   }
   return out;

@@ -601,7 +601,7 @@ test('bl new --from --dry-run makes no commit', () => {
 // --plugins-from <S-id> (S-870): inherit plugins / plugins-<stage> keys
 // ---------------------------------------------------------------------------
 
-const PLUGIN_KEYS = 'plugins-test: bl-tests\nplugins-lint: -foo\n';
+const PLUGIN_KEYS = 'plugins-test: [bl-tests]\nplugins-lint: [-foo]\n';
 const SOURCE = 'stories/S1-parent/index.md';
 const CHILD = 'stories/S2-child/index.md';
 
@@ -642,8 +642,8 @@ test('bl new --plugins-from copies plugins-* keys verbatim from a same-repo stor
     assert.doesNotMatch(fmText, /^primary_repo:/m);
     const { fm } = parseFrontmatter(fmText + '\n');
     assert.equal(fm.component, 'C03');
-    assert.equal(fm['plugins-test'], 'bl-tests');
-    assert.equal(fm['plugins-lint'], '-foo');
+    assert.deepEqual(fm['plugins-test'], ['bl-tests']);
+    assert.deepEqual(fm['plugins-lint'], ['-foo']);
     assert.doesNotMatch(r.stderr, /not copied/);
   } finally {
     cleanup();
@@ -653,13 +653,13 @@ test('bl new --plugins-from copies plugins-* keys verbatim from a same-repo stor
 test('bl new --plugins-from accepts a lowercase id and copies list values as sequences', () => {
   // A flow list and a block list both come through the parsed object, so the
   // new block writes each as a flow sequence (F-62 D3), before `depends_on:`.
-  const listFm = 'plugins: [a, b]\nplugins-test:\n  - bl-tests\n  - extra\nplugins-lint: -foo\n';
+  const listFm = 'plugins: [a, b]\nplugins-test:\n  - bl-tests\n  - extra\nplugins-lint: [-foo]\n';
   const { dir, cleanup } = pluginsBacklog({ extraFm: listFm });
   try {
     const r = runBl([...NEW_CHILD, '--plugins-from', 's-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     const fmText = childFrontmatter(dir);
-    const written = 'plugins: [a, b]\nplugins-test: [bl-tests, extra]\nplugins-lint: -foo\n';
+    const written = 'plugins: [a, b]\nplugins-test: [bl-tests, extra]\nplugins-lint: [-foo]\n';
     assert.ok(fmText.includes(`added: ${new Date().toISOString().slice(0, 10)}\n${written}depends_on:`), fmText);
   } finally {
     cleanup();
@@ -876,9 +876,9 @@ test('bl new --plugins-from rereads and compares its source under the creation l
     },
     {
       name: 'source plugin keys change while waiting',
-      mutate: (dir) => rewrite(dir, 'plugins-test: bl-tests\n', 'plugins-test: new-tests\n'),
+      mutate: (dir) => rewrite(dir, 'plugins-test: [bl-tests]\n', 'plugins-test: [new-tests]\n'),
       status: 0,
-      copied: 'plugins-test: new-tests\nplugins-lint: -foo\n',
+      copied: 'plugins-test: [new-tests]\nplugins-lint: [-foo]\n',
     },
     {
       name: 'source is done while waiting',
@@ -925,7 +925,7 @@ test('bl new --plugins-from rejects duplicate source IDs', () => {
     mkdirSync(join(dir, 'stories', 'S1-dup'), { recursive: true });
     writeFileSync(
       join(dir, 'stories', 'S1-dup', 'index.md'),
-      text.replace('plugins-test: bl-tests', 'plugins-test: dup-tests'),
+      text.replace('plugins-test: [bl-tests]', 'plugins-test: [dup-tests]'),
     );
     const r = runBl([...NEW_CHILD, '--plugins-from', 'S-1'], { cwd: dir });
     assert.equal(r.status, 1, r.stderr);

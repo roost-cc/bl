@@ -2,29 +2,12 @@
  * validate.js — backlog integrity checks.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
-import {
-  loadConfig,
-  configForRepo,
-  parseFrontmatter,
-  parseArgs,
-  normalizeComponentId,
-  FrontmatterError,
-  FrontmatterListError,
-  frontmatterKeyLine,
-  isListKey,
-  listMembers,
-  listValue,
-  FORGE_OPS,
-  BODY_READING_OP,
-  STORIES_DIR,
-  COMPONENTS_DIR,
-  THEMES_DIR,
-  EPICS_DIR,
-} from './config.js';
+import { existsSync, statSync } from 'fs';
+import { isAbsolute, join, relative, resolve } from 'path';
+import { loadConfig, configForRepo, parseArgs, normalizeComponentId, FORGE_OPS, BODY_READING_OP } from './config.js';
+import { loadBacklog } from './backlog-graph.js';
 import { readAllStories, readComponents, parseIdList, pathEntryProblem } from './story.js';
-import { readAllFeatures, FEATURES_DIR, extractSection, sectionHasContent } from './feature.js';
+import { readAllFeatures, extractSection, sectionHasContent } from './feature.js';
 import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID_RE, EPIC_STATUSES } from './theme.js';
 import { findFeatureOrderFindings } from './feature-order.js';
 import { findRoadmapFindings } from './roadmap.js';
@@ -34,7 +17,7 @@ import { scanDeferred } from './deferred.js';
 import { CHANGE_STATUSES, RUN_STATE_KEYS, listChanges, readChange, unitIdOfDir } from './change-doc.js';
 import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
-import { TASKS_DIR, TASK_FILE_RE, findTaskFindings, readAllTasks } from './task.js';
+import { findTaskFindings, readAllTasks } from './task.js';
 import { implementPluginProblem } from './scripted.js';
 
 // ---------------------------------------------------------------------------
@@ -495,17 +478,17 @@ export function findRunStateInSpec(fm, body, location) {
  * directory holds, `change-repo-incomplete` for a `repos:` entry without
  * `repo` or `branch`, `bad-change-status`, `bad-review-status`), then its
  * Review Log against its `review_status` (validateReviewLog). Locations are
- * backlog-relative.
+ * backlog-relative. A unit whose change document is not YAML is not in the
+ * tolerant graph, so this is never called for it.
  *
  * @param {string} backlogRoot
  * @param {string} unitDir
  * @returns {Finding[]}
  */
-export function validateChanges(backlogRoot, unitDir, invalid = new Set()) {
+export function validateChanges(backlogRoot, unitDir) {
   const findings = [];
   const unitId = unitIdOfDir(unitDir);
   for (const { path } of listChanges(unitDir)) {
-    if (invalid.has(path)) continue;
     const location = relative(backlogRoot, path);
     const doc = readChange(path);
     const fm = doc.fm;
@@ -663,39 +646,6 @@ export function findCycles(storyMap) {
  * @param {Map<string, any>} storyMap
  * @returns {Finding[]}
  */
-export function findDanglingDeps(storyMap) {
-  const findings = [];
-  for (const story of storyMap.values()) {
-    const deps = parseIdList(story.depends_on);
-    for (const depId of deps) {
-      if (!storyMap.has(depId)) {
-        findings.push({
-          severity: 'error',
-          code: 'dangling-dep',
-          message: `story ${story.id} depends on non-existent story ${depId}`,
-          location: story.storyRelPath,
-        });
-      }
-    }
-    const reqs = parseIdList(story.required_for);
-    for (const reqId of reqs) {
-      if (!storyMap.has(reqId)) {
-        findings.push({
-          severity: 'error',
-          code: 'dangling-dep',
-          message: `story ${story.id} is required for non-existent story ${reqId}`,
-          location: story.storyRelPath,
-        });
-      }
-    }
-  }
-  return findings;
-}
-
-/**
- * @param {Map<string, any>} storyMap
- * @returns {Finding[]}
- */
 export function findAsymmetricDeps(storyMap) {
   const findings = [];
   for (const story of storyMap.values()) {
@@ -734,6 +684,8 @@ export function findAsymmetricDeps(storyMap) {
 }
 
 /**
+ * Story records sharing an id, for `bl sync`, which refuses to regenerate
+ * over them (`bl validate` takes them from the graph, `findDuplicateFindings`).
  * @param {any[] | Map<string, any>} stories
  * @returns {Finding[]}
  */
@@ -745,26 +697,36 @@ export function findDuplicateIds(stories) {
     matches.push(s);
     byId.set(s.id, matches);
   }
-
   const findings = [];
   for (const [id, matches] of byId) {
     if (matches.length > 1) {
-      const paths = matches.map((m) => {
-        if (m.storyRelPath) return m.storyRelPath;
-        return m.indexPath || 'unknown';
-      });
-
-      findings.push({
-        severity: 'error',
-        code: 'duplicate-id',
-        message:
-          `duplicate story ID ${id} across ${matches.length} files:\n` +
-          matches.map((m, i) => `    ${i + 1}: ${paths[i]} — "${m.title}"`).join('\n'),
-        location: paths[0],
-      });
+      findings.push(
+        storyDuplicateFinding(
+          id,
+          matches.map((m) => ({ relPath: m.storyRelPath || m.indexPath || 'unknown', title: m.title })),
+        ),
+      );
     }
   }
   return findings;
+}
+
+/**
+ * The `duplicate-id` finding for story `id`, at its first copy, listing
+ * every copy with its title.
+ * @param {string} id
+ * @param {Array<{ relPath: string, title: string }>} copies
+ * @returns {Finding}
+ */
+function storyDuplicateFinding(id, copies) {
+  return {
+    severity: 'error',
+    code: 'duplicate-id',
+    message:
+      `duplicate story ID ${id} across ${copies.length} files:\n` +
+      copies.map((m, i) => `    ${i + 1}: ${m.relPath} — "${m.title}"`).join('\n'),
+    location: copies[0].relPath,
+  };
 }
 
 /** Feature statuses in which a non-empty `## Escalation` blocks the next step. */
@@ -853,12 +815,13 @@ export function findDeferredErrors(id, status, text, heading, location, flow, ty
  *   - `feature-story-missing`  (error)   listed story does not exist
  *   - `feature-story-mismatch` (error)   listed story's `feature:` points
  *                                        elsewhere (or is unset)
- *   - `dangling-feature`       (error)   story names a feature that doesn't exist
  *   - `feature-story-unlisted` (warning) story names the feature but the
  *                                        feature doesn't list it
  *   - `feature-no-stories`     (warning) approved/running feature with no stories
  *
- * A feature that still names a repo is validateFrontmatter's `repo-key`.
+ * A feature that still names a repo is validateFrontmatter's `repo-key`; a
+ * story naming a feature that does not exist is the graph's
+ * `dangling-feature` (`findDanglingFindings`).
  *
  * @param {Array} features — readAllFeatures records
  * @param {Map<string, any>} storyMap
@@ -900,16 +863,9 @@ export function findFeatureFindings(features, storyMap) {
   }
   for (const s of storyMap.values()) {
     if (!s.feature) continue;
+    // A feature that does not exist is the graph's `dangling-feature`.
     const f = byId.get(s.feature);
-    if (!f) {
-      findings.push({
-        severity: 'error',
-        code: 'dangling-feature',
-        message: `story ${s.id} names non-existent feature ${s.feature}`,
-        location: s.storyRelPath,
-      });
-      continue;
-    }
+    if (!f) continue;
     if (!f.stories.includes(s.id)) {
       findings.push({
         severity: 'warning',
@@ -1135,9 +1091,11 @@ export function findForgeFindings(config) {
  *     not a non-empty relative glob (absolute, or with a `..` or `.` segment).
  *     `paths:` itself is optional: a map for people and agents, absent or
  *     empty when nobody has drawn it.
- *   - `duplicate-id` (error): two component directories with one id.
  *
- * @param {Array<object>} stories  readAllStories records
+ * Two component directories with one id are the graph's `duplicate-id`
+ * (`findDuplicateFindings`).
+ *
+ * @param {Array<object>} stories  readAllStories records, each with its frontmatter as `fm`
  * @param {Array<object>} components  readComponents records
  * @param {Iterable<string>} registeredRepos  repo names from backlog.json
  * @param {string} backlogRoot
@@ -1148,27 +1106,13 @@ export function findComponentFindings(stories, components, registeredRepos, back
   const err = (code, message, location) => findings.push({ severity: 'error', code, message, location });
   const registered = new Set(registeredRepos);
   const rel = (path) => relative(backlogRoot, path);
-  // The first directory claiming an id wins, as in every reader
-  // (`componentsByIdMap` in story.js); the others are `duplicate-id`.
+  // The first directory claiming an id wins, as in every reader (the graph's
+  // `components`); the others are the graph's `duplicate-id`.
   const byId = new Map();
-  const claims = new Map();
-  for (const c of components) {
-    if (!byId.has(c.id)) byId.set(c.id, c);
-    claims.set(c.id, [...(claims.get(c.id) ?? []), c]);
-  }
-  for (const [id, list] of claims) {
-    if (list.length > 1) {
-      err(
-        'duplicate-id',
-        `duplicate component ID ${id} across ${list.length} directories: ${list.map((c) => rel(c.indexPath)).join(', ')}`,
-        rel(list[1].indexPath),
-      );
-    }
-  }
+  for (const c of components) if (!byId.has(c.id)) byId.set(c.id, c);
 
   for (const s of stories) {
-    const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8').replace(/\r\n/g, '\n'));
-    const raw = fm.component;
+    const raw = s.fm.component;
     if (raw == null || raw === '') {
       err('component-unknown', `${s.id} has no "component:"`, s.storyRelPath);
       continue;
@@ -1232,7 +1176,9 @@ export function findComponentFindings(stories, components, registeredRepos, back
  *     with no directory.
  *   - `theme-repo` (error): a theme with no `repos:` list, or one listing a
  *     repo backlog.json does not register.
- *   - `duplicate-id` (error): two epic directories with one id.
+ *
+ * Two epic directories with one id are the graph's `duplicate-id`
+ * (`findDuplicateFindings`).
  *
  * @param {Array<object>} features  readAllFeatures records
  * @param {Array<object>} themes  readAllThemes records
@@ -1245,16 +1191,10 @@ export function findValueAxisFindings(features, themes, epics, registeredRepos) 
   const err = (code, message, location) => findings.push({ severity: 'error', code, message, location });
   const registered = new Set(registeredRepos);
   const themeIds = new Set(themes.map((t) => t.id));
-  // The first directory claiming an epic id wins, as in `findEpic`.
+  // The first directory claiming an epic id wins, as in `findEpic`; the
+  // others are the graph's `duplicate-id` (`findDuplicateFindings`).
   const epicsById = new Map();
-  for (const e of epics) {
-    const first = epicsById.get(e.id);
-    if (!first) {
-      epicsById.set(e.id, e);
-      continue;
-    }
-    err('duplicate-id', `duplicate epic ID ${e.id} across directories: ${first.relPath}, ${e.relPath}`, e.relPath);
-  }
+  for (const e of epics) if (!epicsById.has(e.id)) epicsById.set(e.id, e);
 
   for (const f of features) {
     if (!f.theme) {
@@ -1339,102 +1279,119 @@ export function findThemeBriefFindings(themes, roostDir) {
 }
 
 /**
- * Every file of the backlog that holds frontmatter: the root `index.md`,
- * each unit's `index.md` and change documents under `stories/`,
- * `components/`, `features/`, `themes/` and `epics/`, and each task file
- * under `tasks/` (F-65 D1). `unitIndex` is the `index.md` of the unit a file
- * belongs to; a task file is its own.
- * @returns {{ path: string, unitIndex: string | null }[]}
+ * Every file of the backlog that holds frontmatter, as the tolerant graph
+ * lists it (`loadBacklog`, F-77 D2): the root `index.md`, each unit's
+ * `index.md` and change documents under `stories/`, `components/`,
+ * `features/`, `themes/` and `epics/`, and each task file under `tasks/`
+ * (F-65 D1). `unitIndex` is the `index.md` of the unit a file belongs to; a
+ * task file is its own.
+ * @returns {ReadonlyArray<{ path: string, unitIndex: string | null }>}
  */
 export function frontmatterFiles(backlogRoot) {
-  const out = [];
-  const root = join(backlogRoot, 'index.md');
-  if (existsSync(root)) out.push({ path: root, unitIndex: null });
-  for (const dir of [STORIES_DIR, COMPONENTS_DIR, FEATURES_DIR, THEMES_DIR, EPICS_DIR]) {
-    const base = join(backlogRoot, dir);
-    if (!existsSync(base)) continue;
-    for (const entry of readdirSync(base).sort()) {
-      const unitDir = join(base, entry);
-      const unitIndex = join(unitDir, 'index.md');
-      if (!statSync(unitDir).isDirectory() || !existsSync(unitIndex)) continue;
-      out.push({ path: unitIndex, unitIndex });
-      for (const c of listChanges(unitDir)) out.push({ path: c.path, unitIndex });
-    }
+  return loadBacklog({ backlogRoot }, { tolerant: true }).files;
+}
+
+/** A graph problem as a finding at the file it names (`line` only when asked). */
+function problemFinding(p, { line = false } = {}) {
+  return {
+    severity: 'error',
+    code: p.code,
+    message: p.message,
+    location: p.file,
+    ...(line ? { line: p.line } : {}),
+  };
+}
+
+/**
+ * The frontmatter findings (F-62 D4), the tolerant graph's
+ * `frontmatter-yaml` and `frontmatter-list` problems over every file
+ * `frontmatterFiles` names:
+ *
+ *   - `frontmatter-yaml` (error): the block is not YAML, at the parser's
+ *     line and column. The file is not read any further: `invalid` holds it,
+ *     and the `index.md` of its unit when it is a change document, and the
+ *     graph leaves that unit out, so no reader sees it.
+ *   - `frontmatter-list` (error): a list key (`isListKey`, D2) holds a
+ *     non-empty scalar or a mapping, or a member that is not a string (not
+ *     a mapping, for a change document's `repos:`), at the key's line. The
+ *     file goes in `invalid` too: a reader throws `FrontmatterListError`
+ *     on such a list rather than drop the member.
+ *
+ * @param {string} backlogRoot
+ * @param {import("./backlog-graph.js").BacklogGraph} [graph]  the tolerant graph, when the caller has it
+ * @returns {{ findings: Finding[], invalid: Set<string> }}
+ */
+export function findFrontmatterFindings(backlogRoot, graph = loadBacklog({ backlogRoot }, { tolerant: true })) {
+  const findings = [];
+  const invalid = new Set();
+  const unitOf = new Map(graph.files.map((f) => [f.path, f.unitIndex]));
+  for (const p of graph.problems) {
+    if (p.code !== 'frontmatter-yaml' && p.code !== 'frontmatter-list') continue;
+    findings.push(problemFinding(p, { line: true }));
+    const path = join(graph.root, p.file);
+    invalid.add(path);
+    const unitIndex = unitOf.get(path);
+    if (unitIndex) invalid.add(unitIndex);
   }
-  const tasks = join(backlogRoot, TASKS_DIR);
-  if (existsSync(tasks)) {
-    for (const entry of readdirSync(tasks).sort()) {
-      const path = join(tasks, entry);
-      if (TASK_FILE_RE.test(entry) && statSync(path).isFile()) out.push({ path, unitIndex: path });
+  return { findings, invalid };
+}
+
+/**
+ * The `duplicate-id` findings, from the graph's problems (F-77 D2), each in
+ * the words `bl validate` has always used for its kind:
+ *
+ *   - stories: one per id, at the first file, listing every copy with its title;
+ *   - components: one per id, at the second directory, listing every one;
+ *   - epics and features: one per later copy, at it, naming the first.
+ *
+ * A task's duplicate id is `findTaskFindings`'s `task-field`.
+ * @param {import("./backlog-graph.js").BacklogGraph} graph
+ * @returns {{ stories: Finding[], components: Finding[], epics: Finding[], features: Finding[] }}
+ */
+export function findDuplicateFindings(graph) {
+  const out = { stories: [], components: [], epics: [], features: [] };
+  const grouped = new Set();
+  for (const p of graph.problems) {
+    if (p.code !== 'duplicate-id') continue;
+    const kind = graph.get(p.ref)?.kind;
+    if (kind === 'epic' || kind === 'feature') {
+      const first = graph.get(p.ref).relPath;
+      out[`${kind}s`].push({
+        severity: 'error',
+        code: 'duplicate-id',
+        message: `duplicate ${kind} ID ${p.ref} across directories: ${first}, ${p.file}`,
+        location: p.file,
+      });
+      continue;
+    }
+    if (grouped.has(p.ref)) continue;
+    grouped.add(p.ref);
+    const copies = graph.list(kind).filter((u) => u.id === p.ref);
+    if (kind === 'story') {
+      out.stories.push(storyDuplicateFinding(p.ref, copies));
+    } else if (kind === 'component') {
+      out.components.push({
+        severity: 'error',
+        code: 'duplicate-id',
+        message: `duplicate component ID ${p.ref} across ${copies.length} directories: ${copies.map((c) => c.relPath).join(', ')}`,
+        location: copies[1].relPath,
+      });
     }
   }
   return out;
 }
 
 /**
- * The frontmatter findings (F-62 D4), over every file `frontmatterFiles`
- * names:
- *
- *   - `frontmatter-yaml` (error): the block is not YAML, at the parser's
- *     line and column. The file is not read any further: `invalid` holds it,
- *     and the `index.md` of its unit when it is a change document, for the
- *     readers to skip (`config.invalidFrontmatter`).
- *   - `frontmatter-list` (error): a list key (`isListKey`, D2) holds a
- *     non-empty scalar or a mapping, or a member that is not a string (not
- *     a mapping, for a change document's `repos:`), at the key's line. The
- *     file goes in `invalid` too: the readers throw `FrontmatterListError`
- *     on such a list rather than drop the member.
- *
- * @returns {{ findings: Finding[], invalid: Set<string> }}
+ * The dangling-reference findings, from the graph's problems (F-77 D2):
+ * `dangling-dep` (a `depends_on:` or `required_for:` naming no story) and
+ * `dangling-feature` (a `feature:` naming no feature), each at the story's
+ * file.
+ * @param {import("./backlog-graph.js").BacklogGraph} graph
+ * @returns {{ deps: Finding[], features: Finding[] }}
  */
-export function findFrontmatterFindings(backlogRoot) {
-  const findings = [];
-  const invalid = new Set();
-  for (const { path, unitIndex } of frontmatterFiles(backlogRoot)) {
-    const location = relative(backlogRoot, path);
-    const text = readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
-    let fm;
-    try {
-      ({ fm } = parseFrontmatter(text));
-    } catch (e) {
-      if (!(e instanceof FrontmatterError)) throw e;
-      findings.push({
-        severity: 'error',
-        code: 'frontmatter-yaml',
-        message: `line ${e.line}${e.column ? `, column ${e.column}` : ''}: the frontmatter is not YAML (${e.reason}); the file is not read`,
-        location,
-        line: e.line,
-      });
-      invalid.add(path);
-      if (unitIndex) invalid.add(unitIndex);
-      continue;
-    }
-    const changeDoc = unitIndex && path !== unitIndex;
-    for (const [key, value] of Object.entries(fm)) {
-      if (!isListKey(key)) continue;
-      try {
-        listMembers(value, key, { member: changeDoc && key === 'repos' ? 'a mapping' : 'a string' });
-        continue;
-      } catch (e) {
-        if (!(e instanceof FrontmatterListError)) throw e;
-        const line = frontmatterKeyLine(text, key);
-        const shown = typeof value === 'string' ? `"${value}"` : 'a mapping';
-        findings.push({
-          severity: 'error',
-          code: 'frontmatter-list',
-          message:
-            listValue(value) == null
-              ? `line ${line}: "${key}:" is ${shown}, not a list; write a YAML sequence, e.g. ${key}: [${typeof value === 'string' ? value : '…'}]`
-              : `line ${line}: ${e.reason}; the file is not read`,
-          location,
-          line,
-        });
-        invalid.add(path);
-        if (unitIndex) invalid.add(unitIndex);
-      }
-    }
-  }
-  return { findings, invalid };
+export function findDanglingFindings(graph) {
+  const pick = (code) => graph.problems.filter((p) => p.code === code).map((p) => problemFinding(p));
+  return { deps: pick('dangling-dep'), features: pick('dangling-feature') };
 }
 
 // ---------------------------------------------------------------------------
@@ -1454,15 +1411,21 @@ export function runAll(config, opts = {}) {
   const { json } = opts;
   const skip = new Set(opts.skip ?? []);
 
-  // 0. Frontmatter that is not YAML is reported and its unit not read (F-62 D4).
-  const frontmatter = findFrontmatterFindings(config.backlogRoot);
-  config = { ...config, invalidFrontmatter: frontmatter.invalid };
+  // 0. The backlog, read once and tolerantly (F-77 D2): frontmatter that is
+  // not YAML is a problem and its unit is left out (F-62 D4). Every reader
+  // below projects this one graph (`graphOf`).
+  const graph = loadBacklog(config, { tolerant: true });
+  const frontmatter = findFrontmatterFindings(config.backlogRoot, graph);
+  config = { ...config, backlogGraph: graph };
 
   // The statuses and gates per type (F-66 D1). A missing or unreadable
   // flow.json throws, naming the file: nothing below can check a status.
   const flow = loadFlow(config.backlogRoot);
 
-  const allStories = readAllStories(config);
+  // Each story's and component's frontmatter, body and text, as the graph
+  // read them, once; a feature record carries its own.
+  const unitAt = new Map([...graph.list('story'), ...graph.list('component')].map((u) => [u.file, u]));
+  const allStories = readAllStories(config).map((s) => ({ ...s, fm: unitAt.get(s.indexPath).fm }));
   const allComponents = readComponents(config);
   const componentCount = allComponents.length;
   const allFeatures = readAllFeatures(config);
@@ -1486,8 +1449,8 @@ export function runAll(config, opts = {}) {
 
   // 1. Frontmatter checks for stories.
   for (const s of allStories) {
-    const text = readFileSync(s.indexPath, 'utf8');
-    const { fm, body } = parseFrontmatter(text);
+    const unit = unitAt.get(s.indexPath);
+    const { fm } = s;
     const parts = s.storyRelPath.split('/');
     const dirName = parts[parts.length - 2];
     findings.push(
@@ -1499,17 +1462,16 @@ export function runAll(config, opts = {}) {
         flow,
       }),
     );
-    findings.push(...findRunStateInSpec(fm, body, s.storyRelPath));
-    findings.push(...validateChanges(config.backlogRoot, dirname(s.indexPath), frontmatter.invalid));
-    findings.push(...findDeferredErrors(s.id, fm.status, text, 'To Do', s.storyRelPath, flow, 'story'));
+    findings.push(...findRunStateInSpec(fm, unit.body(), s.storyRelPath));
+    findings.push(...validateChanges(config.backlogRoot, unit.dir));
+    findings.push(...findDeferredErrors(s.id, fm.status, unit.text(), 'To Do', s.storyRelPath, flow, 'story'));
   }
 
   // 2. Frontmatter checks for components.
   for (const c of allComponents) {
-    const { body } = parseFrontmatter(readFileSync(c.indexPath, 'utf8'));
     const relPath = relative(config.backlogRoot, c.indexPath);
     findings.push(...validateFrontmatter(c.fm, 'component', relPath, { dirName: c.componentEntry }));
-    findings.push(...findRunStateInSpec(c.fm, body, relPath));
+    findings.push(...findRunStateInSpec(c.fm, unitAt.get(c.indexPath).body(), relPath));
   }
 
   // 2a. The component rules (F-49 D4), backlog-wide like the graph checks.
@@ -1530,19 +1492,9 @@ export function runAll(config, opts = {}) {
       }),
     );
     findings.push(...findRunStateInSpec(f.fm, f.body, f.featureRelPath));
-    findings.push(...validateChanges(config.backlogRoot, f.featureDir, frontmatter.invalid));
+    findings.push(...validateChanges(config.backlogRoot, f.featureDir));
     findings.push(...findEscalationNotNone(f));
-    findings.push(
-      ...findDeferredErrors(
-        f.id,
-        f.fm.status,
-        readFileSync(f.indexPath, 'utf8'),
-        'Deferred',
-        f.featureRelPath,
-        flow,
-        'feature',
-      ),
-    );
+    findings.push(...findDeferredErrors(f.id, f.fm.status, f.content, 'Deferred', f.featureRelPath, flow, 'feature'));
   }
 
   // 2c. Themes and epics (F-51 D1): their frontmatter, then the value-axis
@@ -1562,13 +1514,13 @@ export function runAll(config, opts = {}) {
     Object.keys(config.reposByName ?? {}),
   );
 
-  // 3. Duplicate IDs.
-  const dupes = findDuplicateIds(allStories);
+  // 3. Duplicate IDs and dangling references: the graph's problems (F-77 D2).
+  const dupes = findDuplicateFindings(graph);
+  const dangling = findDanglingFindings(graph);
 
   // 4. Graph checks over every story.
   const fullMap = new Map();
   for (const s of allStories) fullMap.set(s.id, s);
-  const danglings = findDanglingDeps(fullMap);
   const cycles = findCycles(fullMap);
   const asymmetrics = findAsymmetricDeps(fullMap);
 
@@ -1577,15 +1529,19 @@ export function runAll(config, opts = {}) {
   const implementPlugins = findImplementPluginFindings(fullMap.values(), config);
   const verificationTitles = skip.has('verification-only-title') ? [] : findVerificationOnlyTitles(allStories, flow);
   findings.push(
-    ...dupes,
-    ...danglings,
+    ...dupes.stories,
+    ...dupes.features,
+    ...dangling.deps,
     ...cycles,
     ...asymmetrics,
     ...featureLinks,
+    ...dangling.features,
     ...foundBy,
     ...implementPlugins,
     ...verificationTitles,
+    ...dupes.components,
     ...componentFindings,
+    ...dupes.epics,
     ...valueAxisFindings,
   );
 
