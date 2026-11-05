@@ -587,7 +587,7 @@ test('bl validate fails each run-state key and a Review Log in an index.md, nami
   writeFileSync(
     featurePath,
     readFileSync(featurePath, 'utf8')
-      .replace('points: 0\n', 'points: 0\npr: 3\n')
+      .replace('status: draft\n', 'status: draft\npr: 3\n')
       .concat('\n## Review Log\n\nNo reviews yet.\n'),
   );
   const { stdout, status } = await runBl(['validate', '--json'], { cwd: td.dir });
@@ -756,7 +756,7 @@ test('bl validate reports feature-theme, feature-epic, epic-theme and theme-repo
   });
   // An epic's and a theme's own keys are checked like any unit's.
   const e50 = join(td.dir, 'epics', 'E50-fine', 'index.md');
-  writeFileSync(e50, readFileSync(e50, 'utf8').replace('status: open\n', 'status: open\nowner: me\n'));
+  writeFileSync(e50, readFileSync(e50, 'utf8').replace('theme: demo\n', 'theme: demo\nowner: me\n'));
   const { stdout, status } = await runBl(['validate', '--json'], { cwd: td.dir });
   assert.equal(status, 1);
   const findings = JSON.parse(stdout).findings;

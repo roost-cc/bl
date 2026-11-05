@@ -44,9 +44,9 @@ Commands:
                worktree and change entry (<repo|C-id> --from <F-n|S-n>
                --title <t> --points <n>); prints S-<n><TAB><worktree>
                --type, --body-file, --json
-  attach     List an existing story in a feature (<S-n> <F-n>, either
-               order): sets its feature:, appends it to stories:, commits
-               --no-sync      Write both files, commit nothing
+  attach     Put an existing story in a feature (<S-n> <F-n>, either
+               order): sets its feature:, commits
+               --no-sync      Write the story, commit nothing
                --json         Print {schema, story, feature, changed}
                Refuses a closed feature, a story in another feature or not
                ${unstarted}, and a repo a running feature does not span

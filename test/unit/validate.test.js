@@ -70,9 +70,8 @@ test('repo-key: either repo key on a story or a feature is an error, once each, 
 });
 
 test("findFeatureFindings no longer reads a feature's repo keys (F-52 D5)", () => {
-  const map = new Map([['S-1', storyRec({ unitRepo: 'app' })]]);
   const f = feat({ fm: { primary_repo: 'bl', secondary_repos: '[x]' } });
-  assert.deepEqual(featureCodes(findFeatureFindings([f], map)), []);
+  assert.deepEqual(featureCodes(findFeatureFindings([f])), []);
 });
 
 test('found-by: a found_by naming no feature or story is an error; a real one, or none, is not (F-48 D2)', () => {
@@ -436,10 +435,31 @@ test("validateFrontmatter: a story's component is a known key and epic is not", 
     validateFrontmatter({ ...fm, epic: 'E32 · bl' }, 'story', 'p').map((f) => [f.code, f.message]),
     [['unknown-fm-key', 'unknown frontmatter key "epic"']],
   );
+  assert.deepEqual(validateFrontmatter({ feature_id: 'F-1', title: 'T', status: 'draft' }, 'feature', 'p'), []);
+});
+
+test('validateFrontmatter: a derived key stored in a feature or an epic is derived-key, not unknown-fm-key (F-77 D3)', () => {
+  const codes = (fm, kind) => validateFrontmatter(fm, kind, 'p').map((f) => [f.severity, f.code, f.message]);
+  const feature = { feature_id: 'F-1', title: 'T', status: 'draft' };
+  for (const key of ['stories', 'points', 'components']) {
+    const found = codes({ ...feature, [key]: key === 'points' ? '3' : ['S-1'] }, 'feature');
+    assert.equal(found.length, 1, key);
+    assert.equal(found[0][0], 'error');
+    assert.equal(found[0][1], 'derived-key');
+    assert.match(found[0][2], new RegExp(`^feature stores "${key}:", which bl derives from `));
+  }
+  const epic = { epic_id: 'E50', title: 'T', theme: 'demo' };
+  assert.deepEqual(codes(epic, 'epic'), []);
   assert.deepEqual(
-    validateFrontmatter({ feature_id: 'F-1', title: 'T', status: 'draft', components: ['C32'] }, 'feature', 'p'),
-    [],
+    codes({ ...epic, features: ['F-1'], status: 'nonsense' }, 'epic').map(([s, c]) => [s, c]),
+    [
+      ['error', 'derived-key'],
+      ['error', 'derived-key'],
+    ],
+    'a stored status is derived-key whatever it holds, never bad-status',
   );
+  // A story's required_for: is still stated until S-1271.
+  assert.deepEqual(codes({ story_id: 'S-1', title: 'T', status: 'backlog', required_for: ['S-2'] }, 'story'), []);
 });
 
 // ---------------------------------------------------------------------------

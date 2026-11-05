@@ -50,9 +50,14 @@ test("featureSessionVars takes the first listed story's number, not the lowest",
   assert.deepEqual(featureSessionVars(null), {});
 });
 
-test("readFeature's stories feed featureSessionVars in listed order", () => {
+test("readFeature's stories feed featureSessionVars in dependency order, not the lowest", () => {
   const { dir, cleanup } = mkTempBacklog({
-    features: [{ id: 'F-3', title: 'Order', dirSuffix: 'order', stories: ['S-9', 'S-2'] }],
+    components: [{ id: 'C00', title: 'Core', dirSuffix: 'core', repo: 'demo-repo' }],
+    stories: [
+      { id: 'S-2', component: 'C00', title: 'Second', dirSuffix: 'b', feature: 'F-3', depends_on: ['S-9'] },
+      { id: 'S-9', component: 'C00', title: 'First', dirSuffix: 'a', feature: 'F-3' },
+    ],
+    features: [{ id: 'F-3', title: 'Order', dirSuffix: 'order' }],
   });
   try {
     const config = loadConfig({ backlogRoot: dir });
@@ -105,14 +110,14 @@ function fixture() {
       {
         id: 'S-5',
         component: 'C01',
-        title: 'Tagged but unlisted',
-        dirSuffix: 'unlisted',
+        title: 'Also in F-1',
+        dirSuffix: 'also',
         feature: 'F-1',
       },
       {
         id: 'S-6',
         component: 'C01',
-        title: 'Listed but points elsewhere',
+        title: 'In another feature',
         dirSuffix: 'elsewhere',
         feature: 'F-2',
       },
@@ -123,7 +128,6 @@ function fixture() {
         title: 'Invite codes',
         dirSuffix: 'invite-codes',
         status: 'refined',
-        stories: ['S-3', 'S-4', 'S-6', 'S-99'],
       },
       {
         id: 'F-2',
@@ -135,7 +139,7 @@ function fixture() {
   });
 }
 
-test('readAllFeatures reads every feature under features/, whatever its status, with parsed story lists', () => {
+test('readAllFeatures reads every feature under features/, whatever its status, with derived stories, points and components', () => {
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -148,7 +152,11 @@ test('readAllFeatures reads every feature under features/, whatever its status, 
       ],
     );
     const f1 = features[0];
-    assert.deepEqual(f1.stories, ['S-3', 'S-4', 'S-6', 'S-99']);
+    // The stories naming it (F-77 D3), in dependency order: S-3 depends on S-4.
+    assert.deepEqual(f1.stories, ['S-4', 'S-3', 'S-5']);
+    assert.equal(f1.points, 9);
+    assert.deepEqual(f1.components, ['C00', 'C01']);
+    assert.deepEqual(features[1].stories, ['S-6']);
     assert.equal('primaryRepo' in f1, false, 'a feature record names no repo (F-52 D3)');
     assert.equal(f1.reviewRoundsMax, 2);
     assert.equal(f1.featureRelPath, 'features/F1-invite-codes/index.md');
@@ -181,7 +189,7 @@ test('nextFeatureId is F-1 on a backlog without features', () => {
   }
 });
 
-test('resolveFeatureStories reports listed, missing, unlisted, and mismatched', () => {
+test("resolveFeatureStories is the stories whose feature: names it, in dependency order (F-77 D3)", () => {
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -189,32 +197,30 @@ test('resolveFeatureStories reports listed, missing, unlisted, and mismatched', 
     const r = resolveFeatureStories(f1, cfg);
     assert.deepEqual(
       r.stories.map((s) => s.id),
-      ['S-3', 'S-4', 'S-6'],
+      ['S-4', 'S-3', 'S-5'],
     );
-    assert.deepEqual(r.missing, ['S-99']);
+    assert.deepEqual(Object.keys(r), ['stories']);
+    // `feature: F1` names F-1 too.
+    const all = readAllStories(cfg).map((s) => (s.id === 'S-6' ? { ...s, feature: 'F1' } : s));
     assert.deepEqual(
-      r.unlisted.map((s) => s.id),
-      ['S-5'],
-    );
-    assert.deepEqual(
-      r.mismatched.map((s) => s.id),
-      ['S-6'],
+      resolveFeatureStories(f1, cfg, all).stories.map((s) => s.id),
+      ['S-4', 'S-3', 'S-5', 'S-6'],
     );
   } finally {
     cleanup();
   }
 });
 
-test('orderStoriesByDeps puts in-feature dependencies first and keeps listed order otherwise', () => {
+test('orderStoriesByDeps puts in-feature dependencies first and keeps number order otherwise', () => {
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
     const f1 = findFeature(normalizeFeatureId('F-1'), cfg);
     const { stories } = resolveFeatureStories(f1, cfg);
-    // Listed [S-3, S-4, S-6]; S-3 depends on S-4 (in feature) and S-1 (outside).
+    // [S-3, S-4, S-5] by number; S-3 depends on S-4 (in feature) and S-1 (outside).
     assert.deepEqual(
       orderStoriesByDeps(stories).map((s) => s.id),
-      ['S-4', 'S-3', 'S-6'],
+      ['S-4', 'S-3', 'S-5'],
     );
   } finally {
     cleanup();
@@ -450,7 +456,12 @@ test('resolveFeaturePlugins reports an unknown plugin name', async () => {
 test('a CRLF feature file reads like an LF one', async () => {
   const { writeFileSync, readFileSync } = await import('fs');
   const { dir, cleanup } = mkTempBacklog({
-    features: [{ id: 'F-3', title: 'Order', dirSuffix: 'order', stories: ['S-9', 'S-2'] }],
+    components: [{ id: 'C00', title: 'Core', dirSuffix: 'core', repo: 'demo-repo' }],
+    stories: [
+      { id: 'S-2', component: 'C00', title: 'Second', dirSuffix: 'b', feature: 'F-3', depends_on: ['S-9'] },
+      { id: 'S-9', component: 'C00', title: 'First', dirSuffix: 'a', feature: 'F-3' },
+    ],
+    features: [{ id: 'F-3', title: 'Order', dirSuffix: 'order' }],
   });
   try {
     const config = loadConfig({ backlogRoot: dir });

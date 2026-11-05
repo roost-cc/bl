@@ -51,27 +51,26 @@ function buildBacklogStory({
   return { backlog, storyPath, tmp };
 }
 
-function addFeature(backlog, stories) {
+/** F-1, and `storyPath`'s story in it: its `feature:` names F-1 (F-77 D3). */
+function addFeature(backlog, storyPath) {
   const fDir = join(backlog, 'features', 'F1-feat');
   mkdirSync(fDir, { recursive: true });
   const featurePath = join(fDir, 'index.md');
-  writeFileSync(
-    featurePath,
-    `---\nfeature_id: F-1\ntitle: Feat\nstatus: running\nprimary_repo: code\nstories: [${stories.join(', ')}]\n---\n\n# F-1\n`,
-  );
+  writeFileSync(featurePath, `---\nfeature_id: F-1\ntitle: Feat\nstatus: running\nprimary_repo: code\n---\n\n# F-1\n`);
+  writeFileSync(storyPath, readFileSync(storyPath, 'utf8').replace('status: refined\n', 'status: refined\nfeature: F-1\n'));
   return featurePath;
 }
 
-test('bl format --story F-<n> covers the feature file and every listed story', () => {
+test('bl format --story F-<n> covers the feature file and every story of it', () => {
   const tmp = mkTempDir('bl-fmt-seen-');
   const seen = join(tmp, 'seen.txt');
-  const { backlog } = buildBacklogStory({
+  const { backlog, storyPath } = buildBacklogStory({
     pluginsConfig: {
       plugins: { md: { format: `echo {{path}} >> ${seen}` } },
       language_dispatch: { format: { '.md': 'md' } },
     },
   });
-  addFeature(backlog, ['S-1']);
+  addFeature(backlog, storyPath);
   const r = runBl(['format', '--story', 'F-1'], { cwd: backlog });
   assert.equal(r.status, 0, r.stderr);
   const got = readFileSync(seen, 'utf8');
@@ -80,18 +79,18 @@ test('bl format --story F-<n> covers the feature file and every listed story', (
   assert.match(r.stderr, /backlog \(S-1\): 1 files via 1 plugin\(s\)/);
 });
 
-test('bl lint --story F-<n> exits with the worst status and warns on a missing story', () => {
-  const { backlog } = buildBacklogStory({
+test('bl lint --story F-<n> exits with the worst status', () => {
+  const { backlog, storyPath } = buildBacklogStory({
     pluginsConfig: {
       plugins: { md: { lint: 'grep -L story_id {{path}} | grep -q . && exit 3 || exit 0' } },
       language_dispatch: { lint: { '.md': 'md' } },
     },
   });
-  addFeature(backlog, ['S-1', 'S-9']);
+  addFeature(backlog, storyPath);
   const r = runBl(['lint', '--story', 'F-1'], { cwd: backlog });
   // The feature file has no story_id, so the lint plugin fails on it.
   assert.equal(r.status, 3, r.stderr);
-  assert.match(r.stderr, /F-1 lists S-9, which was not found — skipped/);
+  assert.match(r.stderr, /backlog \(S-1\): 1 files via 1 plugin\(s\) — exit 0/);
 });
 
 test('bl format --story F-<n> refuses an unknown feature', () => {

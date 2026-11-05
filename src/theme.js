@@ -29,9 +29,6 @@ export const THEME_ID_RE = /^[a-z][a-z0-9-]*$/;
 /** The first epic number; lower `E<n>` ids were components (F-49 D2). */
 export const FIRST_EPIC_NUM = 50;
 
-/** An epic's statuses, derived by `bl sync`: done once every feature is. */
-export const EPIC_STATUSES = ['open', 'done'];
-
 export function themesRoot(config) {
   return join(config.backlogRoot, THEMES_DIR);
 }
@@ -110,8 +107,9 @@ export function readAllThemes(config) {
 
 /**
  * Every epic under `epics/`, projected from `loadBacklog()` (F-77 D2). Its
- * id is its directory's `E<nn>`; its `features:` and `status:` are what
- * `bl sync` last derived.
+ * id is its directory's `E<nn>`; its `features` (the features whose `epic:`
+ * names it, by number) and `status` (`epicStatus` of them) are the graph's,
+ * derived and never stored (F-77 D3).
  * @returns {Array<{ id: string, title: string, theme: string, status: string,
  *   features: string[], epicEntry: string, epicDir: string,
  *   indexPath: string, relPath: string, fm: object }>}
@@ -125,8 +123,8 @@ export function readAllEpics(config) {
         id: `E${unit.entry.match(/^E(\d+)/)[1]}`,
         title: fm.title ?? '',
         theme: String(fm.theme ?? '').trim(),
-        status: fm.status ?? 'open',
-        features: parseNameList(fm.features) ?? [],
+        status: unit.status,
+        features: unit.features.map((f) => f.id),
         epicEntry: unit.entry,
         epicDir: unit.dir,
         indexPath: unit.file,

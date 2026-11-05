@@ -121,8 +121,6 @@ export const EPIC_INDEX_TEMPLATE = (e) => `${serializeFrontmatter({
   epic_id: e.id,
   title: e.title ?? e.id,
   theme: e.theme === null ? undefined : (e.theme ?? DEFAULT_THEME),
-  status: e.status ?? 'open',
-  features: [],
 })}
 # ${e.id} · ${e.title ?? e.id}
 
@@ -136,8 +134,6 @@ export const FEATURE_INDEX_TEMPLATE = (f) => `${serializeFrontmatter({
   epic: f.epic || undefined,
   status: f.status ?? 'draft',
   primary_repo: f.primary_repo || undefined,
-  stories: f.stories?.length ? f.stories : '',
-  points: '0',
   review_rounds_max: f.review_rounds_max ?? 2,
 })}
 # ${f.id} · ${f.title}
@@ -271,6 +267,8 @@ ${story.body ?? ''}
  *           review_status?: string, branch?: string, premise?: string,
  *           deferred?: string, reviewLog?: string, escalation?: string }>} [features]
  *           Written under features/F<n>-<dirSuffix>/ whatever the status.
+ *           `stories` is written as each listed story's `feature:` when its
+ *           fixture names none (F-77 D3: a feature stores no `stories:`).
  *           `branch`, `pr`, `review_status`, `review_round` and `reviewLog`
  *           (on a story too) go to the unit's change.md (CHANGE_TEMPLATE).
  *           `theme` defaults to `demo` (null writes none); `epic` is optional.
@@ -281,8 +279,9 @@ ${story.body ?? ''}
  *           `brief` defaults to the fixture's own backlog.json, relative to
  *           the backlog's parent directory (the backlog's parent); null writes none.
  * @property {Array<{ id: string, title?: string, dirSuffix?: string,
- *           theme?: string | null, status?: string }>} [valueEpics]
+ *           theme?: string | null }>} [valueEpics]
  *           Written under epics/E<nn>-<dirSuffix>/; `theme` defaults to `demo`.
+ *           Its features and status are derived (F-77 D3), never written.
  * @property {Array<{ feature: string, why: string }> | string | null} [featureOrder]
  *           `feature-order.md`: a `ranked:` list (FEATURE_ORDER_TEMPLATE,
  *           `[]` by default), the file's whole text, or null for no file.
@@ -374,13 +373,21 @@ export function mkTempBacklog(fixture = {}, { keep = false } = {}) {
     );
   }
 
+  // A fixture feature's `stories` are written as each story's `feature:`,
+  // the only statement of membership (F-77 D3); a story naming a feature of
+  // its own keeps it, and a listed id with no story is nothing.
+  const listedIn = new Map();
+  for (const f of fixture.features ?? []) {
+    for (const id of f.stories ?? []) if (!listedIn.has(id)) listedIn.set(id, f.id);
+  }
   for (const story of fixture.stories ?? []) {
     // bl uses `S<num>-<slug>` as the story dir name (no hyphen between S and num).
     const baseDir = story.id.replace(/^S-/, 'S');
     const storyDirName = story.dirSuffix != null ? `${baseDir}-${story.dirSuffix}` : baseDir;
     const storyDir = join(dir, 'stories', storyDirName);
     mkdirSync(storyDir, { recursive: true });
-    writeFileSync(join(storyDir, 'index.md'), STORY_INDEX_TEMPLATE(story));
+    const feature = story.feature === undefined ? listedIn.get(story.id) : story.feature;
+    writeFileSync(join(storyDir, 'index.md'), STORY_INDEX_TEMPLATE({ ...story, feature }));
     if (hasRunState(story)) {
       writeFileSync(join(storyDir, 'change.md'), CHANGE_TEMPLATE(story.id, { repo: story.primary_repo, ...story }));
     }

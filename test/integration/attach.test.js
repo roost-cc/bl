@@ -1,9 +1,9 @@
 /**
- * Integration tests for `bl attach` (S-1095): the story's `feature:` and the
- * feature's `stories:` written and committed by path, `--no-sync`, `--json`,
- * the ids in either order, the no-op, both half-attached repairs, every
- * refusal leaving both files byte for byte, and the story restored when the
- * feature write fails.
+ * Integration tests for `bl attach` (S-1095): the story's `feature:`, the
+ * only statement of membership (F-77 D3), written and committed by path with
+ * the feature's regenerated Stories table, `--no-sync`, `--json`, the ids in
+ * either order, the no-op, every refusal leaving both files byte for byte,
+ * and a failed write leaving the story whole.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,32 +28,37 @@ const bl = (args, cwd, opts = {}) => runBl(args, { cwd, env: { ...GIT_ENV, ...(o
 const read = (dir, rel) => readFileSync(join(dir, rel), 'utf8');
 const fm = (dir, rel) => parseFrontmatter(read(dir, rel)).fm;
 
+/** The ids `bl status F-1` lists, its stories. */
+const members = (dir) => [...bl(['status', 'F-1'], dir).stdout.matchAll(/^\d+\s+(S-\d+)\s/gm)].map((m) => m[1]).sort();
+
 /**
- * F-1 (status `featureStatus`) lists S-1 (C00, demo-repo); S-2 is the story
- * to attach, with `story` overriding its fixture fields. `features` adds
- * more features.
+ * F-1 (status `featureStatus`) holds S-1 (C00, demo-repo); S-2 is the story
+ * to attach, with `story` overriding its fixture fields (`feature: ''` by
+ * default: in no feature). `features` adds more features.
  */
-function backlog({ featureStatus = 'refined', story = {}, stories = ['S-1'], features = [], git: inGit = false } = {}) {
+function backlog({ featureStatus = 'refined', story = {}, features = [], git: inGit = false } = {}) {
   const { dir } = mkTempBacklog({
     repos: REPOS,
     components: COMPONENTS,
     stories: [
       { id: 'S-1', component: 'C00', title: 'One', feature: 'F-1', status: 'refined' },
-      { id: 'S-2', component: 'C00', title: 'Two', status: 'refined', ...story },
+      { id: 'S-2', component: 'C00', title: 'Two', status: 'refined', feature: '', ...story },
     ],
-    features: [{ id: 'F-1', title: 'Feat', status: featureStatus, stories }, ...features],
+    features: [{ id: 'F-1', title: 'Feat', status: featureStatus }, ...features],
   });
   if (inGit) initGitBacklog(dir);
   return dir;
 }
 
-test('bl attach sets feature:, lists the story, and commits the story dir, the feature and the indexes', () => {
+test("bl attach sets feature:, and commits the story dir, the feature's table and the indexes", () => {
   const dir = backlog({ git: true });
   const r = bl(['attach', 'S-2', 'F-1'], dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '', 'stdout is empty without --json');
   assert.equal(fm(dir, STORY).feature, 'F-1');
-  assert.deepEqual(fm(dir, FEATURE).stories, ['S-1', 'S-2']);
+  assert.equal(Object.hasOwn(fm(dir, FEATURE), 'stories'), false, 'the feature stores no stories: (F-77 D3)');
+  assert.match(read(dir, FEATURE), /\| \[S-2\]\(\.\.\/\.\.\/stories\/S2\/index\.md\)/, 'its Stories table has S-2');
+  assert.deepEqual(members(dir), ['S-1', 'S-2']);
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: attach S-2 to F-1');
   assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), [
     'components/C00-core/index.md',
@@ -66,17 +71,16 @@ test('bl attach sets feature:, lists the story, and commits the story dir, the f
   // The story keeps its sections and is valid in the feature.
   const v = bl(['validate', '--json'], dir);
   const codes = JSON.parse(v.stdout).findings.map((f) => f.code);
-  assert.ok(!codes.includes('feature-story-unlisted') && !codes.includes('feature-story-mismatch'), codes.join('\n'));
+  assert.ok(!codes.includes('derived-key') && !codes.includes('dangling-feature'), codes.join('\n'));
 });
 
-test('bl attach --no-sync writes both files under the lock and commits nothing', () => {
+test('bl attach --no-sync writes the story under the lock and commits nothing', () => {
   const dir = backlog({ git: true });
   const head = git(dir, 'rev-parse', 'HEAD');
   const index = read(dir, 'index.md');
   const r = bl(['attach', 'S-2', 'F-1', '--no-sync'], dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(fm(dir, STORY).feature, 'F-1');
-  assert.deepEqual(fm(dir, FEATURE).stories, ['S-1', 'S-2']);
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'no commit');
   assert.equal(read(dir, 'index.md'), index, 'the indexes are not regenerated');
   assert.deepEqual(
@@ -84,7 +88,7 @@ test('bl attach --no-sync writes both files under the lock and commits nothing',
       .split('\n')
       .map((l) => l.trim())
       .sort(),
-    [`M ${FEATURE}`, `M ${STORY}`],
+    [`M ${STORY}`],
   );
 });
 
@@ -94,60 +98,42 @@ test('bl attach --json, the ids in reverse order and in any accepted form', () =
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout), { schema: 'bl-attach-json/v1', story: 'S-2', feature: 'F-1', changed: true });
   assert.equal(fm(dir, STORY).feature, 'F-1');
-  assert.deepEqual(fm(dir, FEATURE).stories, ['S-1', 'S-2']);
+  assert.deepEqual(members(dir), ['S-1', 'S-2']);
 });
 
 test('bl attach on a story already in the feature writes and commits nothing', () => {
-  const dir = backlog({ git: true, story: { feature: 'F-1', status: 'in_progress' }, stories: ['S-1', 'S-2'] });
-  const head = git(dir, 'rev-parse', 'HEAD');
-  let r = bl(['attach', 'S-2', 'F-1'], dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, '');
-  assert.match(r.stderr, /S-2 is already in F-1; nothing to do\./);
-  r = bl(['attach', 'S-2', 'F-1', '--json'], dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(JSON.parse(r.stdout).changed, false);
-  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
-  assert.equal(git(dir, 'status', '--porcelain'), '');
+  for (const named of ['F-1', 'F1']) {
+    const dir = backlog({ git: true, story: { feature: named, status: 'in_progress' } });
+    const head = git(dir, 'rev-parse', 'HEAD');
+    let r = bl(['attach', 'S-2', 'F-1'], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /S-2 is already in F-1; nothing to do\./, named);
+    r = bl(['attach', 'S-2', 'F-1', '--json'], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).changed, false, named);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, named);
+    assert.equal(git(dir, 'status', '--porcelain'), '', named);
+  }
 });
 
-test('bl attach completes a story that names the feature but is not listed, writing only the list', () => {
-  // The S-1013 case: in progress, `feature: F-1`, missing from `stories:`.
-  const dir = backlog({ featureStatus: 'running', story: { feature: 'F-1', status: 'in_progress' } });
-  const story = read(dir, STORY);
-  const r = bl(['attach', 'S-2', 'F-1', '--no-sync', '--json'], dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(JSON.parse(r.stdout).changed, true);
-  assert.equal(read(dir, STORY), story, 'the story is not rewritten');
-  assert.deepEqual(fm(dir, FEATURE).stories, ['S-1', 'S-2']);
-});
-
-test('bl attach completes a story listed with no feature:, writing only the story', () => {
-  const dir = backlog({ story: { status: 'in_progress' }, stories: ['S-1', 'S-2'] });
+test('bl attach fills an empty feature: key in place', () => {
+  const dir = backlog();
+  writeFileSync(join(dir, STORY), read(dir, STORY).replace('type: feature\n', 'type: feature\nfeature:\n'));
   const feature = read(dir, FEATURE);
   const r = bl(['attach', 'S-2', 'F-1', '--no-sync'], dir);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(fm(dir, STORY).feature, 'F-1');
+  assert.match(read(dir, STORY), /\ntype: feature\nfeature: F-1\npoints: 1\n/);
   assert.equal(read(dir, FEATURE), feature, 'the feature is not rewritten');
 });
 
-test('bl attach fills an empty feature: key in place and lists into a feature with no stories: key', () => {
-  const dir = backlog({ stories: [] });
-  writeFileSync(join(dir, STORY), read(dir, STORY).replace('type: feature\n', 'type: feature\nfeature:\n'));
-  writeFileSync(join(dir, FEATURE), read(dir, FEATURE).replace(/^stories:.*\n/m, ''));
-  const r = bl(['attach', 'S-2', 'F-1', '--no-sync'], dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(read(dir, STORY), /\ntype: feature\nfeature: F-1\npoints: 1\n/);
-  assert.deepEqual(fm(dir, FEATURE).stories, ['S-2']);
-});
-
-test('bl attach lists the story by its canonical id, whatever its story_id: says', () => {
-  const dir = backlog({ stories: ['S-1', 'S-2'] });
+test('bl attach takes the story by its canonical id, whatever its story_id: says', () => {
+  const dir = backlog();
   writeFileSync(join(dir, STORY), read(dir, STORY).replace('story_id: S-2\n', 'story_id: S2\n'));
   const r = bl(['attach', 'S-2', 'F-1', '--no-sync', '--json'], dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).story, 'S-2');
-  assert.deepEqual(fm(dir, FEATURE).stories, ['S-1', 'S-2'], 'not listed a second time');
+  assert.equal(fm(dir, STORY).feature, 'F-1');
 });
 
 test('bl attach refuses, writing nothing, for bad ids, missing units, closed features and stories it may not move', () => {
@@ -161,11 +147,9 @@ test('bl attach refuses, writing nothing, for bad ids, missing units, closed fea
     { opts: { featureStatus: 'done' }, err: /^Feature F-1 is done; stories can't be added\.$/m },
     { opts: { featureStatus: 'superseded' }, err: /^Feature F-1 is superseded; stories can't be added\.$/m },
     {
-      opts: { story: { feature: 'F-3' }, features: [{ id: 'F-3', title: 'Three', stories: ['S-2'] }] },
+      opts: { story: { feature: 'F-3' }, features: [{ id: 'F-3', title: 'Three' }] },
       err: /^S-2 is already in F-3\.$/m,
     },
-    // Listed in another feature too: the "another feature" refusal wins.
-    { opts: { story: { feature: 'F-3' }, stories: ['S-1', 'S-2'] }, err: /^S-2 is already in F-3\.$/m },
     {
       opts: { story: { status: 'in_progress' } },
       err: /^S-2 is in_progress; only a backlog or refined story moves into a feature\.$/m,
@@ -202,7 +186,7 @@ test('bl attach takes a story in a new repo into a feature that has not started'
     const dir = backlog({ featureStatus, story: { component: 'C02' } });
     const r = bl(['attach', 'S-2', 'F-1', '--no-sync'], dir);
     assert.equal(r.status, 0, `${featureStatus}: ${r.stderr}`);
-    assert.deepEqual(fm(dir, FEATURE).stories, ['S-1', 'S-2'], featureStatus);
+    assert.equal(fm(dir, STORY).feature, 'F-1', featureStatus);
   }
 });
 
@@ -225,13 +209,8 @@ test('attach refuses unresolved story repos before every feature status without 
     },
   ];
   const noRepo = { id: 'C03', title: 'Bare', dirSuffix: 'bare' };
-  // Fresh, both half-attached shapes, and already attached.
-  const memberships = [
-    {},
-    { stories: ['S-1', 'S-2'] },
-    { story: { feature: 'F-1' } },
-    { story: { feature: 'F-1' }, stories: ['S-1', 'S-2'] },
-  ];
+  // In no feature, and already in F-1.
+  const memberships = [{}, { story: { feature: 'F-1' } }];
   for (const featureStatus of ['draft', 'refined', 'approved', 'running', 'escalated']) {
     for (const { label, edit, err } of shapes) {
       for (const m of memberships) {
@@ -242,7 +221,7 @@ test('attach refuses unresolved story repos before every feature status without 
             { id: 'S-1', component: 'C00', title: 'One', feature: 'F-1', status: 'refined' },
             { id: 'S-2', component: 'C00', title: 'Two', status: 'refined', ...m.story },
           ],
-          features: [{ id: 'F-1', title: 'Feat', status: featureStatus, stories: m.stories ?? ['S-1'] }],
+          features: [{ id: 'F-1', title: 'Feat', status: featureStatus }],
         });
         writeFileSync(join(dir, STORY), edit(read(dir, STORY)));
         const story = read(dir, STORY);
@@ -260,13 +239,8 @@ test('attach refuses unresolved story repos before every feature status without 
 });
 
 test('attach_refuses_mismatched_feature_identity_without_writes', () => {
-  // Fresh, both half-attached shapes, and already attached.
-  const memberships = [
-    {},
-    { stories: ['S-1', 'S-2'] },
-    { story: { feature: 'F-1' } },
-    { story: { feature: 'F-1' }, stories: ['S-1', 'S-2'] },
-  ];
+  // In no feature, and already naming F-1.
+  const memberships = [{}, { story: { feature: 'F-1' } }];
   for (const m of memberships) {
     for (const featureId of ['F-9', 'F9', 'nope']) {
       const dir = backlog(m);
@@ -293,83 +267,26 @@ test('attach_refuses_mismatched_feature_identity_without_writes', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).feature, 'F-1');
   assert.equal(fm(dir, STORY).feature, 'F-1');
-  assert.deepEqual(fm(dir, FEATURE).stories, ['S-1', 'S-2']);
 });
 
-test('bl attach restores the story when the feature write fails', () => {
+test('attach_partial_write_preserves_the_story', () => {
+  // BL_INTERNAL_TEST_FAIL_ON_RENAME=1 fails attach's one write, the story's,
+  // after its bytes are staged, where a direct write would have left the file
+  // cut short.
   const dir = backlog({ git: true });
   const story = read(dir, STORY);
   const feature = read(dir, FEATURE);
   const head = git(dir, 'rev-parse', 'HEAD');
-  const r = bl(['attach', 'S-2', 'F-1'], dir, { env: { BL_INTERNAL_TEST_FAIL_ON_LINK: 'list' } });
-  assert.equal(r.status, 1);
-  assert.match(r.stderr, /could not list S-2 in F-1: injected write failure at list\. S-2 is restored\./);
-  assert.equal(read(dir, STORY), story);
-  assert.equal(read(dir, FEATURE), feature);
+  const r = bl(['attach', 'S-2', 'F-1'], dir, { env: { BL_INTERNAL_TEST_FAIL_ON_RENAME: '1' } });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /could not write S-2: .*Nothing was changed\./);
+  assert.equal(read(dir, STORY), story, 'story untouched');
+  assert.equal(read(dir, FEATURE), feature, 'feature untouched');
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
   assert.equal(git(dir, 'status', '--porcelain'), '');
   // No repair record: the next command runs.
   const next = bl(['attach', 'S-2', 'F-1', '--no-sync'], dir);
   assert.equal(next.status, 0, next.stderr);
-});
-
-test('attach_partial_write_preserves_both_documents', () => {
-  // BL_INTERNAL_TEST_FAIL_ON_RENAME=<n> fails attach's n-th write after its
-  // bytes are staged, where a direct write would have left the file cut
-  // short. Each case: the failed write, the story's and feature's contents
-  // afterwards ("before", or "attached" for the story's full new bytes).
-  const cases = [
-    {
-      label: 'story write',
-      env: { BL_INTERNAL_TEST_FAIL_ON_RENAME: '1' },
-      err: /could not write S-2: .*Nothing was changed\./,
-      story: 'before',
-    },
-    {
-      label: 'feature write',
-      env: { BL_INTERNAL_TEST_FAIL_ON_RENAME: '2' },
-      err: /could not list S-2 in F-1: .*S-2 is restored\./,
-      story: 'before',
-    },
-    {
-      label: 'restore after a failed feature write',
-      env: { BL_INTERNAL_TEST_FAIL_ON_LINK: 'list', BL_INTERNAL_TEST_FAIL_ON_RENAME: '2' },
-      err: /S-2 could not be restored \(.*\); it names F-1, so remove that by hand\./,
-      story: 'attached',
-    },
-    // Half-attached: only the missing half is written, so it is write 1.
-    {
-      label: 'story write, listed already',
-      opts: { stories: ['S-1', 'S-2'] },
-      env: { BL_INTERNAL_TEST_FAIL_ON_RENAME: '1' },
-      err: /could not write S-2/,
-      story: 'before',
-    },
-    {
-      label: 'feature write, named already',
-      opts: { story: { feature: 'F-1' } },
-      env: { BL_INTERNAL_TEST_FAIL_ON_RENAME: '1' },
-      err: /could not list S-2 in F-1: .*BL_INTERNAL_TEST_FAIL_ON_RENAME/,
-      story: 'before',
-    },
-  ];
-  for (const { label, opts = {}, env, err, story: storyAfter } of cases) {
-    const dir = backlog(opts);
-    const story = read(dir, STORY);
-    const feature = read(dir, FEATURE);
-    const r = bl(['attach', 'S-2', 'F-1', '--no-sync'], dir, { env });
-    assert.equal(r.status, 1, `${label}: ${r.stderr}`);
-    assert.match(r.stderr, err, label);
-    assert.equal(read(dir, FEATURE), feature, `${label}: feature untouched`);
-    if (storyAfter === 'before') {
-      assert.equal(read(dir, STORY), story, `${label}: story untouched`);
-    } else {
-      const was = parseFrontmatter(story);
-      const now = parseFrontmatter(read(dir, STORY));
-      assert.equal(now.body, was.body, `${label}: story body whole`);
-      assert.deepEqual(now.fm, { ...was.fm, feature: 'F-1' }, `${label}: story frontmatter whole`);
-    }
-  }
 });
 
 test('bl attach --help lists the flags and the refusals', () => {
@@ -388,5 +305,5 @@ test('bl attach --help lists the flags and the refusals', () => {
     assert.ok(r.stdout.includes(s), s);
   }
   const top = bl(['--help'], dir);
-  assert.match(top.stdout, /^ {2}attach {5}List an existing story in a feature/m);
+  assert.match(top.stdout, /^ {2}attach {5}Put an existing story in a feature/m);
 });

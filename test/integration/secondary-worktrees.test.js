@@ -209,7 +209,6 @@ function writeFeature(backlog, others = []) {
     p,
     readFileSync(p, 'utf8').replace('primary_repo: repoB\nsecondary_repos: [repoB]\n', 'feature: F-1\n'),
   );
-  const ids = ['S-7'];
   others.forEach((repo, i) => {
     const n = 8 + i;
     const component = repo === 'repoB' ? 'C01' : `C${10 + i}`;
@@ -220,13 +219,12 @@ function writeFeature(backlog, others = []) {
       join(dir, 'index.md'),
       `---\ncomponent: ${component}\nstory_id: S-${n}\ntitle: In ${repo}\nstatus: refined\npoints: 2\nfeature: F-1\n---\n\n# In ${repo}\n`,
     );
-    ids.push(`S-${n}`);
   });
   const dir = join(backlog, 'features', 'F1-pair');
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'index.md'),
-    `---\nfeature_id: F-1\ntitle: Pair\nstatus: approved\nstories: [${ids.join(', ')}]\n---\n\n# Pair\n`,
+    '---\nfeature_id: F-1\ntitle: Pair\nstatus: approved\n---\n\n# Pair\n',
   );
 }
 
@@ -280,8 +278,9 @@ test("bl run F-n's prep stops, naming the repo, when another repo's bootstrap fa
 test('a feature with no stories exits 1 naming the fix, and nothing is written to the feature', () => {
   const { backlog } = build();
   writeFeature(backlog, []);
-  const fp = join(backlog, 'features', 'F1-pair', 'index.md');
-  writeFileSync(fp, readFileSync(fp, 'utf8').replace('stories: [S-7]', 'stories: []'));
+  // S-7 leaves it: no story names F-1 (F-77 D3).
+  const s7 = join(backlog, 'stories', 'S7-two', 'index.md');
+  writeFileSync(s7, readFileSync(s7, 'utf8').replace('feature: F-1\n', ''));
   const { exit, err, feature } = prepFeature(backlog, []);
   assert.equal(exit, 1);
   assert.match(
@@ -344,7 +343,7 @@ test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, a
   mkdirSync(fdir, { recursive: true });
   writeFileSync(
     join(fdir, 'index.md'),
-    '---\nfeature_id: F-1\ntitle: Trio\nstatus: approved\nstories: [S-20, S-21, S-22]\n---\n\n# Trio\n',
+    '---\nfeature_id: F-1\ntitle: Trio\nstatus: approved\n---\n\n# Trio\n',
   );
   const { exit, err, value } = withBacklog(backlog, () => {
     const config = loadConfig({ backlogRoot: backlog });
@@ -448,7 +447,7 @@ test("bl run F-n's prep gives a story added after approval its worktree with no 
   const first = prepFeature(backlog, []);
   assert.equal(first.exit, null, first.err);
   assert.deepEqual(first.value.otherWorktrees, []);
-  // A story in repoB's component joins the feature; the feature file's repo fields stay as they were.
+  // A story in repoB's component joins the feature by naming it; the feature file is not touched.
   const s8 = join(backlog, 'stories', 'S8-more');
   mkdirSync(s8, { recursive: true });
   writeFileSync(
@@ -456,7 +455,6 @@ test("bl run F-n's prep gives a story added after approval its worktree with no 
     '---\ncomponent: C01\nstory_id: S-8\ntitle: More\nstatus: refined\npoints: 2\nfeature: F-1\n---\n\n# More\n',
   );
   const fp = join(backlog, 'features', 'F1-pair', 'index.md');
-  writeFileSync(fp, readFileSync(fp, 'utf8').replace('stories: [S-7]', 'stories: [S-7, S-8]'));
   const again = prepFeature(backlog, []);
   assert.equal(again.exit, null, again.err);
   assert.deepEqual(again.value.otherWorktrees, [

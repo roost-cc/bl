@@ -281,6 +281,7 @@ test('bl new F-<n> C-<n> adds the story to the feature with the feature template
     features: [{ id: 'F-1', title: 'Invites', dirSuffix: 'invites', primary_repo: 'beta' }],
   });
   try {
+    const feature = readFileSync(join(dir, 'features/F1-invites/index.md'), 'utf8');
     const r = runBl(['new', 'F-1', 'C01', '--title', 'Mint', '--points', '3', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     const text = readFileSync(join(dir, r.stdout.trim()), 'utf8');
@@ -289,7 +290,8 @@ test('bl new F-<n> C-<n> adds the story to the feature with the feature template
     assert.equal(fm.component, 'C01');
     assert.equal(fm.primary_repo, undefined, "no repo field: the story's repo is its component's, not the feature's");
     assert.doesNotMatch(text, /## Justification/, 'story-feature template');
-    assert.match(String(fmOf(dir, 'features/F1-invites/index.md').stories), /S-1/);
+    // The story's feature: is the membership (F-77 D3): the feature file is not written.
+    assert.equal(readFileSync(join(dir, 'features/F1-invites/index.md'), 'utf8'), feature);
   } finally {
     cleanup();
   }
@@ -971,8 +973,6 @@ test('bl new --theme writes themes/<slug>/index.md; bl new --epic --theme writes
       epic_id: 'E50',
       title: 'Backlog taxonomy',
       theme: 'backlog',
-      status: 'open',
-      features: [],
     });
     assert.match(epic, /^# E50 · Backlog taxonomy$/m);
     assert.match(epic, /^## Outcome$/m);
@@ -1254,7 +1254,10 @@ test("bl new --feature, --component, --epic and --theme with a ': ' and ' #' tit
     let r = runBl(['new', '--feature', '--title', TRICKY, '--theme', 'demo', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     let fm = assertTemplateBlock(dir, r.stdout.trim().split('\n').pop(), 'feature');
-    assert.deepEqual([fm.theme, fm.epic, fm.status, fm.stories], ['demo', undefined, 'draft', '']);
+    assert.deepEqual(
+      [fm.theme, fm.epic, fm.status, fm.stories, fm.points],
+      ['demo', undefined, 'draft', undefined, undefined],
+    );
 
     r = runBl(['new', '--component', '--repo', 'beta', '--title', TRICKY, '--paths', '**', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
@@ -1264,7 +1267,7 @@ test("bl new --feature, --component, --epic and --theme with a ': ' and ' #' tit
     r = runBl(['new', '--epic', '--theme', 'demo', '--title', TRICKY, '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     fm = assertTemplateBlock(dir, r.stdout.trim(), 'epic');
-    assert.deepEqual([fm.theme, fm.status, fm.features], ['demo', 'open', []]);
+    assert.deepEqual([fm.theme, fm.status, fm.features], ['demo', undefined, undefined]);
 
     r = runBl(['new', '--theme', 'tricky', '--title', TRICKY, '--brief', 'x.md#a: b', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
@@ -1276,51 +1279,21 @@ test("bl new --feature, --component, --epic and --theme with a ': ' and ' #' tit
 });
 
 // ---------------------------------------------------------------------------
-// The feature link goes through updateSpecFile (F-67 S-1102).
+// bl new F-<n> writes the story's feature: and never the feature (F-77 D3).
 // ---------------------------------------------------------------------------
 
-const PARTIAL = new URL('../helpers/partial-write-preload.js', import.meta.url).pathname;
-const stagedSpecs = (dir) =>
-  existsSync(join(dir, '.bl', 'tmp'))
-    ? readdirSync(join(dir, '.bl', 'tmp')).filter((f) => f.startsWith('index.md.'))
-    : [];
-
-test("bl new F-<n>: a failed write of the feature's stories: list leaves the previous feature file and no staging file", () => {
-  const { dir, cleanup } = componentBacklog({
-    features: [{ id: 'F-1', title: 'Invites', dirSuffix: 'invites', primary_repo: 'beta' }],
-  });
-  try {
-    const featurePath = join(dir, 'features/F1-invites/index.md');
-    const before = readFileSync(featurePath, 'utf8');
-    const env = {
-      NODE_OPTIONS: `--import=${PARTIAL}`,
-      BL_PARTIAL_WRITE_VERB: 'new',
-      BL_PARTIAL_WRITE_TARGET: featurePath,
-      BL_PARTIAL_WRITE_MATCH: 'feature_id: F-1',
-    };
-    const r = runBl(['new', 'F-1', 'C01', '--title', 'Mint', '--points', '3', '--no-sync'], { cwd: dir, env });
-    assert.notEqual(r.status, 0, 'the failed write fails bl new');
-    assert.match(r.stderr, /ENOSPC/);
-    assert.equal(readFileSync(featurePath, 'utf8'), before, 'the previous feature file, whole');
-    assert.deepEqual(stagedSpecs(dir), [], 'no staging file left');
-  } finally {
-    cleanup();
-  }
-});
-
-test('bl new F-<n> into a CRLF feature keeps one frontmatter block and CRLF line ends', () => {
+test('bl new F-<n> leaves the feature file, a CRLF one included, byte for byte', () => {
   const { dir, cleanup } = componentBacklog({
     features: [{ id: 'F-1', title: 'Invites', dirSuffix: 'invites', primary_repo: 'beta' }],
   });
   try {
     const featurePath = join(dir, 'features/F1-invites/index.md');
     writeFileSync(featurePath, readFileSync(featurePath, 'utf8').replace(/\r?\n/g, '\r\n'));
+    const before = readFileSync(featurePath, 'utf8');
     const r = runBl(['new', 'F-1', 'C01', '--title', 'Mint', '--points', '3', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    const text = readFileSync(featurePath, 'utf8');
-    assert.equal(text.match(/^---\r$/gm)?.length, 2, 'one frontmatter block');
-    assert.ok(!/[^\r]\n/.test(text), 'every line ends CRLF');
-    assert.deepEqual(parseFrontmatter(text.replace(/\r\n/g, '\n')).fm.stories, ['S-1']);
+    assert.equal(readFileSync(featurePath, 'utf8'), before);
+    assert.equal(fmOf(dir, r.stdout.trim()).feature, 'F-1');
   } finally {
     cleanup();
   }

@@ -74,7 +74,7 @@ import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { LOCK_FILE, readComponents, parseIdList, readAllStories } from './story.js';
+import { LOCK_FILE, readComponents, readAllStories } from './story.js';
 import { otherWorktreesLine } from './workon.js';
 import {
   codeSpan,
@@ -2242,7 +2242,7 @@ function refreshRepos(ctx) {
       ctx,
       'escalated',
       `the feature's stories could not be re-read after a session: ${scope.error}`,
-      `A session changed ${feature.id}'s stories, and the run cannot tell which stories and repos it now covers, so it stops before anything is gated, published or reviewed on a guess. Fix the feature file or the story (\`bl validate\` names the problem), then \`bl run ${feature.id} --resume\`.`,
+      `A session changed ${feature.id}'s stories, and the run cannot tell which stories and repos it now covers, so it stops before anything is gated, published or reviewed on a guess. Fix the story (\`bl validate\` names the problem), then \`bl run ${feature.id} --resume\`.`,
     );
   }
   const { stories } = scope;
@@ -2555,36 +2555,27 @@ function targetsMoved(ctx, before) {
 }
 
 /**
- * The feature's stories as its file lists them now. The list must parse and
- * every listed story exist; each story the run does not hold yet is checked
- * the way `bl run` checks the others before it starts
- * (`prepareFeatureWorktree`): it names this feature, has a repo the config
- * knows, and depends on nothing open outside the feature. Returns
- * `{ stories }` or `{ error }`; a read that fails is an error, never
- * "nothing changed".
+ * The feature's stories as the backlog has them now: every story whose
+ * `feature:` names it (F-77 D3). Each story the run does not hold yet is
+ * checked the way `bl run` checks the others before it starts
+ * (`prepareFeatureWorktree`): it has a repo the config knows and depends on
+ * nothing open outside the feature. Returns `{ stories }` or `{ error }`; a
+ * read that fails is an error, never "nothing changed".
  */
 function refreshedStories(ctx) {
   const { feature, config } = ctx;
   let all;
   let res;
   try {
-    const ids = parseIdList(readFm(feature.indexPath).stories);
     all = readAllStories(config);
-    res = resolveFeatureStories({ ...feature, stories: ids }, config, all);
+    res = resolveFeatureStories(feature, config, all);
   } catch (e) {
     return { error: e.message };
   }
-  const { stories, missing } = res;
-  if (stories.length === 0 && missing.length === 0) return { error: `${feature.id} lists no stories` };
-  if (missing.length > 0) return { error: `${feature.id} lists stories that don't exist: ${missing.join(', ')}` };
+  const { stories } = res;
+  if (stories.length === 0) return { error: `${feature.id} has no stories` };
   const held = new Set((ctx.prep.ordered ?? []).map((s) => s.id));
   const added = stories.filter((s) => !held.has(s.id));
-  const mismatched = added.filter((s) => (s.feature ?? '') !== feature.id);
-  if (mismatched.length > 0) {
-    return {
-      error: `${mismatched.map((s) => `${s.id} (feature: ${s.feature || 'unset'})`).join(', ')} listed but pointing elsewhere`,
-    };
-  }
   const noRepo = added.filter((s) => !s.unitRepo);
   if (noRepo.length > 0) {
     return { error: `${noRepo.map((s) => `${s.id} (component ${s.componentId || '(none)'})`).join(', ')} has no repo` };

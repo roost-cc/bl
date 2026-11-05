@@ -36,7 +36,7 @@ const fm = (dir, rel) => parseFrontmatter(read(dir, rel)).fm;
  * S-1 (in F-1) and S-2, S-3 in C00, refined; `stories` overrides each
  * story's fixture fields by id. F-1 has status `featureStatus`.
  */
-function backlog({ featureStatus = 'refined', featureStories = ['S-1'], stories = {}, git: inGit = false } = {}) {
+function backlog({ featureStatus = 'refined', stories = {}, git: inGit = false } = {}) {
   const { dir } = mkTempBacklog({
     repos: REPOS,
     components: COMPONENTS,
@@ -45,7 +45,7 @@ function backlog({ featureStatus = 'refined', featureStories = ['S-1'], stories 
       { id: 'S-2', component: 'C00', title: 'Two', status: 'refined', ...stories['S-2'] },
       { id: 'S-3', component: 'C00', title: 'Three', status: 'backlog', ...stories['S-3'] },
     ],
-    features: [{ id: 'F-1', title: 'Feat', status: featureStatus, stories: featureStories }],
+    features: [{ id: 'F-1', title: 'Feat', status: featureStatus }],
   });
   if (inGit) initGitBacklog(dir);
   return dir;
@@ -151,8 +151,8 @@ test('bl move keeps a story of a running feature in its repo', () => {
   }
 });
 
-test('move_refuses_cross_repo_for_listed_feature_members_with_missing_or_invalid_backlinks', () => {
-  // S-1's backlink as written: valid, missing, empty, not a feature id, a feature that does not exist.
+test("move refuses a cross-repo move of a running feature's story, its feature: the only membership (F-77 D3)", () => {
+  // S-1's feature: as written: valid, missing, empty, not a feature id, a feature that does not exist.
   const backlinks = {
     valid: 'feature: F-1\n',
     missing: '',
@@ -161,34 +161,32 @@ test('move_refuses_cross_repo_for_listed_feature_members_with_missing_or_invalid
     dangling: 'feature: F-9\n',
   };
   for (const featureStatus of ['running', 'escalated']) {
-    for (const listed of [true, false]) {
-      for (const [kind, line] of Object.entries(backlinks)) {
-        const label = `${featureStatus} listed=${listed} ${kind}`;
-        const member = listed || kind === 'valid';
-        const dir = backlog({ featureStatus, featureStories: listed ? ['S-1'] : [] });
-        writeFileSync(join(dir, story(1)), read(dir, story(1)).replace('feature: F-1\n', line));
-        const before = snapshot(dir);
-        // A cross-repo move, with S-2 an otherwise movable sibling.
-        let r = bl(['move', 'S-2', 'S-1', 'C02', '--no-sync'], dir);
-        if (member) {
-          assert.equal(r.status, 1, `${label}: ${r.stderr}`);
-          assert.match(
-            r.stderr,
-            new RegExp(`S-1 is in F-1, which is ${featureStatus}: moving it to C02 changes its repo`),
-            label,
-          );
-          assert.deepEqual(snapshot(dir), before, `${label}: the batch is untouched`);
-        } else {
-          assert.equal(r.status, 0, `${label}: ${r.stderr}`);
-          assert.equal(fm(dir, story(1)).component, 'C02', label);
-          assert.equal(fm(dir, story(2)).component, 'C02', label);
-          continue;
-        }
-        // The same repo: the feature's branches already span it.
-        r = bl(['move', 'S-2', 'S-1', 'C01', '--no-sync'], dir);
-        assert.equal(r.status, 0, `${label} same repo: ${r.stderr}`);
-        assert.equal(fm(dir, story(1)).component, 'C01', label);
+    for (const [kind, line] of Object.entries(backlinks)) {
+      const label = `${featureStatus} ${kind}`;
+      const member = kind === 'valid';
+      const dir = backlog({ featureStatus });
+      writeFileSync(join(dir, story(1)), read(dir, story(1)).replace('feature: F-1\n', line));
+      const before = snapshot(dir);
+      // A cross-repo move, with S-2 an otherwise movable sibling.
+      let r = bl(['move', 'S-2', 'S-1', 'C02', '--no-sync'], dir);
+      if (member) {
+        assert.equal(r.status, 1, `${label}: ${r.stderr}`);
+        assert.match(
+          r.stderr,
+          new RegExp(`S-1 is in F-1, which is ${featureStatus}: moving it to C02 changes its repo`),
+          label,
+        );
+        assert.deepEqual(snapshot(dir), before, `${label}: the batch is untouched`);
+      } else {
+        assert.equal(r.status, 0, `${label}: ${r.stderr}`);
+        assert.equal(fm(dir, story(1)).component, 'C02', label);
+        assert.equal(fm(dir, story(2)).component, 'C02', label);
+        continue;
       }
+      // The same repo: the feature's branches already span it.
+      r = bl(['move', 'S-2', 'S-1', 'C01', '--no-sync'], dir);
+      assert.equal(r.status, 0, `${label} same repo: ${r.stderr}`);
+      assert.equal(fm(dir, story(1)).component, 'C01', label);
     }
   }
 });
@@ -353,7 +351,7 @@ test('bl move --help lists the flags and the refusals, and bl --help lists the v
     'does not exist',
     'names no repo',
     'backlog or refined',
-    'running or\n    escalated',
+    'running or escalated',
   ]) {
     assert.ok(r.stdout.includes(s), s);
   }

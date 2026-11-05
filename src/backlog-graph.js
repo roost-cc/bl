@@ -579,9 +579,28 @@ class FrozenMap extends Map {
 }
 
 /**
+ * The frontmatter keys this graph derives and no file may store (F-77 D3),
+ * by unit kind, each with what it is derived from. `bl validate` reports one
+ * found in a file as `derived-key`; `src/migrate-derived-keys.js` removes
+ * them. A story's `required_for:` joins with S-1271, which retires the
+ * `asymmetric-dep` check that still needs it stated.
+ * @type {Readonly<Record<string, Readonly<Record<string, string>>>>}
+ */
+export const DERIVED_KEYS = Object.freeze({
+  feature: Object.freeze({
+    stories: 'the stories whose feature: names it',
+    points: "the sum of its stories' points:",
+    components: "the set of its stories' component:",
+  }),
+  epic: Object.freeze({
+    features: 'the features whose epic: names it',
+    status: 'its features: done when every one is done',
+  }),
+});
+
+/**
  * An epic's derived status: `done` once it has features and every one is
- * closed (meets `done`), else `open` (F-77 D3; `bl sync` writes it until
- * S-1260).
+ * closed (meets `done`), else `open` (F-77 D3).
  * @param {Array<{ status: string }>} epicFeatures
  * @param {import("./flow.js").Flow} flow
  * @returns {"open" | "done"}

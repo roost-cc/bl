@@ -8,6 +8,8 @@ import { runBl } from '../helpers/run-bl.js';
 import { readBacklogOrder } from '../../src/story.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { runSync } from '../../src/sync.js';
+import { readAllFeatures } from '../../src/feature.js';
+import { readAllEpics } from '../../src/theme.js';
 import { withPartialWrites } from '../helpers/partial-write.js';
 
 /** One component and one story, so sync has something to track. */
@@ -434,7 +436,7 @@ test('bl sync gives each component its stories and features, and writes no proje
   }
 });
 
-test("bl sync rolls a feature's points and components up and links stories/ and components/", () => {
+test("bl sync writes a feature's Stories table, linking stories/ and components/, and no derived key", () => {
   const { dir, cleanup } = flatBacklog();
   try {
     const r = runBl(['sync'], { cwd: dir });
@@ -442,9 +444,10 @@ test("bl sync rolls a feature's points and components up and links stories/ and 
 
     const feature = readFileSync(join(dir, 'features/F1-web-flow/index.md'), 'utf8');
     const { fm } = parseFrontmatter(feature);
-    assert.equal(String(fm.points), '7');
-    assert.match(feature, /^components: \[C00, C01\]$/m);
-    assert.equal(fm.epics, undefined);
+    // Its points and components are the graph's (F-77 D3), never written.
+    assert.deepEqual([fm.points, fm.components, fm.stories, fm.epics], [undefined, undefined, undefined, undefined]);
+    const f1 = readAllFeatures(loadConfig({ backlogRoot: dir })).find((f) => f.id === 'F-1');
+    assert.deepEqual([f1.points, f1.components, f1.stories], [7, ['C00', 'C01'], ['S-1', 'S-2', 'S-4']]);
     assert.match(feature, /^\| ID +\| Component +\| Type +\| Title +\| Points +\| Status +\|$/m);
     assert.deepEqual(rowFor(feature, 'S-2'), [
       '[S-2](../../stories/S2-x/index.md)',
@@ -536,7 +539,7 @@ function valueAxisBacklog() {
     themes: [{ id: 'ops', title: 'Operations', repos: ['ops'] }],
     valueEpics: [
       { id: 'E50', title: 'Sign-up', dirSuffix: 'sign-up' },
-      { id: 'E51', title: 'Done epic', dirSuffix: 'done-epic', status: 'open' },
+      { id: 'E51', title: 'Done epic', dirSuffix: 'done-epic' },
       { id: 'E52', title: 'Empty epic', dirSuffix: 'empty-epic' },
     ],
     stories: [
@@ -580,15 +583,16 @@ const VALUE_AXIS_GENERATED = [
   'themes/ops/index.md',
 ];
 
-test("bl sync derives each epic's features and status and writes its Features table", () => {
+test("bl sync writes each epic's Features table; its features and status are derived, never written", () => {
   const { dir, cleanup } = valueAxisBacklog();
   try {
     const r = runBl(['sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
+    const epics = new Map(readAllEpics(loadConfig({ backlogRoot: dir })).map((e) => [e.id, e]));
 
     const e50 = readFileSync(join(dir, 'epics/E50-sign-up/index.md'), 'utf8');
-    assert.match(e50, /^features: \[F-1, F-2\]$/m);
-    assert.match(e50, /^status: open$/m);
+    assert.doesNotMatch(e50, /^(features|status):/m);
+    assert.deepEqual([epics.get('E50').features, epics.get('E50').status], [['F-1', 'F-2'], 'open']);
     assert.deepEqual(sectionIds(e50, 'Features'), ['F-1', 'F-2']);
     assert.deepEqual(rowFor(e50, 'F-1'), [
       '[F-1](../../features/F1-invites/index.md)',
@@ -602,14 +606,11 @@ test("bl sync derives each epic's features and status and writes its Features ta
     assert.deepEqual(e50.match(/^## .+$/gm), ['## Outcome', '## Features']);
 
     // Every feature done or superseded: the epic is done.
-    const e51 = readFileSync(join(dir, 'epics/E51-done-epic/index.md'), 'utf8');
-    assert.match(e51, /^features: \[F-3\]$/m);
-    assert.match(e51, /^status: done$/m);
+    assert.deepEqual([epics.get('E51').features, epics.get('E51').status], [['F-3'], 'done']);
 
-    // No feature yet: open, and `features: []` as the template writes it.
+    // No feature yet: open.
     const e52 = readFileSync(join(dir, 'epics/E52-empty-epic/index.md'), 'utf8');
-    assert.match(e52, /^features: \[\]$/m);
-    assert.match(e52, /^status: open$/m);
+    assert.deepEqual([epics.get('E52').features, epics.get('E52').status], [[], 'open']);
     assert.deepEqual(sectionIds(e52, 'Features'), []);
   } finally {
     cleanup();
@@ -848,7 +849,7 @@ test('syncFeature_keeps_a_token_step_entry_written_after_collection', async () =
     const text = read(path, 'utf8');
     const { fm } = parseFrontmatter(text);
     assert.deepEqual(fm.tokens_by_step, { implement: { input: '7', output: '9' } });
-    assert.match(text, /^points: 5$/m);
+    assert.doesNotMatch(text, /^points:/m);
     assert.deepEqual(rowFor(text, 'S-2').slice(0, 1), ['[S-2](../../stories/S2-x/index.md)']);
   } finally {
     fs.readFileSync = read;

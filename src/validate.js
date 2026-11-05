@@ -5,10 +5,10 @@
 import { existsSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
 import { loadConfig, configForRepo, parseArgs, normalizeComponentId, FORGE_OPS, BODY_READING_OP } from './config.js';
-import { loadBacklog } from './backlog-graph.js';
+import { DERIVED_KEYS, loadBacklog } from './backlog-graph.js';
 import { readAllStories, readComponents, parseIdList, pathEntryProblem } from './story.js';
 import { readAllFeatures, extractSection, sectionHasContent } from './feature.js';
-import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID_RE, EPIC_STATUSES } from './theme.js';
+import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID_RE } from './theme.js';
 import { findFeatureOrderFindings } from './feature-order.js';
 import { findRoadmapFindings } from './roadmap.js';
 import { extractReviewLog, parseLatestSession } from './review-log.js';
@@ -115,10 +115,9 @@ export const VALID_FEATURE_KEYS = new Set([
   'title',
   'status',
   // No `primary_repo` or `secondary_repos`: a feature's repos come from its
-  // stories' components (F-52 D3); either one still set is `repo-key`.
-  'stories',
-  'points',
-  'components',
+  // stories' components (F-52 D3); either one still set is `repo-key`. No
+  // `stories`, `points` or `components`: derived (`DERIVED_KEYS`), so one
+  // still set is `derived-key`.
   // The value axis (F-51 D1): set by hand, checked by findValueAxisFindings.
   'theme',
   'epic',
@@ -164,10 +163,11 @@ const COMPONENT_STATUS_KEYS = ['points', 'status'];
 export const VALID_THEME_KEYS = new Set(['theme_id', 'title', 'repos', 'brief']);
 
 /**
- * A value epic's keys (F-51 D1): an outcome under one theme. `features` and
- * `status` are derived by `bl sync`.
+ * A value epic's keys (F-51 D1): an outcome under one theme. Its features
+ * and status are derived (`DERIVED_KEYS`), so either key still set is
+ * `derived-key`.
  */
-export const VALID_EPIC_KEYS = new Set(['epic_id', 'title', 'theme', 'status', 'features']);
+export const VALID_EPIC_KEYS = new Set(['epic_id', 'title', 'theme']);
 
 // ---------------------------------------------------------------------------
 // Findings
@@ -259,13 +259,14 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
       idRegex: THEME_ID_RE,
       statuses: null,
     },
-    // `theme` is `epic-theme` (findValueAxisFindings). Epics are E50 upward.
+    // `theme` is `epic-theme` (findValueAxisFindings). Epics are E50 upward;
+    // an epic's status is derived, so none is checked here.
     epic: {
       required: ['epic_id', 'title'],
       validKeys: VALID_EPIC_KEYS,
       idKey: 'epic_id',
       idRegex: /^E(?:[5-9]\d|[1-9]\d{2,})$/,
-      statuses: new Set(EPIC_STATUSES),
+      statuses: null,
     },
   };
   const { required, validKeys, idKey, idRegex, statuses } = KINDS[kind];
@@ -299,11 +300,24 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
     }
   }
 
+  // derived-key (F-77 D3): a key the graph derives, stored in the file.
+  const derived = DERIVED_KEYS[kind] ?? {};
+  for (const key of Object.keys(fm)) {
+    if (!Object.hasOwn(derived, key)) continue;
+    findings.push({
+      severity: 'error',
+      code: 'derived-key',
+      message: `${kind} stores "${key}:", which bl derives from ${derived[key]} and never reads; remove it (scripts/migrate-derived-keys.js removes every one)`,
+      location,
+    });
+  }
+
   // unknown-fm-key. A run-state key (branch, pr, review_round,
-  // review_status) is findRunStateInSpec's error instead, and a retired
-  // repo key is `repo-key`.
+  // review_status) is findRunStateInSpec's error instead, a retired
+  // repo key is `repo-key` and a derived key `derived-key`.
   for (const key of Object.keys(fm)) {
     if ((kind === 'story' || kind === 'feature') && REPO_KEYS.includes(key)) continue;
+    if (Object.hasOwn(derived, key)) continue;
     if (!validKeys.has(key) && !key.startsWith('plugins-') && !RUN_STATE_KEYS.includes(key)) {
       findings.push({
         severity: 'warning',
@@ -353,16 +367,15 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
     });
   }
 
-  // bad-points: must be a positive integer estimate. A feature's points are a
-  // roll-up written by sync, so 0 is legitimate until stories are cut.
-  const minPoints = kind === 'feature' ? 0 : 1;
-  if ((kind === 'story' || kind === 'feature') && fm.points !== undefined && fm.points !== null && fm.points !== '') {
+  // bad-points: a story's must be a positive integer estimate. A feature's
+  // are derived (`derived-key`).
+  if (kind === 'story' && fm.points !== undefined && fm.points !== null && fm.points !== '') {
     const pts = Number(fm.points);
-    if (!Number.isInteger(pts) || pts < minPoints) {
+    if (!Number.isInteger(pts) || pts < 1) {
       findings.push({
         severity: 'error',
         code: 'bad-points',
-        message: `points "${fm.points}" is not a ${minPoints === 0 ? 'non-negative' : 'positive'} integer`,
+        message: `points "${fm.points}" is not a positive integer`,
         location,
       });
     }
@@ -808,69 +821,26 @@ export function findDeferredErrors(id, status, text, heading, location, flow, ty
 }
 
 /**
- * Cross-check features against stories. Both sides carry the link — the
- * feature's `stories:` list and each story's `feature:` key — so drift in
- * either direction is a finding:
+ * A feature's stories are the stories whose `feature:` names it (F-77 D3),
+ * so there is nothing to cross-check; what is left:
  *
- *   - `feature-story-missing`  (error)   listed story does not exist
- *   - `feature-story-mismatch` (error)   listed story's `feature:` points
- *                                        elsewhere (or is unset)
- *   - `feature-story-unlisted` (warning) story names the feature but the
- *                                        feature doesn't list it
  *   - `feature-no-stories`     (warning) approved/running feature with no stories
  *
- * A feature that still names a repo is validateFrontmatter's `repo-key`; a
- * story naming a feature that does not exist is the graph's
- * `dangling-feature` (`findDanglingFindings`).
+ * A feature that still names a repo is validateFrontmatter's `repo-key`, one
+ * that stores `stories:` its `derived-key`; a story naming a feature that
+ * does not exist is the graph's `dangling-feature` (`findDanglingFindings`).
  *
  * @param {Array} features — readAllFeatures records
- * @param {Map<string, any>} storyMap
  * @returns {Finding[]}
  */
-export function findFeatureFindings(features, storyMap) {
+export function findFeatureFindings(features) {
   const findings = [];
-  const byId = new Map(features.map((f) => [f.id, f]));
   for (const f of features) {
-    const listed = new Set(f.stories);
-    for (const id of f.stories) {
-      const s = storyMap.get(id);
-      if (!s) {
-        findings.push({
-          severity: 'error',
-          code: 'feature-story-missing',
-          message: `feature ${f.id} lists non-existent story ${id}`,
-          location: f.featureRelPath,
-        });
-        continue;
-      }
-      if ((s.feature ?? '') !== f.id) {
-        findings.push({
-          severity: 'error',
-          code: 'feature-story-mismatch',
-          message: `story ${id} is listed in ${f.id} but its feature: is ${s.feature ? `"${s.feature}"` : 'unset'}`,
-          location: s.storyRelPath,
-        });
-      }
-    }
-    if (listed.size === 0 && (f.status === 'approved' || f.status === 'running' || f.status === 'escalated')) {
+    if (f.stories.length === 0 && (f.status === 'approved' || f.status === 'running' || f.status === 'escalated')) {
       findings.push({
         severity: 'warning',
         code: 'feature-no-stories',
-        message: `feature ${f.id} is ${f.status} but lists no stories`,
-        location: f.featureRelPath,
-      });
-    }
-  }
-  for (const s of storyMap.values()) {
-    if (!s.feature) continue;
-    // A feature that does not exist is the graph's `dangling-feature`.
-    const f = byId.get(s.feature);
-    if (!f) continue;
-    if (!f.stories.includes(s.id)) {
-      findings.push({
-        severity: 'warning',
-        code: 'feature-story-unlisted',
-        message: `story ${s.id} names ${f.id} but ${f.id} does not list it in stories: (bl attach ${s.id} ${f.id} lists it)`,
+        message: `feature ${f.id} is ${f.status} but has no stories`,
         location: f.featureRelPath,
       });
     }
@@ -1524,7 +1494,7 @@ export function runAll(config, opts = {}) {
   const cycles = findCycles(fullMap);
   const asymmetrics = findAsymmetricDeps(fullMap);
 
-  const featureLinks = findFeatureFindings(allFeatures, fullMap);
+  const featureLinks = findFeatureFindings(allFeatures);
   const foundBy = findFoundByFindings(allFeatures, fullMap);
   const implementPlugins = findImplementPluginFindings(fullMap.values(), config);
   const verificationTitles = skip.has('verification-only-title') ? [] : findVerificationOnlyTitles(allStories, flow);
@@ -1661,9 +1631,8 @@ Findings codes:
   missing-required-key, unknown-fm-key, bad-status, bad-points,
   bad-review-status, id-dir-mismatch, bad-id-format, duplicate-id,
   cycle, dangling-dep, asymmetric-dep, review-log-missing,
-  review-log-unaddressed, plugin-binary, feature-story-missing,
-  feature-story-mismatch, dangling-feature, feature-story-unlisted, found-by,
-  feature-no-stories, verification-only-title, run-state-in-spec,
+  review-log-unaddressed, plugin-binary, derived-key, dangling-feature,
+  found-by, feature-no-stories, verification-only-title, run-state-in-spec,
   change-of-mismatch, change-repo-incomplete, bad-change-status,
   forge-plugin, forge-op, forge-op-reads-body, component-unknown,
   home-component, component-has-status, component-paths,

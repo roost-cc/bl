@@ -9,9 +9,10 @@
  *
  *   <backlogRoot>/features/F<n>-<slug>/index.md
  *
- * Stories live in `stories/` and point back with a `feature: F-<n>`
- * frontmatter key; the feature lists them in order under `stories:`.
- * `bl sync` cross-checks the two and renders the tables.
+ * Stories live in `stories/` and name their feature in a `feature: F-<n>`
+ * frontmatter key, which is the only statement of membership: a feature's
+ * stories, points and components are derived from it (`loadBacklog()`,
+ * F-77 D3), never stored in the feature's frontmatter.
  *
  * `readAllFeatures` and `findFeature` project `loadBacklog()`'s feature
  * units into the record shape (F-77 D2); nothing here lists `features/`.
@@ -20,7 +21,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import {
-  info,
   parseFrontmatterOf,
   parsePluginList,
   worktreePathFor,
@@ -32,7 +32,6 @@ import {
 import { statusWords } from './flow.js';
 import { entryMatches, ownFm, parseIdList, readAllStories } from './story.js';
 import { graphOf } from './backlog-graph.js';
-import { updateSpecFile } from './spec-file.js';
 
 export const FEATURES_DIR = 'features';
 
@@ -61,8 +60,9 @@ export function featureBranchName(featureEntry) {
 /**
  * The feature's test-session variables: `sessionId` (`s<N>`, the session
  * CLI's form) and `sessionNum` (`<N>`, what `PLAYWRIGHT_SESSION_ID` takes),
- * where N is the number of the first story in `stories:` — listed order, not
- * the lowest. A story belongs to one feature, so two features never share N.
+ * where N is the number of the feature's first story, in its `stories` order
+ * (dependency order, ties by number). A story belongs to one feature, so two
+ * features never share N.
  * Empty (no keys) when the first entry is not a story ID: a placeholder left
  * unresolved fails the test gate rather than running with a made-up number.
  */
@@ -96,8 +96,11 @@ function featureRecord(unit, config) {
     // The value axis (F-51 D1): the theme slug and the epic id as written.
     theme: String(fm.theme ?? '').trim(),
     epic: String(fm.epic ?? '').trim(),
-    stories: parseIdList(fm.stories),
-    points: toInt(fm.points),
+    // Derived by the graph (F-77 D3): the stories naming it, in dependency
+    // order, their points summed and their components.
+    stories: unit.stories.map((s) => s.id),
+    points: unit.points,
+    components: unit.components.map((c) => c.id),
     branch: change.branch,
     pr: change.pr,
     prUrl: change.prUrl,
@@ -177,52 +180,24 @@ export function storyMoveRefusal(id, fm, featureId, flow) {
   return null;
 }
 
-/**
- * Append story IDs to a feature's `stories:` list (deduped, order kept)
- * through `updateSpecFile` (F-67): the list is the one read under the spec
- * lock, and a failed write leaves the previous file. Sync regenerates the
- * table afterwards. The caller holds the backlog lock, the outer one (D4).
- * Shared by `bl new` and `bl attach`.
- */
-export function appendStoriesToFeature(backlogRoot, feature, ids) {
-  let count;
-  updateSpecFile(backlogRoot, feature.indexPath, (fm) => {
-    const current = parseIdList(fm.stories);
-    for (const id of ids) if (!current.includes(id)) current.push(id);
-    fm.stories = current;
-    count = current.length;
-  });
-  info(`Linked ${ids.join(', ')} to ${feature.id} (${count} stories).`);
+/** Whether the story record `s` names the feature `featureId` in its `feature:`. */
+export function namesFeature(s, featureId) {
+  const raw = String(s?.feature ?? '').trim();
+  return raw !== '' && (normalizeFeatureId(raw)?.id ?? raw) === featureId;
 }
 
 /**
- * Resolve the stories a feature lists, in listed order.
+ * The stories of a feature: the records in `allStories` (read when null)
+ * whose `feature:` names it, the only statement of membership (F-77 D3), in
+ * the graph's order: dependency order, ties by story number.
  *
- * @returns {{
- *   stories: Array<object>,       // readAllStories records, listed order
- *   missing: string[],            // listed IDs with no story on disk
- *   unlisted: Array<object>,      // stories tagged `feature: <id>` but not listed
- *   mismatched: Array<object>     // listed stories whose `feature:` points elsewhere
- * }}
+ * @returns {{ stories: Array<object> }}  readAllStories records
  */
 export function resolveFeatureStories(feature, config, allStories = null) {
   const all = allStories ?? readAllStories(config);
-  const byId = new Map(all.map((s) => [s.id, s]));
-  const stories = [];
-  const missing = [];
-  const mismatched = [];
-  for (const id of feature.stories) {
-    const s = byId.get(id);
-    if (!s) {
-      missing.push(id);
-      continue;
-    }
-    stories.push(s);
-    if ((s.feature ?? '') !== feature.id) mismatched.push(s);
-  }
-  const listed = new Set(feature.stories);
-  const unlisted = all.filter((s) => (s.feature ?? '') === feature.id && !listed.has(s.id));
-  return { stories, missing, unlisted, mismatched };
+  const num = (s) => Number(String(s.id).match(/(\d+)$/)?.[1] ?? -1);
+  const own = all.filter((s) => namesFeature(s, feature.id)).sort((a, b) => num(a) - num(b));
+  return { stories: orderStoriesByDeps(own) };
 }
 
 /**

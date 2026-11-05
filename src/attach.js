@@ -3,13 +3,13 @@
  *
  *   bl attach <S-n> <F-n> [--no-sync] [--json]
  *
- * Membership is the feature's `stories:` list (`bl run` orders from it,
- * `bl sync` sums its points, `bl merge` marks exactly its stories done); the
- * story's `feature:` key points back. `bl attach` writes both, the two writes
- * `bl new F-<n>` makes for a story it creates, and commits the story
- * directory and the feature's `index.md` by path. A story that already has
- * one half (it names the feature but is not listed, or is listed with no
- * `feature:`) gets the other; one with both is left alone.
+ * Membership is the story's `feature:` key, and nothing else (F-77 D3): a
+ * feature's stories, points and components are derived from it (`bl run`
+ * orders them, `bl merge` marks exactly them done). `bl attach` sets it, the
+ * write `bl new F-<n>` makes for a story it creates, and commits the story
+ * directory and the feature's `index.md` (its Stories table, which `bl sync`
+ * regenerates) by path. A story that already names the feature is left
+ * alone.
  *
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written. A story in another feature, or one that
@@ -19,11 +19,9 @@
  * so a story in another repo is refused there: `bl side` brings a repo in.
  * Before the feature runs, a story in a new repo simply joins it.
  *
- * Attach creates nothing, so a failed feature write has one write to undo:
- * the story's bytes from before the attach are written back. No repair
- * record (feature-links.js) is involved. Both documents are written through
- * `updateSpecFile` (F-67) and the restore through `atomicWriteFile`, so a
- * write that fails part way leaves its file as it was, never truncated.
+ * Attach creates nothing and writes one file, the story, through
+ * `updateSpecFile` (F-67), so a write that fails part way leaves it as it
+ * was, never truncated.
  */
 
 import { readFileSync } from 'fs';
@@ -31,15 +29,12 @@ import { relative } from 'path';
 import { loadConfig, parseArgs, parseFrontmatterOf, normalizeId, info } from './config.js';
 import { findStoryDir, storyRepoOrExit } from './story.js';
 import {
-  appendStoriesToFeature,
   closedFeatureRefusal,
   findFeature,
   normalizeFeatureId,
   reposForFeature,
   storyMoveRefusal,
 } from './feature.js';
-import { failPoint } from './feature-links.js';
-import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
@@ -52,11 +47,11 @@ const BRANCHED = new Set(['running', 'escalated']);
 
 const help = (flow) => `Usage: bl attach <S-n> <F-n> [options]
 
-List an existing story in a feature: set the story's feature: and append it
-to the feature's stories:, then sync and commit both files by path. The ids
-may come in either order. A story that names the feature but is not listed,
-or is listed with no feature:, gets the missing half; one with both is left
-alone (stderr says so).
+Put an existing story in a feature: set the story's feature:, then sync and
+commit the story and the feature's index.md (its Stories table) by path. The
+ids may come in either order. A story's feature: is the only statement of
+membership. A story that already names the feature is left alone (stderr
+says so).
 
 Refused, with nothing written:
   - anything other than one story id and one feature id
@@ -71,7 +66,7 @@ Refused, with nothing written:
     repo in)
 
 Options:
-  --no-sync   Write the two files under the backlog lock and leave them
+  --no-sync   Write the story under the backlog lock and leave them
               uncommitted, as bl new --no-sync does
   --json      Print one JSON object (schema ${ATTACH_JSON_SCHEMA}):
               { schema, story, feature, changed }
@@ -143,18 +138,14 @@ export async function main(argv) {
     fail(`bl attach: ${e.message}`);
   }
   const { fm } = parsed;
-  // The directory's id, canonical like the feature's `stories:` entries: a
-  // hand-written `story_id: S2` would miss the dedupe and be listed twice.
+  // The directory's id, canonical: a hand-written `story_id: S2` is S-2.
   const storyId = storyRef.id;
 
   const flow = loadFlow(config.backlogRoot);
   const closed = closedFeatureRefusal(feature, flow);
   if (closed) fail(closed);
-  const listed = feature.stories.includes(storyId);
   const named = String(fm.feature ?? '').trim();
-  // Listed with no `feature:` is the feature's already (half-attached), so
-  // the status rule, which keeps out someone else's work, does not apply.
-  const refusal = listed && !named ? null : storyMoveRefusal(storyId, fm, feature.id, flow);
+  const refusal = storyMoveRefusal(storyId, fm, feature.id, flow);
   if (refusal) fail(refusal);
   // A story's repo is its component's, in every feature status.
   const repo = storyRepoOrExit(storyRef, found);
@@ -169,37 +160,18 @@ export async function main(argv) {
     }
   }
 
-  const needStory = named !== feature.id;
-  const changed = needStory || !listed;
+  // `feature: F77` names F-77 already; it is not rewritten.
+  const changed = (normalizeFeatureId(named)?.id ?? named) !== feature.id;
   if (!changed) {
     info(`${storyId} is already in ${feature.id}; nothing to do.`);
   } else {
-    if (needStory) {
-      try {
-        updateSpecFile(config.backlogRoot, found.indexPath, (specFm) => {
-          // An empty `feature:` key is filled in place; a missing one goes last.
-          specFm.feature = feature.id;
-        });
-      } catch (e) {
-        fail(`bl attach: could not write ${storyId}: ${e.message}. Nothing was changed.`);
-      }
-    }
-    if (!listed) {
-      try {
-        failPoint('list');
-        appendStoriesToFeature(config.backlogRoot, feature, [storyId]);
-      } catch (e) {
-        let restored = '';
-        if (needStory) {
-          try {
-            atomicWriteFile(config.backlogRoot, found.indexPath, before);
-            restored = ` ${storyId} is restored.`;
-          } catch (restoreErr) {
-            restored = ` ${storyId} could not be restored (${restoreErr.message}); it names ${feature.id}, so remove that by hand.`;
-          }
-        }
-        fail(`bl attach: could not list ${storyId} in ${feature.id}: ${e.message}.${restored}`);
-      }
+    try {
+      updateSpecFile(config.backlogRoot, found.indexPath, (specFm) => {
+        // An empty `feature:` key is filled in place; a missing one goes last.
+        specFm.feature = feature.id;
+      });
+    } catch (e) {
+      fail(`bl attach: could not write ${storyId}: ${e.message}. Nothing was changed.`);
     }
     info(`Attached ${storyId} to ${feature.id}.`);
 

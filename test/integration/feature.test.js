@@ -7,7 +7,8 @@ import { runBl } from '../helpers/run-bl.js';
 import { GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
-import { extractSection } from '../../src/feature.js';
+import { extractSection, findFeature, normalizeFeatureId } from '../../src/feature.js';
+import { loadConfig } from '../../src/config.js';
 
 const REPOS = ['../demo-repo'];
 /** demo-repo's home component, so `bl validate` has no home-component finding (F-49 D4). */
@@ -29,6 +30,11 @@ function newFeature(dir, title = 'Invite codes') {
 
 function fm(path) {
   return parseFrontmatter(readFileSync(path, 'utf8')).fm;
+}
+
+/** A feature's stories, the ones whose `feature:` names it (F-77 D3), in its order. */
+function members(dir, id = 'F-1') {
+  return findFeature(normalizeFeatureId(id), loadConfig({ backlogRoot: dir })).stories;
 }
 
 /**
@@ -75,7 +81,11 @@ test('bl new --feature scaffolds features/F1-<slug>/index.md and the root Featur
     // A second feature gets F-2.
     const rel2 = newFeature(dir, 'Second');
     assert.equal(rel2, 'features/F2-second/index.md');
-    // A freshly scaffolded feature (points: 0, no stories) validates clean.
+    // A freshly scaffolded feature (no stories, and no derived key) validates clean.
+    assert.deepEqual(
+      ['stories', 'points', 'components'].filter((k) => Object.hasOwn(f, k)),
+      [],
+    );
     const v = runBl(['validate', '--json'], { cwd: dir });
     const errors = JSON.parse(v.stdout).findings.filter((f) => f.severity === 'error');
     assert.deepEqual(errors, [], JSON.stringify(errors));
@@ -118,18 +128,20 @@ test('bl new --feature tags the story, links it on the feature, and keeps the or
     assert.match(storyContent, /## Implementation Plan/);
 
     const featurePath = join(dir, 'features', 'F1-invite-codes', 'index.md');
-    assert.deepEqual(fm(featurePath).stories, ['S-1']);
+    assert.deepEqual(members(dir), ['S-1']);
+    assert.equal(fm(featurePath).stories, undefined, 'the feature stores no stories: (F-77 D3)');
 
-    // A second story appends, keeping order; F-<n> C-<n> is the same as --feature.
+    // A second story joins; F-<n> C-<n> is the same as --feature.
     const r = runBl(['new', 'F-1', 'C00', '--title', 'Redeem', '--points', '2'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(fm(featurePath).stories, ['S-1', 'S-2']);
+    assert.deepEqual(members(dir), ['S-1', 'S-2']);
+    assert.equal(fm(featurePath).points, undefined, 'nor points:');
 
     // --json carries the feature id.
     const j = runBl(['new', '--json', 'C00', '--title', 'Third', '--points', '2', '--feature', 'F-1'], { cwd: dir });
     assert.equal(j.status, 0, j.stderr);
     assert.equal(JSON.parse(j.stdout).feature, 'F-1');
-    assert.deepEqual(fm(featurePath).stories, ['S-1', 'S-2', 'S-3']);
+    assert.deepEqual(members(dir), ['S-1', 'S-2', 'S-3']);
 
     // A done feature stays in features/, and the top-level index lists
     // active features only; whatever it links must resolve.
@@ -184,7 +196,7 @@ test('the ad-hoc story command in prompts/_blocked-by-bug.md files a bug on the 
     assert.equal(s.feature, 'F-1');
     assert.equal(s.component, 'C00');
     assert.match(readFileSync(storyPath, 'utf8'), /- \[x\] The load waits for the app shell\./);
-    assert.deepEqual(fm(join(dir, 'features', 'F1-invite-codes', 'index.md')).stories, ['S-1', 'S-2']);
+    assert.deepEqual(members(dir), ['S-1', 'S-2']);
     assert.equal(readFileSync(rootIndex, 'utf8'), before, '--no-sync leaves the index files alone');
   } finally {
     cleanup();
@@ -223,7 +235,7 @@ test('the existing-story command in prompts/_blocked-by-bug.md attaches the stor
     const r = runBl(args, { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(fm(join(dir, 'stories', 'S7', 'index.md')).feature, 'F-1');
-    assert.deepEqual(fm(join(dir, 'features', 'F1-invite-codes', 'index.md')).stories, ['S-8', 'S-7']);
+    assert.deepEqual(members(dir), ['S-7', 'S-8']);
     assert.equal(readFileSync(rootIndex, 'utf8'), before, '--no-sync leaves the index files alone');
   } finally {
     cleanup();
@@ -342,7 +354,8 @@ test('bl new --from with feature + per-story component cuts stories across compo
     assert.deepEqual([mint.component, mint.primary_repo], ['C00', undefined]);
     assert.deepEqual([wire.component, wire.primary_repo], ['C02', undefined]);
     assert.match(r.stderr, /\[C01\]/, 'the plan marks a per-story component');
-    assert.deepEqual(fm(join(dir, 'features', 'F1-invite-codes', 'index.md')).stories, ['S-3', 'S-4', 'S-5']);
+    // S-1 and S-2 were cut before the feature took any, so only the spec's are in it.
+    assert.deepEqual(members(dir), ['S-3', 'S-4', 'S-5']);
   } finally {
     cleanup();
   }
@@ -456,7 +469,7 @@ test('bl approve gates on refined status and a non-empty, consistent story list'
     writeFileSync(featurePath, readFileSync(featurePath, 'utf8').replace('status: draft', 'status: refined'));
     r = runBl(['approve', 'F-1'], { cwd: dir });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /lists no stories/);
+    assert.match(r.stderr, /has no stories/);
     // with a story → approved + approved date, root table updated
     newStory(dir, { title: 'Mint', points: '3', extra: ['--feature', 'F-1'] });
     r = runBl(['approve', 'F-1'], { cwd: dir });
@@ -618,8 +631,8 @@ test('bl validate reports feature link drift and verification-only titles', () =
     components: [{ id: 'C00', title: 'Core', dirSuffix: 'core' }],
     stories: [
       { id: 'S-1', component: 'C00', title: 'Dangling', dirSuffix: 'dangling', feature: 'F-9' },
-      { id: 'S-2', component: 'C00', title: 'Mismatch', dirSuffix: 'mismatch', feature: 'F-2' },
-      { id: 'S-3', component: 'C00', title: 'Unlisted', dirSuffix: 'unlisted', feature: 'F-1' },
+      { id: 'S-2', component: 'C00', title: 'In F-1', dirSuffix: 'in', feature: 'F-1' },
+      { id: 'S-3', component: 'C00', title: 'In F-1 too', dirSuffix: 'too', feature: 'F-1' },
       { id: 'S-4', component: 'C00', title: 'Verify the login flow still works', dirSuffix: 'verify' },
       {
         id: 'S-5',
@@ -631,23 +644,20 @@ test('bl validate reports feature link drift and verification-only titles', () =
       },
     ],
     features: [
-      { id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'running', stories: ['S-2', 'S-42'], branch: 'f1-feat' },
+      { id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'running', branch: 'f1-feat' },
       { id: 'F-2', title: 'Other', dirSuffix: 'other', status: 'approved', primary_repo: 'demo-repo' },
     ],
   });
   try {
+    // A stored copy of a derived key is an error, whatever it says (F-77 D3).
+    const f1 = join(dir, 'features', 'F1-feat', 'index.md');
+    writeFileSync(f1, readFileSync(f1, 'utf8').replace(/^status: running$/m, 'status: running\nstories: [S-2, S-42]'));
     const r = runBl(['validate', '--json'], { cwd: dir });
     const { findings } = JSON.parse(r.stdout);
     const codes = findings.map((f) => `${f.code}:${f.location}`);
     assert.ok(codes.includes('dangling-feature:stories/S1-dangling/index.md'), codes.join('\n'));
-    assert.ok(codes.includes('feature-story-mismatch:stories/S2-mismatch/index.md'), codes.join('\n'));
-    assert.ok(codes.includes('feature-story-unlisted:features/F1-feat/index.md'), codes.join('\n'));
-    const unlisted = findings.filter((f) => f.code === 'feature-story-unlisted').map((f) => f.message);
-    assert.ok(
-      unlisted.includes('story S-3 names F-1 but F-1 does not list it in stories: (bl attach S-3 F-1 lists it)'),
-      unlisted.join('\n'),
-    );
-    assert.ok(codes.includes('feature-story-missing:features/F1-feat/index.md'), codes.join('\n'));
+    assert.ok(codes.includes('derived-key:features/F1-feat/index.md'), codes.join('\n'));
+    assert.ok(!codes.some((c) => c.startsWith('feature-story-')), codes.join('\n'));
     assert.ok(codes.includes('feature-no-stories:features/F2-other/index.md'), codes.join('\n'));
     assert.ok(codes.includes('verification-only-title:stories/S4-verify/index.md'), codes.join('\n'));
     // Done stories are not relitigated.
@@ -1495,7 +1505,10 @@ for (const [name, repos, recorded, commitFm, expected] of [
       // The feature already names an exact SHA for the absent repo (an
       // earlier run), and that repo's main has moved on since.
       const fpath = join(dir, 'features', 'F1-feat', 'index.md');
-      writeFileSync(fpath, readFileSync(fpath, 'utf8').replace(/^stories:/m, `${commitFm}\nstories:`));
+      writeFileSync(
+        fpath,
+        readFileSync(fpath, 'utf8').replace(/^review_rounds_max:/m, `${commitFm}\nreview_rounds_max:`),
+      );
       for (const r of Object.keys(recorded)) advanceOriginMain(g, built[r].repo);
       writeFileSync(join(dir, '.gitignore'), `${repoNames.map((r) => `${r}/\n${r}-origin.git/\n`).join('')}.bl/\n`);
       g(dir, 'init', '-q', '-b', 'main');
@@ -1731,7 +1744,10 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
       await new Promise((r) => setTimeout(r, 20));
     }
     const fpath = join(dir, 'features', 'F1-feat', 'index.md');
-    writeFileSync(fpath, readFileSync(fpath, 'utf8').replace(/^stories:/m, 'commit:\n  code: exact111\nstories:'));
+    writeFileSync(
+      fpath,
+      readFileSync(fpath, 'utf8').replace(/^review_rounds_max:/m, 'commit:\n  code: exact111\nreview_rounds_max:'),
+    );
     unlinkSync(lockPath);
     assert.equal(await exited, 0, (await run.closed).stderr);
 

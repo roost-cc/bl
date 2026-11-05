@@ -6066,12 +6066,12 @@ function setupSide({ withWorktree = true } = {}) {
         title: 'Side',
         dirSuffix: 'side',
         points: 1,
-        feature: 'F-1',
+        feature: '',
         status: 'in_progress',
         body: DONE_BODY,
       },
     ],
-    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'running', stories: ['S-1'], branch: 'f1-feat' }],
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'running', branch: 'f1-feat' }],
   });
   const config = loadConfig({ backlogRoot: dir });
   mkdirSync(config.reposByName['repo-b'], { recursive: true });
@@ -6103,9 +6103,10 @@ function setupSide({ withWorktree = true } = {}) {
     targetRepoName: 'demo-repo',
     otherWorktrees: [],
   };
+  // S-3 joins F-1 by naming it, as `bl side --from F-1` writes it (F-77 D3).
   const addSide = () =>
-    editFile(feature.indexPath, (fm) => {
-      fm.stories = ['S-1', 'S-3'];
+    editFile(join(dir, 'stories', 'S3-side', 'index.md'), (fm) => {
+      fm.feature = 'F-1';
     });
   const sideShell = (runner) => {
     const shell = runner.shell;
@@ -6277,38 +6278,12 @@ test('refresh_rejects_unresolvable_story_scope: an unresolvable story list or st
       error: /not a list/,
     },
     {
-      name: 'missing story',
-      edit: ({ feature }) =>
-        editFile(feature.indexPath, (fm) => {
-          fm.stories = ['S-1', 'S-999'];
-        }),
-      error: /lists stories that don't exist: S-999/,
-    },
-    {
-      name: 'invalid member',
-      edit: ({ feature }) =>
-        editFile(feature.indexPath, (fm) => {
-          fm.stories = ['S-1', 'nonsense'];
-        }),
-      error: /lists stories that don't exist: nonsense/,
-    },
-    {
       name: 'malformed story YAML',
       edit: ({ dir, addSide }) => {
         addSide();
         writeFileSync(S3(dir), '---\nstory_id: S-3\ncomponent: [\n---\n');
       },
       error: /could not be re-read/,
-    },
-    {
-      name: 'mismatched feature',
-      edit: ({ dir, addSide }) => {
-        addSide();
-        editFile(S3(dir), (fm) => {
-          fm.feature = 'F-2';
-        });
-      },
-      error: /S-3 \(feature: F-2\) listed but pointing elsewhere/,
     },
     {
       name: 'story without a repo',
@@ -6561,7 +6536,7 @@ test('late_side_stories_complete_gates_before_clean: a closing round that adds a
 });
 
 test('late_side_stories_complete_gates_before_clean: a resumed addressed run reviews a story and repo its last review did not cover', async () => {
-  const { dir, cleanup, config, feature, prep, wtB, sideShell } = setupSide();
+  const { dir, cleanup, config, feature, prep, wtB, addSide, sideShell } = setupSide();
   try {
     let round = 0;
     const behaviour = {
@@ -6580,9 +6555,7 @@ test('late_side_stories_complete_gates_before_clean: a resumed addressed run rev
     assert.equal(first.status, 'clean');
     // S-3 joins after the run, as `bl side` would add it; `bl run --resume`
     // prepares every repo of the feature's stories.
-    editFile(feature.indexPath, (fm) => {
-      fm.stories = ['S-1', 'S-3'];
-    });
+    addSide();
     const again = findFeature(normalizeFeatureId('F-1'), config);
     const resumed = {
       ...prep,
@@ -6649,6 +6622,7 @@ test('late_stories_follow_dependency_order: stories added at any stage are imple
             if (added) return;
             added = true;
             editFile(join(dir, 'stories', 'S3-side', 'index.md'), (fm, body) => {
+              fm.feature = 'F-1';
               fm.component = component;
               fm.depends_on = d.s3;
               return body.replace('- [x]', '- [ ]');
@@ -6666,9 +6640,6 @@ test('late_stories_follow_dependency_order: stories added at any stage are imple
                 depends_on: d.s4,
               }) + AC_BODY,
             );
-            editFile(feature.indexPath, (fm) => {
-              fm.stories = ['S-1', 'S-3', 'S-4'];
-            });
           };
           let round = 0;
           const verdicts = stage.verdicts ?? [true, false];
@@ -6729,9 +6700,6 @@ test('late_stories_follow_dependency_order: an existing story not taken yet wait
           points: '1',
         }) + AC_BODY,
       );
-      editFile(feature.indexPath, (fm) => {
-        fm.stories = ['S-1', 'S-2'];
-      });
       prep.ordered = orderStoriesByDeps(
         resolveFeatureStories(findFeature(normalizeFeatureId('F-1'), config), config, readAllStories(config)).stories,
       );
@@ -6754,9 +6722,6 @@ test('late_stories_follow_dependency_order: an existing story not taken yet wait
           );
           editFile(join(dir, 'stories', 'S2-second', 'index.md'), (fm) => {
             fm.depends_on = ['S-4'];
-          });
-          editFile(feature.indexPath, (fm) => {
-            fm.stories = ['S-1', 'S-2', 'S-4'];
           });
         },
       };

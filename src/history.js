@@ -25,15 +25,17 @@ import { loadFlow } from './flow.js';
 export const CACHE_FILE = join('.bl', 'report-cache.json');
 
 /** Bumped whenever a cached day's shape or content would change. */
-export const CACHE_VERSION = 3;
+export const CACHE_VERSION = 4;
 
 const BLOCK_RE = /^---\n([\s\S]*?)\n---(?:\n|$)/;
 const STORY_ID_RE = /^S-\d+$/;
 const FEATURE_ID_RE = /^F-\d+$/;
 
 /**
- * @typedef {{ status: string, points: number }} StorySnap
+ * @typedef {{ status: string, points: number, feature: string }} StorySnap
+ *   `feature`: the feature its `feature:` named that day, canonical, or empty
  * @typedef {{ status: string, stories: string[] }} FeatureSnap
+ *   `stories`: its `stories:` that day, which a commit from before F-77 D3 stored
  * @typedef {{ date: string, commit: string | null, backfilled: boolean,
  *   stories: Record<string, StorySnap>, features: Record<string, FeatureSnap> }} Day
  * @typedef {{ stories: Record<string, { feature: string, component: string,
@@ -125,6 +127,12 @@ function storyList(raw) {
   return ids.filter(Boolean).map((id) => normalizeId(id)?.id ?? id);
 }
 
+/** A story's `feature:` as a canonical feature id, or empty when it names none. */
+function featureOf(raw) {
+  const named = str(raw);
+  return named ? (normalizeFeatureId(named)?.id ?? '') : '';
+}
+
 /**
  * What a day records of a unit's frontmatter, or null when it is not a
  * story or a feature.
@@ -137,7 +145,11 @@ function unitOf(fm) {
     return {
       kind: 'story',
       id: storyId,
-      snap: { status: str(fm.status) || 'backlog', points: parseInt(str(fm.points), 10) || 0 },
+      snap: {
+        status: str(fm.status) || 'backlog',
+        points: parseInt(str(fm.points), 10) || 0,
+        feature: featureOf(fm.feature),
+      },
     };
   }
   const featureId = str(fm.feature_id);
@@ -229,7 +241,7 @@ export function currentGroups(config, stories = readAllStories(config)) {
   const groups = { stories: {}, features: {} };
   for (const s of stories) {
     groups.stories[s.id] = {
-      feature: s.feature ? (normalizeFeatureId(s.feature)?.id ?? '') : '',
+      feature: featureOf(s.feature),
       component: s.componentId ?? '',
       added: str(s.added),
       completed: str(s.completed),
@@ -252,7 +264,8 @@ export function addDays(date, n) {
  * The days before `firstDate` projected from the current stories: one per
  * calendar day from the earliest `added`, a story in scope from its `added`
  * and closed from its `completed`, with its current points;
- * every other status is unknown and reads `backlog`.
+ * every other status is unknown and reads `backlog`. No feature is known
+ * for a projected day, so its stories name none and it lists none.
  * @param {Groups} groups
  * @param {Map<string, { status: string, points: number }>} current  the stories' current status and points
  * @param {string} firstDate  the first commit's date
@@ -272,7 +285,7 @@ export function backfill(groups, current, firstDate, flow) {
       if (!g.added || g.added > date) continue;
       const now = current.get(id) ?? { status: 'backlog', points: 0 };
       const closed = flow.meets('story', now.status, 'done') && g.completed && g.completed <= date;
-      stories[id] = { status: closed ? now.status : 'backlog', points: now.points };
+      stories[id] = { status: closed ? now.status : 'backlog', points: now.points, feature: '' };
     }
     days.push({ date, commit: null, backfilled: true, stories, features: {} });
   }
@@ -290,7 +303,9 @@ export function validCachedDay(day) {
   return (
     isMap(day) &&
     isMap(day.stories) &&
-    Object.values(day.stories).every((s) => isMap(s) && typeof s.status === 'string' && Number.isFinite(s.points)) &&
+    Object.values(day.stories).every(
+      (s) => isMap(s) && typeof s.status === 'string' && Number.isFinite(s.points) && typeof s.feature === 'string',
+    ) &&
     isMap(day.features) &&
     Object.values(day.features).every((f) => isMap(f) && typeof f.status === 'string' && isStrings(f.stories)) &&
     isStrings(day.unreadable)
@@ -371,8 +386,10 @@ export function buildHistory(config, { since = '', flow = loadFlow(config.backlo
  */
 
 /**
- * The stories of `day` in `scope`, as ids. A feature's are the `stories:` it
- * listed that day; an epic's, its current features'; a theme's, its current
+ * The stories of `day` in `scope`, as ids. A feature's are the stories that
+ * named it in their `feature:` that day, with the `stories:` it listed that
+ * day (a commit from before F-77 D3 stored the list; one after has none); an
+ * epic's, its current features'; a theme's, its current
  * features' (its epics' and those with no epic); a component's, the current
  * stories in it. Outside the backlog scope, only stories in the current tree
  * count.
@@ -391,6 +408,8 @@ export function scopeStories(day, scope, groups) {
     )
     .map(([id]) => id);
   const members = new Set(features.flatMap((id) => day.features[id]?.stories ?? []));
+  const wanted = new Set(features);
+  for (const [id, snap] of Object.entries(day.stories)) if (wanted.has(snap.feature)) members.add(id);
   return ids.filter((id) => members.has(id) && groups.stories[id]);
 }
 

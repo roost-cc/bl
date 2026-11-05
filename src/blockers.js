@@ -32,7 +32,7 @@ import { join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
 import { loadFlow } from './flow.js';
 import { parseIdList, readAllStories } from './story.js';
-import { readAllFeatures } from './feature.js';
+import { normalizeFeatureId, readAllFeatures } from './feature.js';
 import { readAllTasks } from './task.js';
 
 /** The file's name, at the backlog root. */
@@ -216,10 +216,10 @@ export function edgeLabel(e) {
 
 /**
  * Every unit an edge can name, by id. A story's `feature` is the feature
- * it runs and merges with: its `feature:` when that names a feature, else
- * the feature that lists it. A task (F-65 D1) is a unit too, so it can be a
- * blocker or an `active_when` unit; its type has no gates, so no edge holds
- * it (`blockers-gate`).
+ * it runs and merges with: its `feature:` when that names a feature (the
+ * only statement of membership, F-77 D3). A task (F-65 D1) is a unit too, so
+ * it can be a blocker or an `active_when` unit; its type has no gates, so no
+ * edge holds it (`blockers-gate`).
  * @param {Array<{ id: string, status: string, feature?: string, depends_on?: any }>} stories
  * @param {Array<{ id: string, status: string, stories: string[] }>} features
  * @param {Array<{ id: string, status: string }>} [tasks]
@@ -227,18 +227,18 @@ export function edgeLabel(e) {
  */
 export function unitIndex(stories, features, tasks = []) {
   const units = new Map();
-  const listedIn = new Map();
   for (const f of features) {
     units.set(f.id, { id: f.id, type: 'feature', status: f.status, stories: [...f.stories] });
-    for (const s of f.stories) if (!listedIn.has(s)) listedIn.set(s, f.id);
   }
   for (const s of stories) {
-    const own = units.get(s.feature)?.type === 'feature' ? s.feature : '';
+    const named = String(s.feature ?? '').trim();
+    const fid = normalizeFeatureId(named)?.id ?? named;
+    const own = units.get(fid)?.type === 'feature' ? fid : '';
     units.set(s.id, {
       id: s.id,
       type: 'story',
       status: s.status,
-      feature: own || listedIn.get(s.id) || '',
+      feature: own,
       depends_on: parseIdList(s.depends_on),
     });
   }

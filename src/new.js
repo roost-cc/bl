@@ -14,7 +14,7 @@
  * component's repo (F-49 D4); no repo is written on the story (F-52 D1). Prompts for the component (when none is named),
  * title and points. Assigns the next globally-unique story ID. Unless
  * --no-sync or --dry-run, syncs and commits the new stories (plus a new
- * component dir, an appended feature file and the rewritten indexes) inside
+ * component dir, the feature file's regenerated table and the rewritten indexes) inside
  * the lock hold that allocated the IDs.
  */
 
@@ -53,13 +53,7 @@ import {
 } from './story.js';
 import { renderTemplate, templatePath } from './template.js';
 import { implementPluginProblem } from './scripted.js';
-import {
-  normalizeFeatureId,
-  findFeature,
-  appendStoriesToFeature,
-  closedFeatureRefusal,
-  storyMoveRefusal,
-} from './feature.js';
+import { normalizeFeatureId, findFeature, closedFeatureRefusal, storyMoveRefusal } from './feature.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { prepareBody } from './body.js';
@@ -351,8 +345,8 @@ function foldPositionals(args, config) {
 
 /**
  * `bl new --feature --title t [S-1 S-2 …]`: scaffold a feature
- * (`cmdNew`) and move the listed stories into it: `feature:` on each, and
- * appended to its `stories:`. Every story is checked under the backlog lock,
+ * (`cmdNew`) and move the listed stories into it: `feature:` on each, the
+ * only statement of membership (F-77 D3). Every story is checked under the backlog lock,
  * before anything is written: it must be unstarted (`Flow.isUnstarted`) and in no
  * other feature. A repair record (feature-links.js) is written before the
  * first story, so a failure the rollback cannot undo is settled by the next
@@ -405,12 +399,7 @@ async function newFeature(args, stories) {
             failPoint(s.id);
           });
         }
-        failPoint('list');
-        appendStoriesToFeature(
-          root,
-          feature,
-          stories.map((s) => s.id),
-        );
+        info(`Linked ${stories.map((s) => s.id).join(', ')} to ${feature.id}.`);
       } catch (err) {
         let state, left;
         try {
@@ -423,15 +412,11 @@ async function newFeature(args, stories) {
         }
         if (state === 'rolled back') throw err;
         err.keepFeature = true;
-        if (state === 'complete') err.message += `; ${feature.id} and its stories are linked both ways`;
-        else if (state === 'listed') {
+        if (state === 'complete') err.message += `; every story names ${feature.id}`;
+        else {
           err.message +=
-            `; could not restore ${left.join(', ')}, so ${feature.id} is kept and lists it; ` +
+            `; could not restore ${left.join(', ')}, so ${feature.id} is kept with it; ` +
             `the next bl command rolls it back`;
-        } else {
-          err.message +=
-            `; could not restore ${left.join(', ')} or list it in ${feature.id}: ` +
-            `the next bl command repairs it (${relative(root, record)})`;
         }
         throw err;
       }
@@ -741,8 +726,8 @@ async function newTheme(args, jsonMode) {
 /**
  * `bl new --epic --theme <slug> --title t [--body-file p]`: create
  * `epics/E<n>-<slug>/index.md` (F-51 D1) with the next epic number (E50
- * upward) under an existing theme. Its `features:` and `status:` are
- * derived by `bl sync`.
+ * upward) under an existing theme. Its features and status are derived by
+ * the graph (F-77 D3), never stored.
  */
 async function newEpic(args, jsonMode) {
   refuseNonValueFlags(args, '--epic, which creates an epic');
@@ -880,8 +865,8 @@ Options:
                        when no component is named; a repo other than the
                        component's is an error
   --feature <id>       Attach the story to a feature (F-<n>): sets
-                       feature: in its frontmatter, appends it to the
-                       feature's stories: list, and uses the shorter
+                       feature: in its frontmatter (the only statement
+                       of membership) and uses the shorter
                        story-feature template.
   --feature            With no F-id: create a feature instead of a story
                        (features/F<n>-<slug>/index.md), holding the S-ids
@@ -945,7 +930,7 @@ Options:
   --help               Show this help
 
 Stories are written to stories/S<n>-<slug>/index.md. After the sync, commits
-the new stories (plus a new component dir, an appended feature file and every
+the new stories (plus a new component dir, the feature file and every
 index the sync rewrote) on the backlog's current branch, under the backlog
 lock: "chore: add S-N" (or "chore: add S-N, S-M" for a batch, "chore: add
 C<n>" for a component). Other uncommitted edits in the backlog stay out of the
@@ -1289,8 +1274,6 @@ Example:
   );
 
   info(`Created story: ${relative(cfg.backlogRoot, storyIndex)}`);
-
-  if (feature) appendStoriesToFeature(cfg.backlogRoot, feature, [storyId]);
 
   if (args['no-sync']) {
     info("Skipped sync. Run 'bl sync' to update indexes.");
@@ -1713,14 +1696,6 @@ async function runBatchMode(args, jsonMode) {
   }
 
   rmSync(tempRoot, { recursive: true, force: true });
-
-  if (feature) {
-    appendStoriesToFeature(
-      config.backlogRoot,
-      feature,
-      renderedStories.map((r) => r.id),
-    );
-  }
 
   // --- Sync ---
   if (args['no-sync']) {
