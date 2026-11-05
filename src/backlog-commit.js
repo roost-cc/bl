@@ -217,8 +217,8 @@ export function isNonFastForwardRejection(stderr) {
  * `pulled` pushed once more. Any other rejection is not retried. The caller
  * holds the main sync lock (`withMainSyncLock`), so no commit lands
  * mid-rebase. When the rebase settled generated paths, their regeneration is
- * left pending for the next command that pulls (`markRegenerationPending`);
- * it never runs here, under the lock. Without an `origin` remote there is
+ * left pending for the next command that pulls (`leaveRegenerationPending`,
+ * which takes no snapshot yet); it never runs here, under the lock. Without an `origin` remote there is
  * nothing to push (`skipped`).
  * @param {string} root
  * @returns {BacklogPush}
@@ -249,8 +249,7 @@ export function pushBacklog(root) {
   let pendingError = '';
   if (resolved.length > 0) {
     try {
-      if (!markRegenerationPending(root))
-        pendingError = '\n(could not leave the regeneration pending: git status failed)';
+      leaveRegenerationPending(root);
     } catch (err) {
       pendingError = `\n(could not leave the regeneration pending: ${err.message})`;
     }
@@ -302,26 +301,52 @@ export function pushWarning(root, p) {
 /**
  * Where a regeneration after a pull that has not been committed yet keeps
  * the dirty snapshot it started from, so the next command that pulls
- * finishes it (`sync.js` `pullBeforeCommand`).
+ * finishes it (`sync.js` `pullBeforeCommand`). `null` in the file marks a
+ * regeneration owed that has not started (`leaveRegenerationPending`).
  */
 export const PULL_REGEN_PENDING = join('.bl', 'run', 'pull-regenerate.json');
 
+/** The pending file's content: a snapshot's entries, `null`, or undefined when there is none. */
+function readPending(path) {
+  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : undefined;
+}
+
+function writePending(root, path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  atomicWriteFile(root, path, JSON.stringify(value));
+}
+
 /**
- * Start a regeneration after a pull unless one is pending, and return the
+ * Start a regeneration after a pull unless one is underway, and return the
  * dirty snapshot it begins from: the pending one's, or the work tree's now,
- * written to `PULL_REGEN_PENDING`. Null when `git status` fails. The one
- * writer of that file. Throws when the pending file cannot be read or written.
+ * written to `PULL_REGEN_PENDING`. Null when `git status` fails. One of the
+ * two writers of that file, with `leaveRegenerationPending`. Throws when the
+ * pending file cannot be read or written.
  * @param {string} root
  * @returns {Map<string, string> | null}
  */
 export function markRegenerationPending(root) {
   const path = join(root, PULL_REGEN_PENDING);
-  if (existsSync(path)) return new Map(JSON.parse(readFileSync(path, 'utf8')));
+  const pending = readPending(path);
+  if (Array.isArray(pending)) return new Map(pending);
   const snap = dirtySnapshot(root);
   if (!snap) return null;
-  mkdirSync(dirname(path), { recursive: true });
-  atomicWriteFile(root, path, JSON.stringify([...snap]));
+  writePending(root, path, [...snap]);
   return snap;
+}
+
+/**
+ * Leave a regeneration owed for the next command that pulls, without
+ * starting it (`pushBacklog`'s retry, which must not regenerate under the
+ * lock). No snapshot is taken now: the regeneration takes its own when it
+ * starts, so edits made in between are the operator's, not its commit's.
+ * A regeneration already pending is left as it is. Throws when the pending
+ * file cannot be read or written.
+ * @param {string} root
+ */
+export function leaveRegenerationPending(root) {
+  const path = join(root, PULL_REGEN_PENDING);
+  if (readPending(path) === undefined) writePending(root, path, null);
 }
 
 /**

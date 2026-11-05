@@ -2590,8 +2590,10 @@ A push rejected because `origin` moved on (git's `[rejected] … (fetch first)` 
 own rebase (`pullLocked`, below, which settles generated paths and puts everything back when it
 cannot finish), under the main sync lock the commit already holds, and pushed once more (F-74
 D1). When that rebase settled generated paths, their regeneration is left pending in
-`.bl/run/pull-regenerate.json` (`markRegenerationPending`, the one writer of that file) for the
-next command that pulls; it never regenerates under the lock. A push that still fails (a
+`.bl/run/pull-regenerate.json` for the next command that pulls (`leaveRegenerationPending`,
+which writes `null` there: no snapshot yet, so edits made before that command stay out of the
+regeneration's commit; `markRegenerationPending` takes the snapshot when the regeneration
+starts; the two are the file's only writers); it never regenerates under the lock. A push that still fails (a
 conflict outside the generated paths, a hook, auth, offline: the last three get no rebase) is
 one warning (`pushWarning`) naming the conflicting paths, if any, and the command to retry, and
 the command exits as it would have. With an `origin` remote the
