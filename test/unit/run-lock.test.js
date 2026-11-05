@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, readdirSync } from 'fs';
+import { dirname, join } from 'path';
 import { REPO_ROOT } from '../helpers/run-bl.js';
 import * as runLock from '../../src/run-lock.js';
+import * as backlogCommit from '../../src/backlog-commit.js';
 import * as featureRun from '../../src/feature-run.js';
 import * as updates from '../../src/updates.js';
 import * as pidLock from '../../src/pid-lock.js';
@@ -18,6 +19,19 @@ test('updates_lock_path_contract: run-lock.js and pid-lock.js import only node b
     for (const s of specifiers) assert.match(s, /^(node:)?(fs|path)$/, `${file} imports ${s}`);
   }
   assert.equal(typeof pidLock.acquirePidLock, 'function');
+});
+
+// Restatements of `.bl/run` older than F-74, in code it does not change (deferred).
+const PRE_EXISTING_RUN_DIRS = ['feature-links.js', 'migration-txn.js', 'migrate-worktree-layout.js'];
+
+test('regeneration_marker_uses_RUN_DIR: the marker and every other run path derive from run-lock.js', () => {
+  assert.equal(dirname(backlogCommit.PULL_REGEN_PENDING), runLock.RUN_DIR);
+  const dir = join(REPO_ROOT, 'src');
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.js'))) {
+    if (file === 'run-lock.js' || PRE_EXISTING_RUN_DIRS.includes(file)) continue;
+    const src = readFileSync(join(dir, file), 'utf8');
+    assert.doesNotMatch(src, /['"]\.bl['"],\s*['"]run['"]|['"]\.bl\/run\b/, `${file} restates the run directory`);
+  }
 });
 
 test('updates_lock_path_contract: the loop and bl updates use run-lock.js’s one definition', () => {

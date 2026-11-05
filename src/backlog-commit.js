@@ -28,6 +28,7 @@ import { warn } from './config.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { MAIN_REFSPEC, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
+import { RUN_DIR } from './run-lock.js';
 
 // Never wait on a credential prompt; `GIT_EDITOR=true` keeps
 // `git rebase --continue` from opening an editor for the message.
@@ -329,7 +330,7 @@ export function pushWarning(root, p) {
  * finishes it (`sync.js` `pullBeforeCommand`). `null` in the file marks a
  * regeneration owed that has not started (`leaveRegenerationPending`).
  */
-export const PULL_REGEN_PENDING = join('.bl', 'run', 'pull-regenerate.json');
+export const PULL_REGEN_PENDING = join(RUN_DIR, 'pull-regenerate.json');
 
 /** The pending file's content: a snapshot's entries, `null`, or undefined when there is none. */
 function readPending(path) {
