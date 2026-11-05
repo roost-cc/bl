@@ -2584,9 +2584,17 @@ Nothing to commit exits 0; `--commit` without `-m` or `--story`, `--path` withou
 **Pull before, push after (F-50 D4).** The backlog is shared through its `origin` remote, so
 every clone (the operator's, the update runner's) sees the others' work. Every commit
 `commitPaths` makes, and each step commit of `bl run`'s loop (`feature-run.js`
-`commitBacklog`), is followed by `git push origin main`; a failed push (offline, or `origin`
-moved on) is one warning naming the command to retry, and the command exits as it would have,
-since the next committing command's push carries the commit. With an `origin` remote the
+`commitBacklog`), is followed by `git push origin main` (`backlog-commit.js` `pushBacklog`).
+A push rejected because `origin` moved on (git's `[rejected] … (fetch first)` or
+`(non-fast-forward)`, `isNonFastForwardRejection`) is rebased onto `origin/main` with the pull's
+own rebase (`pullLocked`, below, which settles generated paths and puts everything back when it
+cannot finish), under the main sync lock the commit already holds, and pushed once more (F-74
+D1). When that rebase settled generated paths, their regeneration is left pending in
+`.bl/run/pull-regenerate.json` (`markRegenerationPending`, the one writer of that file) for the
+next command that pulls; it never regenerates under the lock. A push that still fails (a
+conflict outside the generated paths, a hook, auth, offline: the last three get no rebase) is
+one warning (`pushWarning`) naming the conflicting paths, if any, and the command to retry, and
+the command exits as it would have. With an `origin` remote the
 commit and its push hold the main sync lock the pull holds, so a commit from a process without
 the backlog lock (`openUnitChange`, the loop) never lands mid-rebase or loses its file to a
 pull's autostash. Every command that commits the
@@ -2605,8 +2613,12 @@ generated files (the top-level and component `index.md` files and `allowed-tools
 keeps the local side, and the regeneration that follows every pull that brought anything
 (`sync.js` `pullBeforeCommand`) rebuilds them and commits and pushes what changed. A
 regeneration that cannot be built or committed stops the command and stays pending in
-`.bl/run/pull-regenerate.json`; the next command that pulls finishes it first. A backlog with no `origin` remote neither
-pulls nor pushes.
+`.bl/run/pull-regenerate.json`; the next command that pulls finishes it first. After a pull
+that ended `pulled` or `current` and made no regeneration commit (whose push carries `main`), a
+`main` still ahead of `origin/main` is pushed, with the same retry (`pushIfAhead`, F-74
+Decision A1): a commit whose push failed is carried by the next command of any kind that pulls,
+not only the next one that commits, and `bl updates status` is the running-man guest's way to
+push an unpushed backlog. A backlog with no `origin` remote neither pulls nor pushes.
 
 What the sync writes (F-49 D7, F-51 D3), every link pointing into `stories/`, `components/`,
 `features/`, `epics/` or `themes/`:

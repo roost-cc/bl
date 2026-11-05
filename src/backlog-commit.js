@@ -12,17 +12,20 @@
  * The backlog is shared through its remote (F-50 D4): every commit made here
  * is pushed to `origin main` (`pushBacklog`), and the commands that commit,
  * plus `bl inbox` and `bl updates status`, first rebase onto `origin/main`
- * (`pullBacklog`). Neither fails the command: a push or pull that cannot
+ * (`pullBacklog`) and push a `main` still ahead of it. A push rejected
+ * because origin moved is rebased the same way and pushed again (F-74 D1).
+ * Neither fails the command: a push or pull that cannot
  * complete is a warning, and the command goes on from local state. The one
  * exception is a pull that cannot prove it put the checkout back (`unsafe`):
  * the command does not run.
  */
 
 import { createHash } from 'crypto';
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 import { warn } from './config.js';
+import { atomicWriteFile } from './atomic-write.js';
 import { MAIN_REFSPEC, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
 
@@ -124,10 +127,13 @@ function addablePaths(root, paths) {
  * `git commit --only`, which records the deletion against HEAD. Left out, the
  * old files would stay in the committed tree beside the new ones.
  *
- * After a commit the backlog is pushed (`pushBacklog`); a failed push prints
- * one warning naming the command to retry and leaves `committed` true, since
- * the next committing command's push carries the commit. `pushed` and
- * `pushError` are present only when the backlog has an `origin` remote.
+ * After a commit the backlog is pushed (`pushBacklog`, which rebases and
+ * pushes again when origin moved); a failed push prints one warning
+ * (`pushWarning`) and leaves `committed` true, since the next command that
+ * pulls pushes the commit (`sync.js` `pullBeforeCommand`). `pushed` and
+ * `pushError` are present only when the backlog has an `origin` remote;
+ * `pushConflicts` names the paths a retry's rebase conflicted in, and
+ * `pushResolved` the generated paths it settled (left pending regeneration).
  *
  * With an `origin` remote the commit and push hold the main sync lock that
  * `pullBacklog` takes, so a commit never lands mid-rebase and a pull's
@@ -135,7 +141,8 @@ function addablePaths(root, paths) {
  * puts the stash back before it lets go. Callers that do not hold the
  * backlog lock (`change-doc.js` `openUnitChange`) rely on this.
  * @returns {{ committed: boolean, paths: string[], error?: string,
- *   pushed?: boolean, pushError?: string }}
+ *   pushed?: boolean, pushError?: string, pushConflicts?: string[],
+ *   pushResolved?: string[] }}
  */
 export function commitPaths(root, paths, message) {
   if (paths.length === 0) return { committed: false, paths };
@@ -145,9 +152,7 @@ export function commitPaths(root, paths, message) {
     return { committed: false, paths, error: `timed out waiting for ${res.lockPath} (PID ${res.holder})` };
   }
   if (res.committed && res.pushed === false) {
-    warn(
-      `backlog commit not pushed (${res.pushError.split('\n')[0]}); the next bl command that commits pushes it, or retry: git -C "${root}" push origin main`,
-    );
+    warn(pushWarning(root, { error: res.pushError, paths: res.pushConflicts }));
   }
   return res;
 }
@@ -171,18 +176,152 @@ function commitLocked(root, paths, message, push) {
   }
   if (!push) return { committed: true, paths };
   const p = pushBacklog(root);
-  return { committed: true, paths, pushed: p.pushed, ...(p.error ? { pushError: p.error } : {}) };
+  return {
+    committed: true,
+    paths,
+    pushed: p.pushed,
+    ...(p.error ? { pushError: p.error } : {}),
+    ...(p.paths ? { pushConflicts: p.paths } : {}),
+    ...(p.resolved?.length ? { pushResolved: p.resolved } : {}),
+  };
 }
 
 /**
- * `git push origin main` in the backlog. Without an `origin` remote there is
+ * Whether `git push`'s stderr says origin's `main` moved past ours (git's
+ * `[rejected] ... (fetch first)` or `(non-fast-forward)`), the one rejection
+ * a rebase can fix. A hook's `[remote rejected]`, an auth or a network
+ * failure is not.
+ */
+export function isNonFastForwardRejection(stderr) {
+  return /^\s*!\s+\[rejected\].*\((fetch first|non-fast-forward)\)/m.test(String(stderr ?? ''));
+}
+
+/**
+ * @typedef {object} BacklogPush
+ * @property {boolean} pushed
+ * @property {boolean} [skipped] no `origin` remote; nothing was pushed.
+ * @property {string} [error] why the push did not go through (git's output,
+ *   or what stopped the rebase before the second push).
+ * @property {BacklogPull["state"]} [retry] how the rebase after a
+ *   non-fast-forward rejection ended, when it ran.
+ * @property {string[]} [paths] the paths that rebase conflicted in (`conflict`).
+ * @property {string[]} [resolved] generated paths that rebase settled by
+ *   taking a side; their regeneration is left pending (`PULL_REGEN_PENDING`).
+ */
+
+/**
+ * `git push origin main` in the backlog (F-74 D1). A push rejected because
+ * origin's `main` moved (`isNonFastForwardRejection`) is rebased onto
+ * `origin/main` with the pull's own rebase (`pullLocked`, which settles
+ * generated paths and puts everything back when it cannot finish), and on
+ * `pulled` pushed once more. Any other rejection is not retried. The caller
+ * holds the main sync lock (`withMainSyncLock`), so no commit lands
+ * mid-rebase. When the rebase settled generated paths, their regeneration is
+ * left pending for the next command that pulls (`markRegenerationPending`);
+ * it never runs here, under the lock. Without an `origin` remote there is
  * nothing to push (`skipped`).
- * @returns {{ pushed: boolean, skipped?: boolean, error?: string }}
+ * @param {string} root
+ * @returns {BacklogPush}
  */
 export function pushBacklog(root) {
   if (!hasOriginRemote(root)) return { pushed: false, skipped: true };
   const r = git(root, ['push', '-q', 'origin', 'main']);
-  return r.status === 0 ? { pushed: true } : { pushed: false, error: gitMessage(r, 'git push') };
+  if (r.status === 0) return { pushed: true };
+  const error = gitMessage(r, 'git push');
+  const branch = git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).stdout?.trim() ?? '';
+  // The rebase moves the checked-out branch: only retry when that is `main`.
+  if (!isNonFastForwardRejection(r.stderr) || branch !== 'main') return { pushed: false, error };
+  const pull = pullLocked(root);
+  if (pull.state !== 'pulled') {
+    const why = pull.paths?.length
+      ? `conflicts in ${pull.paths.join(', ')}`
+      : pull.state === 'unsafe'
+        ? 'could not put the checkout back'
+        : `ended ${pull.state}`;
+    return {
+      pushed: false,
+      error: `origin/main moved and the rebase onto it ${why}${pull.message ? `\n${pull.message}` : ''}`,
+      retry: pull.state,
+      ...(pull.paths ? { paths: pull.paths } : {}),
+    };
+  }
+  const resolved = pull.resolved;
+  let pendingError = '';
+  if (resolved.length > 0) {
+    try {
+      if (!markRegenerationPending(root))
+        pendingError = '\n(could not leave the regeneration pending: git status failed)';
+    } catch (err) {
+      pendingError = `\n(could not leave the regeneration pending: ${err.message})`;
+    }
+  }
+  const again = git(root, ['push', '-q', 'origin', 'main']);
+  return again.status === 0
+    ? { pushed: true, retry: 'pulled', resolved }
+    : { pushed: false, error: gitMessage(again, 'git push') + pendingError, retry: 'pulled', resolved };
+}
+
+/**
+ * After a pull that ended `pulled` or `current`, push a `main` that is still
+ * ahead of the `origin/main` that pull fetched (F-74 D1, Decision A1), under
+ * the main sync lock and with `pushBacklog`'s retry. So a commit whose push
+ * failed is carried by the next command that pulls, not only by the next one
+ * that commits. Null when `main` holds nothing origin lacks.
+ * @param {string} root
+ * @param {{ lockTimeoutMs?: number, pollMs?: number }} [opts]
+ * @returns {BacklogPush | { state: "lock-timeout", holder: number|string, lockPath: string } | null}
+ */
+export function pushIfAhead(root, opts = {}) {
+  return withMainSyncLock(
+    root,
+    () => {
+      const ahead = git(root, ['rev-list', '--count', 'origin/main..HEAD']);
+      if (ahead.status !== 0 || parseInt(ahead.stdout, 10) === 0) return null;
+      return pushBacklog(root);
+    },
+    opts,
+  );
+}
+
+/**
+ * The warning for a backlog commit whose push failed (`commitPaths`,
+ * `pullBeforeCommand`, `feature-run.js`): why, in one line, and what carries
+ * the commit. A conflict names its paths and the pull that settles it.
+ * @param {string} root
+ * @param {BacklogPush} p
+ */
+export function pushWarning(root, p) {
+  const lines = String(p.error ?? '').split('\n');
+  const why = lines.find((l) => /^\s*!\s|^(error|fatal):|^origin\/main moved/.test(l)) ?? lines[0];
+  if (p.paths?.length) {
+    return `backlog commit not pushed (${why.trim()}); rebase aborted, the commit and your edits are as they were. Resolve with: git -C "${root}" pull --rebase --autostash origin main`;
+  }
+  return `backlog commit not pushed (${why.trim()}); the next bl command that pulls pushes it, or retry: git -C "${root}" push origin main`;
+}
+
+/**
+ * Where a regeneration after a pull that has not been committed yet keeps
+ * the dirty snapshot it started from, so the next command that pulls
+ * finishes it (`sync.js` `pullBeforeCommand`).
+ */
+export const PULL_REGEN_PENDING = join('.bl', 'run', 'pull-regenerate.json');
+
+/**
+ * Start a regeneration after a pull unless one is pending, and return the
+ * dirty snapshot it begins from: the pending one's, or the work tree's now,
+ * written to `PULL_REGEN_PENDING`. Null when `git status` fails. The one
+ * writer of that file. Throws when the pending file cannot be read or written.
+ * @param {string} root
+ * @returns {Map<string, string> | null}
+ */
+export function markRegenerationPending(root) {
+  const path = join(root, PULL_REGEN_PENDING);
+  if (existsSync(path)) return new Map(JSON.parse(readFileSync(path, 'utf8')));
+  const snap = dirtySnapshot(root);
+  if (!snap) return null;
+  mkdirSync(dirname(path), { recursive: true });
+  atomicWriteFile(root, path, JSON.stringify([...snap]));
+  return snap;
 }
 
 /**
