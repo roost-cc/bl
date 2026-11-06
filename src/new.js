@@ -799,19 +799,28 @@ function storyValues(vars, { feature = null, dependsOn = [] } = {}) {
  * `depends_on:`, through `updateSpecFile` under its spec lock (the caller
  * holds the backlog lock). An id already listed is not added twice. Returns
  * the backlog-relative paths of the files it wrote, for the commit.
+ *
+ * All or nothing: when one write fails, the edges already written are put
+ * back as they were and the directories in `created` (the new stories, a new
+ * component) removed, so the same `bl new` can run again and get the same
+ * ids; the error names whatever could not be undone.
  * @param {any} cfg
  * @param {Map<string, string[]>} dependents
+ * @param {string[]} created  absolute directories this `bl new` made
  * @returns {string[]}
  */
-function appendDependsOn(cfg, dependents) {
+function appendDependsOn(cfg, dependents, created) {
   if (dependents.size === 0) return [];
   const byId = new Map(readAllStories(cfg).map((s) => [s.id, s]));
+  /** @type {{ path: string, rel: string, before: string }[]} */
   const written = [];
   for (const [targetId, newIds] of dependents) {
     const target = byId.get(targetId);
     if (!target) continue;
     let wrote;
+    let before;
     try {
+      before = readFileSync(target.indexPath, 'utf8');
       wrote = updateSpecFile(cfg.backlogRoot, target.indexPath, (fm) => {
         const list = listValue(fm.depends_on);
         if (list == null) {
@@ -823,17 +832,46 @@ function appendDependsOn(cfg, dependents) {
         info(`${targetId} now depends on ${add.join(', ')}: ${target.storyRelPath}`);
       });
     } catch (e) {
-      // The new stories and the edges written so far stay, uncommitted: say
-      // what is in place and what is not, so the rest can be finished by hand.
-      const done = written.length > 0 ? ` Already written: ${written.join(', ')}.` : '';
-      throw new Error(
-        `could not add ${newIds.join(', ')} to ${targetId}'s depends_on (${e.message}); nothing is committed.${done} Add the edge by hand, then run bl sync.`,
-        { cause: e },
-      );
+      const left = undoNew(cfg.backlogRoot, written, created);
+      const state =
+        left.length === 0
+          ? 'nothing is written or committed: the new stories and the edges already added are undone, so bl new can run again'
+          : `nothing is committed, but undoing failed, so fix these by hand: ${left.join('; ')}`;
+      throw new Error(`could not add ${newIds.join(', ')} to ${targetId}'s depends_on (${e.message}); ${state}.`, {
+        cause: e,
+      });
     }
-    if (wrote) written.push(target.storyRelPath);
+    if (wrote) written.push({ path: target.indexPath, rel: target.storyRelPath, before });
   }
-  return written;
+  return written.map((w) => w.rel);
+}
+
+/**
+ * Undo a `bl new` whose edges failed (`appendDependsOn`): each edited target
+ * back to its text before, newest first, then each created directory
+ * removed. Returns what could not be undone, empty when all was.
+ * @param {string} backlogRoot
+ * @param {{ path: string, rel: string, before: string }[]} written
+ * @param {string[]} created
+ * @returns {string[]}
+ */
+function undoNew(backlogRoot, written, created) {
+  const left = [];
+  for (const w of [...written].reverse()) {
+    try {
+      atomicWriteFile(backlogRoot, w.path, w.before);
+    } catch (e) {
+      left.push(`${w.rel} still has the new edge (${e.message})`);
+    }
+  }
+  for (const dir of created) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      left.push(`${relative(backlogRoot, dir)} is still there (${e.message})`);
+    }
+  }
+  return left;
 }
 
 /**
@@ -1324,7 +1362,7 @@ Example:
   );
 
   info(`Created story: ${relative(cfg.backlogRoot, storyIndex)}`);
-  const dependentPaths = appendDependsOn(cfg, dependents);
+  const dependentPaths = appendDependsOn(cfg, dependents, [storyDir]);
 
   if (args['no-sync']) {
     info("Skipped sync. Run 'bl sync' to update indexes.");
@@ -1760,7 +1798,10 @@ async function runBatchMode(args, jsonMode) {
 
   rmSync(tempRoot, { recursive: true, force: true });
 
-  const dependentPaths = appendDependsOn(cfg, dependents);
+  const dependentPaths = appendDependsOn(cfg, dependents, [
+    ...renderedStories.map((r) => r.finalDir),
+    ...(creatingNewComponent ? [componentAbsDir] : []),
+  ]);
 
   // --- Sync ---
   if (args['no-sync']) {

@@ -593,26 +593,80 @@ test("bl new --required-for appends the new id to the other story's depends_on a
   }
 });
 
-test('bl new --required-for that cannot write a later target says what is written and commits nothing', (t) => {
-  if (process.getuid?.() === 0) return t.skip('root writes into a read-only directory');
-  const { dir, cleanup } = gitEdgeBacklog();
-  const locked = join(dir, 'stories', 'S2-also-later');
-  try {
-    const head = git(dir, 'rev-parse', 'HEAD');
-    // A read-only directory: the atomic write's temporary file cannot be made.
-    chmodSync(locked, 0o555);
-    const r = runBl([...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1,S-2'], { cwd: dir, env: GIT_ENV });
-    assert.equal(r.status, 1, r.stderr);
-    assert.match(r.stderr, /could not add S-3 to S-2's depends_on \(.*\); nothing is committed\./);
-    assert.match(r.stderr, /Already written: stories\/S1-later\/index\.md\./);
-    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
-    assert.deepEqual(fmOf(dir, 'stories/S1-later/index.md').depends_on, ['S-3']);
-    assert.deepEqual(fmOf(dir, 'stories/S2-also-later/index.md').depends_on, ['S-1']);
-  } finally {
-    chmodSync(locked, 0o755);
-    cleanup();
-  }
-});
+// new_required_for_second_write_failure_is_retryable: a target that cannot be
+// written (a read-only directory: the atomic write's temporary file cannot be
+// made), first or later, single story or spec, undoes the new story and every
+// edge already written, so the same command run again gets the same id.
+for (const [name, lockedEntry, failing, newArgs] of [
+  [
+    'a later target, --required-for',
+    'S2-also-later',
+    'S-2',
+    () => [...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1,S-2'],
+  ],
+  [
+    'the first target, --required-for',
+    'S1-later',
+    'S-1',
+    () => [...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1,S-2'],
+  ],
+  ["a later target, a spec's required_for", 'S2-also-later', 'S-2', (dir) => ['new', '--from', edgeSpec(dir)]],
+]) {
+  test(`new_required_for_second_write_failure_is_retryable: ${name}`, (t) => {
+    if (process.getuid?.() === 0) return t.skip('root writes into a read-only directory');
+    const { dir, cleanup } = gitEdgeBacklog();
+    const locked = join(dir, 'stories', lockedEntry);
+    const targets = ['stories/S1-later/index.md', 'stories/S2-also-later/index.md'];
+    try {
+      const args = newArgs(dir);
+      const head = git(dir, 'rev-parse', 'HEAD');
+      const before = targets.map((p) => readFileSync(join(dir, p), 'utf8'));
+      chmodSync(locked, 0o555);
+      const r = runBl(args, { cwd: dir, env: GIT_ENV });
+      assert.equal(r.status, 1, r.stderr);
+      assert.match(
+        r.stderr,
+        new RegExp(`could not add S-3 to ${failing}'s depends_on \\(.*\\); nothing is written or committed`),
+      );
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+      assert.deepEqual(
+        targets.map((p) => readFileSync(join(dir, p), 'utf8')),
+        before,
+        'every target as it was',
+      );
+      assert.equal(existsSync(join(dir, 'stories', 'S3-first')) || existsSync(join(dir, 'stories', 'S3-base')), false);
+      assert.deepEqual(
+        statusLines(dir).filter((l) => !l.includes('plan/')),
+        [],
+      );
+
+      // The cause fixed, the same command runs again and gets the same id.
+      chmodSync(locked, 0o755);
+      const again = runBl(args, { cwd: dir, env: GIT_ENV });
+      assert.equal(again.status, 0, again.stderr);
+      assert.deepEqual(fmOf(dir, targets[0]).depends_on, ['S-3']);
+      assert.deepEqual(fmOf(dir, targets[1]).depends_on, ['S-1', 'S-3']);
+    } finally {
+      chmodSync(locked, 0o755);
+      cleanup();
+    }
+  });
+}
+
+/** A one-story spec in C01 whose story is required for S-1 and S-2; its path. */
+function edgeSpec(dir) {
+  mkdirSync(join(dir, 'plan'), { recursive: true });
+  writeFileSync(join(dir, 'plan', 'a.md'), '## Summary\n\nA.\n');
+  const specPath = join(dir, 'plan', 'spec.json');
+  writeFileSync(
+    specPath,
+    JSON.stringify({
+      component: 'C01',
+      stories: [{ id: 'base', title: 'Base', points: 1, body_file: 'a.md', required_for: ['S-1', 'S-2'] }],
+    }),
+  );
+  return specPath;
+}
 
 test("a spec's required_for writes each edge as the other story's depends_on: a sibling's and an existing one's", () => {
   const { dir, cleanup } = gitEdgeBacklog();
