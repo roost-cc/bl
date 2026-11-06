@@ -107,7 +107,7 @@ export function readAllThemes(config) {
 
 /**
  * Every epic under `epics/`, projected from `loadBacklog()` (F-77 D2). Its
- * id is its directory's `E<nn>`; its `features` (the features whose `epic:`
+ * id is its directory's `E<nn>` as the graph normalizes it; its `features` (the features whose `epic:`
  * names it, by number) and `status` (`epicStatus` of them) are the graph's,
  * derived and never stored (F-77 D3).
  * @returns {Array<{ id: string, title: string, theme: string, status: string,
@@ -120,7 +120,9 @@ export function readAllEpics(config) {
     .map((unit) => {
       const fm = ownFm(unit);
       return {
-        id: `E${unit.entry.match(/^E(\d+)/)[1]}`,
+        // The graph's id for the directory (`E050-x` is E50), so a feature's
+        // `epic:` and this record name the same epic.
+        id: unit.id,
         title: fm.title ?? '',
         theme: String(fm.theme ?? '').trim(),
         status: unit.status,
