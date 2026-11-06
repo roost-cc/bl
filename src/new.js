@@ -810,16 +810,27 @@ function appendDependsOn(cfg, dependents) {
   for (const [targetId, newIds] of dependents) {
     const target = byId.get(targetId);
     if (!target) continue;
-    const wrote = updateSpecFile(cfg.backlogRoot, target.indexPath, (fm) => {
-      const list = listValue(fm.depends_on);
-      if (list == null) {
-        throw new Error(`${target.storyRelPath}: depends_on is not a list; cannot add ${newIds.join(', ')}`);
-      }
-      const add = newIds.filter((id) => !parseIdList(list).includes(id));
-      if (add.length === 0) return false;
-      fm.depends_on = [...list, ...add];
-      info(`${targetId} now depends on ${add.join(', ')}: ${target.storyRelPath}`);
-    });
+    let wrote;
+    try {
+      wrote = updateSpecFile(cfg.backlogRoot, target.indexPath, (fm) => {
+        const list = listValue(fm.depends_on);
+        if (list == null) {
+          throw new Error(`${target.storyRelPath}: depends_on is not a list; cannot add ${newIds.join(', ')}`);
+        }
+        const add = newIds.filter((id) => !parseIdList(list).includes(id));
+        if (add.length === 0) return false;
+        fm.depends_on = [...list, ...add];
+        info(`${targetId} now depends on ${add.join(', ')}: ${target.storyRelPath}`);
+      });
+    } catch (e) {
+      // The new stories and the edges written so far stay, uncommitted: say
+      // what is in place and what is not, so the rest can be finished by hand.
+      const done = written.length > 0 ? ` Already written: ${written.join(', ')}.` : '';
+      throw new Error(
+        `could not add ${newIds.join(', ')} to ${targetId}'s depends_on (${e.message}); nothing is committed.${done} Add the edge by hand, then run bl sync.`,
+        { cause: e },
+      );
+    }
     if (wrote) written.push(target.storyRelPath);
   }
   return written;

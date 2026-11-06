@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
@@ -589,6 +589,27 @@ test("bl new --required-for appends the new id to the other story's depends_on a
     assert.equal(tree.status, 0, tree.stderr);
     assert.match(tree.stdout, /└── S-3 First/);
   } finally {
+    cleanup();
+  }
+});
+
+test('bl new --required-for that cannot write a later target says what is written and commits nothing', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root writes into a read-only directory');
+  const { dir, cleanup } = gitEdgeBacklog();
+  const locked = join(dir, 'stories', 'S2-also-later');
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    // A read-only directory: the atomic write's temporary file cannot be made.
+    chmodSync(locked, 0o555);
+    const r = runBl([...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1,S-2'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /could not add S-3 to S-2's depends_on \(.*\); nothing is committed\./);
+    assert.match(r.stderr, /Already written: stories\/S1-later\/index\.md\./);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+    assert.deepEqual(fmOf(dir, 'stories/S1-later/index.md').depends_on, ['S-3']);
+    assert.deepEqual(fmOf(dir, 'stories/S2-also-later/index.md').depends_on, ['S-1']);
+  } finally {
+    chmodSync(locked, 0o755);
     cleanup();
   }
 });
