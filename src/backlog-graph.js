@@ -224,12 +224,11 @@ import { listChanges, parseChange, readChange, unitChange } from './change-doc.j
 // Layout
 // ---------------------------------------------------------------------------
 
-/** The unit kinds, in the order `bl validate` reports their files. */
-const KIND_NAMES = Object.freeze(['story', 'component', 'feature', 'theme', 'epic', 'task']);
-
 /**
- * The unit roots, in `KIND_NAMES` order. `num` is the number a directory or
- * file name carries; `accept` whether a name is a unit of the kind at all.
+ * The unit kinds and their roots, in the order `bl validate` reports their
+ * files: the one list of kinds (`UnitKind` restates it for the type checker).
+ * `key` is the graph's map of the kind; `num` the number a directory or file
+ * name carries; `accept` whether a name is a unit of the kind at all.
  * Built on first use, not at load: the readers this module projects
  * (`story.js`, `feature.js`, `theme.js`, `task.js`) import it, and their
  * constants are not initialised yet while that import cycle loads.
@@ -237,14 +236,24 @@ const KIND_NAMES = Object.freeze(['story', 'component', 'feature', 'theme', 'epi
 let kindTable;
 function kinds() {
   kindTable ??= Object.freeze([
-    { kind: 'story', dir: STORIES_DIR, num: /^S(\d+)/, changes: true },
-    { kind: 'component', dir: COMPONENTS_DIR, num: /^C(\d+)/ },
-    { kind: 'feature', dir: FEATURES_DIR, num: /^F(\d+)/, changes: true },
-    { kind: 'theme', dir: THEMES_DIR, accept: (e) => THEME_ID_RE.test(e) },
-    { kind: 'epic', dir: EPICS_DIR, num: /^E(\d+)/ },
-    { kind: 'task', dir: TASKS_DIR, num: TASK_FILE_RE, files: true },
+    { kind: 'story', key: 'stories', dir: STORIES_DIR, num: /^S(\d+)/, changes: true },
+    { kind: 'component', key: 'components', dir: COMPONENTS_DIR, num: /^C(\d+)/ },
+    { kind: 'feature', key: 'features', dir: FEATURES_DIR, num: /^F(\d+)/, changes: true },
+    { kind: 'theme', key: 'themes', dir: THEMES_DIR, accept: (e) => THEME_ID_RE.test(e) },
+    { kind: 'epic', key: 'epics', dir: EPICS_DIR, num: /^E(\d+)/ },
+    { kind: 'task', key: 'tasks', dir: TASKS_DIR, num: TASK_FILE_RE, files: true },
   ]);
   return kindTable;
+}
+
+/** The kinds' names, in `kinds()` order. */
+const kindNames = () => kinds().map((k) => k.kind);
+
+/** `kind`'s entry of `kinds()`; one that is not a kind throws, naming `fn`. */
+function kindOf(fn, kind) {
+  const k = kinds().find((x) => x.kind === kind);
+  if (!k) throw new Error(`${fn}: "${kind}" is not a unit kind (${kindNames().join(', ')})`);
+  return k;
 }
 
 /** The id a unit's directory or file name gives, for a problem on an unread unit. */
@@ -376,9 +385,11 @@ function listKind(root, k, bump = () => {}) {
  * @returns {{ entry: string, dir: string, file: string }[]}
  */
 export function unitFiles(config, kind) {
-  const k = kinds().find((x) => x.kind === kind);
-  if (!k) throw new Error(`unitFiles: "${kind}" is not a unit kind (${KIND_NAMES.join(', ')})`);
-  return listKind(resolve(config.backlogRoot), k).map(({ entry, dir, path }) => ({ entry, dir, file: path }));
+  return listKind(resolve(config.backlogRoot), kindOf('unitFiles', kind)).map(({ entry, dir, path }) => ({
+    entry,
+    dir,
+    file: path,
+  }));
 }
 
 /**
@@ -783,9 +794,9 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
   const listed = [];
   const problem = (p) => problems.push({ field: null, ref: null, line: 0, ...p });
   /** @type {Record<string, any[]>} */
-  const lists = Object.fromEntries(KIND_NAMES.map((k) => [k, []]));
+  const lists = Object.fromEntries(kindNames().map((k) => [k, []]));
   /** @type {Record<string, Map<string, any>>} */
-  const maps = Object.fromEntries(KIND_NAMES.map((k) => [k, new Map()]));
+  const maps = Object.fromEntries(kindNames().map((k) => [k, new Map()]));
   const nums = new Map(listing.nums);
 
   for (const slot of listing.slots) {
@@ -851,17 +862,13 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
   }
   for (const p of problems) Object.freeze(p);
 
-  const frozen = Object.fromEntries(KIND_NAMES.map((k) => [k, new FrozenMap(maps[k])]));
+  const frozen = Object.fromEntries(kindNames().map((k) => [k, new FrozenMap(maps[k])]));
   /** @type {BacklogGraph} */
   const graph = {
     root,
     flow,
-    stories: frozen.story,
-    features: frozen.feature,
-    components: frozen.component,
-    epics: frozen.epic,
-    themes: frozen.theme,
-    tasks: frozen.task,
+    // Each kind's map under its `key` (`stories`, `features`, …).
+    ...Object.fromEntries(kinds().map((k) => [k.key, frozen[k.kind]])),
     get(raw) {
       const s = String(raw ?? '').trim();
       const story = normalizeId(s);
@@ -877,12 +884,11 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
       return frozen.theme.get(s) ?? null;
     },
     maxNum(kind) {
-      if (!KIND_NAMES.includes(kind))
-        throw new Error(`maxNum: "${kind}" is not a unit kind (${KIND_NAMES.join(', ')})`);
+      kindOf('maxNum', kind);
       return nums.get(kind) ?? null;
     },
     list(kind) {
-      if (!KIND_NAMES.includes(kind)) throw new Error(`list: "${kind}" is not a unit kind (${KIND_NAMES.join(', ')})`);
+      kindOf('list', kind);
       return lists[kind];
     },
     files: Object.freeze(listed),

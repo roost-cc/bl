@@ -240,6 +240,42 @@ test("list(kind) keeps every readable unit, a duplicate id's later copies includ
   assert.throws(() => g.list('nope'), /not a unit kind/);
 });
 
+test('one list of kinds: list(), maxNum() and unitFiles() take the same kinds, each with its map', () => {
+  const { config } = fixture();
+  const g = loadBacklog(config);
+  const named = (fn) => {
+    try {
+      fn();
+    } catch (e) {
+      return e.message.match(/is not a unit kind \((.*)\)$/)[1].split(', ');
+    }
+    assert.fail('a kind that is none must throw');
+  };
+  const kinds = named(() => g.list('nope'));
+  assert.deepEqual(kinds, ['story', 'component', 'feature', 'theme', 'epic', 'task']);
+  assert.deepEqual(
+    named(() => g.maxNum('nope')),
+    kinds,
+  );
+  assert.deepEqual(
+    named(() => unitFiles(config, 'nope')),
+    kinds,
+  );
+  // Every map the graph has holds exactly one kind's units, and every kind has one.
+  const maps = Object.values(g).filter((v) => v instanceof Map);
+  assert.equal(maps.length, kinds.length);
+  for (const kind of kinds) {
+    g.maxNum(kind);
+    unitFiles(config, kind);
+    const units = g.list(kind);
+    assert.equal(
+      maps.filter((m) => [...m.values()].some((u) => u.kind === kind)).length,
+      units.length > 0 ? 1 : 0,
+      kind,
+    );
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Problems
 // ---------------------------------------------------------------------------
