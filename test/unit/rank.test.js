@@ -188,6 +188,34 @@ test('rank_insert_into_empty_list_preserves_inline_comment_and_body', () => {
   }
 });
 
+test('rank_rejects_invalid_existing_ranked_entries', () => {
+  const good = '  - unit: F-1\n    why: One\n';
+  const invalid = {
+    'missing why': '  - unit: F-2\n',
+    'empty why': '  - unit: F-2\n    why: ""\n',
+    'null why': '  - unit: F-2\n    why:\n',
+    'mapping why': '  - unit: F-2\n    why:\n      a: b\n',
+    'list why': '  - unit: F-2\n    why:\n      - a\n',
+    'missing unit': '  - why: Two\n',
+    'empty unit': '  - unit: ""\n    why: Two\n',
+    'mapping unit': '  - unit:\n      a: b\n    why: Two\n',
+    'list unit': '  - unit: [F-2]\n    why: Two\n',
+  };
+  const ops = {
+    insert: { id: 'S-3', where: 'top', why: 'Three' },
+    move: { id: 'F-1', where: 'bottom' },
+    why: { id: 'F-1', why: 'New' },
+    remove: { id: 'F-1', remove: true },
+  };
+  for (const [name, bad] of Object.entries(invalid)) {
+    const content = `---\nranked:\n${good}${bad}---\n`;
+    assert.throws(() => rankedIds(content), RankFileError, `rankedIds: ${name}`);
+    for (const [kind, op] of Object.entries(ops)) {
+      assert.throws(() => applyRank(content, op), /"ranked:" entry 2 has no "(unit|why)"/, `${kind}: ${name}`);
+    }
+  }
+});
+
 test('rankedIds reads the ids as written, canonical; a file bl rank cannot edit is a RankFileError', () => {
   assert.deepEqual(rankedIds(HAND), ['S-1', 'F-2', 'F-3']);
   assert.deepEqual(rankedIds('---\nranked:\n  - unit: f3\n    why: x\n---\n'), ['F-3']);

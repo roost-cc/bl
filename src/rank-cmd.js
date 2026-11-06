@@ -35,7 +35,7 @@ import { loadBacklog } from './backlog-graph.js';
 import { normalizeFeatureId } from './feature.js';
 import { normalizeTaskId } from './task.js';
 import { HEADLESS_ENV, isHeadless } from './agents/provider.js';
-import { PRIORITY_FILE, isLooseStory } from './priority.js';
+import { PRIORITY_FILE, PriorityError, isLooseStory, parseRanked } from './priority.js';
 
 const HELP = `Usage: bl rank
        bl rank <unit> (--top | --bottom | --before <unit> | --after <unit>) [--why <text>]
@@ -100,6 +100,15 @@ function scan(content) {
   if (value != null && !isSeq(value) && !(isScalar(value) && String(value.value ?? '') === '')) {
     throw new RankFileError(`${PRIORITY_FILE}: "ranked:" is not a list; run bl validate`);
   }
+  // Every entry must be one the priority reader takes: a mapping with a
+  // non-empty scalar `unit` and `why` (`parseRanked`), so an edit never
+  // reports success on a list bl validate rejects.
+  try {
+    parseRanked(doc.toJS()?.ranked);
+  } catch (err) {
+    if (err instanceof PriorityError) throw new RankFileError(err.message);
+    throw err;
+  }
   const seq = isSeq(value) ? value : null;
   if (seq?.flow && seq.items.length > 0) {
     throw new RankFileError(
@@ -161,17 +170,13 @@ export function setWhy(content, id, why) {
   const s = scan(content);
   const e = s.entries.find((x) => x.id === id);
   if (!e) throw new RankFileError(`${id} is not ranked`);
-  if (e.why && isScalar(e.why.value) && e.why.value.range) {
-    const [from, to] = e.why.value.range;
-    // A block scalar (`why: >- # note`) ends with its last line's newline,
-    // and its header may hold a comment; keep both.
-    const nl = s.block[to - 1] === '\n' ? '\n' : '';
-    const note = nl ? (/[ \t]+#.*$/.exec(s.block.slice(from, s.block.indexOf('\n', from)))?.[0] ?? '') : '';
-    return splice(content, s, from, to, scalarText(why) + note + nl);
-  }
-  // An entry with no `why:` (bl validate reports it) gets one as its last line.
-  const { key } = indentOf(s);
-  return splice(content, s, e.end, e.end, `${key}why: ${scalarText(why)}\n`);
+  // `scan` took only entries whose `why` is a non-empty scalar.
+  const [from, to] = e.why.value.range;
+  // A block scalar (`why: >- # note`) ends with its last line's newline,
+  // and its header may hold a comment; keep both.
+  const nl = s.block[to - 1] === '\n' ? '\n' : '';
+  const note = nl ? (/[ \t]+#.*$/.exec(s.block.slice(from, s.block.indexOf('\n', from)))?.[0] ?? '') : '';
+  return splice(content, s, from, to, scalarText(why) + note + nl);
 }
 
 /** `content` without entry `id`; the last entry leaves `ranked: []`. */
