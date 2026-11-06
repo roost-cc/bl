@@ -13,7 +13,8 @@
  * lazy: `body()` slices the text already read, `section(name)` extracts one
  * `## ` section of it, each once and cached; `change()` reads the current
  * change document (`unitChange`) on first call and again only when a stat
- * of the unit's change documents says one changed. Links are objects, built in a second
+ * of the unit's change documents says one changed, reusing the text of any a
+ * tolerant load parsed at its current stat key. Links are objects, built in a second
  * pass, and every inverse is computed, never read from a stored key: a
  * feature's `stories`, `points` and `components`, an epic's `features` and
  * `status`, and a story's `requiredFor` (F-77 D3).
@@ -68,7 +69,7 @@ import { FEATURES_DIR, extractSection, normalizeFeatureId, orderStoriesByDeps } 
 import { parseIdList } from './story.js';
 import { THEME_ID_RE, normalizeEpicId } from './theme.js';
 import { TASKS_DIR, TASK_FILE_RE, normalizeTaskId } from './task.js';
-import { listChanges, unitChange } from './change-doc.js';
+import { listChanges, parseChange, readChange, unitChange } from './change-doc.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -292,6 +293,7 @@ const memos = new Map();
  * @typedef {object} FileRecord
  * @property {string} key        the stat key it was read at
  * @property {string} text       the file, LF line ends
+ * @property {"\n" | "\r\n"} eol  the line end it was written with
  * @property {Readonly<Record<string, any>> | null} fm  null when unreadable
  * @property {number} bodyStart  where the body starts in `text`
  * @property {Array<Omit<Problem, "unit"|"file">>} faults  its frontmatter problems
@@ -440,11 +442,32 @@ function isRacy(key, readAt) {
   return readAt - BigInt(key.slice(0, key.indexOf(':'))) < RACY_NS;
 }
 
-/** A file's text, LF line ends, and whether its stat key can be trusted after this read. */
+/** A file's text, LF line ends, the line end it was written with, and whether its stat key can be trusted after this read. */
 function readText(path, key) {
   const readAt = nowNs();
-  const text = readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
-  return { text, racy: isRacy(key, readAt) };
+  const raw = readFileSync(path, 'utf8');
+  return { text: raw.replace(/\r\n/g, '\n'), eol: raw.includes('\r\n') ? '\r\n' : '\n', racy: isRacy(key, readAt) };
+}
+
+/**
+ * The change document at `path` (`readChange`), parsed from the text a
+ * tolerant load of `backlogRoot` already read when that text is still the
+ * file's (its stat key unchanged, not racy), else read now. A fresh object
+ * on every call, since its readers may change it. `change()` and
+ * `validateChanges` read through it, so `bl validate` reads each change
+ * document once.
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @returns {ReturnType<typeof readChange>}
+ */
+export function changeDoc(backlogRoot, path) {
+  const rec = memos.get(resolve(backlogRoot))?.files.get(path);
+  if (!rec || rec.racy || rec.key !== statKey(path)) return readChange(path);
+  try {
+    return { ...parseChange(rec.text), eol: rec.eol };
+  } catch (e) {
+    throw e instanceof FrontmatterError ? e.withFile(path) : e;
+  }
 }
 
 /**
@@ -480,8 +503,9 @@ function settleRacy(files) {
  */
 function parseFile(path, key, { changeDoc = false } = {}) {
   loadStats.parses++;
-  const { text, racy } = readText(path, key);
+  const { text, eol, racy } = readText(path, key);
   const rec = parseText(path, key, text, changeDoc);
+  rec.eol = eol;
   rec.racy = racy;
   return rec;
 }
@@ -703,7 +727,7 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
         .join('\n');
       if (change === undefined || sig !== changeSig) {
         loadStats.changes++;
-        change = unitChange(slot.dir, kind === 'story' ? unit.repo : '');
+        change = unitChange(slot.dir, kind === 'story' ? unit.repo : '', (path) => changeDoc(root, path));
         changeSig = sig;
       }
       return change;

@@ -94,6 +94,53 @@ for (const args of [['list', '--all'], ['validate']]) {
   });
 }
 
+/** `bl <args>` under the counter: how often the main process read each of `files` (backlog-relative). */
+function fileReads(dir, args, files) {
+  const log = join(mkTempDir('bl-reads-'), 'reads.jsonl');
+  const r = runBl(args, { cwd: dir, env: { NODE_OPTIONS: `--import=${COUNTER}`, BL_COUNT_READS: log } });
+  assert.ok(r.status === 0 || r.status === 1, `bl ${args.join(' ')}: ${r.status}\n${r.stderr}`);
+  const roots = [dir, realpathSync(dir)];
+  const { reads } = JSON.parse(readFileSync(log, 'utf8').trim().split('\n')[0]);
+  const counts = Object.fromEntries(files.map((f) => [f, 0]));
+  for (const path of reads) {
+    const root = roots.find((p) => path.startsWith(`${p}/`));
+    const rel = root ? relative(root, path) : null;
+    if (rel in counts) counts[rel]++;
+  }
+  return counts;
+}
+
+// validate-reads-change-documents-once: the tolerant graph parses every change
+// document, and `bl validate`'s change checks and feature records reuse that
+// text: a story's and a feature's, a second numbered one, and one that is not
+// YAML (its unit unread) are each read once.
+test('validate-reads-change-documents-once: bl validate reads each change document once', () => {
+  const dir = fixture();
+  const featureDir = readdirSync(join(dir, 'features')).find((e) => e.startsWith('F1'));
+  const change = (of, extra = '') =>
+    `---\nchange_of: ${of}\nstatus: open\nreview_round: 0\nreview_status: ''\nrepos:\n  - repo: bl\n    branch: b\n${extra}---\n\n# ${of}\n`;
+  const docs = {
+    'stories/S1/change.md': change('S-1', '').replace('status: open', 'status: merged'),
+    'stories/S1/change-2.md': change('S-1'),
+    'stories/S2/change.md': change('S-2'),
+    [`features/${featureDir}/change.md`]: change('F-1'),
+    'stories/S3/change.md': '---\nchange_of: S-3\nrepos: bl\n---\n',
+  };
+  const old = new Date(Date.now() - 3600_000);
+  for (const [rel, text] of Object.entries(docs)) {
+    writeFileSync(join(dir, rel), text);
+    utimesSync(join(dir, rel), old, old);
+  }
+  const files = Object.keys(docs);
+  assert.deepEqual(fileReads(dir, ['validate'], files), Object.fromEntries(files.map((f) => [f, 1])));
+  // A strict load parses no change document; a feature's record reads its current one, once.
+  const listed = fileReads(dir, ['list', '--all'], files);
+  assert.ok(
+    Object.values(listed).every((n) => n <= 1),
+    JSON.stringify(listed),
+  );
+});
+
 test('a unit file changed between two loads in one process is read again, and only it', async () => {
   const dir = fixture();
   const { loadBacklog } = await import('../../src/backlog-graph.js');

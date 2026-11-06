@@ -5,7 +5,7 @@
 import { existsSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
 import { loadConfig, configForRepo, parseArgs, normalizeComponentId, FORGE_OPS, BODY_READING_OP } from './config.js';
-import { DERIVED_KEYS, loadBacklog } from './backlog-graph.js';
+import { DERIVED_KEYS, changeDoc, loadBacklog } from './backlog-graph.js';
 import { readAllStories, readComponents, parseIdList, pathEntryProblem } from './story.js';
 import { readAllFeatures, extractSection, sectionHasContent } from './feature.js';
 import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID_RE } from './theme.js';
@@ -14,7 +14,7 @@ import { findRoadmapFindings } from './roadmap.js';
 import { extractReviewLog, parseLatestSession } from './review-log.js';
 import { probePluginBinaries } from './plugin-binaries.js';
 import { scanDeferred } from './deferred.js';
-import { CHANGE_STATUSES, RUN_STATE_KEYS, listChanges, readChange, unitIdOfDir } from './change-doc.js';
+import { CHANGE_STATUSES, RUN_STATE_KEYS, listChanges, unitIdOfDir } from './change-doc.js';
 import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
@@ -504,7 +504,8 @@ export function validateChanges(backlogRoot, unitDir) {
   const unitId = unitIdOfDir(unitDir);
   for (const { path } of listChanges(unitDir)) {
     const location = relative(backlogRoot, path);
-    const doc = readChange(path);
+    // The text the tolerant graph read, unless the file changed since (`changeDoc`).
+    const doc = changeDoc(backlogRoot, path);
     const fm = doc.fm;
     if (fm.change_of !== unitId) {
       findings.push({
