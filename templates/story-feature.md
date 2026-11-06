@@ -9,7 +9,6 @@ added:
 feature:
 found_by:
 depends_on:
-required_for:
 ---
 
 # {{storyId}} · {{title}}

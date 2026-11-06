@@ -23,6 +23,7 @@ import { join, dirname, relative, isAbsolute, resolve } from 'path';
 import * as readline from 'readline';
 import {
   loadConfig,
+  listValue,
   parseFrontmatter,
   parseFrontmatterOf,
   slugify,
@@ -47,6 +48,7 @@ import {
   findComponentDir,
   homeComponent,
   normalizeId,
+  parseIdList,
   readAllStories,
   readComponents,
   pathEntryProblem,
@@ -776,7 +778,7 @@ async function newEpic(args, jsonMode) {
  * it, F-48 D2), and a dependency list only when it is non-empty (the
  * template's empty key stays otherwise).
  */
-function storyValues(vars, { feature = null, dependsOn = [], requiredFor = [] } = {}) {
+function storyValues(vars, { feature = null, dependsOn = [] } = {}) {
   return {
     component: vars.componentId,
     story_id: vars.storyId,
@@ -787,8 +789,40 @@ function storyValues(vars, { feature = null, dependsOn = [], requiredFor = [] } 
     feature: feature?.id,
     found_by: undefined,
     ...(dependsOn.length > 0 ? { depends_on: dependsOn } : {}),
-    ...(requiredFor.length > 0 ? { required_for: requiredFor } : {}),
   };
+}
+
+/**
+ * Write `--required-for` and a spec's `required_for` where the edge lives,
+ * on the dependent story (F-77 D3): each existing story in `dependents`
+ * (target id → the new ids it waits for) gets those ids appended to its
+ * `depends_on:`, through `updateSpecFile` under its spec lock (the caller
+ * holds the backlog lock). An id already listed is not added twice. Returns
+ * the backlog-relative paths of the files it wrote, for the commit.
+ * @param {any} cfg
+ * @param {Map<string, string[]>} dependents
+ * @returns {string[]}
+ */
+function appendDependsOn(cfg, dependents) {
+  if (dependents.size === 0) return [];
+  const byId = new Map(readAllStories(cfg).map((s) => [s.id, s]));
+  const written = [];
+  for (const [targetId, newIds] of dependents) {
+    const target = byId.get(targetId);
+    if (!target) continue;
+    const wrote = updateSpecFile(cfg.backlogRoot, target.indexPath, (fm) => {
+      const list = listValue(fm.depends_on);
+      if (list == null) {
+        throw new Error(`${target.storyRelPath}: depends_on is not a list; cannot add ${newIds.join(', ')}`);
+      }
+      const add = newIds.filter((id) => !parseIdList(list).includes(id));
+      if (add.length === 0) return false;
+      fm.depends_on = [...list, ...add];
+      info(`${targetId} now depends on ${add.join(', ')}: ${target.storyRelPath}`);
+    });
+    if (wrote) written.push(target.storyRelPath);
+  }
+  return written;
 }
 
 /**
@@ -907,8 +941,10 @@ Options:
                        No other flags required.
   --depends-on <ids>   Comma-separated story IDs this story depends on
                        (e.g. S-379,S-380). Repeatable. Unknown IDs warn.
-  --required-for <ids> Comma-separated story IDs this story unblocks.
-                       Repeatable. Unknown IDs warn.
+  --required-for <ids> Comma-separated story IDs this story unblocks: the
+                       new id is appended to each one's depends_on (an
+                       edge is stated once, on the dependent story).
+                       Repeatable. Unknown IDs warn and are skipped.
   --json               Emit a JSON object describing the created story to
                        stdout (schema bl-new-json/v3). All other output
                        (sync chatter, plugin output) goes to stderr by
@@ -1242,6 +1278,9 @@ Example:
     today,
   };
 
+  // `--required-for X`: X depends on the new story, an edge stated on X
+  // (F-77 D3); an unknown X is warned about and skipped.
+  const dependents = new Map();
   if (dependsOn.length > 0 || requiredFor.length > 0) {
     const existingIds = new Set(
       readAllStories(cfg)
@@ -1256,7 +1295,7 @@ Example:
     for (const id of requiredFor) {
       if (!existingIds.has(id)) {
         console.error(`warning: required_for ${id} does not match any existing story`);
-      }
+      } else dependents.set(id, [storyId]);
     }
   }
 
@@ -1266,7 +1305,7 @@ Example:
     cfg.backlogRoot,
     storyIndex,
     renderTemplate(feature ? 'story-feature' : 'story', {
-      values: storyValues(storyVars, { feature, dependsOn, requiredFor }),
+      values: storyValues(storyVars, { feature, dependsOn }),
       vars: storyVars,
       body: customBody,
       after: ['feature', plugins],
@@ -1274,6 +1313,7 @@ Example:
   );
 
   info(`Created story: ${relative(cfg.backlogRoot, storyIndex)}`);
+  const dependentPaths = appendDependsOn(cfg, dependents);
 
   if (args['no-sync']) {
     info("Skipped sync. Run 'bl sync' to update indexes.");
@@ -1284,7 +1324,7 @@ Example:
       res = await syncAndCommit(cfg, {
         message: `chore: add ${storyId}`,
         storyIds: [storyId],
-        extraPaths: feature ? [relative(cfg.backlogRoot, feature.indexPath)] : [],
+        extraPaths: [...(feature ? [relative(cfg.backlogRoot, feature.indexPath)] : []), ...dependentPaths],
       });
     } catch (err) {
       console.error(
@@ -1460,6 +1500,22 @@ async function runBatchMode(args, jsonMode) {
     }
   };
 
+  // --- A spec's `required_for` is input only (F-77 D3): each named story
+  // depends on this one, an edge written on it. A sibling's goes into its
+  // rendered `depends_on`; an existing story's is appended to its file once
+  // the batch is in place; an unknown bare id is warned about and skipped.
+  const resolveRef = (r) => (r.startsWith('@') ? placeholderToId.get(r.slice(1)) : r);
+  const siblingDeps = new Map(); // new id → ids it depends on via required_for
+  const dependents = new Map(); // existing id → new ids it depends on
+  for (const item of storyPlan) {
+    for (const ref of item.spec.required_for ?? []) {
+      const target = resolveRef(ref);
+      const into = ref.startsWith('@') ? siblingDeps : existingIds.has(ref) ? dependents : null;
+      if (!into) warnIfMissing(ref, 'required_for');
+      else into.set(target, [...(into.get(target) ?? []), item.id]);
+    }
+  }
+
   // --- Build per-story rendered content ---
   const today = new Date().toISOString().slice(0, 10);
   const storiesDir = join(cfg.backlogRoot, STORIES_DIR);
@@ -1472,13 +1528,9 @@ async function runBatchMode(args, jsonMode) {
     // Per-story component override (validated by validateSpec against disk).
     const storyComponent = storyComponents?.[i] ?? component;
     const inSpecComponent = !storyComponents?.[i];
-    const dependsOn = (s.depends_on ?? []).map((r) => (r.startsWith('@') ? placeholderToId.get(r.slice(1)) : r));
-    const requiredFor = (s.required_for ?? []).map((r) => (r.startsWith('@') ? placeholderToId.get(r.slice(1)) : r));
+    const dependsOn = [...new Set([...(s.depends_on ?? []).map(resolveRef), ...(siblingDeps.get(item.id) ?? [])])];
     for (const ref of s.depends_on ?? []) {
       if (!ref.startsWith('@')) warnIfMissing(ref, 'depends_on');
-    }
-    for (const ref of s.required_for ?? []) {
-      if (!ref.startsWith('@')) warnIfMissing(ref, 'required_for');
     }
 
     const storyVars = {
@@ -1502,7 +1554,7 @@ async function runBatchMode(args, jsonMode) {
       process.exit(1);
     }
     const finalContent = renderTemplate(feature ? 'story-feature' : 'story', {
-      values: storyValues(storyVars, { feature, dependsOn, requiredFor }),
+      values: storyValues(storyVars, { feature, dependsOn }),
       vars: storyVars,
       body,
     });
@@ -1697,6 +1749,8 @@ async function runBatchMode(args, jsonMode) {
 
   rmSync(tempRoot, { recursive: true, force: true });
 
+  const dependentPaths = appendDependsOn(cfg, dependents);
+
   // --- Sync ---
   if (args['no-sync']) {
     info("Skipped sync. Run 'bl sync' to update indexes.");
@@ -1711,6 +1765,7 @@ async function runBatchMode(args, jsonMode) {
         extraPaths: [
           ...(creatingNewComponent ? [componentRelDir] : []),
           ...(feature ? [relative(cfg.backlogRoot, feature.indexPath)] : []),
+          ...dependentPaths,
         ],
       });
     } catch (err) {

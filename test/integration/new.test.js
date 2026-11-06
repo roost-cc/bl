@@ -544,6 +544,97 @@ test('bl new --no-sync makes no commit', () => {
   }
 });
 
+// F-77 D3: an edge is stated once, on the dependent story. `--required-for`
+// and a spec's `required_for` are input: the named story's depends_on gains
+// the new id, and no `required_for:` is written anywhere.
+
+/** A git-backed backlog: C01 with S-1 (depends on nothing) and S-2 (depends on S-1). */
+function gitEdgeBacklog() {
+  const t = componentBacklog({
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'Later', dirSuffix: 'later' },
+      { id: 'S-2', component: 'C01', title: 'Also later', dirSuffix: 'also-later', depends_on: 'S-1' },
+    ],
+  });
+  initGitBacklog(t.dir);
+  return t;
+}
+
+test("bl new --required-for appends the new id to the other story's depends_on and commits it", () => {
+  const { dir, cleanup } = gitEdgeBacklog();
+  try {
+    const r = runBl([...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1,S-2,S-404'], {
+      cwd: dir,
+      env: GIT_ENV,
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), 'stories/S3-first/index.md');
+    assert.match(r.stderr, /^warning: required_for S-404 does not match any existing story$/m);
+    const created = fmOf(dir, 'stories/S3-first/index.md');
+    assert.equal(Object.hasOwn(created, 'required_for'), false, 'no required_for: on the new story');
+    assert.equal(created.depends_on, '');
+    assert.deepEqual(fmOf(dir, 'stories/S1-later/index.md').depends_on, ['S-3']);
+    assert.deepEqual(fmOf(dir, 'stories/S2-also-later/index.md').depends_on, ['S-1', 'S-3']);
+    for (const p of ['stories/S1-later/index.md', 'stories/S2-also-later/index.md']) {
+      assert.equal(Object.hasOwn(fmOf(dir, p), 'required_for'), false, p);
+    }
+
+    const files = headFiles(dir);
+    assert.ok(files.includes('A\tstories/S3-first/index.md'), files.join('\n'));
+    assert.ok(files.includes('M\tstories/S1-later/index.md'), files.join('\n'));
+    assert.ok(files.includes('M\tstories/S2-also-later/index.md'), files.join('\n'));
+    assert.deepEqual(statusLines(dir), []);
+
+    const tree = runBl(['tree', 'S-3'], { cwd: dir });
+    assert.equal(tree.status, 0, tree.stderr);
+    assert.match(tree.stdout, /└── S-3 First/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("a spec's required_for writes each edge as the other story's depends_on: a sibling's and an existing one's", () => {
+  const { dir, cleanup } = gitEdgeBacklog();
+  try {
+    mkdirSync(join(dir, 'plan'), { recursive: true });
+    writeFileSync(join(dir, 'plan', 'a.md'), '## Summary\n\nA.\n');
+    const specPath = join(dir, 'plan', 'spec.json');
+    writeFileSync(
+      specPath,
+      JSON.stringify({
+        component: 'C01',
+        stories: [
+          { id: 'base', title: 'Base', points: 1, body_file: 'a.md', required_for: ['@top', 'S-1', 'S-404'] },
+          { id: 'top', title: 'Top', points: 2, body_file: 'a.md', depends_on: ['S-2'] },
+        ],
+      }),
+    );
+    const r = runBl(['new', '--from', specPath], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^warning: required_for S-404 does not match any existing story$/m);
+    assert.doesNotMatch(r.stderr, /warning: required_for S-(1|4)\b/);
+
+    const base = fmOf(dir, 'stories/S3-base/index.md');
+    const top = fmOf(dir, 'stories/S4-top/index.md');
+    assert.equal(Object.hasOwn(base, 'required_for'), false);
+    assert.equal(Object.hasOwn(top, 'required_for'), false);
+    assert.equal(base.depends_on, '');
+    assert.deepEqual(top.depends_on, ['S-2', 'S-3']);
+    assert.deepEqual(fmOf(dir, 'stories/S1-later/index.md').depends_on, ['S-3']);
+
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: add S-3, S-4');
+    const files = headFiles(dir);
+    assert.ok(files.includes('M\tstories/S1-later/index.md'), files.join('\n'));
+    assert.ok(!files.some((f) => f.includes('S2-also-later')), files.join('\n'));
+    assert.deepEqual(
+      statusLines(dir).filter((l) => !l.includes('plan/')),
+      [],
+    );
+  } finally {
+    cleanup();
+  }
+});
+
 /** Write a two-story spec into C01 and return its path. */
 function writeSpec(dir) {
   mkdirSync(join(dir, 'plan'), { recursive: true });
