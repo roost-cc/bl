@@ -129,6 +129,65 @@ test('applyRank removes an entry; the last one leaves ranked: []', () => {
   assert.equal(applyRank(one, { id: 'F-1', remove: true }), '---\nranked: []\n---\n\nBody.\n');
 });
 
+test('rank_insert_into_empty_list_preserves_inline_comment_and_body', () => {
+  const fm = (block) => `---\n${block}---\n\nBody.\n`;
+  const entry = '  - unit: F-1\n    why: One\n';
+  for (const [name, before, op, after] of [
+    [
+      'insert, flow list + comment',
+      'ranked: [] # operator note\n',
+      { where: 'top', why: 'One' },
+      `ranked: # operator note\n${entry}`,
+    ],
+    [
+      'insert, bare + comment',
+      'ranked: # operator note\n',
+      { where: 'top', why: 'One' },
+      `ranked: # operator note\n${entry}`,
+    ],
+    [
+      'insert, bare + comment line after',
+      'ranked:\n# later note\nother: x\n',
+      { where: 'bottom', why: 'One' },
+      `ranked:\n${entry}# later note\nother: x\n`,
+    ],
+    [
+      'remove last, comment on ranked:',
+      `ranked: # operator note\n${entry}`,
+      { remove: true },
+      'ranked: [] # operator note\n',
+    ],
+    [
+      'remove last, comment line after',
+      `ranked:\n${entry}  # trailing note\nother: x\n`,
+      { remove: true },
+      'ranked: []\n  # trailing note\nother: x\n',
+    ],
+    [
+      'remove last, comment line before',
+      `ranked:\n  # head note\n${entry}`,
+      { remove: true },
+      'ranked: []\n  # head note\n',
+    ],
+    [
+      'why, inline comment',
+      'ranked:\n  - unit: F-1\n    why: One # note\n',
+      { why: 'Two' },
+      'ranked:\n  - unit: F-1\n    why: Two # note\n',
+    ],
+    [
+      'why, block header comment',
+      'ranked:\n  - unit: F-1\n    why: >- # note\n      long\n      text\n# after\n',
+      { why: 'Two' },
+      'ranked:\n  - unit: F-1\n    why: Two # note\n# after\n',
+    ],
+  ]) {
+    const out = applyRank(fm(before), { id: 'F-1', ...op });
+    assert.equal(out, fm(after), name);
+    assert.deepEqual(rankedIds(out), op.remove ? [] : ['F-1'], `${name}: still YAML bl rank reads`);
+  }
+});
+
 test('rankedIds reads the ids as written, canonical; a file bl rank cannot edit is a RankFileError', () => {
   assert.deepEqual(rankedIds(HAND), ['S-1', 'F-2', 'F-3']);
   assert.deepEqual(rankedIds('---\nranked:\n  - unit: f3\n    why: x\n---\n'), ['F-3']);

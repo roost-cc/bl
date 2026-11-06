@@ -163,9 +163,11 @@ export function setWhy(content, id, why) {
   if (!e) throw new RankFileError(`${id} is not ranked`);
   if (e.why && isScalar(e.why.value) && e.why.value.range) {
     const [from, to] = e.why.value.range;
-    // A block scalar (`why: >-`) ends with its last line's newline; keep it.
+    // A block scalar (`why: >- # note`) ends with its last line's newline,
+    // and its header may hold a comment; keep both.
     const nl = s.block[to - 1] === '\n' ? '\n' : '';
-    return splice(content, s, from, to, scalarText(why) + nl);
+    const note = nl ? (/[ \t]+#.*$/.exec(s.block.slice(from, s.block.indexOf('\n', from)))?.[0] ?? '') : '';
+    return splice(content, s, from, to, scalarText(why) + note + nl);
   }
   // An entry with no `why:` (bl validate reports it) gets one as its last line.
   const { key } = indentOf(s);
@@ -177,8 +179,11 @@ export function removeEntry(content, id) {
   const s = scan(content);
   const e = s.entries.find((x) => x.id === id);
   if (!e) throw new RankFileError(`${id} is not ranked`);
-  if (s.entries.length === 1) return splice(content, s, afterColon(s), s.lineEnd(s.seq.range[1]), ' []\n');
-  return splice(content, s, e.start, e.end, '');
+  const cut = splice(content, s, e.start, e.end, '');
+  if (s.entries.length > 1) return cut;
+  // The last one: `ranked: []`, keeping any comment on the `ranked:` line.
+  const at = s.base + afterColon(s);
+  return `${cut.slice(0, at)} []${cut.slice(at)}`;
 }
 
 /**
@@ -189,8 +194,12 @@ export function insertEntry(content, text, where) {
   const s = scan(content);
   if (s.entries.length === 0) {
     if (!s.pair) return splice(content, s, s.block.length, s.block.length, `ranked:\n${text}`);
+    // Drop an empty flow list's `[]` and nothing else: a comment after it
+    // stays on the `ranked:` line, and the entry goes on the next one.
     const colon = afterColon(s);
-    return splice(content, s, colon, s.lineEnd(colon), `\n${text}`);
+    const end = s.seq ? s.seq.range[1] : colon;
+    const eol = s.lineEnd(end);
+    return splice(content, s, colon, eol, `${s.block.slice(end, eol)}${text}`);
   }
   let at;
   if (where === 'top') at = s.entries[0].start;
