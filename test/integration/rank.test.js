@@ -162,6 +162,62 @@ test('rank_failed_commit_retry_finishes_or_reports_pending_change', () => {
   assert.equal(git(dir, 'rev-parse', 'HEAD'), done);
 });
 
+test('rank_noop_preserves_unrelated_dirty_priority', () => {
+  // Each case: someone else's uncommitted edit to priority.md, then a bl rank
+  // that is a no-op (noop) or would change the file (change). Neither commits
+  // the edit; a change is refused with nothing written.
+  const prose = (t) => `${t}Operator prose.\n`;
+  const otherWhy = (t) => t.replace('why: "Users see it next"', 'why: Changed by operator');
+  const cases = [
+    { name: 'unstaged prose', edit: prose },
+    { name: 'staged prose', edit: prose, stage: true },
+    { name: "another entry's reason", edit: otherWhy },
+    { name: "another entry's reason, staged", edit: otherWhy, stage: true },
+  ];
+  const ops = [
+    { kind: 'noop', args: ['rank', 'S-1', '--top'] },
+    { kind: 'noop', args: ['rank', 'F-2', '--bottom'] },
+    { kind: 'change', args: ['rank', 'F-2', '--top'] },
+    { kind: 'change', args: ['rank', 'F-1', '--bottom', '--why', 'Later'] },
+  ];
+  for (const c of cases) {
+    for (const op of ops) {
+      const label = `${c.name} / ${op.args.join(' ')}`;
+      const dir = backlog();
+      const head = git(dir, 'rev-parse', 'HEAD');
+      const edited = c.edit(read(dir));
+      writeFileSync(join(dir, 'priority.md'), edited);
+      if (c.stage) git(dir, 'add', 'priority.md');
+      const status = git(dir, 'status', '--porcelain');
+      const r = bl(op.args, dir);
+      assert.equal(r.status, op.kind === 'noop' ? 0 : 1, `${label}: ${r.stderr}`);
+      if (op.kind === 'noop') assert.match(r.stderr, /other uncommitted edits, left uncommitted/, label);
+      else assert.match(r.stderr, /has uncommitted edits; commit or discard them first/, label);
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), head, `${label}: nothing committed`);
+      assert.equal(originHead(dir), head, `${label}: nothing pushed`);
+      assert.equal(read(dir), edited, `${label}: the edit is as it was`);
+      assert.equal(git(dir, 'status', '--porcelain'), status, `${label}: staged state as it was`);
+    }
+  }
+
+  // An operator edit on top of a failed rank commit's write: the retry
+  // leaves both uncommitted rather than commit the operator's edit.
+  const dir = backlog();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  mkdirSync(dirname(hook), { recursive: true });
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+  chmodSync(hook, 0o755);
+  const args = ['rank', 'F-1', '--top', '--why', 'First'];
+  assert.equal(bl(args, dir).status, 1);
+  unlinkSync(hook);
+  writeFileSync(join(dir, 'priority.md'), prose(read(dir)));
+  const r = bl(args, dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /other uncommitted edits, left uncommitted/);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+});
+
 test('bl rank refuses what is not an open unit, a new unit without --why, and a bad target, writing nothing', () => {
   const dir = backlog();
   const cases = [

@@ -357,6 +357,26 @@ function uncommitted(root) {
   return r.status !== 0 || r.stdout.trim() !== '';
 }
 
+/**
+ * Whether the uncommitted `content` of `priority.md` is exactly what `op`
+ * makes of HEAD's version: the write of an earlier run of the same command
+ * whose commit failed, and nothing else (no prose, no other entry's edit).
+ */
+function pendingIsOurs(root, content, op) {
+  const r = spawnSync('git', ['show', `HEAD:${PRIORITY_FILE}`], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (r.status !== 0) return false;
+  try {
+    return applyRank(r.stdout.replace(/\r\n/g, '\n'), op) === content;
+  } catch (err) {
+    if (err instanceof RankFileError) return false;
+    throw err;
+  }
+}
+
 /** The op's words for the commit subject and the report. */
 function opWords(op) {
   if (op.remove) return 'unranked';
@@ -465,12 +485,20 @@ export async function main(argv, env = process.env) {
       throw err;
     }
     const commit = () => commitPaths(root, [PRIORITY_FILE], `chore: ${id} ${opWords(op)} in ${PRIORITY_FILE}`);
+    // Uncommitted edits to priority.md are committed only when they are this
+    // command's own earlier write whose commit failed (a hook, git add, the
+    // sync lock); anyone else's edits are never swept into a rank commit.
+    const dirty = inRepo(root) && uncommitted(root);
+    const ours = dirty && pendingIsOurs(root, content, op);
     if (next === content) {
-      // The file already says it, but an earlier run's commit may have
-      // failed after the write (a hook, git add, the sync lock): commit what
-      // is pending rather than call it done.
-      if (!inRepo(root) || !uncommitted(root)) return { unchanged: true };
+      if (!dirty) return { unchanged: true };
+      if (!ours) return { unchanged: true, leftAlone: true };
       return { pending: true, commit: commit() };
+    }
+    if (dirty) {
+      return {
+        refused: `${PRIORITY_FILE} has uncommitted edits; commit or discard them first. Nothing was written.`,
+      };
     }
     atomicWriteFile(root, path, crlf ? next.replace(/\n/g, '\r\n') : next);
     if (!inRepo(root)) return { commit: { committed: false, paths: [PRIORITY_FILE], notRepo: true } };
@@ -478,7 +506,9 @@ export async function main(argv, env = process.env) {
   });
   if (res.refused) refuse(res.refused);
   if (res.unchanged) {
-    info(`${id} is already there; ${PRIORITY_FILE} is unchanged.`);
+    if (res.leftAlone) {
+      info(`${id} is already there; ${PRIORITY_FILE} has other uncommitted edits, left uncommitted.`);
+    } else info(`${id} is already there; ${PRIORITY_FILE} is unchanged.`);
     return;
   }
   if (res.pending) info(`${id} is already there, but ${PRIORITY_FILE} is not committed; committing it.`);

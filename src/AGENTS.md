@@ -2617,6 +2617,10 @@ bl rank S-40 --remove                 # back into the dated tail
 - An edit pulls the backlog first (`commandPullsBacklog`), writes the file under the backlog
   lock and commits `priority.md` alone (`commitPaths`, which pushes):
   `chore: <unit> ranked first|last|before <u>|after <u> | reason rewritten | unranked in priority.md`.
+- Uncommitted edits to `priority.md` are never swept into a rank commit. An edit that would
+  change the file while it differs from HEAD is refused, nothing written. A no-op commits the
+  pending file only when it is exactly this edit applied to HEAD's version (`pendingIsOurs`: an
+  earlier run's write whose commit failed); any other uncommitted edit is left uncommitted.
 
 **`BL_HEADLESS`.** Every agent bl starts headless has `BL_HEADLESS=1` in its environment: each
 adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it
