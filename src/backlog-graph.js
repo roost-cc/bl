@@ -462,8 +462,10 @@ function readText(path, key) {
 
 /**
  * The change document at `path` (`readChange`), parsed from the text a
- * tolerant load of `backlogRoot` already read when that text is still the
- * file's (its stat key unchanged, not racy), else read now. A fresh object
+ * tolerant load of `backlogRoot` already read when its stat key is unchanged,
+ * else read now. A racy record is reused too: the last `loadBacklog` read it
+ * again (`settleRacy`), so its text is the one the caller's graph shows, and
+ * a document rewritten unseen since then is no newer than that graph. A fresh object
  * on every call, since its readers may change it. `change()` and
  * `validateChanges` read through it, so `bl validate` reads each change
  * document once.
@@ -473,7 +475,7 @@ function readText(path, key) {
  */
 export function changeDoc(backlogRoot, path) {
   const rec = memos.get(resolve(backlogRoot))?.files.get(path);
-  if (!rec || rec.racy || rec.key !== statKey(path)) return readChange(path);
+  if (!rec || rec.key !== statKey(path)) return readChange(path);
   try {
     return { ...parseChange(rec.text), eol: rec.eol };
   } catch (e) {

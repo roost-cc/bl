@@ -113,33 +113,41 @@ function fileReads(dir, args, files) {
 // validate-reads-change-documents-once: the tolerant graph parses every change
 // document, and `bl validate`'s change checks and feature records reuse that
 // text: a story's and a feature's, a second numbered one, and one that is not
-// YAML (its unit unread) are each read once.
-test('validate-reads-change-documents-once: bl validate reads each change document once', () => {
-  const dir = fixture();
-  const featureDir = readdirSync(join(dir, 'features')).find((e) => e.startsWith('F1'));
-  const change = (of, extra = '') =>
-    `---\nchange_of: ${of}\nstatus: open\nreview_round: 0\nreview_status: ''\nrepos:\n  - repo: bl\n    branch: b\n${extra}---\n\n# ${of}\n`;
-  const docs = {
-    'stories/S1/change.md': change('S-1', '').replace('status: open', 'status: merged'),
-    'stories/S1/change-2.md': change('S-1'),
-    'stories/S2/change.md': change('S-2'),
-    [`features/${featureDir}/change.md`]: change('F-1'),
-    'stories/S3/change.md': '---\nchange_of: S-3\nrepos: bl\n---\n',
-  };
-  const old = new Date(Date.now() - 3600_000);
-  for (const [rel, text] of Object.entries(docs)) {
-    writeFileSync(join(dir, rel), text);
-    utimesSync(join(dir, rel), old, old);
-  }
-  const files = Object.keys(docs);
-  assert.deepEqual(fileReads(dir, ['validate'], files), Object.fromEntries(files.map((f) => [f, 1])));
-  // A strict load parses no change document; a feature's record reads its current one, once.
-  const listed = fileReads(dir, ['list', '--all'], files);
-  assert.ok(
-    Object.values(listed).every((n) => n <= 1),
-    JSON.stringify(listed),
-  );
-});
+// YAML (its unit unread) are each read once, whether written an hour ago, just
+// now or in the future (a recent mtime, which the graph marks racy:
+// validate_reads_fresh_change_documents_once).
+for (const [age, offset] of [
+  ['an hour old', -3600_000],
+  ['just written', 0],
+  ['dated in the future', 1000],
+]) {
+  test(`validate-reads-change-documents-once: bl validate reads each change document once (${age}; validate_reads_fresh_change_documents_once)`, () => {
+    const dir = fixture();
+    const featureDir = readdirSync(join(dir, 'features')).find((e) => e.startsWith('F1'));
+    const change = (of, extra = '') =>
+      `---\nchange_of: ${of}\nstatus: open\nreview_round: 0\nreview_status: ''\nrepos:\n  - repo: bl\n    branch: b\n${extra}---\n\n# ${of}\n`;
+    const docs = {
+      'stories/S1/change.md': change('S-1', '').replace('status: open', 'status: merged'),
+      'stories/S1/change-2.md': change('S-1'),
+      'stories/S2/change.md': change('S-2'),
+      [`features/${featureDir}/change.md`]: change('F-1'),
+      'stories/S3/change.md': '---\nchange_of: S-3\nrepos: bl\n---\n',
+    };
+    const when = new Date(Date.now() + offset);
+    for (const [rel, text] of Object.entries(docs)) {
+      writeFileSync(join(dir, rel), text);
+      utimesSync(join(dir, rel), when, when);
+    }
+    const files = Object.keys(docs);
+    assert.deepEqual(fileReads(dir, ['validate'], files), Object.fromEntries(files.map((f) => [f, 1])));
+    // A strict load parses no change document; a feature's record reads its current one, once.
+    const listed = fileReads(dir, ['list', '--all'], files);
+    assert.ok(
+      Object.values(listed).every((n) => n <= 1),
+      JSON.stringify(listed),
+    );
+  });
+}
 
 test('a unit file changed between two loads in one process is read again, and only it', async () => {
   const dir = fixture();
