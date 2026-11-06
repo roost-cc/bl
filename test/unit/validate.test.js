@@ -212,6 +212,66 @@ test('findDuplicateFindings: stories, components and epics, each in its words', 
   );
 });
 
+// validate-duplicate-malformed-ids: a duplicate is reported by the kind the
+// graph read it as, whether or not its id resolves through `graph.get`.
+for (const [name, files, kind, location] of [
+  [
+    'malformed story id',
+    { 'stories/S1-a/index.md': '---\nstory_id: S-bad\n---\n', 'stories/S2-b/index.md': '---\nstory_id: S-bad\n---\n' },
+    'stories',
+    'stories/S1-a/index.md',
+  ],
+  [
+    'well-formed story id',
+    { 'stories/S1-a/index.md': '---\nstory_id: S-1\n---\n', 'stories/S2-b/index.md': '---\nstory_id: S-1\n---\n' },
+    'stories',
+    'stories/S1-a/index.md',
+  ],
+  [
+    'malformed feature id',
+    {
+      'features/F1-a/index.md': '---\nfeature_id: F-bad\n---\n',
+      'features/F2-b/index.md': '---\nfeature_id: F-bad\n---\n',
+    },
+    'features',
+    'features/F2-b/index.md',
+  ],
+  [
+    'well-formed feature id',
+    {
+      'features/F1-a/index.md': '---\nfeature_id: F-1\n---\n',
+      'features/F2-b/index.md': '---\nfeature_id: F-1\n---\n',
+    },
+    'features',
+    'features/F2-b/index.md',
+  ],
+  [
+    'malformed component id (read from the directory)',
+    {
+      'components/C5-a/index.md': '---\ncomponent_id: C-bad\n---\n',
+      'components/C5-b/index.md': '---\ncomponent_id: C-bad\n---\n',
+    },
+    'components',
+    'components/C5-b/index.md',
+  ],
+  [
+    'epic id (from the directory)',
+    { 'epics/E60-a/index.md': '---\ntitle: A\n---\n', 'epics/E60-b/index.md': '---\ntitle: B\n---\n' },
+    'epics',
+    'epics/E60-b/index.md',
+  ],
+]) {
+  test(`validate-duplicate-malformed-ids: findDuplicateFindings reports a duplicate ${name}`, () => {
+    const g = graphOver(files);
+    assert.equal(g.problems.filter((p) => p.code === 'duplicate-id').length, 1);
+    const found = findDuplicateFindings(g);
+    assert.deepEqual(codes(found[kind]), [['duplicate-id', location]]);
+    for (const other of ['stories', 'features', 'components', 'epics'].filter((k) => k !== kind)) {
+      assert.deepEqual(found[other], [], other);
+    }
+  });
+}
+
 test('findDuplicateIds identifies all matches', () => {
   const stories = [
     { id: 'S-1', title: 'First', storyRelPath: 'path/1' },

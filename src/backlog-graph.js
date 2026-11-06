@@ -184,6 +184,8 @@ import { listChanges, unitChange } from './change-doc.js';
  * `epic-theme`, `task-unit`.
  * @typedef {object} Problem
  * @property {string} code
+ * @property {UnitKind | null} kind  the kind of the unit at fault (null for the root `index.md`), so a
+ *           reader need not resolve `unit` or `ref`, which a malformed id does not
  * @property {string | null} unit  the unit's id (from its directory name when its frontmatter is unread)
  * @property {string} file         backlog-relative path of the file at fault
  * @property {string | null} field the frontmatter key, when one is at fault
@@ -765,14 +767,15 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
     for (const c of slot.changes) listed.push(Object.freeze({ path: c.path, unitIndex }));
     const rec = recordOf(files, slot.path, slot.key);
     const unitId = () => (slot.kind === 'root' ? null : idOfEntry(slot.kind, slot.entry));
+    const kind = slot.kind === 'root' ? null : slot.kind;
     let readable = rec.fm != null && rec.faults.length === 0;
-    for (const f of rec.faults) problem({ ...f, unit: unitId(), file: relOf(root, slot.path) });
+    for (const f of rec.faults) problem({ ...f, kind, unit: unitId(), file: relOf(root, slot.path) });
     // A change document that cannot be read leaves its unit unread too, as
     // `findFrontmatterFindings` does; only a tolerant load parses them.
     if (tolerant) {
       for (const c of slot.changes) {
         const crec = recordOf(files, c.path, c.key, { changeDoc: true });
-        for (const f of crec.faults) problem({ ...f, unit: unitId(), file: relOf(root, c.path) });
+        for (const f of crec.faults) problem({ ...f, kind, unit: unitId(), file: relOf(root, c.path) });
         if (crec.faults.length) readable = false;
       }
     }
@@ -794,6 +797,7 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
     // The first directory claiming an id wins, as every reader does today.
     problem({
       code: slot.kind === 'task' ? 'task-field' : 'duplicate-id',
+      kind: slot.kind,
       unit: unit.id,
       file: unit.relPath,
       field: null,
@@ -869,6 +873,7 @@ function linkUnits(maps, flow, problem) {
   const dangling = (u, code, field, ref, message) =>
     problem({
       code,
+      kind: u.kind,
       unit: u.id,
       file: u.relPath,
       field,

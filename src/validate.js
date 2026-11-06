@@ -1282,9 +1282,12 @@ export function findDuplicateFindings(graph) {
   const grouped = new Set();
   for (const p of graph.problems) {
     if (p.code !== 'duplicate-id') continue;
-    const kind = graph.get(p.ref)?.kind;
+    // The problem's kind, never `graph.get(p.ref)`: a malformed id (`S-bad`)
+    // resolves to no unit, though its copies are in `list()`.
+    const { kind } = p;
+    const copies = graph.list(kind).filter((u) => u.id === p.ref);
     if (kind === 'epic' || kind === 'feature') {
-      const first = graph.get(p.ref).relPath;
+      const first = copies[0].relPath;
       out[`${kind}s`].push({
         severity: 'error',
         code: 'duplicate-id',
@@ -1295,7 +1298,6 @@ export function findDuplicateFindings(graph) {
     }
     if (grouped.has(p.ref)) continue;
     grouped.add(p.ref);
-    const copies = graph.list(kind).filter((u) => u.id === p.ref);
     if (kind === 'story') {
       out.stories.push(storyDuplicateFinding(p.ref, copies));
     } else if (kind === 'component') {
