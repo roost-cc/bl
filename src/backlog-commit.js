@@ -419,9 +419,10 @@ export function commandPullsBacklog(command, argv) {
  * Paths `bl sync` rebuilds whole, so a rebase conflict on them needs no
  * human (F-50 D4): `allowed-tools.json`, the top-level `index.md` and each
  * component's `index.md` (`components/C<nn>-<slug>/index.md`). The top-level index is in because every
- * status change rewrites its tables; the one thing in it a person keeps, the
- * order of the `## Backlog` rows, follows the side taken. A feature file
- * holds hand-written sections, so it is not here.
+ * status change rewrites its tables, and nothing in it is a person's: the
+ * order of its rows is `priority.md`'s (F-78 D2), which is not generated and
+ * not here. A feature file holds hand-written sections, so it is not here
+ * either.
  */
 export function isGeneratedPath(rel) {
   if (rel === 'allowed-tools.json' || rel === 'index.md') return true;

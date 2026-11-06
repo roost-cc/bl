@@ -110,9 +110,10 @@ Commands:
                --since <date>  Only history from YYYY-MM-DD
                --charts <name> The chart adapter (default vega-lite)
                --json          Print data.json and write nothing
-  next       Print the next feature by the feature order (feature-order.md)
-               --theme <slug>, --epic <E-id>  The first ranked feature they
-                                   match; the matching list goes to stderr
+  next       Print the next unit (feature or loose story) by priority.md,
+               hard dependencies first
+               --theme <slug>, --epic <E-id>  The first free unit they
+                                   match; the matching order goes to stderr
   what-next  Suggest the next story to start by walking the dep graph
                [story-id|component-id]  Story → reference point; component →
                                    pick next startable story inside it

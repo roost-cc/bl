@@ -19,10 +19,18 @@ const story = (id, status, extra = {}) => ({
   ...extra,
 });
 
-/** The stories, ranked `ranked` first in the `## Backlog` table. */
+/**
+ * The stories, `ranked` first in `priority.md` (F-78 D1). The root index's
+ * Backlog table lists them the other way round: no reader takes its order
+ * from there (F-78 D2).
+ */
 function fixture(stories, ranked = [], extra = {}) {
-  const { dir } = mkTempBacklog({ components: [{ id: 'C00', title: 'Work' }], stories, ...extra });
-  const rows = ranked.map((id) => `| ${id} | x |`).join('\n');
+  const priority = ranked.map((unit) => ({ unit, why: 'x' }));
+  const { dir } = mkTempBacklog({ components: [{ id: 'C00', title: 'Work' }], stories, priority, ...extra });
+  const rows = [...stories]
+    .reverse()
+    .map((s) => `| ${s.id} | x |`)
+    .join('\n');
   writeFileSync(join(dir, 'index.md'), `# Backlog\n\n## Backlog\n\n| ID | Title |\n| -- | ----- |\n${rows}\n`);
   return dir;
 }
@@ -69,14 +77,15 @@ test('bl grep ranks a prototype-key status like any other unknown status', () =>
   }
 });
 
-test('bl grep keeps ranks 9999 and later ahead of unranked stories', () => {
-  const stories = ['S-10', 'S-9', 'S-3', 'S-2', 'S-1'].map((id) => story(id, 'refined'));
-  // S-3 lands on rank 9999, S-2 on 10000, S-1 on 10001; S-9 and S-10 have none.
-  const filler = Array.from({ length: 9999 }, (_, i) => `S-${100 + i}`);
-  const dir = fixture(stories, [...filler, 'S-3', 'S-2', 'S-1']);
-  const order = ids(dir);
-  assert.deepEqual(order.slice(0, 3), ['S-3', 'S-2', 'S-1']);
-  assert.deepEqual(order.slice(3).sort(), ['S-10', 'S-9']);
+test('bl grep puts ranked stories first, then the unranked by added:, undated first', () => {
+  const stories = [
+    story('S-10', 'refined', { added: '2026-01-01' }),
+    story('S-9', 'refined', { added: '2026-01-02' }),
+    story('S-8', 'refined'),
+    ...['S-3', 'S-2', 'S-1'].map((id) => story(id, 'refined', { added: '2026-01-03' })),
+  ];
+  const dir = fixture(stories, ['S-3', 'S-2', 'S-1']);
+  assert.deepEqual(ids(dir), ['S-3', 'S-2', 'S-1', 'S-8', 'S-10', 'S-9']);
 });
 
 test('a closed status added to flow.json is filtered out and sorts last', () => {

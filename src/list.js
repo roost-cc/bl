@@ -13,30 +13,23 @@
  */
 
 import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
-import { readAllStories, readBacklogOrder, activeWorktreesByStory } from './story.js';
+import { readAllStories, activeWorktreesByStory } from './story.js';
 import { filterContext, filterFromArgs, filterStories, storyThemes } from './filter.js';
+import { loadBacklog } from './backlog-graph.js';
+import { byRank, rankedAs } from './priority.js';
 import { loadFlow } from './flow.js';
-
-/** Comparator: stack rank (unranked last), then numeric id. */
-function byRankThenId(priorityMap) {
-  return (a, b) => {
-    const pa = priorityMap.get(a.id) ?? Infinity;
-    const pb = priorityMap.get(b.id) ?? Infinity;
-    if (pa !== pb) return pa - pb;
-    return a.id.localeCompare(b.id, undefined, { numeric: true });
-  };
-}
 
 /**
  * Comparator for the bare `bl status`: strictly by status, whatever has a
- * worktree, in `openStatuses` order (`Flow.openStatusesOf`), then rank and id.
+ * worktree, in `openStatuses` order (`Flow.openStatusesOf`), then the
+ * backlog's priority and id (`byRank`, F-78 D2).
  * A status outside the list stays listed, last.
  *
- * @param {Map<string, number>} priorityMap
+ * @param {(id: string) => number} rankOf
  * @param {string[]} openStatuses
  */
-export function byOpenStatus(priorityMap, openStatuses) {
-  const tiebreak = byRankThenId(priorityMap);
+export function byOpenStatus(rankOf, openStatuses) {
+  const tiebreak = byRank(rankOf);
   const order = new Map(openStatuses.map((status, i) => [status, i]));
   return (a, b) => {
     const sa = order.get(a.status) ?? order.size;
@@ -45,9 +38,20 @@ export function byOpenStatus(priorityMap, openStatuses) {
   };
 }
 
-/** The stack rank of each ranked story id. */
-function readPriorityMap(cfg) {
-  return new Map(readBacklogOrder(cfg.backlogRoot).map((id, i) => [id, i]));
+/**
+ * The Rank cell of each story: its unit's entry number in `priority.md`'s
+ * `ranked:` (a story inside a feature: its feature's), `-` for an unranked
+ * one, which sorts in the dated tail.
+ * @param {import('./backlog-graph.js').BacklogGraph} graph
+ * @returns {(id: string) => string}
+ */
+function rankCell(graph) {
+  const position = new Map(graph.ranked.map((e) => [e.unit, e.position]));
+  return (id) => {
+    const story = graph.stories.get(id);
+    const unit = story ? rankedAs(story) : null;
+    return String((unit && !unit.done && position.get(unit)) || '-');
+  };
 }
 
 export async function main(argv) {
@@ -86,9 +90,10 @@ Filters combine: every one given must match.`);
 
   const flow = loadFlow(cfg.backlogRoot);
   const showAll = args.all;
-  const stories = filterStories(readAllStories(cfg), filter, ctx);
+  const graph = loadBacklog(cfg);
+  const stories = filterStories(readAllStories({ ...cfg, backlogGraph: graph }), filter, ctx);
 
-  const tiebreak = byRankThenId(readPriorityMap(cfg));
+  const tiebreak = byRank((id) => graph.rankOf(id));
 
   const wtsByStory = activeWorktreesByStory(cfg);
 
@@ -104,7 +109,7 @@ Filters combine: every one given must match.`);
     return tiebreak(a, b);
   });
 
-  printStories(filtered, { flow, ctx, wtsByStory, patternSource: args.positional[0], showAll });
+  printStories(filtered, { flow, ctx, wtsByStory, rank: rankCell(graph), patternSource: args.positional[0], showAll });
 }
 
 /**
@@ -117,20 +122,30 @@ Filters combine: every one given must match.`);
 export function listByStatus() {
   const cfg = loadConfig();
   const flow = loadFlow(cfg.backlogRoot);
-  const stories = readAllStories(cfg)
+  const graph = loadBacklog(cfg);
+  const stories = readAllStories({ ...cfg, backlogGraph: graph })
     .filter((s) => !flow.meets('story', s.status, 'done'))
-    .sort(byOpenStatus(readPriorityMap(cfg), flow.openStatusesOf('story')));
-  printStories(stories, { flow, ctx: filterContext(cfg), wtsByStory: activeWorktreesByStory(cfg), showAll: false });
+    .sort(byOpenStatus((id) => graph.rankOf(id), flow.openStatusesOf('story')));
+  printStories(stories, {
+    flow,
+    ctx: filterContext(cfg),
+    wtsByStory: activeWorktreesByStory(cfg),
+    rank: rankCell(graph),
+    showAll: false,
+  });
 }
 
 /**
  * The one story table: stdout, through the pager, with its summary line. `filtered`
  * is already sorted. An empty list or a pattern matching nothing says so on stderr.
+ * The Rank column, after Status, is `rank(id)`: the unit's `ranked:` entry, or
+ * `-` for an unranked one.
  *
  * @param {object[]} filtered
- * @param {{ flow: import('./flow.js').Flow, ctx: object, wtsByStory: Map<string, object[]>, patternSource?: string, showAll: boolean }} opts
+ * @param {{ flow: import('./flow.js').Flow, ctx: object, wtsByStory: Map<string, object[]>,
+ *   rank: (id: string) => string, patternSource?: string, showAll: boolean }} opts
  */
-function printStories(filtered, { flow, ctx, wtsByStory, patternSource, showAll }) {
+function printStories(filtered, { flow, ctx, wtsByStory, rank, patternSource, showAll }) {
   // Before the empty check: a malformed pattern is an error with no rows too.
   const pattern = patternSource ? new RegExp(patternSource, 'i') : null;
 
@@ -145,13 +160,13 @@ function printStories(filtered, { flow, ctx, wtsByStory, patternSource, showAll 
   // The Feature column only appears once at least one listed story belongs
   // to a feature, so backlogs that don't use features see no change.
   const anyFeature = filtered.some((s) => s.feature);
-  const base = ['Component', 'Story', 'Type', 'Pts', 'Status', 'Title'];
+  const base = ['Component', 'Story', 'Type', 'Pts', 'Status', 'Rank', 'Title'];
   if (anyFeature) base.splice(2, 0, 'Feature');
   const headers = themed ? ['Theme', ...base] : base;
 
   let rows = filtered.map((s) => {
     const status = wtsByStory.has(s.id) ? `${s.status}*` : s.status;
-    const cells = [s.componentId, s.id, s.type, s.points, status, s.title];
+    const cells = [s.componentId, s.id, s.type, s.points, status, rank(s.id), s.title];
     if (anyFeature) cells.splice(2, 0, s.feature || '');
     if (!themed) return cells;
     return [storyThemes(s, ctx).join(',') || '-', ...cells];

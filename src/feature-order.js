@@ -31,8 +31,8 @@ export function featureOrderPath(config) {
 /**
  * A `ranked:` value that is not a list of mappings each with a non-empty
  * `feature` and `why`. `bl validate` no longer reads this file (F-78 D1
- * validates `priority.md`); `bl next` and `bl sync` stop on it until F-78
- * S-1264 removes the file.
+ * validates `priority.md`, and `bl next` reads that); `bl sync` stops on it
+ * until F-78 S-1264 removes the file.
  */
 export class FeatureOrderError extends Error {
   constructor(reason) {

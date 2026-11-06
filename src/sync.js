@@ -79,7 +79,8 @@ import { ensureAllowedTools } from './allowed-tools.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { RUN_STATE_KEYS } from './change-doc.js';
-import { findStoryDir, readAllStories, readBacklogOrder, readComponents } from './story.js';
+import { findStoryDir, readAllStories, readComponents } from './story.js';
+import { byRank } from './priority.js';
 import { VALID_STORY_KEYS, VALID_COMPONENT_KEYS, VALID_FEATURE_KEYS, findDuplicateIds } from './validate.js';
 import { readAllEpics, readAllThemes, normalizeEpicId } from './theme.js';
 import { readAllTasks, tasksOf, taskTableRows } from './task.js';
@@ -560,28 +561,6 @@ function syncFeatureOrder(config, features, touchedMarkdown, flow) {
 }
 
 // ---------------------------------------------------------------------------
-// Global priority order (from top-level index)
-// ---------------------------------------------------------------------------
-
-function buildGlobalOrder(backlogIds) {
-  const order = new Map();
-  backlogIds.forEach((id, i) => order.set(id, i));
-  return order;
-}
-
-function sortByGlobal(stories, globalOrder) {
-  const known = stories.filter((s) => globalOrder.has(s.id));
-  const unknown = stories.filter((s) => !globalOrder.has(s.id));
-  known.sort((a, b) => globalOrder.get(a.id) - globalOrder.get(b.id));
-  unknown.sort((a, b) => {
-    const na = parseInt(a.id.replace('S-', ''), 10);
-    const nb = parseInt(b.id.replace('S-', ''), 10);
-    return na - nb;
-  });
-  return [...known, ...unknown];
-}
-
-// ---------------------------------------------------------------------------
 // Component-level sync
 // ---------------------------------------------------------------------------
 
@@ -590,7 +569,7 @@ function sortByGlobal(stories, globalOrder) {
  * the active features touching it. A component has no points or status
  * (F-49 D4), so its frontmatter is left as it is.
  */
-function syncComponent(backlogRoot, component, stories, globalOrder, touchedMarkdown, features, flow) {
+function syncComponent(backlogRoot, component, stories, byPriority, touchedMarkdown, features, flow) {
   const content = readFileSync(component.indexPath, 'utf8');
   const { fm, body } = parseFrontmatter(content);
   const rel = `${COMPONENTS_DIR}/${component.componentEntry}/index.md`;
@@ -601,7 +580,7 @@ function syncComponent(backlogRoot, component, stories, globalOrder, touchedMark
     }
   }
 
-  const sorted = sortByGlobal(stories, globalOrder);
+  const sorted = [...stories].sort(byPriority);
   const active = sorted.filter((s) => !flow.meets('story', s.status, 'done'));
   const done = sorted.length - active.length;
 
@@ -686,19 +665,14 @@ function ensureTopLevelIndex(backlogRoot, touchedMarkdown, title) {
   return indexPath;
 }
 
-function syncTopLevel(config, ctx, backlogIds, touchedMarkdown, features) {
+function syncTopLevel(config, ctx, touchedMarkdown, features) {
   const { storyMap, components, componentsById, themes, epics } = ctx;
   const indexPath = ensureTopLevelIndex(config.backlogRoot, touchedMarkdown, indexTitle(config));
   const content = readFileSync(indexPath, 'utf8');
 
-  const seen = new Set(backlogIds);
-  // Never-indexed stories go last in id order (`sortByGlobal`), as every
-  // other index sorts them.
-  const unseen = sortByGlobal(
-    [...storyMap.values()].filter((s) => !seen.has(s.id)),
-    new Map(),
-  ).map((s) => s.id);
-  const ordered = [...backlogIds, ...unseen].map((id) => storyMap.get(id)).filter((s) => s != null);
+  // The Backlog table in the backlog's priority (F-78 D2), as every other
+  // index sorts its stories; it is written, never read back.
+  const ordered = [...storyMap.values()].sort(ctx.byPriority);
   const closed = (s) => ctx.flow.meets('story', s.status, 'done');
   const active = ordered.filter((s) => !closed(s));
   const done = ordered.length - active.length;
@@ -819,8 +793,9 @@ async function regenerate(config) {
     `backlog-sync: ${storyMap.size} stories (${storyMap.size - closedCount} active, ${closedCount} ${flow.closedStatusesOf('story').join('/')})`,
   );
 
-  const backlogIds = readBacklogOrder(config.backlogRoot);
-  const globalOrder = buildGlobalOrder(backlogIds);
+  // Every table of stories is in the backlog's priority (F-78 D2).
+  const backlog = graphOf(config);
+  const byPriority = byRank((id) => backlog.rankOf(id));
 
   // Components keep their first directory when two claim one id
   // (`bl validate` reports the clash).
@@ -831,7 +806,7 @@ async function regenerate(config) {
     componentsById.set(c.id, c);
     components.push(c);
   }
-  const ctx = { storyMap, components, componentsById, globalOrder, flow };
+  const ctx = { storyMap, components, componentsById, byPriority, flow };
 
   // Features: resolve story records, regenerate tables. Then the stories'
   // Tasks tables (F-65 D1).
@@ -848,7 +823,7 @@ async function regenerate(config) {
       config.backlogRoot,
       c,
       allStories.filter((s) => s.componentId === c.id),
-      globalOrder,
+      byPriority,
       touchedMarkdown,
       features,
       flow,
@@ -863,7 +838,7 @@ async function regenerate(config) {
   ctx.epics = epics;
   ctx.themes = themes;
 
-  syncTopLevel(config, ctx, backlogIds, touchedMarkdown, features);
+  syncTopLevel(config, ctx, touchedMarkdown, features);
   syncFeatureOrder(config, features, touchedMarkdown, flow);
 
   formatBacklogMarkdown(config, touchedMarkdown);

@@ -144,6 +144,9 @@ test('buildGraph self-loops are ignored', () => {
   );
 });
 
+/** A `rankOf` (`backlog.rankOf`, F-78 D2) that places no story. */
+const NO_PLACE = () => Infinity;
+
 test('pickNextInComponent returns next startable story by priority', () => {
   withBacklog(
     () =>
@@ -177,7 +180,7 @@ test('pickNextInComponent returns next startable story by priority', () => {
     ({ stories, graph }) => {
       // No priority entries → falls back to oldest leaf, which is S-2
       // (S-3 has unfinished dep S-2).
-      const r = pickNextInComponent('C00', stories, graph, new Map(), flow);
+      const r = pickNextInComponent('C00', stories, graph, NO_PLACE, flow);
       assert.equal(r.kind, 'next');
       assert.equal(r.story.id, 'S-2');
       assert.equal(r.method, 'oldest-leaf');
@@ -212,7 +215,7 @@ test('pickNextInComponent priority rank beats lower numeric ID', () => {
         ['S-2', 0],
         ['S-1', 1],
       ]);
-      const r = pickNextInComponent('C00', stories, graph, priority, flow);
+      const r = pickNextInComponent('C00', stories, graph, (id) => priority.get(id) ?? Infinity, flow);
       assert.equal(r.kind, 'next');
       assert.equal(r.story.id, 'S-2');
       assert.equal(r.method, 'priority');
@@ -220,7 +223,7 @@ test('pickNextInComponent priority rank beats lower numeric ID', () => {
   );
 });
 
-test('pickNextInComponent falls back to oldest leaf when none in priority table', () => {
+test('pickNextInComponent falls back to oldest leaf when none has a place in the priority', () => {
   withBacklog(
     () =>
       mkTempBacklog({
@@ -241,7 +244,7 @@ test('pickNextInComponent falls back to oldest leaf when none in priority table'
         ],
       }),
     ({ stories, graph }) => {
-      const r = pickNextInComponent('C00', stories, graph, new Map(), flow);
+      const r = pickNextInComponent('C00', stories, graph, NO_PLACE, flow);
       assert.equal(r.kind, 'next');
       assert.equal(r.story.id, 'S-2');
       assert.equal(r.method, 'oldest-leaf');
@@ -273,7 +276,7 @@ test('pickNextInComponent returns all-done when every story is closed', () => {
         ],
       }),
     ({ stories, graph }) => {
-      const r = pickNextInComponent('C00', stories, graph, new Map(), flow);
+      const r = pickNextInComponent('C00', stories, graph, NO_PLACE, flow);
       assert.equal(r.kind, 'all-done');
     },
   );
@@ -304,7 +307,7 @@ test('pickNextInComponent returns blocked when only open story has unfinished ou
         ],
       }),
     ({ stories, graph }) => {
-      const r = pickNextInComponent('C00', stories, graph, new Map(), flow);
+      const r = pickNextInComponent('C00', stories, graph, NO_PLACE, flow);
       assert.equal(r.kind, 'blocked');
       assert.equal(r.open.length, 1);
       assert.equal(r.open[0].id, 'S-2');

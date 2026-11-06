@@ -5,7 +5,6 @@ import { syncBuiltinESMExports } from 'module';
 import { dirname, join, resolve } from 'path';
 import { blockedFlow, mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
-import { readBacklogOrder } from '../../src/story.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { runSync } from '../../src/sync.js';
 import { readAllFeatures } from '../../src/feature.js';
@@ -259,7 +258,7 @@ function sectionIds(content, heading) {
     .map((l) => cells(l)[0].replace(/^\[([^\]]+)\]\(.*\)$/, '$1'));
 }
 
-/** A root index, hand-ordered: S-4 before S-1. */
+/** A root index an older sync wrote, its Backlog S-4 before S-1: an order no reader takes. */
 const TOP_INDEX = `---
 title: Roost Backlog
 ---
@@ -353,6 +352,7 @@ function flatBacklog() {
       },
       { id: 'F-2', title: 'Ops flow', dirSuffix: 'ops-flow', status: 'done', primary_repo: 'ops', stories: ['S-3'] },
     ],
+    priority: [{ unit: 'S-6', why: 'The orphan first.' }],
   });
   writeFileSync(join(t.dir, 'index.md'), TOP_INDEX);
   return t;
@@ -367,7 +367,7 @@ const GENERATED = [
   'features/F2-ops-flow/index.md',
 ];
 
-test('bl sync writes the root index with Components, Features and the hand-ordered Backlog', () => {
+test('bl sync writes the root index with Components, Features and the Backlog in priority order', () => {
   const { dir, cleanup } = flatBacklog();
   try {
     const r = runBl(['sync'], { cwd: dir });
@@ -390,10 +390,10 @@ test('bl sync writes the root index with Components, Features and the hand-order
     assert.deepEqual(sectionIds(top, 'Features'), ['F-1']);
     assert.equal(rowFor(top, 'F-1')[0], '[F-1](features/F1-web-flow/index.md)');
 
-    // The hand order survives (S-4 before S-1); never-indexed stories follow
-    // in id order; closed ones drop out. `readBacklogOrder` reads it back.
-    assert.deepEqual(sectionIds(top, 'Backlog'), ['S-4', 'S-1', 'S-3', 'S-6']);
-    assert.deepEqual(readBacklogOrder(dir), ['S-4', 'S-1', 'S-3', 'S-6']);
+    // The Backlog is in priority.md's order (F-78 D2), not the index's own
+    // (S-4 before S-1): S-6 is ranked, F-1's stories follow by number, and
+    // S-3, in a done feature, has no place; closed stories drop out.
+    assert.deepEqual(sectionIds(top, 'Backlog'), ['S-6', 'S-1', 'S-4', 'S-3']);
     assert.deepEqual(rowFor(top, 'S-4'), [
       '[S-4](stories/S4-x/index.md)',
       'feature',

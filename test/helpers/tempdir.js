@@ -133,6 +133,7 @@ export const FEATURE_INDEX_TEMPLATE = (f) => `${serializeFrontmatter({
   theme: f.theme === null ? undefined : (f.theme ?? DEFAULT_THEME),
   epic: f.epic || undefined,
   status: f.status ?? 'draft',
+  added: f.added || undefined,
   primary_repo: f.primary_repo || undefined,
   review_rounds_max: f.review_rounds_max ?? 2,
 })}
@@ -240,6 +241,7 @@ export const STORY_INDEX_TEMPLATE = (story) => `${serializeFrontmatter({
   type: story.type ?? 'feature',
   points: story.points ?? 1,
   status: story.status ?? 'backlog',
+  added: story.added || undefined,
   depends_on: refList(story.depends_on),
   // Derived since F-77 D3; a fixture sets it only to test `derived-key`
   // and the migration that removes it.
@@ -267,7 +269,7 @@ ${story.body ?? ''}
  *           same way, an `E<nn>` id becoming `C<nn>`.
  * @property {Array<{ id: string, component?: string,
  *           epic?: string, title: string, type?: string, points?: number,
- *           status?: string, depends_on?: string, required_for?: string,
+ *           status?: string, added?: string, depends_on?: string, required_for?: string,
  *           completed?: string, dirSuffix?: string, body?: string,
  *           feature?: string, primary_repo?: string,
  *           secondary_repos?: string[] }>} [stories]
@@ -275,7 +277,7 @@ ${story.body ?? ''}
  *           `component` (or a pre-F-49 `epic`, `E<nn>` → `C<nn>`) is the
  *           story's `component:`.
  * @property {Array<{ id: string, title: string, dirSuffix?: string,
- *           status?: string, changeRepo?: string, stories?: string[],
+ *           status?: string, added?: string, changeRepo?: string, stories?: string[],
  *           review_status?: string, branch?: string, premise?: string,
  *           deferred?: string, reviewLog?: string, escalation?: string }>} [features]
  *           Written under features/F<n>-<dirSuffix>/ whatever the status.

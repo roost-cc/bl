@@ -7,7 +7,8 @@
  */
 
 import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
-import { readAllStories, readBacklogOrder, activeWorktreesByStory } from './story.js';
+import { readAllStories, activeWorktreesByStory } from './story.js';
+import { byRank } from './priority.js';
 import { loadBacklog } from './backlog-graph.js';
 import { loadFlow } from './flow.js';
 
@@ -49,8 +50,6 @@ stories in the same table format as bl list.`);
   // the records and the texts searched.
   const graph = loadBacklog(cfg);
   const stories = readAllStories({ ...cfg, backlogGraph: graph });
-  const backlogIds = readBacklogOrder(cfg.backlogRoot);
-  const priorityMap = new Map(backlogIds.map((id, i) => [id, i]));
   const wtsByStory = activeWorktreesByStory(cfg);
 
   const matched = new Set(
@@ -69,6 +68,8 @@ stories in the same table format as bl list.`);
     return;
   }
 
+  // Then the backlog's priority (F-78 D2), as `bl list` sorts.
+  const byPriority = byRank((id) => graph.rankOf(id));
   filtered.sort((a, b) => {
     const aa = wtsByStory.has(a.id) ? 0 : 1;
     const ab = wtsByStory.has(b.id) ? 0 : 1;
@@ -76,10 +77,7 @@ stories in the same table format as bl list.`);
     const sa = flow.listRankOf('story', a.status);
     const sb = flow.listRankOf('story', b.status);
     if (sa !== sb) return sa - sb;
-    const pa = priorityMap.get(a.id) ?? Infinity;
-    const pb = priorityMap.get(b.id) ?? Infinity;
-    if (pa !== pb) return pa - pb;
-    return a.componentId.localeCompare(b.componentId);
+    return byPriority(a, b);
   });
 
   const headers = ['Component', 'Story', 'Type', 'Pts', 'Status', 'Title'];

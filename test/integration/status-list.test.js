@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
 import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, PRIORITY_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 
 const STORIES = [
@@ -24,9 +24,17 @@ const STORIES = [
   { id: 'S-2', status: 'refined' },
 ].map((s) => ({ ...s, component: 'C00', title: `Story ${s.id}` }));
 
-/** The fixture's `## Backlog` table: `ranked` first, in that order. */
+/**
+ * The fixture's `priority.md` (F-78 D1): `ranked` first, in that order. The
+ * root index's Backlog table lists them the other way round, and no reader
+ * takes its order from there (F-78 D2).
+ */
 function writeRanks(dir, ranked) {
-  const rows = ranked.map((id) => `| ${id} | x |`).join('\n');
+  writeFileSync(join(dir, 'priority.md'), PRIORITY_TEMPLATE(ranked.map((unit) => ({ unit, why: 'x' }))));
+  const rows = [...ranked]
+    .reverse()
+    .map((id) => `| ${id} | x |`)
+    .join('\n');
   writeFileSync(join(dir, 'index.md'), `# Backlog\n\n## Backlog\n\n| ID | Title |\n| -- | ----- |\n${rows}\n`);
 }
 
@@ -255,23 +263,23 @@ test('bl status sorts every unknown status after backlog including prototype key
   }
 });
 
-test('bl status keeps ranks 10000 and later ahead of unranked stories', () => {
+test('bl status and bl list put ranked stories first, then the unranked by added:, undated first', () => {
   const { dir } = mkTempBacklog({
     components: [{ id: 'C00', title: 'Work' }],
-    stories: ['S-10', 'S-9', 'S-3', 'S-2', 'S-1'].map((id) => ({
-      id,
-      status: 'refined',
-      component: 'C00',
-      title: `Story ${id}`,
-    })),
+    stories: [
+      ['S-10', '2026-01-01'],
+      ['S-9', '2026-01-02'],
+      ['S-8', undefined],
+      ['S-3', '2026-01-03'],
+      ['S-2', '2026-01-03'],
+      ['S-1', '2026-01-03'],
+    ].map(([id, added]) => ({ id, added, status: 'refined', component: 'C00', title: `Story ${id}` })),
   });
-  // S-3 lands on rank 9999, S-2 on 10000, S-1 on 10001; S-9 and S-10 have none.
-  const filler = Array.from({ length: 9999 }, (_, i) => `S-${100 + i}`);
-  writeRanks(dir, [...filler, 'S-3', 'S-2', 'S-1']);
+  writeRanks(dir, ['S-3', 'S-2', 'S-1']);
   for (const verb of ['status', 'list']) {
     const r = runBl([verb], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(ids(r.stdout), ['S-3', 'S-2', 'S-1', 'S-9', 'S-10'], verb);
+    assert.deepEqual(ids(r.stdout), ['S-3', 'S-2', 'S-1', 'S-8', 'S-10', 'S-9'], verb);
   }
 });
 

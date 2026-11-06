@@ -18,7 +18,8 @@
  */
 
 import { loadConfig, parseArgs, normalizeId, normalizeComponentId, componentIdHint, info } from './config.js';
-import { readAllStories, readBacklogOrder, findComponentDir } from './story.js';
+import { readAllStories, findComponentDir } from './story.js';
+import { loadBacklog } from './backlog-graph.js';
 import { filterFromArgs, filterStories, hasFilter, filterLabel } from './filter.js';
 import { loadFlow } from './flow.js';
 
@@ -92,11 +93,11 @@ export function findOldestStartable(rootId, graph, flow, visited = new Set()) {
  * Pick the next startable story inside a single component
  * (`pickNextIn` over the component's stories).
  */
-export function pickNextInComponent(componentId, stories, graph, priorityMap, flow) {
+export function pickNextInComponent(componentId, stories, graph, rankOf, flow) {
   return pickNextIn(
     stories.filter((s) => s.componentId === componentId),
     graph,
-    priorityMap,
+    rankOf,
     flow,
   );
 }
@@ -106,10 +107,12 @@ export function pickNextInComponent(componentId, stories, graph, priorityMap, fl
  * or those a filter matches). `graph` is built over every story, so a
  * dependency outside the set still blocks.
  *
- *   1. Priority rank — lowest `priorityMap` index among startable stories
- *      wins (tiebreak: lowest numeric ID).
- *   2. Oldest leaf — if no startable story is in the priority table, pick
- *      the lowest-id startable story.
+ *   1. Priority rank — the lowest `rankOf` (the backlog's priority, F-78 D2:
+ *      a story at its feature's place, a loose story at its own) among
+ *      startable stories wins (tiebreak: lowest numeric ID).
+ *   2. Oldest leaf — if no startable story has a place in the priority (an
+ *      update story, a story of a closed feature), pick the lowest-id
+ *      startable story.
  *
  * Return shapes:
  *   - `{ kind: "missing" }`   — the set is empty
@@ -119,7 +122,7 @@ export function pickNextInComponent(componentId, stories, graph, priorityMap, fl
  *   - `{ kind: "blocked", open }` — open stories exist but every one of
  *     them has an unfinished `depends_on`
  */
-export function pickNextIn(inSet, graph, priorityMap, flow) {
+export function pickNextIn(inSet, graph, rankOf, flow) {
   if (inSet.length === 0) return { kind: 'missing' };
 
   const closed = (s) => flow.meets('story', s, 'done');
@@ -132,11 +135,11 @@ export function pickNextIn(inSet, graph, priorityMap, flow) {
   });
   if (startable.length === 0) return { kind: 'blocked', open };
 
-  const inPriority = startable.filter((s) => priorityMap.has(s.id));
+  const inPriority = startable.filter((s) => rankOf(s.id) !== Infinity);
   if (inPriority.length > 0) {
     inPriority.sort((a, b) => {
-      const pa = priorityMap.get(a.id);
-      const pb = priorityMap.get(b.id);
+      const pa = rankOf(a.id);
+      const pb = rankOf(b.id);
       if (pa !== pb) return pa - pb;
       return idNum(a.id) - idNum(b.id);
     });
@@ -175,7 +178,7 @@ Arguments:
                the most recently closed story (by frontmatter \`completed\`
                date) is used.
   [component-id]    A component (\`C32\`, \`c-32\`) instead of a story. Suggests the
-               next startable story inside that component by priority rank,
+               next startable story inside that component by priority,
                falling back to the lowest-id startable story.
 
 Suggests the next story to start by walking the dependency graph:
@@ -185,9 +188,10 @@ Suggests the next story to start by walking the dependency graph:
     its own dependencies satisfied is next.
   - If no story depends on the reference story, it was a root — there is
     nothing to chain to.
-  - With a component ID, picks the lowest-priority-rank startable story inside
-    the component; if none of the startable stories appear in the priority
-    table, falls back to the lowest-id startable story.
+  - With a component ID, picks the startable story inside the component
+    whose unit comes first in the backlog's priority (priority.md, then the
+    unranked units by date; a story sorts at its feature's place); if none
+    has a place, falls back to the lowest-id startable story.
   - The filters pick the same way among the stories they match:
       --theme <slug>       stories in a theme (their feature's theme, or, with
                            no feature, a theme whose repos list their
@@ -238,9 +242,8 @@ Suggests the next story to start by walking the dependency graph:
     const label = filterLabel(filter);
     const onlyComponent = label === filter.component;
     const graph = buildGraph(stories);
-    const priorityIds = readBacklogOrder(cfg.backlogRoot);
-    const priorityMap = new Map(priorityIds.map((id, i) => [id, i]));
-    const result = pickNextIn(filterStories(stories, filter, ctx), graph, priorityMap, flow);
+    const backlog = loadBacklog(cfg);
+    const result = pickNextIn(filterStories(stories, filter, ctx), graph, (id) => backlog.rankOf(id), flow);
     if (result.kind === 'missing') {
       if (onlyComponent) {
         console.error(`bl what-next: component not found: ${label}`);
@@ -270,7 +273,7 @@ Suggests the next story to start by walking the dependency graph:
     if (result.method === 'priority') {
       info(`Why: top-priority startable story in ${label}.`);
     } else {
-      info(`Why: oldest leaf in ${label} (no startable story is in the priority list).`);
+      info(`Why: oldest leaf in ${label} (no startable story has a place in the priority).`);
     }
     process.stdout.write(`${next.id}\n`);
     return;

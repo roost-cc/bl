@@ -177,9 +177,32 @@ export function priorityOrder(entries, { features, stories }) {
  */
 export function rankerOf(order) {
   const place = new Map(order.map((u, i) => [u, i]));
-  return (unit) => {
-    if (!unit) return Infinity;
-    const at = unit.kind === 'story' && str(unit.fm.feature) ? unit.feature : unit;
-    return place.get(at) ?? Infinity;
+  return (unit) => (unit ? (place.get(rankedAs(unit)) ?? Infinity) : Infinity);
+}
+
+/**
+ * The comparator every story listing sorts by (F-78 D2): the place
+ * `rankOf(id)` gives (`backlog.rankOf`: a story at its feature's place, a
+ * loose story at its own, no place last), then the id's number, so a
+ * feature's stories sort together, by number.
+ * @param {(id: string) => number} rankOf
+ * @returns {(a: { id: string }, b: { id: string }) => number}
+ */
+export function byRank(rankOf) {
+  return (a, b) => {
+    const pa = rankOf(a.id);
+    const pb = rankOf(b.id);
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    return numOf(a.id) - numOf(b.id);
   };
+}
+
+/**
+ * The unit a story or feature is ranked as: a story inside a feature its
+ * feature (null when that feature does not exist), anything else itself.
+ * @param {any} unit
+ * @returns {any}
+ */
+export function rankedAs(unit) {
+  return unit.kind === 'story' && str(unit.fm.feature) ? unit.feature : unit;
 }
