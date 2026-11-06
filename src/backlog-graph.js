@@ -203,7 +203,9 @@ import { listChanges, unitChange } from './change-doc.js';
  * @property {ReadonlyMap<string, EpicUnit>} epics
  * @property {ReadonlyMap<string, ThemeUnit>} themes
  * @property {ReadonlyMap<string, TaskUnit>} tasks
- * @property {(id: string) => Unit | null} get  any unit by any spelling of its id
+ * @property {(id: string) => Unit | null} get  any unit by any spelling of its id; a
+ *           theme slug that also spells another kind's id (`s1`, `t-1`, `e50`) resolves
+ *           to that kind, so read such a theme from `themes`
  * @property {(kind: UnitKind) => bigint | null} maxNum  the highest number among the
  *           kind's directory or file names, readable or not, and readable ids; null when none
  * @property {(kind: UnitKind) => readonly Unit[]} list  every readable unit of the kind

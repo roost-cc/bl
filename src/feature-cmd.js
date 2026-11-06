@@ -188,7 +188,7 @@ function parsedFor(feature) {
 }
 
 function renderStoriesPlan(config, ordered) {
-  if (ordered.length === 0) return '(no stories listed)';
+  if (ordered.length === 0) return '(no stories)';
   return ordered
     .map(
       (s, i) =>
