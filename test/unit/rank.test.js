@@ -112,6 +112,15 @@ test('applyRank rewrites only the reason with --why alone, and with a move moves
     applyRank(HAND, { id: 'S-1', why: 'Shorter', where: 'bottom' }),
     `${HEAD}${LINES['F-2']}\n${LINES['F-3']}  - unit: S-1\n    why: Shorter\n${TAIL}`,
   );
+  // A block-scalar reason keeps the line break that ends it.
+  const folded =
+    '---\nranked:\n  - unit: F-1\n    why: >-\n      folded\n      text\n  - unit: F-2\n    why: Two\n---\n';
+  assert.equal(
+    applyRank(folded, { id: 'F-1', why: 'New' }),
+    '---\nranked:\n  - unit: F-1\n    why: New\n  - unit: F-2\n    why: Two\n---\n',
+  );
+  const last = '---\nranked:\n  - unit: F-1\n    why: |\n      literal\n---\n';
+  assert.equal(applyRank(last, { id: 'F-1', why: 'New' }), '---\nranked:\n  - unit: F-1\n    why: New\n---\n');
 });
 
 test('applyRank removes an entry; the last one leaves ranked: []', () => {

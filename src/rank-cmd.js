@@ -163,7 +163,9 @@ export function setWhy(content, id, why) {
   if (!e) throw new RankFileError(`${id} is not ranked`);
   if (e.why && isScalar(e.why.value) && e.why.value.range) {
     const [from, to] = e.why.value.range;
-    return splice(content, s, from, to, scalarText(why));
+    // A block scalar (`why: >-`) ends with its last line's newline; keep it.
+    const nl = s.block[to - 1] === '\n' ? '\n' : '';
+    return splice(content, s, from, to, scalarText(why) + nl);
   }
   // An entry with no `why:` (bl validate reports it) gets one as its last line.
   const { key } = indentOf(s);
