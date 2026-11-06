@@ -13,8 +13,8 @@
  * lazy: `body()` slices the text already read, `section(name)` extracts one
  * `## ` section of it, each once and cached; `change()` reads the current
  * change document (`unitChange`) on first call and again only when a stat
- * of the unit's change documents says one changed, reusing the text of any a
- * tolerant load parsed at its current stat key. Links are objects, built in a second
+ * of the unit's change documents says one changed, reusing the text of any
+ * document a tolerant load parsed at its current stat key. Links are objects, built in a second
  * pass, and every inverse is computed, never read from a stored key: a
  * feature's `stories`, `points` and `components`, an epic's `features` and
  * `status`, and a story's `requiredFor` (F-77 D3).
