@@ -22,9 +22,11 @@
 
 import { createHash } from 'crypto';
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { spawnSync } from 'child_process';
 import { warn } from './config.js';
+import { HEADLESS_ENV, isHeadless } from './agents/provider.js';
+import { PRIORITY_FILE } from './priority.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { MAIN_REFSPEC, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
@@ -141,12 +143,18 @@ function addablePaths(root, paths) {
  * autostash never takes a file between its write and its commit: the pull
  * puts the stash back before it lets go. Callers that do not hold the
  * backlog lock (`change-doc.js` `openUnitChange`) rely on this.
+ * Inside an agent bl started headless (`BL_HEADLESS`, F-78 D3) a commit
+ * whose paths include `priority.md`, by name or by a directory that holds it,
+ * is refused before anything is staged: only a person ranks
+ * (`headlessPriorityRefusal`).
  * @returns {{ committed: boolean, paths: string[], error?: string,
  *   pushed?: boolean, pushError?: string, pushConflicts?: string[],
  *   pushResolved?: string[] }}
  */
 export function commitPaths(root, paths, message) {
   if (paths.length === 0) return { committed: false, paths };
+  const refused = headlessPriorityRefusal(root, paths);
+  if (refused) return { committed: false, paths, error: refused };
   if (!hasOriginRemote(root)) return commitLocked(root, paths, message, false);
   const res = withMainSyncLock(root, () => commitLocked(root, paths, message, true));
   if (res.state === 'lock-timeout') {
@@ -156,6 +164,30 @@ export function commitPaths(root, paths, message) {
     warn(pushWarning(root, { error: res.pushError, paths: res.pushConflicts }));
   }
   return res;
+}
+
+/**
+ * Why a backlog commit of `paths` is refused under `BL_HEADLESS` (F-78 D3),
+ * or null: when the marker is set and a path is `priority.md` or a directory
+ * holding it (`.` included). The priority is a person's preference; an agent
+ * bl started headless never commits it, whatever command it goes through.
+ * @param {string} root
+ * @param {string[]} paths  backlog-relative or absolute
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {string | null}
+ */
+export function headlessPriorityRefusal(root, paths, env = process.env) {
+  if (!isHeadless(env)) return null;
+  const file = resolve(root, PRIORITY_FILE);
+  const hit = paths.find((p) => {
+    const at = resolve(root, p);
+    return at === file || file.startsWith(at.endsWith(sep) ? at : at + sep);
+  });
+  if (hit == null) return null;
+  return (
+    `refusing to commit ${PRIORITY_FILE} (path '${hit}'): ${HEADLESS_ENV} is set, so this is an agent bl ` +
+    `started headless, and only the operator or an interactive session ranks work (bl rank)`
+  );
 }
 
 function commitLocked(root, paths, message, push) {
@@ -384,13 +416,16 @@ export function leaveRegenerationPending(root) {
  * before it runs (F-50 D4): every command that commits the backlog (`new`,
  * `side`, `attach`, `move`, `run`, `implement`, `merge`, `done`, `updates`, `sync --commit`,
  * `block add`, `block remove`, `block list --fix`, `task`,
- * `task done`) and the
+ * `task done`, `rank <unit> …`) and the
  * readers of update state, `bl inbox` and
- * `bl updates status`. Help output never pulls.
+ * `bl updates status`. Help output never pulls, and neither does a `bl rank`
+ * under `BL_HEADLESS`, which refuses before it touches the backlog (F-78 D3).
  */
-export function commandPullsBacklog(command, argv) {
+export function commandPullsBacklog(command, argv, env = process.env) {
   if (argv.includes('-h') || argv.includes('--help')) return false;
   switch (command) {
+    case 'rank':
+      return argv.length > 0 && !isHeadless(env);
     case 'new':
     case 'side':
     case 'attach':

@@ -8,7 +8,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { clockTime, matchLimit } from './limit.js';
-import { AgentProvider } from './provider.js';
+import { AgentProvider, agentEnv } from './provider.js';
 import { loadHookDenyMessage } from '../tool-guide.js';
 import { checkModel } from '../config.js';
 
@@ -564,8 +564,9 @@ export class ClaudeProvider extends AgentProvider {
     run = spawnSync,
   }) {
     // The bash-shape guard hook inherits this env: the session's own backlog,
-    // whatever another backlog's `bl init` or launch wrote meanwhile.
-    const env = backlogRoot ? { ...process.env, BL_BACKLOG_DIR: backlogRoot } : process.env;
+    // whatever another backlog's `bl init` or launch wrote meanwhile; and a
+    // headless session is marked BL_HEADLESS (F-78 D3).
+    const env = agentEnv({ headless, backlogRoot });
     const claudeArgs = buildClaudeArgs({
       name,
       prompt,

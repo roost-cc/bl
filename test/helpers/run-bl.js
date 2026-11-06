@@ -14,12 +14,23 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { LOCK_FILE } from '../../src/lock.js';
+import { HEADLESS_ENV } from '../../src/agents/provider.js';
 import { withNoAgent } from './fake-agent.js';
 import { spawnToFiles } from './spawn-files.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(__dirname, '..', '..');
 export const BL_BIN = join(REPO_ROOT, 'bin', 'bl');
+
+/**
+ * This process's env without the headless marker (`BL_HEADLESS`, F-78 D3):
+ * the suite runs as a person whether or not an agent bl started headless
+ * runs it, and a test that wants the marker passes it in `opts.env`.
+ */
+export function personEnv() {
+  const { [HEADLESS_ENV]: _marker, ...env } = process.env;
+  return env;
+}
 
 /**
  * Spawn `bl <args>` against a tempdir backlog.
@@ -45,7 +56,7 @@ export function runBl(args, opts = {}) {
     throw new Error('runBl: opts.cwd is required (must be a tempdir backlog root)');
   }
   const env = withNoAgent({
-    ...process.env,
+    ...personEnv(),
     BL_BACKLOG_DIR: cwd,
     ...(opts.env ?? {}),
   });
@@ -98,7 +109,7 @@ export function startBlBehindLock(args, opts = {}) {
     throw new Error('startBlBehindLock: opts.cwd is required (must be a tempdir backlog root)');
   }
   const env = withNoAgent({
-    ...process.env,
+    ...personEnv(),
     BL_BACKLOG_DIR: cwd,
     ...(opts.env ?? {}),
   });
