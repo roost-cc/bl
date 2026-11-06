@@ -406,9 +406,12 @@ function listBacklog(root, tolerant) {
       slots.push({ kind: k.kind, ...u, changes });
     }
   }
-  const sig = slots
-    .map((s) => `${s.path}\0${s.key}\0${s.changes.map((c) => `${c.path}\0${c.key}`).join('\0')}`)
-    .join('\n');
+  // The maxima too: a directory with no `index.md` is no slot, but its name
+  // takes a number (`maxNum`), so adding or removing one must outdate a snapshot.
+  const sig = [
+    ...slots.map((s) => `${s.path}\0${s.key}\0${s.changes.map((c) => `${c.path}\0${c.key}`).join('\0')}`),
+    [...nums].map(([kind, n]) => `${kind}=${n}`).join('\0'),
+  ].join('\n');
   return { slots, nums, sig };
 }
 

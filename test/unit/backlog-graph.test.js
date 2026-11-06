@@ -347,6 +347,36 @@ test('maxNum counts directory and file names, readable or not; null for a kind w
   assert.throws(() => g.maxNum('nope'), /not a unit kind/);
 });
 
+// loadBacklog_revalidates_maxNum_for_directory_without_index: a name that
+// takes a number but holds no unit is no file the stat sees, yet a warm
+// snapshot must move `maxNum` when one is added or removed, in either mode.
+for (const tolerant of [false, true]) {
+  for (const [kind, rel, before, after] of [
+    ['story', 'stories/S999-empty', 10n, 999n],
+    ['feature', 'features/F999-empty', 3n, 999n],
+    ['component', 'components/C999-empty', 4n, 999n],
+    ['epic', 'epics/E999-empty', 52n, 999n],
+    ['task', 'tasks/T999-broken.md', 4n, 999n],
+  ]) {
+    test(`loadBacklog_revalidates_maxNum_for_directory_without_index: ${kind}, ${tolerant ? 'tolerant' : 'strict'}`, () => {
+      const { root, config } = fixture();
+      const opts = { tolerant };
+      // A task is a file: an empty one has no frontmatter to throw on.
+      const add = () => (kind === 'task' ? writeFileSync(join(root, rel), '') : mkdirSync(join(root, rel)));
+      const g1 = loadBacklog(config, { ...opts, reload: true });
+      assert.equal(g1.maxNum(kind), before);
+      add();
+      const g2 = loadBacklog(config, opts);
+      assert.notEqual(g2, g1, 'added: a new snapshot');
+      assert.equal(g2.maxNum(kind), after);
+      rmSync(join(root, rel), { recursive: true });
+      const g3 = loadBacklog(config, opts);
+      assert.notEqual(g3, g2, 'removed: a new snapshot');
+      assert.equal(g3.maxNum(kind), before);
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Laziness
 // ---------------------------------------------------------------------------
