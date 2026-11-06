@@ -6,8 +6,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -119,6 +119,47 @@ test('each bl rank form changes only its entry; --why alone rewrites a reason; a
   assert.equal(git(dir, 'rev-parse', 'HEAD'), before, 'nothing committed');
   assert.equal(originHead(dir), before, 'every commit pushed');
   assert.equal(git(dir, 'status', '--porcelain'), '');
+});
+
+test('rank_failed_commit_retry_finishes_or_reports_pending_change', () => {
+  const dir = backlog();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  mkdirSync(dirname(hook), { recursive: true });
+  writeFileSync(hook, '#!/bin/sh\necho injected-commit-failure >&2\nexit 1\n');
+  chmodSync(hook, 0o755);
+  const args = ['rank', 'F-1', '--top', '--why', 'First'];
+
+  // The commit fails after the write: reported, nothing committed.
+  let r = bl(args, dir);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /backlog commit failed: injected-commit-failure/);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  const written = read(dir);
+  assert.match(written, /unit: F-1\n {4}why: First/);
+
+  // A retry that still cannot commit says so again; it never reports success.
+  r = bl(args, dir);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /not committed; committing it[\s\S]*backlog commit failed/);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+
+  // Once the commit can go through, the retry commits the requested ranking.
+  unlinkSync(hook);
+  r = bl(args, dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(read(dir), written);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-1 ranked first in priority.md');
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'priority.md');
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+  assert.equal(originHead(dir), git(dir, 'rev-parse', 'HEAD'), 'pushed');
+
+  // With nothing pending, the same command is a no-op again.
+  const done = git(dir, 'rev-parse', 'HEAD');
+  r = bl(args, dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /F-1 is already there; priority\.md is unchanged/);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), done);
 });
 
 test('bl rank refuses what is not an open unit, a new unit without --why, and a bad target, writing nothing', () => {

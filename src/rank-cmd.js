@@ -346,6 +346,16 @@ function inRepo(root) {
   return r.status === 0 && r.stdout.trim() === 'true';
 }
 
+/** Whether `priority.md` differs from HEAD, in the index or the work tree. */
+function uncommitted(root) {
+  const r = spawnSync('git', ['status', '--porcelain', '--', PRIORITY_FILE], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return r.status !== 0 || r.stdout.trim() !== '';
+}
+
 /** The op's words for the commit subject and the report. */
 function opWords(op) {
   if (op.remove) return 'unranked';
@@ -453,16 +463,24 @@ export async function main(argv, env = process.env) {
       if (err instanceof RankFileError) return { refused: err.message };
       throw err;
     }
-    if (next === content) return { unchanged: true };
+    const commit = () => commitPaths(root, [PRIORITY_FILE], `chore: ${id} ${opWords(op)} in ${PRIORITY_FILE}`);
+    if (next === content) {
+      // The file already says it, but an earlier run's commit may have
+      // failed after the write (a hook, git add, the sync lock): commit what
+      // is pending rather than call it done.
+      if (!inRepo(root) || !uncommitted(root)) return { unchanged: true };
+      return { pending: true, commit: commit() };
+    }
     atomicWriteFile(root, path, crlf ? next.replace(/\n/g, '\r\n') : next);
     if (!inRepo(root)) return { commit: { committed: false, paths: [PRIORITY_FILE], notRepo: true } };
-    return { commit: commitPaths(root, [PRIORITY_FILE], `chore: ${id} ${opWords(op)} in ${PRIORITY_FILE}`) };
+    return { commit: commit() };
   });
   if (res.refused) refuse(res.refused);
   if (res.unchanged) {
     info(`${id} is already there; ${PRIORITY_FILE} is unchanged.`);
     return;
   }
-  info(`${id} ${opWords(op)}.`);
+  if (res.pending) info(`${id} is already there, but ${PRIORITY_FILE} is not committed; committing it.`);
+  else info(`${id} ${opWords(op)}.`);
   reportBacklogCommit(res.commit, 'bl rank');
 }
