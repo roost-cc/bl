@@ -247,3 +247,43 @@ test('commitPaths refuses priority.md under BL_HEADLESS, commits it without', ()
   assert.equal(ok.committed, true, ok.error);
   assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'priority.md');
 });
+
+test('commitPaths_headless_refuses_every_pathspec_selecting_priority_md', () => {
+  const { dir } = mkTempBacklog({ priority: [{ unit: 'F-1', why: 'x' }] });
+  initGitBacklog(dir);
+  const path = join(dir, 'priority.md');
+  const head = git(dir, 'rev-parse', 'HEAD');
+  // Modified, staged deletion, untracked: each state git's add and commit would take.
+  const states = {
+    modified: () => writeFileSync(path, readFileSync(path, 'utf8').replace('why: x', 'why: y')),
+    deleted: () => git(dir, 'rm', '-q', '--cached', 'priority.md'),
+  };
+  const specs = [
+    'priority.md',
+    './priority.md',
+    '.',
+    ':(top)priority.md',
+    ':/priority.md',
+    '*.md',
+    'priority*',
+    ':(glob)*.md',
+    ':(icase)PRIORITY.MD',
+    ':(literal)priority.md',
+  ];
+  for (const [state, make] of Object.entries(states)) {
+    make();
+    for (const spec of specs) {
+      const r = withMarker('1', () => commitPaths(dir, [spec], 'chore: rank'));
+      assert.equal(r.committed, false, `${state} ${spec}`);
+      assert.match(r.error ?? '', /refusing to commit priority\.md/, `${state} ${spec}`);
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), head, `${state} ${spec}: nothing committed`);
+    }
+    git(dir, 'reset', '-q', '--hard');
+  }
+  // A pathspec that does not select it is not refused.
+  writeFileSync(path, readFileSync(path, 'utf8').replace('why: x', 'why: y'));
+  writeFileSync(join(dir, 'note.txt'), 'n\n');
+  for (const spec of ['*.txt', ':(glob)note*', 'stories']) {
+    assert.equal(headlessPriorityRefusal(dir, [spec], { BL_HEADLESS: '1' }), null, spec);
+  }
+});
