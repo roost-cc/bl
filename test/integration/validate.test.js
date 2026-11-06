@@ -4,7 +4,8 @@ import { writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
-import { runBl } from '../helpers/run-bl.js';
+import { spawnSync } from 'node:child_process';
+import { BL_BIN, runBl } from '../helpers/run-bl.js';
 
 /**
  * A fixture that passes the component rules (F-49 D4): every registered repo
@@ -409,6 +410,34 @@ test('bl validate --strict promotes warnings to non-zero exit', async () => {
   assert.equal(strict.status, 2);
 
   td.cleanup();
+});
+
+test('bl validate --json to a pipe writes the whole report, past the pipe buffer', () => {
+  // 700 findings make a report of ~200 KB, past a pipe's 64 to 128 KiB. An
+  // exit straight after the write used to cut it there.
+  const stories = Array.from({ length: 700 }, (_, i) => ({
+    id: `S-${i + 1}`,
+    component: 'C00',
+    title: `story ${i + 1}`,
+    required_for: 'S-1',
+  }));
+  const td = cleanBacklog({ stories });
+  try {
+    const out = join(td.dir, '.bl', 'validate.json');
+    mkdirSync(join(td.dir, '.bl'), { recursive: true });
+    const r = spawnSync('/bin/sh', ['-c', '"$1" validate --json | cat >"$2"', 'sh', BL_BIN, out], {
+      cwd: td.dir,
+      env: { ...process.env, BL_BACKLOG_DIR: td.dir },
+      stdio: 'ignore',
+    });
+    assert.equal(r.status, 0);
+    const text = readFileSync(out, 'utf8');
+    assert.ok(text.length > 150_000, `report is ${text.length} bytes`);
+    const report = JSON.parse(text);
+    assert.equal(report.findings.filter((f) => f.code === 'derived-key').length, 700);
+  } finally {
+    td.cleanup();
+  }
 });
 
 test('bl validate --help prints documented options on stdout', async () => {

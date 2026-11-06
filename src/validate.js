@@ -1626,7 +1626,8 @@ among edges and cross-feature depends_on as blockers-cycle.`);
     if (report) console.log(report);
   }
 
-  if (summary.errors > 0) process.exit(1);
-  if (options.strict && summary.warnings > 0) process.exit(2);
-  process.exit(0);
+  // The exit code, not `process.exit`: stdout to a pipe is written
+  // asynchronously, and exiting at once cuts a report past the pipe's
+  // buffer (64 KiB to 128 KiB) short.
+  process.exitCode = summary.errors > 0 ? 1 : options.strict && summary.warnings > 0 ? 2 : 0;
 }

@@ -34,9 +34,10 @@ export function probeBinary(firstToken) {
   if (!firstToken) return false;
   if (probeCache.has(firstToken)) return probeCache.get(firstToken);
   // `command -v` is POSIX, recognises shell builtins, aliases, and PATH
-  // entries — same surface the shell uses to dispatch a plugin command.
-  const result = spawnSync('command', ['-v', firstToken], {
-    shell: true,
+  // entries — same surface the shell uses to dispatch a plugin command. The
+  // token goes in as the script's `$1`, never concatenated into its text
+  // (`shell: true` with args is DEP0190, and would let a token run as shell).
+  const result = spawnSync('/bin/sh', ['-c', 'command -v -- "$1"', 'sh', firstToken], {
     stdio: ['ignore', 'pipe', 'ignore'],
     encoding: 'utf8',
   });
