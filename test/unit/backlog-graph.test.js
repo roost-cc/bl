@@ -252,7 +252,6 @@ test('dangling references and duplicate ids go to problems with bl validate code
     [
       ['component-unknown', 'S-6', 'stories/S6-stray/index.md', 'component', 'C99'],
       ['dangling-dep', 'S-5', 'stories/S5-fifth/index.md', 'depends_on', 'S-404'],
-      ['dangling-dep', 'S-5', 'stories/S5-fifth/index.md', 'required_for', 'S-505'],
       ['dangling-feature', 'S-6', 'stories/S6-stray/index.md', 'feature', 'F-9'],
       ['duplicate-id', 'C01', 'components/C04-copy/index.md', null, 'C01'],
       ['duplicate-id', 'S-5', 'stories/S7-copy/index.md', null, 'S-5'],

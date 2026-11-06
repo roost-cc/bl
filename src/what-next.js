@@ -4,7 +4,8 @@
  * Walks the dependency graph deterministically:
  *   1. Pick a reference story (the optional <story-id> arg, or the most
  *      recently closed story by `completed` date, tiebreak by highest id).
- *   2. If it has no `required_for` parents, it's a root — nothing to chain to.
+ *   2. If no story depends on it (no `requiredFor` parents), it's a root —
+ *      nothing to chain to.
  *   3. For each parent (lowest id first), if every one of the parent's
  *      `depends_on` is done, the parent itself is next.
  *   4. Otherwise, pick the oldest (lowest id) peer that isn't done; if that
@@ -16,17 +17,8 @@
  * story among the stories that match instead (`pickNextIn`).
  */
 
-import { readFileSync } from 'fs';
-import {
-  loadConfig,
-  parseFrontmatter,
-  parseArgs,
-  normalizeId,
-  normalizeComponentId,
-  componentIdHint,
-  info,
-} from './config.js';
-import { readAllStories, parseIdList, readBacklogOrder, findComponentDir } from './story.js';
+import { loadConfig, parseArgs, normalizeId, normalizeComponentId, componentIdHint, info } from './config.js';
+import { readAllStories, readBacklogOrder, findComponentDir } from './story.js';
 import { filterFromArgs, filterStories, hasFilter, filterLabel } from './filter.js';
 import { loadFlow } from './flow.js';
 
@@ -43,7 +35,6 @@ export function buildGraph(stories) {
   const byId = new Map(stories.map((s) => [s.id, s]));
   const children = new Map(); // parent -> Set(child)
   const parents = new Map(); // child -> Set(parent)
-  const fmById = new Map();
 
   const addEdge = (parentId, childId) => {
     if (parentId === childId) return;
@@ -54,11 +45,10 @@ export function buildGraph(stories) {
     parents.get(childId).add(parentId);
   };
 
+  // An edge is stated once, on the dependent story's `depends_on` (F-77 D3);
+  // `requiredFor` is the graph's inverse of it, each edge seen once.
   for (const s of stories) {
-    const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
-    fmById.set(s.id, fm);
-    for (const c of parseIdList(fm.depends_on)) addEdge(s.id, c);
-    for (const p of parseIdList(fm.required_for)) addEdge(p, s.id);
+    for (const p of s.requiredFor ?? []) addEdge(p, s.id);
   }
 
   const sortedArr = (m) => {
@@ -70,7 +60,6 @@ export function buildGraph(stories) {
     children: sortedArr(children),
     parents: sortedArr(parents),
     byId,
-    fmById,
   };
 }
 
@@ -161,11 +150,8 @@ export function pickNextIn(inSet, graph, priorityMap, flow) {
 function pickMostRecentlyClosed(stories, flow) {
   const closed = stories.filter((s) => flow.meets('story', s.status, 'done'));
   if (closed.length === 0) return null;
-  // Read `completed` from frontmatter; fall back to "" (sorts oldest).
-  const withDate = closed.map((s) => {
-    const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
-    return { story: s, completed: fm.completed ?? '' };
-  });
+  // `completed` from frontmatter; "" (sorts oldest) when unset.
+  const withDate = closed.map((s) => ({ story: s, completed: s.completed ?? '' }));
   withDate.sort((a, b) => {
     if (a.completed !== b.completed) return b.completed.localeCompare(a.completed);
     return idNum(b.story.id) - idNum(a.story.id);
@@ -193,12 +179,12 @@ Arguments:
                falling back to the lowest-id startable story.
 
 Suggests the next story to start by walking the dependency graph:
-  - If the reference story has a \`required_for\` parent whose other
-    \`depends_on\` are all done, that parent is next.
+  - If a story that depends on the reference story (a parent) has its
+    other \`depends_on\` all done, that parent is next.
   - Otherwise the oldest (lowest-id) peer or peer descendant that has all
     its own dependencies satisfied is next.
-  - If the reference story has no \`required_for\` parent, it was a root
-    — there is nothing to chain to.
+  - If no story depends on the reference story, it was a root — there is
+    nothing to chain to.
   - With a component ID, picks the lowest-priority-rank startable story inside
     the component; if none of the startable stories appear in the priority
     table, falls back to the lowest-id startable story.
@@ -325,7 +311,7 @@ Suggests the next story to start by walking the dependency graph:
 
   const parents = graph.parents.get(reference.id) ?? [];
   if (parents.length === 0) {
-    info(`\n${reference.id} has no \`required_for\` — it was a root. Nothing to chain to; pick a new line of work.`);
+    info(`\nNo story depends on ${reference.id} — it was a root. Nothing to chain to; pick a new line of work.`);
     return;
   }
 

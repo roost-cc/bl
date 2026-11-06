@@ -43,7 +43,7 @@ import { readFileSync, statSync, existsSync, rmSync } from 'fs';
 import { join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { stringify as stringifyYaml } from 'yaml';
-import { graphOf } from './backlog-graph.js';
+import { DERIVED_KEYS, graphOf } from './backlog-graph.js';
 import {
   loadConfig,
   configForRepo,
@@ -181,8 +181,10 @@ function readStoriesForSync(config, flow) {
       console.warn(`  warning: ${s.storyRelPath} has unknown status "${status}"`);
     }
     // Run-state keys left in an index.md are `bl validate`'s
-    // run-state-in-spec errors, not unknown keys.
+    // run-state-in-spec errors, and a derived key its derived-key, not
+    // unknown keys.
     for (const key of Object.keys(fm)) {
+      if (Object.hasOwn(DERIVED_KEYS.story, key)) continue;
       if (!VALID_STORY_KEYS.has(key) && !key.startsWith('plugins-') && !RUN_STATE_KEYS.includes(key)) {
         console.warn(`  warning: ${s.storyRelPath} has unknown frontmatter key "${key}"`);
       }
@@ -292,6 +294,7 @@ function readFeaturesForSync(config, storyMap) {
   const features = [];
   for (const f of readAllFeatures(config)) {
     for (const key of Object.keys(f.fm)) {
+      if (Object.hasOwn(DERIVED_KEYS.feature, key)) continue;
       if (!VALID_FEATURE_KEYS.has(key) && !key.startsWith('plugins-') && !RUN_STATE_KEYS.includes(key)) {
         console.warn(`  warning: ${f.featureRelPath} has unknown frontmatter key "${key}"`);
       }

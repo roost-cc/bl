@@ -495,7 +495,7 @@ export function activeWorktreesByStory(config) {
  * and its one repo (`unitRepo`, `placeStory`).
  * @returns {Array<{
  *   unitRepo, componentId, componentEntry, id, title, status, type, points,
- *   depends_on, required_for, feature, found_by, added, completed,
+ *   depends_on, requiredFor, feature, found_by, added, completed,
  *   storyEntry, indexPath, storyRelPath
  * }>}
  */
@@ -514,7 +514,9 @@ export function readAllStories(config) {
       type: fm.type ?? '',
       points: fm.points ?? '',
       depends_on: fm.depends_on ?? '',
-      required_for: fm.required_for ?? '',
+      // The stories whose depends_on names this one, in number order: the
+      // graph's derived inverse (F-77 D3), never a stored `required_for:`.
+      requiredFor: (unit.requiredFor ?? []).map((r) => r.id),
       feature: fm.feature ?? '',
       found_by: fm.found_by ?? '',
       added: fm.added ?? '',

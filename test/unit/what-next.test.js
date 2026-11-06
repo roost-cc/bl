@@ -60,7 +60,6 @@ test('findOldestStartable returns null when the entire subtree is done', () => {
             dirSuffix: 'first',
             status: 'done',
             completed: '2026-01-01',
-            required_for: ['S-2'],
           },
           {
             id: 'S-2',

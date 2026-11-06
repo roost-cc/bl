@@ -212,7 +212,7 @@ ${c.reviewLog ?? 'No reviews yet.'}
 /** Whether a fixture unit carries run state, so it gets a change.md. */
 const hasRunState = (u) => ['branch', 'pr', 'review_status', 'review_round', 'reviewLog'].some((k) => u[k] != null);
 
-// `depends_on` / `required_for` are YAML sequences (F-62 D2). A fixture may
+// `depends_on` is a YAML sequence (F-62 D2). A fixture may
 // give an array or, for short, a string of ids (`"S-2"`, `"S-2, S-3"`); the
 // string is split into the sequence. An empty string stays an empty key.
 function refList(value) {
@@ -231,6 +231,8 @@ export const STORY_INDEX_TEMPLATE = (story) => `${serializeFrontmatter({
   points: story.points ?? 1,
   status: story.status ?? 'backlog',
   depends_on: refList(story.depends_on),
+  // Derived since F-77 D3; a fixture sets it only to test `derived-key`
+  // and the migration that removes it.
   required_for: refList(story.required_for),
   completed: story.completed || undefined,
   feature: story.feature || undefined,

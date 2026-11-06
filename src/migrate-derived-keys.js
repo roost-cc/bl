@@ -2,8 +2,9 @@
  * migrate-derived-keys.js — the one F-77 migration (Design D3), run by
  * `scripts/migrate-derived-keys.js`.
  *
- * Since F-77 a feature's stories, points and components, and an epic's
- * features and status, are derived by `loadBacklog()` and never stored
+ * Since F-77 a story's `required_for`, a feature's stories, points and
+ * components, and an epic's features and status, are derived by
+ * `loadBacklog()` and never stored
  * (`DERIVED_KEYS`, `src/backlog-graph.js`); `bl validate` reports one still
  * stored as `derived-key`. The migration:
  *
@@ -118,7 +119,7 @@ export function migrationSection(c, date = new Date().toISOString().slice(0, 10)
     [
       `${MIGRATION_HEADING} (${date})`,
       '',
-      "A feature's stories, points and components, and an epic's features and status, are derived by " +
+      "A story's required_for, a feature's stories, points and components, and an epic's features and status, are derived by " +
         '`loadBacklog()` and no longer stored (F-77 D3). The keys were removed from every file that held ' +
         `them, per kind the files rewritten and how many held each key: ${countsText(c)}.`,
     ].join('\n') + '\n'

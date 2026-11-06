@@ -582,11 +582,13 @@ class FrozenMap extends Map {
  * The frontmatter keys this graph derives and no file may store (F-77 D3),
  * by unit kind, each with what it is derived from. `bl validate` reports one
  * found in a file as `derived-key`; `src/migrate-derived-keys.js` removes
- * them. A story's `required_for:` joins with S-1271, which retires the
- * `asymmetric-dep` check that still needs it stated.
+ * them.
  * @type {Readonly<Record<string, Readonly<Record<string, string>>>>}
  */
 export const DERIVED_KEYS = Object.freeze({
+  story: Object.freeze({
+    required_for: 'the stories whose depends_on: names it',
+  }),
   feature: Object.freeze({
     stories: 'the stories whose feature: names it',
     points: "the sum of its stories' points:",
@@ -914,13 +916,6 @@ function linkUnits(maps, flow, problem) {
         s.dependsOn.push(d);
         d.requiredFor.push(s);
       } else dangling(s, 'dangling-dep', 'depends_on', dep, `story ${s.id} depends on non-existent story ${dep}`);
-    }
-    // The stored `required_for:` is never a link (the inverse is derived
-    // below); a dangling id in it is still `bl validate`'s until S-1271.
-    for (const req of new Set(parseIdList(s.fm.required_for))) {
-      if (!stories.has(req)) {
-        dangling(s, 'dangling-dep', 'required_for', req, `story ${s.id} is required for non-existent story ${req}`);
-      }
     }
   }
 

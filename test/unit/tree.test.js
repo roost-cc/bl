@@ -26,7 +26,7 @@ test('buildGraph produces children/parents for a known chain', () => {
     assert.deepEqual(graph.children.get('S-2') ?? [], ['S-1']);
     assert.deepEqual(graph.children.get('S-3') ?? [], ['S-2']);
     assert.deepEqual(graph.children.get('S-4') ?? [], ['S-3']);
-    // parents(S-x) = stories x is required_for / that depend on x
+    // parents(S-x) = the stories that depend on x (its derived requiredFor)
     assert.deepEqual(graph.parents.get('S-1') ?? [], ['S-2']);
     assert.deepEqual(graph.parents.get('S-3') ?? [], ['S-4']);
   } finally {
@@ -142,7 +142,7 @@ test('epic-scope candidate set excludes done seeds without --all', () => {
     const candidates = ancestorsOf(pendingSeeds, graph);
     // S-1 is done and not seeded; the ancestor walk goes upward (parents),
     // so S-1 (a child of S-2) is excluded. S-2, S-3, S-4 are included as
-    // S-2's required_for chain reaches up to S-4.
+    // S-2's dependents chain reaches up to S-4.
     assert.deepEqual([...candidates].sort(), ['S-2', 'S-3', 'S-4']);
 
     // With --all the seed is the entire epic membership, which extends the

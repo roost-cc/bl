@@ -27,7 +27,7 @@ function fixture() {
       { id: 'C02', title: 'Docs', dirSuffix: 'docs', repo: 'bl' },
     ],
     stories: [
-      { id: 'S-1', component: 'C01', title: 'One', status: 'done', feature: 'F-1', required_for: 'S-2' },
+      { id: 'S-1', component: 'C01', title: 'One', status: 'done', feature: 'F-1' },
       { id: 'S-2', component: 'C01', title: 'Two', depends_on: 'S-1', feature: 'F-1' },
       { id: 'S-3', component: 'C02', title: 'Three', status: 'refined' },
     ],

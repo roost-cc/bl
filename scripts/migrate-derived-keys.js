@@ -2,8 +2,9 @@
 /**
  * migrate-derived-keys.js — the one F-77 migration (Design D3): remove from
  * every unit file the frontmatter keys bl now derives (`DERIVED_KEYS`: a
- * feature's `stories:`, `points:` and `components:`, an epic's `features:`
- * and `status:`). The logic is in `src/migrate-derived-keys.js`.
+ * story's `required_for:`, a feature's `stories:`, `points:` and
+ * `components:`, an epic's `features:` and `status:`). The logic is in
+ * `src/migrate-derived-keys.js`.
  *
  *   node scripts/migrate-derived-keys.js [--dry-run] [--backlog <dir>]
  *

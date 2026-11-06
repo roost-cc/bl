@@ -4,7 +4,7 @@
  *
  * Layout (project demo):
  *   C00-foundation — S-1 (done), S-2 (backlog, depends_on S-1)
- *   C01-features   — S-3 (backlog, depends_on S-2, required_for S-4),
+ *   C01-features   — S-3 (backlog, depends_on S-2),
  *                    S-4 (backlog)
  *
  *   chain                : S-1 (done) → S-2 → S-3 → S-4
@@ -22,9 +22,8 @@ export function buildSampleBacklog() {
       { id: 'C01', title: 'Features', dirSuffix: 'features' },
     ],
     valueEpics: [{ id: 'E50', title: 'Launch', dirSuffix: 'launch', theme: 'demo' }],
-    // Edges declared once each, in the depends_on direction (B depends_on A
-    // is the same edge as A required_for B; the graph builder dedupes either
-    // way). Keep one direction for readability.
+    // Edges declared once each, on the dependent story's depends_on: the
+    // inverse (a story's requiredFor) is derived (F-77 D3).
     stories: [
       {
         id: 'S-1',

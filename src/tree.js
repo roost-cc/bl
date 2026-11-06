@@ -1,11 +1,12 @@
 /**
- * tree.js — render dependency trees built from depends_on/required_for frontmatter.
+ * tree.js — render dependency trees built from depends_on frontmatter.
  *
  * Each story may declare:
  *   depends_on: [S-56, S-78]     # stories that must be done before this can start
- *   required_for: [S-12, S-34]   # stories that cannot start until this is done
+ * and the stories that cannot start until it is done are derived, the graph's
+ * `requiredFor` (F-77 D3).
  *
- * A "tree" is rooted at a story nothing else depends on (empty `required_for`),
+ * A "tree" is rooted at a story nothing else depends on (empty `requiredFor`),
  * and a node's children are its `depends_on` entries. Trees are collected as
  * connected components in the undirected graph — a story with multiple
  * parents shows up under the first one it's encountered; subsequent
@@ -21,11 +22,9 @@
  *                           (filter.js, F-51 D2)
  */
 
-import { readFileSync } from 'fs';
 import {
   exitStatus,
   loadConfig,
-  parseFrontmatter,
   parseArgs,
   showText,
   info,
@@ -33,7 +32,7 @@ import {
   colorEnabled,
   componentIdHint,
 } from './config.js';
-import { readAllStories, normalizeId, normalizeComponentId, findComponentDir, parseIdList } from './story.js';
+import { readAllStories, normalizeId, normalizeComponentId, findComponentDir } from './story.js';
 import { filterFromArgs, filterStories, hasFilter, filterLabel } from './filter.js';
 import { flowForHelp, loadFlow } from './flow.js';
 
@@ -54,7 +53,7 @@ function formatNode(story, flow, extra = '', color = false) {
  * Build the dependency graph.
  * @returns {{
  *   children: Map<string, string[]>,  // parent → children (depends_on)
- *   parents: Map<string, string[]>,   // child → parents (required_for)
+ *   parents: Map<string, string[]>,   // child → parents (requiredFor)
  * }}
  */
 export function buildGraph(stories) {
@@ -70,10 +69,10 @@ export function buildGraph(stories) {
     parentSet.get(childId).add(parentId);
   };
 
+  // An edge is stated once, on the dependent story's `depends_on` (F-77 D3);
+  // `requiredFor` is the graph's inverse of it, each edge seen once.
   for (const s of stories) {
-    const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
-    for (const c of parseIdList(fm.depends_on)) addEdge(s.id, c);
-    for (const p of parseIdList(fm.required_for)) addEdge(p, s.id);
+    for (const p of s.requiredFor ?? []) addEdge(p, s.id);
   }
 
   const toSortedArray = (m) => {
@@ -169,7 +168,7 @@ export function rootsWithin(candidates, graph) {
 
 /**
  * Given a set of seed story ids, return the union of those ids and every
- * ancestor reachable via `graph.parents` (i.e. via `required_for` edges).
+ * ancestor reachable via `graph.parents` (the stories that depend on them).
  * Used to build the candidate set for both the story-scope and component-scope
  * forms of `bl tree`.
  */
@@ -207,7 +206,7 @@ Options:
   --help               Show this help
 
 Notes:
-  - Trees are built from the \`depends_on\` and \`required_for\` frontmatter fields.
+  - Trees are built from the \`depends_on\` frontmatter field.
   - A root is a story nothing depends on; its children are its \`depends_on\` list.
   - Orphan stories (no dependencies) are not shown.
   - With a component id, only trees containing pending stories in the component are
@@ -256,7 +255,7 @@ Notes:
         console.error(`bl tree: story not found: ${raw}`);
         process.exit(1);
       }
-      // Ancestors of the target (including itself), walking via required_for.
+      // Ancestors of the target (including itself), walking its dependents.
       // Limiting candidates to ancestors ensures we only render trees whose
       // subtree actually contains the target — not sibling trees that merely
       // share a descendant with it.
@@ -284,7 +283,7 @@ Notes:
     }
     const hasAnyEdge = seedIds.some((id) => graph.children.has(id) || graph.parents.has(id));
     if (!hasAnyEdge) {
-      info(`No dependency trees for pending stories in ${label}. Add depends_on or required_for to story frontmatter.`);
+      info(`No dependency trees for pending stories in ${label}. Add depends_on to story frontmatter.`);
       return;
     }
     candidateIds = ancestorsOf(seedIds, graph);
@@ -305,7 +304,7 @@ Notes:
     info(
       args.positional[0]
         ? `No dependencies recorded for ${normalizeId(args.positional[0]).id}.`
-        : 'No dependency trees found. Add `depends_on:` or `required_for:` to story frontmatter.',
+        : 'No dependency trees found. Add `depends_on:` to story frontmatter.',
     );
     return;
   }

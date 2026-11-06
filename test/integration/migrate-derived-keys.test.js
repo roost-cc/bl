@@ -21,7 +21,7 @@ import { spawnSyncFiles } from '../../src/child-stdio.js';
 const SCRIPT = fileURLToPath(new URL('../../scripts/migrate-derived-keys.js', import.meta.url));
 
 const unit = (fm, heading) => `${serializeFrontmatter(fm)}\n# ${heading}\n\n## Summary\n\nWhy.\n`;
-const story = (id, feature, points) =>
+const story = (id, feature, points, edges = {}) =>
   unit(
     {
       component: 'C32',
@@ -32,6 +32,7 @@ const story = (id, feature, points) =>
       status: 'backlog',
       added: '2026-11-01',
       feature,
+      ...edges,
     },
     id,
   );
@@ -39,7 +40,9 @@ const story = (id, feature, points) =>
 /**
  * A backlog in git as bl wrote it before F-77: F-1 stores all three derived
  * keys, F-2 only `points:`, F-3 none; E50 stores `features:` and `status:`,
- * E51 none. Every stored value is what the graph derives.
+ * E51 none; S-1 stores `required_for: [S-2]` (S-2 depends on it), S-3 an
+ * empty `required_for:` (the old template's), S-2 none. Every stored value
+ * is what the graph derives.
  */
 function oldBacklog() {
   const dir = mkTempDir('bl-migrate-derived-');
@@ -53,9 +56,9 @@ function oldBacklog() {
       { component_id: 'C32', title: 'bl', repo: 'bl', home: 'true', paths: ['**'] },
       'C32',
     ),
-    'stories/S1-one/index.md': story('S-1', 'F-1', 1),
-    'stories/S2-two/index.md': story('S-2', 'F-1', 2),
-    'stories/S3-three/index.md': story('S-3', 'F-2', 3),
+    'stories/S1-one/index.md': story('S-1', 'F-1', 1, { required_for: ['S-2'] }),
+    'stories/S2-two/index.md': story('S-2', 'F-1', 2, { depends_on: ['S-1'] }),
+    'stories/S3-three/index.md': story('S-3', 'F-2', 3, { required_for: '' }),
     'features/F1-one/index.md': unit(
       {
         feature_id: 'F-1',
@@ -97,12 +100,17 @@ const fm = (dir, rel) => parseFrontmatter(read(dir, rel)).fm;
 const head = (dir) => git(dir, 'rev-parse', 'HEAD');
 const script = (dir, ...args) =>
   spawnSyncFiles(process.execPath, [SCRIPT, '--backlog', dir, ...args], { encoding: 'utf8' });
-const COUNTS = 'features: 2 (stories: 1, points: 2, components: 1); epics: 1 (features: 1, status: 1)';
+const COUNTS =
+  'stories: 2 (required_for: 2); features: 2 (stories: 1, points: 2, components: 1); epics: 1 (features: 1, status: 1)';
 
-/** What bl derives: each feature's stories, points and components, each epic's features and status. */
+/**
+ * What bl derives: each story's requiredFor, each feature's stories, points
+ * and components, each epic's features and status.
+ */
 function derived(dir) {
   const g = loadBacklog(loadConfig({ backlogRoot: dir }), { reload: true });
   return {
+    stories: [...g.stories.values()].map((s) => [s.id, s.requiredFor.map((r) => r.id)]),
     features: [...g.features.values()].map((f) => [
       f.id,
       f.stories.map((s) => s.id),
@@ -129,8 +137,10 @@ test('--dry-run prints each file it would rewrite and the per-kind counts, and w
   assert.match(r.stdout, /^would rewrite features\/F1-one\/index\.md \(stories, points, components removed\)$/m);
   assert.match(r.stdout, /^would rewrite features\/F2-two\/index\.md \(points removed\)$/m);
   assert.match(r.stdout, /^would rewrite epics\/E50-fifty\/index\.md \(features, status removed\)$/m);
+  assert.match(r.stdout, /^would rewrite stories\/S1-one\/index\.md \(required_for removed\)$/m);
+  assert.match(r.stdout, /^would rewrite stories\/S3-three\/index\.md \(required_for removed\)$/m);
   assert.match(r.stdout, /^would append {2}MIGRATION\.md$/m);
-  assert.doesNotMatch(r.stdout, /F3-three|E51|stories\/|components\//);
+  assert.doesNotMatch(r.stdout, /F3-three|E51|S2-two|components\//);
   assert.match(r.stdout, new RegExp(`^${COUNTS.replace(/[()]/g, '\\$&')}$`, 'm'));
   assert.equal(head(dir), before);
   assert.deepEqual(statusLines(dir), []);
@@ -147,14 +157,21 @@ test('a run removes every derived key in one commit, derives the same, and a sec
     'features/F1-one/index.md',
     'features/F1-one/index.md',
     'features/F2-two/index.md',
+    'stories/S1-one/index.md',
+    'stories/S3-three/index.md',
   ]);
-  const untouched = ['features/F3-three/index.md', 'epics/E51-fifty-one/index.md', 'stories/S1-one/index.md'];
+  assert.deepEqual(was.stories, [
+    ['S-1', ['S-2']],
+    ['S-2', []],
+    ['S-3', []],
+  ]);
+  const untouched = ['features/F3-three/index.md', 'epics/E51-fifty-one/index.md', 'stories/S2-two/index.md'];
   // Their frontmatter, as the migration's own sync regenerates tables in bodies.
   const kept = Object.fromEntries(untouched.map((p) => [p, fm(dir, p)]));
 
   const r = script(dir);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^committed \d+ backlog path\(s\) in \w+ chore: F-77 derived-keys migration: features: 2 /m);
+  assert.match(r.stdout, /^committed \d+ backlog path\(s\) in \w+ chore: F-77 derived-keys migration: stories: 2 /m);
   assert.equal(git(dir, 'rev-list', '--count', `${before}..HEAD`), '1');
   assert.deepEqual(statusLines(dir), []);
 
@@ -173,6 +190,9 @@ test('a run removes every derived key in one commit, derives the same, and a sec
     status: 'draft',
   });
   assert.deepEqual(fm(dir, 'epics/E50-fifty/index.md'), { epic_id: 'E50', title: 'Fifty', theme: 'demo' });
+  for (const p of ['stories/S1-one/index.md', 'stories/S3-three/index.md']) {
+    assert.equal(Object.hasOwn(fm(dir, p), 'required_for'), false, p);
+  }
   assert.match(read(dir, 'features/F1-one/index.md'), /\n# F-1\n\n## Summary\n\nWhy\.\n/);
   for (const p of untouched) assert.deepEqual(fm(dir, p), kept[p], p);
   assert.match(read(dir, 'MIGRATION.md'), /^## F-77 derived-keys migration \(\d{4}-\d\d-\d\d\)$/m);
@@ -183,7 +203,10 @@ test('a run removes every derived key in one commit, derives the same, and a sec
   const after = head(dir);
   const again = script(dir, '--dry-run');
   assert.equal(again.status, 0, again.stderr);
-  assert.match(again.stdout, /^features: 0 \(stories: 0, points: 0, components: 0\); epics: 0 /m);
+  assert.match(
+    again.stdout,
+    /^stories: 0 \(required_for: 0\); features: 0 \(stories: 0, points: 0, components: 0\); epics: 0 /m,
+  );
   assert.doesNotMatch(again.stdout, /would rewrite/);
   const rerun = script(dir);
   assert.equal(rerun.status, 0, rerun.stderr);

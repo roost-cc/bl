@@ -4,7 +4,6 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   findCycles,
-  findAsymmetricDeps,
   findDanglingFindings,
   findDuplicateFindings,
   findDuplicateIds,
@@ -211,16 +210,6 @@ test('findDuplicateFindings: stories, components and epics, each in its words', 
       ],
     ],
   );
-});
-
-test('findAsymmetricDeps detects one-sided edges', () => {
-  const storyMap = new Map([
-    ['S-1', { id: 'S-1', depends_on: ['S-2'] }],
-    ['S-2', { id: 'S-2', depends_on: '', required_for: '' }],
-  ]);
-  const findings = findAsymmetricDeps(storyMap);
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].code, 'asymmetric-dep');
 });
 
 test('findDuplicateIds identifies all matches', () => {
@@ -458,8 +447,21 @@ test('validateFrontmatter: a derived key stored in a feature or an epic is deriv
     ],
     'a stored status is derived-key whatever it holds, never bad-status',
   );
-  // A story's required_for: is still stated until S-1271.
-  assert.deepEqual(codes({ story_id: 'S-1', title: 'T', status: 'backlog', required_for: ['S-2'] }, 'story'), []);
+  // A story's required_for: is derived too (S-1271): the inverse of depends_on.
+  const story = { story_id: 'S-1', title: 'T', status: 'backlog' };
+  assert.deepEqual(codes(story, 'story'), []);
+  for (const value of [['S-2'], '']) {
+    const found = codes({ ...story, required_for: value }, 'story');
+    assert.deepEqual(
+      found.map(([sev, c]) => [sev, c]),
+      [['error', 'derived-key']],
+      `required_for: ${JSON.stringify(value)}`,
+    );
+    assert.match(
+      found[0][2],
+      /^story stores "required_for:", which bl derives from the stories whose depends_on: names it/,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -599,20 +601,10 @@ test('findCycles handles disconnected components', () => {
   assert.equal(findings.length, 1);
 });
 
-test('findDanglingFindings catches required_for refs as well', () => {
+test('findDanglingFindings no longer reads a stored required_for (F-77 D3)', () => {
+  // It is derived-key, never a link, so an id in it naming no story is not dangling-dep.
   const g = graphOver({ 'stories/S1-x/index.md': '---\nstory_id: S-1\nrequired_for: [S-9999]\n---\n' });
-  const findings = findDanglingFindings(g).deps;
-  assert.equal(findings.length, 1);
-  assert.ok(findings[0].message.includes('S-9999'));
-});
-
-test('findAsymmetricDeps emits no finding when both sides agree', () => {
-  const storyMap = new Map([
-    ['S-1', { id: 'S-1', depends_on: ['S-2'] }],
-    ['S-2', { id: 'S-2', required_for: ['S-1'] }],
-  ]);
-  const findings = findAsymmetricDeps(storyMap);
-  assert.equal(findings.length, 0);
+  assert.deepEqual(findDanglingFindings(g).deps, []);
 });
 
 // ---------------------------------------------------------------------------

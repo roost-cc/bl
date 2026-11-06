@@ -40,7 +40,8 @@ export const VALID_STORY_KEYS = new Set([
   // component's (F-52 D1); either one still set is `repo-key`.
   'plugins',
   'depends_on',
-  'required_for',
+  // No `required_for`: the inverse of `depends_on` is derived (F-77 D3);
+  // one still set is `derived-key`.
   'feature',
   // The unit whose work found a side story (`bl side --from`, F-48 D2): a
   // record only; `found-by` checks that it names a feature or story.
@@ -606,8 +607,7 @@ export function findCycles(storyMap) {
   const recStack = new Set(); // grey
   const byId = storyMap;
 
-  // We only care about cycles in depends_on edges.
-  // (required_for is the inverse, so cycles would be the same).
+  // A story's edges are its depends_on (the inverse is derived, F-77 D3).
   for (const startId of storyMap.keys()) {
     if (visited.has(startId)) continue;
 
@@ -649,47 +649,6 @@ export function findCycles(storyMap) {
         recStack.delete(id);
         path.pop();
         stack.pop();
-      }
-    }
-  }
-  return findings;
-}
-
-/**
- * @param {Map<string, any>} storyMap
- * @returns {Finding[]}
- */
-export function findAsymmetricDeps(storyMap) {
-  const findings = [];
-  for (const story of storyMap.values()) {
-    const deps = parseIdList(story.depends_on);
-    for (const depId of deps) {
-      const depStory = storyMap.get(depId);
-      if (depStory) {
-        const backLinks = parseIdList(depStory.required_for);
-        if (!backLinks.includes(story.id)) {
-          findings.push({
-            severity: 'warning',
-            code: 'asymmetric-dep',
-            message: `story ${story.id} depends on ${depId}, but ${depId} does not list ${story.id} in required_for`,
-            location: story.storyRelPath,
-          });
-        }
-      }
-    }
-    const reqs = parseIdList(story.required_for);
-    for (const reqId of reqs) {
-      const reqStory = storyMap.get(reqId);
-      if (reqStory) {
-        const backLinks = parseIdList(reqStory.depends_on);
-        if (!backLinks.includes(story.id)) {
-          findings.push({
-            severity: 'warning',
-            code: 'asymmetric-dep',
-            message: `story ${story.id} is required for ${reqId}, but ${reqId} does not list ${story.id} in depends_on`,
-            location: story.storyRelPath,
-          });
-        }
       }
     }
   }
@@ -1353,7 +1312,7 @@ export function findDuplicateFindings(graph) {
 
 /**
  * The dangling-reference findings, from the graph's problems (F-77 D2):
- * `dangling-dep` (a `depends_on:` or `required_for:` naming no story) and
+ * `dangling-dep` (a `depends_on:` naming no story) and
  * `dangling-feature` (a `feature:` naming no feature), each at the story's
  * file.
  * @param {import("./backlog-graph.js").BacklogGraph} graph
@@ -1492,7 +1451,6 @@ export function runAll(config, opts = {}) {
   const fullMap = new Map();
   for (const s of allStories) fullMap.set(s.id, s);
   const cycles = findCycles(fullMap);
-  const asymmetrics = findAsymmetricDeps(fullMap);
 
   const featureLinks = findFeatureFindings(allFeatures);
   const foundBy = findFoundByFindings(allFeatures, fullMap);
@@ -1503,7 +1461,6 @@ export function runAll(config, opts = {}) {
     ...dupes.features,
     ...dangling.deps,
     ...cycles,
-    ...asymmetrics,
     ...featureLinks,
     ...dangling.features,
     ...foundBy,
@@ -1630,7 +1587,7 @@ Exit codes:
 Findings codes:
   missing-required-key, unknown-fm-key, bad-status, bad-points,
   bad-review-status, id-dir-mismatch, bad-id-format, duplicate-id,
-  cycle, dangling-dep, asymmetric-dep, review-log-missing,
+  cycle, dangling-dep, review-log-missing,
   review-log-unaddressed, plugin-binary, derived-key, dangling-feature,
   found-by, feature-no-stories, verification-only-title, run-state-in-spec,
   change-of-mismatch, change-repo-incomplete, bad-change-status,

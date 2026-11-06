@@ -157,7 +157,7 @@ if node -e '
 # ---------------------------------------------------------------------------
 TMP3=$(mktemp -d)
 setup_clean_backlog "$TMP3"
-# Add a one-sided dep to S-1 → asymmetric-dep warning.
+# Add a story with an unknown frontmatter key → unknown-fm-key warning.
 mkdir -p "$TMP3/stories/S2-second"
 cat > "$TMP3/stories/S2-second/index.md" <<'MD'
 ---
@@ -167,7 +167,7 @@ title: Second
 type: feature
 points: 1
 status: backlog
-depends_on: [S-1]
+bogus_key: x
 ---
 MD
 BL_BACKLOG_DIR="$TMP3" "$BL" validate >"$so" 2>"$se"; rc=$?
@@ -175,7 +175,7 @@ assert_eq "validate warnings-only exit 0" "0" "$rc"
 BL_BACKLOG_DIR="$TMP3" "$BL" validate --strict >"$so" 2>"$se"; rc=$?
 assert_eq "validate --strict warnings-only exit 2" "2" "$rc"
 out=$(cat "$so")
-assert_contains "validate --strict stdout still has report" "asymmetric-dep" "$out"
+assert_contains "validate --strict stdout still has report" "unknown-fm-key" "$out"
 rm -rf "$TMP3"
 
 # ---------------------------------------------------------------------------
