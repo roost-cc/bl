@@ -77,18 +77,17 @@ test('moveRefusal: any running or escalated feature among several refuses a repo
   assert.match(moveRefusal({ ...base, features }), /S-2 is in F-1, which is running/);
 });
 
-test('storyFeatures: the named feature and every listing feature, a broken backlink adding none', () => {
+test("storyFeatures: the feature its feature: names, the only membership (F-77 D3)", () => {
   const all = [
-    { id: 'F-1', status: 'running', stories: ['S-1'] },
-    { id: 'F-2', status: 'draft', stories: [] },
-    { id: 'F-3', status: 'escalated', stories: ['S-1', 'S-2'] },
+    { id: 'F-1', status: 'running' },
+    { id: 'F-2', status: 'draft' },
+    { id: 'F-3', status: 'escalated' },
   ];
   const ids = (id, feature) => storyFeatures(id, feature === undefined ? {} : { feature }, all).map((f) => f.id);
-  assert.deepEqual(ids('S-1', 'F-1'), ['F-1', 'F-3']);
-  assert.deepEqual(ids('S-1', 'f2'), ['F-1', 'F-2', 'F-3'], 'a conflicting backlink adds its feature');
+  assert.deepEqual(ids('S-1', 'F-1'), ['F-1']);
+  assert.deepEqual(ids('S-1', 'f2'), ['F-2'], 'any spelling of the id');
   for (const feature of [undefined, '', '  ', 'not-a-feature', 'F-9']) {
-    assert.deepEqual(ids('S-1', feature), ['F-1', 'F-3'], JSON.stringify(feature));
-    assert.deepEqual(ids('S-4', feature), [], JSON.stringify(feature));
+    assert.deepEqual(ids('S-1', feature), [], JSON.stringify(feature));
   }
-  assert.deepEqual(storyFeatures('S-2', {}, all), [{ id: 'F-3', status: 'escalated' }]);
+  assert.deepEqual(storyFeatures('S-2', { feature: 'F-3' }, all), [{ id: 'F-3', status: 'escalated' }]);
 });

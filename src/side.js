@@ -70,6 +70,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { ensureChange } from './change-doc.js';
 import { FEATURE_ORDER_FILE } from './feature-order.js';
+import { unitFiles } from './backlog-graph.js';
 import { insertAfter } from './template.js';
 import { withLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
@@ -344,12 +345,16 @@ function worktreeUndo(repoPath, branch, unitDir, adopted = () => false) {
  */
 function ownedFiles(root, featureDir) {
   const files = [join(root, 'index.md'), join(root, FEATURE_ORDER_FILE)];
-  for (const kind of ['components', 'themes', 'epics', 'features']) {
-    const dir = join(root, kind);
-    if (existsSync(dir)) for (const unit of readdirSync(dir)) files.push(join(dir, unit, 'index.md'));
+  for (const kind of ['component', 'theme', 'epic', 'feature']) {
+    for (const u of unitFiles({ backlogRoot: root }, kind)) files.push(u.file);
   }
   if (featureDir) for (const f of readdirSync(featureDir)) if (f.endsWith('.md')) files.push(join(featureDir, f));
   return files;
+}
+
+/** The story directories' names (`unitFiles`), listed, never read. */
+function storyEntries(root) {
+  return unitFiles({ backlogRoot: root }, 'story').map((u) => u.entry);
 }
 
 /**
@@ -361,11 +366,11 @@ function ownedFiles(root, featureDir) {
  */
 function backlogUndo(root, featureDir) {
   const storiesDir = join(root, 'stories');
-  const storiesBefore = new Set(existsSync(storiesDir) ? readdirSync(storiesDir) : []);
+  const storiesBefore = new Set(storyEntries(root));
   const read = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null);
   const files = new Map(ownedFiles(root, featureDir).map((p) => [p, read(p)]));
   return () => {
-    const added = readdirSync(storiesDir).filter((d) => !storiesBefore.has(d));
+    const added = storyEntries(root).filter((d) => !storiesBefore.has(d));
     const tracked = added.filter((d) => git(root, 'ls-files', '--', join('stories', d)).stdout.trim() !== '');
     if (tracked.length > 0) {
       throw new Error(

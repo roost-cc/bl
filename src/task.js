@@ -26,22 +26,14 @@
  * the task's edges make.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { join, relative } from 'path';
 import { parseArgs } from 'node:util';
 import { atomicWriteFile } from './atomic-write.js';
-import {
-  frontmatterSkipped,
-  info,
-  loadConfig,
-  normalizeId,
-  parseFrontmatter,
-  parseFrontmatterOf,
-  serializeFrontmatter,
-  slugify,
-} from './config.js';
+import { info, loadConfig, normalizeId, parseFrontmatter, serializeFrontmatter, slugify } from './config.js';
 import { hasFrontmatter } from './body.js';
-import { findStoryDir } from './story.js';
+import { findStoryDir, ownFm } from './story.js';
+import { graphOf } from './backlog-graph.js';
 import { findFeature, normalizeFeatureId } from './feature.js';
 import { withLock } from './lock.js';
 import { BLOCKERS_FILE, WILDCARD } from './blockers.js';
@@ -115,40 +107,36 @@ export function normalizeTaskId(raw) {
 }
 
 /**
- * Every task file under `tasks/`, in number order, read from its
- * frontmatter. A file `bl validate` found not to be YAML is skipped
- * (`frontmatterSkipped`); any other command stops at its `FrontmatterError`.
- * A file with no `task_id` is read too, with `id` empty, for `bl validate`
- * to report.
+ * Every task file under `tasks/`, in number order, projected from
+ * `loadBacklog()` (F-77 D2). A file that is not YAML stops the read at its
+ * `FrontmatterError`, except under `bl validate`, whose tolerant graph leaves
+ * it out. A file with no `task_id` is read too, with `id` empty, for
+ * `bl validate` to report.
  * @returns {Task[]}
  */
 export function readAllTasks(config) {
-  const root = tasksRoot(config);
-  if (!existsSync(root)) return [];
-  const out = [];
-  for (const entry of readdirSync(root)) {
-    const m = entry.match(TASK_FILE_RE);
-    const path = join(root, entry);
-    if (!m || !statSync(path).isFile() || frontmatterSkipped(config, path)) continue;
-    const { fm, body } = parseFrontmatterOf(readFileSync(path, 'utf8'), path);
-    const str = (v) => (typeof v === 'string' ? v.trim() : '');
-    out.push({
-      id: str(fm.task_id),
-      num: taskNum(m[1]),
-      title: str(fm.title),
-      unit: str(fm.unit),
-      owner: str(fm.owner),
-      status: str(fm.status),
-      added: str(fm.added),
-      done: str(fm.done),
-      note: str(fm.note),
-      fm,
-      body,
-      path,
-      relPath: relative(config.backlogRoot, path),
-      entry,
+  const str = (v) => (typeof v === 'string' ? v.trim() : '');
+  const out = graphOf(config)
+    .list('task')
+    .map((unit) => {
+      const fm = ownFm(unit);
+      return {
+        id: str(fm.task_id),
+        num: taskNum(unit.entry.match(TASK_FILE_RE)[1]),
+        title: str(fm.title),
+        unit: str(fm.unit),
+        owner: str(fm.owner),
+        status: str(fm.status),
+        added: str(fm.added),
+        done: str(fm.done),
+        note: str(fm.note),
+        fm,
+        body: unit.body(),
+        path: unit.file,
+        relPath: relative(config.backlogRoot, unit.file),
+        entry: unit.entry,
+      };
     });
-  }
   return out.sort((a, b) => (a.num ?? Infinity) - (b.num ?? Infinity) || (a.entry < b.entry ? -1 : 1));
 }
 

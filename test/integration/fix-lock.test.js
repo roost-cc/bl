@@ -1,22 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
 import { BL_BIN, lockOwnerVisible, startBlBehindLock } from '../helpers/run-bl.js';
 import { acquireLock, LOCK_FILE, releaseLock } from '../../src/lock.js';
-import { parseFrontmatter } from '../../src/config.js';
-import { parseIdList } from '../../src/story.js';
 
-// S-866: `bl fix` holds the backlog lock. An asymmetric-dep fix writes the
-// *other* story's index.md, so two agents whose stories both depend on a
-// third target the same file from separate processes; without the lock each
-// read-modify-write could drop the other's edge.
+// S-866: `bl fix` holds the backlog lock, part of its contract. It has no
+// code to repair since F-77 D3 retired `asymmetric-dep`, so it writes
+// nothing either way; the lock stays for the code a later story adds.
 
 const S3_DIR = 'stories/S3';
 
-/** S-1 and S-2 both depend on S-3; S-3 has no required_for. */
+/** S-1 and S-2 both depend on S-3. */
 function backlog() {
   return mkTempBacklog({
     components: [{ id: 'C01', title: 'E' }],
@@ -43,11 +40,6 @@ function within(ms, what, promise) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-function requiredFor(dir) {
-  const { fm } = parseFrontmatter(readFileSync(join(dir, S3_DIR, 'index.md'), 'utf8'));
-  return Object.hasOwn(fm, 'required_for') ? parseIdList(fm.required_for).sort() : null;
-}
-
 test('bl fix waits for the backlog lock', async (t) => {
   if (!lockOwnerVisible(t)) return;
   const { dir, cleanup } = backlog();
@@ -63,11 +55,10 @@ test('bl fix waits for the backlog lock', async (t) => {
     });
     await run.blocked;
     assert.equal(done, false, 'bl fix ran while another process held the lock');
-    assert.equal(readFileSync(s3, 'utf8'), before, 'S-3 was written under the lock');
     releaseLock(dir);
     const r = await within(20_000, 'bl fix after the lock was released', pending);
     assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(requiredFor(dir), ['S-1']);
+    assert.equal(readFileSync(s3, 'utf8'), before, 'bl fix wrote nothing');
     assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'lock released');
   } finally {
     releaseLock(dir);
@@ -85,29 +76,8 @@ test('bl fix --dry-run does not wait for the backlog lock', async () => {
       blAsync(['fix', '--dry-run', '--story', 'S-1'], dir),
     );
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(requiredFor(dir), null, 'dry-run writes nothing');
   } finally {
     releaseLock(dir);
-    cleanup();
-  }
-});
-
-test('concurrent bl fix runs both land their edge on the shared target', async () => {
-  const { dir, cleanup } = backlog();
-  try {
-    const runs = await within(
-      40_000,
-      'two concurrent bl fix runs',
-      Promise.all([blAsync(['fix', '--story', 'S-1'], dir), blAsync(['fix', '--story', 'S-2'], dir)]),
-    );
-    for (const r of runs) assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(requiredFor(dir), ['S-1', 'S-2']);
-    assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'lock file gone');
-    assert.deepEqual(
-      readdirSync(join(dir, S3_DIR)).filter((f) => f.endsWith('.tmp')),
-      [],
-    );
-  } finally {
     cleanup();
   }
 });

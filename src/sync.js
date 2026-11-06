@@ -17,13 +17,13 @@
  *     frontmatter, never location.
  *   - A component's index lists its open stories and the active features
  *     touching it; a component has no points or status (F-49 D4).
- *   - A feature gets its Stories table, points, and `components:` roll-up
- *     regenerated from the stories it lists.
+ *   - A feature gets its Stories table, from the stories naming it. Its
+ *     stories, points and components, and an epic's features and status,
+ *     are derived by the graph (`loadBacklog`) and never written (F-77 D3).
  *   - A feature or story with a task gets its Tasks table (F-65 D1), from
  *     the task files' `unit:` and their edges in `blockers.json`; a unit
  *     with none is left as it is.
- *   - An epic gets its `features:` and `status:` derived from the features
- *     naming it, and a Features table; a theme lists its epics, then its
+ *   - An epic gets a Features table; a theme lists its epics, then its
  *     features with no epic (F-51 D3).
  *   - `feature-order.md` gets its Next up and Not yet ranked tables from its
  *     `ranked:` frontmatter and the features' own; its frontmatter, intro and
@@ -43,6 +43,7 @@ import { readFileSync, statSync, existsSync, rmSync } from 'fs';
 import { join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { stringify as stringifyYaml } from 'yaml';
+import { DERIVED_KEYS, graphOf } from './backlog-graph.js';
 import {
   loadConfig,
   configForRepo,
@@ -85,15 +86,7 @@ import { readAllTasks, tasksOf, taskTableRows } from './task.js';
 import { readBlockers } from './blockers.js';
 import { loadFlow } from './flow.js';
 import { readFeatureOrder, rankedFeatures, unrankedFeatures, FEATURE_ORDER_FILE } from './feature-order.js';
-import {
-  FEATURES_DIR,
-  featuresRoot,
-  scanFeatureDirs,
-  readFeature,
-  storyLinkFromFeature,
-  featureRepoOrder,
-  LEAD_REPO,
-} from './feature.js';
+import { FEATURES_DIR, readAllFeatures, storyLinkFromFeature, featureRepoOrder, LEAD_REPO } from './feature.js';
 
 // ---------------------------------------------------------------------------
 // Markdown tables
@@ -173,20 +166,25 @@ function writeFileIfChanged(backlogRoot, path, content, previous, touchedMarkdow
 /**
  * Every story under `stories/` as a sync record: its component comes from
  * `readAllStories` (`story.js` `placeStory`), the rest from its
- * frontmatter. Unknown statuses and keys are warnings, as `bl validate` makes
- * them errors.
+ * frontmatter, the graph's (`loadBacklog`), so no story is read twice.
+ * Unknown statuses and keys are warnings, as `bl validate` makes them errors.
  */
 function readStoriesForSync(config, flow) {
   const stories = [];
-  for (const s of readAllStories(config)) {
-    const { fm } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
+  // One snapshot for both, so every record has its unit.
+  const graph = graphOf(config);
+  const units = new Map(graph.list('story').map((u) => [u.file, u]));
+  for (const s of readAllStories({ ...config, backlogGraph: graph })) {
+    const { fm } = units.get(s.indexPath);
     const status = fm.status ?? 'backlog';
     if (!flow.statusesOf('story').includes(status)) {
       console.warn(`  warning: ${s.storyRelPath} has unknown status "${status}"`);
     }
     // Run-state keys left in an index.md are `bl validate`'s
-    // run-state-in-spec errors, not unknown keys.
+    // run-state-in-spec errors, and a derived key its derived-key, not
+    // unknown keys.
     for (const key of Object.keys(fm)) {
+      if (Object.hasOwn(DERIVED_KEYS.story, key)) continue;
       if (!VALID_STORY_KEYS.has(key) && !key.startsWith('plugins-') && !RUN_STATE_KEYS.includes(key)) {
         console.warn(`  warning: ${s.storyRelPath} has unknown frontmatter key "${key}"`);
       }
@@ -293,20 +291,15 @@ function hasSection(body, heading) {
  * Nothing moves: a closed feature stays in `features/` (F-49 D3).
  */
 function readFeaturesForSync(config, storyMap) {
-  const root = featuresRoot(config);
-  if (!existsSync(root)) return [];
-
   const features = [];
-  for (const entry of scanFeatureDirs(config)) {
-    const f = readFeature(entry, config);
-    if (!f) continue;
+  for (const f of readAllFeatures(config)) {
     for (const key of Object.keys(f.fm)) {
+      if (Object.hasOwn(DERIVED_KEYS.feature, key)) continue;
       if (!VALID_FEATURE_KEYS.has(key) && !key.startsWith('plugins-') && !RUN_STATE_KEYS.includes(key)) {
         console.warn(`  warning: ${f.featureRelPath} has unknown frontmatter key "${key}"`);
       }
     }
     f.storyRecords = f.stories.map((id) => storyMap.get(id)).filter(Boolean);
-    f.computedPoints = f.storyRecords.reduce((sum, s) => sum + s.points, 0);
     f.repos = featureRepoOrder(f.storyRecords);
     f.commit = flattenCommit(f.fm.commit);
     features.push(f);
@@ -378,9 +371,9 @@ function syncStoryTasks(backlogRoot, stories, taskCtx, touchedMarkdown) {
 }
 
 /**
- * Regenerate one feature's Stories table, points, and `components:` roll-up
- * (derived from its stories, F-49 D1), and its Tasks table when it has a
- * task. The pre-F-49 `epics:` roll-up it replaces is dropped.
+ * Regenerate one feature's Stories table, and its Tasks table when it has a
+ * task. Its stories, points and components are derived by the graph and
+ * never written (F-77 D3); the pre-F-49 `epics:` roll-up is dropped.
  *
  * The rewrite goes through `updateSpecFile` and starts from the spec as read
  * under its spec lock, not from `f.content` read at collection, so a token
@@ -399,15 +392,11 @@ function syncFeature(backlogRoot, f, componentsById, touchedMarkdown, taskCtx = 
   ]);
   const table = formatTable(['ID', 'Component', 'Type', 'Title', 'Points', 'Status'], rows);
   const changed = updateSpecFile(backlogRoot, f.indexPath, (fm, body) => {
-    fm.points = String(f.computedPoints);
     delete fm.epics;
-    fm.components = [...new Set(f.storyRecords.map((s) => s.componentId).filter(Boolean))].sort();
     return withTasksTable(upsertSection(body, 'Stories', table, { after: 'Acceptance' }), f.id, taskCtx, 'Stories');
   });
   if (changed) noteMarkdown(touchedMarkdown, f.indexPath);
-  info(
-    `  ${f.featureRelPath} — ${f.storyRecords.length} stories, ${f.computedPoints} points${changed ? '' : ' (unchanged)'}`,
-  );
+  info(`  ${f.featureRelPath} — ${f.storyRecords.length} stories, ${f.points} points${changed ? '' : ' (unchanged)'}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -424,21 +413,6 @@ function themeLinkFromTop(t) {
 
 function featureNum(f) {
   return parseInt(String(f.id).replace(/^F-/, ''), 10);
-}
-
-/** The features naming epic `epicId` (`E50`), in id order. */
-function featuresOfEpic(features, epicId) {
-  return features.filter((f) => normalizeEpicId(f.epic)?.id === epicId).sort((a, b) => featureNum(a) - featureNum(b));
-}
-
-/**
- * An epic's derived status: `done` once it has features and every one is
- * closed (meets `done`), else `open`.
- */
-export function epicStatus(epicFeatures, flow) {
-  return epicFeatures.length > 0 && epicFeatures.every((f) => flow.meets('feature', f.status, 'done'))
-    ? 'done'
-    : 'open';
 }
 
 /** `<closed>/<total>` over `items` of the flow type `type`, by their `status`. */
@@ -467,15 +441,15 @@ function valueFeaturesTable(features, flow) {
 }
 
 /**
- * Regenerate one epic's index: `features:` and `status:` derived from the
- * features naming it, and its Features table after `## Outcome`.
+ * Regenerate one epic's Features table after `## Outcome`. Its features and
+ * status are the graph's (`readAllEpics`), derived and never written (F-77
+ * D3).
  */
 function syncEpic(backlogRoot, epic, features, touchedMarkdown, flow) {
   const content = readFileSync(epic.indexPath, 'utf8');
   const { fm, body } = parseFrontmatter(content);
-  const own = featuresOfEpic(features, epic.id);
-  fm.features = own.map((f) => f.id);
-  fm.status = epicStatus(own, flow);
+  const byId = new Map(features.map((f) => [f.id, f]));
+  const own = epic.features.map((id) => byId.get(id)).filter(Boolean);
   const newBody = upsertSection(body, 'Features', valueFeaturesTable(own, flow), {
     after: 'Outcome',
   });
@@ -486,8 +460,8 @@ function syncEpic(backlogRoot, epic, features, touchedMarkdown, flow) {
     content,
     touchedMarkdown,
   );
-  info(`  ${epic.relPath} — ${own.length} features, ${fm.status}${changed ? '' : ' (unchanged)'}`);
-  return { ...epic, status: fm.status, featureRecords: own };
+  info(`  ${epic.relPath} — ${own.length} features, ${epic.status}${changed ? '' : ' (unchanged)'}`);
+  return { ...epic, featureRecords: own };
 }
 
 /**
@@ -791,7 +765,7 @@ function syncTopLevel(config, ctx, backlogIds, touchedMarkdown, features) {
         `[${f.id}](${featureLinkFromTop(f)})`,
         f.title,
         f.status,
-        f.computedPoints,
+        f.points,
         f.storyRecords.length,
         f.repos.join(', '),
       ]),

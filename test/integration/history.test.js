@@ -34,16 +34,20 @@ test('buildHistory reads one snapshot per commit day across both layouts', () =>
 
   const d1 = days.get('2026-04-21');
   assert.deepEqual(d1.stories, {
-    'S-1': { status: 'backlog', points: 3 },
-    'S-2': { status: 'backlog', points: 2 },
-    'S-4': { status: 'done', points: 1 },
+    'S-1': { status: 'backlog', points: 3, feature: 'F-1' },
+    'S-2': { status: 'backlog', points: 2, feature: 'F-1' },
+    'S-4': { status: 'done', points: 1, feature: 'F-2' },
   });
   assert.deepEqual(d1.features, { 'F-1': { status: 'draft', stories: ['S-1', 'S-2'] } });
   assert.equal(h.unreadable, 1, 'the S-9 blob');
 
   assert.equal(days.get('2026-04-23').stories['S-1'].status, 'refined');
-  assert.deepEqual(days.get('2026-04-25').stories['S-2'], { status: 'backlog', points: 5 }, 're-estimated');
-  assert.deepEqual(days.get('2026-04-25').stories['S-3'], { status: 'backlog', points: 8 }, 'added');
+  assert.deepEqual(
+    days.get('2026-04-25').stories['S-2'],
+    { status: 'backlog', points: 5, feature: 'F-1' },
+    're-estimated',
+  );
+  assert.deepEqual(days.get('2026-04-25').stories['S-3'], { status: 'backlog', points: 8, feature: '' }, 'added');
 
   const d4 = days.get('2026-04-28');
   assert.equal(d4.stories['S-1'].status, 'done', "the day's last commit");
@@ -98,7 +102,8 @@ test('historical membership normalizes all supported story references in sequenc
   lists.forEach((list, i) => {
     const day = byDate(h).get(`2026-05-${String(i + 1).padStart(2, '0')}`);
     assert.deepEqual(day.features['F-1'].stories, ['S-1', 'S-3'], list);
-    assert.deepEqual(scopeStories(day, { kind: 'feature', id: 'F-1' }, h.groups), ['S-1', 'S-3'], list);
+    // With S-2, which still names F-1 (superseded): membership is the union (F-77 D3).
+    assert.deepEqual(scopeStories(day, { kind: 'feature', id: 'F-1' }, h.groups), ['S-1', 'S-2', 'S-3'], list);
   });
   // The feature's progress row reads the normalized members: 3 + 8 points.
   assert.equal(buildReport(h, config, loadFlow(dir)).features.find((f) => f.id === 'F-1').scope, 11);
@@ -113,11 +118,20 @@ test('buildHistory backfills the days before the first commit from added and com
   assert.equal(early.length, 11);
   assert.ok(early.every((d) => d.commit === null && Object.keys(d.features).length === 0));
   const days = byDate(h);
-  assert.deepEqual(days.get('2026-04-11').stories, { 'S-1': { status: 'backlog', points: 3 } });
-  assert.deepEqual(days.get('2026-04-13').stories['S-4'], { status: 'backlog', points: 1 }, 'before completed');
-  assert.deepEqual(days.get('2026-04-14').stories['S-4'], { status: 'done', points: 1 }, 'from completed');
+  // A projected day knows no feature.
+  assert.deepEqual(days.get('2026-04-11').stories, { 'S-1': { status: 'backlog', points: 3, feature: '' } });
+  assert.deepEqual(
+    days.get('2026-04-13').stories['S-4'],
+    { status: 'backlog', points: 1, feature: '' },
+    'before completed',
+  );
+  assert.deepEqual(
+    days.get('2026-04-14').stories['S-4'],
+    { status: 'done', points: 1, feature: '' },
+    'from completed',
+  );
   // Current points; S-2 is superseded now but has no completed date.
-  assert.deepEqual(days.get('2026-04-15').stories['S-2'], { status: 'backlog', points: 5 });
+  assert.deepEqual(days.get('2026-04-15').stories['S-2'], { status: 'backlog', points: 5, feature: '' });
   assert.equal(days.get('2026-04-15').stories['S-3'], undefined, 'added later');
 });
 
@@ -188,7 +202,8 @@ test('cache rejects malformed day and snapshot shapes and rebuilds them', () => 
     ['a story as a string', { ...day, stories: { ...day.stories, 'S-1': 'done' } }],
     ['a story as an array', { ...day, stories: { ...day.stories, 'S-1': [] } }],
     ['string points', { ...day, stories: { ...day.stories, 'S-1': { ...story, points: '3' } } }],
-    ['no status', { ...day, stories: { ...day.stories, 'S-1': { points: 3 } } }],
+    ['no status', { ...day, stories: { ...day.stories, 'S-1': { points: 3, feature: 'F-1' } } }],
+    ['no feature (a version 3 day)', { ...day, stories: { ...day.stories, 'S-1': { status: 'done', points: 3 } } }],
     ['a null feature', { ...day, features: { 'F-1': null } }],
     ['feature stories as a string', { ...day, features: { 'F-1': { ...feature, stories: 'S-1, S-3' } } }],
     ['feature stories not strings', { ...day, features: { 'F-1': { ...feature, stories: [1, 3] } } }],
@@ -215,9 +230,12 @@ test("bl history --scope narrows to a feature's stories of the day, an epic, a t
     return Object.keys(byDate(JSON.parse(r.stdout)).get(date).stories).sort();
   };
   assert.deepEqual(ids('F-1', '2026-04-21'), ['S-1', 'S-2']);
-  assert.deepEqual(ids('F-1', '2026-04-28'), ['S-1', 'S-3'], 'the stories: it listed that day');
-  assert.deepEqual(ids('E50', '2026-04-28'), ['S-1', 'S-3']);
-  assert.deepEqual(ids('demo', '2026-04-28'), ['S-1', 'S-3']);
+  // The stories naming it that day, with the stories: it listed (F-77 D3):
+  // S-2 left the list but still names F-1, superseded.
+  assert.deepEqual(ids('F-1', '2026-04-28'), ['S-1', 'S-2', 'S-3']);
+  assert.deepEqual(ids('F-1', '2026-04-25'), ['S-1', 'S-2'], 'S-3 named no feature yet');
+  assert.deepEqual(ids('E50', '2026-04-28'), ['S-1', 'S-2', 'S-3']);
+  assert.deepEqual(ids('demo', '2026-04-28'), ['S-1', 'S-2', 'S-3']);
   assert.deepEqual(ids('C01', '2026-04-28'), ['S-1', 'S-2', 'S-3', 'S-4']);
   assert.deepEqual(ids('F-1', '2026-04-15'), [], 'a backfilled day lists no feature');
 });

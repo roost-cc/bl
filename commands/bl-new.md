@@ -17,7 +17,7 @@ repo; no repo is written on the story or on a feature.
 | `--points`       | Yes      | Fibonacci story points: 1, 2, 3, 5, 8, 13                                |
 | `--type`         | No       | Story type (default: `feature`). E.g. feature, bug                       |
 | `--depends-on`   | No       | Comma-separated story IDs this depends on (repeatable)                   |
-| `--required-for` | No       | Comma-separated story IDs this unblocks (repeatable)                     |
+| `--required-for` | No       | Story IDs this unblocks: adds the new id to their `depends_on`           |
 | `--json`         | No       | Emit JSON to stdout (schema `bl-new-json/v2`); human output → stderr     |
 | `--from`         | No       | Batch mode: read N stories (and optionally a new component) from a spec  |
 | `--dry-run`      | No       | With `--from`: validate spec and print the plan, write nothing           |

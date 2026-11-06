@@ -7,19 +7,15 @@ edits:
 1. **Validate.** Run `bl validate`. It is read-only and checks the whole backlog.
 2. **Fix what you touched.** Resolve every finding on a story you created or edited in this
    session, including child stories from `bl new`. Fix the story itself. Do not add frontmatter
-   keys or story fields to explain a change. Run `bl fix --story <id>` first, with one `--story`
-   per story you touched (`bl fix --dry-run --story <id>` previews), for the findings it can
-   repair. It repairs `asymmetric-dep` by adding the missing reverse `depends_on` /
-   `required_for` edge on the other story, and its report lists each file it wrote by story
-   path; keep that list for step 5. Never run `bl fix` without `--story`: unscoped, it rewrites
-   stories you did not touch. `bl new` never adds the reverse edge for you, so a new
-   `depends_on` usually needs it. Do not edit those lists by hand.
+   keys or story fields to explain a change. A dependency is stated once, on the dependent
+   story's `depends_on`; the stories a story is required for are derived and never written, so
+   there is no reverse edge to add. `bl new --required-for` writes its edge on the other story's
+   `depends_on` and names that file in its output.
 3. **Surface, do not fix, the rest.** A finding on a story you did not touch is pre-existing.
    Leave that story alone and mention the finding in your final report.
 4. **Re-run** `bl validate` until nothing is left on the stories you touched.
 5. **Sync and commit in one locked step**, naming each story you created or edited with its own
-   `--story`, plus one `--story` for every other story the `bl fix` report listed (the reverse
-   edge lands on that story's file, and only the `--story` directories are committed):
+   `--story` (only the `--story` directories are committed):
 
    ```
    bl sync --commit -m "<type>: <subject> ({{storyId}})" --story {{storyId}} [--story S-<child> …]

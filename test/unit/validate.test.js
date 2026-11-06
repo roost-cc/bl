@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   findCycles,
-  findDanglingDeps,
-  findAsymmetricDeps,
+  findDanglingFindings,
+  findDuplicateFindings,
   findDuplicateIds,
   findFeatureFindings,
   findFoundByFindings,
   validateFrontmatter,
   VALID_STORY_KEYS,
 } from '../../src/validate.js';
+import { loadBacklog } from '../../src/backlog-graph.js';
+import { mkTempDir } from '../helpers/tempdir.js';
 import { MALFORMED_UPDATE_REQUESTS } from '../helpers/update-requests.js';
 import { Flow, loadFlow } from '../../src/flow.js';
 
@@ -65,9 +69,8 @@ test('repo-key: either repo key on a story or a feature is an error, once each, 
 });
 
 test("findFeatureFindings no longer reads a feature's repo keys (F-52 D5)", () => {
-  const map = new Map([['S-1', storyRec({ unitRepo: 'app' })]]);
   const f = feat({ fm: { primary_repo: 'bl', secondary_repos: '[x]' } });
-  assert.deepEqual(featureCodes(findFeatureFindings([f], map)), []);
+  assert.deepEqual(featureCodes(findFeatureFindings([f])), []);
 });
 
 test('found-by: a found_by naming no feature or story is an error; a real one, or none, is not (F-48 D2)', () => {
@@ -143,22 +146,142 @@ test('findCycles handles diamonds (DAG)', () => {
   assert.equal(findings.length, 0);
 });
 
-test('findDanglingDeps detects missing targets', () => {
-  const storyMap = new Map([['S-1', { id: 'S-1', depends_on: ['S-999'] }]]);
-  const findings = findDanglingDeps(storyMap);
+/**
+ * A tolerant graph over a temp backlog holding `files` (path → text), for
+ * the findings `bl validate` takes from the graph's problems (F-77 D2).
+ */
+function graphOver(files) {
+  const root = mkTempDir('bl-graph-findings-');
+  for (const [rel, text] of Object.entries(files)) {
+    mkdirSync(join(root, rel, '..'), { recursive: true });
+    writeFileSync(join(root, rel), text);
+  }
+  return loadBacklog({ backlogRoot: root }, { tolerant: true });
+}
+
+test('findDanglingFindings: dangling-dep detects missing targets', () => {
+  const g = graphOver({ 'stories/S1-x/index.md': '---\nstory_id: S-1\ndepends_on: [S-999]\n---\n' });
+  const findings = findDanglingFindings(g).deps;
   assert.equal(findings.length, 1);
   assert.equal(findings[0].code, 'dangling-dep');
   assert.ok(findings[0].message.includes('S-999'));
+  assert.deepEqual([findings[0].severity, findings[0].location], ['error', 'stories/S1-x/index.md']);
 });
 
-test('findAsymmetricDeps detects one-sided edges', () => {
-  const storyMap = new Map([
-    ['S-1', { id: 'S-1', depends_on: ['S-2'] }],
-    ['S-2', { id: 'S-2', depends_on: '', required_for: '' }],
+test('findDanglingFindings: dangling-feature, a story naming a feature that does not exist', () => {
+  const g = graphOver({ 'stories/S1-x/index.md': '---\nstory_id: S-1\nfeature: F-9\n---\n' });
+  assert.deepEqual(findDanglingFindings(g).features, [
+    {
+      severity: 'error',
+      code: 'dangling-feature',
+      message: 'story S-1 names non-existent feature F-9',
+      location: 'stories/S1-x/index.md',
+    },
   ]);
-  const findings = findAsymmetricDeps(storyMap);
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].code, 'asymmetric-dep');
+});
+
+test('findDuplicateFindings: stories, components and epics, each in its words', () => {
+  const g = graphOver({
+    'stories/S1-first/index.md': '---\nstory_id: S-1\ntitle: First\n---\n',
+    'stories/S2-second/index.md': '---\nstory_id: S-1\ntitle: Second\n---\n',
+    'stories/S3-third/index.md': '---\nstory_id: S-1\ntitle: Third\n---\n',
+    'components/C32/index.md': '---\ncomponent_id: C32\ntitle: A\n---\n',
+    'components/C32-b/index.md': '---\ncomponent_id: C32\ntitle: B\n---\n',
+    'epics/E64-site/index.md': '---\ntitle: Site\n---\n',
+    'epics/E64-again/index.md': '---\ntitle: Again\n---\n',
+  });
+  const found = findDuplicateFindings(g);
+  assert.equal(found.stories.length, 1);
+  assert.equal(found.stories[0].code, 'duplicate-id');
+  assert.ok(found.stories[0].message.includes('across 3 files'));
+  assert.equal(found.stories[0].location, 'stories/S1-first/index.md');
+  assert.deepEqual(codes(found.components), [['duplicate-id', 'components/C32-b/index.md']]);
+  assert.match(
+    found.components[0].message,
+    /duplicate component ID C32 across 2 directories: components\/C32\/index\.md, components\/C32-b\/index\.md/,
+  );
+  assert.deepEqual(
+    found.epics.map((f) => [f.code, f.location, f.message]),
+    [
+      [
+        'duplicate-id',
+        'epics/E64-site/index.md',
+        'duplicate epic ID E64 across directories: epics/E64-again/index.md, epics/E64-site/index.md',
+      ],
+    ],
+  );
+});
+
+// validate-duplicate-malformed-ids: a duplicate is reported by the kind the
+// graph read it as, whether or not its id resolves through `graph.get`.
+for (const [name, files, kind, location] of [
+  [
+    'malformed story id',
+    { 'stories/S1-a/index.md': '---\nstory_id: S-bad\n---\n', 'stories/S2-b/index.md': '---\nstory_id: S-bad\n---\n' },
+    'stories',
+    'stories/S1-a/index.md',
+  ],
+  [
+    'well-formed story id',
+    { 'stories/S1-a/index.md': '---\nstory_id: S-1\n---\n', 'stories/S2-b/index.md': '---\nstory_id: S-1\n---\n' },
+    'stories',
+    'stories/S1-a/index.md',
+  ],
+  [
+    'malformed feature id',
+    {
+      'features/F1-a/index.md': '---\nfeature_id: F-bad\n---\n',
+      'features/F2-b/index.md': '---\nfeature_id: F-bad\n---\n',
+    },
+    'features',
+    'features/F2-b/index.md',
+  ],
+  [
+    'well-formed feature id',
+    {
+      'features/F1-a/index.md': '---\nfeature_id: F-1\n---\n',
+      'features/F2-b/index.md': '---\nfeature_id: F-1\n---\n',
+    },
+    'features',
+    'features/F2-b/index.md',
+  ],
+  [
+    'malformed component id (read from the directory)',
+    {
+      'components/C5-a/index.md': '---\ncomponent_id: C-bad\n---\n',
+      'components/C5-b/index.md': '---\ncomponent_id: C-bad\n---\n',
+    },
+    'components',
+    'components/C5-b/index.md',
+  ],
+  [
+    'epic id (from the directory)',
+    { 'epics/E60-a/index.md': '---\ntitle: A\n---\n', 'epics/E60-b/index.md': '---\ntitle: B\n---\n' },
+    'epics',
+    'epics/E60-b/index.md',
+  ],
+]) {
+  test(`validate-duplicate-malformed-ids: findDuplicateFindings reports a duplicate ${name}`, () => {
+    const g = graphOver(files);
+    assert.equal(g.problems.filter((p) => p.code === 'duplicate-id').length, 1);
+    const found = findDuplicateFindings(g);
+    assert.deepEqual(codes(found[kind]), [['duplicate-id', location]]);
+    for (const other of ['stories', 'features', 'components', 'epics'].filter((k) => k !== kind)) {
+      assert.deepEqual(found[other], [], other);
+    }
+  });
+}
+
+test('validate-duplicate-malformed-ids: a story and a component duplicating the same id string are each reported', () => {
+  const g = graphOver({
+    'stories/S1-a/index.md': '---\nstory_id: C05\n---\n',
+    'stories/S2-b/index.md': '---\nstory_id: C05\n---\n',
+    'components/C5-a/index.md': '---\ncomponent_id: C5\n---\n',
+    'components/C5-b/index.md': '---\ncomponent_id: C5\n---\n',
+  });
+  const found = findDuplicateFindings(g);
+  assert.deepEqual(codes(found.stories), [['duplicate-id', 'stories/S1-a/index.md']]);
+  assert.deepEqual(codes(found.components), [['duplicate-id', 'components/C5-b/index.md']]);
 });
 
 test('findDuplicateIds identifies all matches', () => {
@@ -373,10 +496,44 @@ test("validateFrontmatter: a story's component is a known key and epic is not", 
     validateFrontmatter({ ...fm, epic: 'E32 · bl' }, 'story', 'p').map((f) => [f.code, f.message]),
     [['unknown-fm-key', 'unknown frontmatter key "epic"']],
   );
+  assert.deepEqual(validateFrontmatter({ feature_id: 'F-1', title: 'T', status: 'draft' }, 'feature', 'p'), []);
+});
+
+test('validateFrontmatter: a derived key stored in a feature or an epic is derived-key, not unknown-fm-key (F-77 D3)', () => {
+  const codes = (fm, kind) => validateFrontmatter(fm, kind, 'p').map((f) => [f.severity, f.code, f.message]);
+  const feature = { feature_id: 'F-1', title: 'T', status: 'draft' };
+  for (const key of ['stories', 'points', 'components']) {
+    const found = codes({ ...feature, [key]: key === 'points' ? '3' : ['S-1'] }, 'feature');
+    assert.equal(found.length, 1, key);
+    assert.equal(found[0][0], 'error');
+    assert.equal(found[0][1], 'derived-key');
+    assert.match(found[0][2], new RegExp(`^feature stores "${key}:", which bl derives from `));
+  }
+  const epic = { epic_id: 'E50', title: 'T', theme: 'demo' };
+  assert.deepEqual(codes(epic, 'epic'), []);
   assert.deepEqual(
-    validateFrontmatter({ feature_id: 'F-1', title: 'T', status: 'draft', components: ['C32'] }, 'feature', 'p'),
-    [],
+    codes({ ...epic, features: ['F-1'], status: 'nonsense' }, 'epic').map(([s, c]) => [s, c]),
+    [
+      ['error', 'derived-key'],
+      ['error', 'derived-key'],
+    ],
+    'a stored status is derived-key whatever it holds, never bad-status',
   );
+  // A story's required_for: is derived too (S-1271): the inverse of depends_on.
+  const story = { story_id: 'S-1', title: 'T', status: 'backlog' };
+  assert.deepEqual(codes(story, 'story'), []);
+  for (const value of [['S-2'], '']) {
+    const found = codes({ ...story, required_for: value }, 'story');
+    assert.deepEqual(
+      found.map(([sev, c]) => [sev, c]),
+      [['error', 'derived-key']],
+      `required_for: ${JSON.stringify(value)}`,
+    );
+    assert.match(
+      found[0][2],
+      /^story stores "required_for:", which bl derives from the stories whose depends_on: names it/,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -398,7 +555,7 @@ async function componentCase({ stories = [], components = [] }) {
     const indexPath = join(dir, 'index.md');
     const lines = Object.entries(fm).map(([k, v]) => `${k}: ${v}`);
     writeFileSync(indexPath, `---\n${lines.join('\n')}\n---\n`);
-    return { id: fm.story_id, indexPath, storyRelPath: `stories/${fm.story_id.replace('-', '')}/index.md` };
+    return { id: fm.story_id, indexPath, storyRelPath: `stories/${fm.story_id.replace('-', '')}/index.md`, fm };
   });
   const componentRecs = components.map((c) => ({
     id: c.id,
@@ -434,7 +591,7 @@ test('component-unknown: a story with no component:, or one with no directory', 
   assert.ok(found.every((f) => f.severity === 'error'));
 });
 
-test('duplicate-id: two component directories with one id; the first wins for the story checks', async () => {
+test('two component directories with one id: the first wins for the story checks (the duplicate is the graph’s)', async () => {
   const { findComponentFindings } = await import('../../src/validate.js');
   const c = await componentCase({
     stories: [{ story_id: 'S-1', component: 'C032', primary_repo: 'bl' }],
@@ -445,11 +602,7 @@ test('duplicate-id: two component directories with one id; the first wins for th
   });
   c.componentRecs[1].indexPath = c.componentRecs[1].indexPath.replace('C32', 'C32-b');
   const found = findComponentFindings(c.storyRecs, c.componentRecs, ['bl', 'km'], c.root);
-  assert.deepEqual(codes(found), [['duplicate-id', 'components/C32-b/index.md']]);
-  assert.match(
-    found[0].message,
-    /duplicate component ID C32 across 2 directories: components\/C32\/index\.md, components\/C32-b\/index\.md/,
-  );
+  assert.deepEqual(codes(found), []);
 });
 
 test("home-component: every registered repo has exactly one home; a component's repo must be registered", async () => {
@@ -520,20 +673,10 @@ test('findCycles handles disconnected components', () => {
   assert.equal(findings.length, 1);
 });
 
-test('findDanglingDeps catches required_for refs as well', () => {
-  const storyMap = new Map([['S-1', { id: 'S-1', required_for: ['S-9999'] }]]);
-  const findings = findDanglingDeps(storyMap);
-  assert.equal(findings.length, 1);
-  assert.ok(findings[0].message.includes('S-9999'));
-});
-
-test('findAsymmetricDeps emits no finding when both sides agree', () => {
-  const storyMap = new Map([
-    ['S-1', { id: 'S-1', depends_on: ['S-2'] }],
-    ['S-2', { id: 'S-2', required_for: ['S-1'] }],
-  ]);
-  const findings = findAsymmetricDeps(storyMap);
-  assert.equal(findings.length, 0);
+test('findDanglingFindings no longer reads a stored required_for (F-77 D3)', () => {
+  // It is derived-key, never a link, so an id in it naming no story is not dangling-dep.
+  const g = graphOver({ 'stories/S1-x/index.md': '---\nstory_id: S-1\nrequired_for: [S-9999]\n---\n' });
+  assert.deepEqual(findDanglingFindings(g).deps, []);
 });
 
 // ---------------------------------------------------------------------------

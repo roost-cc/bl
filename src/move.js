@@ -16,10 +16,8 @@
  * worktree in its current repo), and a story whose repo would change while
  * a feature it is in is `running` or `escalated` (that feature's branches
  * span a fixed set of repos, as `bl attach` refuses it). A story is in the
- * feature its `feature:` names and in every feature whose `stories:` lists
- * it, so a missing or broken backlink does not let it leave its repo. A
- * story already in the target is left alone, whatever its status, and
- * reported as unchanged.
+ * feature its `feature:` names (F-77 D3). A story already in the target is
+ * left alone, whatever its status, and reported as unchanged.
  *
  * Each story is written through `updateSpecFile`, so a failed write leaves
  * its file whole; the stories written before it get their `component:` from
@@ -56,9 +54,9 @@ Refused, with nothing written, naming every offending story:
   - a story or component that does not exist
   - a component that names no repo
   - a story that is not ${statusWords(flow.unstartedStatusesOf('story'))}
-  - a story whose repo would change while a feature it is in (the one its
-    feature: names, or any whose stories: lists it) is running or
-    escalated (the feature's branches span a fixed set of repos)
+  - a story whose repo would change while its feature (the one its
+    feature: names) is running or escalated (the feature's branches span
+    a fixed set of repos)
 
 Options:
   --no-sync   Write the stories under the backlog lock and leave them
@@ -108,9 +106,8 @@ export function parseMoveIds(positional) {
 /**
  * Why story `id` cannot move to the component `to` (in repo `toRepo`), or
  * null when it can. `fm` is its frontmatter, `fromRepo` its repo now (empty
- * when its component is unknown or has none) and `features` every feature it
- * is in: the one its `feature:` names and each one whose `stories:` lists it
- * (`storyFeatures`). Pure; the caller has already set aside a story that is
+ * when its component is unknown or has none) and `features` the feature it
+ * is in, the one its `feature:` names (`storyFeatures`). Pure; the caller has already set aside a story that is
  * in `to`.
  * @param {{ id: string, fm: object, fromRepo: string, to: string, toRepo: string,
  *   features: Array<{ id: string, status: string }>,
@@ -134,18 +131,16 @@ export function moveRefusal({ id, fm, fromRepo, to, toRepo, features, flow }) {
 
 /**
  * The features story `id` (frontmatter `fm`) is in, from `allFeatures`: the
- * one its `feature:` names and every one whose `stories:` lists it, each once.
- * A `feature:` that is empty, not a feature id or names no feature adds none.
+ * one its `feature:` names, the only statement of membership (F-77 D3). A
+ * `feature:` that is empty, not a feature id or names no feature gives none.
  * @param {string} id
  * @param {object} fm
- * @param {Array<{ id: string, status: string, stories: string[] }>} allFeatures
+ * @param {Array<{ id: string, status: string }>} allFeatures
  * @returns {Array<{ id: string, status: string }>}
  */
 export function storyFeatures(id, fm, allFeatures) {
   const named = normalizeFeatureId(String(fm.feature ?? '').trim())?.id;
-  return allFeatures
-    .filter((f) => f.id === named || f.stories.includes(id))
-    .map((f) => ({ id: f.id, status: f.status }));
+  return allFeatures.filter((f) => f.id === named).map((f) => ({ id: f.id, status: f.status }));
 }
 
 export async function main(argv) {
@@ -169,19 +164,21 @@ export async function main(argv) {
   await acquireLock(config.backlogRoot);
 
   // Everything is read here, under the lock: what another bl wrote while
-  // this one waited is what the refusals see.
-  const target = findComponentDir(componentRef, config);
+  // this one waited is what the refusals see. The first read loads the
+  // whole backlog (`loadBacklog`), so a unit file that is not YAML, a named
+  // story's or any other's, stops the move here, naming the file.
+  let target;
+  let allFeatures;
+  try {
+    target = findComponentDir(componentRef, config);
+    allFeatures = readAllFeatures(config);
+  } catch (e) {
+    fail(`bl move: nothing was moved:\n  ${e.message}`);
+  }
   if (!target) fail(`bl move: component ${componentRef.id} not found under components/.`);
   const to = componentRef.id;
   if (!target.repo) {
     fail(`bl move: component ${to} names no repo, and a story's repo is its component's; set repo: on ${to} first.`);
-  }
-
-  let allFeatures;
-  try {
-    allFeatures = readAllFeatures(config);
-  } catch (e) {
-    fail(`bl move: nothing was moved: ${e.message}`);
   }
   const refusals = [];
   const moves = [];

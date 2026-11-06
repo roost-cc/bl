@@ -15,20 +15,19 @@
  * alone.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { readFileSync } from 'fs';
 import { atomicWriteFile } from './atomic-write.js';
 import { join, relative } from 'path';
-import { frontmatterSkipped, listMembers, parseFrontmatterOf, warn, THEMES_DIR, EPICS_DIR } from './config.js';
+import { listMembers, parseFrontmatterOf, warn, THEMES_DIR, EPICS_DIR } from './config.js';
 import { appendSectionLine } from './feature.js';
+import { ownFm } from './story.js';
+import { graphOf } from './backlog-graph.js';
 
 /** A theme id: a lowercase slug. */
 export const THEME_ID_RE = /^[a-z][a-z0-9-]*$/;
 
 /** The first epic number; lower `E<n>` ids were components (F-49 D2). */
 export const FIRST_EPIC_NUM = 50;
-
-/** An epic's statuses, derived by `bl sync`: done once every feature is. */
-export const EPIC_STATUSES = ['open', 'done'];
 
 export function themesRoot(config) {
   return join(config.backlogRoot, THEMES_DIR);
@@ -78,77 +77,60 @@ function parseBriefList(raw) {
   return listMembers(raw).map((s) => s.trim());
 }
 
-// parseFrontmatter matches LF fences only; a CRLF file is still a unit.
-function readFm(indexPath) {
-  return parseFrontmatterOf(readFileSync(indexPath, 'utf8').replace(/\r\n/g, '\n'), indexPath).fm;
-}
-
-/** Directories directly under `root` whose name passes `test`, each with an index.md. */
-function unitDirs(root, test) {
-  if (!existsSync(root)) return [];
-  const out = [];
-  for (const entry of readdirSync(root).sort()) {
-    if (!test(entry)) continue;
-    const dir = join(root, entry);
-    if (!statSync(dir).isDirectory()) continue;
-    const indexPath = join(dir, 'index.md');
-    if (!existsSync(indexPath)) continue;
-    out.push({ entry, dir, indexPath });
-  }
-  return out;
-}
-
 /**
- * Every theme under `themes/`. A theme's id is its directory name; a
- * `theme_id:` that differs is `bl validate`'s `id-dir-mismatch`.
- * `brief` is null when the theme has no `brief:` list.
+ * Every theme under `themes/`, projected from `loadBacklog()` (F-77 D2). A
+ * theme's id is its directory name; a `theme_id:` that differs is
+ * `bl validate`'s `id-dir-mismatch`. `brief` is null when the theme has no
+ * `brief:` list.
  * @returns {Array<{ id: string, title: string, repos: string[] | null,
  *   brief: string[] | null, themeEntry: string, themeDir: string,
  *   indexPath: string, relPath: string, fm: object }>}
  */
 export function readAllThemes(config) {
-  const dirs = unitDirs(themesRoot(config), (e) => THEME_ID_RE.test(e));
-  return dirs
-    .filter((d) => !frontmatterSkipped(config, d.indexPath))
-    .map(({ entry, dir, indexPath }) => {
-      const fm = readFm(indexPath);
+  return graphOf(config)
+    .list('theme')
+    .map((unit) => {
+      const fm = ownFm(unit);
       return {
-        id: entry,
+        id: unit.entry,
         title: fm.title ?? '',
         repos: parseNameList(fm.repos),
         brief: parseBriefList(fm.brief),
-        themeEntry: entry,
-        themeDir: dir,
-        indexPath,
-        relPath: relative(config.backlogRoot, indexPath),
+        themeEntry: unit.entry,
+        themeDir: unit.dir,
+        indexPath: unit.file,
+        relPath: relative(config.backlogRoot, unit.file),
         fm,
       };
     });
 }
 
 /**
- * Every epic under `epics/`. Its id is its directory's `E<nn>`; its
- * `features:` and `status:` are what `bl sync` last derived.
+ * Every epic under `epics/`, projected from `loadBacklog()` (F-77 D2). Its
+ * id is its directory's `E<nn>` as the graph normalizes it; its `features` (the features whose `epic:`
+ * names it, by number) and `status` (`epicStatus` of them) are the graph's,
+ * derived and never stored (F-77 D3).
  * @returns {Array<{ id: string, title: string, theme: string, status: string,
  *   features: string[], epicEntry: string, epicDir: string,
  *   indexPath: string, relPath: string, fm: object }>}
  */
 export function readAllEpics(config) {
-  const dirs = unitDirs(epicsRoot(config), (e) => /^E\d+/.test(e));
-  return dirs
-    .filter((d) => !frontmatterSkipped(config, d.indexPath))
-    .map(({ entry, dir, indexPath }) => {
-      const fm = readFm(indexPath);
+  return graphOf(config)
+    .list('epic')
+    .map((unit) => {
+      const fm = ownFm(unit);
       return {
-        id: `E${entry.match(/^E(\d+)/)[1]}`,
+        // The graph's id for the directory (`E050-x` is E50), so a feature's
+        // `epic:` and this record name the same epic.
+        id: unit.id,
         title: fm.title ?? '',
         theme: String(fm.theme ?? '').trim(),
-        status: fm.status ?? 'open',
-        features: parseNameList(fm.features) ?? [],
-        epicEntry: entry,
-        epicDir: dir,
-        indexPath,
-        relPath: relative(config.backlogRoot, indexPath),
+        status: unit.status,
+        features: unit.features.map((f) => f.id),
+        epicEntry: unit.entry,
+        epicDir: unit.dir,
+        indexPath: unit.file,
+        relPath: relative(config.backlogRoot, unit.file),
         fm,
       };
     });
@@ -176,17 +158,14 @@ export function findEpic(parsed, config) {
 
 /**
  * The next epic number: one past the highest `E<nn>` directory under
- * `epics/`, and never below E50. A BigInt, so a number past 2^53 does not
- * round onto an existing epic.
+ * `epics/` (`maxNum`), and never below E50. A BigInt, so a number past 2^53
+ * does not round onto an existing epic.
  * @returns {bigint}
  */
 export function findNextEpicNum(config) {
-  let max = BigInt(FIRST_EPIC_NUM - 1);
-  for (const { entry } of unitDirs(epicsRoot(config), (e) => /^E\d+/.test(e))) {
-    const n = BigInt(entry.match(/^E(\d+)/)[1]);
-    if (n > max) max = n;
-  }
-  return max + 1n;
+  const floor = BigInt(FIRST_EPIC_NUM - 1);
+  const max = graphOf(config).maxNum('epic') ?? floor;
+  return (max > floor ? max : floor) + 1n;
 }
 
 /**

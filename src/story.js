@@ -4,14 +4,18 @@
  * Stories live in `stories/S<n>-<slug>/`, components in
  * `components/C<nn>-<slug>/` (F-49 D3). Story IDs and component IDs are both
  * globally unique across the backlog repo.
+ *
+ * The readers here (`readAllStories`, `readComponents`, `findStoryDir`,
+ * `findComponentDir` and the next-id lookups) are projections of
+ * `loadBacklog()`'s units into their record shapes (F-77 D2): none lists or
+ * reads a unit directory itself.
  */
 
-import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from 'fs';
 import { join, matchesGlob } from 'path';
 import { execSync } from 'child_process';
+import { graphOf } from './backlog-graph.js';
 import {
-  parseFrontmatterOf,
-  frontmatterSkipped,
   listMembers,
   listValue,
   normalizeId,
@@ -88,35 +92,17 @@ export function componentsRoot(config) {
   return join(config.backlogRoot, COMPONENTS_DIR);
 }
 
-/**
- * The unit directories directly under `root` whose name starts with `letter`
- * and a number (`S12-…`, `C32-…`), sorted, each with an `index.md`. Nothing
- * else under `root` (a `.completed/` left by hand, a stray file) is read.
- * @returns {{ entry: string, dir: string, indexPath: string }[]}
- */
-function unitDirs(root, letter) {
-  if (!existsSync(root)) return [];
-  const re = new RegExp(`^${letter}\\d+`);
-  const out = [];
-  for (const entry of readdirSync(root).sort()) {
-    if (!re.test(entry)) continue;
-    const dir = join(root, entry);
-    if (!statSync(dir).isDirectory()) continue;
-    const indexPath = join(dir, 'index.md');
-    if (!existsSync(indexPath)) continue;
-    out.push({ entry, dir, indexPath });
-  }
-  return out;
-}
-
 /** Whether a directory name is the unit `parsed` names (`S12` or `S12-<slug>`). */
-function entryMatches(entry, parsed) {
+export function entryMatches(entry, parsed) {
   return entry === parsed.dirPrefix || entry.startsWith(parsed.dirPrefix + '-');
 }
 
-// parseFrontmatter matches LF fences only; a CRLF file is still a unit.
-function readFm(indexPath) {
-  return parseFrontmatterOf(readFileSync(indexPath, 'utf8').replace(/\r\n/g, '\n'), indexPath).fm;
+/**
+ * A graph unit's frontmatter as a reader record carries it: a copy the
+ * caller owns and may change, since the graph's is frozen and shared.
+ */
+export function ownFm(unit) {
+  return structuredClone(unit.fm);
 }
 
 // ---------------------------------------------------------------------------
@@ -195,33 +181,36 @@ export function pathMatches(file, globs) {
  *   indexPath: string, fm: object }>}
  */
 export function readComponents(config) {
-  const out = [];
-  for (const { entry, dir, indexPath } of unitDirs(componentsRoot(config), 'C')) {
-    if (frontmatterSkipped(config, indexPath)) continue;
-    const fm = readFm(indexPath);
-    const repo = String(fm.repo ?? '');
-    out.push({
-      id: normalizeComponentId(fm.component_id)?.id ?? entry.match(/^(C\d+)/)[1],
-      title: fm.title ?? '',
-      repo,
-      home: fm.home === true || fm.home === 'true',
-      paths: parsePathList(fm.paths),
-      componentEntry: entry,
-      componentDir: dir,
-      indexPath,
-      fm,
-    });
-  }
-  return out;
+  return graphOf(config).list('component').map(componentRecord);
+}
+
+/** A component unit as `readComponents` returns it. */
+function componentRecord(unit) {
+  const fm = ownFm(unit);
+  return {
+    id: normalizeComponentId(fm.component_id)?.id ?? unit.entry.match(/^(C\d+)/)[1],
+    title: fm.title ?? '',
+    repo: String(fm.repo ?? ''),
+    home: fm.home === true || fm.home === 'true',
+    paths: parsePathList(fm.paths),
+    componentEntry: unit.entry,
+    componentDir: unit.dir,
+    indexPath: unit.file,
+    fm,
+  };
 }
 
 /**
- * Find a component by parsed ID (`normalizeComponentId`).
+ * Find a component by parsed ID (`normalizeComponentId`): the first
+ * directory named for it.
  * @returns {{ id, title, repo, home, componentEntry, componentDir, indexPath, fm } | null}
  */
 export function findComponentDir(parsed, config) {
   if (!parsed) return null;
-  return readComponents(config).find((c) => entryMatches(c.componentEntry, parsed)) ?? null;
+  const unit = graphOf(config)
+    .list('component')
+    .find((u) => entryMatches(u.entry, parsed));
+  return unit ? componentRecord(unit) : null;
 }
 
 /**
@@ -241,21 +230,13 @@ export function homeComponent(config, repoName) {
  * `primary_repo` or `secondary_repos` in the frontmatter is never read. The
  * repo keys the story's per-repo config and plugin layer (F-51 D4).
  */
-function placeStory(config, fm, componentsById) {
+function placeStory(fm, graph) {
   const componentId = normalizeComponentId(fm.component ?? '')?.id ?? '';
-  const component = componentsById.get(componentId) ?? null;
-  const unitRepo = component?.repo ?? '';
-  return { componentId, componentEntry: component?.componentEntry ?? '', unitRepo };
-}
-
-/**
- * Components by id. When two directories claim one id the first wins, as in
- * `bl sync` (`bl validate` reports the clash as `duplicate-id`).
- */
-function componentsByIdMap(config) {
-  const byId = new Map();
-  for (const c of readComponents(config)) if (!byId.has(c.id)) byId.set(c.id, c);
-  return byId;
+  // The graph's components by id: when two directories claim one, the first
+  // wins (`bl validate` reports the clash as `duplicate-id`).
+  const component = graph.components.get(componentId) ?? null;
+  const unitRepo = String(component?.fm.repo ?? '');
+  return { componentId, componentEntry: component?.entry ?? '', unitRepo };
 }
 
 // ---------------------------------------------------------------------------
@@ -263,15 +244,15 @@ function componentsByIdMap(config) {
 // ---------------------------------------------------------------------------
 
 /**
- * Find a story by ID under `stories/`.
+ * Find a story by ID under `stories/`: the first directory named for it.
  * @returns {{ unitRepo, componentId, componentEntry, storyEntry, storyDir, indexPath } | null}
  */
 export function findStoryDir(parsed, config) {
   if (!parsed) return null;
-  const hit = unitDirs(storiesRoot(config), 'S').find((u) => entryMatches(u.entry, parsed));
+  const graph = graphOf(config);
+  const hit = graph.list('story').find((u) => entryMatches(u.entry, parsed));
   if (!hit) return null;
-  const place = placeStory(config, readFm(hit.indexPath), componentsByIdMap(config));
-  return { ...place, storyEntry: hit.entry, storyDir: hit.dir, indexPath: hit.indexPath };
+  return { ...placeStory(hit.fm, graph), storyEntry: hit.entry, storyDir: hit.dir, indexPath: hit.file };
 }
 
 // ---------------------------------------------------------------------------
@@ -514,27 +495,28 @@ export function activeWorktreesByStory(config) {
  * and its one repo (`unitRepo`, `placeStory`).
  * @returns {Array<{
  *   unitRepo, componentId, componentEntry, id, title, status, type, points,
- *   depends_on, required_for, feature, found_by, added, completed,
+ *   depends_on, requiredFor, feature, found_by, added, completed,
  *   storyEntry, indexPath, storyRelPath
  * }>}
  */
 export function readAllStories(config) {
-  const componentsById = componentsByIdMap(config);
+  const graph = graphOf(config);
   const out = [];
-  for (const { entry, indexPath } of unitDirs(storiesRoot(config), 'S')) {
-    if (frontmatterSkipped(config, indexPath)) continue;
-    const fm = readFm(indexPath);
-    if (!fm.story_id) continue;
-    const place = placeStory(config, fm, componentsById);
+  for (const unit of graph.list('story')) {
+    if (!unit.fm.story_id) continue;
+    const fm = ownFm(unit);
+    const indexPath = unit.file;
     out.push({
-      ...place,
+      ...placeStory(fm, graph),
       id: fm.story_id,
       title: fm.title ?? '',
       status: fm.status ?? 'backlog',
       type: fm.type ?? '',
       points: fm.points ?? '',
       depends_on: fm.depends_on ?? '',
-      required_for: fm.required_for ?? '',
+      // The stories whose depends_on names this one, in number order: the
+      // graph's derived inverse (F-77 D3), never a stored `required_for:`.
+      requiredFor: (unit.requiredFor ?? []).map((r) => r.id),
       feature: fm.feature ?? '',
       found_by: fm.found_by ?? '',
       added: fm.added ?? '',
@@ -542,7 +524,7 @@ export function readAllStories(config) {
       // Present only on a scripted story: `isScripted` reads the key (F-71 D3).
       ...(Object.hasOwn(fm, 'plugins-implement') ? { 'plugins-implement': fm['plugins-implement'] } : {}),
       review: fm.review,
-      storyEntry: entry,
+      storyEntry: unit.entry,
       indexPath,
       storyRelPath: indexPath.slice(config.backlogRoot.length + 1),
     });
@@ -580,15 +562,12 @@ export function readBacklogOrder(indexDir) {
 // ---------------------------------------------------------------------------
 
 /**
- * Find the highest story number in the backlog (including completed,
- * and including any active worktree copies that may hold newer IDs).
+ * Find the highest story number in the backlog: every story directory's,
+ * readable or not, and every story id (`maxNum`), and any active worktree
+ * branch's, which may hold a newer id.
  */
 export function findMaxStoryNum(config) {
-  let max = 0;
-  for (const story of readAllStories(config)) {
-    const m = story.id.match(/^S-(\d+)$/);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
+  let max = Number(graphOf(config).maxNum('story') ?? 0);
   for (const wt of allActiveWorktrees(config)) {
     if (!wt.storyId) continue;
     const m = wt.storyId.match(/^S-(\d+)$/);
@@ -611,18 +590,11 @@ export function nextStoryNums(config, count) {
 
 /**
  * The next component number: one past the highest `C<nn>` directory under
- * `components/` (0n on an empty backlog). A BigInt, so a number past 2^53
- * does not round onto an existing component.
+ * `components/` (`maxNum`; 0n on an empty backlog). A BigInt, so a number
+ * past 2^53 does not round onto an existing component.
  * @returns {bigint}
  */
 export function findNextComponentNum(config) {
-  let max = -1n;
-  if (!existsSync(componentsRoot(config))) return 0n;
-  for (const entry of readdirSync(componentsRoot(config))) {
-    const m = entry.match(/^C(\d+)/);
-    if (!m || !statSync(join(componentsRoot(config), entry)).isDirectory()) continue;
-    const n = BigInt(m[1]);
-    if (n > max) max = n;
-  }
-  return max + 1n;
+  const max = graphOf(config).maxNum('component');
+  return max == null ? 0n : max + 1n;
 }

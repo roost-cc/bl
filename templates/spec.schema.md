@@ -45,8 +45,8 @@ A spec with an `epic` block is refused: it is the pre-F-49 name of
 ## `feature`
 
 Optional `F-<n>` of a live feature. Every story is tagged `feature: F-<n>`,
-appended to the feature's `stories:`, and written from the shorter
-`story-feature` template.
+which makes it the feature's (its only statement of membership), and written
+from the shorter `story-feature` template.
 
 ## `stories[i]`
 
@@ -59,7 +59,7 @@ appended to the feature's `stories:`, and written from the shorter
 | `body_file`    | string   | yes      | Path to markdown body, no frontmatter                    |
 | `component`    | string   | no       | An existing `C<nn>` for this story instead of the spec's |
 | `depends_on`   | string[] | no       | Mix of `@<placeholder>` and bare `S-<n>`                 |
-| `required_for` | string[] | no       | Same syntax as `depends_on`                              |
+| `required_for` | string[] | no       | Same syntax; written as the others' `depends_on`         |
 
 A story's `component` override lets one spec cut a feature's stories across
 several components (and so several repos); the story's repo is the
@@ -76,15 +76,13 @@ Inside `depends_on` / `required_for`:
 - `S-<n>` — bare story ID, passed through unchanged. Unknown bare IDs
   warn but do not block (consistent with `bl new --depends-on`).
 
-`bl new` writes each list exactly as given. It does **not** add the reverse
-edge to the other story, and `bl validate` reports a one-sided edge as
-`asymmetric-dep`. Either declare both sides in the spec (`depends_on` on the
-later story, `required_for` on the earlier one, as in
-`spec.example.existing-component.json`), or run `bl fix --story <id>` after
-creating the stories, with one `--story` per story the spec created. It adds
-every missing reverse edge those stories assert, writing it on the other
-story's `index.md`. Never run `bl fix` without `--story`: unscoped, it rewrites
-stories you did not touch. Do not hand-edit the frontmatter.
+An edge is stated once, on the dependent story (F-77 D3): a story's
+`depends_on`. Its inverse, the stories a story is required for, is derived and
+never stored. Declare each edge on one side only; `depends_on` on the later
+story is the usual way. `required_for` is input only: `bl new` appends the
+story's new id to the `depends_on` of each story it names (a sibling's as it
+is written, an existing story's in its `index.md`, committed with the batch)
+and writes no `required_for:`.
 
 Mixed lists are allowed: `["@bootstrap", "S-379"]`.
 
@@ -185,6 +183,7 @@ written.
 - `bl/templates/spec.example.json` — a new component in `shared-config` + 3
   stories with `@<placeholder>` cross-references in `depends_on`.
 - `bl/templates/spec.example.existing-component.json` — existing component
-  (`"component": "C32"`) + 2 stories that exercise both `required_for` and a
-  mixed `depends_on` list (placeholder + bare `S-<n>`), one of them in another
-  component (`"component": "C31"`).
+  (`"component": "C32"`) + 2 stories, one of them in another component
+  (`"component": "C31"`): `metrics` states its edge to `dashboard` as
+  `required_for` (written as `dashboard`'s `depends_on`, beside its bare
+  `S-379`).

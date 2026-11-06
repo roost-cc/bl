@@ -4,7 +4,8 @@ import { writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
-import { runBl } from '../helpers/run-bl.js';
+import { spawnSync } from 'node:child_process';
+import { BL_BIN, runBl } from '../helpers/run-bl.js';
 
 /**
  * A fixture that passes the component rules (F-49 D4): every registered repo
@@ -158,12 +159,7 @@ test('bl validate resolves deps across repos', async () => {
         title: 'S1',
         depends_on: 'S-2',
       },
-      {
-        id: 'S-2',
-        component: 'C02',
-        title: 'S2',
-        required_for: 'S-1',
-      },
+      { id: 'S-2', component: 'C02', title: 'S2' },
     ],
   });
 
@@ -363,53 +359,49 @@ status: backlog
   const data = JSON.parse(stdout);
   // No phantom dangling-dep of any kind (no "object"/"Object", no S-101).
   assert.ok(!data.findings.some((f) => f.code === 'dangling-dep'));
-  // The real edge S-100 → S-101 is seen: it's one-directional, so the
-  // asymmetric-dep check fires (proving the edge made it into the graph).
-  assert.ok(data.findings.some((f) => f.code === 'asymmetric-dep' && /S-100|S-101/.test(f.message)));
-  // asymmetric-dep is warning-only → exit 0.
   assert.equal(status, 0);
+  // The real edge S-100 → S-101 is seen: S-101's derived dependents hold S-100.
+  const tree = await runBl(['tree', 'S-101'], { cwd: td.dir });
+  assert.equal(tree.status, 0, tree.stderr);
+  assert.match(tree.stdout, /^S-100 .*\n└── S-101 /m);
   td.cleanup();
 });
 
-test('bl validate fires asymmetric-dep as a warning', async () => {
+test('bl validate: an edge stated on one side only is no finding (F-77 D3)', async () => {
   const td = cleanBacklog({
     stories: [
-      {
-        id: 'S-1',
-        component: 'C00',
-        title: 'a',
-        depends_on: 'S-2',
-      },
-      {
-        id: 'S-2',
-        component: 'C00',
-        title: 'b',
-      },
+      { id: 'S-1', component: 'C00', title: 'a', depends_on: 'S-2' },
+      { id: 'S-2', component: 'C00', title: 'b' },
     ],
   });
-  const { stdout, status } = await runBl(['validate'], { cwd: td.dir });
-  // asymmetric is warning-only, so plain mode exits 0.
-  assert.equal(status, 0);
-  assert.match(stdout, /asymmetric-dep/);
+  const { stdout, status } = await runBl(['validate', '--strict'], { cwd: td.dir });
+  assert.equal(status, 0, stdout);
+  assert.doesNotMatch(stdout, /asymmetric-dep/);
+  td.cleanup();
+});
+
+test('bl validate: a stored required_for is derived-key (F-77 D3)', async () => {
+  const td = cleanBacklog({
+    stories: [
+      { id: 'S-1', component: 'C00', title: 'a', depends_on: 'S-2' },
+      { id: 'S-2', component: 'C00', title: 'b', required_for: 'S-1' },
+    ],
+  });
+  const { stdout, status } = await runBl(['validate', '--json'], { cwd: td.dir });
+  assert.equal(status, 1);
+  assert.deepEqual(
+    JSON.parse(stdout)
+      .findings.filter((f) => f.code !== 'plugin-binary')
+      .map((f) => [f.severity, f.code, f.location]),
+    [['error', 'derived-key', 'stories/S2/index.md']],
+  );
   td.cleanup();
 });
 
 test('bl validate --strict promotes warnings to non-zero exit', async () => {
-  const td = cleanBacklog({
-    stories: [
-      {
-        id: 'S-1',
-        component: 'C00',
-        title: 'a',
-        depends_on: 'S-2',
-      },
-      {
-        id: 'S-2',
-        component: 'C00',
-        title: 'b',
-      },
-    ],
-  });
+  const td = cleanBacklog();
+  // An unknown frontmatter key is a warning.
+  writeStory(td, 'S1-a', '---\ncomponent: C00\nstory_id: S-1\ntitle: a\nstatus: backlog\nbogus_key: x\n---\n');
 
   const plain = await runBl(['validate'], { cwd: td.dir });
   assert.equal(plain.status, 0);
@@ -418,6 +410,34 @@ test('bl validate --strict promotes warnings to non-zero exit', async () => {
   assert.equal(strict.status, 2);
 
   td.cleanup();
+});
+
+test('bl validate --json to a pipe writes the whole report, past the pipe buffer', () => {
+  // 700 findings make a report of ~200 KB, past a pipe's 64 to 128 KiB. An
+  // exit straight after the write used to cut it there.
+  const stories = Array.from({ length: 700 }, (_, i) => ({
+    id: `S-${i + 1}`,
+    component: 'C00',
+    title: `story ${i + 1}`,
+    required_for: 'S-1',
+  }));
+  const td = cleanBacklog({ stories });
+  try {
+    const out = join(td.dir, '.bl', 'validate.json');
+    mkdirSync(join(td.dir, '.bl'), { recursive: true });
+    const r = spawnSync('/bin/sh', ['-c', '"$1" validate --json | cat >"$2"', 'sh', BL_BIN, out], {
+      cwd: td.dir,
+      env: { ...process.env, BL_BACKLOG_DIR: td.dir },
+      stdio: 'ignore',
+    });
+    assert.equal(r.status, 0);
+    const text = readFileSync(out, 'utf8');
+    assert.ok(text.length > 150_000, `report is ${text.length} bytes`);
+    const report = JSON.parse(text);
+    assert.equal(report.findings.filter((f) => f.code === 'derived-key').length, 700);
+  } finally {
+    td.cleanup();
+  }
 });
 
 test('bl validate --help prints documented options on stdout', async () => {
@@ -587,7 +607,7 @@ test('bl validate fails each run-state key and a Review Log in an index.md, nami
   writeFileSync(
     featurePath,
     readFileSync(featurePath, 'utf8')
-      .replace('points: 0\n', 'points: 0\npr: 3\n')
+      .replace('status: draft\n', 'status: draft\npr: 3\n')
       .concat('\n## Review Log\n\nNo reviews yet.\n'),
   );
   const { stdout, status } = await runBl(['validate', '--json'], { cwd: td.dir });
@@ -756,7 +776,7 @@ test('bl validate reports feature-theme, feature-epic, epic-theme and theme-repo
   });
   // An epic's and a theme's own keys are checked like any unit's.
   const e50 = join(td.dir, 'epics', 'E50-fine', 'index.md');
-  writeFileSync(e50, readFileSync(e50, 'utf8').replace('status: open\n', 'status: open\nowner: me\n'));
+  writeFileSync(e50, readFileSync(e50, 'utf8').replace('theme: demo\n', 'theme: demo\nowner: me\n'));
   const { stdout, status } = await runBl(['validate', '--json'], { cwd: td.dir });
   assert.equal(status, 1);
   const findings = JSON.parse(stdout).findings;
@@ -829,12 +849,14 @@ test("bl validate reports frontmatter-yaml at the parser's line and frontmatter-
     'nothing else is reported from a file that is not read',
   );
 
-  // Every other command stops at the first such file it reads, naming it and the line.
+  // Every other command stops at the first such file it reads, naming it and
+  // the line or key: its one read of the backlog (`loadBacklog`, F-77 D1)
+  // meets S-2's list before S-3.
   const list = await runBl(['list'], { cwd: td.dir });
   assert.equal(list.status, 1);
   assert.match(
     list.stderr,
-    /(stories\/S3-colon\/index\.md|features\/F1-feat\/change\.md): frontmatter is not YAML at line [48], column \d+: /,
+    /(stories\/S3-colon\/index\.md|features\/F1-feat\/change\.md): frontmatter is not YAML at line [48], column \d+: |stories\/S2-lists\/index\.md: "depends_on:" is "S-1", not a list/,
   );
   td.cleanup();
 });

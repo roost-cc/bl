@@ -62,7 +62,8 @@ assert_exit "new F-1 C00" 0 "$RC"
 assert_contains "new F-1 C00 → story under stories/" "stories/S7-by-position/index.md" "$OUT"
 assert_contains "new F-1 C00 sets component:" "component: C00" "$(<"$STORIES/S7-by-position/index.md")"
 assert_contains "new F-1 sets feature:" "feature: F-1" "$(<"$STORIES/S7-by-position/index.md")"
-assert_contains "new F-1 appends to stories:" "stories: [S-3, S-7]" "$(<"$DIR/features/F1-feat/index.md")"
+# The story's feature: is the membership (F-77 D3): the feature stores no list.
+assert_eq "new F-1 writes no stories: on the feature" "" "$(grep '^stories:' "$DIR/features/F1-feat/index.md" || true)"
 
 blrun new C01 --title "In other" --points 2 --no-sync
 assert_exit "new C01" 0 "$RC"
@@ -120,8 +121,7 @@ assert_contains "--feature with a component is refused" "not from a component" "
 blrun new --feature --title "Made" S-1 S-2 --no-sync --theme demo
 assert_exit "new --feature S-1 S-2" 0 "$RC"
 assert_contains "new --feature prints the feature file" "features/F3-made/index.md" "$OUT"
-FEAT=$(<"$DIR/features/F3-made/index.md")
-assert_contains "the feature lists S-1 and S-2" "stories: [S-1, S-2]" "$FEAT"
+assert_eq "the feature stores no stories:" "" "$(grep '^stories:' "$DIR/features/F3-made/index.md" || true)"
 assert_eq "the feature names no repo: its repos are its stories' (F-52 D3)" "" "$(grep '^primary_repo:' "$DIR/features/F3-made/index.md" || true)"
 assert_contains "S-1 is in F-3" "feature: F-3" "$(<"$STORIES/S1-one/index.md")"
 assert_contains "S-2 is in F-3" "feature: F-3" "$(<"$STORIES/S2-two/index.md")"
@@ -130,7 +130,7 @@ assert_contains "S-2 is in F-3" "feature: F-3" "$(<"$STORIES/S2-two/index.md")"
 sed -i 's/^status: backlog$/status: backlog\nfeature:/' "$STORIES/S6-six/index.md"
 blrun new --feature S-6 --title "Value spelling" --no-sync --theme demo
 assert_exit "new --feature S-6" 0 "$RC"
-assert_contains "--feature S-6 is the switch plus a story" "stories: [S-6]" "$(<"$DIR/features/F4-value-spelling/index.md")"
+assert_contains "--feature S-6 is the switch plus a story" "features/F4-value-spelling/index.md" "$OUT"
 assert_eq "an empty feature: key is filled, not doubled" "feature: F-4" "$(grep '^feature:' "$STORIES/S6-six/index.md")"
 
 blrun new --feature --title "Empty" --no-sync --theme demo

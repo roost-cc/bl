@@ -209,7 +209,7 @@ function runFeatureStage(stage, featureParsed, explicit, config) {
       const parsed = normalizeId(id);
       const found = parsed ? findStoryDir(parsed, config) : null;
       if (!found) {
-        warn(`${feature.id} lists ${id}, which was not found — skipped`);
+        warn(`${feature.id}'s story ${id} was not found — skipped`);
         continue;
       }
       groups.push({

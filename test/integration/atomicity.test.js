@@ -98,7 +98,7 @@ function featureBacklog() {
 
 test('new --feature rolls back feature and story links after every injected write failure', () => {
   // Each write in order; a failed rollback is the next test's.
-  for (const fail of ['feature', 'record', 'S-1', 'S-2', 'list']) {
+  for (const fail of ['feature', 'record', 'S-1', 'S-2']) {
     const { dir, cleanup } = featureBacklog();
     try {
       const before = tree(dir);
@@ -120,7 +120,7 @@ test('new --feature rolls back feature and story links after every injected writ
     }
   }
 
-  // No failure: the feature and both stories are linked both ways.
+  // No failure: both stories name the feature, which stores no list (F-77 D3).
   const { dir, cleanup } = featureBacklog();
   try {
     const r = runBl(['new', '--feature', '--theme', 'demo', '--title', 'Atomic', 'S-1', 'S-2', '--no-sync'], {
@@ -128,7 +128,7 @@ test('new --feature rolls back feature and story links after every injected writ
     });
     assert.equal(r.status, 0, r.stderr);
     const feature = readFileSync(join(dir, 'features', readdirSync(join(dir, 'features'))[0], 'index.md'), 'utf8');
-    assert.match(feature, /stories:.*S-1.*S-2|stories:\n\s+- S-1\n\s+- S-2/s);
+    assert.doesNotMatch(feature, /^(stories|points|components):/m);
     for (const p of ['S1-one', 'S2-two']) {
       const text = readFileSync(join(dir, 'stories', p, 'index.md'), 'utf8');
       assert.equal(text.match(/^feature:.*$/gm)?.join('|'), 'feature: F-1', p);
@@ -138,7 +138,10 @@ test('new --feature rolls back feature and story links after every injected writ
   }
 });
 
-/** Each story's `feature:` value, and each feature's `stories:` list. */
+/**
+ * Each story's `feature:` value, and each feature on disk with the stories
+ * naming it, its members (F-77 D3).
+ */
 function membership(dir) {
   const stories = {};
   for (const p of ['S1-one', 'S2-two']) {
@@ -149,11 +152,7 @@ function membership(dir) {
   for (const d of readdirSync(join(dir, 'features'))) {
     const text = readFileSync(join(dir, 'features', d, 'index.md'), 'utf8');
     const id = text.match(/^feature_id: *(\S+)$/m)[1];
-    const list = text.match(/^stories: *\[(.*)\]$/m)?.[1] ?? '';
-    features[id] = list
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    features[id] = Object.keys(stories).filter((s) => stories[s] === id);
   }
   return { stories, features };
 }
@@ -183,22 +182,12 @@ test('new --feature serializes eligibility validation and preserves bidirectiona
     }
   }
 
-  // A story whose restore fails still names the feature: the feature is
-  // kept and lists it, or (when that write fails too) the next command repairs it.
+  // A story whose restore fails still names the feature, so the feature is
+  // kept with it.
   const cases = [
     { fail: 'S-2,restore:S-1', want: { stories: { 'S-1': 'F-1', 'S-2': null }, features: { 'F-1': ['S-1'] } } },
-    {
-      fail: 'list,restore:S-1,restore:S-2',
-      want: { stories: { 'S-1': 'F-1', 'S-2': 'F-1' }, features: { 'F-1': ['S-1', 'S-2'] } },
-    },
-    { fail: 'list,restore:S-2', want: { stories: { 'S-1': null, 'S-2': 'F-1' }, features: { 'F-1': ['S-2'] } } },
-    {
-      fail: 'S-2,restore:S-1,relink',
-      want: { stories: { 'S-1': 'F-1', 'S-2': null }, features: { 'F-1': [] } },
-      byHand: true,
-    },
   ];
-  for (const { fail, want, byHand } of cases) {
+  for (const { fail, want } of cases) {
     const { dir, cleanup } = featureBacklog();
     try {
       // The story files are the ones the links change; everything else is an index or config.
@@ -213,8 +202,7 @@ test('new --feature serializes eligibility validation and preserves bidirectiona
       assert.deepEqual(got, want, fail);
       // No story names a feature that is gone.
       for (const f of Object.values(got.stories)) if (f) assert.ok(got.features[f], `${fail}: ${f} exists`);
-      if (byHand) assert.match(r.stderr, /could not restore S-1 or list it in F-1: the next bl command repairs it/);
-      else assert.match(r.stderr, /F-1 is kept and lists it/, fail);
+      assert.match(r.stderr, /could not restore S-1, so F-1 is kept with it/, fail);
       // It exits before the sync: the indexes are untouched.
       const after = tree(dir);
       for (const [p, bytes] of indexes) assert.equal(after[p], bytes, `${fail}: ${p}`);
@@ -224,11 +212,9 @@ test('new --feature serializes eligibility validation and preserves bidirectiona
   }
 });
 
-/** Each story names a feature that lists it, and each listed story names its feature. */
-function assertTwoWay({ stories, features }, label) {
-  for (const [s, f] of Object.entries(stories)) if (f) assert.ok(features[f]?.includes(s), `${label}: ${f} lists ${s}`);
-  for (const [f, list] of Object.entries(features))
-    for (const s of list) assert.equal(stories[s], f, `${label}: ${s} names ${f}`);
+/** No story names a feature that is not on disk. */
+function assertNoDangling({ stories, features }, label) {
+  for (const [s, f] of Object.entries(stories)) if (f) assert.ok(features[f], `${label}: ${s} names ${f}, which exists`);
 }
 
 const records = (dir) => {
@@ -239,17 +225,9 @@ const records = (dir) => {
   }
 };
 
-test('new --feature preserves bidirectional membership when both story restoration and feature relinking fail', () => {
-  // Every combination of one or both unrestored stories with the feature
-  // list's recovery written or failed.
-  const cases = [
-    'S-2,restore:S-1',
-    'S-2,restore:S-1,relink',
-    'list,restore:S-1',
-    'list,restore:S-2,relink',
-    'list,restore:S-1,restore:S-2',
-    'list,restore:S-1,restore:S-2,relink',
-  ];
+test('new --feature keeps the feature of a story it cannot restore, and the next command rolls it back', () => {
+  // S-1 is written, S-2's write fails and S-1's restore fails too.
+  const cases = ['S-2,restore:S-1'];
   for (const fail of cases) {
     const { dir, cleanup } = featureBacklog();
     try {
@@ -264,17 +242,9 @@ test('new --feature preserves bidirectional membership when both story restorati
       // While the writes still fail, a later command settles what it can and
       // refuses to run until the record is settled.
       const again = runBl(['list'], { cwd: dir, env: { BL_INTERNAL_TEST_FAIL_ON_LINK: fail } });
-      if (fail === 'list,restore:S-1,restore:S-2') {
-        assert.equal(again.status, 0, `${fail}: ${again.stderr}`);
-      } else {
-        assert.equal(again.status, 1, `${fail}: refuses`);
-        assert.match(
-          again.stderr,
-          fail.endsWith(',relink') ? /name F-1, which does not list them/ : /bl refuses to run until/,
-          fail,
-        );
-      }
-      if (!fail.endsWith(',relink')) assertTwoWay(membership(dir), `${fail} (still failing)`);
+      assert.equal(again.status, 1, `${fail}: refuses`);
+      assert.match(again.stderr, /bl refuses to run until/, fail);
+      assertNoDangling(membership(dir), `${fail} (still failing)`);
 
       // Once the writes succeed, the next command finishes the rollback, or
       // keeps a feature whose links are complete.
@@ -283,12 +253,8 @@ test('new --feature preserves bidirectional membership when both story restorati
       assert.match(again.stderr + next.stderr, /settled the interrupted bl new --feature of F-1/, fail);
       assert.deepEqual(records(dir), [], `${fail}: no record left`);
       const got = membership(dir);
-      assertTwoWay(got, fail);
-      if (fail === 'list,restore:S-1,restore:S-2') {
-        assert.deepEqual(got, { stories: { 'S-1': 'F-1', 'S-2': 'F-1' }, features: { 'F-1': ['S-1', 'S-2'] } }, fail);
-      } else {
-        assert.deepEqual(tree(dir), before, `${fail}: every file keeps its bytes`);
-      }
+      assertNoDangling(got, fail);
+      assert.deepEqual(tree(dir), before, `${fail}: every file keeps its bytes`);
     } finally {
       cleanup();
     }
@@ -334,8 +300,8 @@ test('pending listed recovery refuses membership mutations until the record is t
     ['new', '--feature', 'F-1', '--component', 'C00', '--title', 'Three', '--points', '1', '--no-sync'],
     ['new', '--feature', '--theme', 'demo', '--title', 'Other', 'S-2', '--no-sync'],
   ];
-  // `listed` (S-1 kept in F-1) and `one-way` (S-1 names F-1, which omits it).
-  for (const fail of ['S-2,restore:S-1', 'S-2,restore:S-1,relink']) {
+  // `kept`: S-1 still names F-1, which is kept.
+  for (const fail of ['S-2,restore:S-1']) {
     for (const cmd of commands) {
       const label = `${fail}: bl ${cmd.join(' ')}`;
       const { dir, cleanup } = featureBacklog();
@@ -358,11 +324,7 @@ test('pending listed recovery refuses membership mutations until the record is t
         const before = tree(dir);
         const r = runBl(cmd, { cwd: dir, env: { BL_INTERNAL_TEST_FAIL_ON_LINK: fail.replace('S-2,', '') } });
         assert.equal(r.status, 1, label);
-        assert.match(
-          r.stderr,
-          fail.endsWith(',relink') ? /name F-1, which does not list them/ : /bl refuses to run until/,
-          label,
-        );
+        assert.match(r.stderr, /bl refuses to run until/, label);
         assert.match(r.stderr, /of F-2: rolled back/, label);
         assert.deepEqual(records(dir), ['F-1.links.json'], label);
         assert.deepEqual(tree(dir), before, `${label}: nothing changed`);
@@ -372,7 +334,7 @@ test('pending listed recovery refuses membership mutations until the record is t
         assert.match(next.stderr, /of F-1: rolled back/, label);
         assert.deepEqual(records(dir), [], label);
         assert.ok(!readdirSync(join(dir, 'features')).includes('F1-atomic'), `${label}: F-1 is gone`);
-        assertTwoWay(membership(dir), label);
+        assertNoDangling(membership(dir), label);
       } finally {
         cleanup();
       }

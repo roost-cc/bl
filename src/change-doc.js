@@ -75,15 +75,16 @@ export function listChanges(unitDir) {
 
 /**
  * The change document bl works on: the highest-numbered open one, else the
- * highest-numbered one, else null. `{ n, path, doc }`.
+ * highest-numbered one, else null. `{ n, path, doc }`. `read` parses one
+ * document (`readChange`; the graph passes one that reuses the text it read).
  */
-export function currentChange(unitDir) {
+export function currentChange(unitDir, read = readChange) {
   const all = listChanges(unitDir);
-  const read = all.map((c) => ({ ...c, doc: readChange(c.path) }));
-  for (let i = read.length - 1; i >= 0; i--) {
-    if (isOpen(read[i].doc)) return read[i];
+  const docs = all.map((c) => ({ ...c, doc: read(c.path) }));
+  for (let i = docs.length - 1; i >= 0; i--) {
+    if (isOpen(docs[i].doc)) return docs[i];
   }
-  return read.at(-1) ?? null;
+  return docs.at(-1) ?? null;
 }
 
 const isOpen = (doc) => doc != null && (doc.fm.status || 'open') === 'open';
@@ -320,10 +321,10 @@ export function changeNextVerb(reviewStatus) {
  * and URL (a story passes its one repo; a feature none, so its first
  * `repos:` entry, the lead repo's, F-52 D3), the review state, and the body
  * the Review Log lives in. Every field is empty when the unit has no change
- * document.
+ * document. `read` as for `currentChange`.
  */
-export function unitChange(unitDir, repo = '') {
-  const cur = currentChange(unitDir);
+export function unitChange(unitDir, repo = '', read = readChange) {
+  const cur = currentChange(unitDir, read);
   const doc = cur?.doc ?? null;
   const primary = (repo && doc?.repos.find((r) => r.repo === repo)) || doc?.repos[0] || {};
   return {

@@ -230,22 +230,18 @@ assert_eq "bl what-next stdout empty (no closed stories)" "0" "$size"
 err=$(cat "$se")
 assert_contains "bl what-next stderr explains" "No closed stories" "$err"
 
-# Mark S-1 done, link required_for so what-next has a chain to follow.
-# We mutate frontmatter directly because `bl done` is not in scope here.
+# Mark S-1 done, and make S-2 depend on it so what-next has a chain to follow
+# (the edge is stated once, on S-2; F-77 D3). We mutate frontmatter directly
+# because `bl done` is not in scope here.
 S1=$("$BL" which S-1)
 S2=$("$BL" which S-2)
-# Add required_for: S-2 to S-1, depends_on: S-1 to S-2.
 node -e '
   const fs = require("fs");
-  const path1 = process.argv[1];
-  const path2 = process.argv[2];
-  let t1 = fs.readFileSync(path1, "utf8")
-    .replace(/^required_for:.*$/m, "required_for: [S-2]");
-  fs.writeFileSync(path1, t1);
+  const path2 = process.argv[1];
   let t2 = fs.readFileSync(path2, "utf8")
     .replace(/^depends_on:.*$/m, "depends_on: [S-1]");
   fs.writeFileSync(path2, t2);
-' "$S1" "$S2"
+' "$S2"
 
 # Mark S-1 done by editing frontmatter (skip bl done — just need a closed story).
 node -e '

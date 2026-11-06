@@ -92,6 +92,26 @@ test('readAllThemes and readAllEpics read themes/ and epics/; findTheme and find
   assert.equal(findEpic(null, config), null);
 });
 
+test("readAllEpics names an epic as the graph does, so a feature's epic: finds it when the directory has leading zeros", () => {
+  const { dir } = mkTempBacklog();
+  mkdirSync(join(dir, 'epics', 'E050-zeros'), { recursive: true });
+  writeFileSync(join(dir, 'epics', 'E050-zeros', 'index.md'), '---\nepic_id: E50\ntitle: Zeros\ntheme: demo\n---\n');
+  mkdirSync(join(dir, 'features', 'F9-in-it'), { recursive: true });
+  writeFileSync(
+    join(dir, 'features', 'F9-in-it', 'index.md'),
+    '---\nfeature_id: F-9\ntitle: In it\ntheme: demo\nepic: E50\nstatus: draft\n---\n',
+  );
+  const config = loadConfig({ backlogRoot: dir });
+  assert.deepEqual(
+    readAllEpics(config).map((e) => [e.id, e.features, e.epicEntry]),
+    [['E50', ['F-9'], 'E050-zeros']],
+  );
+  assert.deepEqual(
+    findValueAxisFindings([], readAllThemes(config), readAllEpics(config), []).filter((f) => f.code === 'feature-epic'),
+    [],
+  );
+});
+
 test('findNextEpicNum is one past the highest epic, and E50 on a backlog with none', () => {
   const empty = mkTempBacklog();
   assert.equal(findNextEpicNum(loadConfig({ backlogRoot: empty.dir })), 50n);
@@ -175,12 +195,8 @@ test("findValueAxisFindings: each rule's cases, and nothing when every link hold
         ['bl'],
       ),
     ),
+    // The second E64 is the graph's duplicate-id (validate.test.js, findDuplicateFindings).
     [
-      [
-        'duplicate-id',
-        'epics/E64-again/index.md',
-        'duplicate epic ID E64 across directories: epics/E64-site/index.md, epics/E64-again/index.md',
-      ],
       ['feature-theme', 'features/F4/index.md', 'F-4 has no "theme:"; every feature names its theme'],
       ['feature-theme', 'features/F5/index.md', 'F-5 names theme "money", which has no themes/money/index.md'],
       ['feature-epic', 'features/F6/index.md', 'F-6 names epic "E70", which has no epics/E70-*/index.md'],

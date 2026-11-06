@@ -6,9 +6,10 @@
 #   - human mode: report on stdout, "scanning N stories…" on stderr
 #   - --json mode (piped): one JSON line on stdout, stderr empty
 #   - --help: help text on stdout, stderr empty
-#   - exit codes: 0 (clean / fixes applied), 1 (unfixed finding), 2 (bad args)
-#   - S-858: unknown options / positionals exit 2 before anything is written;
-#     --story scopes the run to findings anchored at the named stories.
+#   - exit codes: 0 (clean), 2 (bad args)
+#   - S-858: unknown options / positionals exit 2 before anything is written.
+#   - F-77 D3: no code is supported (asymmetric-dep is gone: an edge is stated
+#     once, on the dependent story), so every run prints the empty report.
 #
 # Run from the bl repo root:
 #   bash test/cli/fix-streams.sh
@@ -91,58 +92,27 @@ depends_on: [S-1]
 MD
 }
 
-# Same backlog plus S-3, which claims `required_for: S-1` while S-1 does not
-# list S-3 under depends_on. Two findings, anchored at S-2 and S-3; both
-# fixes land on S-1's index.md.
-setup_two_finding_backlog() {
-  local root="$1"
-  setup_asym_backlog "$root"
-  mkdir -p "$root/stories/S3-third"
-  cat > "$root/stories/S3-third/index.md" <<'MD'
----
-component: C00
-story_id: S-3
-title: Third
-type: feature
-points: 1
-status: backlog
-required_for: [S-1]
----
-MD
-}
-
 # Checksum of every story file in a fixture backlog.
 fixture_sum() {
   cat "$1"/stories/S*/index.md | md5sum
 }
 
 # ---------------------------------------------------------------------------
-# Case 1: one fix → exit 0, report on stdout, scanning… on stderr.
+# Case 1: a one-sided depends_on is not a finding: exit 0, empty stdout,
+# scanning on stderr, nothing written.
 # ---------------------------------------------------------------------------
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 setup_asym_backlog "$TMP"
 export BL_BACKLOG_DIR="$TMP"
+SUM1_BEFORE=$(fixture_sum "$TMP")
 
 so=$(mktemp); se=$(mktemp)
 "$BL" fix >"$so" 2>"$se"; rc=$?
 assert_eq "fix one-sided exit 0" "0" "$rc"
 out=$(cat "$so"); err=$(cat "$se")
-assert_contains "fix stdout has fixed heading" "fixed (1)" "$out"
-assert_contains "fix stdout has trailing summary" "fix applied" "$out"
-assert_contains "fix stderr has scanning…" "scanning" "$err"
-case "$err" in
-  *"asymmetric-dep"*) fail "fix stderr leaked finding text into progress" ;;
-  *) pass ;;
-esac
-
-# ---------------------------------------------------------------------------
-# Case 2: idempotent re-run → exit 0, empty stdout, scanning still on stderr.
-# ---------------------------------------------------------------------------
-"$BL" fix >"$so" 2>"$se"; rc=$?
-assert_eq "fix idempotent exit 0" "0" "$rc"
-out=$(cat "$so"); err=$(cat "$se")
-assert_empty "fix idempotent stdout empty" "$out"
-assert_contains "fix idempotent stderr has scanning" "scanning" "$err"
+assert_empty "fix one-sided stdout empty" "$out"
+assert_contains "fix stderr has scanning" "scanning" "$err"
+assert_eq "fix one-sided writes nothing" "$SUM1_BEFORE" "$(fixture_sum "$TMP")"
 
 # ---------------------------------------------------------------------------
 # Case 3: --json piped → one JSON line on stdout, empty stderr.
@@ -161,16 +131,12 @@ if node -e '
   if (typeof obj.summary !== "object") { console.error("summary"); process.exit(1); }
   if (typeof obj.summary.total !== "number") { console.error("summary.total"); process.exit(1); }
   if (typeof obj.summary.byCode !== "object") { console.error("summary.byCode"); process.exit(1); }
-  for (const fix of obj.fixes) {
-    for (const k of ["code","location","key","before","after","addedId","targetId"]) {
-      if (!(k in fix)) { console.error("fix."+k); process.exit(1); }
-    }
-  }
+  if (obj.fixes.length !== 0 || obj.summary.total !== 0) { console.error("not empty"); process.exit(1); }
 ' "$so"; then pass; else fail "fix --json schema"; fi
 rm -rf "$TMP2"
 
 # ---------------------------------------------------------------------------
-# Case 4: --dry-run prints plan, leaves files unchanged.
+# Case 4: --dry-run prints the empty report, leaves files unchanged.
 # ---------------------------------------------------------------------------
 TMP3=$(mktemp -d)
 setup_asym_backlog "$TMP3"
@@ -179,7 +145,7 @@ sleep 0.05
 BL_BACKLOG_DIR="$TMP3" "$BL" fix --dry-run >"$so" 2>"$se"; rc=$?
 assert_eq "fix --dry-run exit 0" "0" "$rc"
 out=$(cat "$so")
-assert_contains "fix --dry-run stdout has would-fix" "would fix" "$out"
+assert_empty "fix --dry-run stdout empty" "$out"
 S1_AFTER=$(stat -c %Y "$TMP3/stories/S1-first/index.md")
 assert_eq "fix --dry-run leaves mtime unchanged" "$S1_BEFORE" "$S1_AFTER"
 rm -rf "$TMP3"
@@ -203,7 +169,7 @@ assert_contains "fix --help has Output: block" "Output:" "$out"
 assert_contains "fix --help has Exit codes:" "Exit codes:" "$out"
 assert_contains "fix --help mentions stdout" "stdout" "$out"
 assert_contains "fix --help mentions stderr" "stderr" "$out"
-assert_contains "fix --help lists asymmetric-dep" "asymmetric-dep" "$out"
+assert_contains "fix --help lists no code" "(none)" "$out"
 assert_empty "fix --help stderr empty" "$err"
 
 # ---------------------------------------------------------------------------
@@ -249,49 +215,11 @@ assert_contains "fix --help documents --story" "--story <id>" "$(cat "$so")"
 rm -rf "$TMP7"
 
 # ---------------------------------------------------------------------------
-# Case 9 (S-858): --story fixes only findings anchored at the named stories.
+# Case 9 (S-858): --story and --theme are still judged and scope a run that
+# finds nothing; --project is an unknown option (F-51 D5).
 # ---------------------------------------------------------------------------
 TMP9=$(mktemp -d)
-setup_two_finding_backlog "$TMP9"
-S1_FILE="$TMP9/stories/S1-first/index.md"
-SUM9_BEFORE=$(fixture_sum "$TMP9")
-
-# Dry run shows the scoped plan only.
-BL_BACKLOG_DIR="$TMP9" "$BL" fix --dry-run --story S-2 >"$so" 2>"$se"; rc=$?
-assert_eq "fix --dry-run --story exit 0" "0" "$rc"
-out=$(cat "$so")
-assert_contains "fix --dry-run --story plans one fix" "would fix (1)" "$out"
-assert_contains "fix --dry-run --story names the written file" "S1-first/index.md" "$out"
-assert_contains "fix --dry-run --story plans S-2's edge" "would add S-2 to required_for" "$out"
-case "$out" in
-  *"S-3"*) fail "fix --dry-run --story reported a finding anchored elsewhere" ;;
-  *) pass ;;
-esac
-assert_eq "fix --dry-run --story writes nothing" "$SUM9_BEFORE" "$(fixture_sum "$TMP9")"
-
-# Real run, lowercase id spelling, scoped to S-2: S-1 gains required_for
-# only; S-3's one-sided edge is left alone.
-BL_BACKLOG_DIR="$TMP9" "$BL" fix --story s2 >"$so" 2>"$se"; rc=$?
-assert_eq "fix --story s2 exit 0" "0" "$rc"
-out=$(cat "$so")
-assert_contains "fix --story s2 fixes one" "fixed (1)" "$out"
-assert_contains "fix --story s2 reports S-1's path" "S1-first/index.md" "$out"
-s1=$(cat "$S1_FILE")
-assert_contains "fix --story s2 wrote required_for on S-1" "required_for: [S-2]" "$s1"
-case "$s1" in
-  *"depends_on: [S-3]"*) fail "fix --story s2 also applied S-3's finding" ;;
-  *) pass ;;
-esac
-
-# --project is an unknown option (F-51 D5): exit 2, nothing written.
-SUM9_BEFORE=$(fixture_sum "$TMP9")
-BL_BACKLOG_DIR="$TMP9" "$BL" fix --project demo --story S-3 >"$so" 2>"$se"; rc=$?
-assert_eq "fix --project exit 2" "2" "$rc"
-assert_contains "fix --project is an unknown option" 'unknown option "--project"' "$(cat "$se")"
-assert_eq "fix --project writes nothing" "$SUM9_BEFORE" "$(fixture_sum "$TMP9")"
-
-# --theme composes as an intersection: S-3 is a standalone demo-repo story,
-# so it is in theme demo, which lists that repo (F-51 D1).
+setup_asym_backlog "$TMP9"
 mkdir -p "$TMP9/themes/demo"
 cat > "$TMP9/themes/demo/index.md" <<'MD'
 ---
@@ -304,15 +232,17 @@ repos: [demo-repo]
 
 ## Overview
 MD
-BL_BACKLOG_DIR="$TMP9" "$BL" fix --theme demo --story S-3 --story S-2 >"$so" 2>"$se"; rc=$?
-assert_eq "fix --theme --story exit 0" "0" "$rc"
-assert_contains "fix --theme --story fixes the remaining finding" "fixed (1)" "$(cat "$so")"
-assert_contains "fix --theme --story wrote depends_on on S-1" "depends_on: [S-3]" "$(cat "$S1_FILE")"
-
-# Nothing left for an unscoped run.
-BL_BACKLOG_DIR="$TMP9" "$BL" fix >"$so" 2>"$se"; rc=$?
-assert_eq "fix after scoped runs exit 0" "0" "$rc"
-assert_empty "fix after scoped runs stdout empty" "$(cat "$so")"
+SUM9_BEFORE=$(fixture_sum "$TMP9")
+for args in "--story s2" "--dry-run --story S-2" "--theme demo --story S-2"; do
+  # shellcheck disable=SC2086
+  BL_BACKLOG_DIR="$TMP9" "$BL" fix $args >"$so" 2>"$se"; rc=$?
+  assert_eq "fix $args exit 0" "0" "$rc"
+  assert_empty "fix $args stdout empty" "$(cat "$so")"
+done
+BL_BACKLOG_DIR="$TMP9" "$BL" fix --project demo --story S-2 >"$so" 2>"$se"; rc=$?
+assert_eq "fix --project exit 2" "2" "$rc"
+assert_contains "fix --project is an unknown option" 'unknown option "--project"' "$(cat "$se")"
+assert_eq "fix --story/--theme write nothing" "$SUM9_BEFORE" "$(fixture_sum "$TMP9")"
 rm -rf "$TMP9"
 
 # ---------------------------------------------------------------------------

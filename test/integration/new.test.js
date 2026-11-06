@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
@@ -281,6 +281,7 @@ test('bl new F-<n> C-<n> adds the story to the feature with the feature template
     features: [{ id: 'F-1', title: 'Invites', dirSuffix: 'invites', primary_repo: 'beta' }],
   });
   try {
+    const feature = readFileSync(join(dir, 'features/F1-invites/index.md'), 'utf8');
     const r = runBl(['new', 'F-1', 'C01', '--title', 'Mint', '--points', '3', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     const text = readFileSync(join(dir, r.stdout.trim()), 'utf8');
@@ -289,7 +290,8 @@ test('bl new F-<n> C-<n> adds the story to the feature with the feature template
     assert.equal(fm.component, 'C01');
     assert.equal(fm.primary_repo, undefined, "no repo field: the story's repo is its component's, not the feature's");
     assert.doesNotMatch(text, /## Justification/, 'story-feature template');
-    assert.match(String(fmOf(dir, 'features/F1-invites/index.md').stories), /S-1/);
+    // The story's feature: is the membership (F-77 D3): the feature file is not written.
+    assert.equal(readFileSync(join(dir, 'features/F1-invites/index.md'), 'utf8'), feature);
   } finally {
     cleanup();
   }
@@ -542,6 +544,172 @@ test('bl new --no-sync makes no commit', () => {
   }
 });
 
+// F-77 D3: an edge is stated once, on the dependent story. `--required-for`
+// and a spec's `required_for` are input: the named story's depends_on gains
+// the new id, and no `required_for:` is written anywhere.
+
+/** A git-backed backlog: C01 with S-1 (depends on nothing) and S-2 (depends on S-1). */
+function gitEdgeBacklog() {
+  const t = componentBacklog({
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'Later', dirSuffix: 'later' },
+      { id: 'S-2', component: 'C01', title: 'Also later', dirSuffix: 'also-later', depends_on: 'S-1' },
+    ],
+  });
+  initGitBacklog(t.dir);
+  return t;
+}
+
+test("bl new --required-for appends the new id to the other story's depends_on and commits it", () => {
+  const { dir, cleanup } = gitEdgeBacklog();
+  try {
+    const r = runBl([...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1,S-2,S-404'], {
+      cwd: dir,
+      env: GIT_ENV,
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), 'stories/S3-first/index.md');
+    assert.match(r.stderr, /^warning: required_for S-404 does not match any existing story$/m);
+    const created = fmOf(dir, 'stories/S3-first/index.md');
+    assert.equal(Object.hasOwn(created, 'required_for'), false, 'no required_for: on the new story');
+    assert.equal(created.depends_on, '');
+    assert.deepEqual(fmOf(dir, 'stories/S1-later/index.md').depends_on, ['S-3']);
+    assert.deepEqual(fmOf(dir, 'stories/S2-also-later/index.md').depends_on, ['S-1', 'S-3']);
+    for (const p of ['stories/S1-later/index.md', 'stories/S2-also-later/index.md']) {
+      assert.equal(Object.hasOwn(fmOf(dir, p), 'required_for'), false, p);
+    }
+
+    const files = headFiles(dir);
+    assert.ok(files.includes('A\tstories/S3-first/index.md'), files.join('\n'));
+    assert.ok(files.includes('M\tstories/S1-later/index.md'), files.join('\n'));
+    assert.ok(files.includes('M\tstories/S2-also-later/index.md'), files.join('\n'));
+    assert.deepEqual(statusLines(dir), []);
+
+    const tree = runBl(['tree', 'S-3'], { cwd: dir });
+    assert.equal(tree.status, 0, tree.stderr);
+    assert.match(tree.stdout, /└── S-3 First/);
+  } finally {
+    cleanup();
+  }
+});
+
+// new_required_for_second_write_failure_is_retryable: a target that cannot be
+// written (a read-only directory: the atomic write's temporary file cannot be
+// made), first or later, single story or spec, undoes the new story and every
+// edge already written, so the same command run again gets the same id.
+for (const [name, lockedEntry, failing, newArgs] of [
+  [
+    'a later target, --required-for',
+    'S2-also-later',
+    'S-2',
+    () => [...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1,S-2'],
+  ],
+  [
+    'the first target, --required-for',
+    'S1-later',
+    'S-1',
+    () => [...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1,S-2'],
+  ],
+  ["a later target, a spec's required_for", 'S2-also-later', 'S-2', (dir) => ['new', '--from', edgeSpec(dir)]],
+]) {
+  test(`new_required_for_second_write_failure_is_retryable: ${name}`, (t) => {
+    if (process.getuid?.() === 0) return t.skip('root writes into a read-only directory');
+    const { dir, cleanup } = gitEdgeBacklog();
+    const locked = join(dir, 'stories', lockedEntry);
+    const targets = ['stories/S1-later/index.md', 'stories/S2-also-later/index.md'];
+    try {
+      const args = newArgs(dir);
+      const head = git(dir, 'rev-parse', 'HEAD');
+      const before = targets.map((p) => readFileSync(join(dir, p), 'utf8'));
+      chmodSync(locked, 0o555);
+      const r = runBl(args, { cwd: dir, env: GIT_ENV });
+      assert.equal(r.status, 1, r.stderr);
+      assert.match(
+        r.stderr,
+        new RegExp(`could not add S-3 to ${failing}'s depends_on \\(.*\\); nothing is written or committed`),
+      );
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+      assert.deepEqual(
+        targets.map((p) => readFileSync(join(dir, p), 'utf8')),
+        before,
+        'every target as it was',
+      );
+      assert.equal(existsSync(join(dir, 'stories', 'S3-first')) || existsSync(join(dir, 'stories', 'S3-base')), false);
+      assert.deepEqual(
+        statusLines(dir).filter((l) => !l.includes('plan/')),
+        [],
+      );
+
+      // The cause fixed, the same command runs again and gets the same id.
+      chmodSync(locked, 0o755);
+      const again = runBl(args, { cwd: dir, env: GIT_ENV });
+      assert.equal(again.status, 0, again.stderr);
+      assert.deepEqual(fmOf(dir, targets[0]).depends_on, ['S-3']);
+      assert.deepEqual(fmOf(dir, targets[1]).depends_on, ['S-1', 'S-3']);
+    } finally {
+      chmodSync(locked, 0o755);
+      cleanup();
+    }
+  });
+}
+
+/** A one-story spec in C01 whose story is required for S-1 and S-2; its path. */
+function edgeSpec(dir) {
+  mkdirSync(join(dir, 'plan'), { recursive: true });
+  writeFileSync(join(dir, 'plan', 'a.md'), '## Summary\n\nA.\n');
+  const specPath = join(dir, 'plan', 'spec.json');
+  writeFileSync(
+    specPath,
+    JSON.stringify({
+      component: 'C01',
+      stories: [{ id: 'base', title: 'Base', points: 1, body_file: 'a.md', required_for: ['S-1', 'S-2'] }],
+    }),
+  );
+  return specPath;
+}
+
+test("a spec's required_for writes each edge as the other story's depends_on: a sibling's and an existing one's", () => {
+  const { dir, cleanup } = gitEdgeBacklog();
+  try {
+    mkdirSync(join(dir, 'plan'), { recursive: true });
+    writeFileSync(join(dir, 'plan', 'a.md'), '## Summary\n\nA.\n');
+    const specPath = join(dir, 'plan', 'spec.json');
+    writeFileSync(
+      specPath,
+      JSON.stringify({
+        component: 'C01',
+        stories: [
+          { id: 'base', title: 'Base', points: 1, body_file: 'a.md', required_for: ['@top', 'S-1', 'S-404'] },
+          { id: 'top', title: 'Top', points: 2, body_file: 'a.md', depends_on: ['S-2'] },
+        ],
+      }),
+    );
+    const r = runBl(['new', '--from', specPath], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^warning: required_for S-404 does not match any existing story$/m);
+    assert.doesNotMatch(r.stderr, /warning: required_for S-(1|4)\b/);
+
+    const base = fmOf(dir, 'stories/S3-base/index.md');
+    const top = fmOf(dir, 'stories/S4-top/index.md');
+    assert.equal(Object.hasOwn(base, 'required_for'), false);
+    assert.equal(Object.hasOwn(top, 'required_for'), false);
+    assert.equal(base.depends_on, '');
+    assert.deepEqual(top.depends_on, ['S-2', 'S-3']);
+    assert.deepEqual(fmOf(dir, 'stories/S1-later/index.md').depends_on, ['S-3']);
+
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: add S-3, S-4');
+    const files = headFiles(dir);
+    assert.ok(files.includes('M\tstories/S1-later/index.md'), files.join('\n'));
+    assert.ok(!files.some((f) => f.includes('S2-also-later')), files.join('\n'));
+    assert.deepEqual(
+      statusLines(dir).filter((l) => !l.includes('plan/')),
+      [],
+    );
+  } finally {
+    cleanup();
+  }
+});
+
 /** Write a two-story spec into C01 and return its path. */
 function writeSpec(dir) {
   mkdirSync(join(dir, 'plan'), { recursive: true });
@@ -601,7 +769,7 @@ test('bl new --from --dry-run makes no commit', () => {
 // --plugins-from <S-id> (S-870): inherit plugins / plugins-<stage> keys
 // ---------------------------------------------------------------------------
 
-const PLUGIN_KEYS = 'plugins-test: bl-tests\nplugins-lint: -foo\n';
+const PLUGIN_KEYS = 'plugins-test: [bl-tests]\nplugins-lint: [-foo]\n';
 const SOURCE = 'stories/S1-parent/index.md';
 const CHILD = 'stories/S2-child/index.md';
 
@@ -642,8 +810,8 @@ test('bl new --plugins-from copies plugins-* keys verbatim from a same-repo stor
     assert.doesNotMatch(fmText, /^primary_repo:/m);
     const { fm } = parseFrontmatter(fmText + '\n');
     assert.equal(fm.component, 'C03');
-    assert.equal(fm['plugins-test'], 'bl-tests');
-    assert.equal(fm['plugins-lint'], '-foo');
+    assert.deepEqual(fm['plugins-test'], ['bl-tests']);
+    assert.deepEqual(fm['plugins-lint'], ['-foo']);
     assert.doesNotMatch(r.stderr, /not copied/);
   } finally {
     cleanup();
@@ -653,13 +821,13 @@ test('bl new --plugins-from copies plugins-* keys verbatim from a same-repo stor
 test('bl new --plugins-from accepts a lowercase id and copies list values as sequences', () => {
   // A flow list and a block list both come through the parsed object, so the
   // new block writes each as a flow sequence (F-62 D3), before `depends_on:`.
-  const listFm = 'plugins: [a, b]\nplugins-test:\n  - bl-tests\n  - extra\nplugins-lint: -foo\n';
+  const listFm = 'plugins: [a, b]\nplugins-test:\n  - bl-tests\n  - extra\nplugins-lint: [-foo]\n';
   const { dir, cleanup } = pluginsBacklog({ extraFm: listFm });
   try {
     const r = runBl([...NEW_CHILD, '--plugins-from', 's-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     const fmText = childFrontmatter(dir);
-    const written = 'plugins: [a, b]\nplugins-test: [bl-tests, extra]\nplugins-lint: -foo\n';
+    const written = 'plugins: [a, b]\nplugins-test: [bl-tests, extra]\nplugins-lint: [-foo]\n';
     assert.ok(fmText.includes(`added: ${new Date().toISOString().slice(0, 10)}\n${written}depends_on:`), fmText);
   } finally {
     cleanup();
@@ -876,9 +1044,9 @@ test('bl new --plugins-from rereads and compares its source under the creation l
     },
     {
       name: 'source plugin keys change while waiting',
-      mutate: (dir) => rewrite(dir, 'plugins-test: bl-tests\n', 'plugins-test: new-tests\n'),
+      mutate: (dir) => rewrite(dir, 'plugins-test: [bl-tests]\n', 'plugins-test: [new-tests]\n'),
       status: 0,
-      copied: 'plugins-test: new-tests\nplugins-lint: -foo\n',
+      copied: 'plugins-test: [new-tests]\nplugins-lint: [-foo]\n',
     },
     {
       name: 'source is done while waiting',
@@ -925,7 +1093,7 @@ test('bl new --plugins-from rejects duplicate source IDs', () => {
     mkdirSync(join(dir, 'stories', 'S1-dup'), { recursive: true });
     writeFileSync(
       join(dir, 'stories', 'S1-dup', 'index.md'),
-      text.replace('plugins-test: bl-tests', 'plugins-test: dup-tests'),
+      text.replace('plugins-test: [bl-tests]', 'plugins-test: [dup-tests]'),
     );
     const r = runBl([...NEW_CHILD, '--plugins-from', 'S-1'], { cwd: dir });
     assert.equal(r.status, 1, r.stderr);
@@ -971,8 +1139,6 @@ test('bl new --theme writes themes/<slug>/index.md; bl new --epic --theme writes
       epic_id: 'E50',
       title: 'Backlog taxonomy',
       theme: 'backlog',
-      status: 'open',
-      features: [],
     });
     assert.match(epic, /^# E50 · Backlog taxonomy$/m);
     assert.match(epic, /^## Outcome$/m);
@@ -1254,7 +1420,10 @@ test("bl new --feature, --component, --epic and --theme with a ': ' and ' #' tit
     let r = runBl(['new', '--feature', '--title', TRICKY, '--theme', 'demo', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     let fm = assertTemplateBlock(dir, r.stdout.trim().split('\n').pop(), 'feature');
-    assert.deepEqual([fm.theme, fm.epic, fm.status, fm.stories], ['demo', undefined, 'draft', '']);
+    assert.deepEqual(
+      [fm.theme, fm.epic, fm.status, fm.stories, fm.points],
+      ['demo', undefined, 'draft', undefined, undefined],
+    );
 
     r = runBl(['new', '--component', '--repo', 'beta', '--title', TRICKY, '--paths', '**', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
@@ -1264,7 +1433,7 @@ test("bl new --feature, --component, --epic and --theme with a ': ' and ' #' tit
     r = runBl(['new', '--epic', '--theme', 'demo', '--title', TRICKY, '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     fm = assertTemplateBlock(dir, r.stdout.trim(), 'epic');
-    assert.deepEqual([fm.theme, fm.status, fm.features], ['demo', 'open', []]);
+    assert.deepEqual([fm.theme, fm.status, fm.features], ['demo', undefined, undefined]);
 
     r = runBl(['new', '--theme', 'tricky', '--title', TRICKY, '--brief', 'x.md#a: b', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
@@ -1276,51 +1445,21 @@ test("bl new --feature, --component, --epic and --theme with a ': ' and ' #' tit
 });
 
 // ---------------------------------------------------------------------------
-// The feature link goes through updateSpecFile (F-67 S-1102).
+// bl new F-<n> writes the story's feature: and never the feature (F-77 D3).
 // ---------------------------------------------------------------------------
 
-const PARTIAL = new URL('../helpers/partial-write-preload.js', import.meta.url).pathname;
-const stagedSpecs = (dir) =>
-  existsSync(join(dir, '.bl', 'tmp'))
-    ? readdirSync(join(dir, '.bl', 'tmp')).filter((f) => f.startsWith('index.md.'))
-    : [];
-
-test("bl new F-<n>: a failed write of the feature's stories: list leaves the previous feature file and no staging file", () => {
-  const { dir, cleanup } = componentBacklog({
-    features: [{ id: 'F-1', title: 'Invites', dirSuffix: 'invites', primary_repo: 'beta' }],
-  });
-  try {
-    const featurePath = join(dir, 'features/F1-invites/index.md');
-    const before = readFileSync(featurePath, 'utf8');
-    const env = {
-      NODE_OPTIONS: `--import=${PARTIAL}`,
-      BL_PARTIAL_WRITE_VERB: 'new',
-      BL_PARTIAL_WRITE_TARGET: featurePath,
-      BL_PARTIAL_WRITE_MATCH: 'feature_id: F-1',
-    };
-    const r = runBl(['new', 'F-1', 'C01', '--title', 'Mint', '--points', '3', '--no-sync'], { cwd: dir, env });
-    assert.notEqual(r.status, 0, 'the failed write fails bl new');
-    assert.match(r.stderr, /ENOSPC/);
-    assert.equal(readFileSync(featurePath, 'utf8'), before, 'the previous feature file, whole');
-    assert.deepEqual(stagedSpecs(dir), [], 'no staging file left');
-  } finally {
-    cleanup();
-  }
-});
-
-test('bl new F-<n> into a CRLF feature keeps one frontmatter block and CRLF line ends', () => {
+test('bl new F-<n> leaves the feature file, a CRLF one included, byte for byte', () => {
   const { dir, cleanup } = componentBacklog({
     features: [{ id: 'F-1', title: 'Invites', dirSuffix: 'invites', primary_repo: 'beta' }],
   });
   try {
     const featurePath = join(dir, 'features/F1-invites/index.md');
     writeFileSync(featurePath, readFileSync(featurePath, 'utf8').replace(/\r?\n/g, '\r\n'));
+    const before = readFileSync(featurePath, 'utf8');
     const r = runBl(['new', 'F-1', 'C01', '--title', 'Mint', '--points', '3', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    const text = readFileSync(featurePath, 'utf8');
-    assert.equal(text.match(/^---\r$/gm)?.length, 2, 'one frontmatter block');
-    assert.ok(!/[^\r]\n/.test(text), 'every line ends CRLF');
-    assert.deepEqual(parseFrontmatter(text.replace(/\r\n/g, '\n')).fm.stories, ['S-1']);
+    assert.equal(readFileSync(featurePath, 'utf8'), before);
+    assert.equal(fmOf(dir, r.stdout.trim()).feature, 'F-1');
   } finally {
     cleanup();
   }

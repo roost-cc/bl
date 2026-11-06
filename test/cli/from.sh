@@ -214,16 +214,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Existing-story-dir collision: pre-create one, expect failure
+# A story dir with no readable story still takes its number: never clobbered
 # ---------------------------------------------------------------------------
 
 # Use a fresh backlog dir for this test to avoid polluting later cases.
 TMP_COLLIDE=$(mktemp -d)
 cp "$TMPDIR_ROOT/backlog.json" "$TMP_COLLIDE/backlog.json"
+cp "$TMPDIR_ROOT/flow.json" "$TMP_COLLIDE/flow.json"
 write_components "$TMP_COLLIDE"
 
-# A story dir with the name the plan will choose, but no story_id: it is
-# not a story, so the next id is still S-1.
+# A story dir with the name the plan would choose for S-1, but no story_id.
+# Its directory takes the number all the same (F-77 D1, maxNum), so the new
+# story is S-2 and the stub is left as it was.
 mkdir -p "$TMP_COLLIDE/stories/S1-clobbered"
 echo "stub" > "$TMP_COLLIDE/stories/S1-clobbered/index.md"
 
@@ -237,12 +239,18 @@ cat > "$SPEC_DIR/spec-collide.json" <<'JSON'
 JSON
 
 set +e
-err=$(BL_BACKLOG_DIR="$TMP_COLLIDE" "$BL" new --from "$SPEC_DIR/spec-collide.json" 2>&1 >/dev/null); rc=$?
+err=$(BL_BACKLOG_DIR="$TMP_COLLIDE" "$BL" new --from "$SPEC_DIR/spec-collide.json" --no-sync 2>&1 >/dev/null); rc=$?
 set -e
-case "$err" in
-  *"already exists"*) pass ;;
-  *) fail "collision message expected (got: $err)" ;;
-esac
+if [ "$rc" -eq 0 ] && [ -f "$TMP_COLLIDE/stories/S2-clobbered/index.md" ]; then
+  pass
+else
+  fail "the new story takes the next number, S-2 (rc=$rc: $err)"
+fi
+if [ "$(cat "$TMP_COLLIDE/stories/S1-clobbered/index.md")" = "stub" ]; then
+  pass
+else
+  fail "the numbered stub directory is left as it was"
+fi
 rm -rf "$TMP_COLLIDE"
 
 # ---------------------------------------------------------------------------

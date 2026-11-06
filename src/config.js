@@ -863,17 +863,6 @@ export function frontmatterKeyLine(content, key) {
 }
 
 /**
- * Whether the backlog readers (`readAllStories`, `readComponents`,
- * `readAllFeatures`, `readAllThemes`, `readAllEpics`) skip the unit at
- * `indexPath`: `bl validate` lists in `config.invalidFrontmatter` the files
- * it reports as not YAML (F-62 D4), so none is read partially. Every other
- * command reads them and stops at the `FrontmatterError`.
- */
-export function frontmatterSkipped(config, indexPath) {
-  return config?.invalidFrontmatter?.has(indexPath) ?? false;
-}
-
-/**
  * `parseFrontmatter` of `content` read from `file`: a `FrontmatterError`
  * names the file.
  */

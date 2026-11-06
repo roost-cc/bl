@@ -38,9 +38,10 @@ backlog/
 
 ## Gates
 
-- `approve` needs `status: refined`, a non-empty `stories:` list whose stories
-  all carry `feature: F-<n>`, and warns on open dependencies outside the
-  feature (`implement` refuses on those).
+- `approve` needs `status: refined` and at least one story whose `feature:`
+  names it (membership is derived from each story's `feature:`, never stored
+  on the feature), and warns on open dependencies outside the feature
+  (`implement` refuses on those).
 - `implement` and `run` need a feature `approved`, `running`, or `escalated`; a story
   `refined` or `in_progress`.
 - `merge` refuses while `review_status` is `pending`/`fixed`, while the latest

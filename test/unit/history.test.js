@@ -71,8 +71,11 @@ test('backfill projects added and completed with current points; open statuses r
     ['2026-04-01', '2026-04-02', '2026-04-03'],
   );
   assert.ok(days.every((d) => d.backfilled && d.commit === null));
-  assert.deepEqual(days[0].stories, { 'S-1': { status: 'backlog', points: 2 } });
-  assert.deepEqual(days[1].stories, { 'S-1': { status: 'done', points: 2 }, 'S-2': { status: 'backlog', points: 5 } });
+  assert.deepEqual(days[0].stories, { 'S-1': { status: 'backlog', points: 2, feature: '' } });
+  assert.deepEqual(days[1].stories, {
+    'S-1': { status: 'done', points: 2, feature: '' },
+    'S-2': { status: 'backlog', points: 5, feature: '' },
+  });
   assert.deepEqual(backfill(groups, current, '2026-04-01', flow), [], 'nothing before the first commit');
 });
 

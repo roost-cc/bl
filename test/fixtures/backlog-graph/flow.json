@@ -1,0 +1,42 @@
+{
+  "schema": "bl-flow/v1",
+  "types": {
+    "story": {
+      "statuses": {
+        "backlog": { "implies": [] },
+        "refined": { "implies": ["backlog"] },
+        "in_progress": { "implies": ["refined", "backlog"] },
+        "done": { "implies": ["in_progress", "refined", "backlog"] },
+        "superseded": { "implies": ["done", "in_progress", "refined", "backlog"] }
+      },
+      "gates": {
+        "run": { "verbs": ["run", "implement"] },
+        "merge": { "verbs": ["merge"] }
+      }
+    },
+    "feature": {
+      "statuses": {
+        "draft": { "implies": [] },
+        "refined": { "implies": ["draft"] },
+        "approved": { "implies": ["refined", "draft"] },
+        "running": { "implies": ["approved", "refined", "draft"] },
+        "escalated": { "implies": ["running", "approved", "refined", "draft"] },
+        "done": { "implies": ["escalated", "running", "approved", "refined", "draft"] },
+        "superseded": {
+          "implies": ["done", "escalated", "running", "approved", "refined", "draft"]
+        }
+      },
+      "gates": {
+        "run": { "verbs": ["run", "implement"] },
+        "merge": { "verbs": ["merge"] }
+      }
+    },
+    "task": {
+      "statuses": {
+        "open": { "implies": [] },
+        "done": { "implies": ["open"] }
+      },
+      "gates": {}
+    }
+  }
+}

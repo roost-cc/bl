@@ -4,8 +4,6 @@ title:
 theme:
 epic:
 status: draft
-stories:
-points: 0
 review_rounds_max:
 added:
 ---

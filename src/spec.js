@@ -93,8 +93,8 @@ function existingComponent(raw, config, push, path) {
  * `storyComponents[i]` is the record of story i's own `component`, or null
  * when it takes the spec's. Every story's repo is its component's repo
  * (F-49 D4, F-52 D1). `featureId` is the normalized `F-<n>` when `spec.feature`
- * is set (every created story is tagged with it and appended to the
- * feature's `stories:`). `warnings` is an array of non-fatal diagnostic
+ * is set (every created story is tagged with it, which makes it the
+ * feature's, F-77 D3). `warnings` is an array of non-fatal diagnostic
  * strings the caller should surface.
  *
  * `config` is required and used to check components, repos and the feature

@@ -1,12 +1,14 @@
 /**
  * grep.js — search story contents and display matches as a table.
+ *
+ * The pattern is a JavaScript regular expression, case-insensitive, `^` and
+ * `$` at line ends, matched against each story's whole `index.md` as the
+ * backlog graph read it (`unit.text()`, F-77 D2): its frontmatter and body.
  */
 
-import { existsSync } from 'fs';
-import { dirname, relative } from 'path';
-import { spawnSync } from 'child_process';
 import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
-import { readAllStories, readBacklogOrder, activeWorktreesByStory, storiesRoot } from './story.js';
+import { readAllStories, readBacklogOrder, activeWorktreesByStory } from './story.js';
+import { loadBacklog } from './backlog-graph.js';
 import { loadFlow } from './flow.js';
 
 export async function main(argv) {
@@ -36,42 +38,28 @@ stories in the same table format as bl list.`);
   const showAll = args.all;
   const cfg = loadConfig();
   const flow = loadFlow(cfg.backlogRoot);
-  const stories = readAllStories(cfg);
+  let re;
+  try {
+    re = new RegExp(pattern, 'im');
+  } catch (e) {
+    console.error(`bl grep: ${e.message}`);
+    process.exit(1);
+  }
+  // Every story's index.md, as the graph read it (F-77 D2): one snapshot for
+  // the records and the texts searched.
+  const graph = loadBacklog(cfg);
+  const stories = readAllStories({ ...cfg, backlogGraph: graph });
   const backlogIds = readBacklogOrder(cfg.backlogRoot);
   const priorityMap = new Map(backlogIds.map((id, i) => [id, i]));
   const wtsByStory = activeWorktreesByStory(cfg);
 
-  // Map story dir (relative to backlog root) → story
-  const storyByDir = new Map();
-  for (const s of stories) {
-    if (s.storyRelPath) storyByDir.set(dirname(s.storyRelPath), s);
-  }
-
-  // Run rg against stories/ and map each hit through `storyByDir`.
-  const matchedIds = new Set();
-  const searchRoots = [storiesRoot(cfg)];
-
-  for (const root of searchRoots) {
-    if (!existsSync(root)) continue;
-    const result = spawnSync('rg', ['--files-with-matches', '--no-messages', '--hidden', '-i', pattern, root], {
-      encoding: 'utf8',
-      cwd: cfg.backlogRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    for (const file of (result.stdout || '').trim().split('\n').filter(Boolean)) {
-      const rel = relative(cfg.backlogRoot, file);
-      let dir = dirname(rel);
-      while (dir && dir !== '.') {
-        if (storyByDir.has(dir)) {
-          matchedIds.add(storyByDir.get(dir).id);
-          break;
-        }
-        dir = dirname(dir);
-      }
-    }
-  }
-
-  let filtered = stories.filter((s) => matchedIds.has(s.id));
+  const matched = new Set(
+    graph
+      .list('story')
+      .filter((u) => re.test(u.text()))
+      .map((u) => u.file),
+  );
+  let filtered = stories.filter((s) => matched.has(s.indexPath));
   if (!showAll) {
     filtered = filtered.filter((s) => !flow.meets('story', s.status, 'done'));
   }

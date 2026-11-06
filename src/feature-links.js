@@ -4,15 +4,15 @@
  *
  * Before it rewrites a story, `bl new --feature` writes
  * `<backlog>/.bl/run/<F-id>.links.json`: the feature, its directory, and each
- * story's bytes before the move. The record is removed once every story and
- * the feature list are written. A record left behind (a failed rollback, a
- * crash) is settled by the next bl command before it reads anything:
- * `settlePending()` under the backlog lock. Settling keeps the feature when
- * the links are complete both ways, otherwise restores each story and removes
- * the feature; a story it cannot restore is listed in the feature, and the
- * record stays. Only when that listing fails too does a story name a feature
- * that omits it. While a record stays, every command refuses to run: a change
- * to the feature or its stories could undo what its rollback restores.
+ * story's bytes before the move. The record is removed once every story is
+ * written. A record left behind (a failed rollback, a crash) is settled by
+ * the next bl command before it reads anything: `settlePending()` under the
+ * backlog lock. Settling keeps the feature when it is complete, every story
+ * naming it in its `feature:` (the only statement of membership, F-77 D3),
+ * otherwise restores each story and removes the feature; a story it cannot
+ * restore still names the feature, which is kept, and the record stays.
+ * While a record stays, every command refuses to run: a change to the
+ * feature or its stories could undo what its rollback restores.
  */
 
 import {
@@ -31,16 +31,14 @@ import { basename, join, normalize, relative, sep } from 'path';
 import { findBacklogRoot, parseFrontmatter } from './config.js';
 import { withLock } from './lock.js';
 import { RUN_DIR } from './run-lock.js';
-import { parseIdList } from './story.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { updateSpecFile } from './spec-file.js';
 
 const SUFFIX = '.links.json';
 
 /**
  * Test seam: throw before the write at `position` when it is listed in
- * BL_INTERNAL_TEST_FAIL_ON_LINK (`feature`, a story id, `list`, `record`,
- * `restore:<story id>`, or `relink`).
+ * BL_INTERNAL_TEST_FAIL_ON_LINK (`feature`, a story id, `record` or
+ * `restore:<story id>`).
  */
 export function failPoint(position) {
   const listed = (process.env.BL_INTERNAL_TEST_FAIL_ON_LINK ?? '').split(',');
@@ -113,9 +111,9 @@ export function writeRecord(backlogRoot, record) {
  * Settle one record; the caller holds the backlog lock. Throws, before
  * anything is written, on a record `checkRecord` refuses.
  *
- * @returns {{ state: "complete" | "rolled back" | "listed" | "one-way", left: string[] }}
- *   `listed`: the stories in `left` could not be restored and are listed in
- *   the feature; `one-way`: they could not be listed either. Both keep the record.
+ * @returns {{ state: "complete" | "rolled back" | "kept", left: string[] }}
+ *   `kept`: the stories in `left` could not be restored, so they still name
+ *   the feature, which is kept, and so is the record.
  */
 export function settle(backlogRoot, path) {
   const record = JSON.parse(readFileSync(path, 'utf8'));
@@ -134,18 +132,9 @@ export function settle(backlogRoot, path) {
   };
   const current = record.stories.map((s) => fmOf(join(backlogRoot, s.path)));
   const named = record.stories.filter((_, i) => current[i] == null || current[i].feature === record.feature);
-  const featureFm = existsSync(featurePath) ? fmOf(featurePath) : null;
-  let listed = null;
-  try {
-    if (featureFm) listed = parseIdList(featureFm.stories);
-  } catch {
-    // A `stories:` list the readers refuse is not complete either.
-  }
-  if (
-    listed &&
-    current.every((fm) => fm?.feature === record.feature) &&
-    record.stories.every((s) => listed.includes(s.id))
-  ) {
+  // Membership is each story's `feature:` (F-77 D3): complete is a readable
+  // feature file and every story naming it.
+  if (existsSync(featurePath) && fmOf(featurePath) != null && current.every((fm) => fm?.feature === record.feature)) {
     unlinkSync(path);
     return { state: 'complete', left: [] };
   }
@@ -164,22 +153,13 @@ export function settle(backlogRoot, path) {
     unlinkSync(path);
     return { state: 'rolled back', left };
   }
-  try {
-    failPoint('relink');
-    const ids = record.stories.map((s) => s.id);
-    // Under the backlog lock (settle's caller), the outer lock (F-67 D4).
-    updateSpecFile(backlogRoot, featurePath, (fm) => {
-      fm.stories = [...parseIdList(fm.stories).filter((id) => !ids.includes(id)), ...left];
-    });
-  } catch {
-    return { state: 'one-way', left };
-  }
-  return { state: 'listed', left };
+  // A story still naming the feature is in it, so the feature is kept.
+  return { state: 'kept', left };
 }
 
 /**
  * Settle every record left in the backlog before a command runs. Exits 1
- * when a record is not settled (`listed` or `one-way`).
+ * when a record is not settled (`kept`).
  *
  * @param {string} [backlogRoot] the backlog; found from the cwd when omitted
  */
@@ -210,13 +190,9 @@ export async function settlePending(backlogRoot) {
       }
       if (state === 'complete' || state === 'rolled back') {
         console.error(`bl: settled the interrupted bl new --feature of ${feature}: ${state}.`);
-      } else if (state === 'listed') {
-        out.push(
-          `bl: could not restore ${left.join(', ')}, so ${feature} is kept and lists it; bl refuses to run until the next command restores it (${join(RUN_DIR, f)}).`,
-        );
       } else {
         out.push(
-          `bl: ${left.join(', ')} name ${feature}, which does not list them, and bl could not restore or list them (${join(RUN_DIR, f)}).`,
+          `bl: could not restore ${left.join(', ')}, so ${feature} is kept with it; bl refuses to run until the next command restores it (${join(RUN_DIR, f)}).`,
         );
       }
     }

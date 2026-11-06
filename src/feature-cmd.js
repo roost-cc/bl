@@ -188,7 +188,7 @@ function parsedFor(feature) {
 }
 
 function renderStoriesPlan(config, ordered) {
-  if (ordered.length === 0) return '(no stories listed)';
+  if (ordered.length === 0) return '(no stories)';
   return ordered
     .map(
       (s, i) =>
@@ -615,24 +615,11 @@ export async function cmdApprove(args, config, feature) {
     process.exit(1);
   }
   const all = readAllStories(config);
-  const { stories, missing, mismatched } = resolveFeatureStories(feature, config, all);
-  if (feature.stories.length === 0) {
+  const { stories } = resolveFeatureStories(feature, config, all);
+  if (stories.length === 0) {
     console.error(
-      `Feature ${feature.id} lists no stories. Refine it (or add stories with \`bl new --feature ${feature.id} …\`) first.`,
+      `Feature ${feature.id} has no stories. Refine it (or add stories with \`bl new --feature ${feature.id} …\`) first.`,
     );
-    process.exit(1);
-  }
-  if (missing.length > 0) {
-    console.error(`Feature ${feature.id} lists stories that don't exist: ${missing.join(', ')}`);
-    process.exit(1);
-  }
-  if (mismatched.length > 0) {
-    console.error(
-      `These stories are listed by ${feature.id} but their frontmatter says otherwise (fix \`feature:\` or the list):`,
-    );
-    for (const s of mismatched) {
-      console.error(`  ${s.id}  feature: ${s.feature || '(unset)'}`);
-    }
     process.exit(1);
   }
 
@@ -813,7 +800,7 @@ function printChanges(unit) {
 
 export function cmdStatus(args, config, feature) {
   const all = readAllStories(config);
-  const { stories, missing, unlisted, mismatched } = resolveFeatureStories(feature, config, all);
+  const { stories } = resolveFeatureStories(feature, config, all);
   const ordered = orderStoriesByDeps(stories);
   printUnitHead(feature, featureRepoOrder(stories).join(', '));
   console.log('');
@@ -824,15 +811,6 @@ export function cmdStatus(args, config, feature) {
     );
   } else {
     console.log('(no stories)');
-  }
-  if (missing.length > 0) console.log(`\nmissing stories: ${missing.join(', ')}`);
-  if (mismatched.length > 0) {
-    console.log(
-      `\nlisted but pointing elsewhere: ${mismatched.map((s) => `${s.id} (feature: ${s.feature || 'unset'})`).join(', ')}`,
-    );
-  }
-  if (unlisted.length > 0) {
-    console.log(`\ntagged but not listed: ${unlisted.map((s) => s.id).join(', ')}`);
   }
   const blockers = outsideBlockers(stories, all, loadFlow(config.backlogRoot));
   if (blockers.length > 0) {
@@ -994,11 +972,7 @@ export function prepareFeatureWorktree(config, feature) {
     process.exit(1);
   }
   const all = readAllStories(config);
-  const { stories, missing } = resolveFeatureStories(feature, config, all);
-  if (missing.length > 0) {
-    console.error(`Feature ${feature.id} lists stories that don't exist: ${missing.join(', ')}`);
-    process.exit(1);
-  }
+  const { stories } = resolveFeatureStories(feature, config, all);
   const ordered = orderStoriesByDeps(stories);
   const blockers = outsideBlockers(ordered, all, loadFlow(config.backlogRoot));
   if (blockers.length > 0) {
@@ -1585,11 +1559,7 @@ export async function cmdMerge(args, config, feature) {
   }
 
   const all = readAllStories(config);
-  const { stories, missing } = resolveFeatureStories(feature, config, all);
-  if (missing.length > 0) {
-    console.error(`Feature ${feature.id} lists stories that don't exist: ${missing.join(', ')}`);
-    process.exit(1);
-  }
+  const { stories } = resolveFeatureStories(feature, config, all);
   // Before any repo lands: every story is merged and marked done below.
   exitOnStoryWithoutRepo(feature, stories);
 

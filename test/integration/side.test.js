@@ -13,7 +13,8 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
-import { parseFrontmatter } from '../../src/config.js';
+import { loadConfig, parseFrontmatter } from '../../src/config.js';
+import { findFeature, normalizeFeatureId } from '../../src/feature.js';
 import { findExistingWorktree } from '../../src/story.js';
 import { runBl } from '../helpers/run-bl.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
@@ -69,6 +70,8 @@ function build() {
 }
 
 const fmOf = (path) => parseFrontmatter(readFileSync(path, 'utf8')).fm;
+/** A feature's stories: the ones whose `feature:` names it (F-77 D3). */
+const members = (dir, id) => findFeature(normalizeFeatureId(id), loadConfig({ backlogRoot: dir })).stories;
 const storyDirs = (dir) => readdirSync(join(dir, 'stories')).sort();
 
 /** The HEAD commit's paths, without the indexes `bl sync` regenerates. */
@@ -101,8 +104,8 @@ test("bl side <repo> --from a running feature: a story in the repo's home compon
     'found_by',
   ]);
 
-  const feature = fmOf(join(dir, 'features', 'F1-run', 'index.md'));
-  assert.deepEqual(feature.stories, ['S-1', 'S-4']);
+  assert.deepEqual(members(dir, 'F-1'), ['S-1', 'S-4']);
+  assert.equal(fmOf(join(dir, 'features', 'F1-run', 'index.md')).stories, undefined, 'no stored stories:');
 
   assert.equal(findExistingWorktree(repos.repoB, 'f1-run')?.path, worktree);
   const change = fmOf(join(dir, 'features', 'F1-run', 'change.md'));
@@ -186,8 +189,9 @@ test('bl side --from a draft feature or a standalone story: a standalone story o
     assert.equal(fm.feature, undefined);
     assert.equal(fm.found_by, from);
     assert.equal(fm.status, 'in_progress');
-    // An empty list key reads as "" (a bare `key:`).
-    assert.deepEqual([fm.depends_on, fm.required_for], ['', '']);
+    // An empty list key reads as "" (a bare `key:`); required_for is
+    // derived, never written (F-77 D3).
+    assert.deepEqual([fm.depends_on, Object.hasOwn(fm, 'required_for')], ['', false]);
     assert.equal(findExistingWorktree(repos.repoB, branch)?.path, out.worktree);
     const change = fmOf(join(dir, `stories/S${id.slice(2)}-${slug}/change.md`));
     assert.equal(change.change_of, id);
@@ -555,7 +559,7 @@ test('failed_side_must_preserve_worktree_adopted_by_successful_caller: the workt
     storyDirs(dir).filter((d) => /^S[45]-/.test(d)),
     ['S4-survivor'],
   );
-  assert.deepEqual(fmOf(join(dir, 'features', 'F1-run', 'index.md')).stories, ['S-1', 'S-4']);
+  assert.deepEqual(members(dir, 'F-1'), ['S-1', 'S-4']);
   assert.deepEqual(
     fmOf(join(dir, 'features', 'F1-run', 'change.md')).repos.map((e) => e.repo),
     ['repoA', 'repoB'],

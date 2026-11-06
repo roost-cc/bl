@@ -44,9 +44,9 @@ Commands:
                worktree and change entry (<repo|C-id> --from <F-n|S-n>
                --title <t> --points <n>); prints S-<n><TAB><worktree>
                --type, --body-file, --json
-  attach     List an existing story in a feature (<S-n> <F-n>, either
-               order): sets its feature:, appends it to stories:, commits
-               --no-sync      Write both files, commit nothing
+  attach     Put an existing story in a feature (<S-n> <F-n>, either
+               order): sets its feature:, commits
+               --no-sync      Write the story, commit nothing
                --json         Print {schema, story, feature, changed}
                Refuses a closed feature, a story in another feature or not
                ${unstarted}, and a repo a running feature does not span
@@ -91,7 +91,7 @@ Commands:
                --epic <E-id>   An epic's features, with stories and points done/total
                --feature <F-id>, --component <C-id>  Filter to a feature or component
                --features      List features instead; with a filter, grouped by epic
-  tree       Show dependency trees from depends_on/required_for frontmatter
+  tree       Show dependency trees from depends_on frontmatter
                [story-id|component-id]  Limit to trees containing this story, or
                                    trees containing the component's pending stories
                -a, --all       Include trees where every story is done

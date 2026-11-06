@@ -25,6 +25,7 @@ import {
   removeUnitDirIfEmpty,
   reposForStory,
 } from '../../src/story.js';
+import { loadBacklog } from '../../src/backlog-graph.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
 
@@ -575,10 +576,6 @@ test('component_paths_reject_invalid_members_and_round_trip_escaped_globs', asyn
   const invalid = [
     ['inline empty member', 'paths: ["src/**", ""]', /path "" is empty/],
     ['block empty member', 'paths:\n  - src/**\n  - ""', /path "" is empty/],
-    ['block mapping', 'paths:\n  - src/**\n  - bad: src/**', /is not a string/],
-    ['block nested list', 'paths:\n  - [src/**]', /is not a string/],
-    ['inline mapping', 'paths: [{bad: x}]', /is not a string/],
-    ['a scalar', 'paths: src/**', /is not a list/],
   ];
   for (const [name, text, re] of invalid) {
     const { errors } = component(text);
@@ -586,6 +583,31 @@ test('component_paths_reject_invalid_members_and_round_trip_escaped_globs', asyn
       errors.some((e) => re.test(e.message)),
       `${name}: ${JSON.stringify(errors)}`,
     );
+  }
+  // A member that is not a string, or a paths: that is not a list, is a
+  // frontmatter-list problem of the graph (F-77 D1): a reader stops at it,
+  // naming the file, and bl validate reports it and reads the component no further.
+  for (const [name, text, re] of [
+    ['block mapping', 'paths:\n  - src/**\n  - bad: src/**', /holds .*, not a string/],
+    ['block nested list', 'paths:\n  - [src/**]', /holds .*, not a string/],
+    ['inline mapping', 'paths: [{bad: x}]', /holds .*, not a string/],
+    ['a scalar', 'paths: src/**', /"paths:" is "src\/\*\*", not a list/],
+  ]) {
+    const at = mkTempDir('bl-paths-');
+    assert.throws(
+      () => componentWithPaths(at, 1, text, findComponentFindings),
+      (e) => e instanceof FrontmatterListError && /components\/C01-x\/index\.md: /.test(e.message),
+      name,
+    );
+    const g = loadBacklog({ backlogRoot: at }, { tolerant: true });
+    const list = g.problems.filter((p) => p.code === 'frontmatter-list');
+    assert.deepEqual(
+      list.map((p) => p.file),
+      ['components/C01-x/index.md'],
+      name,
+    );
+    assert.match(list[0].message, re, name);
+    assert.equal(g.get('C01'), null, name);
   }
   // paths: is optional (F-61 D2): absent, empty or an empty list is no finding.
   for (const [name, text] of [
@@ -684,20 +706,29 @@ test('component_paths_read_as_yaml_reports_nested_members_and_refuses_what_is_no
     ['paths:\n  - src/**\n  - {a: b}', ['src/**']],
   ];
   cases.forEach(([text, valid], i) => {
-    const { c, errors } = componentWithPaths(root, i + 1, text, findComponentFindings);
-    const invalid = c.paths.filter((g) => pathEntryProblem(g));
+    // A nested member is a frontmatter-list problem (F-77 D1): no reader
+    // reads the component, so no member of it can become a matching glob.
+    assert.throws(
+      () => componentWithPaths(mkTempDir('bl-paths-'), i + 1, text, findComponentFindings),
+      FrontmatterListError,
+      text,
+    );
+    // parsePathList, handed the parsed value, keeps each nested member as one
+    // that is not a string, which matches no path.
+    const fm = parseFrontmatter(`---\n${text}\n---\n`).fm;
+    const paths = parsePathList(fm.paths);
+    const invalid = paths.filter((g) => pathEntryProblem(g));
     assert.ok(
       invalid.length > 0 && invalid.every((g) => pathEntryProblem(g) === 'is not a string'),
-      `${text}: ${c.paths}`,
+      `${text}: ${paths}`,
     );
     assert.deepEqual(
-      c.paths.filter((g) => !pathEntryProblem(g)),
+      paths.filter((g) => !pathEntryProblem(g)),
       valid,
       text,
     );
-    assert.equal(errors.length, invalid.length, `${text}: ${JSON.stringify(errors)}`);
     // No invalid member becomes a matching glob: a file outside the valid ones matches none.
-    assert.equal(pathMatches('secrets/private.txt', c.paths), false, `${text}: match`);
+    assert.equal(pathMatches('secrets/private.txt', paths), false, `${text}: match`);
   });
   // What YAML cannot read is not read at all: an unclosed list, a stray bracket, an unanchored alias.
   for (const text of [

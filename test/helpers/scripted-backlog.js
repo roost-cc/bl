@@ -153,17 +153,19 @@ export function scriptedBacklog() {
   put(dir, 'features/F1-one/index.md', feature('[S-1, S-2]'));
   shas['2026-04-23'] = commitAt(dir, '2026-04-23T09:00:00', 'day 2');
 
-  // 2026-04-25: S-3 added; S-2 re-estimated.
-  put(dir, 'stories/S3-c/index.md', story('S-3', { points: 8, added: '2026-04-25' }));
+  // 2026-04-25: S-3 added, in no feature yet; S-2 re-estimated.
+  put(dir, 'stories/S3-c/index.md', story('S-3', { points: 8, added: '2026-04-25', feature: '' }));
   put(dir, 'stories/S2-b/index.md', story('S-2', { ...S2, points: 5 }));
   shas['2026-04-25'] = commitAt(dir, '2026-04-25T09:00:00', 'day 3');
 
   // 2026-04-28: S-1 in progress, then done later that day; S-2 superseded;
-  // the feature drops S-2 and lists S-3.
+  // the feature drops S-2 from its stories: (S-2 still names it) and lists
+  // S-3, which now names it.
   put(dir, 'stories/S1-a/index.md', story('S-1', { ...S1, title: '"A: b"', status: 'in_progress' }));
   commitAt(dir, '2026-04-28T08:00:00', 'day 4, morning');
   put(dir, 'stories/S1-a/index.md', story('S-1', { ...S1, title: '"A: b"', status: 'done', completed: '2026-04-28' }));
   put(dir, 'stories/S2-b/index.md', story('S-2', { ...S2, points: 5, status: 'superseded' }));
+  put(dir, 'stories/S3-c/index.md', story('S-3', { points: 8, added: '2026-04-25' }));
   put(dir, 'features/F1-one/index.md', feature('[S-1, S-3]', 'running', F1_TOKENS));
   put(dir, 'stories/S4-d/index.md', story('S-4', { ...S4, extra: S4_TOKENS }));
   shas['2026-04-28'] = commitAt(dir, '2026-04-28T17:00:00', 'day 4, evening');

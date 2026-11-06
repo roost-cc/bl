@@ -14,7 +14,7 @@
  * component's repo (F-49 D4); no repo is written on the story (F-52 D1). Prompts for the component (when none is named),
  * title and points. Assigns the next globally-unique story ID. Unless
  * --no-sync or --dry-run, syncs and commits the new stories (plus a new
- * component dir, an appended feature file and the rewritten indexes) inside
+ * component dir, the feature file's regenerated table and the rewritten indexes) inside
  * the lock hold that allocated the IDs.
  */
 
@@ -23,6 +23,7 @@ import { join, dirname, relative, isAbsolute, resolve } from 'path';
 import * as readline from 'readline';
 import {
   loadConfig,
+  listValue,
   parseFrontmatter,
   parseFrontmatterOf,
   slugify,
@@ -47,19 +48,14 @@ import {
   findComponentDir,
   homeComponent,
   normalizeId,
+  parseIdList,
   readAllStories,
   readComponents,
   pathEntryProblem,
 } from './story.js';
 import { renderTemplate, templatePath } from './template.js';
 import { implementPluginProblem } from './scripted.js';
-import {
-  normalizeFeatureId,
-  findFeature,
-  appendStoriesToFeature,
-  closedFeatureRefusal,
-  storyMoveRefusal,
-} from './feature.js';
+import { normalizeFeatureId, findFeature, closedFeatureRefusal, storyMoveRefusal } from './feature.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { prepareBody } from './body.js';
@@ -67,7 +63,7 @@ import { validateSpec, SpecError } from './spec.js';
 import { resolveTargets } from './targets.js';
 import { failPoint, settle, writeRecord } from './feature-links.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { updateSpecFile } from './spec-file.js';
+import { updateSpecFile, withSpecLock } from './spec-file.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 const FIBONACCI = new Set([1, 2, 3, 5, 8, 13]);
@@ -351,8 +347,8 @@ function foldPositionals(args, config) {
 
 /**
  * `bl new --feature --title t [S-1 S-2 …]`: scaffold a feature
- * (`cmdNew`) and move the listed stories into it: `feature:` on each, and
- * appended to its `stories:`. Every story is checked under the backlog lock,
+ * (`cmdNew`) and move the listed stories into it: `feature:` on each, the
+ * only statement of membership (F-77 D3). Every story is checked under the backlog lock,
  * before anything is written: it must be unstarted (`Flow.isUnstarted`) and in no
  * other feature. A repair record (feature-links.js) is written before the
  * first story, so a failure the rollback cannot undo is settled by the next
@@ -405,12 +401,7 @@ async function newFeature(args, stories) {
             failPoint(s.id);
           });
         }
-        failPoint('list');
-        appendStoriesToFeature(
-          root,
-          feature,
-          stories.map((s) => s.id),
-        );
+        info(`Linked ${stories.map((s) => s.id).join(', ')} to ${feature.id}.`);
       } catch (err) {
         let state, left;
         try {
@@ -423,15 +414,11 @@ async function newFeature(args, stories) {
         }
         if (state === 'rolled back') throw err;
         err.keepFeature = true;
-        if (state === 'complete') err.message += `; ${feature.id} and its stories are linked both ways`;
-        else if (state === 'listed') {
+        if (state === 'complete') err.message += `; every story names ${feature.id}`;
+        else {
           err.message +=
-            `; could not restore ${left.join(', ')}, so ${feature.id} is kept and lists it; ` +
+            `; could not restore ${left.join(', ')}, so ${feature.id} is kept with it; ` +
             `the next bl command rolls it back`;
-        } else {
-          err.message +=
-            `; could not restore ${left.join(', ')} or list it in ${feature.id}: ` +
-            `the next bl command repairs it (${relative(root, record)})`;
         }
         throw err;
       }
@@ -741,8 +728,8 @@ async function newTheme(args, jsonMode) {
 /**
  * `bl new --epic --theme <slug> --title t [--body-file p]`: create
  * `epics/E<n>-<slug>/index.md` (F-51 D1) with the next epic number (E50
- * upward) under an existing theme. Its `features:` and `status:` are
- * derived by `bl sync`.
+ * upward) under an existing theme. Its features and status are derived by
+ * the graph (F-77 D3), never stored.
  */
 async function newEpic(args, jsonMode) {
   refuseNonValueFlags(args, '--epic, which creates an epic');
@@ -791,7 +778,7 @@ async function newEpic(args, jsonMode) {
  * it, F-48 D2), and a dependency list only when it is non-empty (the
  * template's empty key stays otherwise).
  */
-function storyValues(vars, { feature = null, dependsOn = [], requiredFor = [] } = {}) {
+function storyValues(vars, { feature = null, dependsOn = [] } = {}) {
   return {
     component: vars.componentId,
     story_id: vars.storyId,
@@ -802,8 +789,125 @@ function storyValues(vars, { feature = null, dependsOn = [], requiredFor = [] } 
     feature: feature?.id,
     found_by: undefined,
     ...(dependsOn.length > 0 ? { depends_on: dependsOn } : {}),
-    ...(requiredFor.length > 0 ? { required_for: requiredFor } : {}),
   };
+}
+
+/**
+ * Write `--required-for` and a spec's `required_for` where the edge lives,
+ * on the dependent story (F-77 D3): each existing story in `dependents`
+ * (target id → the new ids it waits for) gets those ids appended to its
+ * `depends_on:`, through `updateSpecFile` under its spec lock (the caller
+ * holds the backlog lock). An id already listed is not added twice. Returns
+ * the backlog-relative paths of the files it wrote, for the commit.
+ *
+ * All or nothing: when one write fails, the edges already written are taken
+ * back out and the directories in `created` (the new stories, a new
+ * component) removed, so the same `bl new` can run again and get the same
+ * ids; the error names whatever could not be undone.
+ * @param {any} cfg
+ * @param {Map<string, string[]>} dependents
+ * @param {string[]} created  absolute directories this `bl new` made
+ * @returns {string[]}
+ */
+function appendDependsOn(cfg, dependents, created) {
+  if (dependents.size === 0) return [];
+  const byId = new Map(readAllStories(cfg).map((s) => [s.id, s]));
+  /** @type {Edge[]} */
+  const written = [];
+  for (const [targetId, newIds] of dependents) {
+    const target = byId.get(targetId);
+    if (!target) continue;
+    /** @type {Edge | null} */
+    let edge = null;
+    try {
+      withSpecLock(target.indexPath, () => {
+        const before = readFileSync(target.indexPath, 'utf8');
+        /** @type {string[]} */
+        let added = [];
+        let prev;
+        const wrote = updateSpecFile(cfg.backlogRoot, target.indexPath, (fm) => {
+          const list = listValue(fm.depends_on);
+          if (list == null) {
+            throw new Error(`${target.storyRelPath}: depends_on is not a list; cannot add ${newIds.join(', ')}`);
+          }
+          added = newIds.filter((id) => !parseIdList(list).includes(id));
+          if (added.length === 0) return false;
+          prev = fm.depends_on;
+          fm.depends_on = [...list, ...added];
+          info(`${targetId} now depends on ${added.join(', ')}: ${target.storyRelPath}`);
+        });
+        if (wrote) {
+          const after = readFileSync(target.indexPath, 'utf8');
+          edge = { path: target.indexPath, rel: target.storyRelPath, before, after, added, prev };
+        }
+      });
+    } catch (e) {
+      const left = undoNew(cfg.backlogRoot, written, created);
+      const state =
+        left.length === 0
+          ? 'nothing is written or committed: the new stories and the edges already added are undone, so bl new can run again'
+          : `nothing is committed, but undoing failed, so fix these by hand: ${left.join('; ')}`;
+      throw new Error(`could not add ${newIds.join(', ')} to ${targetId}'s depends_on (${e.message}); ${state}.`, {
+        cause: e,
+      });
+    }
+    if (edge) written.push(edge);
+  }
+  return written.map((w) => w.rel);
+}
+
+/**
+ * One edge `appendDependsOn` wrote: the target's bytes before and after its
+ * write, the ids it added and the `depends_on` value they were added to.
+ * @typedef {{ path: string, rel: string, before: string, after: string, added: string[], prev: unknown }} Edge
+ */
+
+/**
+ * Undo a `bl new` whose edges failed (`appendDependsOn`): each edited target,
+ * newest first and under its spec lock, loses the ids this run added. A
+ * target still exactly as this run wrote it gets its bytes back; one changed
+ * since keeps that change, only the added ids taken out; one gone has no edge
+ * left. Then each created directory is removed, but only when every edge is
+ * gone, so no story is left naming a deleted one. Returns what could not be
+ * undone, empty when all was.
+ * @param {string} backlogRoot
+ * @param {Edge[]} written
+ * @param {string[]} created
+ * @returns {string[]}
+ */
+function undoNew(backlogRoot, written, created) {
+  const left = [];
+  for (const w of [...written].reverse()) {
+    try {
+      withSpecLock(w.path, () => {
+        if (!existsSync(w.path)) return;
+        if (readFileSync(w.path, 'utf8') === w.after) return atomicWriteFile(backlogRoot, w.path, w.before);
+        updateSpecFile(backlogRoot, w.path, (fm) => {
+          const list = listValue(fm.depends_on);
+          if (list == null) throw new Error('its depends_on is no longer a list');
+          const kept = list.filter((id) => !w.added.includes(id));
+          if (kept.length === list.length) return false;
+          if (kept.length > 0 || listValue(w.prev)?.length !== 0) fm.depends_on = kept;
+          else if (w.prev === undefined) delete fm.depends_on;
+          else fm.depends_on = w.prev;
+        });
+      });
+    } catch (e) {
+      left.push(`${w.rel} still has the new edge (${e.message})`);
+    }
+  }
+  if (left.length > 0) {
+    const kept = created.map((dir) => relative(backlogRoot, dir)).join(', ');
+    return kept ? [...left, `${kept} kept, since an edge still names it`] : left;
+  }
+  for (const dir of created) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      left.push(`${relative(backlogRoot, dir)} is still there (${e.message})`);
+    }
+  }
+  return left;
 }
 
 /**
@@ -880,8 +984,8 @@ Options:
                        when no component is named; a repo other than the
                        component's is an error
   --feature <id>       Attach the story to a feature (F-<n>): sets
-                       feature: in its frontmatter, appends it to the
-                       feature's stories: list, and uses the shorter
+                       feature: in its frontmatter (the only statement
+                       of membership) and uses the shorter
                        story-feature template.
   --feature            With no F-id: create a feature instead of a story
                        (features/F<n>-<slug>/index.md), holding the S-ids
@@ -922,8 +1026,10 @@ Options:
                        No other flags required.
   --depends-on <ids>   Comma-separated story IDs this story depends on
                        (e.g. S-379,S-380). Repeatable. Unknown IDs warn.
-  --required-for <ids> Comma-separated story IDs this story unblocks.
-                       Repeatable. Unknown IDs warn.
+  --required-for <ids> Comma-separated story IDs this story unblocks: the
+                       new id is appended to each one's depends_on (an
+                       edge is stated once, on the dependent story).
+                       Repeatable. Unknown IDs warn and are skipped.
   --json               Emit a JSON object describing the created story to
                        stdout (schema bl-new-json/v3). All other output
                        (sync chatter, plugin output) goes to stderr by
@@ -945,7 +1051,7 @@ Options:
   --help               Show this help
 
 Stories are written to stories/S<n>-<slug>/index.md. After the sync, commits
-the new stories (plus a new component dir, an appended feature file and every
+the new stories (plus a new component dir, the feature file and every
 index the sync rewrote) on the backlog's current branch, under the backlog
 lock: "chore: add S-N" (or "chore: add S-N, S-M" for a batch, "chore: add
 C<n>" for a component). Other uncommitted edits in the backlog stay out of the
@@ -1257,6 +1363,9 @@ Example:
     today,
   };
 
+  // `--required-for X`: X depends on the new story, an edge stated on X
+  // (F-77 D3); an unknown X is warned about and skipped.
+  const dependents = new Map();
   if (dependsOn.length > 0 || requiredFor.length > 0) {
     const existingIds = new Set(
       readAllStories(cfg)
@@ -1271,7 +1380,7 @@ Example:
     for (const id of requiredFor) {
       if (!existingIds.has(id)) {
         console.error(`warning: required_for ${id} does not match any existing story`);
-      }
+      } else dependents.set(id, [storyId]);
     }
   }
 
@@ -1281,7 +1390,7 @@ Example:
     cfg.backlogRoot,
     storyIndex,
     renderTemplate(feature ? 'story-feature' : 'story', {
-      values: storyValues(storyVars, { feature, dependsOn, requiredFor }),
+      values: storyValues(storyVars, { feature, dependsOn }),
       vars: storyVars,
       body: customBody,
       after: ['feature', plugins],
@@ -1289,8 +1398,7 @@ Example:
   );
 
   info(`Created story: ${relative(cfg.backlogRoot, storyIndex)}`);
-
-  if (feature) appendStoriesToFeature(cfg.backlogRoot, feature, [storyId]);
+  const dependentPaths = appendDependsOn(cfg, dependents, [storyDir]);
 
   if (args['no-sync']) {
     info("Skipped sync. Run 'bl sync' to update indexes.");
@@ -1301,7 +1409,7 @@ Example:
       res = await syncAndCommit(cfg, {
         message: `chore: add ${storyId}`,
         storyIds: [storyId],
-        extraPaths: feature ? [relative(cfg.backlogRoot, feature.indexPath)] : [],
+        extraPaths: [...(feature ? [relative(cfg.backlogRoot, feature.indexPath)] : []), ...dependentPaths],
       });
     } catch (err) {
       console.error(
@@ -1477,6 +1585,22 @@ async function runBatchMode(args, jsonMode) {
     }
   };
 
+  // --- A spec's `required_for` is input only (F-77 D3): each named story
+  // depends on this one, an edge written on it. A sibling's goes into its
+  // rendered `depends_on`; an existing story's is appended to its file once
+  // the batch is in place; an unknown bare id is warned about and skipped.
+  const resolveRef = (r) => (r.startsWith('@') ? placeholderToId.get(r.slice(1)) : r);
+  const siblingDeps = new Map(); // new id → ids it depends on via required_for
+  const dependents = new Map(); // existing id → new ids it depends on
+  for (const item of storyPlan) {
+    for (const ref of item.spec.required_for ?? []) {
+      const target = resolveRef(ref);
+      const into = ref.startsWith('@') ? siblingDeps : existingIds.has(ref) ? dependents : null;
+      if (!into) warnIfMissing(ref, 'required_for');
+      else into.set(target, [...(into.get(target) ?? []), item.id]);
+    }
+  }
+
   // --- Build per-story rendered content ---
   const today = new Date().toISOString().slice(0, 10);
   const storiesDir = join(cfg.backlogRoot, STORIES_DIR);
@@ -1489,13 +1613,9 @@ async function runBatchMode(args, jsonMode) {
     // Per-story component override (validated by validateSpec against disk).
     const storyComponent = storyComponents?.[i] ?? component;
     const inSpecComponent = !storyComponents?.[i];
-    const dependsOn = (s.depends_on ?? []).map((r) => (r.startsWith('@') ? placeholderToId.get(r.slice(1)) : r));
-    const requiredFor = (s.required_for ?? []).map((r) => (r.startsWith('@') ? placeholderToId.get(r.slice(1)) : r));
+    const dependsOn = [...new Set([...(s.depends_on ?? []).map(resolveRef), ...(siblingDeps.get(item.id) ?? [])])];
     for (const ref of s.depends_on ?? []) {
       if (!ref.startsWith('@')) warnIfMissing(ref, 'depends_on');
-    }
-    for (const ref of s.required_for ?? []) {
-      if (!ref.startsWith('@')) warnIfMissing(ref, 'required_for');
     }
 
     const storyVars = {
@@ -1519,7 +1639,7 @@ async function runBatchMode(args, jsonMode) {
       process.exit(1);
     }
     const finalContent = renderTemplate(feature ? 'story-feature' : 'story', {
-      values: storyValues(storyVars, { feature, dependsOn, requiredFor }),
+      values: storyValues(storyVars, { feature, dependsOn }),
       vars: storyVars,
       body,
     });
@@ -1714,13 +1834,10 @@ async function runBatchMode(args, jsonMode) {
 
   rmSync(tempRoot, { recursive: true, force: true });
 
-  if (feature) {
-    appendStoriesToFeature(
-      config.backlogRoot,
-      feature,
-      renderedStories.map((r) => r.id),
-    );
-  }
+  const dependentPaths = appendDependsOn(cfg, dependents, [
+    ...renderedStories.map((r) => r.finalDir),
+    ...(creatingNewComponent ? [componentAbsDir] : []),
+  ]);
 
   // --- Sync ---
   if (args['no-sync']) {
@@ -1736,6 +1853,7 @@ async function runBatchMode(args, jsonMode) {
         extraPaths: [
           ...(creatingNewComponent ? [componentRelDir] : []),
           ...(feature ? [relative(cfg.backlogRoot, feature.indexPath)] : []),
+          ...dependentPaths,
         ],
       });
     } catch (err) {
