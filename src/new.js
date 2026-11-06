@@ -63,7 +63,7 @@ import { validateSpec, SpecError } from './spec.js';
 import { resolveTargets } from './targets.js';
 import { failPoint, settle, writeRecord } from './feature-links.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { updateSpecFile } from './spec-file.js';
+import { updateSpecFile, withSpecLock } from './spec-file.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 const FIBONACCI = new Set([1, 2, 3, 5, 8, 13]);
@@ -800,8 +800,8 @@ function storyValues(vars, { feature = null, dependsOn = [] } = {}) {
  * holds the backlog lock). An id already listed is not added twice. Returns
  * the backlog-relative paths of the files it wrote, for the commit.
  *
- * All or nothing: when one write fails, the edges already written are put
- * back as they were and the directories in `created` (the new stories, a new
+ * All or nothing: when one write fails, the edges already written are taken
+ * back out and the directories in `created` (the new stories, a new
  * component) removed, so the same `bl new` can run again and get the same
  * ids; the error names whatever could not be undone.
  * @param {any} cfg
@@ -812,24 +812,34 @@ function storyValues(vars, { feature = null, dependsOn = [] } = {}) {
 function appendDependsOn(cfg, dependents, created) {
   if (dependents.size === 0) return [];
   const byId = new Map(readAllStories(cfg).map((s) => [s.id, s]));
-  /** @type {{ path: string, rel: string, before: string }[]} */
+  /** @type {Edge[]} */
   const written = [];
   for (const [targetId, newIds] of dependents) {
     const target = byId.get(targetId);
     if (!target) continue;
-    let wrote;
-    let before;
+    /** @type {Edge | null} */
+    let edge = null;
     try {
-      before = readFileSync(target.indexPath, 'utf8');
-      wrote = updateSpecFile(cfg.backlogRoot, target.indexPath, (fm) => {
-        const list = listValue(fm.depends_on);
-        if (list == null) {
-          throw new Error(`${target.storyRelPath}: depends_on is not a list; cannot add ${newIds.join(', ')}`);
+      withSpecLock(target.indexPath, () => {
+        const before = readFileSync(target.indexPath, 'utf8');
+        /** @type {string[]} */
+        let added = [];
+        let prev;
+        const wrote = updateSpecFile(cfg.backlogRoot, target.indexPath, (fm) => {
+          const list = listValue(fm.depends_on);
+          if (list == null) {
+            throw new Error(`${target.storyRelPath}: depends_on is not a list; cannot add ${newIds.join(', ')}`);
+          }
+          added = newIds.filter((id) => !parseIdList(list).includes(id));
+          if (added.length === 0) return false;
+          prev = fm.depends_on;
+          fm.depends_on = [...list, ...added];
+          info(`${targetId} now depends on ${added.join(', ')}: ${target.storyRelPath}`);
+        });
+        if (wrote) {
+          const after = readFileSync(target.indexPath, 'utf8');
+          edge = { path: target.indexPath, rel: target.storyRelPath, before, after, added, prev };
         }
-        const add = newIds.filter((id) => !parseIdList(list).includes(id));
-        if (add.length === 0) return false;
-        fm.depends_on = [...list, ...add];
-        info(`${targetId} now depends on ${add.join(', ')}: ${target.storyRelPath}`);
       });
     } catch (e) {
       const left = undoNew(cfg.backlogRoot, written, created);
@@ -841,17 +851,27 @@ function appendDependsOn(cfg, dependents, created) {
         cause: e,
       });
     }
-    if (wrote) written.push({ path: target.indexPath, rel: target.storyRelPath, before });
+    if (edge) written.push(edge);
   }
   return written.map((w) => w.rel);
 }
 
 /**
- * Undo a `bl new` whose edges failed (`appendDependsOn`): each edited target
- * back to its text before, newest first, then each created directory
- * removed. Returns what could not be undone, empty when all was.
+ * One edge `appendDependsOn` wrote: the target's bytes before and after its
+ * write, the ids it added and the `depends_on` value they were added to.
+ * @typedef {{ path: string, rel: string, before: string, after: string, added: string[], prev: unknown }} Edge
+ */
+
+/**
+ * Undo a `bl new` whose edges failed (`appendDependsOn`): each edited target,
+ * newest first and under its spec lock, loses the ids this run added. A
+ * target still exactly as this run wrote it gets its bytes back; one changed
+ * since keeps that change, only the added ids taken out; one gone has no edge
+ * left. Then each created directory is removed, but only when every edge is
+ * gone, so no story is left naming a deleted one. Returns what could not be
+ * undone, empty when all was.
  * @param {string} backlogRoot
- * @param {{ path: string, rel: string, before: string }[]} written
+ * @param {Edge[]} written
  * @param {string[]} created
  * @returns {string[]}
  */
@@ -859,10 +879,26 @@ function undoNew(backlogRoot, written, created) {
   const left = [];
   for (const w of [...written].reverse()) {
     try {
-      atomicWriteFile(backlogRoot, w.path, w.before);
+      withSpecLock(w.path, () => {
+        if (!existsSync(w.path)) return;
+        if (readFileSync(w.path, 'utf8') === w.after) return atomicWriteFile(backlogRoot, w.path, w.before);
+        updateSpecFile(backlogRoot, w.path, (fm) => {
+          const list = listValue(fm.depends_on);
+          if (list == null) throw new Error('its depends_on is no longer a list');
+          const kept = list.filter((id) => !w.added.includes(id));
+          if (kept.length === list.length) return false;
+          if (kept.length > 0 || listValue(w.prev)?.length !== 0) fm.depends_on = kept;
+          else if (w.prev === undefined) delete fm.depends_on;
+          else fm.depends_on = w.prev;
+        });
+      });
     } catch (e) {
       left.push(`${w.rel} still has the new edge (${e.message})`);
     }
+  }
+  if (left.length > 0) {
+    const kept = created.map((dir) => relative(backlogRoot, dir)).join(', ');
+    return kept ? [...left, `${kept} kept, since an edge still names it`] : left;
   }
   for (const dir of created) {
     try {
