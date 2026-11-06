@@ -110,7 +110,8 @@ _roost_bl() {
     'tree:Show dependency trees'
     'history:Daily backlog snapshots from git: weeks by points per status'
     'report:Write the backlog progress report to reports/'
-    'next:Print the next feature by the feature order (feature-order.md)'
+    'next:Print the next unit by priority.md, hard dependencies first'
+    'rank:Change priority.md, the one ranked list of units (operator only)'
     'what-next:Suggest the next story to start by walking the dep graph'
     'done:Mark a story as done'
     'inbox:Everything waiting on you: escalations, tasks, update decisions'
@@ -281,8 +282,20 @@ _roost_bl() {
       themes=( ${(f)"$(_roost_theme_ids)"} )
       epics=( ${(f)"$(_roost_epic_ids)"} )
       _arguments -s \
-        '--theme[First ranked feature in a theme]:theme:(${themes})' \
-        '--epic[First ranked feature of an epic]:epic id:(${epics})'
+        '--theme[First free unit in a theme]:theme:(${themes})' \
+        '--epic[First free feature of an epic]:epic id:(${epics})'
+      ;;
+    rank)
+      local -a units
+      units=( ${(f)"$(_roost_feature_ids)"} ${(f)"$(_roost_story_ids)"} )
+      _arguments -s \
+        '(--bottom --before --after --remove)--top[Rank the unit first]' \
+        '(--top --before --after --remove)--bottom[Rank the unit last]' \
+        '(--top --bottom --after --remove)--before[Just before a ranked unit]:unit:(${units})' \
+        '(--top --bottom --before --remove)--after[Just after a ranked unit]:unit:(${units})' \
+        '(--remove)--why[The reason (needed for a new unit)]:why:' \
+        '(--top --bottom --before --after --why)--remove[Take the unit out of the list]' \
+        '1:feature or loose story id:(${units})'
       ;;
     what-next)
       local -a themes epics features components

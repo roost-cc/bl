@@ -112,7 +112,7 @@ _roost_bl() {
 
   # First arg: subcommand
   if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "init new side attach move next-id run implement approve status refine review pr edit view show which grep list ls tree history report next what-next done inbox block task sync s merge log allow agents capacity help" -- "$cur") )
+    COMPREPLY=( $(compgen -W "init new side attach move next-id run implement approve status refine review pr edit view show which grep list ls tree history report next rank what-next done inbox block task sync s merge log allow agents capacity help" -- "$cur") )
     return
   fi
 
@@ -227,6 +227,15 @@ _roost_bl() {
     next)
       _roost_filter_value "$prev" "$cur" && return
       COMPREPLY=( $(compgen -W "--theme --epic" -- "$cur") )
+      ;;
+    rank)
+      if [[ "$prev" == --why ]]; then
+        return
+      elif [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--top --bottom --before --after --why --remove --help" -- "$cur") )
+      else
+        COMPREPLY=( $(compgen -W "$(_roost_feature_ids) $(_roost_story_ids)" -- "$cur") )
+      fi
       ;;
     side)
       case "$prev" in

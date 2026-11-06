@@ -48,6 +48,7 @@ Per-command stdout contracts:
 | `bl grep`            | match table                                               |
 | `bl what-next`       | one line: the suggested story ID (empty if no suggestion) |
 | `bl next`            | one line: the next unit ID, F-n or S-n (empty if none)    |
+| `bl rank`            | no args: the order; an edit: nothing (progress → stderr)  |
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
 | `bl agents`          | the AGENTS.md content                                     |
@@ -621,7 +622,8 @@ S-581 removed it, and it is in git history.)
 a **loose story**, a story with no `feature:` and no `update_repo:` (`isLooseStory`,
 `src/priority.js`); stories inside a feature, update stories and tasks are never units. Its YAML
 frontmatter holds `ranked:`, a list of `{ unit, why }` (`unit` an `F-<n>` or `S-<n>`, `why` the
-operator's reason, both required); its body is prose bl never writes:
+operator's reason, both required); its body is prose bl never writes. Only a person ranks:
+`bl rank` (below) edits one entry at a time, and nothing automated writes the file (F-78 D3):
 
 ```yaml
 ---
@@ -1032,6 +1034,11 @@ every step instead.
 - The headless result's `refusal`: `{ kind, scope, message, resetsAt }` or
   null (see the usage-limit paragraph under `bl run`). `kind` is a usage
   limit's (`session`, `weekly`, `spend`, `other`) or `capacity`.
+- The child's environment: `spawn({ headless: true })` runs the agent with
+  `BL_HEADLESS=1` (`HEADLESS_ENV`), built by `agentEnv({ headless,
+backlogRoot })`, which also sets `BL_BACKLOG_DIR` where the adapter passes
+  it; an interactive spawn adds no marker. `isHeadless()` reads it (F-78 D3,
+  see `bl rank`).
 - `supportsModel()`: whether `spawn({ model })` selects the model (Claude's
   `--model`, Codex's `-m`; Gemini no). The config loader refuses a
   configuration that names a model for an adapter that does not, and `bl run`
@@ -2582,6 +2589,46 @@ its component's repo's themes and no epic. An unknown or malformed theme or epic
 the wrong shape, stderr says so and every unit is unranked; a `priority.md` that is not YAML
 exits 1. The order is a preference: hard dependencies override it, and `bl next` never reads
 the roadmap.
+
+### `bl rank`
+
+How a person changes `priority.md` (F-78 D3, `src/rank-cmd.js`). The operator or an
+interactive session ranks; an agent bl starts headless cannot.
+
+```bash
+bl rank                               # the order: ranked units, then the unranked tail
+bl rank F-12 --top --why "Blocks go-live"   # a new unit needs --why
+bl rank S-40 --before F-12            # move a ranked unit (or --after, --top, --bottom)
+bl rank F-12 --why "Blocks go-live and billing"   # rewrite a ranked unit's reason
+bl rank S-40 --remove                 # back into the dated tail
+```
+
+- With no arguments, stdout lists the ranked units (entry number, id, title, why) and then
+  every other open unit oldest `added:` first, from `backlog.priority`; a closed unit still
+  listed in `ranked:` is named on stderr with the `--remove` that drops it.
+- `<unit>` must be an open feature or loose story (`checkUnit`): a story inside a feature
+  ("the feature is the unit: rank F-n"), an update story, a task, a closed unit and an unknown
+  id are refused, naming why. `--remove` takes whatever `ranked:` lists, so a closed or deleted
+  unit can be dropped. `--before`/`--after` name a unit already ranked.
+- The edit changes only the entry named. The frontmatter is parsed with `yaml`'s
+  `parseDocument` and the entry's lines are cut and spliced at the node's source range, so every
+  other entry, comment, blank line and the body stay byte for byte; a new entry takes the list's
+  indentation and its `why` is quoted only where YAML needs it. A move that leaves the order as
+  it is changes nothing and commits nothing. The last entry removed leaves `ranked: []`.
+- An edit pulls the backlog first (`commandPullsBacklog`), writes the file under the backlog
+  lock and commits `priority.md` alone (`commitPaths`, which pushes):
+  `chore: <unit> ranked first|last|before <u>|after <u> | reason rewritten | unranked in priority.md`.
+
+**`BL_HEADLESS`.** Every agent bl starts headless has `BL_HEADLESS=1` in its environment: each
+adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it
+when `headless` is set (`runHeadlessSession` passes `headless: true`); an interactive spawn adds
+nothing. With it set, a `bl rank` edit exits 1 before it pulls or writes anything, and
+`commitPaths`, the one commit path every bl command uses, refuses any commit whose paths include
+`priority.md` or a directory that holds it (`headlessPriorityRefusal`), so a hand edit cannot be
+committed through `bl sync --commit --path` either. Printing the order is allowed. The marker is
+a guard against an agent changing a person's decision by mistake, not a security boundary.
+The test helper `runBl` drops an inherited `BL_HEADLESS` (`personEnv`), so the suite runs the
+same inside a headless session; a test that wants the marker passes it.
 
 Until F-78 S-1264 replaces it, `<backlog>/feature-order.md` holds the older feature order, which
 `bl sync` still writes tables into and `bl merge` still appends History to; no reader takes an
