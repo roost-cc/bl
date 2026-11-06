@@ -78,7 +78,7 @@ const storyDirs = (dir) => readdirSync(join(dir, 'stories')).sort();
 function committedNonIndex(dir) {
   return headFiles(dir)
     .map((l) => l.split('\t')[1])
-    .filter((p) => !/^(index\.md|feature-order\.md|(components|themes|epics)\/[^/]+\/index\.md)$/.test(p));
+    .filter((p) => !/^(index\.md|(components|themes|epics)\/[^/]+\/index\.md)$/.test(p));
 }
 
 test("bl side <repo> --from a running feature: a story in the repo's home component, on the feature's branch", () => {

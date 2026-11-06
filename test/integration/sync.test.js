@@ -738,34 +738,29 @@ for (const where of ['after Overview', 'at the end']) {
   });
 }
 
-// F-53 D1: feature-order.md holds the operator's ranking and History, so a
-// failed regeneration leaves it whole and the next sync starts from it.
-test('syncFeatureOrder_partial_write_preserves_ranked_and_history_on_retry', async () => {
+// F-78 D3: nothing automated writes priority.md, so a sync that fails midway
+// and the sync after it both leave it as the operator wrote it.
+test('runSync_partial_write_and_retry_leave_priority_md_untouched', async () => {
   const { dir, cleanup } = mkTempBacklog({
     features: [{ id: 'F-1', title: 'One', dirSuffix: 'one' }],
   });
   try {
-    const path = join(dir, 'feature-order.md');
-    const fm = '---\nranked:\n  # Kept.\n  - feature: F-1\n    why: First.\n---\n';
-    const history = '## History\n\n- 2026-01-01: F-0 done (Zero).\n';
-    const order = `${fm}\n# Feature order\n\nIntro.\n\n${history}`;
-    writeFileSync(path, order);
+    const path = join(dir, 'priority.md');
+    const text = '---\nranked:\n  # Kept.\n  - unit: F-1\n    why: First.\n---\n\n# Priority\n\nIntro.\n';
+    writeFileSync(path, text);
     const config = loadConfig({ backlogRoot: dir });
     await assert.rejects(
-      withPartialWrites(path, () => runSync(config)),
+      withPartialWrites(join(dir, 'index.md'), () => runSync(config)),
       /injected ENOSPC/,
     );
-    assert.equal(readFileSync(path, 'utf8'), order);
-    await runSync(config);
-    const text = readFileSync(path, 'utf8');
-    assert.ok(text.startsWith(`${fm}\n# Feature order\n\nIntro.\n`), text);
-    assert.ok(text.endsWith(history), text);
-    assert.match(text, /## Next up\n\n\| # +\| Feature +\|[^]*\[F-1\]/);
+    assert.equal(readFileSync(path, 'utf8'), text);
+    const written = await runSync(config);
+    assert.ok(!written.includes('priority.md'), written.join('\n'));
+    assert.equal(readFileSync(path, 'utf8'), text);
   } finally {
     cleanup();
   }
 });
-
 // F-67 S-1063: every sync write replaces its file atomically, and a spec is
 // rewritten from what is on disk under its spec lock.
 

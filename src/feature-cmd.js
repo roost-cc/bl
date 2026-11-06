@@ -98,7 +98,6 @@ import { updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { tok, tokenFields } from './report.js';
 import { acquireLock, withLock } from './lock.js';
-import { recordFeatureOrderMerge } from './feature-order.js';
 import { failPoint } from './feature-links.js';
 import { prepareBody } from './body.js';
 import { scanDeferred } from './deferred.js';
@@ -1717,9 +1716,8 @@ export async function cmdMerge(args, config, feature) {
       date: stamp,
       extra: [...releaseLines, ...noReviewLines(gates.unreviewed, stamp)],
     });
-    // The feature order drops it from `ranked:` and records it in History
-    // (F-53 D1); the dirty-snapshot commit below takes the file.
-    if (recordFeatureOrderMerge(config, feature, stamp)) info(`Recorded ${feature.id} in feature-order.md.`);
+    // `priority.md` is not touched (F-78 D3): a merged feature leaves the
+    // order because it is closed, and its date is in this merge's commit.
     // Its theme's `## State` records it too (F-53 D4), in the same hold.
     const themeFile = recordThemeState(config, feature, stamp);
     if (themeFile) info(`Recorded ${feature.id} in ${themeFile} (## State).`);

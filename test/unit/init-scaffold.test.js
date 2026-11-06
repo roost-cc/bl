@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { ensureBacklogDocs, ensureReposBlock } from '../../src/init.js';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -37,7 +37,7 @@ test('bl init gives a new backlog an empty roadmap.md and priority.md, and keeps
   quietly(() => ensureBacklogDocs(fresh));
   assert.match(readFileSync(join(fresh, 'roadmap.md'), 'utf8'), /^---\nentries: \[\]\n---\n/);
   assert.match(readFileSync(join(fresh, 'priority.md'), 'utf8'), /^---\nranked: \[\]\n---\n\n# Priority\n/);
-  assert.ok(!existsSync(join(fresh, 'feature-order.md')));
+  assert.deepEqual(readdirSync(fresh).sort(), ['priority.md', 'roadmap.md']);
 
   const kept = mkTempDir('bl-init-docs-');
   writeFileSync(join(kept, 'roadmap.md'), 'kept\n');

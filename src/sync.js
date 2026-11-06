@@ -6,13 +6,15 @@
  *   3. Per-epic index         backlog/epics/E<nn>-*\/index.md
  *   4. Per-theme index        backlog/themes/<slug>/index.md
  *   5. Top-level index        backlog/index.md
- *   6. Feature order          backlog/feature-order.md (F-53 D1)
+ *
+ * `priority.md` is never written here (F-78 D3): only `bl rank` or a person
+ * edits it.
  *
  * Rules:
  *   - Story IDs are globally unique (enforced); stories live in
  *     backlog/stories/S<n>-*\/ and name their component in `component:`.
- *   - Priority order comes from the top-level `## Backlog` table (global).
- *     Stories absent from it are appended in id order.
+ *   - Priority order is `priority.md`'s, through the graph's `rankOf`
+ *     (`byRank`, F-78 D2).
  *   - Points & status read from story frontmatter. Nothing moves: status is
  *     frontmatter, never location.
  *   - A component's index lists its open stories and the active features
@@ -25,9 +27,6 @@
  *     with none is left as it is.
  *   - An epic gets a Features table; a theme lists its epics, then its
  *     features with no epic (F-51 D3).
- *   - `feature-order.md` gets its Next up and Not yet ranked tables from its
- *     `ranked:` frontmatter and the features' own; its frontmatter, intro and
- *     History are left as written. With no file, nothing is written.
  *
  * `runSync` holds the backlog-root lock (`lock.js`, re-entrant) for the whole
  * regeneration and returns every backlog path it wrote. Every write replaces
@@ -82,11 +81,10 @@ import { RUN_STATE_KEYS } from './change-doc.js';
 import { findStoryDir, readAllStories, readComponents } from './story.js';
 import { byRank } from './priority.js';
 import { VALID_STORY_KEYS, VALID_COMPONENT_KEYS, VALID_FEATURE_KEYS, findDuplicateIds } from './validate.js';
-import { readAllEpics, readAllThemes, normalizeEpicId } from './theme.js';
+import { readAllEpics, readAllThemes } from './theme.js';
 import { readAllTasks, tasksOf, taskTableRows } from './task.js';
 import { readBlockers } from './blockers.js';
 import { loadFlow } from './flow.js';
-import { readFeatureOrder, rankedFeatures, unrankedFeatures, FEATURE_ORDER_FILE } from './feature-order.js';
 import { FEATURES_DIR, readAllFeatures, storyLinkFromFeature, featureRepoOrder, LEAD_REPO } from './feature.js';
 
 // ---------------------------------------------------------------------------
@@ -502,65 +500,6 @@ function syncTheme(backlogRoot, theme, epics, features, touchedMarkdown, flow) {
 }
 
 // ---------------------------------------------------------------------------
-// Feature order (F-53 D1)
-// ---------------------------------------------------------------------------
-
-/** A table cell's text: one line, a `|` escaped so it ends no cell. */
-function cell(text) {
-  return String(text ?? '')
-    .replace(/\s*\n\s*/g, ' ')
-    .replace(/\|/g, '\\|');
-}
-
-/**
- * Regenerate `feature-order.md`'s `## Next up` (#, Feature, Title, Theme,
- * Epic, Why) and `## Not yet ranked` tables from its `ranked:` and the
- * features' frontmatter. Everything else, the frontmatter block included, is
- * written back byte for byte, and only when it changed, replacing the file
- * atomically: it holds the operator's ranking and History. No file is a warning, not an error: until the
- * F-53 migration has run, `bl validate` reports it.
- */
-function syncFeatureOrder(config, features, touchedMarkdown, flow) {
-  let order;
-  try {
-    order = readFeatureOrder(config);
-  } catch (e) {
-    console.warn(`  warning: ${FEATURE_ORDER_FILE} not regenerated: ${e.message}`);
-    return;
-  }
-  if (!order) return;
-  const ranked = rankedFeatures(order, features, flow);
-  const unranked = unrankedFeatures(order, features, flow);
-  const featureRef = (f) => `[${f.id}](${featureLinkFromTop(f)})`;
-  const nextUp = formatTable(
-    ['#', 'Feature', 'Title', 'Theme', 'Epic', 'Why'],
-    ranked.map((r) => [
-      r.position,
-      featureRef(r.feature),
-      cell(r.feature.title),
-      cell(r.feature.theme),
-      cell(normalizeEpicId(r.feature.epic)?.id ?? r.feature.epic),
-      cell(r.why),
-    ]),
-  );
-  const notRanked = formatTable(
-    ['Feature', 'Title', 'Theme'],
-    unranked.map((f) => [featureRef(f), cell(f.title), cell(f.theme)]),
-  );
-  let body = upsertSection(order.body, 'Next up', nextUp, { before: 'History' });
-  body = upsertSection(body, 'Not yet ranked', notRanked, { after: 'Next up' });
-  const content = order.fmText + body;
-  const changed = content !== order.content;
-  if (changed) {
-    atomicWriteFile(config.backlogRoot, order.indexPath, content);
-    noteMarkdown(touchedMarkdown, order.indexPath);
-  }
-  info(
-    `  ${FEATURE_ORDER_FILE} — ${ranked.length} ranked, ${unranked.length} not yet ranked${changed ? '' : ' (unchanged)'}`,
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Component-level sync
 // ---------------------------------------------------------------------------
 
@@ -839,7 +778,6 @@ async function regenerate(config) {
   ctx.themes = themes;
 
   syncTopLevel(config, ctx, touchedMarkdown, features);
-  syncFeatureOrder(config, features, touchedMarkdown, flow);
 
   formatBacklogMarkdown(config, touchedMarkdown);
   info('done.');

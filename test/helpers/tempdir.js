@@ -162,20 +162,6 @@ ${f.escalation ?? 'None.'}
 `;
 
 /**
- * The backlog's `feature-order.md` (F-53 D1): `ranked` is its `ranked:`
- * list, each `{ feature, why }`; the body is an intro and a `## History`.
- */
-export const FEATURE_ORDER_TEMPLATE = (ranked = []) => `${serializeFrontmatter({ ranked })}
-# Feature order
-
-The order the operator prefers features to run in.
-
-## History
-
-- 2026-01-01: F-0 done (Before the fixture).
-`;
-
-/**
  * The backlog's `priority.md` (F-78 D1): `ranked` is its `ranked:` list,
  * each `{ unit, why }`; the body is prose bl never writes.
  */
@@ -296,9 +282,6 @@ ${story.body ?? ''}
  *           theme?: string | null }>} [valueEpics]
  *           Written under epics/E<nn>-<dirSuffix>/; `theme` defaults to `demo`.
  *           Its features and status are derived (F-77 D3), never written.
- * @property {Array<{ feature: string, why: string }> | string | null} [featureOrder]
- *           `feature-order.md`: a `ranked:` list (FEATURE_ORDER_TEMPLATE,
- *           `[]` by default), the file's whole text, or null for no file.
  * @property {Array<{ unit: string, why: string }> | string | null} [priority]
  *           `priority.md`: a `ranked:` list (PRIORITY_TEMPLATE, `[]` by
  *           default), the file's whole text, or null for no file.
@@ -437,12 +420,6 @@ export function mkTempBacklog(fixture = {}, { keep = false } = {}) {
     }
   }
 
-  if (fixture.featureOrder !== null) {
-    writeFileSync(
-      join(dir, 'feature-order.md'),
-      typeof fixture.featureOrder === 'string' ? fixture.featureOrder : FEATURE_ORDER_TEMPLATE(fixture.featureOrder),
-    );
-  }
   if (fixture.priority !== null) {
     writeFileSync(
       join(dir, 'priority.md'),

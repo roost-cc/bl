@@ -102,9 +102,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
 <backlog>/
   index.md                      ← overview (auto-generated tables, in priority.md's order)
   priority.md                   ← the one ranked list of features and loose
-                                  stories: `ranked:` by hand only (F-78 D1)
-  feature-order.md              ← the preferred feature order: `ranked:` by hand,
-                                  tables by `bl sync` (F-53 D1)
+                                  stories: `ranked:` by `bl rank` or by hand,
+                                  never by automation (F-78 D1, D3)
   roadmap.md                    ← the road map: `entries:` and one section
                                   each, all by hand (F-53 D2)
   flow.json                     ← every story and feature status, what each
@@ -2630,22 +2629,22 @@ a guard against an agent changing a person's decision by mistake, not a security
 The test helper `runBl` drops an inherited `BL_HEADLESS` (`personEnv`), so the suite runs the
 same inside a headless session; a test that wants the marker passes it.
 
-Until F-78 S-1264 replaces it, `<backlog>/feature-order.md` holds the older feature order, which
-`bl sync` still writes tables into and `bl merge` still appends History to; no reader takes an
-order from it. It is standard YAML frontmatter read by `parseFrontmatter`
-(`src/feature-order.js`):
+**Nothing automated writes `priority.md`** (F-78 D3). `bl sync` and `bl merge` never touch it: a
+merged feature leaves the order because it is closed, not by an edit, and its merge date is in
+the backlog's git history (its `bl merge` commit) and `bl history --json`. `bl side` does not
+count it among the files it owns. The body may keep a hand-written `## History`.
 
-```yaml
----
-ranked:
-  - feature: F-48
-    why: Split from F-42; needs F-42, F-49's components and F-52's one repo per story.
----
-```
-
-Its body is a hand-written intro, then `## Next up` and `## Not yet ranked`, both written by
-`bl sync`, then `## History`, hand-written and appended to by `bl merge F-<n>`. Reorder by
-editing `ranked:` and running `bl sync`.
+**The migration** (F-78 D5). Before F-78 the feature order was the `ranked:` of a file of its own
+at the backlog root (`OLD_FILE`, `src/migrate-priority.js`, the one place that still names it).
+`node scripts/migrate-priority.js [--dry-run] [--backlog <dir>]` (logic in
+`src/migrate-priority.js`, through `src/migration-txn.js`) turns it into `priority.md` in one
+backlog commit: the open ranked features, in order, as `{ unit, why }` (a closed, unknown or
+repeated one is dropped and named); a body of the template's intro, the old intro's own
+paragraphs less the ones about the old mechanism, and the old `## History` with a line for the
+migration; the old generated tables dropped and the old file removed. `--dry-run` prints the
+entries kept and dropped and writes nothing; with no old file a run does nothing, and one beside
+an existing `priority.md` is refused. It commits `priority.md`, so it runs outside any headless
+session. The operator runs it from the merged bl right after `bl merge F-78`.
 
 ### `bl edit` / `bl view`
 
@@ -2781,12 +2780,8 @@ What the sync writes (F-49 D7, F-51 D3), every link pointing into `stories/`, `c
 - each feature: its `## Stories` table (with a `Component` column), its stories in the
   graph's order; it drops a pre-F-49 `epics:` and writes no `points:` or `components:`
   (F-77 D3).
-- `feature-order.md` (F-53 D1, `syncFeatureOrder`): `## Next up` (#, Feature, Title, Theme,
-  Epic, Why: each open ranked feature, numbered by its place in `ranked:`, title, theme and
-  epic from the feature's frontmatter) and `## Not yet ranked` (every feature that is not
-  done, not superseded and not ranked, by id, with title and theme). The frontmatter, the
-  intro and `## History` are written back byte for byte. With no `feature-order.md` nothing is
-  written.
+
+`priority.md` is not among them: a sync never writes it (F-78 D3).
 
 A story whose `component:` has no directory is listed with the bare id, not a link. Nothing
 moves: status is frontmatter, so a sync never renames a directory.
@@ -2796,8 +2791,8 @@ change, so a sync that dies or runs out of disk leaves each file as it was or as
 never truncated (F-67). A feature's tables and roll-ups (`syncFeature`) and a story's Tasks
 table (`syncStoryTasks`) are written through `updateSpecFile`: they take the spec lock inside
 the backlog lock and start from the spec as it is then, not as it was collected, so a token
-step entry a session wrote meanwhile stays. The epic, theme, component and top-level indexes,
-`feature-order.md` and `.bl/run/pull-regenerate.json` go through `atomicWriteFile` alone.
+step entry a session wrote meanwhile stays. The epic, theme, component and top-level indexes
+and `.bl/run/pull-regenerate.json` go through `atomicWriteFile` alone.
 
 ### `bl validate`
 
@@ -2909,8 +2904,8 @@ second when an entry names no feature or story, a story inside a feature, an upd
 task, or a unit already ranked. A closed unit left in `ranked:` is no finding: the order skips
 it, and the operator removes it when they next rank. Only a `priority.md` that is not YAML stops
 other commands (a strict `loadBacklog` throws it); a missing or malformed one is an empty
-`ranked:`, so every open unit is in the dated tail (see **Priority**). `feature-order-file` and
-`feature-order-feature` are gone: `bl validate` no longer reads `feature-order.md`.
+`ranked:`, so every open unit is in the dated tail (see **Priority**). They replace the two
+findings of the old feature order file (F-53 D1), which bl no longer reads.
 
 `frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first,
 from the problems of the tolerant graph `bl validate` loads once (`loadBacklog(config,
@@ -3192,13 +3187,10 @@ The rerun integrates the moved`main` again.
 After the merge the branch's open PR, if any, is closed through
 `change.find` and `change.close`.
 
-`bl merge F-<n>` also updates the feature order (F-53 D1): in the lock hold that marks the
-feature done, `recordFeatureOrderMerge` drops its entries from `feature-order.md`'s `ranked:`
-(through `serializeFrontmatter`) and appends `- <date>: F-<n> done (<title>).` to
-`## History`; the sync after it rewrites the tables, and the merge's backlog commit takes the
-file. A missing or malformed `feature-order.md` is a warning and the merge completes, since the
-repos are merged by then. In the same hold, `recordThemeState` (`theme.js`, F-53 D4) appends
-the same line to the `## State` of the feature's theme, creating the section at the end when
+`bl merge F-<n>` leaves `priority.md` as it is (F-78 D3): the merged feature drops out of the
+order because it is closed, and an entry still naming it is skipped until the operator next
+ranks. In the lock hold that marks the feature done, `recordThemeState` (`theme.js`, F-53 D4)
+appends `- <date>: F-<n> done (<title>).` to the `## State` of the feature's theme, creating the section at the end when
 absent and writing the frontmatter back byte for byte; the commit takes the theme file too. A
 feature whose theme is missing or unreadable only warns.
 

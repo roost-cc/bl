@@ -1,10 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
-import { extractSection } from '../../src/feature.js';
 import { writeBlockers } from '../../src/blockers.js';
 
 // F-78 D2: `bl next` walks `backlog.priority` (priority.md's ranked units,
@@ -291,35 +290,33 @@ test('bl help lists next as the unit picker, and next is no alias of what-next',
   const h = next(dir, '--help');
   assert.equal(h.status, 0);
   assert.match(h.stdout, /^Usage: bl next \[--theme <slug>\] \[--epic <E-id>\]/);
-  assert.doesNotMatch(h.stdout, /feature-order/);
 });
 
-// F-53 D1: `bl sync` writes feature-order.md's tables until F-78 S-1264
-// removes the file.
+// F-78 D3: nothing automated writes priority.md, so `bl sync` leaves it, comments
+// and layout included, byte for byte.
 
-const ORDER = `---
+const PRIORITY = `---
 ranked:
   # Comments and layout here are the operator's.
-  - feature: F-3
+  - unit: F-3
     why: Unblocks | the rest.
-  - feature: F-1
+  - unit: F-1
     why: Then the accounts work.
-  - feature: F-2
+  - unit: F-2
     why: Already done.
 ---
 
-# Feature order
+# Priority
 
-The order the operator prefers features to run in.
+The order the operator prefers work to run in.
 
 ## History
 
 - 2026-01-01: F-0 done (Zero).
 `;
 
-function orderBacklog(featureOrder = ORDER, extra = {}) {
+function orderBacklog(priority = PRIORITY) {
   return mkTempBacklog({
-    ...extra,
     themes: [
       { id: 'backlog', title: 'Backlog' },
       { id: 'accounts', title: 'Accounts' },
@@ -331,89 +328,51 @@ function orderBacklog(featureOrder = ORDER, extra = {}) {
     features: [
       { id: 'F-1', title: 'Sign in', dirSuffix: 'sign-in', theme: 'accounts', epic: 'E51', status: 'refined' },
       { id: 'F-2', title: 'Old', dirSuffix: 'old', theme: 'backlog', status: 'done' },
-      { id: 'F-3', title: 'Feature order', dirSuffix: 'order', theme: 'backlog', epic: 'E50', status: 'approved' },
+      { id: 'F-3', title: 'Priority', dirSuffix: 'order', theme: 'backlog', epic: 'E50', status: 'approved' },
       { id: 'F-4', title: 'Unranked backlog', dirSuffix: 'loose', theme: 'backlog', status: 'draft' },
       { id: 'F-5', title: 'Unranked accounts', dirSuffix: 'acct', theme: 'accounts', status: 'draft' },
     ],
-    featureOrder,
+    priority,
   });
 }
 
-test('bl sync writes Next up and Not yet ranked, and leaves the frontmatter, intro and History byte-identical', () => {
+test('bl sync leaves priority.md byte-identical, and writes no other order file', () => {
   const { dir } = orderBacklog();
-  const r = runBl(['sync'], { cwd: dir });
-  assert.equal(r.status, 0, r.stderr);
-  const text = readFileSync(join(dir, 'feature-order.md'), 'utf8');
-  const [before, history] = ORDER.split('## History\n');
-  assert.ok(text.startsWith(before), 'frontmatter and intro unchanged');
-  assert.ok(text.endsWith(`## History\n${history}`), 'History unchanged');
-  // Column padding aside, the rows are the ranked open features.
-  const squash = (s) => s.replace(/ {2,}/g, ' ').replace(/-{3,}/g, '---');
-  assert.equal(
-    squash(extractSection(text, 'Next up')),
-    squash(`
-| # | Feature | Title | Theme | Epic | Why |
-| --- | --- | --- | --- | --- | --- |
-| 1 | [F-3](features/F3-order/index.md) | Feature order | backlog | E50 | Unblocks \\| the rest. |
-| 2 | [F-1](features/F1-sign-in/index.md) | Sign in | accounts | E51 | Then the accounts work. |
-
-`),
-  );
-  assert.equal(
-    squash(extractSection(text, 'Not yet ranked')),
-    squash(`
-| Feature | Title | Theme |
-| --- | --- | --- |
-| [F-4](features/F4-loose/index.md) | Unranked backlog | backlog |
-| [F-5](features/F5-acct/index.md) | Unranked accounts | accounts |
-
-`),
-  );
-  assert.ok(text.indexOf('## Next up') < text.indexOf('## Not yet ranked'));
-  assert.ok(text.indexOf('## Not yet ranked') < text.indexOf('## History'));
-
-  // A second sync changes nothing; a reorder by hand moves the rows.
-  assert.equal(runBl(['sync'], { cwd: dir }).status, 0);
-  assert.equal(readFileSync(join(dir, 'feature-order.md'), 'utf8'), text);
-  const reordered = text
-    .replace(/ {2}- feature: F-3\n.*\n/, '')
-    .replace('---\n\n# Feature', '  - feature: F-3\n    why: Later now.\n---\n\n# Feature');
-  writeFileSync(join(dir, 'feature-order.md'), reordered);
-  assert.equal(runBl(['sync'], { cwd: dir }).status, 0);
-  assert.match(
-    extractSection(readFileSync(join(dir, 'feature-order.md'), 'utf8'), 'Next up'),
-    /\| 1 +\| \[F-1\][^\n]*\n\| 3 +\| \[F-3\][^\n]*Later now\./,
-  );
+  for (let i = 0; i < 2; i++) {
+    const r = runBl(['sync'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(join(dir, 'priority.md'), 'utf8'), PRIORITY);
+  }
+  // Its own index aside, the sync adds no file at the backlog root.
+  const root = readdirSync(dir).filter((f) => f.endsWith('.md'));
+  assert.deepEqual(root.sort(), ['index.md', 'priority.md', 'roadmap.md']);
 });
 
-test('bl sync with no feature-order.md writes none', () => {
+test('bl sync with no priority.md writes none', () => {
   const { dir } = orderBacklog(null);
   const r = runBl(['sync'], { cwd: dir });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(!existsSync(join(dir, 'feature-order.md')));
+  assert.ok(!existsSync(join(dir, 'priority.md')));
 });
 
-test("bl validate reports priority.md's findings, and no longer reads feature-order.md", () => {
+test("bl validate reports priority.md's findings", () => {
   // F-78 D1: a closed unit in ranked: (F-2) is no finding; an unknown one is.
-  const { dir } = orderBacklog(ORDER, {
-    priority: [
-      { unit: 'F-3', why: 'First.' },
-      { unit: 'F-2', why: 'Done already.' },
-      { unit: 'F-99', why: 'Gone.' },
-    ],
-  });
+  const { dir } = orderBacklog([
+    { unit: 'F-3', why: 'First.' },
+    { unit: 'F-2', why: 'Done already.' },
+    { unit: 'F-99', why: 'Gone.' },
+  ]);
   let r = runBl(['validate', '--json'], { cwd: dir });
   let codes = JSON.parse(r.stdout).findings.map((f) => `${f.code} ${f.location}: ${f.message}`);
   assert.deepEqual(
-    codes.filter((c) => c.startsWith('priority') || c.startsWith('feature-order')),
+    codes.filter((c) => c.startsWith('priority')),
     ['priority-unit priority.md: "ranked:" entry 3 (F-99) names no feature under features/'],
   );
-  const { dir: none } = orderBacklog(ORDER, { priority: null });
+  const { dir: none } = orderBacklog(null);
   r = runBl(['validate', '--json'], { cwd: none });
   assert.equal(r.status, 1);
   codes = JSON.parse(r.stdout).findings.map((f) => f.code);
   assert.ok(codes.includes('priority-file'), codes.join(', '));
   const help = runBl(['validate', '--help'], { cwd: dir });
   assert.match(help.stdout, /priority-file, priority-unit/);
-  assert.doesNotMatch(help.stdout, /feature-order/);
 });

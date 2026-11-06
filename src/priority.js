@@ -43,8 +43,8 @@ export class PriorityError extends Error {
 
 /**
  * `ranked:` as entries `{ [key], why, position }`: `key` (`unit`, or
- * `feature:` for `feature-order.md`, which reads the same shape until F-78
- * S-1264 removes it) as written, trimmed, and `position` from 1. An absent or
+ * `feature` for the old order file `src/migrate-priority.js` reads) as
+ * written, trimmed, and `position` from 1. An absent or
  * empty `ranked:` is an empty order. Throws `PriorityError` on any other
  * shape.
  * @param {unknown} raw  the frontmatter's `ranked:` value
