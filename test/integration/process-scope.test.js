@@ -24,7 +24,11 @@ const probe = scopeAvailable();
 const skip = probe.ok ? false : probe.why;
 const UNIT = `T-${process.pid}`;
 
-/** Poll until `fn` is true or `ms` pass (the stop is synchronous; reaping may lag a little). */
+/**
+ * Poll until `fn` is true or `ms` pass: the stop is synchronous, but reaping
+ * may lag a little, and a `setsid sleep` the command left may still be a
+ * forked `bash` that has not exec'd it yet when the command exits (a busy host).
+ */
 function eventually(fn, ms = 5000) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -42,9 +46,12 @@ test(
     try {
       const r = scopedSpawn(unit)("bash", ["-c", "setsid sleep 300 & exit 3"], { stdio: "ignore" });
       assert.equal(r.status, 3, `the command's status: ${r.error?.message ?? ""}`);
-      const left = scopeProcesses(unit);
+      let left = [];
+      assert.ok(
+        eventually(() => (left = scopeProcesses(unit)).some((p) => p.command === "sleep 300")),
+        `the listing names the sleep: ${JSON.stringify(left)}`,
+      );
       const sleep = left.find((p) => p.command === "sleep 300");
-      assert.ok(sleep, `the listing names the sleep: ${JSON.stringify(left)}`);
       assert.ok(isPidAlive(sleep.pid));
       assert.deepEqual(stopScope(unit), { ok: true });
       assert.ok(
@@ -71,7 +78,7 @@ test("a scoped capture returns when the command exits, though a child it left ho
     assert.equal(r.status, 2, `${r.error?.message ?? ""}`);
     assert.equal(r.stdout, "done\n");
     assert.ok(Date.now() - started < 20_000, "not held until the sleep or the timeout");
-    assert.ok(scopeProcesses(unit).some((p) => p.command === "sleep 300"));
+    assert.ok(eventually(() => scopeProcesses(unit).some((p) => p.command === "sleep 300")));
   } finally {
     stopScope(unit);
   }
@@ -82,8 +89,11 @@ test("the test gate's merged shell runs its command in the scope, output and sta
   try {
     const r = shellMerged("setsid sleep 300 & echo out; echo err >&2; exit 4", mkTempDir("bl-scope-"), { scope: unit });
     assert.deepEqual(r, { status: 4, output: "out\nerr\n" });
-    const sleep = scopeProcesses(unit).find((p) => p.command === "sleep 300");
-    assert.ok(sleep, "the gate command left its sleep in the scope");
+    let sleep;
+    assert.ok(
+      eventually(() => (sleep = scopeProcesses(unit).find((p) => p.command === "sleep 300"))),
+      "the gate command left its sleep in the scope",
+    );
     assert.deepEqual(stopScope(unit), { ok: true });
     assert.ok(eventually(() => !isPidAlive(sleep.pid)));
   } finally {
