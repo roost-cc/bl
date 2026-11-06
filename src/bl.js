@@ -110,9 +110,17 @@ Commands:
                --since <date>  Only history from YYYY-MM-DD
                --charts <name> The chart adapter (default vega-lite)
                --json          Print data.json and write nothing
-  next       Print the next feature by the feature order (feature-order.md)
-               --theme <slug>, --epic <E-id>  The first ranked feature they
-                                   match; the matching list goes to stderr
+  next       Print the next unit (feature or loose story) by priority.md,
+               hard dependencies first
+               --theme <slug>, --epic <E-id>  The first free unit they
+                                   match; the matching order goes to stderr
+  rank       Change priority.md, the one ranked list of units (operator or an
+               interactive session only; refused under BL_HEADLESS)
+               <unit> --top|--bottom|--before <unit>|--after <unit>
+                 [--why <text>]  Place a unit (a new one needs --why)
+               <unit> --why <text>  Rewrite a ranked unit's reason
+               <unit> --remove      Take it out of the list
+               With no arguments, print the order
   what-next  Suggest the next story to start by walking the dep graph
                [story-id|component-id]  Story → reference point; component →
                                    pick next startable story inside it
@@ -317,6 +325,10 @@ async function run() {
     }
     case 'next': {
       const { main } = await import('./next.js');
+      return main(subArgv);
+    }
+    case 'rank': {
+      const { main } = await import('./rank-cmd.js');
       return main(subArgv);
     }
     case 'deps': {

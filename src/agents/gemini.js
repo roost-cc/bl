@@ -7,7 +7,7 @@
 import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { writeFileSync, unlinkSync } from 'fs';
-import { AgentProvider } from './provider.js';
+import { AgentProvider, agentEnv } from './provider.js';
 
 export class GeminiProvider extends AgentProvider {
   get name() {
@@ -99,6 +99,8 @@ export class GeminiProvider extends AgentProvider {
     sessionId,
     args = [],
     scopes = {},
+    headless = false,
+    run = spawnSync,
   }) {
     const geminiArgs = [...args];
 
@@ -128,9 +130,12 @@ export class GeminiProvider extends AgentProvider {
     writeFileSync(policyPath, policy);
     geminiArgs.push('--policy', policyPath);
 
-    const result = spawnSync('gemini', geminiArgs, {
+    // Gemini has no headless mode (supportsHeadless() is false), but a caller
+    // that asks for one still gets the BL_HEADLESS marker (F-78 D3).
+    const result = run('gemini', geminiArgs, {
       stdio: 'inherit',
       cwd,
+      env: agentEnv({ headless }),
     });
 
     try {

@@ -69,7 +69,6 @@ import { hasFrontmatter } from './body.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { ensureChange } from './change-doc.js';
-import { FEATURE_ORDER_FILE } from './feature-order.js';
 import { unitFiles } from './backlog-graph.js';
 import { insertAfter } from './template.js';
 import { withLock } from './lock.js';
@@ -339,12 +338,13 @@ function worktreeUndo(repoPath, branch, unitDir, adopted = () => false) {
 
 /**
  * The files `bl side` and the sync it runs may write, besides new story
- * directories: the indexes the sync regenerates (the backlog's, the feature
- * order's and every component's, theme's, epic's and feature's) and the
- * feature directory's top-level files.
+ * directories: the indexes the sync regenerates (the backlog's and every
+ * component's, theme's, epic's and feature's) and the feature directory's
+ * top-level files. `priority.md` is not one: nothing automated writes it
+ * (F-78 D3).
  */
 function ownedFiles(root, featureDir) {
-  const files = [join(root, 'index.md'), join(root, FEATURE_ORDER_FILE)];
+  const files = [join(root, 'index.md')];
   for (const kind of ['component', 'theme', 'epic', 'feature']) {
     for (const u of unitFiles({ backlogRoot: root }, kind)) files.push(u.file);
   }

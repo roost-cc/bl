@@ -1846,99 +1846,96 @@ test('feature_merge_refuses_any_story_without_component_repo_before_mutation', a
   }
 });
 
-// F-53 D1: the feature order follows a feature merge, in its one backlog
-// commit; a missing feature-order.md only warns.
-for (const missing of [false, true]) {
-  test(`bl merge F-n ${missing ? 'warns and completes with no feature-order.md' : "drops the feature from ranked: and records it in History, in the merge's backlog commit"}`, async () => {
-    const { spawnSync } = await import('child_process');
-    const { dir, cleanup } = mkTempBacklog({
-      repos: { code: { path: './code', deployable: true } },
-      components: [{ id: 'C00', title: 'Core', dirSuffix: 'core', repo: 'code' }],
-      stories: [
-        {
-          id: 'S-1',
-          component: 'C00',
-          title: 'In feature',
-          dirSuffix: 'a',
-          points: 3,
-          status: 'in_progress',
-          feature: 'F-1',
-          body: '## Acceptance Criteria\n\n- [x] a\n',
-        },
-      ],
-      features: [
-        {
-          id: 'F-1',
-          title: 'Feat',
-          dirSuffix: 'feat',
-          status: 'running',
-          stories: ['S-1'],
-          branch: 'f1-feat',
-          review_status: 'addressed',
-          reviewLog:
-            '### Session 2026-09-24 (PR #1)\n\n**Must fix**\nNone.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.',
-        },
-        { id: 'F-2', title: 'Later', dirSuffix: 'later', status: 'draft' },
-      ],
-      featureOrder: missing
-        ? null
-        : [
-            { feature: 'F-1', why: 'Lands first.' },
-            { feature: 'F-2', why: 'After F-1.' },
-          ],
-    });
-    const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
-    const g = (cwd, ...args) => {
-      const r = spawnSync('git', args, {
-        cwd,
-        encoding: 'utf8',
-        env: { ...process.env, ...env },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
-      return r.stdout.trim();
-    };
-    try {
-      initFeatureRepo(g, dir, 'code', { branch: 'f1-feat' });
-      writeFileSync(join(dir, '.gitignore'), 'code/\ncode-origin.git/\n.bl/\n');
-      g(dir, 'init', '-q', '-b', 'main');
-      g(dir, 'add', '.');
-      g(dir, 'commit', '-q', '-m', 'backlog');
+// F-78 D3: nothing automated writes priority.md. A merged feature leaves the
+// order because it is closed, so `bl merge` (and the sync it runs) leaves the
+// file byte-identical, the merged feature's own entry included.
+test('bl merge F-n leaves priority.md byte-identical and out of its backlog commit', async () => {
+  const { spawnSync } = await import('child_process');
+  const priority = `---
+ranked:
+  # The operator's comment.
+  - unit: F-1
+    why: Lands first.
+  - unit: F-2
+    why: After F-1.
+---
 
-      const r = runBl(['merge', 'F-1'], { cwd: dir, env });
-      assert.equal(r.status, 0, r.stderr);
-      assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'done');
-      assert.equal(g(dir, 'status', '--porcelain'), '', 'the merge commits everything it wrote');
-      const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n');
-      if (missing) {
-        assert.match(r.stderr, /warning: feature-order\.md is missing, so F-1 is not recorded in the feature order/);
-        assert.ok(!existsSync(join(dir, 'feature-order.md')), 'no file is created');
-        return;
-      }
-      assert.ok(files.includes('feature-order.md'), files.join('\n'));
-      assert.ok(files.includes('features/F1-feat/index.md'), 'one commit with the feature marked done');
-      // Its theme's `## State` records it in the same commit (F-53 D4).
-      assert.ok(files.includes('themes/demo/index.md'), files.join('\n'));
-      const themeText = g(dir, 'show', 'HEAD:themes/demo/index.md');
-      const doneOn = fm(join(dir, 'features', 'F1-feat', 'index.md')).completed;
-      assert.equal(extractSection(`${themeText}\n`, 'State').trim(), `- ${doneOn}: F-1 done (Feat).`);
-      const text = g(dir, 'show', 'HEAD:feature-order.md');
-      const order = parseFrontmatter(`${text}\n`);
-      assert.deepEqual(order.fm.ranked, [{ feature: 'F-2', why: 'After F-1.' }]);
-      const stamp = fm(join(dir, 'features', 'F1-feat', 'index.md')).completed;
-      assert.match(
-        extractSection(order.body, 'History'),
-        new RegExp(`- 2026-01-01: F-0 done \\(Before the fixture\\)\\.\\n- ${stamp}: F-1 done \\(Feat\\)\\.\\n`),
-      );
-      // The sync in the same merge regenerated Next up without F-1.
-      const nextUp = extractSection(order.body, 'Next up');
-      assert.match(nextUp, /\| 1 +\| \[F-2\]\(features\/F2-later\/index\.md\)/);
-      assert.doesNotMatch(nextUp, /\[F-1\]/);
-    } finally {
-      cleanup();
-    }
+# Priority
+
+Prose bl never writes.
+
+## History
+
+- 2026-01-01: F-0 done (Before the fixture).
+`;
+  const { dir, cleanup } = mkTempBacklog({
+    repos: { code: { path: './code', deployable: true } },
+    components: [{ id: 'C00', title: 'Core', dirSuffix: 'core', repo: 'code' }],
+    stories: [
+      {
+        id: 'S-1',
+        component: 'C00',
+        title: 'In feature',
+        dirSuffix: 'a',
+        points: 3,
+        status: 'in_progress',
+        feature: 'F-1',
+        body: '## Acceptance Criteria\n\n- [x] a\n',
+      },
+    ],
+    features: [
+      {
+        id: 'F-1',
+        title: 'Feat',
+        dirSuffix: 'feat',
+        status: 'running',
+        stories: ['S-1'],
+        branch: 'f1-feat',
+        review_status: 'addressed',
+        reviewLog: '### Session 2026-09-24 (PR #1)\n\n**Must fix**\nNone.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.',
+      },
+      { id: 'F-2', title: 'Later', dirSuffix: 'later', status: 'draft' },
+    ],
+    priority,
   });
-}
+  const env = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  const g = (cwd, ...args) => {
+    const r = spawnSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  try {
+    initFeatureRepo(g, dir, 'code', { branch: 'f1-feat' });
+    writeFileSync(join(dir, '.gitignore'), 'code/\ncode-origin.git/\n.bl/\n');
+    g(dir, 'init', '-q', '-b', 'main');
+    g(dir, 'add', '.');
+    g(dir, 'commit', '-q', '-m', 'backlog');
+
+    const r = runBl(['merge', 'F-1'], { cwd: dir, env });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'done');
+    assert.equal(g(dir, 'status', '--porcelain'), '', 'the merge commits everything it wrote');
+    const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n');
+    assert.ok(files.includes('features/F1-feat/index.md'), 'one commit with the feature marked done');
+    assert.ok(!files.includes('priority.md'), files.join('\n'));
+    assert.equal(readFileSync(join(dir, 'priority.md'), 'utf8'), priority);
+    // Its theme's `## State` records it in the same commit (F-53 D4).
+    assert.ok(files.includes('themes/demo/index.md'), files.join('\n'));
+    const themeText = g(dir, 'show', 'HEAD:themes/demo/index.md');
+    const doneOn = fm(join(dir, 'features', 'F1-feat', 'index.md')).completed;
+    assert.equal(extractSection(`${themeText}\n`, 'State').trim(), `- ${doneOn}: F-1 done (Feat).`);
+    // F-1 is closed, so the order skips it with no edit.
+    const next = runBl(['next'], { cwd: dir, env });
+    assert.equal(next.stdout.trim(), 'F-2', next.stderr);
+  } finally {
+    cleanup();
+  }
+});
 
 test('concurrent_feature_merges_fold_each_story_once', async () => {
   const { spawnSync } = await import('child_process');

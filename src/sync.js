@@ -6,13 +6,15 @@
  *   3. Per-epic index         backlog/epics/E<nn>-*\/index.md
  *   4. Per-theme index        backlog/themes/<slug>/index.md
  *   5. Top-level index        backlog/index.md
- *   6. Feature order          backlog/feature-order.md (F-53 D1)
+ *
+ * `priority.md` is never written here (F-78 D3): only `bl rank` or a person
+ * edits it.
  *
  * Rules:
  *   - Story IDs are globally unique (enforced); stories live in
  *     backlog/stories/S<n>-*\/ and name their component in `component:`.
- *   - Priority order comes from the top-level `## Backlog` table (global).
- *     Stories absent from it are appended in id order.
+ *   - Priority order is `priority.md`'s, through the graph's `rankOf`
+ *     (`byRank`, F-78 D2).
  *   - Points & status read from story frontmatter. Nothing moves: status is
  *     frontmatter, never location.
  *   - A component's index lists its open stories and the active features
@@ -25,9 +27,6 @@
  *     with none is left as it is.
  *   - An epic gets a Features table; a theme lists its epics, then its
  *     features with no epic (F-51 D3).
- *   - `feature-order.md` gets its Next up and Not yet ranked tables from its
- *     `ranked:` frontmatter and the features' own; its frontmatter, intro and
- *     History are left as written. With no file, nothing is written.
  *
  * `runSync` holds the backlog-root lock (`lock.js`, re-entrant) for the whole
  * regeneration and returns every backlog path it wrote. Every write replaces
@@ -79,13 +78,13 @@ import { ensureAllowedTools } from './allowed-tools.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { RUN_STATE_KEYS } from './change-doc.js';
-import { findStoryDir, readAllStories, readBacklogOrder, readComponents } from './story.js';
+import { findStoryDir, readAllStories, readComponents } from './story.js';
+import { byRank } from './priority.js';
 import { VALID_STORY_KEYS, VALID_COMPONENT_KEYS, VALID_FEATURE_KEYS, findDuplicateIds } from './validate.js';
-import { readAllEpics, readAllThemes, normalizeEpicId } from './theme.js';
+import { readAllEpics, readAllThemes } from './theme.js';
 import { readAllTasks, tasksOf, taskTableRows } from './task.js';
 import { readBlockers } from './blockers.js';
 import { loadFlow } from './flow.js';
-import { readFeatureOrder, rankedFeatures, unrankedFeatures, FEATURE_ORDER_FILE } from './feature-order.js';
 import { FEATURES_DIR, readAllFeatures, storyLinkFromFeature, featureRepoOrder, LEAD_REPO } from './feature.js';
 
 // ---------------------------------------------------------------------------
@@ -501,87 +500,6 @@ function syncTheme(backlogRoot, theme, epics, features, touchedMarkdown, flow) {
 }
 
 // ---------------------------------------------------------------------------
-// Feature order (F-53 D1)
-// ---------------------------------------------------------------------------
-
-/** A table cell's text: one line, a `|` escaped so it ends no cell. */
-function cell(text) {
-  return String(text ?? '')
-    .replace(/\s*\n\s*/g, ' ')
-    .replace(/\|/g, '\\|');
-}
-
-/**
- * Regenerate `feature-order.md`'s `## Next up` (#, Feature, Title, Theme,
- * Epic, Why) and `## Not yet ranked` tables from its `ranked:` and the
- * features' frontmatter. Everything else, the frontmatter block included, is
- * written back byte for byte, and only when it changed, replacing the file
- * atomically: it holds the operator's ranking and History. No file is a warning, not an error: until the
- * F-53 migration has run, `bl validate` reports it.
- */
-function syncFeatureOrder(config, features, touchedMarkdown, flow) {
-  let order;
-  try {
-    order = readFeatureOrder(config);
-  } catch (e) {
-    console.warn(`  warning: ${FEATURE_ORDER_FILE} not regenerated: ${e.message}`);
-    return;
-  }
-  if (!order) return;
-  const ranked = rankedFeatures(order, features, flow);
-  const unranked = unrankedFeatures(order, features, flow);
-  const featureRef = (f) => `[${f.id}](${featureLinkFromTop(f)})`;
-  const nextUp = formatTable(
-    ['#', 'Feature', 'Title', 'Theme', 'Epic', 'Why'],
-    ranked.map((r) => [
-      r.position,
-      featureRef(r.feature),
-      cell(r.feature.title),
-      cell(r.feature.theme),
-      cell(normalizeEpicId(r.feature.epic)?.id ?? r.feature.epic),
-      cell(r.why),
-    ]),
-  );
-  const notRanked = formatTable(
-    ['Feature', 'Title', 'Theme'],
-    unranked.map((f) => [featureRef(f), cell(f.title), cell(f.theme)]),
-  );
-  let body = upsertSection(order.body, 'Next up', nextUp, { before: 'History' });
-  body = upsertSection(body, 'Not yet ranked', notRanked, { after: 'Next up' });
-  const content = order.fmText + body;
-  const changed = content !== order.content;
-  if (changed) {
-    atomicWriteFile(config.backlogRoot, order.indexPath, content);
-    noteMarkdown(touchedMarkdown, order.indexPath);
-  }
-  info(
-    `  ${FEATURE_ORDER_FILE} — ${ranked.length} ranked, ${unranked.length} not yet ranked${changed ? '' : ' (unchanged)'}`,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Global priority order (from top-level index)
-// ---------------------------------------------------------------------------
-
-function buildGlobalOrder(backlogIds) {
-  const order = new Map();
-  backlogIds.forEach((id, i) => order.set(id, i));
-  return order;
-}
-
-function sortByGlobal(stories, globalOrder) {
-  const known = stories.filter((s) => globalOrder.has(s.id));
-  const unknown = stories.filter((s) => !globalOrder.has(s.id));
-  known.sort((a, b) => globalOrder.get(a.id) - globalOrder.get(b.id));
-  unknown.sort((a, b) => {
-    const na = parseInt(a.id.replace('S-', ''), 10);
-    const nb = parseInt(b.id.replace('S-', ''), 10);
-    return na - nb;
-  });
-  return [...known, ...unknown];
-}
-
-// ---------------------------------------------------------------------------
 // Component-level sync
 // ---------------------------------------------------------------------------
 
@@ -590,7 +508,7 @@ function sortByGlobal(stories, globalOrder) {
  * the active features touching it. A component has no points or status
  * (F-49 D4), so its frontmatter is left as it is.
  */
-function syncComponent(backlogRoot, component, stories, globalOrder, touchedMarkdown, features, flow) {
+function syncComponent(backlogRoot, component, stories, byPriority, touchedMarkdown, features, flow) {
   const content = readFileSync(component.indexPath, 'utf8');
   const { fm, body } = parseFrontmatter(content);
   const rel = `${COMPONENTS_DIR}/${component.componentEntry}/index.md`;
@@ -601,7 +519,7 @@ function syncComponent(backlogRoot, component, stories, globalOrder, touchedMark
     }
   }
 
-  const sorted = sortByGlobal(stories, globalOrder);
+  const sorted = [...stories].sort(byPriority);
   const active = sorted.filter((s) => !flow.meets('story', s.status, 'done'));
   const done = sorted.length - active.length;
 
@@ -686,19 +604,14 @@ function ensureTopLevelIndex(backlogRoot, touchedMarkdown, title) {
   return indexPath;
 }
 
-function syncTopLevel(config, ctx, backlogIds, touchedMarkdown, features) {
+function syncTopLevel(config, ctx, touchedMarkdown, features) {
   const { storyMap, components, componentsById, themes, epics } = ctx;
   const indexPath = ensureTopLevelIndex(config.backlogRoot, touchedMarkdown, indexTitle(config));
   const content = readFileSync(indexPath, 'utf8');
 
-  const seen = new Set(backlogIds);
-  // Never-indexed stories go last in id order (`sortByGlobal`), as every
-  // other index sorts them.
-  const unseen = sortByGlobal(
-    [...storyMap.values()].filter((s) => !seen.has(s.id)),
-    new Map(),
-  ).map((s) => s.id);
-  const ordered = [...backlogIds, ...unseen].map((id) => storyMap.get(id)).filter((s) => s != null);
+  // The Backlog table in the backlog's priority (F-78 D2), as every other
+  // index sorts its stories; it is written, never read back.
+  const ordered = [...storyMap.values()].sort(ctx.byPriority);
   const closed = (s) => ctx.flow.meets('story', s.status, 'done');
   const active = ordered.filter((s) => !closed(s));
   const done = ordered.length - active.length;
@@ -819,8 +732,9 @@ async function regenerate(config) {
     `backlog-sync: ${storyMap.size} stories (${storyMap.size - closedCount} active, ${closedCount} ${flow.closedStatusesOf('story').join('/')})`,
   );
 
-  const backlogIds = readBacklogOrder(config.backlogRoot);
-  const globalOrder = buildGlobalOrder(backlogIds);
+  // Every table of stories is in the backlog's priority (F-78 D2).
+  const backlog = graphOf(config);
+  const byPriority = byRank((id) => backlog.rankOf(id));
 
   // Components keep their first directory when two claim one id
   // (`bl validate` reports the clash).
@@ -831,7 +745,7 @@ async function regenerate(config) {
     componentsById.set(c.id, c);
     components.push(c);
   }
-  const ctx = { storyMap, components, componentsById, globalOrder, flow };
+  const ctx = { storyMap, components, componentsById, byPriority, flow };
 
   // Features: resolve story records, regenerate tables. Then the stories'
   // Tasks tables (F-65 D1).
@@ -848,7 +762,7 @@ async function regenerate(config) {
       config.backlogRoot,
       c,
       allStories.filter((s) => s.componentId === c.id),
-      globalOrder,
+      byPriority,
       touchedMarkdown,
       features,
       flow,
@@ -863,8 +777,7 @@ async function regenerate(config) {
   ctx.epics = epics;
   ctx.themes = themes;
 
-  syncTopLevel(config, ctx, backlogIds, touchedMarkdown, features);
-  syncFeatureOrder(config, features, touchedMarkdown, flow);
+  syncTopLevel(config, ctx, touchedMarkdown, features);
 
   formatBacklogMarkdown(config, touchedMarkdown);
   info('done.');

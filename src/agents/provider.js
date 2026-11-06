@@ -30,7 +30,42 @@
  * A headless spawn's result carries `refusal` (see supportsHeadless()): the
  * adapter classifies its own refusals inside spawn(), and callers read the
  * field rather than the agent's words.
+ *
+ * A headless spawn's child runs with `BL_HEADLESS=1` (`HEADLESS_ENV`, F-78
+ * D3): each adapter builds the child's environment with `agentEnv`, so every
+ * agent bl starts headless is marked and the `bl` it calls can refuse what
+ * only a person may do (`bl rank`, a backlog commit of `priority.md`). An
+ * interactive spawn adds nothing.
  */
+
+/** The variable that marks an agent bl started headless (F-78 D3). */
+export const HEADLESS_ENV = 'BL_HEADLESS';
+
+/**
+ * Whether this process runs inside an agent bl started headless: `env` has
+ * `BL_HEADLESS` set to anything but the empty string. The marker is inherited,
+ * so a `bl` an agent runs, and whatever that `bl` runs, sees it.
+ * @param {Record<string, string | undefined>} [env]
+ */
+export function isHeadless(env = process.env) {
+  return Boolean(env[HEADLESS_ENV]);
+}
+
+/**
+ * The environment an adapter's spawn gives the agent: `base` with
+ * `BL_HEADLESS=1` when `headless`, and `BL_BACKLOG_DIR` when `backlogRoot` is
+ * given. `base` itself when there is nothing to add.
+ * @param {{ headless?: boolean, backlogRoot?: string | null,
+ *   base?: Record<string, string | undefined> }} [opts]
+ */
+export function agentEnv({ headless = false, backlogRoot = null, base = process.env } = {}) {
+  if (!headless && !backlogRoot) return base;
+  return {
+    ...base,
+    ...(backlogRoot ? { BL_BACKLOG_DIR: backlogRoot } : {}),
+    ...(headless ? { [HEADLESS_ENV]: '1' } : {}),
+  };
+}
 
 export class AgentProvider {
   /** The registry key (`index.js`) the adapter answers to. */
@@ -103,6 +138,10 @@ export class AgentProvider {
    * @param {string|null} [opts.model]   - The model to run; null for the
    *                                       account's own. Only an adapter whose
    *                                       supportsModel() is true selects it.
+   * @param {boolean} [opts.headless]    - Run to completion without a
+   *                                       terminal (supportsHeadless()); the
+   *                                       child's env then has BL_HEADLESS=1
+   *                                       (`agentEnv`).
    */
   spawn(opts) {
     throw new Error('spawn() not implemented');

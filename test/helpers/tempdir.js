@@ -133,6 +133,7 @@ export const FEATURE_INDEX_TEMPLATE = (f) => `${serializeFrontmatter({
   theme: f.theme === null ? undefined : (f.theme ?? DEFAULT_THEME),
   epic: f.epic || undefined,
   status: f.status ?? 'draft',
+  added: f.added || undefined,
   primary_repo: f.primary_repo || undefined,
   review_rounds_max: f.review_rounds_max ?? 2,
 })}
@@ -161,17 +162,13 @@ ${f.escalation ?? 'None.'}
 `;
 
 /**
- * The backlog's `feature-order.md` (F-53 D1): `ranked` is its `ranked:`
- * list, each `{ feature, why }`; the body is an intro and a `## History`.
+ * The backlog's `priority.md` (F-78 D1): `ranked` is its `ranked:` list,
+ * each `{ unit, why }`; the body is prose bl never writes.
  */
-export const FEATURE_ORDER_TEMPLATE = (ranked = []) => `${serializeFrontmatter({ ranked })}
-# Feature order
+export const PRIORITY_TEMPLATE = (ranked = []) => `${serializeFrontmatter({ ranked })}
+# Priority
 
-The order the operator prefers features to run in.
-
-## History
-
-- 2026-01-01: F-0 done (Before the fixture).
+The order the operator prefers units to run in.
 `;
 
 /**
@@ -230,6 +227,7 @@ export const STORY_INDEX_TEMPLATE = (story) => `${serializeFrontmatter({
   type: story.type ?? 'feature',
   points: story.points ?? 1,
   status: story.status ?? 'backlog',
+  added: story.added || undefined,
   depends_on: refList(story.depends_on),
   // Derived since F-77 D3; a fixture sets it only to test `derived-key`
   // and the migration that removes it.
@@ -257,7 +255,7 @@ ${story.body ?? ''}
  *           same way, an `E<nn>` id becoming `C<nn>`.
  * @property {Array<{ id: string, component?: string,
  *           epic?: string, title: string, type?: string, points?: number,
- *           status?: string, depends_on?: string, required_for?: string,
+ *           status?: string, added?: string, depends_on?: string, required_for?: string,
  *           completed?: string, dirSuffix?: string, body?: string,
  *           feature?: string, primary_repo?: string,
  *           secondary_repos?: string[] }>} [stories]
@@ -265,7 +263,7 @@ ${story.body ?? ''}
  *           `component` (or a pre-F-49 `epic`, `E<nn>` → `C<nn>`) is the
  *           story's `component:`.
  * @property {Array<{ id: string, title: string, dirSuffix?: string,
- *           status?: string, changeRepo?: string, stories?: string[],
+ *           status?: string, added?: string, changeRepo?: string, stories?: string[],
  *           review_status?: string, branch?: string, premise?: string,
  *           deferred?: string, reviewLog?: string, escalation?: string }>} [features]
  *           Written under features/F<n>-<dirSuffix>/ whatever the status.
@@ -284,9 +282,9 @@ ${story.body ?? ''}
  *           theme?: string | null }>} [valueEpics]
  *           Written under epics/E<nn>-<dirSuffix>/; `theme` defaults to `demo`.
  *           Its features and status are derived (F-77 D3), never written.
- * @property {Array<{ feature: string, why: string }> | string | null} [featureOrder]
- *           `feature-order.md`: a `ranked:` list (FEATURE_ORDER_TEMPLATE,
- *           `[]` by default), the file's whole text, or null for no file.
+ * @property {Array<{ unit: string, why: string }> | string | null} [priority]
+ *           `priority.md`: a `ranked:` list (PRIORITY_TEMPLATE, `[]` by
+ *           default), the file's whole text, or null for no file.
  * @property {Array<{ title: string, added: string, status: string }> | string | null} [roadmap]
  *           `roadmap.md`: an `entries:` list (ROADMAP_TEMPLATE, `[]` by
  *           default), the file's whole text, or null for no file.
@@ -422,10 +420,10 @@ export function mkTempBacklog(fixture = {}, { keep = false } = {}) {
     }
   }
 
-  if (fixture.featureOrder !== null) {
+  if (fixture.priority !== null) {
     writeFileSync(
-      join(dir, 'feature-order.md'),
-      typeof fixture.featureOrder === 'string' ? fixture.featureOrder : FEATURE_ORDER_TEMPLATE(fixture.featureOrder),
+      join(dir, 'priority.md'),
+      typeof fixture.priority === 'string' ? fixture.priority : PRIORITY_TEMPLATE(fixture.priority),
     );
   }
   if (fixture.roadmap !== null) {

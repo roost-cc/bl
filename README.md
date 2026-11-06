@@ -68,7 +68,7 @@ mkdir -p ~/acme/backlog && cd ~/acme/backlog
 git init -b main
 echo '{ "title": "Acme Backlog" }' > backlog.json
 bl init                                   # agent settings, allowed-tools.json, flow.json,
-                                          # roadmap.md, feature-order.md
+                                          # roadmap.md, priority.md
 # register the code repo in backlog.json:
 #   "repos": { "acme-web": { "path": "../acme-web", "deployable": true, "update_tests": [] } }
 git add -A && git commit -m "chore: new backlog"
@@ -83,7 +83,9 @@ bl validate
 
 From there: `bl refine S-1` makes a story ready, `bl run S-1` implements it on its own branch
 and opens a pull request, and `bl merge S-1` merges it. Features group stories that ship
-together (`bl new --feature`, `bl approve`, `bl run F-1`).
+together (`bl new --feature`, `bl approve`, `bl run F-1`). `priority.md` is your one ranked
+list of features and loose stories: `bl rank F-1 --top --why "<reason>"` edits it, `bl next`
+prints the most important unit whose dependencies are met, and nothing automated ever writes it.
 
 ## Tests
 

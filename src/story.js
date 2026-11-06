@@ -532,31 +532,6 @@ export function readAllStories(config) {
   return out;
 }
 
-/**
- * Read the backlog priority order from an index.md.
- * @param {string} indexDir — directory containing the index.md to read
- */
-export function readBacklogOrder(indexDir) {
-  const indexPath = join(indexDir, 'index.md');
-  if (!existsSync(indexPath)) return [];
-  const content = readFileSync(indexPath, 'utf8');
-  const backlogMatch = content.match(/## Backlog\n\n([\s\S]*?)(?=\n## |\s*$)/);
-  if (!backlogMatch) return [];
-  return backlogMatch[1]
-    .trim()
-    .split('\n')
-    .filter((l) => l.trim().startsWith('|'))
-    .slice(2)
-    .map((l) => {
-      const cell = l
-        .split('|')
-        .slice(1, -1)
-        .map((c) => c.trim())[0];
-      return String(cell ?? '').replace(/^\[([^\]]+)\]\(.*\)$/, '$1');
-    })
-    .filter(Boolean);
-}
-
 // ---------------------------------------------------------------------------
 // Max story ID
 // ---------------------------------------------------------------------------

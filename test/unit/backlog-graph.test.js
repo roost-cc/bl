@@ -516,13 +516,14 @@ test('a changed, added or removed file gives a new snapshot, only that file repa
   assert.notEqual(g5, g4);
   assert.equal(loadStats.parses, 0);
 
-  // reload drops the memo: every file is parsed again.
+  // reload drops the memo: every file is parsed again, `priority.md` too.
   resetLoadStats();
   const g6 = loadBacklog(config, { reload: true });
   assert.notEqual(g6, g5);
   assert.equal(
     loadStats.parses,
-    g6.list('story').length +
+    1 +
+      g6.list('story').length +
       g6.list('feature').length +
       g6.list('component').length +
       g6.list('epic').length +
@@ -606,8 +607,10 @@ test('text() is the whole file; files lists every file, readable or not, with it
 test('a backlog with no unit directories is an empty graph', () => {
   const root = mkTempDir('bl-graph-empty-');
   cpSync(join(FIXTURE, 'flow.json'), join(root, 'flow.json'));
+  cpSync(join(FIXTURE, 'priority.md'), join(root, 'priority.md'));
   const g = loadBacklog({ backlogRoot: root });
   for (const kind of ['stories', 'features', 'components', 'epics', 'themes', 'tasks']) assert.equal(g[kind].size, 0);
   assert.equal(g.maxNum('component'), null);
   assert.deepEqual(g.problems, []);
+  assert.deepEqual(g.priority, []);
 });

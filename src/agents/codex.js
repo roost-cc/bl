@@ -11,7 +11,7 @@ import { spawnSyncFiles } from '../child-stdio.js';
 import { checkModel, exitStatus, info, isBlBranchPath, worktreeRoot } from '../config.js';
 import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
 import { clockTime, matchLimit } from './limit.js';
-import { AgentProvider } from './provider.js';
+import { AgentProvider, agentEnv } from './provider.js';
 
 // The script that holds the `codex app-server` conversation (see its JSDoc).
 const CAPACITY_HELPER = fileURLToPath(new URL('./codex-capacity.js', import.meta.url));
@@ -871,6 +871,8 @@ export class CodexProvider extends AgentProvider {
       try {
         r = run('codex', codexArgs, {
           cwd,
+          // Marked headless (F-78 D3), so the bl it runs refuses `bl rank`.
+          env: agentEnv({ headless: true }),
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'inherit'],
           maxBuffer: 256 * 1024 * 1024,

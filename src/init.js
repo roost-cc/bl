@@ -14,7 +14,7 @@ import { loadConfig, parseArgs, info, sameConfiguration, DEFAULT_BACKLOG_TITLE }
 import { LOCAL_TOOLS_FILE } from './permissions.js';
 import { FLOW_FILE } from './flow.js';
 import { ROADMAP_FILE } from './roadmap.js';
-import { FEATURE_ORDER_FILE } from './feature-order.js';
+import { PRIORITY_FILE } from './priority.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { getProvider, PROVIDER_NAMES } from './agents/index.js';
 import { probePluginBinaries, formatPluginStatus } from './plugin-binaries.js';
@@ -34,7 +34,7 @@ Options:
 
 Registers the backlog repo in your global agent settings so agents can
 commit and push backlog changes from any cwd, and creates allowed-tools.json,
-flow.json (the statuses and gates per type), roadmap.md and feature-order.md
+flow.json (the statuses and gates per type), roadmap.md and priority.md
 from their templates when the backlog has none. A new backlog.json (in
 $BL_BACKLOG_DIR, else the current directory), one with no "repos", gets
 an empty one, the display name "title": "Backlog" (bl sync heads index.md
@@ -82,11 +82,11 @@ export function ensureFlowFile(backlogRoot) {
 
 /**
  * Give a new backlog the two hand-edited documents `bl validate` requires,
- * `roadmap.md` (F-53 D2) and `feature-order.md` (F-53 D1), each from its
+ * `roadmap.md` (F-53 D2) and `priority.md` (F-78 D1), each from its
  * template with an empty list (S-581). An existing one is left alone.
  */
 export function ensureBacklogDocs(backlogRoot) {
-  for (const file of [ROADMAP_FILE, FEATURE_ORDER_FILE]) {
+  for (const file of [ROADMAP_FILE, PRIORITY_FILE]) {
     const path = join(backlogRoot, file);
     if (existsSync(path)) continue;
     copyFileSync(join(__dirname, '..', 'templates', file), path);

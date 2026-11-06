@@ -5,7 +5,6 @@ import { syncBuiltinESMExports } from 'module';
 import { dirname, join, resolve } from 'path';
 import { blockedFlow, mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
-import { readBacklogOrder } from '../../src/story.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { runSync } from '../../src/sync.js';
 import { readAllFeatures } from '../../src/feature.js';
@@ -259,7 +258,7 @@ function sectionIds(content, heading) {
     .map((l) => cells(l)[0].replace(/^\[([^\]]+)\]\(.*\)$/, '$1'));
 }
 
-/** A root index, hand-ordered: S-4 before S-1. */
+/** A root index an older sync wrote, its Backlog S-4 before S-1: an order no reader takes. */
 const TOP_INDEX = `---
 title: Roost Backlog
 ---
@@ -353,6 +352,7 @@ function flatBacklog() {
       },
       { id: 'F-2', title: 'Ops flow', dirSuffix: 'ops-flow', status: 'done', primary_repo: 'ops', stories: ['S-3'] },
     ],
+    priority: [{ unit: 'S-6', why: 'The orphan first.' }],
   });
   writeFileSync(join(t.dir, 'index.md'), TOP_INDEX);
   return t;
@@ -367,7 +367,7 @@ const GENERATED = [
   'features/F2-ops-flow/index.md',
 ];
 
-test('bl sync writes the root index with Components, Features and the hand-ordered Backlog', () => {
+test('bl sync writes the root index with Components, Features and the Backlog in priority order', () => {
   const { dir, cleanup } = flatBacklog();
   try {
     const r = runBl(['sync'], { cwd: dir });
@@ -390,10 +390,10 @@ test('bl sync writes the root index with Components, Features and the hand-order
     assert.deepEqual(sectionIds(top, 'Features'), ['F-1']);
     assert.equal(rowFor(top, 'F-1')[0], '[F-1](features/F1-web-flow/index.md)');
 
-    // The hand order survives (S-4 before S-1); never-indexed stories follow
-    // in id order; closed ones drop out. `readBacklogOrder` reads it back.
-    assert.deepEqual(sectionIds(top, 'Backlog'), ['S-4', 'S-1', 'S-3', 'S-6']);
-    assert.deepEqual(readBacklogOrder(dir), ['S-4', 'S-1', 'S-3', 'S-6']);
+    // The Backlog is in priority.md's order (F-78 D2), not the index's own
+    // (S-4 before S-1): S-6 is ranked, F-1's stories follow by number, and
+    // S-3, in a done feature, has no place; closed stories drop out.
+    assert.deepEqual(sectionIds(top, 'Backlog'), ['S-6', 'S-1', 'S-4', 'S-3']);
     assert.deepEqual(rowFor(top, 'S-4'), [
       '[S-4](stories/S4-x/index.md)',
       'feature',
@@ -738,34 +738,29 @@ for (const where of ['after Overview', 'at the end']) {
   });
 }
 
-// F-53 D1: feature-order.md holds the operator's ranking and History, so a
-// failed regeneration leaves it whole and the next sync starts from it.
-test('syncFeatureOrder_partial_write_preserves_ranked_and_history_on_retry', async () => {
+// F-78 D3: nothing automated writes priority.md, so a sync that fails midway
+// and the sync after it both leave it as the operator wrote it.
+test('runSync_partial_write_and_retry_leave_priority_md_untouched', async () => {
   const { dir, cleanup } = mkTempBacklog({
     features: [{ id: 'F-1', title: 'One', dirSuffix: 'one' }],
   });
   try {
-    const path = join(dir, 'feature-order.md');
-    const fm = '---\nranked:\n  # Kept.\n  - feature: F-1\n    why: First.\n---\n';
-    const history = '## History\n\n- 2026-01-01: F-0 done (Zero).\n';
-    const order = `${fm}\n# Feature order\n\nIntro.\n\n${history}`;
-    writeFileSync(path, order);
+    const path = join(dir, 'priority.md');
+    const text = '---\nranked:\n  # Kept.\n  - unit: F-1\n    why: First.\n---\n\n# Priority\n\nIntro.\n';
+    writeFileSync(path, text);
     const config = loadConfig({ backlogRoot: dir });
     await assert.rejects(
-      withPartialWrites(path, () => runSync(config)),
+      withPartialWrites(join(dir, 'index.md'), () => runSync(config)),
       /injected ENOSPC/,
     );
-    assert.equal(readFileSync(path, 'utf8'), order);
-    await runSync(config);
-    const text = readFileSync(path, 'utf8');
-    assert.ok(text.startsWith(`${fm}\n# Feature order\n\nIntro.\n`), text);
-    assert.ok(text.endsWith(history), text);
-    assert.match(text, /## Next up\n\n\| # +\| Feature +\|[^]*\[F-1\]/);
+    assert.equal(readFileSync(path, 'utf8'), text);
+    const written = await runSync(config);
+    assert.ok(!written.includes('priority.md'), written.join('\n'));
+    assert.equal(readFileSync(path, 'utf8'), text);
   } finally {
     cleanup();
   }
 });
-
 // F-67 S-1063: every sync write replaces its file atomically, and a spec is
 // rewritten from what is on disk under its spec lock.
 

@@ -47,7 +47,8 @@ Per-command stdout contracts:
 | `bl report`          | one line: the path of `index.md` (`--json`: one object)   |
 | `bl grep`            | match table                                               |
 | `bl what-next`       | one line: the suggested story ID (empty if no suggestion) |
-| `bl next`            | one line: the next ranked feature ID (empty if none)      |
+| `bl next`            | one line: the next unit ID, F-n or S-n (empty if none)    |
+| `bl rank`            | no args: the order; an edit: nothing (progress → stderr)  |
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
 | `bl agents`          | the AGENTS.md content                                     |
@@ -99,9 +100,10 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
 
 ```
 <backlog>/
-  index.md                      ← master stack-ranked list (auto-generated tables)
-  feature-order.md              ← the preferred feature order: `ranked:` by hand,
-                                  tables by `bl sync` (F-53 D1)
+  index.md                      ← overview (auto-generated tables, in priority.md's order)
+  priority.md                   ← the one ranked list of features and loose
+                                  stories: `ranked:` by `bl rank` or by hand,
+                                  never by automation (F-78 D1, D3)
   roadmap.md                    ← the road map: `entries:` and one section
                                   each, all by hand (F-53 D2)
   flow.json                     ← every story and feature status, what each
@@ -608,10 +610,52 @@ file. `bl validate` checks its shape only (`roadmap.js` `findRoadmapFindings`), 
   section names no entry.
 
 A backlog with no `roadmap.md` reports `roadmap-file`, and a theme with no `brief:`
-`theme-brief`. `bl init` writes `templates/roadmap.md` and `templates/feature-order.md`
+`theme-brief`. `bl init` writes `templates/roadmap.md` and `templates/priority.md`
 (empty `entries:` and `ranked:`) into a backlog that has neither, and leaves an existing one
-alone (S-581). (F-53's one-off migration that wrote them for the first backlog has run; S-581
-removed it, and it is in git history.)
+alone (S-581, F-78 D1). (F-53's one-off migration that wrote them for the first backlog has run;
+S-581 removed it, and it is in git history.)
+
+### Priority (F-78 D1)
+
+`<backlog>/priority.md` is the backlog's one ranked list of **units**. A unit is a feature or
+a **loose story**, a story with no `feature:` and no `update_repo:` (`isLooseStory`,
+`src/priority.js`); stories inside a feature, update stories and tasks are never units. Its YAML
+frontmatter holds `ranked:`, a list of `{ unit, why }` (`unit` an `F-<n>` or `S-<n>`, `why` the
+operator's reason, both required); its body is prose bl never writes. Only a person ranks:
+`bl rank` (below) edits one entry at a time, and nothing automated writes the file (F-78 D3):
+
+```yaml
+---
+ranked:
+  - unit: S-1
+    why: Blocks every deploy.
+  - unit: F-2
+    why: The next thing users see.
+---
+```
+
+`loadBacklog()` reads it with the units (stat-revalidated like them) and exposes:
+
+- `backlog.ranked`: each valid entry resolved, `{ unit, why, position }`, open or closed;
+- `backlog.priority`: the open ranked units in list order, then every other open unit,
+  features and loose stories alike, by `added:` (`byAdded`): undated first (they predate the
+  field), then features before stories on a tie, then by number. A unit needs no entry: a new
+  story lands at the end of the dated tail with no edit to the file. Computed on first read,
+  since it needs each unit's `done`;
+- `backlog.rankOf(idOrUnit)`: the place in `priority`, from 0. A story inside a feature takes
+  its feature's place, so a listing sorts a feature's stories together at its rank; a closed
+  unit, an update story, a task or an unknown id is `Infinity`, after every placed one.
+
+A missing or malformed file is a `priority-file` problem and an empty `ranked:`; one that is not
+YAML is thrown by a strict load. Entries that name no unit are `priority-unit` problems and are
+skipped (see `bl validate`). The order is a preference, never a dependency.
+
+Every reader that orders work reads it (F-78 D2): `bl next` walks `priority` with hard
+dependencies first (see `bl next`), and `bl list`, the bare `bl status`, `bl grep`,
+`bl what-next`'s filtered pick and `bl sync`'s component and root Backlog tables sort stories
+by `byRank` (`src/priority.js`: `rankOf`, then the id's number). `bl list` shows a `Rank`
+column after Status: the unit's entry number in `ranked:`, or `-` for an unranked row. No code
+reads an order out of the root `index.md`.
 
 The graph derives each epic's features and status (above), and `bl sync` writes the theme
 and epic tables from them (see `bl sync`). `bl list`, `bl tree` and `bl what-next`
@@ -989,6 +1033,11 @@ every step instead.
 - The headless result's `refusal`: `{ kind, scope, message, resetsAt }` or
   null (see the usage-limit paragraph under `bl run`). `kind` is a usage
   limit's (`session`, `weekly`, `spend`, `other`) or `capacity`.
+- The child's environment: `spawn({ headless: true })` runs the agent with
+  `BL_HEADLESS=1` (`HEADLESS_ENV`), built by `agentEnv({ headless,
+backlogRoot })`, which also sets `BL_BACKLOG_DIR` where the adapter passes
+  it; an interactive spawn adds no marker. `isHeadless()` reads it (F-78 D3,
+  see `bl rank`).
 - `supportsModel()`: whether `spawn({ model })` selects the model (Claude's
   `--model`, Codex's `-m`; Gemini no). The config loader refuses a
   configuration that names a model for an adapter that does not, and `bl run`
@@ -2360,8 +2409,8 @@ a filter is refused.
 
 `bl status` with no arguments prints the same table for the open stories, in a different order:
 strictly by status, furthest along first as `flow.json` has it (`Flow.openStatusesOf('story')`:
-`in_progress`, then `refined`, then `backlog` in the shipped flow), stack rank then numeric id
-within each. A story is open when its status does not meet `done`; a status `flow.json` does not
+`in_progress`, then `refined`, then `backlog` in the shipped flow), the backlog's priority
+(`byRank`, see **Priority**) then numeric id within each. A story is open when its status does not meet `done`; a status `flow.json` does not
 name meets nothing, so it stays listed, last. A `flow.json` bl cannot read stops the command with
 its `FlowError`, even with no stories. `bl list` and `bl grep` read `flow.json` the same way, and
 stop the same way, but sort differently: worktree stories first, then `Flow.listRankOf('story', …)`
@@ -2507,38 +2556,101 @@ it from `src/report-cmd.js`; nothing in `src/report.js` changes. Its specs are p
 
 ### `bl next`
 
-The next feature by the operator's feature order (F-53 D3, `src/next.js`). `bl what-next`
-picks a story by the dependency graph; `next` is no longer its alias.
+The next unit, a feature or a loose story, by the backlog's priority with hard dependencies
+first (F-78 D2, `src/next.js`). `bl what-next` picks a story inside a feature or filter; `next`
+is not its alias.
 
 ```bash
-bl next                       # the first ranked open feature
+bl next                       # the first open unit nothing holds
 bl next --theme accounts      # what's next for accounts
-bl next --epic E62            # the first ranked feature of an epic
+bl next --epic E62            # the first free feature of an epic
 ```
 
-stdout is the first feature in `feature-order.md`'s `ranked:` that is not done or superseded
-and matches every filter given (`--theme`, `--epic`, read by `src/filter.js`); stderr lists the
-matching ranked features with their position in `ranked:`, title, theme, epic and why. When
-nothing ranked matches, stdout is empty and stderr names the matching features not yet ranked.
-An unknown or malformed theme or epic exits 1, as do `--feature`, `--component` or a
-positional argument, and a `ranked:` that is not a list of `{feature, why}`. With no
-`feature-order.md` it says so and lists the unranked features. The order is a preference
-(F-53 B2): `depends_on` overrides it, and `bl next` never reads the roadmap.
+`bl next` walks `backlog.priority` (see **Priority**: the open ranked units, then the unranked
+ones by `added:`) and prints on stdout the first unit, `F-<n>` or `S-<n>`, that nothing holds.
+A unit is held by what `bl run` would refuse it for, so `bl next` never offers what `bl run`
+refuses: an open story outside the unit that one of its stories depends on (`outsideBlockers`,
+`src/feature.js`: a loose story's own `depends_on`, a feature's stories' dependencies outside
+it), or an unmet `blockers.json` edge at a gate `run` checks (`heldBy(config, id, 'run')`).
 
-The order lives in `<backlog>/feature-order.md`, standard YAML frontmatter read by
-`parseFrontmatter` (`src/feature-order.js`):
+- A unit held by an open story or feature gives way to the blocker's unit (the story's feature,
+  or the story itself when loose), ranked or not, followed until one is free; stderr says
+  `<unit> (ranked <n>) is held: <why>. <blocker> comes first; it unblocks <unit>.` A blocker
+  outside the filter is still offered: it is what the matching unit needs.
+- A unit held only by a task (an operator action), a missing story or an update story is passed
+  over, and stderr names the holder (`Passed over …`). With every unit held so, stdout is empty.
 
-```yaml
----
-ranked:
-  - feature: F-48
-    why: Split from F-42; needs F-42, F-49's components and F-52's one repo per story.
----
+stderr also lists the matching ranked units (entry number in `ranked:`, id, title, theme and
+epic or component, why) and the unranked tail's first five, oldest first. `--theme` and
+`--epic` filter units (`src/filter.js`): a feature by its own theme and epic, a loose story by
+its component's repo's themes and no epic. An unknown or malformed theme or epic exits 1, as do
+`--feature`, `--component` or a positional argument. With no `priority.md`, or a `ranked:` of
+the wrong shape, stderr says so and every unit is unranked; a `priority.md` that is not YAML
+exits 1. The order is a preference: hard dependencies override it, and `bl next` never reads
+the roadmap.
+
+### `bl rank`
+
+How a person changes `priority.md` (F-78 D3, `src/rank-cmd.js`). The operator or an
+interactive session ranks; an agent bl starts headless cannot.
+
+```bash
+bl rank                               # the order: ranked units, then the unranked tail
+bl rank F-12 --top --why "Blocks go-live"   # a new unit needs --why
+bl rank S-40 --before F-12            # move a ranked unit (or --after, --top, --bottom)
+bl rank F-12 --why "Blocks go-live and billing"   # rewrite a ranked unit's reason
+bl rank S-40 --remove                 # back into the dated tail
 ```
 
-Its body is a hand-written intro, then `## Next up` and `## Not yet ranked`, both written by
-`bl sync`, then `## History`, hand-written and appended to by `bl merge F-<n>`. Reorder by
-editing `ranked:` and running `bl sync`.
+- With no arguments, stdout lists the ranked units (entry number, id, title, why) and then
+  every other open unit oldest `added:` first, from `backlog.priority`; a closed unit still
+  listed in `ranked:` is named on stderr with the `--remove` that drops it.
+- `<unit>` must be an open feature or loose story (`checkUnit`): a story inside a feature
+  ("the feature is the unit: rank F-n"), an update story, a task, a closed unit and an unknown
+  id are refused, naming why. `--remove` takes whatever `ranked:` lists, so a closed or deleted
+  unit can be dropped. `--before`/`--after` name a unit already ranked.
+- The edit changes only the entry named. The frontmatter is parsed with `yaml`'s
+  `parseDocument` and the entry's lines are cut and spliced at the node's source range, so every
+  other entry, comment, blank line and the body stay byte for byte; a new entry takes the list's
+  indentation and its `why` is quoted only where YAML needs it. A move that leaves the order as
+  it is changes nothing and commits nothing. The last entry removed leaves `ranked: []`.
+- An edit pulls the backlog first (`commandPullsBacklog`), writes the file under the backlog
+  lock and commits `priority.md` alone (`commitPaths`, which pushes):
+  `chore: <unit> ranked first|last|before <u>|after <u> | reason rewritten | unranked in priority.md`.
+- Uncommitted edits to `priority.md` are never swept into a rank commit. An edit that would
+  change the file while it differs from HEAD is refused, nothing written. A no-op commits the
+  pending file only when it is exactly this edit applied to HEAD's version and the index holds
+  that or HEAD's version (`pendingIsOurs`: an earlier run's write whose commit failed); any other
+  uncommitted edit, staged or not, is left uncommitted.
+
+**`BL_HEADLESS`.** Every agent bl starts headless has `BL_HEADLESS=1` in its environment: each
+adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it
+when `headless` is set (`runHeadlessSession` passes `headless: true`); an interactive spawn adds
+nothing. With it set, a `bl rank` edit exits 1 before it pulls or writes anything, and
+`commitPaths`, the one commit path every bl command uses, refuses any commit whose paths, taken
+as one Git pathspec set (an exclusion such as `:!priority.md` counts), select `priority.md`
+(`headlessPriorityRefusal`), so a hand edit cannot be
+committed through `bl sync --commit --path` either. Printing the order is allowed. The marker is
+a guard against an agent changing a person's decision by mistake, not a security boundary.
+The test helper `runBl` drops an inherited `BL_HEADLESS` (`personEnv`), so the suite runs the
+same inside a headless session; a test that wants the marker passes it.
+
+**Nothing automated writes `priority.md`** (F-78 D3). `bl sync` and `bl merge` never touch it: a
+merged feature leaves the order because it is closed, not by an edit, and its merge date is in
+the backlog's git history (its `bl merge` commit) and `bl history --json`. `bl side` does not
+count it among the files it owns. The body may keep a hand-written `## History`.
+
+**The migration** (F-78 D5). Before F-78 the feature order was the `ranked:` of a file of its own
+at the backlog root (`OLD_FILE`, `src/migrate-priority.js`, the one place that still names it).
+`node scripts/migrate-priority.js [--dry-run] [--backlog <dir>]` (logic in
+`src/migrate-priority.js`, through `src/migration-txn.js`) turns it into `priority.md` in one
+backlog commit: the open ranked features, in order, as `{ unit, why }` (a closed, unknown or
+repeated one is dropped and named); a body of the template's intro, the old intro's own
+paragraphs less the ones about the old mechanism, and the old `## History` with a line for the
+migration; the old generated tables dropped and the old file removed. `--dry-run` prints the
+entries kept and dropped and writes nothing; with no old file a run does nothing, and one beside
+an existing `priority.md` is refused. It commits `priority.md`, so it runs outside any headless
+session. The operator runs it from the merged bl right after `bl merge F-78`.
 
 ### `bl edit` / `bl view`
 
@@ -2658,10 +2770,11 @@ What the sync writes (F-49 D7, F-51 D3), every link pointing into `stories/`, `c
 - the top-level `index.md`: `## Themes` (theme, title, epic count, open features),
   `## Components` (id, title, repo, home, open and
   done story counts; a component has no points), `## Features` (active ones) and the
-  hand-ordered `## Backlog` of open stories (id, type, component, title, points). A
+  `## Backlog` of open stories (id, type, component, title, points). A
   `## Projects` table an older sync wrote is removed, and no project page is written
-  (F-51 D3). The Backlog order is the global priority
-  (`story.js` `readBacklogOrder`); stories not in it follow in id order.
+  (F-51 D3). The Backlog is in the backlog's priority (`byRank` over `backlog.rankOf`,
+  F-78 D2: a story at its feature's place, a loose story at its own, then by number; a story
+  with no place last). It is written, never read back: no command takes an order from it.
 - each `epics/E<nn>-*/index.md`: `## Features` (id, title, status, stories done/total,
   points done/total) after `## Outcome`, from the graph's derived features; its frontmatter
   is left as it is (F-77 D3).
@@ -2673,12 +2786,8 @@ What the sync writes (F-49 D7, F-51 D3), every link pointing into `stories/`, `c
 - each feature: its `## Stories` table (with a `Component` column), its stories in the
   graph's order; it drops a pre-F-49 `epics:` and writes no `points:` or `components:`
   (F-77 D3).
-- `feature-order.md` (F-53 D1, `syncFeatureOrder`): `## Next up` (#, Feature, Title, Theme,
-  Epic, Why: each open ranked feature, numbered by its place in `ranked:`, title, theme and
-  epic from the feature's frontmatter) and `## Not yet ranked` (every feature that is not
-  done, not superseded and not ranked, by id, with title and theme). The frontmatter, the
-  intro and `## History` are written back byte for byte. With no `feature-order.md` nothing is
-  written.
+
+`priority.md` is not among them: a sync never writes it (F-78 D3).
 
 A story whose `component:` has no directory is listed with the bare id, not a link. Nothing
 moves: status is frontmatter, so a sync never renames a directory.
@@ -2688,8 +2797,8 @@ change, so a sync that dies or runs out of disk leaves each file as it was or as
 never truncated (F-67). A feature's tables and roll-ups (`syncFeature`) and a story's Tasks
 table (`syncStoryTasks`) are written through `updateSpecFile`: they take the spec lock inside
 the backlog lock and start from the spec as it is then, not as it was collected, so a token
-step entry a session wrote meanwhile stays. The epic, theme, component and top-level indexes,
-`feature-order.md` and `.bl/run/pull-regenerate.json` go through `atomicWriteFile` alone.
+step entry a session wrote meanwhile stays. The epic, theme, component and top-level indexes
+and `.bl/run/pull-regenerate.json` go through `atomicWriteFile` alone.
 
 ### `bl validate`
 
@@ -2725,8 +2834,8 @@ missing-required-key, unknown-fm-key, bad-status, bad-points,
 id-dir-mismatch, bad-id-format, duplicate-id, cycle,
 dangling-dep, plugin-binary, bad-update-request,
 component-unknown, home-component, component-has-status, component-paths,
-repo-key, frontmatter-yaml, frontmatter-list, feature-order-file,
-feature-order-feature, roadmap-file, roadmap-section, theme-brief, found-by,
+repo-key, frontmatter-yaml, frontmatter-list, priority-file,
+priority-unit, roadmap-file, roadmap-section, theme-brief, found-by,
 flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
 task-unit, task-field, deferred-unsized, operator-tasks-retired,
@@ -2794,12 +2903,15 @@ on its head line as `found by: <id>`.
 `roadmap-file` and `roadmap-section` check `roadmap.md`'s shape and `theme-brief` a theme's
 `brief:` (see **The roadmap** and **Themes and Epics**).
 
-`feature-order-file` and `feature-order-feature` (F-53 D1, `feature-order.js`
-`findFeatureOrderFindings`), both errors at `feature-order.md`: the first when the file is
-missing, its frontmatter is not YAML, or `ranked:` is not a list of mappings each with a
-non-empty `feature` and `why`; the second when a ranked id names no feature, a done or
-superseded one, or one already ranked. A backlog with no `feature-order.md` reports
-`feature-order-file`; `bl merge`, `bl sync` and `bl next` still work.
+`priority-file` and `priority-unit` (F-78 D1, `findPriorityFindings`, from the graph's
+problems), both errors at `priority.md`: the first when the file is missing, its frontmatter is
+not YAML, or `ranked:` is not a list of mappings each with a non-empty `unit` and `why`; the
+second when an entry names no feature or story, a story inside a feature, an update story or a
+task, or a unit already ranked. A closed unit left in `ranked:` is no finding: the order skips
+it, and the operator removes it when they next rank. Only a `priority.md` that is not YAML stops
+other commands (a strict `loadBacklog` throws it); a missing or malformed one is an empty
+`ranked:`, so every open unit is in the dated tail (see **Priority**). They replace the two
+findings of the old feature order file (F-53 D1), which bl no longer reads.
 
 `frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first,
 from the problems of the tolerant graph `bl validate` loads once (`loadBacklog(config,
@@ -3081,13 +3193,10 @@ The rerun integrates the moved`main` again.
 After the merge the branch's open PR, if any, is closed through
 `change.find` and `change.close`.
 
-`bl merge F-<n>` also updates the feature order (F-53 D1): in the lock hold that marks the
-feature done, `recordFeatureOrderMerge` drops its entries from `feature-order.md`'s `ranked:`
-(through `serializeFrontmatter`) and appends `- <date>: F-<n> done (<title>).` to
-`## History`; the sync after it rewrites the tables, and the merge's backlog commit takes the
-file. A missing or malformed `feature-order.md` is a warning and the merge completes, since the
-repos are merged by then. In the same hold, `recordThemeState` (`theme.js`, F-53 D4) appends
-the same line to the `## State` of the feature's theme, creating the section at the end when
+`bl merge F-<n>` leaves `priority.md` as it is (F-78 D3): the merged feature drops out of the
+order because it is closed, and an entry still naming it is skipped until the operator next
+ranks. In the lock hold that marks the feature done, `recordThemeState` (`theme.js`, F-53 D4)
+appends `- <date>: F-<n> done (<title>).` to the `## State` of the feature's theme, creating the section at the end when
 absent and writing the frontmatter back byte for byte; the commit takes the theme file too. A
 feature whose theme is missing or unreadable only warns.
 
