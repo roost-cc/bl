@@ -199,10 +199,11 @@ export function insertEntry(content, text, where) {
   const s = scan(content);
   if (s.entries.length === 0) {
     if (!s.pair) return splice(content, s, s.block.length, s.block.length, `ranked:\n${text}`);
-    // Drop an empty flow list's `[]` and nothing else: a comment after it
+    // Drop the empty value (`[]`, `''`) and nothing else: a comment after it
     // stays on the `ranked:` line, and the entry goes on the next one.
     const colon = afterColon(s);
-    const end = s.seq ? s.seq.range[1] : colon;
+    const v = s.pair.value;
+    const end = v?.range && v.range[1] > v.range[0] ? v.range[1] : colon;
     const eol = s.lineEnd(end);
     return splice(content, s, colon, eol, `${s.block.slice(end, eol)}${text}`);
   }

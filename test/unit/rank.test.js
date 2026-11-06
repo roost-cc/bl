@@ -146,6 +146,13 @@ test('rank_insert_into_empty_list_preserves_inline_comment_and_body', () => {
       `ranked: # operator note\n${entry}`,
     ],
     [
+      'insert, empty string + comment',
+      "ranked: '' # operator note\n",
+      { where: 'top', why: 'One' },
+      `ranked: # operator note\n${entry}`,
+    ],
+    ['insert, empty string', 'ranked: ""\n', { where: 'top', why: 'One' }, `ranked:\n${entry}`],
+    [
       'insert, bare + comment line after',
       'ranked:\n# later note\nother: x\n',
       { where: 'bottom', why: 'One' },
