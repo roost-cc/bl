@@ -171,8 +171,9 @@ export function commitPaths(root, paths, message) {
  * or null: when the marker is set and a path selects `priority.md`, by name,
  * by a directory that holds it (`.` included), or as a Git pathspec
  * (`:(top)priority.md`, `*.md`, `priority*`): Git itself is asked which files
- * the whole set `paths` selects (so `['*.md', ':!priority.md']` is allowed), in the index, the work tree (untracked, not ignored) and
- * staged deletions, the files `commitLocked`'s add and commit would take.
+ * the whole set `paths` selects (so `['*.md', ':!priority.md']` is allowed),
+ * in the index, the work tree (untracked, not ignored) and staged deletions,
+ * the files `commitLocked`'s add and commit would take.
  * The priority is a person's preference; an agent bl started headless never
  * commits it, whatever command it goes through.
  * @param {string} root
