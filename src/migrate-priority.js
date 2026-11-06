@@ -99,7 +99,8 @@ export function planText(oldText, features, date) {
     }
   }
   const history = (extractSection(body, 'History') ?? '').trim();
-  const line = `- ${date}: ${OLD_FILE} became ${PRIORITY_FILE} (F-78): one list of features and loose stories, ranked with \`bl rank\`; the open ranked features kept their order.`;
+  // The line does not name the old file: once it is gone, nothing hand-written does (F-78).
+  const line = `- ${date}: the feature order became ${PRIORITY_FILE} (F-78): one list of features and loose stories, ranked with \`bl rank\`; the open ranked features kept their order.`;
   const parts = [templateBody(), ...keptIntro(body), `## History\n\n${history ? `${history}\n` : ''}${line}`];
   const text = `${serializeFrontmatter({ ...fm, ranked: kept })}\n${parts.join('\n\n')}\n`;
   // The written file must read back as the order planned.

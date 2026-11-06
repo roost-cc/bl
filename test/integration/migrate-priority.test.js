@@ -156,11 +156,13 @@ test('a run writes priority.md and removes the old file in one commit, and a sec
   assert.match(body, /\n_Last agreed: 2026-10-06\._\n\nThe `bl` work first \(operator, 2026-10-23\)\.\n\n## History\n/);
   assert.ok(
     body.endsWith(
-      `## History\n\n- 2026-09-27: F-21 → F-22 done.\n- 2026-10-05: F-11 done.\n- ${DATE}: ${OLD} became priority.md (F-78): one list of features and loose stories, ranked with \`bl rank\`; the open ranked features kept their order.\n`,
+      `## History\n\n- 2026-09-27: F-21 → F-22 done.\n- 2026-10-05: F-11 done.\n- ${DATE}: the feature order became priority.md (F-78): one list of features and loose stories, ranked with \`bl rank\`; the open ranked features kept their order.\n`,
     ),
     body,
   );
   assert.doesNotMatch(body, /Next up|Not yet ranked|`bl sync`|# Feature Order/);
+  // Nothing hand-written names the old file once it is gone (T-48's check).
+  assert.ok(!text.includes(OLD), text);
 
   // After: bl reads it, with no finding, and follows it.
   assert.deepEqual(
