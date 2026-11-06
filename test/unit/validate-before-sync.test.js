@@ -27,14 +27,11 @@ test("the partial renders into {{validateBeforeSync}} with the session's vars", 
   assert.match(text, /bl sync --commit -m "<type>: <subject> \(S-7\)" --story S-7/);
   // Surface, do not fix, findings on stories this session did not touch.
   assert.match(text, /Surface, do not fix/);
-  // One-sided dependency edges are repaired with `bl fix --story`, scoped to
-  // the stories this session touched, not by hand and never unscoped (S-858).
-  assert.match(text, /Run `bl fix --story <id>` first/);
-  assert.match(text, /Never run `bl fix` without `--story`/);
-  assert.match(text, /`bl new` never adds the reverse edge for you/);
-  // The reverse edge lands on another story's file, so that story is named
-  // in the locked commit too.
-  assert.match(text, /one `--story` for every other story the `bl fix` report listed/);
+  // An edge is stated once, on the dependent story (F-77 D3): no reverse
+  // edge to add, so no `bl fix` step and no extra `--story` for one.
+  assert.match(text, /A dependency is stated once, on the dependent\s+story's `depends_on`/);
+  assert.match(text, /there is no reverse edge to add/);
+  assert.doesNotMatch(text, /bl fix|asymmetric-dep|both sides/);
   // Why/how goes in the commit message, never in new frontmatter keys.
   assert.match(text, /commit message/);
   assert.match(text, /Never run `git add` or `git commit` in the backlog repo \(`\/bl`\)/);
@@ -111,7 +108,7 @@ test('cleanup-triage names another component only for an item that belongs elsew
 test('cleanup-triage orders dependent items with --depends-on and groups overlapping ones as a feature (S-1101)', () => {
   const text = loadPrompt('cleanup-triage', VARS);
   assert.match(text, /--depends-on/);
-  assert.match(text, /bl fix --story/);
+  assert.doesNotMatch(text, /bl fix/);
   assert.match(text, /bl new --feature/);
   assert.match(text, /--theme/);
   assert.match(text, /--path/);
@@ -148,7 +145,7 @@ test('cleanup-triage preserves existing-story dependencies for singleton and mul
       name,
     );
     assert.match(order, /Items with no such relation get no\s+`--depends-on`/, name);
-    assert.match(order, /`bl fix --story` adds the\s+reverse `required_for` edge/, name);
+    assert.match(order, /The edge is stated once, on the later item/, name);
     assert.match(text, /one story alone never becomes a feature/, name);
   }
 });

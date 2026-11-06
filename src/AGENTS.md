@@ -303,7 +303,9 @@ it. `{{var}}` placeholders live only in template bodies.
 
 The list keys (`LIST_KEYS`: `stories`, `depends_on`, `required_for`, `components`,
 `features`, `epics`, `paths`, `repos`, plus `plugins` and `plugins-<stage>`) are
-sequences, read as the parsed array (`parseIdList`, `parseNameList`, `parsePathList`,
+sequences (`stories`, `required_for`, `components` and an epic's `features` are derived
+keys since F-77 D3, kept here so a stored copy that is not a list is still
+`frontmatter-list` until the migration removes it), read as the parsed array (`parseIdList`, `parseNameList`, `parsePathList`,
 `parsePluginList`). A list key with no value is an empty list. Any other scalar (even
 `S-1` or `a, b`), a mapping, or a member that is not a string (not a mapping, for a change
 document's `repos:`) is not read: the reader throws `FrontmatterListError` (`listMembers`)
@@ -369,7 +371,7 @@ backlog lock and need `atomicWriteFile` only.
   other writer lets the error propagate, so a write that could not happen fails the command
   instead of being lost.
 - **Lock order.** The backlog lock (`lock.js`) is the outer lock, a spec lock the inner one:
-  `bl sync`, `bl merge`, `bl fix` and `persistLandedCommits` take the spec lock per file inside the
+  `bl sync`, `bl merge`, `bl new --required-for` and `persistLandedCommits` take the spec lock per file inside the
   backlog lock. Nothing takes the backlog lock while holding a spec lock, and nothing holds two
   spec locks at once. A caller that adds a spec lock says so in a comment at the call.
 - **Who is on it.** The token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
@@ -381,9 +383,9 @@ backlog lock and need `atomicWriteFile` only.
   time inside the backlog lock) and `bl done`'s one write (status, commit, completed and the
   transcript totals collected inside the hold; a collection failure is non-fatal, a write
   failure fails `bl done`). `persistLandedCommits` keeps its `read`/`write` seams and runs them
-  inside `withSpecLock`, and `bl fix` (`fix.js`) its own read and atomic write of each story it
-  fixes, inside the backlog lock; both use `readSpecText` and `specText` (`spec-file.js`) for the
-  same CRLF and fence handling. A new feature's file is written
+  inside `withSpecLock`, using `readSpecText` and `specText` (`spec-file.js`) for the same CRLF
+  and fence handling. `bl new`'s `--required-for` and a spec's `required_for` append to the
+  other story's `depends_on:` through `updateSpecFile`, inside the backlog lock `bl new` holds. A new feature's file is written
   with `atomicWriteFile`. The run loop's writers (`writeEscalation`, `recordStoryRunFields`) and
   `bl updates`' (`recordMerge`, `recordOutcome`, `dropStory`, the request write in
   `requestUpdate`, and `syncUpdates`' refresh and close, which apply their change to the spec
@@ -806,9 +808,10 @@ statement of membership (F-77 D3): a feature's stories are the stories whose
 `feature:` names it, in dependency order (`orderStoriesByDeps`, ties by
 number), and they are what `bl run` runs, `bl sync` counts and `bl merge`
 marks done. The order carries no meaning: the feature is the unit that gets
-prioritized. A feature stores no `stories:`, `points:` or `components:`, and
-an epic no `features:` or `status:`; the graph (`loadBacklog`, `DERIVED_KEYS`
-in `backlog-graph.js`) derives all five, and `bl validate` reports one found
+prioritized. A feature stores no `stories:`, `points:` or `components:`, an
+epic no `features:` or `status:`, and a story no `required_for:` (the stories
+whose `depends_on:` names it); the graph (`loadBacklog`, `DERIVED_KEYS` in
+`backlog-graph.js`) derives all six, and `bl validate` reports one found
 in a file as `derived-key` (error), naming what it is derived from.
 `scripts/migrate-derived-keys.js` removes them from every file in one commit
 (`--dry-run` prints the per-kind counts). `bl validate` reports a story naming
@@ -1819,8 +1822,8 @@ bl new --from plan.json --dry-run --json   # machine-readable plan
 
 Schema: see `bl/templates/spec.schema.md`. Two sample specs to crib from:
 `bl/templates/spec.example.json` (new component) and
-`bl/templates/spec.example.existing-component.json` (existing component, with
-both `required_for` and a mixed `depends_on` list, and a per-story component).
+`bl/templates/spec.example.existing-component.json` (existing component, an
+edge stated as `required_for`, and a per-story component).
 
 Highlights:
 
@@ -1831,6 +1834,12 @@ Highlights:
 - `stories[].id` is a **placeholder** name (e.g. `bootstrap`), not a real ID.
 - Cross-refs in `depends_on` / `required_for` use `@<placeholder>` for
   siblings in the spec, or bare `S-<n>` for already-existing stories.
+- An edge is stated once, on the dependent story (F-77 D3). `required_for` is
+  input only: each story it names gets the new id appended to its
+  `depends_on:` (a sibling's as it is rendered, an existing story's in its
+  file, committed with the batch); no `required_for:` is written. An unknown
+  bare id warns and is skipped. `bl new --required-for` does the same for one
+  story.
 - `body_file` paths resolve against the spec file's directory. Body files
   must not contain frontmatter.
 - Validation errors exit **2** with messages keyed by spec path
@@ -2714,7 +2723,7 @@ Exit codes:
 Findings codes:
 missing-required-key, unknown-fm-key, bad-status, bad-points,
 id-dir-mismatch, bad-id-format, duplicate-id, cycle,
-dangling-dep, asymmetric-dep, plugin-binary, bad-update-request,
+dangling-dep, plugin-binary, bad-update-request,
 component-unknown, home-component, component-has-status, component-paths,
 repo-key, frontmatter-yaml, frontmatter-list, feature-order-file,
 feature-order-feature, roadmap-file, roadmap-section, theme-brief, found-by,
@@ -2724,12 +2733,16 @@ task-unit, task-field, deferred-unsized, operator-tasks-retired,
 bad-tokens-by-step, agent-config, derived-key, dangling-feature,
 feature-no-stories
 
-`derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a feature's
-`stories:`, `points:` or `components:`, or an epic's `features:` or `status:` (`DERIVED_KEYS`
-in `backlog-graph.js`, the one table of them). It is never also `unknown-fm-key`, and an
-epic's stored `status:` is not checked against a set. `scripts/migrate-derived-keys.js`
-removes every one; `feature-story-missing`, `feature-story-mismatch` and
-`feature-story-unlisted`, which compared the stored list with the stories, are gone.
+`derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's
+`required_for:` (even empty), a feature's `stories:`, `points:` or `components:`, or an epic's
+`features:` or `status:` (`DERIVED_KEYS` in `backlog-graph.js`, the one table of them). It is
+never also `unknown-fm-key` (here or in `bl sync`'s warnings), a stored `required_for:` is
+never a link (no `dangling-dep` from it), and an epic's stored `status:` is not checked against
+a set. `scripts/migrate-derived-keys.js` removes every one; `feature-story-missing`,
+`feature-story-mismatch` and `feature-story-unlisted`, which compared the stored list with the
+stories, are gone, and so is `asymmetric-dep`, which compared a `depends_on:` with the other
+story's `required_for:`: an edge is stated once, on the dependent story, and the graph's
+`story.requiredFor` is its inverse.
 
 `agent-config` (F-64 D2, `findAgentConfigFindings`, error at `backlog.json`) is the error
 `loadConfig` would throw for `agent` or `review_agent`, at the top level or under a repo's
@@ -2853,101 +2866,43 @@ machines with `bl validate --skip plugin-binary`.
 
 ### `bl fix`
 
-Apply auto-fixable remediations for findings that `bl validate` reports.
-`bl new` (single and `--from`) writes `depends_on` / `required_for` exactly as
-given and never adds the reverse edge. After creating linked stories, run
-`bl fix --story <id>` rather than hand-editing frontmatter. The shared
-`_validate-before-sync.md` fragment (every story-editing prompt) and the
-feature-refine prompt tell agents to do this.
-The mutation rule for each supported code is deterministic and append-only;
-re-running on an already-clean backlog applies zero fixes.
+Apply auto-fixable remediations for findings that `bl validate` reports. No
+code is supported today: the one there was, `asymmetric-dep`, went with F-77
+D3 (an edge is stated once, on the dependent story's `depends_on`; the
+inverse is derived), so every run prints the empty report and writes nothing.
+The command and its contract stay (feature F-77 Q1, which recommends removing
+it in a later story); `SUPPORTED_CODES` in `src/fix.js` is empty, and
+`bl fix --code <any>` exits 2.
 
 ```bash
-# Apply every supported code (currently just asymmetric-dep) to the
-# whole backlog. Agents: use --story instead.
-bl fix
-
-# Only findings anchored at S-858 (its own depends_on / required_for);
-# the reverse edge is still written on the other story's index.md.
-# Repeatable; the ids are a union.
-bl fix --story S-858 --story S-859
-
-# Preview the planned edits without writing.
-bl fix --dry-run --story S-858
-
-# Restrict to one code (repeatable; no-op when only one is supported).
-bl fix --code asymmetric-dep
-
-# Scope to one theme's stories (F-51 D1). Combined with --story it intersects.
-bl fix --theme backlog
-
-# Pipe machine-readable output.
-bl fix --json | jq '.summary'
-
-# Two-step flow when index drift matters: fix the frontmatter, then
-# regenerate the auto-built index tables.
-bl fix --story S-858 && bl sync
+bl fix                      # scanning… on stderr; nothing on stdout
+bl fix --story S-858        # the same, after checking S-858 exists
+bl fix --json               # {"fixes":[],"summary":{"total":0,"byCode":{}}}
 ```
 
 `bl fix` parses its arguments strictly (`parseFixArgs` in `src/fix.js`, not
 the shared `parseArgs`): an option it does not accept, or a stray positional,
-is an error, not a silent unscoped run. The human report lists each written
-file by its story path; with `--story` that list tells an agent which other
-story directories to name in `bl sync --commit --story …`, because the write
-lands on the target story, not the one the agent edited.
-
-Supported codes:
-asymmetric-dep — appends the missing inverse edge to the target story's
-`required_for` (or `depends_on`) frontmatter list: the parsed list gains the id (a missing
-key goes after its partner) and the block is written back by `serializeFrontmatter`.
+is an error, not a silent unscoped run.
 
 Output:
 stdout — the fix report (or one JSON object with `--json`); empty when
-no fixes were applied.
+no fixes were applied, which today is always.
 stderr — progress lines, e.g. `scanning N stories…`. Empty in `--json`
 mode when stdout is not a TTY.
 
 Exit codes:
-0 Completed cleanly (zero or more fixes applied; dry-run also exits 0).
-1 At least one finding could not be fixed (e.g., write failure,
-frontmatter that is not YAML, a list key that is not a list), or the backlog lock was not
-free within 30 s (`Timed out waiting for lock`; see below).
+0 Completed cleanly.
+1 The backlog lock was not free within 30 s (`Timed out waiting for lock`).
 2 Invalid arguments: an option `bl fix` does not accept
 (`bl fix: unknown option "--bogus"`), a stray positional
 (`bl fix: unexpected argument "S-1"`), or an unknown `--code`, `--theme`
-or `--story` (`bl fix: unknown --story "S-999"`). Nothing is written: an
-unknown option or positional is refused before the backlog is read, and an
-unknown `--theme` or `--story` right after the read-only scan.
+or `--story` (`bl fix: unknown --story "S-999"`). An unknown option or
+positional is refused before the backlog is read, and an unknown `--theme`
+or `--story` right after the read-only scan.
 
-`bl fix` (without `--dry-run`) holds the backlog lock from its story scan
-through its last write, the same lock `bl new`, `bl sync` and `bl merge`
-hold. An asymmetric-dep fix writes the _other_ story's `index.md`, so two
-agents whose stories both depend on a third target the same file from
-separate processes; the lock serialises them so both edges land, and a
-`bl sync --commit` cannot run while a fix rewrites a story file. Each file is
-written with `atomicWriteFile` (`src/atomic-write.js`, shared with
-`allowed-tools.json` and `bl merge`): it is staged at a per-process
-`<backlogRoot>/.bl/tmp/<name>.<pid>.<random>.tmp` and renamed into place.
-`.bl/` is in every backlog's `.gitignore`, so a crash between the two
-leaves its staging file only in ignored space, never in a story directory
-that `bl sync --commit --story` commits; old files there are never swept,
-since a sweep could delete a live caller's staging file. The rename is
-atomic because `.bl/` is on the backlog's filesystem; if it is not (a
-symlink elsewhere) the rename fails with an EXDEV error naming the staging
-directory and the target, with no fallback to staging beside the target.
-The staging file is created exclusively (`wx`): a name that already exists
-belongs to another caller in this process, so it is dropped and a fresh
-name drawn, up to `STAGING_ATTEMPTS` (10); after that the EEXIST
-propagates and the other caller's file is left alone. A failed write or
-rename removes only the staging file this caller created, and a removal
-that fails for any reason other than the file already being gone is
-reported on stderr with the staging path (`warning: could not remove
-staging file …`). A fix that waits on the lock exits 1
-after 30 s with the usual `Timed out waiting for lock` message. `--dry-run`
-reads without the lock.
-
-`bl fix` does **not** run `bl sync` automatically. When index drift
-matters, run `bl fix --story <id> && bl sync` as a two-step flow.
+`bl fix` (without `--dry-run`) still holds the backlog lock for its scan, so
+a code added later plans and writes from one view; `--dry-run` reads without
+it.
 
 ### `bl merge`
 
@@ -4202,8 +4157,8 @@ missing, JSON parse failure, hash mismatch, version bump. A regen whose
 bytes equal the current file is skipped; one that writes prints its
 trigger to stderr (`allowed-tools.json regenerated: config hash
 <old8>→<new8>`). Writes are atomic (temp file + rename) through
-`atomicWriteFile` in `src/atomic-write.js`, the helper `bl fix` and
-`bl merge` use too. The temp file is staged in the backlog's ignored
+`atomicWriteFile` in `src/atomic-write.js`, the helper `bl merge` and the
+spec writers use too. The temp file is staged in the backlog's ignored
 `.bl/tmp/` (`.bl/tmp/allowed-tools.json.<pid>.<random>.tmp`), so a crash
 between write and rename leaves nothing in `git status`. Its name is
 per-process because concurrent `bl` processes regenerate the same file

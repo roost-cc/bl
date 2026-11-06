@@ -84,10 +84,9 @@ in order without asking anyone.
      reaches it. Paths there are read, not changed, so `bl run` does not hold a
      target back for them.
    - Order matters: declare `depends_on` between stories so `bl implement`
-     runs them in sequence. Declare each edge on both sides: `depends_on` on
-     the later story and `required_for` on the earlier one. `bl new --from`
-     does not add the reverse edge, and `bl validate` reports a one-sided edge
-     as `asymmetric-dep`.
+     runs them in sequence. Declare each edge once, as `depends_on` on the
+     later story: the inverse is derived, and a stored `required_for:` is a
+     `derived-key` error.
    - Dependencies outside the feature must already be done, or be pulled into
      the feature. `bl approve` warns and `bl implement` refuses
      otherwise.
@@ -125,21 +124,15 @@ in order without asking anyone.
    `status: refined` in the feature frontmatter.
 
 8. Run `bl validate` and resolve every finding it reports before committing.
-   Run `bl fix --story <id>` first for the findings it can repair, with one
-   `--story` per story you created or edited (`bl fix --dry-run --story <id>`
-   previews). Today that is `asymmetric-dep`: `bl fix` adds each missing
-   `depends_on` / `required_for` reverse edge on the other story and lists
-   the files it wrote; commit those too in step 10. Never run `bl fix`
-   without `--story`: unscoped, it rewrites stories you did not touch. Do not
-   edit those lists by hand with `sed` or Edit. Then run `bl sync` so the
-   feature's Stories table and the indexes reflect the cut.
+   Then run `bl sync` so the feature's Stories table and the indexes reflect
+   the cut.
 
 9. Format changed markdown with `bl format --no-story <paths>`. Feature files
    are outside story scope, so the `--story` form does not apply to them.
 
 10. Commit to the backlog repo's main branch, by path — nothing after this
-    session commits for you. Name every story you created or edited, and every
-    story `bl fix` wrote, with its own `--story`:
+    session commits for you. Name every story you created or edited with its
+    own `--story`:
 
     ```
     bl sync --commit -m "chore: refine {{featureId}}" --path {{featureRelPath}} --story S-<id> [--story S-<id> …]

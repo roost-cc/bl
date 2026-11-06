@@ -44,10 +44,9 @@ To Do section :
      `bl new` (comma-separated for several). When an item depends on an
      existing backlog story, pass that story's ID the same way, at any item
      count, including one. Items with no such relation get no
-     `--depends-on`. Never pass `--required-for` to the earlier item (its
-     later item does not exist yet) and never edit
-     `depends_on` / `required_for` by hand: `bl fix --story` adds the
-     reverse `required_for` edge in the validate step below.
+     `--depends-on`. The edge is stated once, on the later item: never
+     pass `--required-for` to the earlier item (its later item does not
+     exist yet), and never edit `depends_on` by hand.
 
 3. Group overlapping stories into a feature. With only one new story, skip
    this step: one story alone never becomes a feature.
@@ -84,8 +83,7 @@ To Do section :
    already made its own "mark done" commit before spawning you). Use the
    message `chore: triage {{storyId}} To Do into new stories`. Pass
    `--story {{storyId}}` for the `## To Do` removal, plus one `--story` for
-   each new story you created and for each story the `bl fix` report
-   listed. When step 3 created a feature, also pass
+   each new story you created. When step 3 created a feature, also pass
    `--path <feature directory>`: the path `bl new --feature` printed
    without its trailing `/index.md` (for example `features/F68-<slug>`),
    since a feature has no `--story`.
