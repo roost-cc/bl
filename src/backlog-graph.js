@@ -17,7 +17,9 @@
  * document a tolerant load parsed at its current stat key. Links are objects, built in a second
  * pass, and every inverse is computed, never read from a stored key: a
  * feature's `stories`, `points` and `components`, an epic's `features` and
- * `status`, and a story's `requiredFor` (F-77 D3).
+ * `status`, and a story's `requiredFor` (F-77 D3). The root `priority.md` is
+ * read with the units, and its order is the graph's `priority` and
+ * `rankOf` (F-78 D1, `src/priority.js`).
  *
  * Problems never throw from construction: a dangling reference, a duplicate
  * id and a frontmatter that is not YAML (or a list key that is not a list) go
@@ -70,6 +72,7 @@ import { parseIdList } from './story.js';
 import { THEME_ID_RE, normalizeEpicId } from './theme.js';
 import { TASKS_DIR, TASK_FILE_RE, normalizeTaskId } from './task.js';
 import { listChanges, parseChange, readChange, unitChange } from './change-doc.js';
+import { PRIORITY_FILE, PriorityError, parseRanked, priorityOrder, rankerOf, resolveRanked } from './priority.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -182,10 +185,12 @@ import { listChanges, parseChange, readChange, unitChange } from './change-doc.j
  * finding code that reports it: `frontmatter-yaml`, `frontmatter-list`,
  * `duplicate-id` (a task's: `task-field`), `dangling-dep`,
  * `dangling-feature`, `component-unknown`, `feature-theme`, `feature-epic`,
- * `epic-theme`, `task-unit`.
+ * `epic-theme`, `task-unit`, and `priority.md`'s `priority-file` and
+ * `priority-unit` (F-78 D1).
  * @typedef {object} Problem
  * @property {string} code
- * @property {UnitKind | null} kind  the kind of the unit at fault (null for the root `index.md`), so a
+ * @property {UnitKind | null} kind  the kind of the unit at fault (null for the root `index.md` and
+ *           `priority.md`), so a
  *           reader need not resolve `unit` or `ref`, which a malformed id does not
  * @property {string | null} unit  the unit's id (from its directory name when its frontmatter is unread)
  * @property {string} file         backlog-relative path of the file at fault
@@ -217,6 +222,17 @@ import { listChanges, parseChange, readChange, unitChange } from './change-doc.j
  *           listed, readable or not, in `bl validate`'s order: each unit's file, then (a
  *           tolerant load) its change documents, after the root `index.md`; `unitIndex` is
  *           the file of the unit it belongs to (null for the root `index.md`)
+ * @property {ReadonlyArray<{ unit: FeatureUnit | StoryUnit, why: string, position: number }>} ranked
+ *           `priority.md`'s `ranked:` resolved (F-78 D1): each feature or loose story it
+ *           names once, open or closed, `position` its entry's place from 1; empty when the
+ *           file is missing or malformed (a `priority-file` problem)
+ * @property {ReadonlyArray<FeatureUnit | StoryUnit>} priority  the open units in priority
+ *           order (`priorityOrder`): the open ranked ones in list order, then every other open
+ *           feature and loose story by `added:`; computed on first read, and with no flow it
+ *           throws the flow's error
+ * @property {(id: string | Unit) => number} rankOf  a unit's place in `priority`, from 0; a
+ *           story inside a feature takes its feature's place; anything with no place (closed,
+ *           an update story, a task, unknown) is `Infinity`
  * @property {readonly Problem[]} problems
  */
 
@@ -394,9 +410,10 @@ export function unitFiles(config, kind) {
 
 /**
  * List the backlog: every unit file with its stat key (a tolerant listing:
- * the root `index.md` and every change document too), and the highest number
- * per kind among the directory and file names.
- * @returns {{ slots: Slot[], nums: Map<string, bigint>, sig: string }}
+ * the root `index.md` and every change document too), `priority.md`'s
+ * (null when it is missing), and the highest number per kind among the
+ * directory and file names.
+ * @returns {{ slots: Slot[], priority: { path: string, key: string } | null, nums: Map<string, bigint>, sig: string }}
  * @typedef {{ kind: UnitKind | "root", entry: string, dir: string, path: string,
  *   key: string, changes: { path: string, key: string }[] }} Slot
  */
@@ -419,13 +436,17 @@ function listBacklog(root, tolerant) {
       slots.push({ kind: k.kind, ...u, changes });
     }
   }
+  const priorityPath = join(root, PRIORITY_FILE);
+  const priorityKey = statKey(priorityPath);
+  const priority = priorityKey ? { path: priorityPath, key: priorityKey } : null;
   // The maxima too: a directory with no `index.md` is no slot, but its name
   // takes a number (`maxNum`), so adding or removing one must outdate a snapshot.
   const sig = [
     ...slots.map((s) => `${s.path}\0${s.key}\0${s.changes.map((c) => `${c.path}\0${c.key}`).join('\0')}`),
     [...nums].map(([kind, n]) => `${kind}=${n}`).join('\0'),
+    `${PRIORITY_FILE}\0${priorityKey ?? ''}`,
   ].join('\n');
-  return { slots, nums, sig };
+  return { slots, priority, nums, sig };
 }
 
 /** Deep-freeze a parsed frontmatter value. */
@@ -853,6 +874,10 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
   loadStats.links++;
   linkUnits(maps, flow, problem);
 
+  const ranked = readPriority(root, listing.priority, files, maps, problem);
+  for (const e of ranked) Object.freeze(e);
+  Object.freeze(ranked);
+
   for (const list of Object.values(lists)) {
     for (const u of list) {
       // Descriptors, not values: with no flow, `done` is a getter that throws.
@@ -866,6 +891,10 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
   for (const p of problems) Object.freeze(p);
 
   const frozen = Object.fromEntries(kindNames().map((k) => [k, new FrozenMap(maps[k])]));
+  // The priority order needs every unit's `done`, so it is computed on first
+  // read: a reader of titles and links needs no flow (`flowOf`).
+  let order;
+  let ranker;
   /** @type {BacklogGraph} */
   const graph = {
     root,
@@ -895,9 +924,56 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
       return lists[kind];
     },
     files: Object.freeze(listed),
+    ranked,
+    get priority() {
+      order ??= Object.freeze(priorityOrder(ranked, { features: frozen.feature, stories: frozen.story }));
+      return order;
+    },
+    rankOf(unit) {
+      ranker ??= rankerOf(graph.priority);
+      return ranker(typeof unit === 'string' ? graph.get(unit) : unit);
+    },
     problems: Object.freeze(problems),
   };
   return Object.freeze(graph);
+}
+
+/**
+ * `priority.md`'s `ranked:` resolved against the units (F-78 D1), its
+ * problems pushed: `priority-file` when the file is missing, is not YAML
+ * (with the parse error, which a strict load throws) or `ranked:` has the
+ * wrong shape, each leaving the order empty; `priority-unit` for each entry
+ * that names no feature or loose story, or one ranked twice.
+ * @returns {Array<{ unit: FeatureUnit | StoryUnit, why: string, position: number }>}
+ */
+function readPriority(root, slot, files, maps, problem) {
+  const at = { kind: null, unit: null, file: PRIORITY_FILE };
+  if (!slot) {
+    problem({
+      ...at,
+      code: 'priority-file',
+      message: `${PRIORITY_FILE} is missing; the backlog's priority lives in its "ranked:" frontmatter`,
+    });
+    return [];
+  }
+  const rec = recordOf(files, slot.path, slot.key);
+  if (!rec.fm) {
+    const fault = rec.faults[0];
+    problem({ ...at, code: 'priority-file', line: fault.line, message: fault.message, error: fault.error });
+    return [];
+  }
+  const line = frontmatterKeyLine(rec.text, 'ranked');
+  let raw;
+  try {
+    raw = parseRanked(rec.fm.ranked);
+  } catch (e) {
+    if (!(e instanceof PriorityError)) throw e;
+    problem({ ...at, code: 'priority-file', field: 'ranked', line, message: e.reason });
+    return [];
+  }
+  const { entries, problems } = resolveRanked(raw, { features: maps.feature, stories: maps.story });
+  for (const p of problems) problem({ ...at, code: 'priority-unit', field: 'ranked', line, ...p });
+  return entries;
 }
 
 /**
@@ -1105,7 +1181,7 @@ export function loadBacklog(config, opts = {}) {
     graph = prev.graph;
   } else {
     // Drop the records of files that are gone, so a removed unit's text is not kept.
-    const live = new Set();
+    const live = new Set(listing.priority ? [listing.priority.path] : []);
     for (const s of listing.slots) {
       live.add(s.path);
       for (const c of s.changes) live.add(c.path);

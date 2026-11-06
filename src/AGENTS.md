@@ -100,6 +100,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
 ```
 <backlog>/
   index.md                      ← master stack-ranked list (auto-generated tables)
+  priority.md                   ← the one ranked list of features and loose
+                                  stories: `ranked:` by hand only (F-78 D1)
   feature-order.md              ← the preferred feature order: `ranked:` by hand,
                                   tables by `bl sync` (F-53 D1)
   roadmap.md                    ← the road map: `entries:` and one section
@@ -608,10 +610,44 @@ file. `bl validate` checks its shape only (`roadmap.js` `findRoadmapFindings`), 
   section names no entry.
 
 A backlog with no `roadmap.md` reports `roadmap-file`, and a theme with no `brief:`
-`theme-brief`. `bl init` writes `templates/roadmap.md` and `templates/feature-order.md`
+`theme-brief`. `bl init` writes `templates/roadmap.md` and `templates/priority.md`
 (empty `entries:` and `ranked:`) into a backlog that has neither, and leaves an existing one
-alone (S-581). (F-53's one-off migration that wrote them for the first backlog has run; S-581
-removed it, and it is in git history.)
+alone (S-581, F-78 D1). (F-53's one-off migration that wrote them for the first backlog has run;
+S-581 removed it, and it is in git history.)
+
+### Priority (F-78 D1)
+
+`<backlog>/priority.md` is the backlog's one ranked list of **units**. A unit is a feature or
+a **loose story**, a story with no `feature:` and no `update_repo:` (`isLooseStory`,
+`src/priority.js`); stories inside a feature, update stories and tasks are never units. Its YAML
+frontmatter holds `ranked:`, a list of `{ unit, why }` (`unit` an `F-<n>` or `S-<n>`, `why` the
+operator's reason, both required); its body is prose bl never writes:
+
+```yaml
+---
+ranked:
+  - unit: S-1
+    why: Blocks every deploy.
+  - unit: F-2
+    why: The next thing users see.
+---
+```
+
+`loadBacklog()` reads it with the units (stat-revalidated like them) and exposes:
+
+- `backlog.ranked`: each valid entry resolved, `{ unit, why, position }`, open or closed;
+- `backlog.priority`: the open ranked units in list order, then every other open unit,
+  features and loose stories alike, by `added:` (`byAdded`): undated first (they predate the
+  field), then features before stories on a tie, then by number. A unit needs no entry: a new
+  story lands at the end of the dated tail with no edit to the file. Computed on first read,
+  since it needs each unit's `done`;
+- `backlog.rankOf(idOrUnit)`: the place in `priority`, from 0. A story inside a feature takes
+  its feature's place, so a listing sorts a feature's stories together at its rank; a closed
+  unit, an update story, a task or an unknown id is `Infinity`, after every placed one.
+
+A missing or malformed file is a `priority-file` problem and an empty `ranked:`; one that is not
+YAML is thrown by a strict load. Entries that name no unit are `priority-unit` problems and are
+skipped (see `bl validate`). The order is a preference, never a dependency.
 
 The graph derives each epic's features and status (above), and `bl sync` writes the theme
 and epic tables from them (see `bl sync`). `bl list`, `bl tree` and `bl what-next`
@@ -2725,8 +2761,8 @@ missing-required-key, unknown-fm-key, bad-status, bad-points,
 id-dir-mismatch, bad-id-format, duplicate-id, cycle,
 dangling-dep, plugin-binary, bad-update-request,
 component-unknown, home-component, component-has-status, component-paths,
-repo-key, frontmatter-yaml, frontmatter-list, feature-order-file,
-feature-order-feature, roadmap-file, roadmap-section, theme-brief, found-by,
+repo-key, frontmatter-yaml, frontmatter-list, priority-file,
+priority-unit, roadmap-file, roadmap-section, theme-brief, found-by,
 flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
 task-unit, task-field, deferred-unsized, operator-tasks-retired,
@@ -2794,12 +2830,15 @@ on its head line as `found by: <id>`.
 `roadmap-file` and `roadmap-section` check `roadmap.md`'s shape and `theme-brief` a theme's
 `brief:` (see **The roadmap** and **Themes and Epics**).
 
-`feature-order-file` and `feature-order-feature` (F-53 D1, `feature-order.js`
-`findFeatureOrderFindings`), both errors at `feature-order.md`: the first when the file is
-missing, its frontmatter is not YAML, or `ranked:` is not a list of mappings each with a
-non-empty `feature` and `why`; the second when a ranked id names no feature, a done or
-superseded one, or one already ranked. A backlog with no `feature-order.md` reports
-`feature-order-file`; `bl merge`, `bl sync` and `bl next` still work.
+`priority-file` and `priority-unit` (F-78 D1, `findPriorityFindings`, from the graph's
+problems), both errors at `priority.md`: the first when the file is missing, its frontmatter is
+not YAML, or `ranked:` is not a list of mappings each with a non-empty `unit` and `why`; the
+second when an entry names no feature or story, a story inside a feature, an update story or a
+task, or a unit already ranked. A closed unit left in `ranked:` is no finding: the order skips
+it, and the operator removes it when they next rank. Only a `priority.md` that is not YAML stops
+other commands (a strict `loadBacklog` throws it); a missing or malformed one is an empty
+`ranked:`, so every open unit is in the dated tail (see **Priority**). `feature-order-file` and
+`feature-order-feature` are gone: `bl validate` no longer reads `feature-order.md`.
 
 `frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first,
 from the problems of the tolerant graph `bl validate` loads once (`loadBacklog(config,

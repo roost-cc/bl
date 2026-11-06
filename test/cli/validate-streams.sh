@@ -77,8 +77,8 @@ points: 1
 status: backlog
 ---
 MD
-  # The feature order (F-53 D1): an empty `ranked:` is a clean one.
-  cat > "$root/feature-order.md" <<'MD'
+  # The priority (F-78 D1): an empty `ranked:` is a clean one.
+  cat > "$root/priority.md" <<'MD'
 ---
 ranked: []
 ---

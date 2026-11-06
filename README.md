@@ -68,7 +68,7 @@ mkdir -p ~/acme/backlog && cd ~/acme/backlog
 git init -b main
 echo '{ "title": "Acme Backlog" }' > backlog.json
 bl init                                   # agent settings, allowed-tools.json, flow.json,
-                                          # roadmap.md, feature-order.md
+                                          # roadmap.md, priority.md
 # register the code repo in backlog.json:
 #   "repos": { "acme-web": { "path": "../acme-web", "deployable": true, "update_tests": [] } }
 git add -A && git commit -m "chore: new backlog"

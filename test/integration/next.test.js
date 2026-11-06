@@ -206,19 +206,27 @@ test('bl sync with no feature-order.md writes none', () => {
   assert.ok(!existsSync(join(dir, 'feature-order.md')));
 });
 
-test("bl validate reports the feature order's findings", () => {
-  const { dir } = orderBacklog();
+test("bl validate reports priority.md's findings, and no longer reads feature-order.md", () => {
+  // F-78 D1: a closed unit in ranked: (F-2) is no finding; an unknown one is.
+  const { dir } = orderBacklog(ORDER, {
+    priority: [
+      { unit: 'F-3', why: 'First.' },
+      { unit: 'F-2', why: 'Done already.' },
+      { unit: 'F-99', why: 'Gone.' },
+    ],
+  });
   let r = runBl(['validate', '--json'], { cwd: dir });
   let codes = JSON.parse(r.stdout).findings.map((f) => `${f.code} ${f.location}: ${f.message}`);
   assert.deepEqual(
-    codes.filter((c) => c.startsWith('feature-order')),
-    ['feature-order-feature feature-order.md: "ranked:" entry 3 (F-2) is done; remove it from "ranked:"'],
+    codes.filter((c) => c.startsWith('priority') || c.startsWith('feature-order')),
+    ['priority-unit priority.md: "ranked:" entry 3 (F-99) names no feature under features/'],
   );
-  const { dir: none } = orderBacklog(null);
+  const { dir: none } = orderBacklog(ORDER, { priority: null });
   r = runBl(['validate', '--json'], { cwd: none });
   assert.equal(r.status, 1);
   codes = JSON.parse(r.stdout).findings.map((f) => f.code);
-  assert.ok(codes.includes('feature-order-file'), codes.join(', '));
+  assert.ok(codes.includes('priority-file'), codes.join(', '));
   const help = runBl(['validate', '--help'], { cwd: dir });
-  assert.match(help.stdout, /feature-order-file, feature-order-feature/);
+  assert.match(help.stdout, /priority-file, priority-unit/);
+  assert.doesNotMatch(help.stdout, /feature-order/);
 });

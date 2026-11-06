@@ -175,6 +175,16 @@ The order the operator prefers features to run in.
 `;
 
 /**
+ * The backlog's `priority.md` (F-78 D1): `ranked` is its `ranked:` list,
+ * each `{ unit, why }`; the body is prose bl never writes.
+ */
+export const PRIORITY_TEMPLATE = (ranked = []) => `${serializeFrontmatter({ ranked })}
+# Priority
+
+The order the operator prefers units to run in.
+`;
+
+/**
  * The backlog's `roadmap.md` (F-53 D2): `entries` is its `entries:` list,
  * each `{ title, added, status }`, and each gets its `## <title>` section
  * after a preamble.
@@ -287,6 +297,9 @@ ${story.body ?? ''}
  * @property {Array<{ feature: string, why: string }> | string | null} [featureOrder]
  *           `feature-order.md`: a `ranked:` list (FEATURE_ORDER_TEMPLATE,
  *           `[]` by default), the file's whole text, or null for no file.
+ * @property {Array<{ unit: string, why: string }> | string | null} [priority]
+ *           `priority.md`: a `ranked:` list (PRIORITY_TEMPLATE, `[]` by
+ *           default), the file's whole text, or null for no file.
  * @property {Array<{ title: string, added: string, status: string }> | string | null} [roadmap]
  *           `roadmap.md`: an `entries:` list (ROADMAP_TEMPLATE, `[]` by
  *           default), the file's whole text, or null for no file.
@@ -426,6 +439,12 @@ export function mkTempBacklog(fixture = {}, { keep = false } = {}) {
     writeFileSync(
       join(dir, 'feature-order.md'),
       typeof fixture.featureOrder === 'string' ? fixture.featureOrder : FEATURE_ORDER_TEMPLATE(fixture.featureOrder),
+    );
+  }
+  if (fixture.priority !== null) {
+    writeFileSync(
+      join(dir, 'priority.md'),
+      typeof fixture.priority === 'string' ? fixture.priority : PRIORITY_TEMPLATE(fixture.priority),
     );
   }
   if (fixture.roadmap !== null) {

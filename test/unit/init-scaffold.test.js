@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { ensureBacklogDocs, ensureReposBlock } from '../../src/init.js';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -32,14 +32,17 @@ test('bl init keeps a display name the backlog already sets', () => {
   assert.equal(initOn({ title: 'Acme Web Backlog' }).title, 'Acme Web Backlog');
 });
 
-test('bl init gives a new backlog an empty roadmap.md and feature-order.md, and keeps existing ones', () => {
+test('bl init gives a new backlog an empty roadmap.md and priority.md, and keeps existing ones', () => {
   const fresh = mkTempDir('bl-init-docs-');
   quietly(() => ensureBacklogDocs(fresh));
   assert.match(readFileSync(join(fresh, 'roadmap.md'), 'utf8'), /^---\nentries: \[\]\n---\n/);
-  assert.match(readFileSync(join(fresh, 'feature-order.md'), 'utf8'), /^---\nranked: \[\]\n---\n/);
+  assert.match(readFileSync(join(fresh, 'priority.md'), 'utf8'), /^---\nranked: \[\]\n---\n\n# Priority\n/);
+  assert.ok(!existsSync(join(fresh, 'feature-order.md')));
 
   const kept = mkTempDir('bl-init-docs-');
   writeFileSync(join(kept, 'roadmap.md'), 'kept\n');
+  writeFileSync(join(kept, 'priority.md'), 'kept too\n');
   quietly(() => ensureBacklogDocs(kept));
   assert.equal(readFileSync(join(kept, 'roadmap.md'), 'utf8'), 'kept\n');
+  assert.equal(readFileSync(join(kept, 'priority.md'), 'utf8'), 'kept too\n');
 });

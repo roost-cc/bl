@@ -16,9 +16,10 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
-import { FrontmatterError, listValue, parseFrontmatterOf, serializeFrontmatter, warn } from './config.js';
+import { listValue, parseFrontmatterOf, serializeFrontmatter, warn } from './config.js';
 import { appendSectionLine, normalizeFeatureId } from './feature.js';
 import { featureEpicId } from './filter.js';
+import { PriorityError, parseRanked as parsePriorityRanked } from './priority.js';
 
 /** The file's name, at the backlog root. */
 export const FEATURE_ORDER_FILE = 'feature-order.md';
@@ -29,7 +30,9 @@ export function featureOrderPath(config) {
 
 /**
  * A `ranked:` value that is not a list of mappings each with a non-empty
- * `feature` and `why`. `bl validate` reports it as `feature-order-file`.
+ * `feature` and `why`. `bl validate` no longer reads this file (F-78 D1
+ * validates `priority.md`); `bl next` and `bl sync` stop on it until F-78
+ * S-1264 removes the file.
  */
 export class FeatureOrderError extends Error {
   constructor(reason) {
@@ -40,27 +43,18 @@ export class FeatureOrderError extends Error {
 }
 
 /**
- * `ranked:` as entries `{ feature, why, position }`: `feature` as written
- * (`normalizeFeatureId` makes it an id) and `position` from 1. An absent or
- * empty `ranked:` is an empty order. Throws `FeatureOrderError` on any other
- * shape.
+ * `ranked:` as entries `{ feature, why, position }`: `priority.md`'s shape
+ * (`parseRanked` there) keyed `feature`, as written (`normalizeFeatureId`
+ * makes it an id), `position` from 1. An absent or empty `ranked:` is an
+ * empty order. Throws `FeatureOrderError` on any other shape.
  * @returns {Array<{ feature: string, why: string, position: number }>}
  */
 export function parseRanked(raw) {
-  const list = listValue(raw);
-  if (list == null) throw new FeatureOrderError(`"ranked:" is not a list`);
-  return list.map((entry, i) => {
-    const at = `"ranked:" entry ${i + 1}`;
-    if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new FeatureOrderError(`${at} is not a mapping with "feature" and "why"`);
-    }
-    for (const key of ['feature', 'why']) {
-      if (typeof entry[key] !== 'string' || entry[key].trim() === '') {
-        throw new FeatureOrderError(`${at} has no "${key}"`);
-      }
-    }
-    return { feature: entry.feature.trim(), why: entry.why.trim(), position: i + 1 };
-  });
+  try {
+    return /** @type {any} */ (parsePriorityRanked(raw, 'feature', FEATURE_ORDER_FILE));
+  } catch (e) {
+    throw e instanceof PriorityError ? new FeatureOrderError(e.reason) : e;
+  }
 }
 
 /**
@@ -96,8 +90,7 @@ function featureNumber(f) {
  * The ranked features that exist, are not closed, and pass
  * `filter` (`theme`, `epic`), in rank order: `{ id, why, position, feature }`
  * with `feature` the feature record and `position` its place in `ranked:`.
- * A ranked id with no feature, a closed one or a repeat is `bl validate`'s
- * `feature-order-feature` and is skipped here.
+ * A ranked id with no feature, a closed one or a repeat is skipped.
  * @param {{ ranked: object[] } | null} order  `readFeatureOrder` result
  * @param {object[]} features  feature records (`id`, `title`, `theme`, `epic`, `status`)
  * @param {{ theme?: string | null, epic?: string | null }} [filter]
@@ -125,55 +118,6 @@ export function unrankedFeatures(order, features, flow, filter = {}) {
   return features
     .filter((f) => !flow.meets('feature', f.status, 'done') && !ranked.has(f.id) && matches(f, filter))
     .sort((a, b) => featureNumber(a) - featureNumber(b));
-}
-
-/**
- * The feature-order findings (F-53 D1):
- *   - `feature-order-file` (error): the file is missing, its frontmatter is
- *     not YAML, or `ranked:` is not a list of mappings each with `feature`
- *     and `why`.
- *   - `feature-order-feature` (error): a ranked id that names no feature, a
- *     closed one, or one ranked twice.
- * @param {object} config
- * @param {object[]} features  `readAllFeatures` records
- * @param {import("./flow.js").Flow} flow
- */
-export function findFeatureOrderFindings(config, features, flow) {
-  const findings = [];
-  const err = (code, message) => findings.push({ severity: 'error', code, message, location: FEATURE_ORDER_FILE });
-  let order;
-  try {
-    order = readFeatureOrder(config);
-  } catch (e) {
-    if (e instanceof FeatureOrderError) err('feature-order-file', e.reason);
-    else if (e instanceof FrontmatterError)
-      err('feature-order-file', FrontmatterError.text(e.reason, e.line, e.column, null));
-    else throw e;
-    return findings;
-  }
-  if (!order) {
-    err('feature-order-file', `${FEATURE_ORDER_FILE} is missing; the feature order lives in its "ranked:" frontmatter`);
-    return findings;
-  }
-  const byId = new Map(features.map((f) => [f.id, f]));
-  const first = new Map();
-  for (const entry of order.ranked) {
-    const id = normalizeFeatureId(entry.feature)?.id;
-    const at = `"ranked:" entry ${entry.position} (${entry.feature})`;
-    const f = id && byId.get(id);
-    if (!f) {
-      err('feature-order-feature', `${at} names no feature under features/`);
-      continue;
-    }
-    if (first.has(id)) {
-      err('feature-order-feature', `${at} is ranked twice (first at entry ${first.get(id)})`);
-      continue;
-    }
-    first.set(id, entry.position);
-    if (flow.meets('feature', f.status, 'done'))
-      err('feature-order-feature', `${at} is ${f.status}; remove it from "ranked:"`);
-  }
-  return findings;
 }
 
 /**

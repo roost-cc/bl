@@ -9,7 +9,6 @@ import { DERIVED_KEYS, changeDoc, loadBacklog } from './backlog-graph.js';
 import { readAllStories, readComponents, parseIdList, pathEntryProblem } from './story.js';
 import { readAllFeatures, extractSection, sectionHasContent } from './feature.js';
 import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID_RE } from './theme.js';
-import { findFeatureOrderFindings } from './feature-order.js';
 import { findRoadmapFindings } from './roadmap.js';
 import { extractReviewLog, parseLatestSession } from './review-log.js';
 import { probePluginBinaries } from './plugin-binaries.js';
@@ -1326,6 +1325,25 @@ export function findDanglingFindings(graph) {
   return { deps: pick('dangling-dep'), features: pick('dangling-feature') };
 }
 
+/**
+ * The priority findings, from the graph's problems (F-78 D1), each an error
+ * at `priority.md`:
+ *
+ *   - `priority-file`: the file is missing, its frontmatter is not YAML, or
+ *     `ranked:` is not a list of mappings each with `unit` and `why`;
+ *   - `priority-unit`: an entry that names no feature or story, names one
+ *     twice, or names a story inside a feature, an update story or a task.
+ *
+ * A closed unit left in `ranked:` is no finding: the order skips it.
+ * @param {import("./backlog-graph.js").BacklogGraph} graph
+ * @returns {Finding[]}
+ */
+export function findPriorityFindings(graph) {
+  return graph.problems
+    .filter((p) => p.code === 'priority-file' || p.code === 'priority-unit')
+    .map((p) => problemFinding(p));
+}
+
 // ---------------------------------------------------------------------------
 // Orchestration
 // ---------------------------------------------------------------------------
@@ -1475,15 +1493,15 @@ export function runAll(config, opts = {}) {
     ...valueAxisFindings,
   );
 
-  // 4a. The feature order (F-53 D1): `feature-order.md`'s `ranked:`. The
-  //     roadmap's shape (D2) and the themes' briefs (D4).
+  // 4a. The priority (F-78 D1): `priority.md`'s `ranked:`, the graph's
+  //     problems. The roadmap's shape (F-53 D2) and the themes' briefs (D4).
   // The edges in blockers.json (F-66 D5), against the flow and every unit,
   // with the deadlock graph that also reads cross-feature depends_on.
   findings.push(...findBlockersFindings(config.backlogRoot, units, flow));
   // The task files (F-65 D1): `task-unit`, `task-field`.
   findings.push(...findTaskFindings(allTasks, units, flow));
 
-  findings.push(...findFeatureOrderFindings(config, allFeatures, flow));
+  findings.push(...findPriorityFindings(graph));
   findings.push(...findRoadmapFindings(config));
   findings.push(...findThemeBriefFindings(allThemes, config.roostDir));
 
@@ -1597,7 +1615,7 @@ Findings codes:
   forge-plugin, forge-op, forge-op-reads-body, component-unknown,
   home-component, component-has-status, component-paths,
   feature-theme, feature-epic, epic-theme, theme-repo, repo-key,
-  feature-order-file, feature-order-feature, roadmap-file,
+  priority-file, priority-unit, roadmap-file,
   roadmap-section, theme-brief, flow-json, blockers-json, agent-config,
   blockers-unit, blockers-gate, blockers-status, blockers-duplicate,
   blockers-cycle, blockers-unmeetable, blockers-order
