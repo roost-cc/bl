@@ -1297,8 +1297,8 @@ export function findDuplicateFindings(graph) {
       });
       continue;
     }
-    if (grouped.has(p.ref)) continue;
-    grouped.add(p.ref);
+    if (grouped.has(`${kind}\0${p.ref}`)) continue;
+    grouped.add(`${kind}\0${p.ref}`);
     if (kind === 'story') {
       out.stories.push(storyDuplicateFinding(p.ref, copies));
     } else if (kind === 'component') {

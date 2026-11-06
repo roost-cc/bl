@@ -272,6 +272,18 @@ for (const [name, files, kind, location] of [
   });
 }
 
+test('validate-duplicate-malformed-ids: a story and a component duplicating the same id string are each reported', () => {
+  const g = graphOver({
+    'stories/S1-a/index.md': '---\nstory_id: C05\n---\n',
+    'stories/S2-b/index.md': '---\nstory_id: C05\n---\n',
+    'components/C5-a/index.md': '---\ncomponent_id: C5\n---\n',
+    'components/C5-b/index.md': '---\ncomponent_id: C5\n---\n',
+  });
+  const found = findDuplicateFindings(g);
+  assert.deepEqual(codes(found.stories), [['duplicate-id', 'stories/S1-a/index.md']]);
+  assert.deepEqual(codes(found.components), [['duplicate-id', 'components/C5-b/index.md']]);
+});
+
 test('findDuplicateIds identifies all matches', () => {
   const stories = [
     { id: 'S-1', title: 'First', storyRelPath: 'path/1' },
