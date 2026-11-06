@@ -127,8 +127,12 @@ export function resolveRanked(ranked, { features, stories }) {
   return { entries, problems };
 }
 
-/** The number in an id (`S-12` → 12), for ordering only. */
-function numOf(id) {
+/**
+ * The number in an id (`S-12` → 12), for ordering only; -1 when it has none.
+ * Past 2^53 two numbers may tie, which only leaves their order to the sort.
+ * The graph's own sorts (`backlog-graph.js`) use it too.
+ */
+export function numOf(id) {
   const m = String(id).match(/(\d+)$/);
   return m ? Number(m[1]) : -1;
 }

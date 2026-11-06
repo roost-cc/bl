@@ -72,7 +72,15 @@ import { parseIdList } from './story.js';
 import { THEME_ID_RE, normalizeEpicId } from './theme.js';
 import { TASKS_DIR, TASK_FILE_RE, normalizeTaskId } from './task.js';
 import { listChanges, parseChange, readChange, unitChange } from './change-doc.js';
-import { PRIORITY_FILE, PriorityError, parseRanked, priorityOrder, rankerOf, resolveRanked } from './priority.js';
+import {
+  PRIORITY_FILE,
+  PriorityError,
+  numOf,
+  parseRanked,
+  priorityOrder,
+  rankerOf,
+  resolveRanked,
+} from './priority.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -612,15 +620,6 @@ const relOf = (root, path) => (path.startsWith(root + sep) ? path.slice(root.len
 function toInt(v) {
   const n = parseInt(String(v ?? ''), 10);
   return Number.isFinite(n) ? n : 0;
-}
-
-/**
- * The number in an id (`S-12` → 12), for ordering only; -1 when it has none.
- * Past 2^53 two numbers may tie, which only leaves their order to the sort.
- */
-function numOf(id) {
-  const m = String(id).match(/(\d+)$/);
-  return m ? Number(m[1]) : -1;
 }
 
 const byNum = (a, b) => numOf(a.id) - numOf(b.id);
