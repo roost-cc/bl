@@ -381,3 +381,35 @@ test('commitPaths_headless_refuses_every_pathspec_selecting_priority_md', () => 
     assert.equal(headlessPriorityRefusal(dir, [spec], { BL_HEADLESS: '1' }), null, spec);
   }
 });
+
+test('commitPaths_headless_honors_excluded_priority_pathspec', () => {
+  const { dir } = mkTempBacklog({ priority: [{ unit: 'F-1', why: 'x' }] });
+  initGitBacklog(dir);
+  const path = join(dir, 'priority.md');
+  writeFileSync(path, readFileSync(path, 'utf8').replace('why: x', 'why: y'));
+  writeFileSync(join(dir, 'note.md'), 'n\n');
+  // Mixed sets: Git applies them whole, so an exclusion removes priority.md.
+  const excluded = [
+    ['*.md', ':!priority.md'],
+    ['.', ':(exclude)priority.md'],
+    [':!priority.md', 'note.md'],
+    ['note.md', 'priority.md', ':^priority.md'],
+    [':(glob)*.md', ':(top,exclude)priority.md'],
+  ];
+  const selecting = [['note.md', 'priority.md'], ['*.md', ':!note.md'], ['.', ':!stories'], [':!note.md']];
+  for (const specs of selecting) {
+    assert.match(
+      headlessPriorityRefusal(dir, specs, { BL_HEADLESS: '1' }) ?? '',
+      /refusing to commit priority\.md/,
+      specs.join(),
+    );
+  }
+  for (const specs of excluded) {
+    assert.equal(headlessPriorityRefusal(dir, specs, { BL_HEADLESS: '1' }), null, specs.join());
+  }
+  // And through commitPaths: the note commits, priority.md stays modified.
+  const r = withMarker('1', () => commitPaths(dir, ['*.md', ':!priority.md'], 'chore: note'));
+  assert.equal(r.committed, true, r.error);
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'note.md');
+  assert.equal(git(dir, 'status', '--porcelain'), 'M priority.md');
+});

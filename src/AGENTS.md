@@ -2626,8 +2626,9 @@ bl rank S-40 --remove                 # back into the dated tail
 adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it
 when `headless` is set (`runHeadlessSession` passes `headless: true`); an interactive spawn adds
 nothing. With it set, a `bl rank` edit exits 1 before it pulls or writes anything, and
-`commitPaths`, the one commit path every bl command uses, refuses any commit whose paths include
-`priority.md` or a directory that holds it (`headlessPriorityRefusal`), so a hand edit cannot be
+`commitPaths`, the one commit path every bl command uses, refuses any commit whose paths, taken
+as one Git pathspec set (an exclusion such as `:!priority.md` counts), select `priority.md`
+(`headlessPriorityRefusal`), so a hand edit cannot be
 committed through `bl sync --commit --path` either. Printing the order is allowed. The marker is
 a guard against an agent changing a person's decision by mistake, not a security boundary.
 The test helper `runBl` drops an inherited `BL_HEADLESS` (`personEnv`), so the suite runs the

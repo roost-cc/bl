@@ -171,7 +171,7 @@ export function commitPaths(root, paths, message) {
  * or null: when the marker is set and a path selects `priority.md`, by name,
  * by a directory that holds it (`.` included), or as a Git pathspec
  * (`:(top)priority.md`, `*.md`, `priority*`): Git itself is asked which files
- * `paths` select, in the index, the work tree (untracked, not ignored) and
+ * the whole set `paths` selects (so `['*.md', ':!priority.md']` is allowed), in the index, the work tree (untracked, not ignored) and
  * staged deletions, the files `commitLocked`'s add and commit would take.
  * The priority is a person's preference; an agent bl started headless never
  * commits it, whatever command it goes through.
@@ -182,23 +182,25 @@ export function commitPaths(root, paths, message) {
  */
 export function headlessPriorityRefusal(root, paths, env = process.env) {
   if (!isHeadless(env)) return null;
+  // Git is asked about the whole set at once, as add and commit apply it, so
+  // an exclusion (`:!priority.md`) counts. Only when Git cannot answer does
+  // the guard fall back to spelling: a path that is, or holds, the file.
   const file = resolve(root, PRIORITY_FILE);
-  const selects = (p) => {
+  const spelled = (p) => {
     const at = resolve(root, p);
-    if (at === file || file.startsWith(at.endsWith(sep) ? at : at + sep)) return true;
-    for (const args of [
-      ['ls-files', '-z', '--full-name', '-c', '-o', '--exclude-standard', '--', p],
-      ['diff', '-z', '--name-only', '--cached', '--', p],
-    ]) {
-      const r = git(root, args);
-      if (r.status === 0 && r.stdout.split('\0').includes(PRIORITY_FILE)) return true;
-    }
-    return false;
+    return at === file || file.startsWith(at.endsWith(sep) ? at : at + sep);
   };
-  const hit = paths.find(selects);
-  if (hit == null) return null;
+  let selected = false;
+  for (const args of [
+    ['ls-files', '-z', '--full-name', '-c', '-o', '--exclude-standard', '--', ...paths],
+    ['diff', '-z', '--name-only', '--cached', '--', ...paths],
+  ]) {
+    const r = git(root, args);
+    if (r.status !== 0 ? paths.some(spelled) : r.stdout.split('\0').includes(PRIORITY_FILE)) selected = true;
+  }
+  if (!selected) return null;
   return (
-    `refusing to commit ${PRIORITY_FILE} (path '${hit}'): ${HEADLESS_ENV} is set, so this is an agent bl ` +
+    `refusing to commit ${PRIORITY_FILE} (paths '${paths.join("', '")}'): ${HEADLESS_ENV} is set, so this is an agent bl ` +
     `started headless, and only the operator or an interactive session ranks work (bl rank)`
   );
 }
