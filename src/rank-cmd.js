@@ -361,16 +361,25 @@ function uncommitted(root) {
  * Whether the uncommitted `content` of `priority.md` is exactly what `op`
  * makes of HEAD's version: the write of an earlier run of the same command
  * whose commit failed, and nothing else (no prose, no other entry's edit).
+ * The index must hold HEAD's version or that write (its `git add` may or may
+ * not have run), never a staged edit of someone else's, which the commit's
+ * add would overwrite.
  */
 function pendingIsOurs(root, content, op) {
-  const r = spawnSync('git', ['show', `HEAD:${PRIORITY_FILE}`], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (r.status !== 0) return false;
+  const show = (rev) => {
+    const r = spawnSync('git', ['show', `${rev}:${PRIORITY_FILE}`], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return r.status === 0 ? r.stdout.replace(/\r\n/g, '\n') : null;
+  };
+  const head = show('HEAD');
+  const staged = show('');
+  if (head == null || staged == null) return false;
   try {
-    return applyRank(r.stdout.replace(/\r\n/g, '\n'), op) === content;
+    const ourWrite = applyRank(head, op);
+    return ourWrite !== head && ourWrite === content && (staged === head || staged === content);
   } catch (err) {
     if (err instanceof RankFileError) return false;
     throw err;
@@ -489,10 +498,9 @@ export async function main(argv, env = process.env) {
     // command's own earlier write whose commit failed (a hook, git add, the
     // sync lock); anyone else's edits are never swept into a rank commit.
     const dirty = inRepo(root) && uncommitted(root);
-    const ours = dirty && pendingIsOurs(root, content, op);
     if (next === content) {
       if (!dirty) return { unchanged: true };
-      if (!ours) return { unchanged: true, leftAlone: true };
+      if (!pendingIsOurs(root, content, op)) return { unchanged: true, leftAlone: true };
       return { pending: true, commit: commit() };
     }
     if (dirty) {

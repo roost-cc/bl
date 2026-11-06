@@ -180,6 +180,34 @@ test('rank_noop_preserves_unrelated_dirty_priority', () => {
     { kind: 'change', args: ['rank', 'F-2', '--top'] },
     { kind: 'change', args: ['rank', 'F-1', '--bottom', '--why', 'Later'] },
   ];
+  // Staged edits under a work tree that matches HEAD, or that holds the very
+  // write the op makes: the commit's add would overwrite the staged edit.
+  const rankF1 = ['rank', 'F-1', '--top', '--why', 'First'];
+  const f1First = (t) => t.replace('  # The deploy blocker first.\n', '$&  - unit: F-1\n    why: First\n');
+  const stagedOnly = [
+    { name: 'staged prose, work tree as HEAD', staged: prose, args: ['rank', 'S-1', '--top'] },
+    { name: "staged other edit under the op's write", staged: prose, work: f1First, args: rankF1 },
+  ];
+  for (const c of stagedOnly) {
+    const label = c.name;
+    const dir = backlog();
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const original = read(dir);
+    writeFileSync(join(dir, 'priority.md'), c.staged(original));
+    git(dir, 'add', 'priority.md');
+    const edited = c.work ? c.work(original) : original;
+    writeFileSync(join(dir, 'priority.md'), edited);
+    const status = git(dir, 'status', '--porcelain');
+    const index = git(dir, 'show', ':priority.md');
+    const r = bl(c.args, dir);
+    assert.equal(r.status, 0, `${label}: ${r.stderr}`);
+    assert.match(r.stderr, /other uncommitted edits, left uncommitted/, label);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, `${label}: nothing committed`);
+    assert.equal(read(dir), edited, `${label}: the work tree is as it was`);
+    assert.equal(git(dir, 'show', ':priority.md'), index, `${label}: the staged edit is as it was`);
+    assert.equal(git(dir, 'status', '--porcelain'), status, label);
+  }
+
   for (const c of cases) {
     for (const op of ops) {
       const label = `${c.name} / ${op.args.join(' ')}`;
