@@ -1746,9 +1746,10 @@ A session leaves behind three different things, and each has its own place (F-65
   note, a bare bullet, `[points: ?]`).
 - `operator-tasks-retired`: a `### Operator tasks` sub-heading (the items under it are not
   reported again) or an `operator:` / `operator (from S-<n>):` bullet.
-- `deferred-heading-retired`: a `## To Do` heading, the section's name in stories before F-82.
-  The message names `scripts/migrate-deferred-heading.js`, which renames it to `## Deferred` in
-  every story file of the backlog, open or closed, in one commit (on the shape of
+- `deferred-heading-retired`: a story's `## To Do` heading, the section's name in stories before
+  F-82 (a feature has no such finding). The message names `scripts/migrate-deferred-heading.js`,
+  which renames it to `## Deferred` in every story file of the backlog, open or closed, in one
+  commit, and merges it into a `## Deferred` the file already has (on the shape of
   `migrate-priority.js`: clean at origin/main first, inside `migration-txn.js`; a second run
   plans nothing).
 
@@ -2901,7 +2902,7 @@ know (warning).
 `deferred-unsized`, `operator-tasks-retired` and `deferred-heading-retired` (F-65 D4, F-82 D9,
 `findDeferredErrors`, errors at the unit's file with its line) check an open unit's
 `## Deferred`: an item without a numeric `[points: N]`, a `### Operator tasks` sub-heading or
-`operator:` bullet, and a retired `## To Do` heading. A `done` or `superseded` unit has none
+`operator:` bullet, and a story's retired `## To Do` heading. A `done` or `superseded` unit has none
 (see **`## Deferred`, `## Notes` and tasks**). The S-970 `operator-tasks` rule is gone with
 `src/operator-tasks.js`.
 
@@ -3890,7 +3891,8 @@ project's business domain may have its own, which the project writes; bl ships n
 - **`bl init`** copies the seed to the backlog root as `coding-dictionary.yaml`
   (`ensureBacklogDocs`, beside `roadmap.md` and `priority.md`) when the backlog has none, and
   writes `"dictionaries": ["coding-dictionary.yaml"]` into a new `backlog.json` (one with no
-  `repos`, `ensureReposBlock`). It never changes an existing copy or an existing
+  `repos`, `ensureReposBlock`, which copies the seed first, so a failed copy leaves
+  `backlog.json` as it was and a rerun tries again). It never changes an existing copy or an existing
   `backlog.json`: each project curates its own copy, and a later change to the seed reaches
   new backlogs only.
 - **Prompts** name the listed dictionaries through the writing guide's `{{dictionaryGuide}}`

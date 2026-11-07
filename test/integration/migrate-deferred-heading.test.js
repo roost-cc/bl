@@ -112,6 +112,12 @@ test('migration_preserves_all_deferred_items_when_both_headings_exist: one ## De
       ['[points: 5] new'],
     ],
     ['both None.', '## Deferred\n\nNone.\n\n## To Do\n\nNone.\n', '## Deferred\n\nNone.\n', []],
+    [
+      'two To Do, no Deferred',
+      '## To Do\n\n- [points: 1] one\n\n## Notes\n\nn\n\n## To Do\n\n- [points: 2] two\n',
+      '## Deferred\n\n- [points: 1] one\n\n- [points: 2] two\n\n## Notes\n\nn\n',
+      ['[points: 1] one', '[points: 2] two'],
+    ],
   ];
   for (const [name, before, after, items] of cases) {
     for (const eol of ['\n', '\r\n']) {

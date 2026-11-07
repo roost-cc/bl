@@ -9,7 +9,8 @@
  * every story file of the backlog, open or closed, so the whole backlog uses
  * one name. It finds the heading as an mdast heading (`scanDeferred`), so a
  * `### To Do` or the words in prose stay, and it changes nothing else in the
- * file: CRLF line ends and the rest of the body stay byte for byte.
+ * file: CRLF line ends and the rest of the body stay byte for byte. A file
+ * that would get two `## Deferred` sections gets one (`renameHeading`).
  *
  * Idempotent: with no `## To Do` left a run plans nothing.
  *
@@ -32,9 +33,10 @@ import { runSync, syncAndCommit } from './sync.js';
 const RETIRED_RE = new RegExp(`^( {0,3}#{2}[ \\t]+)${RETIRED_SECTION}`);
 
 /**
- * The file's text with each level-2 `## To Do` heading renamed, or null when
- * it has none. When the file already has a `## Deferred`, each `## To Do`
- * section's body moves to the end of that section instead, and the
+ * The file's text with its level-2 `## To Do` heading renamed, or null when
+ * it has none. When the file already has a `## Deferred`, or has a second
+ * `## To Do` (the first is renamed), the body of each other `## To Do`
+ * section moves to the end of the `## Deferred` section instead, and that
  * `## To Do` section goes: readers (`extractSection`, `scanDeferred`) take
  * the first `## Deferred` only, so a second one would hide its items. A
  * body that is only `None.` is dropped when there is something else.
@@ -47,8 +49,11 @@ export function renameHeading(text) {
   // scanDeferred's lines are the file's: a CRLF line keeps its `\r` here.
   const lines = text.split('\n');
   if (heading) return mergeSections(text, lines, heading - 1, retiredSection);
-  for (const line of retiredSection) lines[line - 1] = lines[line - 1].replace(RETIRED_RE, `$1${DEFERRED_HEADING}`);
-  return lines.join('\n');
+  // Rename the first `## To Do` only: any other one then merges into it.
+  const first = retiredSection[0] - 1;
+  lines[first] = lines[first].replace(RETIRED_RE, `$1${DEFERRED_HEADING}`);
+  const renamed = lines.join('\n');
+  return retiredSection.length > 1 ? renameHeading(renamed) : renamed;
 }
 
 const blank = (l) => l.trim() === '';
