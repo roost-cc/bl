@@ -4838,6 +4838,74 @@ test('a story with no effort: counts as effort.default, and bl review runs its p
   }
 });
 
+test('run_refreshes_existing_story_effort_before_retry_and_unit_steps', async () => {
+  // A session changes a held story's effort: and adds no story. Every later
+  // session takes the new level: the same-story retry, a later story's
+  // session and the unit-level steps.
+  const { dir, cleanup, config, feature, prep } = effortSetup({ 'S-1': 'low', 'S-2': 'low' });
+  try {
+    const path = (id) => prep.ordered.find((s) => s.id === id).indexPath;
+    let first = true;
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        story: (o) => {
+          if (o.vars.storyId === 'S-1' && first) {
+            // Leaves its criteria open, so S-1 gets a retry, and raises S-1.
+            first = false;
+            editFile(path('S-1'), (fm) => void (fm.effort = 'max'));
+            return;
+          }
+          // S-2's session lowers S-2's level below S-1's new one.
+          if (o.vars.storyId === 'S-2') editFile(path('S-2'), (fm) => void (fm.effort = 'medium'));
+          checkAll(o.vars.storyAbsPath);
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean', JSON.stringify(state.history.slice(-3)));
+    assert.deepEqual(
+      runner.calls.filter((c) => c.prompt === 'feature-story').map((c) => [c.story, c.effort]),
+      [
+        ['S-1', 'low'],
+        ['S-1', 'max'],
+        ['S-2', 'low'],
+      ],
+    );
+    for (const prompt of ['feature-self-review', 'feature-workon-review']) {
+      const got = effortsOf(runner.calls, prompt);
+      assert.ok(got.length > 0 && got.every((e) => e === 'max'), `${prompt}: ${JSON.stringify(got)}`);
+    }
+  } finally {
+    cleanup();
+  }
+  // A story run (refreshRepos skips it): its retry takes the level its first session set.
+  const fx = storySetup({ effort: 'low', body: STORY_BODY });
+  try {
+    let first = true;
+    const runner = fakeRunner({
+      dir: fx.config.backlogRoot,
+      feature: fx.unit,
+      behaviour: {
+        story: (o) => {
+          if (first) {
+            first = false;
+            editFile(fx.unit.indexPath, (fm) => void (fm.effort = 'xhigh'));
+            return;
+          }
+          checkAll(o.vars.storyAbsPath);
+        },
+      },
+    });
+    await runFeature({ feature: fx.unit, config: fx.config, prep: fx.prep, runner, opts: { maxRounds: 2 } });
+    assert.deepEqual(effortsOf(runner.calls, 'story-run'), ['low', 'xhigh']);
+    assert.deepEqual(effortsOf(runner.calls, 'feature-self-review'), ['xhigh']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('a refusal on an implementing step moves down the list without spending the nudge retry', async () => {
   const { dir, cleanup, config, feature, prep } = setup({}, MODELS);
   try {

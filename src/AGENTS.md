@@ -1189,7 +1189,9 @@ until, message }`) and one log line. Any other result is the step's: its
 Each step runs at one effort level (F-85 D4, **Effort levels**).
 `sessionEffort(config, { mode, stories })` in `src/effort.js` picks it, and
 `runSession` calls it once, before the walk, so every configuration the walk
-reaches gets the same level:
+reaches gets the same level. It reads each story's `effort:` from the story
+file at that moment (`withCurrentEffort`), so a level an earlier session
+changed applies to every later session:
 
 | Step                                                                   | Level                                                        |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------ |

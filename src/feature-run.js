@@ -75,7 +75,7 @@ import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE, readComponents, readAllStories } from './story.js';
-import { sessionEffort } from './effort.js';
+import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
   codeSpan,
@@ -1483,10 +1483,13 @@ function runSession(ctx, { step, mode, role = 'implement', story = null, promptN
   const unitDir = prepUnitDir(prep);
   // Picked once, before the walk, so every configuration it walks to runs at
   // the same level (F-85 D4): a story's own step at that story's level, a
-  // unit-level step at the highest of the unit's stories.
+  // unit-level step at the highest of the unit's stories. Each level is read
+  // from the story's file now: an earlier session may have changed it.
   const effort = sessionEffort(prep.cfg ?? config, {
     mode: role,
-    stories: (prep.ordered ?? []).filter((s) => story == null || s.id === story),
+    stories: (prep.ordered ?? [])
+      .filter((s) => story == null || s.id === story)
+      .map((s) => withCurrentEffort(config.backlogRoot, s)),
   });
   // The session is recorded before its containers are cleaned, so a failed
   // cleanup cannot hide what the session did. A headless session runs in a
@@ -2228,6 +2231,21 @@ function branchWorktrees(ctx, repoPath) {
     if (path && path !== repoPath && lines.includes(ref)) out.push(path);
   }
   return out;
+}
+
+/**
+ * `s` (a `prep.ordered` entry) with `effort:` as its file has it now (F-85
+ * D4), so a level a session changed applies to the next session. When the
+ * file cannot be read, `s` as the run holds it.
+ */
+function withCurrentEffort(backlogRoot, s) {
+  let fm;
+  try {
+    fm = readFm(join(backlogRoot, s.storyRelPath));
+  } catch {
+    return s;
+  }
+  return { ...s, effort: storyEffort(fm) };
 }
 
 /**
