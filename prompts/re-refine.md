@@ -1,4 +1,4 @@
-This story has already been refined. The user is calling `bl refine` again
+This story has already been refined. The operator is calling `bl refine` again
 to update the implementation plan or acceptance criteria.
 
 You are working on story {{storyId}} — "{{title}}".

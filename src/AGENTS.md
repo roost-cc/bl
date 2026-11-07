@@ -12,7 +12,8 @@ The `backlog` key is the relative path to the backlog directory. Stories, compon
 Markdown files with YAML frontmatter. A sync script regenerates all index tables from
 frontmatter on demand.
 
-Run `bl agents` from any repo to print this file.
+Run `bl agents` from any repo to print this file, the plain-writing guide and, inside a backlog,
+each dictionary its `backlog.json` `"dictionaries"` lists.
 
 ### Stream policy
 
@@ -51,7 +52,7 @@ Per-command stdout contracts:
 | `bl rank`            | no args: the order; an edit: nothing (progress → stderr)  |
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
-| `bl agents`          | the AGENTS.md content                                     |
+| `bl agents`          | AGENTS.md, the writing guide, each listed dictionary      |
 | `bl view`            | the file as it is when redirected; else nothing (editor)  |
 | `bl edit`            | nothing (opens editor)                                    |
 | `bl init`            | nothing (status → stderr)                                 |
@@ -3753,6 +3754,7 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_self-consistency.md`           | `{{selfConsistencyGuide}}`: derive from what the system already defines, never restate it. Refine, workon, `feature-story`, `story-run`, `review-correctness` and `feature-self-review`.             |
 | `_simplicity.md`                 | `{{simplicityGuide}}`: build what the criteria ask, abstractions follow shared behaviour, every changed line traces to the story or a named finding. Wherever `{{selfConsistencyGuide}}` is.         |
 | `_plain-writing.md`              | `{{writingGuide}}`: about 80% of ASD-STE100, so the operator or the next agent reads the text right once. Every top-level prompt; `bl agents` prints it after this reference.                        |
+| `_dictionaries.md`               | `{{dictionaryGuide}}` in `_plain-writing.md`, under "Give each thing one name": names each listed dictionary (`renderDictionaryGuide`); "" when none are listed or there is no config.               |
 | `_cd-git-guard-deny.md`          | Deny message for the cd-then-git Claude hook.                                                                                                                                                        |
 | `_cd-search-guard-deny.md`       | Deny message for the cd-then-search Claude hook.                                                                                                                                                     |
 | `_cd-guard-deny.md`              | Bash-shape hook: `cd <path> && <cmd>` (cmd not git or a search tool).                                                                                                                                |
@@ -3885,6 +3887,16 @@ project's business domain may have its own, which the project writes; bl ships n
   `repos`, `ensureReposBlock`). It never changes an existing copy or an existing
   `backlog.json`: each project curates its own copy, and a later change to the seed reaches
   new backlogs only.
+- **Prompts** name the listed dictionaries through the writing guide's `{{dictionaryGuide}}`
+  slot. `loadPrompt` fills it with `renderDictionaryGuide(config)` (`src/session.js`): the
+  `_dictionaries.md` paragraph, which names each absolute path, tells the agent to use each
+  entry's `term` and never its `avoid` words, and to add or update an entry in the same commit
+  when a refine introduces a concept or an operator decision renames a term. With none listed,
+  or with no config, the slot is empty. So every top-level prompt carries it through
+  `{{writingGuide}}`, and `test/unit/plain-writing.test.js` holds both cases in place.
+- **`bl agents`** prints this reference, the writing guide with the slot filled, and then the
+  contents of each listed dictionary under `## Dictionary: <path>` (the absolute path). Outside
+  a backlog (`findBacklogRoot` finds none) it prints the reference and the guide only.
 
 ### Per-agent variants
 

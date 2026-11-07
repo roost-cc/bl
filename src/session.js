@@ -28,6 +28,7 @@ import {
   checkModel,
   worktreeRoot,
   unitDirOf,
+  dictionariesOf,
 } from './config.js';
 import { findExistingWorktree, isSessionRunning, reposForStory, LOCK_FILE } from './story.js';
 import { ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
@@ -143,8 +144,9 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * the two prompts that review for it. `writingGuide` is the plain-writing
  * rule (about 80% of ASD-STE100: short active sentences, one name per thing,
  * facts and hedges kept exact), carried by every top-level prompt because
- * every session writes something the operator or another agent reads.
- * `simplicityGuide` is the simple, surgical change rule (build what the
+ * every session writes something the operator or another agent reads; its
+ * `{{dictionaryGuide}}` slot names the backlog's listed dictionaries
+ * (`renderDictionaryGuide`). `simplicityGuide` is the simple, surgical change rule (build what the
  * criteria ask, abstractions follow shared behaviour, every changed line
  * traces to the story or a named finding); it rides with
  * `selfConsistencyGuide`, in every refine and implementation prompt and the
@@ -175,6 +177,21 @@ const STORY_PARTIALS = {
  */
 function sideFrom(vars) {
   return vars?.featureId || vars?.storyId || '<F-n|S-n>';
+}
+
+/**
+ * The writing guide's `{{dictionaryGuide}}` slot (F-82 D8): the
+ * `_dictionaries.md` paragraph naming each path `dictionariesOf(config)`
+ * lists, indented under the guide's "one name" bullet; "" when none are
+ * listed or there is no config.
+ * @param {object | null | undefined} config
+ * @returns {string}
+ */
+export function renderDictionaryGuide(config, locale = null, agent = null) {
+  const paths = dictionariesOf(config);
+  if (paths.length === 0) return '';
+  const dictionaryList = paths.map((p) => `  - \`${p}\``).join('\n');
+  return `\n\n${renderFragment('_dictionaries', { dictionaryList }, locale, agent)}`;
 }
 
 /**
@@ -220,6 +237,9 @@ export function loadPrompt(name, vars, agentOrOpts = 'claude') {
       const fragmentVars = { ...toolHints, ...vars };
       if (slot === 'sideChangeGuide') {
         fragmentVars.sideFrom = sideFrom(vars);
+      }
+      if (slot === 'writingGuide') {
+        fragmentVars.dictionaryGuide = renderDictionaryGuide(opts.config, locale, opts.agent);
       }
       const name = vars?.unitKind === 'story' ? (STORY_PARTIALS[slot] ?? fragment) : fragment;
       partials[slot] = renderFragment(name, fragmentVars, locale, opts.agent);
