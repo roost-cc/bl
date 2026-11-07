@@ -119,7 +119,8 @@ export function pathsChangedSince(before, after) {
  * before and that the command did not change stays out, and is named. With
  * `session` (an agent session made the change: refine, the merge's triage),
  * `priority.md` stays out too, with one line: only a person ranks (F-78 D3).
- * Nothing changed, or a backlog that is not a git repo, prints nothing.
+ * Nothing changed, or a backlog that is not a git repo of its own (no `.git`
+ * in `root`, even inside a parent checkout), prints nothing.
  * Shared by feature `bl merge`, story `bl merge`'s triage, `bl refine` and
  * `bl init` (S-1330).
  * @param {string} root
@@ -129,6 +130,8 @@ export function pathsChangedSince(before, after) {
  * @returns {boolean} whether the commit failed
  */
 export function commitChangedSince(root, before, message, { session = false } = {}) {
+  // A parent checkout's status names paths from its own top, not `root`'s.
+  if (!existsSync(join(root, '.git'))) return false;
   const after = dirtySnapshot(root);
   let touched = pathsChangedSince(before, after);
   const held = session && touched.includes(PRIORITY_FILE);

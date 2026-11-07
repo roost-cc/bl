@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -73,4 +73,20 @@ test('bl init in a backlog that is not a git repo commits nothing and says nothi
   const r = init(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.doesNotMatch(r.stderr, /Committing backlog changes|Left your uncommitted|backlog commit failed|git repo/);
+});
+
+test('init_inside_parent_git_checkout_skips_commit: a backlog with no repo of its own, inside a parent checkout', () => {
+  const parent = mkTempDir('bl-init-parent-');
+  const dir = join(parent, 'backlog');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'backlog.json'), JSON.stringify({ backlog: 'backlog' }) + '\n');
+  git(parent, 'init', '-q', '-b', 'main');
+  git(parent, 'add', '.');
+  git(parent, 'commit', '-q', '-m', 'base');
+  const head = git(parent, 'rev-parse', 'HEAD');
+
+  const r = runBl(['init'], { cwd: dir, env: { ...GIT_ENV, BL_BACKLOG_DIR: dir, HOME: mkTempDir('bl-init-home-') } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(git(parent, 'rev-parse', 'HEAD'), head);
+  assert.doesNotMatch(r.stderr, /Committing backlog changes|Left your uncommitted|backlog commit failed/);
 });

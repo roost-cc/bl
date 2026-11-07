@@ -199,6 +199,22 @@ test('commitChangedSince: nothing changed makes no commit and prints nothing, a 
   );
 });
 
+test('commit_changed_since_skips_a_backlog_with_no_repo_of_its_own: a plain directory, and one inside a parent checkout', () => {
+  const parent = changedSinceRepo();
+  mkdirSync(join(parent, 'backlog'));
+  for (const root of [mkTempDir('bl-bc-plain-'), join(parent, 'backlog')]) {
+    const before = dirtySnapshot(root);
+    writeFileSync(join(root, 'a.md'), 'written by the command\n');
+    const head = g(parent, 'rev-parse', 'HEAD');
+    assert.deepEqual(
+      captureStderr(() => commitChangedSince(root, before, 'chore: nothing')),
+      [false, ''],
+      root,
+    );
+    assert.equal(g(parent, 'rev-parse', 'HEAD'), head, `${root}: no commit in the parent`);
+  }
+});
+
 test('commitChangedSince: a path dirty before stays out and is named unless the command changed it again', () => {
   const dir = changedSinceRepo();
   writeFileSync(join(dir, 'x.md'), 'operator\n');
