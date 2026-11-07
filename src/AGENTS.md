@@ -2818,8 +2818,9 @@ A story whose `component:` has no directory is listed with the bare id, not a li
 A committed page holds none of them. `bl validate` reports one as `generated-section`, and
 `scripts/migrate-generated-sections.js` (run once after F-79) removed them, with the root's
 "Total backlog" line and its older `## Features` and `## Backlog` tables, from every page. Both
-take a section only when its body is a table and nothing else (`isGeneratedBody`), so a story's
-hand-written `## Tasks` list stays. The root `index.md` is hand-written too: `bl init` writes
+take a section only when its body is a table with the generated header row and nothing else
+(`isGeneratedBody`), so a story's hand-written `## Tasks` list or table stays. `renderPage` keeps
+such a hand-written body and puts the generated table after it. The root `index.md` is hand-written too: `bl init` writes
 it once, when it is missing, with the `backlog.json` `title` (`ensureRootIndex`, `src/init.js`).
 
 ### `bl validate`
@@ -2939,10 +2940,10 @@ other commands (a strict `loadBacklog` throws it); a missing or malformed one is
 findings of the old feature order file (F-53 D1), which bl no longer reads.
 
 `generated-section` (F-79 D3, `findGeneratedSectionFindings`, error at the page) is a committed
-page that holds a section `GENERATED_SECTIONS` names for its kind, with a table for its body
-(`isGeneratedBody`); the message names the heading. `bl report` and `bl view` render those when
+page that holds a section `GENERATED_SECTIONS` names for its kind, with its generated table (the
+same header row) for its body (`isGeneratedBody`); the message names the heading. `bl report` and `bl view` render those when
 the page is read (see **Rendered pages** under `### bl sync`). A hand-written section under the
-same heading, with anything besides a table in it, is no finding.
+same heading, with anything besides that table in it, is no finding: `renderPage` keeps it.
 
 `frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first,
 from the problems of the tolerant graph `bl validate` loads once (`loadBacklog(config,

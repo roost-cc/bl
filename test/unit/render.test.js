@@ -6,10 +6,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { dirname, join, relative, resolve } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { loadBacklog } from '../../src/backlog-graph.js';
-import { formatTable, GENERATED_SECTIONS, renderPage, renderSections, SECTIONS } from '../../src/render.js';
+import {
+  formatTable,
+  GENERATED_SECTIONS,
+  generatedColumns,
+  renderPage,
+  renderSections,
+  SECTIONS,
+} from '../../src/render.js';
+import { findGeneratedSectionFindings } from '../../src/validate.js';
 
 /** Every relative `[text](path)` link in a Markdown text. */
 function links(content) {
@@ -440,6 +448,86 @@ test('a deeper heading with a generated name (### Tasks) is hand-written and sta
     const story = renderPage(g, g.get('S-6'));
     assert.ok(story.includes(notes), story);
     assert.match(story, /## Dependencies\n\nNone\.\n\n## Tasks\n\n\| ID /);
+  } finally {
+    cleanup();
+  }
+});
+
+test('render_preserves_or_rejects_authored_generated_heading: every kind and heading keeps hand-written content; only its own table is replaced, and only that is a finding', () => {
+  const { dir, cleanup } = valueAxisBacklog();
+  try {
+    mkdirSync(join(dir, 'tasks'));
+    for (const [n, unit] of [
+      [1, 'F-1'],
+      [2, 'S-2'],
+    ]) {
+      writeFileSync(
+        join(dir, 'tasks', `T${n}-do-it.md`),
+        `---\ntask_id: T-${n}\ntitle: Do it\nunit: ${unit}\nowner: operator\nstatus: open\nadded: 2026-01-01\n---\n`,
+      );
+    }
+    writeFileSync(join(dir, 'index.md'), '# Backlog\n\nIntro.\n');
+    const g0 = graphOf(dir);
+    const pages = [
+      { kind: 'root', file: join(dir, 'index.md'), get: () => null },
+      { kind: 'component', file: g0.get('C00').file, get: (g) => g.get('C00') },
+      { kind: 'epic', file: g0.get('E50').file, get: (g) => g.get('E50') },
+      { kind: 'theme', file: g0.themes.get('demo').file, get: (g) => g.themes.get('demo') },
+      { kind: 'feature', file: g0.get('F-1').file, get: (g) => g.get('F-1') },
+      { kind: 'story', file: g0.get('S-2').file, get: (g) => g.get('S-2') },
+    ];
+    for (const page of pages) {
+      const original = readFileSync(page.file, 'utf8');
+      for (const heading of GENERATED_SECTIONS[page.kind]) {
+        const columns = generatedColumns(page.kind, heading);
+        const own = formatTable(columns, [columns.map((c, i) => (i === 0 ? 'STALE-ROW' : 'x'))]);
+        const bodies = {
+          prose: { body: 'Keep this prose.', kept: ['Keep this prose.'] },
+          mixed: { body: `${own}\n\nKeep this note.`, kept: ['Keep this note.'] },
+          handTable: { body: '| Person | Note |\n| --- | --- |\n| Alice | Call supplier |', kept: ['Call supplier'] },
+          empty: { body: '', kept: [] },
+          generated: { body: own, kept: [], gone: 'STALE-ROW', finding: true },
+        };
+        for (const [name, c] of Object.entries(bodies)) {
+          const where = `${page.kind} ## ${heading} (${name})`;
+          writeFileSync(page.file, `${original.trimEnd()}\n\n## ${heading}\n\n${c.body}\n`);
+          const g = graphOf(dir);
+          const text = renderPage(g, page.get(g));
+          const sec = text.slice(text.indexOf(`## ${heading}\n`)).split(/\n(?=## )/)[0];
+          for (const k of c.kept) assert.ok(sec.includes(k), `${where} lost "${k}":\n${text}`);
+          if (c.gone) assert.ok(!text.includes(c.gone), `${where} kept the stale table:\n${text}`);
+          assert.ok(
+            sec.split('\n').some((l) => l.startsWith('|') && cells(l).join() === columns.join()),
+            `${where} has no generated table:\n${text}`,
+          );
+          assert.equal((text.match(new RegExp(`^## ${heading}$`, 'gm')) ?? []).length, 1, where);
+          const flagged = findGeneratedSectionFindings(g).some(
+            (f) => f.location === relative(dir, page.file) && f.message.startsWith(`"## ${heading}"`),
+          );
+          assert.equal(flagged, !!c.finding, `${where} finding`);
+        }
+      }
+      writeFileSync(page.file, original);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('a story with hand-written ## Tasks keeps it as written, and keeps it above the table once it gains a task', () => {
+  const { dir, cleanup } = flatBacklog();
+  try {
+    const s7 = join(dir, 'stories/S7-x/index.md');
+    writeFileSync(s7, `${readFileSync(s7, 'utf8')}\n## Tasks\n\nCall the supplier first.\n`);
+    const before = readFileSync(s7, 'utf8');
+    assert.equal(renderPage(graphOf(dir), graphOf(dir).get('S-7')), before);
+    mkdirSync(join(dir, 'tasks'));
+    writeFileSync(
+      join(dir, 'tasks', 'T1-do-it.md'),
+      '---\ntask_id: T-1\ntitle: Do it\nunit: S-7\nowner: operator\nstatus: open\nadded: 2026-01-01\n---\n',
+    );
+    const g = graphOf(dir);
+    assert.match(renderPage(g, g.get('S-7')), /## Tasks\n\nCall the supplier first\.\n\n\| ID +\| Title/);
   } finally {
     cleanup();
   }

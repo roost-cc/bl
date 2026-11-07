@@ -10,8 +10,9 @@
  * body, and from the root `index.md` its "Total backlog" line and the two
  * tables the root had before the priority (`## Features`, `## Backlog`). A
  * section is matched as `extractSection` (and so `bl validate`) matches it
- * (`removeSection`), and goes only when its body is a table and nothing else
- * (`isGeneratedBody`): a story's hand-written `## Tasks` list stays.
+ * (`removeSection`), and goes only when its body is a table with the
+ * generated header row and nothing else (`isGeneratedBody`): a story's
+ * hand-written `## Tasks` list or table stays.
  * Everything else, frontmatter included, stays byte for byte.
  *
  * Idempotent: with no generated section left a run plans nothing.
@@ -29,29 +30,37 @@ import { parseFrontmatter } from './config.js';
 import { removeSection } from './feature.js';
 import { withLock } from './lock.js';
 import { applyMigration, assertMigrationCanStart } from './migration-txn.js';
-import { GENERATED_SECTIONS, TOTAL_BACKLOG_RE, UNIT_PAGE_KINDS, isGeneratedBody } from './render.js';
+import { GENERATED_SECTIONS, TOTAL_BACKLOG_RE, UNIT_PAGE_KINDS, generatedColumns, isGeneratedBody } from './render.js';
 import { syncAndCommit } from './sync.js';
 
-/** The root's tables before F-78's priority; this module is the last to know them. */
-const RETIRED_ROOT_SECTIONS = ['Features', 'Backlog'];
+/**
+ * The root's tables before F-78's priority, with their header rows; this
+ * module is the last to know them.
+ */
+const RETIRED_ROOT_SECTIONS = [
+  { heading: 'Features', columns: ['ID', 'Title', 'Status', 'Points', 'Stories', 'Repo'] },
+  { heading: 'Backlog', columns: ['ID', 'Type', 'Component', 'Title', 'Points'] },
+];
 
 /** The page kinds with generated sections, in the order the plan lists them. */
 const KINDS = ['root', ...UNIT_PAGE_KINDS];
 
 /**
- * `text` (a whole page, frontmatter included) without the `headings`
- * sections and, for the root, the "Total backlog" line with the blank lines
- * after it; null when nothing goes.
+ * `text` (a whole page of `kind`, frontmatter included) without its
+ * generated sections and, for the root, the "Total backlog" line with the
+ * blank lines after it; null when nothing goes. A section goes only when its
+ * body is its generated table (`isGeneratedBody`, header row included).
  * @param {string} text
  * @param {string} body  the part of `text` after its frontmatter
- * @param {readonly string[]} headings
- * @param {boolean} root
+ * @param {string} kind  `root` or a unit page kind
  * @returns {string | null}
  */
-export function stripGenerated(text, body, headings, root) {
+export function stripGenerated(text, body, kind) {
+  const sections = GENERATED_SECTIONS[kind].map((heading) => ({ heading, columns: generatedColumns(kind, heading) }));
+  if (kind === 'root') sections.push(...RETIRED_ROOT_SECTIONS);
   let out = body;
-  if (root) out = out.replace(new RegExp(`${TOTAL_BACKLOG_RE.source}\\r?\\n(?:[ \\t]*\\r?\\n)*`, 'm'), '');
-  for (const h of headings) out = removeSection(out, h, isGeneratedBody);
+  if (kind === 'root') out = out.replace(new RegExp(`${TOTAL_BACKLOG_RE.source}\\r?\\n(?:[ \\t]*\\r?\\n)*`, 'm'), '');
+  for (const { heading, columns } of sections) out = removeSection(out, heading, (c) => isGeneratedBody(c, columns));
   return out === body ? null : text.slice(0, text.length - body.length) + out;
 }
 
@@ -66,13 +75,12 @@ export function planSections(config) {
   const root = join(config.backlogRoot, 'index.md');
   if (existsSync(root)) {
     const text = readFileSync(root, 'utf8');
-    const headings = [...GENERATED_SECTIONS.root, ...RETIRED_ROOT_SECTIONS];
-    const stripped = stripGenerated(text, parseFrontmatter(text).body, headings, true);
+    const stripped = stripGenerated(text, parseFrontmatter(text).body, 'root');
     if (stripped !== null) out.push({ kind: 'root', path: root, text: stripped });
   }
   for (const kind of UNIT_PAGE_KINDS) {
     for (const u of graph.list(kind)) {
-      const stripped = stripGenerated(u.text(), u.body(), GENERATED_SECTIONS[kind], false);
+      const stripped = stripGenerated(u.text(), u.body(), kind);
       if (stripped !== null) out.push({ kind, path: u.file, text: stripped });
     }
   }

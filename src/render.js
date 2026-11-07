@@ -44,29 +44,52 @@ export function formatTable(headers, rows) {
 // Layout: the one list of generated sections
 // ---------------------------------------------------------------------------
 
+/** An epic's or theme's Features table columns. */
+const FEATURES_COLUMNS = ['ID', 'Title', 'Status', 'Stories', 'Points'];
+/** A Tasks table's columns, as `taskTableRows` gives them. */
+const TASKS_COLUMNS = taskTableRows([], [], null, (p) => p).headers;
+
 /**
- * Each page kind's generated sections, in order, with where `upsertSection`
- * places one the committed text lacks: after `after` when the page has it,
- * else before `before` when the page has it, else at the end.
+ * Each page kind's generated sections, in order, with the table's header
+ * row (`columns`) and where `upsertSection` places one the committed text
+ * lacks: after `after` when the page has it, else before `before` when the
+ * page has it, else at the end.
  */
 const LAYOUT = {
   root: [
-    { heading: 'Themes', before: 'Components' },
-    { heading: 'Components', after: 'Themes' },
-    { heading: 'Priority', after: 'Components' },
+    { heading: 'Themes', columns: ['Theme', 'Title', 'Epics', 'Open features'], before: 'Components' },
+    { heading: 'Components', columns: ['ID', 'Title', 'Repo', 'Home', 'Open', 'Done'], after: 'Themes' },
+    {
+      heading: 'Priority',
+      columns: ['Rank', 'ID', 'Type', 'Title', 'Status', 'Points', 'Components'],
+      after: 'Components',
+    },
   ],
-  component: [{ heading: 'Stories' }, { heading: 'Features', after: 'Stories' }],
-  epic: [{ heading: 'Features', after: 'Outcome' }],
+  component: [
+    { heading: 'Stories', columns: ['ID', 'Type', 'Title', 'Points', 'Status'] },
+    { heading: 'Features', columns: ['ID', 'Title', 'Status', 'Stories here'], after: 'Stories' },
+  ],
+  epic: [{ heading: 'Features', columns: FEATURES_COLUMNS, after: 'Outcome' }],
   theme: [
-    { heading: 'Epics', after: 'Overview' },
-    { heading: 'Features', after: 'Epics' },
+    { heading: 'Epics', columns: ['ID', 'Title', 'Status', 'Features'], after: 'Overview' },
+    { heading: 'Features', columns: FEATURES_COLUMNS, after: 'Epics' },
   ],
   feature: [
-    { heading: 'Stories', after: 'Acceptance' },
-    { heading: 'Tasks', after: 'Stories' },
+    { heading: 'Stories', columns: ['ID', 'Component', 'Type', 'Title', 'Points', 'Status'], after: 'Acceptance' },
+    { heading: 'Tasks', columns: TASKS_COLUMNS, after: 'Stories' },
   ],
-  story: [{ heading: 'Tasks', after: 'Dependencies' }],
+  story: [{ heading: 'Tasks', columns: TASKS_COLUMNS, after: 'Dependencies' }],
 };
+
+/**
+ * The header row of `kind`'s generated `## <heading>` table.
+ * @param {string} kind
+ * @param {string} heading
+ * @returns {readonly string[]}
+ */
+export function generatedColumns(kind, heading) {
+  return LAYOUT[kind].find((s) => s.heading === heading).columns;
+}
 
 /**
  * The `## ` headings each page kind renders (`root` is the backlog's
@@ -82,15 +105,23 @@ export const GENERATED_SECTIONS = Object.freeze(
 export const UNIT_PAGE_KINDS = Object.freeze(Object.keys(GENERATED_SECTIONS).filter((k) => k !== 'root'));
 
 /**
- * Whether a section's body is a generated one: a Markdown table and blank
- * lines, nothing else. A hand-written section under the same heading (a
- * story's own `## Tasks` list with prose) is not, so `bl validate` and the
- * F-79 migration leave it.
+ * Whether a section's body is a generated one: a Markdown table whose header
+ * row is `columns`, and blank lines, nothing else. A hand-written section
+ * under the same heading (prose, a mixed body, or a table with other columns)
+ * is not, so `bl validate` and the F-79 migration leave it, and `renderPage`
+ * keeps it above the generated table.
  * @param {string | null} content  the section's body, as `extractSection` gives it
+ * @param {readonly string[]} columns  the generated table's header row
  */
-export function isGeneratedBody(content) {
+export function isGeneratedBody(content, columns) {
   const lines = (content ?? '').split('\n').filter((l) => l.trim() !== '');
-  return lines.length > 0 && lines.every((l) => l.trimStart().startsWith('|'));
+  if (lines.length === 0 || !lines.every((l) => l.trimStart().startsWith('|'))) return false;
+  const header = lines[0]
+    .trim()
+    .replace(/^\||\|$/g, '')
+    .split('|')
+    .map((c) => c.trim());
+  return header.length === columns.length && header.every((c, i) => c === columns[i]);
 }
 
 /** The root `index.md`'s generated "Total backlog" line. */
@@ -129,7 +160,7 @@ function pointsDoneOfTotal(stories) {
 /** An epic's or theme's Features table. */
 function featuresTable(features) {
   return formatTable(
-    ['ID', 'Title', 'Status', 'Stories', 'Points'],
+    FEATURES_COLUMNS,
     features.map((f) => [ref(f, fromUnit), f.title, f.status, doneOfTotal(f.stories), pointsDoneOfTotal(f.stories)]),
   );
 }
@@ -168,12 +199,12 @@ export const SECTIONS = Object.freeze({
     const entryOf = new Map(graph.ranked.map((e) => [e.unit, e]));
     return {
       Themes: formatTable(
-        ['Theme', 'Title', 'Epics', 'Open features'],
+        generatedColumns('root', 'Themes'),
         [...graph.themes.values()].map((t) => [ref(t, fromRoot), t.title, t.epics.length, openFeatures(t)]),
       ),
       // No points: a component is a label and never finishes (F-49 D4).
       Components: formatTable(
-        ['ID', 'Title', 'Repo', 'Home', 'Open', 'Done'],
+        generatedColumns('root', 'Components'),
         [...graph.components.values()].map((c) => {
           const open = c.stories.filter((s) => !s.done).length;
           return [ref(c, fromRoot), c.title, c.repo, c.home ? 'yes' : '', open, c.stories.length - open];
@@ -182,7 +213,7 @@ export const SECTIONS = Object.freeze({
       // The open units in `priority.md`'s order (F-78 D1): ranked first, by
       // their entry's position, then the unranked tail, marked.
       Priority: formatTable(
-        ['Rank', 'ID', 'Type', 'Title', 'Status', 'Points', 'Components'],
+        generatedColumns('root', 'Priority'),
         graph.priority.map((u) => [
           entryOf.get(u)?.position ?? 'unranked',
           ref(u, fromRoot),
@@ -200,11 +231,11 @@ export const SECTIONS = Object.freeze({
     const open = c.stories.filter((s) => !s.done).sort(byRank((id) => graph.rankOf(id)));
     return {
       Stories: formatTable(
-        ['ID', 'Type', 'Title', 'Points', 'Status'],
+        generatedColumns('component', 'Stories'),
         open.map((s) => [ref(s, fromUnit), s.type, s.title, s.points, s.status]),
       ),
       Features: formatTable(
-        ['ID', 'Title', 'Status', 'Stories here'],
+        generatedColumns('component', 'Features'),
         c.features
           .filter((f) => !f.done)
           .map((f) => [ref(f, fromUnit), f.title, f.status, f.stories.filter((s) => s.component === c).length]),
@@ -219,7 +250,7 @@ export const SECTIONS = Object.freeze({
   theme(_graph, t) {
     return {
       Epics: formatTable(
-        ['ID', 'Title', 'Status', 'Features'],
+        generatedColumns('theme', 'Epics'),
         t.epics.map((e) => [ref(e, fromUnit), e.title, e.status, doneOfTotal(e.features)]),
       ),
       Features: featuresTable(t.features.filter((f) => !String(f.fm.epic ?? '').trim())),
@@ -229,7 +260,7 @@ export const SECTIONS = Object.freeze({
   feature(graph, f) {
     return {
       Stories: formatTable(
-        ['ID', 'Component', 'Type', 'Title', 'Points', 'Status'],
+        generatedColumns('feature', 'Stories'),
         f.stories.map((s) => [ref(s, fromUnit), componentCell(s, fromUnit), s.type, s.title, s.points, s.status]),
       ),
       Tasks: tasksTable(graph, f),
@@ -269,18 +300,23 @@ function hasSection(body, heading) {
 /**
  * Replace the body of `## <heading>` with `content`, or create the section
  * (after `## <after>` when that exists, else before `## <before>` when that
- * exists, else at the end). A section that ends the file takes the trailing
- * blank lines with it. Function replacers throughout, so `$` in a title never
- * turns into a backreference.
+ * exists, else at the end). A body that is hand-written (not empty and not a
+ * generated `columns` table, `isGeneratedBody`) stays, and `content` follows
+ * it. A section that ends the file takes the trailing blank lines with it.
+ * Function replacers throughout, so `$` in a title never turns into a
+ * backreference.
  */
-function upsertSection(body, heading, content, { after, before } = {}) {
+function upsertSection(body, heading, content, { after, before, columns } = {}) {
   // The section body runs to the next `## ` (keeping the newline before it)
   // or to the end of the file (taking the trailing whitespace). A heading
   // starts a line, so a deeper `### <heading>` is never taken for it.
   const END = `(?:(\\n)(?=## )|\\s*(?![\\s\\S]))`;
   const re = new RegExp(`^(## ${escapeRe(heading)}\\n)([\\s\\S]*?)${END}`, 'm');
   if (re.test(body)) {
-    return body.replace(re, (_m, head, _old, nl) => `${head}\n${content}\n${nl ?? ''}`);
+    return body.replace(re, (_m, head, old, nl) => {
+      const authored = old.trim() === '' || isGeneratedBody(old, columns) ? '' : `${old.replace(/^\n+|\s+$/g, '')}\n\n`;
+      return `${head}\n${authored}${content}\n${nl ?? ''}`;
+    });
   }
   if (after) {
     const afterRe = new RegExp(`^(## ${escapeRe(after)}\\n[\\s\\S]*?)${END}`, 'm');

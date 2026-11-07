@@ -18,7 +18,7 @@ import { loadBacklog } from '../../src/backlog-graph.js';
 import { loadConfig } from '../../src/config.js';
 import { removeSection } from '../../src/feature.js';
 import { migrate, stripGenerated } from '../../src/migrate-generated-sections.js';
-import { renderPage } from '../../src/render.js';
+import { formatTable, GENERATED_SECTIONS, generatedColumns, renderPage, UNIT_PAGE_KINDS } from '../../src/render.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -66,7 +66,7 @@ function oldBacklog() {
   const root = renderPage(graph, null);
   writeFileSync(
     join(dir, PAGES.root),
-    `${root}\n## Features\n\n| ID | Title |\n| -- | ----- |\n| [F-1](features/F1-one/index.md) | One |\n\n## Backlog\n\n| ID | Title |\n| -- | ----- |\n`,
+    `${root}\n## Features\n\n| ID | Title | Status | Points | Stories | Repo |\n| -- | ----- | ------ | ------ | ------- | ---- |\n| [F-1](features/F1-one/index.md) | One | approved | 0 | 1 | bl |\n\n## Backlog\n\n| ID | Type | Component | Title | Points |\n| -- | ---- | --------- | ----- | ------ |\n`,
   );
   for (const id of ['demo', 'E50', 'C01', 'F-1']) {
     const u = graph.get(id);
@@ -102,10 +102,37 @@ test('removeSection removes every matching section, keeps the rest, and ends the
 
 test('stripGenerated removes the root total line and table sections only, and returns null when nothing goes', () => {
   const body =
-    '# B\n\nTotal backlog: 3 points across 2 stories in 1 components.\n\nintro\n\n## Themes\n\n| a |\n| - |\n';
-  assert.equal(stripGenerated(`---\nt: 1\n---\n${body}`, body, ['Themes'], true), '---\nt: 1\n---\n# B\n\nintro\n');
-  assert.equal(stripGenerated('## Tasks\n\nprose\n', '## Tasks\n\nprose\n', ['Tasks'], false), null);
-  assert.equal(stripGenerated('x\n', 'x\n', ['Tasks'], false), null);
+    '# B\n\nTotal backlog: 3 points across 2 stories in 1 components.\n\nintro\n\n## Themes\n\n| Theme | Title | Epics | Open features |\n| - | - | - | - |\n';
+  assert.equal(stripGenerated(`---\nt: 1\n---\n${body}`, body, 'root'), '---\nt: 1\n---\n# B\n\nintro\n');
+  assert.equal(stripGenerated('## Tasks\n\nprose\n', '## Tasks\n\nprose\n', 'story'), null);
+  assert.equal(stripGenerated('x\n', 'x\n', 'story'), null);
+});
+
+test('migration_preserves_authored_tables_under_generated_headings: every kind and heading loses only its own table', () => {
+  const retired = {
+    Features: ['ID', 'Title', 'Status', 'Points', 'Stories', 'Repo'],
+    Backlog: ['ID', 'Type', 'Component', 'Title', 'Points'],
+  };
+  for (const kind of ['root', ...UNIT_PAGE_KINDS]) {
+    const sections = GENERATED_SECTIONS[kind].map((h) => [h, generatedColumns(kind, h)]);
+    if (kind === 'root') sections.push(...Object.entries(retired));
+    for (const [heading, columns] of sections) {
+      const own = formatTable(columns, [columns.map(() => 'x')]);
+      const cases = {
+        handTable: ['| Person | Note |\n| --- | --- |\n| Alice | Call supplier |', false],
+        fewerColumns: [formatTable(columns.slice(0, -1), [columns.slice(0, -1).map(() => 'x')]), false],
+        prose: ['Keep this prose.', false],
+        mixed: [`${own}\n\nKeep this note.`, false],
+        empty: ['', false],
+        generated: [own, true],
+      };
+      for (const [name, [content, goes]] of Object.entries(cases)) {
+        const body = `# P\n\n## ${heading}\n\n${content}\n\n## After\n\nx\n`;
+        const out = stripGenerated(body, body, kind);
+        assert.equal(out, goes ? '# P\n\n## After\n\nx\n' : null, `${kind} ## ${heading} (${name})`);
+      }
+    }
+  }
 });
 
 test('bl validate reports each generated section, naming file and heading, and not a hand-written one', () => {

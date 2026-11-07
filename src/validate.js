@@ -27,7 +27,7 @@ import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
 import { implementPluginProblem } from './scripted.js';
-import { GENERATED_SECTIONS, UNIT_PAGE_KINDS, isGeneratedBody } from './render.js';
+import { GENERATED_SECTIONS, UNIT_PAGE_KINDS, generatedColumns, isGeneratedBody } from './render.js';
 
 // ---------------------------------------------------------------------------
 // Constants (reused by sync.js)
@@ -1393,9 +1393,10 @@ export function findPriorityFindings(graph) {
 /**
  * The `generated-section` findings (F-79 D3), each an error at the page: a
  * committed page that holds one of the sections `GENERATED_SECTIONS` names
- * for its kind, as a table (`isGeneratedBody`). `bl report` and `bl view`
- * render those when the page is read; a committed copy goes stale and
- * conflicts. A hand-written section under the same heading is no finding.
+ * for its kind, as a table with the generated header row (`isGeneratedBody`).
+ * `bl report` and `bl view` render those when the page is read; a committed
+ * copy goes stale and conflicts. A hand-written section under the same
+ * heading is no finding: `renderPage` keeps it above the generated table.
  * @param {import("./backlog-graph.js").BacklogGraph} graph
  * @returns {Finding[]}
  */
@@ -1410,7 +1411,7 @@ export function findGeneratedSectionFindings(graph) {
   for (const kind of UNIT_PAGE_KINDS) pages.push(...graph.list(kind));
   return pages.flatMap((page) =>
     GENERATED_SECTIONS[page.kind]
-      .filter((h) => isGeneratedBody(page.section(h)))
+      .filter((h) => isGeneratedBody(page.section(h), generatedColumns(page.kind, h)))
       .map((h) => ({
         severity: 'error',
         code: 'generated-section',
