@@ -53,6 +53,7 @@ export async function runMigrationScript(name, migrate, loadOpts = {}) {
     const head = spawnSync('git', ['log', '-1', '--format=%h %s'], {
       cwd: config.backlogRoot,
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).stdout.trim();
     console.log(`committed ${commit.paths.length} backlog path(s) in ${head}`);
   }
