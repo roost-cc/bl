@@ -589,6 +589,12 @@ export async function cmdApprove(args, config, feature) {
   }
   if (feature.status !== 'draft' && feature.status !== 'refined') {
     info(`Feature ${feature.id} is already ${feature.status}.`);
+    // A retry after a failed approval commit commits the approval now; a
+    // committed one has nothing to commit, and says nothing (S-1330).
+    if (feature.status === 'approved') {
+      const res = await approvalCommit(config, feature);
+      if (res.committed || res.error) reportBacklogCommit(res, 'bl approve');
+    }
     return;
   }
   if (feature.status === 'draft' && !args.force) {
@@ -636,10 +642,12 @@ export async function cmdApprove(args, config, feature) {
   for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
 
   info(`\nNext: bl run ${feature.id} (or bl implement ${feature.id} to work interactively)`);
-  reportBacklogCommit(
-    await syncAndCommit(config, { message: `chore: approve ${feature.id}`, extraPaths: [feature.featureRelPath] }),
-    'bl approve',
-  );
+  reportBacklogCommit(await approvalCommit(config, feature), 'bl approve');
+}
+
+/** Commit and push the approved feature file (`syncAndCommit`). */
+function approvalCommit(config, feature) {
+  return syncAndCommit(config, { message: `chore: approve ${feature.id}`, extraPaths: [feature.featureRelPath] });
 }
 
 // ---------------------------------------------------------------------------

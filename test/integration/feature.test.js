@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -503,7 +503,39 @@ test('bl approve gates on refined status and a non-empty, consistent story list,
     r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 0);
     assert.match(r.stderr, /already approved/);
+    assert.doesNotMatch(r.stderr, /Nothing to commit|Committed/);
     assert.equal(head(), before);
+  } finally {
+    cleanup();
+  }
+});
+
+test('approve_retry_commits_after_failed_commit: a rerun after a refused commit commits and pushes the approval', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Core', dirSuffix: 'core' }],
+    stories: [{ id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'refined', feature: 'F-1' }],
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'refined', stories: ['S-1'] }],
+  });
+  try {
+    initGitBacklog(dir);
+    addOrigin(dir);
+    const rel = 'features/F1-feat/index.md';
+    const base = git(dir, 'rev-parse', 'HEAD');
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    let r = runBl(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(fm(join(dir, rel)).status, 'approved');
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), base);
+
+    rmSync(hook);
+    r = runBl(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /already approved/);
+    assert.deepEqual(statusLines(dir), []);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: approve F-1');
+    assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [rel]);
+    assert.equal(git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main'), git(dir, 'rev-parse', 'HEAD'));
   } finally {
     cleanup();
   }
