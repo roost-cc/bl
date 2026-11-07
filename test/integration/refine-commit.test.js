@@ -29,7 +29,9 @@ function writingClaude() {
   const bin = join(dir, 'claude');
   writeFileSync(
     bin,
-    `#!/bin/sh\nfor f in $STUB_WRITE; do printf 'Written by the session.\\n' >> "$f"; done\nexit \${STUB_EXIT:-0}\n`,
+    // `STUB_EXIT=TERM` ends the session by that signal instead of an exit status.
+    `#!/bin/sh\nfor f in $STUB_WRITE; do printf 'Written by the session.\\n' >> "$f"; done\n` +
+      `[ "$STUB_EXIT" = TERM ] && kill -TERM $$\nexit \${STUB_EXIT:-0}\n`,
   );
   chmodSync(bin, 0o755);
   return dir;
@@ -133,12 +135,25 @@ test('a session that exits 1 still has its work committed, and bl refine exits 1
   assertCommitted(dir, 'chore: refine S-1', [S1]);
 });
 
-test('a commit a pre-commit hook refuses makes bl refine exit 1, naming the paths', () => {
-  const dir = gitBacklog();
-  writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  const head = git(dir, 'rev-parse', 'HEAD');
-  const r = refine(dir, ['S-1'], { write: [S1] });
-  assert.equal(r.status, 1, r.stderr);
-  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
-  assert.match(r.stderr, new RegExp(`backlog commit failed: .*\\n {2}Commit these paths yourself: ${S1}`));
-});
+// A session that exits 0, exits 7, or is killed by a signal: a failed commit
+// makes bl refine exit 1 every time, for the story, the batch and the feature.
+for (const [label, args, write] of [
+  ['bl refine S-n', ['S-1'], [S1]],
+  ['the batch refine', ['S-1', 'S-2'], [S1, S2]],
+  ['bl refine F-n', ['F-1'], [F1]],
+]) {
+  for (const exit of ['0', '7', 'TERM']) {
+    test(`refine_commit_failure_overrides_session_status: ${label}, session ends ${exit}, a refused commit exits 1 naming the paths`, () => {
+      const dir = gitBacklog();
+      writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      const head = git(dir, 'rev-parse', 'HEAD');
+      const r = refine(dir, args, { write, exit });
+      assert.equal(r.status, 1, r.stderr);
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+      assert.match(
+        r.stderr,
+        new RegExp(`backlog commit failed: .*\\n {2}Commit these paths yourself: ${write.join(' ')}`),
+      );
+    });
+  }
+}

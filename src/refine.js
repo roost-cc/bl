@@ -150,7 +150,8 @@ export function refineAndCommit(opts, message) {
   const before = dirtySnapshot(opts.backlogRoot);
   const status = launchSession({ ...opts, returnOnExit: true });
   const failed = commitChangedSince(opts.backlogRoot, before, message, { session: true });
-  process.exit(failed && status === 0 ? 1 : status);
+  // A failed commit is 1 whatever the session ended with (S-1330).
+  process.exit(failed ? 1 : status);
 }
 
 /** Single-story interactive refine (the original `bl refine <story>` flow). */
