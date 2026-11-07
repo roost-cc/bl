@@ -1,0 +1,9 @@
+# Prettier must not format these. Every prettier run reads this file: the pre-commit hook,
+# ppp, and the editor hook that runs ppp after each edit.
+#
+# prompts/: templates that bl renders as plain text, not Markdown documents. Prettier changes
+# what they say: it collapses the aligned "Unit dir     :" headers, and it re-indents a wrapped
+# line that starts with a placeholder such as <slug> because it reads it as HTML.
+# test/fixtures/: test inputs, kept byte for byte as the tests expect them.
+prompts/
+test/fixtures/

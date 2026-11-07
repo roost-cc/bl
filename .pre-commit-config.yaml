@@ -2,7 +2,6 @@
 
 default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit]
-exclude: ^(test/fixtures|prompts)/
 repos:
   # ── Shared Roost baseline (vendored, repo: local) ──
   - repo: local
