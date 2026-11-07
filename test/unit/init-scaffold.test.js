@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
-import { ensureBacklogDocs, ensureFlowFile, ensureReposBlock } from '../../src/init.js';
+import { ensureBacklogDocs, ensureFlowFile, ensureReposBlock, ensureRootIndex } from '../../src/init.js';
 import { _hooks } from '../../src/atomic-write.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
@@ -42,7 +42,12 @@ test('bl init gives a new backlog an empty roadmap.md and priority.md and the co
   assert.match(readFileSync(join(fresh, 'priority.md'), 'utf8'), /^---\nranked: \[\]\n---\n\n# Priority\n/);
   assert.equal(readFileSync(join(fresh, 'coding-dictionary.yaml'), 'utf8'), readFileSync(SEED, 'utf8'));
   // .bl/ holds the staging files (ignored in every backlog).
-  assert.deepEqual(readdirSync(fresh).filter((f) => f !== '.bl').sort(), ['coding-dictionary.yaml', 'priority.md', 'roadmap.md']);
+  assert.deepEqual(
+    readdirSync(fresh)
+      .filter((f) => f !== '.bl')
+      .sort(),
+    ['coding-dictionary.yaml', 'priority.md', 'roadmap.md'],
+  );
 
   const kept = mkTempDir('bl-init-docs-');
   writeFileSync(join(kept, 'roadmap.md'), 'kept\n');
@@ -54,7 +59,18 @@ test('bl init gives a new backlog an empty roadmap.md and priority.md and the co
   assert.equal(readFileSync(join(kept, 'coding-dictionary.yaml'), 'utf8'), 'entries: [] # curated\n');
 });
 
-test('init_seed_copy_failure_keeps_config_consistent: a failed seed copy leaves no listed file missing, and a rerun finishes', () => {
+test('bl init writes a missing root index.md with the title and its heading only, and leaves an existing one (F-79 D3)', () => {
+  const fresh = mkTempDir('bl-init-index-');
+  quietly(() => ensureRootIndex({ backlogRoot: fresh, title: 'Acme: Web' }));
+  assert.equal(readFileSync(join(fresh, 'index.md'), 'utf8'), '---\ntitle: "Acme: Web"\n---\n\n# Acme: Web\n');
+
+  const kept = mkTempDir('bl-init-index-');
+  writeFileSync(join(kept, 'index.md'), '# Hand-written\n');
+  quietly(() => ensureRootIndex({ backlogRoot: kept, title: 'Backlog' }));
+  assert.equal(readFileSync(join(kept, 'index.md'), 'utf8'), '# Hand-written\n');
+});
+
+test('init_seed_copy_failure_keeps_config_consistent:a failed seed copy leaves no listed file missing, and a rerun finishes', () => {
   const DOCS = ['roadmap.md', 'priority.md', 'coding-dictionary.yaml'];
   /** bl init's two steps, in its order; the error code, or null. */
   const init = (dir) => {
@@ -130,9 +146,13 @@ test('init_seed_copy_failure_and_concurrent_create_preserve_dictionary: a seed i
     assert.deepEqual(staged(race.dir), [], `${label}: no staging file left`);
   }
   // The dictionary is listed only once it exists, after a failure and a rerun.
-  const listedDir = withHook('coding-dictionary.yaml', (dir) => ensureReposBlock(dir, 'claude'), () => {
-    throw Object.assign(new Error('injected'), { code: 'EIO' });
-  }).dir;
+  const listedDir = withHook(
+    'coding-dictionary.yaml',
+    (dir) => ensureReposBlock(dir, 'claude'),
+    () => {
+      throw Object.assign(new Error('injected'), { code: 'EIO' });
+    },
+  ).dir;
   assert.equal(readFileSync(join(listedDir, 'backlog.json'), 'utf8'), '{}\n');
 });
 

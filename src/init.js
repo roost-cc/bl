@@ -17,6 +17,7 @@ import {
   sameConfiguration,
   CODING_DICTIONARY_FILE,
   DEFAULT_BACKLOG_TITLE,
+  serializeFrontmatter,
 } from './config.js';
 import { LOCAL_TOOLS_FILE } from './permissions.js';
 import { FLOW_FILE } from './flow.js';
@@ -43,10 +44,10 @@ Registers the backlog repo in your global agent settings so agents can
 commit and push backlog changes from any cwd, and creates allowed-tools.json,
 flow.json (the statuses and gates per type), roadmap.md, priority.md and
 coding-dictionary.yaml (bl's seed of software-engineering terms) from
-their templates when the backlog has none; an existing one is left as it
-is. A new backlog.json (in $BL_BACKLOG_DIR, else the current directory),
-one with no "repos", gets an empty one, the display name "title":
-"Backlog" (bl sync heads index.md with it), the worktree root
+their templates, and the root index.md (the "title" and a heading of it),
+when the backlog has none; an existing one is left as it is. A new
+backlog.json (in $BL_BACKLOG_DIR, else the current directory), one with no
+"repos", gets an empty one, the display name "title": "Backlog", the worktree root
 "worktrees": "../worktrees", the dictionary list "dictionaries":
 ["coding-dictionary.yaml"] (the prompts name each listed file), and, unless it
 has them, the configuration lists "agent", [{ "agent": "<-A, else claude>" }],
@@ -68,6 +69,7 @@ backlog.json "repos"; themes are created with bl new --theme.`);
   copySeed(config.backlogRoot, 'allowed-tools.json');
   ensureFlowFile(config.backlogRoot);
   ensureBacklogDocs(config.backlogRoot);
+  ensureRootIndex(config);
 
   // The plugin-tools readout goes last: the setup checklist.
   printPluginStatus(config);
@@ -93,24 +95,40 @@ export function ensureBacklogDocs(backlogRoot) {
 }
 
 /**
- * Copy `templates/<file>` into the backlog `dir` unless `dir` has the file.
- * The copy is whole or absent: it is staged in `.bl/tmp/` and linked into
- * place (`atomicWriteFile`, exclusive), so a failed copy leaves no partial
- * file that a rerun would keep, and a file another process makes meanwhile
- * is kept, not overwritten.
+ * Give a new backlog its root `index.md` (F-79 D3): frontmatter `title` and
+ * a `# <title>` heading from `backlog.json` `title`, and no tables, which
+ * `bl report` and `bl view` render when the page is read. An existing one is
+ * hand-written and left alone.
  */
+export function ensureRootIndex(config) {
+  const text = `${serializeFrontmatter({ title: config.title })}\n# ${config.title}\n`;
+  writeSeed(config.backlogRoot, 'index.md', text, 'Created : index.md');
+}
+
+/** Copy `templates/<file>` into the backlog `dir` unless `dir` has the file (`writeSeed`). */
 function copySeed(dir, file) {
+  writeSeed(dir, file, readFileSync(join(__dirname, '..', 'templates', file)), `Created : ${file} (from template)`);
+}
+
+/**
+ * Write `text` to `<dir>/<file>` unless `dir` has the file, and say `done`.
+ * The write is whole or absent: it is staged in
+ * `.bl/tmp/` and linked into place (`atomicWriteFile`, exclusive), so a
+ * failed write leaves no partial file that a rerun would keep, and a file
+ * another process makes meanwhile is kept, not overwritten.
+ */
+function writeSeed(dir, file, text, done) {
   const path = join(dir, file);
   if (existsSync(path)) return;
   try {
-    atomicWriteFile(dir, path, readFileSync(join(__dirname, '..', 'templates', file)), { exclusive: true });
+    atomicWriteFile(dir, path, text, { exclusive: true });
   } catch (e) {
     // Made by another process since the check: theirs stays. A link to
     // nothing is not a file, so it fails.
     if (e.code === 'EEXIST' && existsSync(path)) return;
     throw e;
   }
-  info(`Created : ${file} (from template)`);
+  info(done);
 }
 
 /** A new backlog's worktree root: beside the backlog, `<parent>/worktrees`. */

@@ -35,11 +35,6 @@ added:
 
 - [ ] <!-- Feature-level observable outcomes, each checkable on the merged result, not on a story alone. -->
 
-## Stories
-
-| ID  | Component | Type | Title | Points | Status |
-| --- | --------- | ---- | ----- | ------ | ------ |
-
 ## Deferred
 
 <!-- Follow-up code work only, discovered while implementing or reviewing:
