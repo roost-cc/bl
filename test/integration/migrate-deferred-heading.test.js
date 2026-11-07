@@ -140,6 +140,49 @@ test('migration_preserves_all_deferred_items_when_both_headings_exist: one ## De
   }
 });
 
+test('migration_preserves_unrelated_section_endings_for_both_heading_orders', () => {
+  const summary = '## Summary\n\nx  \n\n\n';
+  const pairs = {
+    'To Do first': '## To Do\n\n- [points: 3] old\n\n## Deferred\n\n- [points: 5] new\n\n',
+    'Deferred first': '## Deferred\n\n- [points: 5] new\n\n## To Do\n\n- [points: 3] old\n\n',
+  };
+  // The section after the merged ones: blank lines, trailing whitespace, no final newline.
+  const endings = [
+    '## Notes\n\nkeep\n',
+    '## Notes\n\nkeep\n\n\n',
+    '## Notes\n\nkeep  \n \n',
+    '## Notes\n\nkeep',
+    '## Notes\n\n## Log\n\nl\n\n',
+  ];
+  for (const eol of ['\n', '\r\n']) {
+    const crlf = (s) => s.replace(/\n/g, eol);
+    for (const [order, pair] of Object.entries(pairs)) {
+      for (const tail of endings) {
+        const label = `${order}, ${JSON.stringify(tail)}, ${JSON.stringify(eol)}`;
+        const after = renameHeading(crlf(summary + pair + tail));
+        assert.ok(after.startsWith(crlf(summary)), `${label}: the section before stays`);
+        assert.ok(after.endsWith(crlf(`\n\n${tail}`)), `${label}: the sections after stay`);
+        assert.deepEqual(
+          scanDeferred(after)
+            .items.map((i) => i.text)
+            .sort(),
+          ['[points: 3] old', '[points: 5] new'],
+          label,
+        );
+      }
+    }
+    // A dropped last section: the file ends as it did.
+    for (const end of ['\n', '\n\n\n', '  \n', '']) {
+      const before = crlf(`## Deferred\n\n- [points: 5] new\n\n## To Do\n\n- [points: 3] old${end}`);
+      assert.equal(
+        renameHeading(before),
+        crlf(`## Deferred\n\n- [points: 5] new\n\n- [points: 3] old${end}`),
+        `last To Do, ${JSON.stringify(end)}, ${JSON.stringify(eol)}`,
+      );
+    }
+  }
+});
+
 test('--dry-run prints the stories it would rename, and writes nothing', () => {
   const dir = oldBacklog();
   const before = head(dir);

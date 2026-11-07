@@ -94,8 +94,10 @@ function mergeSections(text, lines, target, retiredLines) {
   ];
 
   const out = [];
+  let lastDropped = null;
   for (let i = 0; i < lines.length;) {
     if (retired.has(i)) {
+      if (end(i) === lines.length) lastDropped = split(i).trail;
       i = end(i);
     } else if (i === target) {
       out.push(lines[i], ...merged);
@@ -104,10 +106,13 @@ function mergeSections(text, lines, target, retiredLines) {
       out.push(lines[i++]);
     }
   }
-  // A dropped last section leaves the blank lines that came before it, or
-  // takes the final newline with it: the file ends as it did.
-  while (out.length > 0 && blank(out.at(-1))) out.pop();
-  if (lines.at(-1) === '') out.push('');
+  // A dropped last section leaves the blank lines that came before it: they
+  // give way to its own, so the file ends as it did. Every other section,
+  // its blank lines included, stays byte for byte.
+  if (lastDropped) {
+    while (out.length > 0 && blank(out.at(-1))) out.pop();
+    out.push(...lastDropped);
+  }
   return out.join('\n');
 }
 
