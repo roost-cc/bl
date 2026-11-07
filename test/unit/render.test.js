@@ -494,7 +494,7 @@ test('generated_body_requires_complete_markdown_table_for_every_page_kind: isGen
   }
 });
 
-test('render_preserves_or_rejects_authored_generated_heading:every kind and heading keeps hand-written content; only its own table is replaced, and only that is a finding', () => {
+test('render_preserves_or_rejects_authored_generated_heading: every kind and heading keeps hand-written content; only its own table is replaced, and only that is a finding', () => {
   const { dir, cleanup } = valueAxisBacklog();
   try {
     mkdirSync(join(dir, 'tasks'));
