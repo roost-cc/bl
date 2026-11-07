@@ -25,7 +25,7 @@ import { listChanges, readChange } from './change-doc.js';
 import { FEATURES_DIR, normalizeFeatureId, readAllFeatures } from './feature.js';
 import { readAllStories, readComponents } from './story.js';
 import { readAllEpics, readAllThemes } from './theme.js';
-import { formatTable } from './sync.js';
+import { formatTable } from './render.js';
 import { addDays, isoWeek, pointsByStatus, scopeStories, weeklyDays } from './history.js';
 import { statusWords } from './flow.js';
 
