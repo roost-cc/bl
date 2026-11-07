@@ -264,7 +264,7 @@ test("story-run: the story file only, no PR, follow-ups to Deferred, and the sto
       assert.match(text, /Story file   : \/b\/projects\/demo\/E3-x\/S9-nine\/index\.md/);
       assert.doesNotMatch(text, /Feature file|storiesPlan|featureAbsPath/);
       assert.match(text, /Do not open a pull\s+request: `bl run` opens it/);
-      assert.match(text, /Follow-up code work of 8 points or more: a bullet under \*\*## Deferred\*\*/);
+      assert.match(text, /Code work of 8 points or more: a bullet under \*\*## Deferred\*\*/);
       assert.match(text, /a dated bullet under \*\*## Notes\*\*,\s+`- <YYYY-MM-DD> \(S-9\): …`/);
       assert.match(text, /bl sync --commit -m "chore: S-9 implemented" --story S-9\n/);
       assert.match(text, /bl sync --commit -m "chore: S-9 ad-hoc fix noted" --story S-9\n/);
