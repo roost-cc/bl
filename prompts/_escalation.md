@@ -1,6 +1,6 @@
 ## Writing an escalation
 
-An escalation stops the loop until the operator decides. The operator is busy and has not read
+An escalation stops `bl run` until the operator decides. The operator is busy and has not read
 the code, so write for someone who should understand the problem and the choice in one read.
 Write it where your instructions say, which is usually the {{unitKind}} file's **## Escalation**
 section, in this shape and with these bold headings:

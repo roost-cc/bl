@@ -50,7 +50,7 @@ not reasons to stop. Make a serious effort before you give up on anything.
    run `bl side <repo> --from {{featureId}} --type bug --points <1|2|3> --title "<the bug>" --body-file <the same file>`
    in place of `bl new`. Fix the bug in the worktree that `bl side` prints, and go on from
    step 3. `bl new` prints the new `S-<id>` and its file. Set `status: in_progress` in that
-   file's frontmatter (`bl side` sets it for you). With every criterion checked, the loop treats
+   file's frontmatter (`bl side` sets it for you). With every criterion checked, `bl run` treats
    the story as finished, and `bl merge` marks it done along with the feature.
 
 3. **Fix the bug in its own commit.** The commit touches only that bug, has a Conventional
