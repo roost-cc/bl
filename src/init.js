@@ -7,7 +7,7 @@
  *   bl init [--agent <id>]
  */
 
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -65,12 +65,7 @@ backlog.json "repos"; themes are created with bl new --theme.`);
   ensureLocalToolsGitignored(config.backlogRoot);
   warnIfGhCredentialHelper();
 
-  const toolsPath = join(config.backlogRoot, 'allowed-tools.json');
-  if (!existsSync(toolsPath)) {
-    const templatePath = join(__dirname, '..', 'templates', 'allowed-tools.json');
-    copyFileSync(templatePath, toolsPath);
-    info(`Created : allowed-tools.json (from template)`);
-  }
+  copySeed(config.backlogRoot, 'allowed-tools.json');
   ensureFlowFile(config.backlogRoot);
   ensureBacklogDocs(config.backlogRoot);
 
@@ -84,10 +79,7 @@ backlog.json "repos"; themes are created with bl new --theme.`);
  * operator's and is left alone.
  */
 export function ensureFlowFile(backlogRoot) {
-  const flowPath = join(backlogRoot, FLOW_FILE);
-  if (existsSync(flowPath)) return;
-  copyFileSync(join(__dirname, '..', 'templates', FLOW_FILE), flowPath);
-  info(`Created : ${FLOW_FILE} (from template)`);
+  copySeed(backlogRoot, FLOW_FILE);
 }
 
 /**
@@ -100,11 +92,24 @@ export function ensureBacklogDocs(backlogRoot) {
   for (const file of [ROADMAP_FILE, PRIORITY_FILE, CODING_DICTIONARY_FILE]) copySeed(backlogRoot, file);
 }
 
-/** Copy `templates/<file>` into `dir` unless `dir` has the file. */
+/**
+ * Copy `templates/<file>` into the backlog `dir` unless `dir` has the file.
+ * The copy is whole or absent: it is staged in `.bl/tmp/` and linked into
+ * place (`atomicWriteFile`, exclusive), so a failed copy leaves no partial
+ * file that a rerun would keep, and a file another process makes meanwhile
+ * is kept, not overwritten.
+ */
 function copySeed(dir, file) {
   const path = join(dir, file);
   if (existsSync(path)) return;
-  copyFileSync(join(__dirname, '..', 'templates', file), path);
+  try {
+    atomicWriteFile(dir, path, readFileSync(join(__dirname, '..', 'templates', file)), { exclusive: true });
+  } catch (e) {
+    // Made by another process since the check: theirs stays. A link to
+    // nothing is not a file, so it fails.
+    if (e.code === 'EEXIST' && existsSync(path)) return;
+    throw e;
+  }
   info(`Created : ${file} (from template)`);
 }
 

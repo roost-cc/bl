@@ -498,7 +498,7 @@ component_id: C32
 title: bl Tool Enhancements
 repo: bl # a repo registered in backlog.json
 home: true # this repo's home component; work with no better component lands here
-paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D2)
+paths: ["src/**", "test/**"] # optional: globs relative to the repo root (F-61 D2)
 ---
 ```
 
@@ -3892,7 +3892,9 @@ project's business domain may have its own, which the project writes; bl ships n
   (`ensureBacklogDocs`, beside `roadmap.md` and `priority.md`) when the backlog has none, and
   writes `"dictionaries": ["coding-dictionary.yaml"]` into a new `backlog.json` (one with no
   `repos`, `ensureReposBlock`, which copies the seed first, so a failed copy leaves
-  `backlog.json` as it was and a rerun tries again). It never changes an existing copy or an existing
+  `backlog.json` as it was and a rerun tries again). Every seed `bl init` copies is
+  staged in `.bl/tmp/` and linked into place (`atomicWriteFile` with `exclusive`): a failed
+  copy leaves no partial file, and a file another process makes meanwhile stays. It never changes an existing copy or an existing
   `backlog.json`: each project curates its own copy, and a later change to the seed reaches
   new backlogs only.
 - **Prompts** name the listed dictionaries through the writing guide's `{{dictionaryGuide}}`

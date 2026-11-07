@@ -20,7 +20,17 @@
  * could delete a live caller's staging file.
  */
 
-import { chmodSync, chownSync, mkdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import {
+  chmodSync,
+  chownSync,
+  linkSync,
+  mkdirSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
 import { basename, join } from 'path';
 import { warn } from './config.js';
 
@@ -70,12 +80,17 @@ let renameCallCount = 0;
  * When those cannot be given (chmod or chown refused, or the resolved file is on
  * another filesystem, EXDEV) the write fails and the target is unchanged.
  *
+ * With `{ exclusive: true }` the staging file is hard-linked to `path`
+ * instead of renamed over it, and then removed: a `path` that exists, also
+ * one another process made after the caller looked, stays as it is, and the
+ * write fails with EEXIST.
+ *
  * @param {string} backlogRoot
  * @param {string} path
- * @param {string} text
- * @param {{ preserve?: boolean }} [options]
+ * @param {string | Buffer} text
+ * @param {{ preserve?: boolean, exclusive?: boolean }} [options]
  */
-export function atomicWriteFile(backlogRoot, path, text, { preserve = false } = {}) {
+export function atomicWriteFile(backlogRoot, path, text, { preserve = false, exclusive = false } = {}) {
   let st = null;
   if (preserve) {
     try {
@@ -121,7 +136,8 @@ export function atomicWriteFile(backlogRoot, path, text, { preserve = false } = 
     }
     _hooks.beforeRename?.(tmp);
     try {
-      renameSync(tmp, path);
+      if (exclusive) linkSync(tmp, path);
+      else renameSync(tmp, path);
     } catch (e) {
       if (e.code !== 'EXDEV') throw e;
       throw Object.assign(
@@ -149,5 +165,14 @@ export function atomicWriteFile(backlogRoot, path, text, { preserve = false } = 
       }
     }
     throw err;
+  }
+  // The link is made: the staging name goes, and a failure leaves an
+  // orphan in ignored space, reported, not a failed write.
+  if (exclusive) {
+    try {
+      unlinkSync(tmp);
+    } catch (u) {
+      warn(`could not remove staging file ${tmp} after a write: ${u.message}`);
+    }
   }
 }
