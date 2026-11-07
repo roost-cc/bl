@@ -66,9 +66,11 @@ test('bl new --feature scaffolds features/F1-<slug>/index.md, which the rendered
     assert.equal(f.primary_repo, undefined, 'a feature names no repo (F-52 D3)');
     assert.equal(f.review_rounds_max, '2');
     const content = readFileSync(join(dir, rel), 'utf8');
-    for (const h of ['## Premise', '## Design', '## Acceptance', '## Stories', '## Deferred', '## Escalation']) {
+    for (const h of ['## Premise', '## Design', '## Acceptance', '## Deferred', '## Escalation']) {
       assert.match(content, new RegExp(`^${h}$`, 'm'), `missing ${h}`);
     }
+    // The Stories table is rendered when the page is read, never committed (F-79 D3).
+    assert.doesNotMatch(content, /^## Stories$/m);
     // The run state and the Review Log belong to the change document, which a
     // unit gets only when its branch is created.
     assert.doesNotMatch(content, /^## Review Log$/m);

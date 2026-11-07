@@ -78,6 +78,18 @@ export const GENERATED_SECTIONS = Object.freeze(
   Object.fromEntries(Object.entries(LAYOUT).map(([kind, s]) => [kind, Object.freeze(s.map((x) => x.heading))])),
 );
 
+/**
+ * Whether a section's body is a generated one: a Markdown table and blank
+ * lines, nothing else. A hand-written section under the same heading (a
+ * story's own `## Tasks` list with prose) is not, so `bl validate` and the
+ * F-79 migration leave it.
+ * @param {string | null} content  the section's body, as `extractSection` gives it
+ */
+export function isGeneratedBody(content) {
+  const lines = (content ?? '').split('\n').filter((l) => l.trim() !== '');
+  return lines.length > 0 && lines.every((l) => l.trimStart().startsWith('|'));
+}
+
 /** The root `index.md`'s generated "Total backlog" line. */
 export const TOTAL_BACKLOG_RE = /^Total backlog: \d+ points across \d+ stories in \d+ \w+\.$/m;
 
