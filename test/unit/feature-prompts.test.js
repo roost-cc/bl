@@ -103,7 +103,7 @@ test('every unit prompt names the unit directory as the working directory, and n
         assert.match(text, /^Unit dir {5}: \/u \(your working directory\)$/m, `${name} (${agent})`);
         assert.match(
           text,
-          /Your working directory is the unit directory, `\/u`\. Each repo's worktree\n {2}is `\/u\/<repo>`, and you may write in every one of them\./,
+          /Your working directory is the work unit's directory, `\/u`\. Each repo's worktree\n {2}is `\/u\/<repo>`, and you may write in every one of them\./,
           `${name} (${agent})`,
         );
         assert.doesNotMatch(text, /This worktree|code worktree root|started you in the first/, `${name} (${agent})`);
@@ -124,7 +124,7 @@ test('a session with no unit directory keeps the worktree-root working directory
     const { unitDir, ...vars } = CASES['feature-workon'];
     const text = loadPrompt('feature-workon', vars, { config });
     assert.match(text, /Your working directory is the code worktree root\./);
-    assert.doesNotMatch(text, /Your working directory is the unit directory/);
+    assert.doesNotMatch(text, /Your working directory is the work unit's directory/);
   } finally {
     cleanup();
   }
@@ -264,7 +264,7 @@ test("story-run: the story file only, no PR, follow-ups to Deferred, and the sto
       assert.match(text, /Story file   : \/b\/projects\/demo\/E3-x\/S9-nine\/index\.md/);
       assert.doesNotMatch(text, /Feature file|storiesPlan|featureAbsPath/);
       assert.match(text, /Do not open a pull\s+request: `bl run` opens it/);
-      assert.match(text, /Follow-up code work of 8 points or more: a bullet under \*\*## Deferred\*\*/);
+      assert.match(text, /Code work of 8 points or more: a bullet under \*\*## Deferred\*\*/);
       assert.match(text, /a dated bullet under \*\*## Notes\*\*,\s+`- <YYYY-MM-DD> \(S-9\): …`/);
       assert.match(text, /bl sync --commit -m "chore: S-9 implemented" --story S-9\n/);
       assert.match(text, /bl sync --commit -m "chore: S-9 ad-hoc fix noted" --story S-9\n/);
@@ -594,7 +594,7 @@ test("the correctness pass checks the diff against the repo's AGENTS.md conventi
     assert.match(text, /design-system example/);
     assert.match(text, /Quote the rule and its file/);
     assert.match(text, /Class: documented project convention not followed/);
-    assert.match(text, /then the `AGENTS\.md` files rule 7 names/);
+    assert.match(text, /Then read the `AGENTS\.md` files rule 7 names/);
   } finally {
     cleanup();
   }
@@ -663,7 +663,7 @@ test('every code-writing feature prompt carries the blocked-by-a-bug rule with t
         assert.match(text, /Fix the bug in its own commit\.\*\* The commit touches only that bug/, where);
         assert.match(
           text,
-          /only for three things: an architectural\s+problem, a business rule that is unclear, or a conflict with\s+the project's written principles/,
+          /escalate only for three things: an architectural\s+problem, a business rule that is\s+unclear, or a conflict with\s+the project's written principles/,
           where,
         );
         assert.match(
@@ -718,7 +718,11 @@ test('every feature prompt that can escalate carries the escalation guide once',
           assert.ok(text.includes(heading), `${where}: ${heading}`);
         }
         assert.match(text, /timeline\s+table with named people \(Alice, Bob, Chad\)/, where);
-        assert.match(text, /Use no unexplained jargon/, where);
+        // The guide points at the plain-writing rules instead of repeating them (F-83 D4).
+        assert.match(text, /Write it by the \*\*Plain writing\*\* rules/, where);
+        assert.ok(text.includes('## Plain writing'), `${where}: the plain-writing rules it points at`);
+        assert.doesNotMatch(text, /Use no unexplained jargon/, where);
+        assert.match(text, /name a code\s+identifier only when the operator needs it/, where);
         assert.match(text, /\| Time \| Alice \(removing Bob\)/, `${where}: the worked example`);
         assert.match(
           text,
