@@ -106,6 +106,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
                                   never by automation (F-78 D1, D3)
   roadmap.md                    ← the road map: `entries:` and one section
                                   each, all by hand (F-53 D2)
+  coding-dictionary.yaml        ← the coding dictionary: bl init's copy of
+                                  bl's seed, curated by the project (F-82)
   flow.json                     ← every story and feature status, what each
                                   implies, and the gates per type (F-66 D1)
   blockers.json                 ← every hold between units, one edge per line,
@@ -612,7 +614,8 @@ file. `bl validate` checks its shape only (`roadmap.js` `findRoadmapFindings`), 
 A backlog with no `roadmap.md` reports `roadmap-file`, and a theme with no `brief:`
 `theme-brief`. `bl init` writes `templates/roadmap.md` and `templates/priority.md`
 (empty `entries:` and `ranked:`) into a backlog that has neither, and leaves an existing one
-alone (S-581, F-78 D1). (F-53's one-off migration that wrote them for the first backlog has run;
+alone (S-581, F-78 D1). It does the same with the coding dictionary seed (see
+**Dictionaries**). (F-53's one-off migration that wrote them for the first backlog has run;
 S-581 removed it, and it is in git history.)
 
 ### Priority (F-78 D1)
@@ -2835,7 +2838,7 @@ id-dir-mismatch, bad-id-format, duplicate-id, cycle,
 dangling-dep, plugin-binary, bad-update-request,
 component-unknown, home-component, component-has-status, component-paths,
 repo-key, frontmatter-yaml, frontmatter-list, priority-file,
-priority-unit, roadmap-file, roadmap-section, theme-brief, found-by,
+priority-unit, roadmap-file, roadmap-section, theme-brief, dictionary-file, found-by,
 flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
 task-unit, task-field, deferred-unsized, operator-tasks-retired,
@@ -2901,7 +2904,9 @@ or `superseded` unit has neither (see **`## Deferred`, `## Notes` and tasks**). 
 on its head line as `found by: <id>`.
 
 `roadmap-file` and `roadmap-section` check `roadmap.md`'s shape and `theme-brief` a theme's
-`brief:` (see **The roadmap** and **Themes and Epics**).
+`brief:` (see **The roadmap** and **Themes and Epics**). `dictionary-file` (F-82, error at
+`backlog.json`) is a path `backlog.json` `"dictionaries"` lists that is not a file (see
+**Dictionaries**).
 
 `priority-file` and `priority-unit` (F-78 D1, `findPriorityFindings`, from the graph's
 problems), both errors at `priority.md`: the first when the file is missing, its frontmatter is
@@ -3848,6 +3853,38 @@ with the prompt's own variables (`{{sessionId}}`, `{{sessionNum}}`,
 join every session's allowlist (`getAllowedTools`), `{{roostDir}}` and
 `{{backlogRoot}}` resolved like the generated file's. A malformed
 `session_stack` makes `loadConfig` throw, naming the key.
+
+### Dictionaries (`backlog.json` `dictionaries`, F-82)
+
+A backlog lists the dictionaries its agents write by: files of terms, one meaning each. bl
+owns one of them, the **coding dictionary** for the practice of software engineering. A
+project's business domain may have its own, which the project writes; bl ships nothing for it.
+
+```json
+"dictionaries": ["coding-dictionary.yaml", "docs/domain-dictionary.yaml"]
+```
+
+- **The key** is a list of paths relative to the backlog root. `dictionariesOf(config)`
+  (`src/config.js`) is its one reader: it returns the paths resolved against the backlog root,
+  and `[]` when the key is absent or there is no config. A value that is not a list of non-empty
+  relative paths makes `loadConfig` throw, naming `backlog.json "dictionaries"`. Without the
+  key the backlog lists no dictionaries: a list is the operator's choice, and bl fills in no
+  default.
+- **`bl validate`** reports `dictionary-file` (error, at `backlog.json`) for a listed path that
+  is not a file, naming the path (`findDictionaryFindings`). bl never reads a dictionary's
+  contents to make a decision.
+- **The seed** is `templates/coding-dictionary.yaml` (`CODING_DICTIONARY_FILE`). It is YAML: a
+  header comment and one key, `entries`, a list of `{ term, meaning, avoid, decided }`
+  (`avoid` a list of words not to use for that meaning, `decided` the section of this
+  document where bl defines the term). Its header says that it shapes the words agents write
+  in prose and does not rename bl's CLI verbs, frontmatter keys or section headings. It names
+  no project. `test/unit/coding-dictionary.test.js` holds that shape in place.
+- **`bl init`** copies the seed to the backlog root as `coding-dictionary.yaml`
+  (`ensureBacklogDocs`, beside `roadmap.md` and `priority.md`) when the backlog has none, and
+  writes `"dictionaries": ["coding-dictionary.yaml"]` into a new `backlog.json` (one with no
+  `repos`, `ensureReposBlock`). It never changes an existing copy or an existing
+  `backlog.json`: each project curates its own copy, and a later change to the seed reaches
+  new backlogs only.
 
 ### Per-agent variants
 

@@ -198,6 +198,28 @@ function backlogTitle(topLevel) {
   return t.trim();
 }
 
+/** The coding dictionary `bl init` copies from bl's seed into a new backlog (F-82 D2). */
+export const CODING_DICTIONARY_FILE = 'coding-dictionary.yaml';
+
+/**
+ * `backlog.json` `dictionaries` (F-82 D3): the listed paths, resolved against
+ * the backlog root; `[]` without the key or without a config. A value that is
+ * not a list of non-empty relative paths throws, naming the key. The one
+ * reader of the list: prompts, `bl agents` and `bl validate` go through it.
+ * @param {{ backlogRoot?: string, topLevel?: object } | null | undefined} config
+ * @returns {string[]}
+ */
+export function dictionariesOf(config) {
+  if (!config?.backlogRoot || !config.topLevel || !Object.hasOwn(config.topLevel, 'dictionaries')) return [];
+  const list = config.topLevel.dictionaries;
+  if (!isNameList(list) || list.some((p) => isAbsolute(p.trim()))) {
+    throw new Error(
+      'backlog.json "dictionaries" must be a list of paths relative to the backlog, e.g. ["coding-dictionary.yaml"]',
+    );
+  }
+  return list.map((p) => resolve(config.backlogRoot, p.trim()));
+}
+
 /** The keys every `repos` entry must set (F-51 D4); there are no defaults. */
 const REQUIRED_REPO_KEYS = ['path', 'deployable', 'update_tests'];
 
@@ -349,6 +371,7 @@ export function loadConfig(opts = {}) {
   checkWorktreeRoot(topLevel, repos, { legacy: opts.legacyWorktrees === true });
   checkRegeneratePlugins(topLevel.plugins, 'backlog.json');
   sessionStackOf(topLevel, backlogRoot); // throws on a malformed "session_stack"
+  dictionariesOf({ backlogRoot, topLevel }); // throws on a malformed "dictionaries"
   for (const r of Object.values(repos)) {
     if (r.overrides?.plugins) {
       checkRegeneratePlugins(mergeConfig(topLevel, r.overrides).plugins, `backlog.json repos["${r.name}"] overrides`);

@@ -4,7 +4,15 @@
 
 import { existsSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
-import { loadConfig, configForRepo, parseArgs, normalizeComponentId, FORGE_OPS, BODY_READING_OP } from './config.js';
+import {
+  loadConfig,
+  configForRepo,
+  dictionariesOf,
+  parseArgs,
+  normalizeComponentId,
+  FORGE_OPS,
+  BODY_READING_OP,
+} from './config.js';
 import { DERIVED_KEYS, changeDoc, loadBacklog } from './backlog-graph.js';
 import { readAllStories, readComponents, parseIdList, pathEntryProblem } from './story.js';
 import { readAllFeatures, extractSection, sectionHasContent } from './feature.js';
@@ -1208,6 +1216,24 @@ export function findThemeBriefFindings(themes, roostDir) {
 }
 
 /**
+ * The dictionary findings (F-82 D3): `dictionary-file` (error, at
+ * `backlog.json`) for each path `backlog.json` `"dictionaries"` lists that is
+ * not a file. bl never reads a dictionary's contents.
+ * @param {ReturnType<typeof loadConfig>} config
+ * @returns {Finding[]}
+ */
+export function findDictionaryFindings(config) {
+  return dictionariesOf(config)
+    .filter((path) => !existsSync(path) || !statSync(path).isFile())
+    .map((path) => ({
+      severity: 'error',
+      code: 'dictionary-file',
+      message: `backlog.json "dictionaries" lists ${relative(config.backlogRoot, path)}, which is not a file (${path})`,
+      location: 'backlog.json',
+    }));
+}
+
+/**
  * Every file of the backlog that holds frontmatter, as the tolerant graph
  * lists it (`loadBacklog`, F-77 D2): the root `index.md`, each unit's
  * `index.md` and change documents under `stories/`, `components/`,
@@ -1504,6 +1530,7 @@ export function runAll(config, opts = {}) {
   findings.push(...findPriorityFindings(graph));
   findings.push(...findRoadmapFindings(config));
   findings.push(...findThemeBriefFindings(allThemes, config.roostDir));
+  findings.push(...findDictionaryFindings(config));
 
   // 4b. The forge plugin against the D4 op set (backlog-wide, like 5).
   findings.push(...findForgeFindings(config));
@@ -1616,7 +1643,7 @@ Findings codes:
   home-component, component-has-status, component-paths,
   feature-theme, feature-epic, epic-theme, theme-repo, repo-key,
   priority-file, priority-unit, roadmap-file,
-  roadmap-section, theme-brief, flow-json, blockers-json, agent-config,
+  roadmap-section, theme-brief, dictionary-file, flow-json, blockers-json, agent-config,
   blockers-unit, blockers-gate, blockers-status, blockers-duplicate,
   blockers-cycle, blockers-unmeetable, blockers-order
 

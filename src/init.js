@@ -10,7 +10,14 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { loadConfig, parseArgs, info, sameConfiguration, DEFAULT_BACKLOG_TITLE } from './config.js';
+import {
+  loadConfig,
+  parseArgs,
+  info,
+  sameConfiguration,
+  CODING_DICTIONARY_FILE,
+  DEFAULT_BACKLOG_TITLE,
+} from './config.js';
 import { LOCAL_TOOLS_FILE } from './permissions.js';
 import { FLOW_FILE } from './flow.js';
 import { ROADMAP_FILE } from './roadmap.js';
@@ -34,11 +41,14 @@ Options:
 
 Registers the backlog repo in your global agent settings so agents can
 commit and push backlog changes from any cwd, and creates allowed-tools.json,
-flow.json (the statuses and gates per type), roadmap.md and priority.md
-from their templates when the backlog has none. A new backlog.json (in
-$BL_BACKLOG_DIR, else the current directory), one with no "repos", gets
-an empty one, the display name "title": "Backlog" (bl sync heads index.md
-with it), the worktree root "worktrees": "../worktrees", and, unless it
+flow.json (the statuses and gates per type), roadmap.md, priority.md and
+coding-dictionary.yaml (bl's seed of software-engineering terms) from
+their templates when the backlog has none; an existing one is left as it
+is. A new backlog.json (in $BL_BACKLOG_DIR, else the current directory),
+one with no "repos", gets an empty one, the display name "title":
+"Backlog" (bl sync heads index.md with it), the worktree root
+"worktrees": "../worktrees", the dictionary list "dictionaries":
+["coding-dictionary.yaml"] (the prompts name each listed file), and, unless it
 has them, the configuration lists "agent", [{ "agent": "<-A, else claude>" }],
 and "review_agent", [{ "agent": "<the first other headless agent>" }]: the
 reviewer is never the implementer. Repos are registered by hand in
@@ -83,10 +93,11 @@ export function ensureFlowFile(backlogRoot) {
 /**
  * Give a new backlog the two hand-edited documents `bl validate` requires,
  * `roadmap.md` (F-53 D2) and `priority.md` (F-78 D1), each from its
- * template with an empty list (S-581). An existing one is left alone.
+ * template with an empty list (S-581), and the coding dictionary seed
+ * (F-82 D2), which the project then curates. An existing one is left alone.
  */
 export function ensureBacklogDocs(backlogRoot) {
-  for (const file of [ROADMAP_FILE, PRIORITY_FILE]) {
+  for (const file of [ROADMAP_FILE, PRIORITY_FILE, CODING_DICTIONARY_FILE]) {
     const path = join(backlogRoot, file);
     if (existsSync(path)) continue;
     copyFileSync(join(__dirname, '..', 'templates', file), path);
@@ -153,7 +164,9 @@ export function initConfigurationLists(raw, agent = null) {
 /**
  * Give a new backlog's `backlog.json` (in `dir`) an empty `repos` block, the
  * key bl finds a backlog by (F-51 D5), the worktree root `loadConfig`
- * requires (F-60 D1), unless it names one, and the two configuration lists
+ * requires (F-60 D1), unless it names one, the dictionary list naming the
+ * coding dictionary `ensureBacklogDocs` copies (F-82 D3), unless it has
+ * one, and the two configuration lists
  * it requires (F-64 D2), unless it has them, each independent of the other
  * (`initConfigurationLists`), with no model. A
  * file that has `repos`, or the pre-F-51
@@ -176,6 +189,7 @@ export function ensureReposBlock(dir, agent = null) {
   const added = {};
   if (!Object.hasOwn(raw, 'title')) added.title = DEFAULT_BACKLOG_TITLE;
   if (!Object.hasOwn(raw, 'worktrees')) added.worktrees = NEW_WORKTREE_ROOT;
+  if (!Object.hasOwn(raw, 'dictionaries')) added.dictionaries = [CODING_DICTIONARY_FILE];
   Object.assign(added, initConfigurationLists(raw, agent));
   atomicWriteFile(dir, path, JSON.stringify({ ...raw, ...added, repos: {} }, null, 2) + '\n', { preserve: true });
   const keys = [...Object.entries(added).map(([k, v]) => `"${k}": ${JSON.stringify(v)}`), '"repos": {}'];
