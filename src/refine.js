@@ -7,8 +7,9 @@
  * resolved, a single orchestrator session is launched that delegates each
  * story to its own sub-agent (Task tool), refining them in parallel.
  *
- * Sets each story's status to "refined" when done. Does not commit — leaves
- * that to the user.
+ * Sets each story's status to "refined" when done. When the session ends,
+ * commits and pushes what it left uncommitted in the backlog
+ * (`refineAndCommit`).
  */
 
 import { readFileSync } from 'fs';
@@ -25,6 +26,7 @@ import {
 import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { launchSession, loadPrompt, spillSubagentPrompts } from './session.js';
 import { flowForHelp, loadFlow } from './flow.js';
+import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
 
 /**
@@ -133,6 +135,24 @@ function storyRefineContext(found, fm, config) {
   return { parsed, title, storyRelPath, promptName, vars };
 }
 
+/**
+ * Run a refine session (`launchSession` options), then commit and push what
+ * it left uncommitted in the backlog with `message` (S-1330 D1): the agent
+ * commits its own work during the session, and this catches the rest, the
+ * token totals `launchSession` writes after it included. The snapshot is
+ * taken here, before the session starts (D3). Exits with the session's
+ * status, or 1 when the commit failed. `bl refine S-n`, the batch and
+ * `bl refine F-n` (`feature-cmd.js` `cmdRefine`) all end here.
+ * @param {object} opts  `launchSession` options
+ * @param {string} message
+ */
+export function refineAndCommit(opts, message) {
+  const before = dirtySnapshot(opts.backlogRoot);
+  const status = launchSession({ ...opts, returnOnExit: true });
+  const failed = commitChangedSince(opts.backlogRoot, before, message, { session: true });
+  process.exit(failed && status === 0 ? 1 : status);
+}
+
 /** Single-story interactive refine (the original `bl refine <story>` flow). */
 function refineOne(target, config, { additionalPrompt } = {}) {
   const { backlogRoot, roostDir } = config;
@@ -153,21 +173,24 @@ function refineOne(target, config, { additionalPrompt } = {}) {
     config,
   });
 
-  launchSession({
-    mode: 'refine',
-    parsed,
-    title,
-    worktreePath: backlogRoot,
-    branchName: 'main',
-    sessionPrompt,
-    roostDir,
-    backlogRoot,
-    isNewWorktree: false,
-    agent: config.agent,
-    config,
-    additionalPrompt,
-    effort: sessionEffort(config, { mode: 'refine' }),
-  });
+  refineAndCommit(
+    {
+      mode: 'refine',
+      parsed,
+      title,
+      worktreePath: backlogRoot,
+      branchName: 'main',
+      sessionPrompt,
+      roostDir,
+      backlogRoot,
+      isNewWorktree: false,
+      agent: config.agent,
+      config,
+      additionalPrompt,
+      effort: sessionEffort(config, { mode: 'refine' }),
+    },
+    `chore: ${promptName} ${parsed.id}`,
+  );
 }
 
 /** Batch refine: one orchestrator session that fans out to per-story sub-agents. */
@@ -208,24 +231,27 @@ function refineBatch(targets, config) {
 
   renameTmuxWindow('refine batch');
 
-  launchSession({
-    mode: 'refine',
-    parsed: { id: 'refine-batch' },
-    title: `${targets.length} stories`,
-    worktreePath: backlogRoot,
-    branchName: 'main',
-    sessionPrompt,
-    roostDir,
-    backlogRoot,
-    isNewWorktree: false,
-    agent: config.agent,
-    config,
-    forceNew: true,
-    recordTokens: false,
-    sessionName: `refine batch — ${targets.map((t) => t.id).join(', ')}`,
-    tmuxLabel: 'refine batch',
-    effort: sessionEffort(config, { mode: 'refine' }),
-  });
+  refineAndCommit(
+    {
+      mode: 'refine',
+      parsed: { id: 'refine-batch' },
+      title: `${targets.length} stories`,
+      worktreePath: backlogRoot,
+      branchName: 'main',
+      sessionPrompt,
+      roostDir,
+      backlogRoot,
+      isNewWorktree: false,
+      agent: config.agent,
+      config,
+      forceNew: true,
+      recordTokens: false,
+      sessionName: `refine batch — ${targets.map((t) => t.id).join(', ')}`,
+      tmuxLabel: 'refine batch',
+      effort: sessionEffort(config, { mode: 'refine' }),
+    },
+    `chore: refine ${targets.map((t) => t.id).join(', ')}`,
+  );
 }
 
 export async function main(argv) {
@@ -249,7 +275,8 @@ Options:
 With a single resolved story, launches one interactive agent session in the
 backlog repo to refine and plan it. With multiple stories, launches one
 orchestrator session that delegates each story to its own sub-agent, refining
-them in parallel. Sets status to "refined" when complete. Does not commit.`);
+them in parallel. Sets status to "refined" when complete. When the session
+ends, bl commits and pushes what it left uncommitted in the backlog.`);
     process.exit(0);
   }
 

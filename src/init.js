@@ -27,6 +27,7 @@ import { PRIORITY_FILE } from './priority.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { getProvider, PROVIDER_NAMES } from './agents/index.js';
 import { probePluginBinaries, formatPluginStatus } from './plugin-binaries.js';
+import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { detectGhCredentialHelper, formatGhCredentialHelperAdvisory } from './credential-helper.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -58,11 +59,17 @@ and "review_agent", [{ "agent": "<the first other headless agent>" }]: the
 reviewer is never the implementer. A backlog.json that has "repos" keeps
 its settings and gets only the effort levels, unless it has them. Repos are
 registered by hand in
-backlog.json "repos"; themes are created with bl new --theme.`);
+backlog.json "repos"; themes are created with bl new --theme. When the backlog
+is a git repo, bl init commits and pushes the files it wrote ("chore: bl
+init"); edits you made before it stay uncommitted.`);
     process.exit(0);
   }
 
-  ensureReposBlock(process.env.BL_BACKLOG_DIR || process.cwd(), args.agent);
+  // `ensureReposBlock` treats this directory as the backlog root. The
+  // snapshot keeps edits made before `bl init` out of its commit (S-1330).
+  const backlogDir = process.env.BL_BACKLOG_DIR || process.cwd();
+  const before = dirtySnapshot(backlogDir);
+  ensureReposBlock(backlogDir, args.agent);
   const config = loadConfig({ agent: args.agent });
   const provider = getProvider(config.agent);
 
@@ -75,9 +82,11 @@ backlog.json "repos"; themes are created with bl new --theme.`);
   ensureFlowFile(config.backlogRoot);
   ensureBacklogDocs(config.backlogRoot);
   ensureRootIndex(config);
+  const commitFailed = commitChangedSince(config.backlogRoot, before, 'chore: bl init');
 
   // The plugin-tools readout goes last: the setup checklist.
   printPluginStatus(config);
+  if (commitFailed) process.exit(1);
 }
 
 /**

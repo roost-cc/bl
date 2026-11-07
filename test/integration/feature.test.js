@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 
 import { basename, dirname, join, resolve } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
-import { GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
+import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
 import { extractSection, findFeature, normalizeFeatureId } from '../../src/feature.js';
@@ -15,15 +15,16 @@ const REPOS = ['../demo-repo'];
 /** demo-repo's home component, so `bl validate` has no home-component finding (F-49 D4). */
 const HOME = { id: 'C00', title: 'Core', dirSuffix: 'core', repo: 'demo-repo', home: true };
 
-function newStory(dir, { component = 'C00', title, points = '3', extra = [] }) {
-  const r = runBl(['new', component, '--title', title, '--points', points, ...extra], { cwd: dir });
+function newStory(dir, { component = 'C00', title, points = '3', extra = [], env }) {
+  const r = runBl(['new', component, '--title', title, '--points', points, ...extra], { cwd: dir, env });
   if (r.status !== 0) throw new Error('seed failed:\n' + r.stderr);
   return r.stdout.trim();
 }
 
-function newFeature(dir, title = 'Invite codes') {
+function newFeature(dir, title = 'Invite codes', env = undefined) {
   const r = runBl(['new', '--feature', '--theme', 'demo', '--title', title], {
     cwd: dir,
+    env,
   });
   if (r.status !== 0) throw new Error('feature new failed:\n' + r.stderr);
   return r.stdout.trim();
@@ -460,23 +461,30 @@ test('bl new --from rejects an epic block, an unknown component and an unknown f
   }
 });
 
-test('bl approve gates on refined status and a non-empty, consistent story list', () => {
+test('bl approve gates on refined status and a non-empty, consistent story list, and commits and pushes the approval', () => {
   const { dir, cleanup } = mkTempBacklog({ repos: REPOS, components: [HOME] });
   try {
-    const rel = newFeature(dir);
+    initGitBacklog(dir);
+    addOrigin(dir);
+    const env = GIT_ENV;
+    const head = () => git(dir, 'rev-parse', 'HEAD');
+    const rel = newFeature(dir, undefined, env);
     const featurePath = join(dir, rel);
-    // draft → refuse
-    let r = runBl(['approve', 'F-1'], { cwd: dir });
+    // draft → refuse, and no commit
+    let before = head();
+    let r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /still a draft/);
-    // refined but no stories → refuse
+    assert.equal(head(), before);
+    // refined but no stories → refuse, and no commit
     writeFileSync(featurePath, readFileSync(featurePath, 'utf8').replace('status: draft', 'status: refined'));
-    r = runBl(['approve', 'F-1'], { cwd: dir });
+    r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /has no stories/);
+    assert.equal(head(), before);
     // with a story → approved + approved date, which the rendered root shows
-    newStory(dir, { title: 'Mint', points: '3', extra: ['--feature', 'F-1'] });
-    r = runBl(['approve', 'F-1'], { cwd: dir });
+    newStory(dir, { title: 'Mint', points: '3', extra: ['--feature', 'F-1'], env });
+    r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 0, r.stderr);
     const f = fm(featurePath);
     assert.equal(f.status, 'approved');
@@ -484,10 +492,18 @@ test('bl approve gates on refined status and a non-empty, consistent story list'
     assert.match(r.stderr, /3 points/);
     assert.match(r.stderr, /^ {2}S-1 {2}effort: high \(default\) {2}Mint$/m, 'an unset effort shows effort.default');
     assert.match(rendered(dir), /F-1.*approved/);
-    // approving again is a no-op
-    r = runBl(['approve', 'F-1'], { cwd: dir });
+    // committed and pushed (S-1330): no line left for the operator to run
+    assert.doesNotMatch(r.stderr, /Commit the approval/);
+    assert.deepEqual(statusLines(dir), []);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: approve F-1');
+    assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [rel]);
+    assert.equal(git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main'), head(), 'origin has it');
+    // approving again is a no-op, and commits nothing
+    before = head();
+    r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 0);
     assert.match(r.stderr, /already approved/);
+    assert.equal(head(), before);
   } finally {
     cleanup();
   }

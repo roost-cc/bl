@@ -8,6 +8,7 @@ import {
   dirtySnapshot,
   pathsChangedSince,
   commitPaths,
+  commitChangedSince,
   commandPullsBacklog,
   isGeneratedPath,
   isNonFastForwardRejection,
@@ -30,6 +31,8 @@ import {
   regenReason,
 } from '../../src/allowed-tools.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
+import { PRIORITY_FILE } from '../../src/priority.js';
+import { HEADLESS_ENV } from '../../src/agents/provider.js';
 
 const ENV = {
   ...process.env,
@@ -159,6 +162,97 @@ test('commitPaths reports a commit that fails without output as an error', () =>
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// commitChangedSince: what bl merge, refine, triage and init commit (S-1330)
+// ---------------------------------------------------------------------------
+
+/** A repo with `x.md`, `y.md` and `priority.md` committed, and an identity. */
+function changedSinceRepo() {
+  const dir = mkTempDir('bl-bc-since-');
+  g(dir, 'init', '-q', '-b', 'main');
+  g(dir, 'config', 'user.name', 't');
+  g(dir, 'config', 'user.email', 't@t');
+  for (const f of ['x.md', 'y.md', PRIORITY_FILE]) writeFileSync(join(dir, f), `${f}\n`);
+  g(dir, 'add', '.');
+  g(dir, 'commit', '-q', '-m', 'base');
+  return dir;
+}
+
+test('commitChangedSince: nothing changed makes no commit and prints nothing, a non-repo too', () => {
+  const dir = changedSinceRepo();
+  const head = g(dir, 'rev-parse', 'HEAD');
+  const before = dirtySnapshot(dir);
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: nothing'));
+  assert.equal(failed, false);
+  assert.equal(err, '');
+  assert.equal(g(dir, 'rev-parse', 'HEAD'), head);
+
+  const plain = mkTempDir('bl-bc-plain-');
+  const snap = dirtySnapshot(plain);
+  assert.equal(snap, null);
+  writeFileSync(join(plain, 'a.md'), 'a\n');
+  assert.deepEqual(
+    captureStderr(() => commitChangedSince(plain, snap, 'chore: nothing')),
+    [false, ''],
+  );
+});
+
+test('commitChangedSince: a path dirty before stays out and is named unless the command changed it again', () => {
+  const dir = changedSinceRepo();
+  writeFileSync(join(dir, 'x.md'), 'operator\n');
+  writeFileSync(join(dir, 'y.md'), 'operator\n');
+  const before = dirtySnapshot(dir);
+  writeFileSync(join(dir, 'y.md'), 'operator + command\n');
+  writeFileSync(join(dir, 'new.md'), 'command\n');
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: since'));
+  assert.equal(failed, false, err);
+  assert.equal(g(dir, 'log', '-1', '--format=%s'), 'chore: since');
+  assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['new.md', 'y.md']);
+  assert.match(err, /Committing backlog changes \(2 paths\)\.\.\./);
+  assert.match(err, /Left your uncommitted backlog edits alone: x\.md\n/);
+  assert.equal(g(dir, 'status', '--porcelain'), 'M x.md');
+});
+
+test('commitChangedSince: priority.md is held for an agent session, with one line, and committed otherwise', () => {
+  for (const session of [true, false]) {
+    const dir = changedSinceRepo();
+    const before = dirtySnapshot(dir);
+    writeFileSync(join(dir, PRIORITY_FILE), 'reranked\n');
+    writeFileSync(join(dir, 'x.md'), 'refined\n');
+    // As a person: under the headless marker `commitPaths` refuses
+    // `priority.md` by itself (F-78 D3), session or not.
+    const marker = process.env[HEADLESS_ENV];
+    delete process.env[HEADLESS_ENV];
+    let failed, err;
+    try {
+      [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: s', { session }));
+    } finally {
+      if (marker !== undefined) process.env[HEADLESS_ENV] = marker;
+    }
+    assert.equal(failed, false, err);
+    const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort();
+    const held = new RegExp(`Left ${PRIORITY_FILE} uncommitted: .*only a person ranks`);
+    if (session) {
+      assert.deepEqual(files, ['x.md']);
+      assert.equal(err.match(new RegExp(held, 'g'))?.length, 1, err);
+      assert.equal(g(dir, 'status', '--porcelain'), `M ${PRIORITY_FILE}`);
+    } else {
+      assert.deepEqual(files, [PRIORITY_FILE, 'x.md']);
+      assert.doesNotMatch(err, held);
+    }
+  }
+});
+
+test('commitChangedSince: a failed commit returns true and names the paths', () => {
+  const dir = changedSinceRepo();
+  const before = dirtySnapshot(dir);
+  writeFileSync(join(dir, 'x.md'), 'changed\n');
+  writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: fails'));
+  assert.equal(failed, true);
+  assert.match(err, /backlog commit failed: git commit exited 1\n {2}Commit these paths yourself: x\.md/);
 });
 
 // ---------------------------------------------------------------------------
@@ -454,6 +548,9 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
     ['implement', ['S-1']],
     ['merge', ['F-1']],
     ['done', ['S-1']],
+    ['refine', ['S-1']],
+    ['approve', ['F-1']],
+    ['init', []],
     ['inbox', []],
     ['inbox', ['done', 'F-1:op1']],
     ['updates', ['status']],
@@ -479,6 +576,7 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
     ['updates', []],
     ['inbox', ['--help']],
     ['run', ['-h']],
+    ['refine', ['--help']],
     ['attach', ['--help']],
     ['move', ['--help']],
     ['block', ['list']],

@@ -24,7 +24,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { main as cleanupMain } from '../../src/cleanup.js';
 import { parseFrontmatter } from '../../src/config.js';
@@ -657,6 +657,77 @@ test("cleanup's backlog commit holds only the story and the synced paths", async
   });
   assert.match(status, / M stories\/S7-bystander\/index\.md/);
   assert.match(status, /A {2}staged\.txt/);
+});
+
+// ---------------------------------------------------------------------------
+// S-1330: what the merge's triage agent leaves is committed and pushed
+// ---------------------------------------------------------------------------
+
+/**
+ * Give the story a `## Deferred` item, committed and pushed, and put on PATH
+ * a `claude` stub that writes `newStory` and exits 0.
+ */
+function triageSetup(backlog, storyIndexPath, newStory, { hook = false } = {}) {
+  writeFileSync(storyIndexPath, '\n## Deferred\n\n- [points: 8] the follow-up work\n', { flag: 'a' });
+  execSync(`git ${GIT_ENV} -C "${backlog}" commit -q -am deferred`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  execSync(`git -C "${backlog}" push -q origin main`, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const bin = mkTempDir('bl-triage-claude-');
+  writeFileSync(
+    join(bin, 'claude'),
+    `#!/bin/sh\nmkdir -p "${dirname(newStory)}"\nprintf -- '---\\nstory_id: S-100\\n---\\n' > "${newStory}"\n${
+      // The hook goes in after the merge's own commit, so only the triage commit meets it.
+      hook
+        ? `printf '#!/bin/sh\\nexit 1\\n' > "${backlog}/.git/hooks/pre-commit"\nchmod +x "${backlog}/.git/hooks/pre-commit"\n`
+        : ''
+    }exit 0\n`,
+    { mode: 0o755 },
+  );
+  return bin;
+}
+
+/** `bl merge S-99` with `bin` first on PATH; `exitCode` is the `process.exitCode` it set. */
+async function mergeWithStub(backlog, bin) {
+  const origPath = process.env.PATH;
+  process.env.PATH = `${bin}:${origPath}`;
+  process.env.BL_BACKLOG_DIR = backlog;
+  try {
+    const out = await captureStderr(() => captureExit(() => cleanupMain(['S-99'])));
+    return { ...out, exitCode: process.exitCode };
+  } finally {
+    process.env.PATH = origPath;
+    delete process.env.BL_BACKLOG_DIR;
+    process.exitCode = undefined;
+  }
+}
+
+function backlogGit(backlog, args) {
+  return execSync(`git -C "${backlog}" ${args}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+test('bl merge commits and pushes what the triage agent left, with "chore: triage S-99 Deferred into new stories"', async () => {
+  const { tmp, backlog, storyIndexPath } = buildStoryBacklog({ repoNames: ['bl'], initBacklogGit: true });
+  const newStory = join(backlog, 'stories', 'S100-new', 'index.md');
+  const out = await mergeWithStub(backlog, triageSetup(backlog, storyIndexPath, newStory));
+  assert.equal(out.result.exit, null, out.stderr);
+  assert.equal(backlogGit(backlog, 'status --porcelain'), '');
+  assert.equal(backlogGit(backlog, 'log -1 --format=%s').trim(), 'chore: triage S-99 Deferred into new stories');
+  assert.match(backlogGit(backlog, 'show --name-only --format= HEAD'), /^stories\/S100-new\/index\.md$/m);
+  const origin = backlogGit(join(tmp, 'upstream', 'backlog.git'), 'rev-parse main');
+  assert.equal(origin, backlogGit(backlog, 'rev-parse HEAD'), 'origin has the triage commit');
+});
+
+test('a triage commit that fails makes bl merge exit 1 after its remaining steps', async () => {
+  const { backlog, storyIndexPath } = buildStoryBacklog({ repoNames: ['bl'], initBacklogGit: true });
+  const newStory = join(backlog, 'stories', 'S100-new', 'index.md');
+  const out = await mergeWithStub(backlog, triageSetup(backlog, storyIndexPath, newStory, { hook: true }));
+  assert.equal(out.result.exit, null, out.stderr);
+  assert.equal(out.exitCode, 1, out.stderr);
+  assert.match(
+    out.stderr,
+    /backlog commit failed: .*\n {2}Commit these paths yourself: .*stories\/S100-new\/index\.md/,
+  );
+  // The remaining steps ran: the closing line comes after the failure.
+  assert.match(out.stderr, /backlog commit failed[\s\S]*\nDone\. S-99 cleaned in: bl \(story marked done\)\./);
 });
 
 // ---------------------------------------------------------------------------

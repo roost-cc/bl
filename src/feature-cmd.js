@@ -103,7 +103,9 @@ import { failPoint } from './feature-links.js';
 import { prepareBody } from './body.js';
 import { scanDeferred, DEFERRED_HEADING } from './deferred.js';
 import { readAllTasks, tasksOf } from './task.js';
-import { dirtySnapshot, pathsChangedSince, commitPaths } from './backlog-commit.js';
+import { dirtySnapshot, commitChangedSince } from './backlog-commit.js';
+import { reportBacklogCommit, syncAndCommit } from './sync.js';
+import { refineAndCommit } from './refine.js';
 import {
   changeName,
   ensureChange,
@@ -553,24 +555,27 @@ export function cmdRefine(args, config, feature) {
     config,
   });
   renameTmuxWindow(`${feature.id} refine`);
-  launchSession({
-    mode: 'refine',
-    parsed: parsedFor(feature),
-    title: feature.title,
-    worktreePath: config.backlogRoot,
-    branchName: 'main',
-    sessionPrompt,
-    roostDir: config.roostDir,
-    backlogRoot: config.backlogRoot,
-    isNewWorktree: false,
-    agent: config.agent,
-    config,
-    additionalPrompt: args.prompt,
-    recordTokens: false,
-    sessionName: `${feature.id}: refine — ${feature.title}`,
-    tmuxLabel: `${feature.id} refine`,
-    effort: sessionEffort(config, { mode: 'refine' }),
-  });
+  refineAndCommit(
+    {
+      mode: 'refine',
+      parsed: parsedFor(feature),
+      title: feature.title,
+      worktreePath: config.backlogRoot,
+      branchName: 'main',
+      sessionPrompt,
+      roostDir: config.roostDir,
+      backlogRoot: config.backlogRoot,
+      isNewWorktree: false,
+      agent: config.agent,
+      config,
+      additionalPrompt: args.prompt,
+      recordTokens: false,
+      sessionName: `${feature.id}: refine — ${feature.title}`,
+      tmuxLabel: `${feature.id} refine`,
+      effort: sessionEffort(config, { mode: 'refine' }),
+    },
+    `chore: refine ${feature.id}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -631,7 +636,10 @@ export async function cmdApprove(args, config, feature) {
   for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
 
   info(`\nNext: bl run ${feature.id} (or bl implement ${feature.id} to work interactively)`);
-  info(`Commit the approval:\n  bl sync --commit -m "chore: approve ${feature.id}" --path ${feature.featureRelPath}`);
+  reportBacklogCommit(
+    await syncAndCommit(config, { message: `chore: approve ${feature.id}`, extraPaths: [feature.featureRelPath] }),
+    'bl approve',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1722,20 +1730,11 @@ export async function cmdMerge(args, config, feature) {
     }, completed=${stamp}`,
   );
 
-  const touched = pathsChangedSince(backlogBefore, dirtySnapshot(config.backlogRoot));
-  let commitFailed = false;
-  if (touched.length > 0) {
-    info(`\nCommitting backlog changes (${touched.length} path${touched.length === 1 ? '' : 's'})...`);
-    const res = commitPaths(config.backlogRoot, touched, `chore: merge ${feature.id}, mark stories done`);
-    if (!res.committed && res.error) {
-      commitFailed = true;
-      console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);
-    }
-  }
-  const leftAlone = [...(backlogBefore?.keys() ?? [])].filter((p) => !touched.includes(p));
-  if (leftAlone.length > 0) {
-    info(`Left your uncommitted backlog edits alone: ${leftAlone.join(', ')}`);
-  }
+  const commitFailed = commitChangedSince(
+    config.backlogRoot,
+    backlogBefore,
+    `chore: merge ${feature.id}, mark stories done`,
+  );
 
   runFeatureStagePlugins(
     'cleanup',

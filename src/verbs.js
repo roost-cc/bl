@@ -164,7 +164,8 @@ Options:
 
 Launches an agent session in the backlog repo to refine and plan the work.
 Several stories go to one orchestrator session with a sub-agent each. With a
-feature among the targets, each target opens in its own tmux window.`,
+feature among the targets, each target opens in its own tmux window. When the
+session ends, bl commits and pushes what it left uncommitted in the backlog.`,
   status: `Usage: bl status [<id...>]
 
 Arguments:
@@ -190,7 +191,8 @@ Options:
   --force              Approve a draft
   --help               Show this help
 
-The human gate before bl run. Refuses while ## Escalation is not "None.".`,
+The human gate before bl run. Refuses while ## Escalation is not "None.".
+Commits and pushes the feature file.`,
   done: `Usage: bl done [options] <story-id> [commit-hash]
        bl done [options] <id> <id...>
 

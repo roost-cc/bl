@@ -24,7 +24,7 @@ import { createHash } from 'crypto';
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { join, resolve, sep } from 'path';
 import { spawnSync } from 'child_process';
-import { warn } from './config.js';
+import { info, warn } from './config.js';
 import { HEADLESS_ENV, isHeadless } from './agents/provider.js';
 import { PRIORITY_FILE } from './priority.js';
 import { atomicWriteFile } from './atomic-write.js';
@@ -110,6 +110,44 @@ export function pathsChangedSince(before, after) {
     .filter(([p, h]) => !before.has(p) || before.get(p) !== h)
     .map(([p]) => p)
     .sort();
+}
+
+/**
+ * Commit and push what changed in the backlog since `before` (a
+ * `dirtySnapshot` taken before the command wrote anything): the paths
+ * `pathsChangedSince` returns, through `commitPaths`. A path that was dirty
+ * before and that the command did not change stays out, and is named. With
+ * `session` (an agent session made the change: refine, the merge's triage),
+ * `priority.md` stays out too, with one line: only a person ranks (F-78 D3).
+ * Nothing changed, or a backlog that is not a git repo, prints nothing.
+ * Shared by feature `bl merge`, story `bl merge`'s triage, `bl refine` and
+ * `bl init` (S-1330).
+ * @param {string} root
+ * @param {Map<string, string> | null} before
+ * @param {string} message
+ * @param {{ session?: boolean }} [opts]
+ * @returns {boolean} whether the commit failed
+ */
+export function commitChangedSince(root, before, message, { session = false } = {}) {
+  const after = dirtySnapshot(root);
+  let touched = pathsChangedSince(before, after);
+  if (session && touched.includes(PRIORITY_FILE)) {
+    touched = touched.filter((p) => p !== PRIORITY_FILE);
+    info(`Left ${PRIORITY_FILE} uncommitted: an agent session changed it, and only a person ranks work (bl rank).`);
+  }
+  let failed = false;
+  if (touched.length > 0) {
+    info(`\nCommitting backlog changes (${touched.length} path${touched.length === 1 ? '' : 's'})...`);
+    const res = commitPaths(root, touched, message);
+    if (!res.committed && res.error) {
+      failed = true;
+      console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);
+    }
+  }
+  // Still dirty: a path the session committed itself was not left alone.
+  const leftAlone = [...(before?.keys() ?? [])].filter((p) => after?.has(p) && !touched.includes(p));
+  if (leftAlone.length > 0) info(`Left your uncommitted backlog edits alone: ${leftAlone.join(', ')}`);
+  return failed;
 }
 
 /** Paths `git add` accepts: on disk, or still in the index (a deletion to stage). */
@@ -430,7 +468,8 @@ export function leaveRegenerationPending(root) {
 /**
  * Whether `bl <command> <argv>` rebases the backlog onto `origin/main`
  * before it runs (F-50 D4): every command that commits the backlog (`new`,
- * `side`, `attach`, `move`, `run`, `implement`, `merge`, `done`, `updates`, `sync --commit`,
+ * `side`, `attach`, `move`, `run`, `implement`, `merge`, `done`, `refine`,
+ * `approve`, `init`, `updates`, `sync --commit`,
  * `block add`, `block remove`, `block list --fix`, `task`,
  * `task done`, `rank <unit> …`), a bare `bl sync`, whose whole job is the
  * pull and push (F-79 D1), and the
@@ -451,6 +490,9 @@ export function commandPullsBacklog(command, argv, env = process.env) {
     case 'implement':
     case 'merge':
     case 'done':
+    case 'refine':
+    case 'approve':
+    case 'init':
     case 'inbox':
       return true;
     case 'updates':
