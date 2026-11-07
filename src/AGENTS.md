@@ -3901,8 +3901,9 @@ project's business domain may have its own, which the project writes; bl ships n
   or with no config, the slot is empty. So every top-level prompt carries it through
   `{{writingGuide}}`, and `test/unit/plain-writing.test.js` holds both cases in place.
 - **`bl agents`** prints this reference, the writing guide with the slot filled, and then the
-  contents of each listed dictionary under `## Dictionary: <path>` (the absolute path). Outside
-  a backlog (`findBacklogRoot` finds none) it prints the reference and the guide only.
+  contents of each listed dictionary under `## Dictionary: <path>` (the absolute path). It skips
+  a listed file it cannot read, with a warning on stderr. Outside a backlog (`findBacklogRoot`
+  finds none) it prints the reference and the guide only.
 
 ### Per-agent variants
 

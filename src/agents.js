@@ -6,7 +6,7 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { dictionariesOf, exitStatus, findBacklogRoot, loadConfig, showText } from './config.js';
+import { dictionariesOf, exitStatus, findBacklogRoot, loadConfig, showText, warn } from './config.js';
 import { renderFragment } from './tool-guide.js';
 import { renderDictionaryGuide } from './session.js';
 
@@ -39,7 +39,15 @@ and the contents of each one follow, under "## Dictionary: <path>".`);
   const writing = renderFragment('_plain-writing', { dictionaryGuide: renderDictionaryGuide(config) });
   const parts = [reference.trimEnd(), writing];
   for (const path of dictionariesOf(config)) {
-    const content = readFileSync(path, 'utf8').trimEnd();
+    // A listed file that cannot be read is `bl validate`'s `dictionary-file`
+    // error; the reference and the other dictionaries still print.
+    let content;
+    try {
+      content = readFileSync(path, 'utf8').trimEnd();
+    } catch (e) {
+      warn(`backlog.json "dictionaries" lists ${path}, which cannot be read (${e.code ?? e.message})`);
+      continue;
+    }
     parts.push(`## Dictionary: ${path}\n\n${content}`);
   }
   process.exitCode = exitStatus(showText(`${parts.join('\n\n')}\n`));

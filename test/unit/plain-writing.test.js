@@ -147,3 +147,32 @@ test('bl agents in a backlog prints the reference, the rule and then each listed
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('bl agents skips a listed dictionary that is missing, with a warning, and prints the rest', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bl-agents-'));
+  const stderr = process.stderr.write;
+  const errors = [];
+  try {
+    const root = join(dir, 'backlog');
+    mkdirSync(root);
+    const backlog = {
+      repos: {},
+      worktrees: join(dir, 'wt'),
+      agent: [{ agent: 'claude' }],
+      review_agent: [{ agent: 'claude' }],
+      dictionaries: ['missing.yaml', 'coding-dictionary.yaml'],
+    };
+    writeFileSync(join(root, 'backlog.json'), JSON.stringify(backlog));
+    writeFileSync(join(root, 'coding-dictionary.yaml'), 'entries:\n  - term: work unit\n');
+    process.stderr.write = (chunk) => errors.push(String(chunk)) > 0;
+    const out = await agentsOutput(root);
+    process.stderr.write = stderr;
+    assert.ok(out.includes('Stream policy'), 'the AGENTS.md reference');
+    assert.doesNotMatch(out, /## Dictionary: .*missing\.yaml/);
+    assert.ok(out.includes(`## Dictionary: ${join(root, 'coding-dictionary.yaml')}`));
+    assert.match(errors.join(''), /warning: .*missing\.yaml.*ENOENT/);
+  } finally {
+    process.stderr.write = stderr;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
