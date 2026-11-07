@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { PRIORITY_FILE } from '../../src/priority.js';
@@ -55,16 +55,36 @@ function gitBacklog() {
   return dir;
 }
 
-function refine(dir, args, { write = [], exit = 0 } = {}) {
+/**
+ * A `tmux` stub: `new-window -d -n <name> <command>` runs the command now,
+ * without its closing `exec $SHELL`, and appends "<name>\t<exit status>" to
+ * `$TMUX_STUB_LOG`. Every other tmux call does nothing. `bl` on its PATH is
+ * this checkout's.
+ */
+function runningTmux() {
+  const dir = mkTempDir('bl-tmux-stub-');
+  writeFileSync(
+    join(dir, 'tmux'),
+    '#!/bin/sh\n[ "$1" = new-window ] || exit 0\ncmd=$5\ncmd=${cmd%"; exec \\$SHELL"}\n' +
+      'sh -c "$cmd"\nprintf \'%s\\t%s\\n\' "$4" "$?" >> "$TMUX_STUB_LOG"\n',
+    { mode: 0o755 },
+  );
+  symlinkSync(BL_BIN, join(dir, 'bl'));
+  return dir;
+}
+
+function refine(dir, args, { write = [], exit = 0, tmuxLog = null } = {}) {
+  const path = `${writingClaude()}:${process.env.PATH}`;
   return spawnSyncFiles(BL_BIN, ['refine', ...args], {
     cwd: dir,
     env: {
       ...personEnv(),
       ...GIT_ENV,
       BL_BACKLOG_DIR: dir,
-      PATH: `${writingClaude()}:${process.env.PATH}`,
+      PATH: tmuxLog ? `${runningTmux()}:${path}` : path,
       STUB_WRITE: write.map((p) => join(dir, p)).join(' '),
       STUB_EXIT: String(exit),
+      ...(tmuxLog ? { TMUX: 'stub', TMUX_STUB_LOG: tmuxLog } : {}),
     },
     encoding: 'utf8',
   });
@@ -168,3 +188,43 @@ for (const [label, args, write] of [
     });
   }
 }
+
+// `bl refine -t`, and several targets with a feature among them, run each
+// refine in a tmux window of its own: the detached refine commits, pushes and
+// ends with the status the attached one would have.
+for (const [label, args, write, exit, windows, messages] of [
+  ['bl refine -t S-n', ['-t', 'S-1'], [S1], 0, ['S-1 refine\t0'], ['chore: refine S-1']],
+  ['bl refine -t on a session that exits 7', ['-t', 'S-1'], [S1], 7, ['S-1 refine\t7'], ['chore: refine S-1']],
+  ['the batch with -t', ['-t', 'S-1', 'S-2'], [S1, S2], 0, ['refine batch\t0'], ['chore: refine S-1, S-2']],
+  ['bl refine -t F-n', ['-t', 'F-1'], [F1], 0, ['F-1 refine\t0'], ['chore: refine F-1']],
+  [
+    'a feature and a story, one window each',
+    ['F-1', 'S-2'],
+    [F1, S2],
+    0,
+    ['F-1 refine\t0', 'S-2 refine\t0'],
+    ['chore: refine S-2', 'chore: refine F-1'],
+  ],
+]) {
+  test(`refine_detached_window_commits_pushes_and_status: ${label}`, () => {
+    const dir = gitBacklog();
+    const log = join(mkTempDir('bl-tmux-log-'), 'windows');
+    const r = refine(dir, args, { write, exit, tmuxLog: log });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), windows);
+    assert.deepEqual(statusLines(dir), []);
+    assert.deepEqual(git(dir, 'log', `-${messages.length}`, '--format=%s').split('\n'), messages);
+    assert.equal(originMain(dir), git(dir, 'rev-parse', 'HEAD'), 'origin has the commits');
+  });
+}
+
+test('refine_detached_window_commits_pushes_and_status: a refused commit in the window ends it 1', () => {
+  const dir = gitBacklog();
+  writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const log = join(mkTempDir('bl-tmux-log-'), 'windows');
+  const r = refine(dir, ['-t', 'S-1'], { write: [S1], tmuxLog: log });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), ['S-1 refine\t1']);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+});
