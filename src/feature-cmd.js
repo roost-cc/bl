@@ -42,7 +42,7 @@ import {
   unitDirOf,
 } from './config.js';
 import { readAllStories, findExistingWorktree, isSessionRunning, findUnitPRs, refuseStoryRepo } from './story.js';
-import { effortLabel } from './effort.js';
+import { effortLabel, sessionEffort } from './effort.js';
 import { findEpic, findTheme, normalizeEpicId, readAllThemes, recordThemeState, themeBriefList } from './theme.js';
 import { renderTemplate } from './template.js';
 import { hasFilter, featureMatches, featureEpicId } from './filter.js';
@@ -1117,6 +1117,8 @@ export async function cmdWorkon(args, config, feature) {
     // while a review is pending.
     tokensStep: reviewPending ? tokensStepKey('fix', feature.reviewRound) : 'implement',
     tokensIndexPath: feature.indexPath,
+    // One session for every story: the highest of their levels (F-85 D4).
+    effort: sessionEffort(cfg, { mode: 'workon', stories: prep.ordered }),
   });
   recordFeatureTokens(feature, cfg);
   if (!status) info(implementNextSteps(feature.id));

@@ -51,6 +51,7 @@ import { tokensStepKey } from './tokens.js';
 import { loadFlow } from './flow.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { syncAndCommit } from './sync.js';
+import { sessionEffort } from './effort.js';
 import {
   isScripted,
   recordScriptedRun,
@@ -458,7 +459,8 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     process.exit(1);
   }
 
-  if (!prep.reviewPending && isScripted(parseFrontmatter(readFileSync(prep.indexPath, 'utf8')).fm)) {
+  const { fm } = parseFrontmatter(readFileSync(prep.indexPath, 'utf8'));
+  if (!prep.reviewPending && isScripted(fm)) {
     const { defaultRunner } = await import('./feature-run.js');
     process.exit(await implementScripted(parsed, found, config, prep, defaultRunner()));
   }
@@ -492,6 +494,8 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     // while a review is pending.
     tokensStep: prep.reviewPending ? tokensStepKey('fix', prep.reviewRound) : 'implement',
     tokensIndexPath: prep.indexPath,
+    // The story's own level (F-85 D4), read as `readAllStories` reads it.
+    effort: sessionEffort(config, { mode: 'workon', stories: [{ effort: fm.effort || null }] }),
   });
   if (!status) info(implementNextSteps(parsed.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.

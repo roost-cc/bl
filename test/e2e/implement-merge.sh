@@ -90,11 +90,13 @@ home: true
 # C00 · Core
 MD
 
-# Stub agent — implement will spawn this and it exits 0.
+# Stub agent — implement will spawn this and it exits 0. It writes its
+# arguments, one per line, to $ROOT/claude-args, so the test can read the
+# effort level bl passed (F-85 D4).
 mkdir -p "$ROOT/stub-bin"
-cat > "$ROOT/stub-bin/claude" <<'SH'
+cat > "$ROOT/stub-bin/claude" <<SH
 #!/bin/sh
-# stub: do nothing, exit 0
+printf '%s\n' "\$@" > "$ROOT/claude-args"
 exit 0
 SH
 chmod +x "$ROOT/stub-bin/claude"
@@ -110,13 +112,22 @@ INDEX_REL=$("$BL" new C00 --title "E2E Story" --points 1 2>/dev/null)
 INDEX_ABS="$ROOT/backlog/$INDEX_REL"
 if [[ -f "$INDEX_ABS" ]]; then pass; else fail "bl new did not create $INDEX_ABS"; fi
 
-# Mark the story as refined so implement will proceed.
-node -e '
-  const fs = require("fs");
-  const p = process.argv[1];
-  const t = fs.readFileSync(p, "utf8").replace(/^status:.*$/m, "status: refined");
-  fs.writeFileSync(p, t);
-' "$INDEX_ABS"
+# Mark the story as refined so implement will proceed, at effort level $2.
+refine_at() {
+  node -e '
+    const fs = require("fs");
+    const [p, effort] = process.argv.slice(1);
+    const t = fs
+      .readFileSync(p, "utf8")
+      .replace(/^status:.*$/m, "status: refined")
+      .replace(/^effort:.*$/m, `effort: ${effort}`);
+    fs.writeFileSync(p, t);
+  ' "$1" "$2"
+}
+refine_at "$INDEX_ABS" low
+
+# The effort level the stub agent was last started with.
+effort_arg() { grep -A1 -x -- '--effort' "$ROOT/claude-args" | tail -1; }
 
 # ---------------------------------------------------------------------------
 # bl implement — should create a worktree and a branch, then exit (agent stub)
@@ -127,6 +138,9 @@ set +e
 rc=$?
 set -e
 if (( rc == 0 )); then pass; else fail "bl implement exit $rc"; fi
+
+# bl implement S-n runs at the story's level.
+if [[ "$(effort_arg)" == low ]]; then pass; else fail "bl implement S-1 should pass --effort low"; fi
 
 WT_PATH="$ROOT/worktrees/s1-e2e-story/code"
 if [[ -d "$WT_PATH" ]]; then pass; else fail "expected worktree at $WT_PATH"; fi
@@ -174,6 +188,49 @@ if grep -q '^status: done' "$INDEX_ABS"; then
 else
   fail "expected $INDEX_REL to be status: done after merge"
 fi
+
+# ---------------------------------------------------------------------------
+# bl implement F-n: one session at the highest level of the feature's stories.
+# ---------------------------------------------------------------------------
+
+mkdir -p "$ROOT/backlog/features/F1-feat"
+cat > "$ROOT/backlog/features/F1-feat/index.md" <<'MD'
+---
+feature_id: F-1
+title: Feat
+status: approved
+review_rounds_max: 2
+---
+
+# F-1 · Feat
+
+## Premise
+
+## Acceptance
+
+- [ ] something observable
+
+## Stories
+
+## Deferred
+
+None.
+
+## Escalation
+
+None.
+MD
+for level in low medium; do
+  rel=$("$BL" new F-1 C00 --title "Story $level" --points 1 2>/dev/null)
+  refine_at "$ROOT/backlog/$rel" "$level"
+done
+
+set +e
+"$BL" implement F-1 >/dev/null 2>&1
+rc=$?
+set -e
+if (( rc == 0 )); then pass; else fail "bl implement F-1 exit $rc"; fi
+if [[ "$(effort_arg)" == medium ]]; then pass; else fail "bl implement F-1 should pass --effort medium"; fi
 
 if (( FAIL > 0 )); then
   echo "FAIL: $FAIL test(s) failed; $PASS passed" >&2
