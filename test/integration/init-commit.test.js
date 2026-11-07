@@ -6,10 +6,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { AGENT_CONFIG, mkTempDir } from '../helpers/tempdir.js';
-import { runBl } from '../helpers/run-bl.js';
+import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
+import { LOCK_FILE } from '../../src/lock.js';
 import { GIT_ENV, addOrigin, git, statusLines } from '../helpers/git-backlog.js';
 
 /** A new backlog: a backlog.json with no "repos" yet. */
@@ -127,6 +128,26 @@ test('init_retries_failed_commit_without_losing_written_paths: a rerun commits w
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: bl init');
   assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').length, 8);
   assert.equal(git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main'), git(dir, 'rev-parse', 'HEAD'));
+});
+
+test('init_write_and_commit_share_lock: bl init writes nothing until it holds the backlog lock', async (t) => {
+  if (!lockOwnerVisible(t)) return;
+  // No origin: the pull before the command would wait for the lock first.
+  const dir = newBacklog();
+  git(dir, 'init', '-q', '-b', 'main');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-q', '-m', 'base');
+  const json = readFileSync(join(dir, 'backlog.json'), 'utf8');
+  writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
+  const run = startBlBehindLock(['init'], { cwd: dir, env: { ...GIT_ENV, HOME: mkTempDir('bl-init-home-') } });
+  await run.blocked;
+  assert.equal(readFileSync(join(dir, 'backlog.json'), 'utf8'), json, 'nothing written before the lock');
+  assert.equal(existsSync(join(dir, '.gitignore')), false);
+  rmSync(join(dir, LOCK_FILE));
+  const r = await run.closed;
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(statusLines(dir), []);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: bl init');
 });
 
 test('init_inside_parent_git_checkout_skips_commit: a backlog with no repo of its own, inside a parent checkout', () => {

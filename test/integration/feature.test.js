@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
-import { runBl } from '../helpers/run-bl.js';
+import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
+import { LOCK_FILE } from '../../src/lock.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
@@ -536,6 +537,31 @@ test('approve_retry_commits_after_failed_commit: a rerun after a refused commit 
     assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: approve F-1');
     assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [rel]);
     assert.equal(git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main'), git(dir, 'rev-parse', 'HEAD'));
+  } finally {
+    cleanup();
+  }
+});
+
+test('approve_write_and_commit_share_lock: bl approve writes nothing until it holds the backlog lock', async (t) => {
+  if (!lockOwnerVisible(t)) return;
+  const { dir, cleanup } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Core', dirSuffix: 'core' }],
+    stories: [{ id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'refined', feature: 'F-1' }],
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'refined', stories: ['S-1'] }],
+  });
+  try {
+    // No origin: the pull before the command would wait for the lock first.
+    initGitBacklog(dir);
+    const rel = 'features/F1-feat/index.md';
+    writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
+    const run = startBlBehindLock(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+    await run.blocked;
+    assert.equal(fm(join(dir, rel)).status, 'refined', 'nothing written before the lock');
+    rmSync(join(dir, LOCK_FILE));
+    const r = await run.closed;
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(statusLines(dir), []);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: approve F-1');
   } finally {
     cleanup();
   }

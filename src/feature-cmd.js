@@ -98,7 +98,7 @@ import {
 import { updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { tok, tokenFields } from './report.js';
-import { acquireLock, withLock } from './lock.js';
+import { acquireLock, releaseLock, withLock } from './lock.js';
 import { failPoint } from './feature-links.js';
 import { prepareBody } from './body.js';
 import { scanDeferred, DEFERRED_HEADING } from './deferred.js';
@@ -634,15 +634,22 @@ export async function cmdApprove(args, config, feature) {
     info('  `bl run` and `bl implement` will refuse until these are merged or pulled into the feature.');
   }
 
-  updateFeature(config, feature, (fm) => {
-    fm.status = 'approved';
-    fm.approved = today();
-  });
-  info(`\nApproved ${feature.id} — ${feature.title} (${stories.length} stories, ${points} points).`);
-  for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
+  // Held from the write through the commit (S-1330): no other bl command
+  // commits the approval first, under its own message.
+  await acquireLock(config.backlogRoot);
+  try {
+    updateFeature(config, feature, (fm) => {
+      fm.status = 'approved';
+      fm.approved = today();
+    });
+    info(`\nApproved ${feature.id} — ${feature.title} (${stories.length} stories, ${points} points).`);
+    for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
 
-  info(`\nNext: bl run ${feature.id} (or bl implement ${feature.id} to work interactively)`);
-  reportBacklogCommit(await approvalCommit(config, feature), 'bl approve');
+    info(`\nNext: bl run ${feature.id} (or bl implement ${feature.id} to work interactively)`);
+    reportBacklogCommit(await approvalCommit(config, feature), 'bl approve');
+  } finally {
+    releaseLock(config.backlogRoot);
+  }
 }
 
 /** Commit and push the approved feature file (`syncAndCommit`). */

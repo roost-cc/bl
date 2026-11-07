@@ -28,6 +28,7 @@ import { atomicWriteFile, STAGING_DIR } from './atomic-write.js';
 import { getProvider, PROVIDER_NAMES } from './agents/index.js';
 import { probePluginBinaries, formatPluginStatus } from './plugin-binaries.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
+import { acquireLock, releaseLock, LOCK_FILE } from './lock.js';
 import { detectGhCredentialHelper, formatGhCredentialHelperAdvisory } from './credential-helper.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -77,21 +78,30 @@ init"); edits you made before it stay uncommitted.`);
   // `ensureReposBlock` treats this directory as the backlog root. The
   // snapshot keeps edits made before `bl init` out of its commit (S-1330).
   const backlogDir = initBacklogDir();
-  const before = dirtySnapshot(backlogDir);
-  ensureReposBlock(backlogDir, args.agent);
-  const config = loadConfig({ agent: args.agent });
-  const provider = getProvider(config.agent);
+  // The backlog lock is held from the first write through the commit, so no
+  // other bl command commits what init wrote first.
+  await acquireLock(backlogDir);
+  let config;
+  let commitFailed;
+  try {
+    const before = dirtySnapshot(backlogDir);
+    ensureReposBlock(backlogDir, args.agent);
+    config = loadConfig({ agent: args.agent });
+    const provider = getProvider(config.agent);
 
-  info(`Initializing agent: ${config.agent}...`);
-  await provider.init(config.backlogRoot, config);
-  ensureGitignored(config.backlogRoot);
-  warnIfGhCredentialHelper();
+    info(`Initializing agent: ${config.agent}...`);
+    await provider.init(config.backlogRoot, config);
+    ensureGitignored(config.backlogRoot);
+    warnIfGhCredentialHelper();
 
-  copySeed(config.backlogRoot, 'allowed-tools.json');
-  ensureFlowFile(config.backlogRoot);
-  ensureBacklogDocs(config.backlogRoot);
-  ensureRootIndex(config);
-  const commitFailed = commitChangedSince(config.backlogRoot, before, 'chore: bl init');
+    copySeed(config.backlogRoot, 'allowed-tools.json');
+    ensureFlowFile(config.backlogRoot);
+    ensureBacklogDocs(config.backlogRoot);
+    ensureRootIndex(config);
+    commitFailed = commitChangedSince(config.backlogRoot, before, 'chore: bl init');
+  } finally {
+    releaseLock(backlogDir);
+  }
 
   // The plugin-tools readout goes last: the setup checklist.
   printPluginStatus(config);
@@ -287,10 +297,10 @@ function addToBacklogJson(dir, path, agent) {
 }
 
 // The local tool-grant file holds user-discretion permissions, and `.bl/`
-// holds bl's runtime state (the activity log, staging files, run state):
-// neither is ever committed. Seed the backlog's .gitignore with both on init
-// (idempotent).
-const GITIGNORED = [LOCAL_TOOLS_FILE, `${dirname(STAGING_DIR)}/`];
+// holds bl's runtime state (the activity log, staging files, run state), and
+// the backlog lock file exists only while a bl command holds it: none is ever
+// committed. Seed the backlog's .gitignore with them on init (idempotent).
+const GITIGNORED = [LOCAL_TOOLS_FILE, `${dirname(STAGING_DIR)}/`, LOCK_FILE];
 
 function ensureGitignored(backlogRoot) {
   const gitignorePath = join(backlogRoot, '.gitignore');
