@@ -742,8 +742,8 @@ export function findEscalationNotNone(f) {
  * not closed (a closed unit's section is history and keeps its notes,
  * operator items and old heading as written). One finding per line:
  *
- *   - `deferred-heading-retired` (error)  a `## To Do` heading: the
- *     section's old name in stories, renamed by
+ *   - `deferred-heading-retired` (error)  a story's `## To Do` heading:
+ *     the section's old name in stories, renamed by
  *     `scripts/migrate-deferred-heading.js`.
  *   - `operator-tasks-retired` (error)  a `### Operator tasks` sub-heading
  *     or an `operator:` bullet: the operator's work is a task (`bl task`).
@@ -772,7 +772,8 @@ export function findDeferredErrors(id, status, text, location, flow, type) {
   });
   const retiredMessage = `operator tasks are retired: file each one with "bl task ${id} --title <t> --gate <merge|next|none>" and remove it here`;
   const out = retired.map((line) => finding('operator-tasks-retired', line, `### Operator tasks: ${retiredMessage}`));
-  for (const line of retiredSection) {
+  // `## To Do` was a story's heading only, and the migration renames it in stories only.
+  for (const line of type === 'story' ? retiredSection : []) {
     out.push(
       finding(
         'deferred-heading-retired',

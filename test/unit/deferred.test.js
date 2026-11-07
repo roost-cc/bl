@@ -156,6 +156,24 @@ test("findDeferredErrors: an open story's retired ## To Do is an error naming th
   );
 });
 
+test('retired_heading_applies_only_to_open_stories: a feature or a closed unit with ## To Do has no finding', () => {
+  const text = unitText('To Do', '- [points: 2] work');
+  const cases = [
+    ['story', 'backlog', ['deferred-heading-retired']],
+    ['story', 'in_progress', ['deferred-heading-retired']],
+    ['story', 'done', []],
+    ['story', 'superseded', []],
+    ['feature', 'refined', []],
+    ['feature', 'running', []],
+    ['feature', 'done', []],
+    ['feature', 'superseded', []],
+  ];
+  for (const [type, status, codes] of cases) {
+    const found = findDeferredErrors('X-1', status, text, 'x', flow, type).map((f) => f.code);
+    assert.deepEqual(found, codes, `${type} ${status}`);
+  }
+});
+
 test('no prompt or template names a retired marker', () => {
   const root = new URL('../../', import.meta.url).pathname;
   for (const dir of ['prompts', 'templates']) {
