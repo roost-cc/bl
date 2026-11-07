@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { tmpdir } from 'os';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadPrompt } from '../../src/session.js';
 import { main as agentsMain } from '../../src/agents.js';
+import { mkTempDir } from '../helpers/tempdir.js';
 
 // Every session writes something the operator or another agent reads, so every
 // top-level prompt carries the plain-writing rule (about 80% of ASD-STE100)
@@ -109,7 +109,7 @@ async function agentsOutput(cwd) {
 }
 
 test('bl agents outside a backlog prints the reference and then the plain-writing rule', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bl-agents-'));
+  const dir = mkTempDir('bl-agents-');
   try {
     const out = await agentsOutput(dir);
     assert.ok(out.includes('Stream policy'), 'the AGENTS.md reference');
@@ -122,7 +122,7 @@ test('bl agents outside a backlog prints the reference and then the plain-writin
 });
 
 test('bl agents in a backlog prints the reference, the rule and then each listed dictionary', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bl-agents-'));
+  const dir = mkTempDir('bl-agents-');
   try {
     const root = join(dir, 'backlog');
     mkdirSync(root);
@@ -149,7 +149,7 @@ test('bl agents in a backlog prints the reference, the rule and then each listed
 });
 
 test('bl agents skips a listed dictionary that is missing, with a warning, and prints the rest', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'bl-agents-'));
+  const dir = mkTempDir('bl-agents-');
   const stderr = process.stderr.write;
   const errors = [];
   try {
