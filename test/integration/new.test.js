@@ -471,7 +471,7 @@ function assertOnlyBystandersDirty(dir) {
 
 const NEW_IN_C01 = ['new', 'C01', '--points', '1'];
 
-test('bl new commits the story dir and the rewritten indexes, nothing else', () => {
+test('bl new commits the story dir, nothing else', () => {
   const { dir, cleanup } = gitNewBacklog();
   try {
     const r = runBl([...NEW_IN_C01, '--title', 'Second'], { cwd: dir, env: GIT_ENV });

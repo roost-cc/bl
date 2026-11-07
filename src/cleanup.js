@@ -227,7 +227,7 @@ export function chooseSyncRunner({ primaryRepoPath, readJson = readJsonFile, exi
 
 /**
  * The argument vector of the child `bl sync --commit` run: one `--story`
- * per id, so each story directory is staged with the regenerated indexes.
+ * per id, so each story directory is staged.
  */
 export function syncChildArgs(blEntry, { message, storyIds = [] }) {
   // `bl sync --commit` refuses a commit scoped to no story or path (S-578),

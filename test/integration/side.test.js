@@ -5,7 +5,7 @@
  * the feature's branch; from anything else it is a standalone story on its
  * own branch. Every refusal comes before anything is written, no main
  * checkout leaves `main`, and the backlog commit holds only the paths
- * `bl side` wrote and the indexes the sync regenerated.
+ * `bl side` wrote.
  */
 
 import { test } from 'node:test';

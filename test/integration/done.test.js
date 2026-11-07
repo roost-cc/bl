@@ -301,10 +301,7 @@ function assertOnlyBystandersDirty(dir) {
   assert.deepEqual(statusLines(dir), [` M ${S2}/index.md`, 'A  staged.txt']);
 }
 
-/** A path `bl sync` regenerates whole (backlog-commit.js isGeneratedPath). */
-const isIndex = (p) => p === 'index.md' || /^(projects|components)\/[^/]+\/index\.md$/.test(p);
-
-test("bl done commits the story's status change in place and the rewritten indexes, nothing else", () => {
+test("bl done commits the story's status change in place, nothing else", () => {
   const { dir, cleanup } = gitDoneBacklog();
   try {
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV });
@@ -313,13 +310,7 @@ test("bl done commits the story's status change in place and the rewritten index
     assert.match(r.stderr, /Committed \d+ backlog path\(s\)\./);
 
     assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: mark S-1 done');
-    const files = headFiles(dir);
-    assert.ok(files.includes(`M\t${S1}/index.md`), files.join('\n'));
-    assert.deepEqual(
-      files.filter((f) => f !== `M\t${S1}/index.md`).filter((f) => !(f.startsWith('M\t') && isIndex(f.slice(2)))),
-      [],
-      'only the story and generated indexes, and nothing added or removed',
-    );
+    assert.deepEqual(headFiles(dir), [`M\t${S1}/index.md`]);
     const { fm } = parseFrontmatter(git(dir, 'show', `HEAD:${S1}/index.md`));
     assert.equal(fm.status, 'done');
     assert.equal(fm.commit, 'deadbeef');

@@ -24,8 +24,7 @@
  * committed under one hold of the backlog lock (`bl new` works under it), so
  * no other bl commits a half-made story. A failure before that commit undoes
  * only what this run made: a worktree or branch it created that nobody took
- * up since, and backlog files nobody has committed, the indexes the sync
- * rewrote included. A standalone story's worktree comes after the
+ * up since, and backlog files nobody has committed. A standalone story's worktree comes after the
  * commit (its branch is the story's); when it fails, the committed story
  * stays and the message names the command that prepares the worktree.
  */

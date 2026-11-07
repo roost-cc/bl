@@ -1611,8 +1611,8 @@ export async function cmdMerge(args, config, feature) {
     }
     if (result.mergeCommitHash) (result.branchExists ? landed : tips)[t.repoName] = result.mergeCommitHash;
     // The backlog is synced right after `bl` merges, as a story merge does
-    // (S-864): from the merged checkout, so the new `bl` writes the indexes
-    // a later repo's push gate reads.
+    // (S-864): from the merged checkout, so the new `bl` formats and commits
+    // the feature's story directories. It writes no index (F-79 D1).
     if (t.repoName === LEAD_REPO && !result.noChanges) {
       info(`\nSyncing backlog with the merged ${t.repoName}...`);
       const res = await runBacklogSync(config, chooseSyncRunner({ primaryRepoPath: t.repoPath }), {
