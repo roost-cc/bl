@@ -4762,9 +4762,7 @@ function effortSetup(levels) {
       else delete fm.effort;
     });
   }
-  fx.prep.ordered = orderStoriesByDeps(
-    resolveFeatureStories(fx.feature, fx.config, readAllStories(fx.config)).stories,
-  );
+  fx.prep.ordered = orderStoriesByDeps(resolveFeatureStories(fx.feature, fx.config, readAllStories(fx.config)).stories);
   return fx;
 }
 
