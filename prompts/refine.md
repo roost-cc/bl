@@ -21,8 +21,9 @@ Backlog repo : {{backlogDir}}
 3. Fill in the **## Summary**, **## Acceptance Criteria**, and
    **## Implementation Plan** sections in the story file.
 
-4. The **## Implementation Plan** must be concrete and actionable. It should
-   include:
+4. The **## Implementation Plan** must be concrete and actionable. Write each
+   step as `<step> → verify: <check>`, where the check is the test, command or
+   observation that shows the step worked. It should include:
    - Specific files or components to modify, each path in backticks
      (`src/x.js`): when several targets run at once, `bl run` reads the
      backticked paths to hold back a target that touches the same file as

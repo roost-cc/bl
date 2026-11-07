@@ -30,6 +30,8 @@ The backlog is a **separate git repo** from the code. That means:
    `chore: mark {{storyId}} in_progress` and `--story {{storyId}}`.
 
 3. Implement the story in this worktree according to the execution plan.
+   When the story fixes a bug, first write a test that fails because of the
+   bug, then make it pass.
    Commit your code changes as you go using Conventional Commits messages: a
    valid type (`feat`, `fix`, `chore`, …), the subject ending in
    ` ({{storyId}})`, and body lines wrapped at 100 columns.

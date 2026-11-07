@@ -25,7 +25,8 @@ depends_on:
 
 ## Implementation Plan
 
-1. <!-- Concrete steps: files, tests, edge cases. Keep this under 40 lines;
+1. <!-- Concrete steps: files, tests, edge cases, each written as
+        `<step> → verify: <check>`. Keep this under 40 lines;
         if it needs more, the story is too big or the design belongs in the
         feature file. -->
 

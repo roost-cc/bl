@@ -79,7 +79,9 @@ in order without asking anyone.
    - No verification-only stories ("confirm…", "verify…", "re-run…").
      Verification is an acceptance criterion of the story that made the change.
    - Each story's Implementation Plan is at most 40 lines and links to the
-     Design section instead of repeating it. Write every file path in it in
+     Design section instead of repeating it. Write each step as
+     `<step> → verify: <check>`, where the check is the test, command or
+     observation that shows the step worked. Write every file path in it in
      backticks (`src/x.js`): when several targets run at once, `bl run` reads
      them to hold back a target that touches the same file as another. A path
      that is not backticked is not seen. It has a `### Sources of truth` part:

@@ -8,7 +8,8 @@ not reasons to stop. Make a serious effort before you give up on anything.
 1. **Find the cause.** Reproduce the failure: run the failing test repeatedly, and run it at the
    worker count the suite uses, because a timeout under parallel load is often contention. Read
    a Playwright trace (`--trace on`) or the service logs, and compare with `main`. Do not change
-   code until you can say why it fails.
+   code until you can say why it fails. Then write a test that fails because of the bug, unless
+   a test already fails for it. The fix makes that test pass.
 2. **Fix the bug in its own commit.** The commit touches only that bug, has a Conventional
    Commits message, and its subject ends in ` ({{featureId}})`. Never skip or weaken a test to
    get past a bug. Run the tests that cover the fix.

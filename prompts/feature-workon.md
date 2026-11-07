@@ -45,7 +45,8 @@ Backlog repo : {{backlogDir}}
 
 2. Work the stories in the order given. For each story:
    a. Set `status: in_progress` in its frontmatter.
-   b. Implement its plan. Commit as you go with Conventional Commits, the
+   b. Implement its plan. When the story fixes a bug, first write a test that
+      fails because of the bug, then make it pass. Commit as you go with Conventional Commits, the
       subject ending in ` ({{featureId}} S-<n>)`, body wrapped at 100 columns.
    c. Run the tests that cover what you changed.
    d. Check off its acceptance criteria (`- [ ]` → `- [x]`).

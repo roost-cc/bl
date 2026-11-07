@@ -19,7 +19,9 @@ Backlog repo : {{backlogDir}}
    below).
 
 3. Update the implementation plan, acceptance criteria, or design notes in
-   the story file based on your findings. Put each file path in the plan in
+   the story file based on your findings. Write each plan step as
+   `<step> → verify: <check>`, where the check is the test, command or
+   observation that shows the step worked. Put each file path in the plan in
    backticks (`src/x.js`): when several targets run at once, `bl run` reads
    the backticked paths to hold back a target that touches the same file as
    another. A path that is not backticked is not seen. The plan needs a

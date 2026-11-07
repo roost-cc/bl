@@ -8,7 +8,8 @@ not reasons to stop. Make a serious effort before you give up on anything.
 1. **Find the cause.** Reproduce the failure: run the failing test repeatedly, and run it at the
    worker count the suite uses, because a timeout under parallel load is often contention. Read
    a Playwright trace (`--trace on`) or the service logs, and compare with `main`. Do not change
-   code until you can say why it fails.
+   code until you can say why it fails. Then write a test that fails because of the bug, unless
+   a test already fails for it. The fix makes that test pass.
 2. **Record it as an ad-hoc story attached to this feature.** Use the {{writeTool}} tool to write
    the body to `{{backlogDir}}/.bl/run/{{featureId}}.adhoc-<slug>.md`. It needs three sections:
    `## Summary` (the symptom, the cause and the fix), `## Acceptance Criteria` (with every

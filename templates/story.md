@@ -27,7 +27,7 @@ depends_on:
 
 ## Implementation Plan
 
-1. <!-- Numbered implementation steps. -->
+1. <!-- Numbered implementation steps, each `<step> → verify: <check>`. -->
 
 ## Justification
 

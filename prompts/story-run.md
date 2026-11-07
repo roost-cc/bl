@@ -38,7 +38,8 @@ runs and merges it. If this story cannot be finished without that change, escala
 
 2. Set `status: in_progress` in the story frontmatter.
 
-3. Implement the plan. Commit as you go with Conventional Commits, the subject ending in
+3. Implement the plan. When the story fixes a bug, first write a test that fails because of
+   the bug, then make it pass. Commit as you go with Conventional Commits, the subject ending in
    ` ({{storyId}})`, body wrapped at 100 columns. Run the tests that cover what you changed; add
    tests the plan asks for.
 
