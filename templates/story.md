@@ -4,6 +4,7 @@ story_id:
 title:
 type:
 points:
+effort:
 status: backlog
 added:
 feature:

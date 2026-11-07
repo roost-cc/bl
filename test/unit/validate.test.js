@@ -16,6 +16,7 @@ import { loadBacklog } from '../../src/backlog-graph.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { MALFORMED_UPDATE_REQUESTS } from '../helpers/update-requests.js';
 import { Flow, loadFlow } from '../../src/flow.js';
+import { EFFORT_LEVELS } from '../../src/effort.js';
 
 // A feature record as readAllFeatures returns it, and its stories as readAllStories does.
 const feat = (over = {}) => ({
@@ -380,6 +381,18 @@ test('validateFrontmatter accepts a positive integer', () => {
   };
   const findings = validateFrontmatter(fm, 'story', 'path/1');
   assert.equal(findings.filter((f) => f.code === 'bad-points').length, 0);
+});
+
+test('validateFrontmatter: bad-effort is an error for a value outside the levels (F-85 D1)', () => {
+  const fm = { story_id: 'S-1', title: 'T', status: 'backlog', component: 'C01', points: '3', effort: 'fast' };
+  const bad = validateFrontmatter(fm, 'story', 'path/1').filter((f) => f.code === 'bad-effort');
+  assert.equal(bad.length, 1);
+  assert.equal(bad[0].severity, 'error');
+  assert.match(bad[0].message, /effort must be one of low, medium, high, xhigh, max, not "fast"/);
+  for (const effort of ['', null, ...EFFORT_LEVELS]) {
+    const findings = validateFrontmatter({ ...fm, effort }, 'story', 'path/1');
+    assert.equal(findings.filter((f) => f.code === 'bad-effort' || f.code === 'unknown-fm-key').length, 0, effort);
+  }
 });
 
 test('validateFrontmatter accepts a string commit', () => {

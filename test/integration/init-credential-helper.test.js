@@ -95,6 +95,7 @@ test('bl init writes repos: {} and the worktree root into a new backlog.json, cr
       title: 'Backlog',
       worktrees: '../worktrees',
       dictionaries: ['coding-dictionary.yaml'],
+      effort: { refine: 'high', review: 'high', default: 'high' },
       agent: [{ agent: 'claude' }],
       review_agent: [{ agent: 'codex' }],
       repos: {},

@@ -26,6 +26,7 @@ import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
 import { implementPluginProblem } from './scripted.js';
+import { checkEffort, storyEffort } from './effort.js';
 
 // ---------------------------------------------------------------------------
 // Constants (reused by sync.js)
@@ -37,6 +38,8 @@ export const VALID_STORY_KEYS = new Set([
   'title',
   'type',
   'points',
+  // The effort level the refiner chose (F-85 D1); `bad-effort` checks it.
+  'effort',
   'status',
   'added',
   'completed',
@@ -386,6 +389,16 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
         message: `points "${fm.points}" is not a positive integer`,
         location,
       });
+    }
+  }
+
+  // bad-effort: a story's must be one of the effort levels (F-85 D1); an
+  // empty one runs at `effort.default`.
+  if (kind === 'story' && storyEffort(fm) !== null) {
+    try {
+      checkEffort(storyEffort(fm), 'effort');
+    } catch (err) {
+      findings.push({ severity: 'error', code: 'bad-effort', message: err.message, location });
     }
   }
 
@@ -1652,7 +1665,7 @@ Exit codes:
 
 Findings codes:
   missing-required-key, unknown-fm-key, bad-status, bad-points,
-  bad-review-status, id-dir-mismatch, bad-id-format, duplicate-id,
+  bad-effort, bad-review-status, id-dir-mismatch, bad-id-format, duplicate-id,
   cycle, dangling-dep, review-log-missing,
   review-log-unaddressed, plugin-binary, derived-key, dangling-feature,
   found-by, feature-no-stories, verification-only-title, run-state-in-spec,

@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../child-stdio.js';
 import { checkModel, exitStatus, info, isBlBranchPath, worktreeRoot } from '../config.js';
+import { checkEffort } from '../effort.js';
 import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv } from './provider.js';
@@ -399,6 +400,7 @@ export function buildCodexArgs({
   headless = false,
   outputFile = null,
   model = null,
+  effort = null,
 } = {}) {
   const codexArgs = [...args];
 
@@ -407,6 +409,9 @@ export function buildCodexArgs({
   // The configuration's model (F-64 D2); none passed, Codex uses the
   // account's model.
   if (model != null) sharedOptions.push('-m', checkModel(model, 'model'));
+  // The session's effort level (F-85 D3), with bl's names unchanged: Codex
+  // takes all five. None passed, Codex uses its own setting.
+  if (effort != null) sharedOptions.push('-c', `model_reasoning_effort=${checkEffort(effort, 'effort')}`);
   for (const root of dedupeCodexWritableRoots({
     worktreePath,
     backlogRoot,
@@ -827,6 +832,7 @@ export class CodexProvider extends AgentProvider {
     run = spawnSync,
     headless = false,
     model = null,
+    effort = null,
   }) {
     const translated = Array.isArray(permissions)
       ? translateCodexPermissions(permissions, {
@@ -863,6 +869,7 @@ export class CodexProvider extends AgentProvider {
       headless,
       outputFile,
       model,
+      effort,
     });
 
     if (headless) {

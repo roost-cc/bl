@@ -138,6 +138,10 @@ export class AgentProvider {
    * @param {string|null} [opts.model]   - The model to run; null for the
    *                                       account's own. Only an adapter whose
    *                                       supportsModel() is true selects it.
+   * @param {string|null} [opts.effort]  - The effort level (`EFFORT_LEVELS`
+   *                                       in src/effort.js, F-85 D3); null for
+   *                                       the CLI's own. An adapter that
+   *                                       cannot set it ignores it.
    * @param {boolean} [opts.headless]    - Run to completion without a
    *                                       terminal (supportsHeadless()); the
    *                                       child's env then has BL_HEADLESS=1

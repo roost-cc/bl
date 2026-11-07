@@ -4,7 +4,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path';
 import { loadPrompt } from '../../src/session.js';
 import { main as agentsMain } from '../../src/agents.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { AGENT_CONFIG, mkTempDir } from '../helpers/tempdir.js';
 
 // Every session writes something the operator or another agent reads, so every
 // top-level prompt carries the plain-writing rule (about 80% of ASD-STE100)
@@ -131,6 +131,7 @@ test('bl agents in a backlog prints the reference, the rule and then each listed
       worktrees: join(dir, 'wt'),
       agent: [{ agent: 'claude' }],
       review_agent: [{ agent: 'claude' }],
+      effort: AGENT_CONFIG.effort,
       dictionaries: ['coding-dictionary.yaml'],
     };
     writeFileSync(join(root, 'backlog.json'), JSON.stringify(backlog));
@@ -160,6 +161,7 @@ test('bl agents skips a listed dictionary that is missing, with a warning, and p
       worktrees: join(dir, 'wt'),
       agent: [{ agent: 'claude' }],
       review_agent: [{ agent: 'claude' }],
+      effort: AGENT_CONFIG.effort,
       dictionaries: ['missing.yaml', 'coding-dictionary.yaml'],
     };
     writeFileSync(join(root, 'backlog.json'), JSON.stringify(backlog));

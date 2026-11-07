@@ -42,6 +42,8 @@ Backlog repo : {{backlogDir}}
    - Set `type:` (feature, bug, or chore).
    - Estimate `points:` (1, 2, 3, 5, 8, or 13).
    - Add `depends_on:` story IDs if this work needs other stories first.
+   - Set `effort:` by **Effort level** below, and write the `**Effort:** <level>: <reason>` line
+     as the first line of the Implementation Plan.
 
 6. If the story is too large, use `bl new` to create child stories, and divide the work among
    them.
@@ -64,6 +66,8 @@ Backlog repo : {{backlogDir}}
 {{selfConsistencyGuide}}
 
 {{simplicityGuide}}
+
+{{effortGuide}}
 
 {{validateBeforeSync}}
 
