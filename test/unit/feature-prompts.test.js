@@ -663,7 +663,7 @@ test('every code-writing feature prompt carries the blocked-by-a-bug rule with t
         assert.match(text, /Fix the bug in its own commit\.\*\* The commit touches only that bug/, where);
         assert.match(
           text,
-          /only for three things: an architectural\s+problem, a business rule that is unclear, or a conflict with\s+the project's written principles/,
+          /escalate only for three things: an architectural\s+problem, a business rule that is\s+unclear, or a conflict with\s+the project's written principles/,
           where,
         );
         assert.match(
