@@ -16,7 +16,7 @@
  */
 
 import { existsSync, rmSync, statSync } from 'fs';
-import { join, relative } from 'path';
+import { isAbsolute, join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import {
   loadConfig,
@@ -77,10 +77,14 @@ export function formatBacklogMarkdown(config, touchedMarkdown) {
   const activePluginNames = pluginNames.filter((name) => !removes.includes(name) && config.plugins[name]?.format);
   if (activePluginNames.length === 0) return;
 
+  // A file in the backlog goes by its backlog-relative path; one outside it
+  // (a `bl report --out` page) by its absolute path, so it is formatted too.
   const files = [...touchedMarkdown]
     .filter((path) => existsSync(path) && statSync(path).isFile())
-    .map((path) => relative(config.backlogRoot, path))
-    .filter((path) => path && !path.startsWith('..'));
+    .map((path) => {
+      const rel = relative(config.backlogRoot, path);
+      return rel.startsWith('..') || isAbsolute(rel) ? path : rel;
+    });
   if (files.length === 0) return;
 
   // Bucket by plugin so the pass uses the same dispatch semantics as

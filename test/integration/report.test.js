@@ -7,7 +7,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { syncBuiltinESMExports } from 'module';
 import { basename, dirname, join, resolve } from 'path';
 import { loadBacklog } from '../../src/backlog-graph.js';
@@ -16,6 +17,7 @@ import { loadFlow } from '../../src/flow.js';
 import { addDays, buildHistory } from '../../src/history.js';
 import { buildReport, readTree, renderMarkdown, units } from '../../src/report.js';
 import { registerAdapter } from '../../src/chart.js';
+import { renderPage } from '../../src/render.js';
 import { main as reportMain, writeReport } from '../../src/report-cmd.js';
 import { runBl } from '../helpers/run-bl.js';
 import { rendered } from '../helpers/rendered.js';
@@ -679,6 +681,24 @@ test('bl report --charts with an unknown adapter exits 1 naming the registered o
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /unknown chart adapter "svg"; registered: vega-lite/);
   assert.ok(!existsSync(join(dir, 'reports')));
+});
+
+test('report_outside_backlog_formats_site_pages: the report page and every rendered page are formatted, at the default output and outside the backlog', () => {
+  const { dir } = reportBacklog();
+  const outside = mkdtempSync(join(tmpdir(), 'bl-report-out-'));
+  const graph = loadBacklog({ backlogRoot: dir }, { reload: true });
+  const renderedPages = ['story', 'feature', 'component', 'epic', 'theme']
+    .flatMap((kind) => graph.list(kind))
+    .filter((u) => renderPage(graph, u) !== u.text())
+    .map((u) => u.relPath);
+  assert.ok(renderedPages.length >= 4, `rendered pages: ${renderedPages}`);
+  for (const out of [join(dir, 'reports'), join(outside, 'reports')]) {
+    const r = runBl(['report', '--out', out], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    for (const rel of ['index.md', 'site/index.md', 'site/reports/index.md', ...renderedPages.map((p) => `site/${p}`)]) {
+      assert.ok(readFileSync(join(out, rel), 'utf8').trimEnd().endsWith(FORMATTED), `${out}: ${rel} is not formatted`);
+    }
+  }
 });
 
 test("bl report --out writes elsewhere, and refuses a directory that is not a report's", () => {
