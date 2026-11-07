@@ -55,7 +55,7 @@ line so the implementer can run it too.
    Do not look for new findings. The only new item you may record is a
    regression the fix round introduced that you reproduced, as a Must-fix;
    anything else you notice that is follow-up code work goes to
-   **## {{deferredHeading}}** as a `[points: N]` bullet, and a nit is dropped. The
+   **## Deferred** as a `[points: N]` bullet, and a nit is dropped. The
    session you write lists only what is still open.
 
 3. **Verify every candidate.** Reproduce it as its `Repro:` says. Drop it with
@@ -71,7 +71,7 @@ line so the implementer can run it too.
 4. **Route by origin.** Check each surviving finding's `Origin:` tag against
    `git diff {{mainRef}}...HEAD` (or `git blame`) and correct it if it is wrong;
    tag untagged ones yourself. Only `introduced` findings go into the session.
-   Every `pre-existing` finding goes to **## {{deferredHeading}}** in the {{unitKind}} file as
+   Every `pre-existing` finding goes to **## Deferred** in the {{unitKind}} file as
    `- [points: N] (pre-existing, review round {{nextRound}}) <finding>` — it never
    blocks this {{unitKind}}, never counts toward the round cap, and is never sent to
    the fix round. A pre-existing nit is dropped with a reason, never deferred.
@@ -123,7 +123,7 @@ line so the implementer can run it too.
      Before the closing round, never write **## Escalation** for open items:
      the loop gives the fixer a closing round first.
 
-8. Follow-up work of 8 points or more goes to **## {{deferredHeading}}** with a
+8. Follow-up work of 8 points or more goes to **## Deferred** with a
    `[points: N]` prefix, never into the session block.
 
 9. Commit the change document and the {{unitKind}} file in the backlog repo:

@@ -114,7 +114,7 @@ ${repoNames.length > 1 ? `primary_repo: ${repoNames[1]}\nsecondary_repos: [${rep
 
 - [x] it works
 
-## To Do
+## Deferred
 
 None.
 `,
@@ -300,7 +300,6 @@ test('bl review S-n: two dimension passes and the verifier on the review agent, 
     assert.equal(s.mode, 'review');
     assert.equal(s.worktreePath, worktrees.repoA);
     assert.equal(s.vars.unitKind, 'story');
-    assert.equal(s.vars.deferredHeading, 'To Do');
     assert.equal(s.vars.featureAbsPath, storyPath, 'the story file stands in for the feature file');
     assert.equal(s.vars.prNumber, '100');
   }

@@ -134,8 +134,8 @@ test('cleanup-triage preserves existing-story dependencies for singleton and mul
       '- [points: 1] Rewrite src/tokens.js.\n- [points: 1] Extend the same function after item 1.',
     ],
   ];
-  for (const [name, todoSection] of cases) {
-    const text = loadPrompt('cleanup-triage', { ...VARS, todoSection });
+  for (const [name, deferredSection] of cases) {
+    const text = loadPrompt('cleanup-triage', { ...VARS, deferredSection });
     const order = text.match(/ {3}- Order\.[\s\S]*?(?=\n\n3\.)/)?.[0] ?? '';
     // Only sibling ordering is moot for one item; nothing in the bullet is skipped.
     assert.doesNotMatch(order, /skip this bullet/, name);

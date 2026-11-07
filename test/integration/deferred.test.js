@@ -20,9 +20,12 @@ test('bl validate: the Deferred rules run on open units only', () => {
         component: 'C01',
         title: 'Open',
         status: 'in_progress',
-        body: '## To Do\n\n- [points: -] a note\n',
+        body: '## Deferred\n\n- [points: -] a note\n',
       },
-      { id: 'S-11', component: 'C01', title: 'Closed', status: 'done', body: '## To Do\n\n- [points: -] a note\n' },
+      { id: 'S-11', component: 'C01', title: 'Closed', status: 'done', body: '## Deferred\n\n- [points: -] a note\n' },
+      // F-82 D9: an open story's retired heading is an error; a closed one's is history.
+      { id: 'S-12', component: 'C01', title: 'Old', status: 'refined', body: '## To Do\n\n- [points: 2] work\n' },
+      { id: 'S-13', component: 'C01', title: 'Old done', status: 'done', body: '## To Do\n\n- [points: -] a note\n' },
     ],
     features: [
       {
@@ -42,17 +45,22 @@ test('bl validate: the Deferred rules run on open units only', () => {
   try {
     const r = runBl(['validate', '--json'], { cwd: dir });
     const found = JSON.parse(r.stdout).findings.filter((f) =>
-      ['deferred-unsized', 'operator-tasks-retired'].includes(f.code),
+      ['deferred-unsized', 'operator-tasks-retired', 'deferred-heading-retired'].includes(f.code),
     );
     assert.deepEqual(
       found.map((f) => [f.code, f.message.split(':')[0]]).sort(),
       [
+        ['deferred-heading-retired', 'S-12'],
         ['deferred-unsized', 'S-10'],
         ['operator-tasks-retired', 'F-35'],
       ],
       r.stdout,
     );
     assert.equal(r.status, 1, r.stderr);
+    assert.match(
+      found.find((f) => f.code === 'deferred-heading-retired').message,
+      /scripts\/migrate-deferred-heading\.js/,
+    );
     const story = found.find((f) => f.code === 'deferred-unsized');
     assert.equal(readFileSync(join(dir, story.location), 'utf8').split('\n')[story.line - 1], '- [points: -] a note');
     assert.ok(!JSON.parse(r.stdout).findings.some((f) => f.code === 'operator-tasks'), 'the S-970 rule is gone');
@@ -77,7 +85,7 @@ test("bl status: the deferred line counts items only; the tasks line counts the 
         component: 'C01',
         title: 'Active',
         status: 'in_progress',
-        body: '## Summary\n\nA story.\n\n## To Do\n\n- [points: -] operator: restart the shared api after merge\n- [points: 1] follow-up work\n',
+        body: '## Summary\n\nA story.\n\n## Deferred\n\n- [points: -] operator: restart the shared api after merge\n- [points: 1] follow-up work\n',
       },
     ],
     features: [
@@ -101,7 +109,7 @@ test("bl status: the deferred line counts items only; the tasks line counts the 
     assert.doesNotMatch(f35.stdout, /operator task/);
     const s10 = runBl(['status', 'S-10'], { cwd: dir });
     assert.equal(s10.status, 0, s10.stderr);
-    assert.match(s10.stdout, /^to do: 1 item\ntasks: 1 open, 0 done$/m);
+    assert.match(s10.stdout, /^deferred: 1 item\ntasks: 1 open, 0 done$/m);
     const f40 = runBl(['status', 'F-40'], { cwd: dir });
     assert.doesNotMatch(f40.stdout, /^tasks:/m, 'a unit with no task has no tasks line');
   } finally {

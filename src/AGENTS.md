@@ -930,7 +930,7 @@ and Review Log are not in `index.md`: they are the change document's (below).
 
 Stories inside a feature use the shorter `story-feature` template (Summary,
 Acceptance Criteria, Implementation Plan of at most 40 lines, Dependencies):
-no Design Notes, To Do or Notes — those live on the feature, and a story's hand-offs go
+no Design Notes, Deferred or Notes — those live on the feature, and a story's hand-offs go
 to the feature's `## Notes`.
 
 ### The change document (`change.md`, F-42)
@@ -1717,19 +1717,19 @@ Rules:
 
 A session leaves behind three different things, and each has its own place (F-65 D4):
 
-- **Follow-up code work** goes in a feature's `## Deferred` or a story's `## To Do`, one
-  top-level bullet each, starting with its estimate `[points: N]` (Fibonacci). Nothing else
-  goes there. `## To Do` is the **cleanup agent's intake** (`prompts/cleanup-triage.md` turns
-  each item into a story at the story's merge, orders dependent items with
-  `bl new --depends-on` and groups overlapping ones as a feature, and `todoForTriage` hands it
-  the whole section); a feature's `## Deferred` is reviewed once, at merge. It is **not** a catch-all
+- **Follow-up code work** goes in the unit's `## Deferred`, in a feature and a standalone story
+  alike (F-82 D9), one top-level bullet each, starting with its estimate `[points: N]`
+  (Fibonacci). Nothing else goes there. A story's `## Deferred` is the **cleanup agent's
+  intake** (`prompts/cleanup-triage.md` turns each item into a story at the story's merge,
+  orders dependent items with `bl new --depends-on` and groups overlapping ones as a feature,
+  and `deferredForTriage` hands it the whole section); a feature's is reviewed once, at merge. It is **not** a catch-all
   for anything out of scope: the working agent does uncovered work itself, and only work that
   is a loose estimate of **8 points or more** belongs here. A finding of about one point in
   code the branch already touches is fixed in the session, and a nit is fixed or dropped,
   never deferred (the implementing and fixing prompts say so, folded in from S-638).
 - **Records and hand-offs** (what a session did or found, a note from one story to the next)
   go under `## Notes`: in a feature between `## Deferred` and `## Escalation`
-  (`templates/feature.md`), in a standalone story after `## To Do` (`templates/story.md`). A
+  (`templates/feature.md`), in a standalone story after `## Deferred` (`templates/story.md`). A
   story in a feature has no section of its own: its hand-offs go to the feature's. A note is
   a dated, attributed bullet, `- 2026-10-26 (S-1066): …`, with no marker; bl never reads the
   section.
@@ -1746,11 +1746,16 @@ A session leaves behind three different things, and each has its own place (F-65
   note, a bare bullet, `[points: ?]`).
 - `operator-tasks-retired`: a `### Operator tasks` sub-heading (the items under it are not
   reported again) or an `operator:` / `operator (from S-<n>):` bullet.
+- `deferred-heading-retired`: a `## To Do` heading, the section's name in stories before F-82.
+  The message names `scripts/migrate-deferred-heading.js`, which renames it to `## Deferred` in
+  every story file of the backlog, open or closed, in one commit (on the shape of
+  `migrate-priority.js`: clean at origin/main first, inside `migration-txn.js`; a second run
+  plans nothing).
 
-A closed unit's section is history: its notes and done operator items stay as written, and
-neither rule runs on it.
+A closed unit's section is history: its notes, done operator items and old heading stay as
+written, and no rule runs on it.
 
-### `## Review Log` vs `## To Do`
+### `## Review Log` vs `## Deferred`
 
 `## Review Log` is the **review cycle's** state — items in the latest
 session must be checked off with a resolution note and then verified by
@@ -1758,7 +1763,7 @@ a re-review (`review_status: addressed`) before `bl done` or
 `bl merge` will accept the story.
 
 Do not mix the two. A review item that should become its own story is
-written into `## To Do`, not into a session block.
+written into `## Deferred`, not into a session block.
 
 ## Tooling
 
@@ -2183,13 +2188,13 @@ bl implement S34
 `bl run S34` takes a `refined` or `in_progress` story with no `feature:`
 through the feature loop (`runFeature` in `feature-run.js`), nothing copied:
 `storyUnit` (`unit.js`) gives the story the field names the loop reads from
-a feature, with `kind: "story"` and `deferredHeading: "To Do"`, and
+a feature, with `kind: "story"`, and
 `prepareStoryRun` (`workon.js`) makes the story's own worktree and branch (its
 directory name, lower case) and returns `prepareFeatureWorktree`'s shape with
 `ordered: [story]` and the PR title `S34: <title>`. The implement step uses
 `prompts/story-run.md`; the gate, self-review, review passes, verifier and
-fix rounds use the feature prompts, which read `{{unitKind}}`,
-`{{deferredHeading}}` and `{{premise}}`. The test gate layers the story's
+fix rounds use the feature prompts, which read `{{unitKind}}` and
+`{{premise}}`. The test gate layers the story's
 component under the story file's `plugins-test`.
 
 The first run writes `review_rounds_max` (2, or `--max-rounds`) to the story
@@ -2843,7 +2848,7 @@ priority-unit, roadmap-file, roadmap-section, theme-brief, dictionary-file, foun
 flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
 task-unit, task-field, deferred-unsized, operator-tasks-retired,
-bad-tokens-by-step, agent-config, derived-key, dangling-feature,
+deferred-heading-retired, bad-tokens-by-step, agent-config, derived-key, dangling-feature,
 feature-no-stories
 
 `derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's
@@ -2893,10 +2898,10 @@ file's number, one id on two files, an `owner` outside `operator`, a `status` ou
 `flow.json`'s task statuses, or a `done` task with no `done:` date (errors); a key bl does not
 know (warning).
 
-`deferred-unsized` and `operator-tasks-retired` (F-65 D4, `findDeferredErrors`, errors at the
-unit's file with its line) check an open unit's `## Deferred` or `## To Do`: an item without a
-numeric `[points: N]`, and a `### Operator tasks` sub-heading or `operator:` bullet. A `done`
-or `superseded` unit has neither (see **`## Deferred`, `## Notes` and tasks**). The S-970
+`deferred-unsized`, `operator-tasks-retired` and `deferred-heading-retired` (F-65 D4, F-82 D9,
+`findDeferredErrors`, errors at the unit's file with its line) check an open unit's
+`## Deferred`: an item without a numeric `[points: N]`, a `### Operator tasks` sub-heading or
+`operator:` bullet, and a retired `## To Do` heading. A `done` or `superseded` unit has none (see **`## Deferred`, `## Notes` and tasks**). The S-970
 `operator-tasks` rule is gone with `src/operator-tasks.js`.
 
 `found-by` (F-48 D2, `findFoundByFindings`) is an error on a story whose
@@ -3577,7 +3582,7 @@ their files and the holds from `blockers.json`, never from a unit's body; a `blo
 task), an escalation, change, update or pending id its own; an id not in the inbox is unknown.
 
 The S-970 operator tasks (a `### Operator tasks` sub-list, or legacy `operator:` bullets, in a
-unit's `## Deferred` / `## To Do`) are retired: nothing in `bl` reads a body for tasks, an open
+unit's `## Deferred`, or a story's former `## To Do`) are retired: nothing in `bl` reads a body for tasks, an open
 unit that has one fails `bl validate` (`operator-tasks-retired`), and a closed unit keeps its
 items as history. Their reader, `scanOperatorTasks`, went with F-65's migration (S-581).
 

@@ -45,7 +45,7 @@ Backlog repo : {{backlogDir}}
    create/rollback, acquire/release), and the other callers of the same helper.
    Fix them together — usually one shared check or helper instead of several
    patches — with a table-driven test over every instance and input class.
-   Instances in code the branch did not change go to **## {{deferredHeading}}** as
+   Instances in code the branch did not change go to **## Deferred** as
    `[points: N] (pre-existing, same class as <item>) …`, not into this fix,
    except an instance of about one point in code this branch already touches,
    which is fixed here, not deferred.

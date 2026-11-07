@@ -59,7 +59,7 @@ until the verifier writes `review_status: addressed` or the round cap
 
 `bl run S-34` does the same for one story: its branch is the story's own, its PR is titled
 `S-34: <title>`, and the story file takes the feature file's place (its Summary and Acceptance
-Criteria for the Premise, `## To Do` for `## Deferred`). The first run adds `branch`, `pr`,
+Criteria for the Premise, its own `## Deferred` for the feature's). The first run adds `branch`, `pr`,
 `review_round` and `review_rounds_max` to the story's frontmatter.
 
 A story has one repo, its component's. A feature names no repo: its repos are its stories'

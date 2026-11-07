@@ -14,7 +14,6 @@ const VARS = {
   storyId: 'F-9',
   title: 'T',
   unitKind: 'feature',
-  deferredHeading: 'Deferred',
   premise: "the feature's Premise",
   featureRelPath: 'features/F9-t/index.md',
   featureAbsPath: '/b/features/F9-t/index.md',

@@ -121,10 +121,10 @@ test('bl new --feature tags the story, links it on the feature, and keeps the or
     assert.equal(s.feature, 'F-1');
     assert.equal(s.component, 'C00');
     assert.equal(s.primary_repo, undefined, "a story's repo is its component's (F-52 D1)");
-    // Shorter template: no Review Log / To Do on feature stories.
+    // Shorter template: no Review Log / Deferred on feature stories.
     const storyContent = readFileSync(join(dir, storyRel), 'utf8');
     assert.doesNotMatch(storyContent, /## Review Log/);
-    assert.doesNotMatch(storyContent, /## To Do/);
+    assert.doesNotMatch(storyContent, /## Deferred/);
     assert.match(storyContent, /## Implementation Plan/);
 
     const featurePath = join(dir, 'features', 'F1-invite-codes', 'index.md');
@@ -221,7 +221,7 @@ test('the existing-story command in prompts/_blocked-by-bug.md attaches the stor
         component: 'C00',
         title: 'goto timeout',
         type: 'bug',
-        body: '## Summary\n\nTimeout.\n\n## To Do\n\nNone.\n',
+        body: '## Summary\n\nTimeout.\n\n## Deferred\n\nNone.\n',
       },
     ],
   });

@@ -21,12 +21,12 @@ Some text.
 
 - [ ] item
 
-## To Do
+## Deferred
 None.
 `;
   const log = extractReviewLog(body);
   assert.match(log, /### Session 2026-05-11/);
-  assert.doesNotMatch(log, /## To Do/);
+  assert.doesNotMatch(log, /## Deferred/);
 });
 
 test('extractReviewLog returns null when no Review Log section is present', () => {

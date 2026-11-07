@@ -39,7 +39,6 @@ const BASE = {
   adhocProject: 'demo',
   adhocComponent: 'C03',
   unitKind: 'feature',
-  deferredHeading: 'Deferred',
   premise: "the feature's Premise",
   themeBrief: '- `/roost/app.acme.com/docs/public/tenets.md`',
 };
@@ -207,7 +206,6 @@ const STORY_BASE = {
   sessionNum: '9',
   scratchDir: '/b/.bl/run/S-9.x.scratch',
   unitKind: 'story',
-  deferredHeading: 'To Do',
   premise: "the story's Summary and Acceptance Criteria",
 };
 const STORY_CASES = {
@@ -227,7 +225,7 @@ const STORY_CASES = {
 };
 CASES['story-run'] = STORY_CASES['story-run'];
 
-test("a story run's prompts name the story file and its To Do, never the feature's", () => {
+test("a story run's prompts name the story file and its Deferred, never the feature's", () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const config = loadConfig({ backlogRoot: dir });
@@ -237,12 +235,12 @@ test("a story run's prompts name the story file and its To Do, never the feature
         const where = `${name} (${agent})`;
         const left = [...new Set(text.match(/\{\{[A-Za-z]+\}\}/g) ?? [])];
         assert.deepEqual(left, [], `${where} left ${left.join(', ')}`);
-        assert.doesNotMatch(text, /feature file|## Deferred|feature.s Premise/, where);
+        assert.doesNotMatch(text, /feature file|feature.s Premise/, where);
         assert.doesNotMatch(text, /--feature S-9/, `${where}: no ad-hoc story attached to a story`);
       }
     }
     const verify = loadPrompt('review-verify', STORY_CASES['review-verify'], { agent: 'claude', config });
-    assert.match(verify, /goes to \*\*## To Do\*\* in the story file/);
+    assert.match(verify, /goes to \*\*## Deferred\*\* in the story file/);
     assert.match(verify, /\*\*Check the story's Summary and Acceptance Criteria\*\*/);
     assert.match(
       verify,
@@ -257,7 +255,7 @@ test("a story run's prompts name the story file and its To Do, never the feature
   }
 });
 
-test("story-run: the story file only, no PR, follow-ups to To Do, and the story's ad-hoc fix rule", () => {
+test("story-run: the story file only, no PR, follow-ups to Deferred, and the story's ad-hoc fix rule", () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const config = loadConfig({ backlogRoot: dir });
@@ -266,7 +264,7 @@ test("story-run: the story file only, no PR, follow-ups to To Do, and the story'
       assert.match(text, /Story file   : \/b\/projects\/demo\/E3-x\/S9-nine\/index\.md/);
       assert.doesNotMatch(text, /Feature file|storiesPlan|featureAbsPath/);
       assert.match(text, /Do not open a pull\s+request: `bl run` opens it/);
-      assert.match(text, /Follow-up code work of 8 points or more: a bullet under \*\*## To Do\*\*/);
+      assert.match(text, /Follow-up code work of 8 points or more: a bullet under \*\*## Deferred\*\*/);
       assert.match(text, /a dated bullet under \*\*## Notes\*\*,\s+`- <YYYY-MM-DD> \(S-9\): …`/);
       assert.match(text, /bl sync --commit -m "chore: S-9 implemented" --story S-9\n/);
       assert.match(text, /bl sync --commit -m "chore: S-9 ad-hoc fix noted" --story S-9\n/);

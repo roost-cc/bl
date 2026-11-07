@@ -37,7 +37,7 @@ depends_on:
 
 <!-- List story IDs this story depends on, or "None". -->
 
-## To Do
+## Deferred
 
 <!-- Cleanup-agent intake for follow-up stories; start with "None".
      Follow-up code work only: a loose ≥8-point chunk belongs here (smaller

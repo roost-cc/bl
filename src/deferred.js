@@ -1,6 +1,6 @@
 /**
- * deferred.js — a unit's follow-up section: a feature's `## Deferred`, a
- * story's `## To Do` (F-65 D4). It holds sized follow-up code work only,
+ * deferred.js — a work unit's follow-up section, `## Deferred` in features
+ * and stories alike (F-65 D4, F-82 D9). It holds sized follow-up code work only,
  * one top-level `[points: N]` bullet per item; records and hand-offs go
  * under `## Notes`, and what the operator must do is a task (`bl task`).
  *
@@ -12,6 +12,10 @@
 
 import { fromMarkdown } from 'mdast-util-from-markdown';
 
+/** The section's heading, in features and stories alike. */
+export const DEFERRED_HEADING = 'Deferred';
+/** A story's old name for the section, retired by F-82 D9. */
+export const RETIRED_SECTION = 'To Do';
 /** The retired S-970 sub-heading. */
 const RETIRED_HEADING = 'Operator tasks';
 export const SIZED_RE = /^\[points:[ \t]*\d+\]/;
@@ -24,20 +28,21 @@ const OPERATOR_RE = /^(?:\[points:[ \t]*(?:-|\d+)\][ \t]+)?operator(?:[ \t]*\(fr
 export const MARKER_RE = /^(?:[-*+]|\d+[.)])[ \t]+/;
 
 /**
- * Read a unit's `## <heading>` section.
+ * Read a unit's `## Deferred` section.
  *
  * @param {string} text  the whole file (its line numbers are the file's)
- * @param {string} heading  `Deferred` or `To Do`
  * @returns {{
  *   found: boolean,
  *   items: Array<{ line: number, text: string, sized: boolean, operator: boolean }>,
  *   retired: number[],
+ *   retiredSection: number[],
  * }}
  *   `items` are the section's top-level list items outside a retired
  *   `### Operator tasks` sub-list (`line`: 1-based; `text`: the first line
- *   after its marker); `retired` holds the line of each such sub-heading.
+ *   after its marker); `retired` holds the line of each such sub-heading;
+ *   `retiredSection` holds the line of each `## To Do` heading in the file.
  */
-export function scanDeferred(text, heading) {
+export function scanDeferred(text) {
   const lf = String(text ?? '').replace(/\r\n/g, '\n');
   const nodes = fromMarkdown(lf).children;
   const source = (n) => lf.slice(n.position.start.offset, n.position.end.offset);
@@ -46,8 +51,10 @@ export function scanDeferred(text, heading) {
       .replace(/^#+[ \t]*/, '')
       .replace(/[ \t]+#*[ \t]*$/, '')
       .trim();
-  const start = nodes.findIndex((n) => n.type === 'heading' && n.depth === 2 && title(n) === heading);
-  if (start === -1) return { found: false, items: [], retired: [] };
+  const level2 = (n, name) => n.type === 'heading' && n.depth === 2 && title(n) === name;
+  const retiredSection = nodes.filter((n) => level2(n, RETIRED_SECTION)).map((n) => n.position.start.line);
+  const start = nodes.findIndex((n) => level2(n, DEFERRED_HEADING));
+  if (start === -1) return { found: false, items: [], retired: [], retiredSection };
   const items = [];
   const retired = [];
   let inRetired = false;
@@ -69,5 +76,5 @@ export function scanDeferred(text, heading) {
       });
     }
   }
-  return { found: true, items, retired };
+  return { found: true, items, retired, retiredSection };
 }

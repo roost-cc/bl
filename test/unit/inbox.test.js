@@ -31,11 +31,11 @@ const F35_DEFERRED = `- [points: 2] not for the operator: a follow-up story
   and a paragraph after a blank line
 - [points: -] Note: not an operator task`;
 
-const STORY_TODO = `## Summary
+const STORY_DEFERRED = `## Summary
 
 A story.
 
-## To Do
+## Deferred
 
 - [points: -] operator: restart the shared api after merge
 - [points: 1] follow-up work
@@ -61,7 +61,7 @@ function writeTask(dir, num, unit, title, extra = {}) {
 
 /**
  * A backlog with features (active, escalated, completed), stories (active
- * with a To Do and an escalation, completed with a To Do), two update
+ * with Deferred items and an escalation, completed with them), two update
  * stories in the updates component (one with a decision asked, one new),
  * and tasks: T-1 holds F-42's merge, T-2 is a `next` task on the open S-10
  * (holding nothing yet), T-3 is done, T-4 is a `next` task on the done F-35
@@ -75,14 +75,14 @@ function setup() {
       { id: 'C45', title: 'Updates' },
     ],
     stories: [
-      { id: 'S-10', component: 'C01', title: 'Active', status: 'in_progress', body: STORY_TODO },
+      { id: 'S-10', component: 'C01', title: 'Active', status: 'in_progress', body: STORY_DEFERRED },
       { id: 'S-11', component: 'C01', title: 'Escalated', status: 'in_progress', body: STORY_ESCALATED },
       {
         id: 'S-12',
         component: 'C01',
         title: 'Old',
         status: 'done',
-        body: STORY_TODO.replace('restart the shared api', 'rotate the old key'),
+        body: STORY_DEFERRED.replace('restart the shared api', 'rotate the old key'),
       },
       {
         id: 'S-13',
@@ -584,19 +584,13 @@ const unitText = (heading, section) =>
   `---\nfeature_id: F-1\n---\n\n## Summary\n\nx\n\n## ${heading}\n\n${section}\n\n## Escalation\n\nNone.\n`;
 
 test('bl status lines: the deferred line counts items only', () => {
-  assert.equal(deferredCountLine(unitText('Deferred', SUB_LIST), 'Deferred'), 'deferred: 2 items');
-  assert.equal(deferredCountLine(unitText('Deferred', F35_DEFERRED), 'Deferred'), 'deferred: 2 items');
-  assert.equal(deferredCountLine(unitText('To Do', '- [points: 1] one'), 'To Do'), 'to do: 1 item');
-  assert.equal(deferredCountLine(unitText('To Do', 'None.'), 'To Do'), null);
+  assert.equal(deferredCountLine(unitText('Deferred', SUB_LIST)), 'deferred: 2 items');
+  assert.equal(deferredCountLine(unitText('Deferred', F35_DEFERRED)), 'deferred: 2 items');
+  assert.equal(deferredCountLine(unitText('Deferred', '- [points: 1] one')), 'deferred: 1 item');
+  assert.equal(deferredCountLine(unitText('Deferred', 'None.')), null);
+  assert.equal(deferredCountLine(unitText('Deferred', 'None.\n\n### Operator tasks\n\n1. [points: -] one')), null);
   assert.equal(
-    deferredCountLine(unitText('To Do', 'None.\n\n### Operator tasks\n\n1. [points: -] one'), 'To Do'),
-    null,
-  );
-  assert.equal(
-    deferredCountLine(
-      unitText('Deferred', '- [points: 1] one\r\n- [points: 2] two').replace(/\n/g, '\r\n'),
-      'Deferred',
-    ),
+    deferredCountLine(unitText('Deferred', '- [points: 1] one\r\n- [points: 2] two').replace(/\n/g, '\r\n')),
     'deferred: 2 items',
   );
 

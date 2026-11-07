@@ -115,7 +115,6 @@ test("prepareStoryRun: the story's own branch and worktree, in prepareFeatureWor
     assert.equal(v.featureAbsPath, found.indexPath);
     assert.equal(v.featureRelPath, 'stories/S7-loose/index.md');
     assert.equal(v.unitKind, 'story');
-    assert.equal(v.deferredHeading, 'To Do');
     assert.equal(v.sessionNum, '7');
     assert.equal(v.sessionId, 's7');
     assert.equal(v.adhocComponent, 'C00');

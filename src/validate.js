@@ -20,7 +20,7 @@ import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID
 import { findRoadmapFindings } from './roadmap.js';
 import { extractReviewLog, parseLatestSession } from './review-log.js';
 import { probePluginBinaries } from './plugin-binaries.js';
-import { scanDeferred } from './deferred.js';
+import { scanDeferred, DEFERRED_HEADING, RETIRED_SECTION } from './deferred.js';
 import { CHANGE_STATUSES, RUN_STATE_KEYS, listChanges, unitIdOfDir } from './change-doc.js';
 import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
@@ -738,11 +738,13 @@ export function findEscalationNotNone(f) {
 }
 
 /**
- * The rules of a unit's `## Deferred` (feature) or `## To Do` (story), F-65
- * D4, on a unit that is not closed (a closed unit's section is
- * history and keeps its notes and operator items as written). One finding
- * per line:
+ * The rules of a unit's `## Deferred` (F-65 D4, F-82 D9), on a unit that is
+ * not closed (a closed unit's section is history and keeps its notes,
+ * operator items and old heading as written). One finding per line:
  *
+ *   - `deferred-heading-retired` (error)  a `## To Do` heading: the
+ *     section's old name in stories, renamed by
+ *     `scripts/migrate-deferred-heading.js`.
  *   - `operator-tasks-retired` (error)  a `### Operator tasks` sub-heading
  *     or an `operator:` bullet: the operator's work is a task (`bl task`).
  *   - `deferred-unsized` (error)  any other top-level item without a numeric
@@ -752,17 +754,16 @@ export function findEscalationNotNone(f) {
  * @param {string} id  the unit's id
  * @param {string|undefined} status
  * @param {string} text  the whole file (its line numbers are the file's)
- * @param {string} heading  `Deferred` or `To Do`
  * @param {string} location
  * @param {import("./flow.js").Flow} flow
  * @param {string} type  the flow type: `story` or `feature`
  * @returns {Finding[]}
  */
-export function findDeferredErrors(id, status, text, heading, location, flow, type) {
+export function findDeferredErrors(id, status, text, location, flow, type) {
   // A closed unit's body is history: the Deferred rules do not run on it.
   if (flow.meets(type, status, 'done')) return [];
-  const { items, retired } = scanDeferred(text, heading);
-  const finding = (code, line, message) => ({
+  const { items, retired, retiredSection } = scanDeferred(text);
+  const finding = (code, line, message, heading = DEFERRED_HEADING) => ({
     severity: 'error',
     code,
     message: `${id}: line ${line} (## ${heading}): ${message}`,
@@ -771,6 +772,16 @@ export function findDeferredErrors(id, status, text, heading, location, flow, ty
   });
   const retiredMessage = `operator tasks are retired: file each one with "bl task ${id} --title <t> --gate <merge|next|none>" and remove it here`;
   const out = retired.map((line) => finding('operator-tasks-retired', line, `### Operator tasks: ${retiredMessage}`));
+  for (const line of retiredSection) {
+    out.push(
+      finding(
+        'deferred-heading-retired',
+        line,
+        `the heading is retired: follow-up code work goes under ## ${DEFERRED_HEADING}; run "node <bl>/scripts/migrate-deferred-heading.js" in the backlog to rename it in every story`,
+        RETIRED_SECTION,
+      ),
+    );
+  }
   for (const item of items) {
     if (item.operator) {
       out.push(finding('operator-tasks-retired', item.line, `"${item.text}": ${retiredMessage}`));
@@ -1440,7 +1451,7 @@ export function runAll(config, opts = {}) {
     );
     findings.push(...findRunStateInSpec(fm, unit.body(), s.storyRelPath));
     findings.push(...validateChanges(config.backlogRoot, unit.dir));
-    findings.push(...findDeferredErrors(s.id, fm.status, unit.text(), 'To Do', s.storyRelPath, flow, 'story'));
+    findings.push(...findDeferredErrors(s.id, fm.status, unit.text(), s.storyRelPath, flow, 'story'));
   }
 
   // 2. Frontmatter checks for components.
@@ -1470,7 +1481,7 @@ export function runAll(config, opts = {}) {
     findings.push(...findRunStateInSpec(f.fm, f.body, f.featureRelPath));
     findings.push(...validateChanges(config.backlogRoot, f.featureDir));
     findings.push(...findEscalationNotNone(f));
-    findings.push(...findDeferredErrors(f.id, f.fm.status, f.content, 'Deferred', f.featureRelPath, flow, 'feature'));
+    findings.push(...findDeferredErrors(f.id, f.fm.status, f.content, f.featureRelPath, flow, 'feature'));
   }
 
   // 2c. Themes and epics (F-51 D1): their frontmatter, then the value-axis
