@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   symlinkSync,
   utimesSync,
@@ -100,7 +101,9 @@ test('writeSite copies the published set with its timestamps, and nothing else',
 
 test('writeSite_keeps_rendered_writes_inside_stage_for_symlinked_pages: every page kind, a unit directory, a doc, the root and a report file', () => {
   const dir = siteBacklog();
-  const outside = mkTempDir('bl-site-outside-');
+  // Inside the backlog but not published, so the links stay inside its boundary.
+  const outside = join(dir, 'elsewhere');
+  mkdirSync(outside);
   const graph = loadBacklog({ backlogRoot: dir }, { reload: true });
   // Each case moves the backlog path to `outside` and links it back.
   const linked = [
@@ -124,7 +127,7 @@ test('writeSite_keeps_rendered_writes_inside_stage_for_symlinked_pages: every pa
   }
   const stage = join(dir, '.reports.new');
   mkdirSync(stage);
-  const report = join(outside, 'report.md');
+  const report = join(stage, 'report.md');
   writeFileSync(report, '# Report\n');
   symlinkSync(report, join(stage, 'index.md'));
   before[report] = '# Report\n';
@@ -140,6 +143,96 @@ test('writeSite_keeps_rendered_writes_inside_stage_for_symlinked_pages: every pa
   }
   assert.equal(readFileSync(join(site, 'docs/guide.md'), 'utf8'), '# Guide\n');
   assert.equal(readFileSync(join(site, 'reports', 'index.md'), 'utf8'), '# Report\n');
+});
+
+test('writeSite_rejects_links_outside_backlog_and_dangling_links: published files, directories, deep links, loops and report files', async (t) => {
+  const outside = mkTempDir('bl-site-outside-');
+  writeFileSync(join(outside, 'secret.md'), 'SECRET OUTSIDE BACKLOG\n');
+  mkdirSync(join(outside, 'dir'));
+  writeFileSync(join(outside, 'dir', 'secret.md'), 'SECRET OUTSIDE BACKLOG\n');
+  // Each case: [link, target] relative to the backlog (`b:`), the stage (`s:`) or absolute.
+  const cases = [
+    {
+      why: 'a published file linked outside the backlog',
+      link: 'b:docs/leak.md',
+      to: join(outside, 'secret.md'),
+      err: /outside/,
+    },
+    {
+      why: 'a published directory linked outside the backlog',
+      link: 'b:docs/leak',
+      to: join(outside, 'dir'),
+      err: /outside/,
+    },
+    {
+      why: 'a link deep in a published directory',
+      link: 'b:docs/a/b/leak.md',
+      to: join(outside, 'secret.md'),
+      err: /outside/,
+    },
+    {
+      why: 'a top published path linked outside',
+      link: 'b:tasks',
+      to: join(outside, 'dir'),
+      err: /outside/,
+      replace: true,
+    },
+    {
+      why: 'a dangling published link',
+      link: 'b:docs/missing.md',
+      to: join(outside, 'missing.md'),
+      err: /points to nothing \(ENOENT\)/,
+    },
+    { why: 'a link to itself', link: 'b:docs/self.md', to: 'self.md', err: /points to nothing \(ELOOP\)/ },
+    {
+      why: 'a report file linked outside the stage',
+      link: 's:index.md',
+      to: 'b:docs/guide.md',
+      err: /outside/,
+      replace: true,
+    },
+    { why: 'a dangling report file', link: 's:index.md', to: 's:nowhere.md', err: /points to nothing/, replace: true },
+    {
+      why: 'a directory link back at its parent is a loop, left out',
+      link: 'b:docs/a/up',
+      to: 'b:docs',
+      copied: 'docs/guide.md',
+    },
+    {
+      why: 'a link inside the backlog to an unpublished file is copied',
+      link: 'b:docs/inside.md',
+      to: 'b:.bl/run/scratch.md',
+      copied: 'docs/inside.md',
+    },
+  ];
+  for (const c of cases) {
+    await t.test(c.why, () => {
+      const dir = siteBacklog();
+      const stage = join(dir, '.reports.new');
+      mkdirSync(stage);
+      writeFileSync(join(stage, 'index.md'), '# Report\n');
+      const at = (p) => (p.startsWith('b:') ? join(dir, p.slice(2)) : p.startsWith('s:') ? join(stage, p.slice(2)) : p);
+      const link = at(c.link);
+      mkdirSync(dirname(link), { recursive: true });
+      if (c.replace) rmSync(link, { recursive: true, force: true });
+      symlinkSync(at(c.to), link);
+      const graph = loadBacklog({ backlogRoot: dir }, { reload: true });
+      const write = () => writeSite(loadConfig({ backlogRoot: dir }), graph, stage, ['index.md']);
+      if (c.err) {
+        assert.throws(write, (e) => {
+          assert.match(e.message, c.err);
+          assert.ok(e.message.includes(link), e.message);
+          return true;
+        });
+        for (const e of readdirSync(stage, { recursive: true, withFileTypes: true })) {
+          if (e.isFile()) assert.doesNotMatch(readFileSync(join(e.parentPath, e.name), 'utf8'), /SECRET/);
+        }
+      } else {
+        const site = write();
+        assert.ok(existsSync(join(site, c.copied)), c.copied);
+      }
+    });
+  }
 });
 
 test('writeSite places the report files under reports/', () => {

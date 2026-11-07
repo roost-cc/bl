@@ -2504,7 +2504,10 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
   `index.md` and every page of a `GENERATED_SECTIONS` kind rendered by `renderPage` and
   formatted, each with its committed file's timestamp (a page with nothing generated stays a
   copy); and the report's own files under `site/reports/`, so the report's `../` links resolve
-  inside the root. Nothing under `.bl/` is copied. With `--out <dir>` the root is `<dir>/site`.
+  inside the root. Nothing under `.bl/` is copied. Every symlink is resolved; one that points to
+  nothing, or outside the backlog (outside the stage for a report file), fails the run naming
+  it, and a directory link back at one being copied is a loop and is left out. With
+  `--out <dir>` the root is `<dir>/site`.
 - **Counts** are the last snapshot's (HEAD's day): stories and points by status, features by
   status, epics open or done (done once every feature is done or superseded), themes, the open
   total (what the top-level `index.md` calls the total backlog). Titles, links and grouping are

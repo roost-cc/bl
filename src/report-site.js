@@ -17,8 +17,18 @@
  * Nothing else is copied: no `.bl/`, no config, no change in the backlog.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, utimesSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'fs';
+import { dirname, join, sep } from 'path';
 import { COMPONENTS_DIR, EPICS_DIR, STORIES_DIR, THEMES_DIR } from './config.js';
 import { FEATURES_DIR } from './feature.js';
 import { PRIORITY_FILE } from './priority.js';
@@ -53,25 +63,38 @@ export const PUBLISHED = Object.freeze([
  * Copy `from` to `to` with every symlink, at any depth, resolved to what it
  * points at, so `to` holds no symlink and no later write in it (a rendered
  * page, the formatter, a timestamp) follows one out of the stage. Timestamps
- * are kept. A link that points at nothing, or back at a directory being
- * copied, is left out. (`cpSync`'s `dereference` resolves only `from` itself.)
+ * are kept. A `from` that does not exist is left out. A link that points at
+ * nothing, or whose real path is outside `boundary`, fails naming it; one back
+ * at a directory being copied is a loop, and is left out, as the docs site
+ * does. (`cpSync`'s `dereference` resolves only `from` itself.)
  * @param {string} from
  * @param {string} to
+ * @param {string} boundary  the real path that every copied path must resolve inside
  * @param {Set<string>} [copying]  the real paths of the directories being copied
  */
-function copyResolved(from, to, copying = new Set()) {
-  let st;
+function copyResolved(from, to, boundary, copying = new Set()) {
   try {
-    st = statSync(from);
+    lstatSync(from);
   } catch (e) {
-    if (e.code === 'ENOENT' || e.code === 'ELOOP') return;
+    if (e.code === 'ENOENT') return;
     throw e;
   }
+  let real;
+  try {
+    real = realpathSync(from);
+  } catch (e) {
+    throw new Error(`bl report: ${from} is a symlink that points to nothing (${e.code})`);
+  }
+  if (real !== boundary && !real.startsWith(boundary + sep)) {
+    throw new Error(`bl report: ${from} is a symlink to ${real}, outside ${boundary}`);
+  }
+  const st = statSync(real);
   if (st.isDirectory()) {
-    const real = realpathSync(from);
     if (copying.has(real)) return;
     mkdirSync(to);
-    for (const name of readdirSync(from)) copyResolved(join(from, name), join(to, name), new Set([...copying, real]));
+    for (const name of readdirSync(from)) {
+      copyResolved(join(from, name), join(to, name), boundary, new Set([...copying, real]));
+    }
   } else {
     copyFileSync(from, to);
   }
@@ -89,7 +112,8 @@ function copyResolved(from, to, copying = new Set()) {
 export function writeSite(config, graph, stageDir, reportFiles) {
   const site = join(stageDir, SITE_DIR);
   mkdirSync(site);
-  for (const name of PUBLISHED) copyResolved(join(graph.root, name), join(site, name));
+  const backlog = realpathSync(graph.root);
+  for (const name of PUBLISHED) copyResolved(join(graph.root, name), join(site, name), backlog);
 
   // Each rendered page with the committed file it stands for (null: none).
   const pages = [{ path: join(site, 'index.md'), text: renderPage(graph, null), source: join(graph.root, 'index.md') }];
@@ -108,10 +132,11 @@ export function writeSite(config, graph, stageDir, reportFiles) {
     utimesSync(path, st.atime, st.mtime);
   }
 
+  const stage = realpathSync(stageDir);
   for (const file of reportFiles) {
     const to = join(site, 'reports', file);
     mkdirSync(dirname(to), { recursive: true });
-    copyResolved(join(stageDir, file), to);
+    copyResolved(join(stageDir, file), to, stage);
   }
   return site;
 }
