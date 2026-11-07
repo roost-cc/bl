@@ -22,7 +22,7 @@ import { dirname, join } from 'path';
 import { COMPONENTS_DIR, EPICS_DIR, STORIES_DIR, THEMES_DIR } from './config.js';
 import { FEATURES_DIR } from './feature.js';
 import { PRIORITY_FILE } from './priority.js';
-import { GENERATED_SECTIONS, renderPage } from './render.js';
+import { UNIT_PAGE_KINDS, renderPage } from './render.js';
 import { ROADMAP_FILE } from './roadmap.js';
 import { formatBacklogMarkdown } from './sync.js';
 import { TASKS_DIR } from './task.js';
@@ -49,9 +49,6 @@ export const PUBLISHED = Object.freeze([
   PRIORITY_FILE,
 ]);
 
-/** The unit kinds whose pages have generated sections (`root` is the backlog's `index.md`). */
-const PAGE_KINDS = Object.keys(GENERATED_SECTIONS).filter((k) => k !== 'root');
-
 /**
  * Write the backlog's documentation root at `<stageDir>/site`.
  * @param {{ backlogRoot: string }} config
@@ -70,7 +67,7 @@ export function writeSite(config, graph, stageDir, reportFiles) {
 
   // Each rendered page with the committed file it stands for (null: none).
   const pages = [{ path: join(site, 'index.md'), text: renderPage(graph, null), source: join(graph.root, 'index.md') }];
-  for (const kind of PAGE_KINDS) {
+  for (const kind of UNIT_PAGE_KINDS) {
     for (const unit of graph.list(kind)) {
       const text = renderPage(graph, unit);
       // A page with nothing generated (a story with no task) is its copy already.

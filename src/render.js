@@ -78,6 +78,9 @@ export const GENERATED_SECTIONS = Object.freeze(
   Object.fromEntries(Object.entries(LAYOUT).map(([kind, s]) => [kind, Object.freeze(s.map((x) => x.heading))])),
 );
 
+/** The unit kinds whose pages have generated sections (every kind but `root`). */
+export const UNIT_PAGE_KINDS = Object.freeze(Object.keys(GENERATED_SECTIONS).filter((k) => k !== 'root'));
+
 /**
  * Whether a section's body is a generated one: a Markdown table and blank
  * lines, nothing else. A hand-written section under the same heading (a

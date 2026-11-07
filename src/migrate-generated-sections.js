@@ -29,14 +29,14 @@ import { parseFrontmatter } from './config.js';
 import { removeSection } from './feature.js';
 import { withLock } from './lock.js';
 import { applyMigration, assertMigrationCanStart } from './migration-txn.js';
-import { GENERATED_SECTIONS, TOTAL_BACKLOG_RE, isGeneratedBody } from './render.js';
+import { GENERATED_SECTIONS, TOTAL_BACKLOG_RE, UNIT_PAGE_KINDS, isGeneratedBody } from './render.js';
 import { syncAndCommit } from './sync.js';
 
 /** The root's tables before F-78's priority; this module is the last to know them. */
 const RETIRED_ROOT_SECTIONS = ['Features', 'Backlog'];
 
 /** The page kinds with generated sections, in the order the plan lists them. */
-const KINDS = ['root', 'theme', 'epic', 'component', 'feature', 'story'];
+const KINDS = ['root', ...UNIT_PAGE_KINDS];
 
 /**
  * `text` (a whole page, frontmatter included) without the `headings`
@@ -70,7 +70,7 @@ export function planSections(config) {
     const stripped = stripGenerated(text, parseFrontmatter(text).body, headings, true);
     if (stripped !== null) out.push({ kind: 'root', path: root, text: stripped });
   }
-  for (const kind of KINDS.slice(1)) {
+  for (const kind of UNIT_PAGE_KINDS) {
     for (const u of graph.list(kind)) {
       const stripped = stripGenerated(u.text(), u.body(), GENERATED_SECTIONS[kind], false);
       if (stripped !== null) out.push({ kind, path: u.file, text: stripped });

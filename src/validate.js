@@ -27,7 +27,7 @@ import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
 import { implementPluginProblem } from './scripted.js';
-import { GENERATED_SECTIONS, isGeneratedBody } from './render.js';
+import { GENERATED_SECTIONS, UNIT_PAGE_KINDS, isGeneratedBody } from './render.js';
 
 // ---------------------------------------------------------------------------
 // Constants (reused by sync.js)
@@ -1407,7 +1407,7 @@ export function findGeneratedSectionFindings(graph) {
     const { body } = parseFrontmatter(readFileSync(rootPath, 'utf8').replace(/\r\n/g, '\n'));
     pages.push({ kind: 'root', relPath: 'index.md', section: (h) => extractSection(body, h) });
   }
-  for (const kind of ['theme', 'epic', 'component', 'feature', 'story']) pages.push(...graph.list(kind));
+  for (const kind of UNIT_PAGE_KINDS) pages.push(...graph.list(kind));
   return pages.flatMap((page) =>
     GENERATED_SECTIONS[page.kind]
       .filter((h) => isGeneratedBody(page.section(h)))

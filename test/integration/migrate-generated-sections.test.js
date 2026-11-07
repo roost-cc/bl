@@ -134,7 +134,7 @@ test('--dry-run prints the pages per kind, and writes nothing', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.equal(
     r.stdout,
-    'would remove generated sections from 1 root, 1 theme, 1 epic, 1 component, 1 feature, 1 story page(s)\n',
+    'would remove generated sections from 1 root, 1 component, 1 epic, 1 theme, 1 feature, 1 story page(s)\n',
   );
   assert.equal(head(dir), before);
   assert.deepEqual(statusLines(dir), []);
