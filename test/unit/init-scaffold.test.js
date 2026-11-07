@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { ensureBacklogDocs, ensureReposBlock } from '../../src/init.js';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -50,6 +50,36 @@ test('bl init gives a new backlog an empty roadmap.md and priority.md and the co
   assert.equal(readFileSync(join(kept, 'roadmap.md'), 'utf8'), 'kept\n');
   assert.equal(readFileSync(join(kept, 'priority.md'), 'utf8'), 'kept too\n');
   assert.equal(readFileSync(join(kept, 'coding-dictionary.yaml'), 'utf8'), 'entries: [] # curated\n');
+});
+
+test('init_seed_copy_failure_keeps_config_consistent: a failed seed copy leaves no listed file missing, and a rerun finishes', () => {
+  const DOCS = ['roadmap.md', 'priority.md', 'coding-dictionary.yaml'];
+  /** bl init's two steps, in its order; the error code, or null. */
+  const init = (dir) => {
+    try {
+      quietly(() => (ensureReposBlock(dir, 'claude'), ensureBacklogDocs(dir)));
+      return null;
+    } catch (e) {
+      return e.code;
+    }
+  };
+  const listed = (dir) => JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8')).dictionaries ?? [];
+  for (const blocked of DOCS) {
+    const dir = mkTempDir('bl-init-fail-');
+    writeFileSync(join(dir, 'backlog.json'), '{}\n');
+    // A link into a missing directory: existsSync says no, and the copy fails with ENOENT.
+    symlinkSync(join(dir, 'missing', 'seed'), join(dir, blocked));
+    assert.equal(init(dir), 'ENOENT', blocked);
+    for (const file of listed(dir)) assert.ok(existsSync(join(dir, file)), `${blocked}: ${file} is listed and exists`);
+    if (blocked === 'coding-dictionary.yaml') {
+      assert.equal(readFileSync(join(dir, 'backlog.json'), 'utf8'), '{}\n', 'backlog.json is as it was');
+    }
+
+    unlinkSync(join(dir, blocked));
+    assert.equal(init(dir), null, `${blocked}: the rerun`);
+    assert.deepEqual(listed(dir), ['coding-dictionary.yaml'], blocked);
+    for (const file of DOCS) assert.ok(existsSync(join(dir, file)), `${blocked}: rerun made ${file}`);
+  }
 });
 
 test('bl init lists the coding dictionary in a new backlog.json, and adds no key to an existing one (F-82 D3)', () => {

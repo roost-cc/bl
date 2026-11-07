@@ -97,12 +97,15 @@ export function ensureFlowFile(backlogRoot) {
  * (F-82 D2), which the project then curates. An existing one is left alone.
  */
 export function ensureBacklogDocs(backlogRoot) {
-  for (const file of [ROADMAP_FILE, PRIORITY_FILE, CODING_DICTIONARY_FILE]) {
-    const path = join(backlogRoot, file);
-    if (existsSync(path)) continue;
-    copyFileSync(join(__dirname, '..', 'templates', file), path);
-    info(`Created : ${file} (from template)`);
-  }
+  for (const file of [ROADMAP_FILE, PRIORITY_FILE, CODING_DICTIONARY_FILE]) copySeed(backlogRoot, file);
+}
+
+/** Copy `templates/<file>` into `dir` unless `dir` has the file. */
+function copySeed(dir, file) {
+  const path = join(dir, file);
+  if (existsSync(path)) return;
+  copyFileSync(join(__dirname, '..', 'templates', file), path);
+  info(`Created : ${file} (from template)`);
 }
 
 /** A new backlog's worktree root: beside the backlog, `<parent>/worktrees`. */
@@ -165,10 +168,11 @@ export function initConfigurationLists(raw, agent = null) {
  * Give a new backlog's `backlog.json` (in `dir`) an empty `repos` block, the
  * key bl finds a backlog by (F-51 D5), the worktree root `loadConfig`
  * requires (F-60 D1), unless it names one, the dictionary list naming the
- * coding dictionary `ensureBacklogDocs` copies (F-82 D3), unless it has
- * one, and the two configuration lists
+ * coding dictionary (F-82 D3), unless it has one, and the two configuration lists
  * it requires (F-64 D2), unless it has them, each independent of the other
- * (`initConfigurationLists`), with no model. A
+ * (`initConfigurationLists`), with no model. When it adds the dictionary
+ * list it copies the seed first, so a failed copy leaves backlog.json as it
+ * was and a rerun tries again. A
  * file that has `repos`, or the pre-F-51
  * `projects` that `loadConfig` refuses with the migration's name, is left
  * alone: an existing backlog's settings are its own. The write is atomic: a
@@ -191,6 +195,8 @@ export function ensureReposBlock(dir, agent = null) {
   if (!Object.hasOwn(raw, 'worktrees')) added.worktrees = NEW_WORKTREE_ROOT;
   if (!Object.hasOwn(raw, 'dictionaries')) added.dictionaries = [CODING_DICTIONARY_FILE];
   Object.assign(added, initConfigurationLists(raw, agent));
+  // The seed first: if its copy fails, backlog.json does not list a missing file.
+  if (added.dictionaries) copySeed(dir, CODING_DICTIONARY_FILE);
   atomicWriteFile(dir, path, JSON.stringify({ ...raw, ...added, repos: {} }, null, 2) + '\n', { preserve: true });
   const keys = [...Object.entries(added).map(([k, v]) => `"${k}": ${JSON.stringify(v)}`), '"repos": {}'];
   info(`Updated : backlog.json (+ ${keys.join(', ')})`);
