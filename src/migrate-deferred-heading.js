@@ -21,6 +21,7 @@
 
 import { readFileSync } from 'fs';
 import { relative } from 'path';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 import { DEFERRED_HEADING, RETIRED_SECTION, scanDeferred } from './deferred.js';
 import { withLock } from './lock.js';
 import { applyMigration, assertMigrationCanStart } from './migration-txn.js';
@@ -32,17 +33,77 @@ const RETIRED_RE = new RegExp(`^( {0,3}#{2}[ \\t]+)${RETIRED_SECTION}`);
 
 /**
  * The file's text with each level-2 `## To Do` heading renamed, or null when
- * it has none.
+ * it has none. When the file already has a `## Deferred`, each `## To Do`
+ * section's body moves to the end of that section instead, and the
+ * `## To Do` section goes: readers (`extractSection`, `scanDeferred`) take
+ * the first `## Deferred` only, so a second one would hide its items. A
+ * body that is only `None.` is dropped when there is something else.
  * @param {string} text  a story file as read
  * @returns {string | null}
  */
 export function renameHeading(text) {
-  const { retiredSection } = scanDeferred(text);
+  const { heading, retiredSection } = scanDeferred(text);
   if (retiredSection.length === 0) return null;
   // scanDeferred's lines are the file's: a CRLF line keeps its `\r` here.
   const lines = text.split('\n');
+  if (heading) return mergeSections(text, lines, heading - 1, retiredSection);
   for (const line of retiredSection) lines[line - 1] = lines[line - 1].replace(RETIRED_RE, `$1${DEFERRED_HEADING}`);
   return lines.join('\n');
+}
+
+const blank = (l) => l.trim() === '';
+
+/**
+ * Move the body of each `## To Do` section to the end of the `## Deferred`
+ * section, and drop the `## To Do` sections.
+ * @param {string} text  the file
+ * @param {string[]} lines  its lines (a CRLF line keeps its `\r`)
+ * @param {number} target  the 0-based line of the `## Deferred` heading
+ * @param {number[]} retiredLines  the 1-based lines of the `## To Do` headings
+ */
+function mergeSections(text, lines, target, retiredLines) {
+  // A section runs from its level-1 or level-2 heading to the next one.
+  const starts = fromMarkdown(text.replace(/\r\n/g, '\n'))
+    .children.filter((n) => n.type === 'heading' && n.depth <= 2)
+    .map((n) => n.position.start.line - 1);
+  const end = (start) => starts.find((s) => s > start) ?? lines.length;
+  const retired = new Set(retiredLines.map((l) => l - 1));
+  /** A section's body, as its leading blank lines, its content and its trailing blank lines. */
+  const split = (start) => {
+    const body = lines.slice(start + 1, end(start));
+    const first = body.findIndex((l) => !blank(l));
+    if (first === -1) return { lead: [], content: [], trail: body };
+    const last = body.findLastIndex((l) => !blank(l));
+    return { lead: body.slice(0, first), content: body.slice(first, last + 1), trail: body.slice(last + 1) };
+  };
+  const isNone = (content) => content.length === 1 && content[0].trim() === 'None.';
+
+  const eol = lines[target].endsWith('\r') ? '\r' : '';
+  const own = split(target);
+  const moved = [...retired].map((s) => split(s).content).filter((c) => c.length > 0 && !isNone(c));
+  const parts = isNone(own.content) && moved.length > 0 ? moved : [own.content, ...moved].filter((c) => c.length);
+  const merged = [
+    ...(own.lead.length ? own.lead : [eol]),
+    ...parts.flatMap((p, i) => (i > 0 ? [eol, ...p] : p)),
+    ...own.trail,
+  ];
+
+  const out = [];
+  for (let i = 0; i < lines.length;) {
+    if (retired.has(i)) {
+      i = end(i);
+    } else if (i === target) {
+      out.push(lines[i], ...merged);
+      i = end(i);
+    } else {
+      out.push(lines[i++]);
+    }
+  }
+  // A dropped last section leaves the blank lines that came before it, or
+  // takes the final newline with it: the file ends as it did.
+  while (out.length > 0 && blank(out.at(-1))) out.pop();
+  if (lines.at(-1) === '') out.push('');
+  return out.join('\n');
 }
 
 /**

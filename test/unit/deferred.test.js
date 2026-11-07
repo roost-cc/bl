@@ -52,6 +52,7 @@ test('scanDeferred: top-level items with their file lines; a retired sub-list is
   }
   assert.deepEqual(scanDeferred(unitText('Deferred', 'None.')), {
     found: true,
+    heading: 10,
     items: [],
     retired: [],
     retiredSection: [],

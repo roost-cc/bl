@@ -33,10 +33,12 @@ export const MARKER_RE = /^(?:[-*+]|\d+[.)])[ \t]+/;
  * @param {string} text  the whole file (its line numbers are the file's)
  * @returns {{
  *   found: boolean,
+ *   heading?: number,
  *   items: Array<{ line: number, text: string, sized: boolean, operator: boolean }>,
  *   retired: number[],
  *   retiredSection: number[],
  * }}
+ *   `heading` is the 1-based line of the first `## Deferred`, when found;
  *   `items` are the section's top-level list items outside a retired
  *   `### Operator tasks` sub-list (`line`: 1-based; `text`: the first line
  *   after its marker); `retired` holds the line of each such sub-heading;
@@ -76,5 +78,5 @@ export function scanDeferred(text) {
       });
     }
   }
-  return { found: true, items, retired, retiredSection };
+  return { found: true, heading: nodes[start].position.start.line, items, retired, retiredSection };
 }

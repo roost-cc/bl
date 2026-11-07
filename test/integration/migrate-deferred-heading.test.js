@@ -12,7 +12,12 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { loadConfig } from '../../src/config.js';
 import { migrate, renameHeading } from '../../src/migrate-deferred-heading.js';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { scanDeferred } from '../../src/deferred.js';
+import { deferredForTriage } from '../../src/cleanup.js';
+import { deferredCountLine } from '../../src/feature-cmd.js';
+import { loadFlow } from '../../src/flow.js';
+import { findDeferredErrors } from '../../src/validate.js';
+import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
@@ -77,6 +82,56 @@ test('renameHeading renames the level-2 heading only, or returns null', () => {
   assert.equal(renameHeading('x\r\n\r\n## To Do\r\n\r\nNone.\r\n'), 'x\r\n\r\n## Deferred\r\n\r\nNone.\r\n');
   assert.equal(renameHeading(NEW), null);
   assert.equal(renameHeading('```\n## To Do\n```\n'), null, 'a heading inside a code block is not a heading');
+});
+
+test('migration_preserves_all_deferred_items_when_both_headings_exist: one ## Deferred, every item, for every reader', () => {
+  const flow = loadFlow(dirname(FLOW_TEMPLATE));
+  const cases = [
+    [
+      'To Do first',
+      '## Summary\n\nx\n\n## To Do\n\n- [points: 3] first\n\n## Deferred\n\n- [points: 5] second\n\n## Notes\n\nn\n',
+      '## Summary\n\nx\n\n## Deferred\n\n- [points: 5] second\n\n- [points: 3] first\n\n## Notes\n\nn\n',
+      ['[points: 5] second', '[points: 3] first'],
+    ],
+    [
+      'Deferred first, To Do last',
+      '## Deferred\n\n- [points: 3] first\n\n## To Do\n\n- [points: 5] second\n',
+      '## Deferred\n\n- [points: 3] first\n\n- [points: 5] second\n',
+      ['[points: 3] first', '[points: 5] second'],
+    ],
+    [
+      'Deferred is None.',
+      '## Deferred\n\nNone.\n\n## To Do\n\n- [points: 8] old follow-up\n',
+      '## Deferred\n\n- [points: 8] old follow-up\n',
+      ['[points: 8] old follow-up'],
+    ],
+    [
+      'To Do is None.',
+      '## To Do\n\nNone.\n\n## Deferred\n\n- [points: 5] new\n',
+      '## Deferred\n\n- [points: 5] new\n',
+      ['[points: 5] new'],
+    ],
+    ['both None.', '## Deferred\n\nNone.\n\n## To Do\n\nNone.\n', '## Deferred\n\nNone.\n', []],
+  ];
+  for (const [name, before, after, items] of cases) {
+    for (const eol of ['\n', '\r\n']) {
+      const label = `${name} (${JSON.stringify(eol)})`;
+      const renamed = renameHeading(before.replace(/\n/g, eol));
+      assert.equal(renamed, after.replace(/\n/g, eol), label);
+      assert.equal(renameHeading(renamed), null, `${label}: a rerun plans nothing`);
+      assert.equal(renamed.match(/^## Deferred/gm).length, 1, label);
+      // Every reader sees every item: the scan, validation, the status count and merge triage.
+      assert.deepEqual(
+        scanDeferred(renamed).items.map((i) => i.text),
+        items,
+        label,
+      );
+      assert.deepEqual(findDeferredErrors('S-1', 'in_progress', renamed, 'x', flow, 'story'), [], label);
+      const count = items.length === 1 ? 'deferred: 1 item' : `deferred: ${items.length} items`;
+      assert.equal(deferredCountLine(renamed), items.length ? count : null, label);
+      for (const item of items) assert.ok(deferredForTriage(renamed).includes(item), `${label}: triage has ${item}`);
+    }
+  }
 });
 
 test('--dry-run prints the stories it would rename, and writes nothing', () => {
