@@ -4,6 +4,10 @@
  * all use these five names. The order runs from the least to the most effort.
  */
 
+// config.js imports `checkEffort` from here; each module uses the other's
+// functions only when called, so the import cycle is safe.
+import { configForRepo } from './config.js';
+
 /** The five levels, lowest first. */
 export const EFFORT_LEVELS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 
@@ -32,24 +36,38 @@ export function storyEffort(fm) {
 }
 
 /**
+ * The level a story with no `effort:` runs at: `effort.default` of its repo's
+ * config (`configForRepo`), so a repo override applies. A story with no
+ * `unitRepo` takes `config` as it is.
+ * @param {{ unitRepo?: string }} story
+ * @param {ReturnType<typeof import('./config.js').loadConfig>} config
+ * @returns {string}
+ */
+function defaultEffort(story, config) {
+  return (story.unitRepo ? configForRepo(config, story.unitRepo) : config).effort.default;
+}
+
+/**
  * A story's effort level for display: its `effort:`, or
- * `<effort.default> (default)` when it has none (`bl status`, `bl approve`).
- * @param {{ effort: string | null }} story — a `readAllStories` entry
- * @param {{ effort: { default: string } }} config
+ * `<effort.default> (default)` when it has none (`bl status`, `bl approve`),
+ * the default from the story's repo (`defaultEffort`).
+ * @param {{ effort: string | null, unitRepo?: string }} story — a `readAllStories` entry
+ * @param {ReturnType<typeof import('./config.js').loadConfig>} config
  * @returns {string}
  */
 export function effortLabel(story, config) {
-  return story.effort ?? `${config.effort.default} (default)`;
+  return story.effort ?? `${defaultEffort(story, config)} (default)`;
 }
 
 /**
  * The effort level of one agent session (F-85 D4): `effort.refine` for
  * `mode: 'refine'`, `effort.review` for `mode: 'review'`, and otherwise the
  * highest `effort:` of the stories the session works on, each unset one
- * counting as `effort.default`. A story's level comes from its file, so it
- * throws, naming the story, for a value outside `EFFORT_LEVELS`.
- * @param {{ effort: { refine: string, review: string, default: string } }} config
- * @param {{ mode: string, stories?: Array<{ id: string, effort: unknown }> }} opts
+ * counting as its repo's `effort.default` (`defaultEffort`). A story's level
+ * comes from its file, so it throws, naming the story, for a value outside
+ * `EFFORT_LEVELS`.
+ * @param {ReturnType<typeof import('./config.js').loadConfig>} config
+ * @param {{ mode: string, stories?: Array<{ id: string, effort: unknown, unitRepo?: string }> }} opts
  * @returns {string}
  */
 export function sessionEffort(config, { mode, stories = [] }) {
@@ -57,7 +75,7 @@ export function sessionEffort(config, { mode, stories = [] }) {
   if (mode === 'review') return config.effort.review;
   if (stories.length === 0) return config.effort.default;
   const ranks = stories.map((s) =>
-    EFFORT_LEVELS.indexOf(s.effort == null ? config.effort.default : checkEffort(s.effort, `${s.id} "effort:"`)),
+    EFFORT_LEVELS.indexOf(s.effort == null ? defaultEffort(s, config) : checkEffort(s.effort, `${s.id} "effort:"`)),
   );
   return EFFORT_LEVELS[Math.max(...ranks)];
 }

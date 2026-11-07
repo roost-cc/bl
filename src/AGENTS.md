@@ -1197,7 +1197,9 @@ reaches gets the same level:
 | `fix-tests`, `self-review`, `fix`, `fix-self-review`, `merge-resolve`  | the highest `effort:` of the unit's stories (`prep.ordered`) |
 | review passes and the verifier (`role: "review"`), also in `bl review` | `effort.review`                                              |
 
-A story with no `effort:` counts as `effort.default`. A story's value outside
+A story with no `effort:` counts as `effort.default` of its repo's config
+(`configForRepo`), so a repo override applies; `bl status` and `bl approve`
+show that level. A story's value outside
 the five levels stops the step with an error that names the story
 (`storyEffort` reads the key, `sessionEffort` refuses it). A story run's unit is
 its one story (`storyAsOrdered` carries its `effort`). `bl implement S-n`
