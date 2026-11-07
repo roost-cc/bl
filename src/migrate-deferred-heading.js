@@ -39,16 +39,18 @@ const RETIRED_RE = new RegExp(`^( {0,3}#{2}[ \\t]+)${RETIRED_SECTION}`);
  * section moves to the end of the `## Deferred` section instead, and that
  * `## To Do` section goes: readers (`extractSection`, `scanDeferred`) take
  * the first `## Deferred` only, so a second one would hide its items. A
- * body that is only `None.` is dropped when there is something else.
+ * second `## Deferred` merges the same way. Moved items go above the
+ * section's first `###` heading, where a `### Operator tasks` would hide
+ * them. A body that is only `None.` is dropped when there is something else.
  * @param {string} text  a story file as read
  * @returns {string | null}
  */
 export function renameHeading(text) {
-  const { heading, retiredSection } = scanDeferred(text);
+  const { heading, retiredSection, duplicates } = scanDeferred(text);
   if (retiredSection.length === 0) return null;
   // scanDeferred's lines are the file's: a CRLF line keeps its `\r` here.
   const lines = text.split('\n');
-  if (heading) return mergeSections(text, lines, heading - 1, retiredSection);
+  if (heading) return mergeSections(text, lines, heading - 1, [...retiredSection, ...duplicates]);
   // Rename the first `## To Do` only: any other one then merges into it.
   const first = retiredSection[0] - 1;
   lines[first] = lines[first].replace(RETIRED_RE, `$1${DEFERRED_HEADING}`);
@@ -59,34 +61,49 @@ export function renameHeading(text) {
 const blank = (l) => l.trim() === '';
 
 /**
- * Move the body of each `## To Do` section to the end of the `## Deferred`
- * section, and drop the `## To Do` sections.
+ * Merge the body of each `## To Do` and later `## Deferred` section into the
+ * first `## Deferred` section, and drop those sections. The part of each
+ * body before its first `###` heading comes first, in file order, then the
+ * parts from the `###` headings on.
  * @param {string} text  the file
  * @param {string[]} lines  its lines (a CRLF line keeps its `\r`)
  * @param {number} target  the 0-based line of the `## Deferred` heading
- * @param {number[]} retiredLines  the 1-based lines of the `## To Do` headings
+ * @param {number[]} retiredLines  the 1-based lines of the headings to merge
  */
 function mergeSections(text, lines, target, retiredLines) {
   // A section runs from its level-1 or level-2 heading to the next one.
-  const starts = fromMarkdown(text.replace(/\r\n/g, '\n'))
-    .children.filter((n) => n.type === 'heading' && n.depth <= 2)
-    .map((n) => n.position.start.line - 1);
+  const headings = fromMarkdown(text.replace(/\r\n/g, '\n')).children.filter((n) => n.type === 'heading');
+  const starts = headings.filter((n) => n.depth <= 2).map((n) => n.position.start.line - 1);
+  const subs = new Set(headings.filter((n) => n.depth > 2).map((n) => n.position.start.line - 1));
   const end = (start) => starts.find((s) => s > start) ?? lines.length;
   const retired = new Set(retiredLines.map((l) => l - 1));
-  /** A section's body, as its leading blank lines, its content and its trailing blank lines. */
+  /**
+   * A section's body, as its leading blank lines, its content before the
+   * first `###` heading (`head`), its content from there (`rest`) and its
+   * trailing blank lines.
+   */
   const split = (start) => {
     const body = lines.slice(start + 1, end(start));
     const first = body.findIndex((l) => !blank(l));
-    if (first === -1) return { lead: [], content: [], trail: body };
+    if (first === -1) return { lead: [], head: [], rest: [], trail: body };
     const last = body.findLastIndex((l) => !blank(l));
-    return { lead: body.slice(0, first), content: body.slice(first, last + 1), trail: body.slice(last + 1) };
+    const content = body.slice(first, last + 1);
+    const sub = content.findIndex((_, k) => subs.has(start + 1 + first + k));
+    const head = sub === -1 ? content : content.slice(0, sub);
+    return {
+      lead: body.slice(0, first),
+      head: head.slice(0, head.findLastIndex((l) => !blank(l)) + 1),
+      rest: sub === -1 ? [] : content.slice(sub),
+      trail: body.slice(last + 1),
+    };
   };
   const isNone = (content) => content.length === 1 && content[0].trim() === 'None.';
 
   const eol = lines[target].endsWith('\r') ? '\r' : '';
   const own = split(target);
-  const moved = [...retired].map((s) => split(s).content).filter((c) => c.length > 0 && !isNone(c));
-  const parts = isNone(own.content) && moved.length > 0 ? moved : [own.content, ...moved].filter((c) => c.length);
+  const all = [own, ...[...retired].sort((a, b) => a - b).map(split)];
+  const blocks = [...all.map((p) => p.head), ...all.map((p) => p.rest)].filter((c) => c.length);
+  const parts = blocks.some((c) => !isNone(c)) ? blocks.filter((c) => !isNone(c)) : blocks.slice(0, 1);
   const merged = [
     ...(own.lead.length ? own.lead : [eol]),
     ...parts.flatMap((p, i) => (i > 0 ? [eol, ...p] : p)),

@@ -140,6 +140,66 @@ test('migration_preserves_all_deferred_items_when_both_headings_exist: one ## De
   }
 });
 
+test('migration_merges_every_item_into_one_visible_deferred_section', () => {
+  const flow = loadFlow(dirname(FLOW_TEMPLATE));
+  const ops = '### Operator tasks\n\n- operator: ask\n';
+  const cases = [
+    ['Operator tasks, To Do last', `## Deferred\n\n${ops}\n## To Do\n\n- [points: 3] old\n`, ['[points: 3] old']],
+    ['Operator tasks, To Do first', `## To Do\n\n- [points: 3] old\n\n## Deferred\n\n${ops}`, ['[points: 3] old']],
+    [
+      'items, then Operator tasks',
+      `## Deferred\n\n- [points: 1] new\n\n${ops}\n## To Do\n\n- [points: 3] old\n`,
+      ['[points: 1] new', '[points: 3] old'],
+    ],
+    [
+      'two Deferred and a To Do',
+      '## Deferred\n\n- [points: 1] first\n\n## Deferred\n\n- [points: 2] second\n\n## To Do\n\n- [points: 3] third\n',
+      ['[points: 1] first', '[points: 2] second', '[points: 3] third'],
+    ],
+    [
+      'To Do, then two Deferred',
+      '## To Do\n\n- [points: 3] third\n\n## Deferred\n\n- [points: 1] first\n\n## Notes\n\nn\n\n## Deferred\n\n- [points: 2] second\n',
+      ['[points: 1] first', '[points: 3] third', '[points: 2] second'],
+    ],
+    [
+      'Operator tasks in a second Deferred',
+      `## Deferred\n\nNone.\n\n## Deferred\n\n${ops}\n## To Do\n\n- [points: 3] old\n`,
+      ['[points: 3] old'],
+    ],
+  ];
+  for (const [name, before, items] of cases) {
+    for (const eol of ['\n', '\r\n']) {
+      const label = `${name} (${JSON.stringify(eol)})`;
+      const after = renameHeading(before.replace(/\n/g, eol));
+      assert.equal(after.match(/^## Deferred/gm).length, 1, `${label}: one section`);
+      assert.equal(renameHeading(after), null, `${label}: a rerun plans nothing`);
+      // Every reader sees every sized item: the scan, validation, the status count and merge triage.
+      assert.deepEqual(
+        scanDeferred(after)
+          .items.filter((i) => i.sized)
+          .map((i) => i.text),
+        items,
+        label,
+      );
+      const codes = findDeferredErrors('S-1', 'in_progress', after, 'x', flow, 'story').map((f) => f.code);
+      assert.deepEqual(
+        codes.filter((c) => c !== 'operator-tasks-retired'),
+        [],
+        label,
+      );
+      const count = items.length === 1 ? 'deferred: 1 item' : `deferred: ${items.length} items`;
+      assert.equal(deferredCountLine(after), count, label);
+      for (const item of items) assert.ok(deferredForTriage(after).includes(item), `${label}: triage has ${item}`);
+    }
+  }
+  // Validation reports a second section the migration did not make.
+  const two = '## Deferred\n\n- [points: 1] a\n\n## Deferred\n\n- [points: 2] b\n';
+  assert.deepEqual(
+    findDeferredErrors('F-1', 'in_progress', two, 'x', flow, 'feature').map((f) => [f.code, f.line]),
+    [['deferred-duplicate', 5]],
+  );
+});
+
 test('migration_preserves_unrelated_section_endings_for_both_heading_orders', () => {
   const summary = '## Summary\n\nx  \n\n\n';
   const pairs = {

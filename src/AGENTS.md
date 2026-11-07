@@ -1744,6 +1744,8 @@ A session leaves behind three different things, and each has its own place (F-65
 
 - `deferred-unsized`: a top-level bullet without a numeric `[points: N]` (a `[points: -]`
   note, a bare bullet, `[points: ?]`).
+- `deferred-duplicate`: a `## Deferred` heading after the first; readers take the first
+  section only, so the items of a second one are not seen.
 - `operator-tasks-retired`: a `### Operator tasks` sub-heading (the items under it are not
   reported again) or an `operator:` / `operator (from S-<n>):` bullet.
 - `deferred-heading-retired`: a story's `## To Do` heading, the section's name in stories before
@@ -2848,7 +2850,7 @@ repo-key, frontmatter-yaml, frontmatter-list, priority-file,
 priority-unit, roadmap-file, roadmap-section, theme-brief, dictionary-file, found-by,
 flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
-task-unit, task-field, deferred-unsized, operator-tasks-retired,
+task-unit, task-field, deferred-unsized, deferred-duplicate, operator-tasks-retired,
 deferred-heading-retired, bad-tokens-by-step, agent-config, derived-key, dangling-feature,
 feature-no-stories
 
@@ -2899,10 +2901,10 @@ file's number, one id on two files, an `owner` outside `operator`, a `status` ou
 `flow.json`'s task statuses, or a `done` task with no `done:` date (errors); a key bl does not
 know (warning).
 
-`deferred-unsized`, `operator-tasks-retired` and `deferred-heading-retired` (F-65 D4, F-82 D9,
+`deferred-unsized`, `deferred-duplicate`, `operator-tasks-retired` and `deferred-heading-retired` (F-65 D4, F-82 D9,
 `findDeferredErrors`, errors at the unit's file with its line) check an open unit's
 `## Deferred`: an item without a numeric `[points: N]`, a `### Operator tasks` sub-heading or
-`operator:` bullet, and a story's retired `## To Do` heading. A `done` or `superseded` unit has none
+`operator:` bullet, a second `## Deferred` heading, and a story's retired `## To Do` heading. A `done` or `superseded` unit has none
 (see **`## Deferred`, `## Notes` and tasks**). The S-970 `operator-tasks` rule is gone with
 `src/operator-tasks.js`.
 

@@ -37,12 +37,14 @@ export const MARKER_RE = /^(?:[-*+]|\d+[.)])[ \t]+/;
  *   items: Array<{ line: number, text: string, sized: boolean, operator: boolean }>,
  *   retired: number[],
  *   retiredSection: number[],
+ *   duplicates: number[],
  * }}
  *   `heading` is the 1-based line of the first `## Deferred`, when found;
  *   `items` are the section's top-level list items outside a retired
  *   `### Operator tasks` sub-list (`line`: 1-based; `text`: the first line
  *   after its marker); `retired` holds the line of each such sub-heading;
- *   `retiredSection` holds the line of each `## To Do` heading in the file.
+ *   `retiredSection` holds the line of each `## To Do` heading in the file;
+ *   `duplicates` the line of each `## Deferred` heading after the first.
  */
 export function scanDeferred(text) {
   const lf = String(text ?? '').replace(/\r\n/g, '\n');
@@ -55,8 +57,10 @@ export function scanDeferred(text) {
       .trim();
   const level2 = (n, name) => n.type === 'heading' && n.depth === 2 && title(n) === name;
   const retiredSection = nodes.filter((n) => level2(n, RETIRED_SECTION)).map((n) => n.position.start.line);
-  const start = nodes.findIndex((n) => level2(n, DEFERRED_HEADING));
-  if (start === -1) return { found: false, items: [], retired: [], retiredSection };
+  const deferred = nodes.filter((n) => level2(n, DEFERRED_HEADING));
+  const duplicates = deferred.slice(1).map((n) => n.position.start.line);
+  const start = nodes.indexOf(deferred[0]);
+  if (start === -1) return { found: false, items: [], retired: [], retiredSection, duplicates };
   const items = [];
   const retired = [];
   let inRetired = false;
@@ -78,5 +82,5 @@ export function scanDeferred(text) {
       });
     }
   }
-  return { found: true, heading: nodes[start].position.start.line, items, retired, retiredSection };
+  return { found: true, heading: nodes[start].position.start.line, items, retired, retiredSection, duplicates };
 }

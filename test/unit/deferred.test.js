@@ -56,6 +56,7 @@ test('scanDeferred: top-level items with their file lines; a retired sub-list is
     items: [],
     retired: [],
     retiredSection: [],
+    duplicates: [],
   });
   // The retired heading is not the section; its line is reported.
   assert.deepEqual(scanDeferred(unitText('To Do', '- x')), {
@@ -63,6 +64,7 @@ test('scanDeferred: top-level items with their file lines; a retired sub-list is
     items: [],
     retired: [],
     retiredSection: [10],
+    duplicates: [],
   });
   // The section ends at the next `##`: the Notes bullet is not an item.
   assert.equal(scanDeferred(unitText('Deferred', '- [points: 1] one')).items.length, 1);

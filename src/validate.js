@@ -745,6 +745,8 @@ export function findEscalationNotNone(f) {
  *   - `deferred-heading-retired` (error)  a story's `## To Do` heading:
  *     the section's old name in stories, renamed by
  *     `scripts/migrate-deferred-heading.js`.
+ *   - `deferred-duplicate` (error)  a `## Deferred` heading after the
+ *     first: readers take the first section only.
  *   - `operator-tasks-retired` (error)  a `### Operator tasks` sub-heading
  *     or an `operator:` bullet: the operator's work is a task (`bl task`).
  *   - `deferred-unsized` (error)  any other top-level item without a numeric
@@ -762,7 +764,7 @@ export function findEscalationNotNone(f) {
 export function findDeferredErrors(id, status, text, location, flow, type) {
   // A closed unit's body is history: the Deferred rules do not run on it.
   if (flow.meets(type, status, 'done')) return [];
-  const { items, retired, retiredSection } = scanDeferred(text);
+  const { items, retired, retiredSection, duplicates } = scanDeferred(text);
   const finding = (code, line, message, heading = DEFERRED_HEADING) => ({
     severity: 'error',
     code,
@@ -782,6 +784,10 @@ export function findDeferredErrors(id, status, text, location, flow, type) {
         RETIRED_SECTION,
       ),
     );
+  }
+  // Readers take the first section only: a second one hides its items.
+  for (const line of duplicates) {
+    out.push(finding('deferred-duplicate', line, `a second ## ${DEFERRED_HEADING}: move its items into the first one`));
   }
   for (const item of items) {
     if (item.operator) {
