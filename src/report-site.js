@@ -17,7 +17,7 @@
  * Nothing else is copied: no `.bl/`, no config, no change in the backlog.
  */
 
-import { cpSync, existsSync, mkdirSync, statSync, utimesSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { COMPONENTS_DIR, EPICS_DIR, STORIES_DIR, THEMES_DIR } from './config.js';
 import { FEATURES_DIR } from './feature.js';
@@ -50,6 +50,35 @@ export const PUBLISHED = Object.freeze([
 ]);
 
 /**
+ * Copy `from` to `to` with every symlink, at any depth, resolved to what it
+ * points at, so `to` holds no symlink and no later write in it (a rendered
+ * page, the formatter, a timestamp) follows one out of the stage. Timestamps
+ * are kept. A link that points at nothing, or back at a directory being
+ * copied, is left out. (`cpSync`'s `dereference` resolves only `from` itself.)
+ * @param {string} from
+ * @param {string} to
+ * @param {Set<string>} [copying]  the real paths of the directories being copied
+ */
+function copyResolved(from, to, copying = new Set()) {
+  let st;
+  try {
+    st = statSync(from);
+  } catch (e) {
+    if (e.code === 'ENOENT' || e.code === 'ELOOP') return;
+    throw e;
+  }
+  if (st.isDirectory()) {
+    const real = realpathSync(from);
+    if (copying.has(real)) return;
+    mkdirSync(to);
+    for (const name of readdirSync(from)) copyResolved(join(from, name), join(to, name), new Set([...copying, real]));
+  } else {
+    copyFileSync(from, to);
+  }
+  utimesSync(to, st.atime, st.mtime);
+}
+
+/**
  * Write the backlog's documentation root at `<stageDir>/site`.
  * @param {{ backlogRoot: string }} config
  * @param {import("./backlog-graph.js").BacklogGraph} graph
@@ -60,10 +89,7 @@ export const PUBLISHED = Object.freeze([
 export function writeSite(config, graph, stageDir, reportFiles) {
   const site = join(stageDir, SITE_DIR);
   mkdirSync(site);
-  for (const name of PUBLISHED) {
-    const from = join(graph.root, name);
-    if (existsSync(from)) cpSync(from, join(site, name), { recursive: true, preserveTimestamps: true });
-  }
+  for (const name of PUBLISHED) copyResolved(join(graph.root, name), join(site, name));
 
   // Each rendered page with the committed file it stands for (null: none).
   const pages = [{ path: join(site, 'index.md'), text: renderPage(graph, null), source: join(graph.root, 'index.md') }];
@@ -85,7 +111,7 @@ export function writeSite(config, graph, stageDir, reportFiles) {
   for (const file of reportFiles) {
     const to = join(site, 'reports', file);
     mkdirSync(dirname(to), { recursive: true });
-    cpSync(join(stageDir, file), to);
+    copyResolved(join(stageDir, file), to);
   }
   return site;
 }

@@ -549,9 +549,9 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
     ['writeFileSync', isUnder('index.md')],
     ['mkdirSync', isUnder('charts')],
     // The documentation root: a copy, a rendered page, the report's copy.
-    ['cpSync', (_, to) => String(to).endsWith('/site/roadmap.md')],
+    ['copyFileSync', (_, to) => String(to).endsWith('/site/roadmap.md')],
     ['writeFileSync', (p) => /\/site\/features\/F1-one\/index\.md$/.test(String(p))],
-    ['cpSync', (_, to) => String(to).endsWith('/site/reports/data.json')],
+    ['copyFileSync', (_, to) => String(to).endsWith('/site/reports/data.json')],
     // The swap: moving the last report aside, then moving the new one in.
     ['renameSync', (from) => from === out],
     ['renameSync', (_, to) => to === out],

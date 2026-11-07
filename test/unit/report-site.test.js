@@ -5,8 +5,20 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'fs';
+import { tmpdir } from 'os';
+import { dirname, join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { loadConfig } from '../../src/config.js';
 import { loadBacklog } from '../../src/backlog-graph.js';
@@ -86,6 +98,50 @@ test('writeSite copies the published set with its timestamps, and nothing else',
   assert.deepEqual(top, [...PUBLISHED.filter((p) => existsSync(join(dir, p))), 'index.md', 'reports'].sort());
   assert.ok(!existsSync(join(site, '.bl')));
   assert.ok(!existsSync(join(site, 'backlog.json')));
+});
+
+test('writeSite_keeps_rendered_writes_inside_stage_for_symlinked_pages: every page kind, a unit directory, a doc, the root and a report file', () => {
+  const dir = siteBacklog();
+  const outside = mkdtempSync(join(tmpdir(), 'bl-site-outside-'));
+  const graph = loadBacklog({ backlogRoot: dir }, { reload: true });
+  // Each case moves the backlog path to `outside` and links it back.
+  const linked = [
+    'index.md',
+    graph.list('theme')[0].relPath,
+    graph.get('C01').relPath,
+    graph.get('E50').relPath,
+    graph.get('F-1').relPath,
+    graph.get('S-1').relPath,
+    dirname(graph.get('S-2').relPath),
+    'docs/guide.md',
+  ];
+  const before = {};
+  linked.forEach((rel, i) => {
+    const target = join(outside, `t${i}`);
+    renameSync(join(dir, rel), target);
+    symlinkSync(target, join(dir, rel));
+  });
+  for (const e of readdirSync(outside, { recursive: true, withFileTypes: true })) {
+    if (e.isFile()) before[join(e.parentPath, e.name)] = readFileSync(join(e.parentPath, e.name), 'utf8');
+  }
+  const stage = join(dir, '.reports.new');
+  mkdirSync(stage);
+  const report = join(outside, 'report.md');
+  writeFileSync(report, '# Report\n');
+  symlinkSync(report, join(stage, 'index.md'));
+  before[report] = '# Report\n';
+
+  const site = writeSite(loadConfig({ backlogRoot: dir }), graph, stage, ['index.md']);
+  for (const [file, text] of Object.entries(before)) assert.equal(readFileSync(file, 'utf8'), text, file);
+  for (const e of readdirSync(site, { recursive: true, withFileTypes: true })) {
+    assert.ok(!e.isSymbolicLink(), `site holds a symlink: ${join(e.parentPath, e.name)}`);
+  }
+  assert.equal(readFileSync(join(site, 'index.md'), 'utf8'), renderPage(graph, null));
+  for (const unit of [graph.list('theme')[0], ...['C01', 'E50', 'F-1', 'S-1', 'S-2'].map((id) => graph.get(id))]) {
+    assert.equal(readFileSync(join(site, unit.relPath), 'utf8'), renderPage(graph, unit), unit.relPath);
+  }
+  assert.equal(readFileSync(join(site, 'docs/guide.md'), 'utf8'), '# Guide\n');
+  assert.equal(readFileSync(join(site, 'reports', 'index.md'), 'utf8'), '# Report\n');
 });
 
 test('writeSite places the report files under reports/', () => {
