@@ -1685,7 +1685,10 @@ or a value outside the five levels is a config error naming the key
 `config.effort`. A repo's `overrides` may replace the object whole.
 `bl init` writes all three as `high` into a new backlog (one with no
 `repos`), and into an existing backlog that has `repos` but no `effort`
-object; it adds nothing else to that one. An adapter's `spawn({ effort })` takes a level, or null for the
+object; it adds nothing else to that one. If another process edits
+`backlog.json` after `bl init` reads it, the write fails, and `bl init`
+reads the file again and retries, up to `CONFIG_WRITE_ATTEMPTS` times
+(`atomicWriteFile` with `unchanged`), so the edit stays. An adapter's `spawn({ effort })` takes a level, or null for the
 agent CLI's own setting: Claude passes `--effort <level>`, Codex passes
 `-c model_reasoning_effort=<level>` (`codex exec`, the interactive launch
 and `resume`), with bl's names unchanged. Gemini ignores it.
@@ -3952,7 +3955,7 @@ project's business domain may have its own, which the project writes; bl ships n
   `backlog.json` as it was and a rerun tries again). Every seed `bl init` copies is staged in
   `.bl/tmp/` and linked into place (`atomicWriteFile` with `exclusive`): a failed copy leaves
   no partial file, and a file another process makes meanwhile stays. It never changes an
-  existing copy or an existing
+  existing copy, and never lists the dictionary in an existing
   `backlog.json`: each project curates its own copy, and a later change to the seed reaches
   new backlogs only.
 - **Prompts** name the listed dictionaries through the writing guide's `{{dictionaryGuide}}`
