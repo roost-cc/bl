@@ -132,10 +132,9 @@ The backlog is a **separate git repo** from the code. That means:
 
 - NEVER `git add` files that are in `.gitignore` (e.g. `.env`, credentials,
   secrets). If the story requires a gitignored file, create it in the
-  worktree but do NOT commit it. Instead, add a bullet to the **## Deferred**
-  section like:
-  `Copy worktree file <path-in-worktree> to main repo at <destination-path>`
-  The cleanup agent will handle copying it after merge.
+  worktree but do NOT commit it. Instead, file a task for the operator (see
+  above), with gate `merge`:
+  `bl task {{storyId}} --title "Copy worktree file <path-in-worktree> to main repo at <destination-path>" --gate merge`
 - Only edit your own story file, and never hand-edit backlog index files.
   `bl sync --commit` (see **Backlog commits**) regenerates them;
   `bl merge` still runs the authoritative sync after merge.
