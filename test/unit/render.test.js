@@ -414,6 +414,26 @@ test('a feature and a story with a task render its Tasks table, a feature after 
   }
 });
 
+test('a deeper heading with a generated name (### Tasks) is hand-written and stays; the table goes in its own ## section', () => {
+  const { dir, cleanup } = flatBacklog();
+  try {
+    mkdirSync(join(dir, 'tasks'));
+    writeFileSync(
+      join(dir, 'tasks', 'T1-do-it.md'),
+      '---\ntask_id: T-1\ntitle: Do it\nunit: S-6\nowner: operator\nstatus: open\nadded: 2026-01-01\n---\n',
+    );
+    const s6 = join(dir, 'stories/S6-x/index.md');
+    const notes = '## Notes\n\n### Tasks\n\nMy own list.\n';
+    writeFileSync(s6, `${readFileSync(s6, 'utf8')}\n## Dependencies\n\nNone.\n\n${notes}`);
+    const g = graphOf(dir);
+    const story = renderPage(g, g.get('S-6'));
+    assert.ok(story.includes(notes), story);
+    assert.match(story, /## Dependencies\n\nNone\.\n\n## Tasks\n\n\| ID /);
+  } finally {
+    cleanup();
+  }
+});
+
 test("a title holding '$' patterns is rendered literally", () => {
   const { dir, cleanup } = flatBacklog();
   try {

@@ -272,14 +272,15 @@ function hasSection(body, heading) {
  */
 function upsertSection(body, heading, content, { after, before } = {}) {
   // The section body runs to the next `## ` (keeping the newline before it)
-  // or to the end of the file (taking the trailing whitespace).
-  const END = `(?:(\\n)(?=## )|\\s*$)`;
-  const re = new RegExp(`(## ${escapeRe(heading)}\\n)([\\s\\S]*?)${END}`);
+  // or to the end of the file (taking the trailing whitespace). A heading
+  // starts a line, so a deeper `### <heading>` is never taken for it.
+  const END = `(?:(\\n)(?=## )|\\s*(?![\\s\\S]))`;
+  const re = new RegExp(`^(## ${escapeRe(heading)}\\n)([\\s\\S]*?)${END}`, 'm');
   if (re.test(body)) {
     return body.replace(re, (_m, head, _old, nl) => `${head}\n${content}\n${nl ?? ''}`);
   }
   if (after) {
-    const afterRe = new RegExp(`(## ${escapeRe(after)}\\n[\\s\\S]*?)${END}`);
+    const afterRe = new RegExp(`^(## ${escapeRe(after)}\\n[\\s\\S]*?)${END}`, 'm');
     if (afterRe.test(body)) {
       return body.replace(afterRe, (_m, prev, nl) => `${prev.trimEnd()}\n\n## ${heading}\n\n${content}\n${nl ?? ''}`);
     }
