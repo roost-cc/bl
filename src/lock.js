@@ -2,16 +2,16 @@
  * lock.js — the backlog-root lockfile that serialises mutating bl commands.
  *
  * `bl new` (single-story and batch `--from`) and `bl new --feature` hold it
- * across ID assignment and their follow-up sync; `runSync` (so `bl sync`,
- * `bl sync --commit`, `bl merge`) holds it across index
- * regeneration and, for `--commit`, the commit; `bl fix` (without
+ * across ID assignment and their follow-up commit; `syncAndCommit` (so
+ * `bl sync --commit`, `bl done`, `bl merge`) holds it across the format pass
+ * and the commit; `pullBeforeCommand` across the pull; `bl fix` (without
  * `--dry-run`) holds it from its story scan through its last frontmatter
  * write, so two fixes that land on the same story file serialise. The file
  * keeps its historical name `<backlogRoot>/.bl-new.lock`. Stale locks (whose
  * owning PID is no longer alive) are reclaimed automatically.
  *
  * The lock is re-entrant within a process: `bl new` acquires it and then calls
- * `runSync`, which acquires it again. Each acquire bumps a depth count; only
+ * `syncAndCommit`, which acquires it again. Each acquire bumps a depth count; only
  * the release that brings it back to zero removes the file.
  *
  * A bl child its holder runs under the lock (`bl side` runs `bl new`, F-48)
