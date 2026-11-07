@@ -100,7 +100,7 @@ headless session cannot remove files.
 - Do NOT edit backlog index files or run any `bl sync` other than the `bl sync --commit` line in
   step 8.
 - Commit the change document and the {{unitKind}} file only with that `bl sync --commit` line. It
-  takes the backlog lock and commits only those files and the regenerated indexes. Never run
+  takes the backlog lock, commits only those files, and pushes. Never run
   `git add` or `git commit` in the backlog repo ({{backlogDir}}), because other sessions share
   its index.
 - Format the {{unitKind}} file and the change document with

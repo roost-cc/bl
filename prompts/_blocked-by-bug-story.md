@@ -25,7 +25,7 @@ not reasons to stop. Make a serious effort before you give up on anything.
    bl sync --commit -m "chore: {{featureId}} ad-hoc fix noted" --story {{featureId}}
    ```
 
-   It takes the backlog lock and commits only the story's directory and the regenerated indexes.
+   It takes the backlog lock, commits only the story's directory, and pushes.
    Never run `git add` or `git commit` in the backlog repo.
 
 Stop and escalate only for three things: an architectural problem, a business rule that is

@@ -1693,7 +1693,7 @@ Findings codes:
   forge-plugin, forge-op, forge-op-reads-body, component-unknown,
   home-component, component-has-status, component-paths,
   feature-theme, feature-epic, epic-theme, theme-repo, repo-key,
-  priority-file, priority-unit, roadmap-file,
+  priority-file, priority-unit, generated-section, roadmap-file,
   roadmap-section, theme-brief, dictionary-file, flow-json, blockers-json, agent-config,
   blockers-unit, blockers-gate, blockers-status, blockers-duplicate,
   blockers-cycle, blockers-unmeetable, blockers-order

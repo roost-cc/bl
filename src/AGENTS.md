@@ -9,8 +9,8 @@ Each repo's backlog location is configured in `backlog.json` at the repo root:
 ```
 
 The `backlog` key is the relative path to the backlog directory. Stories, components and features are plain
-Markdown files with YAML frontmatter. A sync script regenerates all index tables from
-frontmatter on demand.
+Markdown files with YAML frontmatter. No committed file holds a derived list: `bl report` and
+`bl view` render the index tables from the frontmatter when a page is read.
 
 Run `bl agents` from any repo to print this file, the plain-writing guide and, inside a backlog,
 each dictionary its `backlog.json` `"dictionaries"` lists.
@@ -101,7 +101,7 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
 
 ```
 <backlog>/
-  index.md                      ← overview (auto-generated tables, in priority.md's order)
+  index.md                      ← overview, hand-written; its tables are rendered when read
   priority.md                   ← the one ranked list of features and loose
                                   stories: `ranked:` by `bl rank` or by hand,
                                   never by automation (F-78 D1, D3)
@@ -187,9 +187,10 @@ sync` writes on the repo's update stories; `[]` for none) are required.
 
 ### `backlog.json` `title`: the backlog's display name (S-581)
 
-`title` is the name `bl sync` gives the top-level `index.md`: its frontmatter
-`title:` and its `# ` heading, rewritten on every sync, so changing the key
-renames an index an older sync wrote. It is optional; unset, the name is
+`title` is the name `bl init` gives a new top-level `index.md`: its frontmatter
+`title:` and its `# ` heading, written once, when the file is missing (F-79 D3).
+After that the title is hand-written like the rest of the page, so a change to
+the key does not reach it. It is optional; unset, the name is
 `Backlog` (`DEFAULT_BACKLOG_TITLE`), and a value that is not a one-line,
 non-empty string makes `loadConfig` throw. `config.title` carries the resolved
 value. `bl init` writes `"title": "Backlog"` into a new `backlog.json`.
@@ -376,15 +377,14 @@ backlog lock and need `atomicWriteFile` only.
   other writer lets the error propagate, so a write that could not happen fails the command
   instead of being lost.
 - **Lock order.** The backlog lock (`lock.js`) is the outer lock, a spec lock the inner one:
-  `bl sync`, `bl merge`, `bl new --required-for` and `persistLandedCommits` take the spec lock per file inside the
+  `bl merge`, `bl new --required-for` and `persistLandedCommits` take the spec lock per file inside the
   backlog lock. Nothing takes the backlog lock while holding a spec lock, and nothing holds two
   spec locks at once. A caller that adds a spec lock says so in a comment at the call.
 - **Who is on it.** The token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
   `recordStoryTokens`) write through `updateSpecFile`, and `recordFeatureTokens` holds
   `withSpecLock` across its transcript read and nests `updateFeature` in that hold (the lock is
-  re-entrant). `bl sync`'s spec rewrites (`syncFeature`, `syncStoryTasks`) write through it too,
-  as do `feature-cmd.js` `updateFeature` (approve, the run's status, the totals re-read),
-  `bl merge F-n`'s fold (`markFeatureMerged`: each story, then the feature, one spec lock at a
+  re-entrant). `feature-cmd.js` `updateFeature` (approve, the run's status, the totals re-read),
+  writes through it too, as do `bl merge F-n`'s fold (`markFeatureMerged`: each story, then the feature, one spec lock at a
   time inside the backlog lock) and `bl done`'s one write (status, commit, completed and the
   transcript totals collected inside the hold; a collection failure is non-fatal, a write
   failure fails `bl done`). `persistLandedCommits` keeps its `read`/`write` seams and runs them
@@ -560,9 +560,10 @@ An epic stores no `features:` or `status:` (F-77 D3): its features are the featu
 `epic:` names it, and its status is `done` once it has features and every one is done or
 superseded, else `open` (`epicStatus`, `backlog-graph.js`).
 
-A theme's body is an `## Overview` paragraph, the tables `bl sync` writes, and a `## State`
-(F-53 D4): a hand-readable log, newest last, that `bl merge F-<n>` appends
-`- <date>: F-<n> done (<title>).` to and `bl sync` never rewrites. An epic's body is an
+A theme's body is an `## Overview` paragraph and a `## State` (F-53 D4): a hand-readable
+log, newest last, that `bl merge F-<n>` appends `- <date>: F-<n> done (<title>).` to. Its
+`## Epics` and `## Features` tables are rendered when the page is read (see **Rendered
+pages** under `### bl sync`). An epic's body is an
 `## Outcome` paragraph. The theme's `brief:` is listed in the feature refine and run prompts
 (`{{themeBrief}}`, `themeBriefList` in `theme.js`: one absolute path per entry, with its
 anchor) beside `backlog/roadmap.md`; a story with no feature has no single theme and gets none.
@@ -661,8 +662,8 @@ by `byRank` (`src/priority.js`: `rankOf`, then the id's number). `bl list` shows
 column after Status: the unit's entry number in `ranked:`, or `-` for an unranked row. No code
 reads an order out of the root `index.md`.
 
-The graph derives each epic's features and status (above), and `bl sync` writes the theme
-and epic tables from them (see `bl sync`). `bl list`, `bl tree` and `bl what-next`
+The graph derives each epic's features and status (above), and `renderPage` renders the theme
+and epic tables from them (see **Rendered pages** under `### bl sync`). `bl list`, `bl tree` and `bl what-next`
 filter by the value axis and the code axis with one filter (`src/filter.js`):
 
 - `--theme <slug>`: stories in the theme by the membership rule above;
@@ -689,7 +690,8 @@ backlog → refined → in_progress → done
 4. **done** — work committed. `commit` and `completed` set. The directory stays where it is.
 5. **superseded** — replaced by another story. Set via `bl done --superseded`.
 
-After any status change, `bl sync` regenerates the index files.
+A status change rewrites no other file: the index tables are rendered from the frontmatter when
+a page is read.
 
 ## Statuses and gates (`flow.json`, F-66 D1)
 
@@ -910,19 +912,19 @@ components (F-52 D2): work in a repo no story of the feature is in is a
 missing story, which the agent escalates. A leftover `primary_repo` or
 `secondary_repos` on a feature is ignored, and `bl validate` reports it as
 `repo-key` (remove it; F-52's migration stripped every one). `bl list
---features`, `bl status F-n` and the root index's Features table show the
-ordered repos in their Repo column.
+--features` and `bl status F-n` show the ordered repos in their Repo column.
 
 Body sections, in order: `## Premise` (the assumption the feature rests on and
 a `Challenged:` paragraph from refinement), `## Goal`, `## Design` (decisions
 written once; stories link here instead of restating), `## Out of Scope`,
-`## Acceptance` (feature-level, observable on the merged result), `## Stories`
-(generated table), `## Tasks` (generated, only when the feature has a task), `## Deferred`
+`## Acceptance` (feature-level, observable on the merged result), `## Deferred`
 (follow-up code work discovered while implementing or reviewing, `[points: N]`-prefixed,
 decided once at merge), `## Notes` (dated records and hand-offs; see **`## Deferred`, `## Notes`
 and tasks**), `## Escalation`
 (written by an agent when the feature cannot converge; anything but `None.`
-blocks approve, run and merge). Operator decisions never live in
+blocks approve, run and merge). The `## Stories` table and, when the feature
+has a task, the `## Tasks` table are rendered after `## Acceptance` when the
+page is read, never committed (F-79). Operator decisions never live in
 `## Escalation`: refine records them as dated `**Decision …**` bullets in the
 Design (or the Premise), and a decided escalation is set back to `None.` with
 the outcome in the Review Log or the Design. The branch, PR, review state
@@ -1942,9 +1944,8 @@ side` then sets `status: in_progress` and `found_by:` through
   text (stdin for `-`) is read and checked by `bl side` first, then given to
   `bl new` on its stdin.
 - **Commit.** One hold of the backlog lock covers `bl new`, the marks, the
-  change document and one `syncAndCommit` of the story directory, the
-  feature file (attached: its Stories table) and the change document, plus the indexes the sync
-  regenerated: `chore: add S-<n> (bl side, found by <id>)`. The `bl new`
+  change document and one `syncAndCommit` of the story directory and the
+  change document: `chore: add S-<n> (bl side, found by <id>)`. The `bl new`
   child works under the parent's lock (`BL_LOCK_HOLDER`, `lock.js`), so no
   other bl commits a half-made story.
 - **No dependency edge** to the `--from` story: `outsideBlockers` would then
@@ -1959,9 +1960,9 @@ side` then sets `status: in_progress` and `found_by:` through
 - **Failures** leave the whole unit or none of it. Before the commit, a
   failing step (the bootstrap of an attached worktree, `bl new`, the marks,
   the change document, the sync) undoes only what this run made: a worktree
-  or branch it created, and backlog files no commit holds, every index the
-  sync rewrote put back as it was when the lock was taken (earlier uncommitted
-  edits included); a story some commit already holds is left as it is, and an
+  or branch it created, and backlog files no commit holds, the feature's
+  change document put back as it was when the lock was taken (earlier
+  uncommitted edits included); a story some commit already holds is left as it is, and an
   undo that fails says what it left. A worktree it created stays when a
   committed story of the feature is in its repo (a concurrent `bl side` took
   it up), when it has changes in it, or when its branch has commits `main`
@@ -1983,7 +1984,7 @@ bl attach <S-n> <F-n> [--no-sync] [--json]
 ```
 
 - **Membership.** A story's `feature:` is the only statement of membership
-  (F-77 D3): `bl run` runs, `bl sync` counts and `bl merge` marks done the
+  (F-77 D3): `bl run` runs, the feature's page lists and `bl merge` marks done the
   stories naming the feature. `bl attach` sets it (an empty key filled in
   place, a missing one last), the write `bl new F-<n>` makes for a story it
   creates, and writes nothing to the feature. It does not change `status:`,
@@ -2007,9 +2008,8 @@ bl attach <S-n> <F-n> [--no-sync] [--json]
   branches and worktrees, so before the feature runs a story in a new repo
   simply joins it. The message names `bl side <repo> --from F-<n>` as the way
   to bring a repo in; attach prepares no worktree and stays a backlog edit.
-- **Commit.** `syncAndCommit` of the story directory and the feature's
-  `index.md` (its Stories table, which the sync regenerates), plus the
-  regenerated indexes: `chore: attach S-<n> to F-<n>`. `--no-sync` writes the
+- **Commit.** `syncAndCommit` of the story directory:
+  `chore: attach S-<n> to F-<n>`. `--no-sync` writes the
   story under the lock and commits nothing, as `bl new --no-sync` does.
 - **Failure.** Attach creates nothing and writes one file, so there is no
   repair record (`feature-links.js`): the story is written through
@@ -2051,8 +2051,7 @@ bl move <S-n>… <C-n> [--no-sync] [--json]
   story is in the feature its `feature:` names (F-77 D3). A move within the
   repo is fine there. A story whose
   component is unknown is moved, not refused: `bl move` is how it is fixed.
-- **Commit.** `syncAndCommit` of the moved stories' directories, plus the
-  regenerated indexes (the old and the new component's tables):
+- **Commit.** `syncAndCommit` of the moved stories' directories:
   `chore: move S-<a>, S-<b> to C<n>`. `--no-sync` writes the stories under
   the lock and commits nothing.
 - **Failure.** When a write fails, the stories written before it get their
@@ -2091,10 +2090,10 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   calls in a row get consecutive ids.
 - **`bl task <F-n|S-n> --title <t> --gate <merge|next|none> [--body-file <path>|-] [--json]`**
   checks the unit exists, takes the backlog lock, writes the file (`status: open`,
-  `owner: operator`, `added: <today>`), then the task's edge in `blockers.json` (below), runs
-  `bl sync` and commits the task file, `blockers.json` (with `.gitattributes` while HEAD lacks
-  the merge driver's line) and what the sync rewrote (the unit's file, for its `## Tasks`
-  table) in one commit: `chore: task T-<n> (<unit>)`. stdout is `T-<n>`; `--json` prints
+  `owner: operator`, `added: <today>`), then the task's edge in `blockers.json` (below), and
+  commits the task file and `blockers.json` (with `.gitattributes` while HEAD lacks the merge
+  driver's line) in one commit: `chore: task T-<n> (<unit>)`. The unit's file is not
+  written: its `## Tasks` table is rendered when the page is read. stdout is `T-<n>`; `--json` prints
   `{ schema: "bl-task-json/v1", id, path, unit, edges }`. An unknown unit, a missing `--title`,
   a missing `--gate` or one outside the three, an unreadable body file or one with frontmatter
   is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A failure before
@@ -2125,12 +2124,13 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   task lifts the holds its edges make. `bl task` and `bl task list` stay allowed through `bl:*`.
 - **`bl task list [--open] [<F-n|S-n>]`** prints one line per task,
   `T-<n>  <unit>  <status>[ <done date>]  <title>`, in id order.
-- **A unit lists no tasks.** `bl sync` writes a `## Tasks` table (ID, Title, Holds, Status,
-  Done) into a unit's file from the task files' `unit:`, after `## Stories` in a feature and
-  after `## Dependencies` in a story, only when the unit has a task; a unit with none is left
-  byte for byte. Holds names each edge the task is the blocker of in `blockers.json` by its
-  gate's verbs (`holdsText`): `bl merge F-3`, `bl run, bl implement (every unit) once F-54 is
-done`; `none` when it has none. A `bl block add T-<n> …` shows there at the next sync.
+- **A unit lists no tasks.** A unit's page renders a `## Tasks` table (ID, Title, Holds,
+  Status, Done) from the task files' `unit:` when it is read (`renderPage`), after `## Stories`
+  in a feature and after `## Dependencies` in a story, only when the unit has a task; nothing
+  writes it into the unit's file. Holds names each edge the task is the blocker of in
+  `blockers.json` by its gate's verbs (`holdsText`): `bl merge F-3`, `bl run, bl implement
+(every unit) once F-54 is done`; `none` when it has none. A `bl block add T-<n> …` shows
+  there at the next read.
 - **A task is a unit in the graph** (`unitIndex`): it can be the `blocker` of an edge or its
   `active_when` unit (`bl block add T-7 --gate merge --unit F-53 --until done`). Its type has
   no gates, so an edge whose `unit` is a task is `blockers-gate`.
@@ -2701,7 +2701,10 @@ bl done --superseded S34      # mark as superseded
 
 ### `bl sync`
 
-Regenerates all index tables from story frontmatter, and optionally commits:
+Brings the backlog up to date with `origin`: it pulls, and pushes what is ahead. With
+`--commit` it commits the paths it is given and pushes. It writes no derived list (F-79 D1):
+`bl report` and `bl view` render the tables when a page is read (see **Rendered pages**
+below).
 
 ```bash
 bl sync                       # alias: bl s
@@ -2721,21 +2724,21 @@ with `-` (a lone `-` is fine): `-m --story S-42` fails with `-m needs a value` i
 taking `--story` as the message, and the same holds for `--story` and `--path`. Give such a
 value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 
-`bl sync` holds the backlog lockfile (`.bl-new.lock`, `src/lock.js`) while it regenerates,
-so concurrent syncs and `bl new` runs take turns. A command that finds the lock held by a
-live process says so once on stderr (`Waiting for lock (.bl-new.lock) held by pid <n>…`) and
-polls until the holder releases it or 30 s pass. The lock is re-entrant within a process
-(`bl new` and `bl new --feature` already hold it when they call `runSync`). `runSync` returns
-every backlog path it wrote; it moves nothing.
+`bl sync --commit` (`syncAndCommit`) holds the backlog lockfile (`.bl-new.lock`,
+`src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
+turns. A command that finds the lock held by a live process says so once on stderr
+(`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
+30 s pass. The lock is re-entrant within a process.
 
-`--commit` regenerates and commits in the same lock hold. It stages exactly the paths the
-sync reported plus each `--story` directory and each `--path` (a backlog-relative path you
-wrote or moved yourself, such as both ends of a `git mv`; repeatable), and commits them with
-`git commit --only` (`backlog-commit.js` `commitPaths`), so another person's dirty story file
-stays out. A `--path` must name one exact file or directory: the root, the whole
-`stories/`, `components/`, `features/`, `themes/` or `epics/`, a glob, a git magic pathspec, an
-absolute path or one with `..` is refused before the sync starts, since it would widen
-the commit to unrelated work.
+Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
+the Markdown files among its paths that git reports changed. Then it stages exactly each
+`--story` directory and each `--path` (a backlog-relative path you wrote or moved yourself,
+such as both ends of a `git mv`; repeatable), and commits them with `git commit --only`
+(`backlog-commit.js` `commitPaths`), so another person's dirty story file stays out. A `--path`
+must name one exact file or directory: the root, the whole `stories/`, `components/`,
+`features/`, `themes/` or `epics/`, a glob, a git magic pathspec, an absolute path or one with
+`..` is refused before anything is committed, since it would widen the commit to unrelated
+work.
 Nothing to commit exits 0; `--commit` without `-m` or `--story`, `--path` without
 `--commit`, or a `--path` that is neither on disk nor tracked by git, is a usage error.
 
@@ -2772,9 +2775,10 @@ the edits back from the stash, the same way. A pull that does not go through is 
 against the state it started from (branch, HEAD, no rebase in progress, nothing unmerged, the
 stash and the uncommitted edits); when they differ (a failed `git rebase --abort`, a stash that
 would not re-apply) the pull is `unsafe` and the command does not run. A conflict confined to
-generated files (the top-level and component `index.md` files and `allowed-tools.json`)
-keeps the local side, and the regeneration that follows every pull that brought anything
-(`sync.js` `pullBeforeCommand`) rebuilds them and commits and pushes what changed. A
+the one generated file, `allowed-tools.json` (`isGeneratedPath`), keeps the local side, and the
+regeneration that follows every pull that brought anything (`sync.js` `pullBeforeCommand`,
+`ensureAllowedTools`) rebuilds it and commits and pushes it if it changed. A conflict in the
+root or a component `index.md` is a real one: those pages are hand-written (F-79 D1). A
 regeneration that cannot be built or committed stops the command and stays pending in
 `.bl/run/pull-regenerate.json`; the next command that pulls finishes it first. After a pull
 that ended `pulled` or `current` and made no regeneration commit (whose push carries `main`), a
@@ -2783,41 +2787,34 @@ Decision A1): a commit whose push failed is carried by the next command of any k
 not only the next one that commits, and `bl updates status` is the running-man guest's way to
 push an unpushed backlog. A backlog with no `origin` remote neither pulls nor pushes.
 
-What the sync writes (F-49 D7, F-51 D3), every link pointing into `stories/`, `components/`,
-`features/`, `epics/` or `themes/`:
+**Rendered pages (F-79 D2, D3).** No committed file holds a derived list. `renderPage(graph,
+unit)` (`src/render.js`) gives a page's committed text with its generated sections placed in
+it, each where the page's layout puts it; `bl report` (its `site/` root) and `bl view` show
+pages through it. `GENERATED_SECTIONS` is the one list of those sections per page kind, every
+link pointing into `stories/`, `components/`, `features/`, `epics/` or `themes/`:
 
-- the top-level `index.md`: `## Themes` (theme, title, epic count, open features),
-  `## Components` (id, title, repo, home, open and
-  done story counts; a component has no points), `## Features` (active ones) and the
-  `## Backlog` of open stories (id, type, component, title, points). A
-  `## Projects` table an older sync wrote is removed, and no project page is written
-  (F-51 D3). The Backlog is in the backlog's priority (`byRank` over `backlog.rankOf`,
-  F-78 D2: a story at its feature's place, a loose story at its own, then by number; a story
-  with no place last). It is written, never read back: no command takes an order from it.
+- the root `index.md`: a "Total backlog" line (open stories, their points, the components),
+  `## Themes` (theme, title, epic count, open features), `## Components` (id, title, repo,
+  home, open and done story counts; a component has no points) and `## Priority`: the open
+  units in `priority.md`'s order (F-78 D1), ranked first, the unranked tail marked.
 - each `epics/E<nn>-*/index.md`: `## Features` (id, title, status, stories done/total,
-  points done/total) after `## Outcome`, from the graph's derived features; its frontmatter
-  is left as it is (F-77 D3).
+  points done/total) after `## Outcome`, from the graph's derived features.
 - each `themes/<slug>/index.md`: `## Epics` (id, title, status, features done/total), then
   `## Features`, its features with no epic.
 - each `components/C<nn>-*/index.md`: `## Stories` (its open stories in priority order, with
-  their status) and `## Features` (active features touching it). Its frontmatter is left as it
-  is: no points.
+  their status) and `## Features` (open features touching it).
 - each feature: its `## Stories` table (with a `Component` column), its stories in the
-  graph's order; it drops a pre-F-49 `epics:` and writes no `points:` or `components:`
-  (F-77 D3).
+  graph's order, then `## Tasks` when it has a task.
+- each story: `## Tasks` when it has a task.
 
-`priority.md` is not among them: a sync never writes it (F-78 D3).
+A story whose `component:` has no directory is listed with the bare id, not a link.
 
-A story whose `component:` has no directory is listed with the bare id, not a link. Nothing
-moves: status is frontmatter, so a sync never renames a directory.
-
-Every file a sync writes is replaced atomically (`atomicWriteFile`), and only when its bytes
-change, so a sync that dies or runs out of disk leaves each file as it was or as regenerated,
-never truncated (F-67). A feature's tables and roll-ups (`syncFeature`) and a story's Tasks
-table (`syncStoryTasks`) are written through `updateSpecFile`: they take the spec lock inside
-the backlog lock and start from the spec as it is then, not as it was collected, so a token
-step entry a session wrote meanwhile stays. The epic, theme, component and top-level indexes
-and `.bl/run/pull-regenerate.json` go through `atomicWriteFile` alone.
+A committed page holds none of them. `bl validate` reports one as `generated-section`, and
+`scripts/migrate-generated-sections.js` (run once after F-79) removed them, with the root's
+"Total backlog" line and its older `## Features` and `## Backlog` tables, from every page. Both
+take a section only when its body is a table and nothing else (`isGeneratedBody`), so a story's
+hand-written `## Tasks` list stays. The root `index.md` is hand-written too: `bl init` writes
+it once, when it is missing, with the `backlog.json` `title` (`ensureRootIndex`, `src/init.js`).
 
 ### `bl validate`
 
@@ -2854,7 +2851,7 @@ id-dir-mismatch, bad-id-format, duplicate-id, cycle,
 dangling-dep, plugin-binary, bad-update-request,
 component-unknown, home-component, component-has-status, component-paths,
 repo-key, frontmatter-yaml, frontmatter-list, priority-file,
-priority-unit, roadmap-file, roadmap-section, theme-brief, dictionary-file, found-by,
+priority-unit, generated-section, roadmap-file, roadmap-section, theme-brief, dictionary-file, found-by,
 flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
 task-unit, task-field, deferred-unsized, deferred-duplicate, operator-tasks-retired,
@@ -2934,6 +2931,12 @@ it, and the operator removes it when they next rank. Only a `priority.md` that i
 other commands (a strict `loadBacklog` throws it); a missing or malformed one is an empty
 `ranked:`, so every open unit is in the dated tail (see **Priority**). They replace the two
 findings of the old feature order file (F-53 D1), which bl no longer reads.
+
+`generated-section` (F-79 D3, `findGeneratedSectionFindings`, error at the page) is a committed
+page that holds a section `GENERATED_SECTIONS` names for its kind, with a table for its body
+(`isGeneratedBody`); the message names the heading. `bl report` and `bl view` render those when
+the page is read (see **Rendered pages** under `### bl sync`). A hand-written section under the
+same heading, with anything besides a table in it, is no finding.
 
 `frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first,
 from the problems of the tolerant graph `bl validate` loads once (`loadBacklog(config,
@@ -3711,8 +3714,8 @@ them.
 - Frontmatter is YAML (failsafe schema), read and written only by `parseFrontmatter` and
   `serializeFrontmatter` (see **Frontmatter is YAML**). Never read a frontmatter line with a
   regex or write one as text.
-- **Never** hand-edit the generated tables in `index.md` files — always edit story frontmatter
-  then run `bl sync`.
+- **Never** write a generated table into a committed page (`generated-section`): edit the
+  frontmatter, and `bl report` and `bl view` render the tables from it.
 - `story_id` format is always `S-<number>` with a hyphen (e.g. `S-40`). Directory names omit
   the hyphen (e.g. `S40-my-feature/`).
 - Points use the Fibonacci sequence: 1, 2, 3, 5, 8, 13. Never use other values.

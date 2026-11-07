@@ -44,9 +44,9 @@ repo; no repo is written on the story or on a feature.
 
 3. Display the path to the newly created story file so the user can open and fill it in.
 
-The script automatically syncs the backlog after creating the story (or component), so the
-affected component and root `index.md` files are regenerated in one command. Pass
-`--no-sync` for batch flows where you'll run `bl sync` yourself once at the end.
+The script commits the new story (or component) and pushes it in one command. No index file is
+written: `bl report` and `bl view` render the tables when a page is read. Pass `--no-sync` for
+batch flows where you'll run `bl sync --commit` yourself once at the end.
 
 ## Batch mode (`--from <spec.json>`)
 

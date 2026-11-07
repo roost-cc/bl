@@ -121,7 +121,7 @@ absolute path, for example `{{worktreePath}}/src/<module>.js`. Quote the command
 
 9. Commit the change document and the {{unitKind}} file in the backlog repo:
    `bl sync --commit -m "chore: append review session for {{featureId}} (<YYYY-MM-DD>)" --path {{changeRelPath}} --path {{featureRelPath}}`.
-   It takes the backlog lock and commits only those files and the regenerated indexes. Never run
+   It takes the backlog lock, commits only those files, and pushes. Never run
    `git add` or `git commit` in the backlog repo.
 
 {{escalationGuide}}

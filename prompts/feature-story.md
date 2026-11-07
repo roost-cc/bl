@@ -121,9 +121,8 @@ checkout.
    bl sync --commit -m "chore: {{storyId}} implemented in {{featureId}}" --story {{storyId}} --path {{featureRelPath}}
    ```
 
-   It takes the backlog lock and commits only three things: the story's directory, the feature
-   file, and the index files the sync regenerates. It never commits what another session has
-   staged. Never run `git add` or `git commit` in the backlog repo.
+   It takes the backlog lock, commits only two things, the story's directory and the feature
+   file, and pushes. It never commits what another session has staged. Never run `git add` or `git commit` in the backlog repo.
 
 8. Format the files you changed (see **Format and lint** below).
 
