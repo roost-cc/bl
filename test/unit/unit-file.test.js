@@ -70,6 +70,30 @@ test('findUnitFile names a missing id of each kind, the component hint for E<n>,
   }
 });
 
+test('findUnitFile resolves an epic id and a theme slug; a missing epic is not found (F-79 D7)', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    valueEpics: [{ id: 'E50', title: 'Value', dirSuffix: 'value' }],
+  });
+  try {
+    const cfg = loadConfig({ backlogRoot: dir });
+    const epicDir = join(dir, 'epics', 'E50-value');
+    const epic = { kind: 'epic', id: 'E50', indexPath: join(epicDir, 'index.md'), dir: epicDir };
+    for (const raw of ['E50', 'e-50']) assert.deepEqual(findUnitFile(raw, cfg), epic, raw);
+    const themeDir = join(dir, 'themes', 'demo');
+    assert.deepEqual(findUnitFile('demo', cfg), {
+      kind: 'theme',
+      id: 'demo',
+      indexPath: join(themeDir, 'index.md'),
+      dir: themeDir,
+    });
+    assert.deepEqual(findUnitFile('E51', cfg), { error: 'Epic E51 not found.' });
+    assert.deepEqual(findUnitFile('nope', cfg), { error: 'Invalid id: nope' });
+  } finally {
+    cleanup();
+  }
+});
+
 test('findUnitFile: no tasks/ directory, or a task file with no task_id, is a task not found', () => {
   const { dir, cleanup } = mkTempBacklog({ components: [{ id: 'C01', title: 'Work' }] });
   try {

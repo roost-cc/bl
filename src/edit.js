@@ -1,5 +1,6 @@
 /**
- * edit.js — open a story, component, feature or task file in $VISUAL/$EDITOR/vi.
+ * edit.js — open a story, component, feature, epic, theme or task file in
+ * $VISUAL/$EDITOR/vi: the committed file, never the rendered page.
  */
 
 import { editorCommand, loadConfig, parseArgs, reportExit, runEditor } from './config.js';
@@ -13,12 +14,14 @@ export async function main(argv) {
     console.log(`Usage: bl edit <id> [options]
 
 Arguments:
-  <id>                Story, component, feature, or task ID (e.g. S34, C10, F3, T5)
+  <id>                Story, component, feature, epic, or task ID, or a theme slug
+                      (e.g. S34, C10, F3, E69, T5, backlog)
 
 Options:
   --help              Show this help
 
-Opens the file in ${editor} ($VISUAL → $EDITOR → vi).`);
+Opens the committed file in ${editor} ($VISUAL → $EDITOR → vi). It holds no
+generated table; bl view shows the page with them.`);
     process.exit(0);
   }
 

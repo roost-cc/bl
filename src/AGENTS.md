@@ -53,7 +53,7 @@ Per-command stdout contracts:
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
 | `bl agents`          | AGENTS.md, the writing guide, each listed dictionary      |
-| `bl view`            | the file as it is when redirected; else nothing (editor)  |
+| `bl view`            | the rendered page when redirected; else nothing (editor)  |
 | `bl edit`            | nothing (opens editor)                                    |
 | `bl init`            | nothing (status → stderr)                                 |
 | `bl sync`            | nothing                                                   |
@@ -2673,18 +2673,24 @@ session. The operator runs it from the merged bl right after `bl merge F-78`.
 
 ### `bl edit` / `bl view`
 
-Open a story, component, feature or task file in your editor (`bl which` prints its
-path, `-d` its directory; a task's directory is `tasks/`):
+Open a story, component, feature, epic (`E<nn>`), theme (by its slug) or task file in your
+editor (`bl which` prints its path, `-d` its directory; a task's directory is `tasks/`):
 
 ```bash
-bl edit S34                   # opens in $VISUAL / $EDITOR / vi
-bl view T5                    # read-only copy in $VISUAL / $EDITOR / vi
-bl view T5 > t5.md            # stdout not a terminal: the file, byte for byte
+bl edit S34                   # the committed file, in $VISUAL / $EDITOR / vi
+bl view F79                   # read-only copy of the page, its tables rendered
+bl view                       # the root index.md: Total backlog, Themes, Components, Priority
+bl view E69 > e69.md          # stdout not a terminal: the rendered page, printed
 bl which -d C10               # prints the component's directory
 ```
 
+`bl view` shows the page as read (F-79 D7): `renderPage` places the kind's
+`GENERATED_SECTIONS` in the committed text, the same tables `bl report` writes. A
+task, and a page with nothing to render (a story with no task), is the file byte for
+byte. `bl edit` always opens the committed file.
+
 Both exit with the editor's status: 127 when it cannot be launched, 128 + n when
-signal n kills it. When `bl view` cannot make its copy it shows the file instead
+signal n kills it. When `bl view` cannot make its copy it shows the page instead
 (printed when it fits the terminal, else `$PAGER` → `less` → `more`) and exits
 with the pager's status the same way.
 
