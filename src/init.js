@@ -24,7 +24,7 @@ import { LOCAL_TOOLS_FILE } from './permissions.js';
 import { FLOW_FILE } from './flow.js';
 import { ROADMAP_FILE } from './roadmap.js';
 import { PRIORITY_FILE } from './priority.js';
-import { atomicWriteFile } from './atomic-write.js';
+import { atomicWriteFile, STAGING_DIR } from './atomic-write.js';
 import { getProvider, PROVIDER_NAMES } from './agents/index.js';
 import { probePluginBinaries, formatPluginStatus } from './plugin-binaries.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
@@ -75,7 +75,7 @@ init"); edits you made before it stay uncommitted.`);
 
   info(`Initializing agent: ${config.agent}...`);
   await provider.init(config.backlogRoot, config);
-  ensureLocalToolsGitignored(config.backlogRoot);
+  ensureGitignored(config.backlogRoot);
   warnIfGhCredentialHelper();
 
   copySeed(config.backlogRoot, 'allowed-tools.json');
@@ -277,19 +277,21 @@ function addToBacklogJson(dir, path, agent) {
   info(`Updated : backlog.json (+ ${keys.join(', ')})`);
 }
 
-// The local tool-grant file holds user-discretion permissions and must never
-// be committed. Seed the backlog's .gitignore with it on init (idempotent).
-function ensureLocalToolsGitignored(backlogRoot) {
+// The local tool-grant file holds user-discretion permissions, and `.bl/`
+// holds bl's runtime state (the activity log, staging files, run state):
+// neither is ever committed. Seed the backlog's .gitignore with both on init
+// (idempotent).
+const GITIGNORED = [LOCAL_TOOLS_FILE, `${dirname(STAGING_DIR)}/`];
+
+function ensureGitignored(backlogRoot) {
   const gitignorePath = join(backlogRoot, '.gitignore');
-  let lines = [];
-  if (existsSync(gitignorePath)) {
-    lines = readFileSync(gitignorePath, 'utf8').split('\n');
-    if (lines.some((l) => l.trim() === LOCAL_TOOLS_FILE)) return;
-  }
-  const needsNewline = lines.length > 0 && lines[lines.length - 1] !== '';
-  const addition = (needsNewline ? '\n' : '') + LOCAL_TOOLS_FILE + '\n';
-  writeFileSync(gitignorePath, (existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '') + addition);
-  info(`Updated : .gitignore (+ ${LOCAL_TOOLS_FILE})`);
+  const text = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+  const lines = text.split('\n');
+  const missing = GITIGNORED.filter((entry) => !lines.some((l) => l.trim() === entry));
+  if (missing.length === 0) return;
+  const needsNewline = text !== '' && !text.endsWith('\n');
+  writeFileSync(gitignorePath, text + (needsNewline ? '\n' : '') + missing.map((m) => `${m}\n`).join(''));
+  info(`Updated : .gitignore (+ ${missing.join(', ')})`);
 }
 
 function warnIfGhCredentialHelper() {

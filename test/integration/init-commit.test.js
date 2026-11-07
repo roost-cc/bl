@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -55,6 +55,17 @@ test('bl init commits and pushes the files it wrote with "chore: bl init"; an ed
   assert.equal(again.status, 0, again.stderr);
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
   assert.doesNotMatch(again.stderr, /Committing backlog changes/);
+});
+
+test("bl init ignores bl's runtime directory .bl/, so a session's activity log is never committed", () => {
+  const dir = newBacklog();
+  git(dir, 'init', '-q', '-b', 'main');
+  assert.equal(init(dir).status, 0);
+  assert.equal(git(dir, 'check-ignore', '.bl/activity.log'), '.bl/activity.log');
+  // A rerun adds nothing twice.
+  const text = readFileSync(join(dir, '.gitignore'), 'utf8');
+  assert.equal(init(dir).status, 0);
+  assert.equal(readFileSync(join(dir, '.gitignore'), 'utf8'), text);
 });
 
 test('bl init in a backlog that is not a git repo commits nothing and says nothing about it', () => {
