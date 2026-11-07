@@ -38,6 +38,7 @@ import {
   commitPaths,
   dirtySnapshot,
   hasOriginRemote,
+  leaveRegenerationPending,
   markRegenerationPending,
   parsePorcelainZ,
   pathsChangedSince,
@@ -161,12 +162,16 @@ export function extraPathProblem(p) {
  * `settlePending`). After a pull that ended `pulled` or `current` and made no
  * regeneration commit (whose own push carries `main`), a `main` still ahead
  * of `origin/main` is pushed (`pushIfAhead`, F-74 D1); a failed push is a
- * warning (`pushWarning`).
+ * warning (`pushWarning`). With `regenerate: false` (`bl init` on a
+ * `backlog.json` that `loadConfig` rejects, S-1330), the settle and the
+ * regeneration need a configuration, so they do not run: a pull that brought
+ * anything leaves the regeneration pending for the next command that pulls.
  *
- * @param {object} config
+ * @param {object} config  only `backlogRoot` is read with `regenerate: false`
+ * @param {{ regenerate?: boolean }} [opts]
  * @returns {Promise<import("./backlog-commit.js").BacklogPull>}
  */
-export async function pullBeforeCommand(config) {
+export async function pullBeforeCommand(config, { regenerate = true } = {}) {
   const root = config.backlogRoot;
   // Nothing to pull: leave the lock to the command, whose first wait for it
   // is then the one it announces.
@@ -178,7 +183,9 @@ export async function pullBeforeCommand(config) {
     const pendingPath = join(root, PULL_REGEN_PENDING);
     const pending = existsSync(pendingPath);
     let committed = false;
-    if (res.state === 'pulled' || (pending && res.state !== 'unsafe' && res.state !== 'not-main')) {
+    if (!regenerate) {
+      if (res.state === 'pulled') leaveRegenerationPending(root);
+    } else if (res.state === 'pulled' || (pending && res.state !== 'unsafe' && res.state !== 'not-main')) {
       // Settle an interrupted `bl new --feature` first, so its half-made
       // links are not committed with the regeneration.
       const { settlePending } = await import('./feature-links.js');

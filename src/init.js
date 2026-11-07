@@ -32,6 +32,15 @@ import { detectGhCredentialHelper, formatGhCredentialHelperAdvisory } from './cr
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+/**
+ * The directory `bl init` treats as the backlog root: `$BL_BACKLOG_DIR`, else
+ * the current directory. `bl.js` pulls it before `bl init` writes, when
+ * `loadConfig` rejects the `backlog.json` there (S-1330).
+ */
+export function initBacklogDir() {
+  return process.env.BL_BACKLOG_DIR || process.cwd();
+}
+
 export async function main(argv) {
   const args = parseArgs(argv);
 
@@ -67,7 +76,7 @@ init"); edits you made before it stay uncommitted.`);
 
   // `ensureReposBlock` treats this directory as the backlog root. The
   // snapshot keeps edits made before `bl init` out of its commit (S-1330).
-  const backlogDir = process.env.BL_BACKLOG_DIR || process.cwd();
+  const backlogDir = initBacklogDir();
   const before = dirtySnapshot(backlogDir);
   ensureReposBlock(backlogDir, args.agent);
   const config = loadConfig({ agent: args.agent });
