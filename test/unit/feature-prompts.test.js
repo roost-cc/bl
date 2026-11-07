@@ -594,7 +594,7 @@ test("the correctness pass checks the diff against the repo's AGENTS.md conventi
     assert.match(text, /design-system example/);
     assert.match(text, /Quote the rule and its file/);
     assert.match(text, /Class: documented project convention not followed/);
-    assert.match(text, /then the `AGENTS\.md` files rule 7 names/);
+    assert.match(text, /Then read the `AGENTS\.md` files rule 7 names/);
   } finally {
     cleanup();
   }
