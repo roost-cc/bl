@@ -11,7 +11,7 @@
 ### Shell
 
 Headless sessions cannot answer a permission prompt, so a command outside the
-allowlist is simply denied. Most denials come from a handful of habits:
+allowlist is denied. Most denials come from a few habits:
 
 - **zsh `noclobber` is on.** `>` refuses to overwrite an existing file ("file
   exists"). Overwrite with `>|`, append with `>>`; `setopt | grep -i clobber`
@@ -44,8 +44,8 @@ story scope must be invoked with `--story {{storyId}}`** — `bl format`,
 `bl lint`, `bl merge`, `bl review`, and any future story-aware tool.
 Do not rely on a "current worktree" default; there isn't one. The story
 ID lets `bl` find every repo the work spans (its stories' repos:
-{{storyRepos}}) and operate on all of them, not just the worktree your
-shell happens to be in. Skipping `--story` will error.
+{{storyRepos}}). `bl` then works on all of them, not only on the worktree
+your shell is in. Without `--story`, the command fails with an error.
 
 ### Format and lint
 
@@ -53,17 +53,17 @@ shell happens to be in. Skipping `--story` will error.
 {{lintExamples}}
 Always invoke as `bl format --story {{storyId}}` /
 `bl lint --story {{storyId}}` so the story's backlog markdown is covered.
-Files edited via your agent's {{editTool}}/{{writeTool}} tools may be
-auto-formatted if an edit hook is configured for that agent; files written
-via Bash need an explicit format pass regardless.
+If an edit hook is configured for your agent, it may format the files you
+edit with the {{editTool}}/{{writeTool}} tools. Files written with Bash
+always need an explicit format pass.
 
 ### Tests
 
 {{testExamples}}
-When the table above lists a test runner for the file extensions you
-touched, invoke it directly. When the section reports nothing configured,
-the project doesn't have a registered test runner for `bl` — fall back to
-the project's documented test command.
+If the table above lists a test runner for the file extensions you
+touched, run it directly. If the section reports nothing configured, the
+project has no registered test runner for `bl`. Then use the project's
+documented test command.
 
 ### Pull requests
 
