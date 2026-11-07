@@ -72,12 +72,12 @@ The backlog is a **separate git repo** from the code. That means:
 
    **## Deferred** holds code work only: `bl validate` refuses an unsized bullet there while the
    story is open. Give each bullet enough context for someone who has not seen your session to
-   understand the issue and create a story from it. Include the file paths, test names or error
+   understand the problem and create a story from it. Include the file paths, test names or error
    messages that apply. **Start each bullet with a point estimate** in the form `[points: N]`
-   (Fibonacci 1/2/3/5/8/13). You did the work that found the item, so you can estimate it best.
+   (Fibonacci 1/2/3/5/8/13). You found the work, so you can estimate it best.
    Do not leave the estimate for the cleanup agent to guess.
 
-   Notes and blockers are not Deferred items:
+   Notes and blockers are not Deferred bullets:
    - A record of what you did or found goes in a dated bullet under the story's **## Notes**:
      `- <YYYY-MM-DD> ({{storyId}}): …`, with no marker. Examples are an acceptance criterion you
      could not fully satisfy and why, or a problem from before your change that you looked into. If the section is
@@ -94,7 +94,7 @@ The backlog is a **separate git repo** from the code. That means:
 
      `bl task` commits the backlog itself; only the operator runs `bl task done`.
 
-   Phrase an item or task that depends on a merge as
+   Phrase a bullet or task that depends on a merge as
    "after review and merge, …", never "after <repo>#<pr> merges". Every PR goes through
    `bl review` first, and you do not know when it will merge.
 
