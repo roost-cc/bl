@@ -253,7 +253,23 @@ test('buildCodexArgs passes -m <model> to codex exec, the interactive launch and
   assert.throws(() => buildCodexArgs({ headless: true, model: '' }), /^Error: model must be a non-empty string$/);
 });
 
-test("CodexProvider.spawn hands the configuration's model to codex exec", () => {
+test('buildCodexArgs passes -c model_reasoning_effort=<level> to codex exec, the interactive launch and resume, and none with no effort (F-85 D3)', () => {
+  const base = { prompt: 'p', worktreePath: '/wt', backlogRoot: '/bl' };
+  const shapes = [{ headless: true }, {}, { sessionId: 'abc' }];
+  for (const shape of shapes) {
+    const args = buildCodexArgs({ ...base, ...shape, effort: 'medium' });
+    const i = args.indexOf('model_reasoning_effort=medium');
+    assert.ok(i > 0 && args[i - 1] === '-c', JSON.stringify(shape));
+    assert.ok(i < args.indexOf('p'), `before the prompt: ${JSON.stringify(shape)}`);
+    const none = buildCodexArgs({ ...base, ...shape, effort: null });
+    assert.ok(!none.some((a) => a.startsWith('model_reasoning_effort')), `null: ${JSON.stringify(shape)}`);
+  }
+  assert.equal(buildCodexArgs({ ...base, headless: true, effort: 'medium' })[0], 'exec');
+  assert.equal(buildCodexArgs({ ...base, sessionId: 'abc', effort: 'medium' })[0], 'resume');
+  assert.throws(() => buildCodexArgs({ ...base, effort: 'huge' }), /^Error: effort must be one of/);
+});
+
+test("CodexProvider.spawn hands the configuration's model and the effort level to codex exec", () => {
   const calls = [];
   const run = (cmd, args) => {
     calls.push({ cmd, args });
@@ -265,6 +281,7 @@ test("CodexProvider.spawn hands the configuration's model to codex exec", () => 
     backlogRoot: '/bl',
     headless: true,
     model: 'gpt-6-sol',
+    effort: 'low',
     run,
     ensureApprovedCommandPrefixes: () => ({ added: 0 }),
   });
@@ -279,6 +296,8 @@ test("CodexProvider.spawn hands the configuration's model to codex exec", () => 
   assert.equal(calls[0].cmd, 'codex');
   assert.equal(calls[0].args[calls[0].args.indexOf('-m') + 1], 'gpt-6-sol');
   assert.ok(!calls[1].args.includes('-m'));
+  assert.ok(calls[0].args.includes('model_reasoning_effort=low'));
+  assert.ok(!calls[1].args.includes('-c'));
 });
 
 test('parseCodexJsonEvents sums usage and flags error events', () => {

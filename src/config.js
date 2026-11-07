@@ -26,6 +26,7 @@ import { spawnSyncFiles } from './child-stdio.js';
 import { Document, LineCounter, Scalar, isMap, isScalar, parseDocument, visit } from 'yaml';
 import { getProvider, hasProvider, PROVIDER_NAMES } from './agents/index.js';
 import { sessionStackOf } from './session-stack.js';
+import { checkEffort } from './effort.js';
 
 // ---------------------------------------------------------------------------
 // Stream helpers
@@ -483,6 +484,9 @@ function withRaw(base, raw, { agent: agentFlag, role: agentRole, lenient: lenien
     // Why the lists are empty, under `lenientAgents` only (`bl validate`).
     agentConfigError,
     limitWaitMaxHours,
+    // The effort level of refine sessions, of review sessions, and of a
+    // story with no `effort:` (F-85 D2).
+    effort: effortConfig(raw, where),
     plugins: raw.plugins ?? {},
     languageDispatch: raw.language_dispatch ?? {},
   };
@@ -600,6 +604,35 @@ export function checkModel(value, label) {
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
+}
+
+/** The keys of `backlog.json` `effort` (F-85 D2), each required. */
+const EFFORT_KEYS = ['refine', 'review', 'default'];
+
+/**
+ * `raw.effort` as `{ refine, review, default }` (F-85 D2): required, with
+ * each key in `EFFORT_KEYS` and no other, and each value an effort level.
+ * bl has no fallback level, so it throws, naming the key, otherwise.
+ * @param {object} raw — the top level, or it with a repo's overrides
+ * @param {string} where — where it was read, for the message
+ * @returns {{ refine: string, review: string, default: string }}
+ */
+function effortConfig(raw, where) {
+  const shape = `{ ${EFFORT_KEYS.map((k) => `"${k}": "high"`).join(', ')} }`;
+  if (!Object.hasOwn(raw, 'effort')) {
+    throw new Error(`${where} has no "effort": add ${shape} (F-85 D2)`);
+  }
+  const effort = raw.effort;
+  if (!isPlainObject(effort)) throw new Error(`${where} "effort" must be an object, ${shape}`);
+  const unknown = Object.keys(effort).filter((k) => !EFFORT_KEYS.includes(k));
+  if (unknown.length > 0) {
+    throw new Error(`${where} "effort" has an unknown key "${unknown[0]}" (allowed: ${EFFORT_KEYS.join(', ')})`);
+  }
+  const missing = EFFORT_KEYS.find((k) => !Object.hasOwn(effort, k));
+  if (missing) throw new Error(`${where} "effort" has no "${missing}": add it, e.g. ${shape}`);
+  return /** @type {{ refine: string, review: string, default: string }} */ (
+    Object.fromEntries(EFFORT_KEYS.map((k) => [k, checkEffort(effort[k], `${where} "effort.${k}"`)]))
+  );
 }
 
 /** The script that moves worktrees from `<root>/<repo>/<branch>` to `<root>/<branch>/<repo>`. */

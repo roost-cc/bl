@@ -11,6 +11,7 @@ import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv } from './provider.js';
 import { loadHookDenyMessage } from '../tool-guide.js';
 import { checkModel } from '../config.js';
+import { checkEffort } from '../effort.js';
 
 // Resolve Claude Code's config directory the same way the CLI does: honour
 // `CLAUDE_CONFIG_DIR` when set, else fall back to `~/.claude`. Hardcoding
@@ -110,6 +111,8 @@ export function claudeScopeRules({ read = [], write = [] } = {}) {
  * `model` (the configuration's, F-64 D2: backlog.json's `agent` or
  * `review_agent` entry) becomes
  * `--model`, which outranks an `ANTHROPIC_MODEL` in the environment.
+ * `effort` (an effort level, F-85 D3) becomes `--effort`; null passes none,
+ * so the CLI uses its own setting.
  */
 export function buildClaudeArgs({
   name,
@@ -121,6 +124,7 @@ export function buildClaudeArgs({
   args = [],
   headless = false,
   model = null,
+  effort = null,
 } = {}) {
   const claudeArgs = [...args];
   if (headless) {
@@ -143,6 +147,7 @@ export function buildClaudeArgs({
     claudeArgs.push('--name', name);
   }
   if (model != null) claudeArgs.push('--model', checkModel(model, 'model'));
+  if (effort != null) claudeArgs.push('--effort', checkEffort(effort, 'effort'));
 
   // Write scope, granted at launch (never via ~/.claude/settings.json). The
   // unit directory is also the cwd; `--add-dir` is idempotent and also extends
@@ -560,6 +565,7 @@ export class ClaudeProvider extends AgentProvider {
     scopes,
     headless = false,
     model = null,
+    effort = null,
     backlogRoot = null,
     run = spawnSync,
   }) {
@@ -579,6 +585,7 @@ export class ClaudeProvider extends AgentProvider {
       args,
       headless,
       model,
+      effort,
     });
 
     if (headless) {

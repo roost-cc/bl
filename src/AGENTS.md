@@ -1636,6 +1636,33 @@ already has is kept, and the missing one is picked against it
 (`initConfigurationLists`): a headless agent the kept list (and -A) does
 not use, so a kept `[codex]` implementer gets a `claude` reviewer.
 
+**Effort levels** (F-85). An effort level says how hard an agent session
+thinks: `low`, `medium`, `high`, `xhigh` or `max`, lowest first
+(`EFFORT_LEVELS` and `checkEffort` in `src/effort.js`, the one place that
+names them). `backlog.json` has a required `"effort"` object beside `agent`
+and `review_agent`:
+
+```json
+{
+  "effort": { "refine": "high", "review": "high", "default": "high" }
+}
+```
+
+- `refine`: every refine session.
+- `review`: every review pass and the verifier, whatever the stories'
+  levels are.
+- `default`: a story with no `effort:` of its own.
+
+bl has no fallback level: a missing object, a missing key, an unknown key
+or a value outside the five levels is a config error naming the key
+(`effortConfig` in `src/config.js`). The config record carries it as
+`config.effort`. A repo's `overrides` may replace the object whole.
+`bl init` writes all three as `high` into a new backlog (one with no
+`repos`). An adapter's `spawn({ effort })` takes a level, or null for the
+agent CLI's own setting: Claude passes `--effort <level>`, Codex passes
+`-c model_reasoning_effort=<level>` (`codex exec`, the interactive launch
+and `resume`), with bl's names unchanged. Gemini ignores it.
+
 Gates and effects:
 
 - `bl implement` reads `review_status`. When it's `pending`, the

@@ -834,6 +834,74 @@ test('a missing, empty or wrong configuration list is a config error naming the 
   }
 });
 
+test('config.effort is backlog.json "effort"; a missing object, key, unknown key or bad level is an error naming the key (F-85 D2)', async () => {
+  const { mkTempBacklog } = await import('../helpers/tempdir.js');
+  const { loadConfig } = await import('../../src/config.js');
+  const { dir, cleanup } = mkTempBacklog({ repos: ['../demo-repo'] });
+  try {
+    const ok = { refine: 'high', review: 'xhigh', default: 'medium' };
+    await patchBacklogJson(dir, { effort: ok });
+    assert.deepEqual(loadConfig({ backlogRoot: dir }).effort, ok);
+    const cases = [
+      [
+        undefined,
+        /^Error: backlog\.json has no "effort": add \{ "refine": "high", "review": "high", "default": "high" \}/,
+      ],
+      ['high', /^Error: backlog\.json "effort" must be an object/],
+      [{ refine: 'high', review: 'high' }, /^Error: backlog\.json "effort" has no "default"/],
+      [
+        { ...ok, implement: 'low' },
+        /^Error: backlog\.json "effort" has an unknown key "implement" \(allowed: refine, review, default\)$/,
+      ],
+      [
+        { ...ok, review: 'huge' },
+        /^Error: backlog\.json "effort\.review" must be one of low, medium, high, xhigh, max, not "huge"$/,
+      ],
+    ];
+    for (const [effort, err] of cases) {
+      await patchBacklogJson(dir, { effort });
+      assert.throws(() => loadConfig({ backlogRoot: dir }), err, JSON.stringify(effort));
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("a repo's overrides replace effort whole, and a bad one is an error naming the repo", async () => {
+  const { mkTempBacklog } = await import('../helpers/tempdir.js');
+  const { loadConfig, configForRepo } = await import('../../src/config.js');
+  const own = { refine: 'low', review: 'max', default: 'medium' };
+  const { dir, cleanup } = mkTempBacklog({
+    repos: { 'demo-repo': { path: '../demo-repo', overrides: { effort: own } }, other: { path: '../other' } },
+  });
+  try {
+    const config = loadConfig({ backlogRoot: dir });
+    assert.deepEqual(config.effort, { refine: 'high', review: 'high', default: 'high' });
+    assert.deepEqual(configForRepo(config, 'demo-repo').effort, own);
+    assert.deepEqual(
+      configForRepo(config, 'other').effort,
+      config.effort,
+      "a repo with no effort gets the top level's",
+    );
+    await patchBacklogJson(dir, {
+      repos: {
+        'demo-repo': {
+          path: '../demo-repo',
+          deployable: false,
+          update_tests: [],
+          overrides: { effort: { refine: 'low' } },
+        },
+      },
+    });
+    assert.throws(
+      () => loadConfig({ backlogRoot: dir }),
+      /^Error: backlog\.json repos\["demo-repo"\] overrides "effort" has no "review"/,
+    );
+  } finally {
+    cleanup();
+  }
+});
+
 test("the retired agent shape is a config error naming the list shape and the migration script, at the top level and in a repo's overrides", async () => {
   const { mkTempBacklog } = await import('../helpers/tempdir.js');
   const { loadConfig } = await import('../../src/config.js');

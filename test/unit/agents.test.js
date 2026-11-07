@@ -632,6 +632,22 @@ test('buildClaudeArgs passes agent_model as --model on every launch shape, and n
   assert.deepEqual(resumed.slice(0, 4), ['--resume', 'abc', '--model', 'sonnet']);
 });
 
+test('buildClaudeArgs passes the effort level as --effort on every launch shape, and nothing with null (F-85 D3)', () => {
+  const shapes = [{ headless: true }, { sessionId: 'abc' }, { name: 'S-1: x' }, {}];
+  for (const shape of shapes) {
+    const args = buildClaudeArgs({ prompt: 'p', ...shape, model: 'opus', effort: 'medium' });
+    const i = args.indexOf('--effort');
+    assert.ok(i > args.indexOf('--model'), `after --model: ${JSON.stringify(shape)}`);
+    assert.equal(args[i + 1], 'medium');
+    assert.ok(i < args.indexOf('--'), 'before the prompt');
+    assert.ok(
+      !buildClaudeArgs({ prompt: 'p', ...shape, effort: null }).includes('--effort'),
+      `null: ${JSON.stringify(shape)}`,
+    );
+  }
+  assert.throws(() => buildClaudeArgs({ prompt: 'p', effort: 'huge' }), /^Error: effort must be one of/);
+});
+
 test('buildClaudeArgs rejects a model that is not a non-empty string', () => {
   for (const bad of ['', '  ', 0, 1, true, {}, ['sonnet']]) {
     assert.throws(

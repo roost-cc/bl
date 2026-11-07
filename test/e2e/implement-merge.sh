@@ -70,6 +70,7 @@ cat > "$ROOT/backlog/backlog.json" <<JSON
   "worktrees": "../worktrees",
   "agent": [{ "agent": "claude" }],
   "review_agent": [{ "agent": "claude" }],
+  "effort": { "refine": "high", "review": "high", "default": "high" },
   "repos": {
     "code": { "path": "../code", "deployable": false, "update_tests": [] }
   }

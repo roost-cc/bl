@@ -146,3 +146,9 @@ test('bl init lists the coding dictionary in a new backlog.json, and adds no key
   quietly(() => ensureReposBlock(dir, 'claude'));
   assert.equal(readFileSync(join(dir, 'backlog.json'), 'utf8'), existing);
 });
+
+test('bl init writes the effort levels into a new backlog.json and keeps an object the file has (F-85 D2)', () => {
+  assert.deepEqual(initOn({}).effort, { refine: 'high', review: 'high', default: 'high' });
+  const own = { refine: 'medium', review: 'xhigh', default: 'low' };
+  assert.deepEqual(initOn({ effort: own }).effort, own, 'an object the file has is kept');
+});

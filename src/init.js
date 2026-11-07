@@ -48,7 +48,9 @@ is. A new backlog.json (in $BL_BACKLOG_DIR, else the current directory),
 one with no "repos", gets an empty one, the display name "title":
 "Backlog" (bl sync heads index.md with it), the worktree root
 "worktrees": "../worktrees", the dictionary list "dictionaries":
-["coding-dictionary.yaml"] (the prompts name each listed file), and, unless it
+["coding-dictionary.yaml"] (the prompts name each listed file), the effort
+levels "effort": { "refine": "high", "review": "high", "default": "high" },
+and, unless it
 has them, the configuration lists "agent", [{ "agent": "<-A, else claude>" }],
 and "review_agent", [{ "agent": "<the first other headless agent>" }]: the
 reviewer is never the implementer. Repos are registered by hand in
@@ -119,6 +121,9 @@ const NEW_WORKTREE_ROOT = '../worktrees';
 /** A new backlog's agent when `bl init` is given no -A. */
 const NEW_AGENT = 'claude';
 
+/** A new backlog's effort levels (F-85 D2): `high`, the level before F-85, for each. */
+const NEW_EFFORT = { refine: 'high', review: 'high', default: 'high' };
+
 /** A role's list as backlog.json has it, provider names lowercased; [] for none. */
 function roleList(value) {
   if (typeof value === 'string') return [{ agent: value.toLowerCase() }];
@@ -173,7 +178,8 @@ export function initConfigurationLists(raw, agent = null) {
  * Give a new backlog's `backlog.json` (in `dir`) an empty `repos` block, the
  * key bl finds a backlog by (F-51 D5), the worktree root `loadConfig`
  * requires (F-60 D1), unless it names one, the dictionary list naming the
- * coding dictionary (F-82 D3), unless it has one, and the two configuration lists
+ * coding dictionary (F-82 D3), unless it has one, the effort levels
+ * (F-85 D2), unless it has them, and the two configuration lists
  * it requires (F-64 D2), unless it has them, each independent of the other
  * (`initConfigurationLists`), with no model. When it adds the dictionary
  * list it copies the seed first, so a failed copy leaves backlog.json as it
@@ -199,6 +205,7 @@ export function ensureReposBlock(dir, agent = null) {
   if (!Object.hasOwn(raw, 'title')) added.title = DEFAULT_BACKLOG_TITLE;
   if (!Object.hasOwn(raw, 'worktrees')) added.worktrees = NEW_WORKTREE_ROOT;
   if (!Object.hasOwn(raw, 'dictionaries')) added.dictionaries = [CODING_DICTIONARY_FILE];
+  if (!Object.hasOwn(raw, 'effort')) added.effort = NEW_EFFORT;
   Object.assign(added, initConfigurationLists(raw, agent));
   // The seed first: if its copy fails, backlog.json does not list a missing file.
   if (added.dictionaries) copySeed(dir, CODING_DICTIONARY_FILE);

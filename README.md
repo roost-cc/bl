@@ -44,6 +44,7 @@ The backlog's configuration. A minimal one:
   "worktrees": "../worktrees",
   "agent": [{ "agent": "claude" }],
   "review_agent": [{ "agent": "codex" }],
+  "effort": { "refine": "high", "review": "high", "default": "high" },
   "repos": {
     "acme-web": { "path": "../acme-web", "deployable": true, "update_tests": [] }
   }
@@ -54,6 +55,8 @@ The backlog's configuration. A minimal one:
 - `repos` registers each code repo, with its path relative to the backlog.
 - `agent` and `review_agent` are the agent configurations, in order of preference, for
   implementing and for reviewing.
+- `effort` is the effort level (`low`, `medium`, `high`, `xhigh` or `max`) of refine sessions,
+  of review sessions, and of a story that sets no `effort:` of its own.
 - `plugins`, `language_dispatch` and `forge` wire in formatters, linters, test commands and the
   forge (GitHub through `gh`, for example).
 - `session_stack` (optional) points at your own guidance for a per-session stack of services,
