@@ -17,6 +17,7 @@ import {
   sameConfiguration,
   CODING_DICTIONARY_FILE,
   DEFAULT_BACKLOG_TITLE,
+  EFFORT_KEYS,
 } from './config.js';
 import { LOCAL_TOOLS_FILE } from './permissions.js';
 import { FLOW_FILE } from './flow.js';
@@ -122,7 +123,7 @@ const NEW_WORKTREE_ROOT = '../worktrees';
 const NEW_AGENT = 'claude';
 
 /** A new backlog's effort levels (F-85 D2): `high`, the level before F-85, for each. */
-const NEW_EFFORT = { refine: 'high', review: 'high', default: 'high' };
+const NEW_EFFORT = Object.fromEntries(EFFORT_KEYS.map((k) => [k, 'high']));
 
 /** A role's list as backlog.json has it, provider names lowercased; [] for none. */
 function roleList(value) {

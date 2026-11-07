@@ -607,7 +607,7 @@ export function checkModel(value, label) {
 }
 
 /** The keys of `backlog.json` `effort` (F-85 D2), each required. */
-const EFFORT_KEYS = ['refine', 'review', 'default'];
+export const EFFORT_KEYS = ['refine', 'review', 'default'];
 
 /**
  * `raw.effort` as `{ refine, review, default }` (F-85 D2): required, with
