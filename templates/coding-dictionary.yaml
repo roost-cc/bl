@@ -99,8 +99,8 @@ entries:
 
   - term: worktree
     meaning: >-
-      A git worktree of one repo on a work unit's branch, at `<root>/<branch>/<repo>`. The unit
-      directory, `<root>/<branch>`, holds one worktree per repo of the work unit.
+      A git worktree of one repo on a work unit's branch, at `<root>/<branch>/<repo>`. The work
+      unit's directory, `<root>/<branch>`, holds one worktree per repo of the work unit.
     avoid: [clone, copy, sandbox]
     decided: >-
       bl src/AGENTS.md, "`backlog.json` `worktrees`: the worktree root"
