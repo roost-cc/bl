@@ -1184,7 +1184,24 @@ fix steps, the merge resolution) walks `agent`, each from the top:
    of the run with no reset time, and the walk moves on. Either way the move
    is an `unavailable` history event (`{ session, agent, model, kind, scope,
 until, message }`) and one log line. Any other result is the step's: its
-   history entry records `agent` and `model`.
+   history entry records `agent`, `model` and `effort`.
+
+Each step runs at one effort level (F-85 D4, **Effort levels**).
+`sessionEffort(config, { mode, stories })` in `src/effort.js` picks it, and
+`runSession` calls it once, before the walk, so every configuration the walk
+reaches gets the same level:
+
+| Step                                                                   | Level                                                        |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `implement` of a story, and its retry (`runSession({ story })`)        | that story's `effort:`                                       |
+| `fix-tests`, `self-review`, `fix`, `fix-self-review`, `merge-resolve`  | the highest `effort:` of the unit's stories (`prep.ordered`) |
+| review passes and the verifier (`role: "review"`), also in `bl review` | `effort.review`                                              |
+
+A story with no `effort:` counts as `effort.default`. A story run's unit is
+its one story (`storyAsOrdered` carries its `effort`). `bl implement S-n`
+runs at the story's level, `bl implement F-n` at the highest level of the
+feature's stories. `runHeadlessSession` and `launchSession` take `effort`
+(null: none) and hand it to `provider.spawn`.
 
 An out-list entry with `scope: account` covers every configuration of its
 agent, one with `scope: model` that configuration only. The out-list is the
