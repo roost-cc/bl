@@ -8,8 +8,8 @@ edits:
 2. **Fix what you touched.** Resolve every finding on a story you created or edited in this
    session, including child stories from `bl new`. Fix the story itself. Do not add frontmatter
    keys or story fields to explain a change. A dependency is stated once, on the dependent
-   story's `depends_on`; the stories a story is required for are derived and never written, so
-   there is no reverse edge to add. `bl new --required-for` writes its edge on the other story's
+   story's `depends_on`. bl derives the stories that a story is required for and never writes
+   them, so there is no reverse edge to add. `bl new --required-for` writes its edge on the other story's
    `depends_on` and names that file in its output.
 3. **Surface, do not fix, the rest.** A finding on a story you did not touch is pre-existing.
    Leave that story alone and mention the finding in your final report.
