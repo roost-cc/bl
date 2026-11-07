@@ -21,7 +21,7 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { normalizeComponentId, parseFrontmatter } from './config.js';
+import { normalizeComponentId, parseFrontmatterOf } from './config.js';
 import { byRank } from './priority.js';
 import { readAllTasks, tasksOf, taskTableRows } from './task.js';
 import { readBlockers } from './blockers.js';
@@ -339,5 +339,5 @@ function rootText(graph) {
     if (e.code !== 'ENOENT') throw e;
     return { text: '', body: '' };
   }
-  return { text, body: parseFrontmatter(text).body };
+  return { text, body: parseFrontmatterOf(text, 'index.md').body };
 }

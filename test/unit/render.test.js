@@ -414,6 +414,17 @@ test('a feature and a story with a task render its Tasks table, a feature after 
   }
 });
 
+test('a root index.md whose frontmatter is not YAML fails naming the file', () => {
+  const { dir, cleanup } = flatBacklog();
+  try {
+    const g = graphOf(dir);
+    writeFileSync(join(dir, 'index.md'), '---\ntitle: [unclosed\n---\n\n# Acme\n');
+    assert.throws(() => renderPage(g, null), /^FrontmatterError: index\.md: frontmatter is not YAML/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('a deeper heading with a generated name (### Tasks) is hand-written and stays; the table goes in its own ## section', () => {
   const { dir, cleanup } = flatBacklog();
   try {
