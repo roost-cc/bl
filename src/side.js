@@ -337,19 +337,15 @@ function worktreeUndo(repoPath, branch, unitDir, adopted = () => false) {
 }
 
 /**
- * The files `bl side` and the sync it runs may write, besides new story
- * directories: the indexes the sync regenerates (the backlog's and every
- * component's, theme's, epic's and feature's) and the feature directory's
- * top-level files. `priority.md` is not one: nothing automated writes it
- * (F-78 D3).
+ * The files `bl side` may write besides new story directories: the feature
+ * directory's top-level files (its change document). It writes no index
+ * (F-79 D1).
  */
-function ownedFiles(root, featureDir) {
-  const files = [join(root, 'index.md')];
-  for (const kind of ['component', 'theme', 'epic', 'feature']) {
-    for (const u of unitFiles({ backlogRoot: root }, kind)) files.push(u.file);
-  }
-  if (featureDir) for (const f of readdirSync(featureDir)) if (f.endsWith('.md')) files.push(join(featureDir, f));
-  return files;
+function ownedFiles(featureDir) {
+  if (!featureDir) return [];
+  return readdirSync(featureDir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => join(featureDir, f));
 }
 
 /** The story directories' names (`unitFiles`), listed, never read. */
@@ -368,7 +364,7 @@ function backlogUndo(root, featureDir) {
   const storiesDir = join(root, 'stories');
   const storiesBefore = new Set(storyEntries(root));
   const read = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null);
-  const files = new Map(ownedFiles(root, featureDir).map((p) => [p, read(p)]));
+  const files = new Map(ownedFiles(featureDir).map((p) => [p, read(p)]));
   return () => {
     const added = storyEntries(root).filter((d) => !storiesBefore.has(d));
     const tracked = added.filter((d) => git(root, 'ls-files', '--', join('stories', d)).stdout.trim() !== '');
@@ -377,12 +373,7 @@ function backlogUndo(root, featureDir) {
         `${tracked.join(', ')} is committed, so it is left as it is; check it with bl validate and bl status`,
       );
     }
-    const now = featureDir
-      ? readdirSync(featureDir)
-          .filter((f) => f.endsWith('.md'))
-          .map((f) => join(featureDir, f))
-      : [];
-    for (const p of new Set([...files.keys(), ...now])) {
+    for (const p of new Set([...files.keys(), ...ownedFiles(featureDir)])) {
       const was = files.get(p) ?? null;
       if (read(p) === was) continue;
       if (was == null) rmSync(p, { force: true });
@@ -501,14 +492,12 @@ export async function main(argv) {
           repos: [{ repo, branch }],
         }).path;
       }
-      const extraPaths = [relative(cfg.backlogRoot, changePath)];
-      if (feature) extraPaths.push(relative(cfg.backlogRoot, feature.indexPath));
       const res = await syncAndCommit(cfg, {
         message: `chore: add ${storyId} (bl side, found by ${fromId})`,
         storyIds: [storyId],
-        extraPaths,
+        extraPaths: [relative(cfg.backlogRoot, changePath)],
       });
-      // The story, the feature's list and the change document are whole now;
+      // The story and the change document are whole now;
       // a failed commit is finished by hand, not undone.
       undo.clear();
       if (!feature)

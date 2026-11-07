@@ -31,7 +31,7 @@ import { parseFrontmatter, serializeFrontmatter } from './config.js';
 import { DERIVED_KEYS, loadBacklog } from './backlog-graph.js';
 import { withLock } from './lock.js';
 import { applyMigration } from './migration-txn.js';
-import { runSync, syncAndCommit } from './sync.js';
+import { syncAndCommit } from './sync.js';
 
 const MIGRATION_HEADING = '## F-77 derived-keys migration';
 
@@ -158,7 +158,6 @@ export async function migrate(config, { dryRun = false, log = console.log, commi
     const result = await applyMigration(config, {
       message: commitMessage(counts),
       commit,
-      sync: runSync,
       apply: ({ write }) => {
         for (const r of plan.rewrites) write(r.path, r.text);
         const path = join(root, 'MIGRATION.md');

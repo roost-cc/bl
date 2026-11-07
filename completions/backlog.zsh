@@ -117,7 +117,7 @@ _roost_bl() {
     'inbox:Everything waiting on you: escalations, tasks, update decisions'
     'block:Holds between units in blockers.json: add, remove, list'
     'task:An action for the operator in tasks/: file one, done, list'
-    'sync:Regenerate backlog index files'
+    'sync:Pull and push the backlog; --commit commits the named paths'
     'merge:Merge a story or feature: gates, merge, sync, push, remove worktrees'
     'log:Show bl activity log'
     'allow:Add permission patterns from agent logs'
@@ -229,7 +229,7 @@ _roost_bl() {
       local -a stories
       stories=( ${(f)"$(_roost_story_ids)"} )
       _arguments -s \
-        '--commit[Commit the sync and named stories under the backlog lock]' \
+        '--commit[Commit the named stories and paths under the backlog lock]' \
         '*'{-m,--message}'[Commit message; repeat for body paragraphs]:message:' \
         '*--story[A story you created or edited]:story id:(${stories})'
       ;;

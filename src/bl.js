@@ -146,7 +146,7 @@ Commands:
                list [<id>] [--fix]  Edges on and by a unit, met and unmet
   done       Mark a story as done (a feature is done by merge)
                --superseded   Mark as superseded instead
-  sync       Regenerate backlog index files (all levels)
+  sync       Pull and push the backlog; --commit commits the named paths
   format     Run the configured format plugin per file extension
                --story <id>   Required (or --no-story with explicit paths)
   lint       Run the configured lint plugin per file extension

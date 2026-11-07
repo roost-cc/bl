@@ -8,10 +8,10 @@ import { BL_BIN, lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/r
 import { GIT_ENV, git, headFiles, initGitBacklog } from '../helpers/git-backlog.js';
 import { loadConfig } from '../../src/config.js';
 import { acquireLock, LOCK_FILE, releaseLock } from '../../src/lock.js';
-import { runSync, syncAndCommit } from '../../src/sync.js';
+import { syncAndCommit } from '../../src/sync.js';
 
-// S-578: `bl sync` serialises on the backlog lock, and `bl sync --commit`
-// commits only what the sync wrote plus the named stories' directories.
+// S-578: `bl sync --commit` serialises on the backlog lock and commits only
+// the named stories' directories and paths (F-79 D1: it writes no index).
 
 const COMPONENT = 'components/C01-core';
 const S1 = 'stories/S1-done';
@@ -50,25 +50,6 @@ function blAsync(args, cwd) {
   );
 }
 
-test('(a) runSync inside a held lock does not block and leaves the outer hold in place', async () => {
-  const { dir, cleanup } = mkTempBacklog();
-  try {
-    const lockPath = join(dir, LOCK_FILE);
-    await acquireLock(dir);
-    const paths = await Promise.race([
-      runSync(loadConfig({ backlogRoot: dir })),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('runSync blocked')), 5000)),
-    ]);
-    assert.ok(Array.isArray(paths));
-    assert.ok(existsSync(lockPath), 'inner release must not drop the outer hold');
-    releaseLock(dir);
-    assert.equal(existsSync(lockPath), false);
-  } finally {
-    releaseLock(dir);
-    cleanup();
-  }
-});
-
 test('(a) a bare bl sync releases the lock when it finishes', () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
@@ -80,13 +61,17 @@ test('(a) a bare bl sync releases the lock when it finishes', () => {
   }
 });
 
-test('(b) bl sync waits for another holder of the lock', async (t) => {
+test('(b) bl sync --commit waits for another holder of the lock', async (t) => {
   if (!lockOwnerVisible(t)) return;
-  const { dir, cleanup } = mkTempBacklog();
+  const { dir, cleanup } = gitBacklog();
   try {
+    setField(dir, S2, 'points', 5);
     await acquireLock(dir);
     let done = false;
-    const run = startBlBehindLock(['sync'], { cwd: dir, env: GIT_ENV });
+    const run = startBlBehindLock(['sync', '--commit', '-m', 'chore: two', '--story', 'S-2'], {
+      cwd: dir,
+      env: GIT_ENV,
+    });
     const pending = run.closed.then((r) => {
       done = true;
       return r;
@@ -118,27 +103,24 @@ test('(b) overlapping sync --commit runs serialise with no torn index or index.l
     const subjects = git(dir, 'log', '--format=%s').split('\n');
     assert.ok(subjects.includes('chore: two'));
     assert.ok(subjects.includes('chore: three'));
-    // Everything is committed, and a fresh sync has nothing left to rewrite.
+    // Everything is committed, and a bare bl sync writes nothing.
     assert.equal(git(dir, 'status', '--porcelain'), '');
     const again = runBl(['sync'], { cwd: dir });
     assert.equal(again.status, 0, again.stderr);
     assert.equal(git(dir, 'status', '--porcelain'), '');
-    const componentIndex = readFileSync(join(dir, COMPONENT, 'index.md'), 'utf8');
-    assert.match(componentIndex, /S-2.*\| 5 +\| backlog +\|$/m);
-    assert.match(componentIndex, /S-3.*\| 8 +\| backlog +\|$/m);
   } finally {
     cleanup();
   }
 });
 
-test("(c) --commit stages sync's paths and the --story dirs, and moves no story", () => {
+test('(c) --commit stages the --story dirs and nothing else, and moves no story', () => {
   const { dir, cleanup } = gitBacklog();
   try {
     setField(dir, S1, 'status', 'done');
     setField(dir, S2, 'status', 'refined');
     writeFileSync(join(dir, S2, 'notes.txt'), 'attachment\n');
     // Another agent edits S-3 during the lock hold: the .md format pass runs
-    // while this sync holds the lock, so a formatter that edits S-3 stands in.
+    // while bl sync holds the lock, so a formatter that edits S-3 stands in.
     const cfgPath = join(dir, 'backlog.json');
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
     const s3 = join(dir, S3, 'index.md');
@@ -155,10 +137,9 @@ test("(c) --commit stages sync's paths and the --story dirs, and moves no story"
     const files = git(dir, 'show', '--name-status', '--no-renames', '--format=', 'HEAD').split('\n').sort();
     assert.ok(files.includes(`M\t${S2}/index.md`), files.join('\n'));
     assert.ok(files.includes(`A\t${S2}/notes.txt`));
-    // The done story leaves the component's table; its directory stays put
-    // (F-49 D3) and, not named with --story, out of the commit.
-    assert.ok(files.includes(`M\t${COMPONENT}/index.md`));
-    assert.doesNotMatch(readFileSync(join(dir, COMPONENT, 'index.md'), 'utf8'), /S-1/);
+    // No index is written (F-79 D1). The done story stays put (F-49 D3) and,
+    // not named with --story, out of the commit.
+    assert.deepEqual(files, [`A\t${S2}/notes.txt`, `M\t${S2}/index.md`]);
     assert.ok(existsSync(join(dir, S1, 'index.md')));
     assert.ok(!files.some((f) => f.includes('S1-done')), files.join('\n'));
     assert.ok(!files.some((f) => f.includes('S3-bystander')), files.join('\n'));
@@ -170,25 +151,48 @@ test("(c) --commit stages sync's paths and the --story dirs, and moves no story"
   }
 });
 
-test('(c) --commit leaves out a dirty index that this sync rewrites byte-for-byte', () => {
+test('(c) --commit formats the changed Markdown files among its paths and commits only them', () => {
   const { dir, cleanup } = gitBacklog();
   try {
-    // An unrelated agent's uncommitted edit to a generated index: sync keeps
-    // the prose outside its tables, so it rewrites the file unchanged.
-    const otherIndex = join(dir, FROM, 'index.md');
-    writeFileSync(otherIndex, readFileSync(otherIndex, 'utf8').replace('## Stories', 'Unrelated note.\n\n## Stories'));
-    const seeded = runBl(['sync'], { cwd: dir });
-    assert.equal(seeded.status, 0, seeded.stderr);
-    assert.match(readFileSync(otherIndex, 'utf8'), /Unrelated note\./);
+    const marker = join(dir, '.git', 'formatted.jsonl');
+    const recorder = join(dir, '.git', 'record-format.mjs');
+    writeFileSync(
+      recorder,
+      "import { writeFileSync } from 'fs';\n" +
+        "writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3)) + '\\n', { flag: 'a' });\n",
+    );
+    const cfgPath = join(dir, 'backlog.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    cfg.plugins = { md: { format: `node ${recorder} ${marker} {{path}}` } };
+    cfg.language_dispatch = { format: { '.md': 'md' } };
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    git(dir, 'add', 'backlog.json');
+    git(dir, 'commit', '-q', '-m', 'formatter');
 
+    // S-2 changed, with an unchanged Markdown file beside it; C02's index
+    // changed but is not named; C01's index is named but unchanged.
     setField(dir, S2, 'points', 5);
-    const r = runBl(['sync', '--commit', '-m', 'chore: points S-2', '--story', 'S-2'], { cwd: dir, env: GIT_ENV });
+    writeFileSync(join(dir, S2, 'notes.md'), '# Notes\n');
+    git(dir, 'add', `${S2}/notes.md`);
+    git(dir, 'commit', '-q', '-m', 'notes');
+    const otherIndex = join(dir, FROM, 'index.md');
+    writeFileSync(otherIndex, `${readFileSync(otherIndex, 'utf8')}\nUnrelated note.\n`);
+
+    const r = runBl(
+      ['sync', '--commit', '-m', 'chore: points S-2', '--story', 'S-2', '--path', `${COMPONENT}/index.md`],
+      {
+        cwd: dir,
+        env: GIT_ENV,
+      },
+    );
     assert.equal(r.status, 0, r.stderr);
 
-    const files = git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n');
-    assert.ok(files.includes(`${S2}/index.md`), files.join('\n'));
-    assert.ok(files.includes(`${COMPONENT}/index.md`), files.join('\n'));
-    assert.ok(!files.includes(`${FROM}/index.md`), files.join('\n'));
+    const formatted = readFileSync(marker, 'utf8')
+      .trim()
+      .split('\n')
+      .flatMap((line) => JSON.parse(line));
+    assert.deepEqual(formatted, [`${S2}/index.md`]);
+    assert.deepEqual(headFiles(dir), [`M\t${S2}/index.md`]);
     assert.match(git(dir, 'status', '--porcelain'), /components\/C02-other\/index\.md/);
   } finally {
     cleanup();

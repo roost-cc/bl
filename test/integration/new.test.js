@@ -506,14 +506,12 @@ test('bl new --component commits the new component dir', () => {
   }
 });
 
-test('bl new --feature commits the feature file it appended to', () => {
+test('bl new --feature commits its story and leaves the feature file alone (F-79 D1)', () => {
   const { dir, cleanup } = gitNewBacklog();
   try {
     const r = runBl([...NEW_IN_C01, '--title', 'Linked', '--feature', 'F-1'], { cwd: dir, env: GIT_ENV });
     assert.equal(r.status, 0, r.stderr);
-    const files = headFiles(dir);
-    assert.ok(files.includes('M\tfeatures/F1-invites/index.md'), files.join('\n'));
-    assert.ok(files.includes('A\tstories/S2-linked/index.md'), files.join('\n'));
+    assert.deepEqual(headFiles(dir), ['A\tstories/S2-linked/index.md']);
     assertOnlyBystandersDirty(dir);
   } finally {
     cleanup();

@@ -1,53 +1,26 @@
 /**
- * sync.js — regenerate the backlog's index tables (F-49 D3, D7).
+ * sync.js — bring the backlog up to date with origin, and commit and push
+ * (F-79 D1).
  *
- *   1. Per-component index    backlog/components/C<nn>-*\/index.md
- *   2. Per-feature index      backlog/features/F<nn>-*\/index.md
- *   3. Per-epic index         backlog/epics/E<nn>-*\/index.md
- *   4. Per-theme index        backlog/themes/<slug>/index.md
- *   5. Top-level index        backlog/index.md
+ * `bl sync` writes no derived list: every table is rendered when read
+ * (`render.js`). What is left:
  *
- * `priority.md` is never written here (F-78 D3): only `bl rank` or a person
- * edits it.
- *
- * Rules:
- *   - Story IDs are globally unique (enforced); stories live in
- *     backlog/stories/S<n>-*\/ and name their component in `component:`.
- *   - Priority order is `priority.md`'s, through the graph's `rankOf`
- *     (`byRank`, F-78 D2).
- *   - Points & status read from story frontmatter. Nothing moves: status is
- *     frontmatter, never location.
- *   - A component's index lists its open stories and the active features
- *     touching it; a component has no points or status (F-49 D4).
- *   - A feature gets its Stories table, from the stories naming it. Its
- *     stories, points and components, and an epic's features and status,
- *     are derived by the graph (`loadBacklog`) and never written (F-77 D3).
- *   - A feature or story with a task gets its Tasks table (F-65 D1), from
- *     the task files' `unit:` and their edges in `blockers.json`; a unit
- *     with none is left as it is.
- *   - An epic gets a Features table; a theme lists its epics, then its
- *     features with no epic (F-51 D3).
- *
- * `runSync` holds the backlog-root lock (`lock.js`, re-entrant) for the whole
- * regeneration and returns every backlog path it wrote. Every write replaces
- * its file atomically (`atomicWriteFile`), so a failed one leaves the
- * previous file whole; a feature or story spec is rewritten through
- * `updateSpecFile`, under its spec lock, from the spec as it is then, not as
- * it was collected (F-67 D2, D4).
- * `bl sync --commit` commits exactly those paths plus the `--story`
- * directories the caller names, inside the same lock hold.
+ *   - `pullBeforeCommand`: rebase onto `origin/main` before a command, settle
+ *     an interrupted `bl new --feature`, regenerate `allowed-tools.json` after
+ *     a pull, and push a `main` still ahead.
+ *   - `syncAndCommit`: under the backlog lock, format the changed Markdown
+ *     files among the paths it is given, then commit exactly those paths and
+ *     push.
+ *   - `bl sync` with no `--commit` pulls and pushes (`bl.js` runs
+ *     `pullBeforeCommand` for it) and writes nothing.
  */
 
-import { readFileSync, statSync, existsSync, rmSync } from 'fs';
+import { existsSync, rmSync, statSync } from 'fs';
 import { join, relative } from 'path';
 import { spawnSync } from 'child_process';
-import { stringify as stringifyYaml } from 'yaml';
-import { DERIVED_KEYS, graphOf } from './backlog-graph.js';
 import {
   loadConfig,
   configForRepo,
-  parseFrontmatter,
-  serializeFrontmatter,
   parsePluginCascade,
   bucketByPlugin,
   runPluginBatch,
@@ -59,14 +32,14 @@ import {
   THEMES_DIR,
   EPICS_DIR,
   agentFlagOf,
-  DEFAULT_BACKLOG_TITLE,
 } from './config.js';
-import { acquireLock, releaseLock, withLock } from './lock.js';
+import { acquireLock, releaseLock } from './lock.js';
 import {
   commitPaths,
   dirtySnapshot,
   hasOriginRemote,
   markRegenerationPending,
+  parsePorcelainZ,
   pathsChangedSince,
   PULL_REGEN_PENDING,
   pullBacklog,
@@ -75,723 +48,15 @@ import {
   reportBacklogPull,
 } from './backlog-commit.js';
 import { ensureAllowedTools } from './allowed-tools.js';
-import { atomicWriteFile } from './atomic-write.js';
-import { updateSpecFile } from './spec-file.js';
-import { RUN_STATE_KEYS } from './change-doc.js';
-import { findStoryDir, readAllStories, readComponents } from './story.js';
-import { byRank } from './priority.js';
-import { VALID_STORY_KEYS, VALID_COMPONENT_KEYS, VALID_FEATURE_KEYS, findDuplicateIds } from './validate.js';
-import { readAllEpics, readAllThemes } from './theme.js';
-import { readAllTasks, tasksOf, taskTableRows } from './task.js';
-import { readBlockers } from './blockers.js';
-import { loadFlow } from './flow.js';
-import { FEATURES_DIR, readAllFeatures, storyLinkFromFeature, featureRepoOrder, LEAD_REPO } from './feature.js';
-
-// ---------------------------------------------------------------------------
-// Markdown tables
-// ---------------------------------------------------------------------------
-
-function stripLink(cell) {
-  return String(cell ?? '').replace(/^\[([^\]]+)\]\(.*\)$/, '$1');
-}
-
-function parseTableIds(text) {
-  if (!text) return [];
-  return text
-    .trim()
-    .split('\n')
-    .filter((l) => l.trim().startsWith('|'))
-    .slice(2)
-    .map((l) =>
-      l
-        .split('|')
-        .slice(1, -1)
-        .map((c) => c.trim()),
-    )
-    .map((cells) => stripLink(cells[0]))
-    .filter(Boolean);
-}
-
-export function formatTable(headers, rows) {
-  const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i] ?? '').length), 3));
-  const pad = (s, w) => String(s ?? '').padEnd(w);
-  const row = (r) => '| ' + headers.map((_, i) => pad(r[i], widths[i])).join(' | ') + ' |';
-  const sep = '| ' + widths.map((w) => '-'.repeat(w)).join(' | ') + ' |';
-  return [row(headers), sep, ...rows.map(row)].join('\n');
-}
+import { findStoryDir } from './story.js';
+import { FEATURES_DIR } from './feature.js';
 
 /**
- * Flatten an `fm.commit` value into the single string that sync stores in its
- * internal story map. Scalar values pass through; map values prefer
- * `repo`'s SHA (a story's one repo; for a feature, which names none, `bl`,
- * the lead of the repo order, F-52 D3), fall back to the first map value,
- * else "". The on-disk frontmatter is left untouched — sync only writes
- * rolled-up index tables.
- */
-export function flattenCommit(rawCommit, repo = LEAD_REPO) {
-  if (rawCommit == null || rawCommit === '') return '';
-  if (typeof rawCommit === 'string') return rawCommit;
-  if (typeof rawCommit === 'object' && !Array.isArray(rawCommit)) {
-    if (repo && typeof rawCommit[repo] === 'string') {
-      return rawCommit[repo];
-    }
-    const first = Object.values(rawCommit).find((v) => typeof v === 'string');
-    return first ?? '';
-  }
-  return '';
-}
-
-// ---------------------------------------------------------------------------
-// Story and component collection
-// ---------------------------------------------------------------------------
-
-function noteMarkdown(touchedMarkdown, path) {
-  if (path.endsWith('.md')) touchedMarkdown.add(path);
-}
-
-/**
- * Replace `path` with `content` atomically (`atomicWriteFile`), unless it
- * equals `previous`, the bytes read before the regeneration. Only the
- * backlog lock's writers use it (epic, theme, component and top-level
- * indexes, F-67 D2); a story or feature spec goes through `updateSpecFile`.
- */
-function writeFileIfChanged(backlogRoot, path, content, previous, touchedMarkdown) {
-  if (content === previous) return false;
-  atomicWriteFile(backlogRoot, path, content);
-  noteMarkdown(touchedMarkdown, path);
-  return true;
-}
-
-/**
- * Every story under `stories/` as a sync record: its component comes from
- * `readAllStories` (`story.js` `placeStory`), the rest from its
- * frontmatter, the graph's (`loadBacklog`), so no story is read twice.
- * Unknown statuses and keys are warnings, as `bl validate` makes them errors.
- */
-function readStoriesForSync(config, flow) {
-  const stories = [];
-  // One snapshot for both, so every record has its unit.
-  const graph = graphOf(config);
-  const units = new Map(graph.list('story').map((u) => [u.file, u]));
-  for (const s of readAllStories({ ...config, backlogGraph: graph })) {
-    const { fm } = units.get(s.indexPath);
-    const status = fm.status ?? 'backlog';
-    if (!flow.statusesOf('story').includes(status)) {
-      console.warn(`  warning: ${s.storyRelPath} has unknown status "${status}"`);
-    }
-    // Run-state keys left in an index.md are `bl validate`'s
-    // run-state-in-spec errors, and a derived key its derived-key, not
-    // unknown keys.
-    for (const key of Object.keys(fm)) {
-      if (Object.hasOwn(DERIVED_KEYS.story, key)) continue;
-      if (!VALID_STORY_KEYS.has(key) && !key.startsWith('plugins-') && !RUN_STATE_KEYS.includes(key)) {
-        console.warn(`  warning: ${s.storyRelPath} has unknown frontmatter key "${key}"`);
-      }
-    }
-    stories.push({
-      componentId: s.componentId,
-      id: s.id,
-      title: s.title,
-      type: s.type,
-      points: parseInt(fm.points ?? '0', 10) || 0,
-      status,
-      added: fm.added ?? '',
-      completed: fm.completed ?? '',
-      commit: flattenCommit(fm.commit, s.unitRepo),
-      feature: s.feature,
-      unitRepo: s.unitRepo,
-      depends_on: fm.depends_on,
-      storyEntry: s.storyEntry,
-      indexPath: s.indexPath,
-    });
-  }
-  return stories;
-}
-
-// ---------------------------------------------------------------------------
-// Link helpers
-// ---------------------------------------------------------------------------
-//
-// Every unit sits at a fixed depth (F-49 D3): `stories/<entry>/`,
-// `components/<entry>/`, `features/<entry>/`, `epics/<entry>/` and
-// `themes/<slug>/` are all two levels below the backlog root, so a link from one index to another is
-// `../../` and the target's root-relative path. Nothing moves when its status
-// changes, so no link depends on one.
-
-function storyLinkFromTop(story) {
-  return `${STORIES_DIR}/${story.storyEntry}/index.md`;
-}
-
-function componentLinkFromTop(component) {
-  return `${COMPONENTS_DIR}/${component.componentEntry}/index.md`;
-}
-
-/** A root-relative path, linked from an index two levels down. */
-function fromUnit(topPath) {
-  return `../../${topPath}`;
-}
-
-/**
- * `[C01](<path>)` for a story's component, or the bare id when the component
- * has no directory (`bl validate` reports it as `component-unknown`), so no
- * link points at a missing file.
- */
-function componentRef(componentsById, story, link) {
-  const c = componentsById.get(story.componentId);
-  if (!c) return story.componentId;
-  return `[${c.id}](${link(componentLinkFromTop(c))})`;
-}
-
-// ---------------------------------------------------------------------------
-// Section helpers
-// ---------------------------------------------------------------------------
-
-function escapeRe(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Replace the body of `## <heading>` with `content`, or create the section
- * (after `## <after>` when that exists, else before `## <before>` when that
- * exists, else at the end). A section that ends the file takes the trailing
- * blank lines with it, so a rewrite never grows the file. Function replacers
- * throughout so `$` in titles never turns into a backreference.
- */
-function upsertSection(body, heading, content, { after, before } = {}) {
-  // The section body runs to the next `## ` (keeping the newline before it)
-  // or to the end of the file (taking the trailing whitespace).
-  const END = `(?:(\\n)(?=## )|\\s*$)`;
-  const re = new RegExp(`(## ${escapeRe(heading)}\\n)([\\s\\S]*?)${END}`);
-  if (re.test(body)) {
-    return body.replace(re, (_m, head, _old, nl) => `${head}\n${content}\n${nl ?? ''}`);
-  }
-  if (after) {
-    const afterRe = new RegExp(`(## ${escapeRe(after)}\\n[\\s\\S]*?)${END}`);
-    if (afterRe.test(body)) {
-      return body.replace(afterRe, (_m, prev, nl) => `${prev.trimEnd()}\n\n## ${heading}\n\n${content}\n${nl ?? ''}`);
-    }
-  }
-  if (before && hasSection(body, before)) {
-    return body.replace(new RegExp(`^## ${escapeRe(before)}\\n`, 'm'), (m) => `## ${heading}\n\n${content}\n\n${m}`);
-  }
-  return `${body.trimEnd()}\n\n## ${heading}\n\n${content}\n`;
-}
-
-function hasSection(body, heading) {
-  return new RegExp(`^## ${escapeRe(heading)}\\n`, 'm').test(body);
-}
-
-// ---------------------------------------------------------------------------
-// Features
-// ---------------------------------------------------------------------------
-
-/**
- * Read every feature and resolve its story records against `storyMap`.
- * Nothing moves: a closed feature stays in `features/` (F-49 D3).
- */
-function readFeaturesForSync(config, storyMap) {
-  const features = [];
-  for (const f of readAllFeatures(config)) {
-    for (const key of Object.keys(f.fm)) {
-      if (Object.hasOwn(DERIVED_KEYS.feature, key)) continue;
-      if (!VALID_FEATURE_KEYS.has(key) && !key.startsWith('plugins-') && !RUN_STATE_KEYS.includes(key)) {
-        console.warn(`  warning: ${f.featureRelPath} has unknown frontmatter key "${key}"`);
-      }
-    }
-    f.storyRecords = f.stories.map((id) => storyMap.get(id)).filter(Boolean);
-    f.repos = featureRepoOrder(f.storyRecords);
-    f.commit = flattenCommit(f.fm.commit);
-    features.push(f);
-  }
-  return features;
-}
-
-function featureLinkFromTop(f) {
-  return `${FEATURES_DIR}/${f.featureEntry}/index.md`;
-}
-
-function featuresTouchingComponent(features, componentId, flow) {
-  return features.filter(
-    (f) => !flow.meets('feature', f.status, 'done') && f.storyRecords.some((s) => s.componentId === componentId),
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tasks (F-65 D1)
-// ---------------------------------------------------------------------------
-
-/**
- * What the `## Tasks` tables are built from: every task, the edges in
- * `blockers.json` and the flow, for the verbs a hold names. A
- * `blockers.json` that cannot be read is `bl validate`'s to report; the table
- * then shows no holds.
- */
-function readTaskContext(config, flow) {
-  const tasks = readAllTasks(config);
-  if (tasks.length === 0) return { tasks, edges: [], flow };
-  let edges = [];
-  try {
-    edges = readBlockers(config.backlogRoot).edges;
-  } catch {
-    // Reported by bl validate (blockers-json).
-  }
-  return { tasks, edges, flow };
-}
-
-/**
- * `body` with its `## Tasks` table rewritten after `## <after>`, when unit
- * `id` has a task; else `body` unchanged, so a unit with none is left byte
- * for byte. Every unit sits two levels down (`fromUnit`).
- */
-function withTasksTable(body, id, taskCtx, after) {
-  const own = tasksOf(id, taskCtx.tasks);
-  if (own.length === 0) return body;
-  const { headers, rows } = taskTableRows(own, taskCtx.edges, taskCtx.flow, fromUnit);
-  return upsertSection(body, 'Tasks', formatTable(headers, rows), { after });
-}
-
-/**
- * Write the `## Tasks` table of every story with a task, after
- * `## Dependencies`, through `updateSpecFile`: the table goes into the spec
- * as read under its spec lock, so a token step entry a session wrote since
- * collection stays. Called inside the backlog lock (F-67 D4: the backlog
- * lock outer, the spec lock inner, one spec lock at a time).
- */
-function syncStoryTasks(backlogRoot, stories, taskCtx, touchedMarkdown) {
-  const units = new Set(taskCtx.tasks.map((t) => t.unit));
-  for (const s of stories) {
-    if (!units.has(s.id)) continue;
-    const wrote = updateSpecFile(backlogRoot, s.indexPath, (_fm, body) => {
-      const newBody = withTasksTable(body, s.id, taskCtx, 'Dependencies');
-      return newBody === body ? false : newBody;
-    });
-    if (wrote) noteMarkdown(touchedMarkdown, s.indexPath);
-  }
-}
-
-/**
- * Regenerate one feature's Stories table, and its Tasks table when it has a
- * task. Its stories, points and components are derived by the graph and
- * never written (F-77 D3); the pre-F-49 `epics:` roll-up is dropped.
- *
- * The rewrite goes through `updateSpecFile` and starts from the spec as read
- * under its spec lock, not from `f.content` read at collection, so a token
- * step entry a session wrote in between stays. Called inside the backlog
- * lock (F-67 D4: the backlog lock outer, the spec lock inner, one spec lock
- * at a time).
- */
-function syncFeature(backlogRoot, f, componentsById, touchedMarkdown, taskCtx = { tasks: [] }) {
-  const rows = f.storyRecords.map((s) => [
-    `[${s.id}](${storyLinkFromFeature(f, storyLinkFromTop(s))})`,
-    componentRef(componentsById, s, (p) => storyLinkFromFeature(f, p)),
-    s.type,
-    s.title,
-    s.points,
-    s.status,
-  ]);
-  const table = formatTable(['ID', 'Component', 'Type', 'Title', 'Points', 'Status'], rows);
-  const changed = updateSpecFile(backlogRoot, f.indexPath, (fm, body) => {
-    delete fm.epics;
-    return withTasksTable(upsertSection(body, 'Stories', table, { after: 'Acceptance' }), f.id, taskCtx, 'Stories');
-  });
-  if (changed) noteMarkdown(touchedMarkdown, f.indexPath);
-  info(`  ${f.featureRelPath} — ${f.storyRecords.length} stories, ${f.points} points${changed ? '' : ' (unchanged)'}`);
-}
-
-// ---------------------------------------------------------------------------
-// Epics and themes (F-51 D3)
-// ---------------------------------------------------------------------------
-
-function epicLinkFromTop(e) {
-  return `${EPICS_DIR}/${e.epicEntry}/index.md`;
-}
-
-function themeLinkFromTop(t) {
-  return `${THEMES_DIR}/${t.themeEntry}/index.md`;
-}
-
-function featureNum(f) {
-  return parseInt(String(f.id).replace(/^F-/, ''), 10);
-}
-
-/** `<closed>/<total>` over `items` of the flow type `type`, by their `status`. */
-function doneOfTotal(items, type, flow) {
-  return `${items.filter((i) => flow.meets(type, i.status, 'done')).length}/${items.length}`;
-}
-
-/** `<closed points>/<total points>` over a feature's story records. */
-function pointsDoneOfTotal(stories, flow) {
-  const done = stories.filter((s) => flow.meets('story', s.status, 'done')).reduce((sum, s) => sum + s.points, 0);
-  return `${done}/${stories.reduce((sum, s) => sum + s.points, 0)}`;
-}
-
-/** The Features table of an epic or theme index (links from two levels down). */
-function valueFeaturesTable(features, flow) {
-  return formatTable(
-    ['ID', 'Title', 'Status', 'Stories', 'Points'],
-    features.map((f) => [
-      `[${f.id}](${fromUnit(featureLinkFromTop(f))})`,
-      f.title,
-      f.status,
-      doneOfTotal(f.storyRecords, 'story', flow),
-      pointsDoneOfTotal(f.storyRecords, flow),
-    ]),
-  );
-}
-
-/**
- * Regenerate one epic's Features table after `## Outcome`. Its features and
- * status are the graph's (`readAllEpics`), derived and never written (F-77
- * D3).
- */
-function syncEpic(backlogRoot, epic, features, touchedMarkdown, flow) {
-  const content = readFileSync(epic.indexPath, 'utf8');
-  const { fm, body } = parseFrontmatter(content);
-  const byId = new Map(features.map((f) => [f.id, f]));
-  const own = epic.features.map((id) => byId.get(id)).filter(Boolean);
-  const newBody = upsertSection(body, 'Features', valueFeaturesTable(own, flow), {
-    after: 'Outcome',
-  });
-  const changed = writeFileIfChanged(
-    backlogRoot,
-    epic.indexPath,
-    serializeFrontmatter(fm) + newBody,
-    content,
-    touchedMarkdown,
-  );
-  info(`  ${epic.relPath} — ${own.length} features, ${epic.status}${changed ? '' : ' (unchanged)'}`);
-  return { ...epic, featureRecords: own };
-}
-
-/**
- * Regenerate one theme's index: its epics (id, title, status, features
- * done/total), then its features that have no epic.
- */
-function syncTheme(backlogRoot, theme, epics, features, touchedMarkdown, flow) {
-  const content = readFileSync(theme.indexPath, 'utf8');
-  const { fm, body } = parseFrontmatter(content);
-  const own = epics.filter((e) => e.theme === theme.id);
-  const loose = features
-    .filter((f) => f.theme === theme.id && !String(f.epic ?? '').trim())
-    .sort((a, b) => featureNum(a) - featureNum(b));
-  const epicsTable = formatTable(
-    ['ID', 'Title', 'Status', 'Features'],
-    own.map((e) => [
-      `[${e.id}](${fromUnit(epicLinkFromTop(e))})`,
-      e.title,
-      e.status,
-      doneOfTotal(e.featureRecords, 'feature', flow),
-    ]),
-  );
-  let newBody = upsertSection(body, 'Epics', epicsTable, { after: 'Overview' });
-  newBody = upsertSection(newBody, 'Features', valueFeaturesTable(loose, flow), {
-    after: 'Epics',
-  });
-  const changed = writeFileIfChanged(
-    backlogRoot,
-    theme.indexPath,
-    serializeFrontmatter(fm) + newBody,
-    content,
-    touchedMarkdown,
-  );
-  info(
-    `  ${theme.relPath} — ${own.length} epics, ${loose.length} features without an epic${changed ? '' : ' (unchanged)'}`,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Component-level sync
-// ---------------------------------------------------------------------------
-
-/**
- * Regenerate one component's index: its open stories in priority order and
- * the active features touching it. A component has no points or status
- * (F-49 D4), so its frontmatter is left as it is.
- */
-function syncComponent(backlogRoot, component, stories, byPriority, touchedMarkdown, features, flow) {
-  const content = readFileSync(component.indexPath, 'utf8');
-  const { fm, body } = parseFrontmatter(content);
-  const rel = `${COMPONENTS_DIR}/${component.componentEntry}/index.md`;
-
-  for (const key of Object.keys(fm)) {
-    if (!VALID_COMPONENT_KEYS.has(key) && !key.startsWith('plugins-')) {
-      console.warn(`  warning: ${rel} has unknown key "${key}"`);
-    }
-  }
-
-  const sorted = [...stories].sort(byPriority);
-  const active = sorted.filter((s) => !flow.meets('story', s.status, 'done'));
-  const done = sorted.length - active.length;
-
-  const storiesTable = formatTable(
-    ['ID', 'Type', 'Title', 'Points', 'Status'],
-    active.map((s) => [`[${s.id}](${fromUnit(storyLinkFromTop(s))})`, s.type, s.title, s.points, s.status]),
-  );
-
-  let newBody = body.replace(/\n## Completed[\s\S]*$/, '').trimEnd() + '\n';
-  newBody = upsertSection(newBody, 'Stories', storiesTable);
-
-  // Features touching this component. The section is only created once a
-  // feature references a story here, so other components keep their shape.
-  const touching = featuresTouchingComponent(features, component.id, flow);
-  if (touching.length > 0 || hasSection(newBody, 'Features')) {
-    const featuresTable = formatTable(
-      ['ID', 'Title', 'Status', 'Stories here'],
-      touching.map((f) => [
-        `[${f.id}](${fromUnit(featureLinkFromTop(f))})`,
-        f.title,
-        f.status,
-        f.storyRecords.filter((s) => s.componentId === component.id).length,
-      ]),
-    );
-    newBody = upsertSection(newBody, 'Features', featuresTable, {
-      after: 'Stories',
-    });
-  }
-  newBody = newBody.trimEnd() + '\n';
-
-  const newFile = serializeFrontmatter(fm) + newBody;
-  const changed = writeFileIfChanged(backlogRoot, component.indexPath, newFile, content, touchedMarkdown);
-  info(`  ${rel} — ${active.length} active, ${done} done${changed ? '' : ' (unchanged)'}`);
-}
-
-// ---------------------------------------------------------------------------
-// Top-level sync
-// ---------------------------------------------------------------------------
-
-/**
- * The backlog's display name in its top-level `index.md`: `backlog.json`
- * `title`, else "Backlog" (`config.title`, S-581).
- */
-function indexTitle(config) {
-  return config.title ?? DEFAULT_BACKLOG_TITLE;
-}
-
-/** `title` as a one-line YAML scalar, quoted only when YAML needs it. */
-function yamlScalar(title) {
-  return stringifyYaml(title, { lineWidth: 0 }).trimEnd();
-}
-
-/**
- * Set the top-level index's frontmatter `title:` and its first `# ` heading
- * to `title`, so a change to `backlog.json` `title` reaches an index an
- * older sync wrote.
- */
-function withIndexTitle(content, title) {
-  const fm = content.match(/^---\n([\s\S]*?\n)?---\n/);
-  // Function replacers: a `$&` or `$1` in the title is text, not a pattern.
-  const head = fm ? fm[0].replace(/^title: .*$/m, () => `title: ${yamlScalar(title)}`) : '';
-  return head + content.slice(fm ? fm[0].length : 0).replace(/^# .*$/m, () => `# ${title}`);
-}
-
-function ensureTopLevelIndex(backlogRoot, touchedMarkdown, title) {
-  const indexPath = join(backlogRoot, 'index.md');
-  if (existsSync(indexPath)) return indexPath;
-  const stub =
-    `---\n` +
-    `title: ${yamlScalar(title)}\n` +
-    `---\n\n` +
-    `# ${title}\n\n` +
-    `Total backlog: 0 points across 0 stories in 0 components.\n\n` +
-    `## Components\n\n` +
-    `| ID | Title | Repo | Home | Open | Done |\n` +
-    `| -- | ----- | ---- | ---- | ---- | ---- |\n\n` +
-    `## Backlog\n\n` +
-    `| ID | Type | Component | Title | Points |\n` +
-    `| -- | ---- | --------- | ----- | ------ |\n`;
-  atomicWriteFile(backlogRoot, indexPath, stub);
-  noteMarkdown(touchedMarkdown, indexPath);
-  return indexPath;
-}
-
-function syncTopLevel(config, ctx, touchedMarkdown, features) {
-  const { storyMap, components, componentsById, themes, epics } = ctx;
-  const indexPath = ensureTopLevelIndex(config.backlogRoot, touchedMarkdown, indexTitle(config));
-  const content = readFileSync(indexPath, 'utf8');
-
-  // The Backlog table in the backlog's priority (F-78 D2), as every other
-  // index sorts its stories; it is written, never read back.
-  const ordered = [...storyMap.values()].sort(ctx.byPriority);
-  const closed = (s) => ctx.flow.meets('story', s.status, 'done');
-  const active = ordered.filter((s) => !closed(s));
-  const done = ordered.length - active.length;
-
-  // No points: a component is a label and never finishes (F-49 D4).
-  const componentRows = components.map((c) => {
-    const stories = [...storyMap.values()].filter((s) => s.componentId === c.id);
-    const open = stories.filter((s) => !closed(s)).length;
-    return [`[${c.id}](${componentLinkFromTop(c)})`, c.title, c.repo, c.home ? 'yes' : '', open, stories.length - open];
-  });
-
-  const totalPoints = active.reduce((sum, s) => sum + s.points, 0);
-
-  const componentsTable = formatTable(['ID', 'Title', 'Repo', 'Home', 'Open', 'Done'], componentRows);
-  const backlogTable = formatTable(
-    ['ID', 'Type', 'Component', 'Title', 'Points'],
-    active.map((s) => [
-      `[${s.id}](${storyLinkFromTop(s)})`,
-      s.type,
-      componentRef(componentsById, s, (p) => p),
-      s.title,
-      s.points,
-    ]),
-  );
-
-  // A Projects table an older sync wrote goes (F-51 D3): projects are
-  // retired and no project page is written for it to link to.
-  let newContent = withIndexTitle(content, indexTitle(config))
-    .replace(/\n*## Completed\n[\s\S]*$/, '')
-    .replace(
-      /Total backlog: \d+ points across \d+ stories in \d+ components\./,
-      `Total backlog: ${totalPoints} points across ${active.length} stories in ${componentRows.length} components.`,
-    )
-    .replace(/^## Projects\n[\s\S]*?(?=^## |(?![\s\S]))/m, '');
-
-  // Themes table (F-51 D3): created once the backlog has a theme, so a
-  // backlog without themes keeps its exact index.
-  if (themes.length > 0 || hasSection(newContent, 'Themes')) {
-    const themesTable = formatTable(
-      ['Theme', 'Title', 'Epics', 'Open features'],
-      themes.map((t) => [
-        `[${t.id}](${themeLinkFromTop(t)})`,
-        t.title,
-        epics.filter((e) => e.theme === t.id).length,
-        features.filter((f) => f.theme === t.id && !ctx.flow.meets('feature', f.status, 'done')).length,
-      ]),
-    );
-    const anchor = ['Components', 'Features', 'Backlog'].find((h) => hasSection(newContent, h));
-    newContent = upsertSection(newContent, 'Themes', themesTable, {
-      before: anchor,
-    });
-  }
-  newContent = upsertSection(newContent, 'Components', componentsTable, {
-    before: hasSection(newContent, 'Features') ? 'Features' : 'Backlog',
-  });
-
-  // Features table (active only) between Components and Backlog. Created on
-  // first use so backlogs without features keep their exact current index.
-  const activeFeatures = features.filter((f) => !ctx.flow.meets('feature', f.status, 'done'));
-  if (activeFeatures.length > 0 || hasSection(newContent, 'Features')) {
-    const featuresTable = formatTable(
-      ['ID', 'Title', 'Status', 'Points', 'Stories', 'Repo'],
-      activeFeatures.map((f) => [
-        `[${f.id}](${featureLinkFromTop(f)})`,
-        f.title,
-        f.status,
-        f.points,
-        f.storyRecords.length,
-        f.repos.join(', '),
-      ]),
-    );
-    newContent = upsertSection(newContent, 'Features', featuresTable, {
-      before: 'Backlog',
-    });
-  }
-
-  newContent = upsertSection(newContent, 'Backlog', backlogTable);
-
-  const changed = writeFileIfChanged(config.backlogRoot, indexPath, newContent, content, touchedMarkdown);
-  info(
-    `  index.md — ${active.length} active, ${done} done, ${componentRows.length} components${changed ? '' : ' (unchanged)'}`,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-/**
- * Regenerate every index under the backlog lock. Re-entrant: `bl new` and
- * `bl new --feature` already hold the lock when they call this.
- *
- * @returns {Promise<string[]>} sorted backlog-relative paths of the indexes
- *   this run changed. An index this run rewrote byte-for-byte is left out, so
- *   a dirty index an earlier uncommitted sync left behind never rides along.
- *   Sync moves nothing: status is frontmatter, never location (F-49 D3).
- */
-export async function runSync(config) {
-  return withLock(config.backlogRoot, () => regenerate(config));
-}
-
-async function regenerate(config) {
-  const touchedMarkdown = new Set();
-  const flow = loadFlow(config.backlogRoot);
-
-  const allStories = readStoriesForSync(config, flow);
-  const dupes = findDuplicateIds(allStories);
-  if (dupes.length > 0) {
-    const err = new Error(dupes.map((d) => d.message).join('; '));
-    err.code = 'DUPLICATE_STORY_IDS';
-    err.duplicates = dupes;
-    throw err;
-  }
-  const storyMap = new Map(allStories.map((s) => [s.id, s]));
-
-  const closedCount = allStories.filter((s) => flow.meets('story', s.status, 'done')).length;
-  info(
-    `backlog-sync: ${storyMap.size} stories (${storyMap.size - closedCount} active, ${closedCount} ${flow.closedStatusesOf('story').join('/')})`,
-  );
-
-  // Every table of stories is in the backlog's priority (F-78 D2).
-  const backlog = graphOf(config);
-  const byPriority = byRank((id) => backlog.rankOf(id));
-
-  // Components keep their first directory when two claim one id
-  // (`bl validate` reports the clash).
-  const components = [];
-  const componentsById = new Map();
-  for (const c of readComponents(config)) {
-    if (componentsById.has(c.id)) continue;
-    componentsById.set(c.id, c);
-    components.push(c);
-  }
-  const ctx = { storyMap, components, componentsById, byPriority, flow };
-
-  // Features: resolve story records, regenerate tables. Then the stories'
-  // Tasks tables (F-65 D1).
-  const taskCtx = readTaskContext(config, flow);
-  const features = readFeaturesForSync(config, storyMap);
-  if (features.length > 0) {
-    info(`backlog-sync: ${features.length} feature(s)`);
-    for (const f of features) syncFeature(config.backlogRoot, f, componentsById, touchedMarkdown, taskCtx);
-  }
-  syncStoryTasks(config.backlogRoot, allStories, taskCtx, touchedMarkdown);
-
-  for (const c of components) {
-    syncComponent(
-      config.backlogRoot,
-      c,
-      allStories.filter((s) => s.componentId === c.id),
-      byPriority,
-      touchedMarkdown,
-      features,
-      flow,
-    );
-  }
-
-  // Epics before themes: a theme's Epics table shows each epic's derived
-  // status.
-  const epics = readAllEpics(config).map((e) => syncEpic(config.backlogRoot, e, features, touchedMarkdown, flow));
-  const themes = readAllThemes(config);
-  for (const t of themes) syncTheme(config.backlogRoot, t, epics, features, touchedMarkdown, flow);
-  ctx.epics = epics;
-  ctx.themes = themes;
-
-  syncTopLevel(config, ctx, touchedMarkdown, features);
-
-  formatBacklogMarkdown(config, touchedMarkdown);
-  info('done.');
-  return [...touchedMarkdown]
-    .map((p) => relative(config.backlogRoot, p))
-    .filter((p) => p && !p.startsWith('..'))
-    .sort();
-}
-
-/**
- * Run the configured `format` plugin over Markdown files this sync invocation
- * touched. Backlog-scoped (no story context). The plugin registered for `.md`
- * under `language_dispatch.format` runs; absence is a silent skip (`bl sync`
- * must not crash on a fresh `bl init` that hasn't picked a Markdown formatter).
+ * Run the configured `format` plugin over the Markdown files in
+ * `touchedMarkdown` (absolute paths). Backlog-scoped (no story context). The
+ * plugin registered for `.md` under `language_dispatch.format` runs; absence
+ * is a silent skip (a fresh `bl init` may not have picked a Markdown
+ * formatter).
  *
  * The backlog-root cascade is consulted purely for opt-out: a top-level
  * `plugins-format: -md` in `<backlogRoot>/index.md` suppresses the pass.
@@ -818,8 +83,8 @@ export function formatBacklogMarkdown(config, touchedMarkdown) {
     .filter((path) => path && !path.startsWith('..'));
   if (files.length === 0) return;
 
-  // Bucket by plugin so sync uses the same dispatch semantics as bl format /
-  // bl lint, but only over files this sync invocation touched.
+  // Bucket by plugin so the pass uses the same dispatch semantics as
+  // bl format / bl lint, but only over the files it was given.
   const buckets = bucketByPlugin(files, 'format', { format: { '.md': activePluginNames } }, config.plugins);
   for (const [name, paths] of buckets) {
     runPluginBatch(name, config.plugins[name].format, paths, { roostDir: config.roostDir }, config.backlogRoot);
@@ -880,19 +145,19 @@ export function extraPathProblem(p) {
  * Rebase the backlog onto `origin/main` before a command (F-50 D4; see
  * `backlog-commit.js` `pullBacklog`), under the backlog lock so no other `bl`
  * process commits mid-rebase. A pull that brought anything is followed by a
- * regeneration (`runSync`, and `allowed-tools.json`, whose inputs a pulled
- * `backlog.json` may have changed without touching the file), committed and
- * pushed when it changed a path, so two clones never need a human for a
- * generated file. Pull failures are warnings; the command goes on from local
- * state, unless the pull is `unsafe`. A regeneration that cannot be built or
- * committed is `unsafe` too: it is left pending (`PULL_REGEN_PENDING`) and
- * the next command that pulls finishes it before it runs, pulled or not. A
- * push that fails after the commit is only a warning (`commitPaths`). An
- * interrupted `bl new --feature` is settled after the pull and before the
- * regeneration (`feature-links.js` `settlePending`). After a pull that ended
- * `pulled` or `current` and made no regeneration commit (whose own push
- * carries `main`), a `main` still ahead of `origin/main` is pushed
- * (`pushIfAhead`, F-74 D1); a failed push is a warning (`pushWarning`).
+ * regeneration of `allowed-tools.json`, whose inputs a pulled `backlog.json`
+ * may have changed without touching the file, committed and pushed when it
+ * changed the file, so two clones never need a human for it. Pull failures
+ * are warnings; the command goes on from local state, unless the pull is
+ * `unsafe`. A regeneration that cannot be built or committed is `unsafe` too:
+ * it is left pending (`PULL_REGEN_PENDING`) and the next command that pulls
+ * finishes it before it runs, pulled or not. A push that fails after the
+ * commit is only a warning (`commitPaths`). An interrupted `bl new --feature`
+ * is settled after the pull and before the regeneration (`feature-links.js`
+ * `settlePending`). After a pull that ended `pulled` or `current` and made no
+ * regeneration commit (whose own push carries `main`), a `main` still ahead
+ * of `origin/main` is pushed (`pushIfAhead`, F-74 D1); a failed push is a
+ * warning (`pushWarning`).
  *
  * @param {object} config
  * @returns {Promise<import("./backlog-commit.js").BacklogPull>}
@@ -910,8 +175,8 @@ export async function pullBeforeCommand(config) {
     const pending = existsSync(pendingPath);
     let committed = false;
     if (res.state === 'pulled' || (pending && res.state !== 'unsafe' && res.state !== 'not-main')) {
-      // The regeneration reads membership: settle an interrupted
-      // `bl new --feature` first, so its half-made links are not committed.
+      // Settle an interrupted `bl new --feature` first, so its half-made
+      // links are not committed with the regeneration.
       const { settlePending } = await import('./feature-links.js');
       await settlePending(root);
       const regen = await regenerateAfterPull(root, config, pendingPath);
@@ -940,7 +205,7 @@ export async function pullBeforeCommand(config) {
 }
 
 /**
- * Rebuild the generated files for the pulled backlog and commit what that
+ * Rebuild `allowed-tools.json` for the pulled backlog and commit what that
  * changed since the regeneration began (`pendingPath` holds that snapshot
  * while it is unfinished). `problem` is what failed, if anything;
  * `committed` says whether a regeneration commit was made (its push carried
@@ -964,7 +229,6 @@ async function regenerateAfterPull(root, config, pendingPath) {
       }),
       config.repoName,
     );
-    await runSync(fresh);
     // A no-op when the file is current for the pulled configuration.
     ensureAllowedTools(root, fresh);
   } catch (err) {
@@ -977,22 +241,23 @@ async function regenerateAfterPull(root, config, pendingPath) {
     rmSync(pendingPath, { force: true });
     return { committed: false };
   }
-  const c = commitPaths(root, touched, 'chore: regenerate backlog indexes after pull');
+  const c = commitPaths(root, touched, 'chore: regenerate allowed-tools.json after pull');
   if (!c.committed) return { problem: `commit failed: ${c.error ?? 'nothing to commit'}` };
   if (!c.pushResolved) rmSync(pendingPath, { force: true });
   return { committed: true };
 }
 
 /**
- * `bl sync --commit`: under one lock hold, regenerate the indexes and commit
- * exactly (paths `runSync` reported) ∪ (each story's directory) ∪
- * `extraPaths`. Never stages the whole backlog, so an unrelated dirty story
- * file, including one another agent edits while this holds the lock, stays out
- * of the commit. `bl done`, `bl new` and `bl merge` commit through this too,
- * holding the lock across their own writes so the sync sees them.
+ * `bl sync --commit`: under one lock hold, format the changed Markdown files
+ * among (each story's directory) ∪ `extraPaths` (`formatBacklogMarkdown`),
+ * then commit exactly those paths and push. Never stages the whole backlog,
+ * so an unrelated dirty story file, including one another agent edits while
+ * this holds the lock, stays out of the commit. `bl done`, `bl new` and
+ * `bl merge` commit through this too, holding the lock across their own
+ * writes.
  *
- * When the backlog is not a git work tree, the sync still runs and the result
- * carries `notRepo: true` instead of committing.
+ * When the backlog is not a git work tree, nothing is formatted or
+ * committed, and the result carries `notRepo: true`.
  *
  * @param {object} config
  * @param {{ message: string, storyIds?: string[], extraPaths?: string[] }} opts
@@ -1005,28 +270,24 @@ export async function syncAndCommit(config, { message, storyIds = [], extraPaths
   const root = config.backlogRoot;
   await acquireLock(root);
   try {
-    const synced = await runSync(config);
     const storyDirs = storyIds.map((raw) => {
       const parsed = normalizeId(raw);
       const found = parsed && findStoryDir(parsed, config);
       if (!found) throw new Error(`Story ${raw} not found in backlog`);
       return relative(root, found.storyDir);
     });
+    const named = [...new Set([...storyDirs, ...extraPaths])];
     const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     if (inRepo.status !== 0 || inRepo.stdout.trim() !== 'true') {
-      return {
-        committed: false,
-        paths: [...new Set([...synced, ...storyDirs, ...extraPaths])].sort(),
-        notRepo: true,
-      };
+      return { committed: false, paths: named.sort(), notRepo: true };
     }
-    const paths = stageablePaths(root, [...new Set([...synced, ...storyDirs, ...extraPaths])]).sort();
+    const paths = stageablePaths(root, named).sort();
     if (paths.length === 0) return { committed: false, paths };
-    const status = spawnSync('git', ['status', '--porcelain', '--untracked-files=all', '--', ...paths], {
+    const status = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all', '--', ...paths], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1038,7 +299,10 @@ export async function syncAndCommit(config, { message, storyIds = [], extraPaths
         error: (status.stderr || '').trim() || 'git status failed',
       };
     }
-    if (status.stdout.trim() === '') return { committed: false, paths };
+    if (status.stdout === '') return { committed: false, paths };
+    // A deleted file is not on disk, so the format pass skips it.
+    const changed = parsePorcelainZ(status.stdout).filter((p) => p.endsWith('.md'));
+    formatBacklogMarkdown(config, new Set(changed.map((p) => join(root, p))));
     return commitPaths(root, paths, message);
   } finally {
     releaseLock(root);
@@ -1070,13 +334,9 @@ export function reportBacklogCommit(res, command, { nothing = 'Nothing to commit
   info(res.committed ? `Committed ${res.paths.length} backlog path(s).` : nothing);
 }
 
-/** Print a sync error the way `bl sync` does, then exit 1. */
+/** Print a `syncAndCommit` error the way `bl sync` does, then exit 1. */
 export function exitOnSyncError(err) {
-  if (err.code === 'DUPLICATE_STORY_IDS') {
-    for (const d of err.duplicates) console.error(`  ERROR: ${d.message}`);
-  } else {
-    console.error(err.message);
-  }
+  console.error(err.message);
   process.exit(1);
 }
 
@@ -1127,26 +387,18 @@ export function parseSyncArgs(argv) {
 
 const USAGE = `Usage: bl sync [--commit -m <message> (--story <id> | --path <backlog-relative>) …]
 
-Regenerates the backlog's index files:
-  - top-level (backlog/index.md): themes, components, features, backlog
-    order
-  - per-component (backlog/components/C<nn>-*/index.md): its stories and features
-  - per-feature (backlog/features/F<nn>-*/index.md): its stories and points
-  - per-epic (backlog/epics/E<nn>-*/index.md): its features and status, derived
-    from the features naming it, and their progress
-  - per-theme (backlog/themes/<slug>/index.md): its epics, then its features
-    with no epic
-
-Moves nothing: a story's status is frontmatter, never location.
-
-Serialises on the backlog lockfile (.bl-new.lock), so concurrent syncs and
-bl new runs wait their turn instead of tearing each other's writes.
+Brings the backlog up to date with origin and pushes it: rebases main onto
+origin/main, then pushes a main that is still ahead. Writes no index or table:
+bl renders those when they are read (bl view, bl report). With no origin
+remote it does nothing.
 
 Options:
-  --commit          After regenerating, commit to the backlog repo, inside the
-                    same lock hold. Stages only the paths this sync wrote or
-                    moved plus each --story directory — never the whole
-                    backlog. Exits 0 without a commit when nothing changed.
+  --commit          After the pull, commit to the backlog repo and push, under
+                    the backlog lockfile (.bl-new.lock). Formats the changed
+                    Markdown files among the named paths, then stages and
+                    commits only each --story directory and each --path, never
+                    the whole backlog. Exits 0 without a commit when nothing
+                    changed.
   -m, --message     Commit message (required with --commit). Repeatable, as
                     with git commit: the first is the subject and each later
                     one becomes a body paragraph (blank line between). Empty
@@ -1158,12 +410,11 @@ Options:
                     staged. Repeat for each story (with --commit, at least one
                     --story or --path).
   --path <path>     A backlog-relative path you wrote or moved yourself (both
-                    ends of a git mv, say) that the sync did not touch; it is
-                    staged with the commit. Must name one exact file or
-                    directory (no root, whole stories/, components/,
-                    features/, themes/ or epics/, glob or ..) that is on disk or
-                    tracked by git. Repeatable;
-                    only with --commit.`;
+                    ends of a git mv, say); it is staged with the commit. Must
+                    name one exact file or directory (no root, whole stories/,
+                    components/, features/, themes/ or epics/, glob or ..) that
+                    is on disk or tracked by git. Repeatable; only with
+                    --commit.`;
 
 export async function main(argv) {
   let args;
@@ -1188,7 +439,10 @@ export async function main(argv) {
     process.exit(2);
   }
 
+  // `bl.js` has already pulled and pushed (`commandPullsBacklog`); a bare
+  // `bl sync` has nothing more to do.
   const config = loadConfig();
+  if (!args.commit) return;
   // A `--path` is operator input: it must name one exact file or directory
   // (see `extraPathProblem`), and one that is neither on disk nor known to
   // git is a typo that `syncAndCommit` would drop without a word.
@@ -1204,26 +458,23 @@ export async function main(argv) {
     console.error(`--path matches nothing in the backlog (not on disk, not tracked by git): ${unknown.join(', ')}`);
     process.exit(2);
   }
+  let res;
   try {
-    if (args.commit) {
-      const res = await syncAndCommit(config, {
-        message: args.message,
-        storyIds: args.storyIds,
-        extraPaths: args.paths,
-      });
-      if (res.notRepo) {
-        console.error(`bl sync --commit: ${config.backlogRoot} is not a git repository.`);
-        process.exit(1);
-      }
-      if (res.error) {
-        console.error(`bl sync --commit: ${res.error}`);
-        process.exit(1);
-      }
-      info(res.committed ? `Committed ${res.paths.length} backlog path(s).` : 'Nothing to commit.');
-      return;
-    }
-    await runSync(config);
+    res = await syncAndCommit(config, {
+      message: args.message,
+      storyIds: args.storyIds,
+      extraPaths: args.paths,
+    });
   } catch (err) {
     exitOnSyncError(err);
   }
+  if (res.notRepo) {
+    console.error(`bl sync --commit: ${config.backlogRoot} is not a git repository.`);
+    process.exit(1);
+  }
+  if (res.error) {
+    console.error(`bl sync --commit: ${res.error}`);
+    process.exit(1);
+  }
+  info(res.committed ? `Committed ${res.paths.length} backlog path(s).` : 'Nothing to commit.');
 }

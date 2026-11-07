@@ -343,9 +343,9 @@ test('bl sync leaves priority.md byte-identical, and writes no other order file'
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readFileSync(join(dir, 'priority.md'), 'utf8'), PRIORITY);
   }
-  // Its own index aside, the sync adds no file at the backlog root.
+  // The sync adds no file at the backlog root, its index included (F-79 D1).
   const root = readdirSync(dir).filter((f) => f.endsWith('.md'));
-  assert.deepEqual(root.sort(), ['index.md', 'priority.md', 'roadmap.md']);
+  assert.deepEqual(root.sort(), ['priority.md', 'roadmap.md']);
 });
 
 test('bl sync with no priority.md writes none', () => {

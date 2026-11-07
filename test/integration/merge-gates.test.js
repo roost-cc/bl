@@ -14,6 +14,7 @@ import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
+import { rendered } from '../helpers/rendered.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { extractSection } from '../../src/feature.js';
 import { mergeGates, unitBranch } from '../../src/merge-gates.js';
@@ -424,7 +425,7 @@ test('a merge task (bl task --gate merge) holds bl merge of its story and its fe
       assert.equal(r.status, 0, `${id}: ${r.stderr}`);
     }
     const today = new Date().toISOString().slice(0, 10);
-    const feature = readFileSync(join(fx.dir, 'features', 'F1-feat', 'index.md'), 'utf8');
+    const feature = rendered(fx.dir, 'F-1');
     assert.match(
       feature,
       new RegExp(`\\| \\[T-2\\]\\([^)]*\\) \\| Migrate F-1 \\| bl merge F-1 \\| done +\\| ${today} \\|`),

@@ -37,7 +37,7 @@ import { RUN_LOCK_ID } from './run-lock.js';
 import { releasePidLock } from './pid-lock.js';
 import { updateSpecFile } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { syncAndCommit, reportBacklogCommit, exitOnSyncError } from './sync.js';
+import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -842,16 +842,10 @@ async function cmdSync(args) {
       process.exit(1);
     }
   }
-  let res;
-  try {
-    res = await syncUpdates(config, {
-      reportPath,
-      dryRun: args['dry-run'] === true,
-    });
-  } catch (err) {
-    if (err.code === 'DUPLICATE_STORY_IDS') exitOnSyncError(err);
-    throw err;
-  }
+  const res = await syncUpdates(config, {
+    reportPath,
+    dryRun: args['dry-run'] === true,
+  });
   if (res.refused) {
     console.error(`bl updates sync: ${res.refused}`);
     process.exit(1);
@@ -883,7 +877,6 @@ async function cmdRun(args) {
       maxMerges,
     });
   } catch (err) {
-    if (err.code === 'DUPLICATE_STORY_IDS') exitOnSyncError(err);
     console.error(err.message);
     process.exit(1);
   }
@@ -920,7 +913,6 @@ async function cmdVulns(args) {
   try {
     res = await vulnsUpdates(config, { repo: args.repo, dryRun });
   } catch (err) {
-    if (err.code === 'DUPLICATE_STORY_IDS') exitOnSyncError(err);
     console.error(`bl updates vulns: ${err.message}`);
     process.exit(1);
   }
@@ -960,7 +952,6 @@ async function cmdApprove(args) {
   try {
     res = await approveUpdate(config, { id: ids[0] });
   } catch (err) {
-    if (err.code === 'DUPLICATE_STORY_IDS') exitOnSyncError(err);
     console.error(err.message);
     process.exit(1);
   }
@@ -985,7 +976,6 @@ async function cmdDrop(args) {
   try {
     res = await dropUpdate(config, { id: ids[0], reason });
   } catch (err) {
-    if (err.code === 'DUPLICATE_STORY_IDS') exitOnSyncError(err);
     console.error(err.message);
     process.exit(1);
   }

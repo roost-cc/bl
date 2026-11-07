@@ -12,10 +12,6 @@
  *   whether the backlog lock file is still there, then removes it as usual.
  * - `lock`: the `bl new` child writes, to `BL_SIDE_FAULT_OUT`, which pid the
  *   backlog lock file names when it exits, with its own and its parent's.
- * - `index`: the first write of a backlog file whose backlog-relative path
- *   matches the regex `BL_SIDE_FAULT_PATH` throws (a generated index the
- *   sync writes, say), in place or as the rename into place of an atomic
- *   write (`atomicWriteFile`).
  * - `adopt`: just before `bl side` takes the backlog lock, a second
  *   `bl side repoB --from F-1` (no faults) runs to the end, its JSON written
  *   to `BL_SIDE_FAULT_OUT`, and a file is left uncommitted in the worktree
@@ -65,28 +61,6 @@ if (side && faults.has('undo')) {
   fs.rmSync = (path, ...rest) => {
     if (/\/stories\/S\d+-[^/]+$/.test(String(path))) throw new Error('injected undo failure');
     return rm(path, ...rest);
-  };
-}
-if (side && faults.has('index') && process.env.BL_SIDE_FAULT_PATH) {
-  const root = process.env.BL_BACKLOG_DIR ?? process.cwd();
-  const match = new RegExp(process.env.BL_SIDE_FAULT_PATH);
-  let thrown = false;
-  const fault = (path) => {
-    const rel = String(path).startsWith(`${root}/`) ? String(path).slice(root.length + 1) : null;
-    if (!thrown && rel != null && match.test(rel)) {
-      thrown = true;
-      throw new Error(`injected write failure: ${rel}`);
-    }
-  };
-  const inner = fs.writeFileSync;
-  fs.writeFileSync = (path, ...rest) => {
-    fault(path);
-    return inner(path, ...rest);
-  };
-  const innerRename = fs.renameSync;
-  fs.renameSync = (from, to, ...rest) => {
-    fault(to);
-    return innerRename(from, to, ...rest);
   };
 }
 if (side && faults.has('adopt') && process.env.BL_SIDE_FAULT_OUT) {

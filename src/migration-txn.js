@@ -39,18 +39,12 @@ import { allActiveWorktrees, LOCK_FILE as SESSION_LOCK_FILE } from './story.js';
  *   apply: (ops: MigrationOps) => void,
  *   message: string,
  *   commit: (config: object, opts: { message: string, extraPaths: string[] }) => Promise<object>,
- *   sync?: (config: object) => Promise<unknown>,
  *   commitConfig?: () => object,
  * }} opts
- *   `commitConfig` gives the config the commit's sync runs on (default:
- *   `config`); `sync` is that sync, run once before the commit, and the
- *   paths it returns are committed with the run's own.
+ *   `commitConfig` gives the config the commit runs on (default: `config`).
  * @returns {Promise<object>} the commit result
  */
-export async function applyMigration(
-  config,
-  { apply, message, commit, sync = async () => {}, commitConfig = () => config },
-) {
+export async function applyMigration(config, { apply, message, commit, commitConfig = () => config }) {
   const root = config.backlogRoot;
   const rel = (p) => relative(root, p);
   const git = gitIn(root);
@@ -104,10 +98,8 @@ export async function applyMigration(
   let result;
   try {
     apply({ write, move, remove, ensureDir, rmdir });
-    // The commit's own sync then changes nothing, so it stages what this one wrote.
-    const synced = (await sync(commitConfig())) ?? [];
     // Moved directories are named whole, so their files (renames) are staged.
-    const extra = [...new Set([...paths, ...synced])].filter((p) => !p.startsWith('..'));
+    const extra = [...paths].filter((p) => !p.startsWith('..'));
     result = await commit(commitConfig(), { message, extraPaths: extra.filter((p) => !filesInside(p, extra)) });
   } catch (e) {
     throw new Error(`migration failed: ${e.message}${restore()}`);

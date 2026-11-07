@@ -13,9 +13,9 @@
  * A story's component names its code boundary, and the story's repo is the
  * component's repo (F-49 D4); no repo is written on the story (F-52 D1). Prompts for the component (when none is named),
  * title and points. Assigns the next globally-unique story ID. Unless
- * --no-sync or --dry-run, syncs and commits the new stories (plus a new
- * component dir, the feature file's regenerated table and the rewritten indexes) inside
- * the lock hold that allocated the IDs.
+ * --no-sync or --dry-run, commits the new stories (plus a new component dir
+ * and the stories whose depends_on it extended) inside the lock hold that
+ * allocated the IDs.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, unlinkSync } from 'fs';
@@ -543,7 +543,7 @@ async function newComponent(args, jsonMode) {
   info(`Created component: ${relPath}`);
 
   if (args['no-sync']) {
-    info("Skipped sync. Run 'bl sync' to update indexes.");
+    info("Skipped the commit. Commit it with 'bl sync --commit'.");
   } else {
     info('\nSyncing backlog...');
     let res;
@@ -554,7 +554,7 @@ async function newComponent(args, jsonMode) {
       });
     } catch (err) {
       console.error(
-        `Component file created at ${relPath}. Sync failed: ${err.message}. Run 'bl sync' manually to update indexes.`,
+        `Component file created at ${relPath}. Sync failed: ${err.message}. Commit it by hand with 'bl sync --commit'.`,
       );
       process.exit(1);
     }
@@ -610,7 +610,7 @@ async function writeValueUnit(config, args, jsonMode, { kind, id, title, dir, co
   info(`Created ${kind}: ${relPath}`);
 
   if (args['no-sync']) {
-    info("Skipped sync. Run 'bl sync' to update indexes.");
+    info("Skipped the commit. Commit it with 'bl sync --commit'.");
   } else {
     info('\nSyncing backlog...');
     let res;
@@ -622,7 +622,7 @@ async function writeValueUnit(config, args, jsonMode, { kind, id, title, dir, co
     } catch (err) {
       console.error(
         `${kind[0].toUpperCase()}${kind.slice(1)} file created at ${relPath}. Sync failed: ${err.message}. ` +
-          `Run 'bl sync' manually to update indexes.`,
+          `Commit it by hand with 'bl sync --commit'.`,
       );
       process.exit(1);
     }
@@ -991,8 +991,7 @@ Options:
                        (features/F<n>-<slug>/index.md), holding the S-ids
                        given. Takes --title, --theme (required, unless
                        --epic gives it), --epic, --repo (default: the
-                       first story's repo), --rounds <n>, --body-file,
-                       --no-sync.
+                       first story's repo), --rounds <n>, --body-file.
   --theme <slug>       With --feature or --epic: the theme it belongs to.
                        On its own: create a theme (themes/<slug>/index.md,
                        repos: []). Takes --title, --brief (required),
@@ -1401,7 +1400,7 @@ Example:
   const dependentPaths = appendDependsOn(cfg, dependents, [storyDir]);
 
   if (args['no-sync']) {
-    info("Skipped sync. Run 'bl sync' to update indexes.");
+    info("Skipped the commit. Commit it with 'bl sync --commit'.");
   } else {
     info('\nSyncing backlog...');
     let res;
@@ -1409,13 +1408,13 @@ Example:
       res = await syncAndCommit(cfg, {
         message: `chore: add ${storyId}`,
         storyIds: [storyId],
-        extraPaths: [...(feature ? [relative(cfg.backlogRoot, feature.indexPath)] : []), ...dependentPaths],
+        extraPaths: dependentPaths,
       });
     } catch (err) {
       console.error(
         `Story file created at ${relative(cfg.backlogRoot, storyIndex)}. ` +
           `Sync failed: ${err.message}. ` +
-          `Run 'bl sync' manually to update indexes.`,
+          `Commit it by hand with 'bl sync --commit'.`,
       );
       process.exit(1);
     }
@@ -1841,7 +1840,7 @@ async function runBatchMode(args, jsonMode) {
 
   // --- Sync ---
   if (args['no-sync']) {
-    info("Skipped sync. Run 'bl sync' to update indexes.");
+    info("Skipped the commit. Commit it with 'bl sync --commit'.");
   } else {
     info('\nSyncing backlog...');
     const ids = renderedStories.map((r) => r.id);
@@ -1850,18 +1849,14 @@ async function runBatchMode(args, jsonMode) {
       res = await syncAndCommit(cfg, {
         message: `chore: add ${ids.join(', ')}`,
         storyIds: ids,
-        extraPaths: [
-          ...(creatingNewComponent ? [componentRelDir] : []),
-          ...(feature ? [relative(cfg.backlogRoot, feature.indexPath)] : []),
-          ...dependentPaths,
-        ],
+        extraPaths: [...(creatingNewComponent ? [componentRelDir] : []), ...dependentPaths],
       });
     } catch (err) {
       const created = renderedStories.map((r) => r.relPath).join(', ');
       console.error(
         `Story files created at ${created}. ` +
           `Sync failed: ${err.message}. ` +
-          `Run 'bl sync' manually to update indexes.`,
+          `Commit it by hand with 'bl sync --commit'.`,
       );
       process.exit(1);
     }

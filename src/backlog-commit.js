@@ -432,7 +432,8 @@ export function leaveRegenerationPending(root) {
  * before it runs (F-50 D4): every command that commits the backlog (`new`,
  * `side`, `attach`, `move`, `run`, `implement`, `merge`, `done`, `updates`, `sync --commit`,
  * `block add`, `block remove`, `block list --fix`, `task`,
- * `task done`, `rank <unit> …`) and the
+ * `task done`, `rank <unit> …`), a bare `bl sync`, whose whole job is the
+ * pull and push (F-79 D1), and the
  * readers of update state, `bl inbox` and
  * `bl updates status`. Help output never pulls, and neither does a `bl rank`
  * under `BL_HEADLESS`, which refuses before it touches the backlog (F-78 D3).
@@ -460,26 +461,20 @@ export function commandPullsBacklog(command, argv, env = process.env) {
       return argv.length > 0 && argv[0] !== 'list';
     case 'sync':
     case 's':
-      return argv.includes('--commit');
+      return true;
     default:
       return false;
   }
 }
 
 /**
- * Paths `bl sync` rebuilds whole, so a rebase conflict on them needs no
- * human (F-50 D4): `allowed-tools.json`, the top-level `index.md` and each
- * component's `index.md` (`components/C<nn>-<slug>/index.md`). The top-level index is in because every
- * status change rewrites its tables, and nothing in it is a person's: the
- * order of its rows is `priority.md`'s (F-78 D2), which is not generated and
- * not here. A feature file holds hand-written sections, so it is not here
- * either.
+ * Paths bl rebuilds whole after a pull, so a rebase conflict on them needs
+ * no human (F-50 D4): only `allowed-tools.json` (F-79 D1). Every other file,
+ * the root and component `index.md` included, is hand-written, and a
+ * conflict in it is a real one.
  */
 export function isGeneratedPath(rel) {
-  if (rel === 'allowed-tools.json' || rel === 'index.md') return true;
-  const parts = rel.split('/');
-  if (parts.length !== 3 || parts[2] !== 'index.md') return false;
-  return parts[0] === 'components' && /^C\d+(-|$)/.test(parts[1]);
+  return rel === 'allowed-tools.json';
 }
 
 function rebaseInProgress(root) {
@@ -500,7 +495,7 @@ function conflictedPaths(root) {
 /**
  * Settle a conflict confined to generated paths: keep the side of the commit
  * being replayed (stage 3, "theirs" during a rebase), or its deletion when it
- * removed the file. `bl sync` regenerates them afterwards, so the side does
+ * removed the file. The pull's regeneration rebuilds them, so the side does
  * not matter; this one never leaves the replayed commit empty.
  */
 function takeReplayedSide(root, paths) {

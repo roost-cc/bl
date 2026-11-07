@@ -17,6 +17,7 @@ import { buildReport, readTree, renderMarkdown, units } from '../../src/report.j
 import { registerAdapter } from '../../src/chart.js';
 import { main as reportMain, writeReport } from '../../src/report-cmd.js';
 import { runBl } from '../helpers/run-bl.js';
+import { rendered } from '../helpers/rendered.js';
 import { commitAt, committedBacklog, feature, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
 import { blockedFlow, CHANGE_TEMPLATE } from '../helpers/tempdir.js';
 
@@ -71,7 +72,7 @@ test("buildReport counts the last snapshot's units by status", () => {
   assert.deepEqual(s.progress, { scope: 12, done: 4, remaining: 8, percent: 33 });
 });
 
-test('the summary equals bl list -a and the top-level index on the same tree', () => {
+test('the summary equals bl list -a and the rendered top-level index on the same tree', () => {
   const { dir } = reportBacklog();
   const data = report(dir);
   const list = runBl(['list', '-a'], { cwd: dir });
@@ -96,7 +97,7 @@ test('the summary equals bl list -a and the top-level index on the same tree', (
     ),
   );
 
-  const index = readFileSync(join(dir, 'index.md'), 'utf8');
+  const index = rendered(dir);
   const [, points, stories] = index.match(/Total backlog: (\d+) points across (\d+) stories/);
   assert.deepEqual([Number(points), Number(stories)], [data.summary.open.points, data.summary.open.stories]);
 

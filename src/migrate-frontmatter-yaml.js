@@ -40,7 +40,7 @@ import { LineCounter, isMap, isScalar, parse, parseDocument, visit } from 'yaml'
 import { isListKey, parseFrontmatter, serializeFrontmatter } from './config.js';
 import { withLock } from './lock.js';
 import { applyMigration } from './migration-txn.js';
-import { runSync, syncAndCommit } from './sync.js';
+import { syncAndCommit } from './sync.js';
 import { frontmatterFiles } from './validate.js';
 
 const MIGRATION_HEADING = '## F-62 frontmatter-yaml migration';
@@ -370,7 +370,6 @@ export async function migrate(config, { dryRun = false, log = console.log, commi
     const result = await applyMigration(config, {
       message: commitMessage(counts),
       commit,
-      sync: runSync,
       apply: ({ write }) => {
         for (const r of plan.rewrites) write(r.path, r.text);
         const path = join(root, 'MIGRATION.md');

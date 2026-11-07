@@ -9,6 +9,7 @@ import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
 import { extractSection, findFeature, normalizeFeatureId } from '../../src/feature.js';
 import { loadConfig } from '../../src/config.js';
+import { rendered } from '../helpers/rendered.js';
 
 const REPOS = ['../demo-repo'];
 /** demo-repo's home component, so `bl validate` has no home-component finding (F-49 D4). */
@@ -39,11 +40,11 @@ function members(dir, id = 'F-1') {
 
 /**
  * Assert every `](…)` target in the `## <heading>` section of an index file
- * exists on disk, resolved against the index's own directory. Returns the
+ * (its `content`, the file's text by default) exists on disk, resolved
+ * against the index's own directory. Returns the
  * targets so a caller can check the section was not empty.
  */
-function assertLinksResolve(indexPath, heading) {
-  const content = readFileSync(indexPath, 'utf8');
+function assertLinksResolve(indexPath, heading, content = readFileSync(indexPath, 'utf8')) {
   const section = content.match(new RegExp(`\\n## ${heading}\\n([\\s\\S]*?)(?=\\n## |\\s*$)`));
   assert.ok(section, `missing ## ${heading} in ${indexPath}`);
   const targets = [...section[1].matchAll(/\]\(([^)]+)\)/g)].map((m) => m[1]);
@@ -54,7 +55,7 @@ function assertLinksResolve(indexPath, heading) {
   return targets;
 }
 
-test('bl new --feature scaffolds features/F1-<slug>/index.md and the root Features table', () => {
+test('bl new --feature scaffolds features/F1-<slug>/index.md, which the rendered root lists', () => {
   const { dir, cleanup } = mkTempBacklog({ repos: REPOS, components: [HOME] });
   try {
     const rel = newFeature(dir);
@@ -73,11 +74,10 @@ test('bl new --feature scaffolds features/F1-<slug>/index.md and the root Featur
     assert.doesNotMatch(content, /^## Review Log$/m);
     for (const k of ['branch', 'pr', 'review_round', 'review_status']) assert.equal(f[k], undefined, k);
     assert.ok(!existsSync(join(dir, 'features', 'F1-invite-codes', 'change.md')));
-    const root = readFileSync(join(dir, 'index.md'), 'utf8');
-    assert.match(root, /## Features\n/);
-    assert.match(root, /\[F-1\]\(features\/F1-invite-codes\/index\.md\)/);
-    // Features sits before Backlog.
-    assert.ok(root.indexOf('## Features') < root.indexOf('## Backlog'));
+    // No index file is written (F-79 D1); the rendered root's Priority table lists it.
+    assert.ok(!existsSync(join(dir, 'index.md')));
+    const root = rendered(dir);
+    assert.match(root, /## Priority\n\n[^#]*\[F-1\]\(features\/F1-invite-codes\/index\.md\)/);
     // A second feature gets F-2.
     const rel2 = newFeature(dir, 'Second');
     assert.equal(rel2, 'features/F2-second/index.md');
@@ -143,15 +143,13 @@ test('bl new --feature tags the story, links it on the feature, and keeps the or
     assert.equal(JSON.parse(j.stdout).feature, 'F-1');
     assert.deepEqual(members(dir), ['S-1', 'S-2', 'S-3']);
 
-    // A done feature stays in features/, and the top-level index lists
-    // active features only; whatever it links must resolve.
+    // A done feature stays in features/, and the rendered root lists open
+    // units only; whatever it links must resolve.
     writeFileSync(featurePath, readFileSync(featurePath, 'utf8').replace('status: draft', 'status: done'));
-    const sync = runBl(['sync'], { cwd: dir });
-    assert.equal(sync.status, 0, sync.stderr);
     assert.ok(existsSync(featurePath));
-    const rootPath = join(dir, 'index.md');
-    assert.doesNotMatch(readFileSync(rootPath, 'utf8'), /\[F-1\]/, 'top-level Features lists active features only');
-    assert.deepEqual(assertLinksResolve(rootPath, 'Features'), []);
+    const root = rendered(dir);
+    assert.doesNotMatch(root, /\[F-1\]/, 'the Priority table lists open units only');
+    assert.ok(assertLinksResolve(join(dir, 'index.md'), 'Components', root).length > 0);
   } finally {
     cleanup();
   }
@@ -162,8 +160,8 @@ test('the ad-hoc story command in prompts/_blocked-by-bug.md files a bug on the 
   try {
     newFeature(dir);
     newStory(dir, { title: 'Mint codes', extra: ['--feature', 'F-1'] });
-    const rootIndex = join(dir, 'index.md');
-    const before = readFileSync(rootIndex, 'utf8');
+    const featureFile = join(dir, 'features', 'F1-invite-codes', 'index.md');
+    const before = readFileSync(featureFile, 'utf8');
     mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
     const body = join(dir, '.bl', 'run', 'F-1.adhoc-goto-timeout.md');
     writeFileSync(
@@ -197,7 +195,7 @@ test('the ad-hoc story command in prompts/_blocked-by-bug.md files a bug on the 
     assert.equal(s.component, 'C00');
     assert.match(readFileSync(storyPath, 'utf8'), /- \[x\] The load waits for the app shell\./);
     assert.deepEqual(members(dir), ['S-1', 'S-2']);
-    assert.equal(readFileSync(rootIndex, 'utf8'), before, '--no-sync leaves the index files alone');
+    assert.equal(readFileSync(featureFile, 'utf8'), before, 'the feature file is left alone');
   } finally {
     cleanup();
   }
@@ -228,15 +226,15 @@ test('the existing-story command in prompts/_blocked-by-bug.md attaches the stor
   try {
     newFeature(dir);
     newStory(dir, { title: 'Mint codes', extra: ['--feature', 'F-1'] });
-    const rootIndex = join(dir, 'index.md');
-    const before = readFileSync(rootIndex, 'utf8');
+    const featureFile = join(dir, 'features', 'F1-invite-codes', 'index.md');
+    const before = readFileSync(featureFile, 'utf8');
     const line = blockedByBugLine(/^ *bl attach S-<id> \{\{featureId\}\} --no-sync$/m).trim();
     const args = line.replace('S-<id>', 'S-7').replace('{{featureId}}', 'F-1').split(' ').slice(1);
     const r = runBl(args, { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(fm(join(dir, 'stories', 'S7', 'index.md')).feature, 'F-1');
     assert.deepEqual(members(dir), ['S-7', 'S-8']);
-    assert.equal(readFileSync(rootIndex, 'utf8'), before, '--no-sync leaves the index files alone');
+    assert.equal(readFileSync(featureFile, 'utf8'), before, 'the feature file is left alone');
   } finally {
     cleanup();
   }
@@ -470,7 +468,7 @@ test('bl approve gates on refined status and a non-empty, consistent story list'
     r = runBl(['approve', 'F-1'], { cwd: dir });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /has no stories/);
-    // with a story → approved + approved date, root table updated
+    // with a story → approved + approved date, which the rendered root shows
     newStory(dir, { title: 'Mint', points: '3', extra: ['--feature', 'F-1'] });
     r = runBl(['approve', 'F-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
@@ -478,7 +476,7 @@ test('bl approve gates on refined status and a non-empty, consistent story list'
     assert.equal(f.status, 'approved');
     assert.match(f.approved, /^\d{4}-\d{2}-\d{2}$/);
     assert.match(r.stderr, /3 points/);
-    assert.match(readFileSync(join(dir, 'index.md'), 'utf8'), /F-1.*approved/);
+    assert.match(rendered(dir), /F-1.*approved/);
     // approving again is a no-op
     r = runBl(['approve', 'F-1'], { cwd: dir });
     assert.equal(r.status, 0);
@@ -695,7 +693,7 @@ test('bl validate flags bad feature frontmatter (status, id/dir)', () => {
   }
 });
 
-test('bl sync leaves a done feature where it is, keeps it out of the root table, and is idempotent', () => {
+test('bl sync leaves a done feature where it is and writes nothing; the rendered root leaves it out', () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,
     components: [{ id: 'C00', title: 'Core', dirSuffix: 'core' }],
@@ -724,14 +722,10 @@ test('bl sync leaves a done feature where it is, keeps it out of the root table,
     assert.ok(existsSync(join(dir, 'features', 'F1-done-one', 'index.md')));
     assert.ok(!existsSync(join(dir, 'features', '.completed')));
     assert.match(r.stderr, /^(?!.*migrate)/s);
-    const root = readFileSync(join(dir, 'index.md'), 'utf8');
+    assert.ok(!existsSync(join(dir, 'index.md')));
+    const root = rendered(dir);
     assert.match(root, /\[F-2\]\(features\/F2-live-one\/index\.md\)/);
     assert.doesNotMatch(root, /F-1/);
-    const before = readFileSync(join(dir, 'features', 'F2-live-one', 'index.md'), 'utf8');
-    r = runBl(['sync'], { cwd: dir });
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(readFileSync(join(dir, 'features', 'F2-live-one', 'index.md'), 'utf8'), before);
-    assert.equal(readFileSync(join(dir, 'index.md'), 'utf8'), root);
   } finally {
     cleanup();
   }

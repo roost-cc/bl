@@ -156,16 +156,13 @@ err=$(cat "$se")
 assert_contains "bl new --print-template --json explains why" "cannot be combined" "$err"
 
 # ---------------------------------------------------------------------------
-# bl sync — stdout empty; stderr has progress
+# bl sync — stdout empty; with no origin it pulls nothing and writes nothing
 # ---------------------------------------------------------------------------
 
 so=$(mktemp); se=$(mktemp)
 "$BL" sync >"$so" 2>"$se"
 size=$(wc -c <"$so" | tr -d ' ')
 assert_eq "bl sync stdout empty" "0" "$size"
-err=$(cat "$se")
-assert_contains "bl sync stderr has 'backlog-sync'" "backlog-sync" "$err"
-assert_contains "bl sync stderr has 'done.'" "done." "$err"
 
 # ---------------------------------------------------------------------------
 # bl which — stdout is one absolute path line
@@ -253,8 +250,6 @@ node -e '
     .replace(/^commit:.*$/m, "commit: deadbee");
   fs.writeFileSync(p, t);
 ' "$S1"
-
-"$BL" sync >/dev/null 2>&1
 
 so=$(mktemp); se=$(mktemp)
 "$BL" what-next >"$so" 2>"$se"

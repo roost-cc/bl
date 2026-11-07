@@ -1,6 +1,7 @@
 /**
  * Integration tests for `bl move` (F-61 D5): each story's `component:`
- * rewritten and committed by path with the regenerated component indexes,
+ * rewritten and committed by path (the component pages' tables are
+ * rendered when read, F-79 D2),
  * `--no-sync`, `--json`, the ids in any order, a cross-repo move, the
  * unchanged report, every refusal leaving every story byte for byte, and the
  * stories already written restored when a later write fails.
@@ -12,6 +13,7 @@ import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
+import { rendered } from '../helpers/rendered.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { main as moveMain } from '../../src/move.js';
 import { _hooks } from '../../src/atomic-write.js';
@@ -53,7 +55,7 @@ function backlog({ featureStatus = 'refined', stories = {}, git: inGit = false }
 
 const snapshot = (dir) => [1, 2, 3].map((n) => read(dir, story(n)));
 
-test("bl move rewrites each story's component: and commits the story dirs and both component indexes", () => {
+test("bl move rewrites each story's component: and commits the story dirs and nothing else", () => {
   const dir = backlog({ git: true });
   const s2 = read(dir, story(2));
   const r = bl(['move', 'S-2', 'S-3', 'C01'], dir);
@@ -65,12 +67,9 @@ test("bl move rewrites each story's component: and commits the story dirs and bo
   assert.equal(fm(dir, story(1)).component, 'C00', 'a story not named is not moved');
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: move S-2, S-3 to C01');
   const paths = git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort();
-  for (const p of ['components/C00-core/index.md', 'components/C01-widgets/index.md', story(2), story(3)]) {
-    assert.ok(paths.includes(p), `${p} in ${paths.join(', ')}`);
-  }
-  assert.ok(!paths.includes(story(1)), 'S-1 is not committed');
-  assert.match(read(dir, 'components/C01-widgets/index.md'), /S-2/);
-  assert.doesNotMatch(read(dir, 'components/C00-core/index.md'), /\bS-2\b/);
+  assert.deepEqual(paths, [story(2), story(3)].sort());
+  assert.match(rendered(dir, 'C01'), /S-2/);
+  assert.doesNotMatch(rendered(dir, 'C00'), /\bS-2\b/);
   assert.equal(git(dir, 'status', '--porcelain'), '');
   // The story keeps its sections, byte for byte apart from the key.
   assert.equal(read(dir, story(2)), s2.replace('component: C00\n', 'component: C01\n'));
@@ -79,13 +78,11 @@ test("bl move rewrites each story's component: and commits the story dirs and bo
 test('bl move --no-sync writes the stories and commits nothing', () => {
   const dir = backlog({ git: true });
   const head = git(dir, 'rev-parse', 'HEAD');
-  const index = read(dir, 'index.md');
   const before = read(dir, story(2));
   const r = bl(['move', 'S-2', 'C01', '--no-sync'], dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(read(dir, story(2)), before.replace('component: C00\n', 'component: C01\n'), 'only the key changes');
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'no commit');
-  assert.equal(read(dir, 'index.md'), index, 'the indexes are not regenerated');
   assert.deepEqual(git(dir, 'status', '--porcelain').trim(), `M ${story(2)}`);
 });
 

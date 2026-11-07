@@ -1436,14 +1436,13 @@ export async function runUpdates(config, opts = {}) {
     const mergesByRepo = new Map();
     const changed = [];
     // Each finished story is committed and pushed at once (F-74 D2): its
-    // directory, the regenerated indexes and the run's report block, which
+    // directory and the run's report block, which
     // is rewritten in place from every outcome so far. Every commit names
     // all the stories the run changed, so one whose commit failed rides
     // along with the next.
     let previous = null;
     let committed = 0;
-    // The paths of a commit that failed (the indexes its sync regenerated
-    // among them, which the next sync finds current and does not report).
+    // The paths of a commit that failed, which the next commit carries.
     let pending = [];
     const commitRun = async (message) => {
       const block = runReportSections(at, result.outcomes).join('\n');

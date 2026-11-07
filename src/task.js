@@ -18,9 +18,9 @@
  * body is the task: what to do, the commands, why it is not code. A task has
  * no points and no branch. It is a unit in F-66's graph (`unitIndex`), so it
  * can block another; it has no gates of its own (`flow.json`'s `task` type),
- * so nothing holds it. A unit lists no tasks: `bl sync` writes its `## Tasks`
- * table from the task files' `unit:` and the edges in `blockers.json`
- * (`taskTable`). `bl task --gate` writes the task's hold as an edge there
+ * so nothing holds it. A unit lists no tasks: its `## Tasks` table is
+ * rendered when read (`render.js`, F-79 D2) from the task files' `unit:` and
+ * the edges in `blockers.json` (`taskTableRows`). `bl task --gate` writes the task's hold as an edge there
  * (`gateEdges`, F-65 D2) in the same commit as the file. `bl task done` is
  * the operator's (`OPERATOR_ONLY` in `allowed-tools.js`): it lifts the holds
  * the task's edges make.
@@ -175,17 +175,17 @@ export function nextTaskNums(config, count) {
 
 /**
  * The feature or story a task belongs to, or null when `raw` names none.
- * @returns {{ id: string, type: "feature" | "story", indexPath: string } | null}
+ * @returns {{ id: string, type: "feature" | "story" } | null}
  */
 export function findTaskUnit(config, raw) {
   const featureId = normalizeFeatureId(raw);
   if (featureId) {
     const f = findFeature(featureId, config);
-    return f ? { id: f.id, type: 'feature', indexPath: f.indexPath } : null;
+    return f ? { id: f.id, type: 'feature' } : null;
   }
   const storyId = normalizeId(raw);
   const found = storyId ? findStoryDir(storyId, config) : null;
-  return found ? { id: storyId.id, type: 'story', indexPath: found.indexPath } : null;
+  return found ? { id: storyId.id, type: 'story' } : null;
 }
 
 /** `T<n>-<slug>.md`, the slug cut at a word to `SLUG_MAX`. */
@@ -261,13 +261,13 @@ function snapshot(root, paths, left = '') {
  * takes the next id, writes `tasks/T<n>-<slug>.md` (`status: open`,
  * `owner: operator`, `added: <today>`), then the `--gate` edge
  * (`gateEdges`) through `bl block add`'s check and write (`writeEdge`, once
- * the task file makes the task a unit), runs `bl sync` (the unit's
- * `## Tasks` table) and commits the task file, `blockers.json` (and
- * `.gitattributes` the first time) and what the sync rewrote together. An
+ * the task file makes the task a unit), and commits the task file and
+ * `blockers.json` (and `.gitattributes` the first time) together; the
+ * unit's Tasks table is rendered when read (`render.js`, F-79 D2). An
  * edge `writeEdge` refuses returns `{ refused }` with the files put back and
  * no commit; so does any other failure before the commit, by throwing.
  * @param {object} config
- * @param {{ unit: { id: string, indexPath: string }, title: string, gate: string,
+ * @param {{ unit: { id: string }, title: string, gate: string,
  *   body?: string | null, today?: string }} opts
  * @returns {Promise<{ refused?: string[], id?: string, path?: string, unit?: string,
  *   edges?: object[], commit?: object }>}
@@ -282,7 +282,7 @@ export async function createTask(config, { unit, title, gate, body = null, today
     const { path, text } = newTaskFile(config, { id, title, unit: unit.id, body, date });
     const rel = relative(root, path);
     const graph = edges.length > 0 ? [join(root, BLOCKERS_FILE), join(root, '.gitattributes')] : [];
-    const undo = snapshot(root, [path, unit.indexPath, ...graph], ` of task ${id}`);
+    const undo = snapshot(root, [path, ...graph], ` of task ${id}`);
     let undone = false;
     try {
       mkdirSync(tasksRoot(config), { recursive: true });
@@ -308,7 +308,7 @@ export async function createTask(config, { unit, title, gate, body = null, today
 
 /**
  * `bl task done T-<n> [note]`: set `status: done`, `done: <today>` and
- * `note:`, sync and commit. A task already done, or one that is not there,
+ * `note:`, and commit the task file. A task already done, or one that is not there,
  * refuses. Its edges stay in `blockers.json`, met.
  * @returns {Promise<{ refused?: string, id?: string, path?: string, commit?: object }>}
  */
@@ -321,10 +321,9 @@ export async function markTaskDone(config, rawId, note = '', { today: date = tod
     const task = findTask(config, parsed.id);
     if (!task) return { refused: `no task ${parsed.id} under ${TASKS_DIR}/ (see bl task list)` };
     if (task.status === 'done') return { refused: `${task.id} is already done (${task.done || 'no date'})` };
-    const unit = findTaskUnit(config, task.unit);
     const undo = snapshot(
       root,
-      [task.path, ...(unit ? [unit.indexPath] : [])],
+      [task.path],
       ` (${task.id} may read done, its holds lifted, though bl task done did not commit)`,
     );
     const { fm, body } = parseFrontmatter(readFileSync(task.path, 'utf8'));
@@ -479,11 +478,12 @@ const HELP = `Usage: bl task <F-n|S-n> --title <t> --gate <merge|next|none>
 
 A task is an action with an owner (the operator) and no branch: run a
 migration, re-mint a key. It is a file, tasks/T<n>-<slug>.md, belonging to
-one feature or story, whose ## Tasks table bl sync writes (F-65 D1).
+one feature or story, whose page shows it in a ## Tasks table that bl
+renders when the page is read (F-65 D1, F-79 D2).
 
   <unit>       File a task on the feature or story: write the file
                (status: open, owner: operator, added: today) and its
-               edge in blockers.json, sync and commit; print T-<n>
+               edge in blockers.json, and commit them; print T-<n>
     --title <t>          Required. What to do, in a few words
     --gate <g>           Required. What the task holds until it is done:
                          merge  bl merge of the unit
@@ -494,8 +494,8 @@ one feature or story, whose ## Tasks table bl sync writes (F-65 D1).
                          why it is not code ("-" for stdin)
     --json               Print { schema: "${TASK_JSON_SCHEMA}", id, path,
                          unit, edges }
-  done         Close the task: status: done, done: today, note:; sync and
-               commit (operator only)
+  done         Close the task: status: done, done: today, note:; commit
+               the task file (operator only)
   list         Print every task, --open only open ones, <unit> only that
                unit's`;
 

@@ -188,7 +188,6 @@ Arguments:
 
 Options:
   --force              Approve a draft
-  --no-sync            Skip the backlog sync
   --help               Show this help
 
 The human gate before bl run. Refuses while ## Escalation is not "None.".`,
