@@ -2,5 +2,5 @@
   "instance": "roost-gh",
   "profile": "public-tool",
   "overrides": {},
-  "test_command": "npm test"
+  "test_command": "bash -c 'npm ci && env BL_REQUIRE_PID_TESTS=1 npm test'"
 }
