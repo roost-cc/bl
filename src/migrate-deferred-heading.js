@@ -14,7 +14,8 @@
  * Idempotent: with no `## To Do` left a run plans nothing.
  *
  * Retryable: it starts only on a clean backlog at origin/main with no bl run
- * active, and a step or commit that fails resets the backlog to HEAD
+ * active (checked before it plans, so a dry run or a run with nothing to
+ * rename is refused too), and a step or commit that fails resets the backlog to HEAD
  * (`migration-txn.js`). It commits once through `syncAndCommit`.
  */
 
@@ -22,7 +23,7 @@ import { readFileSync } from 'fs';
 import { relative } from 'path';
 import { DEFERRED_HEADING, RETIRED_SECTION, scanDeferred } from './deferred.js';
 import { withLock } from './lock.js';
-import { applyMigration } from './migration-txn.js';
+import { applyMigration, assertMigrationCanStart } from './migration-txn.js';
 import { readAllStories } from './story.js';
 import { runSync, syncAndCommit } from './sync.js';
 
@@ -69,6 +70,8 @@ export function planHeadings(config) {
  */
 export async function migrate(config, { dryRun = false, log = console.log, commit = syncAndCommit } = {}) {
   return withLock(config.backlogRoot, async () => {
+    // Before the plan: a run with nothing to rename, or a dry run, is refused too.
+    assertMigrationCanStart(config);
     const plan = planHeadings(config);
     if (plan.length === 0) {
       log(`no story has ## ${RETIRED_SECTION}: nothing to migrate`);

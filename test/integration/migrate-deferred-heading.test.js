@@ -7,8 +7,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { loadConfig } from '../../src/config.js';
 import { migrate, renameHeading } from '../../src/migrate-deferred-heading.js';
@@ -44,6 +44,17 @@ function oldBacklog() {
   // A file with CRLF line ends keeps them.
   const crlf = join(dir, STORIES['S-4']);
   writeFileSync(crlf, readFileSync(crlf, 'utf8').replace(/\n/g, '\r\n'));
+  initGitBacklog(dir);
+  addOrigin(dir);
+  return dir;
+}
+
+/** A clean backlog at origin/main whose stories already use ## Deferred. */
+function newBacklog() {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [{ id: 'S-3', component: 'C01', title: 'New', dirSuffix: 'new', status: 'done', body: NEW }],
+  });
   initGitBacklog(dir);
   addOrigin(dir);
   return dir;
@@ -141,6 +152,53 @@ test('it refuses a backlog that is not clean at origin/main, and writes nothing'
   assert.match(r.stderr, /migration refused: the backlog's work tree is not clean/);
   assert.equal(head(dir), before);
   assert.match(read(dir, 'S-1'), /^## To Do$/m);
+});
+
+test('migration_refuses_dirty_or_off_origin_with_zero_or_nonzero_plan, dry run or not', async () => {
+  const put = (dir, rel, text) => {
+    mkdirSync(dirname(join(dir, rel)), { recursive: true });
+    writeFileSync(join(dir, rel), text);
+  };
+  const states = [
+    ['an untracked file', (d) => put(d, 'stray.md', 'x\n'), /the backlog's work tree is not clean/],
+    [
+      'HEAD ahead of origin/main',
+      (d) => (put(d, 'extra.md', 'x\n'), git(d, 'add', 'extra.md'), git(d, 'commit', '-qm', 'local')),
+      /the backlog's HEAD \(\w{7}\) is not origin\/main/,
+    ],
+    [
+      'an active bl run',
+      // `.bl/` is gitignored in a real backlog, so the run state alone is not a change.
+      (d) => (
+        put(d, '.git/info/exclude', '.bl/\n'),
+        put(d, '.bl/run/F-9.json', '{"feature":"F-9","status":"running"}\n'),
+        put(d, '.bl/run/F-9.lock', `${process.ppid}\n`)
+      ),
+      /a bl run is active/,
+    ],
+  ];
+  const plans = [
+    ['a plan', () => oldBacklog()],
+    ['no plan', () => newBacklog()],
+  ];
+  for (const [state, spoil, why] of states) {
+    for (const [planName, make] of plans) {
+      for (const dryRun of [false, true]) {
+        const label = `${state}, ${planName}, dryRun ${dryRun}`;
+        const dir = make();
+        spoil(dir);
+        const before = head(dir);
+        const lines = [];
+        await assert.rejects(
+          migrate(loadConfig({ backlogRoot: dir }), { dryRun, log: (l) => lines.push(l) }),
+          (e) => e.message.startsWith('migration refused: ') && why.test(e.message),
+          label,
+        );
+        assert.deepEqual(lines, [], `${label}: nothing planned or printed`);
+        assert.equal(head(dir), before, label);
+      }
+    }
+  }
 });
 
 test('a commit that fails leaves the backlog at HEAD', async () => {
