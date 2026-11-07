@@ -25,6 +25,7 @@ import {
   chownSync,
   linkSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   statSync,
@@ -85,12 +86,22 @@ let renameCallCount = 0;
  * one another process made after the caller looked, stays as it is, and the
  * write fails with EEXIST.
  *
+ * With `{ unchanged: <text> }` the target is read again just before the
+ * rename: when it no longer holds `<text>` (another caller edited it after
+ * this caller read it), the write fails with code `ECHANGED` and the target
+ * keeps that edit. The caller reads the file again and retries.
+ *
  * @param {string} backlogRoot
  * @param {string} path
  * @param {string | Buffer} text
- * @param {{ preserve?: boolean, exclusive?: boolean }} [options]
+ * @param {{ preserve?: boolean, exclusive?: boolean, unchanged?: string }} [options]
  */
-export function atomicWriteFile(backlogRoot, path, text, { preserve = false, exclusive = false } = {}) {
+export function atomicWriteFile(
+  backlogRoot,
+  path,
+  text,
+  { preserve = false, exclusive = false, unchanged = undefined } = {},
+) {
   let st = null;
   if (preserve) {
     try {
@@ -135,6 +146,9 @@ export function atomicWriteFile(backlogRoot, path, text, { preserve = false, exc
       }
     }
     _hooks.beforeRename?.(tmp);
+    if (unchanged !== undefined && readFileSync(path, 'utf8') !== unchanged) {
+      throw Object.assign(new Error(`${path} changed while bl wrote it`), { code: 'ECHANGED' });
+    }
     try {
       if (exclusive) linkSync(tmp, path);
       else renameSync(tmp, path);

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
-import { ensureBacklogDocs, ensureFlowFile, ensureReposBlock } from '../../src/init.js';
+import { CONFIG_WRITE_ATTEMPTS, ensureBacklogDocs, ensureFlowFile, ensureReposBlock } from '../../src/init.js';
 import { _hooks } from '../../src/atomic-write.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
@@ -191,5 +191,47 @@ test('init_adds_effort_to_existing_backlog_with_repos', () => {
     if (want === null) assert.equal(after, text, `${label}: left as it was`);
     else if (want === 'new') assert.deepEqual(JSON.parse(after).effort, HIGH, label);
     else assert.deepEqual(JSON.parse(after), want, `${label}: only effort is added`);
+  }
+});
+
+test('init_existing_repos_preserves_concurrent_config_edit', () => {
+  // Another caller edits backlog.json after bl init reads it, on both of
+  // ensureReposBlock's writes. bl init keeps the edit and still adds its keys.
+  const cases = [
+    ['existing repos, effort added', { repos: {}, title: 'original' }],
+    ['new backlog, every key added', { title: 'original' }],
+  ];
+  for (const [label, raw] of cases) {
+    for (const edits of [1, CONFIG_WRITE_ATTEMPTS]) {
+      const dir = mkTempDir('bl-init-race-');
+      const path = join(dir, 'backlog.json');
+      writeFileSync(path, JSON.stringify(raw));
+      let left = edits;
+      _hooks.beforeRename = (tmp) => {
+        if (!basename(tmp).startsWith('backlog.json.') || left === 0) return;
+        left -= 1;
+        writeFileSync(path, JSON.stringify({ ...raw, title: `edit ${left}` }));
+      };
+      let error = null;
+      try {
+        quietly(() => ensureReposBlock(dir, 'claude'));
+      } catch (e) {
+        error = e;
+      } finally {
+        _hooks.beforeRename = null;
+      }
+      const after = JSON.parse(readFileSync(path, 'utf8'));
+      assert.equal(after.title, `edit ${left}`, `${label}, ${edits} edit(s): the edit stays`);
+      if (edits < CONFIG_WRITE_ATTEMPTS) {
+        assert.equal(error, null, `${label}: a retry succeeds`);
+        assert.deepEqual(after.effort, { default: 'high', refine: 'high', review: 'high' }, label);
+        assert.deepEqual(after.repos, {}, label);
+      } else {
+        // An edit on every attempt: bl init fails and writes nothing over it.
+        assert.equal(error?.code, 'ECHANGED', `${label}: fails after ${edits} attempts`);
+        assert.equal(after.effort, undefined, label);
+      }
+      assert.deepEqual(readdirSync(join(dir, '.bl', 'tmp')), [], `${label}: no staging file left`);
+    }
   }
 });

@@ -192,14 +192,32 @@ export function initConfigurationLists(raw, agent = null) {
  * `projects` that `loadConfig` refuses with the migration's name, or one that
  * is not a JSON object, is left alone. The write is atomic: a
  * failed one leaves the file as it was, and a successful one keeps its mode
- * and owner and, through a symlink, replaces the file the link names.
+ * and owner and, through a symlink, replaces the file the link names. If
+ * another caller edits the file after bl reads it, bl keeps that edit: the
+ * write fails (`unchanged`), and bl reads the file again and retries, up to
+ * `CONFIG_WRITE_ATTEMPTS` times.
  */
 export function ensureReposBlock(dir, agent = null) {
   const path = join(dir, 'backlog.json');
   if (!existsSync(path)) return;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return addToBacklogJson(dir, path, agent);
+    } catch (e) {
+      if (e.code !== 'ECHANGED' || attempt === CONFIG_WRITE_ATTEMPTS) throw e;
+    }
+  }
+}
+
+/** Reads of `backlog.json` `ensureReposBlock` makes before a concurrent edit fails `bl init`. */
+export const CONFIG_WRITE_ATTEMPTS = 5;
+
+/** One read and write of `ensureReposBlock`; the write fails with ECHANGED if the file changed after the read. */
+function addToBacklogJson(dir, path, agent) {
+  const text = readFileSync(path, 'utf8');
   let raw;
   try {
-    raw = JSON.parse(readFileSync(path, 'utf8'));
+    raw = JSON.parse(text);
   } catch {
     return;
   }
@@ -209,7 +227,10 @@ export function ensureReposBlock(dir, agent = null) {
     // An existing backlog keeps its settings, but `loadConfig` now requires
     // the effort levels (F-85 D2), so it gets them unless it has them.
     if (Object.hasOwn(raw, 'effort')) return;
-    atomicWriteFile(dir, path, JSON.stringify({ ...raw, effort: NEW_EFFORT }, null, 2) + '\n', { preserve: true });
+    atomicWriteFile(dir, path, JSON.stringify({ ...raw, effort: NEW_EFFORT }, null, 2) + '\n', {
+      preserve: true,
+      unchanged: text,
+    });
     info(`Updated : backlog.json (+ "effort": ${JSON.stringify(NEW_EFFORT)})`);
     return;
   }
@@ -221,7 +242,10 @@ export function ensureReposBlock(dir, agent = null) {
   Object.assign(added, initConfigurationLists(raw, agent));
   // The seed first: if its copy fails, backlog.json does not list a missing file.
   if (added.dictionaries) copySeed(dir, CODING_DICTIONARY_FILE);
-  atomicWriteFile(dir, path, JSON.stringify({ ...raw, ...added, repos: {} }, null, 2) + '\n', { preserve: true });
+  atomicWriteFile(dir, path, JSON.stringify({ ...raw, ...added, repos: {} }, null, 2) + '\n', {
+    preserve: true,
+    unchanged: text,
+  });
   const keys = [...Object.entries(added).map(([k, v]) => `"${k}": ${JSON.stringify(v)}`), '"repos": {}'];
   info(`Updated : backlog.json (+ ${keys.join(', ')})`);
 }
