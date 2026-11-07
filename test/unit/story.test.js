@@ -326,6 +326,25 @@ test('readAllStories reads a story whose index.md has CRLF line ends', () => {
   }
 });
 
+test('readAllStories gives each story its effort, null when unset or empty (F-85 D1)', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'Set', effort: 'low' },
+      { id: 'S-2', component: 'C01', title: 'Unset' },
+      { id: 'S-3', component: 'C01', title: 'Empty' },
+    ],
+  });
+  try {
+    const p = join(dir, 'stories', 'S3', 'index.md');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('points: 1\n', 'points: 1\neffort:\n'));
+    const byId = Object.fromEntries(readAllStories(loadConfig({ backlogRoot: dir })).map((s) => [s.id, s.effort]));
+    assert.deepEqual(byId, { 'S-1': 'low', 'S-2': null, 'S-3': null });
+  } finally {
+    cleanup();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // The F-49 D3 layout: stories/, components/, features/; status, not location
 // ---------------------------------------------------------------------------

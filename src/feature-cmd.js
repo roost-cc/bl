@@ -42,6 +42,7 @@ import {
   unitDirOf,
 } from './config.js';
 import { readAllStories, findExistingWorktree, isSessionRunning, findUnitPRs, refuseStoryRepo } from './story.js';
+import { effortLabel } from './effort.js';
 import { findEpic, findTheme, normalizeEpicId, readAllThemes, recordThemeState, themeBriefList } from './theme.js';
 import { renderTemplate } from './template.js';
 import { hasFilter, featureMatches, featureEpicId } from './filter.js';
@@ -640,6 +641,7 @@ export async function cmdApprove(args, config, feature) {
     fm.approved = today();
   });
   info(`\nApproved ${feature.id} — ${feature.title} (${stories.length} stories, ${points} points).`);
+  for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
 
   if (!args['no-sync']) {
     info('\nSyncing backlog...');
@@ -805,8 +807,8 @@ export function cmdStatus(args, config, feature) {
   console.log('');
   if (ordered.length > 0) {
     printTable(
-      ['#', 'ID', 'Status', 'Pts', 'Component', 'Title'],
-      ordered.map((s, i) => [i + 1, s.id, s.status, s.points, s.componentId, s.title]),
+      ['#', 'ID', 'Status', 'Pts', 'Effort', 'Component', 'Title'],
+      ordered.map((s, i) => [i + 1, s.id, s.status, s.points, effortLabel(s, config), s.componentId, s.title]),
     );
   } else {
     console.log('(no stories)');

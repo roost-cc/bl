@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { EFFORT_LEVELS, checkEffort } from '../../src/effort.js';
+import { EFFORT_LEVELS, checkEffort, effortLabel } from '../../src/effort.js';
 
 test('EFFORT_LEVELS lists the five levels, lowest first (F-85 D1)', () => {
   assert.deepEqual([...EFFORT_LEVELS], ['low', 'medium', 'high', 'xhigh', 'max']);
@@ -15,4 +15,10 @@ test('checkEffort returns a level and throws, naming the label, for anything els
   assert.throws(() => checkEffort('High', 'e'), /^Error: e must be one of/);
   assert.throws(() => checkEffort(3, 'e'), /^Error: e must be one of .*, not 3$/);
   assert.throws(() => checkEffort(null, 'e'), /, not null$/);
+});
+
+test("effortLabel shows a story's effort, or effort.default marked (default) when unset", () => {
+  const config = { effort: { refine: 'high', review: 'high', default: 'medium' } };
+  assert.equal(effortLabel({ effort: 'low' }, config), 'low');
+  assert.equal(effortLabel({ effort: null }, config), 'medium (default)');
 });

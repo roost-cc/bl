@@ -494,7 +494,7 @@ export function activeWorktreesByStory(config) {
  * component (`componentId`, empty when `component:` is missing or malformed)
  * and its one repo (`unitRepo`, `placeStory`).
  * @returns {Array<{
- *   unitRepo, componentId, componentEntry, id, title, status, type, points,
+ *   unitRepo, componentId, componentEntry, id, title, status, type, points, effort,
  *   depends_on, requiredFor, feature, found_by, added, completed,
  *   storyEntry, indexPath, storyRelPath
  * }>}
@@ -513,6 +513,8 @@ export function readAllStories(config) {
       status: fm.status ?? 'backlog',
       type: fm.type ?? '',
       points: fm.points ?? '',
+      // The refiner's effort level (F-85 D1); null when the key is unset or empty.
+      effort: fm.effort || null,
       depends_on: fm.depends_on ?? '',
       // The stories whose depends_on names this one, in number order: the
       // graph's derived inverse (F-77 D3), never a stored `required_for:`.

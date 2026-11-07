@@ -19,3 +19,14 @@ export function checkEffort(value, label) {
   }
   return value;
 }
+
+/**
+ * A story's effort level for display: its `effort:`, or
+ * `<effort.default> (default)` when it has none (`bl status`, `bl approve`).
+ * @param {{ effort: string | null }} story — a `readAllStories` entry
+ * @param {{ effort: { default: string } }} config
+ * @returns {string}
+ */
+export function effortLabel(story, config) {
+  return story.effort ?? `${config.effort.default} (default)`;
+}

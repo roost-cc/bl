@@ -226,6 +226,7 @@ export const STORY_INDEX_TEMPLATE = (story) => `${serializeFrontmatter({
   title: story.title,
   type: story.type ?? 'feature',
   points: story.points ?? 1,
+  effort: story.effort || undefined,
   status: story.status ?? 'backlog',
   added: story.added || undefined,
   depends_on: refList(story.depends_on),
@@ -255,7 +256,7 @@ ${story.body ?? ''}
  *           same way, an `E<nn>` id becoming `C<nn>`.
  * @property {Array<{ id: string, component?: string,
  *           epic?: string, title: string, type?: string, points?: number,
- *           status?: string, added?: string, depends_on?: string, required_for?: string,
+ *           effort?: string, status?: string, added?: string, depends_on?: string, required_for?: string,
  *           completed?: string, dirSuffix?: string, body?: string,
  *           feature?: string, primary_repo?: string,
  *           secondary_repos?: string[] }>} [stories]

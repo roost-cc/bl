@@ -775,16 +775,17 @@ async function newEpic(args, jsonMode) {
 /**
  * A story template's frontmatter values (F-62 D3): `vars` under their keys,
  * `feature:` only when the story has one, never `found_by:` (`bl side` sets
- * it, F-48 D2), and a dependency list only when it is non-empty (the
+ * it, F-48 D2), and a dependency list and an effort level only when set (the
  * template's empty key stays otherwise).
  */
-function storyValues(vars, { feature = null, dependsOn = [] } = {}) {
+function storyValues(vars, { feature = null, dependsOn = [], effort = null } = {}) {
   return {
     component: vars.componentId,
     story_id: vars.storyId,
     title: vars.title,
     type: vars.type,
     points: vars.points,
+    ...(effort ? { effort } : {}),
     added: vars.today,
     feature: feature?.id,
     found_by: undefined,
@@ -1639,7 +1640,7 @@ async function runBatchMode(args, jsonMode) {
       process.exit(1);
     }
     const finalContent = renderTemplate(feature ? 'story-feature' : 'story', {
-      values: storyValues(storyVars, { feature, dependsOn }),
+      values: storyValues(storyVars, { feature, dependsOn, effort: s.effort }),
       vars: storyVars,
       body,
     });

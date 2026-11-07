@@ -422,6 +422,7 @@ story_id: S-01 # canonical ID, always S-<number> with dash
 title: User Login # short title (used in index tables)
 type: feature # feature | bug | chore
 points: 3 # story-point estimate (Fibonacci: 1 2 3 5 8 13)
+effort: medium # optional — the refiner's effort level (low | medium | high | xhigh | max)
 status: backlog # backlog | refined | in_progress | done | superseded
 added: 2026-03-15 # date the story was added (YYYY-MM-DD)
 parent: S-10 # optional — parent story ID
@@ -470,6 +471,7 @@ positional `[commit-hash]` and `--commit` are mutually exclusive.
 | `title`             | yes      | short string                                          | Appears in all index tables                                                                                       |
 | `type`              | yes      | `feature` `bug` `chore`                               | Story type                                                                                                        |
 | `points`            | yes      | 1 2 3 5 8 13                                          | Fibonacci; feature and backlog totals roll up                                                                     |
+| `effort`            | no       | `low` `medium` `high` `xhigh` `max`                   | The effort level refine chose (F-85 D1); unset runs at `effort.default`; `bad-effort` refuses another value       |
 | `status`            | yes      | `backlog` `refined` `in_progress` `done` `superseded` | Drives table placement and gates                                                                                  |
 | `added`             | yes      | `YYYY-MM-DD`                                          | Set once, never changed                                                                                           |
 | `parent`            | no       | `S-<nn>`                                              | Parent story if this was split from one                                                                           |
