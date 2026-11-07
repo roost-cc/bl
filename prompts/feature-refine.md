@@ -64,7 +64,10 @@ in order without asking anyone.
 
 4. Write **## Goal**, **## Design**, and **## Out of Scope**. Design is written
    once, here: decisions, rejected alternatives, and the contracts the stories
-   implement. Stories reference this section; they never restate it.
+   implement. Stories reference this section; they never restate it. In the
+   Design, name the behaviour the new work shares with existing code or with
+   its sibling stories, and decide whether it gets a shared abstraction (see
+   **Simple, surgical changes** below).
 
 5. Write **## Acceptance**: feature-level outcomes, each observable on the
    merged result rather than on one story in isolation.
@@ -158,6 +161,8 @@ in order without asking anyone.
   `bl approve` refuses the feature.
 
 {{selfConsistencyGuide}}
+
+{{simplicityGuide}}
 
 {{sideChangeGuide}}
 

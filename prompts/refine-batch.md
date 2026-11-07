@@ -45,13 +45,15 @@ them to it. You make no backlog commit yourself.
 
 {{validateBeforeSync}}
 
-## The design rule each sub-agent follows
+## The design rules each sub-agent follows
 
-Each sub-agent's file also carries this rule. A plan without a `### Sources of truth` part is not
-finished: for each concept the story touches, it says where that is defined and how the code
+Each sub-agent's file also carries these rules. A plan without a `### Sources of truth` part is
+not finished: for each concept the story touches, it says where that is defined and how the code
 reaches it.
 
 {{selfConsistencyGuide}}
+
+{{simplicityGuide}}
 
 ## The side-PR rule each sub-agent follows
 

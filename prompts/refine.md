@@ -30,6 +30,8 @@ Backlog repo : {{backlogDir}}
    - New tests to add
    - Edge cases to handle
    - Any architectural changes required
+   - The behaviour the story shares with existing code, and whether it gets a
+     shared abstraction (see **Simple, surgical changes** below)
    - A `### Sources of truth` part: for each concept the story touches, where
      it is defined and how the code reaches it. Paths here are read, not
      changed, so `bl run` does not hold a target back for them.
@@ -64,6 +66,8 @@ Backlog repo : {{backlogDir}}
     first.
 
 {{selfConsistencyGuide}}
+
+{{simplicityGuide}}
 
 {{validateBeforeSync}}
 

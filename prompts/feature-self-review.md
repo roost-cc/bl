@@ -40,6 +40,11 @@ The stories on this branch:
    the plan's `### Sources of truth` part where it has one. A restatement is a
    finding, with `Class: restated source of truth` and a `Repro:` showing the
    definition: derive from the definition instead.
+8. **Simplicity.** Look for code the criteria do not need: an unused option, a
+   one-use abstraction, handling for a case that cannot happen, a changed line
+   that traces to neither a story nor a finding. Remove it. Look also for
+   behaviour that now exists twice, and share it (see **Simple, surgical
+   changes** below).
 
 Fix in place with Conventional Commits messages ending in ` ({{featureId}})`,
 run the tests that cover what you changed (see **Tests** below; the loop's
@@ -55,6 +60,8 @@ Never run `git add` or `git commit` in the backlog repo ({{backlogDir}}): its
 index is shared, and a raw commit takes along what other sessions have staged.
 
 {{selfConsistencyGuide}}
+
+{{simplicityGuide}}
 
 {{blockedByBug}}
 

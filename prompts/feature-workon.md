@@ -133,6 +133,8 @@ Backlog repo : {{backlogDir}}
 
 {{selfConsistencyGuide}}
 
+{{simplicityGuide}}
+
 {{blockedByBug}}
 
 {{escalationGuide}}

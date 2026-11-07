@@ -101,6 +101,8 @@ headless session cannot remove files.
 
 {{selfConsistencyGuide}}
 
+{{simplicityGuide}}
+
 {{blockedByBug}}
 
 {{escalationGuide}}

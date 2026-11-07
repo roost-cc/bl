@@ -144,6 +144,11 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * rule (about 80% of ASD-STE100: short active sentences, one name per thing,
  * facts and hedges kept exact), carried by every top-level prompt because
  * every session writes something the operator or another agent reads.
+ * `simplicityGuide` is the simple, surgical change rule (build what the
+ * criteria ask, abstractions follow shared behaviour, every changed line
+ * traces to the story or a named finding); it rides with
+ * `selfConsistencyGuide`, in every refine and implementation prompt and the
+ * two prompts that review for it.
  */
 const PROMPT_PARTIALS = {
   blockedByBug: '_blocked-by-bug',
@@ -152,6 +157,7 @@ const PROMPT_PARTIALS = {
   sideChangeGuide: '_side-changes',
   selfConsistencyGuide: '_self-consistency',
   writingGuide: '_plain-writing',
+  simplicityGuide: '_simplicity',
 };
 
 /**

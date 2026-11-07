@@ -25,7 +25,9 @@ Backlog repo : {{backlogDir}}
    another. A path that is not backticked is not seen. The plan needs a
    `### Sources of truth` part: for each concept the story touches, where it
    is defined and how the code reaches it. Paths there are read, not changed,
-   so `bl run` does not hold a target back for them.
+   so `bl run` does not hold a target back for them. Name the behaviour the
+   story shares with existing code, and whether it gets a shared abstraction
+   (see **Simple, surgical changes** below).
 
 4. If the story is too large, use `bl new` to split it into smaller stories.
 
@@ -46,6 +48,8 @@ Backlog repo : {{backlogDir}}
    directly; do NOT branch first.
 
 {{selfConsistencyGuide}}
+
+{{simplicityGuide}}
 
 {{validateBeforeSync}}
 

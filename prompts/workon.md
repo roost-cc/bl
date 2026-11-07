@@ -116,6 +116,8 @@ The backlog is a **separate git repo** from the code. That means:
 
 {{selfConsistencyGuide}}
 
+{{simplicityGuide}}
+
 {{validateBeforeSync}}
 
 {{sideChangeGuide}}

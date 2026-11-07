@@ -78,8 +78,17 @@ line so the implementer can run it too.
    has one. A restatement is a finding even when it is correct today and every
    test passes, with `Class: restated source of truth`. The `Repro:` is a
    command that shows the definition (`rg -n <value> <where it is defined>`).
+10. **Check for unneeded complexity.** Code the criteria do not need is a
+    finding: an option or extension point nobody asked for, a one-use
+    abstraction, handling for a case that cannot happen, or a changed line that
+    traces to neither a story nor a finding. Behaviour that now exists twice is
+    a finding too: name both places. Use `Class: unneeded complexity`. The
+    `Repro:` is a command that shows it (`rg -n <name> <repo>` showing one
+    use, or both copies).
 
 {{selfConsistencyGuide}}
+
+{{simplicityGuide}}
 
 ## Steps
 
