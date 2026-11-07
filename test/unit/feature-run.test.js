@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import {
   loadConfig,
@@ -4903,6 +4903,52 @@ test('run_refreshes_existing_story_effort_before_retry_and_unit_steps', async ()
     assert.deepEqual(effortsOf(runner.calls, 'feature-self-review'), ['xhigh']);
   } finally {
     fx.cleanup();
+  }
+});
+
+test('run_stops_when_story_effort_cannot_be_read', async () => {
+  // A session leaves a story file missing or unparseable. The next session
+  // must not start at the level the run held before: the run stops.
+  const breaks = {
+    missing: (path) => unlinkSync(path),
+    'malformed YAML': (path) => writeFileSync(path, '---\neffort: [\n---\n' + STORY_BODY),
+  };
+  // [the session that breaks a file, the story whose file it breaks, the session next]
+  const cases = [
+    ['S-1', 'S-1', 'the S-1 retry'],
+    ['S-1', 'S-2', 'the S-2 session'],
+    ['S-2', 'S-1', 'the unit self-review'],
+  ];
+  for (const [how, breakFile] of Object.entries(breaks)) {
+    for (const [by, target, next] of cases) {
+      const label = `${how} ${target}, before ${next}`;
+      const { dir, cleanup, config, feature, prep } = effortSetup({ 'S-1': 'low', 'S-2': 'low' });
+      try {
+        const path = prep.ordered.find((s) => s.id === target).indexPath;
+        const runner = fakeRunner({
+          dir,
+          feature,
+          behaviour: {
+            story: (o) => {
+              if (by !== target) checkAll(o.vars.storyAbsPath);
+              if (o.vars.storyId === by) breakFile(path);
+            },
+          },
+        });
+        let stopped;
+        try {
+          stopped = (await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } })).status;
+        } catch (e) {
+          stopped = e.message;
+        }
+        // Escalated by refreshRepos, or thrown by the first read that fails.
+        assert.match(stopped, /^escalated$|ENOENT/, label);
+        const sessions = runner.calls.filter((c) => c.type === 'session').map((c) => c.story);
+        assert.deepEqual(sessions, by === 'S-1' ? ['S-1'] : ['S-1', 'S-2'], `${label}: no session after the break`);
+      } finally {
+        cleanup();
+      }
+    }
   }
 });
 

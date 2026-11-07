@@ -500,7 +500,7 @@ component_id: C32
 title: bl Tool Enhancements
 repo: bl # a repo registered in backlog.json
 home: true # this repo's home component; work with no better component lands here
-paths: ["src/**", "test/**"] # optional: globs relative to the repo root (F-61 D2)
+paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D2)
 ---
 ```
 
@@ -1191,7 +1191,8 @@ Each step runs at one effort level (F-85 D4, **Effort levels**).
 `runSession` calls it once, before the walk, so every configuration the walk
 reaches gets the same level. It reads each story's `effort:` from the story
 file at that moment (`withCurrentEffort`), so a level an earlier session
-changed applies to every later session:
+changed applies to every later session. If a story file is missing or its
+frontmatter is not YAML, the run stops before the session:
 
 | Step                                                                   | Level                                                        |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------ |

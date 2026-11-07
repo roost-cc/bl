@@ -2236,14 +2236,16 @@ function branchWorktrees(ctx, repoPath) {
 /**
  * `s` (a `prep.ordered` entry) with `effort:` as its file has it now (F-85
  * D4), so a level a session changed applies to the next session. When the
- * file cannot be read, `s` as the run holds it.
+ * file is missing or cannot be parsed, it throws, naming the story: the run
+ * stops before the session, as for a bad `effort:`, and never runs it at a
+ * level the file may no longer have.
  */
 function withCurrentEffort(backlogRoot, s) {
   let fm;
   try {
     fm = readFm(join(backlogRoot, s.storyRelPath));
-  } catch {
-    return s;
+  } catch (e) {
+    throw new Error(`${s.id} "effort:" cannot be read from ${s.storyRelPath}: ${e.message}`, { cause: e });
   }
   return { ...s, effort: storyEffort(fm) };
 }
