@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { loadBacklog } from '../../src/backlog-graph.js';
-import { formatTable, GENERATED_SECTIONS, renderPage, renderSections } from '../../src/render.js';
+import { formatTable, GENERATED_SECTIONS, renderPage, renderSections, SECTIONS } from '../../src/render.js';
 
 /** Every relative `[text](path)` link in a Markdown text. */
 function links(content) {
@@ -145,6 +145,8 @@ test('GENERATED_SECTIONS lists each page kind and is what renderSections renders
     feature: ['Stories', 'Tasks'],
     story: ['Tasks'],
   });
+  // One renderer per page kind.
+  assert.deepEqual(Object.keys(SECTIONS), Object.keys(GENERATED_SECTIONS));
   const { dir, cleanup } = valueAxisBacklog();
   try {
     const g = graphOf(dir);

@@ -142,11 +142,12 @@ function tasksTable(graph, unit) {
 // ---------------------------------------------------------------------------
 
 /**
- * Each kind's generated sections as `{ <heading>: <Markdown> }`; a heading
- * mapped to null is left out of the page.
+ * One renderer per page kind (`root` is the backlog's `index.md`): its
+ * generated sections as `{ <heading>: <Markdown> }`; a heading mapped to null
+ * is left out of the page.
  * @type {Record<string, (graph: import("./backlog-graph.js").BacklogGraph, unit: any) => Record<string, string | null>>}
  */
-const SECTIONS = {
+export const SECTIONS = Object.freeze({
   root(graph) {
     const openFeatures = (t) => t.features.filter((f) => !f.done).length;
     const entryOf = new Map(graph.ranked.map((e) => [e.unit, e]));
@@ -223,7 +224,7 @@ const SECTIONS = {
   story(graph, s) {
     return { Tasks: tasksTable(graph, s) };
   },
-};
+});
 
 /**
  * The generated sections of a page, in order, as `{ heading, content }`
