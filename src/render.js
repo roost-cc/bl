@@ -111,8 +111,7 @@ export const UNIT_PAGE_KINDS = Object.freeze(Object.keys(GENERATED_SECTIONS).fil
  * Whether a section's body is a generated one: one complete GFM table (read
  * as mdast with the GFM table extension, not by hand) whose header row is
  * `columns`, each cell written plainly (`isLiteralCell`), and whose every
- * row has at least that many cells, and nothing
- * else. (bl wrote every cell of every row; a title holding a `|` adds cells,
+ * row has at least that many cells, and nothing else. (bl wrote every cell of every row; a title holding a `|` adds cells,
  * as three committed tables show.) A hand-written section under the same
  * heading (prose, a mixed body, a table with other columns, a header row with
  * no delimiter row, or a line the table reads as a short row) is not, so `bl

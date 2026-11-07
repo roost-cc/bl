@@ -473,26 +473,29 @@ function incompleteTables(columns) {
 }
 
 /**
- * Complete tables for `columns` whose first header cell reads as the same
- * words but is formatted by hand: each keeps its `kept` marker.
+ * Complete tables for `columns` whose first header cell (or, for
+ * `strongLast`, the last one) reads as the same words but is formatted by
+ * hand: each keeps its `kept` marker.
  */
 function formattedHeaders(columns) {
   const [first, ...rest] = columns;
-  const table = (cell, mark) =>
-    `| ${[cell, ...rest].join(' | ')} |\n| ${columns.map(() => '---').join(' | ')} |\n| ${columns.map((_, i) => (i === 0 ? mark : 'x')).join(' | ')} |`;
+  const last = columns.length - 1;
+  const table = (header, mark) =>
+    `| ${header.join(' | ')} |\n| ${columns.map(() => '---').join(' | ')} |\n| ${columns.map((_, i) => (i === 0 ? mark : 'x')).join(' | ')} |`;
   const escaped = `${first.slice(0, 1)}\\${first.slice(1)}`;
   const entity = `&#${first.charCodeAt(0)};${first.slice(1)}`;
   return Object.fromEntries(
     Object.entries({
-      strong: `**${first}**`,
-      emphasis: `_${first}_`,
-      inlineCode: `\`${first}\``,
-      link: `[${first}](x.md)`,
-      escape: escaped,
-      entity,
-    }).map(([name, cell]) => {
+      strong: [`**${first}**`, ...rest],
+      emphasis: [`_${first}_`, ...rest],
+      inlineCode: [`\`${first}\``, ...rest],
+      link: [`[${first}](x.md)`, ...rest],
+      escape: [escaped, ...rest],
+      entity: [entity, ...rest],
+      strongLast: columns.map((c, i) => (i === last ? `**${c}**` : c)),
+    }).map(([name, header]) => {
       const mark = `HEADER-${name.toUpperCase()}`;
-      return [`${name}Header`, { body: table(cell, mark), kept: [mark] }];
+      return [`${name}Header`, { body: table(header, mark), kept: [mark] }];
     }),
   );
 }
