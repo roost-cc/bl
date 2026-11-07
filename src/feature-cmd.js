@@ -583,6 +583,7 @@ export function cmdRefine(args, config, feature) {
     recordTokens: false,
     sessionName: `${feature.id}: refine — ${feature.title}`,
     tmuxLabel: `${feature.id} refine`,
+    effort: sessionEffort(config, { mode: 'refine' }),
   });
 }
 
