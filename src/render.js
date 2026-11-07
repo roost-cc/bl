@@ -23,7 +23,6 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { gfmTableFromMarkdown } from 'mdast-util-gfm-table';
-import { toString } from 'mdast-util-to-string';
 import { gfmTable } from 'micromark-extension-gfm-table';
 import { normalizeComponentId, parseFrontmatterOf } from './config.js';
 import { byRank } from './priority.js';
@@ -111,7 +110,8 @@ export const UNIT_PAGE_KINDS = Object.freeze(Object.keys(GENERATED_SECTIONS).fil
 /**
  * Whether a section's body is a generated one: one complete GFM table (read
  * as mdast with the GFM table extension, not by hand) whose header row is
- * `columns` and whose every row has at least that many cells, and nothing
+ * `columns`, each cell written plainly (`isLiteralCell`), and whose every
+ * row has at least that many cells, and nothing
  * else. (bl wrote every cell of every row; a title holding a `|` adds cells,
  * as three committed tables show.) A hand-written section under the same
  * heading (prose, a mixed body, a table with other columns, a header row with
@@ -122,13 +122,32 @@ export const UNIT_PAGE_KINDS = Object.freeze(Object.keys(GENERATED_SECTIONS).fil
  * @param {readonly string[]} columns  the generated table's header row
  */
 export function isGeneratedBody(content, columns) {
-  const tree = fromMarkdown(content ?? '', { extensions: [gfmTable()], mdastExtensions: [gfmTableFromMarkdown()] });
+  const source = content ?? '';
+  const tree = fromMarkdown(source, { extensions: [gfmTable()], mdastExtensions: [gfmTableFromMarkdown()] });
   if (tree.children.length !== 1 || tree.children[0].type !== 'table') return false;
   const [header, ...rows] = tree.children[0].children;
   return (
     header.children.length === columns.length &&
-    header.children.every((cell, i) => toString(cell) === columns[i]) &&
+    header.children.every((cell, i) => isLiteralCell(source, cell, columns[i])) &&
     rows.every((row) => row.children.length >= columns.length)
+  );
+}
+
+/**
+ * Whether a header cell is `text` written plainly, as bl wrote it: one text
+ * node whose source is `text` itself. Emphasis, inline code, a link, an
+ * escape or an entity (`**ID**`, `` `ID` ``, `[ID](x)`, `I\D`, `&#73;D`) reads
+ * as the same words but is hand-written.
+ * @param {string} source  the Markdown the cell was read from
+ * @param {import('mdast').TableCell} cell
+ * @param {string} text
+ */
+function isLiteralCell(source, cell, text) {
+  const [only, ...rest] = cell.children;
+  return (
+    rest.length === 0 &&
+    only?.type === 'text' &&
+    source.slice(only.position.start.offset, only.position.end.offset) === text
   );
 }
 

@@ -2825,7 +2825,8 @@ A committed page holds none of them. `bl validate` reports one as `generated-sec
 take a section only when its body is one complete GFM table (read with
 `micromark-extension-gfm-table`) with the generated header row, every row at least that wide,
 and nothing else (`isGeneratedBody`), so a story's hand-written `## Tasks` list or table stays,
-and so does a header row with no delimiter row under it. `renderPage` keeps
+and so does a header row with no delimiter row under it, or one with a formatted cell (`**ID**`,
+`` `ID` ``, a link, an escape or an entity: each header cell must be the column's plain text). `renderPage` keeps
 such a hand-written body and puts the generated table after it. The root `index.md` is hand-written too: `bl init` writes
 it once, when it is missing, with the `backlog.json` `title` (`ensureRootIndex`, `src/init.js`).
 

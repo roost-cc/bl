@@ -472,6 +472,58 @@ function incompleteTables(columns) {
   };
 }
 
+/**
+ * Complete tables for `columns` whose first header cell reads as the same
+ * words but is formatted by hand: each keeps its `kept` marker.
+ */
+function formattedHeaders(columns) {
+  const [first, ...rest] = columns;
+  const table = (cell, mark) =>
+    `| ${[cell, ...rest].join(' | ')} |\n| ${columns.map(() => '---').join(' | ')} |\n| ${columns.map((_, i) => (i === 0 ? mark : 'x')).join(' | ')} |`;
+  const escaped = `${first.slice(0, 1)}\\${first.slice(1)}`;
+  const entity = `&#${first.charCodeAt(0)};${first.slice(1)}`;
+  return Object.fromEntries(
+    Object.entries({
+      strong: `**${first}**`,
+      emphasis: `_${first}_`,
+      inlineCode: `\`${first}\``,
+      link: `[${first}](x.md)`,
+      escape: escaped,
+      entity,
+    }).map(([name, cell]) => {
+      const mark = `HEADER-${name.toUpperCase()}`;
+      return [`${name}Header`, { body: table(cell, mark), kept: [mark] }];
+    }),
+  );
+}
+
+/** Root headings the migration also removes: the tables before F-78's priority. */
+const RETIRED_ROOT_COLUMNS = {
+  Features: ['ID', 'Title', 'Status', 'Points', 'Stories', 'Repo'],
+  Backlog: ['ID', 'Type', 'Component', 'Title', 'Points'],
+};
+
+test('generated_body_requires_literal_generated_headers: a header cell with Markdown formatting is hand-written for every page kind', () => {
+  const pages = Object.keys(GENERATED_SECTIONS).flatMap((kind) => [
+    ...GENERATED_SECTIONS[kind].map((heading) => ({ kind, heading, columns: generatedColumns(kind, heading) })),
+    ...(kind === 'root'
+      ? Object.entries(RETIRED_ROOT_COLUMNS).map(([heading, columns]) => ({ kind, heading, columns }))
+      : []),
+  ]);
+  for (const { kind, heading, columns } of pages) {
+    for (const [name, c] of Object.entries(formattedHeaders(columns))) {
+      const where = `${kind} ## ${heading} (${name})`;
+      assert.equal(isGeneratedBody(`${c.body}\n`, columns), false, where);
+      const text = `# Page\n\n## ${heading}\n\n${c.body}\n`;
+      assert.equal(stripGenerated(text, text, kind), null, `${where}: the migration removed it`);
+    }
+    const own = `${formatTable(columns, [columns.map(() => 'x')])}\n`;
+    assert.equal(isGeneratedBody(own, columns), true, `${kind} ## ${heading} (own)`);
+    const text = `# Page\n\n## ${heading}\n\n${own}`;
+    assert.equal(stripGenerated(text, text, kind), '# Page\n', `${kind} ## ${heading} (own)`);
+  }
+});
+
 test('generated_body_requires_complete_markdown_table_for_every_page_kind: isGeneratedBody and the migration keep every incomplete table', () => {
   const pages = Object.keys(GENERATED_SECTIONS).flatMap((kind) =>
     GENERATED_SECTIONS[kind].map((heading) => ({ kind, heading, columns: generatedColumns(kind, heading) })),
@@ -528,6 +580,7 @@ test('render_preserves_or_rejects_authored_generated_heading: every kind and hea
           handTable: { body: '| Person | Note |\n| --- | --- |\n| Alice | Call supplier |', kept: ['Call supplier'] },
           empty: { body: '', kept: [] },
           ...incompleteTables(columns),
+          ...formattedHeaders(columns),
           generated: { body: own, kept: [], gone: 'STALE-ROW', finding: true },
         };
         for (const [name, c] of Object.entries(bodies)) {
