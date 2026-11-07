@@ -10,8 +10,8 @@
  * body, and from the root `index.md` its "Total backlog" line and the two
  * tables the root had before the priority (`## Features`, `## Backlog`). A
  * section is matched as `extractSection` (and so `bl validate`) matches it
- * (`removeSection`), and goes only when its body is a table with the
- * generated header row and nothing else (`isGeneratedBody`): a story's
+ * (`removeSection`), and goes only when its body is one complete GFM table
+ * with the generated header row and nothing else (`isGeneratedBody`): a story's
  * hand-written `## Tasks` list or table stays.
  * Everything else, frontmatter included, stays byte for byte.
  *

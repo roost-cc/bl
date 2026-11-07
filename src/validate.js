@@ -1393,7 +1393,8 @@ export function findPriorityFindings(graph) {
 /**
  * The `generated-section` findings (F-79 D3), each an error at the page: a
  * committed page that holds one of the sections `GENERATED_SECTIONS` names
- * for its kind, as a table with the generated header row (`isGeneratedBody`).
+ * for its kind, as one complete GFM table with the generated header row
+ * (`isGeneratedBody`).
  * `bl report` and `bl view` render those when the page is read; a committed
  * copy goes stale and conflicts. A hand-written section under the same
  * heading is no finding: `renderPage` keeps it above the generated table.

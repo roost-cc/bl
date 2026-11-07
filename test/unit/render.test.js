@@ -13,10 +13,12 @@ import {
   formatTable,
   GENERATED_SECTIONS,
   generatedColumns,
+  isGeneratedBody,
   renderPage,
   renderSections,
   SECTIONS,
 } from '../../src/render.js';
+import { stripGenerated } from '../../src/migrate-generated-sections.js';
 import { findGeneratedSectionFindings } from '../../src/validate.js';
 
 /** Every relative `[text](path)` link in a Markdown text. */
@@ -453,7 +455,46 @@ test('a deeper heading with a generated name (### Tasks) is hand-written and sta
   }
 });
 
-test('render_preserves_or_rejects_authored_generated_heading: every kind and heading keeps hand-written content; only its own table is replaced, and only that is a finding', () => {
+/**
+ * Bodies that start like the generated table for `columns` but are not one
+ * complete GFM table of its width: each keeps its `kept` marker.
+ */
+function incompleteTables(columns) {
+  const header = `| ${columns.join(' | ')} |`;
+  const delimiter = `| ${columns.map(() => '---').join(' | ')} |`;
+  const row = (mark) => `| ${columns.map((_, i) => (i === 0 ? mark : 'x')).join(' | ')} |`;
+  return {
+    headerOnly: { body: header, kept: [] },
+    malformedPipeLine: { body: `${header}\n| AUTHORED-NOTE, not a table |`, kept: ['AUTHORED-NOTE'] },
+    shortRow: { body: `${header}\n${delimiter}\n| SHORT-ROW |`, kept: ['SHORT-ROW'] },
+    lazyLine: { body: `${header}\n${delimiter}\n${row('a')}\nLAZY-NOTE`, kept: ['LAZY-NOTE'] },
+    otherDelimiter: { body: `${header}\n| --- |\n${row('ONE-DELIM')}`, kept: ['ONE-DELIM'] },
+  };
+}
+
+test('generated_body_requires_complete_markdown_table_for_every_page_kind: isGeneratedBody and the migration keep every incomplete table', () => {
+  const pages = Object.keys(GENERATED_SECTIONS).flatMap((kind) =>
+    GENERATED_SECTIONS[kind].map((heading) => ({ kind, heading, columns: generatedColumns(kind, heading) })),
+  );
+  for (const { kind, heading, columns } of pages) {
+    for (const [name, c] of Object.entries(incompleteTables(columns))) {
+      const where = `${kind} ## ${heading} (${name})`;
+      assert.equal(isGeneratedBody(`${c.body}\n`, columns), false, where);
+      const text = `# Page\n\n## ${heading}\n\n${c.body}\n`;
+      assert.equal(stripGenerated(text, text, kind), null, `${where}: the migration removed it`);
+    }
+    // bl's own table, and one whose title holds a `|` (an extra cell), as old bl wrote it.
+    const own = `${formatTable(columns, [columns.map(() => 'x')])}\n`;
+    const piped = `${formatTable(columns, [columns.map((_, i) => (i === 0 ? 'a | b' : 'x'))])}\n`;
+    for (const [name, body] of Object.entries({ own, piped })) {
+      assert.equal(isGeneratedBody(body, columns), true, `${kind} ## ${heading} (${name})`);
+      const text = `# Page\n\n## ${heading}\n\n${body}`;
+      assert.equal(stripGenerated(text, text, kind), '# Page\n', `${kind} ## ${heading} (${name})`);
+    }
+  }
+});
+
+test('render_preserves_or_rejects_authored_generated_heading:every kind and heading keeps hand-written content; only its own table is replaced, and only that is a finding', () => {
   const { dir, cleanup } = valueAxisBacklog();
   try {
     mkdirSync(join(dir, 'tasks'));
@@ -486,6 +527,7 @@ test('render_preserves_or_rejects_authored_generated_heading: every kind and hea
           mixed: { body: `${own}\n\nKeep this note.`, kept: ['Keep this note.'] },
           handTable: { body: '| Person | Note |\n| --- | --- |\n| Alice | Call supplier |', kept: ['Call supplier'] },
           empty: { body: '', kept: [] },
+          ...incompleteTables(columns),
           generated: { body: own, kept: [], gone: 'STALE-ROW', finding: true },
         };
         for (const [name, c] of Object.entries(bodies)) {

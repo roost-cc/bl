@@ -21,6 +21,10 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { fromMarkdown } from 'mdast-util-from-markdown';
+import { gfmTableFromMarkdown } from 'mdast-util-gfm-table';
+import { toString } from 'mdast-util-to-string';
+import { gfmTable } from 'micromark-extension-gfm-table';
 import { normalizeComponentId, parseFrontmatterOf } from './config.js';
 import { byRank } from './priority.js';
 import { readAllTasks, tasksOf, taskTableRows } from './task.js';
@@ -105,23 +109,27 @@ export const GENERATED_SECTIONS = Object.freeze(
 export const UNIT_PAGE_KINDS = Object.freeze(Object.keys(GENERATED_SECTIONS).filter((k) => k !== 'root'));
 
 /**
- * Whether a section's body is a generated one: a Markdown table whose header
- * row is `columns`, and blank lines, nothing else. A hand-written section
- * under the same heading (prose, a mixed body, or a table with other columns)
- * is not, so `bl validate` and the F-79 migration leave it, and `renderPage`
- * keeps it above the generated table.
+ * Whether a section's body is a generated one: one complete GFM table (read
+ * as mdast with the GFM table extension, not by hand) whose header row is
+ * `columns` and whose every row has at least that many cells, and nothing
+ * else. (bl wrote every cell of every row; a title holding a `|` adds cells,
+ * as three committed tables show.) A hand-written section under the same
+ * heading (prose, a mixed body, a table with other columns, a header row with
+ * no delimiter row, or a line the table reads as a short row) is not, so `bl
+ * validate` and the F-79 migration leave it, and `renderPage` keeps it above
+ * the generated table.
  * @param {string | null} content  the section's body, as `extractSection` gives it
  * @param {readonly string[]} columns  the generated table's header row
  */
 export function isGeneratedBody(content, columns) {
-  const lines = (content ?? '').split('\n').filter((l) => l.trim() !== '');
-  if (lines.length === 0 || !lines.every((l) => l.trimStart().startsWith('|'))) return false;
-  const header = lines[0]
-    .trim()
-    .replace(/^\||\|$/g, '')
-    .split('|')
-    .map((c) => c.trim());
-  return header.length === columns.length && header.every((c, i) => c === columns[i]);
+  const tree = fromMarkdown(content ?? '', { extensions: [gfmTable()], mdastExtensions: [gfmTableFromMarkdown()] });
+  if (tree.children.length !== 1 || tree.children[0].type !== 'table') return false;
+  const [header, ...rows] = tree.children[0].children;
+  return (
+    header.children.length === columns.length &&
+    header.children.every((cell, i) => toString(cell) === columns[i]) &&
+    rows.every((row) => row.children.length >= columns.length)
+  );
 }
 
 /** The root `index.md`'s generated "Total backlog" line. */

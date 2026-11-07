@@ -2822,8 +2822,10 @@ A story whose `component:` has no directory is listed with the bare id, not a li
 A committed page holds none of them. `bl validate` reports one as `generated-section`, and
 `scripts/migrate-generated-sections.js` (run once after F-79) removed them, with the root's
 "Total backlog" line and its older `## Features` and `## Backlog` tables, from every page. Both
-take a section only when its body is a table with the generated header row and nothing else
-(`isGeneratedBody`), so a story's hand-written `## Tasks` list or table stays. `renderPage` keeps
+take a section only when its body is one complete GFM table (read with
+`micromark-extension-gfm-table`) with the generated header row, every row at least that wide,
+and nothing else (`isGeneratedBody`), so a story's hand-written `## Tasks` list or table stays,
+and so does a header row with no delimiter row under it. `renderPage` keeps
 such a hand-written body and puts the generated table after it. The root `index.md` is hand-written too: `bl init` writes
 it once, when it is missing, with the `backlog.json` `title` (`ensureRootIndex`, `src/init.js`).
 
