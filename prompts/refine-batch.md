@@ -15,6 +15,9 @@ a SINGLE message, so that they run in parallel. Give each sub-agent this task pr
 > Read the file `<path>` and follow its instructions exactly to refine that one
 > story. Do everything it says.
 
+Start each sub-agent at effort level `{{refineEffort}}`: name that level in the Task tool call.
+A sub-agent that is not given a level runs at its usual level.
+
 Use the exact file path listed for that story. Do not read the files yourself or
 summarize them — let each sub-agent read its own file.
 
@@ -23,7 +26,8 @@ Each sub-agent refines exactly one story, on its own. It does these steps:
 1. It reads the story file and explores the relevant repo or repos.
 2. It fills in the summary, the acceptance criteria and the implementation plan, with the plan's
    `### Sources of truth` part.
-3. It updates the frontmatter (type, points, depends_on, component).
+3. It updates the frontmatter (type, points, depends_on, component, effort), and writes the
+   `**Effort:** <level>: <reason>` line as the first line of the implementation plan.
 4. It formats each file it changed and sets `status: refined`.
 5. It commits its story through the locked `bl validate` → `bl sync --commit` flow that its file
    describes.

@@ -150,7 +150,8 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * criteria ask, abstractions follow shared behaviour, every changed line
  * traces to the story or a named finding); it rides with
  * `selfConsistencyGuide`, in every refine and implementation prompt and the
- * two prompts that review for it.
+ * two prompts that review for it. `effortGuide` is the effort-level rubric
+ * (F-85 D6) that every refine prompt carries, so the refiner sets `effort:`.
  */
 const PROMPT_PARTIALS = {
   blockedByBug: '_blocked-by-bug',
@@ -160,6 +161,7 @@ const PROMPT_PARTIALS = {
   selfConsistencyGuide: '_self-consistency',
   writingGuide: '_plain-writing',
   simplicityGuide: '_simplicity',
+  effortGuide: '_effort',
 };
 
 /**

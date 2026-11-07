@@ -35,6 +35,8 @@ Backlog repo : {{backlogDir}}
 
 5. Update the frontmatter to link the story to each other story that it depends on or that
    should be required for it.
+   Set `effort:` by **Effort level** below, and write the `**Effort:** <level>: <reason>` line as
+   the first line of the Implementation Plan (replace the line if it is there).
 
 6. Format each file you changed with the formatter for its extension. The **Format and lint**
    section below gives the exact command. Use **relative paths** from cwd.
@@ -50,6 +52,8 @@ Backlog repo : {{backlogDir}}
 {{selfConsistencyGuide}}
 
 {{simplicityGuide}}
+
+{{effortGuide}}
 
 {{validateBeforeSync}}
 
