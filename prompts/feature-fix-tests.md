@@ -77,8 +77,7 @@ The lines of the output around every failure marker (runner failure headers,
    ` ({{featureId}} S-<id>)`.
 7. Anything else you find of
    about one point in code this branch already touches is fixed now. It does not go in the
-   {{unitKind}} file's **## Deferred** section. A nit is handled the same way:
-   a nit is fixed or dropped, never deferred.
+   {{unitKind}} file's **## Deferred** section; a nit is fixed or dropped, never deferred.
 
 {{sessionStack}}
 
