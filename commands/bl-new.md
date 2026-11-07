@@ -21,7 +21,7 @@ repo; no repo is written on the story or on a feature.
 | `--json`         | No       | Emit JSON to stdout (schema `bl-new-json/v2`); human output → stderr     |
 | `--from`         | No       | Batch mode: read N stories (and optionally a new component) from a spec  |
 | `--dry-run`      | No       | With `--from`: validate spec and print the plan, write nothing           |
-| `--no-sync`      | No       | Skip the post-create `bl sync` pass (run it yourself afterward)          |
+| `--no-sync`      | No       | Write the story, commit nothing (run `bl sync --commit` yourself)        |
 
 \* Or `--repo` (the repo's home component), or `--plugins-from S-<n>` (that story's component).
 

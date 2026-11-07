@@ -599,7 +599,7 @@ function refuseNonValueFlags(args, what) {
 }
 
 /**
- * Write a new theme or epic, then (unless --no-sync) sync and commit it.
+ * Write a new theme or epic, then (unless --no-sync) commit it.
  * Prints its path, or with --json one object of `schema`.
  */
 async function writeValueUnit(config, args, jsonMode, { kind, id, title, dir, content, json }) {
@@ -1043,7 +1043,7 @@ Options:
   --dry-run            With --from: validate the spec, resolve placeholder
                        IDs, print the plan, and exit 0 without writing
                        any files.
-  --no-sync            Skip the post-create 'bl sync' pass and its commit.
+  --no-sync            Write the stories and commit nothing.
                        Use when you are about to create multiple stories in
                        a row and will run 'bl sync --commit' yourself at the
                        end.

@@ -84,9 +84,9 @@ Per-command stdout contracts:
 `bl done`, `bl new` (unless `--no-sync` or `--dry-run`), `bl side`, `bl attach`
 and `bl move` (each unless `--no-sync`), and `bl merge`
 commit their own backlog changes on the backlog's current branch: the story
-they touched, a new component dir or appended feature file, and every path
-the sync wrote. They commit through `syncAndCommit` (`src/sync.js`)
-in the same backlog-lock hold as the sync, so other uncommitted or staged edits
+they touched and a new component dir or appended feature file. No command
+writes an index or table (F-79). They commit through `syncAndCommit` (`src/sync.js`)
+in the same backlog-lock hold as their own writes, so other uncommitted or staged edits
 in the backlog stay out. The commit notice goes to stderr. When the backlog is
 not a git repo they skip the commit; when the commit fails they exit 1 and
 list the paths to commit by hand. `bl task` and `bl task done` commit the
@@ -657,7 +657,7 @@ skipped (see `bl validate`). The order is a preference, never a dependency.
 
 Every reader that orders work reads it (F-78 D2): `bl next` walks `priority` with hard
 dependencies first (see `bl next`), and `bl list`, the bare `bl status`, `bl grep`,
-`bl what-next`'s filtered pick and `bl sync`'s component and root Backlog tables sort stories
+`bl what-next`'s filtered pick and the component Stories tables `renderPage` renders sort stories
 by `byRank` (`src/priority.js`: `rankOf`, then the id's number). `bl list` shows a `Rank`
 column after Status: the unit's entry number in `ranked:`, or `-` for an unranked row. No code
 reads an order out of the root `index.md`.
@@ -1339,7 +1339,8 @@ feature's scope, and keeps going:
 
 `adhocComponent` comes from the feature's first story
 (`prepareFeatureWorktree()`). `bl new` is covered by the `bl:*` baseline in
-`allowed-tools.json`, and `--no-sync` keeps the session off the index files. If
+`allowed-tools.json`, and `--no-sync` writes the story and commits nothing, so the session's
+`bl sync --commit` commits it with the feature file. If
 `bl new` fails, the fallback is a task with the same body file,
 `bl task <F-n> --title "Ad-hoc fix (done, <sha>): …" --gate none`, so the operator makes it
 a story at merge. The rule allows escalation only for an
