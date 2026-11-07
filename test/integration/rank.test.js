@@ -77,7 +77,7 @@ test('bl rank places a new unit, pulls first, commits priority.md alone and push
   assert.equal(read(dir), HAND.replace('  - unit: F-2', '  - unit: F-1\n    why: "Needed: before F-2"\n  - unit: F-2'));
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-1 ranked before F-2 in priority.md');
   assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'priority.md');
-  // The pull (and the index regeneration it commits) came first.
+  // The pull came first.
   assert.ok(git(dir, 'log', '--format=%s', 'HEAD~1').split('\n').includes('other: note'), 'pulled before committing');
   assert.equal(originHead(dir), git(dir, 'rev-parse', 'HEAD'), 'pushed');
 });

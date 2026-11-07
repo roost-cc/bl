@@ -118,9 +118,10 @@ The backlog is a **separate git repo** from the code. That means:
   story needs a gitignored file, create it in the worktree but do NOT commit it. Instead, file a
   task for the operator (see above), with gate `merge`:
   `bl task {{storyId}} --title "Copy worktree file <path-in-worktree> to main repo at <destination-path>" --gate merge`
-- Only edit your own story file, and never hand-edit backlog index files.
-  `bl sync --commit` (see **Backlog commits**) regenerates them, and `bl merge` still runs the
-  authoritative sync after merge.
+- Only edit your own story file. Never add a table that `bl` renders when a page is read (a
+  feature's or component's `## Stories`, a `## Tasks`); `bl validate` reports one as
+  `generated-section`. `bl sync --commit` (see **Backlog commits**) commits the paths it names and
+  pushes.
 - Do not put `$(...)` command substitution inside an env-var assignment on a command line
   (e.g. `FOO="$(cat key.pem)" npx ...`). The permission analyzer fails on it with
   "Unhandled node type: string" and prompts again. Instead, run `export FOO=$(cat key.pem)` once,

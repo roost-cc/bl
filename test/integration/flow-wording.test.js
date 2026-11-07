@@ -61,9 +61,6 @@ test('flow_derived_diagnostics_match_decisions', () => {
     assert.ok(page.includes(`first snapshot showing ${quoted}.`), `${name}: cycle time`);
     assert.ok(page.includes(`No story is ${quoted}.`), `${name}: empty ages`);
 
-    const sync = runBl(['sync'], { cwd: dir });
-    assert.ok(sync.stderr.includes(`0 ${CLOSED_SLASHED[name]})`) || sync.stdout.includes(`0 ${CLOSED_SLASHED[name]})`));
-
     const fm = { status: 'done' };
     assert.equal(
       moveRefusal({ id: 'S-2', fm, fromRepo: 'a', to: 'C01', toRepo: 'a', features: [], flow }),

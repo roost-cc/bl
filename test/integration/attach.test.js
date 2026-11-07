@@ -1,7 +1,7 @@
 /**
  * Integration tests for `bl attach` (S-1095): the story's `feature:`, the
- * only statement of membership (F-77 D3), written and committed by path with
- * the feature's regenerated Stories table, `--no-sync`, `--json`, the ids in
+ * only statement of membership (F-77 D3), written and committed by path (the
+ * feature's Stories table is rendered when read, F-79 D2), `--no-sync`, `--json`, the ids in
  * either order, the no-op, every refusal leaving both files byte for byte,
  * and a failed write leaving the story whole.
  */
@@ -12,6 +12,7 @@ import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
+import { rendered } from '../helpers/rendered.js';
 import { parseFrontmatter } from '../../src/config.js';
 
 /** demo-repo's home C00, and other-repo's home C02. */
@@ -50,23 +51,17 @@ function backlog({ featureStatus = 'refined', story = {}, features = [], git: in
   return dir;
 }
 
-test("bl attach sets feature:, and commits the story dir, the feature's table and the indexes", () => {
+test('bl attach sets feature:, and commits the story dir and nothing else', () => {
   const dir = backlog({ git: true });
   const r = bl(['attach', 'S-2', 'F-1'], dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '', 'stdout is empty without --json');
   assert.equal(fm(dir, STORY).feature, 'F-1');
   assert.equal(Object.hasOwn(fm(dir, FEATURE), 'stories'), false, 'the feature stores no stories: (F-77 D3)');
-  assert.match(read(dir, FEATURE), /\| \[S-2\]\(\.\.\/\.\.\/stories\/S2\/index\.md\)/, 'its Stories table has S-2');
+  assert.match(rendered(dir, 'F-1'), /\| \[S-2\]\(\.\.\/\.\.\/stories\/S2\/index\.md\)/, 'its Stories table has S-2');
   assert.deepEqual(members(dir), ['S-1', 'S-2']);
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: attach S-2 to F-1');
-  assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), [
-    'components/C00-core/index.md',
-    FEATURE,
-    'index.md',
-    STORY,
-    'themes/demo/index.md',
-  ]);
+  assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [STORY]);
   assert.equal(git(dir, 'status', '--porcelain'), '');
   // The story keeps its sections and is valid in the feature.
   const v = bl(['validate', '--json'], dir);
@@ -77,12 +72,10 @@ test("bl attach sets feature:, and commits the story dir, the feature's table an
 test('bl attach --no-sync writes the story under the lock and commits nothing', () => {
   const dir = backlog({ git: true });
   const head = git(dir, 'rev-parse', 'HEAD');
-  const index = read(dir, 'index.md');
   const r = bl(['attach', 'S-2', 'F-1', '--no-sync'], dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(fm(dir, STORY).feature, 'F-1');
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'no commit');
-  assert.equal(read(dir, 'index.md'), index, 'the indexes are not regenerated');
   assert.deepEqual(
     git(dir, 'status', '--porcelain')
       .split('\n')

@@ -12,9 +12,8 @@ Deferred section :
 
 ## Steps
 
-1. {{readTool}} the current backlog index files to learn the existing stories:
-   `{{backlogDir}}/index.md`
-   `{{backlogDir}}/components/{{componentEntry}}/index.md`
+1. Run `bl list` to learn the existing open stories, and `bl status {{componentId}}` for this
+   component's.
 
 2. Each distinct `[points: N]` bullet in the **## Deferred** section above is an item. The
    section holds only sized deferred code work. Records go under `## Notes`, and the operator's

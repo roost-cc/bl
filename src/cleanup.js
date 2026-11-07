@@ -227,7 +227,7 @@ export function chooseSyncRunner({ primaryRepoPath, readJson = readJsonFile, exi
 
 /**
  * The argument vector of the child `bl sync --commit` run: one `--story`
- * per id, so each story directory is staged with the regenerated indexes.
+ * per id, so each story directory is staged.
  */
 export function syncChildArgs(blEntry, { message, storyIds = [] }) {
   // `bl sync --commit` refuses a commit scoped to no story or path (S-578),
@@ -1031,7 +1031,7 @@ no main checkout touched. A merge into main that still fails is aborted.`);
     info(`  — not marking done yet.`);
   } else {
     // Mark done, sync and commit in one lock hold, staging only the story and
-    // the paths the sync wrote or moved, so other agents' uncommitted edits
+    // the paths this command wrote or moved, so other agents' uncommitted edits
     // in the shared backlog stay out of this commit. A child runner cannot
     // share this process's lock, so for it the lock covers the frontmatter
     // write alone and the child starts after the release; its `--story`

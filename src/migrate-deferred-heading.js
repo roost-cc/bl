@@ -27,7 +27,7 @@ import { DEFERRED_HEADING, RETIRED_SECTION, scanDeferred } from './deferred.js';
 import { withLock } from './lock.js';
 import { applyMigration, assertMigrationCanStart } from './migration-txn.js';
 import { readAllStories } from './story.js';
-import { runSync, syncAndCommit } from './sync.js';
+import { syncAndCommit } from './sync.js';
 
 /** The `## To Do` at the start of a heading line, after up to three spaces of indent. */
 const RETIRED_RE = new RegExp(`^( {0,3}#{2}[ \\t]+)${RETIRED_SECTION}`);
@@ -173,7 +173,6 @@ export async function migrate(config, { dryRun = false, log = console.log, commi
     const result = await applyMigration(config, {
       message: `chore: F-82 heading migration: a story's ## ${RETIRED_SECTION} becomes ## ${DEFERRED_HEADING} (${plan.length} stories)`,
       commit,
-      sync: runSync,
       apply: ({ write }) => {
         for (const p of plan) write(p.path, p.text);
       },

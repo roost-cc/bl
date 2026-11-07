@@ -103,10 +103,6 @@ import { failPoint } from './feature-links.js';
 import { prepareBody } from './body.js';
 import { scanDeferred, DEFERRED_HEADING } from './deferred.js';
 import { readAllTasks, tasksOf } from './task.js';
-// Static import: `bl merge` on a feature removes the worktree it may itself be
-// running from (when bl is the repo being merged), after which a dynamic
-// import of sync.js can no longer resolve.
-import { runSync } from './sync.js';
 import { dirtySnapshot, pathsChangedSince, commitPaths } from './backlog-commit.js';
 import {
   changeName,
@@ -267,10 +263,6 @@ export function recordFeatureTokens(feature, config) {
   }
 }
 
-async function runSyncQuiet(config) {
-  await runSync(config);
-}
-
 function printTable(headers, rows) {
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i] ?? '').length)));
   const pad = (s, w) => String(s ?? '').padEnd(w);
@@ -420,7 +412,7 @@ export function featureValueAxis(args, config) {
 /**
  * Scaffold a feature. `beforeCreate()` runs as soon as the backlog lock is
  * held, before any write, to check what it reads there. `afterCreate(feature)`
- * runs once its file is written, still under the lock and before the sync:
+ * runs once its file is written, still under the lock:
  * `bl new --feature … S-1` moves its stories in there. If writing the feature
  * or `afterCreate` throws, the feature directory is removed and bl exits 1,
  * unless the error has `keepFeature` set (a story still names the feature).
@@ -513,12 +505,6 @@ export async function cmdNew(args, config, { beforeCreate = null, afterCreate = 
     process.exit(1);
   }
 
-  if (args['no-sync']) {
-    info("Skipped sync. Run 'bl sync' to update indexes.");
-  } else {
-    info('\nSyncing backlog...');
-    await runSyncQuiet(config);
-  }
   info(`\nNext: bl refine ${id}`);
   process.stdout.write(`${rel}\n`);
 }
@@ -644,14 +630,8 @@ export async function cmdApprove(args, config, feature) {
   info(`\nApproved ${feature.id} — ${feature.title} (${stories.length} stories, ${points} points).`);
   for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
 
-  if (!args['no-sync']) {
-    info('\nSyncing backlog...');
-    await runSyncQuiet(config);
-  }
   info(`\nNext: bl run ${feature.id} (or bl implement ${feature.id} to work interactively)`);
-  info(
-    `Commit the approval:\n  git -C ${config.backlogRoot} add ${feature.featureRelPath} index.md && git -C ${config.backlogRoot} commit -m "chore: approve ${feature.id}" -- ${feature.featureRelPath} index.md`,
-  );
+  info(`Commit the approval:\n  bl sync --commit -m "chore: approve ${feature.id}" --path ${feature.featureRelPath}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1636,8 +1616,8 @@ export async function cmdMerge(args, config, feature) {
     }
     if (result.mergeCommitHash) (result.branchExists ? landed : tips)[t.repoName] = result.mergeCommitHash;
     // The backlog is synced right after `bl` merges, as a story merge does
-    // (S-864): from the merged checkout, so the new `bl` writes the indexes
-    // a later repo's push gate reads.
+    // (S-864): from the merged checkout, so the new `bl` formats and commits
+    // the feature's story directories. It writes no index (F-79 D1).
     if (t.repoName === LEAD_REPO && !result.noChanges) {
       info(`\nSyncing backlog with the merged ${t.repoName}...`);
       const res = await runBacklogSync(config, chooseSyncRunner({ primaryRepoPath: t.repoPath }), {
@@ -1742,14 +1722,11 @@ export async function cmdMerge(args, config, feature) {
     }, completed=${stamp}`,
   );
 
-  info('\nSyncing backlog...');
-  await runSyncQuiet(config);
-
   const touched = pathsChangedSince(backlogBefore, dirtySnapshot(config.backlogRoot));
   let commitFailed = false;
   if (touched.length > 0) {
     info(`\nCommitting backlog changes (${touched.length} path${touched.length === 1 ? '' : 's'})...`);
-    const res = commitPaths(config.backlogRoot, touched, `chore: merge ${feature.id}, mark stories done, sync backlog`);
+    const res = commitPaths(config.backlogRoot, touched, `chore: merge ${feature.id}, mark stories done`);
     if (!res.committed && res.error) {
       commitFailed = true;
       console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);

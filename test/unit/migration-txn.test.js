@@ -158,14 +158,7 @@ test('applyMigration_runs_past_a_run_state_or_session_lock_whose_process_is_gone
 });
 
 test('applyMigration_failure_before_HEAD_moves_leaves_git_status_clean_and_HEAD_unmoved', async () => {
-  const moments = [
-    'apply throws',
-    'sync throws',
-    'SIGINT in sync',
-    'SIGTERM in sync',
-    'commit throws',
-    'commit returns an error',
-  ];
+  const moments = ['apply throws', 'SIGINT in commit', 'SIGTERM in commit', 'commit throws', 'commit returns an error'];
   for (const moment of moments) {
     const dir = backlog();
     const head = git(dir, 'rev-parse', 'HEAD');
@@ -182,17 +175,14 @@ test('applyMigration_failure_before_HEAD_moves_leaves_git_status_clean_and_HEAD_
           steps(dir)(ops);
           if (moment === 'apply throws') throw new Error('injected');
         },
-        sync: async () => {
-          put(dir, 'idx.md', 'synced\n');
+        commit: async (_c, { extraPaths }) => {
+          // Files the commit step wrote itself, beside the migration's.
+          put(dir, 'idx.md', 'committed\n');
           put(dir, 'gen/new/index.md', 'gen\n');
+          stage(dir, [...extraPaths, 'idx.md', 'gen/new/index.md']);
           // The handler applyMigration put first (lock.js's own would exit).
           if (signal) process.listeners(signal)[0](signal);
-          if (moment.includes('sync')) throw new Error('injected');
-          return ['idx.md', 'gen/new/index.md'];
-        },
-        commit: async (_c, { extraPaths }) => {
-          stage(dir, extraPaths);
-          if (moment === 'commit throws') throw new Error('injected');
+          if (signal || moment === 'commit throws') throw new Error('injected');
           return { committed: false, paths: extraPaths, error: 'injected' };
         },
       },

@@ -87,11 +87,6 @@ export const COMPONENT_INDEX_TEMPLATE = (id, title, { repo, home, paths = ['**']
   paths: paths ?? undefined,
 })}
 # ${id} · ${title}
-
-## Stories
-
-| ID | Type | Title | Points | Status |
-| -- | ---- | ----- | ------ | ------ |
 `;
 
 /**
@@ -146,11 +141,6 @@ ${f.premise ?? ''}
 ## Acceptance
 
 - [ ] something observable
-
-## Stories
-
-| ID | Component | Type | Title | Points | Status |
-| -- | --------- | ---- | ----- | ------ | ------ |
 
 ## Deferred
 

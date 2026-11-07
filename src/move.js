@@ -5,9 +5,8 @@
  *
  * A story's component is its `component:` key, and its one repo is that
  * component's (F-52 D1), so re-homing a mis-filed story is one key. `bl move`
- * rewrites it for every story named and commits the story directories and
- * the regenerated component indexes by path, as `bl attach` commits its two
- * files.
+ * rewrites it for every story named and commits the story directories by
+ * path, as `bl attach` commits its story.
  *
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written, and the whole call is refused when any
@@ -43,8 +42,7 @@ const BRANCHED = new Set(['running', 'escalated']);
 const help = (flow) => `Usage: bl move <S-n>… <C-n> [options]
 
 Move backlog stories to another component: set each story's component:,
-then sync and commit the story directories and the regenerated component
-indexes by path. The ids may come in any order: one component id and one or
+then commit the story directories by path. The ids may come in any order: one component id and one or
 more story ids. A story's repo is its component's, so a move to a component
 in another repo moves the story to that repo. A story already in the
 component is left alone (stderr says so).
@@ -261,7 +259,7 @@ export async function main(argv) {
   const moved = moves.map((m) => m.id);
   if (moved.length > 0) {
     if (noSync) {
-      info("Skipped sync. Run 'bl sync' to update indexes.");
+      info("Skipped the commit. Commit it with 'bl sync --commit'.");
     } else {
       let res;
       try {

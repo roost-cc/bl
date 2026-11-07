@@ -39,7 +39,7 @@ Per repo, in that order:
 3. Removes the worktree directory and deletes the local branch (unless `--keep`)
 
 `bl` goes first because a later repo's pre-push gate may read backlog output the new `bl`
-generates (a link check over the component indexes, say). Right after `bl` merges, `bl merge`
+generates (a link check over the documentation root `bl report` builds, say). Right after `bl` merges, `bl merge`
 runs `bl sync --commit` with the merged code, and only then merges the other repos. When the repo
 is `bl` itself, that sync runs as a child process from the merged `bl` checkout, since the running
 `bl` still has the old code loaded. A failure in that sync, or in a later repo, stops before

@@ -7,9 +7,7 @@
  * feature's stories, points and components are derived from it (`bl run`
  * orders them, `bl merge` marks exactly them done). `bl attach` sets it, the
  * write `bl new F-<n>` makes for a story it creates, and commits the story
- * directory and the feature's `index.md` (its Stories table, which `bl sync`
- * regenerates) by path. A story that already names the feature is left
- * alone.
+ * directory by path. A story that already names the feature is left alone.
  *
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written. A story in another feature, or one that
@@ -25,16 +23,9 @@
  */
 
 import { readFileSync } from 'fs';
-import { relative } from 'path';
 import { loadConfig, parseArgs, parseFrontmatterOf, normalizeId, info } from './config.js';
 import { findStoryDir, storyRepoOrExit } from './story.js';
-import {
-  closedFeatureRefusal,
-  findFeature,
-  normalizeFeatureId,
-  reposForFeature,
-  storyMoveRefusal,
-} from './feature.js';
+import { closedFeatureRefusal, findFeature, normalizeFeatureId, reposForFeature, storyMoveRefusal } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
@@ -47,9 +38,8 @@ const BRANCHED = new Set(['running', 'escalated']);
 
 const help = (flow) => `Usage: bl attach <S-n> <F-n> [options]
 
-Put an existing story in a feature: set the story's feature:, then sync and
-commit the story and the feature's index.md (its Stories table) by path. The
-ids may come in either order. A story's feature: is the only statement of
+Put an existing story in a feature: set the story's feature:, then commit
+the story directory by path. The ids may come in either order. A story's feature: is the only statement of
 membership. A story that already names the feature is left alone (stderr
 says so).
 
@@ -176,14 +166,13 @@ export async function main(argv) {
     info(`Attached ${storyId} to ${feature.id}.`);
 
     if (noSync) {
-      info("Skipped sync. Run 'bl sync' to update indexes.");
+      info("Skipped the commit. Commit it with 'bl sync --commit'.");
     } else {
       let res;
       try {
         res = await syncAndCommit(config, {
           message: `chore: attach ${storyId} to ${feature.id}`,
           storyIds: [storyId],
-          extraPaths: [relative(config.backlogRoot, feature.indexPath)],
         });
       } catch (e) {
         fail(

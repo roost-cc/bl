@@ -132,8 +132,8 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
    epic fits, leave `epic:` out; do not force one. Then set `status: refined` in the feature
    frontmatter.
 
-8. Run `bl validate`, and resolve every finding it reports before you commit. Then run `bl sync`,
-   so that the feature's Stories table and the indexes show the cut.
+8. Run `bl validate`, and resolve every finding it reports before you commit. `bl status
+   {{featureId}}` lists the feature's stories with the cut.
 
 9. Format the changed markdown with `bl format --no-story <paths>`. Feature files are outside
    story scope, so the `--story` form does not apply to them.
@@ -145,8 +145,8 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
     bl sync --commit -m "chore: refine {{featureId}}" --path {{featureRelPath}} --story S-<id> [--story S-<id> …]
     ```
 
-    The command takes the backlog lock and regenerates the index files. It commits only those
-    files, the feature file and the story directories, never what another session has staged.
+    The command takes the backlog lock, commits only the feature file and the story directories,
+    and pushes. It never commits what another session has staged.
     Never run `git add` or `git commit` in the backlog repo.
 
 ## Operator decisions and `## Escalation`

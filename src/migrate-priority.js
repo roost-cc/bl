@@ -43,7 +43,7 @@ import { extractSection, normalizeFeatureId } from './feature.js';
 import { withLock } from './lock.js';
 import { applyMigration } from './migration-txn.js';
 import { PRIORITY_FILE, parseRanked } from './priority.js';
-import { runSync, syncAndCommit } from './sync.js';
+import { syncAndCommit } from './sync.js';
 
 /** The old file's name, at the backlog root; this module is the last to know it. */
 export const OLD_FILE = 'feature-order.md';
@@ -163,7 +163,6 @@ export async function migrate(config, { dryRun = false, log = console.log, commi
     const result = await applyMigration(config, {
       message: commitMessage(plan),
       commit,
-      sync: runSync,
       apply: ({ move, write }) => {
         move(plan.from, plan.to);
         write(plan.to, plan.text);

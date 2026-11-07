@@ -2,13 +2,14 @@
  * validate.js — backlog integrity checks.
  */
 
-import { existsSync, statSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
 import {
   loadConfig,
   configForRepo,
   dictionariesOf,
   parseArgs,
+  parseFrontmatter,
   normalizeComponentId,
   FORGE_OPS,
   BODY_READING_OP,
@@ -26,6 +27,7 @@ import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
 import { implementPluginProblem } from './scripted.js';
+import { GENERATED_SECTIONS, UNIT_PAGE_KINDS, generatedColumns, isGeneratedBody } from './render.js';
 import { checkEffort, storyEffort } from './effort.js';
 
 // ---------------------------------------------------------------------------
@@ -1401,6 +1403,38 @@ export function findPriorityFindings(graph) {
     .map((p) => problemFinding(p));
 }
 
+/**
+ * The `generated-section` findings (F-79 D3), each an error at the page: a
+ * committed page that holds one of the sections `GENERATED_SECTIONS` names
+ * for its kind, as one complete GFM table with the generated header row
+ * (`isGeneratedBody`).
+ * `bl report` and `bl view` render those when the page is read; a committed
+ * copy goes stale and conflicts. A hand-written section under the same
+ * heading is no finding: `renderPage` keeps it above the generated table.
+ * @param {import("./backlog-graph.js").BacklogGraph} graph
+ * @returns {Finding[]}
+ */
+export function findGeneratedSectionFindings(graph) {
+  const pages = [];
+  const rootPath = join(graph.root, 'index.md');
+  // A root whose frontmatter is not YAML is `frontmatter-yaml`'s, and not read further.
+  if (existsSync(rootPath) && !graph.problems.some((p) => p.code === 'frontmatter-yaml' && p.file === 'index.md')) {
+    const { body } = parseFrontmatter(readFileSync(rootPath, 'utf8').replace(/\r\n/g, '\n'));
+    pages.push({ kind: 'root', relPath: 'index.md', section: (h) => extractSection(body, h) });
+  }
+  for (const kind of UNIT_PAGE_KINDS) pages.push(...graph.list(kind));
+  return pages.flatMap((page) =>
+    GENERATED_SECTIONS[page.kind]
+      .filter((h) => isGeneratedBody(page.section(h), generatedColumns(page.kind, h)))
+      .map((h) => ({
+        severity: 'error',
+        code: 'generated-section',
+        message: `"## ${h}" is a generated table: bl report and bl view render it when the page is read; remove the section (node scripts/migrate-generated-sections.js removes them all)`,
+        location: page.relPath,
+      })),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Orchestration
 // ---------------------------------------------------------------------------
@@ -1559,6 +1593,7 @@ export function runAll(config, opts = {}) {
   findings.push(...findTaskFindings(allTasks, units, flow));
 
   findings.push(...findPriorityFindings(graph));
+  findings.push(...findGeneratedSectionFindings(graph));
   findings.push(...findRoadmapFindings(config));
   findings.push(...findThemeBriefFindings(allThemes, config.roostDir));
   findings.push(...findDictionaryFindings(config));
@@ -1673,7 +1708,7 @@ Findings codes:
   forge-plugin, forge-op, forge-op-reads-body, component-unknown,
   home-component, component-has-status, component-paths,
   feature-theme, feature-epic, epic-theme, theme-repo, repo-key,
-  priority-file, priority-unit, roadmap-file,
+  priority-file, priority-unit, generated-section, roadmap-file,
   roadmap-section, theme-brief, dictionary-file, flow-json, blockers-json, agent-config,
   blockers-unit, blockers-gate, blockers-status, blockers-duplicate,
   blockers-cycle, blockers-unmeetable, blockers-order

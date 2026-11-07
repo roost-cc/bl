@@ -78,7 +78,8 @@ Backlog repo : {{backlogDir}}
 ## IMPORTANT
 
 - NEVER `git add` files that are in `.gitignore`.
-- Never hand-edit backlog index files; `bl sync --commit` regenerates them.
+- Never add a table that `bl` renders when a page is read (a `## Stories` or `## Tasks` table);
+  `bl validate` reports one as `generated-section`.
 - Do NOT delete `.pr-review.md`. bl no longer writes that file. If you see one in the worktree,
   it is a leftover from before S-458; remove it by hand outside this session.
 - Commit the story file with `bl sync --commit`, never with `git` in the backlog repo. The

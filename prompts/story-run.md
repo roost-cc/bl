@@ -88,8 +88,8 @@ instead and name the repo (see **Writing an escalation**).
    bl sync --commit -m "chore: {{storyId}} implemented" --story {{storyId}}
    ```
 
-   It takes the backlog lock and commits only the story's directory and the index files the sync
-   regenerates. It never commits what another session has staged. Never run `git add` or
+   It takes the backlog lock, commits only the story's directory, and pushes. It never commits
+   what another session has staged. Never run `git add` or
    `git commit` in the backlog repo.
 
 8. Format the files you changed (see **Format and lint** below).

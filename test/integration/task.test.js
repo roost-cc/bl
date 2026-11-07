@@ -1,7 +1,7 @@
 /**
  * Integration tests for `bl task`, `bl task done` and `bl task list` (F-65
- * D1, D3) against a git backlog: the task file and the unit's `## Tasks`
- * table committed together, the `--gate` edge in the same commit (F-65 D2),
+ * D1, D3) against a git backlog: the task file committed alone (the unit's
+ * `## Tasks` table is rendered when read, F-79 D2), the `--gate` edge in the same commit (F-65 D2),
  * the refusals, consecutive ids, `bl next-id task`, a task as a blocker in `blockers.json`, and `bl validate`'s
  * `task-unit` and `task-field`.
  */
@@ -13,6 +13,7 @@ import { join } from 'path';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
+import { rendered } from '../helpers/rendered.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { writeBlockers } from '../../src/blockers.js';
 import { createTask, markTaskDone } from '../../src/task.js';
@@ -39,7 +40,7 @@ const read = (dir, rel) => readFileSync(join(dir, rel), 'utf8');
 const featureFile = 'features/F1/index.md';
 const tasksIn = (dir) => (existsSync(join(dir, 'tasks')) ? readdirSync(join(dir, 'tasks')).sort() : []);
 
-test('bl task files a task on a feature, writes its Tasks table, commits both alone; done closes it', () => {
+test('bl task files a task on a feature and commits the task file alone; the rendered feature shows it; done closes it', () => {
   const dir = backlog();
   initGitBacklog(dir);
   const s2Before = read(dir, 'stories/S2/index.md');
@@ -63,11 +64,10 @@ test('bl task files a task on a feature, writes its Tasks table, commits both al
   assert.equal(body, '\n# T-1 · Run the migration\n\nRun the migration:\n\n```bash\nnode scripts/migrate.js\n```\n');
 
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: task T-1 (F-1)');
-  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), `${featureFile}\ntasks/T1-run-the-migration.md`);
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'tasks/T1-run-the-migration.md');
   assert.equal(git(dir, 'status', '--porcelain'), '');
-  const feature = read(dir, featureFile);
   assert.match(
-    feature,
+    rendered(dir, 'F-1'),
     /## Stories\n\n[\s\S]*?\n\n## Tasks\n\n\| ID +\| Title +\| Holds \| Status \| Done \|\n\| -+ \| -+ \| -+ \| -+ \| -+ \|\n\| \[T-1\]\(\.\.\/\.\.\/tasks\/T1-run-the-migration\.md\) \| Run the migration \| none +\| open +\| +\|\n\n## Deferred/,
   );
   assert.equal(read(dir, 'stories/S2/index.md'), s2Before, 'a unit with no task is left byte for byte');
@@ -84,8 +84,8 @@ test('bl task files a task on a feature, writes its Tasks table, commits both al
   assert.equal(closed.done, added);
   assert.equal(closed.note, 'ran it');
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: task T-1 done: ran it');
-  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), `${featureFile}\ntasks/T1-run-the-migration.md`);
-  assert.match(read(dir, featureFile), new RegExp(`\\| Run the migration \\| none +\\| done +\\| ${added} \\|`));
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'tasks/T1-run-the-migration.md');
+  assert.match(rendered(dir, 'F-1'), new RegExp(`\\| Run the migration \\| none +\\| done +\\| ${added} \\|`));
   assert.equal(bl(['task', 'list', '--open'], dir).stdout, '');
   assert.equal(bl(['task', 'list'], dir).stdout, `T-1  F-1  done ${added}  Run the migration\n`);
 
@@ -132,13 +132,10 @@ test('bl task on a story puts its Tasks table after ## Dependencies; --body-file
   });
   assert.match(read(dir, 'tasks/T1-re-mint-the-key.md'), /\n# T-1 · Re-mint the key\n\nMint it in the console\.\n$/);
   assert.match(
-    read(dir, 'stories/S1/index.md'),
+    rendered(dir, 'S-1'),
     /## Dependencies\n\nNone\.\n\n## Tasks\n\n\| ID[\s\S]*\[T-1\]\(\.\.\/\.\.\/tasks\/T1-re-mint-the-key\.md\)[\s\S]*\n\n## Deferred\n/,
   );
-  assert.equal(
-    git(dir, 'show', '--name-only', '--format=', 'HEAD'),
-    'stories/S1/index.md\ntasks/T1-re-mint-the-key.md',
-  );
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'tasks/T1-re-mint-the-key.md');
 
   // Two in a row take consecutive ids; list filters by unit.
   assert.equal(bl(['task', 'F-1', '--title', 'A', '--gate', 'none'], dir).stdout, 'T-2\n');
@@ -222,10 +219,9 @@ test('a task is a blocker in blockers.json: bl block add accepts it, a task is n
     true,
   );
 
-  // The table names what the task holds, in blockers.json's order; bl sync keeps it current.
-  assert.equal(bl(['sync'], dir).status, 0);
+  // The rendered table names what the task holds, in blockers.json's order.
   assert.match(
-    read(dir, featureFile),
+    rendered(dir, 'F-1'),
     /\| \[T-1\]\([^)]*\) \| Migrate \| bl run, bl implement \(every unit\) once F-1 is done; bl merge F-1; bl run, bl implement S-2 \| open/,
   );
 
@@ -293,10 +289,10 @@ test('bl task --gate merge commits the task file, its edge in blockers.json and 
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: task T-1 (F-1)');
   assert.equal(
     git(dir, 'show', '--name-only', '--format=', 'HEAD'),
-    `.gitattributes\nblockers.json\n${featureFile}\ntasks/T1-run-the-migration.md`,
+    '.gitattributes\nblockers.json\ntasks/T1-run-the-migration.md',
   );
   assert.equal(git(dir, 'status', '--porcelain'), '');
-  assert.match(read(dir, featureFile), /\| \[T-1\]\([^)]*\) \| Run the migration \| bl merge F-1 +\| open/);
+  assert.match(rendered(dir, 'F-1'), /\| \[T-1\]\([^)]*\) \| Run the migration \| bl merge F-1 +\| open/);
 
   // The second edge: blockers.json alone beside the task, the mapping already in HEAD.
   const n = bl(['task', 'S-1', '--gate', 'next', '--title', 'Reinstall'], dir);
@@ -305,16 +301,13 @@ test('bl task --gate merge commits the task file, its edge in blockers.json and 
     { blocker: 'T-2', gate: 'run', unit: '*', until: 'done', active_when: { unit: 'S-1', status: 'done' } },
     merge,
   ]);
-  assert.equal(
-    git(dir, 'show', '--name-only', '--format=', 'HEAD'),
-    'blockers.json\nstories/S1/index.md\ntasks/T2-reinstall.md',
-  );
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'blockers.json\ntasks/T2-reinstall.md');
 
   // --gate none writes no edge.
   const before = read(dir, 'blockers.json');
   assert.equal(bl(['task', 'S-2', '--gate', 'none', '--title', 'Remember'], dir).status, 0);
   assert.equal(read(dir, 'blockers.json'), before);
-  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'stories/S2/index.md\ntasks/T3-remember.md');
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'tasks/T3-remember.md');
 });
 
 test('bl task refuses a missing or unknown --gate, writing nothing', () => {
@@ -404,52 +397,53 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
   // A file is written in place or renamed into place (`atomicWriteFile`).
   const isWrite = (op) => op === 'writeFileSync' || op === 'renameSync';
 
-  // createTask: the sync's unit write fails once (all put back, the original
-  // error alone), or every time (the graph is still put back; the unit is named).
+  // createTask: the blockers.json write fails once (all put back, the
+  // original error alone), or every time (the task file is still removed;
+  // blockers.json, which held an edge filed by hand, is named).
   for (const persistent of [false, true]) {
     const dir = backlog();
     const config = loadConfig({ backlogRoot: dir });
-    const indexPath = join(dir, featureFile);
+    const blockers = join(dir, 'blockers.json');
+    writeBlockers(dir, [{ blocker: 'S-2', gate: 'merge', unit: 'S-1', until: 'done' }]);
+    const graphBefore = read(dir, 'blockers.json');
     let hits = 0;
     const err = await withFsFaults(
-      (op, p) => isWrite(op) && p === indexPath && (++hits === 1 || persistent),
-      () => thrown(createTask(config, { unit: { id: 'F-1', indexPath }, title: 'Run it', gate: 'merge' })),
+      (op, p) => isWrite(op) && p === blockers && (++hits === 1 || persistent),
+      () => thrown(createTask(config, { unit: { id: 'F-1' }, title: 'Run it', gate: 'merge' })),
     );
     assert.match(err.message, /^injected renameSync failure/, `${persistent}: the original failure first`);
     assert.deepEqual(tasksIn(dir), [], `${persistent}: the task file is removed`);
-    assert.deepEqual(edgesOf(dir), [], `${persistent}: no orphan T-1 edge`);
     if (persistent) {
       assert.match(
         err.message,
-        /could not undo the write of task T-1: features\/F1\/index\.md \(injected renameSync failure\): put it back with git/,
+        /could not undo the write of task T-1: blockers\.json \(injected renameSync failure\): put it back with git/,
       );
       assert.deepEqual(
         err.unrecovered.map((u) => u.path),
-        [indexPath],
+        [blockers],
       );
-      assert.equal(typeof err.unrecovered[0].text, 'string', "the unit's text before is kept for recovery");
+      assert.equal(err.unrecovered[0].text, graphBefore, 'the text before is kept for recovery');
     } else {
       assert.equal(err.unrecovered, undefined);
+      assert.equal(read(dir, 'blockers.json'), graphBefore, 'no orphan T-1 edge');
     }
   }
 
-  // createTask: the task file cannot be removed; the unit and graph are put back.
+  // createTask: the task file cannot be removed; the graph is put back.
   {
     const dir = backlog();
     const config = loadConfig({ backlogRoot: dir });
-    const indexPath = join(dir, featureFile);
-    const before = read(dir, featureFile);
+    const blockers = join(dir, 'blockers.json');
     let wrote = false;
     const err = await withFsFaults(
-      (op, p) => (isWrite(op) && p === indexPath && !wrote && (wrote = true)) || (op === 'rmSync' && isTask(p)),
-      () => thrown(createTask(config, { unit: { id: 'F-1', indexPath }, title: 'Run it', gate: 'merge' })),
+      (op, p) => (isWrite(op) && p === blockers && !wrote && (wrote = true)) || (op === 'rmSync' && isTask(p)),
+      () => thrown(createTask(config, { unit: { id: 'F-1' }, title: 'Run it', gate: 'merge' })),
     );
     assert.match(
       err.message,
       /^injected renameSync failure; and could not undo the write of task T-1: tasks\/T1-run-it\.md \(injected rmSync failure\): remove it$/,
     );
     assert.deepEqual(edgesOf(dir), [], 'the graph is put back after the task file failed');
-    assert.equal(read(dir, featureFile), before, 'and so is the unit');
   }
 
   // createTask: an edge refused, and the task file cannot be removed: the
@@ -471,7 +465,7 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
     assert.deepEqual(edgesOf(dir), []);
   }
 
-  // markTaskDone: a late sync failure, then the task cannot be put back: the
+  // markTaskDone: the task write fails, then the task cannot be put back: the
   // original failure, the task file and its lifted hold are all reported.
   {
     const dir = backlog();
@@ -481,7 +475,7 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
     const taskPath = join(dir, 'tasks', tasksIn(dir)[0]);
     const before = read(dir, featureFile);
     const err = await withFsFaults(
-      (op, p) => isWrite(op) && (p === join(dir, 'index.md') || p === taskPath),
+      (op, p) => isWrite(op) && p === taskPath,
       () => thrown(markTaskDone(config, 'T-1')),
     );
     assert.match(
@@ -493,6 +487,6 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
       [taskPath],
     );
     assert.match(err.unrecovered[0].text, /status: open/, "the open task's text is kept for recovery");
-    assert.equal(read(dir, featureFile), before, 'the unit is put back though the task was not');
+    assert.equal(read(dir, featureFile), before, 'the unit is untouched');
   }
 });

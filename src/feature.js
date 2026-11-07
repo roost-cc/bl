@@ -380,6 +380,27 @@ export function replaceSection(body, heading, text) {
 }
 
 /**
+ * The body without any `## <heading>` section whose content `test` accepts
+ * (by default every one), each matched exactly as `extractSection` matches
+ * it: the heading line and everything up to the next `## ` line. Every other
+ * byte stays. When the last section goes, the blank lines before it go too,
+ * and the body ends with one line end.
+ * @param {string} body
+ * @param {string} heading
+ * @param {(content: string) => boolean} [test]
+ */
+export function removeSection(body, heading, test = () => true) {
+  let last = false;
+  const out = body.replace(new RegExp(sectionRe(heading).source, 'gm'), (m, _head, content, offset) => {
+    if (!test(content)) return m;
+    if (offset + m.length === body.length) last = true;
+    return '';
+  });
+  if (!last || out.trim() === '') return out;
+  return out.trimEnd() + (body.includes('\r\n') ? '\r\n' : '\n');
+}
+
+/**
  * The heading text of every `## ` section, in order, as `extractSection`
  * matches a heading (trailing blanks and CR dropped).
  * @returns {string[]}

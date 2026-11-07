@@ -10,7 +10,7 @@
  */
 
 import { loadConfig, parseArgs, warn } from './config.js';
-import { formatTable } from './sync.js';
+import { formatTable } from './render.js';
 import { filterContext, parseFilter, unknownFilterTargets } from './filter.js';
 import { loadFlow } from './flow.js';
 import { buildHistory, narrowHistory, pointsByStatus, weeklyDays } from './history.js';

@@ -62,7 +62,7 @@ not reasons to stop. Make a serious effort before you give up on anything.
    bl sync --commit -m "chore: S-<id> ad-hoc fix in {{featureId}}" --story S-<id> --path {{featureRelPath}}
    ```
 
-   It takes the backlog lock and commits only those paths and the regenerated indexes. Never run
+   It takes the backlog lock, commits only those paths, and pushes. Never run
    `git add` or `git commit` in the backlog repo.
 
    If `bl new` or `bl attach` fails, file a task for the operator instead, with the same body

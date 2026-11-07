@@ -2453,7 +2453,7 @@ async function committedRunSetup() {
   };
 }
 
-test('a run commits and pushes each story as it finishes: its directory, the indexes and the report (F-74 D2)', async () => {
+test('a run commits and pushes each story as it finishes: its directory and the report, no index (F-74 D2, F-79 D1)', async () => {
   const c = await committedRunSetup();
   try {
     const { t } = c;
@@ -2483,7 +2483,10 @@ test('a run commits and pushes each story as it finishes: its directory, the ind
         files.some((f) => f.startsWith(`${dirs[id]}/`)),
         `${id}: its story directory`,
       );
-      assert.ok(files.includes('index.md'), `${id}: the regenerated index`);
+      assert.ok(
+        files.every((f) => f === 'updates/2026-10-14.md' || f.startsWith('stories/')),
+        `${id}: no index: ${files.join(', ')}`,
+      );
     }
     assert.equal(res.commit.committed, true);
     assert.equal(res.commit.pushed, true);

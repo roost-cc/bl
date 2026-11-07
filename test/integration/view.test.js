@@ -1,10 +1,11 @@
 /**
- * Integration tests for `bl view` (S-1109): the unit's file opens as a
+ * Integration tests for `bl view` (S-1109): the unit's page opens as a
  * read-only copy in `<tmp>/<parent dir name>/<file name>`, in $VISUAL →
  * $EDITOR → vi, and the copy's temp directory is removed when the editor
  * exits; the real file is never changed. When the copy cannot be made, the
- * file is shown instead (`showText`). With stdout not a terminal the file is
- * printed as it is (S-1139). Tests of the editor path fake a terminal on
+ * page is shown instead (`showText`). With stdout not a terminal the page is
+ * printed (S-1139). The page is rendered, its generated tables in place
+ * (F-79 D7); one with nothing to render is the file byte for byte. Tests of the editor path fake a terminal on
  * stdout with the `tty` fault, since runBl captures stdout in a file.
  */
 import { test } from 'node:test';
@@ -17,6 +18,7 @@ import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
 import { BL_BIN, runBl } from '../helpers/run-bl.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
+import { rendered } from '../helpers/rendered.js';
 
 const VIEW_FAULTS = fileURLToPath(new URL('../helpers/view-faults.js', import.meta.url));
 const bl = (args, cwd, env = {}, input) => runBl(args, { cwd, env: { ...GIT_ENV, ...env }, input });
@@ -329,15 +331,90 @@ test('view_primary_and_fallback_failures_exit_nonzero', async (t) => {
   });
 });
 
+/** A backlog with a page of every kind: a feature with a story under an epic, and a theme. */
+function everyKind() {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    valueEpics: [{ id: 'E50', title: 'Value', dirSuffix: 'value' }],
+    features: [{ id: 'F-1', title: 'Feat', status: 'approved', epic: 'E50', stories: ['S-1'] }],
+    stories: [{ id: 'S-1', component: 'C01', title: 'One', body: '## Summary\n\nWork.\n\n## Dependencies\n\nNone.' }],
+  });
+  initGitBacklog(dir);
+  assert.equal(bl(['task', 'S-1', '--title', 'Run the migration', '--gate', 'none'], dir).status, 0);
+  return dir;
+}
+
+test('bl view prints each page kind and the root rendered, its generated tables in place (F-79 D7)', () => {
+  const dir = everyKind();
+  // With no root index.md the root renders from nothing.
+  assert.match(bl(['view'], dir).stdout, /^Total backlog: .*\n\n## Themes\n/);
+  writeFileSync(join(dir, 'index.md'), '---\ntitle: Demo backlog\n---\n\n# Demo backlog\n\nHand-written.\n');
+  const cases = [
+    { id: 'F-1', file: 'features/F1/index.md', headings: ['Stories'] },
+    { id: 'C01', file: 'components/C01/index.md', headings: ['Stories', 'Features'] },
+    { id: 'S-1', file: 'stories/S1/index.md', headings: ['Tasks'] },
+    { id: 'E50', file: 'epics/E50-value/index.md', headings: ['Features'] },
+    { id: 'demo', file: 'themes/demo/index.md', headings: ['Epics', 'Features'] },
+    { id: undefined, file: 'index.md', headings: ['Themes', 'Components', 'Priority'] },
+  ];
+  for (const c of cases) {
+    const r = bl(['view', ...(c.id ? [c.id] : [])], dir, { VISUAL: 'false', PAGER: 'false' });
+    assert.equal(r.status, 0, `${c.id}: ${r.stderr}`);
+    assert.equal(r.stdout, rendered(dir, c.id), c.id);
+    assert.notEqual(r.stdout, readFileSync(join(dir, c.file), 'utf8'), `${c.id} adds tables to the committed text`);
+    for (const h of c.headings) assert.match(r.stdout, new RegExp(`^## ${h}\\n\\n\\| `, 'm'), `${c.id} ${h}`);
+  }
+  const root = bl(['view'], dir).stdout;
+  assert.match(
+    root,
+    /^---\ntitle: Demo backlog\n---\n\n# Demo backlog\n\nTotal backlog: 1 points across 1 stories in 1 components\.\n\nHand-written\.\n/,
+  );
+  assert.match(bl(['view', 'S-1'], dir).stdout, /Run the migration/);
+});
+
+test('bl view opens the rendered page as the read-only copy and removes it after', () => {
+  const dir = everyKind();
+  const edir = mkTempDir('bl-view-editor-');
+  const record = join(edir, 'record');
+  const bin = script(
+    edir,
+    'fake-editor',
+    `for f; do :; done\nprintf '%s\\n' "$f" > '${record}'\nstat -c %a "$f" >> '${record}'\ncat "$f" >> '${record}'`,
+  );
+  const real = join(dir, 'epics', 'E50-value', 'index.md');
+  const before = readFileSync(real, 'utf8');
+  const r = bl(['view', 'E50'], dir, { ...tty(), VISUAL: bin, TMPDIR: mkTempDir('bl-view-tmp-') });
+  assert.equal(r.status, 0, r.stderr);
+  const [path, mode, ...text] = readFileSync(record, 'utf8').split('\n');
+  assert.ok(path.endsWith('/E50-value/index.md'), path);
+  assert.equal(mode, '444');
+  assert.equal(text.join('\n'), rendered(dir, 'E50'));
+  assert.equal(existsSync(dirname(dirname(path))), false, 'the bl-view-* directory is removed');
+  assert.equal(readFileSync(real, 'utf8'), before);
+});
+
+test('bl which and bl edit name an epic and a theme by the committed file', () => {
+  const dir = everyKind();
+  assert.equal(bl(['which', 'E50'], dir).stdout, `${join(dir, 'epics', 'E50-value', 'index.md')}\n`);
+  assert.equal(bl(['which', '-d', 'demo'], dir).stdout, `${join(dir, 'themes', 'demo')}\n`);
+  const editor = fakeEditor();
+  assert.equal(bl(['edit', 'demo'], dir, { VISUAL: editor.bin }).status, 3);
+  assert.equal(editor.read().path, join(dir, 'themes', 'demo', 'index.md'));
+  assert.doesNotMatch(readFileSync(join(dir, 'themes', 'demo', 'index.md'), 'utf8'), /^## Epics\n\n\| /m);
+  assert.match(bl(['which', '--help'], dir).stdout, /epic, or task ID, or a theme slug/);
+  assert.match(bl(['edit', '--help'], dir).stdout, /epic, or task ID, or a theme slug/);
+});
+
 test('bl view --help names the editor chain, the read-only copy, the wait flag and redirection', () => {
   const r = bl(['view', '--help'], backlog(), { VISUAL: 'myeditor' });
   assert.equal(r.status, 0);
-  assert.match(
-    r.stdout,
-    /With stdout redirected \(not a terminal\), the file is printed as it is: no editor, no pager\./,
-  );
-  assert.match(r.stdout, /When the copy cannot be made, the file is shown instead/);
-  assert.match(r.stdout, /read-only copy of the file in myeditor \(\$VISUAL → \$EDITOR → vi\)/);
+  assert.match(r.stdout, /Usage: bl view \[<id>\]/);
+  assert.match(r.stdout, /epic, or task ID, or a theme slug/);
+  assert.match(r.stdout, /With no id, the\s+backlog's root index\.md/);
+  assert.match(r.stdout, /generated tables/);
+  assert.match(r.stdout, /With stdout redirected \(not a terminal\), the page is printed: no editor, no pager\./);
+  assert.match(r.stdout, /When the copy cannot be made, the page is shown instead/);
+  assert.match(r.stdout, /read-only copy of the page in myeditor \(\$VISUAL → \$EDITOR → vi\)/);
   assert.match(r.stdout, /discarded when the editor exits/);
   assert.match(r.stdout, /code --wait/);
 });

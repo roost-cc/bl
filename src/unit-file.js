@@ -1,6 +1,7 @@
 /**
- * unit-file.js — find the file of a feature, story, component or task by id,
- * for the file-oriented verbs (`bl which`, `bl view`, `bl edit`).
+ * unit-file.js — find the file of a feature, story, component, task, epic or
+ * theme by id (a theme by its slug), for the file-oriented verbs (`bl which`,
+ * `bl view`, `bl edit`).
  */
 
 import { dirname } from 'path';
@@ -8,9 +9,11 @@ import { componentIdHint } from './config.js';
 import { normalizeId, normalizeComponentId, findStoryDir, findComponentDir } from './story.js';
 import { normalizeFeatureId, findFeature } from './feature.js';
 import { normalizeTaskId, findTask } from './task.js';
+import { normalizeEpicId } from './theme.js';
+import { loadBacklog } from './backlog-graph.js';
 
 /**
- * @typedef {{ kind: "feature" | "story" | "component" | "task", id: string,
+ * @typedef {{ kind: "feature" | "story" | "component" | "task" | "epic" | "theme", id: string,
  *   indexPath: string, dir: string }} UnitFile
  * `indexPath` is the unit's file (a task's `tasks/T<n>-<slug>.md`); `dir` is
  * its directory (`tasks/` for a task).
@@ -19,7 +22,8 @@ import { normalizeTaskId, findTask } from './task.js';
 /**
  * The file of the unit `rawId` names, or `{ error }` with the message to
  * print: `<Kind> <id> not found.` when the id parsed, else the component-id
- * hint or `Invalid id: <rawId>`. Prints nothing.
+ * hint, else the theme with that slug, else `Invalid id: <rawId>`. Prints
+ * nothing.
  * @returns {UnitFile | { error: string }}
  */
 export function findUnitFile(rawId, cfg) {
@@ -71,5 +75,18 @@ export function findUnitFile(rawId, cfg) {
     };
   }
 
-  return { error: componentIdHint(rawId) ?? `Invalid id: ${rawId}` };
+  const epicParsed = normalizeEpicId(rawId);
+  if (epicParsed) {
+    const epic = loadBacklog(cfg).get(epicParsed.id);
+    if (!epic) return { error: `Epic ${epicParsed.id} not found.` };
+    return { kind: 'epic', id: epic.id, indexPath: epic.file, dir: epic.dir };
+  }
+
+  const hint = componentIdHint(rawId);
+  if (hint) return { error: hint };
+
+  // A theme slug last, once no id form matched (F-79 D7): `get` reads it as one.
+  const theme = loadBacklog(cfg).get(rawId);
+  if (theme) return { kind: 'theme', id: theme.id, indexPath: theme.file, dir: theme.dir };
+  return { error: `Invalid id: ${rawId}` };
 }

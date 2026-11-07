@@ -7,7 +7,9 @@
  * Writes `<backlog>/reports/` (or `--out`): `index.md`, `data.json`, a
  * `.gitignore` holding `*`, so the output ignores itself and a run leaves
  * `git status` clean, and whatever files the chart adapter returns
- * (`--charts`, Design D4; `vega-lite` by default, which writes none). A
+ * (`--charts`, Design D4; `vega-lite` by default, which writes none), and
+ * `site/`, the backlog's documentation root with every page's tables
+ * rendered and the report under `site/reports/` (F-79 D4, `report-site.js`). A
  * run writes the whole report into a directory beside the output, then swaps
  * it for the last run's, so a failed run leaves the last report whole; a
  * directory that holds files but no such `.gitignore` is not a report's and
@@ -27,13 +29,15 @@ import './chart-adapters/vega-lite.js';
 import { loadFlow } from './flow.js';
 import { buildHistory } from './history.js';
 import { buildReport, renderMarkdown } from './report.js';
+import { SITE_DIR, writeSite } from './report-site.js';
+import { loadBacklog } from './backlog-graph.js';
 
 /** The output directory under the backlog root, and what marks one as a report's. */
 export const REPORTS_DIR = 'reports';
 export const REPORT_GITIGNORE = '*\n';
 
 /** The files a run writes itself, which no adapter file may replace. */
-const OWN_FILES = new Set(['.gitignore', 'data.json', 'index.md']);
+const OWN_FILES = new Set(['.gitignore', 'data.json', 'index.md', SITE_DIR]);
 
 const HELP = `Usage: bl report [--out <dir>] [--since <YYYY-MM-DD>] [--charts <adapter>] [--json]
 
@@ -46,6 +50,11 @@ history's daily snapshots.
 Writes ${REPORTS_DIR}/index.md, ${REPORTS_DIR}/data.json and ${REPORTS_DIR}/.gitignore (*)
 in the backlog repo, replacing the last run's files, and prints the path of
 index.md. Nothing is committed.
+
+Also writes ${REPORTS_DIR}/${SITE_DIR}/, the backlog's documentation root, which the docs
+site copies: the stories, features, components, epics, themes, tasks, docs,
+roadmap and priority list copied with their timestamps, every page with its
+tables rendered, the root index.md, and the report at ${SITE_DIR}/${REPORTS_DIR}/.
 
 Options:
   --out <dir>        Write the report there instead (its links assume
@@ -72,7 +81,8 @@ export function checkReportDir(dir) {
 /**
  * Write the report for `data` as `dir`, its charts drawn by the adapter
  * `charts` (the adapter's files under `dir`), its page formatted through the
- * backlog's markdown format plugin, as `bl sync` formats the indexes.
+ * backlog's markdown format plugin, and the backlog's documentation root
+ * under `dir/site` (`writeSite`).
  *
  * The whole report is written and formatted in `.<dir>.new` beside `dir`
  * (its `.gitignore` first, so git ignores it), then swapped in by two
@@ -116,6 +126,7 @@ export function writeReport(config, dir, data, flow, charts = DEFAULT_ADAPTER) {
     }
     writeFileSync(join(stage, 'index.md'), renderMarkdown(data, markdownById, flow));
     formatBacklogMarkdown(config, new Set([join(stage, 'index.md')]));
+    writeSite(config, loadBacklog(config), stage, ['data.json', 'index.md', ...files.map((f) => f.path)]);
 
     if (existsSync(dir)) renameSync(dir, old);
     try {

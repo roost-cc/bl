@@ -21,8 +21,8 @@ edits:
    bl sync --commit -m "<type>: <subject> ({{storyId}})" --story {{storyId}} [--story S-<child> …]
    ```
 
-   This takes the backlog lock, regenerates the index files, and commits exactly the paths the
-   sync wrote plus each `--story` directory. Other people's uncommitted edits stay out of your
+   This takes the backlog lock, commits exactly each `--story` directory and each `--path`, and
+   pushes. Other people's uncommitted edits stay out of your
    commit. It commits on the backlog's `main` branch. If nothing changed, it exits 0 without
    committing.
 

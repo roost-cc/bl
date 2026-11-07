@@ -74,9 +74,9 @@ feature with no stories is refused until they are cut. Neither verb takes `--rep
 works only in the listed worktrees and escalates when it needs a repo that no story names: that
 is a missing story, which the refine adds.
 
-Backlog output a run regenerates with its branch's `bl` (the component indexes, say, when the
-story changes `bl sync` itself) is provisional until `bl` merges: any `bl sync` from the unmerged
-main checkout rewrites it with the old code, and `bl merge` restores it with the sync it runs right
+Backlog output a run writes with its branch's `bl` (`allowed-tools.json`, say, when the story
+changes its generator) is provisional until `bl` merges: any `bl` command from the unmerged main
+checkout rewrites it with the old code, and `bl merge` restores it with the sync it runs right
 after `bl` merges, before any other repo (see `bl-merge.md`).
 
 ```bash

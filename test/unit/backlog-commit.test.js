@@ -223,6 +223,8 @@ function captureStderr(fn) {
 
 const STORY = 'stories/S1-a/index.md';
 const COMPONENT_INDEX = 'components/C01-work/index.md';
+/** The one path a pull settles by taking a side (`isGeneratedPath`, F-79 D1). */
+const GENERATED = 'allowed-tools.json';
 
 test('commitPaths pushes the commit to origin main', () => {
   const { tmp, remote, alice } = twoClones({ [STORY]: 'a\n' });
@@ -387,34 +389,50 @@ test('a conflicting story aborts the rebase with a warning; work tree and edits 
 });
 
 test('a conflict confined to generated files is settled by taking a side', () => {
-  const { tmp, remote, alice, bob } = twoClones({
-    [COMPONENT_INDEX]: 'component\n',
-    'allowed-tools.json': '{}\n',
-    [STORY]: 'a\n',
-  });
+  const { tmp, remote, alice, bob } = twoClones({ 'allowed-tools.json': '{}\n', [STORY]: 'a\n' });
   try {
-    writeFileSync(join(alice, COMPONENT_INDEX), 'component, alice\n');
     writeFileSync(join(alice, 'allowed-tools.json'), '{"a":1}\n');
     writeFileSync(join(alice, STORY), 'alice\n');
     g(alice, 'commit', '-q', '-am', 'alice');
-    bobPushes(bob, { [COMPONENT_INDEX]: 'component, bob\n', 'allowed-tools.json': '{"b":1}\n' });
+    bobPushes(bob, { 'allowed-tools.json': '{"b":1}\n' });
     const res = pullBacklog(alice);
     assert.equal(res.state, 'pulled', res.message);
-    assert.deepEqual(res.resolved.sort(), ['allowed-tools.json', COMPONENT_INDEX]);
+    assert.deepEqual(res.resolved, ['allowed-tools.json']);
     assert.equal(g(alice, 'rev-parse', 'HEAD~1'), g(remote, 'rev-parse', 'main'));
     assert.equal(readFileSync(join(alice, STORY), 'utf8'), 'alice\n');
-    assert.doesNotMatch(readFileSync(join(alice, COMPONENT_INDEX), 'utf8'), /<<<<<<<|>>>>>>>/);
+    assert.doesNotMatch(readFileSync(join(alice, 'allowed-tools.json'), 'utf8'), /<<<<<<<|>>>>>>>/);
     assert.equal(g(alice, 'status', '--porcelain'), '');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test('isGeneratedPath: the top-level and component indexes and allowed-tools.json only', () => {
-  for (const p of ['allowed-tools.json', 'index.md', 'components/C01-work/index.md', 'components/C01/index.md']) {
-    assert.equal(isGeneratedPath(p), true, p);
+test('a conflict in the root or a component index.md is a real conflict: rebase aborted, all as before', () => {
+  for (const rel of ['index.md', COMPONENT_INDEX]) {
+    const { tmp, remote, alice, bob } = twoClones({ [rel]: 'page\n', [STORY]: 'a\n' });
+    try {
+      writeFileSync(join(alice, rel), 'page, alice\n');
+      g(alice, 'commit', '-q', '-am', 'alice');
+      const head = g(alice, 'rev-parse', 'HEAD');
+      bobPushes(bob, { [rel]: 'page, bob\n' });
+      const res = pullBacklog(alice);
+      assert.equal(res.state, 'conflict', `${rel}: ${res.message}`);
+      assert.deepEqual(res.paths, [rel]);
+      assert.equal(g(alice, 'rev-parse', 'HEAD'), head, rel);
+      assert.equal(readFileSync(join(alice, rel), 'utf8'), 'page, alice\n', rel);
+      assert.notEqual(g(remote, 'rev-parse', 'main'), head, rel);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   }
+});
+
+test('isGeneratedPath: allowed-tools.json only; the root and component indexes are hand-written (F-79 D1)', () => {
+  assert.equal(isGeneratedPath('allowed-tools.json'), true);
   for (const p of [
+    'index.md',
+    'components/C01-work/index.md',
+    'components/C01/index.md',
     'features/F1-x/index.md',
     'stories/S1-a/index.md',
     'components/notes/index.md',
@@ -442,6 +460,9 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
     ['updates', ['approve', 'S-1']],
     ['sync', ['--commit', '-m', 'x', '--story', 'S-1']],
     ['s', ['--commit']],
+    // A bare bl sync's whole job is the pull and push (F-79 D1).
+    ['sync', []],
+    ['s', []],
     ['block', ['add', 'S-1', '--gate', 'run', '--unit', 'F-1', '--until', 'done']],
     ['block', ['remove', 'S-1', '--gate', 'run', '--unit', 'F-1']],
     ['block', ['list', '--fix']],
@@ -451,7 +472,7 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
     assert.equal(commandPullsBacklog(cmd, argv), true, `${cmd} ${argv.join(' ')}`);
   }
   for (const [cmd, argv] of [
-    ['sync', []],
+    ['sync', ['--help']],
     ['list', []],
     ['status', ['F-1']],
     ['status', []],
@@ -471,9 +492,8 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
   }
 });
 
-test('bl inbox pulls; a generated-index conflict is regenerated, committed and pushed by bl', () => {
+test('bl inbox pulls; an allowed-tools.json conflict is regenerated, committed and pushed by bl', () => {
   const { dir: alice, cleanup } = mkTempBacklog({
-    projects: { infra: { title: 'Infra' } },
     components: [{ id: 'C01', title: 'Work' }],
     stories: [
       { id: 'S-1', component: 'C01', title: 'First' },
@@ -483,6 +503,9 @@ test('bl inbox pulls; a generated-index conflict is regenerated, committed and p
   const tmp = mkTempDir('bl-bc-remote-');
   try {
     initGitBacklog(alice);
+    ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
+    g(alice, 'add', GENERATED);
+    g(alice, 'commit', '-q', '-m', 'allowed tools');
     const remote = join(tmp, 'remote.git');
     const bob = join(tmp, 'bob');
     g(tmp, 'init', '-q', '--bare', '-b', 'main', remote);
@@ -502,27 +525,30 @@ test('bl inbox pulls; a generated-index conflict is regenerated, committed and p
       writeFileSync(p, readFileSync(p, 'utf8').replace(/^title: .*$/m, `title: ${title}`));
     };
 
-    // Bob retitles S-2 and commits through bl, which pushes.
+    // Bob retitles S-2 and commits through bl, which pushes; his clone's
+    // allowed-tools.json was edited by hand too.
     retitle(bob, 'S-2', 'Second, by Bob');
-    const b = runBl(['sync', '--commit', '-m', 'chore: bob', '--story', 'S-2'], { cwd: bob });
+    writeFileSync(join(bob, GENERATED), '{"b":1}\n');
+    const b = runBl(['sync', '--commit', '-m', 'chore: bob', '--story', 'S-2', '--path', GENERATED], { cwd: bob });
     assert.equal(b.status, 0, b.stderr);
     assert.equal(g(remote, 'rev-parse', 'main'), g(bob, 'rev-parse', 'HEAD'));
 
-    // Alice retitles S-1 and commits by hand, unpushed: both rewrote the
-    // component index's table, on neighbouring rows.
+    // Alice retitles S-1 and edits allowed-tools.json, and commits by hand,
+    // unpushed: the two commits conflict in allowed-tools.json only.
     retitle(alice, 'S-1', 'First, by Alice');
-    assert.equal(runBl(['sync'], { cwd: alice }).status, 0);
+    writeFileSync(join(alice, GENERATED), '{"a":1}\n');
     g(alice, 'commit', '-q', '-am', 'alice');
 
     const r = runBl(['inbox'], { cwd: alice });
     assert.equal(r.status, 0, r.stderr);
     assert.doesNotMatch(r.stderr, /warning: backlog/);
-    const component = readFileSync(join(alice, 'components/C01/index.md'), 'utf8');
-    assert.match(component, /First, by Alice/);
-    assert.match(component, /Second, by Bob/);
-    assert.doesNotMatch(component, /<<<<<<<|>>>>>>>/);
+    assert.match(readFileSync(join(alice, 'stories/S1/index.md'), 'utf8'), /First, by Alice/);
+    assert.match(readFileSync(join(alice, 'stories/S2/index.md'), 'utf8'), /Second, by Bob/);
+    const tools = readFileSync(join(alice, GENERATED), 'utf8');
+    assert.doesNotMatch(tools, /<<<<<<<|>>>>>>>/);
+    assert.ok(JSON.parse(tools)._generated, tools);
     assert.equal(g(alice, 'status', '--porcelain'), '');
-    assert.equal(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate backlog indexes after pull');
+    assert.equal(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate allowed-tools.json after pull');
     assert.equal(g(remote, 'rev-parse', 'main'), g(alice, 'rev-parse', 'HEAD'));
   } finally {
     cleanup();
@@ -612,24 +638,24 @@ const PULL_RECOVERY_CASES = [
   },
   {
     name: 'generated-only conflict whose settlement fails',
-    alice: { [COMPONENT_INDEX]: 'component, alice\n' },
+    alice: { [GENERATED]: 'component, alice\n' },
     dirty: { 'other.md': 'alice, uncommitted\n' },
-    bob: { [COMPONENT_INDEX]: 'component, bob\n' },
+    bob: { [GENERATED]: 'component, bob\n' },
     fail: ['checkout --theirs'],
     abortTo: 'failed',
   },
   {
     name: 'generated-only conflict, settled, then the rebase fails with nothing unmerged',
-    alice: { [COMPONENT_INDEX]: 'component, alice\n' },
-    bob: { [COMPONENT_INDEX]: 'component, bob\n' },
+    alice: { [GENERATED]: 'component, alice\n' },
+    bob: { [GENERATED]: 'component, bob\n' },
     fail: ['rebase --continue'],
     abortTo: 'failed',
   },
   {
     name: 'mixed conflict, dirty tree',
-    alice: { [STORY]: 'alice\n', [COMPONENT_INDEX]: 'component, alice\n' },
+    alice: { [STORY]: 'alice\n', [GENERATED]: 'component, alice\n' },
     dirty: { 'other.md': 'alice, uncommitted\n' },
-    bob: { [STORY]: 'bob\n', [COMPONENT_INDEX]: 'component, bob\n' },
+    bob: { [STORY]: 'bob\n', [GENERATED]: 'component, bob\n' },
     abortTo: 'conflict',
   },
   {
@@ -641,16 +667,16 @@ const PULL_RECOVERY_CASES = [
   },
   {
     name: 'uncommitted edit conflicts with the pull, after a settled generated conflict',
-    alice: { [COMPONENT_INDEX]: 'component, alice\n' },
+    alice: { [GENERATED]: 'component, alice\n' },
     dirty: { [STORY]: 'alice, uncommitted\n' },
-    bob: { [STORY]: 'bob\n', [COMPONENT_INDEX]: 'component, bob\n' },
+    bob: { [STORY]: 'bob\n', [GENERATED]: 'component, bob\n' },
     abortTo: 'conflict',
     unsafeWhen: ['stash pop'],
   },
 ];
 
 function setUpPull(c) {
-  const clones = twoClones({ [STORY]: 'a\n', [COMPONENT_INDEX]: 'component\n', 'other.md': 'o\n', 'staged.md': 's\n' });
+  const clones = twoClones({ [STORY]: 'a\n', [GENERATED]: 'component\n', 'other.md': 'o\n', 'staged.md': 's\n' });
   const { alice, bob } = clones;
   if (c.alice) {
     for (const [rel, text] of Object.entries(c.alice)) writeFileSync(join(alice, rel), text);
@@ -925,7 +951,6 @@ test('a pull that goes through settles an interrupted feature-link record before
     assert.match(r.stderr, /settled the interrupted bl new --feature of F-1: rolled back/);
     assert.equal(existsSync(join(alice, '.bl/run/F-1.links.json')), false);
     assert.equal(g(alice, 'ls-tree', '-r', '--name-only', 'HEAD', 'features'), '', 'no commit holds F-1');
-    assert.doesNotMatch(g(alice, 'show', 'HEAD:index.md'), /F-1/, 'the committed index does not list F-1');
     assert.equal(g(remote, 'rev-parse', 'main'), g(alice, 'rev-parse', 'HEAD'));
     assert.equal(g(alice, 'status', '--porcelain'), '', 'nothing of F-1 is left behind');
   } finally {
@@ -1097,7 +1122,7 @@ test('pullBeforeCommand_retries_or_stops_after_regeneration_commit_failure', () 
         c.name,
       );
       assert.ok(existsSync(join(alice, PENDING)), `${c.name}: the regeneration is left pending`);
-      assert.notEqual(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate backlog indexes after pull', c.name);
+      assert.notEqual(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate allowed-tools.json after pull', c.name);
 
       // The next command finishes it before it runs, whether or not its pull brings anything.
       if (c.fixedBy) bobPushesFn(c.fixedBy);
@@ -1112,7 +1137,7 @@ test('pullBeforeCommand_retries_or_stops_after_regeneration_commit_failure', () 
         c.name,
       );
       assert.equal(g(alice, 'status', '--porcelain'), '', `${c.name}: the regeneration is committed`);
-      assert.equal(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate backlog indexes after pull', c.name);
+      assert.equal(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate allowed-tools.json after pull', c.name);
       assert.equal(g(remote, 'rev-parse', 'main'), g(alice, 'rev-parse', 'HEAD'), `${c.name}: and pushed`);
     } finally {
       cleanup();
@@ -1284,6 +1309,9 @@ function backlogClones() {
   const { dir: alice, cleanup } = mkTempBacklog({});
   const tmp = mkTempDir('bl-bc-remote-');
   initGitBacklog(alice);
+  ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
+  g(alice, 'add', TOOLS);
+  g(alice, 'commit', '-q', '-m', 'allowed tools');
   const remote = join(tmp, 'remote.git');
   const bob = join(tmp, 'bob');
   g(tmp, 'init', '-q', '--bare', '-b', 'main', remote);
@@ -1326,24 +1354,24 @@ async function pullBeforeCommandCaptured(root) {
 test('a conflict only in a generated path is settled, pushed, and regenerated by the next pulling command', async () => {
   const { alice, bob, remote, done } = backlogClones();
   try {
-    const generated = readFileSync(join(alice, 'index.md'), 'utf8');
-    bobPushes(bob, { 'index.md': `${generated}\nbob's line\n` });
-    writeFileSync(join(alice, 'index.md'), `${generated}\nalice's line\n`);
+    const generated = readFileSync(join(alice, TOOLS), 'utf8');
+    bobPushes(bob, { [TOOLS]: `${generated}\nbob's line\n` });
+    writeFileSync(join(alice, TOOLS), `${generated}\nalice's line\n`);
     writeFileSync(join(alice, 'notes.md'), 'alice\n');
-    const [res, err] = captureStderr(() => commitPaths(alice, ['index.md', 'notes.md'], 'chore: alice'));
+    const [res, err] = captureStderr(() => commitPaths(alice, [TOOLS, 'notes.md'], 'chore: alice'));
     assert.equal(res.pushed, true, res.pushError);
-    assert.deepEqual(res.pushResolved, ['index.md']);
+    assert.deepEqual(res.pushResolved, [TOOLS]);
     assert.equal(err, '');
     assert.equal(g(remote, 'rev-parse', 'main'), g(alice, 'rev-parse', 'HEAD'));
     assert.ok(existsSync(join(alice, PENDING)), 'the regeneration is left pending');
-    assert.match(readFileSync(join(alice, 'index.md'), 'utf8'), /alice's line/, 'not regenerated under the lock');
+    assert.match(readFileSync(join(alice, TOOLS), 'utf8'), /alice's line/, 'not regenerated under the lock');
 
     const [pull, pullErr] = await pullBeforeCommandCaptured(alice);
     assert.equal(pull.state, 'current', pullErr);
     assert.doesNotMatch(pullErr, /warning|error/);
     assert.equal(existsSync(join(alice, PENDING)), false, 'the regeneration finished');
-    assert.doesNotMatch(readFileSync(join(alice, 'index.md'), 'utf8'), /alice's line|bob's line/);
-    assert.equal(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate backlog indexes after pull');
+    assert.doesNotMatch(readFileSync(join(alice, TOOLS), 'utf8'), /alice's line|bob's line/);
+    assert.equal(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate allowed-tools.json after pull');
     assert.equal(g(alice, 'status', '--porcelain'), '');
     assert.equal(g(remote, 'rev-parse', 'main'), g(alice, 'rev-parse', 'HEAD'));
   } finally {
@@ -1354,16 +1382,16 @@ test('a conflict only in a generated path is settled, pushed, and regenerated by
 test("an edit made after the retry left a regeneration pending stays out of the regeneration's commit", async () => {
   const { alice, bob, remote, done } = backlogClones();
   try {
-    const generated = readFileSync(join(alice, 'index.md'), 'utf8');
+    const generated = readFileSync(join(alice, TOOLS), 'utf8');
     writeFileSync(join(alice, 'notes.md'), 'committed\n');
     g(alice, 'add', 'notes.md');
     g(alice, 'commit', '-q', '-m', 'notes');
     g(alice, 'push', '-q', 'origin', 'main');
     g(bob, 'pull', '-q', 'origin', 'main');
-    bobPushes(bob, { 'index.md': `${generated}\nbob's line\n` });
-    writeFileSync(join(alice, 'index.md'), `${generated}\nalice's line\n`);
-    const res = commitPaths(alice, ['index.md'], 'chore: alice');
-    assert.deepEqual(res.pushResolved, ['index.md']);
+    bobPushes(bob, { [TOOLS]: `${generated}\nbob's line\n` });
+    writeFileSync(join(alice, TOOLS), `${generated}\nalice's line\n`);
+    const res = commitPaths(alice, [TOOLS], 'chore: alice');
+    assert.deepEqual(res.pushResolved, [TOOLS]);
     assert.ok(existsSync(join(alice, PENDING)), 'the regeneration is left pending');
 
     // The operator goes on working before the next command that pulls.
@@ -1372,9 +1400,9 @@ test("an edit made after the retry left a regeneration pending stays out of the 
     const [pull, pullErr] = await pullBeforeCommandCaptured(alice);
     assert.equal(pull.state, 'current', pullErr);
     assert.equal(existsSync(join(alice, PENDING)), false, 'the regeneration finished');
-    assert.equal(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate backlog indexes after pull');
+    assert.equal(g(alice, 'log', '-1', '--format=%s'), 'chore: regenerate allowed-tools.json after pull');
     const regenerated = g(alice, 'show', '--format=', '--name-only', 'HEAD').split('\n');
-    assert.ok(regenerated.includes('index.md'), regenerated.join(', '));
+    assert.ok(regenerated.includes(TOOLS), regenerated.join(', '));
     assert.ok(!regenerated.includes('notes.md') && !regenerated.includes('draft.md'), regenerated.join(', '));
     assert.equal(readFileSync(join(alice, 'notes.md'), 'utf8'), 'operator, half done\n');
     assert.equal(g(alice, 'status', '--porcelain'), 'M notes.md\n?? draft.md');
@@ -1401,17 +1429,17 @@ test('push_retry_cannot_report_success_when_regeneration_marker_fails', async ()
   for (const c of cases) {
     const { alice, bob, remote, done } = backlogClones();
     try {
-      const generated = readFileSync(join(alice, 'index.md'), 'utf8');
-      bobPushes(bob, { 'index.md': `${generated}\nbob's line\n` });
+      const generated = readFileSync(join(alice, TOOLS), 'utf8');
+      bobPushes(bob, { [TOOLS]: `${generated}\nbob's line\n` });
       const origin = g(remote, 'rev-parse', 'main');
-      writeFileSync(join(alice, 'index.md'), `${generated}\nalice's line\n`);
+      writeFileSync(join(alice, TOOLS), `${generated}\nalice's line\n`);
       mkdirSync(runDir(alice), { recursive: true });
       c.marker(alice);
-      const [res, err] = captureStderr(() => commitPaths(alice, ['index.md'], 'chore: alice'));
+      const [res, err] = captureStderr(() => commitPaths(alice, [TOOLS], 'chore: alice'));
       assert.equal(res.committed, true, `${c.name}: ${res.error}`);
       if (c.ok) {
         assert.equal(res.pushed, true, `${c.name}: ${res.pushError}`);
-        assert.deepEqual(res.pushResolved, ['index.md'], c.name);
+        assert.deepEqual(res.pushResolved, [TOOLS], c.name);
         assert.equal(readFileSync(join(alice, PENDING), 'utf8'), '[]', `${c.name}: the pending snapshot is kept`);
         continue;
       }

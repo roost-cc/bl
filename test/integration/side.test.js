@@ -5,7 +5,7 @@
  * the feature's branch; from anything else it is a standalone story on its
  * own branch. Every refusal comes before anything is written, no main
  * checkout leaves `main`, and the backlog commit holds only the paths
- * `bl side` wrote and the indexes the sync regenerated.
+ * `bl side` wrote.
  */
 
 import { test } from 'node:test';
@@ -74,11 +74,9 @@ const fmOf = (path) => parseFrontmatter(readFileSync(path, 'utf8')).fm;
 const members = (dir, id) => findFeature(normalizeFeatureId(id), loadConfig({ backlogRoot: dir })).stories;
 const storyDirs = (dir) => readdirSync(join(dir, 'stories')).sort();
 
-/** The HEAD commit's paths, without the indexes `bl sync` regenerates. */
-function committedNonIndex(dir) {
-  return headFiles(dir)
-    .map((l) => l.split('\t')[1])
-    .filter((p) => !/^(index\.md|(components|themes|epics)\/[^/]+\/index\.md)$/.test(p));
+/** The HEAD commit's paths. */
+function committed(dir) {
+  return headFiles(dir).map((l) => l.split('\t')[1]);
 }
 
 test("bl side <repo> --from a running feature: a story in the repo's home component, on the feature's branch", () => {
@@ -117,14 +115,10 @@ test("bl side <repo> --from a running feature: a story in the repo's home compon
     ],
   );
 
-  // One commit, by path: the story, the feature file and its change document
-  // (and the regenerated indexes); the bystanders stay as they were.
+  // One commit, by path: the story and the feature's change document, and no
+  // index (F-79 D1); the bystanders stay as they were.
   assert.match(git(dir, 'log', '-1', '--format=%s'), /^chore: add S-4 \(bl side, found by F-1\)$/);
-  assert.deepEqual(committedNonIndex(dir).sort(), [
-    'features/F1-run/change.md',
-    'features/F1-run/index.md',
-    `stories/${storyDir}/index.md`,
-  ]);
+  assert.deepEqual(committed(dir).sort(), ['features/F1-run/change.md', `stories/${storyDir}/index.md`]);
   assert.deepEqual(statusLines(dir), before);
   assert.deepEqual(mainBranches(), { repoA: 'main', repoB: 'main' });
 
@@ -199,7 +193,7 @@ test('bl side --from a draft feature or a standalone story: a standalone story o
       change.repos.map((e) => [e.repo, e.branch]),
       [['repoB', branch]],
     );
-    assert.deepEqual(committedNonIndex(dir).sort(), [
+    assert.deepEqual(committed(dir).sort(), [
       `stories/S${id.slice(2)}-${slug}/change.md`,
       `stories/S${id.slice(2)}-${slug}/index.md`,
     ]);
@@ -476,68 +470,6 @@ test('side_body_refusals_leave_no_partial_state: a bad --body-file is refused be
   });
   assert.equal(ok.status, 0, ok.stderr);
   assert.match(readFileSync(join(dir, JSON.parse(ok.stdout).path), 'utf8'), /From stdin\./);
-});
-
-/** Every Markdown file in the backlog, by path, with its content. */
-function markdownFiles(dir, sub = '') {
-  const out = {};
-  for (const e of readdirSync(join(dir, sub), { withFileTypes: true })) {
-    const rel = sub ? `${sub}/${e.name}` : e.name;
-    if (e.name === '.git') continue;
-    if (e.isDirectory()) Object.assign(out, markdownFiles(dir, rel));
-    else if (e.name.endsWith('.md')) out[rel] = readFileSync(join(dir, rel), 'utf8');
-  }
-  return out;
-}
-
-// side_sync_failure_restores_all_indexes: whichever generated index the sync
-// fails to write, attached or standalone, the undo puts every index the sync
-// had already rewritten back as it was, uncommitted edits made before
-// bl side included, and no index names the story that is gone.
-test('side_sync_failure_restores_all_indexes: a sync that fails part-way leaves every index as it was', () => {
-  const failing = [
-    '^features/[^/]+/index\\.md$',
-    '^components/[^/]+/index\\.md$',
-    '^themes/[^/]+/index\\.md$',
-    '^index\\.md$',
-  ];
-  for (const path of failing) {
-    for (const from of ['F-1', 'S-3']) {
-      // A standalone side story changes no feature, and the sync writes no
-      // file whose bytes stay the same, so there is no feature write to fail.
-      if (path.startsWith('^features/') && from === 'S-3') continue;
-      const label = `${path}, --from ${from}`;
-      const { tmp, dir, repos } = build();
-      // Edits made before bl side, to files the sync rewrites, stay.
-      dirtyBystanders(dir, 'components/C01-b/index.md');
-      writeFileSync(join(dir, 'themes', 'demo', 'index.md'), '\nA theme edit.\n', { flag: 'a' });
-      const files = markdownFiles(dir);
-      const status = statusLines(dir);
-      const head = git(dir, 'rev-parse', 'HEAD');
-      const r = sideWithFaults(dir, from, 'index', { BL_SIDE_FAULT_PATH: path });
-      assert.equal(r.status, 1, `${label}: ${r.stderr}`);
-      assert.match(r.stderr, /injected write failure/, label);
-      assert.equal(
-        storyDirs(dir).find((d) => d.startsWith('S4-')),
-        undefined,
-        `${label}: no story left`,
-      );
-      assert.deepEqual(markdownFiles(dir), files, `${label}: every file as it was`);
-      assert.deepEqual(statusLines(dir), status, label);
-      assert.equal(git(dir, 'rev-parse', 'HEAD'), head, label);
-      assert.equal(
-        findExistingWorktree(repos.repoB, from === 'F-1' ? 'f1-run' : 's4-partial'),
-        null,
-        `${label}: no worktree`,
-      );
-      // The undone worktree's unit directory goes with it (F-60 D2).
-      assert.equal(
-        existsSync(join(tmp, 'worktrees', from === 'F-1' ? 'f1-run' : 's4-partial')),
-        false,
-        `${label}: no unit directory`,
-      );
-    }
-  }
 });
 
 // failed_side_must_preserve_worktree_adopted_by_successful_caller: a failed

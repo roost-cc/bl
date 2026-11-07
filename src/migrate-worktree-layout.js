@@ -419,7 +419,7 @@ function moveWorktree(m, runDir, backlogRoot) {
  */
 export async function migrate(config, { dryRun = false, log = console.log, commit } = {}) {
   const backlogRoot = config.backlogRoot;
-  const { runSync, syncAndCommit } = await import('./sync.js');
+  const { syncAndCommit } = await import('./sync.js');
   return withLock(backlogRoot, async () => {
     const plan = planWorktreeLayout(config);
     const refused = () => new Error(`migration refused: ${plan.refusals.join('; ')}`);
@@ -454,7 +454,6 @@ export async function migrate(config, { dryRun = false, log = console.log, commi
     const result = await applyMigration(config, {
       message: COMMIT_MESSAGE,
       commit: commit ?? syncAndCommit,
-      sync: runSync,
       // The sync and commit run on the backlog as migrated, which the new bl loads.
       commitConfig: () => loadConfig({ backlogRoot }),
       apply: ({ write }) => {
