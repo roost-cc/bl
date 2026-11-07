@@ -7,8 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'fs';
-import { tmpdir } from 'os';
+import fs, { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
 import { basename, dirname, join, resolve } from 'path';
 import { loadBacklog } from '../../src/backlog-graph.js';
@@ -22,7 +21,7 @@ import { main as reportMain, writeReport } from '../../src/report-cmd.js';
 import { runBl } from '../helpers/run-bl.js';
 import { rendered } from '../helpers/rendered.js';
 import { commitAt, committedBacklog, feature, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
-import { blockedFlow, CHANGE_TEMPLATE } from '../helpers/tempdir.js';
+import { blockedFlow, CHANGE_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 
 const FORMATTED = '<!-- formatted -->';
 
@@ -685,7 +684,7 @@ test('bl report --charts with an unknown adapter exits 1 naming the registered o
 
 test('report_outside_backlog_formats_site_pages: the report page and every rendered page are formatted, at the default output and outside the backlog', () => {
   const { dir } = reportBacklog();
-  const outside = mkdtempSync(join(tmpdir(), 'bl-report-out-'));
+  const outside = mkTempDir('bl-report-out-');
   const graph = loadBacklog({ backlogRoot: dir }, { reload: true });
   const renderedPages = ['story', 'feature', 'component', 'epic', 'theme']
     .flatMap((kind) => graph.list(kind))

@@ -8,7 +8,6 @@ import assert from 'node:assert/strict';
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -17,9 +16,8 @@ import {
   utimesSync,
   writeFileSync,
 } from 'fs';
-import { tmpdir } from 'os';
 import { dirname, join } from 'path';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { loadConfig } from '../../src/config.js';
 import { loadBacklog } from '../../src/backlog-graph.js';
 import { GENERATED_SECTIONS, renderPage } from '../../src/render.js';
@@ -102,7 +100,7 @@ test('writeSite copies the published set with its timestamps, and nothing else',
 
 test('writeSite_keeps_rendered_writes_inside_stage_for_symlinked_pages: every page kind, a unit directory, a doc, the root and a report file', () => {
   const dir = siteBacklog();
-  const outside = mkdtempSync(join(tmpdir(), 'bl-site-outside-'));
+  const outside = mkTempDir('bl-site-outside-');
   const graph = loadBacklog({ backlogRoot: dir }, { reload: true });
   // Each case moves the backlog path to `outside` and links it back.
   const linked = [
