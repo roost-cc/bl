@@ -13,6 +13,7 @@ import { basename, dirname, relative } from 'path';
 import { parseFrontmatter, normalizeComponentId } from './config.js';
 import { DEFAULT_REVIEW_ROUNDS_MAX } from './feature.js';
 import { unitChange } from './change-doc.js';
+import { storyEffort } from './effort.js';
 
 function toInt(v, fallback = 0) {
   const n = parseInt(String(v ?? ''), 10);
@@ -80,7 +81,7 @@ export function storyAsOrdered(unit) {
     title: unit.title,
     points: unit.points,
     // As `readAllStories` reads it (F-85 D1): the run's sessions take their level from it.
-    effort: unit.fm.effort || null,
+    effort: storyEffort(unit.fm),
     status: unit.status,
     depends_on: unit.fm.depends_on ?? '',
     unitRepo: unit.unitRepo,

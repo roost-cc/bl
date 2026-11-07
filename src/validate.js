@@ -26,7 +26,7 @@ import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
 import { implementPluginProblem } from './scripted.js';
-import { checkEffort } from './effort.js';
+import { checkEffort, storyEffort } from './effort.js';
 
 // ---------------------------------------------------------------------------
 // Constants (reused by sync.js)
@@ -394,9 +394,9 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
 
   // bad-effort: a story's must be one of the effort levels (F-85 D1); an
   // empty one runs at `effort.default`.
-  if (kind === 'story' && fm.effort !== undefined && fm.effort !== null && fm.effort !== '') {
+  if (kind === 'story' && storyEffort(fm) !== null) {
     try {
-      checkEffort(fm.effort, 'effort');
+      checkEffort(storyEffort(fm), 'effort');
     } catch (err) {
       findings.push({ severity: 'error', code: 'bad-effort', message: err.message, location });
     }

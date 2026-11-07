@@ -26,6 +26,7 @@ import {
   STORIES_DIR,
   COMPONENTS_DIR,
 } from './config.js';
+import { storyEffort } from './effort.js';
 
 export { normalizeId, normalizeComponentId };
 
@@ -514,7 +515,7 @@ export function readAllStories(config) {
       type: fm.type ?? '',
       points: fm.points ?? '',
       // The refiner's effort level (F-85 D1); null when the key is unset or empty.
-      effort: fm.effort || null,
+      effort: storyEffort(fm),
       depends_on: fm.depends_on ?? '',
       // The stories whose depends_on names this one, in number order: the
       // graph's derived inverse (F-77 D3), never a stored `required_for:`.

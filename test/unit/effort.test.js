@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { EFFORT_LEVELS, checkEffort, effortLabel, sessionEffort } from '../../src/effort.js';
+import { EFFORT_LEVELS, checkEffort, effortLabel, sessionEffort, storyEffort } from '../../src/effort.js';
 
 test('EFFORT_LEVELS lists the five levels, lowest first (F-85 D1)', () => {
   assert.deepEqual([...EFFORT_LEVELS], ['low', 'medium', 'high', 'xhigh', 'max']);
@@ -35,4 +35,31 @@ test('sessionEffort follows D4: refine, review, then the highest story level', (
   assert.equal(sessionEffort(config, { mode: 'implement', stories: [unset] }), 'high');
   assert.equal(sessionEffort(config, { mode: 'implement', stories: [low, medium, unset] }), 'high');
   assert.equal(sessionEffort(config, { mode: 'implement', stories: [unset, { effort: 'max' }] }), 'max');
+});
+
+test("sessionEffort refuses a story's bad effort, naming the story, instead of dropping it", () => {
+  const config = { effort: { refine: 'high', review: 'high', default: 'medium' } };
+  assert.throws(
+    () => sessionEffort(config, { mode: 'implement', stories: [{ id: 'S-1', effort: 'hgh' }] }),
+    /^Error: S-1 "effort:" must be one of .*, not "hgh"$/,
+  );
+  assert.throws(
+    () =>
+      sessionEffort(config, {
+        mode: 'implement',
+        stories: [
+          { id: 'S-1', effort: 'low' },
+          { id: 'S-2', effort: 3 },
+        ],
+      }),
+    /^Error: S-2 "effort:"/,
+  );
+});
+
+test("storyEffort reads a story's effort: as-is, null when unset or empty", () => {
+  assert.equal(storyEffort({}), null);
+  assert.equal(storyEffort({ effort: null }), null);
+  assert.equal(storyEffort({ effort: '' }), null);
+  assert.equal(storyEffort({ effort: 'low' }), 'low');
+  assert.equal(storyEffort({ effort: 0 }), 0);
 });
