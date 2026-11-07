@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { AGENT_CONFIG, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -107,6 +107,27 @@ for (const [label, json] of [
     assert.ok(repaired.repos && repaired.effort, 'init repaired the pulled file');
   });
 }
+
+test('init_retries_failed_commit_without_losing_written_paths: a rerun commits what the failed run wrote', () => {
+  const dir = newBacklog();
+  git(dir, 'init', '-q', '-b', 'main');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-q', '-m', 'base');
+  addOrigin(dir);
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const first = init(dir);
+  assert.equal(first.status, 1, first.stderr);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'base');
+  rmSync(hook);
+
+  const retry = init(dir);
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.deepEqual(statusLines(dir), []);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: bl init');
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').length, 8);
+  assert.equal(git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main'), git(dir, 'rev-parse', 'HEAD'));
+});
 
 test('init_inside_parent_git_checkout_skips_commit: a backlog with no repo of its own, inside a parent checkout', () => {
   const parent = mkTempDir('bl-init-parent-');

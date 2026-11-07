@@ -9,6 +9,7 @@ import {
   pathsChangedSince,
   commitPaths,
   commitChangedSince,
+  FAILED_COMMIT_PATHS,
   commandPullsBacklog,
   isGeneratedPath,
   isNonFastForwardRejection,
@@ -317,6 +318,45 @@ test('commitChangedSince: a failed commit returns true and names the paths', () 
   assert.equal(failed, true);
   assert.match(err, /backlog commit failed: git commit exited 1\n {2}Commit these paths yourself: x\.md/);
 });
+
+// A failed commit, then a retry that writes nothing new (its snapshot finds
+// the failed paths dirty already): each path class after the failure.
+for (const [label, after, committed, dirty] of [
+  ['an unchanged path is committed by the retry', () => {}, ['x.md', 'z.md'], ''],
+  [
+    'a path edited since is the operator’s and stays out, named',
+    (dir) => writeFileSync(join(dir, 'x.md'), 'the operator, after\n'),
+    ['z.md'],
+    // Staged by the failed commit's `git add`, edited since.
+    'MM x.md',
+  ],
+  [
+    'a path committed by hand since is not carried',
+    (dir) => g(dir, 'commit', '-q', '-m', 'by hand', 'x.md'),
+    ['z.md'],
+    '',
+  ],
+]) {
+  test(`commit_changed_since_retry_keeps_failed_paths: ${label}`, () => {
+    const dir = changedSinceRepo();
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const first = dirtySnapshot(dir);
+    writeFileSync(join(dir, 'x.md'), 'the command\n');
+    writeFileSync(join(dir, 'z.md'), 'the command\n');
+    assert.equal(captureStderr(() => commitChangedSince(dir, first, 'chore: retry'))[0], true);
+    rmSync(hook);
+    after(dir);
+
+    const [failed, err] = captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), 'chore: retry'));
+    assert.equal(failed, false, err);
+    assert.equal(g(dir, 'log', '-1', '--format=%s'), 'chore: retry');
+    assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), committed);
+    assert.equal(g(dir, 'status', '--porcelain'), dirty);
+    if (dirty) assert.match(err, /Left your uncommitted backlog edits alone: x\.md/);
+    assert.equal(existsSync(join(dir, FAILED_COMMIT_PATHS)), false, 'a commit that did not fail removes the record');
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Shared through the remote (F-50 D4): push after commit, pull with rebase

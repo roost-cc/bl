@@ -113,6 +113,13 @@ export function pathsChangedSince(before, after) {
 }
 
 /**
+ * Where a failed `commitChangedSince` commit records its paths, as JSON
+ * `[path, content hash]` pairs, for the next call to commit (S-1330). The
+ * run directory ignores itself, so the record is never committed.
+ */
+export const FAILED_COMMIT_PATHS = join(RUN_DIR, 'commit-failed.json');
+
+/**
  * Commit and push what changed in the backlog since `before` (a
  * `dirtySnapshot` taken before the command wrote anything): the paths
  * `pathsChangedSince` returns, through `commitPaths`. A path that was dirty
@@ -122,6 +129,11 @@ export function pathsChangedSince(before, after) {
  * Nothing changed, or a backlog that is not a git repo of its own (no `.git`
  * in `root`, even inside a parent checkout), prints nothing. In a repo, a
  * snapshot that `git status` could not take, before or after, is a failure.
+ * A failed commit records its paths and their content hashes in
+ * `FAILED_COMMIT_PATHS`, and the next call commits each one whose content is
+ * the same, so a retry, which finds them dirty before it begins, does not
+ * lose them. A path edited since is the operator's and stays out. A call
+ * that does not fail removes the record.
  * Shared by feature `bl merge`, story `bl merge`'s triage, `bl refine` and
  * `bl init` (S-1330).
  * @param {string} root
@@ -142,7 +154,15 @@ export function commitChangedSince(root, before, message, { session = false } = 
     );
     return true;
   }
-  let touched = pathsChangedSince(before, after);
+  // A retry was dirty before it began, so the paths come from the record.
+  const record = join(root, FAILED_COMMIT_PATHS);
+  let carried = [];
+  try {
+    carried = (readPending(record) ?? []).filter(([p, h]) => after.get(p) === h).map(([p]) => p);
+  } catch (e) {
+    warn(`cannot read ${FAILED_COMMIT_PATHS} (${e.message}); an earlier failed commit's paths are not carried`);
+  }
+  let touched = [...new Set([...pathsChangedSince(before, after), ...carried])].sort();
   const held = session && touched.includes(PRIORITY_FILE);
   if (held) {
     touched = touched.filter((p) => p !== PRIORITY_FILE);
@@ -156,6 +176,17 @@ export function commitChangedSince(root, before, message, { session = false } = 
       failed = true;
       console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);
     }
+  }
+  try {
+    if (failed)
+      writePending(
+        root,
+        record,
+        touched.map((p) => [p, after.get(p)]),
+      );
+    else rmSync(record, { force: true });
+  } catch (e) {
+    console.error(`  (the record of a failed commit's paths, ${FAILED_COMMIT_PATHS}, was not updated: ${e.message})`);
   }
   // Still dirty: a path the session committed itself was not left alone. A
   // held priority.md has its own line above.

@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, writeFileSync } from 'fs';
+import { chmodSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { PRIORITY_FILE } from '../../src/priority.js';
@@ -132,6 +132,17 @@ test('a session that exits 1 still has its work committed, and bl refine exits 1
   const dir = gitBacklog();
   const r = refine(dir, ['S-1'], { write: [S1], exit: 1 });
   assert.equal(r.status, 1, r.stderr);
+  assertCommitted(dir, 'chore: refine S-1', [S1]);
+});
+
+test('a refine rerun after a refused commit commits what the first session left', () => {
+  const dir = gitBacklog();
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  assert.equal(refine(dir, ['S-1'], { write: [S1] }).status, 1);
+  rmSync(hook);
+  const r = refine(dir, ['S-1']);
+  assert.equal(r.status, 0, r.stderr);
   assertCommitted(dir, 'chore: refine S-1', [S1]);
 });
 
