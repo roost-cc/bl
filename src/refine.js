@@ -25,6 +25,7 @@ import {
 import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { launchSession, loadPrompt, spillSubagentPrompts } from './session.js';
 import { flowForHelp, loadFlow } from './flow.js';
+import { sessionEffort } from './effort.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
@@ -165,6 +166,7 @@ function refineOne(target, config, { additionalPrompt } = {}) {
     agent: config.agent,
     config,
     additionalPrompt,
+    effort: sessionEffort(config, { mode: 'refine' }),
   });
 }
 
@@ -198,6 +200,8 @@ function refineBatch(targets, config) {
       // The shared commit flow names each sub-agent's own story.
       storyId: '<its story>',
       backlogDir: backlogRoot,
+      // Each sub-agent is started at this level by name (F-85 D5).
+      refineEffort: sessionEffort(config, { mode: 'refine' }),
     },
     { agent: config.agent, config },
   );
@@ -220,6 +224,7 @@ function refineBatch(targets, config) {
     recordTokens: false,
     sessionName: `refine batch — ${targets.map((t) => t.id).join(', ')}`,
     tmuxLabel: 'refine batch',
+    effort: sessionEffort(config, { mode: 'refine' }),
   });
 }
 

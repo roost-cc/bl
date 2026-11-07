@@ -216,6 +216,7 @@ export const STORY_INDEX_TEMPLATE = (story) => `${serializeFrontmatter({
   title: story.title,
   type: story.type ?? 'feature',
   points: story.points ?? 1,
+  effort: story.effort || undefined,
   status: story.status ?? 'backlog',
   added: story.added || undefined,
   depends_on: refList(story.depends_on),
@@ -245,7 +246,7 @@ ${story.body ?? ''}
  *           same way, an `E<nn>` id becoming `C<nn>`.
  * @property {Array<{ id: string, component?: string,
  *           epic?: string, title: string, type?: string, points?: number,
- *           status?: string, added?: string, depends_on?: string, required_for?: string,
+ *           effort?: string, status?: string, added?: string, depends_on?: string, required_for?: string,
  *           completed?: string, dirSuffix?: string, body?: string,
  *           feature?: string, primary_repo?: string,
  *           secondary_repos?: string[] }>} [stories]
@@ -281,21 +282,24 @@ ${story.body ?? ''}
  * @property {object} [config] Extra top-level keys for backlog.json (for
  *           example `{ run: { limit_wait_max_hours: 1 } }`). `worktrees`, the
  *           worktree root bl requires (F-60 D1), is `"../worktrees"`, and
- *           `agent` and `review_agent` (required, F-64 D2) are AGENT_CONFIG's,
- *           unless this sets them.
+ *           `agent`, `review_agent` (required, F-64 D2) and `effort`
+ *           (required, F-85 D2) are AGENT_CONFIG's, unless this sets them.
  * @property {object | null} [flow] The backlog's flow.json as an object;
  *           default `templates/flow.json`, `null` for none.
  */
 
 /**
- * The two required configuration lists (F-64 D2) a fixture backlog.json
- * carries unless it sets its own: Claude implements and Codex reviews, with
- * no model, as `bl init` scaffolds them (the reviewer is never the
- * implementer, F-64 D4). Spread it into a backlog.json a test writes by hand.
+ * The required agent settings a fixture backlog.json carries unless it sets
+ * its own: the two configuration lists (F-64 D2), Claude implements and
+ * Codex reviews, with no model, as `bl init` scaffolds them (the reviewer is
+ * never the implementer, F-64 D4), and the effort levels (F-85 D2), as
+ * `bl init` scaffolds them. Spread it into a backlog.json a test writes by
+ * hand.
  */
 export const AGENT_CONFIG = Object.freeze({
   agent: [{ agent: 'claude' }],
   review_agent: [{ agent: 'codex' }],
+  effort: { refine: 'high', review: 'high', default: 'high' },
 });
 
 /**

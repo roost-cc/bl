@@ -333,7 +333,7 @@ test('bl new --from with feature + per-story component cuts stories across compo
         component: 'C00',
         stories: [
           { id: 'store', title: 'Store primitive', points: 3, component: 'C01', body_file: 'b.md' },
-          { id: 'mint', title: 'Mint codes', points: 5, body_file: 'a.md', depends_on: ['@store'] },
+          { id: 'mint', title: 'Mint codes', points: 5, effort: 'low', body_file: 'a.md', depends_on: ['@store'] },
           { id: 'wire', title: 'Wire other', points: 2, component: 'C02', body_file: 'c.md' },
         ],
       }),
@@ -349,6 +349,9 @@ test('bl new --from with feature + per-story component cuts stories across compo
     const [store, mint, wire] = paths.map((p) => fm(join(dir, p)));
     for (const s of [store, mint, wire]) assert.equal(s.feature, 'F-1');
     assert.deepEqual(mint.depends_on, ['S-3']);
+    // A spec's effort is written as `effort:`; one with none keeps the template's empty key (F-85 D1).
+    assert.equal(mint.effort, 'low');
+    assert.match(readFileSync(join(dir, paths[0]), 'utf8'), /^points: 3\neffort:\n/m);
     // Each story's repo is its component's; none is written on the story (F-52 D1).
     assert.deepEqual([store.component, store.primary_repo], ['C01', undefined]);
     assert.deepEqual([mint.component, mint.primary_repo], ['C00', undefined]);
@@ -406,13 +409,14 @@ test('bl new --from rejects an epic block, an unknown component and an unknown f
         component: 'C00',
         stories: [
           { id: 'x', title: 'X', points: 2, component: 'C07', body_file: 's.md' },
-          { id: 'y', title: 'Y', points: 2, component: 'E01', body_file: 's.md' },
+          { id: 'y', title: 'Y', points: 2, component: 'E01', effort: 'fast', body_file: 's.md' },
         ],
       }),
     );
     let r = runBl(['new', '--from', 'bad.json'], { cwd: dir });
     assert.equal(r.status, 2);
     assert.match(r.stderr, /feature: feature 'F-4' not found/);
+    assert.match(r.stderr, /stories\[1\]\.effort: must be one of low, medium, high, xhigh, max; got "fast"/);
     assert.match(r.stderr, /stories\[0\]\.component: component 'C07' not found under components\//);
     assert.match(r.stderr, /stories\[1\]\.component: E01 is not a component id: components are C-ids \(C01\)\./);
 
@@ -478,6 +482,7 @@ test('bl approve gates on refined status and a non-empty, consistent story list'
     assert.equal(f.status, 'approved');
     assert.match(f.approved, /^\d{4}-\d{2}-\d{2}$/);
     assert.match(r.stderr, /3 points/);
+    assert.match(r.stderr, /^ {2}S-1 {2}effort: high \(default\) {2}Mint$/m, 'an unset effort shows effort.default');
     assert.match(rendered(dir), /F-1.*approved/);
     // approving again is a no-op
     r = runBl(['approve', 'F-1'], { cwd: dir });
@@ -500,6 +505,7 @@ test('bl approve warns about open dependencies outside the feature', () => {
         title: 'Inside',
         dirSuffix: 'inside',
         points: 8,
+        effort: 'xhigh',
         feature: 'F-1',
         depends_on: 'S-1',
       },
@@ -510,6 +516,7 @@ test('bl approve warns about open dependencies outside the feature', () => {
     const r = runBl(['approve', 'F-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /S-2 depends on S-1 \(backlog\)/);
+    assert.match(r.stderr, /^ {2}S-2 {2}effort: xhigh {2}Inside$/m, "each story's effort (F-85 D1)");
     // workon refuses on the same blocker (before touching git).
     const w = runBl(['implement', 'F-1'], { cwd: dir });
     assert.equal(w.status, 1);
@@ -541,7 +548,16 @@ test('bl status prints stories in dependency order plus review and blocker state
     repos: REPOS,
     components: [{ id: 'C00', title: 'Core', dirSuffix: 'core' }],
     stories: [
-      { id: 'S-1', component: 'C00', title: 'First', dirSuffix: 'first', points: 3, feature: 'F-1', depends_on: 'S-2' },
+      {
+        id: 'S-1',
+        component: 'C00',
+        title: 'First',
+        dirSuffix: 'first',
+        points: 3,
+        effort: 'low',
+        feature: 'F-1',
+        depends_on: 'S-2',
+      },
       { id: 'S-2', component: 'C00', title: 'Second', dirSuffix: 'second', points: 5, feature: 'F-1' },
     ],
     features: [
@@ -569,6 +585,10 @@ test('bl status prints stories in dependency order plus review and blocker state
     const s2 = r.stdout.indexOf('S-2');
     const s1 = r.stdout.indexOf('S-1');
     assert.ok(s2 < s1, 'S-2 should be listed before S-1');
+    // Each story's effort, an unset one at effort.default (F-85 D1).
+    assert.match(r.stdout, /# +ID +Status +Pts +Effort +Component +Title/);
+    assert.match(r.stdout, /S-2 +backlog +5 +high \(default\) +C00 +Second/);
+    assert.match(r.stdout, /S-1 +backlog +3 +low +C00 +First/);
     assert.match(r.stdout, /escalation:\nDesign problem/);
   } finally {
     cleanup();

@@ -150,7 +150,8 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * criteria ask, abstractions follow shared behaviour, every changed line
  * traces to the story or a named finding); it rides with
  * `selfConsistencyGuide`, in every refine and implementation prompt and the
- * two prompts that review for it.
+ * two prompts that review for it. `effortGuide` is the effort-level rubric
+ * (F-85 D6) that every refine prompt carries, so the refiner sets `effort:`.
  */
 const PROMPT_PARTIALS = {
   blockedByBug: '_blocked-by-bug',
@@ -160,6 +161,7 @@ const PROMPT_PARTIALS = {
   selfConsistencyGuide: '_self-consistency',
   writingGuide: '_plain-writing',
   simplicityGuide: '_simplicity',
+  effortGuide: '_effort',
 };
 
 /**
@@ -708,6 +710,7 @@ export function runHeadlessSession({
   usageStep = null,
   logCommand = null,
   model = null,
+  effort = null,
   run = undefined,
   provider: providerOverride = null,
 }) {
@@ -798,6 +801,8 @@ export function runHeadlessSession({
       // The configuration's own model, which the walk always passes (F-64
       // D3); no implementing default, so a review never runs on it.
       model: model == null ? null : checkModel(model, 'model'),
+      // The session's effort level (F-85 D4, `sessionEffort`); null for none.
+      effort,
       ...(run ? { run } : {}),
     });
   } finally {
@@ -878,6 +883,7 @@ export function launchSession({
   tokensStep = null,
   tokensIndexPath = null,
   model = undefined,
+  effort = null,
   provider: providerOverride = null,
 }) {
   const isRefine = mode === 'refine';
@@ -981,6 +987,7 @@ export function launchSession({
       backlogRoot,
       scopes,
       model: sessionModel(model, agent, config),
+      effort,
     });
   } finally {
     try {

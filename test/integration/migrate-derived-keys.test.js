@@ -49,7 +49,7 @@ function oldBacklog() {
   const files = {
     '.gitignore': '.workon.lock\n.bl/\n',
     'flow.json': readFileSync(FLOW_TEMPLATE, 'utf8'),
-    'backlog.json': `${JSON.stringify({ agent: [{ agent: 'claude' }], review_agent: [{ agent: 'claude' }], worktrees: '../worktrees', repos: { bl: { path: '../bl', deployable: false, update_tests: [] } } }, null, 2)}\n`,
+    'backlog.json': `${JSON.stringify({ agent: [{ agent: 'claude' }], review_agent: [{ agent: 'claude' }], effort: { refine: 'high', review: 'high', default: 'high' }, worktrees: '../worktrees', repos: { bl: { path: '../bl', deployable: false, update_tests: [] } } }, null, 2)}\n`,
     'index.md': '# Backlog\n',
     'themes/demo/index.md': unit({ theme_id: 'demo', title: 'Demo', repos: ['bl'] }, 'demo'),
     'components/C32-bl/index.md': unit(

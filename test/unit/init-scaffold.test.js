@@ -2,7 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
-import { ensureBacklogDocs, ensureFlowFile, ensureReposBlock, ensureRootIndex } from '../../src/init.js';
+import {
+  CONFIG_WRITE_ATTEMPTS,
+  ensureBacklogDocs,
+  ensureFlowFile,
+  ensureReposBlock,
+  ensureRootIndex,
+} from '../../src/init.js';
 import { _hooks } from '../../src/atomic-write.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
@@ -161,8 +167,88 @@ test('bl init lists the coding dictionary in a new backlog.json, and adds no key
   assert.deepEqual(initOn({ dictionaries: [] }).dictionaries, [], 'a list the file has is kept');
 
   const dir = mkTempDir('bl-init-existing-');
-  const existing = JSON.stringify({ repos: {}, worktrees: '../worktrees' }) + '\n';
+  // With effort levels: bl init adds them to an existing backlog that has none (F-85 D2).
+  const effort = { refine: 'high', review: 'high', default: 'high' };
+  const existing = JSON.stringify({ repos: {}, worktrees: '../worktrees', effort }) + '\n';
   writeFileSync(join(dir, 'backlog.json'), existing);
   quietly(() => ensureReposBlock(dir, 'claude'));
   assert.equal(readFileSync(join(dir, 'backlog.json'), 'utf8'), existing);
+});
+
+test('bl init writes the effort levels into a new backlog.json and keeps an object the file has (F-85 D2)', () => {
+  assert.deepEqual(initOn({}).effort, { refine: 'high', review: 'high', default: 'high' });
+  const own = { refine: 'medium', review: 'xhigh', default: 'low' };
+  assert.deepEqual(initOn({ effort: own }).effort, own, 'an object the file has is kept');
+});
+
+test('init_adds_effort_to_existing_backlog_with_repos', () => {
+  const HIGH = { refine: 'high', review: 'high', default: 'high' };
+  const own = { refine: 'medium', review: 'xhigh', default: 'low' };
+  // [label, backlog.json text, the text bl init leaves (null: as it was)]
+  const cases = [
+    [
+      'repos, no effort',
+      { repos: { a: { path: '../a' } }, title: 'T' },
+      { repos: { a: { path: '../a' } }, title: 'T', effort: HIGH },
+    ],
+    ['repos and effort', { repos: {}, effort: own }, null],
+    ['no repos, no effort', {}, 'new'],
+    ['pre-F-51 projects', { projects: {} }, null],
+    ['malformed JSON', '{ "repos": ', null],
+    ['JSON array', [], null],
+    ['JSON null', null, null],
+  ];
+  for (const [label, raw, want] of cases) {
+    const dir = mkTempDir('bl-init-effort-');
+    const path = join(dir, 'backlog.json');
+    const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    writeFileSync(path, text);
+    quietly(() => ensureReposBlock(dir, 'claude'));
+    const after = readFileSync(path, 'utf8');
+    if (want === null) assert.equal(after, text, `${label}: left as it was`);
+    else if (want === 'new') assert.deepEqual(JSON.parse(after).effort, HIGH, label);
+    else assert.deepEqual(JSON.parse(after), want, `${label}: only effort is added`);
+  }
+});
+
+test('init_existing_repos_preserves_concurrent_config_edit', () => {
+  // Another caller edits backlog.json after bl init reads it, on both of
+  // ensureReposBlock's writes. bl init keeps the edit and still adds its keys.
+  const cases = [
+    ['existing repos, effort added', { repos: {}, title: 'original' }],
+    ['new backlog, every key added', { title: 'original' }],
+  ];
+  for (const [label, raw] of cases) {
+    for (const edits of [1, CONFIG_WRITE_ATTEMPTS]) {
+      const dir = mkTempDir('bl-init-race-');
+      const path = join(dir, 'backlog.json');
+      writeFileSync(path, JSON.stringify(raw));
+      let left = edits;
+      _hooks.beforeRename = (tmp) => {
+        if (!basename(tmp).startsWith('backlog.json.') || left === 0) return;
+        left -= 1;
+        writeFileSync(path, JSON.stringify({ ...raw, title: `edit ${left}` }));
+      };
+      let error = null;
+      try {
+        quietly(() => ensureReposBlock(dir, 'claude'));
+      } catch (e) {
+        error = e;
+      } finally {
+        _hooks.beforeRename = null;
+      }
+      const after = JSON.parse(readFileSync(path, 'utf8'));
+      assert.equal(after.title, `edit ${left}`, `${label}, ${edits} edit(s): the edit stays`);
+      if (edits < CONFIG_WRITE_ATTEMPTS) {
+        assert.equal(error, null, `${label}: a retry succeeds`);
+        assert.deepEqual(after.effort, { default: 'high', refine: 'high', review: 'high' }, label);
+        assert.deepEqual(after.repos, {}, label);
+      } else {
+        // An edit on every attempt: bl init fails and writes nothing over it.
+        assert.equal(error?.code, 'ECHANGED', `${label}: fails after ${edits} attempts`);
+        assert.equal(after.effort, undefined, label);
+      }
+      assert.deepEqual(readdirSync(join(dir, '.bl', 'tmp')), [], `${label}: no staging file left`);
+    }
+  }
 });

@@ -50,16 +50,17 @@ from the shorter `story-feature` template.
 
 ## `stories[i]`
 
-| Field          | Type     | Required | Notes                                                    |
-| -------------- | -------- | -------- | -------------------------------------------------------- |
-| `id`           | string   | yes      | Placeholder name (`[a-z][a-z0-9-]*`), not `S-<n>`        |
-| `title`        | string   | yes      |                                                          |
-| `points`       | integer  | yes      | Fibonacci: 1, 2, 3, 5, 8, 13                             |
-| `type`         | string   | no       | Default `feature`                                        |
-| `body_file`    | string   | yes      | Path to markdown body, no frontmatter                    |
-| `component`    | string   | no       | An existing `C<nn>` for this story instead of the spec's |
-| `depends_on`   | string[] | no       | Mix of `@<placeholder>` and bare `S-<n>`                 |
-| `required_for` | string[] | no       | Same syntax; written as the others' `depends_on`         |
+| Field          | Type     | Required | Notes                                                     |
+| -------------- | -------- | -------- | --------------------------------------------------------- |
+| `id`           | string   | yes      | Placeholder name (`[a-z][a-z0-9-]*`), not `S-<n>`         |
+| `title`        | string   | yes      |                                                           |
+| `points`       | integer  | yes      | Fibonacci: 1, 2, 3, 5, 8, 13                              |
+| `effort`       | string   | no       | `low` `medium` `high` `xhigh` `max`; written as `effort:` |
+| `type`         | string   | no       | Default `feature`                                         |
+| `body_file`    | string   | yes      | Path to markdown body, no frontmatter                     |
+| `component`    | string   | no       | An existing `C<nn>` for this story instead of the spec's  |
+| `depends_on`   | string[] | no       | Mix of `@<placeholder>` and bare `S-<n>`                  |
+| `required_for` | string[] | no       | Same syntax; written as the others' `depends_on`          |
 
 A story's `component` override lets one spec cut a feature's stories across
 several components (and so several repos); the story's repo is the

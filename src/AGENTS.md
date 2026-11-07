@@ -422,6 +422,7 @@ story_id: S-01 # canonical ID, always S-<number> with dash
 title: User Login # short title (used in index tables)
 type: feature # feature | bug | chore
 points: 3 # story-point estimate (Fibonacci: 1 2 3 5 8 13)
+effort: medium # optional — the refiner's effort level (low | medium | high | xhigh | max)
 status: backlog # backlog | refined | in_progress | done | superseded
 added: 2026-03-15 # date the story was added (YYYY-MM-DD)
 parent: S-10 # optional — parent story ID
@@ -470,6 +471,7 @@ positional `[commit-hash]` and `--commit` are mutually exclusive.
 | `title`             | yes      | short string                                          | Appears in all index tables                                                                                       |
 | `type`              | yes      | `feature` `bug` `chore`                               | Story type                                                                                                        |
 | `points`            | yes      | 1 2 3 5 8 13                                          | Fibonacci; feature and backlog totals roll up                                                                     |
+| `effort`            | no       | `low` `medium` `high` `xhigh` `max`                   | The effort level refine chose (F-85 D1); unset runs at `effort.default`; `bad-effort` refuses another value       |
 | `status`            | yes      | `backlog` `refined` `in_progress` `done` `superseded` | Drives table placement and gates                                                                                  |
 | `added`             | yes      | `YYYY-MM-DD`                                          | Set once, never changed                                                                                           |
 | `parent`            | no       | `S-<nn>`                                              | Parent story if this was split from one                                                                           |
@@ -1184,7 +1186,31 @@ fix steps, the merge resolution) walks `agent`, each from the top:
    of the run with no reset time, and the walk moves on. Either way the move
    is an `unavailable` history event (`{ session, agent, model, kind, scope,
 until, message }`) and one log line. Any other result is the step's: its
-   history entry records `agent` and `model`.
+   history entry records `agent`, `model` and `effort`.
+
+Each step runs at one effort level (F-85 D4, **Effort levels**).
+`sessionEffort(config, { mode, stories })` in `src/effort.js` picks it, and
+`runSession` calls it once, before the walk, so every configuration the walk
+reaches gets the same level. It reads each story's `effort:` from the story
+file at that moment (`withCurrentEffort`), so a level an earlier session
+changed applies to every later session. If a story file is missing or its
+frontmatter is not YAML, the run stops before the session:
+
+| Step                                                                   | Level                                                        |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `implement` of a story, and its retry (`runSession({ story })`)        | that story's `effort:`                                       |
+| `fix-tests`, `self-review`, `fix`, `fix-self-review`, `merge-resolve`  | the highest `effort:` of the unit's stories (`prep.ordered`) |
+| review passes and the verifier (`role: "review"`), also in `bl review` | `effort.review`                                              |
+
+A story with no `effort:` counts as `effort.default` of its repo's config
+(`configForRepo`), so a repo override applies; `bl status` and `bl approve`
+show that level. A story's value outside
+the five levels stops the step with an error that names the story
+(`storyEffort` reads the key, `sessionEffort` refuses it). A story run's unit is
+its one story (`storyAsOrdered` carries its `effort`). `bl implement S-n`
+runs at the story's level, `bl implement F-n` at the highest level of the
+feature's stories. `runHeadlessSession` and `launchSession` take `effort`
+(null: none) and hand it to `provider.spawn`.
 
 An out-list entry with `scope: account` covers every configuration of its
 agent, one with `scope: model` that configuration only. The out-list is the
@@ -1638,6 +1664,37 @@ string `review_agent` a one-entry list); nothing migrates silently.
 already has is kept, and the missing one is picked against it
 (`initConfigurationLists`): a headless agent the kept list (and -A) does
 not use, so a kept `[codex]` implementer gets a `claude` reviewer.
+
+**Effort levels** (F-85). An effort level says how hard an agent session
+thinks: `low`, `medium`, `high`, `xhigh` or `max`, lowest first
+(`EFFORT_LEVELS` and `checkEffort` in `src/effort.js`, the one place that
+names them). `backlog.json` has a required `"effort"` object beside `agent`
+and `review_agent`:
+
+```json
+{
+  "effort": { "refine": "high", "review": "high", "default": "high" }
+}
+```
+
+- `refine`: every refine session.
+- `review`: every review pass and the verifier, whatever the stories'
+  levels are.
+- `default`: a story with no `effort:` of its own.
+
+bl has no fallback level: a missing object, a missing key, an unknown key
+or a value outside the five levels is a config error naming the key
+(`effortConfig` in `src/config.js`). The config record carries it as
+`config.effort`. A repo's `overrides` may replace the object whole.
+`bl init` writes all three as `high` into a new backlog (one with no
+`repos`), and into an existing backlog that has `repos` but no `effort`
+object; it adds nothing else to that one. If another process edits
+`backlog.json` after `bl init` reads it, the write fails, and `bl init`
+reads the file again and retries, up to `CONFIG_WRITE_ATTEMPTS` times
+(`atomicWriteFile` with `unchanged`), so the edit stays. An adapter's `spawn({ effort })` takes a level, or null for the
+agent CLI's own setting: Claude passes `--effort <level>`, Codex passes
+`-c model_reasoning_effort=<level>` (`codex exec`, the interactive launch
+and `resume`), with bl's names unchanged. Gemini ignores it.
 
 Gates and effects:
 
@@ -3786,6 +3843,7 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_side-changes.md`               | `{{sideChangeGuide}}`: a change outside the unit's repos is a `bl side --from {{sideFrom}}` story, never a hand-made worktree, PR or operator task. Refine, workon, `feature-story` and `story-run`. |
 | `_self-consistency.md`           | `{{selfConsistencyGuide}}`: derive from what the system already defines, never restate it. Refine, workon, `feature-story`, `story-run`, `review-correctness` and `feature-self-review`.             |
 | `_simplicity.md`                 | `{{simplicityGuide}}`: build what the criteria ask, abstractions follow shared behaviour, every changed line traces to the story or a named finding. Wherever `{{selfConsistencyGuide}}` is.         |
+| `_effort.md`                     | `{{effortGuide}}`: the effort-level rubric (F-85 D6); the refiner picks the lowest level that fits and writes the `**Effort:**` line. `refine`, `re-refine` and `feature-refine`.                    |
 | `_plain-writing.md`              | `{{writingGuide}}`: about 80% of ASD-STE100, so the operator or the next agent reads the text right once. Every top-level prompt; `bl agents` prints it after this reference.                        |
 | `_dictionaries.md`               | `{{dictionaryGuide}}` in `_plain-writing.md`, under "Give each thing one name": names each listed dictionary (`renderDictionaryGuide`); "" when none are listed or there is no config.               |
 | `_cd-git-guard-deny.md`          | Deny message for the cd-then-git Claude hook.                                                                                                                                                        |
@@ -3921,7 +3979,7 @@ project's business domain may have its own, which the project writes; bl ships n
   `backlog.json` as it was and a rerun tries again). Every seed `bl init` copies is staged in
   `.bl/tmp/` and linked into place (`atomicWriteFile` with `exclusive`): a failed copy leaves
   no partial file, and a file another process makes meanwhile stays. It never changes an
-  existing copy or an existing
+  existing copy, and never lists the dictionary in an existing
   `backlog.json`: each project curates its own copy, and a later change to the seed reaches
   new backlogs only.
 - **Prompts** name the listed dictionaries through the writing guide's `{{dictionaryGuide}}`

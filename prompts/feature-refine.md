@@ -91,6 +91,9 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
    - Give the plan a `### Sources of truth` part: for each concept the story touches, where it
      is defined and how the code reaches it. The story reads these paths and does not change
      them, so `bl run` does not hold a target back for them.
+   - Give each story an effort level by **Effort level** below: put `"effort": "<level>"` on its
+     spec entry, and write the `**Effort:** <level>: <reason>` line as the first line of its
+     Implementation Plan.
    - Order matters. Declare `depends_on` between stories so that `bl implement` runs them in
      sequence. Declare each edge once, as `depends_on` on the later story. bl derives the
      inverse, and a stored `required_for:` is a `derived-key` error.
@@ -161,6 +164,8 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
 {{selfConsistencyGuide}}
 
 {{simplicityGuide}}
+
+{{effortGuide}}
 
 {{sideChangeGuide}}
 

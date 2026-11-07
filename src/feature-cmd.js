@@ -42,6 +42,7 @@ import {
   unitDirOf,
 } from './config.js';
 import { readAllStories, findExistingWorktree, isSessionRunning, findUnitPRs, refuseStoryRepo } from './story.js';
+import { effortLabel, sessionEffort } from './effort.js';
 import { findEpic, findTheme, normalizeEpicId, readAllThemes, recordThemeState, themeBriefList } from './theme.js';
 import { renderTemplate } from './template.js';
 import { hasFilter, featureMatches, featureEpicId } from './filter.js';
@@ -568,6 +569,7 @@ export function cmdRefine(args, config, feature) {
     recordTokens: false,
     sessionName: `${feature.id}: refine — ${feature.title}`,
     tmuxLabel: `${feature.id} refine`,
+    effort: sessionEffort(config, { mode: 'refine' }),
   });
 }
 
@@ -626,6 +628,7 @@ export async function cmdApprove(args, config, feature) {
     fm.approved = today();
   });
   info(`\nApproved ${feature.id} — ${feature.title} (${stories.length} stories, ${points} points).`);
+  for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
 
   info(`\nNext: bl run ${feature.id} (or bl implement ${feature.id} to work interactively)`);
   info(`Commit the approval:\n  bl sync --commit -m "chore: approve ${feature.id}" --path ${feature.featureRelPath}`);
@@ -785,8 +788,8 @@ export function cmdStatus(args, config, feature) {
   console.log('');
   if (ordered.length > 0) {
     printTable(
-      ['#', 'ID', 'Status', 'Pts', 'Component', 'Title'],
-      ordered.map((s, i) => [i + 1, s.id, s.status, s.points, s.componentId, s.title]),
+      ['#', 'ID', 'Status', 'Pts', 'Effort', 'Component', 'Title'],
+      ordered.map((s, i) => [i + 1, s.id, s.status, s.points, effortLabel(s, config), s.componentId, s.title]),
     );
   } else {
     console.log('(no stories)');
@@ -1095,6 +1098,8 @@ export async function cmdWorkon(args, config, feature) {
     // while a review is pending.
     tokensStep: reviewPending ? tokensStepKey('fix', feature.reviewRound) : 'implement',
     tokensIndexPath: feature.indexPath,
+    // One session for every story: the highest of their levels (F-85 D4).
+    effort: sessionEffort(cfg, { mode: 'workon', stories: prep.ordered }),
   });
   recordFeatureTokens(feature, cfg);
   if (!status) info(implementNextSteps(feature.id));

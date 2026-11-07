@@ -50,6 +50,7 @@ setup_clean_backlog() {
   "worktrees": "../worktrees",
   "agent": [{ "agent": "claude" }],
   "review_agent": [{ "agent": "claude" }],
+  "effort": { "refine": "high", "review": "high", "default": "high" },
   "repos": {
     "demo-repo": { "path": "../demo-repo", "deployable": false, "update_tests": [] }
   }

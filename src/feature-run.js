@@ -75,6 +75,7 @@ import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE, readComponents, readAllStories } from './story.js';
+import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
   codeSpan,
@@ -516,6 +517,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       usageIndexPath,
       tokensStep = null,
       model = undefined,
+      effort = null,
       scope = null,
     }) {
       const base = loadPrompt(promptName, vars, { agent, config });
@@ -542,6 +544,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
           tokensStep,
           tokensIndexPath: usageIndexPath,
           model,
+          effort,
         });
         // launchSession returns exitStatus of the agent: a kill is nonzero.
         return { ok: status === 0, output: '', isError: status !== 0, usage: null, refusal: null };
@@ -561,6 +564,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         usageStep: tokensStep,
         logCommand: `feature ${mode}`,
         model,
+        effort,
         // The agent and all it starts live in the step's scope (F-70 D4).
         run: scope ? processScope.scopedSpawn(scope) : undefined,
       });
@@ -1474,9 +1478,19 @@ function readCapacity(runner, c, asked) {
  * verifier names itself among the reviewers). The result carries
  * `configuration`, the `{ agent, model }` that ran it.
  */
-function runSession(ctx, { step, mode, role = 'implement', promptName, vars, label }) {
+function runSession(ctx, { step, mode, role = 'implement', story = null, promptName, vars, label }) {
   const { runner, prep, config, feature } = ctx;
   const unitDir = prepUnitDir(prep);
+  // Picked once, before the walk, so every configuration it walks to runs at
+  // the same level (F-85 D4): a story's own step at that story's level, a
+  // unit-level step at the highest of the unit's stories. Each level is read
+  // from the story's file now: an earlier session may have changed it.
+  const effort = sessionEffort(prep.cfg ?? config, {
+    mode: role,
+    stories: (prep.ordered ?? [])
+      .filter((s) => story == null || s.id === story)
+      .map((s) => withCurrentEffort(config.backlogRoot, s)),
+  });
   // The session is recorded before its containers are cleaned, so a failed
   // cleanup cannot hide what the session did. A headless session runs in a
   // user systemd scope stopped afterwards (F-70 D4); an interactive one is
@@ -1545,6 +1559,7 @@ function runSession(ctx, { step, mode, role = 'implement', promptName, vars, lab
             usageIndexPath: feature.indexPath,
             tokensStep: tokensStepKey(step, ctx.state.round),
             model: c.model ?? null,
+            effort,
             scope: newScope(ctx),
           });
           // Usage first, on every spawn: the provider has already added it to the
@@ -1582,6 +1597,7 @@ function runSession(ctx, { step, mode, role = 'implement', promptName, vars, lab
             startedAt: started,
             agent: c.agent,
             model: c.model ?? null,
+            effort,
             ok: r.ok && denials.length === 0,
             note: notes.filter(Boolean).join(' — '),
           });
@@ -2215,6 +2231,23 @@ function branchWorktrees(ctx, repoPath) {
     if (path && path !== repoPath && lines.includes(ref)) out.push(path);
   }
   return out;
+}
+
+/**
+ * `s` (a `prep.ordered` entry) with `effort:` as its file has it now (F-85
+ * D4), so a level a session changed applies to the next session. When the
+ * file is missing or cannot be parsed, it throws, naming the story: the run
+ * stops before the session, as for a bad `effort:`, and never runs it at a
+ * level the file may no longer have.
+ */
+function withCurrentEffort(backlogRoot, s) {
+  let fm;
+  try {
+    fm = readFm(join(backlogRoot, s.storyRelPath));
+  } catch (e) {
+    throw new Error(`${s.id} "effort:" cannot be read from ${s.storyRelPath}: ${e.message}`, { cause: e });
+  }
+  return { ...s, effort: storyEffort(fm) };
 }
 
 /**

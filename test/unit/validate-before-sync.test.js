@@ -15,6 +15,7 @@ const BATCH_PROMPTS = ['refine-batch'];
 const BATCH_VARS = {
   storyCount: '2',
   storyTasks: '-',
+  refineEffort: 'high',
   storyId: '<its story>',
   backlogDir: '/bl',
 };

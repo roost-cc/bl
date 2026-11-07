@@ -18,6 +18,7 @@ import {
   CODING_DICTIONARY_FILE,
   DEFAULT_BACKLOG_TITLE,
   serializeFrontmatter,
+  EFFORT_KEYS,
 } from './config.js';
 import { LOCAL_TOOLS_FILE } from './permissions.js';
 import { FLOW_FILE } from './flow.js';
@@ -49,10 +50,14 @@ when the backlog has none; an existing one is left as it is. A new
 backlog.json (in $BL_BACKLOG_DIR, else the current directory), one with no
 "repos", gets an empty one, the display name "title": "Backlog", the worktree root
 "worktrees": "../worktrees", the dictionary list "dictionaries":
-["coding-dictionary.yaml"] (the prompts name each listed file), and, unless it
+["coding-dictionary.yaml"] (the prompts name each listed file), the effort
+levels "effort": { "refine": "high", "review": "high", "default": "high" },
+and, unless it
 has them, the configuration lists "agent", [{ "agent": "<-A, else claude>" }],
 and "review_agent", [{ "agent": "<the first other headless agent>" }]: the
-reviewer is never the implementer. Repos are registered by hand in
+reviewer is never the implementer. A backlog.json that has "repos" keeps
+its settings and gets only the effort levels, unless it has them. Repos are
+registered by hand in
 backlog.json "repos"; themes are created with bl new --theme.`);
     process.exit(0);
   }
@@ -137,6 +142,9 @@ const NEW_WORKTREE_ROOT = '../worktrees';
 /** A new backlog's agent when `bl init` is given no -A. */
 const NEW_AGENT = 'claude';
 
+/** A new backlog's effort levels (F-85 D2): `high`, the level before F-85, for each. */
+const NEW_EFFORT = Object.fromEntries(EFFORT_KEYS.map((k) => [k, 'high']));
+
 /** A role's list as backlog.json has it, provider names lowercased; [] for none. */
 function roleList(value) {
   if (typeof value === 'string') return [{ agent: value.toLowerCase() }];
@@ -191,36 +199,71 @@ export function initConfigurationLists(raw, agent = null) {
  * Give a new backlog's `backlog.json` (in `dir`) an empty `repos` block, the
  * key bl finds a backlog by (F-51 D5), the worktree root `loadConfig`
  * requires (F-60 D1), unless it names one, the dictionary list naming the
- * coding dictionary (F-82 D3), unless it has one, and the two configuration lists
+ * coding dictionary (F-82 D3), unless it has one, the effort levels
+ * (F-85 D2), unless it has them, and the two configuration lists
  * it requires (F-64 D2), unless it has them, each independent of the other
  * (`initConfigurationLists`), with no model. When it adds the dictionary
  * list it copies the seed first, so a failed copy leaves backlog.json as it
  * was and a rerun tries again. A
- * file that has `repos`, or the pre-F-51
- * `projects` that `loadConfig` refuses with the migration's name, is left
- * alone: an existing backlog's settings are its own. The write is atomic: a
+ * file that has `repos` keeps its settings: it gets only the effort levels,
+ * which `loadConfig` requires, unless it has them. A file with the pre-F-51
+ * `projects` that `loadConfig` refuses with the migration's name, or one that
+ * is not a JSON object, is left alone. The write is atomic: a
  * failed one leaves the file as it was, and a successful one keeps its mode
- * and owner and, through a symlink, replaces the file the link names.
+ * and owner and, through a symlink, replaces the file the link names. If
+ * another caller edits the file after bl reads it, bl keeps that edit: the
+ * write fails (`unchanged`), and bl reads the file again and retries, up to
+ * `CONFIG_WRITE_ATTEMPTS` times.
  */
 export function ensureReposBlock(dir, agent = null) {
   const path = join(dir, 'backlog.json');
   if (!existsSync(path)) return;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return addToBacklogJson(dir, path, agent);
+    } catch (e) {
+      if (e.code !== 'ECHANGED' || attempt === CONFIG_WRITE_ATTEMPTS) throw e;
+    }
+  }
+}
+
+/** Reads of `backlog.json` `ensureReposBlock` makes before a concurrent edit fails `bl init`. */
+export const CONFIG_WRITE_ATTEMPTS = 5;
+
+/** One read and write of `ensureReposBlock`; the write fails with ECHANGED if the file changed after the read. */
+function addToBacklogJson(dir, path, agent) {
+  const text = readFileSync(path, 'utf8');
   let raw;
   try {
-    raw = JSON.parse(readFileSync(path, 'utf8'));
+    raw = JSON.parse(text);
   } catch {
     return;
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
-  if (Object.hasOwn(raw, 'repos') || Object.hasOwn(raw, 'projects')) return;
+  if (Object.hasOwn(raw, 'projects')) return;
+  if (Object.hasOwn(raw, 'repos')) {
+    // An existing backlog keeps its settings, but `loadConfig` now requires
+    // the effort levels (F-85 D2), so it gets them unless it has them.
+    if (Object.hasOwn(raw, 'effort')) return;
+    atomicWriteFile(dir, path, JSON.stringify({ ...raw, effort: NEW_EFFORT }, null, 2) + '\n', {
+      preserve: true,
+      unchanged: text,
+    });
+    info(`Updated : backlog.json (+ "effort": ${JSON.stringify(NEW_EFFORT)})`);
+    return;
+  }
   const added = {};
   if (!Object.hasOwn(raw, 'title')) added.title = DEFAULT_BACKLOG_TITLE;
   if (!Object.hasOwn(raw, 'worktrees')) added.worktrees = NEW_WORKTREE_ROOT;
   if (!Object.hasOwn(raw, 'dictionaries')) added.dictionaries = [CODING_DICTIONARY_FILE];
+  if (!Object.hasOwn(raw, 'effort')) added.effort = NEW_EFFORT;
   Object.assign(added, initConfigurationLists(raw, agent));
   // The seed first: if its copy fails, backlog.json does not list a missing file.
   if (added.dictionaries) copySeed(dir, CODING_DICTIONARY_FILE);
-  atomicWriteFile(dir, path, JSON.stringify({ ...raw, ...added, repos: {} }, null, 2) + '\n', { preserve: true });
+  atomicWriteFile(dir, path, JSON.stringify({ ...raw, ...added, repos: {} }, null, 2) + '\n', {
+    preserve: true,
+    unchanged: text,
+  });
   const keys = [...Object.entries(added).map(([k, v]) => `"${k}": ${JSON.stringify(v)}`), '"repos": {}'];
   info(`Updated : backlog.json (+ ${keys.join(', ')})`);
 }

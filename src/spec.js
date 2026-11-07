@@ -16,6 +16,7 @@ import { normalizeFeatureId, findFeature } from './feature.js';
 import { normalizeComponentId, componentIdHint } from './config.js';
 import { findComponentDir, pathEntryProblem } from './story.js';
 import { loadFlow } from './flow.js';
+import { EFFORT_LEVELS } from './effort.js';
 
 function checkBodyFile(specDir, bodyFile, push, path) {
   const p = resolveBodyPath(specDir, bodyFile);
@@ -232,6 +233,9 @@ export function validateSpec(spec, specDir, config) {
     }
     if (!FIBONACCI.has(s.points)) {
       push(`${base}.points`, `must be a Fibonacci integer (1 2 3 5 8 13); got ${JSON.stringify(s.points)}`);
+    }
+    if (s.effort != null && !EFFORT_LEVELS.includes(s.effort)) {
+      push(`${base}.effort`, `must be one of ${EFFORT_LEVELS.join(', ')}; got ${JSON.stringify(s.effort)}`);
     }
     if (s.type != null && (typeof s.type !== 'string' || !s.type)) {
       push(`${base}.type`, 'must be a non-empty string');
