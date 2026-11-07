@@ -2901,8 +2901,9 @@ know (warning).
 `deferred-unsized`, `operator-tasks-retired` and `deferred-heading-retired` (F-65 D4, F-82 D9,
 `findDeferredErrors`, errors at the unit's file with its line) check an open unit's
 `## Deferred`: an item without a numeric `[points: N]`, a `### Operator tasks` sub-heading or
-`operator:` bullet, and a retired `## To Do` heading. A `done` or `superseded` unit has none (see **`## Deferred`, `## Notes` and tasks**). The S-970
-`operator-tasks` rule is gone with `src/operator-tasks.js`.
+`operator:` bullet, and a retired `## To Do` heading. A `done` or `superseded` unit has none
+(see **`## Deferred`, `## Notes` and tasks**). The S-970 `operator-tasks` rule is gone with
+`src/operator-tasks.js`.
 
 `found-by` (F-48 D2, `findFoundByFindings`) is an error on a story whose
 `found_by:` is set but names no existing feature (`F-<n>`) or story (`S-<n>`).
@@ -3582,9 +3583,9 @@ their files and the holds from `blockers.json`, never from a unit's body; a `blo
 task), an escalation, change, update or pending id its own; an id not in the inbox is unknown.
 
 The S-970 operator tasks (a `### Operator tasks` sub-list, or legacy `operator:` bullets, in a
-unit's `## Deferred`, or a story's former `## To Do`) are retired: nothing in `bl` reads a body for tasks, an open
-unit that has one fails `bl validate` (`operator-tasks-retired`), and a closed unit keeps its
-items as history. Their reader, `scanOperatorTasks`, went with F-65's migration (S-581).
+unit's `## Deferred`, or a story's former `## To Do`) are retired: nothing in `bl` reads a
+body for tasks, an open unit that has one fails `bl validate` (`operator-tasks-retired`), and
+a closed unit keeps its items as history. Their reader, `scanOperatorTasks`, went with F-65's migration (S-581).
 
 - `bl status` prints `deferred: <n> items` (the section's top-level items, through
   `scanDeferred`, a closed unit's retired operator items not among them) and, for a unit with
