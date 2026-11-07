@@ -11,23 +11,22 @@ section, in this shape and with these bold headings:
    table with named people (Alice, Bob, Chad). Otherwise give a concrete example. Then state
    the bad result in one sentence.
 4. **Why the agents can't fix it:** what stands in the way, such as a missing mechanism, a
-   design decision, or a business rule only the operator can set, and why another attempt
+   design decision, or a business rule only the operator can set. Say why another attempt
    would not help.
 5. **The decision:** lettered options (A, B, ...). Give each its cost and what follows from it.
    Mark one as recommended and say why. End with the exact question the operator must answer.
 6. **Details:** a short list at the end for repro commands, test names, file paths, commit
    SHAs and review items. Keep them out of 1 to 5.
 
-- Use no unexplained jargon. Words like "non-atomic", "compensation" or "read/write boundary"
-  mean nothing to someone who has not seen the code, so say what actually happens instead.
-- Name a code identifier only when the operator needs it, and explain it in passing, for
-  example "the membership index (the lookup storage uses to decide who gets group
+- Write it by the **Plain writing** rules. The operator has not read the code, so name a code
+  identifier only when the operator needs it. Explain it in a few words where it first
+  appears, for example "the membership index (the lookup storage uses to decide who gets group
   permissions)".
 - Keep it short, about one screen. When there are several separate decisions, give each one
   its own block in the same shape.
 - When the operator decides (in this session or later), never mark the escalation "resolved"
-  in place. Record the outcome where it belongs, in the Review Log or as a dated decision in
-  the Design, and set **## Escalation** back to exactly `None.`. Any other text there blocks
+  in place. Record the outcome where it belongs: in the Review Log or as a dated decision in
+  the Design. Then set **## Escalation** back to exactly `None.`. Any other text there blocks
   `bl run`.
 
 Example:

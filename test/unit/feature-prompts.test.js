@@ -718,7 +718,11 @@ test('every feature prompt that can escalate carries the escalation guide once',
           assert.ok(text.includes(heading), `${where}: ${heading}`);
         }
         assert.match(text, /timeline\s+table with named people \(Alice, Bob, Chad\)/, where);
-        assert.match(text, /Use no unexplained jargon/, where);
+        // The guide points at the plain-writing rules instead of repeating them (F-83 D4).
+        assert.match(text, /Write it by the \*\*Plain writing\*\* rules/, where);
+        assert.ok(text.includes('## Plain writing'), `${where}: the plain-writing rules it points at`);
+        assert.doesNotMatch(text, /Use no unexplained jargon/, where);
+        assert.match(text, /name a code\s+identifier only when the operator needs it/, where);
         assert.match(text, /\| Time \| Alice \(removing Bob\)/, `${where}: the worked example`);
         assert.match(
           text,
