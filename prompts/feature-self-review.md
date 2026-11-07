@@ -38,7 +38,7 @@ The stories on this branch:
    outside the diff too, for what already defines it. Read the plan's `### Sources of truth`
    part where it has one. A restatement is a finding, with `Class: restated source of truth` and
    a `Repro:` that shows the definition. Derive from the definition instead.
-8. **Simplicity.** Look for code that the criteria do not need: an unused option, a one-use
+8. **Simplicity.** Look for code the criteria do not need: an unused option, a one-use
    abstraction, handling for a case that cannot happen, or a changed line that traces to neither
    a story nor a finding. Remove it. Look also for behaviour that now exists twice, and share it
    (see **Simple, surgical changes** below).
