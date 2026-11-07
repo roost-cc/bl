@@ -90,6 +90,8 @@ To Do section :
 
 {{validateBeforeSync}}
 
+{{writingGuide}}
+
 {{toolGuide}}
 
 ## IMPORTANT

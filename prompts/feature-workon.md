@@ -139,6 +139,8 @@ Backlog repo : {{backlogDir}}
 
 {{sideChangeGuide}}
 
+{{writingGuide}}
+
 {{toolGuide}}
 
 ## IMPORTANT

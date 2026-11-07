@@ -91,6 +91,8 @@ line so the implementer can run it too.
    Write `None.` under a heading with no items. Do not edit the {{unitKind}} file,
    the story files, or any code: the verifier pass owns the review log.
 
+{{writingGuide}}
+
 {{toolGuide}}
 
 ## IMPORTANT

@@ -140,7 +140,10 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * and the story run; the other loop prompts do not. `selfConsistencyGuide` is
  * the rule that a change derives from what the system already defines rather
  * than restating it, carried by every refine and implementation prompt and by
- * the two prompts that review for it.
+ * the two prompts that review for it. `writingGuide` is the plain-writing
+ * rule (about 80% of ASD-STE100: short active sentences, one name per thing,
+ * facts and hedges kept exact), carried by every top-level prompt because
+ * every session writes something the operator or another agent reads.
  */
 const PROMPT_PARTIALS = {
   blockedByBug: '_blocked-by-bug',
@@ -148,6 +151,7 @@ const PROMPT_PARTIALS = {
   validateBeforeSync: '_validate-before-sync',
   sideChangeGuide: '_side-changes',
   selfConsistencyGuide: '_self-consistency',
+  writingGuide: '_plain-writing',
 };
 
 /**

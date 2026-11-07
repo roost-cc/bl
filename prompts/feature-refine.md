@@ -161,6 +161,8 @@ in order without asking anyone.
 
 {{sideChangeGuide}}
 
+{{writingGuide}}
+
 {{toolGuide}}
 
 ## IMPORTANT

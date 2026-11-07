@@ -53,3 +53,5 @@ bl new C10 --title "Short imperative summary" --points 3
 `bl new` prints the path of the new story's `index.md` on stdout. Prefer
 creating the story through `bl new` over hand-writing files, so indexes and
 frontmatter stay consistent.
+
+{{writingGuide}}

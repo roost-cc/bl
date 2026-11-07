@@ -57,6 +57,8 @@ Backlog repo : {{backlogDir}}
 
 {{escalationGuide}}
 
+{{writingGuide}}
+
 {{toolGuide}}
 
 ## IMPORTANT

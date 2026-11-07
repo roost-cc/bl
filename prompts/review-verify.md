@@ -133,6 +133,8 @@ line so the implementer can run it too.
 
 {{escalationGuide}}
 
+{{writingGuide}}
+
 {{toolGuide}}
 
 ## IMPORTANT

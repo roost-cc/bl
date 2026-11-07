@@ -120,6 +120,8 @@ The backlog is a **separate git repo** from the code. That means:
 
 {{sideChangeGuide}}
 
+{{writingGuide}}
+
 {{toolGuide}}
 
 ## IMPORTANT

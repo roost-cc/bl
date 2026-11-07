@@ -107,6 +107,8 @@ headless session cannot remove files.
 
 {{sideChangeGuide}}
 
+{{writingGuide}}
+
 {{toolGuide}}
 
 ## IMPORTANT

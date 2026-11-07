@@ -60,6 +60,8 @@ index is shared, and a raw commit takes along what other sessions have staged.
 
 {{escalationGuide}}
 
+{{writingGuide}}
+
 {{toolGuide}}
 
 ## IMPORTANT
