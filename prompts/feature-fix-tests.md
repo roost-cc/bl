@@ -66,6 +66,7 @@ The lines of the output around every failure marker (runner failure headers,
    Then fix it in its own commit, even when the code is outside this {{unitKind}}'s scope. Record
    it as **Blocked by a bug** below describes. If the failure will not reproduce after a real
    attempt, end with `RERUN: <what you tried>`. Never end with `UNRELATED` for it.
+
 5. If the failing command is `git status`, the gate refused a dirty worktree. Commit the listed
    files that belong to the {{unitKind}}, with a message ending in ` ({{featureId}})`.
    Move any that do not belong into `{{scratchDir}}`. If your tools cannot move them, leave them and end
