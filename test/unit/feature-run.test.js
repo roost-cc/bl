@@ -200,6 +200,7 @@ function fakeRunner({ dir, feature, behaviour = {}, testResults = [], clock = Da
         mode: o.mode,
         agent: o.agent,
         model: o.model ?? null,
+        effort: o.effort ?? null,
         vars: o.vars,
         unitDir: o.unitDir ?? null,
         worktreePath: o.worktreePath,
@@ -4030,11 +4031,11 @@ const STORY_BODY =
   '## Summary\n\nDo it.\n\n## Acceptance Criteria\n\n- [ ] one works\n- [ ] two works\n\n## Deferred\n\nNone.\n';
 
 /** A loose refined story S-5 as a unit, with the prep prepareStoryRun returns. */
-function storySetup({ status = 'refined', body = STORY_BODY } = {}) {
+function storySetup({ status = 'refined', body = STORY_BODY, effort = undefined } = {}) {
   const { dir, cleanup } = mkTempBacklog({
     repos: ['../demo-repo'],
     components: [{ id: 'C00', title: 'Core', dirSuffix: 'core', repo: 'demo-repo' }],
-    stories: [{ id: 'S-5', component: 'C00', title: 'Loose', dirSuffix: 'loose', points: 3, status, body }],
+    stories: [{ id: 'S-5', component: 'C00', title: 'Loose', dirSuffix: 'loose', points: 3, status, body, effort }],
   });
   const config = loadConfig({ backlogRoot: dir });
   const record = readAllStories(config).find((s) => s.id === 'S-5');
@@ -4731,6 +4732,111 @@ test('a capacity refusal on a review pass runs the pass on the next configuratio
     );
   } finally {
     cleanup();
+  }
+});
+
+test("a story run's unit is its one story, so storyAsOrdered carries the story's effort (F-85 D4)", () => {
+  for (const [effort, want] of [
+    ['low', 'low'],
+    [undefined, null],
+  ]) {
+    const { cleanup, prep } = storySetup({ effort });
+    try {
+      assert.equal(prep.ordered[0].effort, want);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Effort per step (F-85 D4): picked once per step, before the walk.
+// ---------------------------------------------------------------------------
+
+/** `setup` with S-1 and S-2 at `levels` (null: unset), the walk's MODELS and review effort `xhigh`. */
+function effortSetup(levels) {
+  const fx = setup({}, { ...MODELS, effort: { refine: 'high', review: 'xhigh', default: 'high' } });
+  for (const s of fx.prep.ordered) {
+    editFile(s.indexPath, (fm) => {
+      if (levels[s.id]) fm.effort = levels[s.id];
+      else delete fm.effort;
+    });
+  }
+  fx.prep.ordered = orderStoriesByDeps(
+    resolveFeatureStories(fx.feature, fx.config, readAllStories(fx.config)).stories,
+  );
+  return fx;
+}
+
+const effortsOf = (calls, prompt) =>
+  calls.filter((c) => c.type === 'session' && c.prompt === prompt).map((c) => c.effort);
+
+test("each step runs at its story's level or the unit's highest, reviews at effort.review, and the walk keeps it", async () => {
+  const { dir, cleanup, config, feature, prep } = effortSetup({ 'S-1': 'low', 'S-2': 'medium' });
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        limit: (o) =>
+          o.promptName === 'feature-story' && o.vars.storyId === 'S-1' && o.model === 'opus'
+            ? spendLimit(runner, { reset: false })
+            : null,
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean', JSON.stringify(state.history.slice(0, 4)));
+    const s1 = runner.calls.filter((c) => c.prompt === 'feature-story' && c.story === 'S-1');
+    assert.deepEqual(
+      s1.map((c) => [c.model, c.effort]),
+      [
+        ['opus', 'low'],
+        ['sonnet', 'low'],
+      ],
+      'the walk to the next configuration keeps the level',
+    );
+    assert.deepEqual(effortsOf(runner.calls, 'feature-story'), ['low', 'low', 'medium']);
+    for (const prompt of ['feature-self-review', 'feature-workon-review', 'feature-fix-self-review']) {
+      const got = effortsOf(runner.calls, prompt);
+      assert.ok(got.length > 0 && got.every((e) => e === 'medium'), `${prompt}: ${JSON.stringify(got)}`);
+    }
+    const reviews = runner.calls.filter((c) => c.type === 'session' && c.mode === 'review').map((c) => c.effort);
+    assert.ok(reviews.length > 0 && reviews.every((e) => e === 'xhigh'), JSON.stringify(reviews));
+    // Every session event in the run state carries the level it ran at.
+    const sessions = loadRunState(config, 'F-1').history.filter((h) => 'agent' in h && h.step !== 'unavailable');
+    assert.ok(sessions.length > 0 && sessions.every((h) => typeof h.effort === 'string'), JSON.stringify(sessions));
+    assert.deepEqual(
+      sessions.filter((h) => h.step === 'implement').map((h) => h.effort),
+      ['low', 'medium'],
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('a story with no effort: counts as effort.default, and bl review runs its passes at effort.review', async () => {
+  const { dir, cleanup, config, feature, prep } = effortSetup({ 'S-1': 'low' });
+  try {
+    const runner = fakeRunner({ dir, feature });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    assert.deepEqual(effortsOf(runner.calls, 'feature-story'), ['low', 'high']);
+    assert.deepEqual(effortsOf(runner.calls, 'feature-self-review'), ['high']);
+  } finally {
+    cleanup();
+  }
+  const fx = effortSetup({ 'S-1': 'low', 'S-2': 'low' });
+  try {
+    const runner = fakeRunner({ dir: fx.dir, feature: fx.feature });
+    const { config: c, feature: f, prep: p } = fx;
+    await reviewFeature({ feature: f, config: c, prep: p, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
+    // Two passes and the verifier.
+    assert.deepEqual(
+      runner.calls.filter((x) => x.type === 'session').map((x) => x.effort),
+      ['xhigh', 'xhigh', 'xhigh'],
+    );
+  } finally {
+    fx.cleanup();
   }
 });
 
