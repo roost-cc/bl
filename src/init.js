@@ -54,7 +54,9 @@ levels "effort": { "refine": "high", "review": "high", "default": "high" },
 and, unless it
 has them, the configuration lists "agent", [{ "agent": "<-A, else claude>" }],
 and "review_agent", [{ "agent": "<the first other headless agent>" }]: the
-reviewer is never the implementer. Repos are registered by hand in
+reviewer is never the implementer. A backlog.json that has "repos" keeps
+its settings and gets only the effort levels, unless it has them. Repos are
+registered by hand in
 backlog.json "repos"; themes are created with bl new --theme.`);
     process.exit(0);
   }
@@ -185,9 +187,10 @@ export function initConfigurationLists(raw, agent = null) {
  * (`initConfigurationLists`), with no model. When it adds the dictionary
  * list it copies the seed first, so a failed copy leaves backlog.json as it
  * was and a rerun tries again. A
- * file that has `repos`, or the pre-F-51
- * `projects` that `loadConfig` refuses with the migration's name, is left
- * alone: an existing backlog's settings are its own. The write is atomic: a
+ * file that has `repos` keeps its settings: it gets only the effort levels,
+ * which `loadConfig` requires, unless it has them. A file with the pre-F-51
+ * `projects` that `loadConfig` refuses with the migration's name, or one that
+ * is not a JSON object, is left alone. The write is atomic: a
  * failed one leaves the file as it was, and a successful one keeps its mode
  * and owner and, through a symlink, replaces the file the link names.
  */
@@ -201,7 +204,15 @@ export function ensureReposBlock(dir, agent = null) {
     return;
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
-  if (Object.hasOwn(raw, 'repos') || Object.hasOwn(raw, 'projects')) return;
+  if (Object.hasOwn(raw, 'projects')) return;
+  if (Object.hasOwn(raw, 'repos')) {
+    // An existing backlog keeps its settings, but `loadConfig` now requires
+    // the effort levels (F-85 D2), so it gets them unless it has them.
+    if (Object.hasOwn(raw, 'effort')) return;
+    atomicWriteFile(dir, path, JSON.stringify({ ...raw, effort: NEW_EFFORT }, null, 2) + '\n', { preserve: true });
+    info(`Updated : backlog.json (+ "effort": ${JSON.stringify(NEW_EFFORT)})`);
+    return;
+  }
   const added = {};
   if (!Object.hasOwn(raw, 'title')) added.title = DEFAULT_BACKLOG_TITLE;
   if (!Object.hasOwn(raw, 'worktrees')) added.worktrees = NEW_WORKTREE_ROOT;

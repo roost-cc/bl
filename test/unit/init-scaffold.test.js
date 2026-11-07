@@ -42,7 +42,12 @@ test('bl init gives a new backlog an empty roadmap.md and priority.md and the co
   assert.match(readFileSync(join(fresh, 'priority.md'), 'utf8'), /^---\nranked: \[\]\n---\n\n# Priority\n/);
   assert.equal(readFileSync(join(fresh, 'coding-dictionary.yaml'), 'utf8'), readFileSync(SEED, 'utf8'));
   // .bl/ holds the staging files (ignored in every backlog).
-  assert.deepEqual(readdirSync(fresh).filter((f) => f !== '.bl').sort(), ['coding-dictionary.yaml', 'priority.md', 'roadmap.md']);
+  assert.deepEqual(
+    readdirSync(fresh)
+      .filter((f) => f !== '.bl')
+      .sort(),
+    ['coding-dictionary.yaml', 'priority.md', 'roadmap.md'],
+  );
 
   const kept = mkTempDir('bl-init-docs-');
   writeFileSync(join(kept, 'roadmap.md'), 'kept\n');
@@ -130,9 +135,13 @@ test('init_seed_copy_failure_and_concurrent_create_preserve_dictionary: a seed i
     assert.deepEqual(staged(race.dir), [], `${label}: no staging file left`);
   }
   // The dictionary is listed only once it exists, after a failure and a rerun.
-  const listedDir = withHook('coding-dictionary.yaml', (dir) => ensureReposBlock(dir, 'claude'), () => {
-    throw Object.assign(new Error('injected'), { code: 'EIO' });
-  }).dir;
+  const listedDir = withHook(
+    'coding-dictionary.yaml',
+    (dir) => ensureReposBlock(dir, 'claude'),
+    () => {
+      throw Object.assign(new Error('injected'), { code: 'EIO' });
+    },
+  ).dir;
   assert.equal(readFileSync(join(listedDir, 'backlog.json'), 'utf8'), '{}\n');
 });
 
@@ -141,7 +150,9 @@ test('bl init lists the coding dictionary in a new backlog.json, and adds no key
   assert.deepEqual(initOn({ dictionaries: [] }).dictionaries, [], 'a list the file has is kept');
 
   const dir = mkTempDir('bl-init-existing-');
-  const existing = JSON.stringify({ repos: {}, worktrees: '../worktrees' }) + '\n';
+  // With effort levels: bl init adds them to an existing backlog that has none (F-85 D2).
+  const effort = { refine: 'high', review: 'high', default: 'high' };
+  const existing = JSON.stringify({ repos: {}, worktrees: '../worktrees', effort }) + '\n';
   writeFileSync(join(dir, 'backlog.json'), existing);
   quietly(() => ensureReposBlock(dir, 'claude'));
   assert.equal(readFileSync(join(dir, 'backlog.json'), 'utf8'), existing);
@@ -151,4 +162,34 @@ test('bl init writes the effort levels into a new backlog.json and keeps an obje
   assert.deepEqual(initOn({}).effort, { refine: 'high', review: 'high', default: 'high' });
   const own = { refine: 'medium', review: 'xhigh', default: 'low' };
   assert.deepEqual(initOn({ effort: own }).effort, own, 'an object the file has is kept');
+});
+
+test('init_adds_effort_to_existing_backlog_with_repos', () => {
+  const HIGH = { refine: 'high', review: 'high', default: 'high' };
+  const own = { refine: 'medium', review: 'xhigh', default: 'low' };
+  // [label, backlog.json text, the text bl init leaves (null: as it was)]
+  const cases = [
+    [
+      'repos, no effort',
+      { repos: { a: { path: '../a' } }, title: 'T' },
+      { repos: { a: { path: '../a' } }, title: 'T', effort: HIGH },
+    ],
+    ['repos and effort', { repos: {}, effort: own }, null],
+    ['no repos, no effort', {}, 'new'],
+    ['pre-F-51 projects', { projects: {} }, null],
+    ['malformed JSON', '{ "repos": ', null],
+    ['JSON array', [], null],
+    ['JSON null', null, null],
+  ];
+  for (const [label, raw, want] of cases) {
+    const dir = mkTempDir('bl-init-effort-');
+    const path = join(dir, 'backlog.json');
+    const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    writeFileSync(path, text);
+    quietly(() => ensureReposBlock(dir, 'claude'));
+    const after = readFileSync(path, 'utf8');
+    if (want === null) assert.equal(after, text, `${label}: left as it was`);
+    else if (want === 'new') assert.deepEqual(JSON.parse(after).effort, HIGH, label);
+    else assert.deepEqual(JSON.parse(after), want, `${label}: only effort is added`);
+  }
 });
