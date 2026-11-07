@@ -170,7 +170,7 @@ test("prepareStoryRun makes only the story's worktree, in its component's repo, 
     /Unit dir {5}: .*\/worktrees\/s7-two \(your working directory\)\nWorktree {5}: .*\/worktrees\/s7-two\/repoA \(repoA\)\nBranch {7}: s7-two/,
   );
   assert.ok(
-    prompt.includes(`Your working directory is the unit directory, \`${p.unitDir}\`.`),
+    prompt.includes(`Your working directory is the work unit's directory, \`${p.unitDir}\`.`),
     'the tool guide names it',
   );
   assert.doesNotMatch(prompt, /Secondaries|secondary_repos|\{\{/);

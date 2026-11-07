@@ -5,13 +5,12 @@ the following with them:
 
 > {{additionalPrompt}}
 
-Engage in conversation about this **first**. Ask clarifying questions
-if useful, share your reading of the situation, and reach alignment
-with the operator. Do **not** edit files, run commands, modify story
-frontmatter, or otherwise execute the task during this phase.
+Discuss this with the operator **first**. Ask questions where they help,
+say how you read the situation, and agree with the operator on the way
+forward. Do **not** edit files, run commands, modify story frontmatter,
+or otherwise do the task during this phase.
 
-When the discussion has reached a natural close, ask the operator
-verbatim:
+When the discussion comes to an end, ask the operator exactly this:
 
 > Shall I proceed with the original `bl {{mode}}` task for
 > {{storyId}}?

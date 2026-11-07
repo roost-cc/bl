@@ -103,7 +103,7 @@ test('every unit prompt names the unit directory as the working directory, and n
         assert.match(text, /^Unit dir {5}: \/u \(your working directory\)$/m, `${name} (${agent})`);
         assert.match(
           text,
-          /Your working directory is the unit directory, `\/u`\. Each repo's worktree\n {2}is `\/u\/<repo>`, and you may write in every one of them\./,
+          /Your working directory is the work unit's directory, `\/u`\. Each repo's worktree\n {2}is `\/u\/<repo>`, and you may write in every one of them\./,
           `${name} (${agent})`,
         );
         assert.doesNotMatch(text, /This worktree|code worktree root|started you in the first/, `${name} (${agent})`);
@@ -124,7 +124,7 @@ test('a session with no unit directory keeps the worktree-root working directory
     const { unitDir, ...vars } = CASES['feature-workon'];
     const text = loadPrompt('feature-workon', vars, { config });
     assert.match(text, /Your working directory is the code worktree root\./);
-    assert.doesNotMatch(text, /Your working directory is the unit directory/);
+    assert.doesNotMatch(text, /Your working directory is the work unit's directory/);
   } finally {
     cleanup();
   }
