@@ -9,7 +9,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs, { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
-import { basename, join } from 'path';
+import { basename, dirname, join, resolve } from 'path';
+import { loadBacklog } from '../../src/backlog-graph.js';
 import { loadConfig } from '../../src/config.js';
 import { loadFlow } from '../../src/flow.js';
 import { addDays, buildHistory } from '../../src/history.js';
@@ -410,6 +411,83 @@ test('bl report writes reports/, formats the page, leaves git status clean, and 
   assert.equal(readFileSync(join(out, 'index.md'), 'utf8'), page);
 });
 
+/** Every `.md` file under `dir`, as absolute paths. */
+const markdownUnder = (dir) =>
+  readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.md'))
+    .map((e) => join(e.parentPath, e.name));
+
+test('bl report writes site/: the root with its tables, every page, the report, and links that resolve inside it', () => {
+  const { dir } = reportBacklog();
+  put(
+    dir,
+    'tasks/T1-do-it.md',
+    '---\ntask_id: T-1\ntitle: Do it\nunit: F-1\nowner: operator\nstatus: open\nadded: 2026-04-28\n---\n',
+  );
+  put(dir, 'docs/guide.md', '# Guide\n\nSee [the roadmap](../roadmap.md).\n');
+  put(dir, '.bl/run/scratch.md', 'scratch\n');
+  commitAt(dir, '2026-04-28T19:00:00', 'task and doc');
+  const r = runBl(['report'], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  const site = join(dir, 'reports', 'site');
+
+  const root = readFileSync(join(site, 'index.md'), 'utf8');
+  for (const heading of ['Themes', 'Components', 'Priority']) assert.match(root, new RegExp(`^## ${heading}$`, 'm'));
+  assert.match(root, /^Total backlog: 8 points across 1 stories in 1 components\.$/m);
+  const graph = loadBacklog({ backlogRoot: dir }, { reload: true });
+  for (const kind of ['story', 'feature', 'component', 'epic', 'theme']) {
+    for (const unit of graph.list(kind)) assert.ok(existsSync(join(site, unit.relPath)), unit.relPath);
+  }
+  const f1 = readFileSync(join(site, graph.get('F-1').relPath), 'utf8');
+  assert.match(f1, /## Stories\n\n[^#]*\[S-3\]/);
+  assert.match(f1, /## Tasks\n\n[^#]*\[T-1\]\(\.\.\/\.\.\/tasks\/T1-do-it\.md\)/);
+  assert.ok(f1.trimEnd().endsWith(FORMATTED), 'rendered pages go through the markdown format plugin');
+  assert.equal(readFileSync(join(site, 'docs/guide.md'), 'utf8'), '# Guide\n\nSee [the roadmap](../roadmap.md).\n');
+  assert.equal(
+    readFileSync(join(site, 'reports', 'index.md'), 'utf8'),
+    readFileSync(join(dir, 'reports', 'index.md'), 'utf8'),
+  );
+  assert.ok(existsSync(join(site, 'reports', 'data.json')));
+  assert.ok(!existsSync(join(site, '.bl')), 'nothing under .bl/ is copied');
+
+  // Every relative link of every page resolves to a file inside the root.
+  let count = 0;
+  for (const file of markdownUnder(site)) {
+    for (const [, label, href] of readFileSync(file, 'utf8').matchAll(/\[([^\]]*)\]\(([^)\s]+)\)/g)) {
+      if (/^[a-z]+:/.test(href) || href.startsWith('#')) continue;
+      const target = resolve(dirname(file), href.replace(/#.*$/, ''));
+      assert.ok(target.startsWith(`${site}/`), `${file}: [${label}](${href}) leaves the root`);
+      assert.ok(existsSync(target), `${file}: [${label}](${href}) does not resolve`);
+      count += 1;
+    }
+  }
+  assert.ok(count > 20, `links walked: ${count}`);
+  assert.equal(git(dir, ['status', '--porcelain']), '', 'nothing outside reports/ is written');
+});
+
+test('a chart adapter file named site is refused; --json writes nothing', () => {
+  const { dir } = reportBacklog();
+  const json = runBl(['report', '--json'], { cwd: dir });
+  assert.equal(json.status, 0, json.stderr);
+  assert.ok(!existsSync(join(dir, 'reports')), '--json writes nothing');
+
+  const config = loadConfig({ backlogRoot: dir });
+  const flow = loadFlow(dir);
+  const data = buildReport(buildHistory(config), config, flow);
+  registerAdapter({
+    name: 'site-file',
+    render: (chart) => ({
+      markdown: '',
+      files: chart.id === 'flow' ? [{ path: 'site/x.svg', content: '<svg/>' }] : [],
+    }),
+  });
+  assert.throws(
+    () => writeReport(config, join(dir, 'reports'), data, flow, 'site-file'),
+    /file site\/x\.svg would replace the report's own/,
+  );
+  assert.ok(!existsSync(join(dir, 'reports')));
+});
+
 /** Every file under `dir` by relative path, with its text. */
 function snapshot(dir) {
   return Object.fromEntries(
@@ -470,6 +548,10 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
     ['writeFileSync', isUnder('flow.txt')],
     ['writeFileSync', isUnder('index.md')],
     ['mkdirSync', isUnder('charts')],
+    // The documentation root: a copy, a rendered page, the report's copy.
+    ['cpSync', (_, to) => String(to).endsWith('/site/roadmap.md')],
+    ['writeFileSync', (p) => /\/site\/features\/F1-one\/index\.md$/.test(String(p))],
+    ['cpSync', (_, to) => String(to).endsWith('/site/reports/data.json')],
     // The swap: moving the last report aside, then moving the new one in.
     ['renameSync', (from) => from === out],
     ['renameSync', (_, to) => to === out],
@@ -606,6 +688,8 @@ test("bl report --out writes elsewhere, and refuses a directory that is not a re
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, `${join(out, 'index.md')}\n`);
   assert.equal(JSON.parse(readFileSync(join(out, 'data.json'), 'utf8')).first, '2026-04-23');
+  assert.ok(existsSync(join(out, 'site', 'index.md')), 'the root is <out>/site');
+  assert.ok(existsSync(join(out, 'site', 'reports', 'index.md')));
   assert.ok(!existsSync(join(dir, 'reports')));
 
   const notOurs = join(dir, '.bl', 'notes');
