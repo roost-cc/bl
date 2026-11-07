@@ -498,7 +498,7 @@ component_id: C32
 title: bl Tool Enhancements
 repo: bl # a repo registered in backlog.json
 home: true # this repo's home component; work with no better component lands here
-paths: ["src/**", "test/**"] # optional: globs relative to the repo root (F-61 D2)
+paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D2)
 ---
 ```
 
@@ -2901,11 +2901,11 @@ file's number, one id on two files, an `owner` outside `operator`, a `status` ou
 `flow.json`'s task statuses, or a `done` task with no `done:` date (errors); a key bl does not
 know (warning).
 
-`deferred-unsized`, `deferred-duplicate`, `operator-tasks-retired` and `deferred-heading-retired` (F-65 D4, F-82 D9,
-`findDeferredErrors`, errors at the unit's file with its line) check an open unit's
-`## Deferred`: an item without a numeric `[points: N]`, a `### Operator tasks` sub-heading or
-`operator:` bullet, a second `## Deferred` heading, and a story's retired `## To Do` heading. A `done` or `superseded` unit has none
-(see **`## Deferred`, `## Notes` and tasks**). The S-970 `operator-tasks` rule is gone with
+`deferred-unsized`, `deferred-duplicate`, `operator-tasks-retired` and `deferred-heading-retired`
+(F-65 D4, F-82 D9, `findDeferredErrors`, errors at the unit's file with its line) check an open
+unit's `## Deferred`: an item without a numeric `[points: N]`, a `### Operator tasks`
+sub-heading or `operator:` bullet, a second `## Deferred` heading, and a story's retired
+`## To Do` heading. A `done` or `superseded` unit has none (see **`## Deferred`, `## Notes` and tasks**). The S-970 `operator-tasks` rule is gone with
 `src/operator-tasks.js`.
 
 `found-by` (F-48 D2, `findFoundByFindings`) is an error on a story whose
@@ -3894,9 +3894,10 @@ project's business domain may have its own, which the project writes; bl ships n
   (`ensureBacklogDocs`, beside `roadmap.md` and `priority.md`) when the backlog has none, and
   writes `"dictionaries": ["coding-dictionary.yaml"]` into a new `backlog.json` (one with no
   `repos`, `ensureReposBlock`, which copies the seed first, so a failed copy leaves
-  `backlog.json` as it was and a rerun tries again). Every seed `bl init` copies is
-  staged in `.bl/tmp/` and linked into place (`atomicWriteFile` with `exclusive`): a failed
-  copy leaves no partial file, and a file another process makes meanwhile stays. It never changes an existing copy or an existing
+  `backlog.json` as it was and a rerun tries again). Every seed `bl init` copies is staged in
+  `.bl/tmp/` and linked into place (`atomicWriteFile` with `exclusive`): a failed copy leaves
+  no partial file, and a file another process makes meanwhile stays. It never changes an
+  existing copy or an existing
   `backlog.json`: each project curates its own copy, and a later change to the seed reaches
   new backlogs only.
 - **Prompts** name the listed dictionaries through the writing guide's `{{dictionaryGuide}}`

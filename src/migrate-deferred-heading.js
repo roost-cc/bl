@@ -63,8 +63,9 @@ const blank = (l) => l.trim() === '';
 /**
  * Merge the body of each `## To Do` and later `## Deferred` section into the
  * first `## Deferred` section, and drop those sections. The part of each
- * body before its first `###` heading comes first, in file order, then the
- * parts from the `###` headings on.
+ * body before its first `###` heading comes first (the first `## Deferred`'s,
+ * then the others in file order), then the parts from the `###` headings on,
+ * in the same order.
  * @param {string} text  the file
  * @param {string[]} lines  its lines (a CRLF line keeps its `\r`)
  * @param {number} target  the 0-based line of the `## Deferred` heading
