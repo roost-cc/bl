@@ -500,7 +500,7 @@ component_id: C32
 title: bl Tool Enhancements
 repo: bl # a repo registered in backlog.json
 home: true # this repo's home component; work with no better component lands here
-paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D2)
+paths: ["src/**", "test/**"] # optional: globs relative to the repo root (F-61 D2)
 ---
 ```
 
@@ -1683,7 +1683,8 @@ or a value outside the five levels is a config error naming the key
 (`effortConfig` in `src/config.js`). The config record carries it as
 `config.effort`. A repo's `overrides` may replace the object whole.
 `bl init` writes all three as `high` into a new backlog (one with no
-`repos`). An adapter's `spawn({ effort })` takes a level, or null for the
+`repos`), and into an existing backlog that has `repos` but no `effort`
+object; it adds nothing else to that one. An adapter's `spawn({ effort })` takes a level, or null for the
 agent CLI's own setting: Claude passes `--effort <level>`, Codex passes
 `-c model_reasoning_effort=<level>` (`codex exec`, the interactive launch
 and `resume`), with bl's names unchanged. Gemini ignores it.
