@@ -131,7 +131,8 @@ export function pathsChangedSince(before, after) {
 export function commitChangedSince(root, before, message, { session = false } = {}) {
   const after = dirtySnapshot(root);
   let touched = pathsChangedSince(before, after);
-  if (session && touched.includes(PRIORITY_FILE)) {
+  const held = session && touched.includes(PRIORITY_FILE);
+  if (held) {
     touched = touched.filter((p) => p !== PRIORITY_FILE);
     info(`Left ${PRIORITY_FILE} uncommitted: an agent session changed it, and only a person ranks work (bl rank).`);
   }
@@ -144,8 +145,11 @@ export function commitChangedSince(root, before, message, { session = false } = 
       console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);
     }
   }
-  // Still dirty: a path the session committed itself was not left alone.
-  const leftAlone = [...(before?.keys() ?? [])].filter((p) => after?.has(p) && !touched.includes(p));
+  // Still dirty: a path the session committed itself was not left alone. A
+  // held priority.md has its own line above.
+  const leftAlone = [...(before?.keys() ?? [])].filter(
+    (p) => after?.has(p) && !touched.includes(p) && !(held && p === PRIORITY_FILE),
+  );
   if (leftAlone.length > 0) info(`Left your uncommitted backlog edits alone: ${leftAlone.join(', ')}`);
   return failed;
 }

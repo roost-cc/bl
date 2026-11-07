@@ -245,6 +245,29 @@ test('commitChangedSince: priority.md is held for an agent session, with one lin
   }
 });
 
+test('commitChangedSince: a path dirty before that the session committed itself is not named', () => {
+  const dir = changedSinceRepo();
+  writeFileSync(join(dir, 'x.md'), 'operator\n');
+  const before = dirtySnapshot(dir);
+  g(dir, 'commit', '-q', '-am', 'the session commits it');
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: since', { session: true }));
+  assert.equal(failed, false, err);
+  assert.equal(err, '');
+  assert.equal(g(dir, 'log', '-1', '--format=%s'), 'the session commits it');
+});
+
+test('commitChangedSince: priority.md dirty before and changed by the session gets only the hold line', () => {
+  const dir = changedSinceRepo();
+  writeFileSync(join(dir, PRIORITY_FILE), 'operator\n');
+  const before = dirtySnapshot(dir);
+  writeFileSync(join(dir, PRIORITY_FILE), 'operator + session\n');
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: s', { session: true }));
+  assert.equal(failed, false, err);
+  assert.match(err, new RegExp(`Left ${PRIORITY_FILE} uncommitted: .*only a person ranks`));
+  assert.doesNotMatch(err, /Left your uncommitted backlog edits alone/);
+  assert.equal(g(dir, 'status', '--porcelain'), `M ${PRIORITY_FILE}`);
+});
+
 test('commitChangedSince: a failed commit returns true and names the paths', () => {
   const dir = changedSinceRepo();
   const before = dirtySnapshot(dir);
