@@ -42,12 +42,7 @@ test('bl init gives a new backlog an empty roadmap.md and priority.md and the co
   assert.match(readFileSync(join(fresh, 'priority.md'), 'utf8'), /^---\nranked: \[\]\n---\n\n# Priority\n/);
   assert.equal(readFileSync(join(fresh, 'coding-dictionary.yaml'), 'utf8'), readFileSync(SEED, 'utf8'));
   // .bl/ holds the staging files (ignored in every backlog).
-  assert.deepEqual(
-    readdirSync(fresh)
-      .filter((f) => f !== '.bl')
-      .sort(),
-    ['coding-dictionary.yaml', 'priority.md', 'roadmap.md'],
-  );
+  assert.deepEqual(readdirSync(fresh).filter((f) => f !== '.bl').sort(), ['coding-dictionary.yaml', 'priority.md', 'roadmap.md']);
 
   const kept = mkTempDir('bl-init-docs-');
   writeFileSync(join(kept, 'roadmap.md'), 'kept\n');
@@ -135,13 +130,9 @@ test('init_seed_copy_failure_and_concurrent_create_preserve_dictionary: a seed i
     assert.deepEqual(staged(race.dir), [], `${label}: no staging file left`);
   }
   // The dictionary is listed only once it exists, after a failure and a rerun.
-  const listedDir = withHook(
-    'coding-dictionary.yaml',
-    (dir) => ensureReposBlock(dir, 'claude'),
-    () => {
-      throw Object.assign(new Error('injected'), { code: 'EIO' });
-    },
-  ).dir;
+  const listedDir = withHook('coding-dictionary.yaml', (dir) => ensureReposBlock(dir, 'claude'), () => {
+    throw Object.assign(new Error('injected'), { code: 'EIO' });
+  }).dir;
   assert.equal(readFileSync(join(listedDir, 'backlog.json'), 'utf8'), '{}\n');
 });
 
