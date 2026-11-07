@@ -215,6 +215,30 @@ test('commit_changed_since_skips_a_backlog_with_no_repo_of_its_own: a plain dire
   }
 });
 
+// `git status` fails on a corrupt index; the real one is put back after.
+for (const when of ['before', 'after']) {
+  test(`commit_changed_since_rejects_failed_snapshot: git status fails ${when} the write`, () => {
+    const dir = changedSinceRepo();
+    const index = join(dir, '.git', 'index');
+    const good = readFileSync(index);
+    const snapshot = () => {
+      if (when === 'before') writeFileSync(index, 'corrupt');
+      const snap = dirtySnapshot(dir);
+      writeFileSync(index, good);
+      return snap;
+    };
+    const before = snapshot();
+    writeFileSync(join(dir, 'x.md'), 'written by the command\n');
+    if (when === 'after') writeFileSync(index, 'corrupt');
+    const head = g(dir, 'rev-parse', 'HEAD');
+    const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: since'));
+    writeFileSync(index, good);
+    assert.equal(failed, true, err);
+    assert.match(err, new RegExp(`backlog commit failed: git status failed ${when} the command wrote`));
+    assert.equal(g(dir, 'rev-parse', 'HEAD'), head);
+  });
+}
+
 test('commitChangedSince: a path dirty before stays out and is named unless the command changed it again', () => {
   const dir = changedSinceRepo();
   writeFileSync(join(dir, 'x.md'), 'operator\n');

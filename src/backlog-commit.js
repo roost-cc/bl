@@ -120,7 +120,8 @@ export function pathsChangedSince(before, after) {
  * `session` (an agent session made the change: refine, the merge's triage),
  * `priority.md` stays out too, with one line: only a person ranks (F-78 D3).
  * Nothing changed, or a backlog that is not a git repo of its own (no `.git`
- * in `root`, even inside a parent checkout), prints nothing.
+ * in `root`, even inside a parent checkout), prints nothing. In a repo, a
+ * snapshot that `git status` could not take, before or after, is a failure.
  * Shared by feature `bl merge`, story `bl merge`'s triage, `bl refine` and
  * `bl init` (S-1330).
  * @param {string} root
@@ -133,6 +134,14 @@ export function commitChangedSince(root, before, message, { session = false } = 
   // A parent checkout's status names paths from its own top, not `root`'s.
   if (!existsSync(join(root, '.git'))) return false;
   const after = dirtySnapshot(root);
+  // In a repo, a null snapshot is a `git status` that failed, not "no change".
+  if (!before || !after) {
+    console.error(
+      `  backlog commit failed: git status failed ${before ? 'after' : 'before'} the command wrote, so bl cannot tell what it changed\n` +
+        `  Commit its changes yourself: git -C "${root}" status`,
+    );
+    return true;
+  }
   let touched = pathsChangedSince(before, after);
   const held = session && touched.includes(PRIORITY_FILE);
   if (held) {
@@ -150,8 +159,8 @@ export function commitChangedSince(root, before, message, { session = false } = 
   }
   // Still dirty: a path the session committed itself was not left alone. A
   // held priority.md has its own line above.
-  const leftAlone = [...(before?.keys() ?? [])].filter(
-    (p) => after?.has(p) && !touched.includes(p) && !(held && p === PRIORITY_FILE),
+  const leftAlone = [...before.keys()].filter(
+    (p) => after.has(p) && !touched.includes(p) && !(held && p === PRIORITY_FILE),
   );
   if (leftAlone.length > 0) info(`Left your uncommitted backlog edits alone: ${leftAlone.join(', ')}`);
   return failed;
