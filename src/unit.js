@@ -4,9 +4,8 @@
  * The loop in feature-run.js reads a feature record's field names (`id`,
  * `indexPath`, `featureRelPath`, `featureEntry`, `reviewRoundsMax`, …). A
  * story gets the same names from `storyUnit`, so `bl run S-n` goes through
- * the same loop with nothing copied (F-35 Design §3). `kind` and
- * `deferredHeading` are what differ: a feature's follow-ups go under
- * `## Deferred`, a story's under `## To Do`.
+ * the same loop with nothing copied (F-35 Design §3). `kind` is what
+ * differs; both kinds hold follow-up code work under `## Deferred` (F-82 D9).
  */
 
 import { readFileSync } from 'fs';
@@ -22,7 +21,7 @@ function toInt(v, fallback = 0) {
 
 /** A feature record as a unit: the record itself, plus its kind. */
 export function featureUnit(feature) {
-  return { ...feature, kind: 'feature', deferredHeading: 'Deferred' };
+  return { ...feature, kind: 'feature' };
 }
 
 /**
@@ -43,7 +42,6 @@ export function storyUnit(story, config) {
   const change = unitChange(storyDir, primaryRepo);
   return {
     kind: 'story',
-    deferredHeading: 'To Do',
     id,
     title: fm.title ?? storyEntry,
     status: fm.status ?? 'backlog',
@@ -92,14 +90,12 @@ export function storyAsOrdered(unit) {
 
 /**
  * The prompt variables that say which kind of unit a session works on: the
- * shared loop prompts read "the {{unitKind}} file", "## {{deferredHeading}}"
- * and "{{premise}}".
+ * shared loop prompts read "the {{unitKind}} file" and "{{premise}}".
  */
 export function unitVars(unit) {
   const story = unit.kind === 'story';
   return {
     unitKind: story ? 'story' : 'feature',
-    deferredHeading: story ? 'To Do' : 'Deferred',
     premise: story ? "the story's Summary and Acceptance Criteria" : "the feature's Premise",
   };
 }

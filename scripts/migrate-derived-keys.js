@@ -22,54 +22,7 @@
  * fixed), 2 bad arguments.
  */
 
-import { spawnSync } from 'child_process';
-import { loadConfig } from '../src/config.js';
 import { migrate } from '../src/migrate-derived-keys.js';
+import { runMigrationScript } from '../src/migration-script.js';
 
-const USAGE = 'Usage: node scripts/migrate-derived-keys.js [--dry-run] [--backlog <dir>]';
-
-function parse(argv) {
-  const opts = { dryRun: false, backlog: null };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--dry-run') opts.dryRun = true;
-    else if (a === '--backlog' && argv[i + 1]) opts.backlog = argv[++i];
-    else if (a === '-h' || a === '--help') opts.help = true;
-    else throw new Error(`unknown argument: ${a}`);
-  }
-  return opts;
-}
-
-let opts;
-try {
-  opts = parse(process.argv.slice(2));
-} catch (e) {
-  console.error(`${e.message}\n${USAGE}`);
-  process.exit(2);
-}
-if (opts.help) {
-  console.log(USAGE);
-  process.exit(0);
-}
-
-let config;
-let result;
-try {
-  config = loadConfig(opts.backlog ? { backlogRoot: opts.backlog } : {});
-  result = await migrate(config, { dryRun: opts.dryRun });
-} catch (e) {
-  console.error(e.message);
-  process.exit(1);
-}
-const { commit } = result;
-if (commit?.error) {
-  console.error(`backlog commit failed: ${commit.error}`);
-  process.exit(1);
-}
-if (commit?.committed) {
-  const head = spawnSync('git', ['log', '-1', '--format=%h %s'], {
-    cwd: config.backlogRoot,
-    encoding: 'utf8',
-  }).stdout.trim();
-  console.log(`committed ${commit.paths.length} backlog path(s) in ${head}`);
-}
+await runMigrationScript('migrate-derived-keys.js', migrate);

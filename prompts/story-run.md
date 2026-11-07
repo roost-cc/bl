@@ -14,7 +14,7 @@ Backlog repo : {{backlogDir}}
 ## Two-repo model
 
 - The **story file** lives in the backlog repo. Status updates, acceptance-criteria checkoffs,
-  and **## To Do** additions are written there and committed on the backlog's main branch with
+  and **## Deferred** additions are written there and committed on the backlog's main branch with
   `git -C {{backlogDir}} …`. They never go on your code branch.
 - **Code changes** go in this worktree and are committed to `{{branchName}}`. Do not open a pull
   request: `bl run` opens it after the test gate and the self-review.
@@ -50,9 +50,9 @@ runs and merges it. If this story cannot be finished without that change, escala
 5. Uncovered work under 8 points: do it now. A finding of about one point in code this branch
    already touches is fixed now too, not deferred; a nit is fixed or dropped, never deferred.
    What is left goes to one of three places in the story file (add a section that is missing):
-   - Follow-up code work of 8 points or more: a bullet under **## To Do**, starting with its
+   - Follow-up code work of 8 points or more: a bullet under **## Deferred**, starting with its
      estimate `[points: N]`. Nothing else goes there: `bl validate` refuses an unsized bullet in
-     an open story's **## To Do**.
+     an open story's **## Deferred**.
    - A record of what you did or found: a dated bullet under **## Notes**,
      `- <YYYY-MM-DD> ({{storyId}}): …`, with no marker.
    - Anything the operator must do, with a moment to do it: a task. Write its body (what to do,
@@ -89,8 +89,8 @@ runs and merges it. If this story cannot be finished without that change, escala
 
 8. Format the files you changed (see **Format and lint** below).
 
-A path you name in the plan or the To Do is read by the scheduler only when it is in backticks
-(`src/x.js`); write file paths that way.
+A path you name in the plan or the Deferred section is read by the scheduler only when it is in
+backticks (`src/x.js`); write file paths that way.
 
 {{sessionStack}}
 

@@ -1036,3 +1036,26 @@ test('normalizeComponentId preserves arbitrary-length decimal component IDs with
     assert.deepEqual(normalizeComponentId(raw), { num: id.slice(1), id, dirPrefix: id }, raw);
   }
 });
+
+test('backlog.json "dictionaries": dictionariesOf resolves the listed paths; [] without the key; a malformed value throws naming the key (F-82 D3)', async () => {
+  const { mkTempBacklog } = await import('../helpers/tempdir.js');
+  const { loadConfig, dictionariesOf } = await import('../../src/config.js');
+  const { dir, cleanup } = mkTempBacklog({ repos: ['../demo-repo'] });
+  try {
+    assert.deepEqual(dictionariesOf(loadConfig({ backlogRoot: dir })), [], 'no key, no dictionaries');
+    assert.deepEqual(dictionariesOf(null), [], 'no config, no dictionaries');
+
+    await patchBacklogJson(dir, { dictionaries: ['coding-dictionary.yaml', 'docs/domain.yaml'] });
+    assert.deepEqual(dictionariesOf(loadConfig({ backlogRoot: dir })), [
+      join(dir, 'coding-dictionary.yaml'),
+      join(dir, 'docs/domain.yaml'),
+    ]);
+
+    for (const bad of ['coding-dictionary.yaml', ['ok.yaml', ''], ['/abs/dict.yaml'], [3], null, {}]) {
+      await patchBacklogJson(dir, { dictionaries: bad });
+      assert.throws(() => loadConfig({ backlogRoot: dir }), /backlog\.json "dictionaries"/, JSON.stringify(bad));
+    }
+  } finally {
+    cleanup();
+  }
+});

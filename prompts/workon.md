@@ -13,7 +13,7 @@ The backlog is a **separate git repo** from the code. That means:
 
 - The **story file** (`{{storyAbsPath}}`) lives in the backlog repo. Update it
   directly on its main branch — status updates, acceptance criteria checkoffs,
-  and **## To Do** additions are written there, not in the code worktree.
+  and **## Deferred** additions are written there, not in the code worktree.
   These edits do NOT belong on your code branch.
 - **Code changes** go in this worktree (`{{worktreePath}}`) and get committed
   to branch `{{branchName}}`. This is what your PR will contain.
@@ -70,7 +70,7 @@ The backlog is a **separate git repo** from the code. That means:
    The **only** reason to spin off a separate story instead of doing the
    work is size: if the uncovered work is a loose estimate of **8 points or
    more** (Fibonacci 8/13 — a substantial, multi-session chunk), it is too
-   big to absorb here. In that case add it to a **## To Do** section of the
+   big to absorb here. In that case add it to a **## Deferred** section of the
    story file (in the backlog repo) so the cleanup agent can harvest it into
    its own story after merge. Anything you loosely estimate under 8 points,
    do now.
@@ -82,7 +82,7 @@ The backlog is a **separate git repo** from the code. That means:
    A finding of about one point in code this branch already touches is
    fixed now too, not deferred; a nit is fixed or dropped, never deferred.
 
-   **## To Do** holds follow-up code work only: `bl validate` refuses an
+   **## Deferred** holds follow-up code work only: `bl validate` refuses an
    unsized bullet there while the story is open. Each bullet should carry
    enough context for someone unfamiliar with your session to understand the
    issue and create a new story from it — include relevant file paths, test
@@ -91,11 +91,11 @@ The backlog is a **separate git repo** from the code. That means:
    that uncovered this item, so you are best placed to estimate it — do not
    leave it for the cleanup agent to guess.
 
-   Notes and blockers are not To Do items:
+   Notes and blockers are not Deferred items:
    - A record of what you did or found (an acceptance criterion you could
      not fully satisfy and why, a pre-existing problem you looked into): a
      dated bullet under the story's **## Notes** (add the section after
-     **## To Do** if it is missing), `- <YYYY-MM-DD> ({{storyId}}): …`, with
+     **## Deferred** if it is missing), `- <YYYY-MM-DD> ({{storyId}}): …`, with
      no marker.
    - Anything the operator must do, with a moment to do it: a task. Write
      its body (what to do, the exact commands as pasteable blocks with their
@@ -132,10 +132,9 @@ The backlog is a **separate git repo** from the code. That means:
 
 - NEVER `git add` files that are in `.gitignore` (e.g. `.env`, credentials,
   secrets). If the story requires a gitignored file, create it in the
-  worktree but do NOT commit it. Instead, add a bullet to the **## To Do**
-  section like:
-  `Copy worktree file <path-in-worktree> to main repo at <destination-path>`
-  The cleanup agent will handle copying it after merge.
+  worktree but do NOT commit it. Instead, file a task for the operator (see
+  above), with gate `merge`:
+  `bl task {{storyId}} --title "Copy worktree file <path-in-worktree> to main repo at <destination-path>" --gate merge`
 - Only edit your own story file, and never hand-edit backlog index files.
   `bl sync --commit` (see **Backlog commits**) regenerates them;
   `bl merge` still runs the authoritative sync after merge.

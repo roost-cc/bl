@@ -4,7 +4,15 @@
 
 import { existsSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
-import { loadConfig, configForRepo, parseArgs, normalizeComponentId, FORGE_OPS, BODY_READING_OP } from './config.js';
+import {
+  loadConfig,
+  configForRepo,
+  dictionariesOf,
+  parseArgs,
+  normalizeComponentId,
+  FORGE_OPS,
+  BODY_READING_OP,
+} from './config.js';
 import { DERIVED_KEYS, changeDoc, loadBacklog } from './backlog-graph.js';
 import { readAllStories, readComponents, parseIdList, pathEntryProblem } from './story.js';
 import { readAllFeatures, extractSection, sectionHasContent } from './feature.js';
@@ -12,7 +20,7 @@ import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID
 import { findRoadmapFindings } from './roadmap.js';
 import { extractReviewLog, parseLatestSession } from './review-log.js';
 import { probePluginBinaries } from './plugin-binaries.js';
-import { scanDeferred } from './deferred.js';
+import { scanDeferred, DEFERRED_HEADING, RETIRED_SECTION } from './deferred.js';
 import { CHANGE_STATUSES, RUN_STATE_KEYS, listChanges, unitIdOfDir } from './change-doc.js';
 import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
@@ -730,11 +738,15 @@ export function findEscalationNotNone(f) {
 }
 
 /**
- * The rules of a unit's `## Deferred` (feature) or `## To Do` (story), F-65
- * D4, on a unit that is not closed (a closed unit's section is
- * history and keeps its notes and operator items as written). One finding
- * per line:
+ * The rules of a unit's `## Deferred` (F-65 D4, F-82 D9), on a unit that is
+ * not closed (a closed unit's section is history and keeps its notes,
+ * operator items and old heading as written). One finding per line:
  *
+ *   - `deferred-heading-retired` (error)  a story's `## To Do` heading:
+ *     the section's old name in stories, renamed by
+ *     `scripts/migrate-deferred-heading.js`.
+ *   - `deferred-duplicate` (error)  a `## Deferred` heading after the
+ *     first: readers take the first section only.
  *   - `operator-tasks-retired` (error)  a `### Operator tasks` sub-heading
  *     or an `operator:` bullet: the operator's work is a task (`bl task`).
  *   - `deferred-unsized` (error)  any other top-level item without a numeric
@@ -744,17 +756,16 @@ export function findEscalationNotNone(f) {
  * @param {string} id  the unit's id
  * @param {string|undefined} status
  * @param {string} text  the whole file (its line numbers are the file's)
- * @param {string} heading  `Deferred` or `To Do`
  * @param {string} location
  * @param {import("./flow.js").Flow} flow
  * @param {string} type  the flow type: `story` or `feature`
  * @returns {Finding[]}
  */
-export function findDeferredErrors(id, status, text, heading, location, flow, type) {
+export function findDeferredErrors(id, status, text, location, flow, type) {
   // A closed unit's body is history: the Deferred rules do not run on it.
   if (flow.meets(type, status, 'done')) return [];
-  const { items, retired } = scanDeferred(text, heading);
-  const finding = (code, line, message) => ({
+  const { items, retired, retiredSection, duplicates } = scanDeferred(text);
+  const finding = (code, line, message, heading = DEFERRED_HEADING) => ({
     severity: 'error',
     code,
     message: `${id}: line ${line} (## ${heading}): ${message}`,
@@ -763,6 +774,21 @@ export function findDeferredErrors(id, status, text, heading, location, flow, ty
   });
   const retiredMessage = `operator tasks are retired: file each one with "bl task ${id} --title <t> --gate <merge|next|none>" and remove it here`;
   const out = retired.map((line) => finding('operator-tasks-retired', line, `### Operator tasks: ${retiredMessage}`));
+  // `## To Do` was a story's heading only, and the migration renames it in stories only.
+  for (const line of type === 'story' ? retiredSection : []) {
+    out.push(
+      finding(
+        'deferred-heading-retired',
+        line,
+        `the heading is retired: follow-up code work goes under ## ${DEFERRED_HEADING}; run "node <bl>/scripts/migrate-deferred-heading.js" in the backlog to rename it in every story`,
+        RETIRED_SECTION,
+      ),
+    );
+  }
+  // Readers take the first section only: a second one hides its items.
+  for (const line of duplicates) {
+    out.push(finding('deferred-duplicate', line, `a second ## ${DEFERRED_HEADING}: move its items into the first one`));
+  }
   for (const item of items) {
     if (item.operator) {
       out.push(finding('operator-tasks-retired', item.line, `"${item.text}": ${retiredMessage}`));
@@ -1208,6 +1234,24 @@ export function findThemeBriefFindings(themes, roostDir) {
 }
 
 /**
+ * The dictionary findings (F-82 D3): `dictionary-file` (error, at
+ * `backlog.json`) for each path `backlog.json` `"dictionaries"` lists that is
+ * not a file. bl never reads a dictionary's contents.
+ * @param {ReturnType<typeof loadConfig>} config
+ * @returns {Finding[]}
+ */
+export function findDictionaryFindings(config) {
+  return dictionariesOf(config)
+    .filter((path) => !existsSync(path) || !statSync(path).isFile())
+    .map((path) => ({
+      severity: 'error',
+      code: 'dictionary-file',
+      message: `backlog.json "dictionaries" lists ${relative(config.backlogRoot, path)}, which is not a file (${path})`,
+      location: 'backlog.json',
+    }));
+}
+
+/**
  * Every file of the backlog that holds frontmatter, as the tolerant graph
  * lists it (`loadBacklog`, F-77 D2): the root `index.md`, each unit's
  * `index.md` and change documents under `stories/`, `components/`,
@@ -1414,7 +1458,7 @@ export function runAll(config, opts = {}) {
     );
     findings.push(...findRunStateInSpec(fm, unit.body(), s.storyRelPath));
     findings.push(...validateChanges(config.backlogRoot, unit.dir));
-    findings.push(...findDeferredErrors(s.id, fm.status, unit.text(), 'To Do', s.storyRelPath, flow, 'story'));
+    findings.push(...findDeferredErrors(s.id, fm.status, unit.text(), s.storyRelPath, flow, 'story'));
   }
 
   // 2. Frontmatter checks for components.
@@ -1444,7 +1488,7 @@ export function runAll(config, opts = {}) {
     findings.push(...findRunStateInSpec(f.fm, f.body, f.featureRelPath));
     findings.push(...validateChanges(config.backlogRoot, f.featureDir));
     findings.push(...findEscalationNotNone(f));
-    findings.push(...findDeferredErrors(f.id, f.fm.status, f.content, 'Deferred', f.featureRelPath, flow, 'feature'));
+    findings.push(...findDeferredErrors(f.id, f.fm.status, f.content, f.featureRelPath, flow, 'feature'));
   }
 
   // 2c. Themes and epics (F-51 D1): their frontmatter, then the value-axis
@@ -1504,6 +1548,7 @@ export function runAll(config, opts = {}) {
   findings.push(...findPriorityFindings(graph));
   findings.push(...findRoadmapFindings(config));
   findings.push(...findThemeBriefFindings(allThemes, config.roostDir));
+  findings.push(...findDictionaryFindings(config));
 
   // 4b. The forge plugin against the D4 op set (backlog-wide, like 5).
   findings.push(...findForgeFindings(config));
@@ -1616,7 +1661,7 @@ Findings codes:
   home-component, component-has-status, component-paths,
   feature-theme, feature-epic, epic-theme, theme-repo, repo-key,
   priority-file, priority-unit, roadmap-file,
-  roadmap-section, theme-brief, flow-json, blockers-json, agent-config,
+  roadmap-section, theme-brief, dictionary-file, flow-json, blockers-json, agent-config,
   blockers-unit, blockers-gate, blockers-status, blockers-duplicate,
   blockers-cycle, blockers-unmeetable, blockers-order
 

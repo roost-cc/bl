@@ -11,7 +11,7 @@ ASD-STE100 (Simplified Technical English), not full compliance.
   deleted".
 - Put the condition before the command: "If the test fails, read the log."
 - Give each thing one name and keep it for the whole text. Do not rotate synonyms such as
-  check, verify and confirm.
+  check, verify and confirm.{{dictionaryGuide}}
 - Define a term the reader may not know at its first use, in a few words. Say what happens
   instead of using jargon such as "non-atomic".
 - Write the fact, not its importance. Leave out filler and praise: robust, seamless, crucial,

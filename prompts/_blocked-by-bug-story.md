@@ -14,7 +14,7 @@ not reasons to stop. Make a serious effort before you give up on anything.
    Commits message, and its subject ends in ` ({{featureId}})`. Never skip or weaken a test to
    get past a bug. Run the tests that cover the fix.
 3. **Record it in the story file.** A story run has no feature to attach an ad-hoc story to, so
-   add a dated bullet to the story's **## Notes** (add the section after **## To Do** if it is
+   add a dated bullet to the story's **## Notes** (add the section after **## Deferred** if it is
    missing): `- <YYYY-MM-DD> ({{featureId}}): Ad-hoc fix (done, <short sha>):`, then the bug,
    its cause and the fix. A bug in another repo is not fixed here: make it a
    side story with `bl side <repo> --from {{featureId}} --type bug --points <1|2|3> --title "<the bug>"`

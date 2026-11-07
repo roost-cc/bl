@@ -53,6 +53,7 @@ import { storyUnit } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
 import { integrateForMerge } from './merge-integrate.js';
 import { extractSection } from './feature.js';
+import { DEFERRED_HEADING } from './deferred.js';
 import { resolvePermissionScopes } from './permissions.js';
 import { getProvider } from './agents/index.js';
 import { acquireLock, releaseLock } from './lock.js';
@@ -62,15 +63,15 @@ import { syncMain, reportMainSync, MAIN_REFSPEC } from './main-sync.js';
 import { syncAndCommit, reportBacklogCommit, exitOnSyncError } from './sync.js';
 
 /**
- * A story's `## To Do` body, for the merge's triage agent: since F-65 D4 it
- * holds `[points: N]` follow-up work only (`bl validate` refuses anything
+ * A story's `## Deferred` body, for the merge's triage agent: since F-65 D4
+ * it holds `[points: N]` follow-up work only (`bl validate` refuses anything
  * else on an open story), so the agent gets it whole.
  *
  * @param {string} storyContent
  * @returns {string}
  */
-export function todoForTriage(storyContent) {
-  return extractSection(storyContent.replace(/\r\n/g, '\n'), 'To Do') ?? '';
+export function deferredForTriage(storyContent) {
+  return extractSection(storyContent.replace(/\r\n/g, '\n'), DEFERRED_HEADING) ?? '';
 }
 
 /**
@@ -1018,12 +1019,12 @@ no main checkout touched. A merge into main that still fails is aborted.`);
   const remainingWorktrees = allActiveWorktrees(config).filter((w) => w.storyId === parsed.id);
   const allCleaned = remainingWorktrees.length === 0;
 
-  const todoRaw = todoForTriage(storyContent);
+  const deferredRaw = deferredForTriage(storyContent);
   // Strip HTML comments (placeholder scaffolding), then trim and check for
   // common "no content" markers. The regex is generous so a stray period or
   // capitalization doesn't trick us into spawning a pointless triage agent.
-  const todoStripped = todoRaw.replace(/<!--[\s\S]*?-->/g, '').trim();
-  const todoSection = /^(none|n\/a|tbd|nothing|—|-)?\.?$/i.test(todoStripped) ? '' : todoStripped;
+  const deferredStripped = deferredRaw.replace(/<!--[\s\S]*?-->/g, '').trim();
+  const deferredSection = /^(none|n\/a|tbd|nothing|—|-)?\.?$/i.test(deferredStripped) ? '' : deferredStripped;
 
   if (!allCleaned) {
     info(`\nStory ${parsed.id} still has worktrees in: ${remainingWorktrees.map((w) => w.repoName).join(', ')}`);
@@ -1101,15 +1102,15 @@ no main checkout touched. A merge into main that still fails is aborted.`);
     reportMergeSync(res);
   }
 
-  if (allCleaned && todoSection) {
+  if (allCleaned && deferredSection) {
     const componentId = componentEntry.match(/^(C\d+)/)?.[1] ?? '';
-    info(`\nStory ${parsed.id} has a To Do section — launching triage agent...\n`);
+    info(`\nStory ${parsed.id} has a Deferred section — launching triage agent...\n`);
     const triagePrompt = loadPrompt(
       'cleanup-triage',
       {
         storyId: parsed.id,
         title: storyFm.title ?? storyEntry,
-        todoSection,
+        deferredSection,
         componentId,
         componentEntry,
         roostDir: config.roostDir,

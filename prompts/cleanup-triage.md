@@ -1,6 +1,6 @@
 You are performing cleanup and triage for story {{storyId}} — "{{title}}".
 
-The story has been merged into main, but it had a **## To Do** section with
+The story has been merged into main, but it had a **## Deferred** section with
 unresolved items. Your goal is to convert these items into new backlog
 stories.
 
@@ -8,8 +8,8 @@ stories.
 
 Component : {{componentEntry}} ({{componentId}})
 Backlog repo : {{backlogDir}}
-To Do section :
-{{todoSection}}
+Deferred section :
+{{deferredSection}}
 
 ## Steps
 
@@ -17,7 +17,7 @@ To Do section :
    `{{backlogDir}}/index.md`
    `{{backlogDir}}/components/{{componentEntry}}/index.md`
 
-2. For each distinct `[points: N]` item in the **## To Do** section above
+2. For each distinct `[points: N]` item in the **## Deferred** section above
    (the section holds sized follow-up code work only; records live under
    `## Notes` and the operator's work is a task, so neither is here):
    - Create a new story using `bl new`.
@@ -74,15 +74,15 @@ To Do section :
      not `backlog` / `refined`), do not retry: leave the stories standalone
      and say so in your final list.
 
-4. Remove the **## To Do** section from the story file using the
+4. Remove the **## Deferred** section from the story file using the
    {{editTool}} tool. The file is the path `bl which {{storyId}}` prints
    (under `{{backlogDir}}/stories/`).
 
 5. Validate, fix and commit your work by following **Backlog commits**
    below. Nothing after this session commits for you (the parent `bl merge`
    already made its own "mark done" commit before spawning you). Use the
-   message `chore: triage {{storyId}} To Do into new stories`. Pass
-   `--story {{storyId}}` for the `## To Do` removal, plus one `--story` for
+   message `chore: triage {{storyId}} Deferred into new stories`. Pass
+   `--story {{storyId}}` for the `## Deferred` removal, plus one `--story` for
    each new story you created. When step 3 created a feature, also pass
    `--path <feature directory>`: the path `bl new --feature` printed
    without its trailing `/index.md` (for example `features/F68-<slug>`),

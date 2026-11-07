@@ -4027,7 +4027,7 @@ test('a log failure inside the cleanup path cannot skip its escalation', async (
 // ---------------------------------------------------------------------------
 
 const STORY_BODY =
-  '## Summary\n\nDo it.\n\n## Acceptance Criteria\n\n- [ ] one works\n- [ ] two works\n\n## To Do\n\nNone.\n';
+  '## Summary\n\nDo it.\n\n## Acceptance Criteria\n\n- [ ] one works\n- [ ] two works\n\n## Deferred\n\nNone.\n';
 
 /** A loose refined story S-5 as a unit, with the prep prepareStoryRun returns. */
 function storySetup({ status = 'refined', body = STORY_BODY } = {}) {
@@ -4084,7 +4084,6 @@ test("story unit: the loop's field names, read from the story file", () => {
   const { cleanup, unit } = storySetup();
   try {
     assert.equal(unit.kind, 'story');
-    assert.equal(unit.deferredHeading, 'To Do');
     assert.equal(unit.id, 'S-5');
     assert.equal(unit.featureEntry, 'S5-loose');
     assert.equal(unit.primaryRepo, 'demo-repo', "the component's repo when primary_repo is unset");
@@ -4095,7 +4094,6 @@ test("story unit: the loop's field names, read from the story file", () => {
     assert.equal(unit.componentId, 'C00');
     assert.deepEqual(unitVars(unit), {
       unitKind: 'story',
-      deferredHeading: 'To Do',
       premise: "the story's Summary and Acceptance Criteria",
     });
     assert.equal(unitVars({ id: 'F-1' }).unitKind, 'feature');
@@ -4302,19 +4300,19 @@ test('a story run --resume after the escalation is cleared picks up at the gate'
   }
 });
 
-test("a story's review finding routed to its To Do: the review sessions get the story's heading", async () => {
+test("a story's review finding routed to its Deferred: the review sessions get the story's kind", async () => {
   const { cleanup, config, unit, prep } = storySetup();
   try {
     const runner = fakeRunner({
       dir: config.backlogRoot,
       feature: unit,
       behaviour: {
-        // The verifier routes a pre-existing finding to the heading it is given.
+        // The verifier routes a pre-existing finding to the unit's ## Deferred.
         verify: (o) => {
           editFile(unit.indexPath, (fm, body) =>
             body.replace(
-              `## ${o.vars.deferredHeading}\n\nNone.\n`,
-              `## ${o.vars.deferredHeading}\n\n- [points: 2] (pre-existing, review round 1) old bug\n`,
+              '## Deferred\n\nNone.\n',
+              '## Deferred\n\n- [points: 2] (pre-existing, review round 1) old bug\n',
             ),
           );
           editFile(CH(unit), (fm, body) => {
@@ -4332,10 +4330,9 @@ test("a story's review finding routed to its To Do: the review sessions get the 
     const reviewCalls = runner.calls.filter((c) => c.type === 'session' && c.prompt.startsWith('review-'));
     for (const c of reviewCalls) {
       assert.equal(c.vars.unitKind, 'story', c.prompt);
-      assert.equal(c.vars.deferredHeading, 'To Do', c.prompt);
     }
     const body = parseFrontmatter(readFileSync(unit.indexPath, 'utf8')).body;
-    assert.match(extractSection(body, 'To Do'), /\(pre-existing, review round 1\) old bug/);
+    assert.match(extractSection(body, 'Deferred'), /\(pre-existing, review round 1\) old bug/);
   } finally {
     cleanup();
   }

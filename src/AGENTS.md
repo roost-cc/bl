@@ -12,7 +12,8 @@ The `backlog` key is the relative path to the backlog directory. Stories, compon
 Markdown files with YAML frontmatter. A sync script regenerates all index tables from
 frontmatter on demand.
 
-Run `bl agents` from any repo to print this file.
+Run `bl agents` from any repo to print this file, the plain-writing guide and, inside a backlog,
+each dictionary its `backlog.json` `"dictionaries"` lists.
 
 ### Stream policy
 
@@ -51,7 +52,7 @@ Per-command stdout contracts:
 | `bl rank`            | no args: the order; an edit: nothing (progress → stderr)  |
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
-| `bl agents`          | the AGENTS.md content                                     |
+| `bl agents`          | AGENTS.md, the writing guide, each listed dictionary      |
 | `bl view`            | the file as it is when redirected; else nothing (editor)  |
 | `bl edit`            | nothing (opens editor)                                    |
 | `bl init`            | nothing (status → stderr)                                 |
@@ -106,6 +107,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
                                   never by automation (F-78 D1, D3)
   roadmap.md                    ← the road map: `entries:` and one section
                                   each, all by hand (F-53 D2)
+  coding-dictionary.yaml        ← the coding dictionary: bl init's copy of
+                                  bl's seed, curated by the project (F-82)
   flow.json                     ← every story and feature status, what each
                                   implies, and the gates per type (F-66 D1)
   blockers.json                 ← every hold between units, one edge per line,
@@ -612,7 +615,8 @@ file. `bl validate` checks its shape only (`roadmap.js` `findRoadmapFindings`), 
 A backlog with no `roadmap.md` reports `roadmap-file`, and a theme with no `brief:`
 `theme-brief`. `bl init` writes `templates/roadmap.md` and `templates/priority.md`
 (empty `entries:` and `ranked:`) into a backlog that has neither, and leaves an existing one
-alone (S-581, F-78 D1). (F-53's one-off migration that wrote them for the first backlog has run;
+alone (S-581, F-78 D1). It does the same with the coding dictionary seed (see
+**Dictionaries**). (F-53's one-off migration that wrote them for the first backlog has run;
 S-581 removed it, and it is in git history.)
 
 ### Priority (F-78 D1)
@@ -926,7 +930,7 @@ and Review Log are not in `index.md`: they are the change document's (below).
 
 Stories inside a feature use the shorter `story-feature` template (Summary,
 Acceptance Criteria, Implementation Plan of at most 40 lines, Dependencies):
-no Design Notes, To Do or Notes — those live on the feature, and a story's hand-offs go
+no Design Notes, Deferred or Notes — those live on the feature, and a story's hand-offs go
 to the feature's `## Notes`.
 
 ### The change document (`change.md`, F-42)
@@ -1713,19 +1717,19 @@ Rules:
 
 A session leaves behind three different things, and each has its own place (F-65 D4):
 
-- **Follow-up code work** goes in a feature's `## Deferred` or a story's `## To Do`, one
-  top-level bullet each, starting with its estimate `[points: N]` (Fibonacci). Nothing else
-  goes there. `## To Do` is the **cleanup agent's intake** (`prompts/cleanup-triage.md` turns
-  each item into a story at the story's merge, orders dependent items with
-  `bl new --depends-on` and groups overlapping ones as a feature, and `todoForTriage` hands it
-  the whole section); a feature's `## Deferred` is reviewed once, at merge. It is **not** a catch-all
+- **Follow-up code work** goes in the unit's `## Deferred`, in a feature and a standalone story
+  alike (F-82 D9), one top-level bullet each, starting with its estimate `[points: N]`
+  (Fibonacci). Nothing else goes there. A story's `## Deferred` is the **cleanup agent's
+  intake** (`prompts/cleanup-triage.md` turns each item into a story at the story's merge,
+  orders dependent items with `bl new --depends-on` and groups overlapping ones as a feature,
+  and `deferredForTriage` hands it the whole section); a feature's is reviewed once, at merge. It is **not** a catch-all
   for anything out of scope: the working agent does uncovered work itself, and only work that
   is a loose estimate of **8 points or more** belongs here. A finding of about one point in
   code the branch already touches is fixed in the session, and a nit is fixed or dropped,
   never deferred (the implementing and fixing prompts say so, folded in from S-638).
 - **Records and hand-offs** (what a session did or found, a note from one story to the next)
   go under `## Notes`: in a feature between `## Deferred` and `## Escalation`
-  (`templates/feature.md`), in a standalone story after `## To Do` (`templates/story.md`). A
+  (`templates/feature.md`), in a standalone story after `## Deferred` (`templates/story.md`). A
   story in a feature has no section of its own: its hand-offs go to the feature's. A note is
   a dated, attributed bullet, `- 2026-10-26 (S-1066): …`, with no marker; bl never reads the
   section.
@@ -1740,13 +1744,21 @@ A session leaves behind three different things, and each has its own place (F-65
 
 - `deferred-unsized`: a top-level bullet without a numeric `[points: N]` (a `[points: -]`
   note, a bare bullet, `[points: ?]`).
+- `deferred-duplicate`: a `## Deferred` heading after the first; readers take the first
+  section only, so the items of a second one are not seen.
 - `operator-tasks-retired`: a `### Operator tasks` sub-heading (the items under it are not
   reported again) or an `operator:` / `operator (from S-<n>):` bullet.
+- `deferred-heading-retired`: a story's `## To Do` heading, the section's name in stories before
+  F-82 (a feature has no such finding). The message names `scripts/migrate-deferred-heading.js`,
+  which renames it to `## Deferred` in every story file of the backlog, open or closed, in one
+  commit, and merges it into a `## Deferred` the file already has (on the shape of
+  `migrate-priority.js`: clean at origin/main first, inside `migration-txn.js`; a second run
+  plans nothing).
 
-A closed unit's section is history: its notes and done operator items stay as written, and
-neither rule runs on it.
+A closed unit's section is history: its notes, done operator items and old heading stay as
+written, and no rule runs on it.
 
-### `## Review Log` vs `## To Do`
+### `## Review Log` vs `## Deferred`
 
 `## Review Log` is the **review cycle's** state — items in the latest
 session must be checked off with a resolution note and then verified by
@@ -1754,7 +1766,7 @@ a re-review (`review_status: addressed`) before `bl done` or
 `bl merge` will accept the story.
 
 Do not mix the two. A review item that should become its own story is
-written into `## To Do`, not into a session block.
+written into `## Deferred`, not into a session block.
 
 ## Tooling
 
@@ -2179,13 +2191,13 @@ bl implement S34
 `bl run S34` takes a `refined` or `in_progress` story with no `feature:`
 through the feature loop (`runFeature` in `feature-run.js`), nothing copied:
 `storyUnit` (`unit.js`) gives the story the field names the loop reads from
-a feature, with `kind: "story"` and `deferredHeading: "To Do"`, and
+a feature, with `kind: "story"`, and
 `prepareStoryRun` (`workon.js`) makes the story's own worktree and branch (its
 directory name, lower case) and returns `prepareFeatureWorktree`'s shape with
 `ordered: [story]` and the PR title `S34: <title>`. The implement step uses
 `prompts/story-run.md`; the gate, self-review, review passes, verifier and
-fix rounds use the feature prompts, which read `{{unitKind}}`,
-`{{deferredHeading}}` and `{{premise}}`. The test gate layers the story's
+fix rounds use the feature prompts, which read `{{unitKind}}` and
+`{{premise}}`. The test gate layers the story's
 component under the story file's `plugins-test`.
 
 The first run writes `review_rounds_max` (2, or `--max-rounds`) to the story
@@ -2835,11 +2847,11 @@ id-dir-mismatch, bad-id-format, duplicate-id, cycle,
 dangling-dep, plugin-binary, bad-update-request,
 component-unknown, home-component, component-has-status, component-paths,
 repo-key, frontmatter-yaml, frontmatter-list, priority-file,
-priority-unit, roadmap-file, roadmap-section, theme-brief, found-by,
+priority-unit, roadmap-file, roadmap-section, theme-brief, dictionary-file, found-by,
 flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
-task-unit, task-field, deferred-unsized, operator-tasks-retired,
-bad-tokens-by-step, agent-config, derived-key, dangling-feature,
+task-unit, task-field, deferred-unsized, deferred-duplicate, operator-tasks-retired,
+deferred-heading-retired, bad-tokens-by-step, agent-config, derived-key, dangling-feature,
 feature-no-stories
 
 `derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's
@@ -2889,11 +2901,12 @@ file's number, one id on two files, an `owner` outside `operator`, a `status` ou
 `flow.json`'s task statuses, or a `done` task with no `done:` date (errors); a key bl does not
 know (warning).
 
-`deferred-unsized` and `operator-tasks-retired` (F-65 D4, `findDeferredErrors`, errors at the
-unit's file with its line) check an open unit's `## Deferred` or `## To Do`: an item without a
-numeric `[points: N]`, and a `### Operator tasks` sub-heading or `operator:` bullet. A `done`
-or `superseded` unit has neither (see **`## Deferred`, `## Notes` and tasks**). The S-970
-`operator-tasks` rule is gone with `src/operator-tasks.js`.
+`deferred-unsized`, `deferred-duplicate`, `operator-tasks-retired` and `deferred-heading-retired`
+(F-65 D4, F-82 D9, `findDeferredErrors`, errors at the unit's file with its line) check an open
+unit's `## Deferred`: an item without a numeric `[points: N]`, a `### Operator tasks`
+sub-heading or `operator:` bullet, a second `## Deferred` heading, and a story's retired
+`## To Do` heading. A `done` or `superseded` unit has none (see **`## Deferred`, `## Notes` and tasks**). The S-970 `operator-tasks` rule is gone with
+`src/operator-tasks.js`.
 
 `found-by` (F-48 D2, `findFoundByFindings`) is an error on a story whose
 `found_by:` is set but names no existing feature (`F-<n>`) or story (`S-<n>`).
@@ -2901,7 +2914,9 @@ or `superseded` unit has neither (see **`## Deferred`, `## Notes` and tasks**). 
 on its head line as `found by: <id>`.
 
 `roadmap-file` and `roadmap-section` check `roadmap.md`'s shape and `theme-brief` a theme's
-`brief:` (see **The roadmap** and **Themes and Epics**).
+`brief:` (see **The roadmap** and **Themes and Epics**). `dictionary-file` (F-82, error at
+`backlog.json`) is a path `backlog.json` `"dictionaries"` lists that is not a file (see
+**Dictionaries**).
 
 `priority-file` and `priority-unit` (F-78 D1, `findPriorityFindings`, from the graph's
 problems), both errors at `priority.md`: the first when the file is missing, its frontmatter is
@@ -3571,9 +3586,9 @@ their files and the holds from `blockers.json`, never from a unit's body; a `blo
 task), an escalation, change, update or pending id its own; an id not in the inbox is unknown.
 
 The S-970 operator tasks (a `### Operator tasks` sub-list, or legacy `operator:` bullets, in a
-unit's `## Deferred` / `## To Do`) are retired: nothing in `bl` reads a body for tasks, an open
-unit that has one fails `bl validate` (`operator-tasks-retired`), and a closed unit keeps its
-items as history. Their reader, `scanOperatorTasks`, went with F-65's migration (S-581).
+unit's `## Deferred`, or a story's former `## To Do`) are retired: nothing in `bl` reads a
+body for tasks, an open unit that has one fails `bl validate` (`operator-tasks-retired`), and
+a closed unit keeps its items as history. Their reader, `scanOperatorTasks`, went with F-65's migration (S-581).
 
 - `bl status` prints `deferred: <n> items` (the section's top-level items, through
   `scanDeferred`, a closed unit's retired operator items not among them) and, for a unit with
@@ -3748,6 +3763,7 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_self-consistency.md`           | `{{selfConsistencyGuide}}`: derive from what the system already defines, never restate it. Refine, workon, `feature-story`, `story-run`, `review-correctness` and `feature-self-review`.             |
 | `_simplicity.md`                 | `{{simplicityGuide}}`: build what the criteria ask, abstractions follow shared behaviour, every changed line traces to the story or a named finding. Wherever `{{selfConsistencyGuide}}` is.         |
 | `_plain-writing.md`              | `{{writingGuide}}`: about 80% of ASD-STE100, so the operator or the next agent reads the text right once. Every top-level prompt; `bl agents` prints it after this reference.                        |
+| `_dictionaries.md`               | `{{dictionaryGuide}}` in `_plain-writing.md`, under "Give each thing one name": names each listed dictionary (`renderDictionaryGuide`); "" when none are listed or there is no config.               |
 | `_cd-git-guard-deny.md`          | Deny message for the cd-then-git Claude hook.                                                                                                                                                        |
 | `_cd-search-guard-deny.md`       | Deny message for the cd-then-search Claude hook.                                                                                                                                                     |
 | `_cd-guard-deny.md`              | Bash-shape hook: `cd <path> && <cmd>` (cmd not git or a search tool).                                                                                                                                |
@@ -3848,6 +3864,53 @@ with the prompt's own variables (`{{sessionId}}`, `{{sessionNum}}`,
 join every session's allowlist (`getAllowedTools`), `{{roostDir}}` and
 `{{backlogRoot}}` resolved like the generated file's. A malformed
 `session_stack` makes `loadConfig` throw, naming the key.
+
+### Dictionaries (`backlog.json` `dictionaries`, F-82)
+
+A backlog lists the dictionaries its agents write by: files of terms, one meaning each. bl
+owns one of them, the **coding dictionary** for the practice of software engineering. A
+project's business domain may have its own, which the project writes; bl ships nothing for it.
+
+```json
+"dictionaries": ["coding-dictionary.yaml", "docs/domain-dictionary.yaml"]
+```
+
+- **The key** is a list of paths relative to the backlog root. `dictionariesOf(config)`
+  (`src/config.js`) is its one reader: it returns the paths resolved against the backlog root,
+  and `[]` when the key is absent or there is no config. A value that is not a list of non-empty
+  relative paths makes `loadConfig` throw, naming `backlog.json "dictionaries"`. Without the
+  key the backlog lists no dictionaries: a list is the operator's choice, and bl fills in no
+  default.
+- **`bl validate`** reports `dictionary-file` (error, at `backlog.json`) for a listed path that
+  is not a file, naming the path (`findDictionaryFindings`). bl never reads a dictionary's
+  contents to make a decision.
+- **The seed** is `templates/coding-dictionary.yaml` (`CODING_DICTIONARY_FILE`). It is YAML: a
+  header comment and one key, `entries`, a list of `{ term, meaning, avoid, decided }`
+  (`avoid` a list of words not to use for that meaning, `decided` the section of this
+  document where bl defines the term). Its header says that it shapes the words agents write
+  in prose and does not rename bl's CLI verbs, frontmatter keys or section headings. It names
+  no project. `test/unit/coding-dictionary.test.js` holds that shape in place.
+- **`bl init`** copies the seed to the backlog root as `coding-dictionary.yaml`
+  (`ensureBacklogDocs`, beside `roadmap.md` and `priority.md`) when the backlog has none, and
+  writes `"dictionaries": ["coding-dictionary.yaml"]` into a new `backlog.json` (one with no
+  `repos`, `ensureReposBlock`, which copies the seed first, so a failed copy leaves
+  `backlog.json` as it was and a rerun tries again). Every seed `bl init` copies is staged in
+  `.bl/tmp/` and linked into place (`atomicWriteFile` with `exclusive`): a failed copy leaves
+  no partial file, and a file another process makes meanwhile stays. It never changes an
+  existing copy or an existing
+  `backlog.json`: each project curates its own copy, and a later change to the seed reaches
+  new backlogs only.
+- **Prompts** name the listed dictionaries through the writing guide's `{{dictionaryGuide}}`
+  slot. `loadPrompt` fills it with `renderDictionaryGuide(config)` (`src/session.js`): the
+  `_dictionaries.md` paragraph, which names each absolute path, tells the agent to use each
+  entry's `term` and never its `avoid` words, and to add or update an entry in the same commit
+  when a refine introduces a concept or an operator decision renames a term. With none listed,
+  or with no config, the slot is empty. So every top-level prompt carries it through
+  `{{writingGuide}}`, and `test/unit/plain-writing.test.js` holds both cases in place.
+- **`bl agents`** prints this reference, the writing guide with the slot filled, and then the
+  contents of each listed dictionary under `## Dictionary: <path>` (the absolute path). It skips
+  a listed file it cannot read, with a warning on stderr. Outside a backlog (`findBacklogRoot`
+  finds none) it prints the reference and the guide only.
 
 ### Per-agent variants
 

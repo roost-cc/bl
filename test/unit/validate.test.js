@@ -940,6 +940,33 @@ test('component-paths: runAll reads paths from an inline or a block list, and pa
   }
 });
 
+test('dictionary-file: runAll reports a listed dictionary that is not a file, naming the path (F-82 D3)', async () => {
+  const { runAll } = await import('../../src/validate.js');
+  const { mkTempBacklog } = await import('../helpers/tempdir.js');
+  const { loadConfig } = await import('../../src/config.js');
+  const { dir, cleanup } = mkTempBacklog({
+    repos: ['../repos/bl'],
+    config: { dictionaries: ['coding-dictionary.yaml', 'docs/missing.yaml', 'docs'] },
+  });
+  try {
+    mkdirSync(join(dir, 'docs'));
+    writeFileSync(join(dir, 'coding-dictionary.yaml'), 'entries: []\n');
+    const { findings } = runAll(loadConfig({ backlogRoot: dir }), { json: true });
+    const found = findings.filter((f) => f.code === 'dictionary-file');
+    assert.deepEqual(
+      found.map((f) => [f.severity, f.location]),
+      [
+        ['error', 'backlog.json'],
+        ['error', 'backlog.json'],
+      ],
+    );
+    assert.match(found[0].message, /lists docs\/missing\.yaml, which is not a file/);
+    assert.match(found[1].message, /lists docs, which is not a file/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('findFrontmatterFindings: every file with frontmatter is parsed; what is not YAML is skipped, a list key that is not a list is reported (F-62 D4)', async () => {
   const { mkdirSync, writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');

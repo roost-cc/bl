@@ -19,7 +19,7 @@ import { createTask, markTaskDone } from '../../src/task.js';
 
 const bl = (args, cwd, opts = {}) => runBl(args, { cwd, env: GIT_ENV, ...opts });
 
-const STORY_BODY = '## Summary\n\nWork.\n\n## Dependencies\n\nNone.\n\n## To Do\n\nNone.';
+const STORY_BODY = '## Summary\n\nWork.\n\n## Dependencies\n\nNone.\n\n## Deferred\n\nNone.';
 
 /** F-1 (S-11), approved; a standalone S-1 with a `## Dependencies`; S-2 with no task. */
 function backlog() {
@@ -133,7 +133,7 @@ test('bl task on a story puts its Tasks table after ## Dependencies; --body-file
   assert.match(read(dir, 'tasks/T1-re-mint-the-key.md'), /\n# T-1 · Re-mint the key\n\nMint it in the console\.\n$/);
   assert.match(
     read(dir, 'stories/S1/index.md'),
-    /## Dependencies\n\nNone\.\n\n## Tasks\n\n\| ID[\s\S]*\[T-1\]\(\.\.\/\.\.\/tasks\/T1-re-mint-the-key\.md\)[\s\S]*\n\n## To Do\n/,
+    /## Dependencies\n\nNone\.\n\n## Tasks\n\n\| ID[\s\S]*\[T-1\]\(\.\.\/\.\.\/tasks\/T1-re-mint-the-key\.md\)[\s\S]*\n\n## Deferred\n/,
   );
   assert.equal(
     git(dir, 'show', '--name-only', '--format=', 'HEAD'),

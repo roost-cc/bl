@@ -1,0 +1,180 @@
+# Coding dictionary
+#
+# The words this backlog uses for the practice of software engineering, one meaning each. Agents
+# and people use these terms in stories, features, docs, code comments, commits and replies.
+# A project's business domain has its own dictionary, which backlog.json may list beside this one.
+#
+# bl init copied this file from bl's seed, templates/coding-dictionary.yaml. The copy is the
+# project's own: curate it here. A later change to bl's seed does not reach this copy.
+#
+# Limit: this dictionary shapes the words agents write in prose. It does not rename bl's CLI
+# verbs, frontmatter keys or section headings (`bl validate`, `review_round`, `## Review Log`).
+#
+# Each entry:
+#   term     the word to use
+#   meaning  what it means, in one or two plain sentences
+#   avoid    words not to use for this meaning (they may still be right for another meaning)
+#   decided  where the term was set: a doc, a feature or a decision
+#
+# A word that also has a domain meaning is qualified so that it never means two things in one
+# text: "work unit" here, never a bare "unit".
+
+entries:
+  # --- Planning: the value axis and the code axis ----------------------------------------------
+
+  - term: theme
+    meaning: >-
+      A value area that never finishes, such as a product area or the tooling. Each feature names
+      one, and the theme's brief lists what an agent reads before working in it.
+    avoid: [project, area, product line]
+    decided: bl src/AGENTS.md, "Themes and Epics"
+
+  - term: epic
+    meaning: >-
+      An outcome under one theme that finishes once every feature under it is done. A feature
+      may name one; an epic stores no list of its features.
+    avoid: [initiative, milestone, component]
+    decided: bl src/AGENTS.md, "Themes and Epics"
+
+  - term: feature
+    meaning: >-
+      One use case with its exceptional paths, and the work unit bl runs: one branch, one pull
+      request per repo, one review and one merge over an ordered set of stories.
+    avoid: [project, change set, epic]
+    decided: bl src/AGENTS.md, "Features"
+
+  - term: story
+    meaning: >-
+      One step of a feature, or a standalone chore, bug or update. It names exactly one
+      component, and the component's repo is the story's repo.
+    avoid: [ticket, issue, task, item]
+    decided: bl src/AGENTS.md, "Story Frontmatter" and "Lifecycle of a Story"
+
+  - term: component
+    meaning: >-
+      A code boundary in one repo: a label with no status, points or completion. Every story
+      names one.
+    avoid: [epic, module, area]
+    decided: bl src/AGENTS.md, "Component Frontmatter"
+
+  - term: work unit
+    meaning: >-
+      A feature or a story: the thing bl refines, runs, reviews and merges. In prose always write
+      "work unit", never a bare "unit". Code identifiers such as `unitKind` stay as they are.
+    avoid: [unit, item, ticket, job]
+    decided: bl src/AGENTS.md, "Priority" (units) and "Features" (the execution unit)
+
+  # --- People and sessions ---------------------------------------------------------------------
+
+  - term: operator
+    meaning: >-
+      The person who runs bl and decides: approves features, ranks the priority, does the tasks,
+      answers escalations and merges.
+    avoid: [user, human, owner]
+    decided: bl src/AGENTS.md, "Escalations for the operator"
+
+  - term: session
+    meaning: >-
+      One agent session: one run of an agent CLI on one prompt, interactive or headless. A run is
+      made of many sessions (implement, fix-tests, self-review, review passes, fix).
+    avoid: [conversation, chat, job]
+    decided: bl src/AGENTS.md, "Headless sessions"
+
+  - term: run
+    meaning: >-
+      `bl run`, the loop that takes a work unit from approved to reviewed: it implements each
+      story, runs the test gate, self-reviews, opens the pull requests and repeats review rounds
+      and fixes until the review is addressed or the work unit is escalated.
+    avoid: [pipeline, job, build]
+    decided: bl src/AGENTS.md, "Features" (Lifecycle) and "`bl run` for a story"
+
+  # --- Code and change ---------------------------------------------------------------------------
+
+  - term: branch
+    meaning: >-
+      The git branch that a work unit's changes go on, one per work unit, named from its id and
+      title. Every repo of the work unit uses the same branch name.
+    avoid: [topic, stream]
+    decided: bl src/AGENTS.md, "Features" (Lifecycle)
+
+  - term: worktree
+    meaning: >-
+      A git worktree of one repo on a work unit's branch, at `<root>/<branch>/<repo>`. The work
+      unit's directory, `<root>/<branch>`, holds one worktree per repo of the work unit.
+    avoid: [clone, copy, sandbox]
+    decided: >-
+      bl src/AGENTS.md, "`backlog.json` `worktrees`: the worktree root"
+
+  - term: pull request
+    meaning: >-
+      The forge's review request for one repo's branch. `bl run` opens one per repo that has
+      commits, with its body from the change document, and `bl merge` closes it. "PR" is fine.
+    avoid: [merge request, MR, diff]
+    decided: bl src/AGENTS.md, "Forge ops"
+
+  - term: change document
+    meaning: >-
+      The file `change.md` beside a work unit's `index.md`: the record of its change, with each
+      repo's branch and pull request, the review state, and the Gate, Review Log and Merge
+      sections. `index.md` is the plan; the change document is what happened.
+    avoid: [document, change log, changelog, PR description]
+    decided: bl src/AGENTS.md, "The change document"
+
+  - term: deferred
+    meaning: >-
+      Follow-up code work of 8 points or more that a session found and did not do, one bullet
+      each under a work unit's `## Deferred` heading, starting with `[points: N]`. Smaller work
+      is done in the session.
+    avoid: [to do, todo, follow-up, later]
+    decided: bl src/AGENTS.md, "`## Deferred`, `## Notes` and tasks"
+
+  # --- Control: gates, holds and escalations -----------------------------------------------------
+
+  - term: gate
+    meaning: >-
+      A point where bl stops a work unit until a condition is met: the flow gates (`run`,
+      `merge`) that holds and tasks act on, the test gate before review, and the operator's
+      approve gate.
+    avoid: [checkpoint, barrier]
+    decided: bl src/AGENTS.md, "Statuses and gates" and "The test gate"
+
+  - term: hold
+    meaning: >-
+      One edge in `blockers.json`: a work unit held at a gate until another work unit's status
+      meets a given status. A hold is not a dependency: `depends_on:` only orders stories.
+    avoid: [lock, freeze, wait]
+    decided: bl src/AGENTS.md, "Holds between units"
+
+  - term: escalation
+    meaning: >-
+      A feature's `## Escalation` section, written when the agents cannot go on: the rule at
+      stake, the problem, and lettered options for the operator. Anything but `None.` stops
+      approve, run and merge.
+    avoid: [blocker, ticket, alert]
+    decided: bl src/AGENTS.md, "Escalations for the operator"
+
+  # --- Review ------------------------------------------------------------------------------------
+
+  - term: round
+    meaning: >-
+      One review of a work unit's change: the passes, then the verifier, which writes one Review
+      Log session. The change document's `review_round` counts rounds, and `review_rounds_max`
+      caps them.
+    avoid: [iteration, cycle]
+    decided: bl src/AGENTS.md, "Review Cycle"
+
+  - term: pass
+    meaning: >-
+      One review agent's look at a change along one dimension, such as correctness or failure
+      paths, that writes a findings file for the verifier. A round has several passes.
+    avoid: [sweep, scan]
+    decided: bl src/AGENTS.md, "Features" (Lifecycle, `bl review`)
+
+  # --- Verbs -------------------------------------------------------------------------------------
+
+  - term: check
+    meaning: >-
+      The one verb for finding out whether something is correct: run a test, read a value,
+      compare a result. Write "check" for all of these.
+    avoid: [verify, confirm, validate, ensure]
+    decided: bl src/AGENTS.md, "`bl validate`" (bl's checks)

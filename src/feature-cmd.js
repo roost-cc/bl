@@ -100,7 +100,7 @@ import { tok, tokenFields } from './report.js';
 import { acquireLock, withLock } from './lock.js';
 import { failPoint } from './feature-links.js';
 import { prepareBody } from './body.js';
-import { scanDeferred } from './deferred.js';
+import { scanDeferred, DEFERRED_HEADING } from './deferred.js';
 import { readAllTasks, tasksOf } from './task.js';
 // Static import: `bl merge` on a feature removes the worktree it may itself be
 // running from (when bl is the repo being merged), after which a dynamic
@@ -656,19 +656,19 @@ export async function cmdApprove(args, config, feature) {
 // ---------------------------------------------------------------------------
 
 /**
- * The `bl status` line for a unit's `## Deferred` (or `## To Do`): its
- * top-level items, or null when the section is empty or has none. Tasks
- * are counted apart (`taskCountLine`); a closed unit's retired operator
- * items (`### Operator tasks`, `operator:` bullets) are not items.
+ * The `bl status` line for a unit's `## Deferred`: its top-level items, or
+ * null when the section is empty or has none. Tasks are counted apart
+ * (`taskCountLine`); a closed unit's retired operator items
+ * (`### Operator tasks`, `operator:` bullets) are not items.
  *
  *   deferred: 3 items
  */
-export function deferredCountLine(body, heading) {
+export function deferredCountLine(body) {
   const lf = String(body ?? '').replace(/\r\n/g, '\n');
-  if (!sectionHasContent(extractSection(lf, heading))) return null;
-  const items = scanDeferred(lf, heading).items.filter((i) => !i.operator).length;
+  if (!sectionHasContent(extractSection(lf, DEFERRED_HEADING))) return null;
+  const items = scanDeferred(lf).items.filter((i) => !i.operator).length;
   if (items === 0) return null;
-  return `${heading.toLowerCase()}: ${items} item${items === 1 ? '' : 's'}`;
+  return `deferred: ${items} item${items === 1 ? '' : 's'}`;
 }
 
 /**
@@ -692,7 +692,7 @@ export function taskCountLine(unitId, tasks) {
 function printUnitTail(config, unit) {
   const held = heldLines(config, unit.id);
   if (held.length > 0) console.log(`\n${held.map((l) => `held: ${l}`).join('\n')}`);
-  const countLine = deferredCountLine(unit.body, unit.deferredHeading ?? 'Deferred');
+  const countLine = deferredCountLine(unit.body);
   const tasksLine = taskCountLine(unit.id, readAllTasks(config));
   if (countLine || tasksLine) console.log(`\n${[countLine, tasksLine].filter(Boolean).join('\n')}`);
   const tokens = tokensLines(unit.fm);
@@ -821,7 +821,7 @@ export function cmdStatus(args, config, feature) {
 
 /**
  * `bl status S-n`: the story's status, branch, PR, review state and round,
- * its open To Do items and escalation, and the run state `bl run S-n` keeps.
+ * its open Deferred items and escalation, and the run state `bl run S-n` keeps.
  */
 export function cmdStatusStory(args, config, story) {
   const { unit } = loadStoryUnit(story, config);

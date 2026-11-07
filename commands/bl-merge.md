@@ -58,7 +58,7 @@ worktree and branch.
 
 Then it marks the story done (for a feature: every listed story and the feature), runs the
 authoritative `bl sync` on the backlog (under the backlog lock), commits only the backlog paths
-it changed. A story's open `## To Do` goes to a triage session; a feature's `## Deferred` list
+it changed. A story's open `## Deferred` goes to a triage session; a feature's `## Deferred` list
 is printed for you to decide on once.
 
 The unit's change document (`change.md` beside its `index.md`) records each repo's merge commit

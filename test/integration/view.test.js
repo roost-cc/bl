@@ -31,7 +31,7 @@ function backlog() {
         id: 'S-1',
         component: 'C01',
         title: 'One',
-        body: '## Summary\n\nWork.\n\n## Dependencies\n\nNone.\n\n## To Do\n\nNone.',
+        body: '## Summary\n\nWork.\n\n## Dependencies\n\nNone.\n\n## Deferred\n\nNone.',
       },
     ],
   });

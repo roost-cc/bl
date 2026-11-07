@@ -4322,7 +4322,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   }
 
   // 1. Implement stories in dependency order. A story unit's one story uses
-  // story-run.md: no feature file, and its follow-ups go to its own To Do.
+  // story-run.md: no feature file, and its follow-ups go to its own Deferred.
   const implementStopped = implementStories(ctx);
   if (implementStopped) return implementStopped;
 

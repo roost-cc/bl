@@ -53,17 +53,9 @@ export async function applyMigration(
 ) {
   const root = config.backlogRoot;
   const rel = (p) => relative(root, p);
-  const git = (...args) =>
-    spawnSync('git', args, {
-      cwd: root,
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+  const git = gitIn(root);
 
-  const refusal = refuse(config, git);
-  if (refusal) throw new Error(`migration refused: ${refusal}`);
+  assertMigrationCanStart(config);
 
   const headOf = () => git('rev-parse', 'HEAD').stdout.trim();
   const startHead = headOf();
@@ -125,6 +117,30 @@ export async function applyMigration(
   }
   if (result.error) result.error += restore();
   return result;
+}
+
+/** A git runner in `root` that never prompts and never reads stdin. */
+function gitIn(root) {
+  return (...args) =>
+    spawnSync('git', args, {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+}
+
+/**
+ * Throw `migration refused: …` unless the backlog is clean at origin/main
+ * with no bl run or session active: the check `applyMigration` makes. A
+ * migration calls it before it plans, so a run that plans nothing, or a
+ * dry run, is refused as the real run would be.
+ * @param {object} config  the backlog config the run loaded
+ */
+export function assertMigrationCanStart(config) {
+  const refusal = refuse(config, gitIn(config.backlogRoot));
+  if (refusal) throw new Error(`migration refused: ${refusal}`);
 }
 
 /** Why the migration must not start, with what to do, or null. */
