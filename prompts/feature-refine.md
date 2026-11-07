@@ -12,12 +12,14 @@ Stories already linked to this feature:
 
 ## What a feature is
 
-A feature is the unit that gets implemented, reviewed, and merged as one: one
-branch, one pull request, one review cycle. Its stories are the ordered plan
-and the checklist, not separate deliverables. Your job is to make the feature
-ready for that: a premise the operator can approve in five minutes, a design
-written once, feature-level acceptance, and a story cut an agent can execute
-in order without asking anyone.
+A feature is the work unit that bl implements, reviews and merges as one: one branch, one pull
+request, one review. Its stories are the ordered plan and the checklist, not
+separate deliverables. Your job is to make the feature ready for that. It needs four things:
+
+- a premise that the operator can approve in five minutes;
+- a design, written once;
+- feature-level acceptance;
+- a story cut that an agent can carry out in order without asking anyone.
 
 ## Before the design: the theme brief and the road map
 
@@ -27,140 +29,134 @@ in order without asking anyone.
 
 {{themeBrief}}
 
-- **The road map**, `{{backlogDir}}/roadmap.md`: the future states the project is heading for, the
-  directions to them, the hazards on the way (gates such as go-live) and the decisions put off.
-  It is direction, not a commitment. Prefer the generic solution an entry points to. Its
-  statuses are set by hand and inform; bl never gates on them. When the feature would go against
-  an entry (a production deploy while a go-live hazard is not `done`, a residence-only shape where
-  an entry says the core stays generic), say so to the operator in the Premise's `Challenged:`
-  paragraph and in your reply, and let them decide; do not stop on your own.
+- **The road map**, `{{backlogDir}}/roadmap.md`, holds the future states the project is heading
+  for and the directions to them. It also holds the hazards on the way (gates such as go-live)
+  and the decisions put off. It is direction, not a commitment. Prefer the generic solution that
+  an entry points to. The operator sets its statuses by hand, and they inform; bl never gates on
+  them. The feature may go against an entry. Two examples: a production deploy while a go-live
+  hazard is not `done`, or a residence-only shape where an entry says the core stays generic. If
+  it does, say so to the operator in the Premise's `Challenged:` paragraph and in your reply.
+  Let them decide; do not stop on your own.
 
 ## Steps
 
 1. {{readTool}} the feature file. Do not search for it.
 
-2. Explore every repo the work touches (under {{roostDir}}) until you can
-   name the files, contracts, and tests involved, and where the system
-   already defines each concept the work touches (see **Self-consistent
-   designs** below). Ground every claim below in something you read. A
-   feature's repos are derived from its stories: a
-   story's repo is its component's, and that is what puts the repo in the
-   feature, so work in another repo needs a story in a component of that repo
-   (one story per repo). bl orders them `bl` first, then by first story in
-   dependency order, and the first starts the session and gives the review
-   its config. Neither a story nor a feature names a repo: never add
-   `primary_repo` or `secondary_repos` to a frontmatter.
+2. Explore every repo that the work touches (under {{roostDir}}). Go on until you can name the
+   files, contracts and tests involved. Also find where the system already defines each concept
+   that the work touches (see **Self-consistent designs** below). Ground every claim below in
+   something you read.
 
-3. Write **## Premise**. State the assumption that makes this feature the
-   right thing to build and cite the code or evidence it rests on. Then try to
-   falsify it: is the requirement really what the feature says, or a derived
-   shape that smuggled in a stronger claim (one URL where two mounts would do,
-   one flag where a config already exists)? Record the attempt as a paragraph
-   starting with `Challenged:` — what you checked and why the premise holds.
-   If it does not hold, write that, set `status: draft`, and stop after step
-   10; a wrong premise costs a revert later and this paragraph is the cheapest
-   place to catch it. Features touching authentication, storage contracts, or a
-   cross-service boundary always get this paragraph.
+   A feature's repos come from its stories: a
+   story's repo is its component's, and that is what puts the repo in the feature. So work in
+   another repo needs a story in a component of that repo (one story per repo).
+   bl orders them `bl` first, then by first story in dependency order. The first repo starts the
+   session and gives the review its config.
+   Neither a story nor a feature names a repo: never add `primary_repo` or `secondary_repos` to a
+   frontmatter.
 
-4. Write **## Goal**, **## Design**, and **## Out of Scope**. Design is written
-   once, here: decisions, rejected alternatives, and the contracts the stories
-   implement. Stories reference this section; they never restate it. In the
-   Design, name the behaviour the new work shares with existing code or with
-   its sibling stories, and decide whether it gets a shared abstraction (see
-   **Simple, surgical changes** below).
+3. Write **## Premise**. State the assumption that makes this feature the right thing to build,
+   and cite the code or evidence it rests on. Then try to falsify it. Is the requirement really
+   what the feature says? Or is it a derived shape that brought in a stronger claim? Examples are
+   one URL where two mounts would do, or one flag where a config already exists. Record the attempt
+   as a paragraph that starts with `Challenged:`: what you checked and why the premise holds.
 
-5. Write **## Acceptance**: feature-level outcomes, each observable on the
-   merged result rather than on one story in isolation.
+   If the premise does not hold, write that, set `status: draft`, and stop after step 10. A wrong
+   premise costs a revert later, and this paragraph is the cheapest place to catch it. A feature
+   that touches authentication, storage contracts or a cross-service boundary always gets this
+   paragraph.
+
+4. Write **## Goal**, **## Design** and **## Out of Scope**. You write the Design once, here: the
+   decisions, the rejected alternatives, and the contracts that the stories implement. Stories
+   point to this section; they never restate it. In the Design, name the behaviour the new work
+   shares with existing code or with its sibling stories. Decide whether that behaviour gets
+   a shared abstraction (see **Simple, surgical changes** below).
+
+5. Write **## Acceptance**: feature-level outcomes. Each one is observable on the merged result,
+   not on one story alone.
 
 6. Cut the stories. Rules:
-   - 2 to 5 points each; never 1. Fold small work into a sibling.
-   - {{pointsMin}} to {{pointsMax}} points in total. Above that, split the
-     feature; below that, ask whether it is a feature at all.
-   - No verification-only stories ("confirm…", "verify…", "re-run…").
-     Verification is an acceptance criterion of the story that made the change.
-   - Each story's Implementation Plan is at most 40 lines and links to the
-     Design section instead of repeating it. Write each step as
-     `<step> → verify: <check>`, where the check is the test, command or
-     observation that shows the step worked. Write every file path in it in
-     backticks (`src/x.js`): when several targets run at once, `bl run` reads
-     them to hold back a target that touches the same file as another. A path
-     that is not backticked is not seen. It has a `### Sources of truth` part:
-     for each concept the story touches, where it is defined and how the code
-     reaches it. Paths there are read, not changed, so `bl run` does not hold a
-     target back for them.
-   - Order matters: declare `depends_on` between stories so `bl implement`
-     runs them in sequence. Declare each edge once, as `depends_on` on the
-     later story: the inverse is derived, and a stored `required_for:` is a
-     `derived-key` error.
-   - Dependencies outside the feature must already be done, or be pulled into
-     the feature. `bl approve` warns and `bl implement` refuses
-     otherwise.
+   - Give each story 2 to 5 points, never 1. Fold small work into a sibling.
+   - Give the feature {{pointsMin}} to {{pointsMax}} points in total. Above that, split the
+     feature. Below that, ask whether it is a feature at all.
+   - Make no check-only stories ("confirm…", "verify…", "re-run…"). A check is an acceptance
+     criterion of the story that made the change.
+   - Keep each story's Implementation Plan to 40 lines or fewer. It links to the Design section
+     instead of repeating it.
+   - Write each plan step as `<step> → verify: <check>`, where the check is the test, command
+     or observation that shows the step worked.
+   - Write every file path in the plan in backticks (`src/x.js`). When several targets run at
+     once, `bl run` reads these paths to hold back a target that touches the same file as
+     another. `bl run` does not see a path that is not in backticks.
+   - Give the plan a `### Sources of truth` part: for each concept the story touches, where it
+     is defined and how the code reaches it. The story reads these paths and does not change
+     them, so `bl run` does not hold a target back for them.
+   - Order matters. Declare `depends_on` between stories so that `bl implement` runs them in
+     sequence. Declare each edge once, as `depends_on` on the later story. bl derives the
+     inverse, and a stored `required_for:` is a `derived-key` error.
+   - A dependency outside the feature must already be done, or be pulled into the feature.
+     Otherwise `bl approve` warns and `bl implement` refuses.
 
-   Create them in one call so IDs and cross-references resolve atomically:
+   Create the stories in one call, so that their IDs and cross-references resolve together:
 
    ```
    bl new --from <spec.json>
    ```
 
-   with `"feature": "{{featureId}}"` and the stories' `"component": "C<nn>"`
-   at the top level of the spec. A component is a code boundary in one repo,
-   and a story's repo is its component's repo. A story that belongs
-   in another component (another code boundary, or another repo) sets
-   `"component": "C<nn>"` on its own entry. The stories' repos (each one's
-   component's repo) are the feature's repos: `bl run` prepares a worktree
-   for each and nothing else, so every repo the work changes needs a story
-   in one of its components. One story can also be added
-   afterwards with `bl new {{featureId}} <C-id> --title … --points …`.
-   The schema is in `{{roostDir}}/bl/templates/spec.schema.md`; body files use
-   the `story-feature` template (`bl new --print-template story-feature`).
-   Every created story is tagged `feature: {{featureId}}`, which makes it this
-   feature's: a feature's stories, points and components are derived from its
-   stories, never written in the feature file.
+   Put `"feature": "{{featureId}}"` and the stories' `"component": "C<nn>"` at the top level of
+   the spec. A component is a code boundary in one repo, and a story's repo is its component's
+   repo. A story that belongs in another component (another code boundary, or another repo) sets
+   `"component": "C<nn>"` on its own entry. The stories' repos are the feature's repos. `bl run`
+   prepares a worktree for each of them and for nothing else. So every repo that the work changes
+   needs a story in one of its components. You can also add one story afterwards with
+   `bl new {{featureId}} <C-id> --title … --points …`.
 
-   If stories are already linked (listed above), update or supersede them
-   rather than duplicating them.
+   The spec schema is in `{{roostDir}}/bl/templates/spec.schema.md`. Body files use the
+   `story-feature` template (`bl new --print-template story-feature`). `bl new` tags every story
+   it creates `feature: {{featureId}}`, and that tag makes it this feature's story. bl derives a
+   feature's stories, points and components from its stories; never write them in the feature
+   file.
 
-7. Check the feature's value axis in its frontmatter: `theme: <slug>` names
-   the theme it serves (one directory under `themes/`), and `epic: E<nn>`, when
-   it belongs to one, an epic under `epics/` in the same theme. Both are set by
-   hand; `bl sync` derives the epic's feature list. `bl list --features --theme
-   <slug>` shows the theme's epics and features to choose from; when no epic
-   fits, leave `epic:` out rather than forcing one. Then set
-   `status: refined` in the feature frontmatter.
+   If stories are already linked (listed above), update or supersede them. Do not duplicate them.
 
-8. Run `bl validate` and resolve every finding it reports before committing.
-   Then run `bl sync` so the feature's Stories table and the indexes reflect
-   the cut.
+7. Check the feature's value axis in its frontmatter:
+   - `theme: <slug>` names the theme it serves (one directory under `themes/`).
+   - `epic: E<nn>`, when the feature belongs to one, names an epic under `epics/` in the same
+     theme.
 
-9. Format changed markdown with `bl format --no-story <paths>`. Feature files
-   are outside story scope, so the `--story` form does not apply to them.
+   The operator sets both by hand, and `bl sync` derives the epic's feature list.
+   `bl list --features --theme <slug>` shows the theme's epics and features to choose from. If no
+   epic fits, leave `epic:` out; do not force one. Then set `status: refined` in the feature
+   frontmatter.
 
-10. Commit to the backlog repo's main branch, by path — nothing after this
-    session commits for you. Name every story you created or edited with its
-    own `--story`:
+8. Run `bl validate`, and resolve every finding it reports before you commit. Then run `bl sync`,
+   so that the feature's Stories table and the indexes show the cut.
+
+9. Format the changed markdown with `bl format --no-story <paths>`. Feature files are outside
+   story scope, so the `--story` form does not apply to them.
+
+10. Commit to the backlog repo's main branch, by path. Nothing after this session commits for
+    you. Name every story you created or edited with its own `--story`:
 
     ```
     bl sync --commit -m "chore: refine {{featureId}}" --path {{featureRelPath}} --story S-<id> [--story S-<id> …]
     ```
 
-    It takes the backlog lock, regenerates the index files and commits only
-    them, the feature file and the story directories, never what another
-    session has staged. Never run `git add` or `git commit` in the backlog repo.
+    The command takes the backlog lock and regenerates the index files. It commits only those
+    files, the feature file and the story directories, never what another session has staged.
+    Never run `git add` or `git commit` in the backlog repo.
 
 ## Operator decisions and `## Escalation`
 
-- Record every decision the operator makes during this refine where it
-  belongs: a dated bullet in **## Design**, or in **## Premise** when it
-  answers a premise challenge, for example
-  `**Decision A1 (operator, YYYY-MM-DD):** …`.
-- A question that is still undecided goes in an **## Open Questions** section,
-  each with your recommendation.
-- **## Escalation** is only for a blocker that must stop `bl run`
-  until the operator acts. A refine normally leaves it exactly `None.`. Once
-  something is decided, never note it as "resolved" in **## Escalation**; set
-  the section back to `None.`.
-- Any other text in **## Escalation** blocks `bl run`, and
-  `bl approve` refuses the feature.
+- Record every decision that the operator makes during this refine where it belongs. That is a
+  dated bullet in **## Design**, or in **## Premise** when it answers a premise challenge, for
+  example `**Decision A1 (operator, YYYY-MM-DD):** …`.
+- Put each question that is still undecided in an **## Open Questions** section, with your
+  recommendation.
+- **## Escalation** is only for a blocker that must stop `bl run` until the operator acts.
+  A refine normally leaves it exactly `None.`. Once something is decided,
+  never note it as "resolved" in **## Escalation**; set the section back to `None.`.
+- Any other text in **## Escalation** blocks `bl run`, and `bl approve` refuses the feature.
 
 {{selfConsistencyGuide}}
 
@@ -175,7 +171,7 @@ in order without asking anyone.
 ## IMPORTANT
 
 - Do NOT implement anything. Refine and plan only.
-- The operator approves the feature after this session with
-  `bl approve {{featureId}}`. Write for that reader.
-- The tool guide's `--story {{featureId}}` convention is for stories; for this
-  feature use `bl format --no-story <paths>` and the verbs with `{{featureId}}`.
+- After this session, the operator approves the feature with `bl approve {{featureId}}`. Write
+  for that reader.
+- The tool guide's `--story {{featureId}}` convention is for stories. For this feature, use
+  `bl format --no-story <paths>` and the verbs with `{{featureId}}`.
