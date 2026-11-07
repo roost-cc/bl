@@ -708,6 +708,7 @@ export function runHeadlessSession({
   usageStep = null,
   logCommand = null,
   model = null,
+  effort = null,
   run = undefined,
   provider: providerOverride = null,
 }) {
@@ -798,6 +799,8 @@ export function runHeadlessSession({
       // The configuration's own model, which the walk always passes (F-64
       // D3); no implementing default, so a review never runs on it.
       model: model == null ? null : checkModel(model, 'model'),
+      // The session's effort level (F-85 D4, `sessionEffort`); null for none.
+      effort,
       ...(run ? { run } : {}),
     });
   } finally {
@@ -878,6 +881,7 @@ export function launchSession({
   tokensStep = null,
   tokensIndexPath = null,
   model = undefined,
+  effort = null,
   provider: providerOverride = null,
 }) {
   const isRefine = mode === 'refine';
@@ -981,6 +985,7 @@ export function launchSession({
       backlogRoot,
       scopes,
       model: sessionModel(model, agent, config),
+      effort,
     });
   } finally {
     try {

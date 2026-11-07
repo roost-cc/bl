@@ -133,6 +133,7 @@ test("a headless session runs on the model it is given only; an interactive one 
     const cfg = loadConfig({ backlogRoot: dir });
     const wt = mkTempDir('bl-wt-');
     const models = [];
+    const efforts = [];
     const provider = new (class extends AgentProvider {
       supportsHeadless() {
         return true;
@@ -140,8 +141,9 @@ test("a headless session runs on the model it is given only; an interactive one 
       findSession() {
         return null;
       }
-      spawn({ model }) {
+      spawn({ model, effort }) {
         models.push(model);
+        efforts.push(effort);
         return { status: 0, output: '' };
       }
     })();
@@ -201,6 +203,11 @@ test("a headless session runs on the model it is given only; an interactive one 
       );
     }
     assert.equal(models.length, 10);
+    // Both hand the effort level they are given to the provider (F-85 D4), and none by default.
+    assert.ok(efforts.every((e) => e === null));
+    headless({ effort: 'low' });
+    launch({ effort: 'xhigh' });
+    assert.deepEqual(efforts.slice(-2), ['low', 'xhigh']);
   } finally {
     if (tmux != null) process.env.TMUX = tmux;
     cleanup();
