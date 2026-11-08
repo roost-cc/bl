@@ -1,5 +1,5 @@
 // The adapter boundary (F-64 D1): src/agents/provider.js is the interface and
-// claude.js, codex.js and gemini.js are adapters. Outside src/agents/, no
+// claude.js, codex.js, gemini.js and local.js are adapters. Outside src/agents/, no
 // module imports an adapter or compares a value to an agent name; it asks the
 // adapter (getProvider(name).supportsDeny(), …) instead, so adding an agent, a
 // model or a refusal sentence is a change in one adapter. Passing a name as a
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'url';
 const SRC = fileURLToPath(new URL('../../src/', import.meta.url));
 const AGENTS = join(SRC, 'agents');
 
-const NAMES = 'claude|codex|gemini';
+const NAMES = 'claude|codex|gemini|local';
 const IMPORT_RE = new RegExp(
   String.raw`(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)["'][^"']*\bagents/(?:${NAMES})(?:\.js)?["']`,
 );

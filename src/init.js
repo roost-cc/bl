@@ -53,6 +53,7 @@ export async function main(argv) {
 
 Options:
   -A, --agent <id>     Agent provider to initialize
+  --model <m>          Model of the -A configuration (needs -A)
   --help               Show this help
 
 Registers the backlog repo in your global agent settings so agents can
@@ -90,7 +91,7 @@ init"); edits you made before it stay uncommitted.`);
   try {
     before = dirtySnapshot(backlogDir);
     ensureReposBlock(backlogDir, args.agent);
-    config = loadConfig({ agent: args.agent });
+    config = loadConfig({ agent: args.agent, model: args.model });
     const provider = getProvider(config.agent);
 
     info(`Initializing agent: ${config.agent}...`);
@@ -198,10 +199,14 @@ function roleList(value) {
  * registered ones, that `others` does not use at all, else the first whose
  * model-less configuration no entry of `others` equals, so `bl run` can
  * start; with none, `preferred[0]`, else the first of `others`, which
- * `bl run` refuses at start, naming it.
+ * `bl run` refuses at start, naming it. An agent whose checkConfiguration
+ * refuses a model-less configuration in `raw` (`local`) is never picked.
  */
-function independentConfiguration(others, preferred = []) {
-  const names = [...new Set([...preferred, ...PROVIDER_NAMES])].filter((p) => getProvider(p).supportsHeadless());
+function independentConfiguration(others, raw, preferred = []) {
+  const names = [...new Set([...preferred, ...PROVIDER_NAMES])].filter((p) => {
+    const provider = getProvider(p);
+    return provider.supportsHeadless() && provider.checkConfiguration({ model: null }, { topLevel: raw, raw }) == null;
+  });
   const agent =
     names.find((p) => !others.some((c) => c.agent === p)) ??
     names.find((p) => !others.some((c) => sameConfiguration(c, { agent: p }))) ??
@@ -226,9 +231,9 @@ export function initConfigurationLists(raw, agent = null) {
   const flag = agent ? [{ agent: agent.toLowerCase() }] : [];
   const added = {};
   if (!Object.hasOwn(raw, 'agent'))
-    added.agent = flag.length ? flag : [independentConfiguration(roleList(raw.review_agent), [NEW_AGENT])];
+    added.agent = flag.length ? flag : [independentConfiguration(roleList(raw.review_agent), raw, [NEW_AGENT])];
   const implementers = [...(added.agent ?? roleList(raw.agent)), ...flag];
-  if (!Object.hasOwn(raw, 'review_agent')) added.review_agent = [independentConfiguration(implementers)];
+  if (!Object.hasOwn(raw, 'review_agent')) added.review_agent = [independentConfiguration(implementers, raw)];
   return added;
 }
 

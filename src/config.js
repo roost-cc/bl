@@ -335,7 +335,9 @@ export const EPICS_DIR = 'epics';
  * @param {string} [opts.cwd]          — where discovery starts (default process.cwd())
  * @param {string} [opts.backlogRoot]  — explicit backlog root (skips discovery)
  * @param {string} [opts.agent]        — the -A override: a one-entry list
- *   with no model for the role `opts.agentRole` names (F-64 D2)
+ *   for the role `opts.agentRole` names (F-64 D2)
+ * @param {string} [opts.model]        — the --model beside -A: the model of
+ *   that one entry (none: null, the account's model); refused without -A
  * @param {"agent"|"review"} [opts.agentRole] — the role -A replaces:
  *   `review` on `bl review`, `agent` (the default) on every other verb
  * @param {boolean} [opts.lenientAgents] — load a backlog.json whose `agent`
@@ -381,8 +383,10 @@ export function loadConfig(opts = {}) {
   const reposByName = Object.fromEntries(Object.values(repos).map((r) => [r.name, r.path]));
   const title = backlogTitle(topLevel);
 
+  if (opts.model != null && opts.agent == null) throw new Error('--model requires -A <provider>');
   const agentFlag = {
     agent: opts.agent ?? null,
+    model: opts.model ?? null,
     role: opts.agentRole ?? 'agent',
     lenient: opts.lenientAgents === true,
   };
@@ -412,9 +416,14 @@ export function configForRepo(config, repoName) {
   return withRaw({ backlogRoot, roostDir, title, topLevel, repos, reposByName }, raw, agentFlagOf(config), name);
 }
 
-/** The -A handling `config` was loaded with, for a reload or `configForRepo`. */
+/** The -A and --model handling `config` was loaded with, for a reload or `configForRepo`. */
 export function agentFlagOf(config) {
-  return { agent: config.agentFlag ?? null, role: config.agentRole ?? 'agent', lenient: config.lenientAgents === true };
+  return {
+    agent: config.agentFlag ?? null,
+    model: config.agentFlagModel ?? null,
+    role: config.agentRole ?? 'agent',
+    lenient: config.lenientAgents === true,
+  };
 }
 
 /**
@@ -426,13 +435,21 @@ export function repoOf(config) {
 }
 
 /** The config record for `raw` (the top level, or it with a repo's overrides). */
-function withRaw(base, raw, { agent: agentFlag, role: agentRole, lenient: lenientAgents }, repoName) {
+function withRaw(
+  base,
+  raw,
+  { agent: agentFlag, model: agentFlagModel = null, role: agentRole, lenient: lenientAgents },
+  repoName,
+) {
   // Each role is an ordered list of { agent, model } configurations (F-64
   // D2), both required. Reviews run on their own list so the configuration
   // that wrote the code isn't the one signing it off (`review_status:
-  // addressed` is reviewer-only). -A replaces one role's list: the review
-  // list on `bl review`, the implementing list on every other verb.
+  // addressed` is reviewer-only). -A (with --model) replaces one role's list:
+  // the review list on `bl review`, the implementing list on every other verb.
   const where = repoName ? `backlog.json repos["${repoName}"] overrides` : 'backlog.json';
+  // What an adapter's checkConfiguration reads: the top level, and `raw`.
+  const ctx = { topLevel: base.topLevel, raw };
+  const flag = { agent: agentFlag, model: agentFlagModel };
   let agents = [];
   let reviewAgents = [];
   let agentConfigError = null;
@@ -440,11 +457,13 @@ function withRaw(base, raw, { agent: agentFlag, role: agentRole, lenient: lenien
     const retired = retiredAgentShape(raw, where);
     if (retired) throw new Error(retired);
     agents =
-      agentFlag && agentRole !== 'review' ? [flagConfiguration(agentFlag)] : agentConfigurations(raw, 'agent', where);
+      agentFlag && agentRole !== 'review'
+        ? [flagConfiguration(flag, ctx)]
+        : agentConfigurations(raw, 'agent', where, ctx);
     reviewAgents =
       agentFlag && agentRole === 'review'
-        ? [flagConfiguration(agentFlag)]
-        : agentConfigurations(raw, 'review_agent', where);
+        ? [flagConfiguration(flag, ctx)]
+        : agentConfigurations(raw, 'review_agent', where, ctx);
   } catch (e) {
     if (!lenientAgents) throw e;
     agents = [];
@@ -475,10 +494,11 @@ function withRaw(base, raw, { agent: agentFlag, role: agentRole, lenient: lenien
     agentModel: agents[0]?.model ?? null,
     reviewAgent: reviewAgents[0]?.agent ?? null,
     reviewAgentModel: reviewAgents[0]?.model ?? null,
-    // The explicit -A value (or null) and the role it replaces.
-    // `configForRepo` forwards these, not the resolved lists, so a repo's
-    // `agent` or `review_agent` still applies.
+    // The explicit -A value (or null), its --model (or null) and the role
+    // they replace. `configForRepo` forwards these, not the resolved lists,
+    // so a repo's `agent` or `review_agent` still applies.
     agentFlag,
+    agentFlagModel,
     agentRole,
     lenientAgents,
     // Why the lists are empty, under `lenientAgents` only (`bl validate`).
@@ -526,11 +546,12 @@ export function retiredAgentShape(obj, where) {
  * `raw[key]` as a role's list of configurations (F-64 D2): required, a
  * non-empty list of `{ agent, model }`, each `agent` a registered provider,
  * each `model` optional (absent: null, the account's model) and named only
- * for an adapter whose supportsModel() is true, and no entry twice. Throws,
- * naming the entry, otherwise.
+ * for an adapter whose supportsModel() is true, each usable by its adapter's
+ * checkConfiguration, and no entry twice. Throws, naming the entry, otherwise.
+ * @param {{ topLevel: object, raw: object }} ctx — for checkConfiguration
  * @returns {{ agent: string, model: string|null }[]}
  */
-function agentConfigurations(raw, key, where) {
+function agentConfigurations(raw, key, where, ctx) {
   if (!Object.hasOwn(raw, key)) {
     throw new Error(`${where} has no "${key}": list its configurations in priority order, ${LIST_SHAPE} (F-64 D2)`);
   }
@@ -555,6 +576,7 @@ function agentConfigurations(raw, key, where) {
     if (model != null && !getProvider(agent).supportsModel()) {
       throw new Error(`${at} names model "${model}", but ${agent} cannot select a model: drop "model"`);
     }
+    checkUsable({ agent, model }, ctx, at);
     const id = configurationLabel({ agent, model });
     if (seen.has(id)) throw new Error(`${at} repeats ${id}: each configuration is listed once`);
     seen.add(id);
@@ -563,15 +585,34 @@ function agentConfigurations(raw, key, where) {
 }
 
 /**
- * -A as its one-entry list's configuration (F-64 D2): a registered provider,
- * lowercased like a list entry, so D4's equality sees `-A Claude` as the
- * `claude` a list may hold. No model.
+ * -A (and --model) as its one-entry list's configuration (F-64 D2): a
+ * registered provider, lowercased like a list entry, so D4's equality sees
+ * `-A Claude` as the `claude` a list may hold. The model is --model's, or
+ * null; one is refused for an adapter whose supportsModel() is false. The
+ * adapter's checkConfiguration must pass.
+ * @param {{ agent: string, model: string|true|null }} flag
+ * @param {{ topLevel: object, raw: object }} ctx
  */
-function flagConfiguration(agent) {
+function flagConfiguration({ agent, model }, ctx) {
   if (!hasProvider(agent)) {
     throw new Error(`-A must name a registered provider (${PROVIDER_NAMES.join(', ')}), not ${JSON.stringify(agent)}`);
   }
-  return { agent: agent.toLowerCase(), model: null };
+  const name = agent.toLowerCase();
+  if (model != null) {
+    checkModel(model, '--model');
+    if (!getProvider(name).supportsModel()) {
+      throw new Error(`--model "${model}": ${name} cannot select a model: drop --model`);
+    }
+  }
+  const configuration = { agent: name, model: model ?? null };
+  checkUsable(configuration, ctx, `-A ${name}`);
+  return configuration;
+}
+
+/** Throw the adapter's checkConfiguration reason after `at`, if it gives one. */
+function checkUsable(configuration, ctx, at) {
+  const reason = getProvider(configuration.agent).checkConfiguration(configuration, ctx);
+  if (reason) throw new Error(`${at}: ${reason}`);
 }
 
 /** A configuration as the operator reads it: "codex gpt-6-sol", or "claude" with no model. */

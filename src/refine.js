@@ -276,7 +276,8 @@ Arguments:
                        refined (only ${flowForHelp().closedStatusesOf('story').join('/')} are skipped).
 
 Options:
-  -A, --agent <id>     Agent provider (e.g. "claude", "codex", "gemini")
+  -A, --agent <id>     Agent provider (e.g. "claude", "codex", "gemini", "local")
+  --model <m>          Model of the -A configuration (needs -A)
   -P, --prompt <text>  Discuss <text> with the agent first (single story only)
   -t                   Detach into a new tmux window
   --help               Show this help
@@ -289,7 +290,7 @@ ends, bl commits and pushes what it left uncommitted in the backlog.`);
     process.exit(0);
   }
 
-  const config = loadConfig({ agent: args.agent });
+  const config = loadConfig({ agent: args.agent, model: args.model });
 
   const positionals = args.positional;
   if (positionals.length === 0) {

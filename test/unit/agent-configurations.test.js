@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs, { readdirSync, readFileSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
 import { join } from 'path';
-import { loadConfig, sameConfiguration, independentReviewers } from '../../src/config.js';
+import { agentFlagOf, configForRepo, loadConfig, sameConfiguration, independentReviewers } from '../../src/config.js';
 import { findAgentConfigFindings } from '../../src/validate.js';
 import { migrateAgentConfigurations, main as migrate } from '../../scripts/migrate-agent-configurations.js';
 import { ensureReposBlock, initConfigurationLists } from '../../src/init.js';
@@ -393,4 +393,122 @@ test('init_preserves_destination_identity_and_mode', () => {
     run: (dir) => ensureReposBlock(dir),
     done: (j) => Object.hasOwn(j, 'repos'),
   });
+});
+
+// S-1371: the `local` provider and --model beside -A.
+const LOCAL_KEY = { url: 'http://localhost:8090', token: 'local' };
+const LOCAL_QWEN = { agent: 'local', model: 'qwen3.8-27b' };
+
+/** loadConfig's error message for a backlog.json with `patch`, or null when it loads. */
+function loadError(patch, opts = {}, fixture = undefined) {
+  const { dir, cleanup } = backlog(patch, fixture);
+  try {
+    loadConfig({ backlogRoot: dir, ...opts });
+    return null;
+  } catch (e) {
+    return e.message;
+  } finally {
+    cleanup();
+  }
+}
+
+test('a local list entry loads with the top-level local key and is refused without it, naming the key', () => {
+  const { dir, cleanup } = backlog({ local: LOCAL_KEY, agent: [LOCAL_QWEN, { agent: 'claude' }] });
+  try {
+    assert.deepEqual(loadConfig({ backlogRoot: dir }).agents, [LOCAL_QWEN, { agent: 'claude', model: null }]);
+  } finally {
+    cleanup();
+  }
+  const cases = [
+    [{ agent: [{ agent: 'claude' }, LOCAL_QWEN] }, /^backlog\.json "agent"\[1\]: backlog\.json "local" is missing/],
+    [{ local: 'http://localhost:8090' }, /"agent"\[0\]: backlog\.json "local" must be an object/],
+    [{ local: { url: 'http://localhost:8090' } }, /backlog\.json "local" "token" must be a non-empty string/],
+    [{ local: { url: '', token: 'local' } }, /backlog\.json "local" "url" must be a non-empty string/],
+    [{ local: { ...LOCAL_KEY, port: 8090 } }, /backlog\.json "local" has an unknown key "port"/],
+    [{ local: LOCAL_KEY, agent: [{ agent: 'local' }] }, /"agent"\[0\]: .*"model": the server's alias/],
+  ];
+  for (const [patch, want] of cases) {
+    assert.match(loadError({ agent: [LOCAL_QWEN], ...patch }) ?? 'loaded', want, JSON.stringify(patch));
+  }
+});
+
+test("a repo's overrides may not set local for a local configuration; a backlog with no local configuration loads either way", () => {
+  const repos = (overrides) => ({ repos: { demo: { path: '../demo-repo', overrides } } });
+  assert.match(
+    loadError({ local: LOCAL_KEY, agent: [LOCAL_QWEN] }, {}, repos({ local: LOCAL_KEY })) ?? 'loaded',
+    /repos\["demo"\] overrides "agent"\[0\]: .*"overrides" set "local"/,
+  );
+  // Overrides that set local but name no local configuration: nothing reads it.
+  assert.equal(loadError({ local: LOCAL_KEY }, {}, repos({ local: { url: 'x', token: 'y' } })), null);
+  // No local configuration: the key is not needed, and a wrong one is not read.
+  assert.equal(loadError({}), null);
+  assert.equal(loadError({ local: 'nonsense' }), null);
+});
+
+test('-A local --model picks the one-entry list; -A local alone, --model alone and --model on gemini are refused', () => {
+  const { dir, cleanup } = backlog({ local: LOCAL_KEY });
+  try {
+    const cfg = loadConfig({ backlogRoot: dir, agent: 'local', model: 'qwen3.8-27b' });
+    assert.deepEqual(cfg.agents, [LOCAL_QWEN]);
+    assert.equal(cfg.agentModel, 'qwen3.8-27b');
+    assert.deepEqual(cfg.reviewAgents, [{ agent: 'codex', model: null }], 'review_agent stays the list');
+    assert.deepEqual(loadConfig({ backlogRoot: dir, agent: 'Claude', model: 'opus' }).agents, [
+      { agent: 'claude', model: 'opus' },
+    ]);
+    // bl review: -A with --model replaces review_agent.
+    assert.deepEqual(
+      loadConfig({ backlogRoot: dir, agent: 'local', model: 'qwen3.8-27b', agentRole: 'review' }).reviewAgents,
+      [LOCAL_QWEN],
+    );
+    assert.throws(() => loadConfig({ backlogRoot: dir, agent: 'local' }), /^Error: -A local: .*"model"/);
+    assert.throws(() => loadConfig({ backlogRoot: dir, model: 'x' }), /--model requires -A <provider>/);
+    assert.throws(
+      () => loadConfig({ backlogRoot: dir, agent: 'gemini', model: 'x' }),
+      /gemini cannot select a model: drop --model/,
+    );
+    // parseArgs makes a valueless --model `true`.
+    assert.throws(
+      () => loadConfig({ backlogRoot: dir, agent: 'claude', model: true }),
+      /--model must be a non-empty string/,
+    );
+  } finally {
+    cleanup();
+  }
+  // -A local in a backlog with no local key.
+  assert.match(
+    loadError({}, { agent: 'local', model: 'qwen3.8-27b' }) ?? 'loaded',
+    /^-A local: backlog\.json "local" is missing/,
+  );
+});
+
+test('a reload and configForRepo keep the --model of -A', () => {
+  const { dir, cleanup } = backlog(
+    { local: LOCAL_KEY },
+    { repos: { demo: { path: '../demo-repo', overrides: { agent: [{ agent: 'codex' }] } } } },
+  );
+  try {
+    const cfg = loadConfig({ backlogRoot: dir, agent: 'local', model: 'qwen3.8-27b' });
+    assert.deepEqual(agentFlagOf(cfg), { agent: 'local', model: 'qwen3.8-27b', role: 'agent', lenient: false });
+    const repo = configForRepo(cfg, 'demo');
+    assert.deepEqual(repo.agents, [LOCAL_QWEN], '-A outranks the repo list, with its model');
+    assert.equal(repo.agentFlagModel, 'qwen3.8-27b');
+  } finally {
+    cleanup();
+  }
+});
+
+test('independentReviewers keeps every cloud reviewer against a local implementer', () => {
+  const cloud = [
+    { agent: 'claude', model: 'qwen3.8-27b' },
+    { agent: 'codex', model: null },
+    { agent: 'claude', model: null },
+  ];
+  assert.deepEqual(independentReviewers([LOCAL_QWEN], cloud), cloud);
+});
+
+test('bl init never adds a model-less local configuration', () => {
+  const c = (agent) => ({ agent });
+  // Every cloud agent reviews: the implementer is a model-less one of them, not local.
+  const added = initConfigurationLists({ review_agent: [c('claude'), c('codex'), c('gemini')] });
+  assert.notEqual(added.agent[0].agent, 'local');
 });

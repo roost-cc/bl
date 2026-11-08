@@ -28,8 +28,10 @@ Each row: the role, the agent, the model (- for the account's own), the
 state (available, unavailable or unknown), each quota window the adapter
 read with its remaining percent and its reset in local time, and the
 adapter's message. An agent whose quota is one for every model (Codex) is
-asked once. An adapter that cannot report capacity (Claude, Gemini) shows
-unknown, as does a read that failed, with the reason.
+asked once. The local provider asks its server's /health: available when it
+answers 200, unavailable when nothing listens. An adapter that cannot report
+capacity (Claude, Gemini) shows unknown, as does a read that failed, with the
+reason.
 
 Options:
   --json   Print {schema: "${CAPACITY_SCHEMA}", configurations: [...]}, each
@@ -42,14 +44,18 @@ Exit codes:
 
 /**
  * Every configuration of both roles with its adapter's answer. `ask(agent,
- * model)` is the adapter call (a test passes its own).
+ * model)` is the adapter call, given the config's backlog root (a test
+ * passes its own).
  *
- * @param {{ agents: {agent: string, model: string|null}[],
+ * @param {{ backlogRoot: string, agents: {agent: string, model: string|null}[],
  *           reviewAgents: {agent: string, model: string|null}[] }} config
  * @param {(agent: string, model: string|null) => object} [ask]
  * @returns {object[]}
  */
-export function capacityRows(config, ask = (agent, model) => getProvider(agent).capacity({ model })) {
+export function capacityRows(
+  config,
+  ask = (agent, model) => getProvider(agent).capacity({ model, backlogRoot: config.backlogRoot }),
+) {
   const byAgent = new Map();
   const byConfiguration = new Map();
   const read = (agent, model) => {

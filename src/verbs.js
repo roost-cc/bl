@@ -75,8 +75,9 @@ Options:
                        (one target)
   --plan               Print the steps and exit
   --max-rounds <n>     Review-round cap for this run
-  -A, --agent <id>     Agent provider; replaces backlog.json's agent list
-                       (no model), not review_agent
+  -A, --agent <id>     Agent provider; replaces backlog.json's agent list,
+                       not review_agent
+  --model <m>          Model of the -A configuration (needs -A)
   --help               Show this help
 
 No --repo: a story's repo is its component's, and a feature prepares every
@@ -101,6 +102,7 @@ Arguments:
 
 Options:
   -A, --agent <id>     Agent provider
+  --model <m>          Model of the -A configuration (needs -A)
   -P, --prompt <text>  Discuss <text> with the agent first (one target)
   --help               Show this help
 
@@ -119,7 +121,8 @@ Options:
   -r, --repo <name>    Feature: restrict the review to one repo's PR.
                        Refused for a story: it has one repo
   -A, --agent <id>     Agent provider; replaces backlog.json's review_agent
-                       list (no model)
+                       list
+  --model <m>          Model of the -A configuration (needs -A)
   -P, --prompt <text>  Extra instructions for the review sessions
   --interactive        Attach each review session (one target)
   --help               Show this help
@@ -158,6 +161,7 @@ Arguments:
 
 Options:
   -A, --agent <id>     Agent provider
+  --model <m>          Model of the -A configuration (needs -A)
   -P, --prompt <text>  Discuss <text> with the agent first (single target)
   -t                   Detach into a new tmux window
   --help               Show this help
@@ -276,7 +280,11 @@ export async function dispatch(verb, argv) {
 
   // -A replaces the review list on `bl review`, the implementing list on
   // every other verb (F-64 D2).
-  const config = loadConfig({ agent: args.agent, agentRole: verb === 'review' ? 'review' : 'agent' });
+  const config = loadConfig({
+    agent: args.agent,
+    model: args.model,
+    agentRole: verb === 'review' ? 'review' : 'agent',
+  });
   const { targets, errors, notices } = resolveTargets(ids, config, verb);
   for (const n of notices) info(n);
   for (const e of errors) console.error(e);

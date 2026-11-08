@@ -12,6 +12,7 @@ import { AgentProvider, agentEnv } from './provider.js';
 import { loadHookDenyMessage } from '../tool-guide.js';
 import { checkModel } from '../config.js';
 import { checkEffort } from '../effort.js';
+import { checkLocalConfiguration, localServerCapacity, localSpawnEnv } from './local.js';
 
 // Resolve Claude Code's config directory the same way the CLI does: honour
 // `CLAUDE_CONFIG_DIR` when set, else fall back to `~/.claude`. Hardcoding
@@ -552,6 +553,18 @@ export class ClaudeProvider extends AgentProvider {
     return null;
   }
 
+  /**
+   * The environment spawn() gives `claude`. The bash-shape guard hook
+   * inherits it: the session's own backlog, whatever another backlog's
+   * `bl init` or launch wrote meanwhile; and a headless session is marked
+   * BL_HEADLESS (F-78 D3). `local` overrides it to point `claude` at its
+   * server; `model` is for that.
+   * @param {{ headless: boolean, backlogRoot: string|null, model: string|null }} opts
+   */
+  spawnEnv({ headless, backlogRoot }) {
+    return agentEnv({ headless, backlogRoot });
+  }
+
   spawn({
     mode,
     name,
@@ -569,10 +582,7 @@ export class ClaudeProvider extends AgentProvider {
     backlogRoot = null,
     run = spawnSync,
   }) {
-    // The bash-shape guard hook inherits this env: the session's own backlog,
-    // whatever another backlog's `bl init` or launch wrote meanwhile; and a
-    // headless session is marked BL_HEADLESS (F-78 D3).
-    const env = agentEnv({ headless, backlogRoot });
+    const env = this.spawnEnv({ headless, backlogRoot, model });
     const claudeArgs = buildClaudeArgs({
       name,
       prompt,
@@ -689,5 +699,30 @@ export class ClaudeProvider extends AgentProvider {
     }
 
     return any ? totals : null;
+  }
+}
+
+/**
+ * The `local` adapter (S-1371): `claude` against the local model server that
+ * `backlog.json`'s top-level `local` key names. Every method but these three
+ * is claude's. Its logic and its module are local.js; the class is here so
+ * that it extends ClaudeProvider only once ClaudeProvider exists, whatever
+ * module loads first (local.js says why).
+ */
+export class LocalProvider extends ClaudeProvider {
+  get name() {
+    return 'local';
+  }
+
+  checkConfiguration(configuration, ctx) {
+    return checkLocalConfiguration(configuration, ctx);
+  }
+
+  spawnEnv(opts) {
+    return localSpawnEnv(opts);
+  }
+
+  capacity(opts) {
+    return localServerCapacity(opts);
   }
 }
