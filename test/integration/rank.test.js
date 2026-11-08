@@ -387,6 +387,35 @@ test('usage errors and checkUnit refusals exit 1 before the cleanup; a flow list
   assert.equal(read(dir), open);
 });
 
+test('rank_bare_malformed_priority_reports_one_line', () => {
+  // Every RankFileError shape the graph loads, on a bare run and on an edit:
+  // one line, the file unchanged. (Frontmatter that is not YAML, or not a
+  // mapping, stops loadBacklog before bl rank runs.)
+  const shapes = {
+    'not a list': '---\nranked: nope\n---\n',
+    'entry without why': '---\nranked:\n  - unit: F-2\n---\n',
+    'flow list': '---\nranked: [{ unit: F-2, why: Next }]\n---\n',
+    'no frontmatter': '# Priority\n',
+  };
+  for (const [shape, text] of Object.entries(shapes)) {
+    for (const [args, status] of [
+      [[], 0],
+      [['F-1', '--top', '--why', 'x'], 1],
+    ]) {
+      const label = `${shape} / ${args.length ? 'edit' : 'bare'}`;
+      const dir = backlog(text);
+      const head = git(dir, 'rev-parse', 'HEAD');
+      const r = bl(['rank', ...args], dir);
+      assert.equal(r.status, status, `${label}: ${r.stderr}`);
+      const lines = r.stderr.trim().split('\n');
+      assert.equal(lines.length, 1, `${label}: ${r.stderr}`);
+      assert.match(lines[0], /^bl rank: /, label);
+      assert.equal(read(dir), text, label);
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), head, label);
+    }
+  }
+});
+
 test('a headless bare bl rank writes nothing and says nothing about closed units', () => {
   const dir = backlog(CLOSED);
   const head = git(dir, 'rev-parse', 'HEAD');

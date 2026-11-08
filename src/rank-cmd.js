@@ -337,10 +337,14 @@ function describe(u) {
   return `${u.id}  ${u.title}`;
 }
 
-/** `bl rank` with no arguments: the order, ranked then the dated tail. */
-function printOrder(graph) {
+/**
+ * `bl rank` with no arguments: the order, ranked then the dated tail.
+ * `fileReported`: the cleanup already named the file's problem.
+ */
+function printOrder(graph, fileReported = false) {
   for (const p of graph.problems) {
-    if (p.code === 'priority-file' || p.code === 'priority-unit') info(`bl rank: ${p.message} (run bl validate)`);
+    if ((p.code === 'priority-file' && !fileReported) || p.code === 'priority-unit')
+      info(`bl rank: ${p.message} (run bl validate)`);
   }
   const entryOf = new Map(graph.ranked.map((e) => [e.unit, e]));
   const ranked = graph.priority.filter((u) => entryOf.has(u));
@@ -461,7 +465,7 @@ function cleanup(root, path, graph) {
     ids = closedIn(graph, content);
   } catch (err) {
     if (!(err instanceof RankFileError)) throw err;
-    return { skipped: err.message };
+    return { skipped: err.message, fileError: true };
   }
   const message = (removed) => `chore: ${removed.join(', ')} unranked (done) in ${PRIORITY_FILE}`;
   if (inRepo(root) && uncommitted(root)) {
@@ -539,10 +543,16 @@ export async function main(argv, env = process.env) {
   const op = editing ? editOp(graph, path, values, positionals) : null;
 
   // An interactive run first takes closed units out, in a commit of its own.
+  let fileReported = false;
   if (!isHeadless(env) && existsSync(path)) {
     const res = await withLock(root, () => cleanup(root, path, graph));
-    if (res.skipped) info(`bl rank: ${res.skipped}`);
-    else {
+    if (res.skipped) {
+      // A file bl rank cannot edit: an edit refuses with this one line, and
+      // the listing does not name the file's problem again.
+      if (res.fileError && op) refuse(res.skipped);
+      info(`bl rank: ${res.skipped}`);
+      fileReported = Boolean(res.fileError);
+    } else {
       if (res.reopened?.length > 0) info(`bl rank: ${res.reopened.join(', ')} open again; put back in ranked:`);
       if (res.removed.length > 0) {
         info(`bl rank: took out ${res.removed.join(', ')} (done).`);
@@ -554,7 +564,7 @@ export async function main(argv, env = process.env) {
     }
   }
   if (!op) {
-    printOrder(graph);
+    printOrder(graph, fileReported);
     return;
   }
   await applyEdit(root, path, op);
