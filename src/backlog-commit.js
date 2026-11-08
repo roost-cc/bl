@@ -91,8 +91,9 @@ function hashPath(root, rel) {
 }
 
 /**
- * Dirty paths of a repo mapped to a content hash, or null when `root` is not
- * a git repo (callers then skip committing).
+ * Dirty paths of a repo mapped to a content hash, or null when `git status`
+ * fails: `root` is not a git repo, or its repo is broken. In a repo of its
+ * own, `commitChangedSince` treats null as a failure (S-1330).
  * @returns {Map<string, string> | null}
  */
 export function dirtySnapshot(root) {
