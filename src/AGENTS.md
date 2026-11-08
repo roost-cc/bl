@@ -2694,8 +2694,11 @@ bl rank S-40 --remove                 # back into the dated tail
   `ranked:` order), and says `bl rank: took out F-79, F-85 (done).` on stderr, before it prints
   the order or applies the edit. A failed commit exits 1 and the edit does not run. With
   uncommitted edits to `priority.md` it leaves the closed units and says which; the one exception
-  is a file that holds exactly an earlier cleanup's write whose commit failed (`pendingIsOurs`),
-  which it commits. A file bl rank cannot edit (a flow list) skips the cleanup with one line.
+  is a file that holds exactly an earlier cleanup's write whose commit failed (`pendingIsOurs`).
+  It redoes that cleanup on HEAD with the units closed now, and commits it: a unit closed since
+  goes too, and a unit open again gets its entry back, with a line that names it. A file bl rank
+  cannot edit (a flow list) skips the cleanup with one line, and an edit on it refuses with that
+  line.
   `bl rank <closed unit> --remove` exits 0 once the cleanup took that unit out. Usage errors and
   `checkUnit` refusals exit before the cleanup.
 - `<unit>` must be an open feature or loose story (`checkUnit`): a story inside a feature
