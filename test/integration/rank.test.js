@@ -408,6 +408,16 @@ test('a failed cleanup commit exits 1 and stops the edit; the next bare run comm
   assert.equal(r.stdout, LISTING);
 });
 
+test('the cleanup keeps a CRLF priority.md CRLF', () => {
+  const crlf = (s) => s.replace(/\n/g, '\r\n');
+  const dir = backlog(crlf(CLOSED));
+  const r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /took out F-5, S-9 \(done\)/);
+  assert.equal(read(dir), crlf(HAND));
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+});
+
 test('under BL_HEADLESS bl rank refuses with nothing written, and so does a backlog commit of priority.md', () => {
   const dir = backlog();
   const head = git(dir, 'rev-parse', 'HEAD');
