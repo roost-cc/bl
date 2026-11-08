@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
@@ -106,6 +107,24 @@ test('bl list --json prints the listed stories with their whole frontmatter', ()
     const pattern = runBl(['list', '--json', 'Keyed'], { cwd: dir });
     assert.equal(pattern.status, 1);
     assert.match(pattern.stderr, /--json lists stories and takes no pattern/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('list JSON stdout contract is documented: the AGENTS.md stdout table and bl list --help name the schema bl list --json prints', () => {
+  const { dir, cleanup } = buildSampleBacklog();
+  try {
+    const r = runBl(['list', '--json'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    const { schema } = JSON.parse(r.stdout);
+    const agents = readFileSync(fileURLToPath(new URL('../../src/AGENTS.md', import.meta.url)), 'utf8');
+    const row = agents.split('\n').find((l) => l.startsWith('| `bl list --json`'));
+    assert.ok(row, 'src/AGENTS.md has a `bl list --json` row in the per-command stdout contracts');
+    assert.ok(row.includes(`\`${schema}\``), `the row names ${schema}: ${row}`);
+    const help = runBl(['list', '--help'], { cwd: dir });
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout.replace(/\s+/g, ' '), new RegExp(`--json .*${schema.replaceAll('/', '\\/')}`));
   } finally {
     cleanup();
   }

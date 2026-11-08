@@ -42,6 +42,7 @@ Per-command stdout contracts:
 | `bl next-id`         | one ID per line                                           |
 | `bl which`           | one line: absolute path                                   |
 | `bl list` / `ls`     | the table                                                 |
+| `bl list --json`     | one JSON object (schema `bl-list-json/v1`)                |
 | `bl status` (no ids) | the table, as `bl list`                                   |
 | `bl tree`            | the rendered tree                                         |
 | `bl history`         | the week table (`--json`: one object)                     |
@@ -2470,6 +2471,7 @@ bl list --theme backlog       # stories in a theme (Themes and Epics)
 bl list --component C32 --feature F-51   # filters combine
 bl list --epic E-62           # an epic's features, grouped, with progress
 bl list --features --theme backlog       # a theme's features, grouped by epic
+bl list --json                # the stories with their whole frontmatter, as JSON
 bl tree --epic E62            # trees containing the epic's pending stories
 bl what-next --theme backlog  # next startable story in the theme
 ```
