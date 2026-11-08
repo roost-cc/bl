@@ -624,7 +624,10 @@ test('readHeartbeat: the fetch leaves a full clone of the heartbeat repo complet
 });
 
 test('heartbeat_fetch_uses_its_own_commit: another fetch in the clone between the fetch and the read does not change what is read', () => {
-  const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const realGit = spawnSync('sh', ['-c', 'command -v git'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).stdout.trim();
   // Each is a fetch that another process may run in the same clone: it rewrites FETCH_HEAD.
   const others = [
     ['fetch', '-q', 'origin', 'main'],
