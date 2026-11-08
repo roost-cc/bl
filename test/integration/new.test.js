@@ -629,48 +629,63 @@ for (const [name, setup, target, args, check] of [
 // feature_commit_excludes_formatter_sidecars: every `bl new` branch commits
 // the files it wrote and nothing else. The Markdown formatter here writes a
 // `sidecar.txt` beside each file it formats; that file stays out of the commit.
-for (const [name, args, committed, sidecar] of [
+// `fm` holds, per committed index.md, the frontmatter fields its HEAD copy has.
+for (const [name, args, committed, sidecar, fm] of [
   [
     'story',
     () => ['new', 'C01', '--points', '1', '--title', 'Fresh'],
     ['A\tstories/S3-fresh/index.md'],
     'stories/S3-fresh',
+    { 'stories/S3-fresh/index.md': { story_id: 'S-3', title: 'Fresh', component: 'C01' } },
   ],
   [
     'batch',
     (dir) => ['new', '--from', writeSpec(dir)],
     ['A\tstories/S3-alpha/index.md', 'A\tstories/S4-bravo/index.md'],
     'stories/S3-alpha',
+    {
+      'stories/S3-alpha/index.md': { story_id: 'S-3', title: 'Alpha', component: 'C01' },
+      'stories/S4-bravo/index.md': { story_id: 'S-4', title: 'Bravo', component: 'C02' },
+    },
   ],
   [
     'component',
     () => ['new', '--component', '--repo', 'beta', '--title', 'Fresh', '--paths', '**'],
     ['A\tcomponents/C04-fresh/index.md'],
     'components/C04-fresh',
+    { 'components/C04-fresh/index.md': { component_id: 'C04', title: 'Fresh', repo: 'beta' } },
   ],
   [
     'theme',
     (dir) => ['new', '--theme', 'ops', '--title', 'Ops', '--brief', `${basename(dir)}/backlog.json`],
     ['A\tthemes/ops/index.md'],
     'themes/ops',
+    { 'themes/ops/index.md': { theme_id: 'ops', title: 'Ops' } },
   ],
   [
     'epic',
     () => ['new', '--epic', '--theme', 'demo', '--title', 'Hub'],
     ['A\tepics/E50-hub/index.md'],
     'epics/E50-hub',
+    { 'epics/E50-hub/index.md': { epic_id: 'E50', title: 'Hub', theme: 'demo' } },
   ],
   [
     'feature with stories',
     () => ['new', '--feature', '--theme', 'demo', '--title', 'Pair', 'S-1', 'S-2'],
     ['A\tfeatures/F1-pair/index.md', 'M\tstories/S1-one/index.md', 'M\tstories/S2-two/index.md'],
     'features/F1-pair',
+    {
+      'features/F1-pair/index.md': { feature_id: 'F-1', title: 'Pair', theme: 'demo' },
+      'stories/S1-one/index.md': { story_id: 'S-1', feature: 'F-1' },
+      'stories/S2-two/index.md': { story_id: 'S-2', feature: 'F-1' },
+    },
   ],
   [
     'feature with no stories',
     () => ['new', '--feature', '--theme', 'demo', '--title', 'Solo'],
     ['A\tfeatures/F1-solo/index.md'],
     'features/F1-solo',
+    { 'features/F1-solo/index.md': { feature_id: 'F-1', title: 'Solo', theme: 'demo' } },
   ],
 ]) {
   test(`feature_commit_excludes_formatter_sidecars: ${name}`, () => {
@@ -696,6 +711,11 @@ for (const [name, args, committed, sidecar] of [
       const r = runBl(args(dir), { cwd: dir, env: GIT_ENV });
       assert.equal(r.status, 0, r.stderr);
       assert.deepEqual(headFiles(dir), committed);
+      assert.deepEqual(Object.keys(fm).sort(), committed.map((f) => f.split('\t')[1]).sort());
+      for (const [rel, want] of Object.entries(fm)) {
+        const got = parseFrontmatter(git(dir, 'show', `HEAD:${rel}`)).fm;
+        assert.deepEqual(Object.fromEntries(Object.keys(want).map((k) => [k, got[k]])), want, rel);
+      }
       assert.ok(statusLines(dir).includes(`?? ${sidecar}/sidecar.txt`), statusLines(dir).join('\n'));
     } finally {
       cleanup();
