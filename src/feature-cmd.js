@@ -103,7 +103,15 @@ import { failPoint } from './feature-links.js';
 import { prepareBody } from './body.js';
 import { scanDeferred, DEFERRED_HEADING } from './deferred.js';
 import { readAllTasks, tasksOf } from './task.js';
-import { dirtySnapshot, commitChangedSince } from './backlog-commit.js';
+import {
+  commitChangedSince,
+  dirtySnapshot,
+  failedCommitRecord,
+  hashPath,
+  readFailedCommit,
+  saveFailedCommit,
+} from './backlog-commit.js';
+import { loadBacklog } from './backlog-graph.js';
 import { reportBacklogCommit, syncAndCommit } from './sync.js';
 import { refineAndCommit } from './refine.js';
 import {
@@ -584,18 +592,27 @@ export function cmdRefine(args, config, feature) {
 // ---------------------------------------------------------------------------
 
 export async function cmdApprove(args, config, feature) {
+  // Held from the state check through the commit (S-1330): the feature is
+  // read again under it, so a status another command wrote while approve
+  // waited is the one checked, and no other command commits the approval
+  // first, under its own message.
+  await acquireLock(config.backlogRoot);
+  try {
+    const fresh = { ...config, backlogGraph: loadBacklog(config, { reload: true }) };
+    await approveLocked(args, config, findFeature(normalizeFeatureId(feature.id), fresh) ?? feature);
+  } finally {
+    releaseLock(config.backlogRoot);
+  }
+}
+
+async function approveLocked(args, config, feature) {
   if (loadFlow(config.backlogRoot).meets('feature', feature.status, 'done')) {
     console.error(`Feature ${feature.id} is ${feature.status}.`);
     process.exit(1);
   }
   if (feature.status !== 'draft' && feature.status !== 'refined') {
     info(`Feature ${feature.id} is already ${feature.status}.`);
-    // A retry after a failed approval commit commits the approval now; a
-    // committed one has nothing to commit, and says nothing (S-1330).
-    if (feature.status === 'approved') {
-      const res = await approvalCommit(config, feature);
-      if (res.committed || res.error) reportBacklogCommit(res, 'bl approve');
-    }
+    if (feature.status === 'approved') await retryApprovalCommit(config, feature);
     return;
   }
   if (feature.status === 'draft' && !args.force) {
@@ -635,27 +652,71 @@ export async function cmdApprove(args, config, feature) {
     info('  `bl run` and `bl implement` will refuse until these are merged or pulled into the feature.');
   }
 
-  // Held from the write through the commit (S-1330): no other bl command
-  // commits the approval first, under its own message.
-  await acquireLock(config.backlogRoot);
-  try {
-    updateFeature(config, feature, (fm) => {
-      fm.status = 'approved';
-      fm.approved = today();
-    });
-    info(`\nApproved ${feature.id} — ${feature.title} (${stories.length} stories, ${points} points).`);
-    for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
-
-    info(`\nNext: bl run ${feature.id} (or bl implement ${feature.id} to work interactively)`);
-    reportBacklogCommit(await approvalCommit(config, feature), 'bl approve');
-  } finally {
-    releaseLock(config.backlogRoot);
+  // An edit outside bl since the read (an editor) is not approved over.
+  const wrote = updateFeature(config, feature, (fm) => {
+    if ((fm.status ?? 'draft') !== feature.status) return false;
+    fm.status = 'approved';
+    fm.approved = today();
+  });
+  if (!wrote) {
+    console.error(`Feature ${feature.id} changed while bl approve read it; nothing written. Run bl approve again.`);
+    process.exit(1);
   }
+  info(`\nApproved ${feature.id} — ${feature.title} (${stories.length} stories, ${points} points).`);
+  for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
+
+  info(`\nNext: bl run ${feature.id} (or bl implement ${feature.id} to work interactively)`);
+  reportBacklogCommit(await approvalCommit(config, feature), 'bl approve');
 }
 
-/** Commit and push the approved feature file (`syncAndCommit`). */
-function approvalCommit(config, feature) {
-  return syncAndCommit(config, { message: `chore: approve ${feature.id}`, extraPaths: [feature.featureRelPath] });
+/** The owner of an approval's failed-commit record (`failedCommitRecord`). */
+const approvalOwner = (feature) => `approve ${feature.id}`;
+
+/**
+ * Commit and push the approved feature file (`syncAndCommit`). A failed
+ * commit records the file's content in the approval's failed-commit record,
+ * so a rerun commits that approval and nothing else (`retryApprovalCommit`);
+ * any other result removes the record.
+ */
+async function approvalCommit(config, feature) {
+  const root = config.backlogRoot;
+  const rel = feature.featureRelPath;
+  const res = await syncAndCommit(config, { message: `chore: approve ${feature.id}`, extraPaths: [rel] });
+  saveFailedCommit(root, approvalOwner(feature), {
+    commit: res.error ? [[rel, hashPath(root, rel)]] : [],
+    unsure: [],
+  });
+  return res;
+}
+
+/**
+ * A rerun on an `approved` feature (S-1330): commit the approval only when an
+ * earlier `bl approve` failed to commit it and the file still holds what that
+ * commit tried. An operator's edit since, staged or not, and an approval
+ * already committed make no commit and print nothing more. A record that
+ * cannot be read fails the command.
+ */
+async function retryApprovalCommit(config, feature) {
+  const root = config.backlogRoot;
+  const rel = feature.featureRelPath;
+  const owner = approvalOwner(feature);
+  let pending;
+  try {
+    pending = readFailedCommit(root, owner);
+  } catch (e) {
+    saveFailedCommit(root, owner, { commit: [], unsure: [] });
+    console.error(
+      `bl approve: cannot read ${failedCommitRecord(owner)} (${e.message}); an earlier approval may be uncommitted. Check: git -C "${root}" status -- ${rel}`,
+    );
+    process.exit(1);
+  }
+  const hash = hashPath(root, rel);
+  if (!pending.commit.some(([p, h]) => p === rel && h === hash)) {
+    saveFailedCommit(root, owner, { commit: [], unsure: [] });
+    return;
+  }
+  const res = await approvalCommit(config, feature);
+  if (res.committed || res.error) reportBacklogCommit(res, 'bl approve');
 }
 
 // ---------------------------------------------------------------------------
