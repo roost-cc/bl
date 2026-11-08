@@ -61,6 +61,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { readSpecText, specText, withSpecLock } from './spec-file.js';
 import { syncMain, reportMainSync, MAIN_REFSPEC } from './main-sync.js';
 import { syncAndCommit, reportBacklogCommit, exitOnSyncError } from './sync.js';
+import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 
 /**
  * A story's `## Deferred` body, for the merge's triage agent: since F-65 D4
@@ -1103,6 +1104,9 @@ no main checkout touched. A merge into main that still fails is aborted.`);
   }
 
   if (allCleaned && deferredSection) {
+    // What the triage session, and bl for it, leave uncommitted is committed
+    // after it (S-1330); edits made before it stay out.
+    const backlogBefore = dirtySnapshot(config.backlogRoot);
     const componentId = componentEntry.match(/^(C\d+)/)?.[1] ?? '';
     info(`\nStory ${parsed.id} has a Deferred section — launching triage agent...\n`);
     const triagePrompt = loadPrompt(
@@ -1149,6 +1153,8 @@ no main checkout touched. A merge into main that still fails is aborted.`);
     if (triageResult.status !== 0) {
       info('  (triage session ended — you may need to create stories manually)');
     }
+    const triageMessage = `chore: triage ${parsed.id} Deferred into new stories`;
+    if (commitChangedSince(config.backlogRoot, backlogBefore, triageMessage, { session: true })) process.exitCode = 1;
     info('');
   }
 

@@ -10,6 +10,8 @@
  * what-next filter by --theme, --epic, --feature and --component.
  */
 
+import { existsSync } from 'fs';
+import { join } from 'path';
 import { append as logAppend } from './log.js';
 import { info, captureTmuxWindowId, editorCommand, openTmuxWindow } from './config.js';
 import { flowForHelp } from './flow.js';
@@ -210,6 +212,18 @@ async function run() {
       const { pullBeforeCommand } = await import('./sync.js');
       const pull = await pullBeforeCommand(config);
       if (pull.state === 'unsafe') process.exit(1);
+    } else if (command === 'init') {
+      // `bl init` repairs a backlog.json that `loadConfig` rejects (no
+      // "repos", no effort levels), so it pulls that backlog first all the
+      // same (S-1330). `pullBeforeCommand` skips a backlog with no repo of
+      // its own, as for every command.
+      const { initBacklogDir } = await import('./init.js');
+      const dir = initBacklogDir();
+      if (existsSync(join(dir, 'backlog.json'))) {
+        const { pullBeforeCommand } = await import('./sync.js');
+        const pull = await pullBeforeCommand({ backlogRoot: dir }, { regenerate: false });
+        if (pull.state === 'unsafe') process.exit(1);
+      }
     }
   }
 

@@ -24,12 +24,26 @@ import { LOCAL_TOOLS_FILE } from './permissions.js';
 import { FLOW_FILE } from './flow.js';
 import { ROADMAP_FILE } from './roadmap.js';
 import { PRIORITY_FILE } from './priority.js';
-import { atomicWriteFile } from './atomic-write.js';
+import { atomicWriteFile, STAGING_DIR } from './atomic-write.js';
 import { getProvider, PROVIDER_NAMES } from './agents/index.js';
 import { probePluginBinaries, formatPluginStatus } from './plugin-binaries.js';
+import { commitChangedSince, dirtySnapshot, recordChangedSince } from './backlog-commit.js';
+import { acquireLock, releaseLock, LOCK_FILE } from './lock.js';
 import { detectGhCredentialHelper, formatGhCredentialHelperAdvisory } from './credential-helper.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** `bl init`'s commit message, and the owner of its failed-commit record. */
+const INIT_COMMIT_MESSAGE = 'chore: bl init';
+
+/**
+ * The directory `bl init` treats as the backlog root: `$BL_BACKLOG_DIR`, else
+ * the current directory. `bl.js` pulls it before `bl init` writes, when
+ * `loadConfig` rejects the `backlog.json` there (S-1330).
+ */
+export function initBacklogDir() {
+  return process.env.BL_BACKLOG_DIR || process.cwd();
+}
 
 export async function main(argv) {
   const args = parseArgs(argv);
@@ -58,26 +72,49 @@ and "review_agent", [{ "agent": "<the first other headless agent>" }]: the
 reviewer is never the implementer. A backlog.json that has "repos" keeps
 its settings and gets only the effort levels, unless it has them. Repos are
 registered by hand in
-backlog.json "repos"; themes are created with bl new --theme.`);
+backlog.json "repos"; themes are created with bl new --theme. When the backlog
+is a git repo, bl init commits and pushes the files it wrote ("chore: bl
+init"); edits you made before it stay uncommitted.`);
     process.exit(0);
   }
 
-  ensureReposBlock(process.env.BL_BACKLOG_DIR || process.cwd(), args.agent);
-  const config = loadConfig({ agent: args.agent });
-  const provider = getProvider(config.agent);
+  // `ensureReposBlock` treats this directory as the backlog root. The
+  // snapshot keeps edits made before `bl init` out of its commit (S-1330).
+  const backlogDir = initBacklogDir();
+  // The backlog lock is held from the first write through the commit, so no
+  // other bl command commits what init wrote first.
+  await acquireLock(backlogDir);
+  let config;
+  let commitFailed;
+  let before;
+  try {
+    before = dirtySnapshot(backlogDir);
+    ensureReposBlock(backlogDir, args.agent);
+    config = loadConfig({ agent: args.agent });
+    const provider = getProvider(config.agent);
 
-  info(`Initializing agent: ${config.agent}...`);
-  await provider.init(config.backlogRoot, config);
-  ensureLocalToolsGitignored(config.backlogRoot);
-  warnIfGhCredentialHelper();
+    info(`Initializing agent: ${config.agent}...`);
+    await provider.init(config.backlogRoot, config);
+    ensureGitignored(config.backlogRoot);
+    warnIfGhCredentialHelper();
 
-  copySeed(config.backlogRoot, 'allowed-tools.json');
-  ensureFlowFile(config.backlogRoot);
-  ensureBacklogDocs(config.backlogRoot);
-  ensureRootIndex(config);
+    copySeed(config.backlogRoot, 'allowed-tools.json');
+    ensureFlowFile(config.backlogRoot);
+    ensureBacklogDocs(config.backlogRoot);
+    ensureRootIndex(config);
+    commitFailed = commitChangedSince(config.backlogRoot, before, INIT_COMMIT_MESSAGE);
+  } catch (e) {
+    // A step failed after others wrote: the next `bl init` commits what this
+    // one wrote with its own writes (S-1330).
+    recordChangedSince(config?.backlogRoot ?? backlogDir, before ?? null, INIT_COMMIT_MESSAGE);
+    throw e;
+  } finally {
+    releaseLock(backlogDir);
+  }
 
   // The plugin-tools readout goes last: the setup checklist.
   printPluginStatus(config);
+  if (commitFailed) process.exit(1);
 }
 
 /**
@@ -268,19 +305,21 @@ function addToBacklogJson(dir, path, agent) {
   info(`Updated : backlog.json (+ ${keys.join(', ')})`);
 }
 
-// The local tool-grant file holds user-discretion permissions and must never
-// be committed. Seed the backlog's .gitignore with it on init (idempotent).
-function ensureLocalToolsGitignored(backlogRoot) {
+// The local tool-grant file holds user-discretion permissions, and `.bl/`
+// holds bl's runtime state (the activity log, staging files, run state), and
+// the backlog lock file exists only while a bl command holds it: none is ever
+// committed. Seed the backlog's .gitignore with them on init (idempotent).
+const GITIGNORED = [LOCAL_TOOLS_FILE, `${dirname(STAGING_DIR)}/`, LOCK_FILE];
+
+function ensureGitignored(backlogRoot) {
   const gitignorePath = join(backlogRoot, '.gitignore');
-  let lines = [];
-  if (existsSync(gitignorePath)) {
-    lines = readFileSync(gitignorePath, 'utf8').split('\n');
-    if (lines.some((l) => l.trim() === LOCAL_TOOLS_FILE)) return;
-  }
-  const needsNewline = lines.length > 0 && lines[lines.length - 1] !== '';
-  const addition = (needsNewline ? '\n' : '') + LOCAL_TOOLS_FILE + '\n';
-  writeFileSync(gitignorePath, (existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '') + addition);
-  info(`Updated : .gitignore (+ ${LOCAL_TOOLS_FILE})`);
+  const text = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+  const lines = text.split('\n');
+  const missing = GITIGNORED.filter((entry) => !lines.some((l) => l.trim() === entry));
+  if (missing.length === 0) return;
+  const needsNewline = text !== '' && !text.endsWith('\n');
+  writeFileSync(gitignorePath, text + (needsNewline ? '\n' : '') + missing.map((m) => `${m}\n`).join(''));
+  info(`Updated : .gitignore (+ ${missing.join(', ')})`);
 }
 
 function warnIfGhCredentialHelper() {

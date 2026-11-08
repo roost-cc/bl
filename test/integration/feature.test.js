@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
-import { runBl } from '../helpers/run-bl.js';
-import { GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
+import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
+import { LOCK_FILE } from '../../src/lock.js';
+import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
 import { extractSection, findFeature, normalizeFeatureId } from '../../src/feature.js';
@@ -15,15 +16,16 @@ const REPOS = ['../demo-repo'];
 /** demo-repo's home component, so `bl validate` has no home-component finding (F-49 D4). */
 const HOME = { id: 'C00', title: 'Core', dirSuffix: 'core', repo: 'demo-repo', home: true };
 
-function newStory(dir, { component = 'C00', title, points = '3', extra = [] }) {
-  const r = runBl(['new', component, '--title', title, '--points', points, ...extra], { cwd: dir });
+function newStory(dir, { component = 'C00', title, points = '3', extra = [], env }) {
+  const r = runBl(['new', component, '--title', title, '--points', points, ...extra], { cwd: dir, env });
   if (r.status !== 0) throw new Error('seed failed:\n' + r.stderr);
   return r.stdout.trim();
 }
 
-function newFeature(dir, title = 'Invite codes') {
+function newFeature(dir, title = 'Invite codes', env = undefined) {
   const r = runBl(['new', '--feature', '--theme', 'demo', '--title', title], {
     cwd: dir,
+    env,
   });
   if (r.status !== 0) throw new Error('feature new failed:\n' + r.stderr);
   return r.stdout.trim();
@@ -460,23 +462,30 @@ test('bl new --from rejects an epic block, an unknown component and an unknown f
   }
 });
 
-test('bl approve gates on refined status and a non-empty, consistent story list', () => {
+test('bl approve gates on refined status and a non-empty, consistent story list, and commits and pushes the approval', () => {
   const { dir, cleanup } = mkTempBacklog({ repos: REPOS, components: [HOME] });
   try {
-    const rel = newFeature(dir);
+    initGitBacklog(dir);
+    addOrigin(dir);
+    const env = GIT_ENV;
+    const head = () => git(dir, 'rev-parse', 'HEAD');
+    const rel = newFeature(dir, undefined, env);
     const featurePath = join(dir, rel);
-    // draft → refuse
-    let r = runBl(['approve', 'F-1'], { cwd: dir });
+    // draft → refuse, and no commit
+    let before = head();
+    let r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /still a draft/);
-    // refined but no stories → refuse
+    assert.equal(head(), before);
+    // refined but no stories → refuse, and no commit
     writeFileSync(featurePath, readFileSync(featurePath, 'utf8').replace('status: draft', 'status: refined'));
-    r = runBl(['approve', 'F-1'], { cwd: dir });
+    r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /has no stories/);
+    assert.equal(head(), before);
     // with a story → approved + approved date, which the rendered root shows
-    newStory(dir, { title: 'Mint', points: '3', extra: ['--feature', 'F-1'] });
-    r = runBl(['approve', 'F-1'], { cwd: dir });
+    newStory(dir, { title: 'Mint', points: '3', extra: ['--feature', 'F-1'], env });
+    r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 0, r.stderr);
     const f = fm(featurePath);
     assert.equal(f.status, 'approved');
@@ -484,14 +493,185 @@ test('bl approve gates on refined status and a non-empty, consistent story list'
     assert.match(r.stderr, /3 points/);
     assert.match(r.stderr, /^ {2}S-1 {2}effort: high \(default\) {2}Mint$/m, 'an unset effort shows effort.default');
     assert.match(rendered(dir), /F-1.*approved/);
-    // approving again is a no-op
-    r = runBl(['approve', 'F-1'], { cwd: dir });
+    // committed and pushed (S-1330): no line left for the operator to run
+    assert.doesNotMatch(r.stderr, /Commit the approval/);
+    assert.deepEqual(statusLines(dir), []);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: approve F-1');
+    assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [rel]);
+    assert.equal(git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main'), head(), 'origin has it');
+    // approving again is a no-op, and commits nothing
+    before = head();
+    r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 0);
     assert.match(r.stderr, /already approved/);
+    assert.doesNotMatch(r.stderr, /Nothing to commit|Committed/);
+    assert.equal(head(), before);
   } finally {
     cleanup();
   }
 });
+
+test('approve_retry_commits_after_failed_commit: a rerun after a refused commit commits and pushes the approval', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Core', dirSuffix: 'core' }],
+    stories: [{ id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'refined', feature: 'F-1' }],
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'refined', stories: ['S-1'] }],
+  });
+  try {
+    initGitBacklog(dir);
+    addOrigin(dir);
+    const rel = 'features/F1-feat/index.md';
+    const base = git(dir, 'rev-parse', 'HEAD');
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    let r = runBl(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(fm(join(dir, rel)).status, 'approved');
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), base);
+
+    rmSync(hook);
+    r = runBl(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /already approved/);
+    assert.deepEqual(statusLines(dir), []);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: approve F-1');
+    assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [rel]);
+    assert.equal(git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main'), git(dir, 'rev-parse', 'HEAD'));
+  } finally {
+    cleanup();
+  }
+});
+
+test('approve_write_and_commit_share_lock: bl approve writes nothing until it holds the backlog lock', async (t) => {
+  if (!lockOwnerVisible(t)) return;
+  const { dir, cleanup } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Core', dirSuffix: 'core' }],
+    stories: [{ id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'refined', feature: 'F-1' }],
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'refined', stories: ['S-1'] }],
+  });
+  try {
+    // No origin: the pull before the command would wait for the lock first.
+    initGitBacklog(dir);
+    const rel = 'features/F1-feat/index.md';
+    writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
+    const run = startBlBehindLock(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+    await run.blocked;
+    assert.equal(fm(join(dir, rel)).status, 'refined', 'nothing written before the lock');
+    rmSync(join(dir, LOCK_FILE));
+    const r = await run.closed;
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(statusLines(dir), []);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: approve F-1');
+  } finally {
+    cleanup();
+  }
+});
+
+/** A git backlog with an `origin` and F-1 (`status`) holding the refined S-1. */
+function approveBacklog(status) {
+  const fixture = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Core', dirSuffix: 'core' }],
+    stories: [{ id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'refined', feature: 'F-1' }],
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status, stories: ['S-1'] }],
+  });
+  initGitBacklog(fixture.dir);
+  addOrigin(fixture.dir);
+  return fixture;
+}
+const APPROVE_REL = 'features/F1-feat/index.md';
+const operatorEdit = (dir) => writeFileSync(join(dir, APPROVE_REL), '\nThe operator, later.\n', { flag: 'a' });
+
+// An approved feature, its file as the operator left it: approve commits nothing.
+for (const [label, edit, status] of [
+  ['a clean file', () => {}, []],
+  ['an edit', operatorEdit, [` M ${APPROVE_REL}`]],
+  [
+    'a staged edit',
+    (dir) => {
+      operatorEdit(dir);
+      git(dir, 'add', APPROVE_REL);
+    },
+    [`M  ${APPROVE_REL}`],
+  ],
+]) {
+  test(`approve_already_approved_dirty_file_makes_no_commit: ${label}`, () => {
+    const { dir, cleanup } = approveBacklog('approved');
+    try {
+      edit(dir);
+      const head = git(dir, 'rev-parse', 'HEAD');
+      const r = runBl(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /already approved/);
+      assert.doesNotMatch(r.stderr, /Committed|Nothing to commit/);
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+      assert.deepEqual(statusLines(dir), status);
+    } finally {
+      cleanup();
+    }
+  });
+}
+
+/** Approve with a commit the pre-commit hook refuses: the approval stays written and uncommitted. */
+function failApproval(dir) {
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const r = runBl(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(fm(join(dir, APPROVE_REL)).status, 'approved');
+  rmSync(hook);
+}
+
+test('approve_rechecks_state_under_lock_and_retry_commits_only_its_write: an edit after a failed approval commit is not committed', () => {
+  const { dir, cleanup } = approveBacklog('refined');
+  try {
+    failApproval(dir);
+    operatorEdit(dir);
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const r = runBl(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /already approved/);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'the file is no longer only the approval');
+    assert.match(statusLines(dir).join('\n'), new RegExp(`M ${APPROVE_REL}`));
+  } finally {
+    cleanup();
+  }
+});
+
+// Another command changes and commits F-1 while approve waits for the lock:
+// approve checks the status it finds under the lock and writes nothing.
+for (const [label, status, exit, said] of [
+  ['marked done', 'done', 1, /Feature F-1 is done/],
+  ['approved by someone else', 'approved', 0, /already approved/],
+]) {
+  test(`approve_rechecks_state_under_lock_and_retry_commits_only_its_write: F-1 ${label} while approve waits`, async (t) => {
+    if (!lockOwnerVisible(t)) return;
+    const fixture = mkTempBacklog({
+      components: [{ id: 'C01', title: 'Core', dirSuffix: 'core' }],
+      stories: [{ id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'refined', feature: 'F-1' }],
+      features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'refined', stories: ['S-1'] }],
+    });
+    const { dir } = fixture;
+    try {
+      // No origin: the pull before the command would wait for the lock first.
+      initGitBacklog(dir);
+      const path = join(dir, APPROVE_REL);
+      writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
+      const run = startBlBehindLock(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
+      await run.blocked;
+      writeFileSync(path, readFileSync(path, 'utf8').replace('status: refined', `status: ${status}`));
+      git(dir, 'commit', '-q', '-m', 'another command', '--', APPROVE_REL);
+      rmSync(join(dir, LOCK_FILE));
+      const r = await run.closed;
+      assert.equal(r.status, exit, r.stderr);
+      assert.match(r.stderr, said);
+      assert.equal(fm(path).status, status, 'approve wrote nothing over it');
+      assert.equal(git(dir, 'log', '-1', '--format=%s'), 'another command');
+      assert.deepEqual(statusLines(dir), []);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+}
 
 test('bl approve warns about open dependencies outside the feature', () => {
   const { dir, cleanup } = mkTempBacklog({

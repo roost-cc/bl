@@ -8,10 +8,10 @@
   },
   "scripts": {
     "test": "npm run test:unit && npm run test:integration && npm run test:cli",
-    "test:unit": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" node --test 'test/unit/*.test.js'",
-    "test:integration": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" node --test 'test/integration/*.test.js'",
-    "test:cli": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" bash test/cli/run-all.sh",
-    "test:e2e": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" bash test/e2e/run-all.sh",
+    "test:unit": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" bash test/helpers/without-repo-env.sh node --test 'test/unit/*.test.js'",
+    "test:integration": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" bash test/helpers/without-repo-env.sh node --test 'test/integration/*.test.js'",
+    "test:cli": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" bash test/helpers/without-repo-env.sh bash test/cli/run-all.sh",
+    "test:e2e": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config\" bash test/helpers/without-repo-env.sh bash test/e2e/run-all.sh",
     "test:all": "npm test && npm run test:e2e"
   },
   "private": true,
