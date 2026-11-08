@@ -286,6 +286,35 @@ test('localCapacity maps 200, ECONNREFUSED, TIMEOUT, a 503 and a bad answer', ()
   }
 });
 
+test('local_capacity_rejects_incomplete_health_records: only ok false with ECONNREFUSED is unavailable', () => {
+  const url = LOCAL_KEY.url;
+  // Each record and the state it maps to: every branch (ok, status, code, error) with each wrong shape.
+  const cases = [
+    [{ code: 'ECONNREFUSED' }, 'unknown'],
+    [{ ok: null, code: 'ECONNREFUSED' }, 'unknown'],
+    [{ ok: 'false', code: 'ECONNREFUSED' }, 'unknown'],
+    [{ ok: 0, code: 'ECONNREFUSED' }, 'unknown'],
+    [{ ok: true, code: 'ECONNREFUSED' }, 'unknown'],
+    [{ status: 200 }, 'unknown'],
+    [{ ok: 'true', status: 200 }, 'unknown'],
+    [{ ok: true }, 'unknown'],
+    [{ ok: true, status: '200' }, 'unknown'],
+    [{ ok: true, status: 200.5 }, 'unknown'],
+    [{ ok: false }, 'unknown'],
+    [{ ok: false, code: 'econnrefused' }, 'unknown'],
+    [{ ok: false, code: null, error: { message: 'x' } }, 'unknown'],
+    [{ ok: false, code: 'ECONNREFUSED' }, 'unavailable'],
+    [{ ok: true, status: 200 }, 'available'],
+    [{ ok: true, status: 503 }, 'unknown'],
+  ];
+  for (const [out, state] of cases) {
+    const c = localCapacity(out, url);
+    assert.equal(c.state, state, JSON.stringify(out));
+    assert.ok(c.message.includes(url), `${JSON.stringify(out)}: the message names the URL`);
+    assert.doesNotMatch(c.message, /undefined|\[object Object\]/, JSON.stringify(out));
+  }
+});
+
 test('LocalProvider.capacity runs the helper with the backlog URL and maps its answer; never throws', () => {
   const { dir, cleanup } = localBacklog();
   try {

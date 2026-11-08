@@ -89,23 +89,28 @@ export function localEnv({ url, token, model, base }) {
  * The capacity (provider.js `capacity()`) the helper's answer `out` means,
  * for the server at `url`. A 200 is `available`. A refused connection is
  * `unavailable` with no `until`: nothing listens, and bl does not start the
- * server. Any other answer, a timeout or another failure is `unknown`. Every
- * answer is `account`-scoped and its message names `url`.
+ * server. Any other answer, a timeout or another failure is `unknown`. A
+ * record of another shape (no boolean `ok`, or `ok: true` with no integer
+ * `status`) is `unknown` too, so only `ok: false` with `code: "ECONNREFUSED"`
+ * skips the configuration. Every answer is `account`-scoped and its message
+ * names `url`.
  * @param {unknown} out
  * @param {string} url
  * @returns {ReturnType<import("./provider.js").AgentProvider["capacity"]>}
  */
 export function localCapacity(out, url) {
-  if (!isPlainObject(out)) return reading('unknown', `local server ${url}: the health check gave no answer`);
-  if (out.ok === true && out.status === 200) return reading('available', `local server ${url} is up`);
-  if (out.ok === true) {
+  const malformed = !isPlainObject(out) || typeof out.ok !== 'boolean' || (out.ok && !Number.isInteger(out.status));
+  if (malformed) return reading('unknown', `local server ${url}: the health check gave no answer`);
+  if (out.ok && out.status === 200) return reading('available', `local server ${url} is up`);
+  if (out.ok) {
     return reading('unknown', `local server ${url}: /health answered ${out.status}`);
   }
   if (out.code === 'ECONNREFUSED') {
     return reading('unavailable', `local server ${url} refused the connection: start the server`);
   }
   if (out.code === 'TIMEOUT') return reading('unknown', `local server ${url}: /health did not answer in time`);
-  return reading('unknown', `local server ${url}: ${out.error ?? 'the health check failed'}`);
+  const error = typeof out.error === 'string' && out.error !== '' ? out.error : 'the health check failed';
+  return reading('unknown', `local server ${url}: ${error}`);
 }
 
 /**
