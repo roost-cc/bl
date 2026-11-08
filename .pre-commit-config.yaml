@@ -58,7 +58,7 @@ repos:
     hooks:
       - id: test-gate
         name: test gate (local pre-push gate)
-        entry: npm test
+        entry: sh -c 'vars=$(git rev-parse --local-env-vars) || exit; unset $vars; exec "$@"' test-gate bash -c 'npm ci && env BL_REQUIRE_PID_TESTS=1 npm test'
         language: system
         stages: [pre-push]
         always_run: true
