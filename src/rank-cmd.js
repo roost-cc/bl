@@ -460,8 +460,7 @@ function cleanup(root, path, graph) {
     ids = closedIn(graph, content);
   } catch (err) {
     if (!(err instanceof RankFileError)) throw err;
-    // Only worth a line when the graph sees a closed unit to take out.
-    return graph.ranked.some((e) => e.unit.done) ? { skipped: err.message } : { removed: [] };
+    return { skipped: err.message };
   }
   const message = (removed) => `chore: ${removed.join(', ')} unranked (done) in ${PRIORITY_FILE}`;
   if (inRepo(root) && uncommitted(root)) {

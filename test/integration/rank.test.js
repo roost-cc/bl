@@ -357,6 +357,14 @@ test('usage errors and checkUnit refusals exit 1 before the cleanup; a flow list
   r = bl(['rank', 'F-1', '--top', '--why', 'x'], dir);
   assert.equal(r.status, 1);
   assert.equal(read(dir), flow);
+
+  // The line prints when no ranked unit is closed too.
+  const open = '---\nranked: [{ unit: F-1, why: x }]\n---\n';
+  dir = backlog(open);
+  r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /bl rank: priority\.md: "ranked:" is a flow list/);
+  assert.equal(read(dir), open);
 });
 
 test('a headless bare bl rank writes nothing and says nothing about closed units', () => {
