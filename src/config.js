@@ -447,8 +447,9 @@ function withRaw(
   // addressed` is reviewer-only). -A (with --model) replaces one role's list:
   // the review list on `bl review`, the implementing list on every other verb.
   const where = repoName ? `backlog.json repos["${repoName}"] overrides` : 'backlog.json';
-  // What an adapter's checkConfiguration reads: the top level, and `raw`.
-  const ctx = { topLevel: base.topLevel, raw };
+  // What an adapter's checkConfiguration reads: the top level, `raw`, and
+  // the backlog root, under which `local` records the server it checked.
+  const ctx = { topLevel: base.topLevel, raw, backlogRoot: base.backlogRoot };
   const flag = { agent: agentFlag, model: agentFlagModel };
   let agents = [];
   let reviewAgents = [];

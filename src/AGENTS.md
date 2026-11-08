@@ -1044,9 +1044,10 @@ against a local model server; see **The local provider** below. Besides `spawn`,
   report capacity"). Codex and `local` run their read as a Node child
   (`runCapacityHelper`, `src/agents/capacity-helper.js`), because
   `capacity()` is synchronous.
-- `checkConfiguration({ model }, { topLevel, raw })` → a reason string, or
+- `checkConfiguration({ model }, { topLevel, raw, backlogRoot })` → a reason string, or
   null when the configuration is usable. `topLevel` is `backlog.json`'s top
-  level; `raw` is it with the repo's `overrides` merged over it. The config
+  level; `raw` is it with the repo's `overrides` merged over it; `backlogRoot`
+  is the backlog the loader loads. The config
   loader calls it for each `agent` and `review_agent` entry and for -A, and
   throws the reason after the entry's location (`backlog.json "agent"[2]:
 …`, `-A local: …`), so `config.js` names no agent. The base returns null;
@@ -1096,6 +1097,11 @@ bl does not start or stop the server.
   `"local": { "url": "http://localhost:8090", "token": "local" }`. Both keys
   are required non-empty strings, and no other key is allowed. bl reads it
   from the top level only: `spawn()` knows the backlog, not the repo.
+- `spawnEnv` and `capacity` use the server that `checkConfiguration` last
+  checked for the backlog (the loader passes `backlogRoot` in its context).
+  They do not read `backlog.json` again: a new read without the command's
+  `-A` and `--model` fails on a role list that `-A` replaced, and a read
+  after an edit could name a server that nothing checked.
 - `spawnEnv` sets `ANTHROPIC_BASE_URL` to `url`, `ANTHROPIC_AUTH_TOKEN` to
   `token`, `ANTHROPIC_API_KEY` to the empty string (so the operator's real
   key never reaches the server) and `ANTHROPIC_SMALL_FAST_MODEL` to the

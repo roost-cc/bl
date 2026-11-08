@@ -18,8 +18,9 @@
  * it loads.
  */
 
+import { resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { isPlainObject, loadConfig } from '../config.js';
+import { isPlainObject } from '../config.js';
 import { runCapacityHelper } from './capacity-helper.js';
 import { LOCAL_CAPACITY_TIMEOUT_MS } from './local-capacity.js';
 import { agentEnv } from './provider.js';
@@ -112,37 +113,64 @@ export function localCapacity(out, url) {
  * server's model alias, and the backlog's top level names the server.
  * `spawn()` knows the backlog but not the repo, so a repo's `overrides` may
  * not set `local`: `mergeConfig` copies the top level's object unless they do.
+ * A usable configuration records the server under `backlogRoot`
+ * (`checkedServers`).
  * @param {{ model: string|null }} configuration
- * @param {{ topLevel: object, raw: object }} ctx
+ * @param {{ topLevel: object, raw: object, backlogRoot?: string }} ctx
  * @returns {string|null}
  */
-export function checkLocalConfiguration({ model }, { topLevel, raw }) {
+export function checkLocalConfiguration({ model }, { topLevel, raw, backlogRoot }) {
   if (model == null) {
     return 'a local configuration needs a "model": the server\'s alias (llama-server --alias), e.g. { "agent": "local", "model": "qwen3.8-27b" }';
   }
+  let server;
   try {
-    localServer(topLevel);
+    server = localServer(topLevel);
   } catch (error) {
     return error.message;
   }
   if (raw.local !== topLevel.local) {
     return 'a repo\'s "overrides" set "local": bl reads backlog.json "local" from the top level only';
   }
+  if (backlogRoot) checkedServers.set(resolve(backlogRoot), server);
   return null;
 }
 
 /**
+ * The server that the config loader last checked for each backlog, by its
+ * root: `checkLocalConfiguration` records it, and spawn() and capacity() use
+ * it. They do not read `backlog.json` again. A new read without the command's
+ * -A and --model fails on a role list that -A replaced, and a read after an
+ * edit could name a server that nothing checked.
+ */
+const checkedServers = new Map();
+
+/**
+ * The server checked for the backlog at `backlogRoot` (`checkedServers`).
+ * Throws when the config loader checked no local configuration there.
+ * @param {string|null} backlogRoot
+ * @returns {{ url: string, token: string }}
+ */
+function checkedServer(backlogRoot) {
+  const server = backlogRoot ? checkedServers.get(resolve(backlogRoot)) : undefined;
+  if (!server) {
+    throw new Error(`no local configuration of the backlog ${backlogRoot} was checked: load its backlog.json first`);
+  }
+  return server;
+}
+
+/**
  * LocalProvider.spawnEnv(): claude's environment (`agentEnv`) over
- * `localEnv`, with the server read from the backlog at `backlogRoot`.
+ * `localEnv`, with the server checked for the backlog at `backlogRoot`.
  * @param {{ headless: boolean, backlogRoot: string|null, model: string }} opts
  */
 export function localSpawnEnv({ headless, backlogRoot, model }) {
-  const { url, token } = localServer(loadConfig({ backlogRoot }).topLevel);
+  const { url, token } = checkedServer(backlogRoot);
   return agentEnv({ headless, backlogRoot, base: localEnv({ url, token, model, base: process.env }) });
 }
 
 /**
- * LocalProvider.capacity(): whether the server named in the backlog at
+ * LocalProvider.capacity(): whether the server checked for the backlog at
  * `backlogRoot` answers its `/health` within `timeoutMs`, asked by
  * `local-capacity.js` through `runCapacityHelper` and mapped by
  * `localCapacity()`. Never throws. `run`, `env` and `timeoutMs` are for
@@ -151,7 +179,7 @@ export function localSpawnEnv({ headless, backlogRoot, model }) {
 export function localServerCapacity({ backlogRoot, run, env, timeoutMs = LOCAL_CAPACITY_TIMEOUT_MS } = {}) {
   let url;
   try {
-    url = localServer(loadConfig({ backlogRoot }).topLevel).url;
+    url = checkedServer(backlogRoot).url;
   } catch (error) {
     return reading('unknown', error.message);
   }

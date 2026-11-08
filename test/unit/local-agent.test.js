@@ -13,18 +13,158 @@ import { getProvider } from '../../src/agents/index.js';
 import { ClaudeProvider, parseClaudeJsonResult } from '../../src/agents/claude.js';
 import { LocalProvider, localCapacity, localEnv, localServer } from '../../src/agents/local.js';
 import { healthUrl, probeLocalServer } from '../../src/agents/local-capacity.js';
+import { loadConfig } from '../../src/config.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 
 const LOCAL_KEY = { url: 'http://localhost:8090', token: 'local' };
 const MODEL = 'qwen3.8-27b';
 
-/** A fixture backlog whose backlog.json has the top-level `local` key `local`. */
+/**
+ * A fixture backlog whose backlog.json has the top-level `local` key `local`,
+ * loaded once with `-A local --model`, as a command loads it before a spawn.
+ */
 function localBacklog(local = LOCAL_KEY) {
   const t = mkTempBacklog({ repos: ['../demo-repo'] });
   const path = join(t.dir, 'backlog.json');
   writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), local }, null, 2) + '\n');
+  loadConfig({ backlogRoot: t.dir, agent: 'local', model: MODEL });
   return t;
 }
+
+/** `run` for spawn(): records each call's environment. */
+function recordingRun(envs) {
+  return (_cmd, _args, opts) => {
+    envs.push(opts.env);
+    return { status: 0, stdout: JSON.stringify({ type: 'result', result: 'ok', session_id: 's' }) };
+  };
+}
+
+/** `run` for capacity(): a helper that answers 200, recording the URL it was given. */
+function healthyRun(urls = []) {
+  return (_cmd, args) => {
+    urls.push(args[args.indexOf('--url') + 1]);
+    return { status: 0, stdout: '{"ok":true,"status":200}\n' };
+  };
+}
+
+// The role list -A replaces, in every shape: a reload without -A refuses all
+// but the valid one, so spawn() and capacity() must not reload.
+const REPLACED_LISTS = [
+  ['missing', undefined],
+  ['empty', []],
+  ['wrong type', {}],
+  ['bad entry', [{ agent: 'missing-provider' }]],
+  ['valid', [{ agent: 'claude' }]],
+];
+
+/** Each role × each REPLACED_LISTS shape: a backlog whose list of that role is the shape, loaded with -A local. */
+function* replacedRoleBacklogs() {
+  for (const [role, key] of [
+    ['agent', 'agent'],
+    ['review', 'review_agent'],
+  ]) {
+    for (const [shape, list] of REPLACED_LISTS) {
+      const t = mkTempBacklog({ config: { agent: [{ agent: 'claude' }], review_agent: [{ agent: 'codex' }] } });
+      const path = join(t.dir, 'backlog.json');
+      const raw = { ...JSON.parse(readFileSync(path, 'utf8')), local: LOCAL_KEY };
+      if (list === undefined) delete raw[key];
+      else raw[key] = list;
+      writeFileSync(path, JSON.stringify(raw));
+      loadConfig({ backlogRoot: t.dir, agent: 'local', model: MODEL, agentRole: role });
+      try {
+        yield { label: `${role} ${shape}`, dir: t.dir };
+      } finally {
+        t.cleanup();
+      }
+    }
+  }
+}
+
+test('local_spawn_keeps_replaced_role_override: spawn() reaches the server for every role list -A replaced', () => {
+  for (const { label, dir } of replacedRoleBacklogs()) {
+    const envs = [];
+    getProvider('local').spawn({
+      prompt: 'p',
+      worktreePath: dir,
+      backlogRoot: dir,
+      headless: true,
+      model: MODEL,
+      run: recordingRun(envs),
+    });
+    assert.equal(envs.length, 1, label);
+    assert.equal(envs[0].ANTHROPIC_BASE_URL, LOCAL_KEY.url, label);
+  }
+});
+
+test('local_capacity_keeps_replaced_role_override: capacity() asks the server for every role list -A replaced', () => {
+  for (const { label, dir } of replacedRoleBacklogs()) {
+    const urls = [];
+    const c = getProvider('local').capacity({ backlogRoot: dir, run: healthyRun(urls) });
+    assert.equal(c.state, 'available', `${label}: ${c.message}`);
+    assert.deepEqual(urls, [LOCAL_KEY.url], label);
+  }
+});
+
+test('local_spawn_uses_validated_configuration_snapshot: spawn() and capacity() use the server the loader checked', () => {
+  const { dir, cleanup } = localBacklog();
+  try {
+    // An edit after the check names another server: nothing checked it.
+    const path = join(dir, 'backlog.json');
+    const edited = { url: 'http://localhost:8091', token: 'new' };
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), local: edited }));
+    const urls = [];
+    const envs = [];
+    getProvider('local').capacity({ backlogRoot: dir, run: healthyRun(urls) });
+    getProvider('local').spawn({
+      prompt: 'p',
+      worktreePath: dir,
+      backlogRoot: dir,
+      headless: true,
+      model: MODEL,
+      run: recordingRun(envs),
+    });
+    assert.deepEqual(urls, [LOCAL_KEY.url]);
+    assert.deepEqual([envs[0].ANTHROPIC_BASE_URL, envs[0].ANTHROPIC_AUTH_TOKEN], [LOCAL_KEY.url, LOCAL_KEY.token]);
+    // A reload (sync.js after a pull) checks the edit, and both use it from then on.
+    loadConfig({ backlogRoot: dir, agent: 'local', model: MODEL });
+    getProvider('local').capacity({ backlogRoot: dir, run: healthyRun(urls) });
+    getProvider('local').spawn({
+      prompt: 'p',
+      worktreePath: dir,
+      backlogRoot: dir,
+      headless: true,
+      model: MODEL,
+      run: recordingRun(envs),
+    });
+    assert.deepEqual(urls, [LOCAL_KEY.url, edited.url]);
+    assert.deepEqual([envs[1].ANTHROPIC_BASE_URL, envs[1].ANTHROPIC_AUTH_TOKEN], [edited.url, edited.token]);
+  } finally {
+    cleanup();
+  }
+  // A backlog whose local configuration nothing checked: spawn() throws, capacity() is unknown.
+  const { dir: unchecked, cleanup: done } = mkTempBacklog({ repos: ['../demo-repo'] });
+  try {
+    const envs = [];
+    assert.throws(
+      () =>
+        getProvider('local').spawn({
+          prompt: 'p',
+          worktreePath: unchecked,
+          backlogRoot: unchecked,
+          headless: true,
+          model: MODEL,
+          run: recordingRun(envs),
+        }),
+      /no local configuration of the backlog .* was checked/,
+    );
+    assert.equal(envs.length, 0);
+    const c = getProvider('local').capacity({ backlogRoot: unchecked, run: healthyRun() });
+    assert.equal(c.state, 'unknown');
+    assert.match(c.message, /was checked/);
+  } finally {
+    done();
+  }
+});
 
 test('LocalProvider is ClaudeProvider named local, overriding only spawnEnv, checkConfiguration and capacity', () => {
   const p = getProvider('local');
@@ -179,10 +319,10 @@ test('LocalProvider.capacity runs the helper with the backlog URL and maps its a
   } finally {
     cleanup();
   }
-  // No local key: unknown with the reason, not a throw.
+  // No local key, so nothing was checked: unknown with the reason, not a throw.
   const { dir: bare, cleanup: done } = mkTempBacklog({ repos: ['../demo-repo'] });
   try {
-    assert.match(getProvider('local').capacity({ backlogRoot: bare }).message, /"local" is missing/);
+    assert.match(getProvider('local').capacity({ backlogRoot: bare }).message, /was checked/);
   } finally {
     done();
   }

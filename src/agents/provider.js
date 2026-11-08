@@ -216,9 +216,12 @@ export class AgentProvider {
    * `review_agent` entry and for -A, and throws the reason after the entry's
    * location. `topLevel` is `backlog.json`'s top level; `raw` is it with the
    * repo's `overrides` merged over it (`raw` is `topLevel` without them).
+   * `backlogRoot` is the backlog the loader loads (absent outside it):
+   * `local` records the server it checked under it, for spawn() and
+   * capacity().
    *
    * @param {{ model: string|null }} _configuration
-   * @param {{ topLevel: object, raw: object }} _ctx
+   * @param {{ topLevel: object, raw: object, backlogRoot?: string }} _ctx
    * @returns {string|null}
    */
   checkConfiguration(_configuration, _ctx) {
