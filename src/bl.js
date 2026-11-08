@@ -93,7 +93,8 @@ Commands:
                --epic <E-id>   An epic's features, with stories and points done/total
                --feature <F-id>, --component <C-id>  Filter to a feature or component
                --features      List features instead; with a filter, grouped by epic
-  tree       Show dependency trees from depends_on frontmatter
+               --json          The stories with their frontmatter, as JSON
+  tree      Show dependency trees from depends_on frontmatter
                [story-id|component-id]  Limit to trees containing this story, or
                                    trees containing the component's pending stories
                -a, --all       Include trees where every story is done

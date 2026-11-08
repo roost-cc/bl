@@ -106,6 +106,51 @@ test('bl new --body-file uses file content as the story body', () => {
   }
 });
 
+test('bl new --frontmatter writes the keys a client finds its story by, and refuses keys bl owns', () => {
+  const { dir, cleanup } = componentBacklog();
+  try {
+    const keys = { update_repo: 'roost-cc/alpha', update_lockfile: 'package-lock.json', update_advisory: ['GHSA-1'] };
+    const r = runBl(
+      [
+        'new',
+        '--repo',
+        'alpha',
+        '--title',
+        'Keyed',
+        '--points',
+        '2',
+        '--no-sync',
+        '--frontmatter',
+        JSON.stringify(keys),
+      ],
+      { cwd: dir },
+    );
+    assert.equal(r.status, 0, r.stderr);
+    const fm = fmOf(dir, r.stdout.trim());
+    assert.equal(fm.component, 'C01');
+    assert.deepEqual([fm.update_repo, fm.update_lockfile, fm.update_advisory], Object.values(keys));
+    assert.equal(fm.status, 'backlog');
+    const validate = runBl(['validate'], { cwd: dir });
+    assert.equal(validate.status, 0, validate.stdout + validate.stderr);
+
+    for (const [value, why] of [
+      ['{"status": "done"}', /status: not a story key bl validate accepts, or one bl new writes/],
+      ['{"color": "red"}', /color: not a story key/],
+      ['["update_repo"]', /not a JSON object/],
+      ['{', /not a JSON object \(/],
+    ]) {
+      const bad = runBl(['new', 'C01', '--title', 'Bad', '--points', '1', '--no-sync', '--frontmatter', value], {
+        cwd: dir,
+      });
+      assert.equal(bad.status, 1, value);
+      assert.match(bad.stderr, why);
+    }
+    assert.equal(readdirSync(join(dir, 'stories')).length, 1, 'a refused --frontmatter writes no story');
+  } finally {
+    cleanup();
+  }
+});
+
 test('bl new --body-file - needs a component, --repo or --plugins-from on the command line', () => {
   const { dir, cleanup } = componentBacklog();
   try {

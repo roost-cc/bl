@@ -46,6 +46,71 @@ test('bl list sorts by flow.json: in_progress; backlog, refined and unknown toge
   }
 });
 
+test('bl list --json prints the listed stories with their whole frontmatter', () => {
+  const stories = [
+    { id: 'S-1', status: 'done', completed: '2026-01-01' },
+    { id: 'S-2', status: 'backlog', feature: 'F-1' },
+  ].map((s) => ({ ...s, component: 'C00', title: `Story ${s.id}` }));
+  const { dir, cleanup } = mkTempBacklog({
+    repos: ['../repos/alpha'],
+    components: [{ id: 'C00', title: 'Work', repo: 'alpha' }],
+    features: [{ id: 'F-1', title: 'A feature' }],
+    stories,
+  });
+  try {
+    const keys = { update_advisory: ['GHSA-1', 'CVE-2'] };
+    const made = runBl(
+      ['new', 'C00', '--title', 'Keyed', '--points', '2', '--no-sync', '--frontmatter', JSON.stringify(keys)],
+      {
+        cwd: dir,
+      },
+    );
+    assert.equal(made.status, 0, made.stderr);
+    const list = (args) => {
+      const r = runBl(['list', '--json', ...args], { cwd: dir });
+      assert.equal(r.status, 0, r.stderr);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.schema, 'bl-list-json/v1');
+      return out.stories;
+    };
+    const open = list([]);
+    assert.deepEqual(
+      open.map((s) => s.id),
+      ['S-2', 'S-3'],
+    );
+    const [two, three] = open;
+    assert.deepEqual(
+      { ...two, frontmatter: undefined },
+      {
+        id: 'S-2',
+        title: 'Story S-2',
+        status: 'backlog',
+        component: 'C00',
+        feature: 'F-1',
+        path: two.path,
+        frontmatter: undefined,
+      },
+    );
+    assert.match(two.path, /^stories\/S2[^/]*\/index\.md$/);
+    assert.deepEqual(three.frontmatter.update_advisory, ['GHSA-1', 'CVE-2']);
+    assert.equal(three.feature, null);
+    assert.deepEqual(
+      list(['-a']).map((s) => s.id),
+      ['S-2', 'S-3', 'S-1'],
+    );
+    assert.deepEqual(
+      list(['--component', 'C00', '--feature', 'F-1']).map((s) => s.id),
+      ['S-2'],
+    );
+
+    const pattern = runBl(['list', '--json', 'Keyed'], { cwd: dir });
+    assert.equal(pattern.status, 1);
+    assert.match(pattern.stderr, /--json lists stories and takes no pattern/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('a flow.json bl cannot read stops bl list naming the file, even with no stories', () => {
   const { dir, cleanup } = mkTempBacklog({ flow: null });
   try {
