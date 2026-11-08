@@ -327,6 +327,29 @@ test('validateFrontmatter checks ID-dir mismatch', () => {
   assert.ok(findings.some((f) => f.code === 'id-dir-mismatch'));
 });
 
+test('validateFrontmatter accepts the update_* keys on closed update and vulns stories, kept as records (F-80 B5)', () => {
+  const flow = loadFlow(new URL('../fixtures/flow/', import.meta.url).pathname);
+  const update = {
+    update_repo: 'roost-cc/tools',
+    update_branch: 'renovate/glob-11.x',
+    update_pr: 8,
+    update_head: 'a1b2c3d',
+    update_security: 'true',
+  };
+  const vulns = {
+    update_repo: 'roost-cc/tools',
+    update_lockfile: 'package-lock.json',
+    update_advisory: 'GHSA-xxxx',
+    update_dropped: '2026-11-01',
+  };
+  for (const status of ['done', 'superseded']) {
+    for (const keys of [update, vulns]) {
+      const fm = { story_id: 'S-1', title: 'T', status, component: 'C01', ...keys };
+      assert.deepEqual(validateFrontmatter(fm, 'story', 'path/1', { flow }), [], `${status} ${Object.keys(keys)}`);
+    }
+  }
+});
+
 test('validateFrontmatter accepts a matching dir prefix', () => {
   const fm = { story_id: 'S-1', title: 'T', status: 'backlog', component: 'C01' };
   const findings = validateFrontmatter(fm, 'story', 'path/1', {

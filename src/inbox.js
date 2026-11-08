@@ -14,13 +14,11 @@
  *               repo's main checkout; id `S-<n>:change`, answered by
  *               `bl run S-<n>`, or `bl merge S-<n>` once the review is
  *               `addressed`
- *   update      an F-32 update story in the `decision needed` or `held`
- *               state of `bl updates status`; id `S-<n>`, answered by
- *               `bl updates approve` / `drop`
- *   pending     an update story whose approve or drop request waits on the
- *               runner's next `bl updates run` (F-50 D8); nothing to answer
- *   runner      one line when the newest `## Run` in `updates/` is older
- *               than STALE_RUN_HOURS: the runner has gone quiet (F-50 D7)
+ *   update      a red update in the update job's latest heartbeat (F-80
+ *               D4, B2); id `<repo>:<branch>`; nothing to answer here: the
+ *               next update run tests it again
+ *   runner      one line when that heartbeat is older than STALE_RUN_HOURS
+ *               or records a failed update run (F-80 B3)
  *
  * The inbox reads a task from its file and what it holds from
  * `blockers.json`, never from a unit's body. `bl inbox done` closes
@@ -29,7 +27,13 @@
 
 import { spawnSync } from 'child_process';
 import { dirname, relative } from 'path';
-import { info, loadConfig } from './config.js';
+// `bl merge` imports this module lazily, after its git merge. When the merge
+// is of bl itself, the process's other modules are still the pre-merge ones
+// (F-49 D6), so a named import of an export the merge added would not link,
+// and the merge's last step would fail. `updateSettings` came with F-80, so
+// it is read from the namespace: a pre-F-80 config.js leaves it undefined,
+// which collectInbox reports as a warning.
+import * as configModule from './config.js';
 import { changeNextVerb, currentChange } from './change-doc.js';
 import { extractSection, sectionHasContent } from './feature.js';
 import { loadBacklog } from './backlog-graph.js';
@@ -37,30 +41,16 @@ import { loadFlow } from './flow.js';
 import { BLOCKERS_FILE, isActive, isMet, readBlockers, readUnits as readGraphUnits } from './blockers.js';
 import { holdsText, readAllTasks } from './task.js';
 
-// `bl merge` imports this module lazily, after its git merge. When the merge
-// is of bl itself, the process's other modules are still the pre-merge ones,
-// so the merged updates-answer.js (and the modules it pulls in) may not link
-// against them (F-49 D6). A failed import then makes the update sources
-// unreadable, which collectInbox reports as a warning, instead of failing the
-// import of this module and the merge's last step with it.
-const { lastRun, statusUpdates } = await import('./updates-answer.js').catch((e) => {
-  const unreadable = () => {
-    throw e;
-  };
-  return { lastRun: unreadable, statusUpdates: unreadable };
-});
+const { info, loadConfig } = configModule;
 
 /** The kinds, in the order `bl inbox` prints them. */
-export const KINDS = ['runner', 'escalation', 'task', 'change', 'update', 'pending'];
+export const KINDS = ['runner', 'escalation', 'task', 'change', 'update'];
 
-/** The `bl updates status` states that wait on the operator. */
-const UPDATE_STATES = new Set(['decision needed', 'held']);
-
-/** The `bl updates status` states that wait on the runner. */
-const PENDING_STATES = new Set(['approve pending', 'drop pending']);
-
-/** Twice the runner's 4 h cadence: a newer `## Run` means it is alive. */
+/** Twice the update job's 4 h timer: a newer heartbeat means it is alive. */
 export const STALE_RUN_HOURS = 8;
+
+/** The heartbeat body this reader knows (F-80 B3). */
+export const HEARTBEAT_SCHEMA = 'roost-update-heartbeat/v1';
 
 /**
  * Every unit, features then stories, open and closed, with its file's text
@@ -161,6 +151,102 @@ function gitOut(cwd, args) {
   return r.stdout;
 }
 
+const isText = (v) => typeof v === 'string' && v.trim() !== '';
+
+/**
+ * The update job's latest heartbeat (F-80 B3, D6), read with git alone:
+ * `git fetch --quiet origin <branch>`, then `git log -1 --format=%cI%n%B
+ * FETCH_HEAD`, in the clone of `updates.heartbeat.repo` that backlog.json
+ * registers. The first line is the commit date, the next the subject (the
+ * update run's summary), and the rest of the message the heartbeat's JSON.
+ * No `--depth=1`: on a full clone it marks the repository shallow, and the
+ * heartbeat is one commit with no parent, so the fetch moves the same
+ * objects without it. Null when backlog.json has no `updates` block. Throws
+ * when a setting is missing, git fails, or the message is not a heartbeat.
+ *
+ * @param {object} config
+ * @returns {{ at: string, subject: string, result: 'success' | 'failure',
+ *   failedStep: string | null, red: Array<{ repo: string, branch: string,
+ *   update: string, notes: string | null, log: string }> | null,
+ *   ref: string } | null}
+ */
+export function readHeartbeat(config) {
+  const settings = configModule.updateSettings(config);
+  if (!settings) return null;
+  const { repo, branch } = settings.heartbeat;
+  const ref = `${repo}:${branch}`;
+  const cwd = config.reposByName?.[repo];
+  if (!cwd) throw new Error(`updates.heartbeat.repo ${repo} is not in backlog.json repos`);
+  gitOut(cwd, ['fetch', '--quiet', 'origin', branch]);
+  const [at, subject = '', ...body] = gitOut(cwd, ['log', '-1', '--format=%cI%n%B', 'FETCH_HEAD']).split('\n');
+  const notHeartbeat = (why) => new Error(`${ref}: the commit message is not a ${HEARTBEAT_SCHEMA} heartbeat: ${why}`);
+  let hb;
+  try {
+    hb = JSON.parse(body.join('\n'));
+  } catch (e) {
+    throw notHeartbeat(e.message);
+  }
+  if (hb?.schema !== HEARTBEAT_SCHEMA) throw notHeartbeat(`schema ${JSON.stringify(hb?.schema)}`);
+  if (hb.result !== 'success' && hb.result !== 'failure') throw notHeartbeat(`result ${JSON.stringify(hb.result)}`);
+  if (hb.red !== null && !Array.isArray(hb.red)) throw notHeartbeat('red is neither a list nor null');
+  for (const e of hb.red ?? []) {
+    if (!isText(e?.repo) || !isText(e.branch) || !isText(e.update) || !isText(e.log)) {
+      throw notHeartbeat(`a red entry lacks repo, branch, update or log: ${JSON.stringify(e)}`);
+    }
+  }
+  return {
+    at,
+    subject: subject.trim(),
+    result: hb.result,
+    failedStep: isText(hb.failed_step) ? hb.failed_step : null,
+    red: hb.red?.map((e) => ({ ...e, notes: isText(e.notes) ? e.notes : null })) ?? null,
+    ref,
+  };
+}
+
+/**
+ * The `runner` line and the `update` items of a heartbeat (F-80 B2, B3):
+ * one `runner` item when it is more than STALE_RUN_HOURS old or records a
+ * failure, and one `update` item per red-list entry. A red list that is
+ * `null` (the update run failed before the job wrote it) is a warning: the
+ * red updates are not known.
+ */
+function heartbeatItems(hb, now, warnings) {
+  const items = [];
+  const age = now - Date.parse(hb.at);
+  const parts = [];
+  if (age > STALE_RUN_HOURS * 3600 * 1000) {
+    parts.push(`no update run since ${hb.at} (${Math.floor(age / (3600 * 1000))} h, more than ${STALE_RUN_HOURS} h)`);
+  }
+  if (hb.result === 'failure') {
+    parts.push(`the update run of ${hb.at} failed${hb.failedStep ? ` at ${hb.failedStep}` : ''}: ${hb.subject}`);
+  }
+  if (parts.length > 0) {
+    items.push({
+      kind: 'runner',
+      id: 'updates:run',
+      unit: 'updates',
+      line: parts.join('; '),
+      next: 'check the update job where it runs (its journal or log)',
+      path: hb.ref,
+    });
+  }
+  if (hb.red === null) {
+    warnings.push(`the update run of ${hb.at} reported no red list (red: null): its red updates are not known`);
+  }
+  for (const e of hb.red ?? []) {
+    items.push({
+      kind: 'update',
+      id: `${e.repo}:${e.branch}`,
+      unit: e.repo,
+      line: `${e.update} · red · notes: ${e.notes ?? 'none'}`,
+      next: `read the gate log ${e.log}; the next update run tests it again`,
+      path: e.log,
+    });
+  }
+  return items;
+}
+
 /**
  * The `change` items (F-48 D4): one per open unit that merges on its own
  * (a feature, or a story with no `feature:`) whose current change document
@@ -236,12 +322,13 @@ function byUnitNewest(a, b) {
 /**
  * Everything in the inbox, grouped by kind (KINDS order) and by unit id,
  * newest first. `warnings` names a source that could not be read (the
- * update stories, when `backlog.json` has no `updates.namespace`; a repo
- * whose branches git cannot read); the other sources are still listed. A
- * `flow.json` that cannot be read throws: closed units cannot be told apart.
+ * update job's heartbeat, when a setting is missing or git cannot fetch it;
+ * a repo whose branches git cannot read); the other sources are still
+ * listed. A `flow.json` that cannot be read throws: closed units cannot be
+ * told apart.
  *
  * @param {object} config
- * @param {{ now?: number }} [opts]  the clock the stale-run line reads
+ * @param {{ now?: number }} [opts]  the clock the heartbeat's age is read by
  * @returns {{ items: Array<{ kind: string, id: string, unit: string,
  *   line: string, holds?: string[], next: string, path: string }>,
  *   warnings: string[] }}
@@ -250,22 +337,11 @@ export function collectInbox(config, { now = Date.now() } = {}) {
   const flow = loadFlow(config.backlogRoot);
   const items = [];
   const warnings = [];
-  let run = null;
   try {
-    run = lastRun(config);
+    const hb = readHeartbeat(config);
+    if (hb) items.push(...heartbeatItems(hb, now, warnings));
   } catch (e) {
-    warnings.push(`update reports not read: ${e.message}`);
-  }
-  if (run && now - Date.parse(run.at) > STALE_RUN_HOURS * 3600 * 1000) {
-    const hours = Math.floor((now - Date.parse(run.at)) / (3600 * 1000));
-    items.push({
-      kind: 'runner',
-      id: 'updates:run',
-      unit: 'updates',
-      line: `no bl updates run since ${run.at} (${hours} h, more than ${STALE_RUN_HOURS} h): is the runner up?`,
-      next: 'check the scheduler that runs bl updates (its journal or log)',
-      path: run.path,
-    });
+    warnings.push(`update job heartbeat not read: ${e.message}`);
   }
   const units = readUnits(config);
   for (const u of units) {
@@ -286,34 +362,8 @@ export function collectInbox(config, { now = Date.now() } = {}) {
   }
   items.push(...taskItems(config, warnings, flow));
   items.push(...changeItems(config, units, warnings, flow));
-  try {
-    for (const s of statusUpdates(config).stories) {
-      const path = relative(config.backlogRoot, units.find((u) => u.id === s.id)?.indexPath ?? '');
-      if (PENDING_STATES.has(s.state)) {
-        items.push({
-          kind: 'pending',
-          id: s.id,
-          unit: s.id,
-          line: `${s.repo}: ${s.title} · ${s.state}: waiting on the runner`,
-          next: 'nothing: the runner executes it on its next bl updates run',
-          path,
-        });
-        continue;
-      }
-      if (!UPDATE_STATES.has(s.state)) continue;
-      items.push({
-        kind: 'update',
-        id: s.id,
-        unit: s.id,
-        line: `${s.repo}: ${s.title} · ${s.state}${s.detail ? `: ${s.detail}` : ''}`,
-        next: `bl updates approve ${s.id}, or bl updates drop ${s.id} --reason <text>`,
-        path,
-      });
-    }
-  } catch (e) {
-    warnings.push(`update stories not read: ${e.message}`);
-  }
-  items.sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || byUnitNewest(a, b));
+  // Red updates keep the heartbeat's order, which is the job's repo order.
+  items.sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || (a.kind === 'update' ? 0 : byUnitNewest(a, b)));
   return { items: items.map(({ ordinal, ...rest }) => rest), warnings };
 }
 
@@ -348,8 +398,7 @@ export function renderInbox(items) {
  */
 export function inboxCountLine(config) {
   try {
-    // A pending request waits on the runner, not on the operator.
-    const n = collectInbox(config).items.filter((e) => e.kind !== 'pending').length;
+    const n = collectInbox(config).items.length;
     return n > 0 ? `inbox: ${n} item(s) need you (bl inbox)` : null;
   } catch {
     return null;
@@ -377,9 +426,10 @@ function normalizeInboxId(raw) {
 /**
  * `bl inbox done <id>`: closes nothing (F-65 D3). Every item is answered by
  * its own verb, and this names it: a task (`T-<n>`) and a retired operator
- * task id (`F-<n>:op<k>`) by `bl task done`, an escalation, an update
- * decision, a change, a pending request by theirs. One verb per thing: an
- * alias would be a second way to close a task.
+ * task id (`F-<n>:op<k>`) by `bl task done`, an escalation and a change by
+ * theirs; a red update and the runner line clear when a later heartbeat no
+ * longer lists them. One verb per thing: an alias would be a second way to
+ * close a task.
  *
  * @param {object} config
  * @param {string} rawId
@@ -399,14 +449,14 @@ export function doneRefusal(config, rawId) {
   }
   if (item?.kind === 'update') {
     return {
-      refused: `${id} is an update decision: answer it with bl updates approve ${id}, or bl updates drop ${id} --reason <text>`,
+      refused: `${id} is a red update: it leaves the inbox when an update run no longer finds it red; ${item.next}`,
     };
+  }
+  if (item?.kind === 'runner') {
+    return { refused: `${id} is the update job's health: it clears when a heartbeat newer than 8 h records a success` };
   }
   if (item?.kind === 'change') {
     return { refused: `${id} is unmerged work on its branch: answer it with ${item.next}` };
-  }
-  if (item?.kind === 'pending') {
-    return { refused: `${id} waits on the runner: its next bl updates run executes the request` };
   }
   return { unknown: `${rawId} is not in the inbox (see bl inbox)` };
 }
@@ -423,10 +473,12 @@ Everything waiting on you, read from the backlog: open escalations
 in blockers.json make now; closed with bl task done T-7 [note]), unmerged work
 (S-<n>:change: an open feature, or a story with no feature:, whose open
 change document names a branch with commits ahead of main; answered by
-bl run, or bl merge once the review is addressed), and update stories that
-need a decision (S-<n>). Update stories whose approve or drop
-waits on the runner are listed under pending, and one runner: line says when
-the newest bl updates run in updates/ is more than 8 h old.
+bl run, or bl merge once the review is addressed), and the red updates of
+the update job's latest heartbeat (<repo>:<branch>, with the notes link and
+the gate log). One runner: line says when that heartbeat is more than 8 h
+old or records a failure. bl reads the heartbeat with git from the clone of
+backlog.json "updates": { "heartbeat": { "repo" } }; a fetch that fails is a
+warning, and the other items are still listed.
 
   --json           Print the items as a JSON array
   done <id>        Closes nothing: name the verb that answers the item
