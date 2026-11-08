@@ -725,6 +725,10 @@ export async function syncUpdates(config, opts = {}) {
 
 const help = (flow) => `Usage: bl updates <verb> [options]
 
+Deprecated: running-man's update job (F-80) gates and merges Renovate's
+branches, and bl inbox reads its heartbeat. Every verb still works and
+prints a warning; a later story removes them.
+
 Renovate's dependency updates as backlog stories (F-32). Renovate opens the
 branch and the PR and writes a per-cycle report; bl turns the report into
 stories, then tests and merges them.

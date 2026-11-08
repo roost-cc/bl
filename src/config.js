@@ -5,8 +5,9 @@
  *   - One shared backlog repo at `<roostDir>/backlog/` (discovered by walking
  *     up from cwd or via $BL_BACKLOG_DIR).
  *   - Top-level `backlog.json` registers the code repos in `repos`, keyed by
- *     repo name: each entry's `path`, `deployable` and `update_tests`, and the
- *     optional per-repo layers `plugins-<stage>` and `overrides` (F-51 D4).
+ *     repo name: each entry's `path` and `deployable`, the deprecated
+ *     `update_tests`, and the optional per-repo layers `plugins-<stage>` and
+ *     `overrides` (F-51 D4).
  *     Stories, components and features live in `stories/`, `components/` and
  *     `features/` at the backlog root (F-49 D3).
  *   - A repo's `overrides` refine the top-level settings for work in that
@@ -221,8 +222,56 @@ export function dictionariesOf(config) {
   return list.map((p) => resolve(config.backlogRoot, p.trim()));
 }
 
+/**
+ * `backlog.json` `updates` (F-80 D6): the settings running-man's update job
+ * and `bl inbox` share. Null when backlog.json has no `updates` block: that
+ * backlog has no update job. Otherwise every key is required, with no
+ * defaults, and one that is missing or of the wrong type throws, naming it.
+ * Other keys in the block (the deprecated `report`) are not read here.
+ * Read when used, never by `loadConfig`, so a backlog.json from before
+ * F-80's cutover still loads.
+ * @param {{ topLevel?: object } | null | undefined} config
+ * @returns {{ namespace: string, pushAttempts: number,
+ *   heartbeat: { repo: string, branch: string } } | null}
+ */
+export function updateSettings(config) {
+  if (!config?.topLevel || !Object.hasOwn(config.topLevel, 'updates')) return null;
+  const u = config.topLevel.updates;
+  const bad = (key, what) =>
+    new Error(
+      `backlog.json "updates" ${what} "${key}": the update job and bl inbox read namespace, push_attempts, heartbeat.repo and heartbeat.branch, with no defaults`,
+    );
+  const name = (obj, key, path = key) => {
+    if (!Object.hasOwn(obj, key)) throw bad(path, 'has no');
+    if (typeof obj[key] !== 'string' || !obj[key].trim()) throw bad(path, 'needs a non-empty string for');
+    return obj[key].trim();
+  };
+  if (!isPlainObject(u)) throw new Error('backlog.json "updates" must be an object');
+  const namespace = name(u, 'namespace');
+  if (!Object.hasOwn(u, 'push_attempts')) throw bad('push_attempts', 'has no');
+  if (!Number.isInteger(u.push_attempts) || u.push_attempts < 1) {
+    throw bad('push_attempts', 'needs a positive whole number for');
+  }
+  if (!Object.hasOwn(u, 'heartbeat')) throw bad('heartbeat', 'has no');
+  if (!isPlainObject(u.heartbeat)) throw bad('heartbeat', 'needs an object { repo, branch } for');
+  return {
+    namespace,
+    pushAttempts: u.push_attempts,
+    heartbeat: {
+      repo: name(u.heartbeat, 'repo', 'heartbeat.repo'),
+      branch: name(u.heartbeat, 'branch', 'heartbeat.branch'),
+    },
+  };
+}
+
 /** The keys every `repos` entry must set (F-51 D4); there are no defaults. */
-const REQUIRED_REPO_KEYS = ['path', 'deployable', 'update_tests'];
+const REQUIRED_REPO_KEYS = ['path', 'deployable'];
+
+/**
+ * `update_tests`, deprecated with `bl updates` (F-80 G3): read when present,
+ * so a backlog.json may keep it or drop it.
+ */
+const OPTIONAL_REPO_KEYS = ['update_tests'];
 
 const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const isNameList = (v) => Array.isArray(v) && v.every((n) => typeof n === 'string' && n.trim() !== '');
@@ -231,6 +280,7 @@ const isNameList = (v) => Array.isArray(v) && v.every((n) => typeof n === 'strin
  * Resolve `backlog.json`'s `repos` block (F-51 D4) into one record per repo:
  * `{ name, path, deployable, updateTests, plugins, overrides }`, with `path`
  * absolute and `plugins` the entry's `plugins-<stage>` lists keyed by stage.
+ * `updateTests` is the deprecated `update_tests`, `[]` without it.
  * A missing required key, a value of the wrong type or an unknown key throws,
  * naming the repo and the key.
  * @param {string} backlogRoot
@@ -257,12 +307,12 @@ function resolveRepos(backlogRoot, raw) {
     if (typeof def.deployable !== 'boolean') {
       throw new Error(`${where} "deployable" must be true or false`);
     }
-    if (!isNameList(def.update_tests)) {
+    if (Object.hasOwn(def, 'update_tests') && !isNameList(def.update_tests)) {
       throw new Error(`${where} "update_tests" must be a list of plugin names ([] for none)`);
     }
     const plugins = {};
     for (const [key, value] of Object.entries(def)) {
-      if (REQUIRED_REPO_KEYS.includes(key)) continue;
+      if (REQUIRED_REPO_KEYS.includes(key) || OPTIONAL_REPO_KEYS.includes(key)) continue;
       if (key === 'overrides') {
         if (!isPlainObject(value)) throw new Error(`${where} "overrides" must be an object`);
         continue;
@@ -270,7 +320,7 @@ function resolveRepos(backlogRoot, raw) {
       const stage = key.match(/^plugins-([a-z][a-z0-9-]*)$/)?.[1];
       if (!stage) {
         throw new Error(
-          `${where} has an unknown key "${key}" (allowed: ${REQUIRED_REPO_KEYS.join(', ')}, plugins-<stage>, overrides)`,
+          `${where} has an unknown key "${key}" (allowed: ${[...REQUIRED_REPO_KEYS, ...OPTIONAL_REPO_KEYS].join(', ')}, plugins-<stage>, overrides)`,
         );
       }
       if (!isNameList(value)) throw new Error(`${where} "${key}" must be a list of plugin names`);
@@ -280,7 +330,7 @@ function resolveRepos(backlogRoot, raw) {
       name,
       path: resolve(backlogRoot, def.path),
       deployable: def.deployable,
-      updateTests: [...def.update_tests],
+      updateTests: [...(def.update_tests ?? [])],
       plugins,
       overrides: def.overrides ?? null,
     };
