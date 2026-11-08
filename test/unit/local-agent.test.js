@@ -222,6 +222,10 @@ test('probeLocalServer: a 200, a closed port and a server that never answers', a
   const refused = await probeLocalServer({ url: up.url, timeoutMs: 2000 });
   assert.equal(refused.ok, false);
   assert.equal(refused.code, 'ECONNREFUSED');
+  // `localhost`, as backlog.json names it, resolves to more than one address;
+  // nothing listens on any of them, and the answer is still ECONNREFUSED.
+  const port = new URL(up.url).port;
+  assert.equal((await probeLocalServer({ url: `http://localhost:${port}`, timeoutMs: 2000 })).code, 'ECONNREFUSED');
 
   const silent = await serve(() => {});
   try {
