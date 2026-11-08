@@ -23,8 +23,8 @@
  * Only a person ranks: inside an agent bl started headless (`BL_HEADLESS`,
  * set by each adapter's spawn) an edit is refused before anything is pulled
  * or written, and `commitPaths` refuses any commit of `priority.md` there
- * too. Printing the order writes nothing, takes no closed unit out, and is
- * allowed everywhere.
+ * too. Printing the order is allowed everywhere; under `BL_HEADLESS` it
+ * writes nothing and takes no closed unit out.
  */
 
 import { spawnSync } from 'child_process';
