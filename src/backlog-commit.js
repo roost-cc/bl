@@ -52,6 +52,17 @@ function gitMessage(r, what) {
   return (r.stderr || r.stdout || '').trim() || `${what} exited ${r.status}`;
 }
 
+/**
+ * Whether the backlog at `root` is a git repo of its own: `root` holds a
+ * `.git` (a directory, or a worktree's file). A backlog inside a parent
+ * checkout is not: git would pull and commit the parent there, and name
+ * paths from the parent's top (S-1330). `pullBeforeCommand`,
+ * `syncAndCommit` and `commitChangedSince` skip such a backlog.
+ */
+export function hasOwnRepo(root) {
+  return existsSync(join(root, '.git'));
+}
+
 /** Whether the repo at `root` has an `origin` remote to push to and pull from. */
 export function hasOriginRemote(root) {
   return git(root, ['remote', 'get-url', 'origin']).status === 0;
@@ -144,8 +155,7 @@ export const FAILED_COMMIT_PATHS = join(RUN_DIR, 'commit-failed.json');
  * @returns {boolean} whether the commit failed
  */
 export function commitChangedSince(root, before, message, { session = false } = {}) {
-  // A parent checkout's status names paths from its own top, not `root`'s.
-  if (!existsSync(join(root, '.git'))) return false;
+  if (!hasOwnRepo(root)) return false;
   const after = dirtySnapshot(root);
   // In a repo, a null snapshot is a `git status` that failed, not "no change".
   if (!before || !after) {

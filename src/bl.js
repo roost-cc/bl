@@ -215,11 +215,11 @@ async function run() {
     } else if (command === 'init') {
       // `bl init` repairs a backlog.json that `loadConfig` rejects (no
       // "repos", no effort levels), so it pulls that backlog first all the
-      // same (S-1330). A backlog with no `.git` of its own is not pulled: in
-      // a parent checkout, the pull would rebase the parent.
+      // same (S-1330). `pullBeforeCommand` skips a backlog with no repo of
+      // its own, as for every command.
       const { initBacklogDir } = await import('./init.js');
       const dir = initBacklogDir();
-      if (existsSync(join(dir, 'backlog.json')) && existsSync(join(dir, '.git'))) {
+      if (existsSync(join(dir, 'backlog.json'))) {
         const { pullBeforeCommand } = await import('./sync.js');
         const pull = await pullBeforeCommand({ backlogRoot: dir }, { regenerate: false });
         if (pull.state === 'unsafe') process.exit(1);

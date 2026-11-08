@@ -6,9 +6,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { AGENT_CONFIG, mkTempDir } from '../helpers/tempdir.js';
+import { AGENT_CONFIG, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { GIT_ENV, addOrigin, git, statusLines } from '../helpers/git-backlog.js';
@@ -173,3 +173,58 @@ test('init_inside_parent_git_checkout_skips_commit: a backlog with no repo of it
   assert.equal(git(parent, 'rev-parse', 'HEAD'), head, 'no commit in the parent, and no pull of it');
   assert.doesNotMatch(r.stderr, /Committing backlog changes|Left your uncommitted|backlog commit failed/);
 });
+
+// Every path that pulls or commits a backlog with no repo of its own: the
+// pull before a command (`pullBeforeCommand`, which refine's pull is too),
+// `syncAndCommit` (approve) and `commitChangedSince` (init). The parent's
+// origin is ahead, so a pull of the parent would move its HEAD.
+const FEATURE_BACKLOG = {
+  components: [{ id: 'C01', title: 'Core', dirSuffix: 'core' }],
+  stories: [{ id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'refined', feature: 'F-1' }],
+  features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'refined', stories: ['S-1'] }],
+};
+for (const [label, seed, args] of [
+  [
+    'bl init, a backlog.json that loadConfig rejects',
+    (dir) => writeFileSync(join(dir, 'backlog.json'), '{}\n'),
+    ['init'],
+  ],
+  ['bl init, a valid backlog.json', copyFixture({}), ['init']],
+  ['bl approve', copyFixture(FEATURE_BACKLOG), ['approve', 'F-1']],
+  ['bl sync, the pull every committing command runs first', copyFixture({}), ['sync']],
+]) {
+  test(`init_and_approve_inside_parent_checkout_leave_parent_head_unchanged: ${label}`, () => {
+    const parent = mkTempDir('bl-nested-parent-');
+    const dir = join(parent, 'backlog');
+    mkdirSync(dir);
+    seed(dir);
+    git(parent, 'init', '-q', '-b', 'main');
+    git(parent, 'add', '.');
+    git(parent, 'commit', '-q', '-m', 'base');
+    addOrigin(parent);
+    const other = mkTempDir('bl-nested-other-');
+    git(other, 'clone', '-q', git(parent, 'remote', 'get-url', 'origin'), '.');
+    writeFileSync(join(other, 'theirs.md'), 'theirs\n');
+    git(other, 'add', '.');
+    git(other, 'commit', '-q', '-m', 'the other clone');
+    git(other, 'push', '-q', 'origin', 'main');
+    const head = git(parent, 'rev-parse', 'HEAD');
+
+    const r = runBl(args, { cwd: dir, env: { ...GIT_ENV, HOME: mkTempDir('bl-nested-home-') } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(git(parent, 'rev-parse', 'HEAD'), head, 'no commit in the parent, and no pull of it');
+    assert.doesNotMatch(r.stderr, /Committing backlog changes|Committed \d|backlog commit failed/);
+  });
+}
+
+/** A seed that copies a `mkTempBacklog(spec)` backlog into the directory. */
+function copyFixture(spec) {
+  return (dir) => {
+    const fixture = mkTempBacklog(spec);
+    try {
+      cpSync(fixture.dir, dir, { recursive: true });
+    } finally {
+      fixture.cleanup();
+    }
+  };
+}

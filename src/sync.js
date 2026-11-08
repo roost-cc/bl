@@ -38,6 +38,7 @@ import {
   commitPaths,
   dirtySnapshot,
   hasOriginRemote,
+  hasOwnRepo,
   leaveRegenerationPending,
   markRegenerationPending,
   parsePorcelainZ,
@@ -166,6 +167,8 @@ export function extraPathProblem(p) {
  * `backlog.json` that `loadConfig` rejects, S-1330), the settle and the
  * regeneration need a configuration, so they do not run: a pull that brought
  * anything leaves the regeneration pending for the next command that pulls.
+ * A backlog with no git repo of its own (`hasOwnRepo`) is not pulled: in a
+ * parent checkout, the pull would rebase the parent (S-1330).
  *
  * @param {object} config  only `backlogRoot` is read with `regenerate: false`
  * @param {{ regenerate?: boolean }} [opts]
@@ -175,7 +178,7 @@ export async function pullBeforeCommand(config, { regenerate = true } = {}) {
   const root = config.backlogRoot;
   // Nothing to pull: leave the lock to the command, whose first wait for it
   // is then the one it announces.
-  if (!hasOriginRemote(root)) return { state: 'no-remote' };
+  if (!hasOwnRepo(root) || !hasOriginRemote(root)) return { state: 'no-remote' };
   await acquireLock(root);
   try {
     const res = pullBacklog(root);
@@ -267,7 +270,8 @@ async function regenerateAfterPull(root, config, pendingPath) {
  * `bl merge` commit through this too, holding the lock across their own
  * writes.
  *
- * When the backlog is not a git work tree, nothing is formatted or
+ * When the backlog is not a git work tree, or not one of its own (a backlog
+ * inside a parent checkout, `hasOwnRepo`, S-1330), nothing is formatted or
  * committed, and the result carries `notRepo: true`.
  *
  * @param {object} config
@@ -293,7 +297,7 @@ export async function syncAndCommit(config, { message, storyIds = [], extraPaths
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    if (inRepo.status !== 0 || inRepo.stdout.trim() !== 'true') {
+    if (!hasOwnRepo(root) || inRepo.status !== 0 || inRepo.stdout.trim() !== 'true') {
       return { committed: false, paths: named.sort(), notRepo: true };
     }
     const paths = stageablePaths(root, named).sort();
