@@ -1025,19 +1025,32 @@ every step instead.
 #### The adapter interface (F-64 D1)
 
 `src/agents/provider.js` (`AgentProvider`) is the interface; `claude.js`,
-`codex.js` and `gemini.js` are its adapters, handed out by name by
-`getProvider()` in `src/agents/index.js`. Besides `spawn`,
+`codex.js`, `gemini.js` and `local.js` are its adapters, handed out by name by
+`getProvider()` in `src/agents/index.js`. `local` (S-1371) is Claude Code
+against a local model server; see **The local provider** below. Besides `spawn`,
 `translatePermissions`, `getToolHints`, `findSession`, `parseLogs`,
 `getTokens` and `supportsHeadless`, the contract has:
 
-- `capacity({ model })` → `{ state, scope, until, windows, message }`: whether a
-  configuration can take work now. `state` is `available`, `unavailable` or
+- `capacity({ model, backlogRoot })` → `{ state, scope, until, windows, message }`: whether a
+  configuration can take work now. Both callers (`capacityRows` in `src/capacity.js`, the runner's
+  `capacity` in `src/feature-run.js`) pass the backlog root, for an adapter that reads
+  `backlog.json` (`local`); the base ignores it. `state` is `available`, `unavailable` or
   `unknown`; `scope` is `account` (every model of the agent) or `model`;
   `until` is when an `unavailable` one may be tried again, or null; `windows`
   is `[{ name, remainingPercent, resetsAt }]`. It never throws: a failed read
   is `unknown` with the reason in `message`. Codex reads its quota over
-  `codex app-server` (see `bl capacity`); Claude and Gemini answer the base
-  `unknown` ("<agent> cannot report capacity").
+  `codex app-server` (see `bl capacity`); `local` asks its server's
+  `/health`; Claude and Gemini answer the base `unknown` ("<agent> cannot
+  report capacity"). Codex and `local` run their read as a Node child
+  (`runCapacityHelper`, `src/agents/capacity-helper.js`), because
+  `capacity()` is synchronous.
+- `checkConfiguration({ model }, { topLevel, raw })` → a reason string, or
+  null when the configuration is usable. `topLevel` is `backlog.json`'s top
+  level; `raw` is it with the repo's `overrides` merged over it. The config
+  loader calls it for each `agent` and `review_agent` entry and for -A, and
+  throws the reason after the entry's location (`backlog.json "agent"[2]:
+…`, `-A local: …`), so `config.js` names no agent. The base returns null;
+  `local` has rules of its own.
 - The headless result's `refusal`: `{ kind, scope, message, resetsAt }` or
   null (see the usage-limit paragraph under `bl run`). `kind` is a usage
   limit's (`session`, `weekly`, `spend`, `other`) or `capacity`.
@@ -1045,7 +1058,8 @@ every step instead.
   `BL_HEADLESS=1` (`HEADLESS_ENV`), built by `agentEnv({ headless,
 backlogRoot })`, which also sets `BL_BACKLOG_DIR` where the adapter passes
   it; an interactive spawn adds no marker. `isHeadless()` reads it (F-78 D3,
-  see `bl rank`).
+  see `bl rank`). `ClaudeProvider.spawn()` takes it from
+  `spawnEnv({ headless, backlogRoot, model })`, which `local` overrides.
 - `supportsModel()`: whether `spawn({ model })` selects the model (Claude's
   `--model`, Codex's `-m`; Gemini no). The config loader refuses a
   configuration that names a model for an adapter that does not, and `bl run`
@@ -1063,6 +1077,42 @@ a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
 `test/unit/agent-boundary.test.js` fails on either and names its one
 exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
 a name as a literal (a default argument, a prompt variant) is allowed.
+
+#### The local provider (S-1371)
+
+`local` runs the `claude` CLI against a model server on the workstation that
+speaks the Anthropic Messages API: llama-server, started by hand
+(`roost/llama/qwen38.sh` serves Qwen3.8-27B on port 8090 as `qwen3.8-27b`).
+bl does not start or stop the server.
+
+- `LocalProvider` extends `ClaudeProvider` and overrides only `spawnEnv`,
+  `checkConfiguration` and `capacity`; the CLI, its arguments, the tool
+  names, the permissions, the hooks and the JSON result are claude's. Its
+  logic is in `src/agents/local.js`, which exports the class. The class
+  itself is in `claude.js`, below `ClaudeProvider`: a class in `local.js`
+  would extend `ClaudeProvider` while `local.js` loads, which a module that
+  imports `claude.js` first reaches before `ClaudeProvider` exists.
+- The server is `backlog.json`'s top-level `local` key,
+  `"local": { "url": "http://localhost:8090", "token": "local" }`. Both keys
+  are required non-empty strings, and no other key is allowed. bl reads it
+  from the top level only: `spawn()` knows the backlog, not the repo.
+- `spawnEnv` sets `ANTHROPIC_BASE_URL` to `url`, `ANTHROPIC_AUTH_TOKEN` to
+  `token`, `ANTHROPIC_API_KEY` to the empty string (so the operator's real
+  key never reaches the server) and `ANTHROPIC_SMALL_FAST_MODEL` to the
+  configuration's model (so Claude Code's side requests stay on the server),
+  over claude's `agentEnv` (`localEnv`).
+- `checkConfiguration` refuses a `local` configuration with no model (the
+  model is the server's alias), a missing or wrong `local` key, and a repo
+  whose `overrides` set `local`. A backlog that names no `local`
+  configuration loads with or without the key.
+- `capacity` asks `<url>/health` within two seconds
+  (`src/agents/local-capacity.js`): a 200 is `available`; a refused
+  connection is `unavailable` with no `until`, so the walk skips the
+  configuration for the rest of the run; a timeout, another status (503
+  while the model loads) or another failure is `unknown`. Every answer has
+  scope `account` and names the URL.
+- A session whose `claude` cannot reach the server ends in error with
+  `refusal` null: a failed step, not a usage limit.
 
 #### Tokens per step (S-904)
 
@@ -1175,8 +1225,8 @@ fix steps, the merge resolution) walks `agent`, each from the top:
    log line `<step>: skipping <agent> <model>: <why>`. An entry whose `until` has
    passed is dropped with a log line, so the run returns to the operator's
    first choice at the next step.
-2. The runner's `capacity(agent, model)` (the adapter's `capacity({ model })`)
-   is asked; an `account`-scoped answer is kept for the rest of the walk, so
+2. The runner's `capacity(agent, model, backlogRoot)` (the adapter's
+   `capacity({ model, backlogRoot })`) is asked; an `account`-scoped answer is kept for the rest of the walk, so
    each agent is asked once. `unavailable` puts the configuration on the
    out-list (kind `quota`) until the reading's `until` plus the margin below.
    `available` and `unknown`, and a read that throws, spawn.
@@ -1579,8 +1629,18 @@ or knocks it back to `pending` with a new session.
 **Review agent.** `bl review`, and the review step of `bl run`, run on
 `backlog.json`'s `review_agent` list (see **Agent configurations**),
 walked down when a configuration is out (F-64 D3, **Headless sessions**). `-A <agent>` on
-`bl review` replaces that list with a one-entry list with no model; on
-every other verb `-A` replaces the implementing list only.
+`bl review` replaces that list with a one-entry list; on every other verb
+`-A` replaces the implementing list only. `--model <m>` beside `-A` gives
+that entry its model (none: no model, the account's own), so
+`bl run S-1 -A local --model qwen3.8-27b` implements on the local server and
+reviews on the `review_agent` list. `--model` goes wherever `-A` goes
+(`bl run`, `bl implement`, `bl review`, `bl refine`, `bl init`, `bl agent`,
+`bl allow`, `bl format`/`bl lint`). Without `-A` it exits 1 with
+`--model requires -A <provider>`; on an adapter that cannot select a model
+it exits 1 with `<agent> cannot select a model: drop --model`. The entry is
+checked like a list entry (`checkConfiguration`), and the model reaches
+`spawn()`, the run state, every log line and the Review Log. A reload
+(`agentFlagOf`, `configForRepo`, `sync.js`) keeps it.
 
 **The reviewer is never the implementer** (F-64 D4). A `review_agent`
 configuration equal to one that ran an implementing step of the run
@@ -1645,7 +1705,21 @@ outranks an `ANTHROPIC_MODEL` in the environment) or Codex's `-m`
 model flag is passed and the agent CLI uses the account's model; bl
 supplies none of its own, and one configuration's model never reaches
 another agent. Use aliases (`opus`, `sonnet`) so the config follows new
-releases. A repo's `overrides` may replace either list whole. The config
+releases. Each entry must also pass its adapter's `checkConfiguration`
+(see **The adapter interface**): a `local` entry names the server's model
+alias and needs `backlog.json`'s top-level `local` key (see **The local
+provider**):
+
+```json
+{
+  "local": { "url": "http://localhost:8090", "token": "local" },
+  "agent": [{ "agent": "local", "model": "qwen3.8-27b" }]
+}
+```
+
+A `local` configuration is different from every cloud one, so a cloud
+reviewer stays independent of it. A repo's `overrides` may replace either
+list whole, but may not set `local`. The config
 record carries both lists (`agents`, `reviewAgents`) and their first
 entries (`agent`, `agentModel`, `reviewAgent`, `reviewAgentModel`) for
 the callers that do not walk a list.
@@ -1663,7 +1737,9 @@ string `review_agent` a one-entry list); nothing migrates silently.
 (**Review agent**: the reviewer is never the implementer). A role the file
 already has is kept, and the missing one is picked against it
 (`initConfigurationLists`): a headless agent the kept list (and -A) does
-not use, so a kept `[codex]` implementer gets a `claude` reviewer.
+not use, so a kept `[codex]` implementer gets a `claude` reviewer. It never
+picks an agent whose model-less configuration `checkConfiguration` refuses
+(`local`).
 
 **Effort levels** (F-85). An effort level says how hard an agent session
 thinks: `low`, `medium`, `high`, `xhigh` or `max`, lowest first
@@ -2430,8 +2506,9 @@ Shows whether each agent configuration can take work now (F-64 D6): one row
 per configuration of `agent`, then `review_agent`, in list order, with its
 role, agent, model (`-` for the account's own), state (`available`,
 `unavailable`, `unknown`), each quota window's remaining percent and reset in
-local time, and the adapter's message. It calls each adapter's `capacity()`,
-the call the run loop makes, so it shows what the loop will see. An
+local time, and the adapter's message. It calls each adapter's
+`capacity({ model, backlogRoot })`, the call the run loop makes, so it shows
+what the loop will see. An
 `account`-scoped answer (Codex) is asked once per agent, a `model`-scoped one
 once per model. It reports and does not gate: it exits 0 whatever the
 states, and 1 only when the backlog or its `backlog.json` cannot be loaded.
@@ -2456,6 +2533,10 @@ with a 20-second deadline and stops app-server on every path;
 `spendControlReached`, makes every Codex model `unavailable` until the latest
 such reset (none for a spend cap). A timeout, an exit, a JSON-RPC error or an
 answer with no windows is `unknown`, with the reason.
+
+The `local` row comes from the server's `/health` (see **The local
+provider**): `available` on a 200, `unavailable` when the connection is
+refused, `unknown` otherwise; the message names the URL.
 
 ### `bl list`
 
@@ -4007,7 +4088,9 @@ prompts/
 ```
 
 Use lowercase `<agentId>` values that match the provider registry keys
-in `src/agents/index.js` (currently `claude`, `codex`, and `gemini`).
+in `src/agents/index.js` (currently `claude`, `codex`, `gemini` and
+`local`). A `local` session reads `local` variants, not `claude` ones: no
+variant exists for either today.
 Unrecognized or malformed agent IDs are ignored for prompt lookup and
 fall back to the shared chain.
 
