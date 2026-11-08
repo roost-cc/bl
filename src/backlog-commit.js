@@ -90,7 +90,8 @@ export function parsePorcelainZ(out) {
   return paths;
 }
 
-function hashPath(root, rel) {
+/** The content hash `dirtySnapshot` records for `rel`, or a marker for an absent, non-file or unreadable path. */
+export function hashPath(root, rel) {
   const abs = join(root, rel);
   if (!existsSync(abs)) return '(absent)';
   try {
