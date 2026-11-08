@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
-import { basename, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
 import { parse as parseYaml } from 'yaml';
@@ -529,6 +529,14 @@ function gitPairBacklog() {
 }
 
 const NEW_PAIR = ['new', '--feature', '--theme', 'demo', '--title', 'Pair', 'S-2', 'S-3'];
+const PAIR_STORIES = ['stories/S2-two/index.md', 'stories/S3-three/index.md'];
+
+/** The feature file at `rel` is F-2 in theme demo, and each of `stories` names it. */
+function assertFeatureF2(dir, rel, title, stories) {
+  const fm = fmOf(dir, rel);
+  assert.deepEqual([fm.feature_id, fm.title, fm.theme], ['F-2', title, 'demo']);
+  for (const p of stories) assert.equal(fmOf(dir, p).feature, 'F-2', p);
+}
 
 test('bl new --feature commits the feature and the stories it links (S-1368)', () => {
   const { dir, cleanup } = gitPairBacklog();
@@ -536,6 +544,7 @@ test('bl new --feature commits the feature and the stories it links (S-1368)', (
     const r = runBl(NEW_PAIR, { cwd: dir, env: GIT_ENV });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout.trim(), 'features/F2-pair/index.md');
+    assertFeatureF2(dir, 'features/F2-pair/index.md', 'Pair', PAIR_STORIES);
     assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: add F-2');
     assert.deepEqual(headFiles(dir).sort(), [
       'A\tfeatures/F2-pair/index.md',
@@ -554,6 +563,7 @@ test('bl new --feature with no story ids commits the feature alone (S-1368)', ()
     const r = runBl(['new', '--feature', '--theme', 'demo', '--title', 'Solo'], { cwd: dir, env: GIT_ENV });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: add F-2');
+    assertFeatureF2(dir, 'features/F2-solo/index.md', 'Solo', []);
     assert.deepEqual(headFiles(dir), ['A\tfeatures/F2-solo/index.md']);
     assertOnlyBystandersDirty(dir);
   } finally {
@@ -569,11 +579,52 @@ test('bl new --feature --no-sync makes no commit (S-1368)', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /Skipped the commit\. Commit it with 'bl sync --commit'\./);
     assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+    assertFeatureF2(dir, 'features/F2-pair/index.md', 'Pair', PAIR_STORIES);
     assert.ok(statusLines(dir).includes('?? features/F2-pair/index.md'), statusLines(dir).join('\n'));
   } finally {
     cleanup();
   }
 });
+
+// A linked story whose index.md was dirty before the command is committed
+// whole, with the new line; a staged file beside it stays staged and out.
+for (const [name, setup, target, args, check] of [
+  ['bl new --feature', gitPairBacklog, 'stories/S2-two/index.md', NEW_PAIR, (fm) => assert.equal(fm.feature, 'F-2')],
+  [
+    'bl new --required-for',
+    gitEdgeBacklog,
+    'stories/S1-later/index.md',
+    [...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1'],
+    (fm) => assert.deepEqual(fm.depends_on, ['S-3']),
+  ],
+  [
+    "bl new --from with a spec's required_for",
+    gitEdgeBacklog,
+    'stories/S1-later/index.md',
+    (dir) => ['new', '--from', edgeSpec(dir)],
+    (fm) => assert.deepEqual(fm.depends_on, ['S-3']),
+  ],
+]) {
+  test(`${name} commits a dirty linked index but excludes its sibling file`, () => {
+    const { dir, cleanup } = setup();
+    const sibling = join(dirname(target), 'notes.md');
+    try {
+      writeFileSync(join(dir, target), '\nAn edit made before the command.\n', { flag: 'a' });
+      writeFileSync(join(dir, sibling), '# Notes\n');
+      git(dir, 'add', sibling);
+      const r = runBl(typeof args === 'function' ? args(dir) : args, { cwd: dir, env: GIT_ENV });
+      assert.equal(r.status, 0, r.stderr);
+      const committed = git(dir, 'show', `HEAD:${target}`);
+      assert.equal(committed, readFileSync(join(dir, target), 'utf8').trim());
+      assert.match(committed, /An edit made before the command\./);
+      check(parseFrontmatter(committed).fm);
+      assert.ok(!headFiles(dir).some((f) => f.endsWith(sibling)), headFiles(dir).join('\n'));
+      assert.ok(statusLines(dir).includes(`A  ${sibling}`), statusLines(dir).join('\n'));
+    } finally {
+      cleanup();
+    }
+  });
+}
 
 // feature_commit_excludes_formatter_sidecars: every `bl new` branch commits
 // the files it wrote and nothing else. The Markdown formatter here writes a
