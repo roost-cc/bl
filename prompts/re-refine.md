@@ -43,8 +43,9 @@ Backlog repo : {{backlogDir}}
 
 7. When you are finished, set `status: refined` in the frontmatter.
 
-8. Commit your re-refinement by following **Backlog commits** below. Nothing after this session
-   commits for you. Use the message `chore: re-refine {{storyId}}`, and put why the plan changed
+8. Commit your re-refinement by following **Backlog commits** below. When this session ends,
+   `bl` commits and pushes what you left uncommitted with `chore: re-refine {{storyId}}`, but your
+   own commit says why. Use the message `chore: re-refine {{storyId}}`, and put why the plan changed
    in its body. Pass `--story {{storyId}}`, plus one `--story` for each child story you created
    with `bl new`. The backlog workflow commits to its `main` branch directly; do NOT branch
    first.

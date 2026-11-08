@@ -138,8 +138,9 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
 9. Format the changed markdown with `bl format --no-story <paths>`. Feature files are outside
    story scope, so the `--story` form does not apply to them.
 
-10. Commit to the backlog repo's main branch, by path. Nothing after this session commits for
-    you. Name every story you created or edited with its own `--story`:
+10. Commit to the backlog repo's main branch, by path. When this session ends, `bl` commits and
+    pushes what you left uncommitted with `chore: refine {{featureId}}`, but your own commit says
+    why. Name every story you created or edited with its own `--story`:
 
     ```
     bl sync --commit -m "chore: refine {{featureId}}" --path {{featureRelPath}} --story S-<id> [--story S-<id> …]

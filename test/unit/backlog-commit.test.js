@@ -8,6 +8,8 @@ import {
   dirtySnapshot,
   pathsChangedSince,
   commitPaths,
+  commitChangedSince,
+  failedCommitRecord,
   commandPullsBacklog,
   isGeneratedPath,
   isNonFastForwardRejection,
@@ -30,6 +32,8 @@ import {
   regenReason,
 } from '../../src/allowed-tools.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
+import { PRIORITY_FILE } from '../../src/priority.js';
+import { HEADLESS_ENV } from '../../src/agents/provider.js';
 
 const ENV = {
   ...process.env,
@@ -160,6 +164,385 @@ test('commitPaths reports a commit that fails without output as an error', () =>
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// commitChangedSince: what bl merge, refine, triage and init commit (S-1330)
+// ---------------------------------------------------------------------------
+
+/** A repo with `x.md`, `y.md` and `priority.md` committed, and an identity. */
+function changedSinceRepo() {
+  const dir = mkTempDir('bl-bc-since-');
+  g(dir, 'init', '-q', '-b', 'main');
+  g(dir, 'config', 'user.name', 't');
+  g(dir, 'config', 'user.email', 't@t');
+  for (const f of ['x.md', 'y.md', PRIORITY_FILE]) writeFileSync(join(dir, f), `${f}\n`);
+  g(dir, 'add', '.');
+  g(dir, 'commit', '-q', '-m', 'base');
+  return dir;
+}
+
+test('commitChangedSince: nothing changed makes no commit and prints nothing, a non-repo too', () => {
+  const dir = changedSinceRepo();
+  const head = g(dir, 'rev-parse', 'HEAD');
+  const before = dirtySnapshot(dir);
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: nothing'));
+  assert.equal(failed, false);
+  assert.equal(err, '');
+  assert.equal(g(dir, 'rev-parse', 'HEAD'), head);
+
+  const plain = mkTempDir('bl-bc-plain-');
+  const snap = dirtySnapshot(plain);
+  assert.equal(snap, null);
+  writeFileSync(join(plain, 'a.md'), 'a\n');
+  assert.deepEqual(
+    captureStderr(() => commitChangedSince(plain, snap, 'chore: nothing')),
+    [false, ''],
+  );
+});
+
+test('commit_changed_since_skips_a_backlog_with_no_repo_of_its_own: a plain directory, and one inside a parent checkout', () => {
+  const parent = changedSinceRepo();
+  mkdirSync(join(parent, 'backlog'));
+  for (const root of [mkTempDir('bl-bc-plain-'), join(parent, 'backlog')]) {
+    const before = dirtySnapshot(root);
+    writeFileSync(join(root, 'a.md'), 'written by the command\n');
+    const head = g(parent, 'rev-parse', 'HEAD');
+    assert.deepEqual(
+      captureStderr(() => commitChangedSince(root, before, 'chore: nothing')),
+      [false, ''],
+      root,
+    );
+    assert.equal(g(parent, 'rev-parse', 'HEAD'), head, `${root}: no commit in the parent`);
+  }
+});
+
+// `git status` fails on a corrupt index; the real one is put back after.
+for (const when of ['before', 'after']) {
+  test(`commit_changed_since_rejects_failed_snapshot: git status fails ${when} the write`, () => {
+    const dir = changedSinceRepo();
+    const index = join(dir, '.git', 'index');
+    const good = readFileSync(index);
+    const snapshot = () => {
+      if (when === 'before') writeFileSync(index, 'corrupt');
+      const snap = dirtySnapshot(dir);
+      writeFileSync(index, good);
+      return snap;
+    };
+    const before = snapshot();
+    writeFileSync(join(dir, 'x.md'), 'written by the command\n');
+    if (when === 'after') writeFileSync(index, 'corrupt');
+    const head = g(dir, 'rev-parse', 'HEAD');
+    const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: since'));
+    writeFileSync(index, good);
+    assert.equal(failed, true, err);
+    assert.match(err, new RegExp(`backlog commit failed: git status failed ${when} the command wrote`));
+    assert.equal(g(dir, 'rev-parse', 'HEAD'), head);
+  });
+}
+
+test('commitChangedSince: a path dirty before stays out and is named unless the command changed it again', () => {
+  const dir = changedSinceRepo();
+  writeFileSync(join(dir, 'x.md'), 'operator\n');
+  writeFileSync(join(dir, 'y.md'), 'operator\n');
+  const before = dirtySnapshot(dir);
+  writeFileSync(join(dir, 'y.md'), 'operator + command\n');
+  writeFileSync(join(dir, 'new.md'), 'command\n');
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: since'));
+  assert.equal(failed, false, err);
+  assert.equal(g(dir, 'log', '-1', '--format=%s'), 'chore: since');
+  assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['new.md', 'y.md']);
+  assert.match(err, /Committing backlog changes \(2 paths\)\.\.\./);
+  assert.match(err, /Left your uncommitted backlog edits alone: x\.md\n/);
+  assert.equal(g(dir, 'status', '--porcelain'), 'M x.md');
+});
+
+test('commitChangedSince: priority.md is held for an agent session, with one line, and committed otherwise', () => {
+  for (const session of [true, false]) {
+    const dir = changedSinceRepo();
+    const before = dirtySnapshot(dir);
+    writeFileSync(join(dir, PRIORITY_FILE), 'reranked\n');
+    writeFileSync(join(dir, 'x.md'), 'refined\n');
+    // As a person: under the headless marker `commitPaths` refuses
+    // `priority.md` by itself (F-78 D3), session or not.
+    const marker = process.env[HEADLESS_ENV];
+    delete process.env[HEADLESS_ENV];
+    let failed, err;
+    try {
+      [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: s', { session }));
+    } finally {
+      if (marker !== undefined) process.env[HEADLESS_ENV] = marker;
+    }
+    assert.equal(failed, false, err);
+    const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort();
+    const held = new RegExp(`Left ${PRIORITY_FILE} uncommitted: .*only a person ranks`);
+    if (session) {
+      assert.deepEqual(files, ['x.md']);
+      assert.equal(err.match(new RegExp(held, 'g'))?.length, 1, err);
+      assert.equal(g(dir, 'status', '--porcelain'), `M ${PRIORITY_FILE}`);
+    } else {
+      assert.deepEqual(files, [PRIORITY_FILE, 'x.md']);
+      assert.doesNotMatch(err, held);
+    }
+  }
+});
+
+test('commitChangedSince: a path dirty before that the session committed itself is not named', () => {
+  const dir = changedSinceRepo();
+  writeFileSync(join(dir, 'x.md'), 'operator\n');
+  const before = dirtySnapshot(dir);
+  g(dir, 'commit', '-q', '-am', 'the session commits it');
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: since', { session: true }));
+  assert.equal(failed, false, err);
+  assert.equal(err, '');
+  assert.equal(g(dir, 'log', '-1', '--format=%s'), 'the session commits it');
+});
+
+test('commitChangedSince: priority.md dirty before and changed by the session gets only the hold line', () => {
+  const dir = changedSinceRepo();
+  writeFileSync(join(dir, PRIORITY_FILE), 'operator\n');
+  const before = dirtySnapshot(dir);
+  writeFileSync(join(dir, PRIORITY_FILE), 'operator + session\n');
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: s', { session: true }));
+  assert.equal(failed, false, err);
+  assert.match(err, new RegExp(`Left ${PRIORITY_FILE} uncommitted: .*only a person ranks`));
+  assert.doesNotMatch(err, /Left your uncommitted backlog edits alone/);
+  assert.equal(g(dir, 'status', '--porcelain'), `M ${PRIORITY_FILE}`);
+});
+
+test('commitChangedSince: a failed commit returns true and names the paths', () => {
+  const dir = changedSinceRepo();
+  const before = dirtySnapshot(dir);
+  writeFileSync(join(dir, 'x.md'), 'changed\n');
+  writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: fails'));
+  assert.equal(failed, true);
+  assert.match(err, /backlog commit failed: git commit exited 1\n {2}Commit these paths yourself: x\.md/);
+});
+
+// A failed commit, then a retry that writes nothing new (its snapshot finds
+// the failed paths dirty already): each path class after the failure.
+for (const [label, after, committed, dirty] of [
+  ['an unchanged path is committed by the retry', () => {}, ['x.md', 'z.md'], ''],
+  [
+    'a path edited since is the operator’s and stays out, named',
+    (dir) => writeFileSync(join(dir, 'x.md'), 'the operator, after\n'),
+    ['z.md'],
+    // Staged by the failed commit's `git add`, edited since.
+    'MM x.md',
+  ],
+  [
+    'a path committed by hand since is not carried',
+    (dir) => g(dir, 'commit', '-q', '-m', 'by hand', 'x.md'),
+    ['z.md'],
+    '',
+  ],
+]) {
+  test(`commit_changed_since_retry_keeps_failed_paths: ${label}`, () => {
+    const dir = changedSinceRepo();
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const first = dirtySnapshot(dir);
+    writeFileSync(join(dir, 'x.md'), 'the command\n');
+    writeFileSync(join(dir, 'z.md'), 'the command\n');
+    assert.equal(captureStderr(() => commitChangedSince(dir, first, 'chore: retry'))[0], true);
+    rmSync(hook);
+    after(dir);
+
+    const [failed, err] = captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), 'chore: retry'));
+    assert.equal(failed, false, err);
+    assert.equal(g(dir, 'log', '-1', '--format=%s'), 'chore: retry');
+    assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), committed);
+    assert.equal(g(dir, 'status', '--porcelain'), dirty);
+    if (dirty) assert.match(err, /Left your uncommitted backlog edits alone: x\.md/);
+    assert.equal(
+      existsSync(join(dir, failedCommitRecord('chore: retry'))),
+      false,
+      'a commit that did not fail removes the record',
+    );
+  });
+}
+
+// One command's failed commit, then another command's call that changes
+// nothing: the record is the first command's, so the second commits nothing
+// and the path stays dirty for the first command's retry. The last row is the
+// same owner under another message (a refine, then a re-refine): it carries.
+for (const [first, next, carries] of [
+  [{ message: 'chore: refine S-1', owner: 'refine S-1' }, { message: 'chore: bl init' }, false],
+  [
+    { message: 'chore: merge F-1, mark stories done' },
+    { message: 'chore: triage S-5 Deferred into new stories' },
+    false,
+  ],
+  [
+    { message: 'chore: triage S-5 Deferred into new stories' },
+    { message: 'chore: refine S-1', owner: 'refine S-1' },
+    false,
+  ],
+  [{ message: 'chore: refine S-1', owner: 'refine S-1' }, { message: 'chore: refine S-2', owner: 'refine S-2' }, false],
+  [
+    { message: 'chore: refine S-1', owner: 'refine S-1' },
+    { message: 'chore: re-refine S-1', owner: 'refine S-1' },
+    true,
+  ],
+]) {
+  test(`commit_changed_since_failed_refine_then_noop_init_keeps_refine_path_uncommitted: ${first.message} fails, then ${next.message}`, () => {
+    const dir = changedSinceRepo();
+    const head = g(dir, 'rev-parse', 'HEAD');
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const before = dirtySnapshot(dir);
+    writeFileSync(join(dir, 'x.md'), 'the first command\n');
+    assert.equal(captureStderr(() => commitChangedSince(dir, before, first.message, first))[0], true);
+    rmSync(hook);
+
+    const [failed, err] = captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), next.message, next));
+    assert.equal(failed, false, err);
+    if (carries) {
+      assert.equal(g(dir, 'log', '-1', '--format=%s'), next.message);
+      assert.equal(g(dir, 'status', '--porcelain'), '');
+      return;
+    }
+    assert.equal(g(dir, 'rev-parse', 'HEAD'), head, 'the other command commits nothing');
+    assert.equal(g(dir, 'status', '--porcelain'), 'M  x.md');
+    // The first command's retry still commits it.
+    const retry = captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), first.message, first));
+    assert.equal(retry[0], false, retry[1]);
+    assert.equal(g(dir, 'log', '-1', '--format=%s'), first.message);
+    assert.equal(g(dir, 'status', '--porcelain'), '');
+  });
+}
+
+// Each way a failure can drop the record of a failed commit's paths: every
+// path either stays recorded until a retry commits it, or a call reports the
+// failure and names it. `call` runs `commitChangedSince` as a person (the
+// headless marker refuses `priority.md` on its own, F-78 D3).
+{
+  const MESSAGE = 'chore: o';
+  const call = (dir, before, opts = {}) => {
+    const marker = process.env[HEADLESS_ENV];
+    delete process.env[HEADLESS_ENV];
+    try {
+      return captureStderr(() => commitChangedSince(dir, before, MESSAGE, opts));
+    } finally {
+      if (marker !== undefined) process.env[HEADLESS_ENV] = marker;
+    }
+  };
+  const hook = (dir) => join(dir, '.git', 'hooks', 'pre-commit');
+  const refuse = (dir) => writeFileSync(hook(dir), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const record = (dir) => join(dir, failedCommitRecord(MESSAGE));
+  /** The first call: `x.md` (or `file`) written, and a commit the hook refuses. */
+  const failFirst = (dir, file = 'x.md') => {
+    refuse(dir);
+    const before = dirtySnapshot(dir);
+    writeFileSync(join(dir, file), 'the command\n');
+    assert.equal(call(dir, before)[0], true);
+    rmSync(hook(dir));
+  };
+  /** `git status` with a corrupt index, the real one put back after. */
+  const corrupt = (dir, fn) => {
+    const index = join(dir, '.git', 'index');
+    const good = readFileSync(index);
+    writeFileSync(index, 'corrupt');
+    try {
+      return fn();
+    } finally {
+      writeFileSync(index, good);
+    }
+  };
+  const subject = (dir) => g(dir, 'log', '-1', '--format=%s');
+  for (const [label, run] of [
+    [
+      'a carried priority.md that a session holds stays recorded, and the next call commits it',
+      (dir) => {
+        failFirst(dir, PRIORITY_FILE);
+        const [held, err] = call(dir, dirtySnapshot(dir), { session: true });
+        assert.equal(held, false, err);
+        assert.match(err, /Left priority\.md uncommitted/);
+        assert.equal(subject(dir), 'base');
+        assert.ok(existsSync(record(dir)), 'still recorded');
+        const [failed, err2] = call(dir, dirtySnapshot(dir));
+        assert.equal(failed, false, err2);
+        assert.equal(subject(dir), MESSAGE);
+        assert.equal(g(dir, 'status', '--porcelain'), '');
+      },
+    ],
+    [
+      'a malformed record fails the next call, which names it',
+      (dir) => {
+        failFirst(dir);
+        writeFileSync(record(dir), '{bad');
+        const [failed, err] = call(dir, dirtySnapshot(dir));
+        assert.equal(failed, true);
+        assert.match(err, /backlog commit failed: cannot read .*the record of an earlier failed commit/);
+        assert.equal(subject(dir), 'base');
+      },
+    ],
+    [
+      'a record that cannot be written fails the call, which names its paths',
+      (dir) => {
+        mkdirSync(record(dir), { recursive: true });
+        refuse(dir);
+        const before = dirtySnapshot(dir);
+        writeFileSync(join(dir, 'x.md'), 'the command\n');
+        const [failed, err] = call(dir, before);
+        assert.equal(failed, true);
+        assert.match(err, /cannot write .*so no later bl run commits these paths: x\.md/);
+      },
+    ],
+    [
+      'a failed snapshot before records the dirty paths, and the next call names them as a failure',
+      (dir) => {
+        const before = corrupt(dir, () => dirtySnapshot(dir));
+        assert.equal(before, null);
+        writeFileSync(join(dir, 'x.md'), 'the command\n');
+        assert.equal(call(dir, before)[0], true);
+        const [failed, err] = call(dir, dirtySnapshot(dir));
+        assert.equal(failed, true);
+        assert.match(err, /no record of what it changed .*these paths may hold its changes: x\.md/);
+        assert.equal(subject(dir), 'base', 'bl cannot tell whose they are, so it commits none');
+        // Named once: the call after that leaves it to the operator.
+        assert.deepEqual(call(dir, dirtySnapshot(dir)), [false, 'Left your uncommitted backlog edits alone: x.md\n']);
+      },
+    ],
+    [
+      'a failed snapshot after leaves the record, and the next call commits the path',
+      (dir) => {
+        failFirst(dir);
+        const before = dirtySnapshot(dir);
+        assert.equal(corrupt(dir, () => call(dir, before))[0], true);
+        const [failed, err] = call(dir, dirtySnapshot(dir));
+        assert.equal(failed, false, err);
+        assert.equal(subject(dir), MESSAGE);
+        assert.equal(g(dir, 'status', '--porcelain'), '');
+      },
+    ],
+    [
+      'a record that cannot be removed after a commit is a warning, and carries nothing',
+      (dir) => {
+        if (process.getuid?.() === 0) return; // root removes it all the same
+        failFirst(dir);
+        const recordDir = join(dir, failedCommitRecord(MESSAGE), '..');
+        chmodSync(recordDir, 0o555);
+        let res;
+        try {
+          res = call(dir, dirtySnapshot(dir));
+        } finally {
+          chmodSync(recordDir, 0o755);
+        }
+        assert.equal(res[0], false, res[1]);
+        assert.match(res[1], /cannot remove /);
+        assert.equal(subject(dir), MESSAGE);
+        const head = g(dir, 'rev-parse', 'HEAD');
+        assert.equal(call(dir, dirtySnapshot(dir))[0], false);
+        assert.equal(g(dir, 'rev-parse', 'HEAD'), head);
+      },
+    ],
+  ]) {
+    test(`commit_changed_since_preserves_failed_paths_across_hold_and_record_errors: ${label}`, () => {
+      run(changedSinceRepo());
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shared through the remote (F-50 D4): push after commit, pull with rebase
@@ -454,6 +837,9 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
     ['implement', ['S-1']],
     ['merge', ['F-1']],
     ['done', ['S-1']],
+    ['refine', ['S-1']],
+    ['approve', ['F-1']],
+    ['init', []],
     ['inbox', []],
     ['inbox', ['done', 'F-1:op1']],
     ['updates', ['status']],
@@ -479,6 +865,7 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
     ['updates', []],
     ['inbox', ['--help']],
     ['run', ['-h']],
+    ['refine', ['--help']],
     ['attach', ['--help']],
     ['move', ['--help']],
     ['block', ['list']],

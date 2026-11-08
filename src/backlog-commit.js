@@ -21,10 +21,10 @@
  */
 
 import { createHash } from 'crypto';
-import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
-import { join, resolve, sep } from 'path';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
+import { dirname, join, resolve, sep } from 'path';
 import { spawnSync } from 'child_process';
-import { warn } from './config.js';
+import { info, warn } from './config.js';
 import { HEADLESS_ENV, isHeadless } from './agents/provider.js';
 import { PRIORITY_FILE } from './priority.js';
 import { atomicWriteFile } from './atomic-write.js';
@@ -50,6 +50,17 @@ function git(root, args) {
 function gitMessage(r, what) {
   if (r.error) return r.error.message;
   return (r.stderr || r.stdout || '').trim() || `${what} exited ${r.status}`;
+}
+
+/**
+ * Whether the backlog at `root` is a git repo of its own: `root` holds a
+ * `.git` (a directory, or a worktree's file). A backlog inside a parent
+ * checkout is not: git would pull and commit the parent there, and name
+ * paths from the parent's top (S-1330). `pullBeforeCommand`,
+ * `syncAndCommit` and `commitChangedSince` skip such a backlog.
+ */
+export function hasOwnRepo(root) {
+  return existsSync(join(root, '.git'));
 }
 
 /** Whether the repo at `root` has an `origin` remote to push to and pull from. */
@@ -79,7 +90,8 @@ export function parsePorcelainZ(out) {
   return paths;
 }
 
-function hashPath(root, rel) {
+/** The content hash `dirtySnapshot` records for `rel`, or a marker for an absent, non-file or unreadable path. */
+export function hashPath(root, rel) {
   const abs = join(root, rel);
   if (!existsSync(abs)) return '(absent)';
   try {
@@ -91,8 +103,9 @@ function hashPath(root, rel) {
 }
 
 /**
- * Dirty paths of a repo mapped to a content hash, or null when `root` is not
- * a git repo (callers then skip committing).
+ * Dirty paths of a repo mapped to a content hash, or null when `git status`
+ * fails: `root` is not a git repo, or its repo is broken. In a repo of its
+ * own, `commitChangedSince` treats null as a failure (S-1330).
  * @returns {Map<string, string> | null}
  */
 export function dirtySnapshot(root) {
@@ -110,6 +123,159 @@ export function pathsChangedSince(before, after) {
     .filter(([p, h]) => !before.has(p) || before.get(p) !== h)
     .map(([p]) => p)
     .sort();
+}
+
+/**
+ * Where a failed `commitChangedSince` commit records its paths, as JSON
+ * `[path, content hash]` pairs, for the next call of the same command to
+ * commit (S-1330): one file per owner (`failedCommitRecord`). The run
+ * directory ignores itself, so a record is never committed.
+ */
+export const FAILED_COMMIT_DIR = join(RUN_DIR, 'commit-failed');
+
+/**
+ * The backlog-relative record of `owner`'s failed commit (`refine S-1`,
+ * `init`, a merge's message): a retry of the same command reads it, and no
+ * other command does, so one command's paths never go into another's commit.
+ * @param {string} owner
+ */
+export function failedCommitRecord(owner) {
+  return join(FAILED_COMMIT_DIR, `${owner.replace(/[^A-Za-z0-9-]+/g, '_')}.json`);
+}
+
+/**
+ * Commit and push what changed in the backlog since `before` (a
+ * `dirtySnapshot` taken before the command wrote anything): the paths
+ * `pathsChangedSince` returns, through `commitPaths`. A path that was dirty
+ * before and that the command did not change stays out, and is named. With
+ * `session` (an agent session made the change: refine, the merge's triage),
+ * `priority.md` stays out too, with one line: only a person ranks (F-78 D3).
+ * Nothing changed, or a backlog that is not a git repo of its own (no `.git`
+ * in `root`, even inside a parent checkout), prints nothing. In a repo, a
+ * snapshot that `git status` could not take, before or after, is a failure.
+ * A failed commit records its paths and their content hashes in its owner's
+ * record (`failedCommitRecord`, `owner` defaults to `message`), and the next
+ * call with the same owner commits each one whose content is the same, so a
+ * retry, which finds them dirty before it begins, does not lose them. A path
+ * edited since is the operator's and stays out. A call that does not fail
+ * removes its owner's record; other owners' records stay. No failure loses a
+ * recorded path without saying so: a carried `priority.md` that a session
+ * holds stays recorded; a record that cannot be read or written fails the
+ * call; a failed snapshot after leaves the record as it was; and a failed
+ * snapshot before records every dirty path as `unsure`, which the next call
+ * names as a failure and does not commit (`readFailedCommit`).
+ * Shared by feature `bl merge`, story `bl merge`'s triage, `bl refine` and
+ * `bl init` (S-1330).
+ * @param {string} root
+ * @param {Map<string, string> | null} before
+ * @param {string} message
+ * @param {{ session?: boolean, owner?: string }} [opts]
+ * @returns {boolean} whether the commit failed
+ */
+export function commitChangedSince(root, before, message, { session = false, owner = message } = {}) {
+  if (!hasOwnRepo(root)) return false;
+  const after = dirtySnapshot(root);
+  // In a repo, a null snapshot is a `git status` that failed, not "no change".
+  if (!before || !after) {
+    console.error(
+      `  backlog commit failed: git status failed ${before ? 'after' : 'before'} the command wrote, so bl cannot tell what it changed\n` +
+        `  Commit its changes yourself: git -C "${root}" status`,
+    );
+    // With no snapshot before, every path dirty now may be the command's:
+    // the record keeps them as `unsure`, and the next call names them.
+    // With none after, the record stays as it was.
+    if (after) recordChangedSince(root, null, owner);
+    return true;
+  }
+  let failed = false;
+  // A retry was dirty before it began, so the paths come from the record.
+  let pending = { commit: [], unsure: [] };
+  try {
+    pending = readFailedCommit(root, owner);
+  } catch (e) {
+    failed = true;
+    console.error(
+      `  backlog commit failed: cannot read ${failedCommitRecord(owner)}, the record of an earlier failed commit (${e.message}); its paths may still be uncommitted\n` +
+        `  Commit them yourself: git -C "${root}" status`,
+    );
+  }
+  const still = (entries) => entries.filter(([p, h]) => after.get(p) === h).map(([p]) => p);
+  const carried = still(pending.commit);
+  // A failed snapshot before an earlier call left these: bl cannot tell
+  // whether they are the command's, so it names them once and commits none.
+  const unsure = still(pending.unsure);
+  if (unsure.length > 0) {
+    failed = true;
+    console.error(
+      `  backlog commit failed earlier with no record of what it changed (git status failed); these paths may hold its changes: ${unsure.join(' ')}\n` +
+        '  Commit them yourself if they are.',
+    );
+  }
+  let touched = [...new Set([...pathsChangedSince(before, after), ...carried])].sort();
+  const held = session && touched.includes(PRIORITY_FILE);
+  if (held) {
+    touched = touched.filter((p) => p !== PRIORITY_FILE);
+    info(`Left ${PRIORITY_FILE} uncommitted: an agent session changed it, and only a person ranks work (bl rank).`);
+  }
+  let commitFailed = false;
+  if (touched.length > 0) {
+    info(`\nCommitting backlog changes (${touched.length} path${touched.length === 1 ? '' : 's'})...`);
+    const res = commitPaths(root, touched, message);
+    if (!res.committed && res.error) {
+      commitFailed = true;
+      console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);
+    }
+  }
+  // A carried priority.md that this session held stays pending.
+  const keep = [...(commitFailed ? touched : []), ...(held && carried.includes(PRIORITY_FILE) ? [PRIORITY_FILE] : [])];
+  if (!saveFailedCommit(root, owner, { commit: keep.map((p) => [p, after.get(p)]), unsure: [] })) {
+    failed = true;
+  }
+  failed ||= commitFailed;
+  // Still dirty: a path the session committed itself was not left alone. A
+  // held priority.md has its own line above.
+  const leftAlone = [...before.keys()].filter(
+    (p) => after.has(p) && !touched.includes(p) && !(held && p === PRIORITY_FILE),
+  );
+  if (leftAlone.length > 0) info(`Left your uncommitted backlog edits alone: ${leftAlone.join(', ')}`);
+  return failed;
+}
+
+/**
+ * Record what changed in the backlog since `before` for `owner`'s next
+ * `commitChangedSince`, and commit nothing: for a command that fails after it
+ * wrote and before its commit (`bl init`, whose agent setup can fail). The
+ * paths join `owner`'s record (`saveFailedCommit`, which reports a record it
+ * cannot write); with no snapshot before, the paths dirty now are `unsure`.
+ * A backlog with no repo of its own, or a failed snapshot after, records
+ * nothing.
+ * @param {string} root
+ * @param {Map<string, string> | null} before
+ * @param {string} owner
+ */
+export function recordChangedSince(root, before, owner) {
+  if (!hasOwnRepo(root)) return;
+  const after = dirtySnapshot(root);
+  if (!after) return;
+  let pending = { commit: [], unsure: [] };
+  try {
+    pending = readFailedCommit(root, owner);
+  } catch {
+    // Unreadable: this record replaces it.
+  }
+  if (before) {
+    // A recorded path the command wrote again is recorded with its new content.
+    const changed = new Set(pathsChangedSince(before, after));
+    const others = (entries) => entries.filter(([p]) => !changed.has(p));
+    pending = {
+      commit: [...others(pending.commit), ...[...changed].map((p) => [p, after.get(p)])],
+      unsure: others(pending.unsure),
+    };
+  } else {
+    const known = new Set([...pending.commit, ...pending.unsure].map(([p]) => p));
+    pending.unsure.push(...[...after].filter(([p]) => !known.has(p)));
+  }
+  saveFailedCommit(root, owner, pending);
 }
 
 /** Paths `git add` accepts: on disk, or still in the index (a deletion to stage). */
@@ -385,9 +551,62 @@ function readPending(path) {
   return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : undefined;
 }
 
+/**
+ * `owner`'s failed-commit record (`failedCommitRecord`): `commit`, the paths
+ * a retry commits while their content is the same, and `unsure`, the paths a
+ * call with no snapshot before found dirty, which a retry only names. Each
+ * entry is `[path, content hash]` (`hashPath`). No file is an empty record;
+ * a file of another shape throws.
+ * @param {string} root
+ * @param {string} owner
+ * @returns {{ commit: [string, string][], unsure: [string, string][] }}
+ */
+export function readFailedCommit(root, owner) {
+  const value = readPending(join(root, failedCommitRecord(owner))) ?? { commit: [], unsure: [] };
+  const entries = (list) =>
+    Array.isArray(list) &&
+    list.every((e) => Array.isArray(e) && e.length === 2 && e.every((s) => typeof s === 'string'));
+  if (!value || typeof value !== 'object' || !entries(value.commit) || !entries(value.unsure)) {
+    throw new Error('not a record of paths and content hashes');
+  }
+  return { commit: value.commit, unsure: value.unsure };
+}
+
+/**
+ * Write `owner`'s failed-commit record, or remove it when it holds no path.
+ * A record that cannot be written is reported, with its paths, and returns
+ * false: no later call can commit them. A record that cannot be removed is a
+ * warning: a retry carries only a path still dirty with the recorded content.
+ * @param {string} root
+ * @param {string} owner
+ * @param {{ commit: [string, string][], unsure: [string, string][] }} pending
+ * @returns {boolean} false when a record with paths was not written
+ */
+export function saveFailedCommit(root, owner, pending) {
+  const recordRel = failedCommitRecord(owner);
+  const record = join(root, recordRel);
+  const paths = [...pending.commit, ...pending.unsure].map(([p]) => p);
+  try {
+    if (paths.length > 0) writePending(root, record, pending);
+    else rmSync(record, { force: true });
+    return true;
+  } catch (e) {
+    if (paths.length === 0) {
+      warn(`cannot remove ${recordRel} (${e.message})`);
+      return true;
+    }
+    console.error(
+      `  backlog commit failed: cannot write ${recordRel} (${e.message}), so no later bl run commits these paths: ${paths.join(' ')}\n` +
+        '  Commit them yourself.',
+    );
+    return false;
+  }
+}
+
 function writePending(root, path, value) {
   // The run directory ignores itself, so the marker never shows as untracked.
   ensureRunDir({ backlogRoot: root });
+  mkdirSync(dirname(path), { recursive: true });
   atomicWriteFile(root, path, JSON.stringify(value));
 }
 
@@ -430,7 +649,8 @@ export function leaveRegenerationPending(root) {
 /**
  * Whether `bl <command> <argv>` rebases the backlog onto `origin/main`
  * before it runs (F-50 D4): every command that commits the backlog (`new`,
- * `side`, `attach`, `move`, `run`, `implement`, `merge`, `done`, `updates`, `sync --commit`,
+ * `side`, `attach`, `move`, `run`, `implement`, `merge`, `done`, `refine`,
+ * `approve`, `init`, `updates`, `sync --commit`,
  * `block add`, `block remove`, `block list --fix`, `task`,
  * `task done`, `rank <unit> …`), a bare `bl sync`, whose whole job is the
  * pull and push (F-79 D1), and the
@@ -451,6 +671,9 @@ export function commandPullsBacklog(command, argv, env = process.env) {
     case 'implement':
     case 'merge':
     case 'done':
+    case 'refine':
+    case 'approve':
+    case 'init':
     case 'inbox':
       return true;
     case 'updates':
