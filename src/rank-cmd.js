@@ -15,10 +15,16 @@
  * is written under the backlog lock and committed alone (`commitPaths`, which
  * pushes); `bl.js` pulls the backlog first (`commandPullsBacklog`).
  *
+ * Every interactive run, with or without arguments, first takes each closed
+ * unit out of `ranked:` (`removeClosed`) and commits that alone, before it
+ * prints the order or applies the edit (S-1364). `bl merge` and `bl sync`
+ * still never touch the file.
+ *
  * Only a person ranks: inside an agent bl started headless (`BL_HEADLESS`,
  * set by each adapter's spawn) an edit is refused before anything is pulled
  * or written, and `commitPaths` refuses any commit of `priority.md` there
- * too. Printing the order writes nothing and is allowed everywhere.
+ * too. Printing the order writes nothing, takes no closed unit out, and is
+ * allowed everywhere.
  */
 
 import { spawnSync } from 'child_process';
@@ -46,8 +52,9 @@ Change ${PRIORITY_FILE}, the backlog's one ranked list of units: features (F-<n>
 and loose stories (S-<n>, a story in no feature and not an update story). The
 order is the operator's preference; hard dependencies still come first (bl next).
 
-With no arguments, print the order: the ranked units (position, id, title,
-why), then every other open unit, oldest "added:" first.
+With no arguments, take closed units out (below), then print the order: the
+ranked units (position, id, title, why), then every other open unit, oldest
+"added:" first.
 
   --top, --bottom     Put <unit> first or last in the list
   --before <unit>     Put <unit> just before a ranked unit
@@ -58,9 +65,12 @@ why), then every other open unit, oldest "added:" first.
                       dated tail
 
 Only the entry named changes; the rest of the file is kept byte for byte. The
-file is committed alone and pushed, after the usual pull. Under ${HEADLESS_ENV}
-(every agent bl starts headless) an edit is refused: only the operator or an
-interactive session ranks.`;
+file is committed alone and pushed, after the usual pull.
+
+An interactive run, with or without arguments, first takes every closed unit
+out of the list, in a commit of its own, and names them on stderr. Under
+${HEADLESS_ENV} (every agent bl starts headless) an edit is refused and the
+listing writes nothing: only the operator or an interactive session ranks.`;
 
 // ---------------------------------------------------------------------------
 // The text edit
@@ -230,6 +240,20 @@ export function rankedIds(content) {
   return scan(content).entries.map((e) => e.id);
 }
 
+/**
+ * `content` without any entry for the units `ids`; a unit listed twice loses
+ * both entries. Every other byte stays as written (`removeEntry`).
+ * @param {string} content  priority.md, LF line ends
+ * @param {string[]} ids
+ */
+export function removeClosed(content, ids) {
+  let text = content;
+  for (const id of ids) {
+    while (rankedIds(text).includes(id)) text = removeEntry(text, id);
+  }
+  return text;
+}
+
 /** `ids` with `id` moved to `where` (`applyRank`'s `where`). */
 function moved(ids, id, where) {
   const rest = ids.filter((x) => x !== id);
@@ -319,9 +343,6 @@ function printOrder(graph) {
     if (p.code === 'priority-file' || p.code === 'priority-unit') info(`bl rank: ${p.message} (run bl validate)`);
   }
   const entryOf = new Map(graph.ranked.map((e) => [e.unit, e]));
-  for (const e of graph.ranked) {
-    if (e.unit.done) info(`bl rank: ${e.unit.id} is ${e.unit.status}; take it out with bl rank ${e.unit.id} --remove`);
-  }
   const ranked = graph.priority.filter((u) => entryOf.has(u));
   const tail = graph.priority.filter((u) => !entryOf.has(u));
   const out = [];
@@ -358,14 +379,18 @@ function uncommitted(root) {
 }
 
 /**
- * Whether the uncommitted `content` of `priority.md` is exactly what `op`
- * makes of HEAD's version: the write of an earlier run of the same command
- * whose commit failed, and nothing else (no prose, no other entry's edit).
- * The index must hold HEAD's version or that write (its `git add` may or may
- * not have run), never a staged edit of someone else's, which the commit's
- * add would overwrite.
+ * Whether the uncommitted `content` of `priority.md` is exactly what
+ * `change` (a function from HEAD's text to the new text: an edit, or the
+ * cleanup of closed units) makes of HEAD's version: the write of an earlier
+ * run whose commit failed, and nothing else (no prose, no other entry's
+ * edit). The index must hold HEAD's version or that write (its `git add` may
+ * or may not have run), never a staged edit of someone else's, which the
+ * commit's add would overwrite.
+ * @param {string} root
+ * @param {string} content
+ * @param {(head: string) => string} change
  */
-function pendingIsOurs(root, content, op) {
+function pendingIsOurs(root, content, change) {
   const show = (rev) => {
     const r = spawnSync('git', ['show', `${rev}:${PRIORITY_FILE}`], {
       cwd: root,
@@ -378,7 +403,7 @@ function pendingIsOurs(root, content, op) {
   const staged = show('');
   if (head == null || staged == null) return false;
   try {
-    const ourWrite = applyRank(head, op);
+    const ourWrite = change(head);
     return ourWrite !== head && ourWrite === content && (staged === head || staged === content);
   } catch (err) {
     if (err instanceof RankFileError) return false;
@@ -393,6 +418,63 @@ function opWords(op) {
   if (op.where === 'top') return 'ranked first';
   if (op.where === 'bottom') return 'ranked last';
   return op.where.before ? `ranked before ${op.where.before}` : `ranked after ${op.where.after}`;
+}
+
+/** `priority.md` as LF text, and whether it was written with CRLF. */
+function readPriority(path) {
+  const original = readFileSync(path, 'utf8');
+  const crlf = original.includes('\r\n');
+  return { content: crlf ? original.replace(/\r\n/g, '\n') : original, crlf };
+}
+
+/** Write `text` (LF) to `priority.md` with the line ends it had. */
+function writePriority(root, path, text, crlf) {
+  atomicWriteFile(root, path, crlf ? text.replace(/\n/g, '\r\n') : text);
+}
+
+/**
+ * The closed units `text`'s `ranked:` lists, once each, in list order: the
+ * entries `loadBacklog` resolves (`graph.ranked`: a feature or a loose story)
+ * whose unit is done. An entry that names no unit is never one of them.
+ * Throws `RankFileError` on a file bl rank cannot edit.
+ */
+function closedIn(graph, text) {
+  const ids = rankedIds(text).filter((id) => {
+    const u = graph.get(id);
+    return u?.done && (u.kind === 'feature' || isLooseStory(u));
+  });
+  return [...new Set(ids)];
+}
+
+/**
+ * Take every closed unit out of `ranked:` and commit `priority.md` alone, under
+ * the caller's lock. A file with someone else's uncommitted edits is left as
+ * it is; a file that holds exactly an earlier cleanup's write whose commit
+ * failed is committed (`pendingIsOurs`).
+ * @returns {{ removed: string[], commit?: object } | { skipped: string }}
+ */
+function cleanup(root, path, graph) {
+  const { content, crlf } = readPriority(path);
+  let ids;
+  try {
+    ids = closedIn(graph, content);
+  } catch (err) {
+    if (!(err instanceof RankFileError)) throw err;
+    // Only worth a line when the graph sees a closed unit to take out.
+    return graph.ranked.some((e) => e.unit.done) ? { skipped: err.message } : { removed: [] };
+  }
+  const message = (removed) => `chore: ${removed.join(', ')} unranked (done) in ${PRIORITY_FILE}`;
+  if (inRepo(root) && uncommitted(root)) {
+    let retried = [];
+    const ours = pendingIsOurs(root, content, (head) => removeClosed(head, (retried = closedIn(graph, head))));
+    if (ours) return { removed: retried, commit: commitPaths(root, [PRIORITY_FILE], message(retried)) };
+    if (ids.length === 0) return { removed: [] };
+    return { skipped: `${PRIORITY_FILE} has uncommitted edits; left ${ids.join(', ')} in ranked:` };
+  }
+  if (ids.length === 0) return { removed: [] };
+  writePriority(root, path, removeClosed(content, ids), crlf);
+  if (!inRepo(root)) return { removed: ids, commit: { committed: false, paths: [PRIORITY_FILE], notRepo: true } };
+  return { removed: ids, commit: commitPaths(root, [PRIORITY_FILE], message(ids)) };
 }
 
 export async function main(argv, env = process.env) {
@@ -430,12 +512,35 @@ export async function main(argv, env = process.env) {
   }
 
   const config = loadConfig();
-  const graph = loadBacklog(config);
-  if (!editing) {
+  let graph = loadBacklog(config);
+  const root = config.backlogRoot;
+  const path = join(root, PRIORITY_FILE);
+  const op = editing ? editOp(graph, path, values, positionals) : null;
+
+  // An interactive run first takes closed units out, in a commit of its own.
+  if (!isHeadless(env) && existsSync(path)) {
+    const res = await withLock(root, () => cleanup(root, path, graph));
+    if (res.skipped) info(`bl rank: ${res.skipped}`);
+    else if (res.removed.length > 0) {
+      info(`bl rank: took out ${res.removed.join(', ')} (done).`);
+      reportBacklogCommit(res.commit, 'bl rank');
+      if (op?.remove && res.removed.includes(op.id)) return;
+      // The listing's positions are the file's as it now stands.
+      if (!op) graph = loadBacklog(config);
+    }
+  }
+  if (!op) {
     printOrder(graph);
     return;
   }
+  await applyEdit(root, path, op);
+}
 
+/**
+ * The edit `bl rank <unit> …` asks for, after the usage checks and
+ * `checkUnit`; exits 1 on a refusal, before anything is written.
+ */
+function editOp(graph, path, values, positionals) {
   if (positionals.length !== 1) usage(positionals.length === 0 ? 'name the unit to rank' : 'name one unit');
   const positions = ['top', 'bottom', 'before', 'after'].filter((k) => values[k] != null && values[k] !== false);
   if (positions.length > 1) usage(`--${positions.join(', --')} are alternatives; give one`);
@@ -446,8 +551,6 @@ export async function main(argv, env = process.env) {
   const why = values.why == null ? undefined : values.why.replace(/\s+/g, ' ').trim();
   if (why === '') usage('--why needs a reason');
 
-  const root = config.backlogRoot;
-  const path = join(root, PRIORITY_FILE);
   if (!existsSync(path)) refuse(`${PRIORITY_FILE} is missing; bl init writes an empty one`);
 
   // The unit: --remove takes whatever the list names (a closed or vanished
@@ -464,12 +567,14 @@ export async function main(argv, env = process.env) {
   const pos = positions[0];
   const where = pos === 'top' || pos === 'bottom' ? pos : pos ? { [pos]: canonical(values[pos]) } : undefined;
   if (where?.before === id || where?.after === id) refuse(`${id} cannot be ranked beside itself`);
-  const op = { id, where, why, remove: Boolean(values.remove) };
+  return { id, where, why, remove: Boolean(values.remove) };
+}
 
+/** Apply `op` to `priority.md` under the lock, commit it alone and report. */
+async function applyEdit(root, path, op) {
+  const { id } = op;
   const res = await withLock(root, () => {
-    const original = readFileSync(path, 'utf8');
-    const crlf = original.includes('\r\n');
-    const content = crlf ? original.replace(/\r\n/g, '\n') : original;
+    const { content, crlf } = readPriority(path);
     let ids;
     try {
       ids = rankedIds(content);
@@ -500,7 +605,7 @@ export async function main(argv, env = process.env) {
     const dirty = inRepo(root) && uncommitted(root);
     if (next === content) {
       if (!dirty) return { unchanged: true };
-      if (!pendingIsOurs(root, content, op)) return { unchanged: true, leftAlone: true };
+      if (!pendingIsOurs(root, content, (head) => applyRank(head, op))) return { unchanged: true, leftAlone: true };
       return { pending: true, commit: commit() };
     }
     if (dirty) {
@@ -508,7 +613,7 @@ export async function main(argv, env = process.env) {
         refused: `${PRIORITY_FILE} has uncommitted edits; commit or discard them first. Nothing was written.`,
       };
     }
-    atomicWriteFile(root, path, crlf ? next.replace(/\n/g, '\r\n') : next);
+    writePriority(root, path, next, crlf);
     if (!inRepo(root)) return { commit: { committed: false, paths: [PRIORITY_FILE], notRepo: true } };
     return { commit: commit() };
   });
