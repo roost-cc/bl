@@ -158,10 +158,18 @@ test('init_inside_parent_git_checkout_skips_commit: a backlog with no repo of it
   git(parent, 'init', '-q', '-b', 'main');
   git(parent, 'add', '.');
   git(parent, 'commit', '-q', '-m', 'base');
+  // The parent's origin is ahead: init must not pull the parent either.
+  addOrigin(parent);
+  const other = mkTempDir('bl-init-parent-other-');
+  git(other, 'clone', '-q', git(parent, 'remote', 'get-url', 'origin'), '.');
+  writeFileSync(join(other, 'theirs.md'), 'theirs\n');
+  git(other, 'add', '.');
+  git(other, 'commit', '-q', '-m', 'the other clone');
+  git(other, 'push', '-q', 'origin', 'main');
   const head = git(parent, 'rev-parse', 'HEAD');
 
   const r = runBl(['init'], { cwd: dir, env: { ...GIT_ENV, BL_BACKLOG_DIR: dir, HOME: mkTempDir('bl-init-home-') } });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(git(parent, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(parent, 'rev-parse', 'HEAD'), head, 'no commit in the parent, and no pull of it');
   assert.doesNotMatch(r.stderr, /Committing backlog changes|Left your uncommitted|backlog commit failed/);
 });
