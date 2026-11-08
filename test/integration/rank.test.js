@@ -313,6 +313,26 @@ test('a bare interactive bl rank takes closed units out in a commit of its own, 
   assert.equal(r.stdout, LISTING);
 });
 
+test('bare_rank_keeps_unknown_and_in_feature_entries_and_removes_a_closed_unit_listed_twice', () => {
+  // F-99 names no unit; S-15 is a done story inside F-5; F-5 is listed twice.
+  const kept = '  - unit: F-99\n    why: Gone\n  - unit: S-15\n    why: In a feature\n';
+  const twice = '  - unit: F-5\n    why: Done now\n';
+  const before = HAND.replace('---\n\n# Priority', `${twice}${kept}${twice}---\n\n# Priority`);
+  let dir = backlog(before);
+  let r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /bl rank: took out F-5 \(done\)\./);
+  assert.equal(read(dir), HAND.replace('---\n\n# Priority', `${kept}---\n\n# Priority`));
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-5 unranked (done) in priority.md');
+
+  // The last closed entry leaves `ranked: []`.
+  dir = backlog('---\nranked:\n  - unit: F-5\n    why: Done\n---\n\n# Priority\n');
+  r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(read(dir), '---\nranked: []\n---\n\n# Priority\n');
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+});
+
 test('an edit run with closed units ranked makes two commits, the cleanup first', () => {
   const dir = backlog(CLOSED);
   const head = git(dir, 'rev-parse', 'HEAD');
