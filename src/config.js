@@ -224,7 +224,7 @@ export function dictionariesOf(config) {
 /** The keys every `repos` entry must set (F-51 D4); there are no defaults. */
 const REQUIRED_REPO_KEYS = ['path', 'deployable', 'update_tests'];
 
-const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+export const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const isNameList = (v) => Array.isArray(v) && v.every((n) => typeof n === 'string' && n.trim() !== '');
 
 /**
@@ -438,7 +438,7 @@ export function repoOf(config) {
 function withRaw(
   base,
   raw,
-  { agent: agentFlag, model: agentFlagModel = null, role: agentRole, lenient: lenientAgents },
+  { agent: agentFlag, model: agentFlagModel, role: agentRole, lenient: lenientAgents },
   repoName,
 ) {
   // Each role is an ordered list of { agent, model } configurations (F-64

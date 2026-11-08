@@ -19,7 +19,7 @@
  */
 
 import { fileURLToPath } from 'url';
-import { loadConfig } from '../config.js';
+import { isPlainObject, loadConfig } from '../config.js';
 import { runCapacityHelper } from './capacity-helper.js';
 import { LOCAL_CAPACITY_TIMEOUT_MS } from './local-capacity.js';
 import { agentEnv } from './provider.js';
@@ -34,8 +34,6 @@ const LOCAL_KEYS = ['url', 'token'];
 
 /** The `local` key as an error message shows it. */
 const LOCAL_SHAPE = '"local": { "url": "http://localhost:8090", "token": "local" }';
-
-const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
 /** A capacity reading of the local server: `account`-scoped, never an `until`. */
 const reading = (state, message) => ({ state, scope: 'account', until: null, windows: [], message });
