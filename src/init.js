@@ -4,7 +4,7 @@
  * The backlog repo itself is created by hand (one per workspace).
  * This command sets up the agent and the backlog's local files for it.
  *
- *   bl init [--agent <id>]
+ *   bl init [--agent <id> [--model <m>]]
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
