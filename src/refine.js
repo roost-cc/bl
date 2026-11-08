@@ -145,11 +145,17 @@ function storyRefineContext(found, fm, config) {
  * `bl refine F-n` (`feature-cmd.js` `cmdRefine`) all end here.
  * @param {object} opts  `launchSession` options
  * @param {string} message
+ * @param {string[]} ids  the refined units: a failed commit's paths go to
+ *   the next refine of the same units (`refine <ids>`), whether it is a
+ *   refine or a re-refine
  */
-export function refineAndCommit(opts, message) {
+export function refineAndCommit(opts, message, ids) {
   const before = dirtySnapshot(opts.backlogRoot);
   const status = launchSession({ ...opts, returnOnExit: true });
-  const failed = commitChangedSince(opts.backlogRoot, before, message, { session: true });
+  const failed = commitChangedSince(opts.backlogRoot, before, message, {
+    session: true,
+    owner: `refine ${ids.join(', ')}`,
+  });
   // A failed commit is 1 whatever the session ended with (S-1330).
   process.exit(failed ? 1 : status);
 }
@@ -191,6 +197,7 @@ function refineOne(target, config, { additionalPrompt } = {}) {
       effort: sessionEffort(config, { mode: 'refine' }),
     },
     `chore: ${promptName} ${parsed.id}`,
+    [parsed.id],
   );
 }
 
@@ -252,6 +259,7 @@ function refineBatch(targets, config) {
       effort: sessionEffort(config, { mode: 'refine' }),
     },
     `chore: refine ${targets.map((t) => t.id).join(', ')}`,
+    targets.map((t) => t.id),
   );
 }
 
