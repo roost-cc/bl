@@ -383,7 +383,7 @@ export function loadConfig(opts = {}) {
   const reposByName = Object.fromEntries(Object.values(repos).map((r) => [r.name, r.path]));
   const title = backlogTitle(topLevel);
 
-  if (opts.model != null && opts.agent == null) throw new Error('--model requires -A <provider>');
+  requireAgentForModel(opts);
   const agentFlag = {
     agent: opts.agent ?? null,
     model: opts.model ?? null,
@@ -608,6 +608,24 @@ function flagConfiguration({ agent, model }, ctx) {
   const configuration = { agent: name, model: model ?? null };
   checkUsable(configuration, ctx, `-A ${name}`);
   return configuration;
+}
+
+/** Throw when --model (`model`) is set without -A (`agent`). */
+function requireAgentForModel({ agent, model }) {
+  if (model != null && agent == null) throw new Error('--model requires -A <provider>');
+}
+
+/**
+ * -A and --model as `loadConfig` checks them, against `backlog.json`'s top
+ * level `topLevel`: --model needs -A, and -A's configuration must pass
+ * `flagConfiguration`. Throws the loader's message. `bl init` calls it before
+ * it writes `backlog.json`, so a flag that the loader refuses writes nothing.
+ * @param {{ agent?: string|null, model?: string|true|null }} flag
+ * @param {object} topLevel
+ */
+export function checkAgentFlag({ agent = null, model = null }, topLevel) {
+  requireAgentForModel({ agent, model });
+  if (agent != null) flagConfiguration({ agent, model }, { topLevel, raw: topLevel });
 }
 
 /** Throw the adapter's checkConfiguration reason after `at`, if it gives one. */

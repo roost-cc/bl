@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import {
+  checkAgentFlag,
   checkModel,
   loadConfig,
   parseArgs,
@@ -251,7 +252,8 @@ export function initConfigurationLists(raw, agent = null, model = null) {
  * it requires (F-64 D2), unless it has them, each independent of the other
  * (`initConfigurationLists`), with no model but -A's --model. When it adds the dictionary
  * list it copies the seed first, so a failed copy leaves backlog.json as it
- * was and a rerun tries again. A
+ * was and a rerun tries again. A -A or --model that `loadConfig` refuses
+ * (`checkAgentFlag`) throws before any write. A
  * file that has `repos` keeps its settings: it gets only the effort levels,
  * which `loadConfig` requires, unless it has them. A file with the pre-F-51
  * `projects` that `loadConfig` refuses with the migration's name, or one that
@@ -288,6 +290,8 @@ function addToBacklogJson(dir, path, agent, model) {
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
   if (Object.hasOwn(raw, 'projects')) return;
+  // A -A or --model that the loader refuses writes nothing.
+  checkAgentFlag({ agent, model }, raw);
   if (Object.hasOwn(raw, 'repos')) {
     // An existing backlog keeps its settings, but `loadConfig` now requires
     // the effort levels (F-85 D2), so it gets them unless it has them.

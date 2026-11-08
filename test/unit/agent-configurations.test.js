@@ -522,7 +522,49 @@ test("bl init -A local --model writes -A's entry with its model", () => {
   assert.throws(() => initConfigurationLists({}, 'local', true), /--model must be a non-empty string/);
   const dir = mkTempDir('bl-init-local-');
   const path = join(dir, 'backlog.json');
-  writeFileSync(path, JSON.stringify({ backlog: 'backlog' }));
+  writeFileSync(path, JSON.stringify({ backlog: 'backlog', local: LOCAL_KEY }));
   ensureReposBlock(dir, 'local', 'qwen3.8-27b');
   assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).agent, [LOCAL_QWEN]);
+});
+
+test('init_rejected_agent_flags_leave_backlog_json_unchanged: bl init refuses a flag the loader refuses before it writes', () => {
+  // Each flag pair the loader refuses, with the loader's message.
+  const refused = [
+    [{ agent: null, model: 'qwen3.8-27b' }, /--model requires -A <provider>/],
+    [{ agent: 'gemini', model: 'qwen3.8-27b' }, /gemini cannot select a model: drop --model/],
+    [{ agent: 'local', model: null }, /-A local: a local configuration needs a "model"/],
+    [{ agent: 'local', model: true }, /--model must be a non-empty string/],
+    [{ agent: 'nope', model: null }, /-A must name a registered provider/],
+  ];
+  // A new backlog with and without the `local` key, and an existing one (it has
+  // `repos`) with no effort levels, which bl init would otherwise add.
+  const backlogs = [
+    ['new', { backlog: 'backlog' }],
+    ['new with local', { backlog: 'backlog', local: LOCAL_KEY }],
+    [
+      'existing',
+      { repos: {}, worktrees: '../worktrees', agent: [{ agent: 'claude' }], review_agent: [{ agent: 'codex' }] },
+    ],
+  ];
+  const missingLocal = [{ agent: 'local', model: 'qwen3.8-27b' }, /-A local: backlog\.json "local" is missing/];
+  for (const [name, content] of backlogs) {
+    for (const [flag, want] of content.local ? refused : [...refused, missingLocal]) {
+      const dir = mkTempDir('bl-init-refuse-');
+      const path = join(dir, 'backlog.json');
+      const text = JSON.stringify(content);
+      writeFileSync(path, text);
+      const label = `${name} ${JSON.stringify(flag)}`;
+      assert.throws(() => ensureReposBlock(dir, flag.agent, flag.model), want, label);
+      assert.equal(readFileSync(path, 'utf8'), text, `${label}: backlog.json is unchanged`);
+      assert.deepEqual(readdirSync(dir), ['backlog.json'], `${label}: no seed is copied`);
+      // The loader refuses the same flag with the same message.
+      if (name === 'existing') {
+        writeFileSync(
+          path,
+          JSON.stringify({ ...content, effort: { refine: 'high', review: 'high', default: 'high' } }),
+        );
+        assert.throws(() => loadConfig({ backlogRoot: dir, ...flag }), want, `${label}: loadConfig`);
+      }
+    }
+  }
 });
