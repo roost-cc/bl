@@ -27,11 +27,14 @@ import { PRIORITY_FILE } from './priority.js';
 import { atomicWriteFile, STAGING_DIR } from './atomic-write.js';
 import { getProvider, PROVIDER_NAMES } from './agents/index.js';
 import { probePluginBinaries, formatPluginStatus } from './plugin-binaries.js';
-import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
+import { commitChangedSince, dirtySnapshot, recordChangedSince } from './backlog-commit.js';
 import { acquireLock, releaseLock, LOCK_FILE } from './lock.js';
 import { detectGhCredentialHelper, formatGhCredentialHelperAdvisory } from './credential-helper.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/** `bl init`'s commit message, and the owner of its failed-commit record. */
+const INIT_COMMIT_MESSAGE = 'chore: bl init';
 
 /**
  * The directory `bl init` treats as the backlog root: `$BL_BACKLOG_DIR`, else
@@ -83,8 +86,9 @@ init"); edits you made before it stay uncommitted.`);
   await acquireLock(backlogDir);
   let config;
   let commitFailed;
+  let before;
   try {
-    const before = dirtySnapshot(backlogDir);
+    before = dirtySnapshot(backlogDir);
     ensureReposBlock(backlogDir, args.agent);
     config = loadConfig({ agent: args.agent });
     const provider = getProvider(config.agent);
@@ -98,7 +102,12 @@ init"); edits you made before it stay uncommitted.`);
     ensureFlowFile(config.backlogRoot);
     ensureBacklogDocs(config.backlogRoot);
     ensureRootIndex(config);
-    commitFailed = commitChangedSince(config.backlogRoot, before, 'chore: bl init');
+    commitFailed = commitChangedSince(config.backlogRoot, before, INIT_COMMIT_MESSAGE);
+  } catch (e) {
+    // A step failed after others wrote: the next `bl init` commits what this
+    // one wrote with its own writes (S-1330).
+    recordChangedSince(config?.backlogRoot ?? backlogDir, before ?? null, INIT_COMMIT_MESSAGE);
+    throw e;
   } finally {
     releaseLock(backlogDir);
   }
