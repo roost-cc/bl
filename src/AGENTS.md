@@ -4117,7 +4117,7 @@ continues to work for every agent.
 ### Surface variants
 
 Surface variants are independent of agent identity. The agent axis
-(`claude`, `codex`, `gemini`) changes tool names and agent-specific
+(`claude`, `codex`, `gemini`, `local`) changes tool names and agent-specific
 prompt prose; the surface axis describes the host wrapping that agent,
 such as `claude-code`, where slash commands and IDE behaviour may matter.
 
