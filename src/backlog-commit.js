@@ -183,17 +183,7 @@ export function commitChangedSince(root, before, message, { session = false, own
     // With no snapshot before, every path dirty now may be the command's:
     // the record keeps them as `unsure`, and the next call names them.
     // With none after, the record stays as it was.
-    if (after) {
-      let pending = { commit: [], unsure: [] };
-      try {
-        pending = readFailedCommit(root, owner);
-      } catch {
-        // Unreadable: this call's record replaces it.
-      }
-      const known = new Set([...pending.commit, ...pending.unsure].map(([p]) => p));
-      pending.unsure.push(...[...after].filter(([p]) => !known.has(p)));
-      saveFailedCommit(root, owner, pending);
-    }
+    if (after) recordChangedSince(root, null, owner);
     return true;
   }
   let failed = false;
@@ -248,6 +238,43 @@ export function commitChangedSince(root, before, message, { session = false, own
   );
   if (leftAlone.length > 0) info(`Left your uncommitted backlog edits alone: ${leftAlone.join(', ')}`);
   return failed;
+}
+
+/**
+ * Record what changed in the backlog since `before` for `owner`'s next
+ * `commitChangedSince`, and commit nothing: for a command that fails after it
+ * wrote and before its commit (`bl init`, whose agent setup can fail). The
+ * paths join `owner`'s record (`saveFailedCommit`, which reports a record it
+ * cannot write); with no snapshot before, the paths dirty now are `unsure`.
+ * A backlog with no repo of its own, or a failed snapshot after, records
+ * nothing.
+ * @param {string} root
+ * @param {Map<string, string> | null} before
+ * @param {string} owner
+ */
+export function recordChangedSince(root, before, owner) {
+  if (!hasOwnRepo(root)) return;
+  const after = dirtySnapshot(root);
+  if (!after) return;
+  let pending = { commit: [], unsure: [] };
+  try {
+    pending = readFailedCommit(root, owner);
+  } catch {
+    // Unreadable: this record replaces it.
+  }
+  if (before) {
+    // A recorded path the command wrote again is recorded with its new content.
+    const changed = new Set(pathsChangedSince(before, after));
+    const others = (entries) => entries.filter(([p]) => !changed.has(p));
+    pending = {
+      commit: [...others(pending.commit), ...[...changed].map((p) => [p, after.get(p)])],
+      unsure: others(pending.unsure),
+    };
+  } else {
+    const known = new Set([...pending.commit, ...pending.unsure].map(([p]) => p));
+    pending.unsure.push(...[...after].filter(([p]) => !known.has(p)));
+  }
+  saveFailedCommit(root, owner, pending);
 }
 
 /** Paths `git add` accepts: on disk, or still in the index (a deletion to stage). */

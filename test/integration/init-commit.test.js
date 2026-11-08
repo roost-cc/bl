@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { AGENT_CONFIG, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
@@ -129,6 +129,61 @@ test('init_retries_failed_commit_without_losing_written_paths: a rerun commits w
   assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').length, 8);
   assert.equal(git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main'), git(dir, 'rev-parse', 'HEAD'));
 });
+
+// Each step of `bl init` after its first write, made to fail once: the
+// rerun commits what the failed run wrote with its own writes. A link to
+// nothing makes a seed's write fail (`writeSeed`); a home that is a file
+// makes the agent's setup fail.
+const INIT_FILES = [
+  '.gitignore',
+  'allowed-tools.json',
+  'backlog.json',
+  'coding-dictionary.yaml',
+  'flow.json',
+  'index.md',
+  'priority.md',
+  'roadmap.md',
+];
+const brokenSeed = (file) => [
+  (dir) => symlinkSync(join(dir, 'nowhere'), join(dir, file)),
+  (dir) => rmSync(join(dir, file)),
+];
+for (const [label, [breakIt, repair], home] of [
+  ['provider.init', [() => {}, () => {}], 'file'],
+  [
+    'ensureGitignored',
+    [(dir) => mkdirSync(join(dir, '.gitignore')), (dir) => rmSync(join(dir, '.gitignore'), { recursive: true })],
+  ],
+  ['copySeed (allowed-tools.json)', brokenSeed('allowed-tools.json')],
+  ['ensureFlowFile', brokenSeed('flow.json')],
+  ['ensureBacklogDocs', brokenSeed('roadmap.md')],
+  ['ensureRootIndex', brokenSeed('index.md')],
+]) {
+  test(`init_retry_commits_files_written_before_setup_failure: ${label} fails`, () => {
+    const dir = newBacklog();
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'base');
+    addOrigin(dir);
+    const homeDir = mkTempDir('bl-init-home-');
+    const badHome = join(homeDir, 'a-file');
+    writeFileSync(badHome, 'not a directory\n');
+    breakIt(dir);
+    // The claude provider writes its settings under CLAUDE_CONFIG_DIR, else HOME.
+    const env = home === 'file' ? { HOME: badHome, CLAUDE_CONFIG_DIR: badHome } : { HOME: homeDir };
+    const first = runBl(['init'], { cwd: dir, env: { ...GIT_ENV, ...env } });
+    assert.notEqual(first.status, 0, first.stderr);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'base');
+    repair(dir);
+
+    const retry = init(dir);
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.deepEqual(statusLines(dir), []);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: bl init');
+    assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), INIT_FILES);
+    assert.equal(git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main'), git(dir, 'rev-parse', 'HEAD'));
+  });
+}
 
 test('init_write_and_commit_share_lock: bl init writes nothing until it holds the backlog lock', async (t) => {
   if (!lockOwnerVisible(t)) return;
