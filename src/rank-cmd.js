@@ -450,8 +450,9 @@ function closedIn(graph, text) {
  * Take every closed unit out of `ranked:` and commit `priority.md` alone, under
  * the caller's lock. A file with someone else's uncommitted edits is left as
  * it is; a file that holds exactly an earlier cleanup's write whose commit
- * failed is committed (`pendingIsOurs`).
- * @returns {{ removed: string[], commit?: object } | { skipped: string }}
+ * failed is redone on HEAD with today's closed units and committed
+ * (`pendingIsOurs`); `reopened` names the units it put back.
+ * @returns {{ removed: string[], reopened?: string[], commit?: object } | { skipped: string }}
  */
 function cleanup(root, path, graph) {
   const { content, crlf } = readPriority(path);
@@ -464,14 +465,30 @@ function cleanup(root, path, graph) {
   }
   const message = (removed) => `chore: ${removed.join(', ')} unranked (done) in ${PRIORITY_FILE}`;
   if (inRepo(root) && uncommitted(root)) {
-    // The earlier cleanup took out the closed units the file no longer lists;
-    // a unit that closed since is still listed, and is not part of that write.
+    // An earlier cleanup whose commit failed left HEAD's text without the
+    // entries of some units (`gone`). Closed states may have changed since, so
+    // the retry redoes the cleanup on HEAD with today's closed set: a unit
+    // closed since goes too, and a unit open again gets its entry back.
     const left = new Set(rankedIds(content));
-    let retried = [];
-    const ours = pendingIsOurs(root, content, (head) =>
-      removeClosed(head, (retried = closedIn(graph, head).filter((id) => !left.has(id)))),
-    );
-    if (ours) return { removed: retried, commit: commitPaths(root, [PRIORITY_FILE], message(retried)) };
+    const gone = (text) =>
+      [...new Set(rankedIds(text))].filter((id) => {
+        const u = graph.get(id);
+        return !left.has(id) && u && (u.kind === 'feature' || isLooseStory(u));
+      });
+    let head = null;
+    const ours = pendingIsOurs(root, content, (h) => removeClosed((head = h), gone(h)));
+    if (ours) {
+      const removed = closedIn(graph, head);
+      const reopened = gone(head).filter((id) => !removed.includes(id));
+      if (removed.length === 0) {
+        // Nothing is closed any more: put HEAD's version back, index too.
+        spawnSync('git', ['checkout', 'HEAD', '--', PRIORITY_FILE], { cwd: root, stdio: 'ignore' });
+        return { removed, reopened };
+      }
+      const next = removeClosed(head, removed);
+      if (next !== content) writePriority(root, path, next, crlf);
+      return { removed, reopened, commit: commitPaths(root, [PRIORITY_FILE], message(removed)) };
+    }
     if (ids.length === 0) return { removed: [] };
     return { skipped: `${PRIORITY_FILE} has uncommitted edits; left ${ids.join(', ')} in ranked:` };
   }
@@ -525,12 +542,15 @@ export async function main(argv, env = process.env) {
   if (!isHeadless(env) && existsSync(path)) {
     const res = await withLock(root, () => cleanup(root, path, graph));
     if (res.skipped) info(`bl rank: ${res.skipped}`);
-    else if (res.removed.length > 0) {
-      info(`bl rank: took out ${res.removed.join(', ')} (done).`);
-      reportBacklogCommit(res.commit, 'bl rank');
-      if (op?.remove && res.removed.includes(op.id)) return;
+    else {
+      if (res.reopened?.length > 0) info(`bl rank: ${res.reopened.join(', ')} open again; put back in ranked:`);
+      if (res.removed.length > 0) {
+        info(`bl rank: took out ${res.removed.join(', ')} (done).`);
+        reportBacklogCommit(res.commit, 'bl rank');
+        if (op?.remove && res.removed.includes(op.id)) return;
+      }
       // The listing's positions are the file's as it now stands.
-      if (!op) graph = loadBacklog(config);
+      if (!op && (res.removed.length > 0 || res.reopened?.length > 0)) graph = loadBacklog(config);
     }
   }
   if (!op) {

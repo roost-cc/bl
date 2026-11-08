@@ -436,36 +436,64 @@ test('a failed cleanup commit exits 1 and stops the edit; the next bare run comm
   assert.equal(r.stdout, LISTING);
 });
 
-test('rank_failed_cleanup_commit_retry_survives_another_unit_closing', () => {
-  const dir = backlog(CLOSED);
-  const hook = join(dir, '.git', 'hooks', 'pre-commit');
-  mkdirSync(dirname(hook), { recursive: true });
-  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
-  chmodSync(hook, 0o755);
-  let r = bl(['rank'], dir);
-  assert.equal(r.status, 1, r.stderr);
-  assert.equal(read(dir), HAND);
-  unlinkSync(hook);
+test('rank_retry_reconciles_closed_work_units_before_edit', () => {
+  // A failed cleanup commit leaves HAND (F-5 and S-9 taken out). Before the
+  // retry, closed states change; the retry redoes the cleanup on HEAD with
+  // today's closed units, then lists or edits, with every index state.
+  const setStatus = (dir, file, from, to) => {
+    writeFileSync(join(dir, file), readFileSync(join(dir, file), 'utf8').replace(`status: ${from}`, `status: ${to}`));
+    git(dir, 'commit', '-q', '-m', `${file} ${to}`, '--', file);
+  };
+  const F2 = 'features/F2/index.md';
+  const F5 = 'features/F5/index.md';
+  const S9 = 'stories/S9/index.md';
+  const changes = {
+    'F-2 closes': { apply: (d) => setStatus(d, F2, 'draft', 'done'), removed: ['F-5', 'F-2', 'S-9'], back: [] },
+    'F-5 reopens': { apply: (d) => setStatus(d, F5, 'done', 'draft'), removed: ['S-9'], back: ['F-5'] },
+    'all reopen': {
+      apply: (d) => {
+        setStatus(d, F5, 'done', 'draft');
+        setStatus(d, S9, 'done', 'draft');
+      },
+      removed: [],
+      back: ['F-5', 'S-9'],
+    },
+  };
+  const modes = { bare: [], edit: ['S-2', '--top', '--why', 'x'], remove: ['F-2', '--remove'] };
+  for (const [change, c] of Object.entries(changes)) {
+    for (const [mode, args] of Object.entries(modes)) {
+      for (const staged of [true, false]) {
+        const label = `${change} / ${mode} / ${staged ? 'staged' : 'unstaged'}`;
+        const dir = backlog(CLOSED);
+        const hook = join(dir, '.git', 'hooks', 'pre-commit');
+        mkdirSync(dirname(hook), { recursive: true });
+        writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+        chmodSync(hook, 0o755);
+        assert.equal(bl(['rank'], dir).status, 1, label);
+        unlinkSync(hook);
+        if (!staged) git(dir, 'reset', '-q', '--', 'priority.md');
+        c.apply(dir);
+        const before = git(dir, 'rev-parse', 'HEAD');
 
-  // F-2 closes before the retry.
-  const f2 = join(dir, 'features', 'F2', 'index.md');
-  writeFileSync(f2, readFileSync(f2, 'utf8').replace('status: draft', 'status: done'));
-  git(dir, 'commit', '-q', '-m', 'F-2 done', '--', 'features/F2/index.md');
-
-  r = bl(['rank'], dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stderr, /took out F-5, S-9 \(done\)/);
-  assert.doesNotMatch(r.stderr, /uncommitted|left/);
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-5, S-9 unranked (done) in priority.md');
-  assert.equal(git(dir, 'status', '--porcelain'), '');
-  assert.equal(read(dir), HAND);
-
-  // The next run takes F-2 out.
-  r = bl(['rank'], dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stderr, /took out F-2 \(done\)/);
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-2 unranked (done) in priority.md');
-  assert.equal(git(dir, 'status', '--porcelain'), '');
+        const r = bl(['rank', ...args], dir);
+        assert.equal(r.status, 0, `${label}: ${r.stderr}`);
+        assert.doesNotMatch(r.stderr, /uncommitted|left/, label);
+        const file = read(dir);
+        for (const id of c.removed) assert.doesNotMatch(file, new RegExp(`unit: ${id}\\b`), `${label}: ${id} out`);
+        for (const id of c.back) assert.match(file, new RegExp(`unit: ${id}\\b`), `${label}: ${id} back`);
+        if (c.back.length > 0) assert.match(r.stderr, new RegExp(`${c.back.join(', ')} open again`), label);
+        const subjects = git(dir, 'log', '--format=%s', `${before}..HEAD`).split('\n').filter(Boolean);
+        const cleaned = c.removed.length > 0 ? [`chore: ${c.removed.join(', ')} unranked (done) in priority.md`] : [];
+        const removedByCleanup = mode === 'remove' && c.removed.includes('F-2');
+        const edits = { bare: [], edit: ['chore: S-2 ranked first in priority.md'], remove: [] };
+        edits.remove = removedByCleanup ? [] : ['chore: F-2 unranked in priority.md'];
+        assert.deepEqual(subjects, [...edits[mode], ...cleaned], label);
+        assert.equal(git(dir, 'status', '--porcelain'), '', label);
+        if (mode === 'bare')
+          assert.doesNotMatch(r.stdout, /Not yet ranked[\s\S]*F-5/, `${label}: F-5 listed as ranked`);
+      }
+    }
+  }
 });
 
 test('the cleanup keeps a CRLF priority.md CRLF', () => {
