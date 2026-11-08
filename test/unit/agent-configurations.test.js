@@ -512,3 +512,17 @@ test('bl init never adds a model-less local configuration', () => {
   const added = initConfigurationLists({ review_agent: [c('claude'), c('codex'), c('gemini')] });
   assert.notEqual(added.agent[0].agent, 'local');
 });
+
+test("bl init -A local --model writes -A's entry with its model", () => {
+  assert.deepEqual(initConfigurationLists({}, 'Local', 'qwen3.8-27b'), {
+    agent: [LOCAL_QWEN],
+    review_agent: [{ agent: 'claude' }],
+  });
+  // A valueless --model (parseArgs: true) is refused before anything is written.
+  assert.throws(() => initConfigurationLists({}, 'local', true), /--model must be a non-empty string/);
+  const dir = mkTempDir('bl-init-local-');
+  const path = join(dir, 'backlog.json');
+  writeFileSync(path, JSON.stringify({ backlog: 'backlog' }));
+  ensureReposBlock(dir, 'local', 'qwen3.8-27b');
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).agent, [LOCAL_QWEN]);
+});
