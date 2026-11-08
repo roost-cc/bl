@@ -412,6 +412,138 @@ for (const [first, next, carries] of [
   });
 }
 
+// Each way a failure can drop the record of a failed commit's paths: every
+// path either stays recorded until a retry commits it, or a call reports the
+// failure and names it. `call` runs `commitChangedSince` as a person (the
+// headless marker refuses `priority.md` on its own, F-78 D3).
+{
+  const MESSAGE = 'chore: o';
+  const call = (dir, before, opts = {}) => {
+    const marker = process.env[HEADLESS_ENV];
+    delete process.env[HEADLESS_ENV];
+    try {
+      return captureStderr(() => commitChangedSince(dir, before, MESSAGE, opts));
+    } finally {
+      if (marker !== undefined) process.env[HEADLESS_ENV] = marker;
+    }
+  };
+  const hook = (dir) => join(dir, '.git', 'hooks', 'pre-commit');
+  const refuse = (dir) => writeFileSync(hook(dir), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const record = (dir) => join(dir, failedCommitRecord(MESSAGE));
+  /** The first call: `x.md` (or `file`) written, and a commit the hook refuses. */
+  const failFirst = (dir, file = 'x.md') => {
+    refuse(dir);
+    const before = dirtySnapshot(dir);
+    writeFileSync(join(dir, file), 'the command\n');
+    assert.equal(call(dir, before)[0], true);
+    rmSync(hook(dir));
+  };
+  /** `git status` with a corrupt index, the real one put back after. */
+  const corrupt = (dir, fn) => {
+    const index = join(dir, '.git', 'index');
+    const good = readFileSync(index);
+    writeFileSync(index, 'corrupt');
+    try {
+      return fn();
+    } finally {
+      writeFileSync(index, good);
+    }
+  };
+  const subject = (dir) => g(dir, 'log', '-1', '--format=%s');
+  for (const [label, run] of [
+    [
+      'a carried priority.md that a session holds stays recorded, and the next call commits it',
+      (dir) => {
+        failFirst(dir, PRIORITY_FILE);
+        const [held, err] = call(dir, dirtySnapshot(dir), { session: true });
+        assert.equal(held, false, err);
+        assert.match(err, /Left priority\.md uncommitted/);
+        assert.equal(subject(dir), 'base');
+        assert.ok(existsSync(record(dir)), 'still recorded');
+        const [failed, err2] = call(dir, dirtySnapshot(dir));
+        assert.equal(failed, false, err2);
+        assert.equal(subject(dir), MESSAGE);
+        assert.equal(g(dir, 'status', '--porcelain'), '');
+      },
+    ],
+    [
+      'a malformed record fails the next call, which names it',
+      (dir) => {
+        failFirst(dir);
+        writeFileSync(record(dir), '{bad');
+        const [failed, err] = call(dir, dirtySnapshot(dir));
+        assert.equal(failed, true);
+        assert.match(err, /backlog commit failed: cannot read .*the record of an earlier failed commit/);
+        assert.equal(subject(dir), 'base');
+      },
+    ],
+    [
+      'a record that cannot be written fails the call, which names its paths',
+      (dir) => {
+        mkdirSync(record(dir), { recursive: true });
+        refuse(dir);
+        const before = dirtySnapshot(dir);
+        writeFileSync(join(dir, 'x.md'), 'the command\n');
+        const [failed, err] = call(dir, before);
+        assert.equal(failed, true);
+        assert.match(err, /cannot write .*so no later bl run commits these paths: x\.md/);
+      },
+    ],
+    [
+      'a failed snapshot before records the dirty paths, and the next call names them as a failure',
+      (dir) => {
+        const before = corrupt(dir, () => dirtySnapshot(dir));
+        assert.equal(before, null);
+        writeFileSync(join(dir, 'x.md'), 'the command\n');
+        assert.equal(call(dir, before)[0], true);
+        const [failed, err] = call(dir, dirtySnapshot(dir));
+        assert.equal(failed, true);
+        assert.match(err, /no record of what it changed .*these paths may hold its changes: x\.md/);
+        assert.equal(subject(dir), 'base', 'bl cannot tell whose they are, so it commits none');
+        // Named once: the call after that leaves it to the operator.
+        assert.deepEqual(call(dir, dirtySnapshot(dir)), [false, 'Left your uncommitted backlog edits alone: x.md\n']);
+      },
+    ],
+    [
+      'a failed snapshot after leaves the record, and the next call commits the path',
+      (dir) => {
+        failFirst(dir);
+        const before = dirtySnapshot(dir);
+        assert.equal(corrupt(dir, () => call(dir, before))[0], true);
+        const [failed, err] = call(dir, dirtySnapshot(dir));
+        assert.equal(failed, false, err);
+        assert.equal(subject(dir), MESSAGE);
+        assert.equal(g(dir, 'status', '--porcelain'), '');
+      },
+    ],
+    [
+      'a record that cannot be removed after a commit is a warning, and carries nothing',
+      (dir) => {
+        if (process.getuid?.() === 0) return; // root removes it all the same
+        failFirst(dir);
+        const recordDir = join(dir, failedCommitRecord(MESSAGE), '..');
+        chmodSync(recordDir, 0o555);
+        let res;
+        try {
+          res = call(dir, dirtySnapshot(dir));
+        } finally {
+          chmodSync(recordDir, 0o755);
+        }
+        assert.equal(res[0], false, res[1]);
+        assert.match(res[1], /cannot remove /);
+        assert.equal(subject(dir), MESSAGE);
+        const head = g(dir, 'rev-parse', 'HEAD');
+        assert.equal(call(dir, dirtySnapshot(dir))[0], false);
+        assert.equal(g(dir, 'rev-parse', 'HEAD'), head);
+      },
+    ],
+  ]) {
+    test(`commit_changed_since_preserves_failed_paths_across_hold_and_record_errors: ${label}`, () => {
+      run(changedSinceRepo());
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Shared through the remote (F-50 D4): push after commit, pull with rebase
 // ---------------------------------------------------------------------------
