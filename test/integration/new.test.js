@@ -575,6 +575,83 @@ test('bl new --feature --no-sync makes no commit (S-1368)', () => {
   }
 });
 
+// feature_commit_excludes_formatter_sidecars: every `bl new` branch commits
+// the files it wrote and nothing else. The Markdown formatter here writes a
+// `sidecar.txt` beside each file it formats; that file stays out of the commit.
+for (const [name, args, committed, sidecar] of [
+  [
+    'story',
+    () => ['new', 'C01', '--points', '1', '--title', 'Fresh'],
+    ['A\tstories/S3-fresh/index.md'],
+    'stories/S3-fresh',
+  ],
+  [
+    'batch',
+    (dir) => ['new', '--from', writeSpec(dir)],
+    ['A\tstories/S3-alpha/index.md', 'A\tstories/S4-bravo/index.md'],
+    'stories/S3-alpha',
+  ],
+  [
+    'component',
+    () => ['new', '--component', '--repo', 'beta', '--title', 'Fresh', '--paths', '**'],
+    ['A\tcomponents/C04-fresh/index.md'],
+    'components/C04-fresh',
+  ],
+  [
+    'theme',
+    (dir) => ['new', '--theme', 'ops', '--title', 'Ops', '--brief', `${basename(dir)}/backlog.json`],
+    ['A\tthemes/ops/index.md'],
+    'themes/ops',
+  ],
+  [
+    'epic',
+    () => ['new', '--epic', '--theme', 'demo', '--title', 'Hub'],
+    ['A\tepics/E50-hub/index.md'],
+    'epics/E50-hub',
+  ],
+  [
+    'feature with stories',
+    () => ['new', '--feature', '--theme', 'demo', '--title', 'Pair', 'S-1', 'S-2'],
+    ['A\tfeatures/F1-pair/index.md', 'M\tstories/S1-one/index.md', 'M\tstories/S2-two/index.md'],
+    'features/F1-pair',
+  ],
+  [
+    'feature with no stories',
+    () => ['new', '--feature', '--theme', 'demo', '--title', 'Solo'],
+    ['A\tfeatures/F1-solo/index.md'],
+    'features/F1-solo',
+  ],
+]) {
+  test(`feature_commit_excludes_formatter_sidecars: ${name}`, () => {
+    const { dir, cleanup } = componentBacklog({
+      stories: [
+        { id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one' },
+        { id: 'S-2', component: 'C01', title: 'Two', dirSuffix: 'two' },
+      ],
+    });
+    try {
+      const script = join(dir, 'sidecar-formatter.mjs');
+      writeFileSync(
+        script,
+        "import { writeFileSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\n" +
+          "for (const p of process.argv.slice(2)) writeFileSync(join(dirname(p), 'sidecar.txt'), 'formatter\\n');\n",
+      );
+      const cfgPath = join(dir, 'backlog.json');
+      const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+      cfg.plugins = { ...cfg.plugins, md: { format: `node ${script} {{path}}` } };
+      cfg.language_dispatch = { ...cfg.language_dispatch, format: { '.md': 'md' } };
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+      initGitBacklog(dir);
+      const r = runBl(args(dir), { cwd: dir, env: GIT_ENV });
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(headFiles(dir), committed);
+      assert.ok(statusLines(dir).includes(`?? ${sidecar}/sidecar.txt`), statusLines(dir).join('\n'));
+    } finally {
+      cleanup();
+    }
+  });
+}
+
 test('bl new --json keeps stdout a single JSON object while it commits', () => {
   const { dir, cleanup } = gitNewBacklog();
   try {

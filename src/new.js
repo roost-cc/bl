@@ -84,10 +84,12 @@ function prettyRelPath(p) {
 
 /**
  * Commit what a `bl new` branch wrote, unless `--no-sync`: `syncAndCommit`
- * with `message`, `storyIds` and `extraPaths`, then the report. On a failed
- * sync, print `created` ("Story file created at …") with the error and exit 1.
+ * with `message` and `files`, then the report. On a failed sync, print
+ * `created` ("Story file created at …") with the error and exit 1.
+ * `files` names each file written, never its directory: a formatter or an
+ * editor may leave another file beside it, and that file stays out.
  */
-async function commitNew(config, args, { message, storyIds = [], extraPaths = [], created }) {
+async function commitNew(config, args, { message, files, created }) {
   if (args['no-sync']) {
     info("Skipped the commit. Commit it with 'bl sync --commit'.");
     return;
@@ -95,7 +97,7 @@ async function commitNew(config, args, { message, storyIds = [], extraPaths = []
   info('\nSyncing backlog...');
   let res;
   try {
-    res = await syncAndCommit(config, { message, storyIds, extraPaths });
+    res = await syncAndCommit(config, { message, extraPaths: files });
   } catch (err) {
     console.error(`${created}. Sync failed: ${err.message}. Commit it by hand with 'bl sync --commit'.`);
     process.exit(1);
@@ -457,7 +459,7 @@ async function newFeature(args, stories) {
 
   await commitNew(config, args, {
     message: `chore: add ${created.id}`,
-    extraPaths: [relative(root, dirname(created.indexPath)), ...stories.map((s) => relative(root, s.indexPath))],
+    files: [created.indexPath, ...stories.map((s) => s.indexPath)].map((p) => relative(root, p)),
     created: `Feature file created at ${relative(root, created.indexPath)}`,
   });
 }
@@ -575,7 +577,7 @@ async function newComponent(args, jsonMode) {
 
   await commitNew(config, args, {
     message: `chore: add ${componentId}`,
-    extraPaths: [relative(config.backlogRoot, dir)],
+    files: [relPath],
     created: `Component file created at ${relPath}`,
   });
 
@@ -629,7 +631,7 @@ async function writeValueUnit(config, args, jsonMode, { kind, id, title, dir, co
 
   await commitNew(config, args, {
     message: `chore: add ${kind} ${id}`,
-    extraPaths: [relative(config.backlogRoot, dir)],
+    files: [relPath],
     created: `${kind[0].toUpperCase()}${kind.slice(1)} file created at ${relPath}`,
   });
 
@@ -1408,8 +1410,7 @@ Example:
 
   await commitNew(cfg, args, {
     message: `chore: add ${storyId}`,
-    storyIds: [storyId],
-    extraPaths: dependentPaths,
+    files: [relative(cfg.backlogRoot, storyIndex), ...dependentPaths],
     created: `Story file created at ${relative(cfg.backlogRoot, storyIndex)}`,
   });
 
@@ -1834,8 +1835,11 @@ async function runBatchMode(args, jsonMode) {
   const ids = renderedStories.map((r) => r.id);
   await commitNew(cfg, args, {
     message: `chore: add ${ids.join(', ')}`,
-    storyIds: ids,
-    extraPaths: [...(creatingNewComponent ? [componentRelDir] : []), ...dependentPaths],
+    files: [
+      ...renderedStories.map((r) => r.relPath),
+      ...(creatingNewComponent ? [componentRelIndex] : []),
+      ...dependentPaths,
+    ],
     created: `Story files created at ${renderedStories.map((r) => r.relPath).join(', ')}`,
   });
 
