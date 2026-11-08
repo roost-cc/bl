@@ -453,7 +453,9 @@ export function doneRefusal(config, rawId) {
     };
   }
   if (item?.kind === 'runner') {
-    return { refused: `${id} is the update job's health: it clears when a heartbeat newer than 8 h records a success` };
+    return {
+      refused: `${id} is the update job's health: it clears when a heartbeat newer than ${STALE_RUN_HOURS} h records a success`,
+    };
   }
   if (item?.kind === 'change') {
     return { refused: `${id} is unmerged work on its branch: answer it with ${item.next}` };
