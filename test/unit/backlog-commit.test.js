@@ -9,7 +9,7 @@ import {
   pathsChangedSince,
   commitPaths,
   commitChangedSince,
-  FAILED_COMMIT_PATHS,
+  failedCommitRecord,
   commandPullsBacklog,
   isGeneratedPath,
   isNonFastForwardRejection,
@@ -354,7 +354,61 @@ for (const [label, after, committed, dirty] of [
     assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), committed);
     assert.equal(g(dir, 'status', '--porcelain'), dirty);
     if (dirty) assert.match(err, /Left your uncommitted backlog edits alone: x\.md/);
-    assert.equal(existsSync(join(dir, FAILED_COMMIT_PATHS)), false, 'a commit that did not fail removes the record');
+    assert.equal(
+      existsSync(join(dir, failedCommitRecord('chore: retry'))),
+      false,
+      'a commit that did not fail removes the record',
+    );
+  });
+}
+
+// One command's failed commit, then another command's call that changes
+// nothing: the record is the first command's, so the second commits nothing
+// and the path stays dirty for the first command's retry. The last row is the
+// same owner under another message (a refine, then a re-refine): it carries.
+for (const [first, next, carries] of [
+  [{ message: 'chore: refine S-1', owner: 'refine S-1' }, { message: 'chore: bl init' }, false],
+  [
+    { message: 'chore: merge F-1, mark stories done' },
+    { message: 'chore: triage S-5 Deferred into new stories' },
+    false,
+  ],
+  [
+    { message: 'chore: triage S-5 Deferred into new stories' },
+    { message: 'chore: refine S-1', owner: 'refine S-1' },
+    false,
+  ],
+  [{ message: 'chore: refine S-1', owner: 'refine S-1' }, { message: 'chore: refine S-2', owner: 'refine S-2' }, false],
+  [
+    { message: 'chore: refine S-1', owner: 'refine S-1' },
+    { message: 'chore: re-refine S-1', owner: 'refine S-1' },
+    true,
+  ],
+]) {
+  test(`commit_changed_since_failed_refine_then_noop_init_keeps_refine_path_uncommitted: ${first.message} fails, then ${next.message}`, () => {
+    const dir = changedSinceRepo();
+    const head = g(dir, 'rev-parse', 'HEAD');
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const before = dirtySnapshot(dir);
+    writeFileSync(join(dir, 'x.md'), 'the first command\n');
+    assert.equal(captureStderr(() => commitChangedSince(dir, before, first.message, first))[0], true);
+    rmSync(hook);
+
+    const [failed, err] = captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), next.message, next));
+    assert.equal(failed, false, err);
+    if (carries) {
+      assert.equal(g(dir, 'log', '-1', '--format=%s'), next.message);
+      assert.equal(g(dir, 'status', '--porcelain'), '');
+      return;
+    }
+    assert.equal(g(dir, 'rev-parse', 'HEAD'), head, 'the other command commits nothing');
+    assert.equal(g(dir, 'status', '--porcelain'), 'M  x.md');
+    // The first command's retry still commits it.
+    const retry = captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), first.message, first));
+    assert.equal(retry[0], false, retry[1]);
+    assert.equal(g(dir, 'log', '-1', '--format=%s'), first.message);
+    assert.equal(g(dir, 'status', '--porcelain'), '');
   });
 }
 

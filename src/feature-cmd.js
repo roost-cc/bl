@@ -575,6 +575,7 @@ export function cmdRefine(args, config, feature) {
       effort: sessionEffort(config, { mode: 'refine' }),
     },
     `chore: refine ${feature.id}`,
+    [feature.id],
   );
 }
 
