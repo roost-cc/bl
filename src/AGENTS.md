@@ -3650,8 +3650,11 @@ The heartbeat (F-80 B3, D6) is one orphan commit on the branch
 `updates.heartbeat.branch` of the repo `updates.heartbeat.repo`, which
 running-man's update job force-pushes after every update run. `readHeartbeat`
 reads it with git alone, in that repo's clone as `backlog.json` `repos`
-registers it: `git fetch --quiet origin <branch>`, then `git log -1
---format=%cI%n%B FETCH_HEAD`. The first line is the update run's time, the
+registers it: `git fetch --quiet origin
++refs/heads/<branch>:refs/remotes/origin/<branch>`, then `git log -1
+--format=%cI%n%B refs/remotes/origin/<branch>`. It reads that ref, not
+`FETCH_HEAD`, because any other fetch in the clone rewrites `FETCH_HEAD`.
+The first line is the update run's time, the
 next the subject (its summary), and the rest of the message JSON with
 `"schema": "roost-update-heartbeat/v1"`, `result`, `failed_step` and `red`
 (a list of `{ repo, branch, update, head, main, notes, log }`, or `null`

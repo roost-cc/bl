@@ -155,10 +155,13 @@ const isText = (v) => typeof v === 'string' && v.trim() !== '';
 
 /**
  * The update job's latest heartbeat (F-80 B3, D6), read with git alone:
- * `git fetch --quiet origin <branch>`, then `git log -1 --format=%cI%n%B
- * FETCH_HEAD`, in the clone of `updates.heartbeat.repo` that backlog.json
- * registers. The first line is the commit date, the next the subject (the
- * update run's summary), and the rest of the message the heartbeat's JSON.
+ * `git fetch --quiet origin +refs/heads/<branch>:refs/remotes/origin/<branch>`,
+ * then `git log -1 --format=%cI%n%B refs/remotes/origin/<branch>`, in the
+ * clone of `updates.heartbeat.repo` that backlog.json registers. The first
+ * line is the commit date, the next the subject (the update run's summary),
+ * and the rest of the message the heartbeat's JSON. The read names the
+ * branch's own ref, not `FETCH_HEAD`: any other fetch in the clone rewrites
+ * `FETCH_HEAD`, but only a fetch of the heartbeat branch moves that ref.
  * No `--depth=1`: on a full clone it marks the repository shallow, and the
  * heartbeat is one commit with no parent, so the fetch moves the same
  * objects without it. Null when backlog.json has no `updates` block. Throws
@@ -177,8 +180,9 @@ export function readHeartbeat(config) {
   const ref = `${repo}:${branch}`;
   const cwd = config.reposByName?.[repo];
   if (!cwd) throw new Error(`updates.heartbeat.repo ${repo} is not in backlog.json repos`);
-  gitOut(cwd, ['fetch', '--quiet', 'origin', branch]);
-  const [at, subject = '', ...body] = gitOut(cwd, ['log', '-1', '--format=%cI%n%B', 'FETCH_HEAD']).split('\n');
+  const tracking = `refs/remotes/origin/${branch}`;
+  gitOut(cwd, ['fetch', '--quiet', 'origin', `+refs/heads/${branch}:${tracking}`]);
+  const [at, subject = '', ...body] = gitOut(cwd, ['log', '-1', '--format=%cI%n%B', tracking]).split('\n');
   const notHeartbeat = (why) => new Error(`${ref}: the commit message is not a ${HEARTBEAT_SCHEMA} heartbeat: ${why}`);
   let hb;
   try {

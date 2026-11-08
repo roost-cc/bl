@@ -623,6 +623,36 @@ test('readHeartbeat: the fetch leaves a full clone of the heartbeat repo complet
   }
 });
 
+test('heartbeat_fetch_uses_its_own_commit: another fetch in the clone between the fetch and the read does not change what is read', () => {
+  const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  // Each is a fetch that another process may run in the same clone: it rewrites FETCH_HEAD.
+  const others = [
+    ['fetch', '-q', 'origin', 'main'],
+    ['fetch', '-q', 'origin'],
+    ['fetch', '-q', 'origin', '+refs/heads/main:refs/remotes/origin/main'],
+  ];
+  for (const other of others) {
+    const t = setupHeartbeat();
+    try {
+      t.beat(heartbeat());
+      const bin = join(t.dir, 'bin');
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, 'git'),
+        `#!/bin/sh\nif [ "$1" = log ]; then '${realGit}' ${other.join(' ')} || exit 1; fi\nexec '${realGit}' "$@"\n`,
+        { mode: 0o755 },
+      );
+      withEnv({ PATH: `${bin}:${process.env.PATH}` }, () => {
+        const hb = readHeartbeat(t.config());
+        assert.equal(hb.result, 'success', `git ${other.join(' ')} before the read`);
+        assert.equal(hb.red.length, 2, `git ${other.join(' ')} before the read`);
+      });
+    } finally {
+      t.cleanup();
+    }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // S-970: the ### Operator tasks sub-list
 // ---------------------------------------------------------------------------
