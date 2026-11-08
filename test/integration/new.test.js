@@ -548,6 +548,19 @@ test('bl new --feature commits the feature and the stories it links (S-1368)', (
   }
 });
 
+test('bl new --feature with no story ids commits the feature alone (S-1368)', () => {
+  const { dir, cleanup } = gitNewBacklog();
+  try {
+    const r = runBl(['new', '--feature', '--theme', 'demo', '--title', 'Solo'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: add F-2');
+    assert.deepEqual(headFiles(dir), ['A\tfeatures/F2-solo/index.md']);
+    assertOnlyBystandersDirty(dir);
+  } finally {
+    cleanup();
+  }
+});
+
 test('bl new --feature --no-sync makes no commit (S-1368)', () => {
   const { dir, cleanup } = gitPairBacklog();
   try {
