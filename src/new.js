@@ -15,7 +15,8 @@
  * title and points. Assigns the next globally-unique story ID. Unless
  * --no-sync or --dry-run, commits the new stories (plus a new component dir
  * and the stories whose depends_on it extended) inside the lock hold that
- * allocated the IDs.
+ * allocated the IDs. A new feature is committed the same way, with the
+ * stories whose `feature:` line it wrote.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, unlinkSync } from 'fs';
@@ -373,7 +374,8 @@ function foldPositionals(args, config) {
  * before anything is written: it must be unstarted (`Flow.isUnstarted`) and in no
  * other feature. A repair record (feature-links.js) is written before the
  * first story, so a failure the rollback cannot undo is settled by the next
- * bl command.
+ * bl command. Unless --no-sync, it then commits the feature directory and
+ * each linked story's index.md as `chore: add F-<n>`.
  */
 async function newFeature(args, stories) {
   if (args.json === true) {
@@ -382,8 +384,10 @@ async function newFeature(args, stories) {
   }
 
   const config = loadConfig();
+  const root = config.backlogRoot;
   const { cmdNew } = await import('./feature-cmd.js');
-  return cmdNew(args, config, {
+  let created;
+  await cmdNew(args, config, {
     beforeCreate: () => {
       // Each story file is read again here: a record read before the lock
       // may already be in a feature another `bl new --feature` made.
@@ -398,12 +402,12 @@ async function newFeature(args, stories) {
       if (refusals.length > 0) process.exit(1);
     },
     afterCreate: (feature) => {
+      created = feature;
       if (stories.length === 0) return;
       // Each story's bytes before its rewrite go in the repair record first. A
       // failed write is settled at once: restore every story and rethrow so
       // cmdNew removes the feature. A story that cannot be restored still
       // names the feature, so the feature is kept and the record stays.
-      const root = config.backlogRoot;
       const record = writeRecord(root, {
         feature: feature.id,
         dir: relative(root, dirname(feature.indexPath)),
@@ -449,6 +453,12 @@ async function newFeature(args, stories) {
         // The links are complete: the next command finds them so and drops it.
       }
     },
+  });
+
+  await commitNew(config, args, {
+    message: `chore: add ${created.id}`,
+    extraPaths: [relative(root, dirname(created.indexPath)), ...stories.map((s) => relative(root, s.indexPath))],
+    created: `Feature file created at ${relative(root, created.indexPath)}`,
   });
 }
 
@@ -985,8 +995,8 @@ Options:
   --feature            With no F-id: create a feature instead of a story
                        (features/F<n>-<slug>/index.md), holding the S-ids
                        given. Takes --title, --theme (required, unless
-                       --epic gives it), --epic, --repo (default: the
-                       first story's repo), --rounds <n>, --body-file.
+                       --epic gives it), --epic, --rounds <n>,
+                       --body-file, --no-sync.
   --theme <slug>       With --feature or --epic: the theme it belongs to.
                        On its own: create a theme (themes/<slug>/index.md,
                        repos: []). Takes --title, --brief (required),
@@ -1048,8 +1058,10 @@ Stories are written to stories/S<n>-<slug>/index.md. After the sync, commits
 the new stories (plus a new component dir, the feature file and every
 index the sync rewrote) on the backlog's current branch, under the backlog
 lock: "chore: add S-N" (or "chore: add S-N, S-M" for a batch, "chore: add
-C<n>" for a component). Other uncommitted edits in the backlog stay out of the
-commit. When the backlog is not a git repository, the commit is skipped.
+C<n>" for a component, "chore: add F-<n>" for a feature). A feature's commit
+holds the feature file and the stories it linked. Other uncommitted edits in
+the backlog stay out of the commit. When the backlog is not a git repository,
+the commit is skipped.
 
 Example:
   bl new C10 --title "My story" --points 1 \\

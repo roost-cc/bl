@@ -518,6 +518,50 @@ test('bl new --feature commits its story and leaves the feature file alone (F-79
   }
 });
 
+/** A git backlog with S-2 and S-3 committed in C01, for `bl new --feature` to link. */
+function gitPairBacklog() {
+  const t = gitNewBacklog();
+  for (const title of ['Two', 'Three']) {
+    const r = runBl([...NEW_IN_C01, '--title', title], { cwd: t.dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+  }
+  return t;
+}
+
+const NEW_PAIR = ['new', '--feature', '--theme', 'demo', '--title', 'Pair', 'S-2', 'S-3'];
+
+test('bl new --feature commits the feature and the stories it links (S-1368)', () => {
+  const { dir, cleanup } = gitPairBacklog();
+  try {
+    const r = runBl(NEW_PAIR, { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), 'features/F2-pair/index.md');
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: add F-2');
+    assert.deepEqual(headFiles(dir).sort(), [
+      'A\tfeatures/F2-pair/index.md',
+      'M\tstories/S2-two/index.md',
+      'M\tstories/S3-three/index.md',
+    ]);
+    assertOnlyBystandersDirty(dir);
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl new --feature --no-sync makes no commit (S-1368)', () => {
+  const { dir, cleanup } = gitPairBacklog();
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const r = runBl([...NEW_PAIR, '--no-sync'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /Skipped the commit\. Commit it with 'bl sync --commit'\./);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+    assert.ok(statusLines(dir).includes('?? features/F2-pair/index.md'), statusLines(dir).join('\n'));
+  } finally {
+    cleanup();
+  }
+});
+
 test('bl new --json keeps stdout a single JSON object while it commits', () => {
   const { dir, cleanup } = gitNewBacklog();
   try {
