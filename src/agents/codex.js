@@ -7,19 +7,15 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync,
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { spawnSyncFiles } from '../child-stdio.js';
 import { checkModel, exitStatus, info, isBlBranchPath, worktreeRoot } from '../config.js';
 import { checkEffort } from '../effort.js';
+import { runCapacityHelper } from './capacity-helper.js';
 import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv } from './provider.js';
 
 // The script that holds the `codex app-server` conversation (see its JSDoc).
 const CAPACITY_HELPER = fileURLToPath(new URL('./codex-capacity.js', import.meta.url));
-
-// Past the helper's own deadline: its SIGTERM-then-SIGKILL grace for
-// app-server and its own start-up fit inside it.
-const CAPACITY_SPAWN_MARGIN_MS = 5_000;
 
 function normalizePath(path) {
   return path ? resolve(path) : null;
@@ -701,36 +697,17 @@ export class CodexProvider extends AgentProvider {
    * quota is one for every model, so every answer is `account`-scoped. Any
    * failure (no `codex`, an exit, a JSON-RPC error, the deadline, output
    * that is not the helper's) is `unknown` with the reason; never throws.
-   * `run`, `env` and `timeoutMs` are for tests. The helper is a Node child,
-   * so its answer comes back through a file (F-70 D1).
+   * `run`, `env` and `timeoutMs` are for tests. The helper is a Node child
+   * (`runCapacityHelper`), so its answer comes back through a file (F-70 D1).
    */
-  capacity({ run = spawnSyncFiles, env = process.env, timeoutMs = CODEX_CAPACITY_TIMEOUT_MS } = {}) {
+  capacity({ run, env, timeoutMs = CODEX_CAPACITY_TIMEOUT_MS } = {}) {
     const unknown = (message) => ({ state: 'unknown', scope: 'account', until: null, windows: [], message });
-    let r;
-    try {
-      r = run(process.execPath, [CAPACITY_HELPER, '--timeout', String(timeoutMs)], {
-        encoding: 'utf8',
-        env,
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: timeoutMs + CAPACITY_SPAWN_MARGIN_MS,
-      });
-    } catch (error) {
-      return unknown(`codex capacity read failed: ${error.message}`);
-    }
-    if (r.error) return unknown(`codex capacity read failed: ${r.error.message}`);
-    let out;
-    try {
-      out = JSON.parse(
-        String(r.stdout ?? '')
-          .trim()
-          .split('\n')
-          .pop(),
-      );
-    } catch {
-      out = null;
-    }
-    if (!isObject(out))
-      return unknown(`codex capacity read failed (${r.signal ? `signal ${r.signal}` : `exit ${r.status}`})`);
+    const { out, reason } = runCapacityHelper(CAPACITY_HELPER, ['--timeout', String(timeoutMs)], {
+      run,
+      env,
+      timeoutMs,
+    });
+    if (!out) return unknown(`codex capacity read failed (${reason})`);
     if (!out.ok) return unknown(String(out.error ?? 'codex capacity read failed'));
     return codexCapacity(out.result);
   }
