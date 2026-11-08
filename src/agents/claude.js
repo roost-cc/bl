@@ -4,7 +4,7 @@
 
 import { spawnSync } from 'child_process';
 import { join, dirname } from 'path';
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { clockTime, matchLimit } from './limit.js';

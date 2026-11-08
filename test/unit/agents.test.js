@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import fs, { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { syncBuiltinESMExports } from 'module';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
 import { AgentProvider } from '../../src/agents/provider.js';
@@ -19,6 +20,25 @@ import {
   translateCodexPermissions,
 } from '../../src/agents/codex.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+
+test('ClaudeProvider.clearLogs deletes each /tmp/claude-permissions-*.log (bl allow --clear)', () => {
+  // fs is stubbed so the test never deletes a real session's log.
+  const saved = { readdirSync: fs.readdirSync, unlinkSync: fs.unlinkSync };
+  const deleted = [];
+  fs.readdirSync = (dir, ...rest) =>
+    dir === '/tmp'
+      ? ['claude-permissions-a.log', 'other.log', 'claude-permissions-b.log']
+      : saved.readdirSync(dir, ...rest);
+  fs.unlinkSync = (p) => deleted.push(p);
+  syncBuiltinESMExports();
+  try {
+    new ClaudeProvider().clearLogs();
+  } finally {
+    Object.assign(fs, saved);
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(deleted, ['/tmp/claude-permissions-a.log', '/tmp/claude-permissions-b.log']);
+});
 
 test('base AgentProvider optional capabilities are safe no-ops', async () => {
   const provider = new AgentProvider();
