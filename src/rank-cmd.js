@@ -465,8 +465,13 @@ function cleanup(root, path, graph) {
   }
   const message = (removed) => `chore: ${removed.join(', ')} unranked (done) in ${PRIORITY_FILE}`;
   if (inRepo(root) && uncommitted(root)) {
+    // The earlier cleanup took out the closed units the file no longer lists;
+    // a unit that closed since is still listed, and is not part of that write.
+    const left = new Set(rankedIds(content));
     let retried = [];
-    const ours = pendingIsOurs(root, content, (head) => removeClosed(head, (retried = closedIn(graph, head))));
+    const ours = pendingIsOurs(root, content, (head) =>
+      removeClosed(head, (retried = closedIn(graph, head).filter((id) => !left.has(id)))),
+    );
     if (ours) return { removed: retried, commit: commitPaths(root, [PRIORITY_FILE], message(retried)) };
     if (ids.length === 0) return { removed: [] };
     return { skipped: `${PRIORITY_FILE} has uncommitted edits; left ${ids.join(', ')} in ranked:` };

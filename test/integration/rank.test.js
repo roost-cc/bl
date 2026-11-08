@@ -408,6 +408,38 @@ test('a failed cleanup commit exits 1 and stops the edit; the next bare run comm
   assert.equal(r.stdout, LISTING);
 });
 
+test('rank_failed_cleanup_commit_retry_survives_another_unit_closing', () => {
+  const dir = backlog(CLOSED);
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  mkdirSync(dirname(hook), { recursive: true });
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+  chmodSync(hook, 0o755);
+  let r = bl(['rank'], dir);
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(read(dir), HAND);
+  unlinkSync(hook);
+
+  // F-2 closes before the retry.
+  const f2 = join(dir, 'features', 'F2', 'index.md');
+  writeFileSync(f2, readFileSync(f2, 'utf8').replace('status: draft', 'status: done'));
+  git(dir, 'commit', '-q', '-m', 'F-2 done', '--', 'features/F2/index.md');
+
+  r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /took out F-5, S-9 \(done\)/);
+  assert.doesNotMatch(r.stderr, /uncommitted|left/);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-5, S-9 unranked (done) in priority.md');
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+  assert.equal(read(dir), HAND);
+
+  // The next run takes F-2 out.
+  r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /took out F-2 \(done\)/);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-2 unranked (done) in priority.md');
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+});
+
 test('the cleanup keeps a CRLF priority.md CRLF', () => {
   const crlf = (s) => s.replace(/\n/g, '\r\n');
   const dir = backlog(crlf(CLOSED));
