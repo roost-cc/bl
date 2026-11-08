@@ -13,8 +13,8 @@
  * A story's component names its code boundary, and the story's repo is the
  * component's repo (F-49 D4); no repo is written on the story (F-52 D1). Prompts for the component (when none is named),
  * title and points. Assigns the next globally-unique story ID. Unless
- * --no-sync or --dry-run, commits the new stories (plus a new component dir
- * and the stories whose depends_on it extended) inside the lock hold that
+ * --no-sync or --dry-run, commits the new stories (plus a new component's
+ * index.md and the stories whose depends_on it extended) inside the lock hold that
  * allocated the IDs. A new feature is committed the same way, with the
  * stories whose `feature:` line it wrote.
  */
@@ -376,7 +376,7 @@ function foldPositionals(args, config) {
  * before anything is written: it must be unstarted (`Flow.isUnstarted`) and in no
  * other feature. A repair record (feature-links.js) is written before the
  * first story, so a failure the rollback cannot undo is settled by the next
- * bl command. Unless --no-sync, it then commits the feature directory and
+ * bl command. Unless --no-sync, it then commits the feature's index.md and
  * each linked story's index.md as `chore: add F-<n>`.
  */
 async function newFeature(args, stories) {
@@ -1057,7 +1057,7 @@ Options:
   --help               Show this help
 
 Stories are written to stories/S<n>-<slug>/index.md. After the sync, commits
-the new stories (plus a new component dir, the feature file and every
+the new stories (plus a new component's index.md, the feature file and every
 index the sync rewrote) on the backlog's current branch, under the backlog
 lock: "chore: add S-N" (or "chore: add S-N, S-M" for a batch, "chore: add
 C<n>" for a component, "chore: add F-<n>" for a feature). A feature's commit
