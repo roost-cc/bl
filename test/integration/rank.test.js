@@ -479,13 +479,13 @@ test('rank_retry_reconciles_closed_work_units_before_edit', () => {
   const changes = {
     'F-2 closes': { apply: (d) => setStatus(d, F2, 'draft', 'done'), removed: ['F-5', 'F-2', 'S-9'], back: [] },
     'F-5 reopens': { apply: (d) => setStatus(d, F5, 'done', 'draft'), removed: ['S-9'], back: ['F-5'] },
-    'all reopen': {
+    'F-2 closes, F-5 reopens': {
       apply: (d) => {
+        setStatus(d, F2, 'draft', 'done');
         setStatus(d, F5, 'done', 'draft');
-        setStatus(d, S9, 'done', 'draft');
       },
-      removed: [],
-      back: ['F-5', 'S-9'],
+      removed: ['F-2', 'S-9'],
+      back: ['F-5'],
     },
   };
   const modes = { bare: [], edit: ['S-2', '--top', '--why', 'x'], remove: ['F-2', '--remove'] };
@@ -523,6 +523,50 @@ test('rank_retry_reconciles_closed_work_units_before_edit', () => {
       }
     }
   }
+
+  // When every unit the write took out is open again, the write looks like a
+  // failed `--remove` edit or a hand edit: a bare run leaves it, and an edit
+  // asks for it to be committed or discarded.
+  for (const [mode, args] of Object.entries(modes)) {
+    const dir = backlog(CLOSED);
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    mkdirSync(dirname(hook), { recursive: true });
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+    chmodSync(hook, 0o755);
+    assert.equal(bl(['rank'], dir).status, 1, mode);
+    unlinkSync(hook);
+    setStatus(dir, F5, 'done', 'draft');
+    setStatus(dir, S9, 'done', 'draft');
+    const before = git(dir, 'rev-parse', 'HEAD');
+    const r = bl(['rank', ...args], dir);
+    assert.equal(r.status, mode === 'bare' ? 0 : 1, `all reopen / ${mode}: ${r.stderr}`);
+    if (mode !== 'bare') assert.match(r.stderr, /commit or discard them first/, mode);
+    assert.equal(read(dir), HAND, `all reopen / ${mode}: the pending write stays`);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), before, mode);
+  }
+});
+
+test('rank_retry_keeps_a_pending_write_that_took_out_only_open_units', () => {
+  // A failed `bl rank F-2 --remove` commit and a hand edit that deletes F-2's
+  // entry leave the same text as a cleanup of F-2 would. F-2 is open, so the
+  // write is not a cleanup's: a bare run leaves it as it is.
+  const dir = backlog();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  mkdirSync(dirname(hook), { recursive: true });
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+  chmodSync(hook, 0o755);
+  assert.equal(bl(['rank', 'F-2', '--remove'], dir).status, 1);
+  unlinkSync(hook);
+  const pending = read(dir);
+  assert.doesNotMatch(pending, /unit: F-2/);
+
+  const r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /open again/);
+  assert.equal(read(dir), pending, 'the pending edit stays');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  assert.match(git(dir, 'status', '--porcelain'), /priority\.md/);
 });
 
 test('the cleanup keeps a CRLF priority.md CRLF', () => {

@@ -456,7 +456,7 @@ function closedIn(graph, text) {
  * it is; a file that holds exactly an earlier cleanup's write whose commit
  * failed is redone on HEAD with today's closed units and committed
  * (`pendingIsOurs`); `reopened` names the units it put back.
- * @returns {{ removed: string[], reopened?: string[], commit?: object } | { skipped: string }}
+ * @returns {{ removed: string[], reopened?: string[], commit?: object } | { skipped: string, fileError?: boolean }}
  */
 function cleanup(root, path, graph) {
   const { content, crlf } = readPriority(path);
@@ -472,7 +472,9 @@ function cleanup(root, path, graph) {
     // An earlier cleanup whose commit failed left HEAD's text without the
     // entries of some units (`gone`). Closed states may have changed since, so
     // the retry redoes the cleanup on HEAD with today's closed set: a unit
-    // closed since goes too, and a unit open again gets its entry back.
+    // closed since goes too, and a unit open again gets its entry back. A
+    // write that took out only open units is not a cleanup's: a failed
+    // `--remove` edit or a hand edit leaves the same text, so it stays.
     const left = new Set(rankedIds(content));
     const gone = (text) =>
       [...new Set(rankedIds(text))].filter((id) => {
@@ -481,14 +483,9 @@ function cleanup(root, path, graph) {
       });
     let head = null;
     const ours = pendingIsOurs(root, content, (h) => removeClosed((head = h), gone(h)));
-    if (ours) {
-      const removed = closedIn(graph, head);
+    const removed = ours ? closedIn(graph, head) : [];
+    if (ours && gone(head).some((id) => removed.includes(id))) {
       const reopened = gone(head).filter((id) => !removed.includes(id));
-      if (removed.length === 0) {
-        // Nothing is closed any more: put HEAD's version back, index too.
-        spawnSync('git', ['checkout', 'HEAD', '--', PRIORITY_FILE], { cwd: root, stdio: 'ignore' });
-        return { removed, reopened };
-      }
       const next = removeClosed(head, removed);
       if (next !== content) writePriority(root, path, next, crlf);
       return { removed, reopened, commit: commitPaths(root, [PRIORITY_FILE], message(removed)) };
