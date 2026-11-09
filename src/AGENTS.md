@@ -1271,7 +1271,7 @@ The loop pushes the branch and checks that `origin/<branch>` contains HEAD
 before every review pass and before it ends `clean`; a failed push, or a
 forge that cannot open or find the PR, escalates. Having no forge configured
 at all is the one way to finish without a PR.
-bl raises `review_round` by exactly one before each verifier session, so the
+bl raises `review_round` by exactly one with each verifier verdict, so the
 round is always a number that goes up. A run that starts at the
 round cap with the last round `pending` or `fixed` runs the one closing round
 it is owed: it fixes that round's items (when `pending`), and the verifier
