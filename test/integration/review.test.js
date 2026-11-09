@@ -419,7 +419,7 @@ test('bl review S-n: a verifier with no outcome is resumed once, then escalates 
   );
   assert.doesNotMatch(stderr, /done:/);
   const { fm } = parseChange(readFileSync(changeOf(storyPath), 'utf8'));
-  assert.equal(fm.review_round, '1', 'the round bl wrote for the verifier is put back');
+  assert.equal(fm.review_round, '1', 'the round is unchanged');
   assert.equal(fm.review_status, 'addressed');
 });
 
