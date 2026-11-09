@@ -193,17 +193,17 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
 
   // Only the reviewer may sign a story off: `pending` means items are open,
   // `fixed` means the implementing agent claims they're resolved but no
-  // re-review has verified it. Both block. Unchecked items in the latest
-  // session block too, regardless of the frontmatter, so a hand-flipped
+  // re-review has verified it. Both block. Unchecked Must/Should items in the
+  // latest session block too (open nits do not, as in `bl merge`), regardless of the frontmatter, so a hand-flipped
   // `addressed` with open boxes doesn't slip through. Both live in the
   // story's change document.
   const change = unitChange(dirname(indexPath), unitRepo);
   const reviewStatus = change.reviewStatus || undefined;
   const reviewSummary = summarizeLatestReviewSession(change.changeBody);
-  const reviewBlocked = reviewStatus === 'pending' || reviewStatus === 'fixed' || reviewSummary?.unchecked > 0;
+  const reviewBlocked = reviewStatus === 'pending' || reviewStatus === 'fixed' || reviewSummary?.blocking > 0;
   if (reviewBlocked) {
     const date = reviewSummary?.date ?? 'unknown date';
-    const unchecked = reviewSummary?.unchecked ?? 0;
+    const unchecked = reviewSummary?.blocking ?? 0;
     const next =
       reviewStatus === 'pending'
         ? `Address the review feedback (bl implement ${parsed.id})`
@@ -211,7 +211,7 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
     console.error(
       `Story ${parsed.id} has unresolved review state` +
         ` (review_status: ${reviewStatus ?? 'unset'}, latest session ${date},` +
-        ` ${unchecked} unchecked item${unchecked === 1 ? '' : 's'}).` +
+        ` ${unchecked} unchecked Must/Should).` +
         `\n${next} — or edit its change document manually — before marking done.`,
     );
     process.exit(1);
