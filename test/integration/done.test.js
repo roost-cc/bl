@@ -459,6 +459,23 @@ test('done_retry_after_edit_names_the_file_and_commits_nothing', () => {
   }
 });
 
+test('done_rerun_without_record_names_the_dirty_file: a run killed before its commit left no record', () => {
+  const { dir, cleanup } = gitDoneBacklog();
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const path = join(dir, S1, 'index.md');
+    writeFileSync(path, readFileSync(path, 'utf8').replace(/^status: .*$/m, 'status: done'));
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Story S-1 is already marked done\./);
+    assert.match(r.stderr, new RegExp(`${S1}/index\\.md has uncommitted changes`));
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  } finally {
+    cleanup();
+  }
+});
+
 test('done_retry_unreadable_record_exits_1', () => {
   const { dir, cleanup, hook } = failingDoneBacklog();
   try {
