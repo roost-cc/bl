@@ -14,5 +14,6 @@ test('the suite runs with none of the tmux or tab-title variables set', () => {
   assert.deepEqual(
     vars.filter((v) => process.env[v] !== undefined),
     [],
+    'run `npm run test:unit`, which unsets these variables',
   );
 });
