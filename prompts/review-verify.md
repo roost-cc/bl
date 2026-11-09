@@ -132,9 +132,9 @@ absolute path, for example `{{worktreePath}}/src/<module>.js`. Quote the command
   wrote in step 6.
 - Set `escalated` to `true` when you wrote **## Escalation** in the {{unitKind}} file.
 
-bl owns the review state in the change document's frontmatter. It set the round to
-{{nextRound}} before this session started. From your outcome it sets the status: pending when
-`must` plus `should` is more than 0, else addressed. Do not edit either field.
+bl owns the review state in the change document's frontmatter. From your outcome it sets the
+round to {{nextRound}} and the status: pending when `must` plus `should` is more than 0, else
+addressed. Do not edit either field.
 
 {{escalationGuide}}
 

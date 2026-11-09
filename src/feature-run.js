@@ -3405,11 +3405,11 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
     changeBefore
       ? atomicWriteFile(ctx.config.backlogRoot, changeFile(ctx), changeBefore)
       : rmSync(changeFile(ctx), { force: true });
-  // The round's number is bl's, written before the verifier starts (F-68
-  // D3), so the session block and the commit the verifier makes carry it.
+  // The round's number is bl's (F-68 D3). bl writes it together with the
+  // status, once, after the verifier returns a verdict: a round that ends
+  // any other way (a throw, an abort, a killed bl) leaves both as they were.
+  // The prompt gives the verifier the round as `nextRound`.
   const fieldsBefore = reviewFields(ctx);
-  fieldsBefore.review_round = String(round + 1);
-  setReviewFields(config.backlogRoot, changeFile(ctx), { review_round: fieldsBefore.review_round });
   let rv;
   try {
     rv = quarantineOnCleanupError(ctx, `r${round + 1}-verify`, beforeVerify.snaps, () =>
@@ -3432,8 +3432,8 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
     );
   } catch (e) {
     // A stopped round (no valid outcome, no agent) has no verdict: the change
-    // document goes back to how the round found it, the round bl wrote
-    // included. The unit file keeps the escalation the stop wrote.
+    // document goes back to how the round found it. The unit file keeps the
+    // escalation the stop wrote.
     if (e instanceof RunStoppedError) restoreChange();
     throw e;
   }
@@ -3482,7 +3482,7 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
     ctx,
     'review:verify',
     fieldsBefore,
-    { review_status: status },
+    { review_round: String(round + 1), review_status: status },
     `chore: ${feature.id} review round ${round + 1} ${status}`,
   );
   // An escalation the outcome claims is one the operator reads: when the
@@ -4368,7 +4368,7 @@ export async function reviewFeature({
       status: result.status,
       round: result.round,
       escalated,
-      // A round that did not finish left the change document as it was: no end.
+      // A round that did not finish wrote no review fields: no end.
       end: error && !escalated ? null : endOfReview(ctx, maxRounds, escalated),
       error,
     };

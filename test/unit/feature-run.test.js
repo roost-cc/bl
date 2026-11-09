@@ -44,6 +44,7 @@ import {
   hasHeadlessConfiguration,
   reviewEnd,
   roundCapStanding,
+  OutcomeError,
 } from '../../src/feature-run.js';
 import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
 import { spawnSync } from 'child_process';
@@ -3325,9 +3326,99 @@ test('a fix self-review with permission denials but a good result continues to t
   }
 });
 
+test('a review round that ends without a verdict leaves review_round and review_status as the round found them', async () => {
+  // Each case breaks the round at one point after the verifier starts. The
+  // fields must be as before, and a rerun at a cap of 1 must review.
+  const cases = [
+    {
+      name: 'the verifier session throws a plain Error',
+      session: () => {
+        throw new Error('simulated crash');
+      },
+    },
+    {
+      name: 'the verifier stops the run (no valid outcome)',
+      session: () => {
+        throw new OutcomeError('no valid outcome', null);
+      },
+    },
+    {
+      name: 'the quarantine fails after a good verifier',
+      verify: (s) => {
+        s.failRevParse = true;
+      },
+    },
+    {
+      name: 'writing the verdict fails after a good verifier',
+      verify: () => {
+        atomicHooks.beforeRename = (tmp) => {
+          if (!readFileSync(tmp, 'utf8').includes('change_of:')) return;
+          atomicHooks.beforeRename = null;
+          throw new Error('injected change write failure');
+        };
+      },
+    },
+    {
+      // A killed bl leaves the change document as it was while the verifier ran.
+      name: 'bl is killed while the verifier runs',
+      verify: (s, feature) => {
+        s.whileVerifying = reviewFieldsOf(CH(feature));
+      },
+    },
+  ];
+  const reviewFieldsOf = (path) => {
+    const { fm } = parseChange(readFileSync(path, 'utf8'));
+    return { review_round: String(fm.review_round ?? ''), review_status: String(fm.review_status ?? '') };
+  };
+  for (const c of cases) {
+    const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
+    const s = { failRevParse: false, whileVerifying: null, broken: true };
+    try {
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          verify: () => {
+            if (s.broken) c.verify?.(s, feature);
+            return verifySession(CH(feature), { pending: false, round: 1 });
+          },
+          shell: (cmd) => (s.failRevParse && cmd.startsWith('git rev-parse HEAD') ? { status: 1, output: '' } : null),
+        },
+      });
+      const session = runner.session;
+      runner.session = (o) => {
+        if (s.broken && c.session && o.promptName === 'review-verify') c.session();
+        return session(o);
+      };
+      const before = reviewFieldsOf(CH(feature));
+      try {
+        await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 3 });
+      } catch {
+        // A plain Error unwinds; the fields are what this test checks.
+      }
+      atomicHooks.beforeRename = null;
+      if (c.name.includes('killed')) {
+        // The fake round itself finishes; what a kill would leave is what matters.
+        assert.deepEqual(s.whileVerifying, before, `${c.name}: the fields while the verifier ran`);
+        continue;
+      }
+      assert.deepEqual(reviewFieldsOf(CH(feature)), before, `${c.name}: the fields after the round`);
+      s.broken = false;
+      s.failRevParse = false;
+      const r = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 1 });
+      assert.equal(r.round, 1, `${c.name}: a rerun at a cap of 1 reviews`);
+      assert.equal(reviewFieldsOf(CH(feature)).review_status, 'addressed', `${c.name}: with a verdict`);
+    } finally {
+      atomicHooks.beforeRename = null;
+      cleanup();
+    }
+  }
+});
+
 test('review_outcome_decides_the_round: the loop takes each branch from the outcomes and writes the review fields from them', async () => {
   // `seen` holds the change document's review fields as each session starts:
-  // the verifier sees the round bl wrote for it, the fix sees the verifier's
+  // the verifier sees the fields the last verdict left (bl writes both after
+  // the verifier returns), the fix sees the verifier's
   // verdict, the fix self-review sees `fixed`. `final` is the run's end.
   const FIXED_NOT = { summary: 'item 1 needs the operator', fixed: false, open: 1 };
   const cases = [
@@ -3335,21 +3426,21 @@ test('review_outcome_decides_the_round: the loop takes each branch from the outc
       name: 'must: 1 → a fix round, then a clean re-review',
       verdicts: [{ must: 1 }, {}],
       expect: 'clean',
-      seen: ['verify 1/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 2/fixed'],
+      seen: ['verify 0/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 1/fixed'],
       final: '2/addressed',
     },
     {
       name: 'should: 1 → a fix round',
       verdicts: [{ should: 1 }, {}],
       expect: 'clean',
-      seen: ['verify 1/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 2/fixed'],
+      seen: ['verify 0/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 1/fixed'],
       final: '2/addressed',
     },
     {
       name: 'must: 0, should: 0 → clean, open nits or not',
       verdicts: [{ nits: 2 }],
       expect: 'clean',
-      seen: ['verify 1/'],
+      seen: ['verify 0/'],
       final: '1/addressed',
     },
     {
@@ -3358,7 +3449,7 @@ test('review_outcome_decides_the_round: the loop takes each branch from the outc
       fix: FIXED_NOT,
       expect: 'escalated',
       error: /^fix session for round 1 left 1 item\(s\) open: item 1 needs the operator$/,
-      seen: ['verify 1/', 'fix 1/pending'],
+      seen: ['verify 0/', 'fix 1/pending'],
       final: '1/pending',
     },
     {
@@ -3367,7 +3458,7 @@ test('review_outcome_decides_the_round: the loop takes each branch from the outc
       expect: 'escalated',
       error: /^reviewer escalated in round 1$/,
       escalation: /review round 1: the verifier escalated\n\nThe verifier's outcome: open items/,
-      seen: ['verify 1/'],
+      seen: ['verify 0/'],
       final: '1/pending',
     },
   ];
