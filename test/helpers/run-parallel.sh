@@ -13,7 +13,13 @@
 #
 # If the runner gets SIGINT, SIGTERM or SIGHUP, it stops every item that has
 # not ended, with all of the item's child processes, and prints the output of
-# those items so far. Then it ends by the same signal.
+# those items so far. Then it ends by the same signal. A second signal during
+# the stop does nothing, and the caller's `set -e` does not end the stop.
+#
+# RUN_PARALLEL_GRACE is the time in tenths of a second (default 30) that the
+# stop waits after SIGTERM before it sends SIGKILL. Each item gets half of the
+# runner's value, so a nested runner ends its own items before its parent
+# runner sends SIGKILL to it.
 #
 # Source this file for the function, or execute it to run `run_parallel "$@"`:
 #   bash test/helpers/run-parallel.sh test 'npm run' test:unit test:cli
@@ -23,6 +29,7 @@ run_parallel() {
   local label="$1" runner="$2"
   shift 2
   local items=("$@") pids=() failed=() pass=0 next=0 dir i traps
+  local grace="${RUN_PARALLEL_GRACE:-30}"
   # Without its directory no item can write its output: start none.
   dir=$(mktemp -d) || return 1
   # The function removes $dir itself and sets no EXIT trap: the EXIT trap
@@ -41,7 +48,7 @@ run_parallel() {
   set -m
   for i in "${!items[@]}"; do
     # shellcheck disable=SC2086 # the runner is split into words on purpose
-    $runner "${items[$i]}" </dev/null >"$dir/$i" 2>&1 &
+    RUN_PARALLEL_GRACE=$((grace / 2)) $runner "${items[$i]}" </dev/null >"$dir/$i" 2>&1 &
     pids+=("$!")
   done
   set +m
@@ -52,8 +59,9 @@ run_parallel() {
     else
       failed+=("$(basename -- "${items[$i]}")")
     fi
-    _run_parallel_print "$i"
+    # Item $i has ended: a stop from now on does not print it again.
     next=$((i + 1))
+    _run_parallel_print "$i"
   done
   rm -rf -- "$dir"
   trap - INT TERM HUP
@@ -79,18 +87,22 @@ _run_parallel_print() {
 # their output so far, removes the temp directory, puts back the caller's
 # traps and ends by signal $1.
 _run_parallel_stop() {
-  local sig="$1" i end
-  trap - INT TERM HUP
+  # A second signal must not end the stop before its cleanup, and a `kill` or
+  # `wait` on an item that has already ended must not end it under `set -e`.
+  trap '' INT TERM HUP
+  set +e
+  local sig="$1" i left="$grace"
   for ((i = next; i < ${#pids[@]}; i++)); do
     kill -TERM -- "-${pids[$i]}" 2>/dev/null
   done
   # A process can end some seconds after SIGTERM: a `node --test` file
   # process ends at its next await. A nested runner needs the time to stop
-  # its own items. After about 3 s, SIGKILL ends what is left of each group.
-  end=$((SECONDS + 3))
+  # its own items, and it has half of this grace time for that. After the
+  # grace time, SIGKILL ends what is left of each group.
   for ((i = next; i < ${#pids[@]}; i++)); do
-    while kill -0 -- "-${pids[$i]}" 2>/dev/null && ((SECONDS < end)); do
+    while kill -0 -- "-${pids[$i]}" 2>/dev/null && ((left > 0)); do
       sleep 0.1
+      left=$((left - 1))
     done
     kill -KILL -- "-${pids[$i]}" 2>/dev/null
     wait "${pids[$i]}" 2>/dev/null
@@ -98,6 +110,7 @@ _run_parallel_stop() {
   done
   rm -rf -- "$dir"
   echo "$label: stopped by SIG$sig" >&2
+  trap - INT TERM HUP
   eval "$traps"
   kill -s "$sig" "$BASHPID"
   # The caller's trap for $sig did not end the shell.

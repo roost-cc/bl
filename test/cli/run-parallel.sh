@@ -75,18 +75,40 @@ assert_eq "two calls: both temp directories removed" "" "$(ls -A "$TWICE")"
 # runner would ignore SIGINT; `env --default-signal` gives it back.
 printf 'echo slow-start; sleep 30 & echo $! >"%s/slow.child"; echo $$ >"%s/slow.pid"; wait; echo slow-end\n' "$DIR" "$DIR" >"$DIR/slow"
 printf 'trap "" TERM; echo stubborn-start; echo $$ >"%s/stubborn.pid"; while :; do sleep 0.1; done\n' "$DIR" >"$DIR/stubborn"
+
+# Waits up to 5 s until every file $@ is written.
+wait_for() {
+  local f
+  for f in "$@"; do
+    for _ in $(seq 50); do
+      [[ -s "$f" ]] && break
+      sleep 0.1
+    done
+  done
+}
+
+# Passes if the process whose pid file $2 names has ended; ends it if not.
+assert_ended() {
+  if [[ ! -s "$2" ]]; then
+    fail "$1: $(basename "$2") was not written"
+  elif kill -0 "$(cat "$2")" 2>/dev/null; then
+    fail "$1: $(basename "$2") process still runs"
+    kill -KILL "$(cat "$2")"
+  else
+    pass
+  fi
+}
+
 for sig in TERM INT HUP; do
   STOP="$DIR/stop-$sig"
   mkdir -p "$STOP"
   rm -f "$DIR"/*.pid "$DIR"/*.child
   items=("$DIR/fast" "$DIR/slow")
-  [[ "$sig" == TERM ]] && items+=("$DIR/stubborn")
+  watched=("$DIR/slow.pid" "$DIR/slow.child")
+  [[ "$sig" == TERM ]] && items+=("$DIR/stubborn") && watched+=("$DIR/stubborn.pid")
   env --default-signal=INT TMPDIR="$STOP" bash "$RUN_PARALLEL" demo bash "${items[@]}" >"$STOP.out" 2>&1 &
   runner=$!
-  for _ in $(seq 50); do
-    [[ -s "$DIR/slow.pid" && -s "$DIR/slow.child" ]] && { [[ "$sig" != TERM ]] || [[ -s "$DIR/stubborn.pid" ]]; } && break
-    sleep 0.1
-  done
+  wait_for "${watched[@]}"
   kill -s "$sig" "$runner"
   set +e
   wait "$runner" 2>/dev/null
@@ -97,19 +119,86 @@ for sig in TERM INT HUP; do
   assert_contains "SIG$sig: an ended item's output is printed" $'──── fast\nfast-out' "$out"
   assert_contains "SIG$sig: a stopped item's output so far is printed" $'──── slow\nslow-start' "$out"
   assert_contains "SIG$sig: the runner says it was stopped" "demo: stopped by SIG$sig" "$out"
-  watched=("$DIR/slow.pid" "$DIR/slow.child")
-  [[ "$sig" == TERM ]] && watched+=("$DIR/stubborn.pid")
   for f in "${watched[@]}"; do
-    if [[ ! -s "$f" ]]; then
-      fail "SIG$sig: $(basename "$f") was not written"
-    elif kill -0 "$(cat "$f")" 2>/dev/null; then
-      fail "SIG$sig: $(basename "$f") process still runs"
-      kill -KILL "$(cat "$f")"
-    else
-      pass
-    fi
+    assert_ended "SIG$sig" "$f"
   done
   assert_eq "SIG$sig: temp directory removed" "" "$(ls -A "$STOP")"
 done
+
+# A signal to a nested runner ends an item of the inner runner that ignores
+# SIGTERM: the inner runner has half the grace time, so it sends SIGKILL to
+# its item before the outer runner sends SIGKILL to it. Three runs, because a
+# leak depends on timing.
+printf 'bash "%s" inner bash "%s"\n' "$RUN_PARALLEL" "$DIR/stubborn" >"$DIR/inner"
+for run in 1 2 3; do
+  STOP="$DIR/nested-$run"
+  mkdir -p "$STOP"
+  rm -f "$DIR/stubborn.pid"
+  env RUN_PARALLEL_GRACE=20 TMPDIR="$STOP" bash "$RUN_PARALLEL" outer bash "$DIR/inner" >"$STOP.out" 2>&1 &
+  runner=$!
+  wait_for "$DIR/stubborn.pid"
+  kill -TERM "$runner"
+  set +e
+  wait "$runner" 2>/dev/null
+  rc=$?
+  set -e
+  out=$(cat "$STOP.out")
+  assert_exit "nested $run: the runner ends by the signal" "143" "$rc"
+  assert_contains "nested $run: the inner item's output so far is printed" "stubborn-start" "$out"
+  assert_contains "nested $run: the inner runner says it was stopped" "inner: stopped by SIGTERM" "$out"
+  assert_ended "nested $run" "$DIR/stubborn.pid"
+  assert_eq "nested $run: both temp directories removed" "" "$(ls -A "$STOP")"
+done
+
+# A second signal during the stop does nothing: the stop still sends SIGKILL
+# to the item that ignores SIGTERM and removes the temp directory.
+STOP="$DIR/second"
+mkdir -p "$STOP"
+rm -f "$DIR/stubborn.pid"
+env RUN_PARALLEL_GRACE=20 TMPDIR="$STOP" bash "$RUN_PARALLEL" demo bash "$DIR/stubborn" >"$STOP.out" 2>&1 &
+runner=$!
+wait_for "$DIR/stubborn.pid"
+set +e
+kill -TERM "$runner"
+sleep 0.5
+kill -TERM "$runner"
+kill -HUP "$runner"
+wait "$runner" 2>/dev/null
+rc=$?
+set -e
+out=$(cat "$STOP.out")
+assert_exit "second signal: the runner ends by the first signal" "143" "$rc"
+assert_contains "second signal: the item's output so far is printed" $'──── stubborn\nstubborn-start' "$out"
+assert_contains "second signal: the runner says it was stopped" "demo: stopped by SIGTERM" "$out"
+assert_ended "second signal" "$DIR/stubborn.pid"
+assert_eq "second signal: temp directory removed" "" "$(ls -A "$STOP")"
+
+# A caller with `set -e` still gets the whole stop, although a `kill` on an
+# item that has already ended fails.
+STOP="$DIR/errexit"
+mkdir -p "$STOP"
+rm -f "$DIR"/*.pid "$DIR"/*.child
+env TMPDIR="$STOP" RUN_PARALLEL="$RUN_PARALLEL" bash -c '
+  set -e
+  source "$RUN_PARALLEL"
+  run_parallel demo bash "$1" "$2"
+  echo after-the-runner
+' _ "$DIR/fast" "$DIR/slow" >"$STOP.out" 2>&1 &
+runner=$!
+wait_for "$DIR/slow.pid" "$DIR/slow.child"
+kill -TERM "$runner"
+set +e
+wait "$runner" 2>/dev/null
+rc=$?
+set -e
+out=$(cat "$STOP.out")
+assert_exit "set -e caller: the runner ends by the signal" "143" "$rc"
+assert_contains "set -e caller: an ended item's output is printed" $'──── fast\nfast-out' "$out"
+assert_contains "set -e caller: a stopped item's output so far is printed" $'──── slow\nslow-start' "$out"
+assert_contains "set -e caller: the runner says it was stopped" "demo: stopped by SIGTERM" "$out"
+if [[ "$out" == *after-the-runner* ]]; then fail "set -e caller: the caller goes on"; else pass; fi
+assert_ended "set -e caller" "$DIR/slow.pid"
+assert_ended "set -e caller" "$DIR/slow.child"
+assert_eq "set -e caller: temp directory removed" "" "$(ls -A "$STOP")"
 
 summary_and_exit
