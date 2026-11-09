@@ -10,7 +10,7 @@
       "description": "One line: what the session did.",
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^\\n]*\\S[^\\n]*$"
+      "pattern": "^[^\\r\\n\\u2028\\u2029]*\\S[^\\r\\n\\u2028\\u2029]*$"
     },
     "resolved": {
       "description": "true when every merge is committed and every worktree is clean.",
@@ -18,7 +18,10 @@
     },
     "reason": {
       "description": "Why a merge is not resolved, in one line. reason is a string exactly when resolved is false, and null when resolved is true.",
-      "anyOf": [{ "type": "string", "minLength": 1, "pattern": "^[^\\n]*\\S[^\\n]*$" }, { "type": "null" }]
+      "anyOf": [
+        { "type": "string", "minLength": 1, "pattern": "^[^\\r\\n\\u2028\\u2029]*\\S[^\\r\\n\\u2028\\u2029]*$" },
+        { "type": "null" }
+      ]
     }
   },
   "if": { "properties": { "resolved": { "const": true } } },

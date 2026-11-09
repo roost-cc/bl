@@ -53,8 +53,15 @@ for (const [schemaName, promptName] of Object.entries(EXAMPLES)) {
 test('every schema refuses a summary of spaces only', () => {
   for (const [schemaName, promptName] of Object.entries(EXAMPLES)) {
     const [example] = jsonBlocks(promptName);
-    const { structuredError } = validateOutcome(loadSchema(schemaName), { ...example, summary: '   ' });
-    assert.match(structuredError ?? '', /^schema violation at \$\/summary: must match pattern/, schemaName);
+    // Spaces only, and a line break of each kind inside the line.
+    for (const summary of ['   ', 'a\nb', 'a\rb', 'a b', 'a b']) {
+      const { structuredError } = validateOutcome(loadSchema(schemaName), { ...example, summary });
+      assert.match(
+        structuredError ?? '',
+        /^schema violation at \$\/summary: must match pattern/,
+        `${schemaName} ${JSON.stringify(summary)}`,
+      );
+    }
   }
   // The other text fields bl prints or records: each needs a character that is not a space.
   const blank = [
