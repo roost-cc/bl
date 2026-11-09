@@ -50,6 +50,16 @@ for (const [schemaName, promptName] of Object.entries(EXAMPLES)) {
   });
 }
 
+test('every schema refuses a summary of spaces only', () => {
+  for (const [schemaName, promptName] of Object.entries(EXAMPLES)) {
+    const [example] = jsonBlocks(promptName);
+    const { structuredError } = validateOutcome(loadSchema(schemaName), { ...example, summary: '   ' });
+    assert.match(structuredError ?? '', /^schema violation at \$\/summary: must match pattern/, schemaName);
+  }
+  const blocked = { summary: 's', done: false, blocked: ' ' };
+  assert.match(validateOutcome(loadSchema('implement'), blocked).structuredError, /\$\/blocked/);
+});
+
 test("a batch sub-agent's reply is a valid entry of the batch outcome", () => {
   const [entry] = jsonBlocks('_refine-outcome-subagent');
   const outcome = { summary: 's', stories: { 'S-1': entry } };

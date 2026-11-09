@@ -10,7 +10,7 @@
       "description": "One line: what the session did.",
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^\\n]*$"
+      "pattern": "^[^\\n]*\\S[^\\n]*$"
     },
     "outcome": {
       "description": "fixed: a fix is committed. rerun: the failure would not reproduce after a real attempt. unrelated: nothing in the repos can make the gate pass.",

@@ -10,7 +10,7 @@
       "description": "One line: what the self-review found and did.",
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^\\n]*$"
+      "pattern": "^[^\\n]*\\S[^\\n]*$"
     },
     "ok": {
       "description": "true when the branch can go to the independent review; false when it cannot and the self-review could not correct it.",

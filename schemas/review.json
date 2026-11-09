@@ -10,7 +10,7 @@
       "description": "One line: the round's verdict.",
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^\\n]*$"
+      "pattern": "^[^\\n]*\\S[^\\n]*$"
     },
     "must": {
       "description": "The unchecked Must fix items in the session block this round wrote.",
