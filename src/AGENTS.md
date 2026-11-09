@@ -631,7 +631,9 @@ a **loose story**, a story with no `feature:` and no `update_repo:` (`isLooseSto
 `src/priority.js`); stories inside a feature, update stories and tasks are never units. Its YAML
 frontmatter holds `ranked:`, a list of `{ unit, why }` (`unit` an `F-<n>` or `S-<n>`, `why` the
 operator's reason, both required); its body is prose bl never writes. Only a person ranks:
-`bl rank` (below) edits one entry at a time, and nothing automated writes the file (F-78 D3):
+`bl rank` (below) edits one entry at a time, and nothing automated writes the file (F-78 D3).
+An interactive `bl rank` also takes every closed unit out of `ranked:`, in a commit of its own
+(S-1364):
 
 ```yaml
 ---
@@ -2775,8 +2777,23 @@ bl rank S-40 --remove                 # back into the dated tail
 ```
 
 - With no arguments, stdout lists the ranked units (entry number, id, title, why) and then
-  every other open unit oldest `added:` first, from `backlog.priority`; a closed unit still
-  listed in `ranked:` is named on stderr with the `--remove` that drops it.
+  every other open unit oldest `added:` first, from `backlog.priority`.
+- Every interactive run, with or without arguments, pulls the backlog first
+  (`commandPullsBacklog`) and then, under the backlog lock, takes each closed unit out of
+  `ranked:` (`removeClosed`: every entry of each unit `graph.ranked` resolves whose unit is done,
+  a unit listed twice losing both; an entry that names no unit stays a `priority-unit` finding).
+  It commits `priority.md` alone, `chore: F-79, F-85 unranked (done) in priority.md` (ids in
+  `ranked:` order), and says `bl rank: took out F-79, F-85 (done).` on stderr, before it prints
+  the order or applies the edit. A failed commit exits 1 and the edit does not run. With
+  uncommitted edits to `priority.md` it leaves the closed units and says which; the one exception
+  is a file that holds exactly an earlier cleanup's write whose commit failed (`pendingIsOurs`).
+  It redoes that cleanup on HEAD with the units closed now, and commits it: a unit closed since
+  goes too, and a unit open again gets its entry back, with a line that names it. If every unit
+  that write took out is open again, the write stays uncommitted: a failed `--remove` edit or a
+  hand edit leaves the same text. A file bl rank cannot edit (a flow list) skips the cleanup with
+  one line, and an edit on it refuses with that line.
+  `bl rank <closed unit> --remove` exits 0 once the cleanup took that unit out. Usage errors and
+  `checkUnit` refusals exit before the cleanup.
 - `<unit>` must be an open feature or loose story (`checkUnit`): a story inside a feature
   ("the feature is the unit: rank F-n"), an update story, a task, a closed unit and an unknown
   id are refused, naming why. `--remove` takes whatever `ranked:` lists, so a closed or deleted
@@ -2791,7 +2808,8 @@ bl rank S-40 --remove                 # back into the dated tail
   `chore: <unit> ranked first|last|before <u>|after <u> | reason rewritten | unranked in priority.md`.
 - Uncommitted edits to `priority.md` are never swept into a rank commit. An edit that would
   change the file while it differs from HEAD is refused, nothing written. A no-op commits the
-  pending file only when it is exactly this edit applied to HEAD's version and the index holds
+  pending file only when it is exactly this edit applied to HEAD's version (`pendingIsOurs` takes
+  the change as a function of HEAD's text, the edit's or the cleanup's) and the index holds
   that or HEAD's version (`pendingIsOurs`: an earlier run's write whose commit failed); any other
   uncommitted edit, staged or not, is left uncommitted.
 
@@ -2802,13 +2820,15 @@ nothing. With it set, a `bl rank` edit exits 1 before it pulls or writes anythin
 `commitPaths`, the one commit path every bl command uses, refuses any commit whose paths, taken
 as one Git pathspec set (an exclusion such as `:!priority.md` counts), select `priority.md`
 (`headlessPriorityRefusal`), so a hand edit cannot be
-committed through `bl sync --commit --path` either. Printing the order is allowed. The marker is
+committed through `bl sync --commit --path` either. Printing the order is allowed; it neither
+pulls nor takes closed units out, and says nothing about them, since the order skips them. The marker is
 a guard against an agent changing a person's decision by mistake, not a security boundary.
 The test helper `runBl` drops an inherited `BL_HEADLESS` (`personEnv`), so the suite runs the
 same inside a headless session; a test that wants the marker passes it.
 
 **Nothing automated writes `priority.md`** (F-78 D3). `bl sync` and `bl merge` never touch it: a
-merged feature leaves the order because it is closed, not by an edit, and its merge date is in
+merged feature leaves the order because it is closed, not by an edit, and the next interactive
+`bl rank` (a person's command) takes its entry out. Its merge date is in
 the backlog's git history (its `bl merge` commit) and `bl history --json`. `bl side` does not
 count it among the files it owns. The body may keep a hand-written `## History`.
 
@@ -3090,7 +3110,7 @@ problems), both errors at `priority.md`: the first when the file is missing, its
 not YAML, or `ranked:` is not a list of mappings each with a non-empty `unit` and `why`; the
 second when an entry names no feature or story, a story inside a feature, an update story or a
 task, or a unit already ranked. A closed unit left in `ranked:` is no finding: the order skips
-it, and the operator removes it when they next rank. Only a `priority.md` that is not YAML stops
+it, and the next interactive `bl rank` removes it. Only a `priority.md` that is not YAML stops
 other commands (a strict `loadBacklog` throws it); a missing or malformed one is an empty
 `ranked:`, so every open unit is in the dated tail (see **Priority**). They replace the two
 findings of the old feature order file (F-53 D1), which bl no longer reads.
@@ -3382,8 +3402,8 @@ After the merge the branch's open PR, if any, is closed through
 `change.find` and `change.close`.
 
 `bl merge F-<n>` leaves `priority.md` as it is (F-78 D3): the merged feature drops out of the
-order because it is closed, and an entry still naming it is skipped until the operator next
-ranks. In the lock hold that marks the feature done, `recordThemeState` (`theme.js`, F-53 D4)
+order because it is closed, and an entry still naming it is skipped until the next
+interactive `bl rank` removes it. In the lock hold that marks the feature done, `recordThemeState` (`theme.js`, F-53 D4)
 appends `- <date>: F-<n> done (<title>).` to the `## State` of the feature's theme, creating the section at the end when
 absent and writing the frontmatter back byte for byte; the commit takes the theme file too. A
 feature whose theme is missing or unreadable only warns.

@@ -119,12 +119,14 @@ Commands:
                --theme <slug>, --epic <E-id>  The first free unit they
                                    match; the matching order goes to stderr
   rank       Change priority.md, the one ranked list of units (operator or an
-               interactive session only; refused under BL_HEADLESS)
+               interactive session only; an edit is refused under BL_HEADLESS)
                <unit> --top|--bottom|--before <unit>|--after <unit>
                  [--why <text>]  Place a unit (a new one needs --why)
                <unit> --why <text>  Rewrite a ranked unit's reason
                <unit> --remove      Take it out of the list
                With no arguments, print the order
+               An interactive run first pulls and takes closed units out of
+               the list, in a commit of its own
   what-next  Suggest the next story to start by walking the dep graph
                [story-id|component-id]  Story → reference point; component →
                                    pick next startable story inside it

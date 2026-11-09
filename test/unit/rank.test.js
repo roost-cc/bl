@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { applyRank, checkUnit, rankedIds, RankFileError } from '../../src/rank-cmd.js';
+import { applyRank, checkUnit, rankedIds, removeClosed, RankFileError } from '../../src/rank-cmd.js';
 import { HEADLESS_ENV, agentEnv, isHeadless } from '../../src/agents/provider.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
 import { CodexProvider } from '../../src/agents/codex.js';
@@ -127,6 +127,17 @@ test('applyRank removes an entry; the last one leaves ranked: []', () => {
   assert.equal(applyRank(HAND, { id: 'F-2', remove: true }), `${HEAD}${LINES['S-1']}\n${LINES['F-3']}${TAIL}`);
   const one = '---\nranked:\n  - unit: F-1\n    why: One\n---\n\nBody.\n';
   assert.equal(applyRank(one, { id: 'F-1', remove: true }), '---\nranked: []\n---\n\nBody.\n');
+});
+
+test('removeClosed takes out every entry of the ids given and keeps every other byte', () => {
+  assert.equal(removeClosed(HAND, ['F-2', 'S-1']), `${HEAD}\n${LINES['F-3']}${TAIL}`);
+  const twice = HAND.replace(LINES['F-3'], `${LINES['F-3']}${LINES['S-1']}`);
+  assert.equal(removeClosed(twice, ['S-1']), `${HEAD}${LINES['F-2']}\n${LINES['F-3']}${TAIL}`);
+  assert.equal(
+    removeClosed(HAND, ['S-1', 'F-2', 'F-3']),
+    '---\n# Hand-written comment at the top.\nranked: []\n  # The deploy blocker comes first.\n\n' + TAIL,
+  );
+  assert.equal(removeClosed(HAND, []), HAND);
 });
 
 test('rank_insert_into_empty_list_preserves_inline_comment_and_body', () => {
@@ -316,11 +327,12 @@ test('headlessPriorityRefusal names priority.md, by path or by a directory that 
   assert.equal(headlessPriorityRefusal('/b', ['priority.md'], {}), null);
 });
 
-test('an edit by bl rank pulls the backlog first; the listing, help and a headless edit do not', () => {
+test('an interactive bl rank pulls the backlog first, listing or edit; help and a headless run do not', () => {
   assert.equal(commandPullsBacklog('rank', ['F-1', '--top'], {}), true);
-  assert.equal(commandPullsBacklog('rank', [], {}), false);
+  assert.equal(commandPullsBacklog('rank', [], {}), true);
   assert.equal(commandPullsBacklog('rank', ['--help'], {}), false);
   assert.equal(commandPullsBacklog('rank', ['F-1', '--top'], { BL_HEADLESS: '1' }), false);
+  assert.equal(commandPullsBacklog('rank', [], { BL_HEADLESS: '1' }), false);
 });
 
 test('commitPaths refuses priority.md under BL_HEADLESS, commits it without', () => {
