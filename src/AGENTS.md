@@ -3991,12 +3991,15 @@ Adding a test:
 - **cli** — write `test/cli/<topic>.sh`. Source `helpers/tempdir.sh`,
   call `mk_temp_backlog`, then drive `"$BL"` with the assert\_\* helpers.
   `cli/run-all.sh` picks it up automatically and runs it at the same time
-  as the other scripts, so it uses only its own `mktemp` paths.
+  as the other scripts, so it uses only its own `mktemp` paths
+  (`unit/bash-temp-paths.test.js` fails on a `/tmp` or `$TMPDIR/` path).
 - **file time** — no file in `unit/` or `integration/` takes more than 15 s
   alone (`node --test <file>`): `node --test` runs the tests of one file in
   order, so the longest file sets the suite's time. Split a longer file
   `<name>.test.js` into `<name>-<group>.test.js` files, with their shared
-  fixtures in `test/helpers/<name>-fixture.js` (F-99 D2).
+  fixtures in `test/helpers/<name>-fixture.js` (F-99 D2). No test checks
+  the time, because load changes it (S-1381 Notes): if `npm test` takes more
+  than 35 s on a quiet workstation, time the files alone.
 - **e2e** — write `test/e2e/<scenario>.sh`. `git init` your own tempdirs
   for the code repos and a bare origin if cleanup paths are exercised;
   set `BL_BACKLOG_DIR` to the backlog tempdir.
