@@ -76,13 +76,13 @@ export BL_TAB_TITLE='{{story}} {{status}}'                   # shorter
 export BL_TAB_TITLE=''                                       # titles off
 ```
 
-`bl` sets `BL_TAB_TITLE=''` for every agent session and for the parallel child processes of
-`bl run --several`.
-
 A field that is not set renders as nothing: `: S-210 : implement` for a story with no
 feature, `F-123 :  : refine` for a feature. When `bl` exits it gives the title back to the
 terminal (tmux's automatic rename, or the title the terminal had before), so no tab keeps a
 title for work that is over; a run's end rings the bell.
+
+`bl` sets `BL_TAB_TITLE=''` for every agent session and for the parallel child processes of
+`bl run --several`.
 
 ## Quickstart
 
