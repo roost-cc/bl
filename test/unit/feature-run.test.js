@@ -203,6 +203,16 @@ test('reviewEnd: no verdict shows the raw review_status with its field name and 
   });
 });
 
+test('reviewEnd: a review_round that is not a number is no verdict, with no next command', () => {
+  for (const review_status of ['pending', 'addressed']) {
+    assert.deepEqual(end({ review_round: 'two', review_status }), {
+      outcome: 'no verdict recorded (review_round: two)',
+      cap: '',
+      next: null,
+    });
+  }
+});
+
 test('reviewEnd: an escalation points at the unit index.md', () => {
   assert.deepEqual(end({ review_round: '1', review_status: 'pending' }, { escalated: true }), {
     outcome: 'escalated',

@@ -4364,6 +4364,9 @@ function higherCapCommand(id, round) {
  */
 export function reviewEnd({ id, unitRelPath, maxRounds, fm, body, state, escalated }) {
   if (escalated) return { outcome: 'escalated', cap: '', next: `read ## Escalation in ${unitRelPath}` };
+  if (Number.isNaN(parseRound(fm.review_round))) {
+    return { outcome: `no verdict recorded (review_round: ${fm.review_round})`, cap: '', next: null };
+  }
   const status = fm.review_status;
   const session = summarizeLatestReviewSession(body ?? '');
   const outcome = reviewOutcome(status, session);
