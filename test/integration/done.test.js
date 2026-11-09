@@ -1,11 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { mkTempBacklog, STORY_INDEX_TEMPLATE } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { parseFrontmatter } from '../../src/config.js';
-import { GIT_ENV, git, initGitBacklog, headFiles, dirtyBystanders, statusLines } from '../helpers/git-backlog.js';
+import {
+  GIT_ENV,
+  git,
+  initGitBacklog,
+  addOrigin,
+  headFiles,
+  dirtyBystanders,
+  statusLines,
+} from '../helpers/git-backlog.js';
 
 const FOUNDATION = { id: 'C00', title: 'Foundation', dirSuffix: 'foundation' };
 
@@ -90,13 +98,13 @@ test('bl done refuses a story that is already done', () => {
   }
 });
 
-/** Write the story's change document with `reviewStatus` and a Review Log of `items`. */
-function writeReview(dir, rel, reviewStatus, date, items) {
+/** Write the story's change document with `reviewStatus` and a Review Log of Must-fix `items` and `nits`. */
+function writeReview(dir, rel, reviewStatus, date, items, nits = 'None.') {
   const { fm } = parseFrontmatter(readFileSync(join(dir, rel), 'utf8'));
   const log =
     items == null
       ? ''
-      : `\n## Review Log\n\n### Session ${date} (PR #1)\n\n**Must fix**\n\n${items}\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n`;
+      : `\n## Review Log\n\n### Session ${date} (PR #1)\n\n**Must fix**\n\n${items}\n\n**Should fix**\nNone.\n\n**Nits**\n${nits}\n`;
   writeFileSync(
     join(dirname(join(dir, rel)), 'change.md'),
     `---\nchange_of: S-1\nstatus: open\nreview_status: ${reviewStatus}\n---\n\n# ${fm.title}\n${log}`,
@@ -110,7 +118,7 @@ test('bl done refuses while review_status: pending', () => {
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /review_status: pending/);
-    assert.match(r.stderr, /1 unchecked item/);
+    assert.match(r.stderr, /1 unchecked Must\/Should/);
     assert.match(r.stderr, /2026-05-11/);
     assert.equal(storyFm(dir, rel).status, 'backlog', 'the story is left as it was');
   } finally {
@@ -137,7 +145,19 @@ test('bl done refuses when addressed but the latest session has unchecked items'
     writeReview(dir, rel, 'addressed', '2026-07-01', '- [ ] never actually fixed');
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.notEqual(r.status, 0, 'unchecked items must block done even when frontmatter says addressed');
-    assert.match(r.stderr, /1 unchecked item/);
+    assert.match(r.stderr, /1 unchecked Must\/Should/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl done proceeds when addressed with only an open nit, as bl merge does', () => {
+  const { dir, rel, cleanup } = backlogWithStory('Addressed With Nit');
+  try {
+    writeReview(dir, rel, 'addressed', '2026-11-07', '- [x] fixed in abc1234', '- [ ] [safe] optional tidy-up');
+    const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(storyFm(dir, rel).status, 'done');
   } finally {
     cleanup();
   }
@@ -380,6 +400,180 @@ test('bl done exits 1 and names the paths when the commit fails, leaving the edi
     assert.match(r.stderr, new RegExp(`${S1}/index\\.md`));
     assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
     assert.equal(parseFrontmatter(readFileSync(join(dir, S1, 'index.md'), 'utf8')).fm.status, 'done');
+    assert.ok(existsSync(join(dir, '.bl', 'run', 'commit-failed', 'done_S-1.json')), 'the failed commit is recorded');
+  } finally {
+    cleanup();
+  }
+});
+
+// S-1347: a rerun after a failed commit commits what the failed run left.
+
+const DONE_RECORD = join('.bl', 'run', 'commit-failed', 'done_S-1.json');
+
+/** A git backlog with an origin whose commits fail; returns the hook path. */
+function failingDoneBacklog() {
+  const t = gitDoneBacklog();
+  addOrigin(t.dir);
+  const hook = join(t.dir, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+  chmodSync(hook, 0o755);
+  return { ...t, hook };
+}
+
+test('done_retry_commits_after_failed_commit', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const first = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV });
+    assert.equal(first.status, 1, first.stderr);
+    assert.ok(existsSync(join(dir, DONE_RECORD)), 'the failed commit leaves a record');
+
+    const second = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(second.status, 1, second.stderr);
+    assert.match(second.stderr, /committing what an earlier bl done left uncommitted/);
+    assert.match(second.stderr, /backlog commit failed/);
+    assert.match(second.stderr, new RegExp(`Commit these backlog paths by hand:\\n  ${S1}\\n`));
+    assert.ok(existsSync(join(dir, DONE_RECORD)), 'a second failed commit keeps the record');
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+
+    rmSync(hook);
+    // The rerun's own flags do not change what the failed run wrote.
+    const third = runBl(['done', '--superseded', 'S-1', 'cafe123'], { cwd: dir, env: GIT_ENV });
+    assert.equal(third.status, 0, third.stderr);
+    assert.match(third.stderr, /Done\. Story S-1 marked done\./);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: mark S-1 done');
+    assert.deepEqual(headFiles(dir), [`M\t${S1}/index.md`]);
+    assert.equal(parseFrontmatter(git(dir, 'show', `HEAD:${S1}/index.md`)).fm.commit, 'deadbeef');
+    assert.equal(git(dir, 'ls-remote', 'origin', 'main').split('\t')[0], git(dir, 'rev-parse', 'HEAD'));
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'the record is gone');
+    assertOnlyBystandersDirty(dir);
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_retry_after_edit_names_the_file_and_commits_nothing', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 1);
+    writeFileSync(join(dir, S1, 'index.md'), '\nAn operator edit.\n', { flag: 'a' });
+    rmSync(hook);
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Story S-1 is already marked done\./);
+    assert.match(r.stderr, new RegExp(`${S1}/index\\.md has uncommitted changes`));
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+    assert.ok(!existsSync(join(dir, DONE_RECORD)));
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_rerun_without_record_names_the_dirty_file: a run killed before its commit left no record', () => {
+  const { dir, cleanup } = gitDoneBacklog();
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const path = join(dir, S1, 'index.md');
+    writeFileSync(path, readFileSync(path, 'utf8').replace(/^status: .*$/m, 'status: done'));
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Story S-1 is already marked done\./);
+    assert.match(r.stderr, new RegExp(`${S1}/index\\.md has uncommitted changes`));
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_retry_unreadable_record_exits_1', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 1);
+    writeFileSync(join(dir, DONE_RECORD), 'not json');
+    rmSync(hook);
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /cannot read \.bl\/run\/commit-failed\/done_S-1\.json/);
+    assert.match(r.stderr, new RegExp(`status -- ${S1}/index\\.md`));
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'the record is gone');
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_rerun_after_hand_commit_exits_1_and_drops_the_record', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 1);
+    rmSync(hook);
+    // The operator commits the story file by hand; the record still matches it.
+    git(dir, 'commit', '-q', '-m', 'by hand', '--', `${S1}/index.md`);
+    const head = git(dir, 'rev-parse', 'HEAD');
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Story S-1 is already marked done\./);
+    assert.doesNotMatch(r.stderr, /committing what an earlier bl done left uncommitted/);
+    assert.doesNotMatch(r.stderr, /Done\./);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'the record is gone');
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_second_gate_commits_the_record: the story closes between the first read and the locked write', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    const path = join(dir, S1, 'index.md');
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 1);
+    rmSync(hook);
+    // Put the story back open, and keep what the failed run wrote. bl done
+    // reads HEAD's hash (`git rev-parse --short HEAD`) after its first gate
+    // and before its locked write; a `git` wrapper puts the closed file back
+    // at that moment, so only the second gate sees the story closed.
+    const seam = join(dir, '.bl', 'run', 'second-gate');
+    mkdirSync(seam);
+    const swap = join(seam, 'closed.md');
+    writeFileSync(swap, readFileSync(path, 'utf8'));
+    git(dir, 'checkout', 'HEAD', '--', `${S1}/index.md`);
+    writeFileSync(
+      join(seam, 'git'),
+      `#!/bin/sh\nif [ "$*" = "rev-parse --short HEAD" ] && [ -f "${swap}" ]; then mv "${swap}" "${path}"; fi\nPATH="${process.env.PATH}" exec git "$@"\n`,
+    );
+    chmodSync(join(seam, 'git'), 0o755);
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: { ...GIT_ENV, PATH: `${seam}:${process.env.PATH}` } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!existsSync(swap), 'the wrapper closed the story after the first gate');
+    assert.match(r.stderr, /committing what an earlier bl done left uncommitted/);
+    assert.match(r.stderr, /Done\. Story S-1 marked done\./);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: mark S-1 done');
+    assert.equal(parseFrontmatter(git(dir, 'show', `HEAD:${S1}/index.md`)).fm.commit, 'deadbeef');
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'the record is gone');
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_success_leaves_no_record, and a rerun on the committed story commits nothing', () => {
+  const { dir, cleanup } = gitDoneBacklog();
+  try {
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 0);
+    assert.ok(!existsSync(join(dir, DONE_RECORD)));
+    const head = git(dir, 'rev-parse', 'HEAD');
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Story S-1 is already marked done\./);
+    assert.doesNotMatch(r.stderr, /uncommitted/);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
   } finally {
     cleanup();
   }
@@ -391,6 +585,7 @@ test('bl done in a backlog that is not a git repo skips the commit with a notice
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /not a git repository; skipping commit/);
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'leaves no failed-commit record');
   } finally {
     cleanup();
   }

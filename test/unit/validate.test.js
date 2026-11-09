@@ -785,6 +785,30 @@ test('validateReviewLog: addressed with unchecked items fires', async () => {
   assert.ok(findings.some((f) => f.code === 'review-log-unaddressed'));
 });
 
+test('validateReviewLog: addressed with only an open nit passes, as bl merge does', async () => {
+  const { validateReviewLog } = await import('../../src/validate.js');
+  const body = `# Title
+
+## Review Log
+
+### Session 2026-11-07 (PR #5)
+
+**Must fix**
+
+- [x] done
+
+**Should fix**
+
+None.
+
+**Nits**
+
+- [ ] [safe] optional tidy-up
+`;
+  const findings = validateReviewLog({ review_status: 'addressed' }, body, 'path/1');
+  assert.equal(findings.length, 0);
+});
+
 test('validateReviewLog: addressed with all items checked passes', async () => {
   const { validateReviewLog } = await import('../../src/validate.js');
   const body = `# Title

@@ -603,6 +603,32 @@ export function saveFailedCommit(root, owner, pending) {
   }
 }
 
+/**
+ * Whether `owner`'s failed-commit record holds `rel` with the content `rel`
+ * has now (S-1347): a rerun of a command that commits one file
+ * (`commitAndRecord` in `sync.js`) commits it only then. Any other answer
+ * removes the record, so an edit since the failed commit is never committed
+ * as the command's own. A record that cannot be read is removed and its read
+ * error thrown; the caller names it.
+ * @param {string} root
+ * @param {string} owner
+ * @param {string} rel  backlog-relative path
+ * @returns {boolean}
+ */
+export function failedCommitPending(root, owner, rel) {
+  let pending;
+  try {
+    pending = readFailedCommit(root, owner);
+  } catch (e) {
+    saveFailedCommit(root, owner, { commit: [], unsure: [] });
+    throw e;
+  }
+  const hash = hashPath(root, rel);
+  if (pending.commit.some(([p, h]) => p === rel && h === hash)) return true;
+  saveFailedCommit(root, owner, { commit: [], unsure: [] });
+  return false;
+}
+
 function writePending(root, path, value) {
   // The run directory ignores itself, so the marker never shows as untracked.
   ensureRunDir({ backlogRoot: root });

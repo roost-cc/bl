@@ -579,7 +579,9 @@ export function validateChanges(backlogRoot, unitDir) {
  *     pending), so a missing log means the field was hand-edited or the
  *     session was deleted.
  *   - `review_status: fixed` or `addressed` but the latest session still
- *     has unchecked items. Means the agent set the frontmatter without
+ *     has unchecked Must/Should items. Open nits do not count, as in
+ *     `bl merge`: the verifier leaves `[safe]` nits open on a session it
+ *     signs off as `addressed`. Means the agent set the frontmatter without
  *     actually checking the items off — or someone reverted the checks
  *     after committing.
  *
@@ -607,11 +609,11 @@ export function validateReviewLog(fm, body, location) {
     }
   }
   if (status === 'fixed' || status === 'addressed') {
-    if (latest && latest.unchecked > 0) {
+    if (latest && latest.blocking > 0) {
       findings.push({
         severity: 'error',
         code: 'review-log-unaddressed',
-        message: `review_status: ${status} but latest session (${latest.date}) has ${latest.unchecked} unchecked item${latest.unchecked === 1 ? '' : 's'}`,
+        message: `review_status: ${status} but latest session (${latest.date}) has ${latest.blocking} unchecked Must/Should item${latest.blocking === 1 ? '' : 's'}`,
         location,
       });
     }
