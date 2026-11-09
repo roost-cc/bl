@@ -267,26 +267,24 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   if (closedAs) return alreadyClosed(parsed, closedAs, config, found);
   info(`Updated : ${backlogRel}  (status=${status}, commit=${commitForLog}, completed=${today})`);
 
-  await commitDone(parsed, status, config, backlogRel);
+  reportBacklogCommit(await commitDone(parsed, status, config, backlogRel), 'bl done');
   return { status, unitRepo, componentEntry, storyEntry };
 }
 
 /** The owner of a `bl done` failed-commit record (`failedCommitRecord`), one per story. */
 const doneOwner = (id) => `done ${id}`;
 
-/** Commit and push the story's directory (`commitAndRecord`); a failed commit exits 1. */
+/** Commit and push the story's directory (`commitAndRecord`) and return the result. */
 async function commitDone(parsed, status, config, backlogRel) {
   info('Syncing backlog...');
-  let res;
   try {
-    res = await commitAndRecord(config, doneOwner(parsed.id), backlogRel, {
+    return await commitAndRecord(config, doneOwner(parsed.id), backlogRel, {
       message: `chore: mark ${parsed.id} ${status}`,
       storyIds: [parsed.id],
     });
   } catch (err) {
     exitOnSyncError(err);
   }
-  reportBacklogCommit(res, 'bl done');
 }
 
 /**
@@ -308,11 +306,14 @@ async function alreadyClosed(parsed, closedAs, config, found) {
     );
     process.exit(1);
   }
-  if (pending) {
+  // A retry that commits nothing (the file was committed by hand) exits 1
+  // below, as a rerun with no record does; `commitAndRecord` drops the record.
+  const res = pending && (await commitDone(parsed, closedAs, config, backlogRel));
+  if (res && (res.committed || res.error)) {
     console.error(
       `Story ${parsed.id} is already marked ${closedAs}; committing what an earlier bl done left uncommitted.`,
     );
-    await commitDone(parsed, closedAs, config, backlogRel);
+    reportBacklogCommit(res, 'bl done');
     const { unitRepo, componentEntry, storyEntry } = found;
     return { status: closedAs, unitRepo, componentEntry, storyEntry };
   }

@@ -495,6 +495,27 @@ test('done_retry_unreadable_record_exits_1', () => {
   }
 });
 
+test('done_rerun_after_hand_commit_exits_1_and_drops_the_record', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 1);
+    rmSync(hook);
+    // The operator commits the story file by hand; the record still matches it.
+    git(dir, 'commit', '-q', '-m', 'by hand', '--', `${S1}/index.md`);
+    const head = git(dir, 'rev-parse', 'HEAD');
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Story S-1 is already marked done\./);
+    assert.doesNotMatch(r.stderr, /committing what an earlier bl done left uncommitted/);
+    assert.doesNotMatch(r.stderr, /Done\./);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'the record is gone');
+  } finally {
+    cleanup();
+  }
+});
+
 test('done_success_leaves_no_record, and a rerun on the committed story commits nothing', () => {
   const { dir, cleanup } = gitDoneBacklog();
   try {
