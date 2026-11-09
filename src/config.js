@@ -5,8 +5,9 @@
  *   - One shared backlog repo at `<roostDir>/backlog/` (discovered by walking
  *     up from cwd or via $BL_BACKLOG_DIR).
  *   - Top-level `backlog.json` registers the code repos in `repos`, keyed by
- *     repo name: each entry's `path`, `deployable` and `update_tests`, and the
- *     optional per-repo layers `plugins-<stage>` and `overrides` (F-51 D4).
+ *     repo name: each entry's `path` and `deployable`, the deprecated
+ *     `update_tests`, and the optional per-repo layers `plugins-<stage>` and
+ *     `overrides` (F-51 D4).
  *     Stories, components and features live in `stories/`, `components/` and
  *     `features/` at the backlog root (F-49 D3).
  *   - A repo's `overrides` refine the top-level settings for work in that
@@ -221,16 +222,65 @@ export function dictionariesOf(config) {
   return list.map((p) => resolve(config.backlogRoot, p.trim()));
 }
 
-/** The keys every `repos` entry must set (F-51 D4); there are no defaults. */
-const REQUIRED_REPO_KEYS = ['path', 'deployable', 'update_tests'];
+/**
+ * `backlog.json` `updates` (F-80 D6): the settings running-man's update job
+ * and `bl inbox` share. Null when backlog.json has no `updates` block: that
+ * backlog has no update job. Otherwise every key is required, with no
+ * defaults, and one that is missing or of the wrong type throws, naming it.
+ * Other keys in the block (the deprecated `report`) are not read here.
+ * Read when used, never by `loadConfig`, so a backlog.json from before
+ * F-80's cutover still loads.
+ * @param {{ topLevel?: object } | null | undefined} config
+ * @returns {{ namespace: string, pushAttempts: number,
+ *   heartbeat: { repo: string, branch: string } } | null}
+ */
+export function updateSettings(config) {
+  if (!config?.topLevel || !Object.hasOwn(config.topLevel, 'updates')) return null;
+  const u = config.topLevel.updates;
+  const bad = (key, what) =>
+    new Error(
+      `backlog.json "updates" ${what} "${key}": the update job and bl inbox read namespace, push_attempts, heartbeat.repo and heartbeat.branch, with no defaults`,
+    );
+  const name = (obj, key, path = key) => {
+    if (!Object.hasOwn(obj, key)) throw bad(path, 'has no');
+    if (typeof obj[key] !== 'string' || !obj[key].trim()) throw bad(path, 'needs a non-empty string for');
+    return obj[key].trim();
+  };
+  if (!isPlainObject(u)) throw new Error('backlog.json "updates" must be an object');
+  const namespace = name(u, 'namespace');
+  if (!Object.hasOwn(u, 'push_attempts')) throw bad('push_attempts', 'has no');
+  if (!Number.isInteger(u.push_attempts) || u.push_attempts < 1) {
+    throw bad('push_attempts', 'needs a positive whole number for');
+  }
+  if (!Object.hasOwn(u, 'heartbeat')) throw bad('heartbeat', 'has no');
+  if (!isPlainObject(u.heartbeat)) throw bad('heartbeat', 'needs an object { repo, branch } for');
+  return {
+    namespace,
+    pushAttempts: u.push_attempts,
+    heartbeat: {
+      repo: name(u.heartbeat, 'repo', 'heartbeat.repo'),
+      branch: name(u.heartbeat, 'branch', 'heartbeat.branch'),
+    },
+  };
+}
 
-const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+/** The keys every `repos` entry must set (F-51 D4); there are no defaults. */
+const REQUIRED_REPO_KEYS = ['path', 'deployable'];
+
+/**
+ * `update_tests`, deprecated with `bl updates` (F-80 G3): read when present,
+ * so a backlog.json may keep it or drop it.
+ */
+const OPTIONAL_REPO_KEYS = ['update_tests'];
+
+export const isPlainObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const isNameList = (v) => Array.isArray(v) && v.every((n) => typeof n === 'string' && n.trim() !== '');
 
 /**
  * Resolve `backlog.json`'s `repos` block (F-51 D4) into one record per repo:
  * `{ name, path, deployable, updateTests, plugins, overrides }`, with `path`
  * absolute and `plugins` the entry's `plugins-<stage>` lists keyed by stage.
+ * `updateTests` is the deprecated `update_tests`, `[]` without it.
  * A missing required key, a value of the wrong type or an unknown key throws,
  * naming the repo and the key.
  * @param {string} backlogRoot
@@ -257,12 +307,12 @@ function resolveRepos(backlogRoot, raw) {
     if (typeof def.deployable !== 'boolean') {
       throw new Error(`${where} "deployable" must be true or false`);
     }
-    if (!isNameList(def.update_tests)) {
+    if (Object.hasOwn(def, 'update_tests') && !isNameList(def.update_tests)) {
       throw new Error(`${where} "update_tests" must be a list of plugin names ([] for none)`);
     }
     const plugins = {};
     for (const [key, value] of Object.entries(def)) {
-      if (REQUIRED_REPO_KEYS.includes(key)) continue;
+      if (REQUIRED_REPO_KEYS.includes(key) || OPTIONAL_REPO_KEYS.includes(key)) continue;
       if (key === 'overrides') {
         if (!isPlainObject(value)) throw new Error(`${where} "overrides" must be an object`);
         continue;
@@ -270,7 +320,7 @@ function resolveRepos(backlogRoot, raw) {
       const stage = key.match(/^plugins-([a-z][a-z0-9-]*)$/)?.[1];
       if (!stage) {
         throw new Error(
-          `${where} has an unknown key "${key}" (allowed: ${REQUIRED_REPO_KEYS.join(', ')}, plugins-<stage>, overrides)`,
+          `${where} has an unknown key "${key}" (allowed: ${[...REQUIRED_REPO_KEYS, ...OPTIONAL_REPO_KEYS].join(', ')}, plugins-<stage>, overrides)`,
         );
       }
       if (!isNameList(value)) throw new Error(`${where} "${key}" must be a list of plugin names`);
@@ -280,7 +330,7 @@ function resolveRepos(backlogRoot, raw) {
       name,
       path: resolve(backlogRoot, def.path),
       deployable: def.deployable,
-      updateTests: [...def.update_tests],
+      updateTests: [...(def.update_tests ?? [])],
       plugins,
       overrides: def.overrides ?? null,
     };
@@ -335,7 +385,9 @@ export const EPICS_DIR = 'epics';
  * @param {string} [opts.cwd]          — where discovery starts (default process.cwd())
  * @param {string} [opts.backlogRoot]  — explicit backlog root (skips discovery)
  * @param {string} [opts.agent]        — the -A override: a one-entry list
- *   with no model for the role `opts.agentRole` names (F-64 D2)
+ *   for the role `opts.agentRole` names (F-64 D2)
+ * @param {string} [opts.model]        — the --model beside -A: the model of
+ *   that one entry (none: null, the account's model); refused without -A
  * @param {"agent"|"review"} [opts.agentRole] — the role -A replaces:
  *   `review` on `bl review`, `agent` (the default) on every other verb
  * @param {boolean} [opts.lenientAgents] — load a backlog.json whose `agent`
@@ -381,8 +433,10 @@ export function loadConfig(opts = {}) {
   const reposByName = Object.fromEntries(Object.values(repos).map((r) => [r.name, r.path]));
   const title = backlogTitle(topLevel);
 
+  requireAgentForModel(opts);
   const agentFlag = {
     agent: opts.agent ?? null,
+    model: opts.model ?? null,
     role: opts.agentRole ?? 'agent',
     lenient: opts.lenientAgents === true,
   };
@@ -412,9 +466,14 @@ export function configForRepo(config, repoName) {
   return withRaw({ backlogRoot, roostDir, title, topLevel, repos, reposByName }, raw, agentFlagOf(config), name);
 }
 
-/** The -A handling `config` was loaded with, for a reload or `configForRepo`. */
+/** The -A and --model handling `config` was loaded with, for a reload or `configForRepo`. */
 export function agentFlagOf(config) {
-  return { agent: config.agentFlag ?? null, role: config.agentRole ?? 'agent', lenient: config.lenientAgents === true };
+  return {
+    agent: config.agentFlag ?? null,
+    model: config.agentFlagModel ?? null,
+    role: config.agentRole ?? 'agent',
+    lenient: config.lenientAgents === true,
+  };
 }
 
 /**
@@ -426,13 +485,21 @@ export function repoOf(config) {
 }
 
 /** The config record for `raw` (the top level, or it with a repo's overrides). */
-function withRaw(base, raw, { agent: agentFlag, role: agentRole, lenient: lenientAgents }, repoName) {
+function withRaw(
+  base,
+  raw,
+  { agent: agentFlag, model: agentFlagModel, role: agentRole, lenient: lenientAgents },
+  repoName,
+) {
   // Each role is an ordered list of { agent, model } configurations (F-64
   // D2), both required. Reviews run on their own list so the configuration
   // that wrote the code isn't the one signing it off (`review_status:
-  // addressed` is reviewer-only). -A replaces one role's list: the review
-  // list on `bl review`, the implementing list on every other verb.
+  // addressed` is reviewer-only). -A (with --model) replaces one role's list:
+  // the review list on `bl review`, the implementing list on every other verb.
   const where = repoName ? `backlog.json repos["${repoName}"] overrides` : 'backlog.json';
+  // What an adapter's checkConfiguration reads: the top level and `raw`.
+  const ctx = { topLevel: base.topLevel, raw };
+  const flag = { agent: agentFlag, model: agentFlagModel };
   let agents = [];
   let reviewAgents = [];
   let agentConfigError = null;
@@ -440,11 +507,13 @@ function withRaw(base, raw, { agent: agentFlag, role: agentRole, lenient: lenien
     const retired = retiredAgentShape(raw, where);
     if (retired) throw new Error(retired);
     agents =
-      agentFlag && agentRole !== 'review' ? [flagConfiguration(agentFlag)] : agentConfigurations(raw, 'agent', where);
+      agentFlag && agentRole !== 'review'
+        ? [flagConfiguration(flag, ctx)]
+        : agentConfigurations(raw, 'agent', where, ctx);
     reviewAgents =
       agentFlag && agentRole === 'review'
-        ? [flagConfiguration(agentFlag)]
-        : agentConfigurations(raw, 'review_agent', where);
+        ? [flagConfiguration(flag, ctx)]
+        : agentConfigurations(raw, 'review_agent', where, ctx);
   } catch (e) {
     if (!lenientAgents) throw e;
     agents = [];
@@ -475,10 +544,11 @@ function withRaw(base, raw, { agent: agentFlag, role: agentRole, lenient: lenien
     agentModel: agents[0]?.model ?? null,
     reviewAgent: reviewAgents[0]?.agent ?? null,
     reviewAgentModel: reviewAgents[0]?.model ?? null,
-    // The explicit -A value (or null) and the role it replaces.
-    // `configForRepo` forwards these, not the resolved lists, so a repo's
-    // `agent` or `review_agent` still applies.
+    // The explicit -A value (or null), its --model (or null) and the role
+    // they replace. `configForRepo` forwards these, not the resolved lists,
+    // so a repo's `agent` or `review_agent` still applies.
     agentFlag,
+    agentFlagModel,
     agentRole,
     lenientAgents,
     // Why the lists are empty, under `lenientAgents` only (`bl validate`).
@@ -526,11 +596,12 @@ export function retiredAgentShape(obj, where) {
  * `raw[key]` as a role's list of configurations (F-64 D2): required, a
  * non-empty list of `{ agent, model }`, each `agent` a registered provider,
  * each `model` optional (absent: null, the account's model) and named only
- * for an adapter whose supportsModel() is true, and no entry twice. Throws,
- * naming the entry, otherwise.
+ * for an adapter whose supportsModel() is true, each usable by its adapter's
+ * checkConfiguration, and no entry twice. Throws, naming the entry, otherwise.
+ * @param {{ topLevel: object, raw: object }} ctx — for checkConfiguration
  * @returns {{ agent: string, model: string|null }[]}
  */
-function agentConfigurations(raw, key, where) {
+function agentConfigurations(raw, key, where, ctx) {
   if (!Object.hasOwn(raw, key)) {
     throw new Error(`${where} has no "${key}": list its configurations in priority order, ${LIST_SHAPE} (F-64 D2)`);
   }
@@ -555,6 +626,7 @@ function agentConfigurations(raw, key, where) {
     if (model != null && !getProvider(agent).supportsModel()) {
       throw new Error(`${at} names model "${model}", but ${agent} cannot select a model: drop "model"`);
     }
+    checkUsable({ agent, model }, ctx, at);
     const id = configurationLabel({ agent, model });
     if (seen.has(id)) throw new Error(`${at} repeats ${id}: each configuration is listed once`);
     seen.add(id);
@@ -563,15 +635,59 @@ function agentConfigurations(raw, key, where) {
 }
 
 /**
- * -A as its one-entry list's configuration (F-64 D2): a registered provider,
- * lowercased like a list entry, so D4's equality sees `-A Claude` as the
- * `claude` a list may hold. No model.
+ * -A (and --model) as its one-entry list's configuration (F-64 D2): a
+ * registered provider, lowercased like a list entry, so D4's equality sees
+ * `-A Claude` as the `claude` a list may hold. The model is --model's, or
+ * null; one is refused for an adapter whose supportsModel() is false. The
+ * adapter's checkConfiguration must pass.
+ * @param {{ agent: string, model: string|true|null }} flag
+ * @param {{ topLevel: object, raw: object }} ctx
  */
-function flagConfiguration(agent) {
+function flagConfiguration({ agent, model }, ctx) {
   if (!hasProvider(agent)) {
     throw new Error(`-A must name a registered provider (${PROVIDER_NAMES.join(', ')}), not ${JSON.stringify(agent)}`);
   }
-  return { agent: agent.toLowerCase(), model: null };
+  const name = agent.toLowerCase();
+  if (model != null) {
+    checkModel(model, '--model');
+    if (!getProvider(name).supportsModel()) {
+      throw new Error(`--model "${model}": ${name} cannot select a model: drop --model`);
+    }
+  }
+  const configuration = { agent: name, model: model ?? null };
+  checkUsable(configuration, ctx, `-A ${name}`);
+  return configuration;
+}
+
+/** Throw when --model (`model`) is set without -A (`agent`). */
+function requireAgentForModel({ agent, model }) {
+  if (model != null && agent == null) throw new Error('--model requires -A <provider>');
+}
+
+/**
+ * -A and --model as `loadConfig` checks them, against `backlog.json`'s top
+ * level `topLevel`: --model needs -A, and -A's configuration must pass
+ * `flagConfiguration` for the top level and for each repo's `overrides`
+ * merged over it. Throws the loader's message. `bl init` calls it before it
+ * writes `backlog.json`, so a flag that the loader refuses writes nothing.
+ * @param {{ agent?: string|null, model?: string|true|null }} flag
+ * @param {object} topLevel
+ */
+export function checkAgentFlag({ agent = null, model = null }, topLevel) {
+  requireAgentForModel({ agent, model });
+  if (agent == null) return;
+  flagConfiguration({ agent, model }, { topLevel, raw: topLevel });
+  for (const def of Object.values(isPlainObject(topLevel.repos) ? topLevel.repos : {})) {
+    if (isPlainObject(def?.overrides)) {
+      flagConfiguration({ agent, model }, { topLevel, raw: mergeConfig(topLevel, def.overrides) });
+    }
+  }
+}
+
+/** Throw the adapter's checkConfiguration reason after `at`, if it gives one. */
+function checkUsable(configuration, ctx, at) {
+  const reason = getProvider(configuration.agent).checkConfiguration(configuration, ctx);
+  if (reason) throw new Error(`${at}: ${reason}`);
 }
 
 /** A configuration as the operator reads it: "codex gpt-6-sol", or "claude" with no model. */

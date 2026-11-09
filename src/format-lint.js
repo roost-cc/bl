@@ -249,6 +249,7 @@ Options:
   --no-story       Skip story resolution (ad-hoc use). Requires explicit
                    paths and operates relative to cwd.
   -A, --agent <id> Agent provider (passed through for config resolution).
+  --model <m>      Model of the -A configuration (needs -A).
   --help           Show this help
 
 The dispatch table is config-driven: backlog.json's language_dispatch.${stage}
@@ -266,7 +267,7 @@ with {{path}} interpolated to the matched files.`);
     process.exit(2);
   }
 
-  const config = loadConfig({ agent: args.agent });
+  const config = loadConfig({ agent: args.agent, model: args.model });
 
   if (noStory) {
     if (explicit.length === 0) {

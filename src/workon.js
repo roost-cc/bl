@@ -521,7 +521,8 @@ Arguments:
                        aren't all merged (done) is deferred, not launched.
 
 Options:
-  -A, --agent <id>     Agent provider (e.g. "claude", "codex", "gemini")
+  -A, --agent <id>     Agent provider (e.g. "claude", "codex", "gemini", "local")
+  --model <m>          Model of the -A configuration (needs -A)
   -P, --prompt <text>  Discuss <text> with the agent first
   --help               Show this help
 
@@ -533,7 +534,7 @@ Several targets (bl implement S-1 S-2) open one tmux window each.`);
   }
   refuseStoryRepo('implement', args);
 
-  const baseConfig = loadConfig({ agent: args.agent });
+  const baseConfig = loadConfig({ agent: args.agent, model: args.model });
 
   const positionals = args.positional;
   if (positionals.length === 0) {

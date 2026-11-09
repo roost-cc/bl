@@ -9,7 +9,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { loadConfig, configForRepo, repoOf, resolvePlugins, parsePluginCascade } from '../../src/config.js';
+import {
+  loadConfig,
+  configForRepo,
+  repoOf,
+  resolvePlugins,
+  parsePluginCascade,
+  updateSettings,
+} from '../../src/config.js';
 import { findStoryDir } from '../../src/story.js';
 import { resolveFeaturePluginsReport } from '../../src/feature.js';
 import { testPluginsFor } from '../../src/updates.js';
@@ -107,12 +114,12 @@ test('loadConfig registers every repos entry with its path, deployable, update_t
   }
 });
 
-test('a repos entry missing path, deployable or update_tests fails naming the repo and the key', () => {
+test('a repos entry missing path or deployable fails naming the repo and the key', () => {
   const { dir, cleanup } = appBacklog();
   try {
     const cfgPath = join(dir, 'backlog.json');
     const good = readFileSync(cfgPath, 'utf8');
-    for (const key of ['path', 'deployable', 'update_tests']) {
+    for (const key of ['path', 'deployable']) {
       const raw = JSON.parse(good);
       delete raw.repos.bl[key];
       writeFileSync(cfgPath, JSON.stringify(raw));
@@ -142,6 +149,60 @@ test('a repos entry missing path, deployable or update_tests fails naming the re
     empty.repos.bl.update_tests = [];
     writeFileSync(cfgPath, JSON.stringify(empty));
     assert.deepEqual(loadConfig({ backlogRoot: dir }).repos.bl.updateTests, []);
+    // update_tests is deprecated with bl updates (F-80 G3): an entry may leave it out.
+    const without = JSON.parse(good);
+    delete without.repos.bl.update_tests;
+    writeFileSync(cfgPath, JSON.stringify(without));
+    assert.deepEqual(loadConfig({ backlogRoot: dir }).repos.bl.updateTests, []);
+  } finally {
+    cleanup();
+  }
+});
+
+test('updateSettings reads the updates block with no defaults; loadConfig never requires it', () => {
+  const { dir, cleanup } = appBacklog();
+  try {
+    const cfgPath = join(dir, 'backlog.json');
+    const good = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    const write = (updates) => {
+      const raw = structuredClone(good);
+      if (updates === undefined) delete raw.updates;
+      else raw.updates = updates;
+      writeFileSync(cfgPath, JSON.stringify(raw));
+      return loadConfig({ backlogRoot: dir });
+    };
+    assert.equal(updateSettings(write(undefined)), null, 'no updates block: no update job');
+    // The deprecated keys stay accepted beside the new ones (F-80 G3).
+    const full = {
+      namespace: 'acme',
+      report: 'running-man/renovate/reports/renovate-report.json',
+      push_attempts: 3,
+      heartbeat: { repo: 'running-man', branch: 'updates-heartbeat' },
+    };
+    assert.deepEqual(updateSettings(write(full)), {
+      namespace: 'acme',
+      pushAttempts: 3,
+      heartbeat: { repo: 'running-man', branch: 'updates-heartbeat' },
+    });
+    // A backlog.json from before the cutover still loads; only the reader refuses it.
+    const before = write({ namespace: 'acme', report: full.report });
+    assert.throws(() => updateSettings(before), /"updates" has no "push_attempts"/);
+    const { heartbeat: _h, ...noHeartbeat } = full;
+    assert.throws(() => updateSettings(write(noHeartbeat)), /"updates" has no "heartbeat"/);
+    for (const [patch, err] of [
+      [{ namespace: undefined }, /has no "namespace"/],
+      [{ namespace: ' ' }, /needs a non-empty string for "namespace"/],
+      [{ push_attempts: 0 }, /needs a positive whole number for "push_attempts"/],
+      [{ push_attempts: '3' }, /needs a positive whole number for "push_attempts"/],
+      [{ heartbeat: 'running-man' }, /needs an object \{ repo, branch \} for "heartbeat"/],
+      [{ heartbeat: { repo: 'running-man' } }, /has no "heartbeat\.branch"/],
+      [{ heartbeat: { branch: 'b', repo: '' } }, /needs a non-empty string for "heartbeat\.repo"/],
+    ]) {
+      const u = { ...full, ...patch };
+      for (const k of Object.keys(u)) if (u[k] === undefined) delete u[k];
+      assert.throws(() => updateSettings(write(u)), err, JSON.stringify(patch));
+    }
+    assert.throws(() => updateSettings(write([])), /"updates" must be an object/);
   } finally {
     cleanup();
   }

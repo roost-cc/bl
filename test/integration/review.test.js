@@ -543,7 +543,7 @@ test('bl review S-n: an unknown review_agent provider is a config error, and -A 
   });
   assert.throws(
     () => loadConfig({ backlogRoot: backlog }),
-    /"review_agent"\[0\] "agent" must be a registered provider \(claude, codex, gemini\), not "clippy"/,
+    /"review_agent"\[0\] "agent" must be a registered provider \(claude, codex, gemini, local\), not "clippy"/,
   );
   writeFileSync(
     join(backlog, 'backlog.json'),
@@ -557,7 +557,7 @@ test('bl review S-n: an unknown review_agent provider is a config error, and -A 
   // error and exits 1.
   await assert.rejects(
     review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner, agent: 'clippy' }),
-    /^Error: -A must name a registered provider \(claude, codex, gemini\), not "clippy"$/,
+    /^Error: -A must name a registered provider \(claude, codex, gemini, local\), not "clippy"$/,
   );
   assert.equal(runner.sessions.length, 0, 'no session may start');
 });

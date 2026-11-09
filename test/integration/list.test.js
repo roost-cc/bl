@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
@@ -41,6 +42,89 @@ test('bl list sorts by flow.json: in_progress; backlog, refined and unknown toge
     };
     assert.deepEqual(ids([]), ['S-6', 'S-3', 'S-4', 'S-5']);
     assert.deepEqual(ids(['-a']), ['S-6', 'S-3', 'S-4', 'S-5', 'S-2', 'S-1']);
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl list --json prints the listed stories with their whole frontmatter', () => {
+  const stories = [
+    { id: 'S-1', status: 'done', completed: '2026-01-01' },
+    { id: 'S-2', status: 'backlog', feature: 'F-1' },
+  ].map((s) => ({ ...s, component: 'C00', title: `Story ${s.id}` }));
+  const { dir, cleanup } = mkTempBacklog({
+    repos: ['../repos/alpha'],
+    components: [{ id: 'C00', title: 'Work', repo: 'alpha' }],
+    features: [{ id: 'F-1', title: 'A feature' }],
+    stories,
+  });
+  try {
+    const keys = { update_advisory: ['GHSA-1', 'CVE-2'] };
+    const made = runBl(
+      ['new', 'C00', '--title', 'Keyed', '--points', '2', '--no-sync', '--frontmatter', JSON.stringify(keys)],
+      {
+        cwd: dir,
+      },
+    );
+    assert.equal(made.status, 0, made.stderr);
+    const list = (args) => {
+      const r = runBl(['list', '--json', ...args], { cwd: dir });
+      assert.equal(r.status, 0, r.stderr);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.schema, 'bl-list-json/v1');
+      return out.stories;
+    };
+    const open = list([]);
+    assert.deepEqual(
+      open.map((s) => s.id),
+      ['S-2', 'S-3'],
+    );
+    const [two, three] = open;
+    assert.deepEqual(
+      { ...two, frontmatter: undefined },
+      {
+        id: 'S-2',
+        title: 'Story S-2',
+        status: 'backlog',
+        component: 'C00',
+        feature: 'F-1',
+        path: two.path,
+        frontmatter: undefined,
+      },
+    );
+    assert.match(two.path, /^stories\/S2[^/]*\/index\.md$/);
+    assert.deepEqual(three.frontmatter.update_advisory, ['GHSA-1', 'CVE-2']);
+    assert.equal(three.feature, null);
+    assert.deepEqual(
+      list(['-a']).map((s) => s.id),
+      ['S-2', 'S-3', 'S-1'],
+    );
+    assert.deepEqual(
+      list(['--component', 'C00', '--feature', 'F-1']).map((s) => s.id),
+      ['S-2'],
+    );
+
+    const pattern = runBl(['list', '--json', 'Keyed'], { cwd: dir });
+    assert.equal(pattern.status, 1);
+    assert.match(pattern.stderr, /--json lists stories and takes no pattern/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('list JSON stdout contract is documented: the AGENTS.md stdout table and bl list --help name the schema bl list --json prints', () => {
+  const { dir, cleanup } = buildSampleBacklog();
+  try {
+    const r = runBl(['list', '--json'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    const { schema } = JSON.parse(r.stdout);
+    const agents = readFileSync(fileURLToPath(new URL('../../src/AGENTS.md', import.meta.url)), 'utf8');
+    const row = agents.split('\n').find((l) => l.startsWith('| `bl list --json`'));
+    assert.ok(row, 'src/AGENTS.md has a `bl list --json` row in the per-command stdout contracts');
+    assert.ok(row.includes(`\`${schema}\``), `the row names ${schema}: ${row}`);
+    const help = runBl(['list', '--help'], { cwd: dir });
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout.replace(/\s+/g, ' '), new RegExp(`--json .*${schema.replaceAll('/', '\\/')}`));
   } finally {
     cleanup();
   }

@@ -55,13 +55,14 @@ Arguments:
   [session-id]   Only parse logs for a specific session
 
 Options:
-  -A, --agent <id> Agent provider (e.g. "claude", "codex", "gemini")
+  -A, --agent <id> Agent provider (e.g. "claude", "codex", "gemini", "local")
+  --model <m>      Model of the -A configuration (needs -A)
   --clear        Delete all permission log files
   --help         Show this help`);
     process.exit(0);
   }
 
-  const config = loadConfig({ agent: args.agent });
+  const config = loadConfig({ agent: args.agent, model: args.model });
   const provider = getProvider(config.agent);
 
   if (argv.includes('--clear')) {

@@ -238,6 +238,7 @@ async function regenerateAfterPull(root, config, pendingPath) {
       loadConfig({
         backlogRoot: root,
         agent: flag.agent ?? undefined,
+        model: flag.model ?? undefined,
         agentRole: flag.role,
         lenientAgents: flag.lenient,
       }),

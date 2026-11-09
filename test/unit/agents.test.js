@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import fs, { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { syncBuiltinESMExports } from 'module';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
 import { AgentProvider } from '../../src/agents/provider.js';
-import { getProvider, hasProvider } from '../../src/agents/index.js';
+import { getProvider, hasProvider, PROVIDER_NAMES } from '../../src/agents/index.js';
 import { ClaudeProvider, buildClaudeArgs, claudeScopeRules } from '../../src/agents/claude.js';
 import { GeminiProvider } from '../../src/agents/gemini.js';
 import { resolvePermissionScopes } from '../../src/permissions.js';
@@ -19,6 +20,25 @@ import {
   translateCodexPermissions,
 } from '../../src/agents/codex.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+
+test('ClaudeProvider.clearLogs deletes each /tmp/claude-permissions-*.log (bl allow --clear)', () => {
+  // fs is stubbed so the test never deletes a real session's log.
+  const saved = { readdirSync: fs.readdirSync, unlinkSync: fs.unlinkSync };
+  const deleted = [];
+  fs.readdirSync = (dir, ...rest) =>
+    dir === '/tmp'
+      ? ['claude-permissions-a.log', 'other.log', 'claude-permissions-b.log']
+      : saved.readdirSync(dir, ...rest);
+  fs.unlinkSync = (p) => deleted.push(p);
+  syncBuiltinESMExports();
+  try {
+    new ClaudeProvider().clearLogs();
+  } finally {
+    Object.assign(fs, saved);
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(deleted, ['/tmp/claude-permissions-a.log', '/tmp/claude-permissions-b.log']);
+});
 
 test('base AgentProvider optional capabilities are safe no-ops', async () => {
   const provider = new AgentProvider();
@@ -47,9 +67,11 @@ test("base AgentProvider.capacity answers unknown, scoped to the model, in the a
     message: 'fake cannot report capacity',
   });
   // Every registered adapter has a name the registry knows it by.
-  for (const name of ['claude', 'codex', 'gemini']) assert.equal(getProvider(name).name, name);
+  for (const name of PROVIDER_NAMES) assert.equal(getProvider(name).name, name);
+  assert.deepEqual([...PROVIDER_NAMES], ['claude', 'codex', 'gemini', 'local']);
   // Claude and Gemini keep the base answer; Codex reads app-server
-  // (test/unit/codex-capacity.test.js, against a fake one).
+  // (test/unit/codex-capacity.test.js, against a fake one) and local its
+  // server's /health (test/unit/local-agent.test.js).
   for (const name of ['claude', 'gemini']) {
     assert.equal(getProvider(name).capacity().state, 'unknown', name);
     assert.equal(getProvider(name).capacity().message, `${name} cannot report capacity`);
@@ -58,11 +80,12 @@ test("base AgentProvider.capacity answers unknown, scoped to the model, in the a
 
 test('the adapters say whether they select a model and deny per session (F-64 D5)', () => {
   assert.deepEqual(
-    ['claude', 'codex', 'gemini'].map((n) => [n, getProvider(n).supportsModel(), getProvider(n).supportsDeny()]),
+    PROVIDER_NAMES.map((n) => [n, getProvider(n).supportsModel(), getProvider(n).supportsDeny()]),
     [
       ['claude', true, true],
       ['codex', true, false],
       ['gemini', false, true],
+      ['local', true, true],
     ],
   );
 });

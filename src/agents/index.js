@@ -5,6 +5,7 @@
 import { ClaudeProvider } from './claude.js';
 import { CodexProvider } from './codex.js';
 import { GeminiProvider } from './gemini.js';
+import { LocalProvider } from './local.js';
 import { PROVIDER_NAMES } from './names.js';
 
 export { hasProvider, PROVIDER_NAMES } from './names.js';
@@ -20,6 +21,7 @@ function providers() {
     claude: ClaudeProvider,
     codex: CodexProvider,
     gemini: GeminiProvider,
+    local: LocalProvider,
   };
   // names.js is the source of truth for which keys exist; keep the class map
   // in lockstep with it.

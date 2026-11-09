@@ -42,6 +42,7 @@ Per-command stdout contracts:
 | `bl next-id`         | one ID per line                                           |
 | `bl which`           | one line: absolute path                                   |
 | `bl list` / `ls`     | the table                                                 |
+| `bl list --json`     | one JSON object (schema `bl-list-json/v1`)                |
 | `bl status` (no ids) | the table, as `bl list`                                   |
 | `bl tree`            | the rendered tree                                         |
 | `bl history`         | the week table (`--json`: one object)                     |
@@ -164,11 +165,12 @@ per-repo setting:
 }
 ```
 
-- `path` (relative to the backlog), `deployable` (a release manifest records
-  the repo, `bl merge F-n`) and `update_tests` (the `plugins:` `bl updates
-sync` writes on the repo's update stories; `[]` for none) are required.
-  `loadConfig` fails naming the repo and the key, and has no defaults. Any
-  other key but `plugins-<stage>` and `overrides` is an error.
+- `path` (relative to the backlog) and `deployable` (a release manifest
+  records the repo, `bl merge F-n`) are required. `loadConfig` fails naming
+  the repo and the key, and has no defaults. `update_tests` (the `plugins:`
+  the deprecated `bl updates sync` writes on the repo's update stories) is
+  optional since F-80 G3, `[]` when absent. Any other key but
+  `plugins-<stage>` and `overrides` is an error.
 - `plugins-<stage>` is the repo layer of the plugin cascade (see
   **Activation via Frontmatter**); there is no generic `plugins:` form here.
 - `overrides` is merged over the top level by `mergeConfig` for work in that
@@ -1027,19 +1029,32 @@ every step instead.
 #### The adapter interface (F-64 D1)
 
 `src/agents/provider.js` (`AgentProvider`) is the interface; `claude.js`,
-`codex.js` and `gemini.js` are its adapters, handed out by name by
-`getProvider()` in `src/agents/index.js`. Besides `spawn`,
+`codex.js`, `gemini.js` and `local.js` are its adapters, handed out by name by
+`getProvider()` in `src/agents/index.js`. `local` (S-1371) is Claude Code
+against a local model server; see **The local provider** below. Besides `spawn`,
 `translatePermissions`, `getToolHints`, `findSession`, `parseLogs`,
 `getTokens` and `supportsHeadless`, the contract has:
 
-- `capacity({ model })` → `{ state, scope, until, windows, message }`: whether a
-  configuration can take work now. `state` is `available`, `unavailable` or
+- `capacity({ model, topLevel })` → `{ state, scope, until, windows, message }`: whether a
+  configuration can take work now. Both callers (`capacityRows` in `src/capacity.js`, the runner's
+  `capacity` in `src/feature-run.js`) pass their config's `topLevel` (`backlog.json`'s top level
+  as that load read it), for an adapter that reads `backlog.json` (`local`); the base ignores it. `state` is `available`, `unavailable` or
   `unknown`; `scope` is `account` (every model of the agent) or `model`;
   `until` is when an `unavailable` one may be tried again, or null; `windows`
   is `[{ name, remainingPercent, resetsAt }]`. It never throws: a failed read
   is `unknown` with the reason in `message`. Codex reads its quota over
-  `codex app-server` (see `bl capacity`); Claude and Gemini answer the base
-  `unknown` ("<agent> cannot report capacity").
+  `codex app-server` (see `bl capacity`); `local` asks its server's
+  `/health`; Claude and Gemini answer the base `unknown` ("<agent> cannot
+  report capacity"). Codex and `local` run their read as a Node child
+  (`runCapacityHelper`, `src/agents/capacity-helper.js`), because
+  `capacity()` is synchronous.
+- `checkConfiguration({ model }, { topLevel, raw })` → a reason string, or
+  null when the configuration is usable. `topLevel` is `backlog.json`'s top
+  level; `raw` is it with the repo's `overrides` merged over it. The config
+  loader calls it for each `agent` and `review_agent` entry and for -A, and
+  throws the reason after the entry's location (`backlog.json "agent"[2]:
+…`, `-A local: …`), so `config.js` names no agent. The base returns null;
+  `local` has rules of its own.
 - The headless result's `refusal`: `{ kind, scope, message, resetsAt }` or
   null (see the usage-limit paragraph under `bl run`). `kind` is a usage
   limit's (`session`, `weekly`, `spend`, `other`) or `capacity`.
@@ -1047,7 +1062,9 @@ every step instead.
   `BL_HEADLESS=1` (`HEADLESS_ENV`), built by `agentEnv({ headless,
 backlogRoot })`, which also sets `BL_BACKLOG_DIR` where the adapter passes
   it; an interactive spawn adds no marker. `isHeadless()` reads it (F-78 D3,
-  see `bl rank`).
+  see `bl rank`). `ClaudeProvider.spawn()` takes it from
+  `spawnEnv({ headless, backlogRoot, model, topLevel })`, which `local`
+  overrides. Every caller of `spawn()` passes its config's `topLevel`.
 - `supportsModel()`: whether `spawn({ model })` selects the model (Claude's
   `--model`, Codex's `-m`; Gemini no). The config loader refuses a
   configuration that names a model for an adapter that does not, and `bl run`
@@ -1065,6 +1082,49 @@ a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
 `test/unit/agent-boundary.test.js` fails on either and names its one
 exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
 a name as a literal (a default argument, a prompt variant) is allowed.
+
+#### The local provider (S-1371)
+
+`local` runs the `claude` CLI against a model server on the workstation that
+speaks the Anthropic Messages API: llama-server, started by hand
+(`roost/llama/qwen38.sh` serves Qwen3.8-27B on port 8090 as `qwen3.8-27b`).
+bl does not start or stop the server.
+
+- `LocalProvider` extends `ClaudeProvider` and overrides only `spawnEnv`,
+  `checkConfiguration` and `capacity`; the CLI, its arguments, the tool
+  names, the permissions, the hooks and the JSON result are claude's. Its
+  logic is in `src/agents/local.js`, which exports the class. The class
+  itself is in `claude.js`, below `ClaudeProvider`: a class in `local.js`
+  would extend `ClaudeProvider` while `local.js` loads, which a module that
+  imports `claude.js` first reaches before `ClaudeProvider` exists.
+- The server is `backlog.json`'s top-level `local` key,
+  `"local": { "url": "http://localhost:8090", "token": "local" }`. Both keys
+  are required non-empty strings, and no other key is allowed. bl reads it
+  from the top level only: `spawn()` knows the backlog, not the repo.
+- `spawnEnv` and `capacity` use the server in the `topLevel` that the caller
+  passes: the top level of the config the caller loaded, which that load
+  checked. They do not read `backlog.json` again and keep no state between
+  loads: a new read without the command's `-A` and `--model` fails on a role
+  list that `-A` replaced, a read after an edit could name a server that
+  nothing checked, and a later load (also a rejected one) of the same backlog
+  does not change the server of a config loaded before it.
+- `spawnEnv` sets `ANTHROPIC_BASE_URL` to `url`, `ANTHROPIC_AUTH_TOKEN` to
+  `token`, `ANTHROPIC_API_KEY` to the empty string (so the operator's real
+  key never reaches the server) and `ANTHROPIC_SMALL_FAST_MODEL` to the
+  configuration's model (so Claude Code's side requests stay on the server),
+  over claude's `agentEnv` (`localEnv`).
+- `checkConfiguration` refuses a `local` configuration with no model (the
+  model is the server's alias), a missing or wrong `local` key, and a repo
+  whose `overrides` set `local`. A backlog that names no `local`
+  configuration loads with or without the key.
+- `capacity` asks `<url>/health` within two seconds
+  (`src/agents/local-capacity.js`): a 200 is `available`; a refused
+  connection is `unavailable` with no `until`, so the walk skips the
+  configuration for the rest of the run; a timeout, another status (503
+  while the model loads) or another failure is `unknown`. Every answer has
+  scope `account` and names the URL.
+- A session whose `claude` cannot reach the server ends in error with
+  `refusal` null: a failed step, not a usage limit.
 
 #### Tokens per step (S-904)
 
@@ -1177,8 +1237,8 @@ fix steps, the merge resolution) walks `agent`, each from the top:
    log line `<step>: skipping <agent> <model>: <why>`. An entry whose `until` has
    passed is dropped with a log line, so the run returns to the operator's
    first choice at the next step.
-2. The runner's `capacity(agent, model)` (the adapter's `capacity({ model })`)
-   is asked; an `account`-scoped answer is kept for the rest of the walk, so
+2. The runner's `capacity(agent, model, topLevel)` (the adapter's
+   `capacity({ model, topLevel })`) is asked; an `account`-scoped answer is kept for the rest of the walk, so
    each agent is asked once. `unavailable` puts the configuration on the
    out-list (kind `quota`) until the reading's `until` plus the margin below.
    `available` and `unknown`, and a read that throws, spawn.
@@ -1581,8 +1641,18 @@ or knocks it back to `pending` with a new session.
 **Review agent.** `bl review`, and the review step of `bl run`, run on
 `backlog.json`'s `review_agent` list (see **Agent configurations**),
 walked down when a configuration is out (F-64 D3, **Headless sessions**). `-A <agent>` on
-`bl review` replaces that list with a one-entry list with no model; on
-every other verb `-A` replaces the implementing list only.
+`bl review` replaces that list with a one-entry list; on every other verb
+`-A` replaces the implementing list only. `--model <m>` beside `-A` gives
+that entry its model (none: no model, the account's own), so
+`bl run S-1 -A local --model qwen3.8-27b` implements on the local server and
+reviews on the `review_agent` list. `--model` goes wherever `-A` goes
+(`bl run`, `bl implement`, `bl review`, `bl refine`, `bl init`, `bl agent`,
+`bl allow`, `bl format`/`bl lint`). Without `-A` it exits 1 with
+`--model requires -A <provider>`; on an adapter that cannot select a model
+it exits 1 with `<agent> cannot select a model: drop --model`. The entry is
+checked like a list entry (`checkConfiguration`), and the model reaches
+`spawn()`, the run state, every log line and the Review Log. A reload
+(`agentFlagOf`, `configForRepo`, `sync.js`) keeps it.
 
 **The reviewer is never the implementer** (F-64 D4). A `review_agent`
 configuration equal to one that ran an implementing step of the run
@@ -1647,7 +1717,21 @@ outranks an `ANTHROPIC_MODEL` in the environment) or Codex's `-m`
 model flag is passed and the agent CLI uses the account's model; bl
 supplies none of its own, and one configuration's model never reaches
 another agent. Use aliases (`opus`, `sonnet`) so the config follows new
-releases. A repo's `overrides` may replace either list whole. The config
+releases. Each entry must also pass its adapter's `checkConfiguration`
+(see **The adapter interface**): a `local` entry names the server's model
+alias and needs `backlog.json`'s top-level `local` key (see **The local
+provider**):
+
+```json
+{
+  "local": { "url": "http://localhost:8090", "token": "local" },
+  "agent": [{ "agent": "local", "model": "qwen3.8-27b" }]
+}
+```
+
+A `local` configuration is different from every cloud one, so a cloud
+reviewer stays independent of it. A repo's `overrides` may replace either
+list whole, but may not set `local`. The config
 record carries both lists (`agents`, `reviewAgents`) and their first
 entries (`agent`, `agentModel`, `reviewAgent`, `reviewAgentModel`) for
 the callers that do not walk a list.
@@ -1665,7 +1749,9 @@ string `review_agent` a one-entry list); nothing migrates silently.
 (**Review agent**: the reviewer is never the implementer). A role the file
 already has is kept, and the missing one is picked against it
 (`initConfigurationLists`): a headless agent the kept list (and -A) does
-not use, so a kept `[codex]` implementer gets a `claude` reviewer.
+not use, so a kept `[codex]` implementer gets a `claude` reviewer. It never
+picks an agent whose model-less configuration `checkConfiguration` refuses
+(`local`).
 
 **Effort levels** (F-85). An effort level says how hard an agent session
 thinks: `low`, `medium`, `high`, `xhigh` or `max`, lowest first
@@ -2432,8 +2518,9 @@ Shows whether each agent configuration can take work now (F-64 D6): one row
 per configuration of `agent`, then `review_agent`, in list order, with its
 role, agent, model (`-` for the account's own), state (`available`,
 `unavailable`, `unknown`), each quota window's remaining percent and reset in
-local time, and the adapter's message. It calls each adapter's `capacity()`,
-the call the run loop makes, so it shows what the loop will see. An
+local time, and the adapter's message. It calls each adapter's
+`capacity({ model, topLevel })`, the call the run loop makes, so it shows
+what the loop will see. An
 `account`-scoped answer (Codex) is asked once per agent, a `model`-scoped one
 once per model. It reports and does not gate: it exits 0 whatever the
 states, and 1 only when the backlog or its `backlog.json` cannot be loaded.
@@ -2459,6 +2546,10 @@ with a 20-second deadline and stops app-server on every path;
 such reset (none for a spend cap). A timeout, an exit, a JSON-RPC error or an
 answer with no windows is `unknown`, with the reason.
 
+The `local` row comes from the server's `/health` (see **The local
+provider**): `available` on a 200, `unavailable` when the connection is
+refused, `unknown` otherwise; the message names the URL.
+
 ### `bl list`
 
 List backlog stories. Active worktrees show their worktree status with a trailing `*`.
@@ -2471,6 +2562,7 @@ bl list --theme backlog       # stories in a theme (Themes and Epics)
 bl list --component C32 --feature F-51   # filters combine
 bl list --epic E-62           # an epic's features, grouped, with progress
 bl list --features --theme backlog       # a theme's features, grouped by epic
+bl list --json                # the stories with their whole frontmatter, as JSON
 bl tree --epic E62            # trees containing the epic's pending stories
 bl what-next --theme backlog  # next startable story in the theme
 ```
@@ -3318,6 +3410,13 @@ feature whose theme is missing or unreadable only warns.
 
 ### `bl updates`
 
+Deprecated since F-80 (G3): running-man's update job gates and merges
+Renovate's branches, and `bl inbox` reads its heartbeat. Every verb below
+still works and first prints one warning on stderr, `bl updates is
+deprecated: running-man's update job (F-80) does this` (`src/bl.js`);
+`--help` prints none, as no verb's help writes to stderr. A later story
+removes the verbs and the code only they use.
+
 Renovate's dependency updates as backlog stories (F-32). Renovate opens the
 branch and the PR and, at the end of each cycle, writes a report
 (`backlog.json` `updates.report`, relative to the backlog's parent directory, for
@@ -3484,8 +3583,8 @@ produced. Per story:
    An outcome written but not committed when something stops the run is
    committed (the counts as message) before the error surfaces; then the
    tmux bell. One still uncommitted after that fails the run, naming the
-   paths to commit by hand. A run with nothing open still writes `## Run <time>` (`No open update stories.`): it is the
-   heartbeat `bl inbox` reads. stdout: one line per story (`merged`,
+   paths to commit by hand. A run with nothing open still writes `## Run <time>` (`No open update stories.`); since
+   F-80, `bl inbox` reads the update job's heartbeat instead. stdout: one line per story (`merged`,
    `dropped`, `held`, `decision`, `skipped`, or `would run` with
    `--dry-run`).
 
@@ -3645,19 +3744,48 @@ Everything waiting on the operator, in one list (F-42 Design D1,
 `src/inbox.js`). It scans the backlog on every call (no index) and prints
 the groups below, each by unit id, newest first, features before stories:
 
-| Kind         | Source                                                                                                                                                                                 | Id           | Answered by                                                 |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ----------------------------------------------------------- |
-| `escalation` | an active (not `done` or `superseded`) feature's or story's `## Escalation` with content                                                                                               | `F-42:esc`   | `bl status F-42`                                            |
-| `task`       | an open task (`tasks/`, see **`bl task`**) of any unit, open or closed, with a `holds:` line per edge of it in `blockers.json` that holds now                                          | `T-7`        | `bl task done T-7 [note]`                                   |
-| `change`     | unmerged work (F-48 D4): an open feature, or an open story with no `feature:`, whose current change document is `status: open` and names a branch with commits ahead of `main` (below) | `S-7:change` | `bl run S-7`; `bl merge S-7` once its review is `addressed` |
-| `update`     | an F-32 update story in the `decision needed` or `held` state of `bl updates status`                                                                                                   | `S-842`      | `bl updates approve S-842` / `drop … --reason`              |
-| `pending`    | an update story in the `approve pending` or `drop pending` state: it waits on the runner, not on the operator (F-50 D8)                                                                | `S-842`      | nothing: the runner's next `bl updates run`                 |
+| Kind         | Source                                                                                                                                                                                 | Id                         | Answered by                                                         |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------- |
+| `escalation` | an active (not `done` or `superseded`) feature's or story's `## Escalation` with content                                                                                               | `F-42:esc`                 | `bl status F-42`                                                    |
+| `task`       | an open task (`tasks/`, see **`bl task`**) of any unit, open or closed, with a `holds:` line per edge of it in `blockers.json` that holds now                                          | `T-7`                      | `bl task done T-7 [note]`                                           |
+| `change`     | unmerged work (F-48 D4): an open feature, or an open story with no `feature:`, whose current change document is `status: open` and names a branch with commits ahead of `main` (below) | `S-7:change`               | `bl run S-7`; `bl merge S-7` once its review is `addressed`         |
+| `update`     | an entry in the red list of the update job's latest heartbeat (F-80 D4, B2, below)                                                                                                     | `tools:renovate/glob-11.x` | nothing here: the next update run tests it again; read its gate log |
 
-One more line comes first, `runner: no bl updates run since <time> …`
-(kind `runner`, id `updates:run`), when the newest `## Run <time>` heading
-under `updates/` (`lastRun`: the newest report holding one) is more than 8 h
-old, twice the runner's cadence (F-50 D7); none when it is newer or when no
-report holds a run. A `pending` item is not counted by `inboxCountLine`.
+One more line comes first, `runner: …` (kind `runner`, id `updates:run`),
+when the latest heartbeat is more than 8 h old (twice the job's 4 h timer)
+or records `"result": "failure"`: `no update run since <time> (<n> h, more
+than 8 h)`, `the update run of <time> failed at <step>: <subject>`, or both
+joined by `; ` (F-80 B3).
+
+The heartbeat (F-80 B3, D6) is one orphan commit on the branch
+`updates.heartbeat.branch` of the repo `updates.heartbeat.repo`, which
+running-man's update job force-pushes after every update run. `readHeartbeat`
+reads it with git alone, in that repo's clone as `backlog.json` `repos`
+registers it: `git fetch --quiet origin
++refs/heads/<branch>:refs/remotes/origin/<branch>`, then `git log -1
+--format=%cI%n%B refs/remotes/origin/<branch>`. It reads that ref, not
+`FETCH_HEAD`, because any other fetch in the clone rewrites `FETCH_HEAD`.
+The first line is the update run's time, the
+next the subject (its summary), and the rest of the message JSON with
+`"schema": "roost-update-heartbeat/v1"`, `result`, `failed_step` and `red`
+(a list of `{ repo, branch, update, head, main, notes, log }`, or `null`
+when the update run failed before the job wrote it). The fetch has no
+`--depth=1`: on a full clone that marks the repository shallow, and the
+heartbeat has no parent, so it moves the same objects without it. No `gh`
+and no forge op is used. Each red entry is one `update` item,
+`<update> · red · notes: <url or none>`, `next: read the gate log <log>;
+the next update run tests it again`, in the heartbeat's order; an entry
+leaves the inbox when a later heartbeat no longer lists it. A `"red": null`
+is a warning that the red updates are not known.
+
+`updateSettings` (`src/config.js`) reads the `updates` block: `namespace`,
+`push_attempts`, `heartbeat.repo` and `heartbeat.branch`, every key required
+with no defaults, and other keys (the deprecated `report`) left alone. A
+backlog.json with no `updates` block has no update job, and the inbox reads
+no heartbeat. A missing key, a fetch that fails, or a message that is not a
+heartbeat is one warning on stderr (`update job heartbeat not read: …`), and
+the other kinds are still listed. `loadConfig` never reads the block, so a
+backlog.json from before F-80's cutover still loads.
 
 A `change` item is one per unit, naming every repo with unmerged commits:
 `tools, web: <title> · tools 2 commit(s) on <branch>, web 1 commit(s) on <branch>, not merged`
@@ -3684,7 +3812,8 @@ their files and the holds from `blockers.json`, never from a unit's body; a `blo
 
 `bl inbox done` closes nothing (F-65 D3): every id exits 1 naming the verb that answers it, a
 `T-<n>` and a retired `F-<n>:op<k>` id `bl task done` (an alias would be a second way to close a
-task), an escalation, change, update or pending id its own; an id not in the inbox is unknown.
+task), an escalation or change id its own. A red update or the runner line names what clears
+it: a later heartbeat. An id not in the inbox is unknown.
 
 The S-970 operator tasks (a `### Operator tasks` sub-list, or legacy `operator:` bullets, in a
 unit's `## Deferred`, or a story's former `## To Do`) are retired: nothing in `bl` reads a
@@ -3706,9 +3835,12 @@ a closed unit keeps its items as history. Their reader, `scanOperatorTasks`, wen
   `migrate-worktree-layout`.
 - `bl run` and `bl merge` end with `inbox: <n> item(s) need you (bl inbox)`
   on stderr when the count is non-zero (`printInboxCount`). A failed scan
-  prints nothing and never fails the command.
-- When the update stories cannot be read (no `updates.namespace` in
-  `backlog.json`), `bl inbox` warns on stderr and lists the rest.
+  prints nothing and never fails the command. The count includes red updates
+  and the runner line, so it fetches the heartbeat too.
+- `bl merge` imports `src/inbox.js` after its git merge, when the process
+  may still hold the pre-merge `config.js` (F-49 D6). So `inbox.js` reads
+  `updateSettings` through `import * as configModule`, not a named import: a
+  config.js without it is a warning, not a failed merge.
 
 ### Testing
 
@@ -4027,7 +4159,9 @@ prompts/
 ```
 
 Use lowercase `<agentId>` values that match the provider registry keys
-in `src/agents/index.js` (currently `claude`, `codex`, and `gemini`).
+in `src/agents/index.js` (currently `claude`, `codex`, `gemini` and
+`local`). A `local` session reads `local` variants, not `claude` ones: no
+variant exists for either today.
 Unrecognized or malformed agent IDs are ignored for prompt lookup and
 fall back to the shared chain.
 
@@ -4048,7 +4182,7 @@ continues to work for every agent.
 ### Surface variants
 
 Surface variants are independent of agent identity. The agent axis
-(`claude`, `codex`, `gemini`) changes tool names and agent-specific
+(`claude`, `codex`, `gemini`, `local`) changes tool names and agent-specific
 prompt prose; the surface axis describes the host wrapping that agent,
 such as `claude-code`, where slash commands and IDE behaviour may matter.
 
