@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from '../../src/config.js';
 import { outcomePath } from '../../src/outcome.js';
+import { refineBatchId } from '../../src/refine.js';
 import { git, statusLines } from '../helpers/git-backlog.js';
 import { F1, S1, S2, S3, gitBacklog, refine } from '../helpers/refine-session.js';
 
@@ -78,7 +79,7 @@ test('the batch sets each story from its entry, and prints the reason for the ot
     summary: 'Two planned.',
     stories: { 'S-1': { refined: true }, 'S-2': { refined: false, reason: 'too large' } },
   });
-  const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: 'refine-batch-S-1-S-2' });
+  const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: refineBatchId(['S-1', 'S-2']) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'refined');
   assert.equal(statusOf(dir, S2), 'backlog');
@@ -90,11 +91,21 @@ test('the batch sets each story from its entry, and prints the reason for the ot
 test('the batch leaves a story the outcome does not name, and says so', () => {
   const dir = gitBacklog();
   const outcome = json({ summary: 'One planned.', stories: { 'S-1': { refined: true } } });
-  const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: 'refine-batch-S-1-S-2' });
+  const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: refineBatchId(['S-1', 'S-2']) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'refined');
   assert.equal(statusOf(dir, S2), 'backlog');
   assert.match(r.stderr, /S-2 is not refined; its status is unchanged: the outcome has no entry for it/);
+});
+
+test('a batch of 60 stories starts, and bl sets each status from the outcome', () => {
+  const dir = gitBacklog({ extraStories: 60 });
+  const ids = Array.from({ length: 60 }, (_, i) => `S-${101 + i}`);
+  const stories = Object.fromEntries(ids.map((id) => [id, { refined: true }]));
+  const r = refine(dir, ids, { outcome: json({ summary: 'All planned.', stories }), outcomeUnit: refineBatchId(ids) });
+  assert.equal(r.status, 0, r.stderr);
+  for (const id of ids) assert.equal(statusOf(dir, `stories/S${id.slice(2)}/index.md`), 'refined', id);
+  assert.deepEqual(statusLines(dir), []);
 });
 
 for (const [label, outcome, status, said] of [

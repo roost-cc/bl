@@ -38,14 +38,25 @@ function writingClaude() {
   return dir;
 }
 
-/** A git backlog with an `origin`: S-1 and S-2 in backlog, S-3 refined, F-1 a draft of S-1. */
-export function gitBacklog() {
+/**
+ * A git backlog with an `origin`: S-1 and S-2 in backlog, S-3 refined, F-1 a
+ * draft of S-1, and `extraStories` more stories in backlog from S-101 on
+ * (`stories/S<n>/index.md`).
+ */
+export function gitBacklog({ extraStories = 0 } = {}) {
+  const extra = Array.from({ length: extraStories }, (_, i) => ({
+    id: `S-${101 + i}`,
+    component: 'C01',
+    title: `Extra ${101 + i}`,
+    status: 'backlog',
+  }));
   const { dir } = mkTempBacklog({
     components: [{ id: 'C01', title: 'One', dirSuffix: 'one' }],
     stories: [
       { id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'backlog', feature: 'F-1' },
       { id: 'S-2', component: 'C01', title: 'Two', dirSuffix: 'two', status: 'backlog' },
       { id: 'S-3', component: 'C01', title: 'Three', dirSuffix: 'three', status: 'refined' },
+      ...extra,
     ],
     features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'draft', stories: ['S-1'] }],
   });
@@ -76,7 +87,7 @@ function runningTmux() {
 
 /**
  * `bl refine <args>` in `dir`. `outcome` is the text the agent writes to the
- * outcome file of `outcomeUnit` (the refined unit's id, `refine-batch-S-1-S-2` for a
+ * outcome file of `outcomeUnit` (the refined unit's id, `refineBatchId(<ids>)` for a
  * batch); with none, the agent writes no outcome file.
  */
 export function refine(dir, args, { write = [], exit = 0, tmuxLog = null, outcome = null, outcomeUnit = null } = {}) {

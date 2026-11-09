@@ -13,6 +13,7 @@
  * (`refineAndCommit`).
  */
 
+import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import {
   loadConfig,
@@ -258,12 +259,18 @@ function refineOne(target, config, { additionalPrompt } = {}) {
 }
 
 /**
- * The unit id of a batch refine's session (`refine-batch-S-1-S-2`). It names
- * the batch's outcome file, so two batches of other stories never share one.
- * @param {string[]} ids the batch's story ids, in order
+ * The unit id of a batch refine's session (`refine-batch-<12 hex>`): the first
+ * 12 hex characters of a SHA-256 of the sorted story ids. It names the batch's
+ * outcome file, so two batches of other stories never share one, and its
+ * length does not grow with the batch (a component can hold hundreds of
+ * stories, and a file name is at most 255 bytes).
+ * @param {string[]} ids the batch's story ids
  */
 export function refineBatchId(ids) {
-  return ['refine-batch', ...ids].join('-');
+  const hash = createHash('sha256')
+    .update([...ids].sort().join('\n'))
+    .digest('hex');
+  return `refine-batch-${hash.slice(0, 12)}`;
 }
 
 /** Batch refine: one orchestrator session that fans out to per-story sub-agents. */

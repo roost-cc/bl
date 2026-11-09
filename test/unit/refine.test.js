@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { basename } from 'path';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../../src/config.js';
 import { resolveRefineTargets, refineBatchId, applyRefineStatus } from '../../src/refine.js';
@@ -9,9 +10,19 @@ import { mkTempBacklog } from '../helpers/tempdir.js';
 test('two batch refines with different stories use different outcome files', () => {
   const a = outcomePath('/b', refineBatchId(['S-1', 'S-2']));
   const b = outcomePath('/b', refineBatchId(['S-3', 'S-4']));
-  assert.equal(a, '/b/.bl/outcome/refine-batch-S-1-S-2.json');
+  assert.match(a, /^\/b\/\.bl\/outcome\/refine-batch-[0-9a-f]{12}\.json$/);
   assert.notEqual(a, b);
   assert.notEqual(a, outcomePath('/b', refineBatchId(['S-1'])), 'a batch that holds one story more');
+  assert.equal(a, outcomePath('/b', refineBatchId(['S-2', 'S-1'])), 'the same stories in another order');
+});
+
+test('a batch refine outcome file name stays under 255 bytes for every batch size', () => {
+  for (const n of [1, 2, 35, 60, 200, 1000]) {
+    const ids = Array.from({ length: n }, (_, i) => `S-${1000 + i}`);
+    const name = basename(outcomePath('/b', refineBatchId(ids)));
+    assert.ok(Buffer.byteLength(name) < 255, `${n} stories: ${name}`);
+    assert.notEqual(refineBatchId(ids), refineBatchId(ids.slice(1)), `${n} stories and one fewer`);
+  }
 });
 
 test('a status write that fails names its story', () => {
