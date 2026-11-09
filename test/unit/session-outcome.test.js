@@ -125,6 +125,22 @@ test('launchSession without a schema returns the bare status and leaves {{outcom
   assert.match(prompt, /\{\{outcomePath\}\}/);
 });
 
+test('launchSession refuses a schema without returnOnExit, before any session starts', () => {
+  let spawned = false;
+  assert.throws(
+    () =>
+      launch(
+        () => {
+          spawned = true;
+          return { status: 0 };
+        },
+        { schema: SCHEMA, returnOnExit: false },
+      ),
+    /launchSession: a schema needs returnOnExit/,
+  );
+  assert.equal(spawned, false);
+});
+
 /** runHeadlessSession with a headless provider stub; `spawn(opts)` is the adapter. */
 function headless(spawn, extra = {}) {
   const { dir, cleanup } = mkTempBacklog();

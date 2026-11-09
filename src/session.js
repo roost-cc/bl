@@ -916,9 +916,9 @@ export function runHeadlessSession({
  * `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`), which the prompt
  * names as `{{outcomePath}}` and the agent writes as its last act. A stale
  * file from an earlier session is removed before the spawn; after the agent
- * exits, the file is read, validated against `schema` and deleted. With
- * `returnOnExit`, the call then returns `{ status, structured,
- * structuredError }` in place of the bare exit status.
+ * exits, the file is read and validated against `schema`. A `schema` needs
+ * `returnOnExit` (it throws without one): the call then returns `{ status,
+ * structured, structuredError }` in place of the bare exit status.
  */
 export function launchSession({
   mode,
@@ -945,6 +945,9 @@ export function launchSession({
   schema = null,
   provider: providerOverride = null,
 }) {
+  // Without `returnOnExit` the process exits after the session, and the
+  // outcome it read would be lost.
+  if (schema && !returnOnExit) throw new Error('launchSession: a schema needs returnOnExit');
   const isRefine = mode === 'refine';
   const sessionName = sessionNameOverride ?? (isRefine ? `${parsed.id}: refine — ${title}` : `${parsed.id}: ${title}`);
 
