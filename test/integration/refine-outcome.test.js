@@ -78,7 +78,7 @@ test('the batch sets each story from its entry, and prints the reason for the ot
     summary: 'Two planned.',
     stories: { 'S-1': { refined: true }, 'S-2': { refined: false, reason: 'too large' } },
   });
-  const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: 'refine-batch' });
+  const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: 'refine-batch-S-1-S-2' });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'refined');
   assert.equal(statusOf(dir, S2), 'backlog');
@@ -90,7 +90,7 @@ test('the batch sets each story from its entry, and prints the reason for the ot
 test('the batch leaves a story the outcome does not name, and says so', () => {
   const dir = gitBacklog();
   const outcome = json({ summary: 'One planned.', stories: { 'S-1': { refined: true } } });
-  const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: 'refine-batch' });
+  const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: 'refine-batch-S-1-S-2' });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'refined');
   assert.equal(statusOf(dir, S2), 'backlog');

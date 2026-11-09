@@ -251,6 +251,15 @@ function refineOne(target, config, { additionalPrompt } = {}) {
   );
 }
 
+/**
+ * The unit id of a batch refine's session (`refine-batch-S-1-S-2`). It names
+ * the batch's outcome file, so two batches of other stories never share one.
+ * @param {string[]} ids the batch's story ids, in order
+ */
+export function refineBatchId(ids) {
+  return ['refine-batch', ...ids].join('-');
+}
+
 /** Batch refine: one orchestrator session that fans out to per-story sub-agents. */
 function refineBatch(targets, config) {
   const { backlogRoot, roostDir } = config;
@@ -295,7 +304,7 @@ function refineBatch(targets, config) {
   refineAndCommit(
     {
       mode: 'refine',
-      parsed: { id: 'refine-batch' },
+      parsed: { id: refineBatchId(targets.map((t) => t.id)) },
       title: `${targets.length} stories`,
       worktreePath: backlogRoot,
       branchName: 'main',

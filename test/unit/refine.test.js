@@ -1,9 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../../src/config.js';
-import { resolveRefineTargets } from '../../src/refine.js';
+import { resolveRefineTargets, refineBatchId } from '../../src/refine.js';
 import { loadPrompt } from '../../src/session.js';
+import { outcomePath } from '../../src/outcome.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
+
+test('two batch refines with different stories use different outcome files', () => {
+  const a = outcomePath('/b', refineBatchId(['S-1', 'S-2']));
+  const b = outcomePath('/b', refineBatchId(['S-3', 'S-4']));
+  assert.equal(a, '/b/.bl/outcome/refine-batch-S-1-S-2.json');
+  assert.notEqual(a, b);
+  assert.notEqual(a, outcomePath('/b', refineBatchId(['S-1'])), 'a batch that holds one story more');
+});
 
 function fixture() {
   return mkTempBacklog({

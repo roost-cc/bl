@@ -76,7 +76,7 @@ function runningTmux() {
 
 /**
  * `bl refine <args>` in `dir`. `outcome` is the text the agent writes to the
- * outcome file of `outcomeUnit` (the refined unit's id, `refine-batch` for a
+ * outcome file of `outcomeUnit` (the refined unit's id, `refine-batch-S-1-S-2` for a
  * batch); with none, the agent writes no outcome file.
  */
 export function refine(dir, args, { write = [], exit = 0, tmuxLog = null, outcome = null, outcomeUnit = null } = {}) {
