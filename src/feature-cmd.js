@@ -103,16 +103,9 @@ import { failPoint } from './feature-links.js';
 import { prepareBody } from './body.js';
 import { scanDeferred, DEFERRED_HEADING } from './deferred.js';
 import { readAllTasks, tasksOf } from './task.js';
-import {
-  commitChangedSince,
-  dirtySnapshot,
-  failedCommitRecord,
-  hashPath,
-  readFailedCommit,
-  saveFailedCommit,
-} from './backlog-commit.js';
+import { commitChangedSince, dirtySnapshot, failedCommitPending, failedCommitRecord } from './backlog-commit.js';
 import { loadBacklog } from './backlog-graph.js';
-import { reportBacklogCommit, syncAndCommit } from './sync.js';
+import { commitAndRecord, reportBacklogCommit } from './sync.js';
 import { refineAndCommit } from './refine.js';
 import {
   changeName,
@@ -673,20 +666,16 @@ async function approveLocked(args, config, feature) {
 const approvalOwner = (feature) => `approve ${feature.id}`;
 
 /**
- * Commit and push the approved feature file (`syncAndCommit`). A failed
- * commit records the file's content in the approval's failed-commit record,
- * so a rerun commits that approval and nothing else (`retryApprovalCommit`);
- * any other result removes the record.
+ * Commit and push the approved feature file (`commitAndRecord`), so a rerun
+ * after a failed commit commits that approval and nothing else
+ * (`retryApprovalCommit`).
  */
-async function approvalCommit(config, feature) {
-  const root = config.backlogRoot;
+function approvalCommit(config, feature) {
   const rel = feature.featureRelPath;
-  const res = await syncAndCommit(config, { message: `chore: approve ${feature.id}`, extraPaths: [rel] });
-  saveFailedCommit(root, approvalOwner(feature), {
-    commit: res.error ? [[rel, hashPath(root, rel)]] : [],
-    unsure: [],
+  return commitAndRecord(config, approvalOwner(feature), rel, {
+    message: `chore: approve ${feature.id}`,
+    extraPaths: [rel],
   });
-  return res;
 }
 
 /**
@@ -702,19 +691,14 @@ async function retryApprovalCommit(config, feature) {
   const owner = approvalOwner(feature);
   let pending;
   try {
-    pending = readFailedCommit(root, owner);
+    pending = failedCommitPending(root, owner, rel);
   } catch (e) {
-    saveFailedCommit(root, owner, { commit: [], unsure: [] });
     console.error(
       `bl approve: cannot read ${failedCommitRecord(owner)} (${e.message}); an earlier approval may be uncommitted. Check: git -C "${root}" status -- ${rel}`,
     );
     process.exit(1);
   }
-  const hash = hashPath(root, rel);
-  if (!pending.commit.some(([p, h]) => p === rel && h === hash)) {
-    saveFailedCommit(root, owner, { commit: [], unsure: [] });
-    return;
-  }
+  if (!pending) return;
   const res = await approvalCommit(config, feature);
   if (res.committed || res.error) reportBacklogCommit(res, 'bl approve');
 }

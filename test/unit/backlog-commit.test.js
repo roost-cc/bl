@@ -10,6 +10,9 @@ import {
   commitPaths,
   commitChangedSince,
   failedCommitRecord,
+  failedCommitPending,
+  hashPath,
+  saveFailedCommit,
   commandPullsBacklog,
   isGeneratedPath,
   isNonFastForwardRejection,
@@ -47,6 +50,27 @@ function g(cwd, ...args) {
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
 }
+
+test('failedCommitPending: a matching record stays, a changed file or an unreadable record removes it', () => {
+  const dir = mkTempDir('bl-bc-');
+  try {
+    const record = join(dir, failedCommitRecord('done S-1'));
+    writeFileSync(join(dir, 'x.md'), 'written\n');
+    saveFailedCommit(dir, 'done S-1', { commit: [['x.md', hashPath(dir, 'x.md')]], unsure: [] });
+    assert.equal(failedCommitPending(dir, 'done S-1', 'x.md'), true);
+    assert.ok(existsSync(record));
+
+    writeFileSync(join(dir, 'x.md'), 'edited\n');
+    assert.equal(failedCommitPending(dir, 'done S-1', 'x.md'), false);
+    assert.ok(!existsSync(record));
+
+    writeFileSync(record, 'not json');
+    assert.throws(() => failedCommitPending(dir, 'done S-1', 'x.md'));
+    assert.ok(!existsSync(record));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('parsePorcelainZ returns both sides of a rename and plain paths with spaces', () => {
   const out = ' M a b.md\0R  new.md\0old.md\0?? dir/x.md\0';

@@ -29,7 +29,8 @@ import { updateSpecFile } from './spec-file.js';
 import { summarizeLatestReviewSession } from './review-log.js';
 import { unitChange } from './change-doc.js';
 import { acquireLock, releaseLock } from './lock.js';
-import { syncAndCommit, reportBacklogCommit, exitOnSyncError } from './sync.js';
+import { commitAndRecord, reportBacklogCommit, exitOnSyncError } from './sync.js';
+import { dirtySnapshot, failedCommitPending, failedCommitRecord, hasOwnRepo } from './backlog-commit.js';
 import { loadFlow } from './flow.js';
 
 function resolveCommitHash(config, primaryRepoName, rawCommit) {
@@ -78,7 +79,8 @@ Sets the story's status; its directory stays where it is. Commits the backlog
 change (the story file and every index the sync rewrote) on the backlog's
 current branch, under the backlog lock. Other
 uncommitted edits in the backlog stay out of the commit. When the backlog is
-not a git repository, the commit is skipped.`);
+not a git repository, the commit is skipped. If the commit fails, a rerun
+commits what the failed run wrote, while the story file is unchanged.`);
     process.exit(0);
   }
 
@@ -144,7 +146,8 @@ async function doneStory(parsed, status, rawCommit, config, commitMap = null) {
   } finally {
     releaseLock(config.backlogRoot);
   }
-  const { unitRepo, componentEntry, storyEntry } = done;
+  // A rerun that commits an earlier run's write keeps the status on disk.
+  const { status: marked, unitRepo, componentEntry, storyEntry } = done;
 
   // Plugins run after the lock is released (they may call bl themselves) and
   // their output is not part of the commit.
@@ -169,7 +172,7 @@ async function doneStory(parsed, status, rawCommit, config, commitMap = null) {
     runPlugins(donePlugins, pluginVars, primaryRepoPath ?? config.backlogRoot);
   }
 
-  info(`\nDone. Story ${parsed.id} marked ${status}.`);
+  info(`\nDone. Story ${parsed.id} marked ${marked}.`);
 }
 
 async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
@@ -186,10 +189,7 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   const content = readFileSync(indexPath, 'utf8');
   const { fm } = parseFrontmatter(content);
 
-  if (flow.meets('story', fm.status, 'done')) {
-    console.error(`Story ${parsed.id} is already marked ${fm.status}.`);
-    process.exit(1);
-  }
+  if (flow.meets('story', fm.status, 'done')) return alreadyClosed(parsed, fm.status, config, found);
 
   // Only the reviewer may sign a story off: `pending` means items are open,
   // `fixed` means the implementing agent claims they're resolved but no
@@ -241,7 +241,6 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   // waits for it, so it is never lost and the totals never fall below the
   // step map. A failed write leaves the previous spec and fails `bl done`.
   let closedAs = null;
-  let written;
   try {
     updateSpecFile(config.backlogRoot, indexPath, (fm) => {
       // Re-checked on the file read in the hold.
@@ -261,29 +260,69 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
       } catch {
         // non-fatal
       }
-      written = fm;
     });
   } catch (err) {
     console.error(`bl done: could not write ${backlogRel}: ${err.message}`);
     process.exit(1);
   }
-  if (closedAs) {
-    console.error(`Story ${parsed.id} is already marked ${closedAs}.`);
-    process.exit(1);
-  }
+  if (closedAs) return alreadyClosed(parsed, closedAs, config, found);
   info(`Updated : ${backlogRel}  (status=${status}, commit=${commitForLog}, completed=${today})`);
 
+  reportBacklogCommit(await commitDone(parsed, status, config, backlogRel), 'bl done');
+  return { status, unitRepo, componentEntry, storyEntry };
+}
+
+/** The owner of a `bl done` failed-commit record (`failedCommitRecord`), one per story. */
+const doneOwner = (id) => `done ${id}`;
+
+/** Commit and push the story's directory (`commitAndRecord`) and return the result. */
+async function commitDone(parsed, status, config, backlogRel) {
   info('Syncing backlog...');
-  let res;
   try {
-    res = await syncAndCommit(config, {
+    return await commitAndRecord(config, doneOwner(parsed.id), backlogRel, {
       message: `chore: mark ${parsed.id} ${status}`,
       storyIds: [parsed.id],
     });
   } catch (err) {
     exitOnSyncError(err);
   }
-  reportBacklogCommit(res, 'bl done');
+}
 
-  return { fm: written, unitRepo, componentEntry, storyEntry };
+/**
+ * A story that is already closed (S-1347). If an earlier `bl done` failed to
+ * commit it and the file still holds what that commit tried, commit it under
+ * the status on disk and finish the run. Otherwise exit 1, and name the story
+ * file when it has uncommitted changes that no failed `bl done` recorded.
+ */
+async function alreadyClosed(parsed, closedAs, config, found) {
+  const root = config.backlogRoot;
+  const backlogRel = relative(root, found.indexPath);
+  const owner = doneOwner(parsed.id);
+  let pending;
+  try {
+    pending = failedCommitPending(root, owner, backlogRel);
+  } catch (e) {
+    console.error(
+      `bl done: cannot read ${failedCommitRecord(owner)} (${e.message}); an earlier bl done may be uncommitted. Check: git -C "${root}" status -- ${backlogRel}`,
+    );
+    process.exit(1);
+  }
+  // A retry that commits nothing (the file was committed by hand) exits 1
+  // below, as a rerun with no record does; `commitAndRecord` drops the record.
+  const res = pending && (await commitDone(parsed, closedAs, config, backlogRel));
+  if (res && (res.committed || res.error)) {
+    console.error(
+      `Story ${parsed.id} is already marked ${closedAs}; committing what an earlier bl done left uncommitted.`,
+    );
+    reportBacklogCommit(res, 'bl done');
+    const { unitRepo, componentEntry, storyEntry } = found;
+    return { status: closedAs, unitRepo, componentEntry, storyEntry };
+  }
+  console.error(`Story ${parsed.id} is already marked ${closedAs}.`);
+  if (hasOwnRepo(root) && dirtySnapshot(root)?.has(backlogRel)) {
+    console.error(
+      `${backlogRel} has uncommitted changes that no failed bl done recorded. Check: git -C "${root}" status -- ${backlogRel}`,
+    );
+  }
+  process.exit(1);
 }
