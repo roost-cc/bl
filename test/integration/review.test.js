@@ -143,6 +143,9 @@ function reviewRunner(storyPath, { status = 'pending' } = {}) {
   return {
     ...real,
     sessions,
+    // The sessions are simulated, so the workstation's real Codex quota
+    // (defaultRunner asks `codex app-server`) must not decide whether they spawn.
+    capacity: () => ({ state: 'available', scope: 'account', until: null, message: '' }),
     session(o) {
       sessions.push({ prompt: o.promptName, agent: o.agent, mode: o.mode, worktreePath: o.worktreePath, vars: o.vars });
       if (o.promptName === 'review-verify') {

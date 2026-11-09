@@ -111,6 +111,9 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
     log() {},
     notify() {},
     listContainers: () => null,
+    // The sessions are simulated, so the workstation's real Codex quota
+    // (defaultRunner asks `codex app-server`) must not decide whether they spawn.
+    capacity: () => ({ state: 'available', scope: 'account', until: null, message: '' }),
     testPlugins: () => ({ plugins: [{ name: 'check', command: 'git status --porcelain' }], unknown: [] }),
     shell(cmd, cwd, o) {
       calls.push({ type: 'shell', cmd, cwd });
