@@ -335,14 +335,36 @@ function refineBatch(targets, config) {
     },
     `chore: refine ${targets.map((t) => t.id).join(', ')}`,
     targets.map((t) => t.id),
-    ({ stories }) => {
-      for (const t of targets) {
-        const entry = stories[t.id] ?? { refined: false, reason: 'the outcome has no entry for it' };
-        const unit = { id: t.id, indexPath: t.found.indexPath };
-        applyRefineStatus(backlogRoot, unit, entry.refined ? 'refined' : null, entry.reason);
-      }
-    },
+    ({ stories }) => applyBatchStatuses(backlogRoot, targets, stories),
   );
+}
+
+/**
+ * Apply a batch refine's outcome to every story. A story whose status write
+ * fails does not stop the others: bl tries each one, then throws one error
+ * that names the stories set and each story not set.
+ * @param {string} backlogRoot
+ * @param {Array<{ id: string, found: { indexPath: string } }>} targets
+ * @param {Record<string, { refined: boolean, reason?: string }>} stories
+ */
+export function applyBatchStatuses(backlogRoot, targets, stories) {
+  const set = [];
+  const failed = [];
+  for (const t of targets) {
+    const entry = stories[t.id] ?? { refined: false, reason: 'the outcome has no entry for it' };
+    const unit = { id: t.id, indexPath: t.found.indexPath };
+    try {
+      applyRefineStatus(backlogRoot, unit, entry.refined ? 'refined' : null, entry.reason);
+      if (entry.refined) set.push(t.id);
+    } catch (e) {
+      failed.push(e.message);
+    }
+  }
+  if (failed.length > 0) {
+    throw new Error(
+      `status set for: ${set.join(', ') || 'none'}; not set for:\n` + failed.map((m) => `  ${m}`).join('\n'),
+    );
+  }
 }
 
 export async function main(argv) {
