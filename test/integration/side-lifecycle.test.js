@@ -109,6 +109,9 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
   const runner = {
     ...real,
     log() {},
+    // A fixed reading: the real one asks the operator's agent account, so a
+    // used-up quota would escalate the run before any session starts.
+    capacity: () => ({ state: 'available', scope: 'account', until: null, windows: [], message: '' }),
     notify() {},
     listContainers: () => null,
     testPlugins: () => ({ plugins: [{ name: 'check', command: 'git status --porcelain' }], unknown: [] }),
