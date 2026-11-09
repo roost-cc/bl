@@ -2474,8 +2474,14 @@ command (`reviewEnd`, `src/feature-run.js`, S-1348). No line shows a raw
   If the session still has an open Must fix or Should fix box, the line is
   `review_status: addressed, but the latest Review Log session has <k> open Must fix/Should fix item(s)`.
 - Any other value: `Review round <n> done: no verdict recorded (review_status: <value>).`
-  (`unset` when empty), with no `Next:` line. Escalated:
-  `Review round <n>: escalated.`
+  (`unset` when empty), with no `Next:` line. A `review_round` that is not a
+  number gives `no verdict recorded (review_round: <value>)`, also with no
+  `Next:` line. Escalated: `Review round <n>: escalated.`
+- A round that did not finish (an error and no escalation, for example a
+  verifier that failed or left `review_round` unchanged):
+  `The review round did not finish.`, then the error line, with no `done`
+  line and no `Next:` line. The change document is as the failed step left
+  it, so `bl review` builds no outcome from it.
 
 The second line is `Next: <command>`:
 
