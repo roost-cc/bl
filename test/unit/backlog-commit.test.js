@@ -1193,10 +1193,10 @@ const INDEX_CLASSES = [
   },
 ];
 
-test('pullBacklog_recovery_rejects_changed_index_state', () => {
-  // Every conflict phase × every index class: the pull that does not go
-  // through gives the index back exactly, or it is not reported safe.
-  for (const c of PULL_RECOVERY_CASES) {
+// Every conflict phase × every index class: the pull that does not go
+// through gives the index back exactly, or it is not reported safe.
+for (const c of PULL_RECOVERY_CASES) {
+  test(`pullBacklog_recovery_rejects_changed_index_state: ${c.name}`, () => {
     for (const ix of INDEX_CLASSES) {
       const name = `${c.name}, ${ix.name}`;
       const { tmp, alice } = setUpPull(c);
@@ -1210,7 +1210,10 @@ test('pullBacklog_recovery_rejects_changed_index_state', () => {
         rmSync(tmp, { recursive: true, force: true });
       }
     }
-  }
+  });
+}
+
+test('pullBacklog_recovery_rejects_changed_index_state: index not written back', () => {
   // When the index cannot be written back, the changed staging is caught.
   const c = PULL_RECOVERY_CASES.find((k) => k.name === 'hand-written conflict, dirty tree');
   for (const ix of INDEX_CLASSES.filter((k) => k.lost)) {
