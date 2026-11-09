@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { readdirSync, readFileSync, writeFileSync } from 'fs';
+import fs, { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
 import { join } from 'path';
 import { agentFlagOf, configForRepo, loadConfig, sameConfiguration, independentReviewers } from '../../src/config.js';
@@ -567,4 +567,26 @@ test('init_rejected_agent_flags_leave_backlog_json_unchanged: bl init refuses a 
       }
     }
   }
+  // An existing backlog whose repo's overrides set `local`: the loader checks
+  // -A against each repo's overrides too, so bl init refuses it before it writes.
+  const root = mkTempDir('bl-init-refuse-');
+  const dir = join(root, 'backlog');
+  mkdirSync(dir);
+  mkdirSync(join(root, 'demo-repo'));
+  const path = join(dir, 'backlog.json');
+  const repo = { path: '../demo-repo', deployable: false, update_tests: [], overrides: { local: LOCAL_KEY } };
+  const content = {
+    repos: { demo: repo },
+    worktrees: '../worktrees',
+    local: { ...LOCAL_KEY },
+    agent: [{ agent: 'claude' }],
+    review_agent: [{ agent: 'codex' }],
+  };
+  const text = JSON.stringify(content);
+  writeFileSync(path, text);
+  const overridden = /-A local: a repo's "overrides" set "local"/;
+  assert.throws(() => ensureReposBlock(dir, 'local', 'qwen3.8-27b'), overridden, 'repo overrides');
+  assert.equal(readFileSync(path, 'utf8'), text, 'repo overrides: backlog.json is unchanged');
+  writeFileSync(path, JSON.stringify({ ...content, effort: { refine: 'high', review: 'high', default: 'high' } }));
+  assert.throws(() => loadConfig({ backlogRoot: dir, agent: 'local', model: 'qwen3.8-27b' }), overridden, 'loadConfig');
 });

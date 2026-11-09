@@ -618,14 +618,21 @@ function requireAgentForModel({ agent, model }) {
 /**
  * -A and --model as `loadConfig` checks them, against `backlog.json`'s top
  * level `topLevel`: --model needs -A, and -A's configuration must pass
- * `flagConfiguration`. Throws the loader's message. `bl init` calls it before
- * it writes `backlog.json`, so a flag that the loader refuses writes nothing.
+ * `flagConfiguration` for the top level and for each repo's `overrides`
+ * merged over it. Throws the loader's message. `bl init` calls it before it
+ * writes `backlog.json`, so a flag that the loader refuses writes nothing.
  * @param {{ agent?: string|null, model?: string|true|null }} flag
  * @param {object} topLevel
  */
 export function checkAgentFlag({ agent = null, model = null }, topLevel) {
   requireAgentForModel({ agent, model });
-  if (agent != null) flagConfiguration({ agent, model }, { topLevel, raw: topLevel });
+  if (agent == null) return;
+  flagConfiguration({ agent, model }, { topLevel, raw: topLevel });
+  for (const def of Object.values(isPlainObject(topLevel.repos) ? topLevel.repos : {})) {
+    if (isPlainObject(def?.overrides)) {
+      flagConfiguration({ agent, model }, { topLevel, raw: mergeConfig(topLevel, def.overrides) });
+    }
+  }
 }
 
 /** Throw the adapter's checkConfiguration reason after `at`, if it gives one. */
