@@ -3950,6 +3950,9 @@ test/
     token-writer.js    # startTokenWriter() — a node child holding a spec lock (unit lock tests)
     sample-backlog.js  # 2-component / 4-story chain used by graph tests
     tempdir.sh     # bash equivalent for cli/ + e2e/
+    run-parallel.sh    # run_parallel: runs test commands at the same time, prints
+                       # each output whole in order (npm test, cli/ + e2e/ run-all.sh)
+    <name>-fixture.js  # the fixtures that the parts of a split test file share
   unit/            # node --test, pure functions, in-process
   integration/     # node --test, spawns bl against a tempdir backlog
   cli/             # bash, asserts stdout/stderr/exit-code contracts
@@ -3959,7 +3962,7 @@ test/
 Run:
 
 ```bash
-npm test            # unit + integration + cli   (under 30s on a laptop)
+npm test            # unit + integration + cli, at the same time (about 30 s)
 npm run test:unit
 npm run test:integration
 npm run test:cli
@@ -3987,7 +3990,13 @@ Adding a test:
   against it. Assert filesystem effects, frontmatter, and exit codes.
 - **cli** — write `test/cli/<topic>.sh`. Source `helpers/tempdir.sh`,
   call `mk_temp_backlog`, then drive `"$BL"` with the assert\_\* helpers.
-  `cli/run-all.sh` picks it up automatically.
+  `cli/run-all.sh` picks it up automatically and runs it at the same time
+  as the other scripts, so it uses only its own `mktemp` paths.
+- **file time** — no file in `unit/` or `integration/` takes more than 15 s
+  alone (`node --test <file>`): `node --test` runs the tests of one file in
+  order, so the longest file sets the suite's time. Split a longer file
+  `<name>.test.js` into `<name>-<group>.test.js` files, with their shared
+  fixtures in `test/helpers/<name>-fixture.js` (F-99 D2).
 - **e2e** — write `test/e2e/<scenario>.sh`. `git init` your own tempdirs
   for the code repos and a bare origin if cleanup paths are exercised;
   set `BL_BACKLOG_DIR` to the backlog tempdir.
