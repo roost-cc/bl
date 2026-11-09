@@ -6,6 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadConfig } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
@@ -14,7 +15,7 @@ import { mkTempBacklog } from '../helpers/tempdir.js';
 
 const MUST_LOG = '### Session 2026-11-09 (PR #4)\n\n**Must fix**\n\n- [ ] one\n';
 
-function reviewedLine(story, code = 0) {
+function reviewedLine(story, code = 0, mutate = null) {
   // The change document's one repos: entry carries the PR the line names.
   story = { primary_repo: 'demo-repo', pr: '4', ...story };
   const { dir, cleanup } = mkTempBacklog({
@@ -25,6 +26,7 @@ function reviewedLine(story, code = 0) {
   try {
     const config = loadConfig({ backlogRoot: dir });
     const record = readAllStories(config).find((s) => s.id === 'S-1');
+    if (mutate) mutate(record);
     const target = { kind: 'story', id: 'S-1', record };
     return outcomeLine('review', { target, code, outPath: join(dir, '.bl', 'run', 'S-1.out') }, config);
   } finally {
@@ -66,6 +68,25 @@ test('outcomeLine: a review_status that is no verdict shows its field name and n
       line: `S-1: reviewed, round 1 done: no verdict recorded (review_status: ${shown}), PR #4`,
       ok: true,
     });
+  }
+});
+
+test('outcomeLine: a review child whose story file cannot be read still gets a line', () => {
+  // Every read in outcomeLine is guarded: a story file that is gone or does
+  // not parse leaves a line, never a throw that loses the other children's.
+  const cases = [
+    ['index.md unreadable after child', (rec) => writeFileSync(rec.indexPath, '---\n: bad: [\n---\n')],
+    ['index.md deleted', (rec) => rmSync(rec.indexPath)],
+  ];
+  for (const [name, mutate] of cases) {
+    assert.deepEqual(
+      reviewedLine({ review_round: 1, review_status: 'pending', reviewLog: MUST_LOG }, 0, mutate),
+      { line: 'S-1: reviewed, round 1 done: 1 open item (1 Must fix), PR #4', ok: true },
+      `${name}, exit 0`,
+    );
+    const { line, ok } = reviewedLine({ review_round: 1, review_status: 'pending', reviewLog: MUST_LOG }, 1, mutate);
+    assert.equal(ok, false, `${name}, exit 1`);
+    assert.match(line, /^S-1: failed \(exit 1\), PR #4 — see /, `${name}, exit 1`);
   }
 });
 

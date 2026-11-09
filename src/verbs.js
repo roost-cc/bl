@@ -536,7 +536,12 @@ export function outcomeLine(verb, { target, code, outPath, error = null }, confi
     if (verb === 'review') {
       // The unit's cap and path only: a feature record's change fields were
       // read before the child ran.
-      const unit = target.kind === 'feature' ? featureUnit(target.record) : storyUnit(target.record, config);
+      let unit = null;
+      try {
+        unit = target.kind === 'feature' ? featureUnit(target.record) : storyUnit(target.record, config);
+      } catch {
+        // an unreadable story file leaves the line without a next command
+      }
       let state = null;
       try {
         state = loadRunState(config, id);
@@ -545,21 +550,27 @@ export function outcomeLine(verb, { target, code, outPath, error = null }, confi
       }
       const end = reviewEnd({
         id,
-        unitRelPath: unit.featureRelPath,
-        maxRounds: unit.reviewRoundsMax,
+        unitRelPath: unit?.featureRelPath,
+        maxRounds: unit?.reviewRoundsMax,
         fm,
         body: change?.body ?? '',
         state,
         escalated: false,
       });
       return {
-        line: `${id}: reviewed, round ${fm.review_round ?? '?'} done: ${end.outcome}${pr}${end.next ? ` — next: ${end.next}` : ''}`,
+        line: `${id}: reviewed, round ${fm.review_round ?? '?'} done: ${end.outcome}${pr}${unit && end.next ? ` — next: ${end.next}` : ''}`,
         ok: true,
       };
     }
     return { line: `${id}: clean${pr} — next: bl merge ${id}`, ok: true };
   }
-  if (escalationOpen(target.record.indexPath)) {
+  let escalated = false;
+  try {
+    escalated = escalationOpen(target.record.indexPath);
+  } catch {
+    // an unreadable story file reads as not escalated: the line says failed
+  }
+  if (escalated) {
     return { line: `${id}: escalated${pr} — next: answer its ## Escalation (bl status ${id})`, ok: false };
   }
   return { line: `${id}: failed (${error ?? `exit ${code}`})${pr} — see ${out}`, ok: false };
