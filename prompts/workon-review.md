@@ -42,13 +42,8 @@ Backlog repo : {{backlogDir}}
 4. Check that all tests pass and that all files are formatted. Format the changed files with the
    formatter for their extension. The **Format and lint** section below gives the exact command.
 
-5. When every item in the latest session is checked off, set `review_status: fixed` in the YAML
-   frontmatter of the change document. Do NOT set `review_status: addressed`. That is the
-   reviewer's sign-off, which only a `bl review` session writes after it checks your fixes.
-   `fixed` means "claimed resolved, awaiting re-review".
-
-6. Commit the change-document edits **once** in the backlog repo. Do it after you check off the
-   final item and set `review_status: fixed`. Follow **Backlog commits** below with
+5. Commit the change-document edits **once** in the backlog repo. Do it after you check off the
+   final item. Follow **Backlog commits** below with
    `--story {{storyId}}` (it stages the story's directory, change document included) and this
    message:
 
@@ -59,15 +54,21 @@ Backlog repo : {{backlogDir}}
    `<YYYY-MM-DD>` is the date of the session you just addressed. In this worktree, code commits
    stay one per fix, as usual.
 
-7. Push your code changes:
+6. Push your code changes:
 
    ```
    git push origin {{branchName}}
    ```
 
-8. If all acceptance criteria are now met too, mark them done in the story file. Do not run
+7. If all acceptance criteria are now met too, mark them done in the story file. Do not run
    `bl done`: the reviewer or the cleanup agent does that. `bl done` and `bl merge` refuse until a
-   re-review sets `review_status: addressed`.
+   re-review signs the change off.
+
+## Outcome
+
+{{outcomeDelivery}}
+
+{{fixOutcome}}
 
 {{validateBeforeSync}}
 
@@ -85,4 +86,4 @@ Backlog repo : {{backlogDir}}
 - Commit the story file with `bl sync --commit`, never with `git` in the backlog repo. The
   backlog is a separate repo from this worktree.
 - Avoid `$(...)` command substitution inside env-var assignments.
-- At the very end, output the PR URL as the final line of your response.
+- End with the outcome object that **Outcome** above describes.

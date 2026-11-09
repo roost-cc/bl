@@ -13,6 +13,7 @@ import { loadHookDenyMessage } from '../tool-guide.js';
 import { checkModel } from '../config.js';
 import { checkEffort } from '../effort.js';
 import { checkLocalConfiguration, localServerCapacity, localSpawnEnv } from './local.js';
+import { outcomeFor } from '../outcome.js';
 
 // Resolve Claude Code's config directory the same way the CLI does: honour
 // `CLAUDE_CONFIG_DIR` when set, else fall back to `~/.claude`. Hardcoding
@@ -113,7 +114,8 @@ export function claudeScopeRules({ read = [], write = [] } = {}) {
  * `review_agent` entry) becomes
  * `--model`, which outranks an `ANTHROPIC_MODEL` in the environment.
  * `effort` (an effort level, F-85 D3) becomes `--effort`; null passes none,
- * so the CLI uses its own setting.
+ * so the CLI uses its own setting. A headless `schema` (F-68 D1) becomes
+ * `--json-schema`, and the result's `structured_output` holds the object.
  */
 export function buildClaudeArgs({
   name,
@@ -126,14 +128,26 @@ export function buildClaudeArgs({
   headless = false,
   model = null,
   effort = null,
+  schema = null,
 } = {}) {
   const claudeArgs = [...args];
   if (headless) {
     // Print mode: run the prompt to completion and emit one JSON result on
-    // stdout. No session name or resume — every headless step is a fresh
-    // context by design (see feature-run.js). Tools outside the allowlist are
-    // denied instead of prompted, which is what makes the loop unattended.
+    // stdout. No session name: every headless step is a fresh context by
+    // design (see feature-run.js); the one resume is the loop's outcome retry
+    // (F-68 D5), which passes the session id the first result carried. Tools
+    // outside the allowlist are denied instead of prompted, which is what
+    // makes the loop unattended.
     claudeArgs.push('-p', '--output-format', 'json');
+    if (sessionId) claudeArgs.push('--resume', sessionId);
+    // Claude Code's --json-schema check does not know draft 2020-12 and
+    // rejects a schema whose `$schema` names it, before the session starts
+    // (T-60). bl's own check (outcome.js) keeps the draft; claude gets the
+    // schema without the `$schema` line. No schema uses a 2020-12-only keyword.
+    if (schema) {
+      const { $schema: _draft, ...forClaude } = schema;
+      claudeArgs.push('--json-schema', JSON.stringify(forClaude));
+    }
     // acceptEdits: file writes inside the granted write roots (`--add-dir`: the
     // worktree and the backlog, including the run's `.bl/run/*.scratch` dirs)
     // are approved without a prompt. Without it, print mode denies every shell
@@ -243,13 +257,17 @@ function resetTime([, weekday, hh, mm, ampm, zone], now) {
  * events, last `type: "result"`). Never throws. `denials` lists the tools
  * the permission layer refused (`Bash(touch x)`): a denial is not a session
  * error, so this is the only place it surfaces. `refusal` is the usage-limit
- * refusal the text carries (see `parseLimit`), or null.
+ * refusal the text carries (see `parseLimit`), or null. With a `schema`
+ * (F-68 D1), `structured` is the result's `structured_output` validated
+ * against it, or null with the fault in `structuredError`; without one, both
+ * are null.
  *
  * @returns {{ output: string, isError: boolean, usage: object|null,
  *             sessionId: string|null, costUsd: number|null, denials: string[],
- *             refusal: object|null, parsed: boolean }}
+ *             refusal: object|null, parsed: boolean,
+ *             structured: object|null, structuredError: string|null }}
  */
-export function parseClaudeJsonResult(stdout) {
+export function parseClaudeJsonResult(stdout, schema = null) {
   const text = String(stdout ?? '').trim();
   let obj = null;
   try {
@@ -280,6 +298,7 @@ export function parseClaudeJsonResult(stdout) {
       denials: [],
       refusal: parseLimit(text),
       parsed: false,
+      ...outcomeFor(schema, null),
     };
   }
   const u = obj.usage && typeof obj.usage === 'object' ? obj.usage : null;
@@ -301,6 +320,7 @@ export function parseClaudeJsonResult(stdout) {
     denials: Array.isArray(obj.permission_denials) ? obj.permission_denials.map(formatDenial) : [],
     refusal: parseLimit(output),
     parsed: true,
+    ...outcomeFor(schema, obj.structured_output),
   };
 }
 
@@ -582,6 +602,7 @@ export class ClaudeProvider extends AgentProvider {
     effort = null,
     backlogRoot = null,
     topLevel = null,
+    schema = null,
     run = spawnSync,
   }) {
     const env = this.spawnEnv({ headless, backlogRoot, model, topLevel });
@@ -598,6 +619,7 @@ export class ClaudeProvider extends AgentProvider {
       headless,
       model,
       effort,
+      schema,
     });
 
     if (headless) {
@@ -611,7 +633,7 @@ export class ClaudeProvider extends AgentProvider {
         maxBuffer: 256 * 1024 * 1024,
       });
       if (r.error) return r;
-      return { ...r, ...parseClaudeJsonResult(r.stdout) };
+      return { ...r, ...parseClaudeJsonResult(r.stdout, schema) };
     }
 
     return run('claude', claudeArgs, {

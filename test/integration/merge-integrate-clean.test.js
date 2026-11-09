@@ -9,9 +9,9 @@ import { storyUnit } from '../../src/unit.js';
 import { mergePrep } from '../../src/merge-integrate.js';
 import { integrateUnit, acquireRunLock, runLockPath } from '../../src/feature-run.js';
 import {
-  REFUSED,
   RESOLVED,
   REVIEW_SESSIONS,
+  UNRESOLVED,
   escalation,
   featureCtx,
   featureFile,
@@ -104,7 +104,7 @@ test('a red gate after a clean merge reaches the resolution agent; its failure e
     const { config, unit, prep } = featureCtx(fx);
     const head = g(fx.wts['f1-feat'], 'rev-parse', 'HEAD');
     const pushed = g(fx.repo, 'rev-parse', 'origin/f1-feat');
-    const { runner, calls } = scriptedRunner({ test: 'echo boom; false', resolve: () => REFUSED });
+    const { runner, calls } = scriptedRunner({ test: 'echo boom; false', resolve: () => UNRESOLVED });
     const res = integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
@@ -125,7 +125,8 @@ test('a red gate after a clean merge reaches the resolution agent; its failure e
       /^merge with main: the test gate failed after merging main into code, and the resolution agent did not resolve it/,
     );
     assert.match(esc, /Command: `echo boom; false`/);
-    assert.match(esc, /- the session failed: no agent in this test/);
+    assert.match(esc, /- the agent did not resolve it: no agent in this test/);
+    assert.match(esc, /The agent's outcome: could not resolve/);
     assert.match(esc, /rerun `bl merge F-1`/);
     assert.equal(parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm.status, 'escalated');
   } finally {

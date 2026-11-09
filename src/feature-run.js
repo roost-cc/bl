@@ -68,7 +68,7 @@ import {
   orderStoriesByDeps,
   outsideBlockers,
 } from './feature.js';
-import { runHeadlessSession, launchSession, loadPrompt } from './session.js';
+import { runHeadlessSession, launchSession, loadPrompt, loadSchema } from './session.js';
 import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
@@ -101,7 +101,9 @@ import {
   currentChange,
   ensureChange,
   readChange,
+  REVIEW_FIELDS,
   setRepo,
+  setReviewFields,
   updateChange,
   writeChange,
 } from './change-doc.js';
@@ -530,11 +532,19 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       model = undefined,
       effort = null,
       scope = null,
+      schema = null,
+      retry = null,
     }) {
-      const base = loadPrompt(promptName, vars, { agent, config });
-      const prompt = extraPrompt ? `${base}\n\n## Additional instructions from the operator\n\n${extraPrompt}\n` : base;
+      // An interactive session returns its outcome in the outcome file (F-68 D1).
+      const promptVars = interactive && schema ? { ...vars, outcomeCarrier: 'file' } : vars;
+      const base = loadPrompt(promptName, promptVars, { agent, config });
+      let prompt = extraPrompt ? `${base}\n\n## Additional instructions from the operator\n\n${extraPrompt}\n` : base;
+      // The outcome retry (F-68 D5): a resumed headless session hears only the
+      // note; any other session gets the whole prompt with the note after it.
+      const resume = !interactive && retry?.sessionId ? retry.sessionId : null;
+      if (retry) prompt = resume ? retry.note : `${prompt}\n\n${retry.note}\n`;
       if (interactive) {
-        const status = launchSession({
+        const ret = launchSession({
           mode,
           parsed,
           title: label,
@@ -555,9 +565,20 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
           tokensIndexPath: usageIndexPath,
           model,
           effort,
+          schema,
         });
-        // launchSession returns exitStatus of the agent: a kill is nonzero.
-        return { ok: status === 0, output: '', isError: status !== 0, usage: null, refusal: null };
+        // launchSession returns exitStatus of the agent (a kill is nonzero),
+        // with the outcome beside it when the step has a schema.
+        const { status, structured = null, structuredError = null } = schema ? ret : { status: ret };
+        return {
+          ok: status === 0,
+          output: '',
+          isError: status !== 0,
+          usage: null,
+          refusal: null,
+          structured,
+          structuredError,
+        };
       }
       const r = runHeadlessSession({
         mode,
@@ -575,6 +596,8 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         logCommand: `feature ${mode}`,
         model,
         effort,
+        schema,
+        sessionId: resume,
         // The agent and all it starts live in the step's scope (F-70 D4).
         run: scope ? processScope.scopedSpawn(scope) : undefined,
       });
@@ -586,6 +609,9 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         error: r.error,
         denials: r.denials ?? [],
         refusal: r.refusal ?? null,
+        sessionId: r.sessionId ?? null,
+        structured: r.structured ?? null,
+        structuredError: r.structuredError ?? null,
       };
     },
     /** `scope`: run `cmd` as `sh -c <cmd>` inside that user systemd scope (F-70 D4). */
@@ -940,6 +966,9 @@ export class ProcessCleanupError extends RunStoppedError {}
 /** The agent refused for a usage limit the loop could not wait out. */
 export class AgentUnavailableError extends RunStoppedError {}
 
+/** A step's session returned no valid outcome, retried once (F-68 D5). */
+export class OutcomeError extends RunStoppedError {}
+
 /** Remove what `label` left behind; returns why it could not, or null. Never throws. */
 function removeFreshContainers(ctx, label, before) {
   const { runner } = ctx;
@@ -1184,77 +1213,40 @@ export function shellMerged(cmd, cwd, { scope = null } = {}) {
 }
 
 /**
- * The last non-blank line of an agent's output, trimmed: the line the loop
- * prompts reserve for the verdict (DONE S-1, FIXED, UNRELATED: …).
- */
-export function lastLine(output) {
-  return (
-    String(output ?? '')
-      .split('\n')
-      .filter((l) => l.trim())
-      .pop() ?? ''
-  ).trim();
-}
-
-/**
- * The reason of a fix-tests session that ended `UNRELATED: <reason>`, or null.
- * Only the last non-blank line counts, and a reason is required. Markdown
- * emphasis around the keyword (`**UNRELATED:**`, a backtick span) is ignored.
- */
-export function unrelatedReason(output) {
-  return verdictReason(output, 'UNRELATED');
-}
-
-/**
- * The reason of a fix-tests session that ended `RERUN: <reason>` (a failure
- * that would not reproduce after a real attempt), or null. Same parsing as
- * `unrelatedReason`.
- */
-export function rerunReason(output) {
-  return verdictReason(output, 'RERUN');
-}
-
-function verdictReason(output, keyword) {
-  const line = lastLine(output)
-    .replace(/^[`*_]+/, '')
-    .replace(/[`*_]+$/, '');
-  const m = line.match(new RegExp(`^${keyword}:[\`*_]*\\s*(.+)$`));
-  return m && m[1].trim() ? m[1].trim() : null;
-}
-
-/**
- * Whether an `UNRELATED` reason describes a flaky failure: flaky,
- * intermittent, a timeout, or "not caused by" this branch. Those are bugs to
- * fix, not reasons to stop (F-22 escalated a page-load timeout that had
- * failed 2 of its 4 gate runs), so the loop sends the session back once.
+ * Whether the reason of an `unrelated` fix-tests outcome describes a flaky
+ * failure: flaky, intermittent, a timeout, or "not caused by" this branch.
+ * Those are bugs to fix, not reasons to stop (F-22 escalated a page-load
+ * timeout that had failed 2 of its 4 gate runs), so the loop sends the session
+ * back once.
  */
 export function looksFlaky(reason) {
   return /flak|intermittent|time[sd]?[ -]?out|not caused by/i.test(String(reason ?? ''));
 }
 
-/** The note a fix-tests session gets when its flaky `UNRELATED` is refused. */
+/** The note a fix-tests session gets when its flaky `unrelated` outcome is refused. */
 export function flakyPushbackNote(reason) {
   return [
     '',
     '## Your previous session was sent back',
     '',
-    `A fix-tests session on this failure ended \`UNRELATED: ${reason}\`. A flaky, intermittent or`,
-    'timing failure, or one this branch did not cause, is a bug to fix, not a reason to stop. Find its',
-    'cause and fix it in its own commit with an ad-hoc story (rule 4 and **Blocked by a bug**), or end',
-    '`RERUN: <what you tried>` if it truly will not reproduce. A second `UNRELATED` escalates.',
+    `A fix-tests session on this failure returned \`unrelated\` with the reason "${reason}". A flaky,`,
+    'intermittent or timing failure, or one this branch did not cause, is a bug to fix, not a reason to',
+    'stop. Find its cause and fix it in its own commit with an ad-hoc story (rule 4 and **Blocked by a',
+    'bug**), or return `rerun` with what you tried if it truly will not reproduce. A second `unrelated`',
+    'escalates.',
     '',
   ].join('\n');
 }
 
-/** The note a fix-tests session gets when the gate failed again after `RERUN`. */
+/** The note a fix-tests session gets when the gate failed again after a `rerun` outcome. */
 export function rerunFailedNote(reason) {
   return [
     '',
     '## The failure reproduced',
     '',
-    `The previous fix-tests session ended \`RERUN: ${reason}\`, and the gate was rerun and failed`,
-    'again (the excerpt below is from that run). It reproduces: find its cause and fix it. `RERUN`',
-    'is not available again for this failure.',
+    `The previous fix-tests session returned \`rerun\` with the reason "${reason}", and the gate was`,
+    'rerun and failed again (the excerpt below is from that run). It reproduces: find its cause and fix',
+    'it. `rerun` is not available again for this failure.',
     '',
   ].join('\n');
 }
@@ -1496,8 +1488,19 @@ function readCapacity(runner, c, asked, topLevel) {
  * `vars` may be a function of the configuration about to spawn (the
  * verifier names itself among the reviewers). The result carries
  * `configuration`, the `{ agent, model }` that ran it.
+ *
+ * With `schema` (F-68 D1, D5), the step's outcome is the result's
+ * `structured`, and its history entry says `outcome: <summary>`. A session
+ * that returns `structured: null` is recorded as a failed event with its
+ * `structuredError`, and the same session is resumed once with
+ * `OUTCOME_RETRY_NOTE` (a session with no id to resume starts again with the
+ * note after its prompt). A second failure escalates with the text's last 20
+ * lines and throws an OutcomeError. Nothing reads an outcome from the text.
  */
-function runSession(ctx, { step, mode, role = 'implement', story = null, promptName, vars, label }) {
+export function runSession(
+  ctx,
+  { step, mode, role = 'implement', story = null, promptName, vars, label, schema = null },
+) {
   const { runner, prep, config, feature } = ctx;
   const unitDir = prepUnitDir(prep);
   // Picked once, before the walk, so every configuration it walks to runs at
@@ -1510,6 +1513,80 @@ function runSession(ctx, { step, mode, role = 'implement', story = null, promptN
       .filter((s) => story == null || s.id === story)
       .map((s) => withCurrentEffort(config.backlogRoot, s)),
   });
+  // One spawn of configuration `c`, recorded in the history; null when it was
+  // a refusal, which puts `c` on the out-list instead. `retry` is the outcome
+  // retry's `{ sessionId, note }` (F-68 D5).
+  const spawnRecorded = (c, retry) => {
+    const started = new Date().toISOString();
+    const r = runner.session({
+      mode,
+      agent: c.agent,
+      promptName,
+      vars: {
+        ...prep.baseVars,
+        unitDir,
+        changeAbsPath: changeFile(ctx),
+        changeRelPath: changeRelPath(ctx),
+        ...(typeof vars === 'function' ? vars(c) : vars),
+      },
+      worktreePath: prep.worktreePath,
+      unitDir,
+      config: prep.cfg ?? config,
+      parsed: prep.parsed,
+      label,
+      usageIndexPath: feature.indexPath,
+      tokensStep: tokensStepKey(step, ctx.state.round),
+      model: c.model ?? null,
+      effort,
+      scope: newScope(ctx),
+      ...(schema ? { schema } : {}),
+      ...(retry ? { retry } : {}),
+    });
+    // Usage first, on every spawn: the provider has already added it to the
+    // unit file, and the run state must agree even when the spawn was a
+    // refusal (marked out, waited out or escalated, all of which save it).
+    if (r?.usage) {
+      for (const k of Object.keys(ctx.state.usage)) ctx.state.usage[k] += r.usage[k] ?? 0;
+    }
+    if (r?.refusal && r.isError) {
+      const reset = r.refusal.resetsAt == null ? NaN : new Date(r.refusal.resetsAt).getTime();
+      markOut(ctx, {
+        step,
+        configuration: c,
+        kind: r.refusal.kind,
+        scope: r.refusal.scope,
+        message: r.refusal.message,
+        until: Number.isFinite(reset) ? reset + LIMIT_WAIT_MARGIN_MS : null,
+      });
+      return null;
+    }
+    // A denied tool does not fail the session (the agent sees a tool error and
+    // carries on), but the operator must see it in `bl status`.
+    const denials = Array.isArray(r.denials) ? r.denials : [];
+    // A step with a schema says what its outcome was, or why it has none
+    // (F-68 D1, D4); `outcome` keeps the summary for `bl status`. A step
+    // without one (a review dimension pass) says nothing: its text is no verdict.
+    const noOutcome = Boolean(schema) && r.structured == null;
+    const outcome = schema && !noOutcome ? String(r.structured.summary).slice(0, 160) : null;
+    const notes = [
+      r.error ?? (r.isError ? 'agent reported an error' : ''),
+      denials.length ? `denied: ${denials.join('; ')}` : '',
+      noOutcome ? `outcome error: ${outcomeFault(r)}` : outcome != null ? `outcome: ${outcome}` : '',
+    ];
+    record(ctx, {
+      step,
+      ...(story ? { story } : {}),
+      promptName,
+      startedAt: started,
+      agent: c.agent,
+      model: c.model ?? null,
+      effort,
+      ok: r.ok && denials.length === 0 && !noOutcome,
+      ...(outcome != null ? { outcome } : {}),
+      note: notes.filter(Boolean).join(' — '),
+    });
+    return { ...r, configuration: { agent: c.agent, model: c.model ?? null } };
+  };
   // The session is recorded before its containers are cleaned, so a failed
   // cleanup cannot hide what the session did. A headless session runs in a
   // user systemd scope stopped afterwards (F-70 D4); an interactive one is
@@ -1558,74 +1635,57 @@ function runSession(ctx, { step, mode, role = 'implement', story = null, promptN
               continue;
             }
           }
-          const started = new Date().toISOString();
-          const r = runner.session({
-            mode,
-            agent: c.agent,
-            promptName,
-            vars: {
-              ...prep.baseVars,
-              unitDir,
-              changeAbsPath: changeFile(ctx),
-              changeRelPath: changeRelPath(ctx),
-              ...(typeof vars === 'function' ? vars(c) : vars),
-            },
-            worktreePath: prep.worktreePath,
-            unitDir,
-            config: prep.cfg ?? config,
-            parsed: prep.parsed,
-            label,
-            usageIndexPath: feature.indexPath,
-            tokensStep: tokensStepKey(step, ctx.state.round),
-            model: c.model ?? null,
-            effort,
-            scope: newScope(ctx),
-          });
-          // Usage first, on every spawn: the provider has already added it to the
-          // unit file, and the run state must agree even when the spawn was a
-          // refusal (marked out, waited out or escalated, all of which save it).
-          if (r?.usage) {
-            for (const k of Object.keys(ctx.state.usage)) ctx.state.usage[k] += r.usage[k] ?? 0;
+          let r = spawnRecorded(c, null);
+          if (!r) continue;
+          // No valid outcome: the same session once more with the note (F-68 D5).
+          if (schema && r.structured == null) {
+            runner.log(`  ${step}: no valid outcome (${outcomeFault(r)}); resuming the session once`);
+            r = spawnRecorded(c, { sessionId: r.sessionId ?? null, note: OUTCOME_RETRY_NOTE });
+            if (!r) continue;
+            if (r.structured == null) escalateNoOutcome(ctx, step, r);
           }
-          if (r?.refusal && r.isError) {
-            const reset = r.refusal.resetsAt == null ? NaN : new Date(r.refusal.resetsAt).getTime();
-            markOut(ctx, {
-              step,
-              configuration: c,
-              kind: r.refusal.kind,
-              scope: r.refusal.scope,
-              message: r.refusal.message,
-              until: Number.isFinite(reset) ? reset + LIMIT_WAIT_MARGIN_MS : null,
-            });
-            continue;
-          }
-          // A denied tool does not fail the session (the agent sees a tool error and
-          // carries on), but the operator must see it in `bl status`.
-          const denials = Array.isArray(r.denials) ? r.denials : [];
-          // The agent's last line (DONE S-1, FIXED, UNRELATED: …, REVIEW pending …)
-          // is the cheapest diagnostic when a step goes wrong; keep it in history.
-          const said = lastLine(r.output);
-          const notes = [
-            r.error ?? (r.isError ? 'agent reported an error' : ''),
-            denials.length ? `denied: ${denials.join('; ')}` : '',
-            said ? `said: ${said.slice(0, 160)}` : '',
-          ];
-          record(ctx, {
-            step,
-            promptName,
-            startedAt: started,
-            agent: c.agent,
-            model: c.model ?? null,
-            effort,
-            ok: r.ok && denials.length === 0,
-            note: notes.filter(Boolean).join(' — '),
-          });
-          return { ...r, configuration: { agent: c.agent, model: c.model ?? null } };
+          return r;
         }
         waitedUntil = waitOrEscalate(ctx, { step, role, list, excluded, waitedUntil });
       }
     }),
   );
+}
+
+/** The one-line note a resumed session gets when its final message was no valid outcome (F-68 D5). */
+export const OUTCOME_RETRY_NOTE =
+  'Your final message must be the JSON object the schema describes; nothing else was read.';
+
+/** Why a session has no outcome: its `structuredError`, else its error, else `no output`. */
+function outcomeFault(r) {
+  return r.structuredError ?? r.error ?? 'no output';
+}
+
+/**
+ * A step's session returned no valid outcome twice (F-68 D5): escalate with
+ * the fault and the last 20 lines of the session's text, and throw an
+ * OutcomeError. The text is evidence for the operator, never a verdict.
+ */
+function escalateNoOutcome(ctx, step, r) {
+  const reason = `${step}: no valid outcome after one retry (${outcomeFault(r)})`;
+  const tail = String(r.output ?? '')
+    .trimEnd()
+    .split('\n')
+    .slice(-20)
+    .join('\n');
+  const resume = ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`;
+  const details = [
+    `The ${step} session's final message was not the JSON object its schema describes, and the resumed session's was not either. The loop reads no outcome from text, so it stops.`,
+    '',
+    `Fault: ${outcomeFault(r)}`,
+    '',
+    tail ? 'The last 20 lines of the session text:' : 'The session left no text.',
+    ...(tail ? ['', '````text', tail, '````'] : []),
+    '',
+    `Find why the agent did not return the outcome, then run \`${resume}\`.`,
+  ].join('\n');
+  finish(ctx, 'escalated', reason, details);
+  throw new OutcomeError(reason, ctx.state);
 }
 
 // Added to the reset time the agent named: the limit lifts on the minute, and
@@ -2155,15 +2215,15 @@ function fenced(text) {
 }
 
 /**
- * The file in a fix-tests session's scratch dir where a session ending
- * `UNRELATED:` writes its explanation for the operator, in the shape
- * `prompts/_escalation.md` describes. The final line stays one line.
+ * The file in a fix-tests session's scratch dir where a session returning
+ * `unrelated` writes its explanation for the operator, in the shape
+ * `prompts/_escalation.md` describes. The outcome's reason stays short.
  */
 export const ESCALATION_FILE = 'escalation.md';
 
 /**
- * The details of a fix-tests `UNRELATED` escalation: the session's written
- * explanation when it left one (then its one-line reason as a label), else
+ * The details of a fix-tests `unrelated` escalation: the session's written
+ * explanation when it left one (then its outcome's reason as a label), else
  * the reason alone; the gate's details follow either way.
  */
 function unrelatedDetails(reason, explanationPath, gate) {
@@ -2171,10 +2231,10 @@ function unrelatedDetails(reason, explanationPath, gate) {
   try {
     written = readFileSync(explanationPath, 'utf8').trim();
   } catch {
-    // No file: the session left only its one-line reason.
+    // No file: the session left only its outcome's reason.
   }
   if (!written) return `${reason}\n\n${gateDetails(gate)}`;
-  return `${written}\n\nfix-tests ended \`UNRELATED: ${reason}\`. The failed gate:\n\n${gateDetails(gate)}`;
+  return `${written}\n\nfix-tests returned \`unrelated\`: ${reason}. The failed gate:\n\n${gateDetails(gate)}`;
 }
 
 /** A failed gate's escalation details: command, log path, excerpt, tail. */
@@ -2406,6 +2466,7 @@ function implementStories(ctx) {
       promptName: implementPrompt,
       vars: storyVars,
       label: isStory(feature) ? `${s.id}: ${s.title}` : `${feature.id}: ${s.id} ${s.title}`,
+      schema: loadSchema('implement'),
     });
     if (escalationOpen(feature.indexPath)) {
       return finish(ctx, 'escalated', `agent escalated while implementing ${s.id}`);
@@ -2414,7 +2475,7 @@ function implementStories(ctx) {
     if (stopped) return stopped;
     let open = unmetCriteria(storyAbsPath);
     if (open.length > 0) {
-      runSession(ctx, {
+      const retry = runSession(ctx, {
         step: 'implement',
         story: s.id,
         mode: 'workon',
@@ -2424,6 +2485,7 @@ function implementStories(ctx) {
           nudge: `A previous session on this story ended with these acceptance criteria still unchecked. Finish them (or, if one cannot be met, say why in the story file and escalate):\n${open.map((o) => `- ${o}`).join('\n')}`,
         },
         label: isStory(feature) ? `${s.id} (retry)` : `${feature.id}: ${s.id} (retry)`,
+        schema: loadSchema('implement'),
       });
       if (escalationOpen(feature.indexPath)) {
         return finish(ctx, 'escalated', `agent escalated while implementing ${s.id}`);
@@ -2432,11 +2494,12 @@ function implementStories(ctx) {
       if (stopped) return stopped;
       open = unmetCriteria(storyAbsPath);
       if (open.length > 0) {
+        const blocked = retry.structured.blocked;
         return finish(
           ctx,
           'escalated',
           `${s.id} acceptance criteria unmet after two sessions`,
-          open.map((o) => `- [ ] ${o}`).join('\n'),
+          [...open.map((o) => `- [ ] ${o}`), ...(blocked ? ['', `The agent was blocked: ${blocked}`] : [])].join('\n'),
         );
       }
     }
@@ -2894,13 +2957,14 @@ function changedFilesSince(ctx, sha) {
  * Test gate with a fix session. Returns true when green (or skipped).
  *
  * gate → fix-tests → gate, escalating when the second gate fails, with two
- * bounded detours, each taken at most once per call:
- * - a session ending `UNRELATED:` with a flaky-sounding reason (looksFlaky)
- *   is sent back to fix-tests with a note instead of escalating; a second
- *   `UNRELATED` escalates.
- * - a session ending `RERUN:` (the failure would not reproduce) reruns the
- *   gate as FIXED does; if that gate fails, the failure goes to one more
- *   fix-tests session instead of escalating.
+ * bounded detours, each taken at most once per call. The session's outcome
+ * (`schemas/fix-tests.json`, F-68 D2) decides:
+ * - `unrelated` with a flaky-sounding reason (looksFlaky) is sent back to
+ *   fix-tests with a note instead of escalating; a second `unrelated`
+ *   escalates.
+ * - `rerun` (the failure would not reproduce) reruns the gate as `fixed`
+ *   does; if that gate fails, the failure goes to one more fix-tests session
+ *   instead of escalating.
  * So a call runs at most three fix-tests sessions and three gates.
  */
 function testGateWithFix(ctx) {
@@ -2917,7 +2981,7 @@ function testGateWithFix(ctx) {
   for (;;) {
     setStep(ctx, 'fix-tests');
     const scratchDir = scratchFor(ctx, `fix-tests-${ctx.state.testAttempts}`);
-    // Where a session ending UNRELATED writes the operator's explanation
+    // Where a session returning `unrelated` writes the operator's explanation
     // (prompts/_escalation.md). A send-back shares the slot, so an earlier
     // session's file is cleared first.
     const explanationPath = join(scratchDir, ESCALATION_FILE);
@@ -2939,34 +3003,35 @@ function testGateWithFix(ctx) {
         scratchDir,
       },
       label: `${ctx.feature.id}: fix tests`,
+      schema: loadSchema('fix-tests'),
     });
+    const { outcome, reason } = fix.structured;
     // An agent that judged the failure environmental (an expired certificate,
     // a stack running other code) has nothing to fix; rerunning the gate would
     // only cost minutes and replace its reason with a second identical failure.
     // `--resume` after the operator fixes the environment starts at the gate.
     // A flaky failure is not environmental: it goes back to be fixed, once.
-    const unrelated = unrelatedReason(fix?.output);
-    if (unrelated) {
-      if (!pushedBack && looksFlaky(unrelated)) {
+    if (outcome === 'unrelated') {
+      if (!pushedBack && looksFlaky(reason)) {
         pushedBack = true;
-        fixNote = flakyPushbackNote(unrelated);
+        fixNote = flakyPushbackNote(reason);
         record(ctx, {
           step: 'fix-tests',
           ok: false,
-          note: `UNRELATED refused — a flaky failure is a bug to fix; sent back once: ${unrelated.slice(0, 120)}`,
+          note: `unrelated refused — a flaky failure is a bug to fix; sent back once: ${reason.slice(0, 120)}`,
         });
         continue;
       }
       finish(
         ctx,
         'escalated',
-        'test gate failure is environmental (fix-tests: UNRELATED)',
-        unrelatedDetails(unrelated, explanationPath, gate),
+        'test gate failure is environmental (fix-tests: unrelated)',
+        unrelatedDetails(reason, explanationPath, gate),
       );
       return false;
     }
     if (rescope(ctx).stop) return false;
-    const rerun = rerunUsed ? null : rerunReason(fix?.output);
+    const rerun = !rerunUsed && outcome === 'rerun' ? reason : null;
     setStep(ctx, 'test');
     gate = runTestGate(ctx);
     if (gate.ok) return true;
@@ -3263,7 +3328,12 @@ function branchFiles(ctx) {
  * worktree cannot be restored, or any session fails.
  */
 function reviewRound(ctx, { reReview, closing = false, scope = null }) {
-  const round = parseRound(changeFm(ctx).review_round);
+  const raw = changeFm(ctx).review_round;
+  const round = parseRound(raw);
+  // Every caller gets this refusal, `bl merge`'s integration round included:
+  // bl would otherwise write review_round "NaN" with a verdict.
+  if (Number.isNaN(round))
+    return roundAborted(ctx, round, `review_round "${raw}" in ${changeRelPath(ctx)} is not a number`);
   const locks = holdReviewLocks(ctx);
   if (locks.error) return roundAborted(ctx, round, locks.error);
   try {
@@ -3336,33 +3406,51 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
   // unit file as it ended, is kept (F-67 D6).
   const featureBefore = readFileSync(feature.indexPath, 'utf8');
   const changeBefore = existsSync(changeFile(ctx)) ? readFileSync(changeFile(ctx)) : null;
-  const rv = quarantineOnCleanupError(ctx, `r${round + 1}-verify`, beforeVerify.snaps, () =>
-    runSession(ctx, {
-      step: 'review:verify',
-      mode: 'review',
-      role: 'review',
-      promptName: 'review-verify',
-      vars: (c) => ({
-        ...common,
-        findingsPaths: closing
-          ? '(none: this is the closing round, and no dimension passes ran)'
-          : findingsPaths.map((p) => `- ${p}`).join('\n'),
-        scratchDir: verifyScratch,
-        reviewers: reviewersLabel([...passes, c]),
+  const restoreChange = () =>
+    changeBefore
+      ? atomicWriteFile(ctx.config.backlogRoot, changeFile(ctx), changeBefore)
+      : rmSync(changeFile(ctx), { force: true });
+  // The round's number is bl's (F-68 D3). bl writes it together with the
+  // status, once, after the verifier returns a verdict: a round that ends
+  // any other way (a throw, an abort, a killed bl) leaves both as they were.
+  // The Review Log may not: if bl dies after the verifier committed its
+  // session block, the log holds a block for round N+1 while review_round
+  // says N. The prompt gives the verifier the round as `nextRound`.
+  const fieldsBefore = reviewFields(ctx);
+  let rv;
+  try {
+    rv = quarantineOnCleanupError(ctx, `r${round + 1}-verify`, beforeVerify.snaps, () =>
+      runSession(ctx, {
+        step: 'review:verify',
+        mode: 'review',
+        role: 'review',
+        promptName: 'review-verify',
+        vars: (c) => ({
+          ...common,
+          findingsPaths: closing
+            ? '(none: this is the closing round, and no dimension passes ran)'
+            : findingsPaths.map((p) => `- ${p}`).join('\n'),
+          scratchDir: verifyScratch,
+          reviewers: reviewersLabel([...passes, c]),
+        }),
+        label: `${feature.id}: review r${round + 1} verify`,
+        schema: loadSchema('review'),
       }),
-      label: `${feature.id}: review r${round + 1} verify`,
-    }),
-  );
+    );
+  } catch (e) {
+    // A stopped round (no valid outcome, no agent) has no verdict: the change
+    // document goes back to how the round found it. The unit file keeps the
+    // escalation the stop wrote.
+    if (e instanceof RunStoppedError) restoreChange();
+    throw e;
+  }
   // Each restore is tried, and the quarantine runs, whatever an earlier one
   // threw: the round aborts with every failure named.
   const restoreErrors = [];
   if (!rv.ok) {
     for (const restore of [
       () => restoreKeepingTokens(ctx.config.backlogRoot, feature.indexPath, featureBefore),
-      () =>
-        changeBefore
-          ? atomicWriteFile(ctx.config.backlogRoot, changeFile(ctx), changeBefore)
-          : rmSync(changeFile(ctx), { force: true }),
+      restoreChange,
     ]) {
       try {
         restore();
@@ -3394,13 +3482,74 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
     repos: [...new Set([...covered.repos, ...reviewOtherRepos(ctx).map((r) => r.repoName)])],
   };
   saveRunState(config, ctx.state);
-  const fmAfter = changeFm(ctx);
-  return {
-    status: fmAfter.review_status ?? '',
-    round: parseRound(fmAfter.review_round),
-    rawRound: String(fmAfter.review_round ?? ''),
-    expected: round + 1,
-  };
+  // The verdict is the outcome's (F-68 D3): bl writes review_status from it.
+  const outcome = rv.structured;
+  const status = reviewStatusOf(outcome);
+  writeReviewFields(
+    ctx,
+    'review:verify',
+    fieldsBefore,
+    { review_round: String(round + 1), review_status: status },
+    `chore: ${feature.id} review round ${round + 1} ${status}`,
+  );
+  // An escalation the outcome claims is one the operator reads: when the
+  // verifier wrote none, bl writes it.
+  if (outcome.escalated && !escalationOpen(feature.indexPath)) {
+    writeEscalation(
+      ctx,
+      `review round ${round + 1}: the verifier escalated`,
+      `The verifier's outcome: ${outcome.summary}\n\nIt wrote no ## Escalation; the session block in ${changeRelPath(ctx)} has its findings.`,
+    );
+  }
+  return { status, round: round + 1 };
+}
+
+/** `pending` while the round left a Must fix or Should fix item open, else `addressed` (F-68 D3). */
+function reviewStatusOf({ must, should }) {
+  return must + should === 0 ? 'addressed' : 'pending';
+}
+
+/** The change document's review fields as strings (`''` when unset). */
+function reviewFields(ctx) {
+  const fm = changeFm(ctx);
+  return Object.fromEntries(REVIEW_FIELDS.map((k) => [k, String(fm[k] ?? '')]));
+}
+
+/**
+ * Write the review fields bl decides into the change document under its lock
+ * and commit it (F-68 D3): `before` is what they held when `step`'s session
+ * started, `fields` what the outcome sets. A field the session changed is a
+ * warning in the history, never a decision: bl's value replaces it.
+ */
+function writeReviewFields(ctx, step, before, fields, message) {
+  const next = { ...before, ...fields };
+  const found = setReviewFields(ctx.config.backlogRoot, changeFile(ctx), next);
+  for (const k of REVIEW_FIELDS) {
+    // A field the session left, or set to bl's own value, is no warning.
+    if (found[k] === before[k] || found[k] === next[k]) continue;
+    const note = `${step}: the session changed ${k} to "${found[k]}"; bl writes "${next[k]}" from the outcome`;
+    ctx.runner.log(`  warning: ${note}`);
+    record(ctx, { step, ok: true, warning: true, note });
+  }
+  if (REVIEW_FIELDS.some((k) => found[k] !== next[k])) commitChangeFile(ctx, step, message);
+}
+
+/**
+ * Run a step's session (`run`). When it throws (no valid outcome, no agent),
+ * `keep` first puts back the review fields the step found; the session's
+ * error is the one thrown.
+ */
+function keepingReviewFields(ctx, keep, run) {
+  try {
+    return run();
+  } catch (e) {
+    try {
+      keep();
+    } catch (k) {
+      ctx.runner.log(`  warning: cannot put back the review fields: ${k.message}`);
+    }
+    throw e;
+  }
 }
 
 /**
@@ -3429,7 +3578,6 @@ function roundAborted(ctx, round, error) {
   return {
     status: fm.review_status ?? '',
     round: parseRound(fm.review_round),
-    rawRound: String(fm.review_round ?? ''),
     expected: round + 1,
     abortError: error,
   };
@@ -3774,7 +3922,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
     runner.log(`  ${session ? 'resolution agent' : 'checks'}: ${what}...`);
     setStep(ctx, 'merge-resolve');
     const r = !session
-      ? { ok: true, output: '' }
+      ? { ok: true, structured: null }
       : runSession(ctx, {
           step: 'merge-resolve',
           mode: 'workon',
@@ -3785,10 +3933,13 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
             scratchDir: scratchFor(ctx, 'merge-resolve'),
           },
           label: `${unit.id}: resolve the merge with main`,
+          schema: loadSchema('merge-resolve'),
         });
     const problems = checked.flatMap((e) => resolutionProblems(ctx, e));
     if (escalationOpen(unit.indexPath)) problems.unshift('the agent wrote an escalation');
     else if (!r.ok || r.isError) problems.unshift(`the session failed: ${sessionError(r)}`);
+    else if (r.structured?.resolved === false)
+      problems.unshift(`the agent did not resolve it: ${r.structured.reason ?? '(no reason given)'}`);
     if (problems.length > 0) {
       const stuck = work.filter((e) => !abortIntegration(ctx, e.worktreePath));
       const left = agentCommits(ctx, repos);
@@ -3798,7 +3949,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
         blocks.join('\n\n'),
         gate ? gateDetails(gate) : '',
         `After the session:\n\n${problems.map((p) => `- ${p}`).join('\n')}`,
-        `The agent's last line: ${fenced(lastLine(r.output) || '(none)')}`,
+        r.structured ? `The agent's outcome: ${r.structured.summary}` : '',
         `${abortNote(stuck).trim()}${left}`.trim(),
         restored,
       ].filter(Boolean);
@@ -3836,7 +3987,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
     });
     runner.log('  review of the resolution...');
     const result = reviewRound(ctx, { reReview: false, scope: { text: resolutionScope(scope), files } });
-    const verdict = !result.abortError && result.round === result.expected ? result.status : null;
+    const verdict = result.abortError ? null : result.status;
     if (verdict === 'addressed' && !escalationOpen(unit.indexPath)) {
       ctx.integration = null;
       return pushIntegrated(ctx, repos);
@@ -3859,11 +4010,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
     const restored = rolledBack();
     const why = result.abortError
       ? `was aborted before a verdict: ${result.abortError}`
-      : result.round !== result.expected
-        ? `left review_round at "${result.rawRound}" (expected ${result.expected})`
-        : verdict === 'addressed'
-          ? 'ended addressed, but an escalation was written during it'
-          : `ended with review_status "${result.status || 'unset'}"`;
+      : 'ended addressed, but an escalation was written during it';
     const reason = `merge with main: the review of the resolution ${why}`;
     escalateIntegration(ctx, reason, `${blocks.join('\n\n')}\n\n${restored}`, { save: true });
     return { ok: false, escalated: true, reason, repos };
@@ -4242,16 +4389,12 @@ export async function reviewFeature({
     state.lastError = result.abortError ?? null;
     saveRunState(config, state);
     const escalated = escalationOpen(feature.indexPath);
-    const error = result.abortError
-      ? result.abortError
-      : result.round !== result.expected
-        ? `the verifier left review_round at "${result.rawRound}" (expected ${result.expected})`
-        : null;
+    const error = result.abortError ?? null;
     return {
       status: result.status,
       round: result.round,
       escalated,
-      // A round that did not finish left the change document as it was: no end.
+      // A round that did not finish wrote no review fields: no end.
       end: error && !escalated ? null : endOfReview(ctx, maxRounds, escalated),
       error,
     };
@@ -4476,21 +4619,29 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   if (!reachedReview && !skipsReview(ctx)) {
     setStep(ctx, 'self-review');
     const beforeSelf = targetHeads(ctx);
-    runSession(ctx, {
+    const self = runSession(ctx, {
       step: 'self-review',
       mode: 'workon',
       promptName: 'feature-self-review',
       vars: { mainRef: 'main' },
       label: `${feature.id}: self-review`,
+      schema: loadSchema('self-review'),
     });
     if (escalationOpen(feature.indexPath)) return finish(ctx, 'escalated', 'agent escalated during self-review');
+    if (!self.structured.ok) {
+      return finish(
+        ctx,
+        'escalated',
+        `the self-review found the branch not ready for review: ${self.structured.summary}`,
+      );
+    }
     const scope = rescope(ctx);
     if (scope.stop) return scope.stop;
-    // Gate again when the self-review committed something in any repo, also
-    // when it left edits uncommitted (those would otherwise ride along
-    // untested until a later gate refused the dirty tree), and when it added
-    // stories or repos.
-    if (scope.changed || targetsMoved(ctx, beforeSelf)) {
+    // Gate again when the self-review says it changed something, committed
+    // something in any repo, also when it left edits uncommitted (those would
+    // otherwise ride along untested until a later gate refused the dirty
+    // tree), and when it added stories or repos.
+    if (scope.changed || self.structured.changed || targetsMoved(ctx, beforeSelf)) {
       setStep(ctx, 'test');
       if (!testGateWithFix(ctx)) return state;
     }
@@ -4559,20 +4710,10 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         return finish(ctx, 'escalated', `review round ${result.expected} aborted before a verdict`, result.abortError);
       }
       if (escalationOpen(feature.indexPath)) {
-        return finish(ctx, 'escalated', `reviewer escalated in round ${result.expected}`);
+        return finish(ctx, 'escalated', `reviewer escalated in round ${result.round}`);
       }
       const scope = rescope(ctx);
       if (scope.stop) return scope.stop;
-      // Every verifier session must advance the round by exactly one. The cap
-      // below is what bounds the loop, and it only holds while the round is a
-      // number that goes up.
-      if (result.round !== result.expected) {
-        return finish(
-          ctx,
-          'escalated',
-          `review round ${result.expected}: the verifier left review_round at "${result.rawRound}" (expected ${result.expected})`,
-        );
-      }
       // Stories or repos added during the round are not in its verdict: they
       // are gated and get a round of their own.
       if (result.status === 'addressed' && scope.changed) {
@@ -4589,13 +4730,6 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         continue;
       }
       if (result.status === 'addressed') return finishClean(ctx);
-      if (result.status !== 'pending') {
-        return finish(
-          ctx,
-          'escalated',
-          `review round ${result.round} ended with review_status "${result.status || 'unset'}" — the verifier did not record a verdict`,
-        );
-      }
       if (closing) {
         return finish(
           ctx,
@@ -4608,26 +4742,45 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     }
     setStep(ctx, 'fix', { round: fixRound });
     const preFixSha = headSha(ctx);
-    runSession(ctx, {
-      step: 'fix',
-      mode: 'workon',
-      promptName: 'feature-workon-review',
-      vars: { scratchDir: scratchFor(ctx, `r${fixRound}.fix`) },
-      label: `${feature.id}: address review r${fixRound}`,
-    });
-    if (escalationOpen(feature.indexPath))
+    const fixBefore = reviewFields(ctx);
+    // Every exit without `fixed` puts back the fields the session found.
+    const keepFixFields = () =>
+      writeReviewFields(ctx, 'fix', fixBefore, {}, `chore: ${feature.id} review round ${fixRound} not fixed`);
+    const fix = keepingReviewFields(ctx, keepFixFields, () =>
+      runSession(ctx, {
+        step: 'fix',
+        mode: 'workon',
+        promptName: 'feature-workon-review',
+        vars: { scratchDir: scratchFor(ctx, `r${fixRound}.fix`) },
+        label: `${feature.id}: address review r${fixRound}`,
+        schema: loadSchema('fix'),
+      }),
+    );
+    if (escalationOpen(feature.indexPath)) {
+      keepFixFields();
       return finish(ctx, 'escalated', 'agent escalated while addressing review feedback');
+    }
     const afterFix = rescope(ctx);
-    if (afterFix.stop) return afterFix.stop;
-    const fixedFm = changeFm(ctx);
-    if (fixedFm.review_status !== 'fixed') {
+    if (afterFix.stop) {
+      keepFixFields();
+      return afterFix.stop;
+    }
+    if (!fix.structured.fixed) {
+      keepFixFields();
       return finish(
         ctx,
         'escalated',
-        `fix session for round ${fixRound} did not set review_status: fixed`,
+        `fix session for round ${fixRound} left ${fix.structured.open} item(s) open: ${fix.structured.summary}`,
         openItemsSummary(ctx),
       );
     }
+    writeReviewFields(
+      ctx,
+      'fix',
+      fixBefore,
+      { review_status: 'fixed' },
+      `chore: ${feature.id} review round ${fixRound} fixed`,
+    );
     // The author re-reads the fix diff in a fresh context before anyone else
     // does: on F-2, fix rounds wrote more code than the feature and none of it
     // was re-read before the next review, which then reviewed it for them.
@@ -4636,42 +4789,50 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     // branch, whose feature code no review item "asked for".
     const fixBaseSha = ctx.state.reviewBaseSha ?? preFixSha;
     setStep(ctx, 'fix-self-review', { round: fixRound });
-    const selfReview = runSession(ctx, {
-      step: 'fix-self-review',
-      mode: 'workon',
-      promptName: 'feature-fix-self-review',
-      vars: {
-        fixBaseSha: fixBaseSha ?? '',
-        fixDiff: fixBaseSha ? `git diff ${fixBaseSha}..HEAD` : 'git diff main...HEAD',
-      },
-      label: `${feature.id}: self-review fix r${fixRound}`,
-    });
-    if (escalationOpen(feature.indexPath))
+    const fixedFields = reviewFields(ctx);
+    // The fix round's `fixed` stands on every exit: bl keeps it whatever the session wrote.
+    const keepFixedFields = () =>
+      writeReviewFields(ctx, 'fix-self-review', fixedFields, {}, `chore: ${feature.id} review round ${fixRound} fixed`);
+    const selfReview = keepingReviewFields(ctx, keepFixedFields, () =>
+      runSession(ctx, {
+        step: 'fix-self-review',
+        mode: 'workon',
+        promptName: 'feature-fix-self-review',
+        vars: {
+          fixBaseSha: fixBaseSha ?? '',
+          fixDiff: fixBaseSha ? `git diff ${fixBaseSha}..HEAD` : 'git diff main...HEAD',
+        },
+        label: `${feature.id}: self-review fix r${fixRound}`,
+        schema: loadSchema('self-review'),
+      }),
+    );
+    if (escalationOpen(feature.indexPath)) {
+      keepFixedFields();
       return finish(ctx, 'escalated', 'agent escalated during the fix self-review');
+    }
     const afterSelfReview = rescope(ctx);
-    if (afterSelfReview.stop) return afterSelfReview.stop;
+    if (afterSelfReview.stop) {
+      keepFixedFields();
+      return afterSelfReview.stop;
+    }
     // A fix diff nobody re-read is what this step exists to prevent.
     // A denied command is a warning, not a failure: the agent sees a tool
     // error and takes another route (runSession has already recorded it in
-    // the history). Only a session that errored or reported not-ok stops the
-    // loop — on F-3 a strict "any denial escalates" rule stopped a self-review
-    // that had recovered and done its job (operator decision 2026-09-24).
-    if (!selfReview.ok || selfReview.isError) {
+    // the history). Only a session that errored, or whose outcome says the
+    // fix is not ready, stops the loop — on F-3 a strict "any denial
+    // escalates" rule stopped a self-review that had recovered and done its
+    // job (operator decision 2026-09-24).
+    if (!selfReview.ok || selfReview.isError || !selfReview.structured.ok) {
+      const why = selfReview.structured?.ok === false ? selfReview.structured.summary : sessionError(selfReview);
+      keepFixedFields();
       return finish(
         ctx,
         'escalated',
-        `the fix self-review for round ${fixRound} failed: ${sessionError(selfReview)}`,
+        `the fix self-review for round ${fixRound} failed: ${why}`,
         openItemsSummary(ctx),
       );
     }
-    if (changeFm(ctx).review_status !== 'fixed') {
-      return finish(
-        ctx,
-        'escalated',
-        `the fix self-review for round ${fixRound} changed review_status (it must leave it at fixed)`,
-        openItemsSummary(ctx),
-      );
-    }
+    keepFixedFields();
     setStep(ctx, 'test');
     if (!testGateWithFix(ctx)) return state;
   }

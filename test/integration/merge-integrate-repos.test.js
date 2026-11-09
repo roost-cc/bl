@@ -4,6 +4,7 @@ import { unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { integrateUnit } from '../../src/feature-run.js';
 import {
+  FIXED_TESTS,
   RESOLVED,
   addSecond,
   commitSecond,
@@ -66,7 +67,7 @@ test('integration_resolution_tracks_changes_in_current_merged_and_conflicted_rep
         calls.sessions.push(o.promptName);
         commitSecond(second.wt, 'test fix\n', 'fix the tests');
         unlinkSync(flag);
-        return { ok: true, output: 'FIXED', isError: false };
+        return FIXED_TESTS;
       };
       const res = integrateUnit({ ...ctx, runner });
       const scope = calls.vars['review-correctness']?.reviewScope ?? '';

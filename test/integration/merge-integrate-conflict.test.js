@@ -71,6 +71,24 @@ test('a conflict the agent resolves is gated, re-reviewed outside the round cap,
   }
 });
 
+test('reviewRound refuses an unreadable review_round', () => {
+  // `bl merge` reaches the review round without the entry checks of `bl run`
+  // and `bl review`: the round itself refuses, and writes no "NaN".
+  const fx = fixture({ reviewRound: 'two' });
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const { runner, calls } = scriptedRunner({ test: 'true', resolve: resolveBoth });
+    const res = integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /aborted before a verdict: review_round "two" in .*change\.md is not a number/);
+    assert.deepEqual(calls.sessions, ['merge-resolve'], 'no review session ran');
+    assert.equal(String(parseFrontmatter(readFileSync(changeFile(fx), 'utf8')).fm.review_round), 'two');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('an agent that leaves the merge unfinished is aborted and escalated, and main is untouched', () => {
   const fx = fixture();
   try {
@@ -96,8 +114,37 @@ test('an agent that leaves the merge unfinished is aborted and escalated, and ma
     assert.ok(esc.includes(`main: ${mainSha} `), esc);
     assert.match(esc, /- code: the merge is still in progress/);
     assert.match(esc, /- code: the index still has unmerged entries/);
-    assert.match(esc, /The agent's last line: `{3}\nRESOLVED\n`{3}/);
+    assert.match(esc, /The agent's outcome: resolved the merge/);
     assert.match(esc, /rerun `bl merge F-1`/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a resolution session that ends with RESOLVED text and no outcome is resumed once, then rolled back and escalated', () => {
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const wt = fx.wts['f1-feat'];
+    const head = g(wt, 'rev-parse', 'HEAD');
+    const { runner, calls } = scriptedRunner({
+      test: 'true',
+      resolve: () => ({ ok: true, output: 'All merged.\nRESOLVED\n', isError: false }),
+    });
+    const res = integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.ok, false);
+    assert.equal(res.escalated, true);
+    assert.deepEqual(calls.sessions, ['merge-resolve', 'merge-resolve'], 'resumed once, no gate or review');
+    assert.equal(calls.gates, 0);
+    assert.equal(ok(wt, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'), false, 'the merge is aborted');
+    assert.equal(g(wt, 'status', '--porcelain'), '');
+    assert.equal(g(wt, 'rev-parse', 'HEAD'), head);
+    const esc = escalation(featureFile(fx));
+    assert.match(esc, /^merge with main: merge-resolve: no valid outcome after one retry \(no output\)/);
+    assert.match(esc, /All merged\.\nRESOLVED/, 'the text is evidence, not a verdict');
+    assert.match(esc, /- `f1-feat\.txt`\n {4}- main: \S+ main edits f1-feat\.txt/);
+    assert.match(esc, /The merges were rolled back/);
   } finally {
     fx.cleanup();
   }

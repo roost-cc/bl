@@ -6,6 +6,8 @@ import { findFeature, normalizeFeatureId, resolveFeatureStories, orderStoriesByD
 import { mkTempBacklog, mkTempDir } from './tempdir.js';
 import { parseChange, serializeChange } from '../../src/change-doc.js';
 import { storyUnit, storyAsOrdered, unitVars } from '../../src/unit.js';
+import { outcomeFor } from '../../src/outcome.js';
+import { defaultOutcome, reviewOutcome } from './outcomes.js';
 
 export const AC_BODY = '## Acceptance Criteria\n\n- [ ] one works\n- [ ] two works\n';
 
@@ -103,16 +105,28 @@ export function checkAll(path) {
   });
 }
 
-export function writeSession(featurePath, { pending, round }) {
+/**
+ * A review session block in the change document's Review Log, with the
+ * review fields bl writes after a round (`fields`, the default: a state a
+ * test starts from). A fake verifier passes `fields: false`, since the loop
+ * writes them from its outcome. Returns that outcome.
+ */
+export function writeSession(featurePath, { pending, round, fields = true }) {
   editFile(featurePath, (fm, body) => {
-    fm.review_round = String(round);
-    fm.review_status = pending ? 'pending' : 'addressed';
+    if (fields) {
+      fm.review_round = String(round);
+      fm.review_status = pending ? 'pending' : 'addressed';
+    }
     const block = pending
       ? `### Session 2026-09-24 (PR #7) r${round}\n\n**Must fix**\n\n- [ ] invariant X — Repro: y. Test: z.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n`
       : `### Session 2026-09-24 (PR #7) r${round}\n\n**Must fix**\nNone.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n`;
     return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
   });
+  return reviewOutcome({ pending });
 }
+
+/** A fake verifier's round: the session block, and the outcome the loop decides from. */
+export const verifySession = (path, { pending, round }) => writeSession(path, { pending, round, fields: false });
 
 /**
  * A fake runner whose `session` simulates the agents by editing files, and
@@ -137,13 +151,9 @@ export function fakeRunner({
     story: (o) => checkAll(o.vars.storyAbsPath),
     verify: () => {
       round += 1;
-      writeSession(CH(feature), { pending: round === 1, round });
+      return verifySession(CH(feature), { pending: round === 1, round });
     },
-    fix: () =>
-      editFile(CH(feature), (fm, body) => {
-        fm.review_status = 'fixed';
-        return body.replaceAll('- [ ] invariant', '- [x] invariant');
-      }),
+    fix: () => editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant')),
     ...behaviour,
   };
   return {
@@ -164,20 +174,26 @@ export function fakeRunner({
       // A usage-limit refusal: the agent did nothing (unless `limit` itself did) and said so.
       const limit = b.limit ? b.limit(o) : null;
       if (limit) return { ok: false, output: limit.message, isError: true, usage: null, denials: [], refusal: limit };
+      // What the behaviour returns is the session's outcome (F-68 D2).
+      let out;
       if (o.promptName === 'feature-story' || o.promptName === 'story-run') b.story(o);
       else if (o.promptName.startsWith('review-') && o.promptName !== 'review-verify') {
         writeFileSync(o.vars.findingsPath, `# ${o.vars.dimension}\n\n## Must fix\n\n- x\n`);
         if (b.review) b.review(o);
-      } else if (o.promptName === 'review-verify') b.verify(o);
-      else if (o.promptName === 'feature-workon-review') b.fix(o);
-      else if (o.promptName === 'feature-fix-tests' && b.fixTests) b.fixTests(o);
-      else if (o.promptName === 'feature-self-review' && b.selfReview) b.selfReview(o);
-      else if (o.promptName === 'feature-fix-self-review' && b.fixSelfReview) b.fixSelfReview(o);
+      } else if (o.promptName === 'review-verify') out = b.verify(o);
+      else if (o.promptName === 'feature-workon-review') out = b.fix(o);
+      else if (o.promptName === 'feature-fix-tests') {
+        if (b.fixTests) b.fixTests(o);
+        if (b.fixTestsOutcome) out = b.fixTestsOutcome(o);
+      } else if (o.promptName === 'feature-self-review' && b.selfReview) out = b.selfReview(o);
+      else if (o.promptName === 'feature-fix-self-review' && b.fixSelfReview) out = b.fixSelfReview(o);
       return {
         ok: true,
         output: b.output ? b.output(o) : '',
         isError: false,
         usage: { input: 1, output: 1, cache_creation: 0, cache_read: 0 },
+        // Checked against the step's schema, as a provider adapter does.
+        ...outcomeFor(o.schema, out ?? defaultOutcome(o.promptName)),
       };
     },
     shell(cmd, cwd) {

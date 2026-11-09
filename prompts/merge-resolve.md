@@ -65,10 +65,22 @@ Backlog repo : {{backlogDir}}
 
 {{toolGuide}}
 
+## Outcome
+
+{{outcomeDelivery}}
+
+```json
+{ "summary": "<one line: what you resolved>", "resolved": true, "reason": null }
+```
+
+- Set `resolved` to `true` when every merge is committed and every worktree is clean.
+- Set it to `false` when a merge is not resolved, and give the reason in one line in `reason`.
+  Otherwise `reason` is `null`. bl rolls the merge back and stops for the operator. If you wrote
+  **## Escalation** (rule 10), bl stops whatever `resolved` says.
+
 ## IMPORTANT
 
 - NEVER `git add` files that are in `.gitignore`.
 - Never run `git add` or `git commit` in the backlog repo ({{backlogDir}}), because other sessions
   share its index. The `bl sync --commit` line in rule 10 is the only backlog commit.
-- End your response with one line: `RESOLVED` when every merge is committed and the tree is
-  clean, or `ESCALATED` if you wrote an Escalation.
+- End with the outcome object that **Outcome** above describes.

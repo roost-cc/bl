@@ -1003,7 +1003,7 @@ draft → refined → approved → running → done
 | `bl refine F-3`              | Agent session in the backlog repo (`prompts/feature-refine.md`): writes Premise (with the `Challenged:` check), Design, Acceptance, and cuts the stories via `bl new --from` with `"feature": "F-3"`. Sets `refined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `bl approve F-3`             | **The human gate.** Requires `refined` and a consistent, non-empty story list; warns on dependencies outside the feature and on totals outside 8–20 points. Sets `approved`. Refuses while `## Escalation` is not `None.` (`--force` skips only the draft gate). Commits and pushes the feature file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `bl implement F-3`           | One worktree per repo at `worktrees/f3-<slug>/<repo>` on branch `f3-<slug>`; runs bootstrap/workon plugins; sets `running`; launches `prompts/feature-workon.md` (stories in dependency order, one PR at the end) or `feature-workon-review.md` when `review_status: pending`. Refuses on outside blockers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `bl review F-3`              | Takes each repo's PR from the change document, else `change.find` by branch (a branch with commits and no PR gets one through `change.open`), syncs each branch with main (refuses on a conflict), then takes one review round over all of them — one verifier, one Review Log session, `review_round` up by one; the PRs are taken in the feature's repo order, and the lead repo's PR is the one run state keeps. The round is the same review step as `run`: the `review-correctness.md` and `review-failure-paths.md` passes and `review-verify.md`, on the review agent, headless unless `--interactive` (or the agent has no headless mode). Shares `run`'s state in `.bl/run/`, refuses while a run holds the feature and at the round cap. The verifier bumps `review_round` and writes `## Escalation` when the cap is hit with Must-fix items left.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `bl review F-3`              | Takes each repo's PR from the change document, else `change.find` by branch (a branch with commits and no PR gets one through `change.open`), syncs each branch with main (refuses on a conflict), then takes one review round over all of them — one verifier, one Review Log session, `review_round` up by one; the PRs are taken in the feature's repo order, and the lead repo's PR is the one run state keeps. The round is the same review step as `run`: the `review-correctness.md` and `review-failure-paths.md` passes and `review-verify.md`, on the review agent, headless unless `--interactive` (or the agent has no headless mode). Shares `run`'s state in `.bl/run/`, refuses while a run holds the feature and at the round cap. bl writes `review_round` and `review_status` from the verifier's outcome; the verifier writes `## Escalation` when the cap is hit with Must-fix items left.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `bl run F-3`                 | **The autonomous loop.** Same gates as `implement`, then: implement each story in dependency order (`feature-story.md`, headless) → test gate (`test` stage plugin; one `feature-fix-tests.md` attempt) → self-review (`feature-self-review.md`) → push + a PR per repo (the lead always, another repo when its branch has commits) → review (two dimension passes `review-correctness.md` / `review-failure-paths.md` writing findings files, then `review-verify.md` writing the session) → fix (`feature-workon-review.md`, minimal changes) → fix self-review (`feature-fix-self-review.md`, scoped to the fix diff) → re-review … until `addressed`. Items still open after the last full round (`review_rounds_max`) get one closing round: fix → fix self-review → test gate → `review-verify.md` alone, checking only those items (`closingRound`); anything still open → `escalated`. Every headless prompt ends with the headless rules (`withHeadlessRules`: no background commands, commit before ending). State in `.bl/run/F-3.json`; `--resume`, `--plan`, `--interactive`, `--max-rounds <n>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `bl status F-3`              | Stories in dependency order, review state, blockers, deferred count, escalation, and the last run's state.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `bl merge F-3`               | Gates: the one set `bl merge S-n` applies too (`mergeGates`, `src/merge-gates.js`, F-36 D1; see `### bl merge`): `review_status` not `pending`/`fixed`, no unchecked Must/Should items in the latest session (open nits do not block; `bl run` ends `clean` only when this gate passes), a Review Log session on record unless `--no-review`, `## Escalation` empty, no worktree on the branch in a repo no story names, every main checkout on `main`. Then every worktree is brought up to date with main, gated and pushed (`integrateUnit`, F-36 D4; see `### bl merge`): conflicted generated files are regenerated (D5), other conflicts and a red gate go to a resolution agent whose resolution is gated and re-reviewed (D6, D7). A failed merge into `main` is aborted (D9). Then per repo in the feature's repo order (`bl` first, then by first story, F-52 D3): `git merge --no-ff`, push, close the open PR (`change.find`, `change.close`), remove worktree — the same routine as `bl merge`; right after `bl` merges, the backlog is synced from its merged checkout (`runBacklogSync`, as a story merge does, S-864). The repos a release records are those whose `backlog.json` `repos` entry sets `deployable: true` (every entry must set it; `loadConfig` refuses one that does not). After the last push, each touched repo's merge commit gets an annotated tag `F-3` (`F-3.2` for a second change; title and change-document path in the message), the tags are pushed last, and `releases/F-3.json` records the `main` commit of every deployable repo as its `origin` has it (an unreadable `origin` main, read before tagging, or a failed tag push, which takes back the tags it made, exits 1 before the manifest or anything `done` is written; a re-run resumes); the change document gets `merged:` per repo, the `## Merge` lines (tag, manifest link) and `status: merged`. Marks every listed story and the feature `done`, rolls up tokens, syncs, commits only the backlog paths it changed (your own uncommitted edits stay out), prints `## Deferred`. |
@@ -1081,12 +1081,82 @@ review` prints the prompt-guidance note for one that does not (Codex).
 - `syncNativeApprovals(patterns, config, opts)`: `bl allow` hands every
   agent the granted patterns; Codex installs them as prefix rules (see
   **Codex native approvals**), the others do nothing.
+- The headless result's outcome, `structured` and `structuredError` (see
+  **Session outcomes** below).
 
 Nothing under `src/` outside `src/agents/` imports an adapter file or compares
 a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
 `test/unit/agent-boundary.test.js` fails on either and names its one
 exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
 a name as a literal (a default argument, a prompt variant) is allowed.
+
+#### Session outcomes (F-68 D1, D5)
+
+A session's outcome is `{ structured, structuredError }`: the JSON object the
+agent returned, validated against the step's JSON Schema, or `null` with the
+fault named. `validateOutcome(schema, value)` in `src/outcome.js` does the
+validation, with `ajv` (draft 2020-12). It takes the object or the text that
+holds it, and its faults are `no output`, `not JSON: <parser message>` and
+`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). Nothing in
+bl reads an outcome out of prose. Two carriers deliver the value:
+
+| Session     | Carrier                                                                                                                                                                                                                                                                                                                                     | Read by                                 |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the run), and the last message parsed as JSON. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
+| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                | `launchSession`, after the agent exits  |
+
+- **The outcome file.** It lives under the git-ignored `.bl/`, so nothing
+  commits it. `launchSession` removes a stale one before the spawn, and after
+  the agent exits reads and validates it (`readOutcomeFile`). It deletes a
+  valid file and keeps a faulty one for the operator to read; a missing file
+  is the fault `no outcome file at <path>`. With `returnOnExit`
+  and a schema, `launchSession` returns
+  `{ status, structured, structuredError }`; without a schema it returns the
+  bare exit status.
+- **A step without a schema** reads no outcome: both fields are null.
+- **Schemas (D2).** `schemas/<step>.json`, one per prompt that ends a step,
+  loaded by `loadSchema(name)` in `session.js` beside `loadPrompt`. Each has
+  `additionalProperties: false` and a one-line `summary`.
+- **Refine outcomes (D3).** `bl refine` passes `schemas/refine.json`
+  (`{ summary, refined, reason? }`), `refine-batch.json`
+  (`{ summary, stories: { "S-n": { refined, reason? } } }`) or
+  `feature-refine.json` (`{ summary, premise_holds, refined, reason? }`) to
+  `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
+  before its backlog commit. `refined: true` writes `status: refined`;
+  `premise_holds: false` writes a feature's `status: draft`; otherwise the
+  status stays and `reason` is printed (`applyRefineStatus`, through
+  `updateSpecFile`). A batch story the outcome does not name stays as it is. A
+  session without a valid outcome file changes no status and prints the
+  fault; the agent's own commit of the refinement is not affected. No refine
+  prompt asks the agent to write a status
+  (`test/unit/prompts-no-status-writes.test.js`).
+- **No valid outcome is an error, not a verdict (D5).** `runSession` in
+  `feature-run.js` takes `schema` and passes it through the runner. A session
+  with `structured: null` is recorded as a failed event,
+  `outcome error: <fault>`. The loop then resumes the same session once (`sessionId`: claude's
+  `--resume`, codex's `exec … resume <thread id>`) with the one-line note
+  `OUTCOME_RETRY_NOTE`. A session with no id starts again with the note after
+  its prompt. A second failure escalates with the fault and the last 20 lines
+  of the session's text, and throws `OutcomeError`. A step with a valid
+  outcome records `outcome: <summary>` in its note and the summary as the
+  history entry's `outcome` field (with `story` for an implement step); `bl
+status` prints the latest one of each step (`outcomeLines()` in
+  `feature-cmd.js`). A step without a schema (a review dimension pass)
+  records nothing of its text.
+- **Implement, fix-tests and merge-resolve outcomes (D2, D4).** The implement
+  step (`feature-story.md`, `story-run.md`) passes `schemas/implement.json`
+  (`{ summary, done, blocked }`); the loop still decides from the story's
+  criteria and `## Escalation`, and names `blocked` when it escalates unmet
+  criteria. fix-tests passes `fix-tests.json`
+  (`{ summary, outcome: fixed | rerun | unrelated, reason }`) and the
+  resolution `merge-resolve.json` (`{ summary, resolved, reason }`;
+  `resolved: false` is a resolution problem). Every property of the three is
+  required, `blocked` and the resolution's `reason` nullable, so Codex's
+  strict `--output-schema` has no optional field to refuse. The prompts end
+  with `{{outcomeDelivery}}` and the object (`_implement-outcome.md` is
+  shared by the two implement prompts). No prompt asks for a verdict line
+  (`DONE S-n`, `ESCALATED`, `RESOLVED`, `FIXED`, `UNRELATED:`, `RERUN:`), and
+  `prompts-no-status-writes.test.js` guards it.
 
 #### The local provider (S-1371)
 
@@ -1189,9 +1259,9 @@ The loop reads outcomes from files, never from the agent's prose: a story is
 done when its `## Acceptance Criteria` section exists and every checkbox in it
 is checked, whatever the list marker (`-`, `*`, `+`, `1.`); a story without
 that section is never skipped as complete and never passes the
-post-implement check; a review round ends with
-whatever `review_status` the verifier wrote; an agent stops the run by writing
-`## Escalation`. Machine-local run state lives under `<backlog>/.bl/run/`
+post-implement check; a review round ends with the `review_status` bl writes
+from the verifier's outcome (see **Review fields from outcomes** below); an
+agent stops the run by writing `## Escalation`. Machine-local run state lives under `<backlog>/.bl/run/`
 (self-ignored by a `.gitignore` inside it). `run` refuses while `## Escalation`
 has content. `--resume` skips completed stories; once the run has reached the
 PR it also skips self-review, fixes a `pending` review session before
@@ -1204,8 +1274,8 @@ The loop pushes the branch and checks that `origin/<branch>` contains HEAD
 before every review pass and before it ends `clean`; a failed push, or a
 forge that cannot open or find the PR, escalates. Having no forge configured
 at all is the one way to finish without a PR.
-Every verifier session must raise `review_round` by exactly one; anything
-else (unchanged, lowered, not a number) escalates. A run that starts at the
+bl raises `review_round` by exactly one with each verifier verdict, so the
+round is always a number that goes up. A run that starts at the
 round cap with the last round `pending` or `fixed` runs the one closing round
 it is owed: it fixes that round's items (when `pending`), and the verifier
 checks only those items. A round that `bl merge`'s review of a merge
@@ -1375,29 +1445,28 @@ to read the log rather than rerun the suite. A second failed attempt escalates
 as `test gate failed twice` with the command, the log path, the excerpt and
 the tail, in that order.
 
-The fix-tests session ends with one of three lines. The last non-blank line is
-the one that counts. Markdown emphasis around the keyword is ignored, a reason
-is required, and a keyword on an earlier line does not count
-(`unrelatedReason()` / `rerunReason()`).
+The fix-tests session returns an outcome object (`schemas/fix-tests.json`,
+F-68 D2): `outcome` is one of three values, and `reason` is required for each.
+Nothing is read from the session's text; a session without a valid outcome is
+resumed once and then escalates (D5).
 
-- `FIXED`: the agent committed a fix, and the loop reruns the gate. A second
-  failure escalates as `test gate failed twice`. Any ending the loop does not
-  recognise is treated the same way.
-- `RERUN: <what it tried>`: the failure would not reproduce after a real
-  attempt. The loop reruns the gate. If that gate fails too, the failure is
-  real, and one more fix-tests session gets it (`fixNote` says it reproduced)
-  instead of escalating. `RERUN` is honoured once per gate. After that it
-  counts as `FIXED`.
-- `UNRELATED: <reason>`: nothing in the repos can make the gate pass. That
+- `fixed`: the agent committed a fix, and the loop reruns the gate. A second
+  failure escalates as `test gate failed twice`.
+- `rerun`: the failure would not reproduce after a real attempt; `reason`
+  says what it tried. The loop reruns the gate. If that gate fails too, the
+  failure is real, and one more fix-tests session gets it (`fixNote` says it
+  reproduced) instead of escalating. `rerun` is honoured once per gate. After
+  that it counts as `fixed`.
+- `unrelated`: nothing in the repos can make the gate pass. That
   means the stack runs other code than this worktree's, stray files the
   session cannot move, or infrastructure outside the repos is down. The loop
   does not rerun the gate. It escalates at once as `test gate failure is
-environmental (fix-tests: UNRELATED)`, with the agent's reason followed by
-  the first attempt's details. The line stays one line; the session writes
+environmental (fix-tests: unrelated)`, with the agent's reason followed by
+  the first attempt's details. The reason stays short; the session writes
   its full explanation for the operator to `escalation.md` in its scratch
   directory (`ESCALATION_FILE`), and when that file has content it replaces
   the bare reason in `## Escalation`, followed by
-  ``fix-tests ended `UNRELATED: <reason>` `` and the gate's details
+  ``fix-tests returned `unrelated`: <reason>`` and the gate's details
   (`unrelatedDetails()`). The loop clears the file before every fix-tests
   session, so a sent-back session never inherits the previous one's. On F-4 an expired dev certificate was diagnosed
   correctly, and a rerun would have cost five minutes and replaced the reason
@@ -1407,11 +1476,11 @@ environmental (fix-tests: UNRELATED)`, with the agent's reason followed by
 
 A flaky failure is a bug to fix, not an environment problem. F-22 escalated a
 page-load timeout with `UNRELATED` after it had failed 2 of its 4 gate runs.
-So the first `UNRELATED` whose reason reads as flaky (`looksFlaky()`: flaky,
-intermittent, timeout / timed out, "not caused by") does not escalate. The
-loop sends the session back to fix-tests once, without rerunning the gate, and
-`fixNote` (`flakyPushbackNote()`) tells the agent to fix the failure. The
-refusal is recorded in the run history. A second `UNRELATED` escalates. With
+So the first `unrelated` outcome whose reason reads as flaky (`looksFlaky()`:
+flaky, intermittent, timeout / timed out, "not caused by") does not escalate.
+The loop sends the session back to fix-tests once, without rerunning the gate,
+and `fixNote` (`flakyPushbackNote()`) tells the agent to fix the failure. The
+refusal is recorded in the run history. A second `unrelated` escalates. With
 both detours, one `testGateWithFix()` call runs at most three fix-tests
 sessions and three gates.
 
@@ -1484,7 +1553,7 @@ Where the text comes from:
   in the same shape: one block per decision, its code / design /
   test-infrastructure diagnosis under **Why the agents can't fix it**, and the
   open items under **Details**.
-- fix-tests ends with a one-line `UNRELATED: <reason>`, so its explanation
+- fix-tests returns `unrelated` with a short reason, so its explanation
   goes to `<scratch>/escalation.md`, which the loop copies in (see **The test
   gate**).
 - Escalations the loop raises on its own (a gate that failed twice, a push or
@@ -1511,8 +1580,9 @@ every loop session that may need to diagnose something gets a
 
 The prompts tell the agent to write probe scripts, redirected test output and
 scratch configs there, never in the worktree, and none tells it to delete
-files. A stray file fix-tests cannot move out ends the session with
-`UNRELATED: stray files in the worktree: <paths>` for the operator.
+files. A stray file fix-tests cannot move out ends the session with the
+outcome `unrelated` and the reason "stray files in the worktree: <paths>" for
+the operator.
 
 ### Worktree hygiene in the loop
 
@@ -1636,17 +1706,73 @@ PR review feedback is persisted in the unit's **change document**
 The optional `review_status:` field of the change document tracks where the
 implementation stands relative to the most recent PR review:
 
-| Value       | Meaning                                                                                                              |
-| ----------- | -------------------------------------------------------------------------------------------------------------------- |
-| _omitted_   | Story has never been reviewed.                                                                                       |
-| `pending`   | The reviewer wrote a session block; the implementing agent has items to address.                                     |
-| `fixed`     | The implementing agent checked every item off — claimed resolved, awaiting re-review. Set by the implementing agent. |
-| `addressed` | The reviewer verified the fixes (or the session was an audit-only "no issues" entry). Set **only** by `bl review`.   |
+| Value       | Meaning                                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Value       | Meaning                                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------  |
+| _omitted_   | Story has never been reviewed.                                                                                            |
+| `pending`   | The reviewer wrote a session block with an open Must fix or Should fix item; the implementing agent has items to address. |
+| `fixed`     | The implementing agent checked every item off — claimed resolved, awaiting re-review.                                     |
+| `addressed` | The reviewer verified the fixes (or the session was an audit-only "no issues" entry).                                     |
 
 Lifecycle: `unset → pending → fixed → (addressed | pending → fixed → …)`.
-The implementing agent may set `pending → fixed`; only a `bl review`
-session promotes `fixed → addressed` (after verifying each resolution)
-or knocks it back to `pending` with a new session.
+bl writes the field, never an agent (F-68 D3): see **Review fields from
+outcomes** below. A fix round's outcome moves `pending → fixed`; only a
+review round's outcome moves `fixed → addressed` (after the verifier checks
+each resolution) or back to `pending` with a new session.
+
+#### Review fields from outcomes (F-68 D2, D3)
+
+The review, fix and self-review sessions each return an outcome object (see
+**Session outcomes**), validated against its schema in `schemas/`:
+
+| Session (prompt)                                                     | Schema             | Object                                       |
+| -------------------------------------------------------------------- | ------------------ | -------------------------------------------- |
+| verifier (`review-verify.md`)                                        | `review.json`      | `{ summary, must, should, nits, escalated }` |
+| fix (`feature-workon-review.md`, `workon-review.md`)                 | `fix.json`         | `{ summary, fixed, open }`                   |
+| self-review (`feature-self-review.md`, `feature-fix-self-review.md`) | `self-review.json` | `{ summary, ok, changed }`                   |
+
+Each prompt ends with an **Outcome** section: the object, and the
+`{{outcomeDelivery}}` sentence (`_outcome-message.md`, the final message, for
+a headless session; `_outcome-file.md`, the outcome file, when
+`vars.outcomeCarrier` is `file`). `_fix-outcome.md` and
+`_self-review-outcome.md` hold the objects two prompts share.
+
+- **Review round** (`reviewRoundLocked`). From the outcome bl writes
+  `review_round` (the round + 1) and `review_status` together, once, after
+  the verifier returns: `pending` when `must + should > 0`, else `addressed`
+  (`reviewStatusOf`). The prompt gives the verifier the round as
+  `{{nextRound}}`. `escalated: true` with an empty `## Escalation` makes bl
+  write one with the summary. A round that ends without a verdict (a throw,
+  an abort, a killed bl) leaves both fields as the round found them. The
+  Review Log may not match them: if bl dies after the verifier committed its
+  session block, the log holds a block for round N+1 while `review_round`
+  says N. A round
+  stopped before an outcome (a failed verifier, no valid outcome after the
+  retry, no agent) also puts the rest of the change document back.
+- **Fix** (`fixed`). `true`: bl writes `review_status: fixed`. `false`: the
+  run escalates with `open` and the summary, and the status stays `pending`.
+  Every exit without `fixed` (an open `## Escalation`, a scope stop,
+  `fixed: false`, a session that throws) puts back the fields the fix
+  session found.
+- **Self-review** (`ok`, `changed`). `ok: false` escalates with the summary;
+  `changed: true` runs the test gate again. On every exit of the fix
+  self-review, bl keeps `fixed`.
+- **What a session wrote is a warning, never a decision.** bl reads the
+  fields when a session starts and again before it writes
+  (`writeReviewFields`, through `setReviewFields` in `change-doc.js` under
+  the change document's lock). A field the session changed is recorded as a
+  warning event (`<step>: the session changed review_status to "x"; bl writes
+"y" from the outcome`), and bl's value replaces it. The read-back never
+  picks the round's branch; the outcome does. `bl validate`'s review-status
+  findings still guard hand edits.
+- **`bl implement` with a review pending** (story and feature) runs the fix
+  prompt interactively with `schema: fix`; the agent writes the outcome file.
+  After the session `applyFixOutcome` (`change-doc.js`) writes and commits
+  `review_status: fixed` when `fixed` is true. Otherwise it prints why and
+  puts back the review fields the session found (`reviewFieldsAt`).
+- `test/unit/prompts-no-status-writes.test.js` fails when a prompt names
+  `review_status:` or `review_round:`.
 
 **Review agent.** `bl review`, and the review step of `bl run`, run on
 `backlog.json`'s `review_agent` list (see **Agent configurations**),
@@ -1799,7 +1925,8 @@ Gates and effects:
 - `bl implement` reads `review_status`. When it's `pending`, the
   implementing agent is launched with the `workon-review` prompt and an
   info line `Review pending in story — using review-feedback prompt.`;
-  otherwise the standard `workon` prompt is used.
+  otherwise the standard `workon` prompt is used. The fix session's outcome
+  file sets `fixed` (see **Review fields from outcomes**).
 - `bl done` refuses while `review_status` is `pending` or `fixed`, and
   also while the latest `## Review Log` session has unchecked Must or
   Should items regardless of the frontmatter value (an open nit does not
@@ -1820,10 +1947,11 @@ Gates and effects:
   `review_round` like any round, but is not counted against
   `review_rounds_max`: the cap bounds the fix loop, and integration has none.
   `pending` leaves the resolution on the branch for `bl run --resume`.
-- `bl review` resets `review_status` back to `pending` whenever it
-  appends a new session that contains items; on a re-review of a
-  `fixed` story it verifies each claimed resolution and either promotes
-  to `addressed` or writes a new `pending` session.
+- `bl review` sets `review_status` back to `pending` whenever its
+  verifier's outcome counts an open Must fix or Should fix item; on a
+  re-review of a `fixed` story the verifier checks each claimed resolution,
+  and the outcome either promotes it to `addressed` or leaves a new
+  `pending` session.
 - `bl validate` enforces two integrity rules:
   `review-log-missing` (`pending`/`fixed` but no `## Review Log`
   session) and `review-log-unaddressed` (`fixed`/`addressed` but the
@@ -1869,8 +1997,8 @@ Rules:
   `- [x]` in place and appends a short `→ <resolution>` note (typically
   a commit SHA and a few words; for deferred items, a deferral reason).
 - The implementing agent makes **one commit** to the backlog repo per
-  review session, after the final item is checked and `review_status` is
-  set to `fixed`. Commit message:
+  review session, after the final item is checked. bl then writes
+  `review_status: fixed` from the fix outcome. Commit message:
   `chore: address review feedback ({{storyId}}, session <YYYY-MM-DD>)`.
 
 ### `## Deferred`, `## Notes` and tasks
@@ -2327,7 +2455,9 @@ Launches an agent session **on main** to refine and plan a story:
 - Refines acceptance criteria and resolves ambiguities
 - Creates a detailed execution plan with concrete steps
 - Can create child stories via `bl new` if the story should be split
-- Sets `status: refined`; when the session ends, commits and pushes what it left uncommitted
+- Ends by writing its outcome file (F-68 D1); when the session ends, `bl refine` sets the
+  status from it (see **Refine outcomes** under **Session outcomes**), then commits and pushes
+  what the session left uncommitted
 
 ```bash
 bl refine S34
@@ -2487,10 +2617,10 @@ command (`reviewEnd`, `src/feature-run.js`, S-1348). No line shows a raw
   it starts and exits non-zero, so neither its own lines nor the
   several-target summary print it today. Escalated: `Review round <n>: escalated.`
 - A round that did not finish (an error and no escalation, for example a
-  verifier that failed or left `review_round` unchanged):
-  `The review round did not finish.`, then the error line, with no `done`
-  line and no `Next:` line. The change document is as the failed step left
-  it, so `bl review` builds no outcome from it.
+  verifier that failed): `The review round did not finish.`, then the error
+  line, with no `done` line and no `Next:` line. The change document is put
+  back as the round found it, so `bl review` builds no outcome from it. A
+  verifier with no valid outcome after its retry escalates (F-68 D5).
 
 The second line is `Next: <command>`:
 
@@ -3441,10 +3571,12 @@ HEAD`): one merged or committed on by a session, and one an earlier
   repo must have no `MERGE_HEAD`, an empty `git ls-files -u`, the ref merged,
   and no conflict marker (`git grep -nE '^(<{7}|>{7})( |$)' <merge> --
 <files>` in each merge since the integration began, over the conflicted
-  files and those a retained resolution merged); a failed session, an escalation or any failed check runs
+  files and those a retained resolution merged); a failed session, an
+  outcome with `resolved: false` (`schemas/merge-resolve.json`), an escalation
+  or any failed check runs
   `git merge --abort` where a merge is still in progress, rolls back and
   escalates `merge with main: <what failed>, and the resolution agent did not
-resolve it`, with what bl found, the agent's last line and where its
+resolve it`, with what bl found, the outcome's summary and where its
   commits are kept (`git reset --keep <sha>` restores them). A merge that
   failed with no conflicted file (git refused to start it) has nothing to
   resolve and escalates `merge with main: <repo> conflicts with main` as
@@ -4112,6 +4244,8 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_effort.md`                     | `{{effortGuide}}`: the effort-level rubric (F-85 D6); the refiner picks the lowest level that fits and writes the `**Effort:**` line. `refine`, `re-refine` and `feature-refine`.                    |
 | `_plain-writing.md`              | `{{writingGuide}}`: about 80% of ASD-STE100, so the operator or the next agent reads the text right once. Every top-level prompt; `bl agents` prints it after this reference.                        |
 | `_dictionaries.md`               | `{{dictionaryGuide}}` in `_plain-writing.md`, under "Give each thing one name": names each listed dictionary (`renderDictionaryGuide`); "" when none are listed or there is no config.               |
+| `_refine-outcome.md`             | `{{refineOutcome}}`: the story refine's closing **Outcome** section, the object to write to `{{outcomePath}}` as the session's last act (F-68 D1). `refine` and `re-refine`.                         |
+| `_refine-outcome-subagent.md`    | `{{refineOutcome}}` in a batch refine's per-story files: the sub-agent replies with the object, and the orchestrator writes the batch's outcome file.                                                |
 | `_cd-git-guard-deny.md`          | Deny message for the cd-then-git Claude hook.                                                                                                                                                        |
 | `_cd-search-guard-deny.md`       | Deny message for the cd-then-search Claude hook.                                                                                                                                                     |
 | `_cd-guard-deny.md`              | Bash-shape hook: `cd <path> && <cmd>` (cmd not git or a search tool).                                                                                                                                |

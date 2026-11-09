@@ -13,6 +13,7 @@ import { parseChange } from '../../src/change-doc.js';
 import { unitVars } from '../../src/unit.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
 import { CH, creates, editFile, fakeRunner, storySetup, captureLog } from '../helpers/feature-run-fixture.js';
+import { reviewOutcome } from '../helpers/outcomes.js';
 
 // ---------------------------------------------------------------------------
 // A single story through the loop: `bl run S-n` (F-35 Design §3)
@@ -254,12 +255,11 @@ test("a story's review finding routed to its Deferred: the review sessions get t
             ),
           );
           editFile(CH(unit), (fm, body) => {
-            fm.review_round = '1';
-            fm.review_status = 'addressed';
             const block =
               '### Session 2026-10-07 (PR #7) r1\n\n**Must fix**\nNone.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n';
             return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
           });
+          return reviewOutcome();
         },
       },
     });

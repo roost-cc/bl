@@ -28,9 +28,12 @@ Each sub-agent refines exactly one story, on its own. It does these steps:
    `### Sources of truth` part.
 3. It updates the frontmatter (type, points, depends_on, component, effort), and writes the
    `**Effort:** <level>: <reason>` line as the first line of the implementation plan.
-4. It formats each file it changed and sets `status: refined`.
+4. It formats each file it changed.
 5. It commits its story through the locked `bl validate` → `bl sync --commit` flow that its file
    describes.
+6. It ends its reply to you with its story's outcome, `{ "refined": true }` or
+   `{ "refined": false, "reason": "…" }`. It does not change the story's status: `bl refine` sets
+   it from your outcome (see **Outcome** below).
 
 Constraints for every sub-agent (already stated in their files — enforce them):
 
@@ -74,7 +77,31 @@ Each sub-agent's file also carries this rule, and your summary table follows it 
 
 ## After all sub-agents finish
 
-Print a summary table with one row per story: the story ID, its final status, its points, and a
-one-line note on what was planned. If a sub-agent could not finish, the note says why. Name any
-`bl validate` findings that a sub-agent reported on stories it did not touch. Do not commit
+Print a summary table with one row per story: the story ID, whether it is refined, its points,
+and a one-line note on what was planned. If a sub-agent could not finish, the note says why. Name
+any `bl validate` findings that a sub-agent reported on stories it did not touch. Do not commit
 anything yourself — each sub-agent already committed its own story.
+
+## Outcome
+
+As the last act of the session, after the summary table, use the {{writeTool}} tool to write this
+JSON object, and nothing else, to `{{outcomePath}}`:
+
+```json
+{
+  "summary": "<one line: what the batch planned>",
+  "stories": {
+    "S-1": { "refined": true },
+    "S-2": { "refined": false, "reason": "<why, in one line>" }
+  }
+}
+```
+
+- Give `stories` one entry for each story listed above, keyed by its ID, with the object its
+  sub-agent replied with.
+- If a sub-agent did not finish or did not reply with an object, set its entry to
+  `{ "refined": false, "reason": "<what happened, in one line>" }`.
+
+`bl refine` reads the file when the session ends. It sets each story with `refined: true` to
+refined, and prints the reason for each other story and leaves its status as it is. If the file
+is missing or does not match this shape, `bl refine` changes no status.

@@ -22,7 +22,7 @@ import {
   creates,
   editFile,
   checkAll,
-  writeSession,
+  verifySession,
   fakeRunner,
   statusOf,
   storySetup,
@@ -844,19 +844,17 @@ test('late_side_stories_complete_gates_before_clean: a story added at any stage 
         },
         verify: () => {
           round += 1;
-          writeSession(CH(feature), { pending: verdicts[round - 1] ?? false, round });
+          const out = verifySession(CH(feature), { pending: verdicts[round - 1] ?? false, round });
           if (c.at === 'verify') add();
+          return out;
         },
       };
-      if (c.at === 'selfReview') behaviour.selfReview = add;
+      if (c.at === 'selfReview') behaviour.selfReview = () => void add();
       if (c.at === 'fixTests') behaviour.fixTests = add;
-      if (c.at === 'fixSelfReview') behaviour.fixSelfReview = add;
+      if (c.at === 'fixSelfReview') behaviour.fixSelfReview = () => void add();
       if (c.at === 'fix') {
         behaviour.fix = () => {
-          editFile(CH(feature), (fm, body) => {
-            fm.review_status = 'fixed';
-            return body.replaceAll('- [ ] invariant', '- [x] invariant');
-          });
+          editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant'));
           add();
         };
       }
@@ -901,8 +899,8 @@ test('late_side_stories_complete_gates_before_clean: a closing round that adds a
           // Round 1 leaves an item; round 2 is the closing round (cap 1).
           verify: () => {
             round += 1;
-            writeSession(CH(feature), { pending: round === 1, round });
             if (round === 2) addSide();
+            return verifySession(CH(feature), { pending: round === 1, round });
           },
         },
       }),
@@ -925,7 +923,7 @@ test('late_side_stories_complete_gates_before_clean: a resumed addressed run rev
     const behaviour = {
       verify: () => {
         round += 1;
-        writeSession(CH(feature), { pending: false, round });
+        return verifySession(CH(feature), { pending: false, round });
       },
     };
     const first = await runFeature({
@@ -1033,19 +1031,17 @@ test('late_stories_follow_dependency_order: stories added at any stage are imple
             },
             verify: () => {
               round += 1;
-              writeSession(CH(feature), { pending: verdicts[round - 1] ?? false, round });
+              const out = verifySession(CH(feature), { pending: verdicts[round - 1] ?? false, round });
               if (stage.at === 'verify') add();
+              return out;
             },
           };
-          if (stage.at === 'selfReview') behaviour.selfReview = add;
+          if (stage.at === 'selfReview') behaviour.selfReview = () => void add();
           if (stage.at === 'fixTests') behaviour.fixTests = add;
-          if (stage.at === 'fixSelfReview') behaviour.fixSelfReview = add;
+          if (stage.at === 'fixSelfReview') behaviour.fixSelfReview = () => void add();
           if (stage.at === 'fix') {
             behaviour.fix = () => {
-              editFile(CH(feature), (fm, body) => {
-                fm.review_status = 'fixed';
-                return body.replaceAll('- [ ] invariant', '- [x] invariant');
-              });
+              editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant'));
               add();
             };
           }

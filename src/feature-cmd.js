@@ -66,7 +66,15 @@ import {
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
 import { heldLines } from './blockers.js';
-import { ensureWorktree, launchSession, loadPrompt, workonDue, workonDone, prepareWorktreeOnce } from './session.js';
+import {
+  ensureWorktree,
+  launchSession,
+  loadPrompt,
+  loadSchema,
+  workonDue,
+  workonDone,
+  prepareWorktreeOnce,
+} from './session.js';
 import { syncBranchWithMain, reportNoOpenPR } from './review.js';
 import { featureUnit, storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
@@ -105,14 +113,16 @@ import { readAllTasks, tasksOf } from './task.js';
 import { commitChangedSince, dirtySnapshot, failedCommitPending, failedCommitRecord } from './backlog-commit.js';
 import { loadBacklog } from './backlog-graph.js';
 import { commitAndRecord, reportBacklogCommit } from './sync.js';
-import { refineAndCommit } from './refine.js';
+import { applyRefineStatus, refineAndCommit } from './refine.js';
 import {
+  applyFixOutcome,
   changeName,
   ensureChange,
   listChanges,
   openUnitChange,
   readChange,
   recordMerge,
+  reviewFieldsAt,
   setRepo,
   updateChange,
 } from './change-doc.js';
@@ -571,9 +581,13 @@ export function cmdRefine(args, config, feature) {
       recordTokens: false,
       sessionName: `${feature.id}: refine — ${feature.title}`,
       effort: sessionEffort(config, { mode: 'refine' }),
+      schema: loadSchema('feature-refine'),
     },
     `chore: refine ${feature.id}`,
     [feature.id],
+    // A premise that does not hold puts the feature back to draft (F-68 D2).
+    ({ premise_holds, refined, reason }) =>
+      applyRefineStatus(config.backlogRoot, feature, !premise_holds ? 'draft' : refined ? 'refined' : null, reason),
   );
 }
 
@@ -763,6 +777,7 @@ function printUnitTail(config, unit) {
       if (run.status === 'running' && last?.step === 'waiting') {
         console.log(`  waiting until ${localTime(last.until)} — ${last.message ?? last.note ?? ''}`);
       }
+      for (const line of outcomeLines(run.history)) console.log(line);
       // The out-list (F-64 D3): the configurations the walk skips, and until
       // when, so the operator sees why a run is not on its first choice.
       if (run.status !== 'clean') {
@@ -787,6 +802,23 @@ function printUnitTail(config, unit) {
       // unreadable run state is not an error for status
     }
   }
+}
+
+/**
+ * `bl status`'s outcome lines (F-68 D4): the latest outcome summary of each
+ * step of a run (and story, for an implement step), in the order the steps
+ * last ran. A step without an outcome (a review dimension pass, a gate) has
+ * no line.
+ */
+function outcomeLines(history) {
+  const latest = new Map();
+  for (const h of Array.isArray(history) ? history : []) {
+    if (typeof h?.outcome !== 'string') continue;
+    const key = `${h.step}${h.story ? ` ${h.story}` : ''}`;
+    latest.delete(key);
+    latest.set(key, h.outcome);
+  }
+  return [...latest].map(([key, outcome]) => `  ${key}: outcome: ${outcome}`);
 }
 
 /**
@@ -1141,6 +1173,8 @@ export async function cmdWorkon(args, config, feature) {
   if (reviewPending) info('Review pending on the feature — using the review-feedback prompt.\n');
   const vars = { ...prep.baseVars };
   if (reviewPending) {
+    // A fix session returns its outcome in the outcome file (F-68 D1, D3).
+    vars.outcomeCarrier = 'file';
     // The same slot `bl run` gives this round's fix session.
     ensureRunDir(cfg);
     vars.scratchDir = join(cfg.backlogRoot, RUN_DIR, `${feature.id}.r${feature.reviewRound}.fix.scratch`);
@@ -1148,7 +1182,9 @@ export async function cmdWorkon(args, config, feature) {
   }
   const sessionPrompt = loadPrompt(promptName, vars, { agent: cfg.agent, config: cfg });
 
-  const status = launchSession({
+  // What a fix session found; applyFixOutcome puts it back unless the outcome is `fixed`.
+  const fixBefore = reviewPending ? reviewFieldsAt(vars.changeAbsPath) : {};
+  const ret = launchSession({
     mode: 'workon',
     parsed,
     title: feature.title,
@@ -1171,8 +1207,13 @@ export async function cmdWorkon(args, config, feature) {
     tokensIndexPath: feature.indexPath,
     // One session for every story: the highest of their levels (F-85 D4).
     effort: sessionEffort(cfg, { mode: 'workon', stories: prep.ordered }),
+    ...(reviewPending ? { schema: loadSchema('fix') } : {}),
   });
+  const status = reviewPending ? ret.status : ret;
   recordFeatureTokens(feature, cfg);
+  if (reviewPending) {
+    applyFixOutcome(cfg.backlogRoot, { id: feature.id, changePath: vars.changeAbsPath }, ret, fixBefore);
+  }
   if (!status) info(implementNextSteps(feature.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.
   process.exit(status);

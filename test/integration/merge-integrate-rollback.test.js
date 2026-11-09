@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { integrateUnit } from '../../src/feature-run.js';
 import {
-  REFUSED,
+  UNRESOLVED,
   clearEscalation,
   escalation,
   featureCtx,
@@ -25,7 +25,7 @@ test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: ever
       name: 'red gate, failed resolution',
       main: clean,
       review: [],
-      runner: () => scriptedRunner({ test: 'false', resolve: () => REFUSED }),
+      runner: () => scriptedRunner({ test: 'false', resolve: () => UNRESOLVED }),
     },
     {
       name: 'misconfigured gate',

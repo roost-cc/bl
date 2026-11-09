@@ -31,7 +31,9 @@ test('bl merge S-n stops on a conflict before any main checkout is touched', () 
     const before = g(fx.repo, 'rev-parse', 'main');
     const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
     assert.equal(r.status, 1, r.stderr);
-    assert.match(r.stderr, /S-1: integration with main stopped — merge with main: code conflicts with main/);
+    // The test PATH's agent refuses, so the resolution session returns no
+    // outcome, is resumed once, and escalates (F-68 D5).
+    assert.match(r.stderr, /S-1: integration with main stopped — merge-resolve: no valid outcome after one retry/);
     assert.match(r.stderr, /No main checkout was touched\./);
     assert.equal(g(fx.repo, 'rev-parse', 'main'), before);
     assert.equal(g(fx.repo, 'status', '--porcelain'), '');

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "feature refine outcome",
+  "description": "The outcome of `bl refine F-n` (feature-refine.md), written by the agent to the outcome file. `bl refine` sets the feature's status from it (F-68 D3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "premise_holds", "refined"],
+  "properties": {
+    "summary": {
+      "description": "One line: what the session decided and planned.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\r\\n\\u2028\\u2029]*\\S[^\\r\\n\\u2028\\u2029]*$"
+    },
+    "premise_holds": {
+      "description": "false: the premise does not hold, and bl sets the feature's status to draft.",
+      "type": "boolean"
+    },
+    "refined": {
+      "description": "true: the feature is ready for approval, and bl sets its status to refined. false: bl leaves the status and prints the reason. refined is false whenever premise_holds is false.",
+      "type": "boolean"
+    },
+    "reason": {
+      "description": "Why the premise does not hold or the feature is not refined, in one line. Required unless premise_holds and refined are both true.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "premise_holds": { "const": true }, "refined": { "const": true } } },
+      "else": { "properties": { "reason": true }, "required": ["reason"] }
+    },
+    {
+      "if": { "properties": { "premise_holds": { "const": false } } },
+      "then": { "properties": { "refined": { "const": false } } }
+    }
+  ]
+}

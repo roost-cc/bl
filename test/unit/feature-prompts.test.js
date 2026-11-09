@@ -117,6 +117,41 @@ test('every unit prompt names the unit directory as the working directory, and n
   }
 });
 
+// F-68 D1, D2: each review, fix and self-review prompt ends with its outcome
+// object. A headless session returns it as its final message; an interactive
+// one (`outcomeCarrier: "file"`) writes it to the outcome file.
+test('the review, fix and self-review prompts end with their outcome object, delivered by the session carrier', () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const config = loadConfig({ backlogRoot: dir });
+    const objects = {
+      'review-verify':
+        /\{ "summary": "<one line: the round's verdict>", "must": 0, "should": 0, "nits": 0, "escalated": false \}/,
+      'feature-workon-review': /\{ "summary": "<one line: what the fix round did>", "fixed": true, "open": 0 \}/,
+      'feature-self-review':
+        /\{ "summary": "<one line: what you found and corrected>", "ok": true, "changed": false \}/,
+      'feature-fix-self-review': /"ok": true, "changed": false \}/,
+    };
+    for (const [name, object] of Object.entries(objects)) {
+      for (const agent of ['claude', 'codex']) {
+        const headless = loadPrompt(name, CASES[name], { agent, config });
+        assert.match(headless, /## Outcome\n\nEnd the session with this JSON object as your final message/, name);
+        assert.match(headless, object, name);
+        assert.doesNotMatch(
+          headless,
+          /\{\{outcomePath\}\}|REVIEW <pending|SELF-REVIEW DONE|PR URL as the final line/,
+          name,
+        );
+        const interactive = loadPrompt(name, { ...CASES[name], outcomeCarrier: 'file' }, { agent, config });
+        assert.match(interactive, /## Outcome\n\nAs the last act of the session, use the \S+ tool to write/, name);
+        assert.match(interactive, /to `\{\{outcomePath\}\}`/, `${name}: launchSession fills it in`);
+      }
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('a session with no unit directory keeps the worktree-root working directory line', () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
@@ -143,6 +178,35 @@ test('feature-fix-tests names the failing repo and its worktree, and has the fix
         agent,
       );
       assert.match(text, /`git -C \/wt-docs …`/, agent);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('the implement prompts end with the implement outcome object, as the final message or in the outcome file (F-68 D2)', () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const config = loadConfig({ backlogRoot: dir });
+    for (const name of ['feature-story', 'story-run']) {
+      for (const agent of ['claude', 'codex']) {
+        const where = `${name} (${agent})`;
+        const text = loadPrompt(name, CASES[name], { agent, config });
+        assert.match(text, /## Outcome\n\nEnd the session with this JSON object as your final message/, where);
+        assert.match(text, /"done": true, "blocked": null/, where);
+        assert.match(
+          text,
+          new RegExp(`when every acceptance criterion of ${CASES[name].storyId} is checked off`),
+          where,
+        );
+        assert.match(text, /- End with the outcome object that \*\*Outcome\*\* above describes\.\n?$/, where);
+        const file = loadPrompt(
+          name,
+          { ...CASES[name], outcomeCarrier: 'file', outcomePath: '/o.json' },
+          { agent, config },
+        );
+        assert.match(file, /write this JSON object, and nothing\nelse, to `\/o\.json`/, `${where}: file carrier`);
+      }
     }
   } finally {
     cleanup();
@@ -246,7 +310,10 @@ test("a story run's prompts name the story file and its Deferred, never the feat
       verify,
       /Prepend a session block to `## Review Log` in the change document\n\s+\(`\/b\/projects\/demo\/E3-x\/S9-nine\/change\.md`\)/,
     );
-    assert.match(verify, /Update the change document's frontmatter \(not the story file's\)/);
+    // The review state is bl's (F-68 D3): the verifier returns an outcome as its final message.
+    assert.match(verify, /bl owns the review state in the change document's frontmatter/);
+    assert.match(verify, /End the session with this JSON object as your final message/);
+    assert.match(verify, /"must": 0, "should": 0, "nits": 0, "escalated": false/);
     const self = loadPrompt('feature-self-review', STORY_CASES['feature-self-review'], { agent: 'claude', config });
     assert.match(self, /rest on the story's Summary and Acceptance Criteria\?/);
     assert.match(self, /`bl run` does that next/);
@@ -527,13 +594,14 @@ test('implement, fix-tests and review-fix sessions write diagnostics to the scra
       'rule 1 redirects into the scratch dir',
     );
     assert.match(fix, /Move any that do not belong into `\/b\/\.bl\/run\/F-9\.x\.scratch`/, 'rule 5 moves strays out');
-    assert.match(fix, /`UNRELATED`\s+stops the run and escalates/, 'the agent knows UNRELATED escalates');
-    assert.match(fix, /^  - `FIXED`: /m, 'FIXED is one final line');
-    assert.match(fix, /^  - `RERUN: <what you tried>`: /m, 'RERUN is one final line');
-    assert.match(fix, /^  - `UNRELATED: <reason>`: use it only when nothing in the repos/m, 'UNRELATED is narrowed');
+    assert.match(fix, /`unrelated` stops the run and escalates/, 'the agent knows unrelated escalates');
+    assert.match(fix, /^- `fixed`: /m, 'fixed is one outcome');
+    assert.match(fix, /^- `rerun`: the failure would not reproduce/m, 'rerun is one outcome');
+    assert.match(fix, /^- `unrelated`: use it only when nothing in the repos/m, 'unrelated is narrowed');
+    assert.match(fix, /"outcome": "fixed", "reason": "<one line>"/, 'the outcome object');
     assert.match(
       fix,
-      /"Flaky", "intermittent", "timeout"\s+and "not caused by this branch" are never reasons for `UNRELATED`/,
+      /"Flaky", "intermittent", "timeout" and "not caused by this branch" are never reasons\s+for `unrelated`/,
     );
     assert.match(
       fix,
@@ -740,16 +808,16 @@ test('every feature prompt that can escalate carries the escalation guide once',
   }
 });
 
-test('fix-tests asks for the UNRELATED explanation in the scratch escalation file; the verifier puts open items under Details', () => {
+test('fix-tests asks for the unrelated explanation in the scratch escalation file; the verifier puts open items under Details', () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const config = loadConfig({ backlogRoot: dir });
     const fix = loadPrompt('feature-fix-tests', CASES['feature-fix-tests'], { agent: 'claude', config });
     assert.match(
       fix,
-      /write the full explanation for the\s+operator to `\/b\/\.bl\/run\/F-9\.x\.scratch\/escalation\.md`/,
+      /write the full explanation for the operator\s+to `\/b\/\.bl\/run\/F-9\.x\.scratch\/escalation\.md`/,
     );
-    assert.match(fix, /Keep the line itself to a short\s+summary/);
+    assert.match(fix, /Keep\s+`reason` to a short summary/);
     const verify = loadPrompt('review-verify', CASES['review-verify'], { agent: 'claude', config });
     assert.match(
       verify,

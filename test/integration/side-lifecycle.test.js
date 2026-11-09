@@ -26,6 +26,7 @@ import { defaultRunner, runFeature } from '../../src/feature-run.js';
 import { runBl } from '../helpers/run-bl.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
+import { defaultOutcome, reviewOutcome } from '../helpers/outcomes.js';
 
 const DONE = '## Acceptance Criteria\n\n- [x] done\n';
 const fmOf = (path) => parseFrontmatter(readFileSync(path, 'utf8')).fm;
@@ -86,10 +87,13 @@ function commitIn(wt, file, text) {
 }
 
 /** The change document at `path` with a clean review session and `review_status: addressed`. */
-function markAddressed(path, round) {
+function markAddressed(path, round, { fields = true } = {}) {
   const doc = parseChange(readFileSync(path, 'utf8'));
-  doc.fm.review_round = String(round);
-  doc.fm.review_status = 'addressed';
+  // A fake verifier leaves the fields to bl, which writes them from its outcome (F-68 D3).
+  if (fields) {
+    doc.fm.review_round = String(round);
+    doc.fm.review_status = 'addressed';
+  }
   const block = `### Session 2026-10-26 r${round}\n\n**Must fix**\nNone.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n`;
   doc.body = doc.body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
   writeFileSync(path, serializeChange(doc));
@@ -147,9 +151,10 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
         writeFileSync(o.vars.findingsPath, `# ${o.vars.dimension}\n\nNone.\n`);
       } else if (o.promptName === 'review-verify') {
         round += 1;
-        markAddressed(changePath, round);
+        markAddressed(changePath, round, { fields: false });
+        return { ok: true, output: '', isError: false, usage: null, structured: reviewOutcome() };
       }
-      return { ok: true, output: '', isError: false, usage: null };
+      return { ok: true, output: '', isError: false, usage: null, structured: defaultOutcome(o.promptName) };
     },
   };
   const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });

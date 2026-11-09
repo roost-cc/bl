@@ -10,10 +10,14 @@ import {
   reviewFeature,
   acquireRunLock,
   RUN_DIR,
+  OutcomeError,
 } from '../../src/feature-run.js';
 import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
 import { spawnSync } from 'child_process';
 import { featureReviewGate } from '../../src/review-log.js';
+import { extractSection } from '../../src/feature.js';
+import { parseChange } from '../../src/change-doc.js';
+import { _hooks as atomicHooks } from '../../src/atomic-write.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import {
@@ -23,10 +27,14 @@ import {
   editFile,
   checkAll,
   writeSession,
+  verifySession,
   fakeRunner,
   statusOf,
   withContainers,
 } from '../helpers/feature-run-fixture.js';
+import { FIX_OUTCOME, reviewOutcome, SELF_REVIEW_OUTCOME } from '../helpers/outcomes.js';
+import { validateOutcome } from '../../src/outcome.js';
+import { loadSchema } from '../../src/session.js';
 
 // ---------------------------------------------------------------------------
 // Quarantine against a real git worktree
@@ -340,14 +348,14 @@ test("bl review on a two-repo feature spends one round and keeps both repos' ope
         // A reviewer leaves a probe in the secondary repo's worktree.
         review: (o) => o.vars.dimension === 'correctness' && writeFileSync(join(wtB, probe), 'probe\n'),
         // The verifier records one session for both PRs; the open Must is repo B's.
-        verify: () =>
+        verify: () => {
           editFile(CH(feature), (fm, body) => {
-            fm.review_round = '1';
-            fm.review_status = 'pending';
             const block =
               '### Session 2026-09-24 (PR #7, #12)\n\n**Must fix**\n\n- [ ] repo-b: invariant Y — Repro: y. Test: z.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n';
             return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
-          }),
+          });
+          return reviewOutcome({ must: 1 });
+        },
       },
     });
     const shell = runner.shell;
@@ -428,13 +436,13 @@ test('featureReviewGate blocks an open Must in a CRLF feature file', async () =>
         verify: () => {
           writeFileSync(feature.indexPath, readFileSync(feature.indexPath, 'utf8').replace(/\r\n/g, '\n'));
           editFile(CH(feature), (fm, body) => {
-            fm.review_round = '1';
-            fm.review_status = 'addressed';
             const block =
               '### Session 2026-09-24 (PR #7)\n\n**Must fix**\n\n- [ ] invariant X\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n';
             return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
           });
           toCrlf();
+          // An outcome that missed the open Must: bl writes addressed, and the gate catches it.
+          return reviewOutcome();
         },
       },
     });
@@ -475,7 +483,7 @@ test('the test gate refuses a dirty tree with no test plugin configured', async 
           },
           fix: (o) => {
             if (leftBy === 'fix') leave();
-            return base.session({ ...o, promptName: 'feature-workon-review' });
+            return base.session({ ...o, promptName: 'feature-workon-review' }).structured;
           },
           shell: statusOf(prep.worktreePath, [stray]),
           fixTests: (o) => {
@@ -588,7 +596,7 @@ test('a review round over a unit directory takes its one session lock, not one p
     const runner = fakeRunner({
       dir: s.dir,
       feature: s.feature,
-      behaviour: { verify: () => writeSession(CH(s.feature), { pending: false, round: 1 }) },
+      behaviour: { verify: () => verifySession(CH(s.feature), { pending: false, round: 1 }) },
     });
     const seen = [];
     const session = runner.session;
@@ -667,7 +675,7 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
       const runner = fakeRunner({
         dir: s.dir,
         feature: s.feature,
-        behaviour: { verify: () => writeSession(CH(s.feature), { pending: false, round: 1 }) },
+        behaviour: { verify: () => verifySession(CH(s.feature), { pending: false, round: 1 }) },
       });
       const seen = [];
       const session = runner.session;
@@ -796,7 +804,7 @@ test('the loop escalates a review round aborted by a failed pass instead of read
     const runner = fakeRunner({
       dir,
       feature,
-      behaviour: { verify: () => writeSession(CH(feature), { pending: false, round: 1 }) },
+      behaviour: { verify: () => verifySession(CH(feature), { pending: false, round: 1 }) },
     });
     const session = runner.session;
     runner.session = (o) =>
@@ -845,12 +853,9 @@ test('a pending session with no recorded review commit scopes the fix self-revie
       behaviour: {
         fix: () => {
           runner.bumpHead();
-          editFile(CH(feature), (fm, body) => {
-            fm.review_status = 'fixed';
-            return body.replaceAll('- [ ] invariant', '- [x] invariant');
-          });
+          editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant'));
         },
-        verify: () => writeSession(CH(feature), { pending: false, round: 2 }),
+        verify: () => verifySession(CH(feature), { pending: false, round: 2 }),
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -883,9 +888,17 @@ test('a session that throws still has its containers removed, and the error prop
 });
 
 test('a returned fix-self-review failure stops before the test gate and re-review', async () => {
+  // A session that failed but returned an outcome, and one whose outcome says
+  // the fix is not ready (F-68 D2).
   const failures = {
-    'ok: false': { ok: false, isError: true, error: 'provider failed', output: '' },
-    'isError with ok': { ok: true, isError: true, output: 'half done' },
+    'ok: false': { ok: false, isError: true, error: 'provider failed', output: '', structured: SELF_REVIEW_OUTCOME },
+    'isError with ok': { ok: true, isError: true, output: 'half done', structured: SELF_REVIEW_OUTCOME },
+    'outcome ok: false': {
+      ok: true,
+      isError: false,
+      output: '',
+      structured: { summary: 'item 1 needs a redesign', ok: false, changed: false },
+    },
   };
   for (const [kind, result] of Object.entries(failures)) {
     const { dir, cleanup, config, feature, prep } = setup();
@@ -899,6 +912,7 @@ test('a returned fix-self-review failure stops before the test gate and re-revie
       const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
       assert.equal(state.status, 'escalated', kind);
       assert.match(state.lastError, /fix self-review for round 1 failed/, kind);
+      if (kind === 'outcome ok: false') assert.match(state.lastError, /failed: item 1 needs a redesign/);
       const after = runner.calls.slice(runner.calls.findIndex((c) => c.prompt === 'feature-fix-self-review') + 1);
       assert.ok(!after.some((c) => c.cmd === 'npm test'), `${kind}: no test gate after it`);
       assert.ok(!after.some((c) => c.prompt?.startsWith('review-')), `${kind}: no re-review after it`);
@@ -953,7 +967,210 @@ test('a fix self-review with permission denials but a good result continues to t
   }
 });
 
-test('a fix self-review that changes review_status escalates instead of re-reviewing', async () => {
+test('a review round that ends without a verdict leaves review_round and review_status as the round found them', async () => {
+  // Each case breaks the round at one point after the verifier starts. The
+  // fields must be as before, and a rerun at a cap of 1 must review.
+  const cases = [
+    {
+      name: 'the verifier session throws a plain Error',
+      session: () => {
+        throw new Error('simulated crash');
+      },
+    },
+    {
+      name: 'the verifier stops the run (no valid outcome)',
+      session: () => {
+        throw new OutcomeError('no valid outcome', null);
+      },
+    },
+    {
+      name: 'the quarantine fails after a good verifier',
+      verify: (s) => {
+        s.failRevParse = true;
+      },
+    },
+    {
+      name: 'writing the verdict fails after a good verifier',
+      verify: () => {
+        atomicHooks.beforeRename = (tmp) => {
+          if (!readFileSync(tmp, 'utf8').includes('change_of:')) return;
+          atomicHooks.beforeRename = null;
+          throw new Error('injected change write failure');
+        };
+      },
+    },
+    {
+      // A killed bl leaves the change document as it was while the verifier ran.
+      name: 'bl is killed while the verifier runs',
+      verify: (s, feature) => {
+        s.whileVerifying = reviewFieldsOf(CH(feature));
+      },
+    },
+  ];
+  const reviewFieldsOf = (path) => {
+    const { fm } = parseChange(readFileSync(path, 'utf8'));
+    return { review_round: String(fm.review_round ?? ''), review_status: String(fm.review_status ?? '') };
+  };
+  for (const c of cases) {
+    const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
+    const s = { failRevParse: false, whileVerifying: null, broken: true };
+    try {
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          verify: () => {
+            if (s.broken) c.verify?.(s, feature);
+            return verifySession(CH(feature), { pending: false, round: 1 });
+          },
+          shell: (cmd) => (s.failRevParse && cmd.startsWith('git rev-parse HEAD') ? { status: 1, output: '' } : null),
+        },
+      });
+      const session = runner.session;
+      runner.session = (o) => {
+        if (s.broken && c.session && o.promptName === 'review-verify') c.session();
+        return session(o);
+      };
+      const before = reviewFieldsOf(CH(feature));
+      try {
+        await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 3 });
+      } catch {
+        // A plain Error unwinds; the fields are what this test checks.
+      }
+      atomicHooks.beforeRename = null;
+      if (c.name.includes('killed')) {
+        // The fake round itself finishes; what a kill would leave is what matters.
+        assert.deepEqual(s.whileVerifying, before, `${c.name}: the fields while the verifier ran`);
+        continue;
+      }
+      assert.deepEqual(reviewFieldsOf(CH(feature)), before, `${c.name}: the fields after the round`);
+      s.broken = false;
+      s.failRevParse = false;
+      const r = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 1 });
+      assert.equal(r.round, 1, `${c.name}: a rerun at a cap of 1 reviews`);
+      assert.equal(reviewFieldsOf(CH(feature)).review_status, 'addressed', `${c.name}: with a verdict`);
+    } finally {
+      atomicHooks.beforeRename = null;
+      cleanup();
+    }
+  }
+});
+
+test('review_outcome_decides_the_round: the loop takes each branch from the outcomes and writes the review fields from them', async () => {
+  // `seen` holds the change document's review fields as each session starts:
+  // the verifier sees the fields the last verdict left (bl writes both after
+  // the verifier returns), the fix sees the verifier's
+  // verdict, the fix self-review sees `fixed`. `final` is the run's end.
+  const FIXED_NOT = { summary: 'item 1 needs the operator', fixed: false, open: 1 };
+  const cases = [
+    {
+      name: 'must: 1 → a fix round, then a clean re-review',
+      verdicts: [{ must: 1 }, {}],
+      expect: 'clean',
+      seen: ['verify 0/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 1/fixed'],
+      final: '2/addressed',
+    },
+    {
+      name: 'should: 1 → a fix round',
+      verdicts: [{ should: 1 }, {}],
+      expect: 'clean',
+      seen: ['verify 0/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 1/fixed'],
+      final: '2/addressed',
+    },
+    {
+      name: 'must: 0, should: 0 → clean, open nits or not',
+      verdicts: [{ nits: 2 }],
+      expect: 'clean',
+      seen: ['verify 0/'],
+      final: '1/addressed',
+    },
+    {
+      name: 'fixed: false → escalates, the status left pending',
+      verdicts: [{ must: 1 }],
+      fix: FIXED_NOT,
+      expect: 'escalated',
+      error: /^fix session for round 1 left 1 item\(s\) open: item 1 needs the operator$/,
+      seen: ['verify 0/', 'fix 1/pending'],
+      final: '1/pending',
+    },
+    {
+      name: 'escalated: true with no ## Escalation → bl writes it',
+      verdicts: [{ must: 1, escalated: true }],
+      expect: 'escalated',
+      error: /^reviewer escalated in round 1$/,
+      escalation: /review round 1: the verifier escalated\n\nThe verifier's outcome: open items/,
+      seen: ['verify 0/'],
+      final: '1/pending',
+    },
+  ];
+  for (const c of cases) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const fields = () => {
+        const { fm } = parseChange(readFileSync(CH(feature), 'utf8'));
+        return `${fm.review_round}/${fm.review_status ?? ''}`;
+      };
+      const seen = [];
+      let round = 0;
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          verify: () => {
+            seen.push(`verify ${fields()}`);
+            const v = c.verdicts[round++] ?? {};
+            const pending = (v.must ?? 0) + (v.should ?? 0) > 0;
+            verifySession(CH(feature), { pending, round });
+            return reviewOutcome(v);
+          },
+          fix: () => {
+            seen.push(`fix ${fields()}`);
+            editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant'));
+            return c.fix ?? FIX_OUTCOME;
+          },
+          fixSelfReview: () => void seen.push(`fix-self-review ${fields()}`),
+        },
+      });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, c.expect, `${c.name}: ${state.lastError}`);
+      if (c.error) assert.match(state.lastError, c.error, c.name);
+      assert.deepEqual(seen, c.seen, c.name);
+      assert.equal(fields(), c.final, c.name);
+      for (const o of [...c.verdicts.map(reviewOutcome), c.fix ?? FIX_OUTCOME]) {
+        assert.equal(validateOutcome(loadSchema(o.fixed == null ? 'review' : 'fix'), o).structuredError, null);
+      }
+      if (c.escalation) {
+        const { body } = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));
+        assert.match(extractSection(body, 'Escalation'), c.escalation, c.name);
+      }
+      // Every step with an outcome records it, never a last line.
+      for (const h of state.history.filter((e) => ['review:verify', 'fix', 'fix-self-review'].includes(e.step))) {
+        if (!h.warning) assert.match(h.note, /outcome: /, `${c.name}: ${h.step}`);
+      }
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+test('the fake agents return outcomes their schemas accept', () => {
+  for (const [name, o] of [
+    ['review', reviewOutcome({ pending: true })],
+    ['fix', FIX_OUTCOME],
+    ['self-review', SELF_REVIEW_OUTCOME],
+  ]) {
+    assert.equal(validateOutcome(loadSchema(name), o).structuredError, null, name);
+  }
+  // A count that is not a whole number, or a missing field, is no outcome.
+  assert.match(
+    validateOutcome(loadSchema('review'), { summary: 's', must: 1.5, should: 0, nits: 0, escalated: false })
+      .structuredError,
+    /schema violation at \$\/must/,
+  );
+  assert.match(validateOutcome(loadSchema('fix'), { summary: 's', fixed: true }).structuredError, /schema violation/);
+});
+
+test('a fix self-review that changes review_status is a warning: bl keeps fixed and re-reviews', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
     const runner = fakeRunner({
@@ -967,10 +1184,70 @@ test('a fix self-review that changes review_status escalates instead of re-revie
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
-    assert.equal(state.status, 'escalated');
-    assert.match(state.lastError, /fix self-review for round 1 changed review_status/);
-    assert.equal(runner.calls.filter((c) => c.prompt === 'review-verify').length, 1, 'no re-review after it');
+    assert.equal(state.status, 'clean');
+    const verifies = runner.calls.filter((c) => c.prompt === 'review-verify');
+    assert.equal(verifies.length, 2, 'the re-review runs');
+    assert.equal(verifies[1].vars.reReview, 'true', 'from fixed: a re-review, not a first review');
+    const warning = state.history.find((h) => h.step === 'fix-self-review' && h.warning);
+    assert.match(warning.note, /the session changed review_status to "pending"; bl writes "fixed" from the outcome/);
   } finally {
     cleanup();
+  }
+});
+
+test('a fix session that sets review_status and reports fixed false leaves the status as it found it', async () => {
+  // Every exit of the fix and fix self-review steps: the session writes the
+  // review fields, then the step stops. bl puts back what the step found:
+  // the verdict before the fix, `fixed` before the fix self-review.
+  const escalate = (feature) =>
+    editFile(feature.indexPath, (fm, body) => body.replace(/## Escalation\n\nNone\./, '## Escalation\n\nStop.'));
+  const breakStory = (feature, prep) =>
+    writeFileSync(prep.ordered.find((s) => s.id === 'S-1').indexPath, '---\neffort: [\n---\n');
+  const NOT_FIXED = { summary: 'item 1 needs the operator', fixed: false, open: 1 };
+  const NOT_READY = { summary: 'item 1 needs a redesign', ok: false, changed: false };
+  const rows = [
+    { name: 'fix: fixed false', at: 'fix', outcome: NOT_FIXED, error: /left 1 item\(s\) open/ },
+    { name: 'fix: an open ## Escalation', at: 'fix', act: escalate, error: /while addressing review feedback/ },
+    { name: 'fix: a scope stop', at: 'fix', act: breakStory, error: /could not be re-read/ },
+    // Text, not the schema's object, twice: the step throws.
+    { name: 'fix: no valid outcome', at: 'fix', outcome: 'done', error: /^fix: no valid outcome after one retry/ },
+    { name: 'fix self-review: ok false', at: 'fixSelfReview', outcome: NOT_READY, error: /self-review .* failed/ },
+    { name: 'fix self-review: an open ## Escalation', at: 'fixSelfReview', act: escalate, error: /fix self-review$/ },
+    { name: 'fix self-review: a scope stop', at: 'fixSelfReview', act: breakStory, error: /could not be re-read/ },
+    {
+      name: 'fix self-review: no valid outcome',
+      at: 'fixSelfReview',
+      outcome: 'done',
+      error: /^fix-self-review: no valid outcome after one retry/,
+    },
+  ];
+  for (const r of rows) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const fields = () => {
+        const { fm } = parseChange(readFileSync(CH(feature), 'utf8'));
+        return `${fm.review_round}/${fm.review_status ?? ''}`;
+      };
+      let found = null;
+      const session = () => {
+        // The first session's view: a retry finds what the first one wrote.
+        found ??= fields();
+        editFile(CH(feature), (fm, body) => {
+          fm.review_round = '5';
+          fm.review_status = 'addressed';
+          return body.replaceAll('- [ ] invariant', '- [x] invariant');
+        });
+        r.act?.(feature, prep);
+        return r.outcome;
+      };
+      const runner = fakeRunner({ dir, feature, behaviour: { [r.at]: session } });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'escalated', r.name);
+      assert.match(state.lastError, r.error, `${r.name}: ${state.lastError}`);
+      assert.equal(found, r.at === 'fix' ? '1/pending' : '1/fixed', `${r.name}: the fields the session found`);
+      assert.equal(fields(), found, `${r.name}: the fields after the step`);
+    } finally {
+      cleanup();
+    }
   }
 });

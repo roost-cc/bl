@@ -24,6 +24,7 @@ import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { mkTempBacklog, mkTempDir } from './tempdir.js';
 import { noAgentEnv } from './fake-agent.js';
+import { fixTestsOutcome, MERGE_RESOLVE_OUTCOME, reviewOutcome } from './outcomes.js';
 import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { extractSection, findFeature, normalizeFeatureId } from '../../src/feature.js';
 import { featureUnit } from '../../src/unit.js';
@@ -142,13 +143,20 @@ export function landOnMain(fx, file, content, message) {
   return g(c, 'rev-parse', '--short', 'HEAD');
 }
 
-/** Real git through the default runner; the test plugin is `test`, sessions refused. */
+/**
+ * Real git through the default runner; the test plugin is `test`. The
+ * resolution agent resolves nothing (`resolved: false`, F-68 D2), fix-tests
+ * returns `fixed` without changing anything, and every other session is
+ * refused.
+ */
 export function stubRunner(testCmd) {
   const calls = { gates: 0, sessions: 0, log: [] };
   const runner = {
     ...defaultRunner(),
-    session() {
+    session({ promptName }) {
       calls.sessions++;
+      if (promptName === 'merge-resolve') return UNRESOLVED;
+      if (promptName === 'feature-fix-tests') return FIXED_TESTS;
       return { ok: false, output: 'no sessions in this test', isError: true };
     },
     testPlugins() {
@@ -163,7 +171,17 @@ export function stubRunner(testCmd) {
 }
 
 export const REFUSED = { ok: false, output: 'no agent in this test', isError: true };
-export const RESOLVED = { ok: true, output: 'RESOLVED', isError: false };
+/** A resolution session's outcome (F-68 D2): every merge committed. */
+export const RESOLVED = { ok: true, output: '', isError: false, structured: MERGE_RESOLVE_OUTCOME };
+/** A resolution session that says it could not resolve the merge. */
+export const UNRESOLVED = {
+  ok: true,
+  output: '',
+  isError: false,
+  structured: { summary: 'could not resolve', resolved: false, reason: 'no agent in this test' },
+};
+/** A fix-tests session that committed a fix. */
+export const FIXED_TESTS = { ok: true, output: '', isError: false, structured: fixTestsOutcome() };
 export const REVIEW_SESSIONS = ['review-correctness', 'review-failure-paths', 'review-verify'];
 
 /** The resolution `both\n` for the f1-feat.txt conflict, committed as the merge. */
@@ -175,22 +193,24 @@ export function resolveBoth(cwd) {
 }
 
 /**
- * Write the verifier's verdict into the change document, as review-verify
- * does: `review_status`, `review_round` up by one, and a session on top of
- * the Review Log with `must` as its Must fix items.
+ * Write the verifier's session on top of the change document's Review Log,
+ * with `must` as its Must fix items, as review-verify does, and return its
+ * outcome (F-68 D2): `pending` counts one open Must fix, `addressed` none, and
+ * `unset` is a verifier that returned no outcome. The loop writes
+ * `review_round` and `review_status` itself.
  */
 function writeVerdict(path, verdict, must) {
   const { fm, body } = parseFrontmatter(readFileSync(path, 'utf8'));
-  fm.review_status = verdict;
-  fm.review_round = String(Number(fm.review_round ?? 0) + 1);
   const session = `### Session 2026-10-26 (merge resolution)\n\n**Must fix**\n\n${must}\n\n**Should fix**\n\nNone.\n\n**Nits**\n\nNone.\n\n`;
   writeFileSync(path, serializeFrontmatter(fm) + body.replace('## Review Log\n\n', `## Review Log\n\n${session}`));
+  return verdict === 'unset' ? null : reviewOutcome({ pending: verdict === 'pending' });
 }
 
 /**
  * Real git through the default runner, the test plugin `test`, and scripted
  * sessions: `resolve(worktreePath, vars)` plays the resolution agent, the
- * dimension passes find nothing, and the verifier records `verdict`.
+ * dimension passes find nothing, the verifier returns `verdict`, and a
+ * fix-tests session returns `fixed` without changing anything.
  */
 export function scriptedRunner({ test: testCmd, resolve, verdict = 'addressed', must = 'None.' }) {
   const calls = { gates: 0, sessions: [], vars: {}, log: [] };
@@ -201,10 +221,11 @@ export function scriptedRunner({ test: testCmd, resolve, verdict = 'addressed', 
       calls.vars[promptName] = vars;
       if (promptName === 'merge-resolve') return resolve(worktreePath, vars);
       if (promptName === 'review-verify') {
-        writeVerdict(vars.changeAbsPath, verdict, must);
-        return { ok: true, output: `REVIEW ${verdict} round 1`, isError: false };
+        const structured = writeVerdict(vars.changeAbsPath, verdict, must);
+        return { ok: true, output: '', isError: false, structured };
       }
       if (promptName.startsWith('review-')) return { ok: true, output: 'no findings', isError: false };
+      if (promptName === 'feature-fix-tests') return FIXED_TESTS;
       return REFUSED;
     },
     testPlugins() {

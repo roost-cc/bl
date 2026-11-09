@@ -52,6 +52,12 @@ bl sync --commit -m "chore: escalate {{featureId}} fix self-review" --path {{fea
 Never run `git add` or `git commit` in the backlog repo ({{backlogDir}}). Its index is shared,
 and a raw commit takes along what other sessions have staged.
 
+## Outcome
+
+{{outcomeDelivery}}
+
+{{selfReviewOutcome}}
+
 {{blockedByBug}}
 
 {{escalationGuide}}
@@ -62,8 +68,7 @@ and a raw commit takes along what other sessions have staged.
 
 ## IMPORTANT
 
-- Do NOT change `review_status`, check or uncheck any review item, or edit the Review Log in the
-  change document. The fix round's claims stand; you only make the code match them.
+- Do NOT check or uncheck any review item, or edit the Review Log in the change document. The
+  fix round's claims stand; you only make the code match them.
 - Do NOT push, open a PR, or run any `bl sync` other than the `bl sync --commit` line above.
-- End your response with one line: `FIX SELF-REVIEW DONE` (optionally followed by the number of
-  corrections), or `ESCALATED`.
+- End with the outcome object that **Outcome** above describes.

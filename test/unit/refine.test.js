@@ -1,9 +1,76 @@
 import { test } from 'node:test';
+import { basename } from 'path';
 import assert from 'node:assert/strict';
-import { loadConfig } from '../../src/config.js';
-import { resolveRefineTargets } from '../../src/refine.js';
+import { readFileSync } from 'fs';
+import { loadConfig, parseFrontmatter } from '../../src/config.js';
+import { resolveRefineTargets, refineBatchId, applyRefineStatus, applyBatchStatuses } from '../../src/refine.js';
 import { loadPrompt } from '../../src/session.js';
+import { outcomePath } from '../../src/outcome.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
+
+test('two batch refines with different stories use different outcome files', () => {
+  const a = outcomePath('/b', refineBatchId(['S-1', 'S-2']));
+  const b = outcomePath('/b', refineBatchId(['S-3', 'S-4']));
+  assert.match(a, /^\/b\/\.bl\/outcome\/refine-batch-[0-9a-f]{12}\.json$/);
+  assert.notEqual(a, b);
+  assert.notEqual(a, outcomePath('/b', refineBatchId(['S-1'])), 'a batch that holds one story more');
+  assert.equal(a, outcomePath('/b', refineBatchId(['S-2', 'S-1'])), 'the same stories in another order');
+});
+
+test('a batch refine outcome file name stays under 255 bytes for every batch size', () => {
+  for (const n of [1, 2, 35, 60, 200, 1000]) {
+    const ids = Array.from({ length: n }, (_, i) => `S-${1000 + i}`);
+    const name = basename(outcomePath('/b', refineBatchId(ids)));
+    assert.ok(Buffer.byteLength(name) < 255, `${n} stories: ${name}`);
+    assert.notEqual(refineBatchId(ids), refineBatchId(ids.slice(1)), `${n} stories and one fewer`);
+  }
+});
+
+test('a status write that fails names its story', () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const unit = { id: 'S-9', indexPath: `${dir}/stories/S9-gone/index.md` };
+    assert.throws(() => applyRefineStatus(dir, unit, 'refined'), /^Error: S-9: /);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a batch refine applies every story it can and names each one it could not', () => {
+  const stories = ['S-1', 'S-3', 'S-4'].map((id) => ({
+    id,
+    component: 'C01',
+    title: id,
+    status: 'backlog',
+  }));
+  const { dir, cleanup } = mkTempBacklog({ components: [{ id: 'C01', title: 'One' }], stories });
+  try {
+    const path = (id) => `${dir}/stories/S${id.slice(2)}/index.md`;
+    // S-2 and S-5 have no file: their writes fail, before and after the others.
+    const targets = ['S-1', 'S-2', 'S-3', 'S-4', 'S-5'].map((id) => ({ id, found: { indexPath: path(id) } }));
+    const outcome = {
+      'S-1': { refined: true },
+      'S-2': { refined: true },
+      'S-3': { refined: false, reason: 'too large' },
+      'S-4': { refined: true },
+      'S-5': { refined: true },
+    };
+    assert.throws(
+      () => applyBatchStatuses(dir, targets, outcome),
+      (e) => {
+        assert.match(e.message, /^status set for: S-1, S-4; not set for:\n/);
+        assert.match(e.message, /\n {2}S-2: /);
+        assert.match(e.message, /\n {2}S-5: /);
+        return true;
+      },
+    );
+    assert.equal(parseFrontmatter(readFileSync(path('S-1'), 'utf8')).fm.status, 'refined');
+    assert.equal(parseFrontmatter(readFileSync(path('S-3'), 'utf8')).fm.status, 'backlog');
+    assert.equal(parseFrontmatter(readFileSync(path('S-4'), 'utf8')).fm.status, 'refined');
+  } finally {
+    cleanup();
+  }
+});
 
 function fixture() {
   return mkTempBacklog({
@@ -188,5 +255,30 @@ for (const name of ['refine', 're-refine']) {
   test(`${name} prompt no longer forbids running bl sync`, () => {
     const text = loadPrompt(name, { storyId: 'S-1', backlogDir: '/bl' });
     assert.doesNotMatch(text, /Do NOT run `bl sync`/);
+  });
+
+  // F-68 D1: the session ends by writing the outcome file, which `launchSession` names.
+  test(`${name} prompt ends with the Outcome section naming {{outcomePath}}`, () => {
+    const text = loadPrompt(name, { storyId: 'S-1', backlogDir: '/bl' });
+    const outcome = text.slice(text.lastIndexOf('## Outcome'));
+    assert.match(outcome, /^## Outcome\n/);
+    assert.match(outcome, /use the Write tool to write this JSON\s+object, and nothing else, to `\{\{outcomePath\}\}`/);
+    assert.match(outcome, /"refined": true/);
+  });
+
+  test(`${name} prompt for a batch sub-agent replies with the outcome and names no outcome file`, () => {
+    const refineOutcome = loadPrompt('_refine-outcome-subagent', {});
+    const text = loadPrompt(name, { storyId: 'S-1', backlogDir: '/bl', refineOutcome });
+    assert.doesNotMatch(text, /\{\{outcomePath\}\}/);
+    assert.match(text, /## Outcome\n\nYou are one sub-agent of a batch refine\. Write no outcome file\./);
+  });
+}
+
+for (const name of ['refine-batch', 'feature-refine']) {
+  test(`${name} prompt ends with the Outcome section naming {{outcomePath}}`, () => {
+    const text = loadPrompt(name, { storyId: 'S-1', featureId: 'F-1', backlogDir: '/bl' });
+    const outcome = text.slice(text.lastIndexOf('## Outcome'));
+    assert.match(outcome, /^## Outcome\n/);
+    assert.match(outcome, /to `\{\{outcomePath\}\}`/);
   });
 }

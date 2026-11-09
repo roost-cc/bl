@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
+import { parseFrontmatter } from '../../src/config.js';
 import { integrateUnit, runFeature } from '../../src/feature-run.js';
+import { defaultOutcome } from '../helpers/outcomes.js';
 import {
   changeFile,
   clearEscalation,
@@ -58,14 +59,10 @@ test('resume_pending_integration_review_below_at_and_above_cap: bl run --resume 
       const { runner, calls } = scriptedRunner({ test: 'true', resolve: resolveBoth, verdict: 'addressed' });
       const session = runner.session;
       runner.session = (o) => {
-        if (o.promptName === 'feature-workon-review') {
-          calls.sessions.push(o.promptName);
-          const { fm, body } = parseFrontmatter(readFileSync(changeFile(fx), 'utf8'));
-          fm.review_status = 'fixed';
-          writeFileSync(changeFile(fx), serializeFrontmatter(fm) + body);
-          return { ok: true, output: 'FIXED', isError: false };
+        if (o.promptName === 'feature-workon-review') calls.sessions.push(o.promptName);
+        if (o.promptName === 'feature-workon-review' || o.promptName === 'feature-fix-self-review') {
+          return { ok: true, output: '', isError: false, structured: defaultOutcome(o.promptName) };
         }
-        if (o.promptName === 'feature-fix-self-review') return { ok: true, output: 'OK', isError: false };
         return session(o);
       };
       const fresh = featureCtx(fx);

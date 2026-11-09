@@ -13,6 +13,7 @@ import { runCapacityHelper } from './capacity-helper.js';
 import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv } from './provider.js';
+import { outcomeFor } from '../outcome.js';
 
 // The script that holds the `codex app-server` conversation (see its JSDoc).
 const CAPACITY_HELPER = fileURLToPath(new URL('./codex-capacity.js', import.meta.url));
@@ -395,6 +396,7 @@ export function buildCodexArgs({
   writableRoots = [],
   headless = false,
   outputFile = null,
+  schemaFile = null,
   model = null,
   effort = null,
 } = {}) {
@@ -421,8 +423,14 @@ export function buildCodexArgs({
     // `codex exec` is the non-interactive entry point: no approval prompts
     // exist there (a command the sandbox refuses simply fails), JSON events
     // stream on stdout, and the final assistant message lands in a file.
+    // `schemaFile` (F-68 D1) constrains that final message to the step's
+    // JSON Schema. A `sessionId` resumes that thread (`exec … resume <id>`):
+    // the loop's one outcome retry (F-68 D5); the exec options stay before
+    // the subcommand.
     codexArgs.push('exec', ...sharedOptions, '--skip-git-repo-check', '--json');
     if (outputFile) codexArgs.push('--output-last-message', outputFile);
+    if (schemaFile) codexArgs.push('--output-schema', schemaFile);
+    if (sessionId) codexArgs.push('resume', sessionId);
     if (prompt) codexArgs.push(prompt);
     return codexArgs;
   }
@@ -528,15 +536,18 @@ function codexResetTime([, month, day, year, hh, mm, ampm], now) {
  * `parseCodexLimit`), else its capacity refusal (`parseCodexCapacity`): the
  * first such event, read on its own, so its reset time is never another
  * event's; or null: agent text that merely quotes the sentence is not a
- * refusal. Never throws.
+ * refusal. `sessionId` is the `thread.started` event's `thread_id`, which
+ * `codex exec resume` takes, or null. Never throws.
  *
- * @returns {{ usage: object|null, isError: boolean, refusal: object|null }}
+ * @returns {{ usage: object|null, isError: boolean, refusal: object|null,
+ *             sessionId: string|null }}
  */
 export function parseCodexJsonEvents(stdout) {
   const usage = { input: 0, output: 0, cache_creation: 0, cache_read: 0 };
   let any = false;
   let isError = false;
   let refusal = null;
+  let sessionId = null;
   for (const line of String(stdout ?? '').split('\n')) {
     const t = line.trim();
     if (!t.startsWith('{')) continue;
@@ -548,6 +559,7 @@ export function parseCodexJsonEvents(stdout) {
     }
     if (!ev || typeof ev !== 'object') continue;
     const type = String(ev.type ?? '');
+    if (type === 'thread.started' && typeof ev.thread_id === 'string' && ev.thread_id) sessionId ??= ev.thread_id;
     if (/error|failed/i.test(type)) {
       isError = true;
       // `turn.failed` carries `error.message`; a `type: "error"` event, `message`.
@@ -566,7 +578,7 @@ export function parseCodexJsonEvents(stdout) {
       any = true;
     }
   }
-  return { usage: any ? usage : null, isError, refusal };
+  return { usage: any ? usage : null, isError, refusal, sessionId };
 }
 
 /** A quota window's length as Codex's own usage view names it: 5h, 7d. */
@@ -810,6 +822,7 @@ export class CodexProvider extends AgentProvider {
     headless = false,
     model = null,
     effort = null,
+    schema = null,
   }) {
     const translated = Array.isArray(permissions)
       ? translateCodexPermissions(permissions, {
@@ -835,7 +848,10 @@ export class CodexProvider extends AgentProvider {
       ...codexRepoWorktrees(cwd).flatMap((wt) => resolveCodexWritableGitRoots({ worktreePath: wt, backlogRoot })),
       ...(scopes.write ?? []),
     ];
-    const outputFile = headless ? join(tmpdir(), `bl-codex-${process.pid}-${Date.now()}.md`) : null;
+    const fileBase = join(tmpdir(), `bl-codex-${process.pid}-${Date.now()}`);
+    const outputFile = headless ? `${fileBase}.md` : null;
+    // The step's schema (F-68 D1), beside the last-message file.
+    const schemaFile = headless && schema ? `${fileBase}.schema.json` : null;
     const codexArgs = buildCodexArgs({
       prompt: effectivePrompt,
       worktreePath: cwd,
@@ -845,6 +861,7 @@ export class CodexProvider extends AgentProvider {
       writableRoots,
       headless,
       outputFile,
+      schemaFile,
       model,
       effort,
     });
@@ -853,6 +870,7 @@ export class CodexProvider extends AgentProvider {
       let r;
       let output = '';
       try {
+        if (schemaFile) writeFileSync(schemaFile, JSON.stringify(schema));
         r = run('codex', codexArgs, {
           cwd,
           // Marked headless (F-78 D3), so the bl it runs refuses `bl rank`.
@@ -867,11 +885,13 @@ export class CodexProvider extends AgentProvider {
           // best-effort
         }
       } finally {
-        // Every path, the spawn error one included, removes the temp file.
-        try {
-          if (existsSync(outputFile)) unlinkSync(outputFile);
-        } catch {
-          // best-effort
+        // Every path, the spawn error one included, removes the temp files.
+        for (const file of [outputFile, schemaFile]) {
+          try {
+            if (file && existsSync(file)) unlinkSync(file);
+          } catch {
+            // best-effort
+          }
         }
       }
       if (r.error) return r;
@@ -885,8 +905,10 @@ export class CodexProvider extends AgentProvider {
         usage: events.usage,
         isError: status !== 0 || events.isError,
         refusal: events.refusal,
-        sessionId: null,
+        sessionId: events.sessionId,
         parsed: true,
+        // Only the last-message file: the event stream is not the outcome.
+        ...outcomeFor(schema, output),
       };
     }
 

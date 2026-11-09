@@ -11,7 +11,8 @@ import { accumulateTokensOnFile } from '../../src/tokens.js';
 import { _hooks as atomicHooks } from '../../src/atomic-write.js';
 import { installPartialWrites } from '../helpers/partial-write.js';
 import { startTokenWriter } from '../helpers/token-writer.js';
-import { setup, CH, editFile, writeSession, fakeRunner, spendLimit } from '../helpers/feature-run-fixture.js';
+import { setup, CH, editFile, verifySession, fakeRunner, spendLimit } from '../helpers/feature-run-fixture.js';
+import { reviewOutcome } from '../helpers/outcomes.js';
 
 // ---------------------------------------------------------------------------
 // Tokens per step (S-904)
@@ -321,10 +322,11 @@ test('a failed review-verify session keeps the usage it recorded on the feature,
               fm.verifier_edit = 'x';
               return `${body}\nverifier text\n`;
             });
-            return;
+            // A session that failed with an outcome: the failure, not the outcome, decides.
+            return reviewOutcome();
           }
           round += 1;
-          writeSession(CH(feature), { pending: round === 1, round });
+          return verifySession(CH(feature), { pending: round === 1, round });
         },
       },
     });
@@ -429,16 +431,22 @@ test('failed_verify_restores_missing_or_malformed_spec_and_change_document', asy
         dir: root,
         feature,
         behaviour: {
-          verify: () => {
+          // The files as the round found them: the last pass runs before bl
+          // writes the round's number for the verifier.
+          review: () => {
             if (!failed) {
               before = { feature: readFileSync(feature.indexPath, 'utf8'), change: readFileSync(CH(feature), 'utf8') };
+            }
+          },
+          verify: () => {
+            if (!failed) {
               writeFileSync(CH(feature), 'verifier garbage\n');
               if (hurt) hurt(feature.indexPath);
               else editFile(feature.indexPath, (fm) => void (fm.verifier_edit = 'x'));
-              return;
+              return reviewOutcome();
             }
             round += 1;
-            writeSession(CH(feature), { pending: round === 1, round });
+            return verifySession(CH(feature), { pending: round === 1, round });
           },
         },
       });

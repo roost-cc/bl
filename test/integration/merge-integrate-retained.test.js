@@ -4,6 +4,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { integrateUnit } from '../../src/feature-run.js';
 import {
+  FIXED_TESTS,
   REFUSED,
   RESOLVED,
   addSecond,
@@ -239,7 +240,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
       if (o.promptName !== 'feature-fix-tests') return scripted(o);
       commitSecond(second.wt, 'test fix\n', 'fix the tests');
       unlinkSync(flag);
-      return { ok: true, output: 'FIXED', isError: false };
+      return FIXED_TESTS;
     };
     failReset(s.runner);
     assert.equal(integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: s.runner }).escalated, true);

@@ -42,11 +42,12 @@ import {
   workonDone,
   prepareWorktreeOnce,
   loadPrompt,
+  loadSchema,
   launchSession,
 } from './session.js';
 import { featureSessionVars } from './feature.js';
 import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
-import { openUnitChange, unitChange } from './change-doc.js';
+import { applyFixOutcome, openUnitChange, reviewFieldsAt, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
 import { loadFlow } from './flow.js';
 import { acquireLock, releaseLock } from './lock.js';
@@ -465,7 +466,9 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     process.exit(await implementScripted(parsed, found, config, prep, defaultRunner()));
   }
 
-  const sessionPrompt = loadPrompt(prep.promptName, prep.promptVars, {
+  // A fix session returns its outcome in the outcome file (F-68 D1, D3).
+  const vars = prep.reviewPending ? { ...prep.promptVars, outcomeCarrier: 'file' } : prep.promptVars;
+  const sessionPrompt = loadPrompt(prep.promptName, vars, {
     agent: config.agent,
     config,
   });
@@ -474,7 +477,9 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     info('Review pending in story — using review-feedback prompt.\n');
   }
 
-  const status = launchSession({
+  // What a fix session found; applyFixOutcome puts it back unless the outcome is `fixed`.
+  const fixBefore = prep.reviewPending ? reviewFieldsAt(prep.promptVars.changeAbsPath) : {};
+  const ret = launchSession({
     mode: 'workon',
     parsed,
     title: prep.title,
@@ -496,7 +501,12 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     tokensIndexPath: prep.indexPath,
     // The story's own level (F-85 D4).
     effort: sessionEffort(config, { mode: 'workon', stories: [{ id: parsed.id, effort: storyEffort(fm) }] }),
+    ...(prep.reviewPending ? { schema: loadSchema('fix') } : {}),
   });
+  const status = prep.reviewPending ? ret.status : ret;
+  if (prep.reviewPending) {
+    applyFixOutcome(config.backlogRoot, { id: parsed.id, changePath: prep.promptVars.changeAbsPath }, ret, fixBefore);
+  }
   if (!status) info(implementNextSteps(parsed.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.
   process.exit(status);

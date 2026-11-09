@@ -10,7 +10,9 @@ import {
   unlinkSync,
   symlinkSync,
   mkdtempSync,
+  mkdirSync,
   realpathSync,
+  rmSync,
 } from 'fs';
 import { join, sep, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -46,6 +48,7 @@ import { renderSessionStack, sessionStackOf } from './session-stack.js';
 import { resolveLocale, fragmentCandidates } from './locale.js';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
 import { syncMain, reportMainSync } from './main-sync.js';
+import { outcomePath, readOutcomeFile } from './outcome.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -152,8 +155,26 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * `selfConsistencyGuide`, in every refine and implementation prompt and the
  * two prompts that review for it. `effortGuide` is the effort-level rubric
  * (F-85 D6) that every refine prompt carries, so the refiner sets `effort:`.
+ * `refineOutcome` is the story refine's closing **Outcome** section (F-68
+ * D1): the object to write to `{{outcomePath}}` as the session's last act.
+ * The batch refine passes its sub-agents `_refine-outcome-subagent` in its
+ * place: they reply with the object, and the orchestrator writes the file.
+ * `outcomeDelivery` is the sentence that tells a loop session how to return
+ * its outcome object (F-68 D1): as its final message
+ * (`_outcome-message`), or, with `vars.outcomeCarrier === "file"` (an
+ * interactive session), written to `{{outcomePath}}` (`_outcome-file`).
+ * `fixOutcome` is the fix round's outcome object, shared by
+ * `feature-workon-review` and `workon-review`; `selfReviewOutcome` the
+ * self-review's, shared by `feature-self-review` and `feature-fix-self-review`;
+ * `implementOutcome` the implement step's, shared by `feature-story` and
+ * `story-run`.
  */
 const PROMPT_PARTIALS = {
+  refineOutcome: '_refine-outcome',
+  outcomeDelivery: '_outcome-message',
+  fixOutcome: '_fix-outcome',
+  selfReviewOutcome: '_self-review-outcome',
+  implementOutcome: '_implement-outcome',
   blockedByBug: '_blocked-by-bug',
   escalationGuide: '_escalation',
   validateBeforeSync: '_validate-before-sync',
@@ -170,6 +191,11 @@ const PROMPT_PARTIALS = {
  */
 const STORY_PARTIALS = {
   blockedByBug: '_blocked-by-bug-story',
+};
+
+/** Partials an interactive session with an outcome file (`vars.outcomeCarrier === "file"`) gets. */
+const FILE_OUTCOME_PARTIALS = {
+  outcomeDelivery: '_outcome-file',
 };
 
 /**
@@ -243,7 +269,8 @@ export function loadPrompt(name, vars, agentOrOpts = 'claude') {
       if (slot === 'writingGuide') {
         fragmentVars.dictionaryGuide = renderDictionaryGuide(opts.config, locale, opts.agent);
       }
-      const name = vars?.unitKind === 'story' ? (STORY_PARTIALS[slot] ?? fragment) : fragment;
+      let name = vars?.unitKind === 'story' ? (STORY_PARTIALS[slot] ?? fragment) : fragment;
+      if (vars?.outcomeCarrier === 'file') name = FILE_OUTCOME_PARTIALS[slot] ?? name;
       partials[slot] = renderFragment(name, fragmentVars, locale, opts.agent);
     }
   }
@@ -258,6 +285,24 @@ export function loadPrompt(name, vars, agentOrOpts = 'claude') {
     text = text.replaceAll(`{{${k}}}`, v ?? '');
   }
   return text;
+}
+
+/** Loaded schemas by name: one object each, so `validateOutcome` compiles each once. */
+const schemas = new Map();
+
+/**
+ * The outcome schema of the step `name` (F-68 D2): `schemas/<name>.json`,
+ * beside the step's prompt in `prompts/`. A JSON Schema (draft 2020-12) for
+ * the object the agent returns, passed to `launchSession` or
+ * `runHeadlessSession` as `schema`.
+ * @param {string} name
+ * @returns {object}
+ */
+export function loadSchema(name) {
+  if (!schemas.has(name)) {
+    schemas.set(name, JSON.parse(readFileSync(join(__dirname, '..', 'schemas', `${name}.json`), 'utf8')));
+  }
+  return schemas.get(name);
 }
 
 /**
@@ -681,8 +726,8 @@ function sessionModel(model, agent, config) {
 /**
  * Run one prompt to completion without a terminal and return what the agent
  * said. The building block of `bl run`: same allowlist, deny list,
- * and directory scopes as `launchSession`, but no session name, no resume,
- * no tmux rename, and the result comes back to the caller instead of the
+ * and directory scopes as `launchSession`, but no session name, no resume
+ * (except the outcome retry's, below), no tmux rename, and the result comes back to the caller instead of the
  * screen. Usage is accumulated on `usageIndexPath` (the feature file) when
  * given, and with `usageStep` into its `tokens_by_step[usageStep]` as well.
  *
@@ -691,9 +736,17 @@ function sessionModel(model, agent, config) {
  * repo's worktree, for the activity log. Without `unitDir` (a caller with no
  * unit) both are `worktreePath`.
  *
+ * With `schema` (F-68 D1), the adapter returns the final message validated
+ * against it as `structured`, or null with `structuredError`; a session that
+ * did not run has the reason it did not as its `structuredError`. With
+ * `sessionId`, the spawn resumes that session and sends `prompt` as it is:
+ * the loop's one outcome retry (F-68 D5), whose session already has the
+ * headless rules.
+ *
  * @returns {{ status: number, output: string, isError: boolean,
  *             usage: object|null, sessionId: string|null, denials: string[],
- *             refusal?: object|null, error?: string }}
+ *             refusal?: object|null, error?: string,
+ *             structured: object|null, structuredError: string|null }}
  */
 export function runHeadlessSession({
   mode,
@@ -711,24 +764,30 @@ export function runHeadlessSession({
   logCommand = null,
   model = null,
   effort = null,
+  schema = null,
+  sessionId = null,
   run = undefined,
   provider: providerOverride = null,
 }) {
+  // A session that did not run: its reason is the error, and the outcome's fault.
+  const notRun = (error) => ({
+    status: 1,
+    output: '',
+    isError: true,
+    usage: null,
+    sessionId: null,
+    denials: [],
+    error,
+    structured: null,
+    structuredError: schema ? error : null,
+  });
   // `provider` is a test seam; production resolves it from `agent`. `run`,
   // when given, replaces the adapter's `spawnSync` for the agent itself: `bl
   // run` passes one that starts it in a user systemd scope (F-70 D4).
   const provider = providerOverride ?? getProvider(agent);
   const cwd = unitDir ?? worktreePath;
   if (typeof provider.supportsHeadless !== 'function' || !provider.supportsHeadless()) {
-    return {
-      status: 1,
-      output: '',
-      isError: true,
-      usage: null,
-      sessionId: null,
-      denials: [],
-      error: `agent provider '${agent}' has no headless mode`,
-    };
+    return notRun(`agent provider '${agent}' has no headless mode`);
   }
 
   // Never take over a live session's lock: overwriting it and unlinking it
@@ -748,15 +807,7 @@ export function runHeadlessSession({
       taken = {}; // an unwritable lock is non-fatal
     }
     if (taken.holder != null && taken.holder !== process.pid) {
-      return {
-        status: 1,
-        output: '',
-        isError: true,
-        usage: null,
-        sessionId: null,
-        denials: [],
-        error: `a live session (pid ${taken.holder}) holds ${lockPath}`,
-      };
+      return notRun(`a live session (pid ${taken.holder}) holds ${lockPath}`);
     }
     lockContent = taken.content ?? null;
   }
@@ -788,12 +839,12 @@ export function runHeadlessSession({
     result = provider.spawn({
       mode,
       name: label,
-      prompt: withHeadlessRules(prompt, mode),
+      prompt: sessionId ? prompt : withHeadlessRules(prompt, mode),
       permissions: translatedPermissions,
       denied: deniedTools,
       worktreePath,
       cwd,
-      sessionId: null,
+      sessionId,
       roostDir,
       backlogRoot,
       topLevel: config?.topLevel ?? null,
@@ -804,6 +855,7 @@ export function runHeadlessSession({
       model: model == null ? null : checkModel(model, 'model'),
       // The session's effort level (F-85 D4, `sessionEffort`); null for none.
       effort,
+      schema,
       ...(run ? { run } : {}),
     });
   } finally {
@@ -816,15 +868,7 @@ export function runHeadlessSession({
   }
 
   if (result?.error) {
-    return {
-      status: 1,
-      output: '',
-      isError: true,
-      usage: null,
-      sessionId: null,
-      denials: [],
-      error: result.error.message ?? String(result.error),
-    };
+    return notRun(result.error.message ?? String(result.error));
   }
   // A killed agent (`signal`, `status: null`) is 128 + n, so it is an
   // error whatever its output said (F-70 D3).
@@ -840,6 +884,8 @@ export function runHeadlessSession({
     // `supportsHeadless`); the loop waits it out instead of counting the
     // session as an attempt.
     refusal: result?.refusal ?? null,
+    structured: result?.structured ?? null,
+    structuredError: result?.structuredError ?? null,
   };
   if (usageIndexPath && out.usage) accumulateTokensOnFile(backlogRoot, usageIndexPath, out.usage, usageStep);
   return out;
@@ -865,6 +911,14 @@ export function runHeadlessSession({
  *
  * As in `runHeadlessSession`, the agent starts in `unitDir` when given, its
  * write root and lock directory, and its transcripts are found there.
+ *
+ * With `schema` (F-68 D1), the session's outcome comes back through a file:
+ * `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`), which the prompt
+ * names as `{{outcomePath}}` and the agent writes as its last act. A stale
+ * file from an earlier session is removed before the spawn; after the agent
+ * exits, the file is read and validated against `schema`. A `schema` needs
+ * `returnOnExit` (it throws without one): the call then returns `{ status,
+ * structured, structuredError }` in place of the bare exit status.
  */
 export function launchSession({
   mode,
@@ -888,8 +942,12 @@ export function launchSession({
   tokensIndexPath = null,
   model = undefined,
   effort = null,
+  schema = null,
   provider: providerOverride = null,
 }) {
+  // Without `returnOnExit` the process exits after the session, and the
+  // outcome it read would be lost.
+  if (schema && !returnOnExit) throw new Error('launchSession: a schema needs returnOnExit');
   const isRefine = mode === 'refine';
   const sessionName = sessionNameOverride ?? (isRefine ? `${parsed.id}: refine — ${title}` : `${parsed.id}: ${title}`);
 
@@ -957,12 +1015,20 @@ export function launchSession({
   });
   const scopes = resolvePermissionScopes(config, { unitDir: cwd });
 
-  const effectivePrompt = applyAdditionalPrompt(sessionPrompt, additionalPrompt, {
+  let effectivePrompt = applyAdditionalPrompt(sessionPrompt, additionalPrompt, {
     mode,
     storyId: parsed.id,
     agent,
     config,
   });
+  // The outcome file (F-68 D1): no stale one from an earlier session, and its
+  // directory ready for the agent's write.
+  const outcomeFile = schema ? outcomePath(backlogRoot, parsed.id) : null;
+  if (outcomeFile) {
+    rmSync(outcomeFile, { force: true });
+    mkdirSync(dirname(outcomeFile), { recursive: true });
+    effectivePrompt = effectivePrompt.replaceAll('{{outcomePath}}', outcomeFile);
+  }
 
   // The transcript totals before the session, for its per-step difference.
   // `undefined` when they could not be read: then nothing is recorded.
@@ -1014,10 +1080,17 @@ export function launchSession({
   // The agent had the terminal and may have set its own title.
   reassertTabTitle();
 
+  // The outcome file is read and validated whatever the exit: a launch that
+  // failed leaves none, which is its fault.
+  const outcome = outcomeFile ? readOutcomeFile(outcomeFile, schema) : null;
+  const exitWith = (status) => {
+    if (!returnOnExit) process.exit(status);
+    return outcome ? { status, ...outcome } : status;
+  };
+
   if (result.error) {
     console.error(`Error: failed to launch agent '${agent}': ${result.error.message}`);
-    if (returnOnExit) return 1;
-    process.exit(1);
+    return exitWith(1);
   }
 
   // Recompute token totals from the just-finished session and write them to
@@ -1032,7 +1105,5 @@ export function launchSession({
     }
   }
 
-  const status = exitStatus(result);
-  if (returnOnExit) return status;
-  process.exit(status);
+  return exitWith(exitStatus(result));
 }

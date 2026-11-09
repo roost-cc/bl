@@ -69,14 +69,19 @@ Backlog repo : {{backlogDir}}
 7. Run the full test suite for this repo and format the changed files (see **Tests** and
    **Format and lint** below).
 
-8. Set `review_status: fixed` in the change document's frontmatter. Never write `addressed`:
-   that is the reviewer's sign-off. Commit the backlog once:
+8. Commit the backlog once:
 
    ```
    bl sync --commit -m "chore: address review feedback ({{featureId}}, session <YYYY-MM-DD>)" --path {{changeRelPath}} --path {{featureRelPath}}
    ```
 
 9. Push: `git push origin {{branchName}}`.
+
+## Outcome
+
+{{outcomeDelivery}}
+
+{{fixOutcome}}
 
 {{sessionStack}}
 
@@ -105,4 +110,4 @@ headless session cannot remove files.
   its index.
 - Format the {{unitKind}} file and the change document with
   `bl format --no-story {{featureRelPath}} {{changeRelPath}}`.
-- At the very end, output the PR URL as the final line of your response.
+- End with the outcome object that **Outcome** above describes.

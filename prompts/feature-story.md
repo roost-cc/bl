@@ -148,6 +148,12 @@ headless session cannot remove files.
 
 {{toolGuide}}
 
+## Outcome
+
+{{outcomeDelivery}}
+
+{{implementOutcome}}
+
 ## IMPORTANT
 
 - NEVER `git add` files that are in `.gitignore`.
@@ -155,5 +161,4 @@ headless session cannot remove files.
   above.
 - Do NOT push. `bl run` pushes once, after every story is done.
 - Never ask or tell the operator to merge a PR, and never merge one yourself.
-- End your response with one line: `DONE {{storyId}}` when every criterion is checked, or
-  `ESCALATED {{storyId}}` if you wrote an Escalation.
+- End with the outcome object that **Outcome** above describes.
