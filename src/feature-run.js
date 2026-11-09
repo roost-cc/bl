@@ -3523,7 +3523,8 @@ function writeReviewFields(ctx, step, before, fields, message) {
   const next = { ...before, ...fields };
   const found = setReviewFields(ctx.config.backlogRoot, changeFile(ctx), next);
   for (const k of REVIEW_FIELDS) {
-    if (found[k] === before[k]) continue;
+    // A field the session left, or set to bl's own value, is no warning.
+    if (found[k] === before[k] || found[k] === next[k]) continue;
     const note = `${step}: the session changed ${k} to "${found[k]}"; bl writes "${next[k]}" from the outcome`;
     ctx.runner.log(`  warning: ${note}`);
     record(ctx, { step, ok: true, warning: true, note });

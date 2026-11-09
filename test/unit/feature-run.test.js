@@ -1311,6 +1311,32 @@ test('a verifier that writes the review fields only warns: bl numbers the round 
   }
 });
 
+test('a verifier that writes the review fields bl writes anyway is no warning', async () => {
+  const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        verify: () => {
+          editFile(CH(feature), (fm) => {
+            fm.review_round = '1';
+            fm.review_status = 'pending';
+          });
+          return verifySession(CH(feature), { pending: true, round: 1 });
+        },
+      },
+    });
+    const r = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 3 });
+    assert.equal(r.round, 1);
+    assert.equal(r.status, 'pending');
+    const warnings = loadRunState(config, 'F-1').history.filter((h) => h.warning);
+    assert.deepEqual(warnings, []);
+  } finally {
+    cleanup();
+  }
+});
+
 test('run never finishes clean with unpushed commits or without a PR when a forge is configured', async () => {
   const forgeOk = (runner) => (op) => {
     runner.calls.push({ type: 'forge', op });
