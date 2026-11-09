@@ -3,9 +3,10 @@
  * `test/e2e/` at the same time, so a script uses only its own `mktemp`
  * paths (`src/AGENTS.md`). A fixed temp path, such as `/tmp/bl-x` or
  * `$TMPDIR/bl-x`, is shared by two scripts or two runs. This guard fails on
- * any `/tmp` or `$TMPDIR/` path outside a comment in those scripts and in the
- * helpers they source. `mktemp` takes TMPDIR itself, so a script never needs
- * either. A plain text search per line.
+ * any `/tmp`, `/var/tmp`, `/dev/shm` or `$TMPDIR/` path outside a whole-line
+ * comment in those scripts (and their subdirectories) and in the helpers they
+ * source. `mktemp` takes TMPDIR itself, so a script never needs any of them.
+ * A plain text search per line.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,9 +17,11 @@ import { fileURLToPath } from 'url';
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const DIRS = ['test/cli', 'test/e2e', 'test/helpers'];
 
-// `/tmp`, or a path under `$TMPDIR` / `${TMPDIR}` / `${TMPDIR:-…}`.
-// `$TMPDIR_ROOT` is another variable, and `TMPDIR=…` sets TMPDIR for mktemp.
-const FIXED = /(^|[^\w.])\/tmp\b|\$(\{TMPDIR\b[^}]*\}|TMPDIR\b)\//;
+// `/tmp`, `/var/tmp`, `/dev/shm`, or a path under `$TMPDIR` / `${TMPDIR}` /
+// `${TMPDIR:-…}`, with or without a closing quote before the `/`. `~/tmp` is
+// in the home directory, `$TMPDIR_ROOT` is another variable, and `TMPDIR=…`
+// sets TMPDIR for mktemp.
+const FIXED = /(^|[^\w.~])\/(tmp|var\/tmp|dev\/shm)\b|\$(\{TMPDIR\b[^}]*\}|TMPDIR\b)"?\//;
 
 /** @param {string} text @returns {string[]} the lines with a fixed temp path */
 function fixedPaths(text) {
@@ -27,7 +30,7 @@ function fixedPaths(text) {
 
 test('no bash test script names a fixed temp path', () => {
   const failing = DIRS.flatMap((dir) =>
-    readdirSync(join(ROOT, dir))
+    readdirSync(join(ROOT, dir), { recursive: true })
       .filter((f) => f.endsWith('.sh'))
       .flatMap((f) =>
         fixedPaths(readFileSync(join(ROOT, dir, f), 'utf8')).map((line) => `${dir}/${f}: ${line.trim()}`),
@@ -43,6 +46,13 @@ test('a fixed temp path is found in each form, and a mktemp path is not', () => 
     ['rm -rf "$TMPDIR/bl-x"', true],
     ['cp a "${TMPDIR}/bl-x"', true],
     ['mkdir "${TMPDIR:-/tmp}/bl-x"', true],
+    ['rm -rf "$TMPDIR"/bl-x', true],
+    ['echo x >"${TMPDIR}"/bl-x', true],
+    ['f="$TMPDIR"/bl-x', true],
+    ['f="${TMPDIR}"/bl-x', true],
+    ['echo x >/var/tmp/bl-x', true],
+    ['echo x >/dev/shm/bl-x', true],
+    ['f=~/tmp/x', false],
     ['DIR=$(mktemp -d)', false],
     ['mktemp -d -t bl-test-XXXXXX', false],
     ['rm -rf "$TMPDIR_ROOT/x"', false],
