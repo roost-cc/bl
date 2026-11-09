@@ -13,7 +13,7 @@ import { join } from 'path';
 import Ajv2020 from 'ajv/dist/2020.js';
 
 /** Where interactive sessions write their outcome file, under the git-ignored `.bl/`. */
-export const OUTCOME_DIR = join('.bl', 'outcome');
+const OUTCOME_DIR = join('.bl', 'outcome');
 
 const ajv = new Ajv2020({ strict: true });
 /** Each schema object compiles once. */

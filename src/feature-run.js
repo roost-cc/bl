@@ -3498,7 +3498,7 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
 }
 
 /** `pending` while the round left a Must fix or Should fix item open, else `addressed` (F-68 D3). */
-export function reviewStatusOf({ must, should }) {
+function reviewStatusOf({ must, should }) {
   return must + should === 0 ? 'addressed' : 'pending';
 }
 

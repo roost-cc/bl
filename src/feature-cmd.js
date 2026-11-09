@@ -809,7 +809,7 @@ function printUnitTail(config, unit) {
  * last ran. A step without an outcome (a review dimension pass, a gate) has
  * no line.
  */
-export function outcomeLines(history) {
+function outcomeLines(history) {
   const latest = new Map();
   for (const h of Array.isArray(history) ? history : []) {
     if (typeof h?.outcome !== 'string') continue;
