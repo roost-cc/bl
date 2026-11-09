@@ -13,9 +13,10 @@
  * A story's component names its code boundary, and the story's repo is the
  * component's repo (F-49 D4); no repo is written on the story (F-52 D1). Prompts for the component (when none is named),
  * title and points. Assigns the next globally-unique story ID. Unless
- * --no-sync or --dry-run, commits the new stories (plus a new component dir
- * and the stories whose depends_on it extended) inside the lock hold that
- * allocated the IDs.
+ * --no-sync or --dry-run, commits the new stories (plus a new component's
+ * index.md and the stories whose depends_on it extended) inside the lock hold that
+ * allocated the IDs. A new feature is committed the same way, with the
+ * stories whose `feature:` line it wrote.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, unlinkSync } from 'fs';
@@ -80,6 +81,29 @@ function prettyRelPath(p) {
   const rel = relative(process.cwd(), p);
   if (!rel || rel.startsWith('..')) return p;
   return rel;
+}
+
+/**
+ * Commit what a `bl new` branch wrote, unless `--no-sync`: `syncAndCommit`
+ * with `message` and `files`, then the report. On a failed sync, print
+ * `created` ("Story file created at …") with the error and exit 1.
+ * `files` names each file written, never its directory: a formatter or an
+ * editor may leave another file beside it, and that file stays out.
+ */
+async function commitNew(config, args, { message, files, created }) {
+  if (args['no-sync']) {
+    info("Skipped the commit. Commit it with 'bl sync --commit'.");
+    return;
+  }
+  info('\nSyncing backlog...');
+  let res;
+  try {
+    res = await syncAndCommit(config, { message, extraPaths: files });
+  } catch (err) {
+    console.error(`${created}. Sync failed: ${err.message}. Commit it by hand with 'bl sync --commit'.`);
+    process.exit(1);
+  }
+  reportBacklogCommit(res, 'bl new');
 }
 
 /**
@@ -382,7 +406,8 @@ function foldPositionals(args, config) {
  * before anything is written: it must be unstarted (`Flow.isUnstarted`) and in no
  * other feature. A repair record (feature-links.js) is written before the
  * first story, so a failure the rollback cannot undo is settled by the next
- * bl command.
+ * bl command. Unless --no-sync, it then commits the feature's index.md and
+ * each linked story's index.md as `chore: add F-<n>`.
  */
 async function newFeature(args, stories) {
   if (args.json === true) {
@@ -391,8 +416,10 @@ async function newFeature(args, stories) {
   }
 
   const config = loadConfig();
+  const root = config.backlogRoot;
   const { cmdNew } = await import('./feature-cmd.js');
-  return cmdNew(args, config, {
+  let created;
+  await cmdNew(args, config, {
     beforeCreate: () => {
       // Each story file is read again here: a record read before the lock
       // may already be in a feature another `bl new --feature` made.
@@ -407,12 +434,12 @@ async function newFeature(args, stories) {
       if (refusals.length > 0) process.exit(1);
     },
     afterCreate: (feature) => {
+      created = feature;
       if (stories.length === 0) return;
       // Each story's bytes before its rewrite go in the repair record first. A
       // failed write is settled at once: restore every story and rethrow so
       // cmdNew removes the feature. A story that cannot be restored still
       // names the feature, so the feature is kept and the record stays.
-      const root = config.backlogRoot;
       const record = writeRecord(root, {
         feature: feature.id,
         dir: relative(root, dirname(feature.indexPath)),
@@ -458,6 +485,12 @@ async function newFeature(args, stories) {
         // The links are complete: the next command finds them so and drops it.
       }
     },
+  });
+
+  await commitNew(config, args, {
+    message: `chore: add ${created.id}`,
+    files: [created.indexPath, ...stories.map((s) => s.indexPath)].map((p) => relative(root, p)),
+    created: `Feature file created at ${relative(root, created.indexPath)}`,
   });
 }
 
@@ -573,24 +606,11 @@ async function newComponent(args, jsonMode) {
   atomicWriteFile(config.backlogRoot, indexPath, content);
   info(`Created component: ${relPath}`);
 
-  if (args['no-sync']) {
-    info("Skipped the commit. Commit it with 'bl sync --commit'.");
-  } else {
-    info('\nSyncing backlog...');
-    let res;
-    try {
-      res = await syncAndCommit(config, {
-        message: `chore: add ${componentId}`,
-        extraPaths: [relative(config.backlogRoot, dir)],
-      });
-    } catch (err) {
-      console.error(
-        `Component file created at ${relPath}. Sync failed: ${err.message}. Commit it by hand with 'bl sync --commit'.`,
-      );
-      process.exit(1);
-    }
-    reportBacklogCommit(res, 'bl new');
-  }
+  await commitNew(config, args, {
+    message: `chore: add ${componentId}`,
+    files: [relPath],
+    created: `Component file created at ${relPath}`,
+  });
 
   if (jsonMode) {
     process.stdout.write(
@@ -640,25 +660,11 @@ async function writeValueUnit(config, args, jsonMode, { kind, id, title, dir, co
   atomicWriteFile(config.backlogRoot, indexPath, content);
   info(`Created ${kind}: ${relPath}`);
 
-  if (args['no-sync']) {
-    info("Skipped the commit. Commit it with 'bl sync --commit'.");
-  } else {
-    info('\nSyncing backlog...');
-    let res;
-    try {
-      res = await syncAndCommit(config, {
-        message: `chore: add ${kind} ${id}`,
-        extraPaths: [relative(config.backlogRoot, dir)],
-      });
-    } catch (err) {
-      console.error(
-        `${kind[0].toUpperCase()}${kind.slice(1)} file created at ${relPath}. Sync failed: ${err.message}. ` +
-          `Commit it by hand with 'bl sync --commit'.`,
-      );
-      process.exit(1);
-    }
-    reportBacklogCommit(res, 'bl new');
-  }
+  await commitNew(config, args, {
+    message: `chore: add ${kind} ${id}`,
+    files: [relPath],
+    created: `${kind[0].toUpperCase()}${kind.slice(1)} file created at ${relPath}`,
+  });
 
   if (jsonMode) {
     process.stdout.write(JSON.stringify({ ...json, id, path: relPath }) + '\n');
@@ -1022,8 +1028,8 @@ Options:
   --feature            With no F-id: create a feature instead of a story
                        (features/F<n>-<slug>/index.md), holding the S-ids
                        given. Takes --title, --theme (required, unless
-                       --epic gives it), --epic, --repo (default: the
-                       first story's repo), --rounds <n>, --body-file.
+                       --epic gives it), --epic, --rounds <n>,
+                       --body-file, --no-sync.
   --theme <slug>       With --feature or --epic: the theme it belongs to.
                        On its own: create a theme (themes/<slug>/index.md,
                        repos: []). Takes --title, --brief (required),
@@ -1086,11 +1092,13 @@ Options:
   --help               Show this help
 
 Stories are written to stories/S<n>-<slug>/index.md. After the sync, commits
-the new stories (plus a new component dir, the feature file and every
+the new stories (plus a new component's index.md, the feature file and every
 index the sync rewrote) on the backlog's current branch, under the backlog
 lock: "chore: add S-N" (or "chore: add S-N, S-M" for a batch, "chore: add
-C<n>" for a component). Other uncommitted edits in the backlog stay out of the
-commit. When the backlog is not a git repository, the commit is skipped.
+C<n>" for a component, "chore: add F-<n>" for a feature). A feature's commit
+holds the feature file and the stories it linked. Other uncommitted edits in
+the backlog stay out of the commit. When the backlog is not a git repository,
+the commit is skipped.
 
 Example:
   bl new C10 --title "My story" --points 1 \\
@@ -1436,27 +1444,11 @@ Example:
   info(`Created story: ${relative(cfg.backlogRoot, storyIndex)}`);
   const dependentPaths = appendDependsOn(cfg, dependents, [storyDir]);
 
-  if (args['no-sync']) {
-    info("Skipped the commit. Commit it with 'bl sync --commit'.");
-  } else {
-    info('\nSyncing backlog...');
-    let res;
-    try {
-      res = await syncAndCommit(cfg, {
-        message: `chore: add ${storyId}`,
-        storyIds: [storyId],
-        extraPaths: dependentPaths,
-      });
-    } catch (err) {
-      console.error(
-        `Story file created at ${relative(cfg.backlogRoot, storyIndex)}. ` +
-          `Sync failed: ${err.message}. ` +
-          `Commit it by hand with 'bl sync --commit'.`,
-      );
-      process.exit(1);
-    }
-    reportBacklogCommit(res, 'bl new');
-  }
+  await commitNew(cfg, args, {
+    message: `chore: add ${storyId}`,
+    files: [relative(cfg.backlogRoot, storyIndex), ...dependentPaths],
+    created: `Story file created at ${relative(cfg.backlogRoot, storyIndex)}`,
+  });
 
   const newPlugins = resolvePlugins('new', cfg.plugins, {
     backlogRoot: cfg.backlogRoot,
@@ -1877,29 +1869,16 @@ async function runBatchMode(args, jsonMode) {
   ]);
 
   // --- Sync ---
-  if (args['no-sync']) {
-    info("Skipped the commit. Commit it with 'bl sync --commit'.");
-  } else {
-    info('\nSyncing backlog...');
-    const ids = renderedStories.map((r) => r.id);
-    let res;
-    try {
-      res = await syncAndCommit(cfg, {
-        message: `chore: add ${ids.join(', ')}`,
-        storyIds: ids,
-        extraPaths: [...(creatingNewComponent ? [componentRelDir] : []), ...dependentPaths],
-      });
-    } catch (err) {
-      const created = renderedStories.map((r) => r.relPath).join(', ');
-      console.error(
-        `Story files created at ${created}. ` +
-          `Sync failed: ${err.message}. ` +
-          `Commit it by hand with 'bl sync --commit'.`,
-      );
-      process.exit(1);
-    }
-    reportBacklogCommit(res, 'bl new');
-  }
+  const ids = renderedStories.map((r) => r.id);
+  await commitNew(cfg, args, {
+    message: `chore: add ${ids.join(', ')}`,
+    files: [
+      ...renderedStories.map((r) => r.relPath),
+      ...(creatingNewComponent ? [componentRelIndex] : []),
+      ...dependentPaths,
+    ],
+    created: `Story files created at ${renderedStories.map((r) => r.relPath).join(', ')}`,
+  });
 
   // --- Plugins (per story) ---
   for (const r of renderedStories) {
