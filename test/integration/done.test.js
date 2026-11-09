@@ -516,6 +516,40 @@ test('done_rerun_after_hand_commit_exits_1_and_drops_the_record', () => {
   }
 });
 
+test('done_second_gate_commits_the_record: the story closes between the first read and the locked write', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    const path = join(dir, S1, 'index.md');
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 1);
+    rmSync(hook);
+    // Put the story back open, and keep what the failed run wrote. bl done
+    // reads HEAD's hash (`git rev-parse --short HEAD`) after its first gate
+    // and before its locked write; a `git` wrapper puts the closed file back
+    // at that moment, so only the second gate sees the story closed.
+    const seam = join(dir, '.bl', 'run', 'second-gate');
+    mkdirSync(seam);
+    const swap = join(seam, 'closed.md');
+    writeFileSync(swap, readFileSync(path, 'utf8'));
+    git(dir, 'checkout', 'HEAD', '--', `${S1}/index.md`);
+    writeFileSync(
+      join(seam, 'git'),
+      `#!/bin/sh\nif [ "$*" = "rev-parse --short HEAD" ] && [ -f "${swap}" ]; then mv "${swap}" "${path}"; fi\nPATH="${process.env.PATH}" exec git "$@"\n`,
+    );
+    chmodSync(join(seam, 'git'), 0o755);
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: { ...GIT_ENV, PATH: `${seam}:${process.env.PATH}` } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!existsSync(swap), 'the wrapper closed the story after the first gate');
+    assert.match(r.stderr, /committing what an earlier bl done left uncommitted/);
+    assert.match(r.stderr, /Done\. Story S-1 marked done\./);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: mark S-1 done');
+    assert.equal(parseFrontmatter(git(dir, 'show', `HEAD:${S1}/index.md`)).fm.commit, 'deadbeef');
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'the record is gone');
+  } finally {
+    cleanup();
+  }
+});
+
 test('done_success_leaves_no_record, and a rerun on the committed story commits nothing', () => {
   const { dir, cleanup } = gitDoneBacklog();
   try {
