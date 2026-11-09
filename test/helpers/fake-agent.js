@@ -5,7 +5,9 @@
  * `bl`'s PATH (`withNoAgent`), so no test ever reaches a real agent through
  * a command that may start a session (`bl merge`'s resolution agent, F-36
  * D6). A test that calls such code in-process puts `noAgentEnv()` into its
- * own `process.env`.
+ * own `process.env`. Or it gives its runner a fixed `capacity` and stubs
+ * its `session`. `test/unit/runner-agent-guard.test.js` checks the rule for
+ * `test/integration/`.
  */
 
 import { chmodSync, writeFileSync } from 'fs';
