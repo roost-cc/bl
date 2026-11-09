@@ -160,6 +160,9 @@ function reviewRunner(storyPath, { status = 'pending' } = {}) {
       }
       return { ok: true, output: '', isError: false, usage: null };
     },
+    // The sessions are simulated, so no live account is asked for capacity:
+    // the real one answered from this machine's codex quota.
+    capacity: () => null,
     listContainers: () => null,
     notify() {},
     log() {},
