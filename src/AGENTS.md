@@ -1203,9 +1203,14 @@ forge that cannot open or find the PR, escalates. Having no forge configured
 at all is the one way to finish without a PR.
 Every verifier session must raise `review_round` by exactly one; anything
 else (unchanged, lowered, not a number) escalates. A run that starts at the
-round cap escalates at once instead of spending a round past it, whatever the
-`review_status` (only a resumed run already signed off `addressed` ends clean
-without a review) — raise the cap with `--max-rounds <n>`.
+round cap with the last round `pending` or `fixed` runs the one closing round
+it is owed: it fixes that round's items (when `pending`), and the verifier
+checks only those items. A round that `bl merge`'s review of a merge
+resolution left open is owed the same, below, at or past the cap. Any other
+run that starts at or past the cap escalates at once instead of spending a
+round the cap does not allow (a resumed run already signed off `addressed`
+ends clean without a review) — raise the cap with `--max-rounds <n>`.
+`roundCapStanding` (`src/feature-run.js`) holds this rule.
 
 A session the agent refuses for a usage limit ("You've hit your session limit
 · resets 3:45pm", "… weekly limit · resets Mon 12:00am", "… monthly spend
@@ -2458,6 +2463,58 @@ repo, each worktree is synced with main first (a conflict exits, pointing at
 `bl implement S34`), and every repo's PR is recorded on its `repos:` entry in
 the change document. With no
 open PR it says why, including a PR that merged before review.
+
+`bl review` ends with the round's outcome and, when there is one, the next
+command (`reviewEnd`, `src/feature-run.js`, S-1348). No line shows a raw
+`review_status` value without its field name.
+
+- Open items (`pending`): `Review round <n> done: <k> open item(s) (<a> Must fix, <b> Should fix, <c> nit(s)).`
+  The counts come from the latest Review Log session, zero counts are left
+  out, and boxes under any other heading count as `<o> other`. A `pending`
+  round whose session has no open box says so with
+  `review_status: pending, but the latest Review Log session has no open item`.
+- Nothing left (`addressed`): `Review round <n> done: nothing left to fix.`,
+  or `nothing left to fix (<c> open nit(s) left).` while the session has open nits.
+  If the session still has an open Must fix or Should fix box, the line is
+  `review_status: addressed, but the latest Review Log session has <k> open Must fix/Should fix item(s)`.
+- Any other value: `Review round <n> done: no verdict recorded (review_status: <value>).`
+  (`unset` when empty), with no `Next:` line. A `review_round` that is not a
+  number gives `no verdict recorded (review_round: <value>)`, also with no
+  `Next:` line. This is a guard only: `bl review` refuses such a round before
+  it starts and exits non-zero, so neither its own lines nor the
+  several-target summary print it today. Escalated: `Review round <n>: escalated.`
+- A round that did not finish (an error and no escalation, for example a
+  verifier that failed or left `review_round` unchanged):
+  `The review round did not finish.`, then the error line, with no `done`
+  line and no `Next:` line. The change document is as the failed step left
+  it, so `bl review` builds no outcome from it.
+
+The second line is `Next: <command>`:
+
+- `addressed`: `bl merge <id>`. If the session still has an open Must fix or
+  Should fix box, the merge gate (`featureReviewGate`) blocks the merge, so
+  the command is `bl implement <id>`, the one the merge gate's refusal names.
+  `bl status` prints no next command.
+- Open items below the round cap: `bl run <id> --resume`.
+- Open items in the round that reached the cap: the outcome line adds
+  ` The round cap (<cap>) is reached: the next run fixes these items and runs one closing round on them.`
+  and the command is `bl run <id> --resume`. If the session has no open box,
+  the outcome line adds only ` The round cap (<cap>) is reached.`.
+- Open items past what the cap allows: the outcome line adds
+  ` The round cap (<cap>) is reached.` and the command is
+  `bl run <id> --resume --max-rounds <n+1>`.
+- Escalated: `read ## Escalation in <the unit's index.md>`.
+
+The cap cases come from `roundCapStanding`, the check by which `bl run`
+refuses a run at the cap, so the two cannot disagree. `bl status <id>` prints
+the same outcome words on its `review:` line
+(`review: round <r>/<cap> done: <outcome>`; `review: round <r>/<cap>, review_status: <value>`
+for another value; `review: none (round <r>/<cap>)` when unset; each with
+`, latest session <date>` when the change document has a session). With
+several targets, each child that exited 0 gets
+`<id>: reviewed, round <n> done: <outcome><pr> — next: <command>`. The exit
+codes are as before: 0 after a `pending` or `addressed` round with no error
+and no escalation, else 1.
 
 ```bash
 bl review S34                 # alias: bl pr S34

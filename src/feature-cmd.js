@@ -75,7 +75,7 @@ import { integrateForMerge } from './merge-integrate.js';
 import { prepareStoryRun, otherWorktreesLine, implementNextSteps } from './workon.js';
 import { reviewSkipped } from './scripted.js';
 import { chooseSyncRunner, cleanupOneRepo, commitFmShape, runBacklogSync, unionLandedCommits } from './cleanup.js';
-import { summarizeLatestReviewSession } from './review-log.js';
+import { reviewOutcome, summarizeLatestReviewSession } from './review-log.js';
 import {
   runStatePath,
   ensureRunDir,
@@ -821,9 +821,14 @@ function printUnitHead(unit, repos) {
   console.log(
     `status: ${unit.status}   repo: ${repos || '-'}   branch: ${unit.branch || '-'}   pr: ${unit.pr ? `#${unit.pr}` : '-'}   points: ${unit.points}${foundBy ? `   found by: ${foundBy}` : ''}`,
   );
-  console.log(
-    `review: ${unit.reviewStatus || 'none'} (round ${unit.reviewRound}/${unit.reviewRoundsMax})${review ? `, latest session ${review.date} with ${review.blocking} unchecked Must/Should${review.unchecked > review.blocking ? ` and ${review.unchecked - review.blocking} open nit(s)` : ''}` : ''}`,
-  );
+  const rounds = `${unit.reviewRound}/${unit.reviewRoundsMax}`;
+  const outcome = reviewOutcome(unit.reviewStatus, review);
+  const state = !unit.reviewStatus
+    ? `none (round ${rounds})`
+    : outcome != null
+      ? `round ${rounds} done: ${outcome}`
+      : `round ${rounds}, review_status: ${unit.reviewStatus}`;
+  console.log(`review: ${state}${review ? `, latest session ${review.date}` : ''}`);
   printChanges(unit);
 }
 
@@ -1471,9 +1476,11 @@ async function reviewUnitPRs(
     console.error(`bl review: ${result.lastError}`);
     process.exit(1);
   }
-  info(
-    `\nReview round ${result.round}: ${result.status || 'no verdict recorded'}${result.escalated ? ' — ## Escalation written' : ''}`,
-  );
+  const { end } = result;
+  if (!end) info('\nThe review round did not finish.');
+  else if (end.outcome === 'escalated') info(`\nReview round ${result.round}: escalated.`);
+  else info(`\nReview round ${result.round} done: ${end.outcome}.${end.cap}`);
+  if (end?.next) info(`Next: ${end.next}`);
   if (result.error) console.error(`bl review: ${result.error}`);
   const ok = !result.error && !result.escalated && (result.status === 'pending' || result.status === 'addressed');
   process.exit(ok ? 0 : 1);

@@ -113,6 +113,9 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
     // used-up quota would escalate the run before any session starts.
     capacity: () => ({ state: 'available', scope: 'account', until: null, windows: [], message: '' }),
     notify() {},
+    // The sessions are simulated, so no live account is asked for capacity:
+    // the real one answered from this machine's codex quota.
+    capacity: () => null,
     listContainers: () => null,
     testPlugins: () => ({ plugins: [{ name: 'check', command: 'git status --porcelain' }], unknown: [] }),
     shell(cmd, cwd, o) {

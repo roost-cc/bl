@@ -25,8 +25,9 @@ import { classifyId, resolveTargets } from './targets.js';
 import { schedule, dependencyOrder, byId } from './schedule.js';
 import { heldBy, readBlockers, readUnits } from './blockers.js';
 import { loadFlow } from './flow.js';
-import { RUN_DIR, ensureRunDir, escalationOpen } from './feature-run.js';
-import { changeNextVerb, currentChange } from './change-doc.js';
+import { RUN_DIR, ensureRunDir, escalationOpen, loadRunState, reviewEnd } from './feature-run.js';
+import { currentChange } from './change-doc.js';
+import { featureUnit, storyUnit } from './unit.js';
 
 const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 
@@ -533,16 +534,43 @@ export function outcomeLine(verb, { target, code, outPath, error = null }, confi
   const pr = prs.length > 0 ? `, PR ${prs.join(', ')}` : '';
   if (code === 0) {
     if (verb === 'review') {
-      const next =
-        changeNextVerb(fm.review_status) === 'merge' ? `bl merge ${id}` : `bl run ${id} to fix, or bl implement ${id}`;
+      // The unit's cap and path only: a feature record's change fields were
+      // read before the child ran.
+      let unit = null;
+      try {
+        unit = target.kind === 'feature' ? featureUnit(target.record) : storyUnit(target.record, config);
+      } catch {
+        // an unreadable story file leaves the line without a next command
+      }
+      let state = null;
+      try {
+        state = loadRunState(config, id);
+      } catch {
+        // an unreadable run state owes no integration round
+      }
+      const end = reviewEnd({
+        id,
+        unitRelPath: unit?.featureRelPath,
+        maxRounds: unit?.reviewRoundsMax,
+        fm,
+        body: change?.body ?? '',
+        state,
+        escalated: false,
+      });
       return {
-        line: `${id}: reviewed, round ${fm.review_round ?? '?'}, ${fm.review_status || 'no verdict'}${pr} — next: ${next}`,
+        line: `${id}: reviewed, round ${fm.review_round ?? '?'} done: ${end.outcome}${pr}${unit && end.next ? ` — next: ${end.next}` : ''}`,
         ok: true,
       };
     }
     return { line: `${id}: clean${pr} — next: bl merge ${id}`, ok: true };
   }
-  if (escalationOpen(target.record.indexPath)) {
+  let escalated = false;
+  try {
+    escalated = escalationOpen(target.record.indexPath);
+  } catch {
+    // an unreadable story file reads as not escalated: the line says failed
+  }
+  if (escalated) {
     return { line: `${id}: escalated${pr} — next: answer its ## Escalation (bl status ${id})`, ok: false };
   }
   return { line: `${id}: failed (${error ?? `exit ${code}`})${pr} — see ${out}`, ok: false };

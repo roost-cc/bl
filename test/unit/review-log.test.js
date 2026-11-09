@@ -5,6 +5,7 @@ import {
   parseLatestSession,
   summarizeLatestReviewSession,
   openCheckboxItems,
+  reviewOutcome,
 } from '../../src/review-log.js';
 
 test("extractReviewLog pulls the section between '## Review Log' and the next '##'", () => {
@@ -78,7 +79,86 @@ None.
     prNumber: '142',
     unchecked: 3,
     blocking: 2,
+    must: 2,
+    should: 0,
+    nits: 1,
   });
+});
+
+test('parseLatestSession counts open boxes by heading', () => {
+  const log = `### Session 2026-11-09 (PR #3)
+
+**Must fix**
+
+- [ ] m1
+- [ ] m2
+- [x] m3
+
+**should fix**
+
+- [ ] s1
+
+**Nit**
+
+- [ ] n1
+- [ ] n2
+- [ ] n3
+`;
+  const r = parseLatestSession(log);
+  assert.equal(r.must, 2);
+  assert.equal(r.should, 1);
+  assert.equal(r.nits, 3);
+  assert.equal(r.unchecked, 6);
+  assert.equal(r.blocking, 3);
+});
+
+const session = (counts) => ({ date: 'd', prNumber: null, blocking: 0, must: 0, should: 0, nits: 0, ...counts });
+
+test('reviewOutcome counts the open items of a pending round, singular and plural, without zeros', () => {
+  assert.equal(reviewOutcome('pending', session({ unchecked: 1, must: 1 })), '1 open item (1 Must fix)');
+  assert.equal(
+    reviewOutcome('pending', session({ unchecked: 6, must: 2, should: 1, nits: 3 })),
+    '6 open items (2 Must fix, 1 Should fix, 3 nits)',
+  );
+  assert.equal(
+    reviewOutcome('pending', session({ unchecked: 2, should: 1, nits: 1 })),
+    '2 open items (1 Should fix, 1 nit)',
+  );
+  assert.equal(
+    reviewOutcome('pending', session({ unchecked: 3, must: 1, nits: 1 })),
+    '3 open items (1 Must fix, 1 nit, 1 other)',
+  );
+});
+
+test('reviewOutcome says when a pending round has no open item', () => {
+  const words = 'review_status: pending, but the latest Review Log session has no open item';
+  assert.equal(reviewOutcome('pending', null), words);
+  assert.equal(reviewOutcome('pending', session({ unchecked: 0 })), words);
+});
+
+test('reviewOutcome on an addressed round names the open nits left', () => {
+  assert.equal(reviewOutcome('addressed', null), 'nothing left to fix');
+  assert.equal(reviewOutcome('addressed', session({ unchecked: 0 })), 'nothing left to fix');
+  assert.equal(reviewOutcome('addressed', session({ unchecked: 1, nits: 1 })), 'nothing left to fix (1 open nit left)');
+  assert.equal(
+    reviewOutcome('addressed', session({ unchecked: 2, nits: 2 })),
+    'nothing left to fix (2 open nits left)',
+  );
+});
+
+test('reviewOutcome on an addressed round with an open Must fix or Should fix item says so, not "nothing left to fix"', () => {
+  assert.equal(
+    reviewOutcome('addressed', session({ unchecked: 1, blocking: 1, must: 1 })),
+    'review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item',
+  );
+  assert.equal(
+    reviewOutcome('addressed', session({ unchecked: 3, blocking: 2, must: 1, should: 1, nits: 1 })),
+    'review_status: addressed, but the latest Review Log session has 2 open Must fix/Should fix items',
+  );
+});
+
+test('reviewOutcome is null for any other review_status', () => {
+  for (const s of ['fixed', '', undefined, 'bogus']) assert.equal(reviewOutcome(s, null), null);
 });
 
 test('parseLatestSession counts every checkbox marker and leaves nits out of blocking', () => {

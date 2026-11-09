@@ -86,9 +86,17 @@ import {
   scriptedEscalation,
   scriptedSummary,
 } from './scripted.js';
-import { parseLatestSession, extractReviewLog, featureReviewGate, openCheckboxItems } from './review-log.js';
+import {
+  parseLatestSession,
+  extractReviewLog,
+  featureReviewGate,
+  openCheckboxItems,
+  reviewOutcome,
+  summarizeLatestReviewSession,
+} from './review-log.js';
 import {
   appendSection,
+  changeNextVerb,
   changePath,
   currentChange,
   ensureChange,
@@ -4159,7 +4167,9 @@ function escalateIntegration(ctx, reason, details, { save = false } = {}) {
  * review step, so there is one review path per feature and a later
  * `run --resume` re-reviews from the base this round recorded. Refuses while
  * a run holds the feature, and at the round cap. Returns
- * `{ status, round, escalated, error }` or a refusal.
+ * `{ status, round, escalated, error, end }` (`end` from `reviewEnd`, `null`
+ * for a round that did not finish: `error` set and no escalation) or a
+ * refusal.
  *
  * `prep` and `pr` are the lead repo's (the PR the run state keeps);
  * `otherRepos` (`[{ repoName, worktreePath, pr: { number, url } }]`) are the
@@ -4213,30 +4223,52 @@ export async function reviewFeature({
       result = reviewRound(ctx, { reReview: fm.review_status === 'fixed', closing: owed && round >= maxRounds });
     } catch (e) {
       if (!(e instanceof RunStoppedError)) throw e;
-      const after = changeFm(ctx);
+      const after = readChangeText(ctx);
       return {
-        status: after.review_status ?? '',
-        round: parseRound(after.review_round),
+        status: after.fm.review_status ?? '',
+        round: parseRound(after.fm.review_round),
         escalated: true,
         error: e.message,
+        end: endOfReview(ctx, maxRounds, true, after),
       };
     }
     state.status = result.abortError ? 'failed' : 'reviewed';
     state.lastError = result.abortError ?? null;
     saveRunState(config, state);
+    const escalated = escalationOpen(feature.indexPath);
+    const error = result.abortError
+      ? result.abortError
+      : result.round !== result.expected
+        ? `the verifier left review_round at "${result.rawRound}" (expected ${result.expected})`
+        : null;
     return {
       status: result.status,
       round: result.round,
-      escalated: escalationOpen(feature.indexPath),
-      error: result.abortError
-        ? result.abortError
-        : result.round !== result.expected
-          ? `the verifier left review_round at "${result.rawRound}" (expected ${result.expected})`
-          : null,
+      escalated,
+      // A round that did not finish left the change document as it was: no end.
+      end: error && !escalated ? null : endOfReview(ctx, maxRounds, escalated),
+      error,
     };
   } finally {
     releaseRunLock(config, feature.id, lock.content);
   }
+}
+
+/**
+ * `reviewEnd` for the round `bl review` just ran, from the change document it
+ * left (`text`, read here when the caller has not read it).
+ */
+function endOfReview(ctx, maxRounds, escalated, text = readChangeText(ctx)) {
+  const { fm, body } = text;
+  return reviewEnd({
+    id: ctx.feature.id,
+    unitRelPath: ctx.feature.featureRelPath,
+    maxRounds,
+    fm,
+    body,
+    state: ctx.state,
+    escalated,
+  });
 }
 
 /**
@@ -4297,7 +4329,73 @@ function recordStoryRunFields(ctx, maxRounds) {
  * round whatever the cap, below, at or above it.
  */
 function integrationRoundOwed(state, fm, round) {
-  return state.integrationReview === round && (fm.review_status === 'pending' || fm.review_status === 'fixed');
+  return state?.integrationReview === round && (fm.review_status === 'pending' || fm.review_status === 'fixed');
+}
+
+/**
+ * Where a run that starts now stands against the round cap: `'below'` the
+ * cap; `'closing'` at or past it with a closing round owed (the last full
+ * round, at the cap, still `pending` or `fixed`, or an open integration
+ * round); else `'reached'`, where `bl run` refuses until the operator raises
+ * the cap with --max-rounds. `state` is the run state, or `null` when there
+ * is none (then no integration round is owed).
+ *
+ * @returns {'below'|'closing'|'reached'}
+ */
+export function roundCapStanding(state, fm, maxRounds) {
+  const round = parseRound(fm.review_round);
+  if (round < maxRounds) return 'below';
+  const owed =
+    (round === maxRounds && (fm.review_status === 'pending' || fm.review_status === 'fixed')) ||
+    integrationRoundOwed(state, fm, round);
+  return owed ? 'closing' : 'reached';
+}
+
+/** The command that raises the cap for one more round after `round`. */
+function higherCapCommand(id, round) {
+  return `bl run ${id} --resume --max-rounds ${round + 1}`;
+}
+
+/**
+ * How `bl review` ends: the round's outcome words, the cap sentence (`''`
+ * when there is none) and the next command (`null` when there is none). The
+ * next command follows `roundCapStanding`, the rule `bl run` refuses by, so
+ * the two cannot disagree. `fm` and `body` are the change document's after
+ * the round; `unitRelPath` is the unit's `index.md`, relative to the backlog.
+ *
+ * @returns {{ outcome: string, cap: string, next: string|null }}
+ */
+export function reviewEnd({ id, unitRelPath, maxRounds, fm, body, state, escalated }) {
+  if (escalated) return { outcome: 'escalated', cap: '', next: `read ## Escalation in ${unitRelPath}` };
+  if (Number.isNaN(parseRound(fm.review_round))) {
+    return { outcome: `no verdict recorded (review_round: ${fm.review_round})`, cap: '', next: null };
+  }
+  const status = fm.review_status;
+  const session = summarizeLatestReviewSession(body ?? '');
+  const outcome = reviewOutcome(status, session);
+  if (outcome == null) {
+    return { outcome: `no verdict recorded (review_status: ${status || 'unset'})`, cap: '', next: null };
+  }
+  if (changeNextVerb(status) === 'merge') {
+    // Open Must/Should boxes block the merge gate: name the command it names.
+    const next = (session?.blocking ?? 0) > 0 ? `bl implement ${id}` : `bl merge ${id}`;
+    return { outcome, cap: '', next };
+  }
+  const standing = roundCapStanding(state, fm, maxRounds);
+  if (standing === 'below') return { outcome, cap: '', next: `bl run ${id} --resume` };
+  if (standing === 'closing') {
+    const items = (session?.unchecked ?? 0) > 0;
+    return {
+      outcome,
+      cap: ` The round cap (${maxRounds}) is reached${items ? ': the next run fixes these items and runs one closing round on them' : ''}.`,
+      next: `bl run ${id} --resume`,
+    };
+  }
+  return {
+    outcome,
+    cap: ` The round cap (${maxRounds}) is reached.`,
+    next: higherCapCommand(id, parseRound(fm.review_round)),
+  };
 }
 
 async function driveFeature({ feature, config, prep, runner, opts }) {
@@ -4427,15 +4525,12 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   // anything else at the cap, or past it, would spend a round the cap does not
   // allow — the same refusal `bl review` makes. Raising the cap is the
   // operator's call, made with --max-rounds.
-  const owedClosing =
-    (entryRound === maxRounds && (entryFm.review_status === 'pending' || entryFm.review_status === 'fixed')) ||
-    integrationRoundOwed(state, entryFm, entryRound);
-  if (entryRound >= maxRounds && !owedClosing) {
+  if (roundCapStanding(state, entryFm, maxRounds) === 'reached') {
     return finish(
       ctx,
       'escalated',
       `review round cap (${maxRounds}) already reached at round ${entryRound}`,
-      `Another round needs a higher cap: bl run ${feature.id} --resume --max-rounds ${entryRound + 1}\n\n${openItemsSummary(ctx)}`.trim(),
+      `Another round needs a higher cap: ${higherCapCommand(feature.id, entryRound)}\n\n${openItemsSummary(ctx)}`.trim(),
     );
   }
   let pendingRound = entryFm.review_status === 'pending' ? entryRound : null;
@@ -4480,7 +4575,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
             ctx,
             'escalated',
             `the closing round added ${scopeNote(scope)}, which no review has covered`,
-            `Another round needs a higher cap: bl run ${feature.id} --resume --max-rounds ${result.round + 1}`,
+            `Another round needs a higher cap: ${higherCapCommand(feature.id, result.round)}`,
           );
         }
         setStep(ctx, 'test');

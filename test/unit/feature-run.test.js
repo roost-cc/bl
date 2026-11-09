@@ -45,10 +45,12 @@ import {
   tokensStepKey,
   restoreKeepingTokens,
   hasHeadlessConfiguration,
+  reviewEnd,
+  roundCapStanding,
 } from '../../src/feature-run.js';
 import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
 import { spawnSync } from 'child_process';
-import { featureReviewGate } from '../../src/review-log.js';
+import { featureReviewGate, summarizeLatestReviewSession } from '../../src/review-log.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { initGitBacklog, git as backlogGit, GIT_ENV } from '../helpers/git-backlog.js';
 import { parseChange, serializeChange } from '../../src/change-doc.js';
@@ -61,6 +63,163 @@ import { startTokenWriter } from '../helpers/token-writer.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const AC_BODY = '## Acceptance Criteria\n\n- [ ] one works\n- [ ] two works\n';
+
+/** What `reviewFeature` returns as `end` for a round-1 `pending` verdict with one Must fix on F-1, cap 2. */
+const PENDING_END = { outcome: '1 open item (1 Must fix)', cap: '', next: 'bl run F-1 --resume' };
+
+// --- how `bl review` ends (S-1348) ---
+
+const MUST_LOG = '## Review Log\n\n### Session 2026-11-09 (PR #1)\n\n**Must fix**\n\n- [ ] one\n';
+const end = (fm, extra = {}) =>
+  reviewEnd({
+    id: 'S-7',
+    unitRelPath: 'stories/S7-x/index.md',
+    maxRounds: 2,
+    fm,
+    body: MUST_LOG,
+    state: null,
+    ...extra,
+  });
+const CLOSING = ' The round cap (2) is reached: the next run fixes these items and runs one closing round on them.';
+
+test('roundCapStanding: below the cap, owed a closing round, or reached', () => {
+  assert.equal(roundCapStanding(null, { review_round: '1', review_status: 'pending' }, 2), 'below');
+  assert.equal(roundCapStanding(null, { review_round: '2', review_status: 'pending' }, 2), 'closing');
+  assert.equal(roundCapStanding(null, { review_round: '2', review_status: 'fixed' }, 2), 'closing');
+  assert.equal(roundCapStanding(null, { review_round: '2', review_status: 'addressed' }, 2), 'reached');
+  assert.equal(roundCapStanding(null, { review_round: '3', review_status: 'pending' }, 2), 'reached');
+  // A round bl merge's integration review left open is owed whatever the cap (F-36 D7).
+  assert.equal(
+    roundCapStanding({ integrationReview: 3 }, { review_round: '3', review_status: 'pending' }, 2),
+    'closing',
+  );
+  assert.equal(
+    roundCapStanding({ integrationReview: 2 }, { review_round: '3', review_status: 'pending' }, 2),
+    'reached',
+  );
+});
+
+test('reviewEnd: open items below the cap point at bl run --resume', () => {
+  assert.deepEqual(end({ review_round: '1', review_status: 'pending' }), {
+    outcome: '1 open item (1 Must fix)',
+    cap: '',
+    next: 'bl run S-7 --resume',
+  });
+});
+
+test('reviewEnd: open items in the round that reached the cap are owed a closing round', () => {
+  for (const state of [null, { integrationReview: null }]) {
+    assert.deepEqual(end({ review_round: '2', review_status: 'pending' }, { state }), {
+      outcome: '1 open item (1 Must fix)',
+      cap: CLOSING,
+      next: 'bl run S-7 --resume',
+    });
+  }
+});
+
+test('reviewEnd: open items past what the cap allows need a higher cap', () => {
+  assert.deepEqual(end({ review_round: '3', review_status: 'pending' }), {
+    outcome: '1 open item (1 Must fix)',
+    cap: ' The round cap (2) is reached.',
+    next: 'bl run S-7 --resume --max-rounds 4',
+  });
+});
+
+test('reviewEnd: an open integration round past the cap is still owed its closing round', () => {
+  assert.deepEqual(end({ review_round: '3', review_status: 'pending' }, { state: { integrationReview: 3 } }), {
+    outcome: '1 open item (1 Must fix)',
+    cap: CLOSING,
+    next: 'bl run S-7 --resume',
+  });
+});
+
+test('reviewEnd: an addressed round points at bl merge, at the cap too', () => {
+  for (const round of ['1', '2', '3']) {
+    assert.deepEqual(end({ review_round: round, review_status: 'addressed' }, { body: '' }), {
+      outcome: 'nothing left to fix',
+      cap: '',
+      next: 'bl merge S-7',
+    });
+  }
+});
+
+test('reviewEnd: addressed with an open Must fix gives no merge command', () => {
+  assert.deepEqual(end({ review_round: '1', review_status: 'addressed' }), {
+    outcome: 'review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item',
+    cap: '',
+    // The command the merge gate names when it blocks.
+    next: 'bl implement S-7',
+  });
+});
+
+test('reviewEnd: pending with no open item at the cap adds no fix sentence', () => {
+  const body = MUST_LOG.replace('[ ]', '[x]');
+  assert.deepEqual(end({ review_round: '2', review_status: 'pending' }, { body }), {
+    outcome: 'review_status: pending, but the latest Review Log session has no open item',
+    cap: ' The round cap (2) is reached.',
+    next: 'bl run S-7 --resume',
+  });
+});
+
+// The invariant: the end lines never claim what the latest session contradicts.
+test('reviewEnd: no "nothing left to fix" or bl merge with an open Must/Should box, no "these items" with none', () => {
+  const log = (box) => `## Review Log\n\n### Session 2026-11-09 (PR #1)\n\n${box}\n`;
+  const bodies = {
+    none: '',
+    checked: log('**Must fix**\n\n- [x] one'),
+    must: log('**Must fix**\n\n- [ ] one'),
+    should: log('**Should fix**\n\n- [ ] one'),
+    nit: log('**Nits**\n\n- [ ] one'),
+    other: log('- [ ] one'),
+  };
+  for (const [name, body] of Object.entries(bodies)) {
+    const session = summarizeLatestReviewSession(body);
+    for (const review_status of ['pending', 'addressed']) {
+      for (const review_round of ['1', '2', '3']) {
+        for (const state of [null, { integrationReview: 3 }]) {
+          const r = end({ review_round, review_status }, { body, state });
+          const at = `${name}, ${review_status}, round ${review_round}, state ${JSON.stringify(state)}`;
+          if ((session?.blocking ?? 0) > 0) {
+            assert.doesNotMatch(r.outcome, /nothing left to fix/, at);
+            assert.notEqual(r.next, 'bl merge S-7', at);
+          }
+          if ((session?.unchecked ?? 0) === 0) assert.doesNotMatch(r.cap, /these items/, at);
+        }
+      }
+    }
+  }
+});
+
+test('reviewEnd: no verdict shows the raw review_status with its field name and no next command', () => {
+  assert.deepEqual(end({ review_round: '1', review_status: 'fixed' }), {
+    outcome: 'no verdict recorded (review_status: fixed)',
+    cap: '',
+    next: null,
+  });
+  assert.deepEqual(end({ review_round: '1' }), {
+    outcome: 'no verdict recorded (review_status: unset)',
+    cap: '',
+    next: null,
+  });
+});
+
+test('reviewEnd: a review_round that is not a number is no verdict, with no next command', () => {
+  for (const review_status of ['pending', 'addressed']) {
+    assert.deepEqual(end({ review_round: 'two', review_status }), {
+      outcome: 'no verdict recorded (review_round: two)',
+      cap: '',
+      next: null,
+    });
+  }
+});
+
+test('reviewEnd: an escalation points at the unit index.md', () => {
+  assert.deepEqual(end({ review_round: '1', review_status: 'pending' }, { escalated: true }), {
+    outcome: 'escalated',
+    cap: '',
+    next: 'read ## Escalation in stories/S7-x/index.md',
+  });
+});
 
 function fixture(extra = {}, backlogConfig = null) {
   return mkTempBacklog({
@@ -1653,7 +1812,7 @@ test("bl review takes the loop's review path: split passes, verifier, shared run
   try {
     const runner = fakeRunner({ dir, feature });
     const first = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
-    assert.deepEqual(first, { status: 'pending', round: 1, escalated: false, error: null });
+    assert.deepEqual(first, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
     assert.deepEqual(
       runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt),
       ['review-correctness', 'review-failure-paths', 'review-verify'],
@@ -2512,7 +2671,7 @@ test("bl review on a two-repo feature spends one round and keeps both repos' ope
       otherRepos,
       maxRounds: 3,
     });
-    assert.deepEqual(r, { status: 'pending', round: 1, escalated: false, error: null });
+    assert.deepEqual(r, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
     const sessions = runner.calls.filter((c) => c.type === 'session');
     assert.equal(sessions.filter((c) => c.prompt === 'review-verify').length, 1, 'one verifier: one round spent');
     for (const s of sessions) {
@@ -2860,7 +3019,13 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
   // Every session of a clean round runs with every scoped worktree locked by
   // this process; another process is refused each one; all are released after.
   const ok = await scenario({});
-  assert.deepEqual(ok.r, { status: 'addressed', round: 1, escalated: false, error: null });
+  assert.deepEqual(ok.r, {
+    status: 'addressed',
+    round: 1,
+    escalated: false,
+    error: null,
+    end: { outcome: 'nothing left to fix', cap: '', next: 'bl merge F-1' },
+  });
   assert.deepEqual(
     ok.seen.map((x) => x.prompt),
     PASSES,
@@ -4456,7 +4621,7 @@ test('a usage limit on a review pass under bl review reruns the pass without spe
       behaviour: { limit: (o) => (o.promptName === 'review-correctness' && hits++ === 0 ? spendLimit(runner) : null) },
     });
     const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
-    assert.deepEqual(result, { status: 'pending', round: 1, escalated: false, error: null });
+    assert.deepEqual(result, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
     assert.deepEqual(
       runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt),
       ['review-correctness', 'review-correctness', 'review-failure-paths', 'review-verify'],
@@ -4500,7 +4665,7 @@ test('a usage limit on the verifier under bl review reruns the verifier without 
     const start = runner.clock();
     const until = start + 30 * 60_000 + 60_000;
     const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
-    assert.deepEqual(result, { status: 'pending', round: 1, escalated: false, error: null });
+    assert.deepEqual(result, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
     assert.deepEqual(
       runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt),
       ['review-correctness', 'review-failure-paths', 'review-verify', 'review-verify'],
@@ -4679,7 +4844,7 @@ test('a capacity refusal on a review pass runs the pass on the next configuratio
     const logs = [];
     runner.log = (m) => logs.push(m);
     const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
-    assert.deepEqual(result, { status: 'pending', round: 1, escalated: false, error: null });
+    assert.deepEqual(result, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
     assert.deepEqual(
       configsOf(runner.calls, () => true),
       ['codex gpt-6-sol', 'codex gpt-6-astra', 'codex gpt-6-astra', 'codex gpt-6-astra'],

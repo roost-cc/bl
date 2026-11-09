@@ -760,7 +760,7 @@ test('bl status prints stories in dependency order plus review and blocker state
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /status: running/);
     assert.match(r.stdout, /branch: f1-feat/);
-    assert.match(r.stdout, /review: pending \(round 0\/2\), latest session 2026-09-20 with 1 unchecked/);
+    assert.match(r.stdout, /review: round 0\/2 done: 1 open item \(1 Must fix\), latest session 2026-09-20\n/);
     // S-2 first (S-1 depends on it)
     const s2 = r.stdout.indexOf('S-2');
     const s1 = r.stdout.indexOf('S-1');
@@ -1091,7 +1091,7 @@ test("bl status prints each repo's branch, PR, URL and merge state from the chan
     assert.equal(r.status, 0, r.stderr);
     assert.match(
       r.stdout,
-      /branch: f1-feat {3}pr: #9 {3}points: 0\nreview: pending \(round 1\/2\), latest session 2026-10-18 with 1 unchecked Must\/Should\n/,
+      /branch: f1-feat {3}pr: #9 {3}points: 0\nreview: round 1\/2 done: 1 open item \(1 Must fix\), latest session 2026-10-18\n/,
       'the open change is current',
     );
     assert.match(
@@ -1102,6 +1102,44 @@ test("bl status prints each repo's branch, PR, URL and merge state from the chan
       r.stdout,
       /\nchange change-2\.md \(open, current\):\n {2}demo-repo: branch f1-feat {3}pr: #9 https:\/\/x\/pull\/9 {3}merged: no\n {2}tools: branch f1-feat {3}pr: - {3}merged: no\n/,
     );
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl status words the review line by outcome, and shows any other review_status with its field name', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    repos: REPOS,
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'running', branch: 'f1-feat' }],
+  });
+  try {
+    const change = join(dir, 'features', 'F1-feat', 'change.md');
+    const base = readFileSync(change, 'utf8');
+    const log = '### Session 2026-11-09 (PR #9)\n\n**Must fix**\n\n- [x] done\n\n**Nits**\n\n- [ ] tidy\n';
+    const statusWith = (status, round, reviewLog = log) => {
+      writeFileSync(
+        change,
+        base
+          .replace(/review_round:.*\n/, `review_round: ${round}\n`)
+          .replace(/review_status:.*\n/, `review_status: ${status}\n`)
+          .replace('No reviews yet.', reviewLog),
+      );
+      const r = runBl(['status', 'F-1'], { cwd: dir });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout.match(/^review: .*$/m)[0];
+    };
+    assert.equal(statusWith('fixed', 1), 'review: round 1/2, review_status: fixed, latest session 2026-11-09');
+    assert.equal(
+      statusWith('addressed', 2),
+      'review: round 2/2 done: nothing left to fix (1 open nit left), latest session 2026-11-09',
+    );
+    // An open Must fix box under addressed: never "nothing left to fix".
+    assert.equal(
+      statusWith('addressed', 1, log.replace('[x] done', '[ ] open')),
+      'review: round 1/2 done: review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item, latest session 2026-11-09',
+    );
+    assert.equal(statusWith('', 0, ''), 'review: none (round 0/2)');
+    assert.equal(statusWith('', 0), 'review: none (round 0/2), latest session 2026-11-09');
   } finally {
     cleanup();
   }
