@@ -19,7 +19,8 @@
     "reason": {
       "description": "Why the story is not refined, in one line. Required when refined is false.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "\\S"
     }
   },
   "if": { "properties": { "refined": { "const": false } } },

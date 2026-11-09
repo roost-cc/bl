@@ -23,7 +23,8 @@
     "reason": {
       "description": "Why the premise does not hold or the feature is not refined, in one line. Required unless premise_holds and refined are both true.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "\\S"
     }
   },
   "allOf": [

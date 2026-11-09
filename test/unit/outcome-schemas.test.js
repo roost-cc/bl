@@ -56,8 +56,18 @@ test('every schema refuses a summary of spaces only', () => {
     const { structuredError } = validateOutcome(loadSchema(schemaName), { ...example, summary: '   ' });
     assert.match(structuredError ?? '', /^schema violation at \$\/summary: must match pattern/, schemaName);
   }
-  const blocked = { summary: 's', done: false, blocked: ' ' };
-  assert.match(validateOutcome(loadSchema('implement'), blocked).structuredError, /\$\/blocked/);
+  // The other text fields bl prints or records: each needs a character that is not a space.
+  const blank = [
+    ['implement', { summary: 's', done: false, blocked: ' ' }, /\$\/blocked/],
+    ['merge-resolve', { summary: 's', resolved: false, reason: ' ' }, /\$\/reason/],
+    ['fix-tests', { summary: 's', outcome: 'unrelated', reason: ' ' }, /\$\/reason/],
+    ['refine', { summary: 's', refined: false, reason: ' ' }, /\$\/reason/],
+    ['feature-refine', { summary: 's', premise_holds: false, refined: false, reason: ' ' }, /\$\/reason/],
+    ['refine-batch', { summary: 's', stories: { 'S-1': { refined: false, reason: ' ' } } }, /\$\/stories\/S-1\/reason/],
+  ];
+  for (const [schemaName, outcome, at] of blank) {
+    assert.match(validateOutcome(loadSchema(schemaName), outcome).structuredError ?? '', at, schemaName);
+  }
 });
 
 test("a batch sub-agent's reply is a valid entry of the batch outcome", () => {

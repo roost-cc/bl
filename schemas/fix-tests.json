@@ -19,7 +19,8 @@
     "reason": {
       "description": "fixed: the cause you fixed. rerun: what you tried. unrelated: why nothing in the repos can make the gate pass.",
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "pattern": "\\S"
     }
   }
 }
