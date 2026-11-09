@@ -20,7 +20,8 @@
  * as `: S-210 : implement` and a feature with no story as `F-123 :  : refine`.
  * `{{name}}` is the placeholder bl already uses in its prompts and plugin
  * commands (F-63 row 2), not a new format. An empty `BL_TAB_TITLE` turns
- * titles off; `bl` sets it so for the child `bl` processes it runs and for
+ * titles off; `bl` sets it so for the parallel child processes of
+ * `bl run --several` and for
  * every agent session (`agentEnv`, S-1388). The tab belongs to the `bl` the
  * operator started, so nothing below an agent session renames the window.
  *

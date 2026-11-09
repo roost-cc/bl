@@ -2576,7 +2576,8 @@ bl's prompts and plugin commands use, not a new format.
   editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
   its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
 - An empty `BL_TAB_TITLE` (`TAB_TITLE_ENV`) turns titles off; `verbs.js` `childEnv` sets it for
-  the child `bl` processes it runs, so the parent's window keeps the parent's title. `agentEnv`
+  the parallel child processes of `bl run --several`, so the parent's window keeps the parent's
+  title. `agentEnv`
   sets it for every agent session (S-1388): the tab belongs to the `bl` that started the session,
   so no `bl` the agent runs, and no test it starts, renames the window or turns its
   `automatic-rename` back on. `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
