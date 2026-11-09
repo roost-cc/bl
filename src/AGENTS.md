@@ -1201,9 +1201,14 @@ forge that cannot open or find the PR, escalates. Having no forge configured
 at all is the one way to finish without a PR.
 Every verifier session must raise `review_round` by exactly one; anything
 else (unchanged, lowered, not a number) escalates. A run that starts at the
-round cap escalates at once instead of spending a round past it, whatever the
-`review_status` (only a resumed run already signed off `addressed` ends clean
-without a review) — raise the cap with `--max-rounds <n>`.
+round cap with the last round `pending` or `fixed` runs the one closing round
+it is owed: it fixes that round's items (when `pending`), and the verifier
+checks only those items. A round that `bl merge`'s review of a merge
+resolution left open is owed the same, below, at or past the cap. Any other
+run that starts at or past the cap escalates at once instead of spending a
+round the cap does not allow (a resumed run already signed off `addressed`
+ends clean without a review) — raise the cap with `--max-rounds <n>`.
+`roundCapStanding` (`src/feature-run.js`) holds this rule.
 
 A session the agent refuses for a usage limit ("You've hit your session limit
 · resets 3:45pm", "… weekly limit · resets Mon 12:00am", "… monthly spend
