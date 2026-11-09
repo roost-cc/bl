@@ -19,7 +19,8 @@ run_parallel() {
   local label="$1" runner="$2"
   shift 2
   local items=("$@") pids=() failed=() pass=0 dir i
-  dir=$(mktemp -d)
+  # Without its directory no item can write its output: start none.
+  dir=$(mktemp -d) || return 1
   # Expanded now: $dir is local and is gone when the EXIT trap runs.
   # shellcheck disable=SC2064
   trap "rm -rf '$dir'" EXIT
