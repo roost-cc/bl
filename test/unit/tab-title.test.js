@@ -227,6 +227,16 @@ test('a shorter title is padded to the widest title shown; a longer one raises t
   });
 });
 
+test('a title set while titles are off does not change the width', () => {
+  underFakeTmux((fake) => {
+    updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'test' });
+    withEnv({ BL_TAB_TITLE: '' }, () => updateTabTitle('status', 'implementing'));
+    updateTabTitle('status', 'x');
+    assert.equal(fake.calls().length, 2);
+    assert.equal(fake.calls()[1], `rename-window\n-t\n@7\n--\n${'F-56 : S-210 : x'.padEnd(19)}\n`);
+  });
+});
+
 test('clearTabTitle keeps the width', () => {
   underFakeTmux((fake) => {
     updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
