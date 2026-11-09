@@ -55,3 +55,10 @@ test('a runner without its capacity stub is reported', () => {
   assert.equal(unguarded(text), false);
   assert.equal(unguarded(text.replace(/^\s*capacity\s*:.*\n/gm, '')), true);
 });
+
+test('an import is not a call, and a call to runner.capacity() is not a guard', () => {
+  assert.equal(unguarded("import { defaultRunner } from '../../src/feature-run.js';\n"), false);
+  assert.equal(unguarded('const r = defaultRunner({ interactive: true });\n'), true);
+  assert.equal(unguarded('const r = defaultRunner();\nawait r.capacity({});\n'), true);
+  assert.equal(unguarded('const r = { ...defaultRunner(),\n  capacity() { return {}; } };\n'), false);
+});
