@@ -22,5 +22,5 @@ The script will:
 2. Commit the story's directory on the backlog's current branch and push it
 
 Do not commit the backlog yourself. If the backlog commit fails, `bl done` exits 1 and names the
-paths. Fix the cause and run `bl done <story-id>` again: it commits what the failed run wrote,
-while the story file is unchanged since then.
+paths. Fix the cause and run `bl done <story-id>` again. If the story file has not changed since
+the failed run, the rerun commits what that run wrote. Otherwise it exits 1 and names the file.
