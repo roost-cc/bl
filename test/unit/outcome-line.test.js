@@ -57,6 +57,18 @@ test('outcomeLine: a child that exited 1 gets no outcome and no next command fro
   assert.doesNotMatch(line, /done:|— next:/);
 });
 
+test('outcomeLine: a review_status that is no verdict shows its field name and no next command', () => {
+  for (const [review_status, shown] of [
+    ['fixed', 'fixed'],
+    ['', 'unset'],
+  ]) {
+    assert.deepEqual(reviewedLine({ review_round: 1, review_status, reviewLog: MUST_LOG }), {
+      line: `S-1: reviewed, round 1 done: no verdict recorded (review_status: ${shown}), PR #4`,
+      ok: true,
+    });
+  }
+});
+
 test('outcomeLine: a pending story at its round cap is owed the closing round', () => {
   assert.deepEqual(reviewedLine({ review_round: 2, review_status: 'pending', reviewLog: MUST_LOG }), {
     line: 'S-1: reviewed, round 2 done: 1 open item (1 Must fix), PR #4 — next: bl run S-1 --resume',
