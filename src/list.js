@@ -73,6 +73,10 @@ Options:
   --features           List features instead (-a includes done ones); with
                        --theme, --epic, --feature or --component, grouped by
                        epic with stories and points done/total
+  --json               Print the stories as one JSON object (schema
+                       bl-list-json/v1): each story's id, title, status,
+                       component, feature, path and whole frontmatter.
+                       Takes no pattern
   --help               Show this help
 
 Filters combine: every one given must match.`);
@@ -81,6 +85,11 @@ Filters combine: every one given must match.`);
 
   const cfg = loadConfig();
   const { filter, ctx } = filterFromArgs(args, cfg, 'bl list');
+
+  if (args.json && (args.features || filter.epic || args.positional.length > 0)) {
+    console.error('bl list: --json lists stories and takes no pattern, --features or --epic');
+    process.exit(1);
+  }
 
   // An epic is a set of features: `bl list --epic` lists them (F-51 D2).
   if (args.features || filter.epic) {
@@ -98,6 +107,24 @@ Filters combine: every one given must match.`);
   const wtsByStory = activeWorktreesByStory(cfg);
 
   const filtered = showAll ? stories : stories.filter((s) => !flow.meets('story', s.status, 'done'));
+
+  // For a client that reads the backlog through bl, such as the update job's `decide`
+  // stories (F-80 B4): it finds its own by a frontmatter key.
+  if (args.json) {
+    const out = filtered
+      .sort((a, b) => tiebreak(a, b))
+      .map((s) => ({
+        id: s.id,
+        title: s.title,
+        status: s.status,
+        component: s.componentId,
+        feature: s.feature || null,
+        path: s.storyRelPath,
+        frontmatter: s.frontmatter,
+      }));
+    process.stdout.write(`${JSON.stringify({ schema: 'bl-list-json/v1', stories: out })}\n`);
+    return;
+  }
 
   filtered.sort((a, b) => {
     const aa = wtsByStory.has(a.id) ? 0 : 1;

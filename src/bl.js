@@ -13,7 +13,7 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { append as logAppend } from './log.js';
-import { info, captureTmuxWindowId, editorCommand, openTmuxWindow } from './config.js';
+import { info, warn, captureTmuxWindowId, editorCommand, openTmuxWindow } from './config.js';
 import { flowForHelp } from './flow.js';
 
 // Grab the window id the moment bl starts, before any async work, so later
@@ -93,6 +93,7 @@ Commands:
                --epic <E-id>   An epic's features, with stories and points done/total
                --feature <F-id>, --component <C-id>  Filter to a feature or component
                --features      List features instead; with a filter, grouped by epic
+               --json          The stories with their frontmatter, as JSON
   tree       Show dependency trees from depends_on frontmatter
                [story-id|component-id]  Limit to trees containing this story, or
                                    trees containing the component's pending stories
@@ -130,7 +131,8 @@ Commands:
                                    story among those a filter matches
   deps       Ordered work plan for a story's blocking cone, leaf-first
                <story-id>      Required. The story you want to land
-  updates    Renovate's dependency updates as backlog stories
+  updates    Deprecated (running-man's update job, F-80): Renovate's
+               dependency updates as backlog stories
                sync            One story per open Renovate branch, from the
                                per-cycle report (--report <path>, --dry-run)
                run             Rebase, gate and merge the open update
@@ -138,10 +140,10 @@ Commands:
                status          Open update stories by repo and state (--json)
                approve S-<n>   Merge a held story after rerunning the gate
                drop S-<n>      Close the PR and supersede the story (--reason)
-  inbox      Everything waiting on you: open escalations, operator
-               tasks not marked → Done, update stories that need a
-               decision (--json)
-               done <id> [note]  Mark an operator task done
+  inbox      Everything waiting on you: open escalations, open tasks,
+               unmerged work, red updates and the update job's health,
+               from its heartbeat (--json)
+               done <id>      Closes nothing: names the verb that answers it
   block      Holds between units, in blockers.json (F-66)
                add <blocker> --gate <g> --unit <id|*> --until <status>
                remove <blocker> --gate <g> --unit <id|*>  (operator only)
@@ -194,6 +196,12 @@ async function run() {
     } catch {
       // logging is non-fatal
     }
+  }
+
+  // F-80 G3: deprecated, not removed; each subcommand still works. Help
+  // keeps stderr empty, as for every verb; its text says it is deprecated.
+  if (command === 'updates' && !subArgv.includes('-h') && !subArgv.includes('--help')) {
+    warn("bl updates is deprecated: running-man's update job (F-80) does this");
   }
 
   // Committing commands, `bl inbox` and `bl updates status` rebase the

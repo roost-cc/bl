@@ -1,5 +1,11 @@
 # Updates: Renovate's dependency updates as backlog stories (terminal commands)
 
+**Deprecated (F-80).** Running-man's update job gates and merges Renovate's branches with no
+backlog stories, and `bl inbox` reads its red updates and its health from its heartbeat (see
+`bl inbox --help`). Every `bl updates` verb still works as described below and prints one
+warning on stderr: `bl updates is deprecated: running-man's update job (F-80) does this`
+(`--help` prints none). A later story removes the verbs, the templates and `updates/`.
+
 Renovate opens the branch and the PR and, at the end of each cycle, writes a report listing
 every branch it manages. `bl updates` turns that report into stories, tests and merges them, and
 gives the operator two verbs to answer with. One report per run, one or two commands back; no
@@ -40,11 +46,10 @@ bl updates drop S-841 --reason "..."    # request: the runner closes the PR, sup
    (merged, held, decisions needed, skipped) and one per request it executed. The run commits
    and pushes the backlog after each story, rewriting its section, so a run that stops midway
    keeps what it already merged on record (F-74 D2). A run with
-   nothing open still writes its `## Run <time>` heading: `bl inbox` prints one `runner:` line
-   when the newest one is more than 8 h old, so a runner gone quiet is visible (F-50 D7). The
-   tmux bell rings after a run.
-5. **The operator** reads the report and `bl inbox`, and answers with `approve` and `drop`
-   requests (F-50 D8). The operator's workstation runs no gate, merge or close for updates.
+   nothing open still writes its `## Run <time>` heading. The tmux bell rings after a run.
+   Since F-80, `bl inbox` no longer reads these reports or the update stories.
+5. **The operator** reads the report and `bl updates status`, and answers with `approve` and
+   `drop` requests (F-50 D8). The operator's workstation runs no gate, merge or close for updates.
 
 Schedule steps 2 and 3 on the runner at the Renovate cadence (for example a systemd user timer
 running `bl updates sync` then `bl updates run` every 4 hours). Run them by hand any time: sync, run,
@@ -117,8 +122,7 @@ Both verbs are requests: each writes `update_request` on the story (`approve`, o
 `update_request_reason`), commits and pushes, and runs no gate, fetch, merge or close. A second
 request replaces the first. Refused when the story is closed, not an update story, or of a repo
 not in `backlog.json`. Until the runner acts, `bl updates status` shows `approve pending` or
-`drop pending` and `bl inbox` lists the story under `pending`, waiting on the runner rather
-than on the operator.
+`drop pending`.
 
 The runner's next `bl updates run` executes requested stories first, clears the request and
 appends the outcome to the day's report.
@@ -165,7 +169,7 @@ Configure once in `backlog.json`: `"updates": { "namespace": "acme",
 "report": "renovate/reports/renovate-report.json" }` (the namespace is the owner
 every report slug must carry; a slug under another owner is skipped; the report path is
 relative to the backlog's parent directory, with no default), each repo's test plugins in its `repos` entry's
-`"update_tests": ["<plugin>"]` (`[]` for none), and
+`"update_tests": ["<plugin>"]` (`[]` or no key for none), and
 the forge ops `change.find`,
 `update.notes` (the one op allowed to read a PR body: Renovate's release notes for a red
 major) and
