@@ -1741,7 +1741,10 @@ a headless session; `_outcome-file.md`, the outcome file, when
   (`reviewStatusOf`). The prompt gives the verifier the round as
   `{{nextRound}}`. `escalated: true` with an empty `## Escalation` makes bl
   write one with the summary. A round that ends without a verdict (a throw,
-  an abort, a killed bl) leaves both fields as the round found them. A round
+  an abort, a killed bl) leaves both fields as the round found them. The
+  Review Log may not match them: if bl dies after the verifier committed its
+  session block, the log holds a block for round N+1 while `review_round`
+  says N. A round
   stopped before an outcome (a failed verifier, no valid outcome after the
   retry, no agent) also puts the rest of the change document back.
 - **Fix** (`fixed`). `true`: bl writes `review_status: fixed`. `false`: the

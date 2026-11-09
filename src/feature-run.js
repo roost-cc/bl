@@ -3413,7 +3413,9 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
   // The round's number is bl's (F-68 D3). bl writes it together with the
   // status, once, after the verifier returns a verdict: a round that ends
   // any other way (a throw, an abort, a killed bl) leaves both as they were.
-  // The prompt gives the verifier the round as `nextRound`.
+  // The Review Log may not: if bl dies after the verifier committed its
+  // session block, the log holds a block for round N+1 while review_round
+  // says N. The prompt gives the verifier the round as `nextRound`.
   const fieldsBefore = reviewFields(ctx);
   let rv;
   try {
