@@ -111,7 +111,7 @@ test('launchSession: no file, an invalid file, or a failed launch is a fault, ne
     { schema: SCHEMA },
   );
   assert.equal(bad.ret.structuredError, 'schema violation at $/status: must NOT have additional properties');
-  assert.equal(bad.left, false);
+  assert.equal(bad.left, true, 'the invalid file is kept for the operator');
 
   const failed = launch(() => ({ error: new Error('ENOENT'), status: null }), { schema: SCHEMA });
   assert.equal(failed.ret.status, 1);

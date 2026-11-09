@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { dirname } from 'path';
 import { outcomeFor, outcomePath, readOutcomeFile, validateOutcome } from '../../src/outcome.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
@@ -79,7 +79,7 @@ test('outcomePath is <backlogRoot>/.bl/outcome/<unit id>.json', () => {
   assert.equal(outcomePath('/b', 'S-7'), '/b/.bl/outcome/S-7.json');
 });
 
-test('readOutcomeFile validates and deletes the file; a missing one is the fault', () => {
+test('readOutcomeFile validates and deletes a valid file, keeps a faulty one; a missing or unreadable one is the fault', () => {
   const root = mkTempDir('bl-outcome-');
   const path = outcomePath(root, 'F-2');
   assert.deepEqual(readOutcomeFile(path, SCHEMA), { structured: null, structuredError: `no outcome file at ${path}` });
@@ -92,6 +92,11 @@ test('readOutcomeFile validates and deletes the file; a missing one is the fault
   assert.equal(existsSync(path), false);
   writeFileSync(path, '{"summary": 1, "refined": true}');
   assert.equal(readOutcomeFile(path, SCHEMA).structuredError, 'schema violation at $/summary: must be string');
-  assert.equal(existsSync(path), false, 'an invalid file is deleted too');
-  assert.equal(existsSync(join(root, '.bl', 'outcome')), true);
+  assert.equal(existsSync(path), true, 'an invalid file is kept for the operator');
+  writeFileSync(path, 'not json');
+  assert.match(readOutcomeFile(path, SCHEMA).structuredError, /^not JSON/);
+  assert.equal(existsSync(path), true, 'a file that is not JSON is kept too');
+  rmSync(path);
+  mkdirSync(path);
+  assert.match(readOutcomeFile(path, SCHEMA).structuredError, /^cannot read .*F-2\.json: EISDIR/);
 });

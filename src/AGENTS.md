@@ -1104,8 +1104,9 @@ bl reads an outcome out of prose. Two carriers deliver the value:
 
 - **The outcome file.** It lives under the git-ignored `.bl/`, so nothing
   commits it. `launchSession` removes a stale one before the spawn, and after
-  the agent exits reads, validates and deletes it (`readOutcomeFile`); a
-  missing file is the fault `no outcome file at <path>`. With `returnOnExit`
+  the agent exits reads and validates it (`readOutcomeFile`). It deletes a
+  valid file and keeps a faulty one for the operator to read; a missing file
+  is the fault `no outcome file at <path>`. With `returnOnExit`
   and a schema, `launchSession` returns
   `{ status, structured, structuredError }`; without a schema it returns the
   bare exit status.

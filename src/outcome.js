@@ -85,8 +85,10 @@ export function outcomePath(backlogRoot, unitId) {
 }
 
 /**
- * Read, validate and delete the outcome file at `path`. A missing file is the
- * fault `no outcome file at <path>`.
+ * Read and validate the outcome file at `path`, and delete it when it is
+ * valid. A faulty file stays, so the operator can read what the agent wrote;
+ * the next session on the unit removes it as it starts. A missing file is the
+ * fault `no outcome file at <path>`, an unreadable one `cannot read <path>: …`.
  *
  * @param {string} path
  * @param {object} schema
@@ -94,7 +96,19 @@ export function outcomePath(backlogRoot, unitId) {
  */
 export function readOutcomeFile(path, schema) {
   if (!existsSync(path)) return { structured: null, structuredError: `no outcome file at ${path}` };
-  const text = readFileSync(path, 'utf8');
-  unlinkSync(path);
-  return validateOutcome(schema, text);
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (e) {
+    return { structured: null, structuredError: `cannot read ${path}: ${e.message}` };
+  }
+  const outcome = validateOutcome(schema, text);
+  if (outcome.structured) {
+    try {
+      unlinkSync(path);
+    } catch {
+      // The outcome is read; the next session's start removes the file.
+    }
+  }
+  return outcome;
 }
