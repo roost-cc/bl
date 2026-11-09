@@ -1110,6 +1110,22 @@ bl reads an outcome out of prose. Two carriers deliver the value:
   `{ status, structured, structuredError }`; without a schema it returns the
   bare exit status.
 - **A step without a schema** reads no outcome: both fields are null.
+- **Schemas (D2).** `schemas/<step>.json`, one per prompt that ends a step,
+  loaded by `loadSchema(name)` in `session.js` beside `loadPrompt`. Each has
+  `additionalProperties: false` and a one-line `summary`.
+- **Refine outcomes (D3).** `bl refine` passes `schemas/refine.json`
+  (`{ summary, refined, reason? }`), `refine-batch.json`
+  (`{ summary, stories: { "S-n": { refined, reason? } } }`) or
+  `feature-refine.json` (`{ summary, premise_holds, refined, reason? }`) to
+  `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
+  before its backlog commit. `refined: true` writes `status: refined`;
+  `premise_holds: false` writes a feature's `status: draft`; otherwise the
+  status stays and `reason` is printed (`applyRefineStatus`, through
+  `updateSpecFile`). A batch story the outcome does not name stays as it is. A
+  session without a valid outcome file changes no status and prints the
+  fault; the agent's own commit of the refinement is not affected. No refine
+  prompt asks the agent to write a status
+  (`test/unit/prompts-no-status-writes.test.js`).
 - **No valid outcome is an error, not a verdict (D5).** `runSession` in
   `feature-run.js` takes `schema` and passes it through the runner. A session
   with `structured: null` is recorded as a failed event,
@@ -2360,7 +2376,9 @@ Launches an agent session **on main** to refine and plan a story:
 - Refines acceptance criteria and resolves ambiguities
 - Creates a detailed execution plan with concrete steps
 - Can create child stories via `bl new` if the story should be split
-- Sets `status: refined`; when the session ends, commits and pushes what it left uncommitted
+- Ends by writing its outcome file (F-68 D1); when the session ends, `bl refine` sets the
+  status from it (see **Refine outcomes** under **Session outcomes**), then commits and pushes
+  what the session left uncommitted
 
 ```bash
 bl refine S34
@@ -4122,6 +4140,8 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_effort.md`                     | `{{effortGuide}}`: the effort-level rubric (F-85 D6); the refiner picks the lowest level that fits and writes the `**Effort:**` line. `refine`, `re-refine` and `feature-refine`.                    |
 | `_plain-writing.md`              | `{{writingGuide}}`: about 80% of ASD-STE100, so the operator or the next agent reads the text right once. Every top-level prompt; `bl agents` prints it after this reference.                        |
 | `_dictionaries.md`               | `{{dictionaryGuide}}` in `_plain-writing.md`, under "Give each thing one name": names each listed dictionary (`renderDictionaryGuide`); "" when none are listed or there is no config.               |
+| `_refine-outcome.md`             | `{{refineOutcome}}`: the story refine's closing **Outcome** section, the object to write to `{{outcomePath}}` as the session's last act (F-68 D1). `refine` and `re-refine`.                         |
+| `_refine-outcome-subagent.md`    | `{{refineOutcome}}` in a batch refine's per-story files: the sub-agent replies with the object, and the orchestrator writes the batch's outcome file.                                                |
 | `_cd-git-guard-deny.md`          | Deny message for the cd-then-git Claude hook.                                                                                                                                                        |
 | `_cd-search-guard-deny.md`       | Deny message for the cd-then-search Claude hook.                                                                                                                                                     |
 | `_cd-guard-deny.md`              | Bash-shape hook: `cd <path> && <cmd>` (cmd not git or a search tool).                                                                                                                                |

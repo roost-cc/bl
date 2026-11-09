@@ -66,7 +66,15 @@ import {
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
 import { heldLines } from './blockers.js';
-import { ensureWorktree, launchSession, loadPrompt, workonDue, workonDone, prepareWorktreeOnce } from './session.js';
+import {
+  ensureWorktree,
+  launchSession,
+  loadPrompt,
+  loadSchema,
+  workonDue,
+  workonDone,
+  prepareWorktreeOnce,
+} from './session.js';
 import { syncBranchWithMain, reportNoOpenPR } from './review.js';
 import { featureUnit, storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
@@ -105,7 +113,7 @@ import { readAllTasks, tasksOf } from './task.js';
 import { commitChangedSince, dirtySnapshot, failedCommitPending, failedCommitRecord } from './backlog-commit.js';
 import { loadBacklog } from './backlog-graph.js';
 import { commitAndRecord, reportBacklogCommit } from './sync.js';
-import { refineAndCommit } from './refine.js';
+import { applyRefineStatus, refineAndCommit } from './refine.js';
 import {
   changeName,
   ensureChange,
@@ -571,9 +579,13 @@ export function cmdRefine(args, config, feature) {
       recordTokens: false,
       sessionName: `${feature.id}: refine — ${feature.title}`,
       effort: sessionEffort(config, { mode: 'refine' }),
+      schema: loadSchema('feature-refine'),
     },
     `chore: refine ${feature.id}`,
     [feature.id],
+    // A premise that does not hold puts the feature back to draft (F-68 D2).
+    ({ premise_holds, refined, reason }) =>
+      applyRefineStatus(config.backlogRoot, feature, !premise_holds ? 'draft' : refined ? 'refined' : null, reason),
   );
 }
 

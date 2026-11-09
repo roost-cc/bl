@@ -55,7 +55,8 @@ for (const name of BATCH_PROMPTS) {
     const text = loadPrompt(name, BATCH_VARS);
     assert.match(text, /bl sync --commit … --story <its story>/);
     assert.match(text, /--story <its story> \[--story/);
-    assert.doesNotMatch(text, /\{\{\w+\}\}/);
+    // `{{outcomePath}}` is filled by `launchSession`, not `loadPrompt` (F-68 D1).
+    assert.doesNotMatch(text, /\{\{(?!outcomePath\}\})\w+\}\}/);
     assert.doesNotMatch(text, /Do NOT run `bl sync`/);
     assert.doesNotMatch(text, /must NOT run `bl sync`/);
     assert.doesNotMatch(text, /UNCOMMITTED/);

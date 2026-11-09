@@ -155,8 +155,13 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * `selfConsistencyGuide`, in every refine and implementation prompt and the
  * two prompts that review for it. `effortGuide` is the effort-level rubric
  * (F-85 D6) that every refine prompt carries, so the refiner sets `effort:`.
+ * `refineOutcome` is the story refine's closing **Outcome** section (F-68
+ * D1): the object to write to `{{outcomePath}}` as the session's last act.
+ * The batch refine passes its sub-agents `_refine-outcome-subagent` in its
+ * place: they reply with the object, and the orchestrator writes the file.
  */
 const PROMPT_PARTIALS = {
+  refineOutcome: '_refine-outcome',
   blockedByBug: '_blocked-by-bug',
   escalationGuide: '_escalation',
   validateBeforeSync: '_validate-before-sync',
@@ -261,6 +266,24 @@ export function loadPrompt(name, vars, agentOrOpts = 'claude') {
     text = text.replaceAll(`{{${k}}}`, v ?? '');
   }
   return text;
+}
+
+/** Loaded schemas by name: one object each, so `validateOutcome` compiles each once. */
+const schemas = new Map();
+
+/**
+ * The outcome schema of the step `name` (F-68 D2): `schemas/<name>.json`,
+ * beside the step's prompt in `prompts/`. A JSON Schema (draft 2020-12) for
+ * the object the agent returns, passed to `launchSession` or
+ * `runHeadlessSession` as `schema`.
+ * @param {string} name
+ * @returns {object}
+ */
+export function loadSchema(name) {
+  if (!schemas.has(name)) {
+    schemas.set(name, JSON.parse(readFileSync(join(__dirname, '..', 'schemas', `${name}.json`), 'utf8')));
+  }
+  return schemas.get(name);
 }
 
 /**

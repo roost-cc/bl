@@ -7,8 +7,9 @@
  * resolved, a single orchestrator session is launched that delegates each
  * story to its own sub-agent (Task tool), refining them in parallel.
  *
- * Sets each story's status to "refined" when done. When the session ends,
- * commits and pushes what it left uncommitted in the backlog
+ * The session ends by writing its outcome file (F-68 D1); when the session
+ * exits, sets each story's status to "refined" from it, then commits and
+ * pushes what the session left uncommitted in the backlog
  * (`refineAndCommit`).
  */
 
@@ -24,7 +25,8 @@ import {
 } from './config.js';
 import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { updateTabTitle } from './tab-title.js';
-import { launchSession, loadPrompt, spillSubagentPrompts } from './session.js';
+import { launchSession, loadPrompt, loadSchema, spillSubagentPrompts } from './session.js';
+import { updateSpecFile } from './spec-file.js';
 import { flowForHelp, loadFlow } from './flow.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
@@ -136,28 +138,67 @@ function storyRefineContext(found, fm, config) {
 }
 
 /**
- * Run a refine session (`launchSession` options), then commit and push what
- * it left uncommitted in the backlog with `message` (S-1330 D1): the agent
- * commits its own work during the session, and this catches the rest, the
- * token totals `launchSession` writes after it included. The snapshot is
- * taken here, before the session starts (D3). Exits with the session's
- * status, or 1 when the commit failed. `bl refine S-n`, the batch and
- * `bl refine F-n` (`feature-cmd.js` `cmdRefine`) all end here.
+ * Apply one unit's refine outcome (F-68 D3): write `status` to the spec at
+ * `indexPath` under its spec lock (`updateSpecFile`), or, when `status` is
+ * null, leave it and print `reason`.
+ * @param {string} backlogRoot
+ * @param {{ id: string, indexPath: string }} unit
+ * @param {string|null} status
+ * @param {string} [reason]
+ */
+export function applyRefineStatus(backlogRoot, { id, indexPath }, status, reason) {
+  if (status) {
+    updateSpecFile(backlogRoot, indexPath, (fm) => {
+      fm.status = status;
+    });
+    info(`${id}: status ${status}.`);
+  } else {
+    info(`${id} is not refined; its status is unchanged: ${reason}`);
+  }
+}
+
+/**
+ * Run a refine session (`launchSession` options, with the step's `schema`),
+ * apply its outcome, then commit and push what it left uncommitted in the
+ * backlog with `message` (S-1330 D1): the agent commits its own work during
+ * the session, and this catches the rest, the token totals `launchSession`
+ * writes and the status `apply` writes included. The snapshot is taken here,
+ * before the session starts (D3). A session without a valid outcome file
+ * changes no status, and its fault is printed (F-68 D5). Exits with the
+ * session's status, or 1 when the status write or the commit failed.
+ * `bl refine S-n`, the batch and `bl refine F-n` (`feature-cmd.js`
+ * `cmdRefine`) all end here.
  * @param {object} opts  `launchSession` options
  * @param {string} message
  * @param {string[]} ids  the refined units: a failed commit's paths go to
  *   the next refine of the same units (`refine <ids>`), whether it is a
  *   refine or a re-refine
+ * @param {(structured: object) => void} apply  writes the statuses from the
+ *   validated outcome
  */
-export function refineAndCommit(opts, message, ids) {
+export function refineAndCommit(opts, message, ids, apply) {
   const before = dirtySnapshot(opts.backlogRoot);
-  const status = launchSession({ ...opts, returnOnExit: true });
+  const { status, structured, structuredError } = launchSession({ ...opts, returnOnExit: true });
+  let applyFailed = false;
+  if (structured) {
+    try {
+      apply(structured);
+    } catch (e) {
+      applyFailed = true;
+      console.error(`Error: cannot set the status from the refine outcome: ${e.message}`);
+    }
+  } else {
+    console.error(
+      `No refine outcome (${structuredError}); every status is unchanged.\n` +
+        `  Run \`bl refine ${ids.join(' ')}\` again to set it.`,
+    );
+  }
   const failed = commitChangedSince(opts.backlogRoot, before, message, {
     session: true,
     owner: `refine ${ids.join(', ')}`,
   });
   // A failed commit is 1 whatever the session ended with (S-1330).
-  process.exit(failed ? 1 : status);
+  process.exit(failed || applyFailed ? 1 : status);
 }
 
 /** Single-story interactive refine (the original `bl refine <story>` flow). */
@@ -196,9 +237,17 @@ function refineOne(target, config, { additionalPrompt } = {}) {
       config,
       additionalPrompt,
       effort: sessionEffort(config, { mode: 'refine' }),
+      schema: loadSchema('refine'),
     },
     `chore: ${promptName} ${parsed.id}`,
     [parsed.id],
+    ({ refined, reason }) =>
+      applyRefineStatus(
+        backlogRoot,
+        { id: parsed.id, indexPath: target.found.indexPath },
+        refined ? 'refined' : null,
+        reason,
+      ),
   );
 }
 
@@ -212,9 +261,11 @@ function refineBatch(targets, config) {
   }
   info('');
 
+  // Each sub-agent replies with its story's outcome; the orchestrator writes the file.
+  const refineOutcome = loadPrompt('_refine-outcome-subagent', {}, { agent: config.agent, config });
   const items = targets.map((t) => {
     const { promptName, vars } = storyRefineContext(t.found, t.fm, config);
-    const body = loadPrompt(promptName, vars, { agent: config.agent, config });
+    const body = loadPrompt(promptName, { ...vars, refineOutcome }, { agent: config.agent, config });
     return { id: t.id, title: t.title, body };
   });
 
@@ -258,9 +309,17 @@ function refineBatch(targets, config) {
       recordTokens: false,
       sessionName: `refine batch — ${targets.map((t) => t.id).join(', ')}`,
       effort: sessionEffort(config, { mode: 'refine' }),
+      schema: loadSchema('refine-batch'),
     },
     `chore: refine ${targets.map((t) => t.id).join(', ')}`,
     targets.map((t) => t.id),
+    ({ stories }) => {
+      for (const t of targets) {
+        const entry = stories[t.id] ?? { refined: false, reason: 'the outcome has no entry for it' };
+        const unit = { id: t.id, indexPath: t.found.indexPath };
+        applyRefineStatus(backlogRoot, unit, entry.refined ? 'refined' : null, entry.reason);
+      }
+    },
   );
 }
 
@@ -286,8 +345,10 @@ Options:
 With a single resolved story, launches one interactive agent session in the
 backlog repo to refine and plan it. With multiple stories, launches one
 orchestrator session that delegates each story to its own sub-agent, refining
-them in parallel. Sets status to "refined" when complete. When the session
-ends, bl commits and pushes what it left uncommitted in the backlog.`);
+them in parallel. The session ends by writing its outcome: when the session
+ends, bl sets each story the agent refined to "refined", and prints the reason
+for each one it did not. Then bl commits and pushes what the session left
+uncommitted in the backlog.`);
     process.exit(0);
   }
 

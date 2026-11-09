@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "batch refine outcome",
+  "description": "The outcome of a batch `bl refine` (refine-batch.md), written by the orchestrator to the outcome file from its sub-agents' replies. `bl refine` sets each story's status from its entry (F-68 D3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "stories"],
+  "properties": {
+    "summary": {
+      "description": "One line: what the batch planned.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\n]*$"
+    },
+    "stories": {
+      "description": "One entry per story of the batch, keyed by its id (S-12).",
+      "type": "object",
+      "propertyNames": { "pattern": "^S-[0-9]+$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["refined"],
+        "properties": {
+          "refined": {
+            "description": "true: the story is ready for an agent to implement, and bl sets its status to refined. false: bl leaves the status and prints the reason.",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Why the story is not refined, in one line. Required when refined is false.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "if": { "properties": { "refined": { "const": false } } },
+        "then": { "properties": { "reason": true }, "required": ["reason"] }
+      }
+    }
+  }
+}

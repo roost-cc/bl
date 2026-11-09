@@ -41,14 +41,14 @@ Backlog repo : {{backlogDir}}
 6. Format each file you changed with the formatter for its extension. The **Format and lint**
    section below gives the exact command. Use **relative paths** from cwd.
 
-7. When you are finished, set `status: refined` in the frontmatter.
-
-8. Commit your re-refinement by following **Backlog commits** below. When this session ends,
+7. Commit your re-refinement by following **Backlog commits** below. When this session ends,
    `bl` commits and pushes what you left uncommitted with `chore: re-refine {{storyId}}`, but your
    own commit says why. Use the message `chore: re-refine {{storyId}}`, and put why the plan changed
    in its body. Pass `--story {{storyId}}`, plus one `--story` for each child story you created
    with `bl new`. The backlog workflow commits to its `main` branch directly; do NOT branch
    first.
+
+8. Write the outcome as the last act of the session (see **Outcome** below).
 
 {{selfConsistencyGuide}}
 
@@ -67,3 +67,5 @@ Backlog repo : {{backlogDir}}
 ## IMPORTANT
 
 - Do NOT implement the story — only refine and plan.
+
+{{refineOutcome}}

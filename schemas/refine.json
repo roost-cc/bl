@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "refine outcome",
+  "description": "The outcome of `bl refine S-n` (refine.md, re-refine.md), written by the agent to the outcome file. `bl refine` sets the story's status from it (F-68 D3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "refined"],
+  "properties": {
+    "summary": {
+      "description": "One line: what the session planned.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\n]*$"
+    },
+    "refined": {
+      "description": "true: the story is ready for an agent to implement, and bl sets its status to refined. false: bl leaves the status and prints the reason.",
+      "type": "boolean"
+    },
+    "reason": {
+      "description": "Why the story is not refined, in one line. Required when refined is false.",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "if": { "properties": { "refined": { "const": false } } },
+  "then": { "properties": { "reason": true }, "required": ["reason"] }
+}

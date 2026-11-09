@@ -61,10 +61,11 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
    one URL where two mounts would do, or one flag where a config already exists. Record the attempt
    as a paragraph that starts with `Challenged:`: what you checked and why the premise holds.
 
-   If the premise does not hold, write that, set `status: draft`, and stop after step 10. A wrong
-   premise costs a revert later, and this paragraph is the cheapest place to catch it. A feature
-   that touches authentication, storage contracts or a cross-service boundary always gets this
-   paragraph.
+   If the premise does not hold, write that, and stop after step 11, with `"premise_holds": false`
+   in the outcome (see **Outcome** below). `bl refine` then puts the feature back to draft. A wrong
+   premise costs a revert later, and this paragraph is the cheapest place to catch
+   it. A feature that touches authentication, storage contracts or a cross-service boundary always
+   gets this paragraph.
 
 4. Write **## Goal**, **## Design** and **## Out of Scope**. You write the Design once, here: the
    decisions, the rejected alternatives, and the contracts that the stories implement. Stories
@@ -129,8 +130,8 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
 
    The operator sets both by hand, and `bl sync` derives the epic's feature list.
    `bl list --features --theme <slug>` shows the theme's epics and features to choose from. If no
-   epic fits, leave `epic:` out; do not force one. Then set `status: refined` in the feature
-   frontmatter.
+   epic fits, leave `epic:` out; do not force one. Do not change the feature's status: `bl refine`
+   sets it from your outcome.
 
 8. Run `bl validate`, and resolve every finding it reports before you commit. `bl status
    {{featureId}}` lists the feature's stories with the cut.
@@ -149,6 +150,8 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
     The command takes the backlog lock, commits only the feature file and the story directories,
     and pushes. It never commits what another session has staged.
     Never run `git add` or `git commit` in the backlog repo.
+
+11. Write the outcome as the last act of the session (see **Outcome** below).
 
 ## Operator decisions and `## Escalation`
 
@@ -181,3 +184,22 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
   for that reader.
 - The tool guide's `--story {{featureId}}` convention is for stories. For this feature, use
   `bl format --no-story <paths>` and the verbs with `{{featureId}}`.
+
+## Outcome
+
+As the last act of the session, after your commit, use the {{writeTool}} tool to write this JSON
+object, and nothing else, to `{{outcomePath}}`:
+
+```json
+{ "summary": "<one line: what you decided and planned>", "premise_holds": true, "refined": true }
+```
+
+- Set `premise_holds` to `false` when the premise does not hold (step 3), and add
+  `"reason": "<why, in one line>"`. `bl refine` then sets the feature's status to draft.
+- Set `refined` to `true` when the feature is ready for `bl approve {{featureId}}`. With
+  `premise_holds: true`, `bl refine` then sets the feature's status to refined.
+- Set `refined` to `false` when it is not, for example while an open question blocks the story
+  cut, and add `"reason"`. `bl refine` prints the reason and leaves the status as it is.
+
+`bl refine` reads the file when the session ends. If the file is missing or does not match this
+shape, `bl refine` changes no status.

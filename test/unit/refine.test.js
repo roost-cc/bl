@@ -189,4 +189,29 @@ for (const name of ['refine', 're-refine']) {
     const text = loadPrompt(name, { storyId: 'S-1', backlogDir: '/bl' });
     assert.doesNotMatch(text, /Do NOT run `bl sync`/);
   });
+
+  // F-68 D1: the session ends by writing the outcome file, which `launchSession` names.
+  test(`${name} prompt ends with the Outcome section naming {{outcomePath}}`, () => {
+    const text = loadPrompt(name, { storyId: 'S-1', backlogDir: '/bl' });
+    const outcome = text.slice(text.lastIndexOf('## Outcome'));
+    assert.match(outcome, /^## Outcome\n/);
+    assert.match(outcome, /use the Write tool to write this JSON\s+object, and nothing else, to `\{\{outcomePath\}\}`/);
+    assert.match(outcome, /"refined": true/);
+  });
+
+  test(`${name} prompt for a batch sub-agent replies with the outcome and names no outcome file`, () => {
+    const refineOutcome = loadPrompt('_refine-outcome-subagent', {});
+    const text = loadPrompt(name, { storyId: 'S-1', backlogDir: '/bl', refineOutcome });
+    assert.doesNotMatch(text, /\{\{outcomePath\}\}/);
+    assert.match(text, /## Outcome\n\nYou are one sub-agent of a batch refine\. Write no outcome file\./);
+  });
+}
+
+for (const name of ['refine-batch', 'feature-refine']) {
+  test(`${name} prompt ends with the Outcome section naming {{outcomePath}}`, () => {
+    const text = loadPrompt(name, { storyId: 'S-1', featureId: 'F-1', backlogDir: '/bl' });
+    const outcome = text.slice(text.lastIndexOf('## Outcome'));
+    assert.match(outcome, /^## Outcome\n/);
+    assert.match(outcome, /to `\{\{outcomePath\}\}`/);
+  });
 }
