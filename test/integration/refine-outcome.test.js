@@ -100,10 +100,10 @@ test('the batch leaves a story the outcome does not name, and says so', () => {
 for (const [label, outcome, status, said] of [
   ['refined: true sets refined', { premise_holds: true, refined: true }, 'refined', /F-1: status refined\./],
   [
-    'premise_holds: false sets draft',
+    'premise_holds: false sets draft and prints the reason',
     { premise_holds: false, refined: false, reason: 'the cache already does it' },
     'draft',
-    /F-1: status draft\./,
+    /F-1: status draft: the cache already does it/,
   ],
   [
     'refined: false leaves the status and prints the reason',

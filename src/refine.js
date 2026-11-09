@@ -151,7 +151,8 @@ export function applyRefineStatus(backlogRoot, { id, indexPath }, status, reason
     updateSpecFile(backlogRoot, indexPath, (fm) => {
       fm.status = status;
     });
-    info(`${id}: status ${status}.`);
+    // A draft (the premise does not hold) says why.
+    info(reason ? `${id}: status ${status}: ${reason}` : `${id}: status ${status}.`);
   } else {
     info(`${id} is not refined; its status is unchanged: ${reason}`);
   }
