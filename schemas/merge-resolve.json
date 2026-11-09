@@ -17,7 +17,7 @@
       "type": "boolean"
     },
     "reason": {
-      "description": "Why a merge is not resolved, in one line, when resolved is false; null when it is.",
+      "description": "Why a merge is not resolved, in one line. reason is a string exactly when resolved is false, and null when resolved is true.",
       "anyOf": [{ "type": "string", "minLength": 1, "pattern": "^[^\\n]*\\S[^\\n]*$" }, { "type": "null" }]
     }
   },

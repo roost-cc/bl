@@ -17,7 +17,7 @@
       "type": "boolean"
     },
     "blocked": {
-      "description": "What stopped the session, in one line, when done is false; null when nothing did.",
+      "description": "What stopped the session, in one line. blocked is a string exactly when done is false, and null when done is true.",
       "anyOf": [{ "type": "string", "minLength": 1, "pattern": "^[^\\n]*\\S[^\\n]*$" }, { "type": "null" }]
     }
   },

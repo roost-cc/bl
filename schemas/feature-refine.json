@@ -17,7 +17,7 @@
       "type": "boolean"
     },
     "refined": {
-      "description": "true (with premise_holds true): the feature is ready for approval, and bl sets its status to refined. false: bl leaves the status and prints the reason.",
+      "description": "true: the feature is ready for approval, and bl sets its status to refined. false: bl leaves the status and prints the reason. refined is false whenever premise_holds is false.",
       "type": "boolean"
     },
     "reason": {

@@ -98,6 +98,10 @@ const CONSISTENCY = [
   ['feature-refine', { summary: 's', premise_holds: true, refined: false, reason: 'r' }, true],
   ['feature-refine', { summary: 's', premise_holds: false, refined: false, reason: 'r' }, true],
   ['feature-refine', { summary: 's', premise_holds: false, refined: true, reason: 'r' }, false],
+  ['feature-refine', { summary: 's', premise_holds: true, refined: false }, false],
+  ['refine', { summary: 's', refined: false, reason: 'r' }, true],
+  ['refine', { summary: 's', refined: false }, false],
+  ['refine-batch', { summary: 's', stories: { 'S-1': { refined: false } } }, false],
   // Not contradictions: a self-review can commit a correction and still find
   // the branch not ready, and a verifier can escalate a round with no open
   // items (a premise or test-infrastructure problem).
@@ -109,5 +113,36 @@ test('outcome schemas refuse fields that contradict each other', () => {
   for (const [schemaName, outcome, accepted] of CONSISTENCY) {
     const { structuredError } = validateOutcome(loadSchema(schemaName), outcome);
     assert.equal(structuredError === null, accepted, `${schemaName} ${JSON.stringify(outcome)}: ${structuredError}`);
+  }
+});
+
+// Each rule a CONSISTENCY row refuses, as the field's description states it
+// to the agent: [schema, the field's path in the schema, the rule's words].
+const RULES = [
+  ['fix', ['properties', 'open'], 'open is 0 exactly when fixed is true'],
+  ['implement', ['properties', 'blocked'], 'blocked is a string exactly when done is false'],
+  ['merge-resolve', ['properties', 'reason'], 'reason is a string exactly when resolved is false'],
+  ['feature-refine', ['properties', 'refined'], 'refined is false whenever premise_holds is false'],
+  ['feature-refine', ['properties', 'reason'], 'Required unless premise_holds and refined are both true'],
+  ['refine', ['properties', 'reason'], 'Required when refined is false'],
+  [
+    'refine-batch',
+    ['properties', 'stories', 'additionalProperties', 'properties', 'reason'],
+    'Required when refined is false',
+  ],
+];
+
+test("each CONSISTENCY rule is named in its schema field's description", () => {
+  for (const [schemaName, path, words] of RULES) {
+    const field = path.reduce((o, k) => o[k], loadSchema(schemaName));
+    assert.ok(field.description.includes(words), `${schemaName} ${path.at(-1)}: "${words}"`);
+  }
+  // Every schema with a refused row has its rule stated.
+  for (const [schemaName, , accepted] of CONSISTENCY) {
+    if (!accepted)
+      assert.ok(
+        RULES.some(([s]) => s === schemaName),
+        `${schemaName} has a rule in RULES`,
+      );
   }
 });

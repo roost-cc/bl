@@ -17,7 +17,7 @@
       "type": "boolean"
     },
     "open": {
-      "description": "The Must fix and Should fix items of the latest session still unchecked.",
+      "description": "The Must fix and Should fix items of the latest session still unchecked. open is 0 exactly when fixed is true.",
       "type": "integer",
       "minimum": 0
     }
