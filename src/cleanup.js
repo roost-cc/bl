@@ -1145,6 +1145,7 @@ no main checkout touched. A merge into main that still fails is aborted.`);
       worktreePath: config.backlogRoot,
       roostDir: config.roostDir,
       backlogRoot: config.backlogRoot,
+      topLevel: config.topLevel,
       scopes: resolvePermissionScopes(config, {
         unitDir: config.backlogRoot,
       }),

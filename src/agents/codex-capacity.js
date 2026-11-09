@@ -23,8 +23,7 @@
  */
 
 import { spawn } from 'child_process';
-import { realpathSync } from 'fs';
-import { fileURLToPath } from 'url';
+import { isMainModule } from './capacity-helper.js';
 
 /** How long the whole read may take before it is abandoned (D5: 20 s). */
 export const CODEX_CAPACITY_TIMEOUT_MS = 20_000;
@@ -108,15 +107,7 @@ export async function readCodexRateLimits({ command = 'codex', timeoutMs = CODEX
   }
 }
 
-function isMain() {
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isMain()) {
+if (isMainModule(import.meta.url)) {
   const i = process.argv.indexOf('--timeout');
   const timeoutMs = i >= 0 ? Number(process.argv[i + 1]) : CODEX_CAPACITY_TIMEOUT_MS;
   let out;

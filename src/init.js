@@ -4,13 +4,15 @@
  * The backlog repo itself is created by hand (one per workspace).
  * This command sets up the agent and the backlog's local files for it.
  *
- *   bl init [--agent <id>]
+ *   bl init [--agent <id> [--model <m>]]
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import {
+  checkAgentFlag,
+  checkModel,
   loadConfig,
   parseArgs,
   info,
@@ -53,6 +55,7 @@ export async function main(argv) {
 
 Options:
   -A, --agent <id>     Agent provider to initialize
+  --model <m>          Model of the -A configuration (needs -A)
   --help               Show this help
 
 Registers the backlog repo in your global agent settings so agents can
@@ -89,8 +92,8 @@ init"); edits you made before it stay uncommitted.`);
   let before;
   try {
     before = dirtySnapshot(backlogDir);
-    ensureReposBlock(backlogDir, args.agent);
-    config = loadConfig({ agent: args.agent });
+    ensureReposBlock(backlogDir, args.agent, args.model);
+    config = loadConfig({ agent: args.agent, model: args.model });
     const provider = getProvider(config.agent);
 
     info(`Initializing agent: ${config.agent}...`);
@@ -198,10 +201,14 @@ function roleList(value) {
  * registered ones, that `others` does not use at all, else the first whose
  * model-less configuration no entry of `others` equals, so `bl run` can
  * start; with none, `preferred[0]`, else the first of `others`, which
- * `bl run` refuses at start, naming it.
+ * `bl run` refuses at start, naming it. An agent whose checkConfiguration
+ * refuses a model-less configuration in `raw` (`local`) is never picked.
  */
-function independentConfiguration(others, preferred = []) {
-  const names = [...new Set([...preferred, ...PROVIDER_NAMES])].filter((p) => getProvider(p).supportsHeadless());
+function independentConfiguration(others, raw, preferred = []) {
+  const names = [...new Set([...preferred, ...PROVIDER_NAMES])].filter((p) => {
+    const provider = getProvider(p);
+    return provider.supportsHeadless() && provider.checkConfiguration({ model: null }, { topLevel: raw, raw }) == null;
+  });
   const agent =
     names.find((p) => !others.some((c) => c.agent === p)) ??
     names.find((p) => !others.some((c) => sameConfiguration(c, { agent: p }))) ??
@@ -216,19 +223,23 @@ function independentConfiguration(others, preferred = []) {
  * unless it has one, as -A (`agent`), else claude or, when the retained
  * reviewers use it, the first headless agent they do not; `review_agent`,
  * unless it has one, independent of the implementers it has or gets and of
- * -A (`independentConfiguration`).
+ * -A (`independentConfiguration`). -A's entry carries --model (`model`),
+ * which a `local` configuration needs.
  *
  * @param {object} raw
  * @param {string|null} [agent]
- * @returns {{ agent?: {agent: string}[], review_agent?: {agent: string}[] }}
+ * @param {string|true|null} [model]
+ * @returns {{ agent?: {agent: string, model?: string}[], review_agent?: {agent: string}[] }}
  */
-export function initConfigurationLists(raw, agent = null) {
-  const flag = agent ? [{ agent: agent.toLowerCase() }] : [];
+export function initConfigurationLists(raw, agent = null, model = null) {
+  const flag = agent
+    ? [{ agent: agent.toLowerCase(), ...(model != null ? { model: checkModel(model, '--model') } : {}) }]
+    : [];
   const added = {};
   if (!Object.hasOwn(raw, 'agent'))
-    added.agent = flag.length ? flag : [independentConfiguration(roleList(raw.review_agent), [NEW_AGENT])];
+    added.agent = flag.length ? flag : [independentConfiguration(roleList(raw.review_agent), raw, [NEW_AGENT])];
   const implementers = [...(added.agent ?? roleList(raw.agent)), ...flag];
-  if (!Object.hasOwn(raw, 'review_agent')) added.review_agent = [independentConfiguration(implementers)];
+  if (!Object.hasOwn(raw, 'review_agent')) added.review_agent = [independentConfiguration(implementers, raw)];
   return added;
 }
 
@@ -239,9 +250,10 @@ export function initConfigurationLists(raw, agent = null) {
  * coding dictionary (F-82 D3), unless it has one, the effort levels
  * (F-85 D2), unless it has them, and the two configuration lists
  * it requires (F-64 D2), unless it has them, each independent of the other
- * (`initConfigurationLists`), with no model. When it adds the dictionary
+ * (`initConfigurationLists`), with no model but -A's --model. When it adds the dictionary
  * list it copies the seed first, so a failed copy leaves backlog.json as it
- * was and a rerun tries again. A
+ * was and a rerun tries again. A -A or --model that `loadConfig` refuses
+ * (`checkAgentFlag`) throws before any write. A
  * file that has `repos` keeps its settings: it gets only the effort levels,
  * which `loadConfig` requires, unless it has them. A file with the pre-F-51
  * `projects` that `loadConfig` refuses with the migration's name, or one that
@@ -252,12 +264,12 @@ export function initConfigurationLists(raw, agent = null) {
  * write fails (`unchanged`), and bl reads the file again and retries, up to
  * `CONFIG_WRITE_ATTEMPTS` times.
  */
-export function ensureReposBlock(dir, agent = null) {
+export function ensureReposBlock(dir, agent = null, model = null) {
   const path = join(dir, 'backlog.json');
   if (!existsSync(path)) return;
   for (let attempt = 1; ; attempt += 1) {
     try {
-      return addToBacklogJson(dir, path, agent);
+      return addToBacklogJson(dir, path, agent, model);
     } catch (e) {
       if (e.code !== 'ECHANGED' || attempt === CONFIG_WRITE_ATTEMPTS) throw e;
     }
@@ -268,7 +280,7 @@ export function ensureReposBlock(dir, agent = null) {
 export const CONFIG_WRITE_ATTEMPTS = 5;
 
 /** One read and write of `ensureReposBlock`; the write fails with ECHANGED if the file changed after the read. */
-function addToBacklogJson(dir, path, agent) {
+function addToBacklogJson(dir, path, agent, model) {
   const text = readFileSync(path, 'utf8');
   let raw;
   try {
@@ -278,6 +290,8 @@ function addToBacklogJson(dir, path, agent) {
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
   if (Object.hasOwn(raw, 'projects')) return;
+  // A -A or --model that the loader refuses writes nothing.
+  checkAgentFlag({ agent, model }, raw);
   if (Object.hasOwn(raw, 'repos')) {
     // An existing backlog keeps its settings, but `loadConfig` now requires
     // the effort levels (F-85 D2), so it gets them unless it has them.
@@ -294,7 +308,7 @@ function addToBacklogJson(dir, path, agent) {
   if (!Object.hasOwn(raw, 'worktrees')) added.worktrees = NEW_WORKTREE_ROOT;
   if (!Object.hasOwn(raw, 'dictionaries')) added.dictionaries = [CODING_DICTIONARY_FILE];
   if (!Object.hasOwn(raw, 'effort')) added.effort = NEW_EFFORT;
-  Object.assign(added, initConfigurationLists(raw, agent));
+  Object.assign(added, initConfigurationLists(raw, agent, model));
   // The seed first: if its copy fails, backlog.json does not list a missing file.
   if (added.dictionaries) copySeed(dir, CODING_DICTIONARY_FILE);
   atomicWriteFile(dir, path, JSON.stringify({ ...raw, ...added, repos: {} }, null, 2) + '\n', {

@@ -5089,9 +5089,11 @@ test('an unavailable capacity reading skips the spawn; an account-scoped one is 
   try {
     const runner = fakeRunner({ dir, feature });
     const asked = [];
+    const topLevels = [];
     const resetsAt = new Date(runner.clock() + 3 * 3_600_000);
-    runner.capacity = (agent, model) => {
+    runner.capacity = (agent, model, topLevel) => {
       asked.push(`${agent} ${model}`);
+      topLevels.push(topLevel);
       if (agent === 'codex')
         return { state: 'unavailable', scope: 'account', until: resetsAt, windows: [], message: '5h window at 0%' };
       return { state: 'unknown', scope: 'model', until: null, windows: [], message: 'claude cannot report capacity' };
@@ -5107,6 +5109,10 @@ test('an unavailable capacity reading skips the spawn; an account-scoped one is 
       asked,
       ['codex gpt-6-sol', 'claude sonnet', 'claude sonnet', 'claude sonnet'],
       'Codex asked once; an unknown answer still spawns',
+    );
+    assert.ok(
+      topLevels.every((top) => top === config.topLevel),
+      "every ask gets the run config's top level (local reads its server there)",
     );
     const saved = loadRunState(config, 'F-1');
     assert.deepEqual(saved.unavailable, [

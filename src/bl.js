@@ -31,7 +31,8 @@ function printHelp() {
   console.log(`Usage: bl <command> [args...]
 
 Global Options:
-  -A, --agent <id>  Specify the agent provider (claude, codex, gemini)
+  -A, --agent <id>  Specify the agent provider (claude, codex, gemini, local)
+  --model <m>       The model of that provider for this command (needs -A)
 
 Commands:
   init       Set up the agent and local files for the backlog repo

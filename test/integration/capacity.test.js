@@ -5,8 +5,10 @@ import { fileURLToPath } from 'url';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { BL_BIN, runBl } from '../helpers/run-bl.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
+import { createServer } from 'http';
 import { capacityRows } from '../../src/capacity.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
+import { loadConfig } from '../../src/config.js';
 
 // F-64 D6: `bl capacity` prints every configuration of both roles from its
 // adapter's capacity(), asking each agent once, and exits 0 whatever the
@@ -120,6 +122,50 @@ test('capacityRows asks an account-scoped agent once and a model-scoped one once
       ['review', 'codex', 'b'],
       ['review', 'claude', 'opus'],
     ],
+  );
+});
+
+/** A URL on a local port nothing listens on: one the system gave out and took back. */
+async function closedPortUrl() {
+  const server = createServer();
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return `http://127.0.0.1:${port}`;
+}
+
+/** A fixture backlog with a `local` configuration whose server is at `url`. */
+function localBacklog(url) {
+  return mkTempBacklog({
+    config: {
+      local: { url, token: 'local' },
+      agent: [{ agent: 'local', model: 'qwen3.8-27b' }],
+      review_agent: [{ agent: 'claude', model: 'opus' }],
+    },
+  });
+}
+
+test("capacityRows's default ask gives the adapter the config's top level: local reads its server there", async () => {
+  // Another backlog (BL_BACKLOG_DIR, or the cwd's) names another server, so
+  // the URL in the message says which backlog the adapter read.
+  const url = await closedPortUrl();
+  const { dir } = localBacklog(url);
+  const [row] = capacityRows(loadConfig({ backlogRoot: dir }));
+  assert.deepEqual(
+    [row.agent, row.model, row.state, row.scope, row.until],
+    ['local', 'qwen3.8-27b', 'unavailable', 'account', null],
+  );
+  assert.ok(row.message.includes(url), row.message);
+});
+
+test('bl capacity shows the local row', async () => {
+  const url = await closedPortUrl();
+  const { dir } = localBacklog(url);
+  const r = runBl(['capacity'], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(
+    r.stdout.split('\n')[1],
+    /^agent\s+local\s+qwen3\.8-27b\s+unavailable\s+local server http:\/\/127\.0\.0\.1:\d+ refused/,
   );
 });
 

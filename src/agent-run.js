@@ -22,13 +22,17 @@ Launches the configured agent with the base allowed-tools from
 backlog/allowed-tools.json applied. The session is framed for questions
 and design discussion (not implementation) via prompts/agent.md.
 
+Options:
+  -A, --agent <id>     Agent provider; replaces backlog.json's agent list
+  --model <m>          Model of the -A configuration (needs -A)
+
 Any extra args are passed through to the agent.
 
 Aliases: claude`);
     process.exit(0);
   }
 
-  const config = loadConfig({ agent: args.agent });
+  const config = loadConfig({ agent: args.agent, model: args.model });
   const { backlogRoot, roostDir, agent } = config;
   const provider = getProvider(agent);
   const allowedTools = getAllowedTools(agent, {
@@ -54,6 +58,7 @@ Aliases: claude`);
     args: args.positional,
     roostDir,
     backlogRoot,
+    topLevel: config.topLevel,
     scopes: resolvePermissionScopes(config, { unitDir: process.cwd() }),
     model: config.agentModel,
   });

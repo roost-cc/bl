@@ -743,7 +743,7 @@ test('-A replaces the review list on agentRole review and the implementing list 
     ]);
     assert.throws(
       () => loadConfig({ backlogRoot: dir, agent: 'nope' }),
-      /^Error: -A must name a registered provider \(claude, codex, gemini\), not "nope"$/,
+      /^Error: -A must name a registered provider \(claude, codex, gemini, local\), not "nope"$/,
     );
   } finally {
     cleanup();
@@ -792,7 +792,7 @@ test('a missing, empty or wrong configuration list is a config error naming the 
       [{ agent: ['claude'] }, /^Error: backlog\.json "agent"\[0\] must be a configuration/],
       [
         { agent: [{ agent: 'nope' }] },
-        /^Error: backlog\.json "agent"\[0\] "agent" must be a registered provider \(claude, codex, gemini\), not "nope"$/,
+        /^Error: backlog\.json "agent"\[0\] "agent" must be a registered provider \(claude, codex, gemini, local\), not "nope"$/,
       ],
       [{ agent: [{ model: 'opus' }] }, /"agent"\[0\] "agent" must be a registered provider/],
       [

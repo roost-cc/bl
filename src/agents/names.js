@@ -9,7 +9,7 @@
  * registry. Keeping the names here breaks the cycle.
  */
 
-export const PROVIDER_NAMES = Object.freeze(['claude', 'codex', 'gemini']);
+export const PROVIDER_NAMES = Object.freeze(['claude', 'codex', 'gemini', 'local']);
 
 /**
  * Return true when `name` is a configured agent provider registry key.

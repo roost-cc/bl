@@ -1,6 +1,7 @@
 /**
- * provider.js — the adapter interface (F-64 D1). `claude.js`, `codex.js` and
- * `gemini.js` are adapters: each extends AgentProvider, and the registry in
+ * provider.js — the adapter interface (F-64 D1). `claude.js`, `codex.js`,
+ * `gemini.js` and `local.js` are adapters: each extends AgentProvider (`local`
+ * extends ClaudeProvider), and the registry in
  * `index.js` hands them out by name. Nothing under `src/` outside
  * `src/agents/` imports an adapter or compares a value to an agent name; it
  * asks the adapter instead (test/unit/agent-boundary.test.js holds that).
@@ -22,6 +23,8 @@
  *     without stable token transcripts should return null.
  *   - capacity(): whether a configuration ({ agent, model }) can take work
  *     now; the base answers `unknown`.
+ *   - checkConfiguration(): why a configuration cannot be used, read when
+ *     the config loader loads it; the base finds no reason.
  *   - supportsModel() / supportsDeny(): whether spawn() can select a model,
  *     and whether it has a per-session deny mechanism; the base says no.
  *   - syncNativeApprovals(): install granted patterns into the agent's own
@@ -135,6 +138,9 @@ export class AgentProvider {
    * @param {string} [opts.sessionId]    - ID of session to resume
    * @param {string} [opts.roostDir]
    * @param {string} [opts.backlogRoot]
+   * @param {object|null} [opts.topLevel] - `backlog.json`'s top level as the
+   *                                       caller's config loaded it (`local`
+   *                                       reads its server from it)
    * @param {string|null} [opts.model]   - The model to run; null for the
    *                                       account's own. Only an adapter whose
    *                                       supportsModel() is true selects it.
@@ -186,7 +192,12 @@ export class AgentProvider {
    * again, or null; `windows` lists the quota windows read, for
    * `bl capacity`; `message` is the adapter's own words.
    *
-   * @param {{ model?: string|null }} [opts]
+   * `topLevel` is `backlog.json`'s top level as the caller's config loaded
+   * it: an adapter whose answer depends on `backlog.json` (`local` reads its
+   * server URL) reads it there, never from the file. Both callers pass it;
+   * the base ignores it.
+   *
+   * @param {{ model?: string|null, topLevel?: object }} [opts]
    * @returns {{ state: "available"|"unavailable"|"unknown",
    *             scope: "account"|"model", until: Date|null,
    *             windows: { name: string, remainingPercent: number,
@@ -201,6 +212,21 @@ export class AgentProvider {
       windows: [],
       message: `${this.name} cannot report capacity`,
     };
+  }
+
+  /**
+   * Why the configuration `{ model }` of this adapter cannot be used, or null
+   * when it can. The config loader calls it for each `agent` and
+   * `review_agent` entry and for -A, and throws the reason after the entry's
+   * location. `topLevel` is `backlog.json`'s top level; `raw` is it with the
+   * repo's `overrides` merged over it (`raw` is `topLevel` without them).
+   *
+   * @param {{ model: string|null }} _configuration
+   * @param {{ topLevel: object, raw: object }} _ctx
+   * @returns {string|null}
+   */
+  checkConfiguration(_configuration, _ctx) {
+    return null;
   }
 
   /**
