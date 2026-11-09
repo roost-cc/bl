@@ -11,6 +11,7 @@ import { exitStatus, loadConfig, parseArgs, worktreeRoot } from './config.js';
 import { getAllowedTools, loadPrompt } from './session.js';
 import { resolvePermissionScopes } from './permissions.js';
 import { getProvider } from './agents/index.js';
+import { updateTabTitle } from './tab-title.js';
 
 export async function main(argv) {
   const args = parseArgs(argv);
@@ -50,6 +51,7 @@ Aliases: claude`);
 
   const prompt = loadPrompt('agent', {}, { agent, config });
 
+  updateTabTitle({ status: 'agent' });
   const result = provider.spawn({
     mode: agent,
     prompt,

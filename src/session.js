@@ -24,13 +24,13 @@ import {
   repoOf,
   runPlugins,
   info,
-  renameTmuxWindow,
   checkModel,
   worktreeRoot,
   unitDirOf,
   dictionariesOf,
 } from './config.js';
 import { findExistingWorktree, isSessionRunning, reposForStory, LOCK_FILE } from './story.js';
+import { reassertTabTitle, unitTitleFields, updateTabTitle } from './tab-title.js';
 import { ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
 import { resolvePermissionScopes, loadLocalTools } from './permissions.js';
 import { getProvider } from './agents/index.js';
@@ -848,10 +848,14 @@ export function runHeadlessSession({
 /**
  * Launch an agent session (or resume an existing one).
  *
- * `sessionName` / `tmuxLabel` override the story-derived display strings (used
- * by the batch-refine orchestrator, which fans out to per-story sub-agents and
+ * `sessionName` overrides the story-derived session name (used by the
+ * batch-refine orchestrator, which fans out to per-story sub-agents and
  * therefore has no single owning story). `recordTokens: false` skips the
  * post-session token bookkeeping for the same reason.
+ *
+ * The tab title (`tab-title.js`) gets the unit `parsed.id` names (`F-n` the
+ * feature, `S-n` the story) and the mode as its status; a caller that knows
+ * more, such as a story's feature, sets those fields before calling.
  *
  * With `tokensStep` and `tokensIndexPath`, the difference between the
  * provider's transcript totals for this worktree before and after the session
@@ -879,7 +883,6 @@ export function launchSession({
   additionalPrompt,
   returnOnExit = false,
   sessionName: sessionNameOverride = null,
-  tmuxLabel: tmuxLabelOverride = null,
   recordTokens = true,
   tokensStep = null,
   tokensIndexPath = null,
@@ -902,8 +905,7 @@ export function launchSession({
     info(`Worktree exists but no previous session found — starting fresh.\n`);
   }
 
-  const tmuxLabel = tmuxLabelOverride ?? (isRefine ? `${parsed.id} refine` : parsed.id);
-  renameTmuxWindow(tmuxLabel);
+  updateTabTitle({ ...unitTitleFields(parsed.id), status: mode === 'workon' ? 'implement' : mode });
 
   // A lock this process already holds (a feature's `bl review` round holds every
   // unit directory's for the whole round) is neither rewritten nor released here.
@@ -1009,6 +1011,8 @@ export function launchSession({
       }
     }
   }
+  // The agent had the terminal and may have set its own title.
+  reassertTabTitle();
 
   if (result.error) {
     console.error(`Error: failed to launch agent '${agent}': ${result.error.message}`);

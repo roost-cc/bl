@@ -18,12 +18,12 @@ import {
   parseFrontmatter,
   parseArgs,
   info,
-  renameTmuxWindow,
   normalizeId,
   normalizeComponentId,
   componentIdHint,
 } from './config.js';
 import { findStoryDir, findComponentDir, readAllStories } from './story.js';
+import { updateTabTitle } from './tab-title.js';
 import { launchSession, loadPrompt, spillSubagentPrompts } from './session.js';
 import { flowForHelp, loadFlow } from './flow.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
@@ -173,7 +173,8 @@ function refineOne(target, config, { additionalPrompt } = {}) {
   info(`File    : ${storyRelPath}`);
   info('');
 
-  renameTmuxWindow(`${parsed.id} refine`);
+  // The story's feature, when it has one; `launchSession` adds the story and the mode.
+  updateTabTitle({ feature: target.fm.feature });
 
   const sessionPrompt = loadPrompt(promptName, vars, {
     agent: config.agent,
@@ -237,7 +238,8 @@ function refineBatch(targets, config) {
     { agent: config.agent, config },
   );
 
-  renameTmuxWindow('refine batch');
+  // No single story: the count stands in its place (`refine-batch` names no unit).
+  updateTabTitle({ story: `${targets.length} stories` });
 
   refineAndCommit(
     {
@@ -255,7 +257,6 @@ function refineBatch(targets, config) {
       forceNew: true,
       recordTokens: false,
       sessionName: `refine batch — ${targets.map((t) => t.id).join(', ')}`,
-      tmuxLabel: 'refine batch',
       effort: sessionEffort(config, { mode: 'refine' }),
     },
     `chore: refine ${targets.map((t) => t.id).join(', ')}`,

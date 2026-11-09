@@ -53,7 +53,6 @@ import {
   runForgeOp,
   findChange,
   info,
-  renameTmuxWindow,
   checkModel,
   configurationLabel,
   sameConfiguration,
@@ -75,6 +74,7 @@ import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE, readComponents, readAllStories } from './story.js';
+import { updateTabTitle } from './tab-title.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
@@ -551,7 +551,6 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
           returnOnExit: true,
           recordTokens: false,
           sessionName: label,
-          tmuxLabel: parsed.id,
           tokensStep,
           tokensIndexPath: usageIndexPath,
           model,
@@ -655,9 +654,13 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     staleScopes(unitId) {
       return processScope.staleScopes(unitId);
     },
-    notify(label) {
-      renameTmuxWindow(label);
+    /** Ring the terminal bell: the run reached an end state the operator should look at. */
+    notify() {
       process.stderr.write('\x07');
+    },
+    /** Set tab-title fields (`tab-title.js`): the feature, the story in hand, the step or end state. */
+    title(fields) {
+      updateTabTitle(fields);
     },
     now() {
       return new Date();
@@ -686,6 +689,8 @@ function setStep(ctx, step, extra = {}) {
   ctx.state.step = step;
   Object.assign(ctx.state, extra);
   saveRunState(ctx.config, ctx.state);
+  // A runner without `title` (the unit tests' fake) sets no tab title.
+  ctx.runner.title?.({ feature: ctx.feature.id, story: extra.story ?? '', status: step });
   ctx.runner.log(
     `\n── ${ctx.feature.id} ▸ ${step}${extra.story ? ` ${extra.story}` : ''}${extra.round ? ` (round ${extra.round})` : ''}`,
   );
@@ -772,6 +777,7 @@ function finish(ctx, status, reason = null, details = '') {
   // `step` keeps the step the run stopped in — that is what `bl status`
   // shows and where `--resume` picks up.
   saveRunState(ctx.config, ctx.state);
+  ctx.runner.title?.({ feature: ctx.feature.id, story: '', status });
   ctx.runner.notify(`${ctx.feature.id} ${status}`);
   const log = ctx.runner.log;
   log('');

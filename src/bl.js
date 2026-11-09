@@ -13,11 +13,12 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { append as logAppend } from './log.js';
-import { info, warn, captureTmuxWindowId, editorCommand, openTmuxWindow } from './config.js';
+import { info, warn, editorCommand, openTmuxWindow } from './config.js';
+import { captureTmuxWindowId, renderTabTitle, unitTitleFields } from './tab-title.js';
 import { flowForHelp } from './flow.js';
 
 // Grab the window id the moment bl starts, before any async work, so later
-// `tmux rename-window` calls target this window even if the user has switched
+// tab titles (tab-title.js) target this window even if the user has switched
 // tabs in the meantime.
 captureTmuxWindowId();
 
@@ -294,8 +295,11 @@ async function run() {
         }
         const storyArgs = filteredArgv.filter((a) => !a.startsWith('-'));
         const multi = storyArgs.length > 1;
-        const windowName = multi ? 'refine batch' : `${storyArgs[0] ?? ''} refine`;
         const target = multi ? storyArgs.join(', ') : (storyArgs[0] ?? '');
+        // The window's name until the detached bl sets its own title, in the same shape.
+        const unit = unitTitleFields(target);
+        const fields = multi ? { story: `${storyArgs.length} stories` } : unit.feature ? unit : { story: target };
+        const windowName = renderTabTitle({ ...fields, status: 'refine' });
         // The detached `bl refine` owns the new window's title.
         openTmuxWindow(windowName, ['refine', ...filteredArgv]);
         info(`Started refine for ${target} in new tmux window.`);

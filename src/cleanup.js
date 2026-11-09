@@ -34,7 +34,6 @@ import {
   shellQuote,
   normalizeId,
   info,
-  renameTmuxWindow,
   unitDirFor,
 } from './config.js';
 import {
@@ -56,6 +55,7 @@ import { extractSection } from './feature.js';
 import { DEFERRED_HEADING } from './deferred.js';
 import { resolvePermissionScopes } from './permissions.js';
 import { getProvider } from './agents/index.js';
+import { reassertTabTitle, updateTabTitle } from './tab-title.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { readSpecText, specText, withSpecLock } from './spec-file.js';
@@ -1124,7 +1124,7 @@ no main checkout touched. A merge into main that still fails is aborted.`);
       { agent: config.agent, config },
     );
     const triageName = `${parsed.id}: triage — ${storyFm.title ?? storyEntry}`;
-    renameTmuxWindow(`${parsed.id} triage`);
+    updateTabTitle({ story: parsed.id, status: 'triage' });
     const provider = getProvider(config.agent);
     const allowedTools = getAllowedTools('triage', {
       backlogRoot: config.backlogRoot,
@@ -1151,6 +1151,7 @@ no main checkout touched. A merge into main that still fails is aborted.`);
       }),
       model: config.agentModel,
     });
+    reassertTabTitle(); // the agent had the terminal
     if (triageResult.status !== 0) {
       info('  (triage session ended — you may need to create stories manually)');
     }

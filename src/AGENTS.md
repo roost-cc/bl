@@ -2553,6 +2553,33 @@ targets are listed first, each naming its blocker or the shared files.
 bl run S-1 S-2 S-3            # S-2 depends on S-1: S-1 and S-3 start
 ```
 
+### Tab titles (`src/tab-title.js`)
+
+Every title `bl` gives a terminal tab goes through `updateTabTitle`: the tmux window name
+under tmux (targeting the window `bl` started in, captured at startup), the OSC 2 window
+title when stderr is a terminal outside tmux, nothing otherwise. The title is rendered from
+named fields with the `BL_TAB_TITLE` format, default `{{feature}} : {{story}} : {{status}}`;
+an unset field renders as nothing and the result is trimmed. The placeholder is the `{{var}}`
+bl's prompts and plugin commands use, not a new format.
+
+- A code path sets the fields it knows, by name, at any time: `updateTabTitle('story', 'S-34')`
+  or `updateTabTitle({ feature: 'F-56', status: 'testing' })`. Names are not checked.
+- `launchSession` sets the unit `parsed.id` names (`F-n` the feature, `S-n` the story) and
+  the mode as `status` (`workon` shows as `implement`); a caller that knows more, such as a
+  story's `feature:`, sets it first. The `bl run` loop sets the feature, the story in hand and
+  the step in `setStep`, and the end state in `finish`, through the runner's `title(fields)`;
+  `notify` only rings the bell now.
+- After a tool that had the terminal returns (the agent in `launchSession` and triage, the
+  editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
+  its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
+- An empty `BL_TAB_TITLE` turns titles off; `verbs.js` sets it for the child `bl` processes it
+  runs, so the parent's window keeps the parent's title. `openTmuxWindow` names a new window
+  with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
+- When `bl` exits after setting a title, `restoreTabTitle` (registered on the first title)
+  gives it back: under tmux it turns the window's `automatic-rename` on again, elsewhere it
+  pops the title the terminal saved on its title stack (XTWINOPS 22/23) when the first title
+  was set. No tab keeps a title for work that is over; the bell at a run's end is the signal.
+
 ### Pre-task discussion (`-P, --prompt`)
 
 `bl refine` and `bl implement` accept a `-P, --prompt "<text>"` flag that

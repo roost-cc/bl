@@ -190,19 +190,20 @@ for (const [label, args, write] of [
 }
 
 // `bl refine -t`, and several targets with a feature among them, run each
-// refine in a tmux window of its own: the detached refine commits, pushes and
+// refine in a tmux window of its own, named by `renderTabTitle` (tab-title.js):
+// the detached refine commits, pushes and
 // ends with the status the attached one would have.
 for (const [label, args, write, exit, windows, messages] of [
-  ['bl refine -t S-n', ['-t', 'S-1'], [S1], 0, ['S-1 refine\t0'], ['chore: refine S-1']],
-  ['bl refine -t on a session that exits 7', ['-t', 'S-1'], [S1], 7, ['S-1 refine\t7'], ['chore: refine S-1']],
-  ['the batch with -t', ['-t', 'S-1', 'S-2'], [S1, S2], 0, ['refine batch\t0'], ['chore: refine S-1, S-2']],
-  ['bl refine -t F-n', ['-t', 'F-1'], [F1], 0, ['F-1 refine\t0'], ['chore: refine F-1']],
+  ['bl refine -t S-n', ['-t', 'S-1'], [S1], 0, [': S-1 : refine\t0'], ['chore: refine S-1']],
+  ['bl refine -t on a session that exits 7', ['-t', 'S-1'], [S1], 7, [': S-1 : refine\t7'], ['chore: refine S-1']],
+  ['the batch with -t', ['-t', 'S-1', 'S-2'], [S1, S2], 0, [': 2 stories : refine\t0'], ['chore: refine S-1, S-2']],
+  ['bl refine -t F-n', ['-t', 'F-1'], [F1], 0, ['F-1 :  : refine\t0'], ['chore: refine F-1']],
   [
     'a feature and a story, one window each',
     ['F-1', 'S-2'],
     [F1, S2],
     0,
-    ['F-1 refine\t0', 'S-2 refine\t0'],
+    ['F-1 :  : refine\t0', ': S-2 : refine\t0'],
     ['chore: refine S-2', 'chore: refine F-1'],
   ],
 ]) {
@@ -225,6 +226,6 @@ test('refine_detached_window_commits_pushes_and_status: a refused commit in the 
   const log = join(mkTempDir('bl-tmux-log-'), 'windows');
   const r = refine(dir, ['-t', 'S-1'], { write: [S1], tmuxLog: log });
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), ['S-1 refine\t1']);
+  assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), [': S-1 : refine\t1']);
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
 });

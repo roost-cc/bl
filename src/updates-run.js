@@ -45,9 +45,9 @@ import {
   normalizeId,
   shellQuote,
   info,
-  renameTmuxWindow,
 } from './config.js';
 import { removeUnitDirIfEmpty } from './story.js';
+import { updateTabTitle } from './tab-title.js';
 import { checkCriteria, extractSection, replaceSection, sectionHasContent } from './feature.js';
 import { RUN_DIR, ensureRunDir, acquireRunLock, runLockPath, shellMerged } from './feature-run.js';
 import { releasePidLock } from './pid-lock.js';
@@ -574,9 +574,13 @@ export function defaultUpdatesRunner() {
     forge(op, vars, { config, repoPath }) {
       return runForgeOp(op, vars, { config, repoPath });
     },
-    notify(label) {
-      renameTmuxWindow(label);
+    /** Ring the terminal bell: the run ended. */
+    notify() {
       process.stderr.write('\x07');
+    },
+    /** Set tab-title fields (`tab-title.js`). */
+    title(fields) {
+      updateTabTitle(fields);
     },
     log: info,
   };
@@ -1560,6 +1564,7 @@ export async function runUpdates(config, opts = {}) {
         failure ??= e;
       }
     }
+    runner.title?.({ feature: 'updates', story: '', status: counts.join(', ') || 'nothing to do' });
     runner.notify(`updates run: ${counts.join(', ')}`);
     if (failure) throw failure;
     throwIfUncommitted(result.commit);

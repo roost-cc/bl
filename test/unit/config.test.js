@@ -22,8 +22,6 @@ import {
   runEditor,
   exitStatus,
   slugify,
-  captureTmuxWindowId,
-  renameTmuxWindow,
 } from '../../src/config.js';
 
 // ---------------------------------------------------------------------------
@@ -600,54 +598,6 @@ test('runEditor falls through an empty VISUAL to EDITOR', () => {
   const r = withEnv({ VISUAL: '', EDITOR: fake }, () => runEditor('x.md'));
   assert.equal(r.status, 0);
   assert.equal(readFileSync(record, 'utf8'), 'x.md');
-});
-
-// ---------------------------------------------------------------------------
-// tmux window targeting
-// ---------------------------------------------------------------------------
-
-test('captureTmuxWindowId is a no-op when not under tmux', () => {
-  const savedTmux = process.env.TMUX;
-  const savedId = process.env.BL_TMUX_WINDOW_ID;
-  delete process.env.TMUX;
-  delete process.env.BL_TMUX_WINDOW_ID;
-  try {
-    captureTmuxWindowId();
-    assert.equal(process.env.BL_TMUX_WINDOW_ID, undefined);
-  } finally {
-    if (savedTmux === undefined) delete process.env.TMUX;
-    else process.env.TMUX = savedTmux;
-    if (savedId === undefined) delete process.env.BL_TMUX_WINDOW_ID;
-    else process.env.BL_TMUX_WINDOW_ID = savedId;
-  }
-});
-
-test('captureTmuxWindowId does not overwrite an already-captured id', () => {
-  const savedTmux = process.env.TMUX;
-  const savedId = process.env.BL_TMUX_WINDOW_ID;
-  process.env.TMUX = '/tmp/tmux-fake,1,0';
-  process.env.BL_TMUX_WINDOW_ID = '@7';
-  try {
-    captureTmuxWindowId();
-    // Already set → left untouched, tmux is never consulted.
-    assert.equal(process.env.BL_TMUX_WINDOW_ID, '@7');
-  } finally {
-    if (savedTmux === undefined) delete process.env.TMUX;
-    else process.env.TMUX = savedTmux;
-    if (savedId === undefined) delete process.env.BL_TMUX_WINDOW_ID;
-    else process.env.BL_TMUX_WINDOW_ID = savedId;
-  }
-});
-
-test('renameTmuxWindow is a no-op (does not throw) when not under tmux', () => {
-  const savedTmux = process.env.TMUX;
-  delete process.env.TMUX;
-  try {
-    assert.doesNotThrow(() => renameTmuxWindow('S-123 refine'));
-  } finally {
-    if (savedTmux === undefined) delete process.env.TMUX;
-    else process.env.TMUX = savedTmux;
-  }
 });
 
 // ---------------------------------------------------------------------------

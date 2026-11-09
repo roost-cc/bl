@@ -24,6 +24,7 @@ import { constants as osConstants } from 'os';
 import { join, resolve, basename, dirname, relative, isAbsolute, sep } from 'path';
 import { spawnSync } from 'child_process';
 import { spawnSyncFiles } from './child-stdio.js';
+import { reassertTabTitle } from './tab-title.js';
 import { Document, LineCounter, Scalar, isMap, isScalar, parseDocument, visit } from 'yaml';
 import { getProvider, hasProvider, PROVIDER_NAMES } from './agents/index.js';
 import { sessionStackOf } from './session-stack.js';
@@ -1707,53 +1708,15 @@ export function shellQuote(value) {
 const shellQuoteForgeVar = shellQuote;
 
 /**
- * Capture the id of the tmux window `bl` was invoked in, once, at startup.
- *
- * tmux window ids (e.g. `@5`) are stable for the life of a window regardless
- * of which window is currently active, unlike `#W` (name) or the implicit
- * "current window" target. Renames can fire a moment after `bl` starts — long
- * enough for the user to switch tabs — so every rename must target the window
- * we started in, not whichever one happens to be focused. We grab the id here
- * and stash it in the environment so it survives across the dynamic `import()`
- * boundaries the subcommands load through.
- */
-export function captureTmuxWindowId() {
-  if (!process.env.TMUX || process.env.BL_TMUX_WINDOW_ID) return;
-  const res = spawnSync('tmux', ['display-message', '-p', '#{window_id}'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (res.status === 0 && res.stdout) {
-    process.env.BL_TMUX_WINDOW_ID = res.stdout.trim();
-  }
-}
-
-/**
- * Rename the tmux window `bl` was invoked in (see `captureTmuxWindowId`),
- * targeting it by captured id so we never rename a window the user has since
- * switched to. No-op when not under tmux. Non-fatal on any tmux error.
- */
-export function renameTmuxWindow(label) {
-  if (!process.env.TMUX) return;
-  const id = process.env.BL_TMUX_WINDOW_ID;
-  const args = ['rename-window'];
-  if (id) args.push('-t', id);
-  args.push(label);
-  try {
-    spawnSync('tmux', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch {
-    // not fatal
-  }
-}
-
-/**
  * Run `bl <argv>` in a new, detached tmux window named `name`, from `cwd`;
  * the window keeps a shell open when bl exits. The invoking window is left
  * alone: renaming it, even to its own name, would turn off tmux
  * `automatic-rename`. The captured window id is unset first so the inner bl
- * captures the new window instead of renaming ours. Throws when tmux fails.
+ * captures the new window and sets its title (`tab-title.js`) instead of
+ * ours. Throws when tmux fails.
  *
- * @param {string} name
+ * @param {string} name  the window's name until the inner bl sets its title:
+ *   `renderTabTitle` of the fields the inner bl will set, so it never changes shape
  * @param {string[]} argv  the arguments after `bl`
  * @param {{ cwd?: string }} [opts]
  */
@@ -2000,10 +1963,12 @@ export function editorCommand() {
  * unquoted.
  */
 export function runEditor(path) {
-  return spawnSync(`${editorCommand()} ${shellQuote(path)}`, {
+  const res = spawnSync(`${editorCommand()} ${shellQuote(path)}`, {
     stdio: 'inherit',
     shell: true,
   });
+  reassertTabTitle(); // an editor may have set the terminal title
+  return res;
 }
 
 /**

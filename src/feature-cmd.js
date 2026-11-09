@@ -34,7 +34,6 @@ import {
   parseFrontmatter,
   slugify,
   info,
-  renameTmuxWindow,
   runForgeOp,
   runPlugins,
   worktreePathFor,
@@ -555,7 +554,6 @@ export function cmdRefine(args, config, feature) {
     agent: config.agent,
     config,
   });
-  renameTmuxWindow(`${feature.id} refine`);
   refineAndCommit(
     {
       mode: 'refine',
@@ -572,7 +570,6 @@ export function cmdRefine(args, config, feature) {
       additionalPrompt: args.prompt,
       recordTokens: false,
       sessionName: `${feature.id}: refine — ${feature.title}`,
-      tmuxLabel: `${feature.id} refine`,
       effort: sessionEffort(config, { mode: 'refine' }),
     },
     `chore: refine ${feature.id}`,

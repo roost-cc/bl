@@ -64,6 +64,23 @@ The backlog's configuration. A minimal one:
 
 `bl agents` prints the full reference.
 
+### Tab titles
+
+While `bl` runs a session or a loop, it names the terminal tab after the work: the tmux window
+under tmux, the terminal's window title elsewhere. The title is rendered from the fields each
+code path sets (`feature`, `story`, `status`), with the format in `BL_TAB_TITLE`:
+
+```sh
+export BL_TAB_TITLE='{{feature}} : {{story}} : {{status}}'   # the default
+export BL_TAB_TITLE='{{story}} {{status}}'                   # shorter
+export BL_TAB_TITLE=''                                       # titles off
+```
+
+A field that is not set renders as nothing: `: S-210 : implement` for a story with no
+feature, `F-123 :  : refine` for a feature. When `bl` exits it gives the title back to the
+terminal (tmux's automatic rename, or the title the terminal had before), so no tab keeps a
+title for work that is over; a run's end rings the bell.
+
 ## Quickstart
 
 ```sh
