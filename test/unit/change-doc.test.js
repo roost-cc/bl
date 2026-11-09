@@ -6,6 +6,7 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import {
   appendSection,
+  applyFixOutcome,
   changeName,
   changePath,
   currentChange,
@@ -17,6 +18,7 @@ import {
   recordMerge,
   serializeChange,
   setRepo,
+  setReviewFields,
   unitChange,
   unitIdOfDir,
   writeChange,
@@ -25,6 +27,7 @@ import { extractSection, featureRepoOrder } from '../../src/feature.js';
 import { deployableRepos, mainCommits, tagRepos } from '../../src/release.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
+import { git as gitIn } from '../helpers/git-backlog.js';
 
 const TEMPLATES = fileURLToPath(new URL('../../templates/', import.meta.url));
 
@@ -692,4 +695,50 @@ test('readChange names the file of a change document that is not YAML', () => {
     () => readChange(path),
     (e) => e.name === 'FrontmatterError' && e.file === path && e.line === 5,
   );
+});
+
+test('setReviewFields writes only a field that differs and returns what the document held before', () => {
+  const { root, dir } = unitDir();
+  const path = changePath(dir);
+  writeChange(root, path, newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] }));
+  const before = readFileSync(path, 'utf8');
+  assert.deepEqual(setReviewFields(root, path, { review_round: '0' }), { review_round: '0', review_status: '' });
+  assert.equal(readFileSync(path, 'utf8'), before, 'no change, no write');
+  assert.deepEqual(setReviewFields(root, path, { review_round: '1', review_status: 'pending' }), {
+    review_round: '0',
+    review_status: '',
+  });
+  const { fm, repos } = readChange(path);
+  assert.equal(fm.review_round, '1');
+  assert.equal(fm.review_status, 'pending');
+  assert.equal(repos[0].branch, 'f42-hub', 'the rest of the document is kept');
+  assert.throws(
+    () => setReviewFields(root, join(dir, 'change-9.md'), { review_status: 'fixed' }),
+    /no change document/,
+  );
+});
+
+test('applyFixOutcome: fixed writes and commits review_status fixed; anything else leaves the status', () => {
+  const { root, dir } = unitDir();
+  const path = changePath(dir);
+  const doc = newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
+  doc.fm.review_status = 'pending';
+  writeChange(root, path, doc);
+  const git = (...args) => gitIn(root, ...args);
+  git('init', '-q', '-b', 'main');
+  git('add', '.');
+  git('commit', '-q', '-m', 'base');
+  const unit = { id: 'F-42', changePath: path };
+  const outcome = (structured, structuredError = null) => ({ structured, structuredError });
+  const cases = [
+    { name: 'no outcome', outcome: outcome(null, 'no outcome file at x'), fixed: false },
+    { name: 'not fixed', outcome: outcome({ summary: 's', fixed: false, open: 2 }), fixed: false },
+    { name: 'fixed', outcome: outcome({ summary: 's', fixed: true, open: 0 }), fixed: true },
+  ];
+  for (const c of cases) {
+    assert.equal(applyFixOutcome(root, unit, c.outcome), c.fixed, c.name);
+    assert.equal(readChange(path).fm.review_status, c.fixed ? 'fixed' : 'pending', c.name);
+  }
+  assert.equal(git('log', '-1', '--format=%s'), 'chore: F-42 review fixed');
+  assert.equal(git('status', '--porcelain'), '', 'the write is committed');
 });

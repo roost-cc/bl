@@ -26,6 +26,7 @@ import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { installPartialWrites } from '../helpers/partial-write.js';
 import { runBl } from '../helpers/run-bl.js';
 import { noAgentEnv } from '../helpers/fake-agent.js';
+import { defaultOutcome, reviewOutcome } from '../helpers/outcomes.js';
 import { loadConfig, normalizeId, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { findStoryDir } from '../../src/story.js';
 import { extractSection, findFeature, normalizeFeatureId } from '../../src/feature.js';
@@ -179,22 +180,23 @@ function resolveBoth(cwd) {
 }
 
 /**
- * Write the verifier's verdict into the change document, as review-verify
- * does: `review_status`, `review_round` up by one, and a session on top of
- * the Review Log with `must` as its Must fix items.
+ * Write the verifier's session on top of the change document's Review Log,
+ * with `must` as its Must fix items, as review-verify does, and return its
+ * outcome (F-68 D2): `pending` counts one open Must fix, `addressed` none, and
+ * `unset` is a verifier that returned no outcome. The loop writes
+ * `review_round` and `review_status` itself.
  */
 function writeVerdict(path, verdict, must) {
   const { fm, body } = parseFrontmatter(readFileSync(path, 'utf8'));
-  fm.review_status = verdict;
-  fm.review_round = String(Number(fm.review_round ?? 0) + 1);
   const session = `### Session 2026-10-26 (merge resolution)\n\n**Must fix**\n\n${must}\n\n**Should fix**\n\nNone.\n\n**Nits**\n\nNone.\n\n`;
   writeFileSync(path, serializeFrontmatter(fm) + body.replace('## Review Log\n\n', `## Review Log\n\n${session}`));
+  return verdict === 'unset' ? null : reviewOutcome({ pending: verdict === 'pending' });
 }
 
 /**
  * Real git through the default runner, the test plugin `test`, and scripted
  * sessions: `resolve(worktreePath, vars)` plays the resolution agent, the
- * dimension passes find nothing, and the verifier records `verdict`.
+ * dimension passes find nothing, and the verifier returns `verdict`.
  */
 function scriptedRunner({ test: testCmd, resolve, verdict = 'addressed', must = 'None.' }) {
   const calls = { gates: 0, sessions: [], vars: {}, log: [] };
@@ -205,8 +207,8 @@ function scriptedRunner({ test: testCmd, resolve, verdict = 'addressed', must = 
       calls.vars[promptName] = vars;
       if (promptName === 'merge-resolve') return resolve(worktreePath, vars);
       if (promptName === 'review-verify') {
-        writeVerdict(vars.changeAbsPath, verdict, must);
-        return { ok: true, output: `REVIEW ${verdict} round 1`, isError: false };
+        const structured = writeVerdict(vars.changeAbsPath, verdict, must);
+        return { ok: true, output: '', isError: false, structured };
       }
       if (promptName.startsWith('review-')) return { ok: true, output: 'no findings', isError: false };
       return REFUSED;
@@ -1544,14 +1546,10 @@ test('resume_pending_integration_review_below_at_and_above_cap: bl run --resume 
       const { runner, calls } = scriptedRunner({ test: 'true', resolve: resolveBoth, verdict: 'addressed' });
       const session = runner.session;
       runner.session = (o) => {
-        if (o.promptName === 'feature-workon-review') {
-          calls.sessions.push(o.promptName);
-          const { fm, body } = parseFrontmatter(readFileSync(changeFile(fx), 'utf8'));
-          fm.review_status = 'fixed';
-          writeFileSync(changeFile(fx), serializeFrontmatter(fm) + body);
-          return { ok: true, output: 'FIXED', isError: false };
+        if (o.promptName === 'feature-workon-review') calls.sessions.push(o.promptName);
+        if (o.promptName === 'feature-workon-review' || o.promptName === 'feature-fix-self-review') {
+          return { ok: true, output: '', isError: false, structured: defaultOutcome(o.promptName) };
         }
-        if (o.promptName === 'feature-fix-self-review') return { ok: true, output: 'OK', isError: false };
         return session(o);
       };
       const fresh = featureCtx(fx);

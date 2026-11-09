@@ -55,6 +55,12 @@ bl sync --commit -m "chore: self-review notes for {{featureId}}" --path {{featur
 Never run `git add` or `git commit` in the backlog repo ({{backlogDir}}). Its index is shared,
 and a raw commit takes along what other sessions have staged.
 
+## Outcome
+
+{{outcomeDelivery}}
+
+{{selfReviewOutcome}}
+
 {{selfConsistencyGuide}}
 
 {{simplicityGuide}}
@@ -71,5 +77,4 @@ and a raw commit takes along what other sessions have staged.
 
 - Do NOT push or open a PR: `bl run` does that next.
 - Do NOT run any `bl sync` other than the `bl sync --commit` line above.
-- End your response with one line: `SELF-REVIEW DONE` (optionally followed by the number of
-  fixes), or `ESCALATED` if you wrote an Escalation.
+- End with the outcome object that **Outcome** above describes.

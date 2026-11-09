@@ -31,6 +31,7 @@ import { git, GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { newChange, writeChange } from '../../src/change-doc.js';
+import { defaultOutcome } from '../helpers/outcomes.js';
 
 const AC = '## Acceptance Criteria\n\n- [ ] the lock is fresh\n';
 const PLUGINS = { relock: { implement: 'relock {{storyId}}' }, other: { test: 'npm test' } };
@@ -402,7 +403,7 @@ function loopRunner({ exit = 0, dirty = ' M lock\n', sessions = {}, testExits = 
     session(o) {
       calls.push({ type: 'session', prompt: o.promptName });
       if (sessions[o.promptName]) sessions[o.promptName](o);
-      return { ok: true, output: '', isError: false, usage: null };
+      return { ok: true, output: '', isError: false, usage: null, structured: defaultOutcome(o.promptName) };
     },
     shell(cmd, cwd) {
       calls.push({ type: 'shell', cmd, cwd });

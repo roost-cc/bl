@@ -115,6 +115,7 @@ import { loadBacklog } from './backlog-graph.js';
 import { commitAndRecord, reportBacklogCommit } from './sync.js';
 import { applyRefineStatus, refineAndCommit } from './refine.js';
 import {
+  applyFixOutcome,
   changeName,
   ensureChange,
   listChanges,
@@ -1153,6 +1154,8 @@ export async function cmdWorkon(args, config, feature) {
   if (reviewPending) info('Review pending on the feature — using the review-feedback prompt.\n');
   const vars = { ...prep.baseVars };
   if (reviewPending) {
+    // A fix session returns its outcome in the outcome file (F-68 D1, D3).
+    vars.outcomeCarrier = 'file';
     // The same slot `bl run` gives this round's fix session.
     ensureRunDir(cfg);
     vars.scratchDir = join(cfg.backlogRoot, RUN_DIR, `${feature.id}.r${feature.reviewRound}.fix.scratch`);
@@ -1160,7 +1163,7 @@ export async function cmdWorkon(args, config, feature) {
   }
   const sessionPrompt = loadPrompt(promptName, vars, { agent: cfg.agent, config: cfg });
 
-  const status = launchSession({
+  const ret = launchSession({
     mode: 'workon',
     parsed,
     title: feature.title,
@@ -1183,8 +1186,11 @@ export async function cmdWorkon(args, config, feature) {
     tokensIndexPath: feature.indexPath,
     // One session for every story: the highest of their levels (F-85 D4).
     effort: sessionEffort(cfg, { mode: 'workon', stories: prep.ordered }),
+    ...(reviewPending ? { schema: loadSchema('fix') } : {}),
   });
+  const status = reviewPending ? ret.status : ret;
   recordFeatureTokens(feature, cfg);
+  if (reviewPending) applyFixOutcome(cfg.backlogRoot, { id: feature.id, changePath: vars.changeAbsPath }, ret);
   if (!status) info(implementNextSteps(feature.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.
   process.exit(status);

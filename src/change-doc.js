@@ -37,6 +37,7 @@ import { FrontmatterError, listMembers, parseFrontmatter, serializeFrontmatter, 
 import { extractSection, replaceSection } from './feature.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { commitPaths } from './backlog-commit.js';
+import { withSpecLock } from './spec-file.js';
 import { substituteVars, templatePath } from './template.js';
 
 export const CHANGE_FILE = 'change.md';
@@ -164,6 +165,68 @@ export function updateChange(backlogRoot, path, mutate) {
   return doc;
 }
 
+/** The review fields bl writes from the review and fix outcomes (F-68 D3); no prompt asks an agent for them. */
+export const REVIEW_FIELDS = ['review_round', 'review_status'];
+
+/**
+ * The review fields of the change document at `path` (`{ review_round,
+ * review_status }`, strings, `''` when unset) read under its lock
+ * (`withSpecLock`), then set to `fields` when a key's value differs. Returns
+ * the values the document held before the write, so a caller can tell an
+ * agent's edit from its own.
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @param {{ review_round?: string, review_status?: string }} fields
+ * @returns {{ review_round: string, review_status: string }}
+ */
+export function setReviewFields(backlogRoot, path, fields) {
+  return withSpecLock(path, () => {
+    const doc = readChange(path);
+    if (!doc) throw new Error(`no change document at ${path}`);
+    const before = Object.fromEntries(REVIEW_FIELDS.map((k) => [k, String(doc.fm[k] ?? '')]));
+    if (Object.entries(fields).some(([k, v]) => before[k] !== v)) {
+      Object.assign(doc.fm, fields);
+      writeChange(backlogRoot, path, doc);
+    }
+    return before;
+  });
+}
+
+/**
+ * Apply the outcome of an interactive fix session (`bl implement` while a
+ * review is pending, F-68 D3): with `fixed: true`, set `review_status: fixed`
+ * in the change document at `changePath` and commit it; otherwise leave the
+ * status and print why. Returns whether the status is now `fixed`.
+ * @param {string} backlogRoot
+ * @param {{ id: string, changePath: string }} unit
+ * @param {{ structured: object|null, structuredError: string|null }} outcome
+ * @returns {boolean}
+ */
+export function applyFixOutcome(backlogRoot, { id, changePath }, { structured, structuredError }) {
+  if (!structured) {
+    warn(`no fix outcome (${structuredError}); ${id}'s review status is unchanged`);
+    return false;
+  }
+  if (!structured.fixed) {
+    warn(`${id}: ${structured.open} review item(s) still open; the review status is unchanged: ${structured.summary}`);
+    return false;
+  }
+  setReviewFields(backlogRoot, changePath, { review_status: 'fixed' });
+  commitChangeDoc(backlogRoot, changePath, `chore: ${id} review fixed`);
+  return true;
+}
+
+/**
+ * Commit the change document at `path` in the backlog, skipped when the
+ * backlog is not a git repository; a failed commit is a warning.
+ */
+function commitChangeDoc(backlogRoot, path, message) {
+  if (!existsSync(join(backlogRoot, '.git'))) return;
+  const rel = relative(backlogRoot, path);
+  const c = commitPaths(backlogRoot, [rel], message);
+  if (!c.committed) warn(`${rel} is written but not committed (${c.error ?? 'nothing to commit'})`);
+}
+
 /**
  * A new document from `templates/change.md`: `status: open`, round 0, one
  * `repos:` entry per `{ repo, branch }`. `change_of:` is set on the parsed
@@ -251,10 +314,8 @@ export function openUnitChange(backlogRoot, { id, title, indexPath }, branch, re
     title,
     repos: names.map((repo) => ({ repo, branch })),
   });
-  if (res.changed && existsSync(join(backlogRoot, '.git'))) {
-    const rel = relative(backlogRoot, res.path);
-    const c = commitPaths(backlogRoot, [rel], `chore: ${id} change ${res.created ? 'opened' : 'updated'} on ${branch}`);
-    if (!c.committed) warn(`${rel} is written but not committed (${c.error ?? 'nothing to commit'})`);
+  if (res.changed) {
+    commitChangeDoc(backlogRoot, res.path, `chore: ${id} change ${res.created ? 'opened' : 'updated'} on ${branch}`);
   }
   return res;
 }

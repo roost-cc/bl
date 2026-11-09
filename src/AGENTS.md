@@ -1003,7 +1003,7 @@ draft → refined → approved → running → done
 | `bl refine F-3`              | Agent session in the backlog repo (`prompts/feature-refine.md`): writes Premise (with the `Challenged:` check), Design, Acceptance, and cuts the stories via `bl new --from` with `"feature": "F-3"`. Sets `refined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `bl approve F-3`             | **The human gate.** Requires `refined` and a consistent, non-empty story list; warns on dependencies outside the feature and on totals outside 8–20 points. Sets `approved`. Refuses while `## Escalation` is not `None.` (`--force` skips only the draft gate). Commits and pushes the feature file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `bl implement F-3`           | One worktree per repo at `worktrees/f3-<slug>/<repo>` on branch `f3-<slug>`; runs bootstrap/workon plugins; sets `running`; launches `prompts/feature-workon.md` (stories in dependency order, one PR at the end) or `feature-workon-review.md` when `review_status: pending`. Refuses on outside blockers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `bl review F-3`              | Takes each repo's PR from the change document, else `change.find` by branch (a branch with commits and no PR gets one through `change.open`), syncs each branch with main (refuses on a conflict), then takes one review round over all of them — one verifier, one Review Log session, `review_round` up by one; the PRs are taken in the feature's repo order, and the lead repo's PR is the one run state keeps. The round is the same review step as `run`: the `review-correctness.md` and `review-failure-paths.md` passes and `review-verify.md`, on the review agent, headless unless `--interactive` (or the agent has no headless mode). Shares `run`'s state in `.bl/run/`, refuses while a run holds the feature and at the round cap. The verifier bumps `review_round` and writes `## Escalation` when the cap is hit with Must-fix items left.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `bl review F-3`              | Takes each repo's PR from the change document, else `change.find` by branch (a branch with commits and no PR gets one through `change.open`), syncs each branch with main (refuses on a conflict), then takes one review round over all of them — one verifier, one Review Log session, `review_round` up by one; the PRs are taken in the feature's repo order, and the lead repo's PR is the one run state keeps. The round is the same review step as `run`: the `review-correctness.md` and `review-failure-paths.md` passes and `review-verify.md`, on the review agent, headless unless `--interactive` (or the agent has no headless mode). Shares `run`'s state in `.bl/run/`, refuses while a run holds the feature and at the round cap. bl raises `review_round` before the verifier and writes `review_status` from its outcome; the verifier writes `## Escalation` when the cap is hit with Must-fix items left.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `bl run F-3`                 | **The autonomous loop.** Same gates as `implement`, then: implement each story in dependency order (`feature-story.md`, headless) → test gate (`test` stage plugin; one `feature-fix-tests.md` attempt) → self-review (`feature-self-review.md`) → push + a PR per repo (the lead always, another repo when its branch has commits) → review (two dimension passes `review-correctness.md` / `review-failure-paths.md` writing findings files, then `review-verify.md` writing the session) → fix (`feature-workon-review.md`, minimal changes) → fix self-review (`feature-fix-self-review.md`, scoped to the fix diff) → re-review … until `addressed`. Items still open after the last full round (`review_rounds_max`) get one closing round: fix → fix self-review → test gate → `review-verify.md` alone, checking only those items (`closingRound`); anything still open → `escalated`. Every headless prompt ends with the headless rules (`withHeadlessRules`: no background commands, commit before ending). State in `.bl/run/F-3.json`; `--resume`, `--plan`, `--interactive`, `--max-rounds <n>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `bl status F-3`              | Stories in dependency order, review state, blockers, deferred count, escalation, and the last run's state.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `bl merge F-3`               | Gates: the one set `bl merge S-n` applies too (`mergeGates`, `src/merge-gates.js`, F-36 D1; see `### bl merge`): `review_status` not `pending`/`fixed`, no unchecked Must/Should items in the latest session (open nits do not block; `bl run` ends `clean` only when this gate passes), a Review Log session on record unless `--no-review`, `## Escalation` empty, no worktree on the branch in a repo no story names, every main checkout on `main`. Then every worktree is brought up to date with main, gated and pushed (`integrateUnit`, F-36 D4; see `### bl merge`): conflicted generated files are regenerated (D5), other conflicts and a red gate go to a resolution agent whose resolution is gated and re-reviewed (D6, D7). A failed merge into `main` is aborted (D9). Then per repo in the feature's repo order (`bl` first, then by first story, F-52 D3): `git merge --no-ff`, push, close the open PR (`change.find`, `change.close`), remove worktree — the same routine as `bl merge`; right after `bl` merges, the backlog is synced from its merged checkout (`runBacklogSync`, as a story merge does, S-864). The repos a release records are those whose `backlog.json` `repos` entry sets `deployable: true` (every entry must set it; `loadConfig` refuses one that does not). After the last push, each touched repo's merge commit gets an annotated tag `F-3` (`F-3.2` for a second change; title and change-document path in the message), the tags are pushed last, and `releases/F-3.json` records the `main` commit of every deployable repo as its `origin` has it (an unreadable `origin` main, read before tagging, or a failed tag push, which takes back the tags it made, exits 1 before the manifest or anything `done` is written; a re-run resumes); the change document gets `merged:` per repo, the `## Merge` lines (tag, manifest link) and `status: merged`. Marks every listed story and the feature `done`, rolls up tokens, syncs, commits only the backlog paths it changed (your own uncommitted edits stay out), prints `## Deferred`. |
@@ -1238,9 +1238,9 @@ The loop reads outcomes from files, never from the agent's prose: a story is
 done when its `## Acceptance Criteria` section exists and every checkbox in it
 is checked, whatever the list marker (`-`, `*`, `+`, `1.`); a story without
 that section is never skipped as complete and never passes the
-post-implement check; a review round ends with
-whatever `review_status` the verifier wrote; an agent stops the run by writing
-`## Escalation`. Machine-local run state lives under `<backlog>/.bl/run/`
+post-implement check; a review round ends with the `review_status` bl writes
+from the verifier's outcome (see **Review fields from outcomes** below); an
+agent stops the run by writing `## Escalation`. Machine-local run state lives under `<backlog>/.bl/run/`
 (self-ignored by a `.gitignore` inside it). `run` refuses while `## Escalation`
 has content. `--resume` skips completed stories; once the run has reached the
 PR it also skips self-review, fixes a `pending` review session before
@@ -1253,8 +1253,8 @@ The loop pushes the branch and checks that `origin/<branch>` contains HEAD
 before every review pass and before it ends `clean`; a failed push, or a
 forge that cannot open or find the PR, escalates. Having no forge configured
 at all is the one way to finish without a PR.
-Every verifier session must raise `review_round` by exactly one; anything
-else (unchanged, lowered, not a number) escalates. A run that starts at the
+bl raises `review_round` by exactly one before each verifier session, so the
+round is always a number that goes up. A run that starts at the
 round cap with the last round `pending` or `fixed` runs the one closing round
 it is owed: it fixes that round's items (when `pending`), and the verifier
 checks only those items. A round that `bl merge`'s review of a merge
@@ -1685,17 +1685,66 @@ PR review feedback is persisted in the unit's **change document**
 The optional `review_status:` field of the change document tracks where the
 implementation stands relative to the most recent PR review:
 
-| Value       | Meaning                                                                                                              |
-| ----------- | -------------------------------------------------------------------------------------------------------------------- |
-| _omitted_   | Story has never been reviewed.                                                                                       |
-| `pending`   | The reviewer wrote a session block; the implementing agent has items to address.                                     |
-| `fixed`     | The implementing agent checked every item off — claimed resolved, awaiting re-review. Set by the implementing agent. |
-| `addressed` | The reviewer verified the fixes (or the session was an audit-only "no issues" entry). Set **only** by `bl review`.   |
+| Value       | Meaning                                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Value       | Meaning                                                                                                                   |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------  |
+| _omitted_   | Story has never been reviewed.                                                                                            |
+| `pending`   | The reviewer wrote a session block with an open Must fix or Should fix item; the implementing agent has items to address. |
+| `fixed`     | The implementing agent checked every item off — claimed resolved, awaiting re-review.                                     |
+| `addressed` | The reviewer verified the fixes (or the session was an audit-only "no issues" entry).                                     |
 
 Lifecycle: `unset → pending → fixed → (addressed | pending → fixed → …)`.
-The implementing agent may set `pending → fixed`; only a `bl review`
-session promotes `fixed → addressed` (after verifying each resolution)
-or knocks it back to `pending` with a new session.
+bl writes the field, never an agent (F-68 D3): see **Review fields from
+outcomes** below. A fix round's outcome moves `pending → fixed`; only a
+review round's outcome moves `fixed → addressed` (after the verifier checks
+each resolution) or back to `pending` with a new session.
+
+#### Review fields from outcomes (F-68 D2, D3)
+
+The review, fix and self-review sessions each return an outcome object (see
+**Session outcomes**), validated against its schema in `schemas/`:
+
+| Session (prompt)                                                     | Schema             | Object                                       |
+| -------------------------------------------------------------------- | ------------------ | -------------------------------------------- |
+| verifier (`review-verify.md`)                                        | `review.json`      | `{ summary, must, should, nits, escalated }` |
+| fix (`feature-workon-review.md`, `workon-review.md`)                 | `fix.json`         | `{ summary, fixed, open }`                   |
+| self-review (`feature-self-review.md`, `feature-fix-self-review.md`) | `self-review.json` | `{ summary, ok, changed }`                   |
+
+Each prompt ends with an **Outcome** section: the object, and the
+`{{outcomeDelivery}}` sentence (`_outcome-message.md`, the final message, for
+a headless session; `_outcome-file.md`, the outcome file, when
+`vars.outcomeCarrier` is `file`). `_fix-outcome.md` and
+`_self-review-outcome.md` hold the objects two prompts share.
+
+- **Review round** (`reviewRoundLocked`). bl writes `review_round` (the
+  round + 1) before the verifier starts, so its session block and commit
+  carry it. From the outcome bl writes `review_status`: `pending` when
+  `must + should > 0`, else `addressed` (`reviewStatusOf`). `escalated: true`
+  with an empty `## Escalation` makes bl write one with the summary. A round
+  stopped before an outcome (a failed verifier, no valid outcome after the
+  retry, no agent) puts the change document back as the round found it, the
+  round bl wrote included.
+- **Fix** (`fixed`). `true`: bl writes `review_status: fixed`. `false`: the
+  run escalates with `open` and the summary, and the status stays `pending`.
+- **Self-review** (`ok`, `changed`). `ok: false` escalates with the summary;
+  `changed: true` runs the test gate again. After the fix self-review, bl
+  keeps `fixed`.
+- **What a session wrote is a warning, never a decision.** bl reads the
+  fields when a session starts and again before it writes
+  (`writeReviewFields`, through `setReviewFields` in `change-doc.js` under
+  the change document's lock). A field the session changed is recorded as a
+  warning event (`<step>: the session changed review_status to "x"; bl writes
+"y" from the outcome`), and bl's value replaces it. The read-back never
+  picks the round's branch; the outcome does. `bl validate`'s review-status
+  findings still guard hand edits.
+- **`bl implement` with a review pending** (story and feature) runs the fix
+  prompt interactively with `schema: fix`; the agent writes the outcome file.
+  After the session `applyFixOutcome` (`change-doc.js`) writes and commits
+  `review_status: fixed` when `fixed` is true, else prints why and leaves the
+  status.
+- `test/unit/prompts-no-status-writes.test.js` fails when a prompt names
+  `review_status:` or `review_round:`.
 
 **Review agent.** `bl review`, and the review step of `bl run`, run on
 `backlog.json`'s `review_agent` list (see **Agent configurations**),
@@ -1848,7 +1897,8 @@ Gates and effects:
 - `bl implement` reads `review_status`. When it's `pending`, the
   implementing agent is launched with the `workon-review` prompt and an
   info line `Review pending in story — using review-feedback prompt.`;
-  otherwise the standard `workon` prompt is used.
+  otherwise the standard `workon` prompt is used. The fix session's outcome
+  file sets `fixed` (see **Review fields from outcomes**).
 - `bl done` refuses while `review_status` is `pending` or `fixed`, and
   also while the latest `## Review Log` session has unchecked Must or
   Should items regardless of the frontmatter value (an open nit does not
@@ -1869,10 +1919,11 @@ Gates and effects:
   `review_round` like any round, but is not counted against
   `review_rounds_max`: the cap bounds the fix loop, and integration has none.
   `pending` leaves the resolution on the branch for `bl run --resume`.
-- `bl review` resets `review_status` back to `pending` whenever it
-  appends a new session that contains items; on a re-review of a
-  `fixed` story it verifies each claimed resolution and either promotes
-  to `addressed` or writes a new `pending` session.
+- `bl review` sets `review_status` back to `pending` whenever its
+  verifier's outcome counts an open Must fix or Should fix item; on a
+  re-review of a `fixed` story the verifier checks each claimed resolution,
+  and the outcome either promotes it to `addressed` or leaves a new
+  `pending` session.
 - `bl validate` enforces two integrity rules:
   `review-log-missing` (`pending`/`fixed` but no `## Review Log`
   session) and `review-log-unaddressed` (`fixed`/`addressed` but the
@@ -1918,8 +1969,8 @@ Rules:
   `- [x]` in place and appends a short `→ <resolution>` note (typically
   a commit SHA and a few words; for deferred items, a deferral reason).
 - The implementing agent makes **one commit** to the backlog repo per
-  review session, after the final item is checked and `review_status` is
-  set to `fixed`. Commit message:
+  review session, after the final item is checked. bl then writes
+  `review_status: fixed` from the fix outcome. Commit message:
   `chore: address review feedback ({{storyId}}, session <YYYY-MM-DD>)`.
 
 ### `## Deferred`, `## Notes` and tasks
@@ -2538,10 +2589,10 @@ command (`reviewEnd`, `src/feature-run.js`, S-1348). No line shows a raw
   it starts and exits non-zero, so neither its own lines nor the
   several-target summary print it today. Escalated: `Review round <n>: escalated.`
 - A round that did not finish (an error and no escalation, for example a
-  verifier that failed or left `review_round` unchanged):
-  `The review round did not finish.`, then the error line, with no `done`
-  line and no `Next:` line. The change document is as the failed step left
-  it, so `bl review` builds no outcome from it.
+  verifier that failed): `The review round did not finish.`, then the error
+  line, with no `done` line and no `Next:` line. The change document is put
+  back as the round found it, so `bl review` builds no outcome from it. A
+  verifier with no valid outcome after its retry escalates (F-68 D5).
 
 The second line is `Next: <command>`:
 

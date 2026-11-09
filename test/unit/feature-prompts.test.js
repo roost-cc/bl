@@ -117,6 +117,41 @@ test('every unit prompt names the unit directory as the working directory, and n
   }
 });
 
+// F-68 D1, D2: each review, fix and self-review prompt ends with its outcome
+// object. A headless session returns it as its final message; an interactive
+// one (`outcomeCarrier: "file"`) writes it to the outcome file.
+test('the review, fix and self-review prompts end with their outcome object, delivered by the session carrier', () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const config = loadConfig({ backlogRoot: dir });
+    const objects = {
+      'review-verify':
+        /\{ "summary": "<one line: the round's verdict>", "must": 0, "should": 0, "nits": 0, "escalated": false \}/,
+      'feature-workon-review': /\{ "summary": "<one line: what the fix round did>", "fixed": true, "open": 0 \}/,
+      'feature-self-review':
+        /\{ "summary": "<one line: what you found and corrected>", "ok": true, "changed": false \}/,
+      'feature-fix-self-review': /"ok": true, "changed": false \}/,
+    };
+    for (const [name, object] of Object.entries(objects)) {
+      for (const agent of ['claude', 'codex']) {
+        const headless = loadPrompt(name, CASES[name], { agent, config });
+        assert.match(headless, /## Outcome\n\nEnd the session with this JSON object as your final message/, name);
+        assert.match(headless, object, name);
+        assert.doesNotMatch(
+          headless,
+          /\{\{outcomePath\}\}|REVIEW <pending|SELF-REVIEW DONE|PR URL as the final line/,
+          name,
+        );
+        const interactive = loadPrompt(name, { ...CASES[name], outcomeCarrier: 'file' }, { agent, config });
+        assert.match(interactive, /## Outcome\n\nAs the last act of the session, use the \S+ tool to write/, name);
+        assert.match(interactive, /to `\{\{outcomePath\}\}`/, `${name}: launchSession fills it in`);
+      }
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test('a session with no unit directory keeps the worktree-root working directory line', () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
@@ -246,7 +281,10 @@ test("a story run's prompts name the story file and its Deferred, never the feat
       verify,
       /Prepend a session block to `## Review Log` in the change document\n\s+\(`\/b\/projects\/demo\/E3-x\/S9-nine\/change\.md`\)/,
     );
-    assert.match(verify, /Update the change document's frontmatter \(not the story file's\)/);
+    // The review state is bl's (F-68 D3): the verifier returns an outcome as its final message.
+    assert.match(verify, /bl owns the review state in the change document's frontmatter/);
+    assert.match(verify, /End the session with this JSON object as your final message/);
+    assert.match(verify, /"must": 0, "should": 0, "nits": 0, "escalated": false/);
     const self = loadPrompt('feature-self-review', STORY_CASES['feature-self-review'], { agent: 'claude', config });
     assert.match(self, /rest on the story's Summary and Acceptance Criteria\?/);
     assert.match(self, /`bl run` does that next/);

@@ -53,7 +53,8 @@ backlog/
 `bl run F-3` replaces the manual implement/review cycle with one
 unattended run: implement each story in dependency order, run the `test`
 stage plugin, self-review, push and open one PR, then review → fix → re-review
-until the verifier writes `review_status: addressed` or the round cap
+until the verifier's outcome counts no open Must fix or Should fix item (bl then writes
+`review_status: addressed`) or the round cap
 (`review_rounds_max`) is hit, which escalates with the open items in
 `## Escalation`. Agents can escalate too (a false premise, unmet criteria).
 

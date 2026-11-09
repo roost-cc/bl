@@ -159,9 +159,19 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * D1): the object to write to `{{outcomePath}}` as the session's last act.
  * The batch refine passes its sub-agents `_refine-outcome-subagent` in its
  * place: they reply with the object, and the orchestrator writes the file.
+ * `outcomeDelivery` is the sentence that tells a review, fix or self-review
+ * session how to return its outcome object (F-68 D1): as its final message
+ * (`_outcome-message`), or, with `vars.outcomeCarrier === "file"` (an
+ * interactive session), written to `{{outcomePath}}` (`_outcome-file`).
+ * `fixOutcome` is the fix round's outcome object, shared by
+ * `feature-workon-review` and `workon-review`; `selfReviewOutcome` the
+ * self-review's, shared by `feature-self-review` and `feature-fix-self-review`.
  */
 const PROMPT_PARTIALS = {
   refineOutcome: '_refine-outcome',
+  outcomeDelivery: '_outcome-message',
+  fixOutcome: '_fix-outcome',
+  selfReviewOutcome: '_self-review-outcome',
   blockedByBug: '_blocked-by-bug',
   escalationGuide: '_escalation',
   validateBeforeSync: '_validate-before-sync',
@@ -178,6 +188,11 @@ const PROMPT_PARTIALS = {
  */
 const STORY_PARTIALS = {
   blockedByBug: '_blocked-by-bug-story',
+};
+
+/** Partials an interactive session with an outcome file (`vars.outcomeCarrier === "file"`) gets. */
+const FILE_OUTCOME_PARTIALS = {
+  outcomeDelivery: '_outcome-file',
 };
 
 /**
@@ -251,7 +266,8 @@ export function loadPrompt(name, vars, agentOrOpts = 'claude') {
       if (slot === 'writingGuide') {
         fragmentVars.dictionaryGuide = renderDictionaryGuide(opts.config, locale, opts.agent);
       }
-      const name = vars?.unitKind === 'story' ? (STORY_PARTIALS[slot] ?? fragment) : fragment;
+      let name = vars?.unitKind === 'story' ? (STORY_PARTIALS[slot] ?? fragment) : fragment;
+      if (vars?.outcomeCarrier === 'file') name = FILE_OUTCOME_PARTIALS[slot] ?? name;
       partials[slot] = renderFragment(name, fragmentVars, locale, opts.agent);
     }
   }

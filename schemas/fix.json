@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "fix outcome",
+  "description": "The outcome of a fix round (feature-workon-review.md, workon-review.md). bl writes the change document's review_status: fixed when fixed is true (F-68 D3); the loop escalates when it is false.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "fixed", "open"],
+  "properties": {
+    "summary": {
+      "description": "One line: what the fix round did.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\n]*$"
+    },
+    "fixed": {
+      "description": "true when every Must fix and Should fix item of the latest session is checked off.",
+      "type": "boolean"
+    },
+    "open": {
+      "description": "The Must fix and Should fix items of the latest session still unchecked.",
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

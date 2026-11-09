@@ -23,6 +23,7 @@ import { defaultRunner, REVIEW_DIMENSIONS } from '../../src/feature-run.js';
 import { appendSection, parseChange, serializeChange } from '../../src/change-doc.js';
 import { cmdReview, cmdReviewStory } from '../../src/feature-cmd.js';
 import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
+import { reviewOutcome } from '../helpers/outcomes.js';
 
 function writeJsonShim(dir) {
   const path = join(dir, 'shim.mjs');
@@ -135,7 +136,8 @@ None.
  * The real runner (shell, git) with the review agent's sessions simulated:
  * each dimension pass writes its findings file, and the verifier prepends one
  * session to the Review Log of the change document it is given
- * (`changeAbsPath`) and advances its `review_round` by one.
+ * (`changeAbsPath`) and returns its outcome (F-68 D2): one open Must fix when
+ * `status` is pending. bl writes `review_round` and `review_status`.
  */
 function reviewRunner(storyPath, { status = 'pending' } = {}) {
   const sessions = [];
@@ -151,16 +153,14 @@ function reviewRunner(storyPath, { status = 'pending' } = {}) {
       if (o.promptName === 'review-verify') {
         assert.equal(o.vars.changeAbsPath, changeOf(storyPath));
         const doc = parseChange(readFileSync(o.vars.changeAbsPath, 'utf8'));
-        const next = Number(doc.fm.review_round || 0) + 1;
-        doc.fm.review_round = String(next);
-        doc.fm.review_status = status;
         const item = status === 'pending' ? '- [ ] invariant X — Repro: y. Test: z.' : 'None.';
         const block = `### Session 2026-10-07 (PR #${o.vars.prNumber})\n\n**Must fix**\n\n${item}\n\n**Should fix**\n\nNone.\n\n**Nits**\n\nNone.\n`;
         doc.body = appendSection(doc.body, 'Review Log', block);
         writeFileSync(o.vars.changeAbsPath, serializeChange(doc));
-      } else {
-        writeFileSync(o.vars.findingsPath, `# ${o.vars.dimension}\n\nNone.\n`);
+        const structured = reviewOutcome({ pending: status === 'pending' });
+        return { ok: true, output: '', isError: false, usage: null, structured };
       }
+      writeFileSync(o.vars.findingsPath, `# ${o.vars.dimension}\n\nNone.\n`);
       return { ok: true, output: '', isError: false, usage: null };
     },
     // The sessions are simulated, so no live account is asked for capacity:
@@ -364,31 +364,30 @@ function openEscalation(storyPath) {
 }
 
 // A round that did not finish leaves the change document as it was, so no
-// end line is built from it: a stale review_status is no verdict.
+// end line is built from it: a stale review_status is no verdict. The
+// verifier failed although it returned an outcome: the failure decides.
 for (const c of [
   {
     name: 'a verifier that fails',
     stale: { review_round: '1', review_status: 'addressed' },
-    verify: () => ({ ok: false, output: 'provider crashed', isError: true, usage: null }),
     error: /bl review: .*provider crashed|bl review: the verifier/,
-  },
-  {
-    name: 'a verifier that leaves review_round unchanged',
-    stale: { review_round: '0', review_status: '' },
-    verify: () => ({ ok: true, output: '', isError: false, usage: null }),
-    error: /bl review: the verifier left review_round at "0" \(expected 1\)/,
   },
   {
     name: 'a verifier that fails on a stale pending round',
     stale: { review_round: '1', review_status: 'pending' },
-    verify: () => ({ ok: false, output: 'provider crashed', isError: true, usage: null }),
     error: /bl review: /,
   },
 ]) {
   test(`bl review S-n: ${c.name} prints no done line and no Next line`, async () => {
     const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
     editChange(storyPath, (doc) => Object.assign(doc.fm, c.stale));
-    const runner = verifierRunner(storyPath, c.verify);
+    const runner = verifierRunner(storyPath, () => ({
+      ok: false,
+      output: 'provider crashed',
+      isError: true,
+      usage: null,
+      structured: reviewOutcome(),
+    }));
     const { exit, stderr, error } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
     assert.equal(error, undefined, error?.stack);
     assert.equal(exit, 1, stderr);
@@ -396,34 +395,39 @@ for (const c of [
     assert.match(stderr, c.error);
     assert.doesNotMatch(stderr, /done:/);
     assert.doesNotMatch(stderr, /^Next:/m);
+    const { fm } = parseChange(readFileSync(changeOf(storyPath), 'utf8'));
+    assert.deepEqual({ review_round: fm.review_round, review_status: fm.review_status }, c.stale, 'as it was');
   });
 }
 
-test('bl review S-n: an escalated round that has an error still prints the escalation and its Next line', async () => {
+test('bl review S-n: a verifier with no outcome is resumed once, then escalates with the change document as it was', async () => {
   const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
   editChange(storyPath, (doc) => Object.assign(doc.fm, { review_round: '1', review_status: 'addressed' }));
-  // The verifier leaves review_round unchanged (an error) and escalates.
+  let verifies = 0;
   const runner = verifierRunner(storyPath, () => {
-    openEscalation(storyPath);
-    return { ok: true, output: '', isError: false, usage: null };
+    verifies += 1;
+    return { ok: true, output: 'REVIEW pending round 2', isError: false, usage: null };
   });
   const { exit, stderr, error } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
   assert.equal(error, undefined, error?.stack);
   assert.equal(exit, 1, stderr);
-  assert.match(stderr, /bl review: the verifier left review_round at "1" \(expected 2\)/);
+  assert.equal(verifies, 2, 'the session and its one retry');
+  assert.match(stderr, /bl review: review:verify: no valid outcome after one retry/);
   assert.match(
     stderr,
     /Review round \d+: escalated\.\nNext: read ## Escalation in stories\/S99-test-review\/index\.md\n/,
   );
   assert.doesNotMatch(stderr, /done:/);
+  const { fm } = parseChange(readFileSync(changeOf(storyPath), 'utf8'));
+  assert.equal(fm.review_round, '1', 'the round bl wrote for the verifier is put back');
+  assert.equal(fm.review_status, 'addressed');
 });
 
 test('bl review S-n prints the escalation line and the Escalation next command', async () => {
   const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
-  const runner = verifierRunner(storyPath, (o) => {
-    verifierEdit(o, (doc) => Object.assign(doc.fm, { review_round: '1', review_status: 'pending' }));
+  const runner = verifierRunner(storyPath, () => {
     openEscalation(storyPath);
-    return { ok: true, output: '', isError: false, usage: null };
+    return { ok: true, output: '', isError: false, usage: null, structured: reviewOutcome({ escalated: true }) };
   });
   const { exit, stderr, error } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
   assert.equal(error, undefined, error?.stack);
@@ -434,17 +438,26 @@ test('bl review S-n prints the escalation line and the Escalation next command',
   );
 });
 
-test('bl review S-n prints no verdict and no Next line for another review_status', async () => {
+test("bl review S-n: a verifier's own review_status is replaced by the outcome's, with a warning", async () => {
   const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
   const runner = verifierRunner(storyPath, (o) => {
-    verifierEdit(o, (doc) => Object.assign(doc.fm, { review_round: '1', review_status: 'fixed' }));
-    return { ok: true, output: '', isError: false, usage: null };
+    verifierEdit(o, (doc) => Object.assign(doc.fm, { review_round: '7', review_status: 'fixed' }));
+    return { ok: true, output: '', isError: false, usage: null, structured: reviewOutcome() };
   });
   const { exit, stderr, error } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
   assert.equal(error, undefined, error?.stack);
-  assert.equal(exit, 1, stderr);
-  assert.match(stderr, /Review round 1 done: no verdict recorded \(review_status: fixed\)\.\n/);
-  assert.doesNotMatch(stderr, /^Next:/m);
+  assert.equal(exit, 0, stderr);
+  assert.match(stderr, /Review round 1 done: nothing left to fix\.\nNext: bl merge S-99\n/);
+  const { fm } = parseChange(readFileSync(changeOf(storyPath), 'utf8'));
+  assert.equal(fm.review_round, '1');
+  assert.equal(fm.review_status, 'addressed');
+  const history = JSON.parse(readFileSync(join(backlog, '.bl', 'run', 'S-99.json'), 'utf8')).history;
+  const notes = history.filter((h) => h.warning).map((h) => h.note);
+  assert.ok(
+    notes.some((n) => /the session changed review_round to "7"; bl writes "1"/.test(n)),
+    notes.join('\n'),
+  );
+  assert.ok(notes.some((n) => /the session changed review_status to "fixed"; bl writes "addressed"/.test(n)));
 });
 
 test('bl review S-n: refuses at the review round cap', async () => {

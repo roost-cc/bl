@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "self-review outcome",
+  "description": "The outcome of a self-review (feature-self-review.md, feature-fix-self-review.md), its final message. The loop escalates when ok is false, and runs the test gate again when changed is true (F-68 D2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "ok", "changed"],
+  "properties": {
+    "summary": {
+      "description": "One line: what the self-review found and did.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\n]*$"
+    },
+    "ok": {
+      "description": "true when the branch can go to the independent review; false when it cannot and the self-review could not correct it.",
+      "type": "boolean"
+    },
+    "changed": {
+      "description": "true when the self-review committed a correction.",
+      "type": "boolean"
+    }
+  }
+}

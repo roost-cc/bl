@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "review outcome",
+  "description": "The verifier's verdict on a review round (review-verify.md), its final message. The loop writes the change document's review_status from it: pending when must + should > 0, else addressed (F-68 D3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "must", "should", "nits", "escalated"],
+  "properties": {
+    "summary": {
+      "description": "One line: the round's verdict.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\n]*$"
+    },
+    "must": {
+      "description": "The unchecked Must fix items in the session block this round wrote.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "should": {
+      "description": "The unchecked Should fix items in the session block this round wrote.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "nits": {
+      "description": "The unchecked Nits in the session block this round wrote.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "escalated": {
+      "description": "true when the verifier wrote ## Escalation in the unit file.",
+      "type": "boolean"
+    }
+  }
+}

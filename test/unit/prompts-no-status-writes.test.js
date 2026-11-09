@@ -15,17 +15,6 @@ const PROMPTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'promp
 
 const FORBIDDEN = [/status: refined/, /status: draft/, /review_status:/, /review_round:/];
 
-/**
- * Prompts that still ask for a review field, each with the story that removes
- * the request. S-1125 empties this list; a prompt that no longer matches must
- * leave it.
- */
-const PENDING = {
-  'review-verify.md': 'S-1125: the loop writes review_round and review_status from the verdict',
-  'workon-review.md': 'S-1125: the loop writes review_status from the fix outcome',
-  'feature-workon-review.md': 'S-1125: the loop writes review_status from the fix outcome',
-};
-
 function offending(name) {
   const text = readFileSync(join(PROMPTS, name), 'utf8');
   return text
@@ -38,18 +27,23 @@ function offending(name) {
 const prompts = readdirSync(PROMPTS).filter((f) => f.endsWith('.md'));
 
 test('no prompt instructs an agent to write status: refined, status: draft, review_status: or review_round:', () => {
-  const found = prompts.filter((f) => !(f in PENDING)).flatMap(offending);
+  const found = prompts.flatMap(offending);
   assert.deepEqual(found, [], `prompts that ask for a field bl writes:\n${found.join('\n')}`);
-});
-
-test('every pending prompt still asks for a review field, so the list shrinks as S-1125 lands', () => {
-  for (const name of Object.keys(PENDING)) {
-    assert.ok(prompts.includes(name), `${name} is not a prompt`);
-    assert.notDeepEqual(offending(name), [], `${name} no longer asks for a review field: remove it from PENDING`);
-  }
 });
 
 test('the guard catches a refine status instruction', () => {
   assert.ok(FORBIDDEN.some((re) => re.test('9. When you are finished, set `status: refined` in the frontmatter.')));
   assert.ok(!FORBIDDEN.some((re) => re.test('2. Set `status: in_progress` in the story frontmatter.')));
+});
+
+test('the guard catches a review field instruction', () => {
+  for (const line of [
+    '5. When every item is checked off, set `review_status: fixed` in the YAML frontmatter.',
+    '   - `review_round: {{nextRound}}`',
+  ]) {
+    assert.ok(
+      FORBIDDEN.some((re) => re.test(line)),
+      line,
+    );
+  }
 });

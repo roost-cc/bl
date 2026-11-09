@@ -68,7 +68,7 @@ import {
   orderStoriesByDeps,
   outsideBlockers,
 } from './feature.js';
-import { runHeadlessSession, launchSession, loadPrompt } from './session.js';
+import { runHeadlessSession, launchSession, loadPrompt, loadSchema } from './session.js';
 import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
@@ -101,7 +101,9 @@ import {
   currentChange,
   ensureChange,
   readChange,
+  REVIEW_FIELDS,
   setRepo,
+  setReviewFields,
   updateChange,
   writeChange,
 } from './change-doc.js';
@@ -533,7 +535,9 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       schema = null,
       retry = null,
     }) {
-      const base = loadPrompt(promptName, vars, { agent, config });
+      // An interactive session returns its outcome in the outcome file (F-68 D1).
+      const promptVars = interactive && schema ? { ...vars, outcomeCarrier: 'file' } : vars;
+      const base = loadPrompt(promptName, promptVars, { agent, config });
       let prompt = extraPrompt ? `${base}\n\n## Additional instructions from the operator\n\n${extraPrompt}\n` : base;
       // The outcome retry (F-68 D5): a resumed headless session hears only the
       // note; any other session gets the whole prompt with the note after it.
@@ -3430,33 +3434,49 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
   // unit file as it ended, is kept (F-67 D6).
   const featureBefore = readFileSync(feature.indexPath, 'utf8');
   const changeBefore = existsSync(changeFile(ctx)) ? readFileSync(changeFile(ctx)) : null;
-  const rv = quarantineOnCleanupError(ctx, `r${round + 1}-verify`, beforeVerify.snaps, () =>
-    runSession(ctx, {
-      step: 'review:verify',
-      mode: 'review',
-      role: 'review',
-      promptName: 'review-verify',
-      vars: (c) => ({
-        ...common,
-        findingsPaths: closing
-          ? '(none: this is the closing round, and no dimension passes ran)'
-          : findingsPaths.map((p) => `- ${p}`).join('\n'),
-        scratchDir: verifyScratch,
-        reviewers: reviewersLabel([...passes, c]),
+  const restoreChange = () =>
+    changeBefore
+      ? atomicWriteFile(ctx.config.backlogRoot, changeFile(ctx), changeBefore)
+      : rmSync(changeFile(ctx), { force: true });
+  // The round's number is bl's, written before the verifier starts (F-68
+  // D3), so the session block and the commit the verifier makes carry it.
+  const fieldsBefore = reviewFields(ctx);
+  fieldsBefore.review_round = String(round + 1);
+  setReviewFields(config.backlogRoot, changeFile(ctx), { review_round: fieldsBefore.review_round });
+  let rv;
+  try {
+    rv = quarantineOnCleanupError(ctx, `r${round + 1}-verify`, beforeVerify.snaps, () =>
+      runSession(ctx, {
+        step: 'review:verify',
+        mode: 'review',
+        role: 'review',
+        promptName: 'review-verify',
+        vars: (c) => ({
+          ...common,
+          findingsPaths: closing
+            ? '(none: this is the closing round, and no dimension passes ran)'
+            : findingsPaths.map((p) => `- ${p}`).join('\n'),
+          scratchDir: verifyScratch,
+          reviewers: reviewersLabel([...passes, c]),
+        }),
+        label: `${feature.id}: review r${round + 1} verify`,
+        schema: loadSchema('review'),
       }),
-      label: `${feature.id}: review r${round + 1} verify`,
-    }),
-  );
+    );
+  } catch (e) {
+    // A stopped round (no valid outcome, no agent) has no verdict: the change
+    // document goes back to how the round found it, the round bl wrote
+    // included. The unit file keeps the escalation the stop wrote.
+    if (e instanceof RunStoppedError) restoreChange();
+    throw e;
+  }
   // Each restore is tried, and the quarantine runs, whatever an earlier one
   // threw: the round aborts with every failure named.
   const restoreErrors = [];
   if (!rv.ok) {
     for (const restore of [
       () => restoreKeepingTokens(ctx.config.backlogRoot, feature.indexPath, featureBefore),
-      () =>
-        changeBefore
-          ? atomicWriteFile(ctx.config.backlogRoot, changeFile(ctx), changeBefore)
-          : rmSync(changeFile(ctx), { force: true }),
+      restoreChange,
     ]) {
       try {
         restore();
@@ -3488,13 +3508,55 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
     repos: [...new Set([...covered.repos, ...reviewOtherRepos(ctx).map((r) => r.repoName)])],
   };
   saveRunState(config, ctx.state);
-  const fmAfter = changeFm(ctx);
-  return {
-    status: fmAfter.review_status ?? '',
-    round: parseRound(fmAfter.review_round),
-    rawRound: String(fmAfter.review_round ?? ''),
-    expected: round + 1,
-  };
+  // The verdict is the outcome's (F-68 D3): bl writes review_status from it.
+  const outcome = rv.structured;
+  const status = reviewStatusOf(outcome);
+  writeReviewFields(
+    ctx,
+    'review:verify',
+    fieldsBefore,
+    { review_status: status },
+    `chore: ${feature.id} review round ${round + 1} ${status}`,
+  );
+  // An escalation the outcome claims is one the operator reads: when the
+  // verifier wrote none, bl writes it.
+  if (outcome.escalated && !escalationOpen(feature.indexPath)) {
+    writeEscalation(
+      ctx,
+      `review round ${round + 1}: the verifier escalated`,
+      `The verifier's outcome: ${outcome.summary}\n\nIt wrote no ## Escalation; the session block in ${changeRelPath(ctx)} has its findings.`,
+    );
+  }
+  return { status, round: round + 1 };
+}
+
+/** `pending` while the round left a Must fix or Should fix item open, else `addressed` (F-68 D3). */
+export function reviewStatusOf({ must, should }) {
+  return must + should === 0 ? 'addressed' : 'pending';
+}
+
+/** The change document's review fields as strings (`''` when unset). */
+function reviewFields(ctx) {
+  const fm = changeFm(ctx);
+  return Object.fromEntries(REVIEW_FIELDS.map((k) => [k, String(fm[k] ?? '')]));
+}
+
+/**
+ * Write the review fields bl decides into the change document under its lock
+ * and commit it (F-68 D3): `before` is what they held when `step`'s session
+ * started, `fields` what the outcome sets. A field the session changed is a
+ * warning in the history, never a decision: bl's value replaces it.
+ */
+function writeReviewFields(ctx, step, before, fields, message) {
+  const next = { ...before, ...fields };
+  const found = setReviewFields(ctx.config.backlogRoot, changeFile(ctx), next);
+  for (const k of REVIEW_FIELDS) {
+    if (found[k] === before[k]) continue;
+    const note = `${step}: the session changed ${k} to "${found[k]}"; bl writes "${next[k]}" from the outcome`;
+    ctx.runner.log(`  warning: ${note}`);
+    record(ctx, { step, ok: true, warning: true, note });
+  }
+  if (REVIEW_FIELDS.some((k) => found[k] !== next[k])) commitChangeFile(ctx, step, message);
 }
 
 /**
@@ -3523,7 +3585,6 @@ function roundAborted(ctx, round, error) {
   return {
     status: fm.review_status ?? '',
     round: parseRound(fm.review_round),
-    rawRound: String(fm.review_round ?? ''),
     expected: round + 1,
     abortError: error,
   };
@@ -3930,7 +3991,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
     });
     runner.log('  review of the resolution...');
     const result = reviewRound(ctx, { reReview: false, scope: { text: resolutionScope(scope), files } });
-    const verdict = !result.abortError && result.round === result.expected ? result.status : null;
+    const verdict = result.abortError ? null : result.status;
     if (verdict === 'addressed' && !escalationOpen(unit.indexPath)) {
       ctx.integration = null;
       return pushIntegrated(ctx, repos);
@@ -3953,11 +4014,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
     const restored = rolledBack();
     const why = result.abortError
       ? `was aborted before a verdict: ${result.abortError}`
-      : result.round !== result.expected
-        ? `left review_round at "${result.rawRound}" (expected ${result.expected})`
-        : verdict === 'addressed'
-          ? 'ended addressed, but an escalation was written during it'
-          : `ended with review_status "${result.status || 'unset'}"`;
+      : 'ended addressed, but an escalation was written during it';
     const reason = `merge with main: the review of the resolution ${why}`;
     escalateIntegration(ctx, reason, `${blocks.join('\n\n')}\n\n${restored}`, { save: true });
     return { ok: false, escalated: true, reason, repos };
@@ -4336,11 +4393,7 @@ export async function reviewFeature({
     state.lastError = result.abortError ?? null;
     saveRunState(config, state);
     const escalated = escalationOpen(feature.indexPath);
-    const error = result.abortError
-      ? result.abortError
-      : result.round !== result.expected
-        ? `the verifier left review_round at "${result.rawRound}" (expected ${result.expected})`
-        : null;
+    const error = result.abortError ?? null;
     return {
       status: result.status,
       round: result.round,
@@ -4570,21 +4623,29 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   if (!reachedReview && !skipsReview(ctx)) {
     setStep(ctx, 'self-review');
     const beforeSelf = targetHeads(ctx);
-    runSession(ctx, {
+    const self = runSession(ctx, {
       step: 'self-review',
       mode: 'workon',
       promptName: 'feature-self-review',
       vars: { mainRef: 'main' },
       label: `${feature.id}: self-review`,
+      schema: loadSchema('self-review'),
     });
     if (escalationOpen(feature.indexPath)) return finish(ctx, 'escalated', 'agent escalated during self-review');
+    if (!self.structured.ok) {
+      return finish(
+        ctx,
+        'escalated',
+        `the self-review found the branch not ready for review: ${self.structured.summary}`,
+      );
+    }
     const scope = rescope(ctx);
     if (scope.stop) return scope.stop;
-    // Gate again when the self-review committed something in any repo, also
-    // when it left edits uncommitted (those would otherwise ride along
-    // untested until a later gate refused the dirty tree), and when it added
-    // stories or repos.
-    if (scope.changed || targetsMoved(ctx, beforeSelf)) {
+    // Gate again when the self-review says it changed something, committed
+    // something in any repo, also when it left edits uncommitted (those would
+    // otherwise ride along untested until a later gate refused the dirty
+    // tree), and when it added stories or repos.
+    if (scope.changed || self.structured.changed || targetsMoved(ctx, beforeSelf)) {
       setStep(ctx, 'test');
       if (!testGateWithFix(ctx)) return state;
     }
@@ -4653,20 +4714,10 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         return finish(ctx, 'escalated', `review round ${result.expected} aborted before a verdict`, result.abortError);
       }
       if (escalationOpen(feature.indexPath)) {
-        return finish(ctx, 'escalated', `reviewer escalated in round ${result.expected}`);
+        return finish(ctx, 'escalated', `reviewer escalated in round ${result.round}`);
       }
       const scope = rescope(ctx);
       if (scope.stop) return scope.stop;
-      // Every verifier session must advance the round by exactly one. The cap
-      // below is what bounds the loop, and it only holds while the round is a
-      // number that goes up.
-      if (result.round !== result.expected) {
-        return finish(
-          ctx,
-          'escalated',
-          `review round ${result.expected}: the verifier left review_round at "${result.rawRound}" (expected ${result.expected})`,
-        );
-      }
       // Stories or repos added during the round are not in its verdict: they
       // are gated and get a round of their own.
       if (result.status === 'addressed' && scope.changed) {
@@ -4683,13 +4734,6 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         continue;
       }
       if (result.status === 'addressed') return finishClean(ctx);
-      if (result.status !== 'pending') {
-        return finish(
-          ctx,
-          'escalated',
-          `review round ${result.round} ended with review_status "${result.status || 'unset'}" — the verifier did not record a verdict`,
-        );
-      }
       if (closing) {
         return finish(
           ctx,
@@ -4702,26 +4746,34 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     }
     setStep(ctx, 'fix', { round: fixRound });
     const preFixSha = headSha(ctx);
-    runSession(ctx, {
+    const fixBefore = reviewFields(ctx);
+    const fix = runSession(ctx, {
       step: 'fix',
       mode: 'workon',
       promptName: 'feature-workon-review',
       vars: { scratchDir: scratchFor(ctx, `r${fixRound}.fix`) },
       label: `${feature.id}: address review r${fixRound}`,
+      schema: loadSchema('fix'),
     });
     if (escalationOpen(feature.indexPath))
       return finish(ctx, 'escalated', 'agent escalated while addressing review feedback');
     const afterFix = rescope(ctx);
     if (afterFix.stop) return afterFix.stop;
-    const fixedFm = changeFm(ctx);
-    if (fixedFm.review_status !== 'fixed') {
+    if (!fix.structured.fixed) {
       return finish(
         ctx,
         'escalated',
-        `fix session for round ${fixRound} did not set review_status: fixed`,
+        `fix session for round ${fixRound} left ${fix.structured.open} item(s) open: ${fix.structured.summary}`,
         openItemsSummary(ctx),
       );
     }
+    writeReviewFields(
+      ctx,
+      'fix',
+      fixBefore,
+      { review_status: 'fixed' },
+      `chore: ${feature.id} review round ${fixRound} fixed`,
+    );
     // The author re-reads the fix diff in a fresh context before anyone else
     // does: on F-2, fix rounds wrote more code than the feature and none of it
     // was re-read before the next review, which then reviewed it for them.
@@ -4730,6 +4782,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     // branch, whose feature code no review item "asked for".
     const fixBaseSha = ctx.state.reviewBaseSha ?? preFixSha;
     setStep(ctx, 'fix-self-review', { round: fixRound });
+    const fixedFields = reviewFields(ctx);
     const selfReview = runSession(ctx, {
       step: 'fix-self-review',
       mode: 'workon',
@@ -4739,6 +4792,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         fixDiff: fixBaseSha ? `git diff ${fixBaseSha}..HEAD` : 'git diff main...HEAD',
       },
       label: `${feature.id}: self-review fix r${fixRound}`,
+      schema: loadSchema('self-review'),
     });
     if (escalationOpen(feature.indexPath))
       return finish(ctx, 'escalated', 'agent escalated during the fix self-review');
@@ -4747,25 +4801,21 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     // A fix diff nobody re-read is what this step exists to prevent.
     // A denied command is a warning, not a failure: the agent sees a tool
     // error and takes another route (runSession has already recorded it in
-    // the history). Only a session that errored or reported not-ok stops the
-    // loop — on F-3 a strict "any denial escalates" rule stopped a self-review
-    // that had recovered and done its job (operator decision 2026-09-24).
-    if (!selfReview.ok || selfReview.isError) {
+    // the history). Only a session that errored, or whose outcome says the
+    // fix is not ready, stops the loop — on F-3 a strict "any denial
+    // escalates" rule stopped a self-review that had recovered and done its
+    // job (operator decision 2026-09-24).
+    if (!selfReview.ok || selfReview.isError || !selfReview.structured.ok) {
+      const why = selfReview.structured?.ok === false ? selfReview.structured.summary : sessionError(selfReview);
       return finish(
         ctx,
         'escalated',
-        `the fix self-review for round ${fixRound} failed: ${sessionError(selfReview)}`,
+        `the fix self-review for round ${fixRound} failed: ${why}`,
         openItemsSummary(ctx),
       );
     }
-    if (changeFm(ctx).review_status !== 'fixed') {
-      return finish(
-        ctx,
-        'escalated',
-        `the fix self-review for round ${fixRound} changed review_status (it must leave it at fixed)`,
-        openItemsSummary(ctx),
-      );
-    }
+    // The fix round's `fixed` stands: bl keeps it whatever the session wrote.
+    writeReviewFields(ctx, 'fix-self-review', fixedFields, {}, `chore: ${feature.id} review round ${fixRound} fixed`);
     setStep(ctx, 'test');
     if (!testGateWithFix(ctx)) return state;
   }

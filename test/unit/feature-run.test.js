@@ -61,6 +61,9 @@ import { _hooks as atomicHooks } from '../../src/atomic-write.js';
 import { installPartialWrites } from '../helpers/partial-write.js';
 import { startTokenWriter } from '../helpers/token-writer.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
+import { defaultOutcome, FIX_OUTCOME, reviewOutcome, SELF_REVIEW_OUTCOME } from '../helpers/outcomes.js';
+import { outcomeFor, validateOutcome } from '../../src/outcome.js';
+import { loadSchema } from '../../src/session.js';
 
 const AC_BODY = '## Acceptance Criteria\n\n- [ ] one works\n- [ ] two works\n';
 
@@ -312,16 +315,28 @@ function checkAll(path) {
   });
 }
 
-function writeSession(featurePath, { pending, round }) {
+/**
+ * A review session block in the change document's Review Log, with the
+ * review fields bl writes after a round (`fields`, the default: a state a
+ * test starts from). A fake verifier passes `fields: false`, since the loop
+ * writes them from its outcome. Returns that outcome.
+ */
+function writeSession(featurePath, { pending, round, fields = true }) {
   editFile(featurePath, (fm, body) => {
-    fm.review_round = String(round);
-    fm.review_status = pending ? 'pending' : 'addressed';
+    if (fields) {
+      fm.review_round = String(round);
+      fm.review_status = pending ? 'pending' : 'addressed';
+    }
     const block = pending
       ? `### Session 2026-09-24 (PR #7) r${round}\n\n**Must fix**\n\n- [ ] invariant X — Repro: y. Test: z.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n`
       : `### Session 2026-09-24 (PR #7) r${round}\n\n**Must fix**\nNone.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n`;
     return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
   });
+  return reviewOutcome({ pending });
 }
+
+/** A fake verifier's round: the session block, and the outcome the loop decides from. */
+const verifySession = (path, { pending, round }) => writeSession(path, { pending, round, fields: false });
 
 /**
  * A fake runner whose `session` simulates the agents by editing files, and
@@ -340,13 +355,9 @@ function fakeRunner({ dir, feature, behaviour = {}, testResults = [], clock = Da
     story: (o) => checkAll(o.vars.storyAbsPath),
     verify: () => {
       round += 1;
-      writeSession(CH(feature), { pending: round === 1, round });
+      return verifySession(CH(feature), { pending: round === 1, round });
     },
-    fix: () =>
-      editFile(CH(feature), (fm, body) => {
-        fm.review_status = 'fixed';
-        return body.replaceAll('- [ ] invariant', '- [x] invariant');
-      }),
+    fix: () => editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant')),
     ...behaviour,
   };
   return {
@@ -367,20 +378,24 @@ function fakeRunner({ dir, feature, behaviour = {}, testResults = [], clock = Da
       // A usage-limit refusal: the agent did nothing (unless `limit` itself did) and said so.
       const limit = b.limit ? b.limit(o) : null;
       if (limit) return { ok: false, output: limit.message, isError: true, usage: null, denials: [], refusal: limit };
+      // What the behaviour returns is the session's outcome (F-68 D2).
+      let out;
       if (o.promptName === 'feature-story' || o.promptName === 'story-run') b.story(o);
       else if (o.promptName.startsWith('review-') && o.promptName !== 'review-verify') {
         writeFileSync(o.vars.findingsPath, `# ${o.vars.dimension}\n\n## Must fix\n\n- x\n`);
         if (b.review) b.review(o);
-      } else if (o.promptName === 'review-verify') b.verify(o);
-      else if (o.promptName === 'feature-workon-review') b.fix(o);
+      } else if (o.promptName === 'review-verify') out = b.verify(o);
+      else if (o.promptName === 'feature-workon-review') out = b.fix(o);
       else if (o.promptName === 'feature-fix-tests' && b.fixTests) b.fixTests(o);
-      else if (o.promptName === 'feature-self-review' && b.selfReview) b.selfReview(o);
-      else if (o.promptName === 'feature-fix-self-review' && b.fixSelfReview) b.fixSelfReview(o);
+      else if (o.promptName === 'feature-self-review' && b.selfReview) out = b.selfReview(o);
+      else if (o.promptName === 'feature-fix-self-review' && b.fixSelfReview) out = b.fixSelfReview(o);
       return {
         ok: true,
         output: b.output ? b.output(o) : '',
         isError: false,
         usage: { input: 1, output: 1, cache_creation: 0, cache_read: 0 },
+        // Checked against the step's schema, as a provider adapter does.
+        ...outcomeFor(o.schema, out ?? defaultOutcome(o.promptName)),
       };
     },
     shell(cmd, cwd) {
@@ -968,10 +983,7 @@ test('implement, fix-tests and review-fix sessions each get a scratch dir under 
           seen.push({ prompt: o.promptName, scratchDir: o.vars.scratchDir, exists: existsSync(o.vars.scratchDir) }),
         fix: (o) => {
           seen.push({ prompt: o.promptName, scratchDir: o.vars.scratchDir, exists: existsSync(o.vars.scratchDir) });
-          editFile(CH(feature), (fm, body) => {
-            fm.review_status = 'fixed';
-            return body.replaceAll('- [ ] invariant', '- [x] invariant');
-          });
+          editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant'));
         },
       },
     });
@@ -1094,7 +1106,7 @@ test('items still open after the last full round get one closing round, and esca
       behaviour: {
         verify: () => {
           round += 1;
-          writeSession(CH(feature), { pending: true, round });
+          return verifySession(CH(feature), { pending: true, round });
         },
       },
     });
@@ -1147,13 +1159,14 @@ test('an escalation lists each open item whole: the claim without its Repro/Test
       dir,
       feature,
       behaviour: {
+        // An outcome that counts no open item for a block that has three: the
+        // merge gate's read of the block stops the run at finishClean.
         verify: () => {
           editFile(CH(feature), (fm, body) => {
-            fm.review_round = '1';
-            fm.review_status = 'addressed';
             const block = `### Session 2026-09-24 (PR #7)\n\n**Must fix**\n\n${must}\n\n**Should fix**\n\n${should}\n\n**Nits**\nNone.\n`;
             return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
           });
+          return reviewOutcome();
         },
       },
     });
@@ -1194,7 +1207,7 @@ test('a closing round that closes the last items finishes clean', async () => {
       behaviour: {
         verify: () => {
           round += 1;
-          writeSession(CH(feature), { pending: round < 3, round });
+          return verifySession(CH(feature), { pending: round < 3, round });
         },
       },
     });
@@ -1211,33 +1224,35 @@ test('a closing round that closes the last items finishes clean', async () => {
   }
 });
 
-test('run loop terminates within maxRounds when the verifier does not bump review_round', async () => {
-  // Every way the verifier can fail to advance the round: leave it unchanged,
-  // write something that is not a number, or lower it after a proper round.
+test('a verifier that writes the review fields only warns: bl numbers the round and sets the status from the outcome', async () => {
+  // Every way a verifier can write the round bl owns (F-68 D3): leave it
+  // unchanged, write something that is not a number, lower it after a proper
+  // round, or bump it twice. The cap still bounds the loop: two full rounds,
+  // then the closing one.
   const classes = {
     unchanged: () => () =>
-      editFile(featurePathOf(), (fm) => {
-        fm.review_status = 'pending';
+      editFile(CH_OF(), (fm) => {
+        fm.review_status = 'addressed';
       }),
     'non-numeric': () => () =>
-      editFile(featurePathOf(), (fm) => {
-        fm.review_status = 'pending';
+      editFile(CH_OF(), (fm) => {
+        fm.review_status = 'addressed';
         fm.review_round = 'r1';
       }),
     lowered: () => {
       let n = 0;
       return () => {
         n += 1;
-        writeSession(featurePathOf(), { pending: true, round: n === 1 ? 1 : 0 });
+        writeSession(CH_OF(), { pending: false, round: n === 1 ? 1 : 0 });
       };
     },
-    'bumped twice': () => () => writeSession(featurePathOf(), { pending: true, round: 2 }),
+    'bumped twice': () => () => writeSession(CH_OF(), { pending: false, round: 2 }),
   };
   let current;
-  const featurePathOf = () => current;
+  const CH_OF = () => current;
   for (const [name, make] of Object.entries(classes)) {
     const { dir, cleanup, config, feature, prep } = setup();
-    current = feature.indexPath;
+    current = CH(feature);
     try {
       const verify = make();
       let verifies = 0;
@@ -1247,15 +1262,28 @@ test('run loop terminates within maxRounds when the verifier does not bump revie
         behaviour: {
           verify: () => {
             verifies += 1;
-            assert.ok(verifies <= 2, `${name}: verifier ran ${verifies} times with maxRounds 2`);
             verify();
+            return reviewOutcome({ pending: true });
           },
         },
       });
       const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
       assert.equal(state.status, 'escalated', name);
-      assert.match(state.lastError, /the verifier left review_round at/, name);
-      assert.ok(verifies <= 2, name);
+      assert.match(state.lastError, /the closing round after the review round cap \(2\) left open items/, name);
+      assert.equal(verifies, 3, `${name}: two full rounds and the closing one`);
+      const { fm } = parseChange(readFileSync(CH(feature), 'utf8'));
+      assert.equal(fm.review_round, '3', name);
+      assert.equal(fm.review_status, 'pending', `${name}: the outcome's status, not the session's`);
+      const warnings = state.history.filter((h) => h.step === 'review:verify' && h.warning);
+      assert.ok(warnings.length > 0, `${name}: the edit is a warning`);
+      for (const w of warnings) {
+        assert.ok(w.ok, name);
+        assert.match(
+          w.note,
+          /the session changed review_(round|status) to ".*"; bl writes ".*" from the outcome/,
+          name,
+        );
+      }
     } finally {
       cleanup();
     }
@@ -1311,7 +1339,7 @@ test('run never finishes clean with unpushed commits or without a PR when a forg
             return () => {
               assert.ok(runner.published(), `${name}: review ran on an unpublished HEAD`);
               round += 1;
-              writeSession(CH(feature), { pending: round === 1, round });
+              return verifySession(CH(feature), { pending: round === 1, round });
             };
           })(),
         },
@@ -1348,13 +1376,15 @@ test('a nits-only addressed session ends the run clean and passes the merge revi
         dir,
         feature,
         behaviour: {
-          verify: () =>
+          // Every outcome counts no open Must or Should item, so bl writes
+          // addressed; an open box the count missed is the merge gate's to catch.
+          verify: () => {
             editFile(CH(feature), (fm, body) => {
-              fm.review_round = '1';
-              fm.review_status = 'addressed';
               const block = `### Session 2026-09-24 (PR #7)\n\n**Must fix**\n\n${s.must}\n\n**Should fix**\n\n${s.should ?? 'None.'}\n\n**Nits**\n\n${s.nits}\n`;
               return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
-            }),
+            });
+            return reviewOutcome();
+          },
         },
       });
       const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -1413,7 +1443,7 @@ test('re-review with no recorded base sha reviews the full branch diff', async (
               : cmd === 'git diff --name-only main...HEAD'
                 ? { status: 0, output: 'src/a.js\nsrc/b.js\n' }
                 : null,
-          verify: () => writeSession(CH(feature), { pending: false, round: 2 }),
+          verify: () => verifySession(CH(feature), { pending: false, round: 2 }),
         },
       });
       await runFeature({ feature, config, prep, runner, opts: { resume: c.resume, maxRounds: 3 } });
@@ -1620,8 +1650,18 @@ test('a backlog commit that fails is recorded at the escalation and the pr: writ
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'escalated');
     const failed = state.history.filter((h) => h.ok === false && /backlog commit failed/.test(h.note ?? ''));
-    // The run's start, each gate line, the PR record and the escalation.
-    assert.deepEqual(failed.map((h) => h.step).sort(), ['escalate', 'pr', 'setup', 'test', 'test', 'test']);
+    // The run's start, each gate line, the PR record, the review fields bl
+    // writes after the verifier and the fix, and the escalation.
+    assert.deepEqual(failed.map((h) => h.step).sort(), [
+      'escalate',
+      'fix',
+      'pr',
+      'review:verify',
+      'setup',
+      'test',
+      'test',
+      'test',
+    ]);
     assert.ok(
       failed.find((h) => h.step === 'pr').note.includes('features/F1-feat/change.md is written but uncommitted'),
     );
@@ -1651,7 +1691,7 @@ test('a findings file left by an earlier attempt is not fed to the verifier', as
           for (const dim of ['correctness', 'failure-paths']) {
             seen.push(readFileSync(join(dir, RUN_DIR, `F-1.r${round}.${dim}.md`), 'utf8'));
           }
-          writeSession(CH(feature), { pending: round === 1, round });
+          return verifySession(CH(feature), { pending: round === 1, round });
         },
       },
     });
@@ -2107,7 +2147,7 @@ test('resume after the round cap fixes the pending session first and skips self-
       behaviour: {
         verify: () => {
           round += 1;
-          writeSession(CH(feature), { pending: true, round });
+          return verifySession(CH(feature), { pending: true, round });
         },
       },
     });
@@ -2121,7 +2161,7 @@ test('resume after the round cap fixes the pending session first and skips self-
     const runner = fakeRunner({
       dir,
       feature,
-      behaviour: { verify: () => writeSession(CH(feature), { pending: false, round: 4 }) },
+      behaviour: { verify: () => verifySession(CH(feature), { pending: false, round: 4 }) },
     });
     // The first run spent two full rounds and the closing round (round 3).
     // Another full round needs the cap raised explicitly.
@@ -2184,7 +2224,7 @@ test('a run that enters at the cap runs only the closing round it is owed, and n
         const runner = fakeRunner({
           dir,
           feature,
-          behaviour: { verify: () => writeSession(CH(feature), { pending: false, round: Number(c.round) + 1 }) },
+          behaviour: { verify: () => verifySession(CH(feature), { pending: false, round: Number(c.round) + 1 }) },
         });
         const state = await runFeature({ feature, config, prep, runner, opts: { resume, maxRounds: 2 } });
         const label = `round=${c.round}, status=${JSON.stringify(c.status)}, resume=${resume}`;
@@ -2246,7 +2286,6 @@ test("a reviewer's leftover file is quarantined out of the worktree and never re
           writeFileSync(join(prep.worktreePath, probe), "test('REPRO', () => { throw new Error('stale'); });\n");
         },
         shell: statusOf(prep.worktreePath, [probe]),
-        output: (o) => (o.promptName === 'review-verify' ? 'noise\nREVIEW pending round 1\n' : ''),
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -2265,7 +2304,7 @@ test("a reviewer's leftover file is quarantined out of the worktree and never re
     assert.equal(kept.length, 2, 'each copy is kept for the operator');
     assert.ok(!state.history.some((h) => h.step === 'test' && !h.ok), 'the gate never saw the probe');
     const verify = state.history.find((h) => h.step === 'review:verify');
-    assert.match(verify.note, /said: REVIEW pending round 1/, "the agent's last line is recorded");
+    assert.match(verify.note, /^outcome: open items$/, "the outcome's summary is recorded");
   } finally {
     cleanup();
   }
@@ -2647,14 +2686,14 @@ test("bl review on a two-repo feature spends one round and keeps both repos' ope
         // A reviewer leaves a probe in the secondary repo's worktree.
         review: (o) => o.vars.dimension === 'correctness' && writeFileSync(join(wtB, probe), 'probe\n'),
         // The verifier records one session for both PRs; the open Must is repo B's.
-        verify: () =>
+        verify: () => {
           editFile(CH(feature), (fm, body) => {
-            fm.review_round = '1';
-            fm.review_status = 'pending';
             const block =
               '### Session 2026-09-24 (PR #7, #12)\n\n**Must fix**\n\n- [ ] repo-b: invariant Y — Repro: y. Test: z.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n';
             return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
-          }),
+          });
+          return reviewOutcome({ must: 1 });
+        },
       },
     });
     const shell = runner.shell;
@@ -2735,13 +2774,13 @@ test('featureReviewGate blocks an open Must in a CRLF feature file', async () =>
         verify: () => {
           writeFileSync(feature.indexPath, readFileSync(feature.indexPath, 'utf8').replace(/\r\n/g, '\n'));
           editFile(CH(feature), (fm, body) => {
-            fm.review_round = '1';
-            fm.review_status = 'addressed';
             const block =
               '### Session 2026-09-24 (PR #7)\n\n**Must fix**\n\n- [ ] invariant X\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n';
             return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
           });
           toCrlf();
+          // An outcome that missed the open Must: bl writes addressed, and the gate catches it.
+          return reviewOutcome();
         },
       },
     });
@@ -2782,7 +2821,7 @@ test('the test gate refuses a dirty tree with no test plugin configured', async 
           },
           fix: (o) => {
             if (leftBy === 'fix') leave();
-            return base.session({ ...o, promptName: 'feature-workon-review' });
+            return base.session({ ...o, promptName: 'feature-workon-review' }).structured;
           },
           shell: statusOf(prep.worktreePath, [stray]),
           fixTests: (o) => {
@@ -2895,7 +2934,7 @@ test('a review round over a unit directory takes its one session lock, not one p
     const runner = fakeRunner({
       dir: s.dir,
       feature: s.feature,
-      behaviour: { verify: () => writeSession(CH(s.feature), { pending: false, round: 1 }) },
+      behaviour: { verify: () => verifySession(CH(s.feature), { pending: false, round: 1 }) },
     });
     const seen = [];
     const session = runner.session;
@@ -2974,7 +3013,7 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
       const runner = fakeRunner({
         dir: s.dir,
         feature: s.feature,
-        behaviour: { verify: () => writeSession(CH(s.feature), { pending: false, round: 1 }) },
+        behaviour: { verify: () => verifySession(CH(s.feature), { pending: false, round: 1 }) },
       });
       const seen = [];
       const session = runner.session;
@@ -3103,7 +3142,7 @@ test('the loop escalates a review round aborted by a failed pass instead of read
     const runner = fakeRunner({
       dir,
       feature,
-      behaviour: { verify: () => writeSession(CH(feature), { pending: false, round: 1 }) },
+      behaviour: { verify: () => verifySession(CH(feature), { pending: false, round: 1 }) },
     });
     const session = runner.session;
     runner.session = (o) =>
@@ -3152,12 +3191,9 @@ test('a pending session with no recorded review commit scopes the fix self-revie
       behaviour: {
         fix: () => {
           runner.bumpHead();
-          editFile(CH(feature), (fm, body) => {
-            fm.review_status = 'fixed';
-            return body.replaceAll('- [ ] invariant', '- [x] invariant');
-          });
+          editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant'));
         },
-        verify: () => writeSession(CH(feature), { pending: false, round: 2 }),
+        verify: () => verifySession(CH(feature), { pending: false, round: 2 }),
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -3190,9 +3226,17 @@ test('a session that throws still has its containers removed, and the error prop
 });
 
 test('a returned fix-self-review failure stops before the test gate and re-review', async () => {
+  // A session that failed but returned an outcome, and one whose outcome says
+  // the fix is not ready (F-68 D2).
   const failures = {
-    'ok: false': { ok: false, isError: true, error: 'provider failed', output: '' },
-    'isError with ok': { ok: true, isError: true, output: 'half done' },
+    'ok: false': { ok: false, isError: true, error: 'provider failed', output: '', structured: SELF_REVIEW_OUTCOME },
+    'isError with ok': { ok: true, isError: true, output: 'half done', structured: SELF_REVIEW_OUTCOME },
+    'outcome ok: false': {
+      ok: true,
+      isError: false,
+      output: '',
+      structured: { summary: 'item 1 needs a redesign', ok: false, changed: false },
+    },
   };
   for (const [kind, result] of Object.entries(failures)) {
     const { dir, cleanup, config, feature, prep } = setup();
@@ -3206,6 +3250,7 @@ test('a returned fix-self-review failure stops before the test gate and re-revie
       const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
       assert.equal(state.status, 'escalated', kind);
       assert.match(state.lastError, /fix self-review for round 1 failed/, kind);
+      if (kind === 'outcome ok: false') assert.match(state.lastError, /failed: item 1 needs a redesign/);
       const after = runner.calls.slice(runner.calls.findIndex((c) => c.prompt === 'feature-fix-self-review') + 1);
       assert.ok(!after.some((c) => c.cmd === 'npm test'), `${kind}: no test gate after it`);
       assert.ok(!after.some((c) => c.prompt?.startsWith('review-')), `${kind}: no re-review after it`);
@@ -3260,7 +3305,120 @@ test('a fix self-review with permission denials but a good result continues to t
   }
 });
 
-test('a fix self-review that changes review_status escalates instead of re-reviewing', async () => {
+test('review_outcome_decides_the_round: the loop takes each branch from the outcomes and writes the review fields from them', async () => {
+  // `seen` holds the change document's review fields as each session starts:
+  // the verifier sees the round bl wrote for it, the fix sees the verifier's
+  // verdict, the fix self-review sees `fixed`. `final` is the run's end.
+  const FIXED_NOT = { summary: 'item 1 needs the operator', fixed: false, open: 1 };
+  const cases = [
+    {
+      name: 'must: 1 → a fix round, then a clean re-review',
+      verdicts: [{ must: 1 }, {}],
+      expect: 'clean',
+      seen: ['verify 1/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 2/fixed'],
+      final: '2/addressed',
+    },
+    {
+      name: 'should: 1 → a fix round',
+      verdicts: [{ should: 1 }, {}],
+      expect: 'clean',
+      seen: ['verify 1/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 2/fixed'],
+      final: '2/addressed',
+    },
+    {
+      name: 'must: 0, should: 0 → clean, open nits or not',
+      verdicts: [{ nits: 2 }],
+      expect: 'clean',
+      seen: ['verify 1/'],
+      final: '1/addressed',
+    },
+    {
+      name: 'fixed: false → escalates, the status left pending',
+      verdicts: [{ must: 1 }],
+      fix: FIXED_NOT,
+      expect: 'escalated',
+      error: /^fix session for round 1 left 1 item\(s\) open: item 1 needs the operator$/,
+      seen: ['verify 1/', 'fix 1/pending'],
+      final: '1/pending',
+    },
+    {
+      name: 'escalated: true with no ## Escalation → bl writes it',
+      verdicts: [{ must: 1, escalated: true }],
+      expect: 'escalated',
+      error: /^reviewer escalated in round 1$/,
+      escalation: /review round 1: the verifier escalated\n\nThe verifier's outcome: open items/,
+      seen: ['verify 1/'],
+      final: '1/pending',
+    },
+  ];
+  for (const c of cases) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const fields = () => {
+        const { fm } = parseChange(readFileSync(CH(feature), 'utf8'));
+        return `${fm.review_round}/${fm.review_status ?? ''}`;
+      };
+      const seen = [];
+      let round = 0;
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          verify: () => {
+            seen.push(`verify ${fields()}`);
+            const v = c.verdicts[round++] ?? {};
+            const pending = (v.must ?? 0) + (v.should ?? 0) > 0;
+            verifySession(CH(feature), { pending, round });
+            return reviewOutcome(v);
+          },
+          fix: () => {
+            seen.push(`fix ${fields()}`);
+            editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant'));
+            return c.fix ?? FIX_OUTCOME;
+          },
+          fixSelfReview: () => void seen.push(`fix-self-review ${fields()}`),
+        },
+      });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, c.expect, `${c.name}: ${state.lastError}`);
+      if (c.error) assert.match(state.lastError, c.error, c.name);
+      assert.deepEqual(seen, c.seen, c.name);
+      assert.equal(fields(), c.final, c.name);
+      for (const o of [...c.verdicts.map(reviewOutcome), c.fix ?? FIX_OUTCOME]) {
+        assert.equal(validateOutcome(loadSchema(o.fixed == null ? 'review' : 'fix'), o).structuredError, null);
+      }
+      if (c.escalation) {
+        const { body } = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));
+        assert.match(extractSection(body, 'Escalation'), c.escalation, c.name);
+      }
+      // Every step with an outcome records it, never a last line.
+      for (const h of state.history.filter((e) => ['review:verify', 'fix', 'fix-self-review'].includes(e.step))) {
+        if (!h.warning) assert.match(h.note, /outcome: /, `${c.name}: ${h.step}`);
+      }
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+test('the fake agents return outcomes their schemas accept', () => {
+  for (const [name, o] of [
+    ['review', reviewOutcome({ pending: true })],
+    ['fix', FIX_OUTCOME],
+    ['self-review', SELF_REVIEW_OUTCOME],
+  ]) {
+    assert.equal(validateOutcome(loadSchema(name), o).structuredError, null, name);
+  }
+  // A count that is not a whole number, or a missing field, is no outcome.
+  assert.match(
+    validateOutcome(loadSchema('review'), { summary: 's', must: 1.5, should: 0, nits: 0, escalated: false })
+      .structuredError,
+    /schema violation at \$\/must/,
+  );
+  assert.match(validateOutcome(loadSchema('fix'), { summary: 's', fixed: true }).structuredError, /schema violation/);
+});
+
+test('a fix self-review that changes review_status is a warning: bl keeps fixed and re-reviews', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
     const runner = fakeRunner({
@@ -3274,9 +3432,12 @@ test('a fix self-review that changes review_status escalates instead of re-revie
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
-    assert.equal(state.status, 'escalated');
-    assert.match(state.lastError, /fix self-review for round 1 changed review_status/);
-    assert.equal(runner.calls.filter((c) => c.prompt === 'review-verify').length, 1, 'no re-review after it');
+    assert.equal(state.status, 'clean');
+    const verifies = runner.calls.filter((c) => c.prompt === 'review-verify');
+    assert.equal(verifies.length, 2, 'the re-review runs');
+    assert.equal(verifies[1].vars.reReview, 'true', 'from fixed: a re-review, not a first review');
+    const warning = state.history.find((h) => h.step === 'fix-self-review' && h.warning);
+    assert.match(warning.note, /the session changed review_status to "pending"; bl writes "fixed" from the outcome/);
   } finally {
     cleanup();
   }
@@ -4482,12 +4643,11 @@ test("a story's review finding routed to its Deferred: the review sessions get t
             ),
           );
           editFile(CH(unit), (fm, body) => {
-            fm.review_round = '1';
-            fm.review_status = 'addressed';
             const block =
               '### Session 2026-10-07 (PR #7) r1\n\n**Must fix**\nNone.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n';
             return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
           });
+          return reviewOutcome();
         },
       },
     });
@@ -6847,19 +7007,17 @@ test('late_side_stories_complete_gates_before_clean: a story added at any stage 
         },
         verify: () => {
           round += 1;
-          writeSession(CH(feature), { pending: verdicts[round - 1] ?? false, round });
+          const out = verifySession(CH(feature), { pending: verdicts[round - 1] ?? false, round });
           if (c.at === 'verify') add();
+          return out;
         },
       };
-      if (c.at === 'selfReview') behaviour.selfReview = add;
+      if (c.at === 'selfReview') behaviour.selfReview = () => void add();
       if (c.at === 'fixTests') behaviour.fixTests = add;
-      if (c.at === 'fixSelfReview') behaviour.fixSelfReview = add;
+      if (c.at === 'fixSelfReview') behaviour.fixSelfReview = () => void add();
       if (c.at === 'fix') {
         behaviour.fix = () => {
-          editFile(CH(feature), (fm, body) => {
-            fm.review_status = 'fixed';
-            return body.replaceAll('- [ ] invariant', '- [x] invariant');
-          });
+          editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant'));
           add();
         };
       }
@@ -6904,8 +7062,8 @@ test('late_side_stories_complete_gates_before_clean: a closing round that adds a
           // Round 1 leaves an item; round 2 is the closing round (cap 1).
           verify: () => {
             round += 1;
-            writeSession(CH(feature), { pending: round === 1, round });
             if (round === 2) addSide();
+            return verifySession(CH(feature), { pending: round === 1, round });
           },
         },
       }),
@@ -6928,7 +7086,7 @@ test('late_side_stories_complete_gates_before_clean: a resumed addressed run rev
     const behaviour = {
       verify: () => {
         round += 1;
-        writeSession(CH(feature), { pending: false, round });
+        return verifySession(CH(feature), { pending: false, round });
       },
     };
     const first = await runFeature({
@@ -7036,19 +7194,17 @@ test('late_stories_follow_dependency_order: stories added at any stage are imple
             },
             verify: () => {
               round += 1;
-              writeSession(CH(feature), { pending: verdicts[round - 1] ?? false, round });
+              const out = verifySession(CH(feature), { pending: verdicts[round - 1] ?? false, round });
               if (stage.at === 'verify') add();
+              return out;
             },
           };
-          if (stage.at === 'selfReview') behaviour.selfReview = add;
+          if (stage.at === 'selfReview') behaviour.selfReview = () => void add();
           if (stage.at === 'fixTests') behaviour.fixTests = add;
-          if (stage.at === 'fixSelfReview') behaviour.fixSelfReview = add;
+          if (stage.at === 'fixSelfReview') behaviour.fixSelfReview = () => void add();
           if (stage.at === 'fix') {
             behaviour.fix = () => {
-              editFile(CH(feature), (fm, body) => {
-                fm.review_status = 'fixed';
-                return body.replaceAll('- [ ] invariant', '- [x] invariant');
-              });
+              editFile(CH(feature), (fm, body) => body.replaceAll('- [ ] invariant', '- [x] invariant'));
               add();
             };
           }
@@ -7429,10 +7585,11 @@ test('a failed review-verify session keeps the usage it recorded on the feature,
               fm.verifier_edit = 'x';
               return `${body}\nverifier text\n`;
             });
-            return;
+            // A session that failed with an outcome: the failure, not the outcome, decides.
+            return reviewOutcome();
           }
           round += 1;
-          writeSession(CH(feature), { pending: round === 1, round });
+          return verifySession(CH(feature), { pending: round === 1, round });
         },
       },
     });
@@ -7537,16 +7694,22 @@ test('failed_verify_restores_missing_or_malformed_spec_and_change_document', asy
         dir: root,
         feature,
         behaviour: {
-          verify: () => {
+          // The files as the round found them: the last pass runs before bl
+          // writes the round's number for the verifier.
+          review: () => {
             if (!failed) {
               before = { feature: readFileSync(feature.indexPath, 'utf8'), change: readFileSync(CH(feature), 'utf8') };
+            }
+          },
+          verify: () => {
+            if (!failed) {
               writeFileSync(CH(feature), 'verifier garbage\n');
               if (hurt) hurt(feature.indexPath);
               else editFile(feature.indexPath, (fm) => void (fm.verifier_edit = 'x'));
-              return;
+              return reviewOutcome();
             }
             round += 1;
-            writeSession(CH(feature), { pending: round === 1, round });
+            return verifySession(CH(feature), { pending: round === 1, round });
           },
         },
       });
