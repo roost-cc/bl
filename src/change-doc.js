@@ -310,7 +310,8 @@ export function appendSection(body, name, text) {
 /**
  * The verb that moves an open change on: `merge` once its review is
  * `addressed`, else `run` (`bl review`'s summary line, `bl inbox`'s change
- * items).
+ * items). `reviewEnd` refines it by the session counts: `addressed` with an
+ * open Must fix/Should fix box gives `bl implement`, not `bl merge`.
  */
 export function changeNextVerb(reviewStatus) {
   return reviewStatus === 'addressed' ? 'merge' : 'run';
