@@ -65,4 +65,47 @@ out=$(env TMPDIR="$TWICE" RUN_PARALLEL="$RUN_PARALLEL" ITEM="$DIR/fast" bash -c 
 assert_eq "two calls: the caller's EXIT trap runs" "caller-trap-ran" "$out"
 assert_eq "two calls: both temp directories removed" "" "$(ls -A "$TWICE")"
 
+# A signal to the runner stops every item that has not ended, with its child
+# processes, and prints the output of those items so far. `stubborn` ignores
+# SIGTERM, so only the SIGKILL after the grace time ends it. The background
+# runner would ignore SIGINT; `env --default-signal` gives it back.
+printf 'echo slow-start; sleep 30 & echo $! >"%s/slow.child"; echo $$ >"%s/slow.pid"; wait; echo slow-end\n' "$DIR" "$DIR" >"$DIR/slow"
+printf 'trap "" TERM; echo stubborn-start; echo $$ >"%s/stubborn.pid"; while :; do sleep 0.1; done\n' "$DIR" >"$DIR/stubborn"
+for sig in TERM INT HUP; do
+  STOP="$DIR/stop-$sig"
+  mkdir -p "$STOP"
+  rm -f "$DIR"/*.pid "$DIR"/*.child
+  items=("$DIR/fast" "$DIR/slow")
+  [[ "$sig" == TERM ]] && items+=("$DIR/stubborn")
+  env --default-signal=INT TMPDIR="$STOP" bash "$RUN_PARALLEL" demo bash "${items[@]}" >"$STOP.out" 2>&1 &
+  runner=$!
+  for _ in $(seq 50); do
+    [[ -s "$DIR/slow.pid" && -s "$DIR/slow.child" ]] && { [[ "$sig" != TERM ]] || [[ -s "$DIR/stubborn.pid" ]]; } && break
+    sleep 0.1
+  done
+  kill -s "$sig" "$runner"
+  set +e
+  wait "$runner" 2>/dev/null
+  rc=$?
+  set -e
+  out=$(cat "$STOP.out")
+  assert_exit "SIG$sig: the runner ends by the signal" "$((128 + $(kill -l "$sig")))" "$rc"
+  assert_contains "SIG$sig: an ended item's output is printed" $'──── fast\nfast-out' "$out"
+  assert_contains "SIG$sig: a stopped item's output so far is printed" $'──── slow\nslow-start' "$out"
+  assert_contains "SIG$sig: the runner says it was stopped" "demo: stopped by SIG$sig" "$out"
+  watched=("$DIR/slow.pid" "$DIR/slow.child")
+  [[ "$sig" == TERM ]] && watched+=("$DIR/stubborn.pid")
+  for f in "${watched[@]}"; do
+    if [[ ! -s "$f" ]]; then
+      fail "SIG$sig: $(basename "$f") was not written"
+    elif kill -0 "$(cat "$f")" 2>/dev/null; then
+      fail "SIG$sig: $(basename "$f") process still runs"
+      kill -KILL "$(cat "$f")"
+    else
+      pass
+    fi
+  done
+  assert_eq "SIG$sig: temp directory removed" "" "$(ls -A "$STOP")"
+done
+
 summary_and_exit

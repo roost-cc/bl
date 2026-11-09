@@ -11,6 +11,10 @@
 # failure excerpt reads it). Then it prints a summary and returns non-zero if
 # any item failed.
 #
+# If the runner gets SIGINT, SIGTERM or SIGHUP, it stops every item that has
+# not ended, with all of the item's child processes, and prints the output of
+# those items so far. Then it ends by the same signal.
+#
 # Source this file for the function, or execute it to run `run_parallel "$@"`:
 #   bash test/helpers/run-parallel.sh test 'npm run' test:unit test:cli
 set -uo pipefail
@@ -18,17 +22,29 @@ set -uo pipefail
 run_parallel() {
   local label="$1" runner="$2"
   shift 2
-  local items=("$@") pids=() failed=() pass=0 dir i
+  local items=("$@") pids=() failed=() pass=0 next=0 dir i traps
   # Without its directory no item can write its output: start none.
   dir=$(mktemp -d) || return 1
   # The function removes $dir itself and sets no EXIT trap: the EXIT trap
   # belongs to the caller, and a sourced runner can run more than once.
 
+  # The caller's signal traps come back when the function ends.
+  traps=$(trap -p INT TERM HUP)
+  trap '_run_parallel_stop INT' INT
+  trap '_run_parallel_stop TERM' TERM
+  trap '_run_parallel_stop HUP' HUP
+
+  # Job control puts each item in its own process group, so a stop reaches
+  # the item's child processes too (`npm run` starts `node`). Without job
+  # control a background item also ignores SIGINT.
+  local -
+  set -m
   for i in "${!items[@]}"; do
     # shellcheck disable=SC2086 # the runner is split into words on purpose
-    $runner "${items[$i]}" >"$dir/$i" 2>&1 &
+    $runner "${items[$i]}" </dev/null >"$dir/$i" 2>&1 &
     pids+=("$!")
   done
+  set +m
 
   for i in "${!items[@]}"; do
     if wait "${pids[$i]}"; then
@@ -36,11 +52,12 @@ run_parallel() {
     else
       failed+=("$(basename "${items[$i]}")")
     fi
-    echo "──── $(basename "${items[$i]}")"
-    cat "$dir/$i"
-    echo
+    _run_parallel_print "$i"
+    next=$((i + 1))
   done
   rm -rf -- "$dir"
+  trap - INT TERM HUP
+  eval "$traps"
 
   if ((${#failed[@]} > 0)); then
     echo "$label summary: ${#failed[@]} failed, $pass passed" >&2
@@ -48,6 +65,43 @@ run_parallel() {
     return 1
   fi
   echo "$label summary: $pass passed"
+}
+
+# Prints the output of item $1 under its line. It reads `items` and `dir` of
+# the run_parallel call that runs it.
+_run_parallel_print() {
+  echo "──── $(basename "${items[$1]}")"
+  cat "$dir/$1"
+  echo
+}
+
+# The signal trap of run_parallel: stops the items from `next` on, prints
+# their output so far, removes the temp directory, puts back the caller's
+# traps and ends by signal $1.
+_run_parallel_stop() {
+  local sig="$1" i end
+  trap - INT TERM HUP
+  for ((i = next; i < ${#pids[@]}; i++)); do
+    kill -TERM -- "-${pids[$i]}" 2>/dev/null
+  done
+  # A process can end some seconds after SIGTERM: a `node --test` file
+  # process ends at its next await. A nested runner needs the time to stop
+  # its own items. After about 3 s, SIGKILL ends what is left of each group.
+  end=$((SECONDS + 3))
+  for ((i = next; i < ${#pids[@]}; i++)); do
+    while kill -0 -- "-${pids[$i]}" 2>/dev/null && ((SECONDS < end)); do
+      sleep 0.1
+    done
+    kill -KILL -- "-${pids[$i]}" 2>/dev/null
+    wait "${pids[$i]}" 2>/dev/null
+    _run_parallel_print "$i"
+  done
+  rm -rf -- "$dir"
+  echo "$label: stopped by SIG$sig" >&2
+  eval "$traps"
+  kill -s "$sig" "$BASHPID"
+  # The caller's trap for $sig did not end the shell.
+  exit $((128 + $(kill -l "$sig")))
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
