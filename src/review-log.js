@@ -88,11 +88,12 @@ export function openCheckboxItems(text) {
  * box; `blocking` leaves out those under **Nits** — nits never gate a merge
  * (the verifier renders `[safe]` nits as open boxes on a session it signs off
  * as `addressed`). A box before any category heading counts as blocking.
+ * `must`, `should` and `nits` count the open boxes under a **Must fix**, a
+ * **Should fix** and a **Nits** (or **Nit**) heading.
  */
 function countOpenBoxes(sessionBody) {
   let category = null;
-  let unchecked = 0;
-  let blocking = 0;
+  const counts = { unchecked: 0, blocking: 0, must: 0, should: 0, nits: 0 };
   for (const line of sessionBody.split('\n')) {
     const heading = line.match(HEADING_RE);
     if (heading) {
@@ -100,19 +101,22 @@ function countOpenBoxes(sessionBody) {
       continue;
     }
     if (!CHECKBOX_RE.test(line)) continue;
-    unchecked += 1;
-    if (category !== 'nits') blocking += 1;
+    counts.unchecked += 1;
+    if (category !== 'nits') counts.blocking += 1;
+    if (category === 'must fix') counts.must += 1;
+    else if (category === 'should fix') counts.should += 1;
+    else if (category === 'nits') counts.nits += 1;
   }
-  return { unchecked, blocking };
+  return counts;
 }
 
 /**
  * Parse the latest (first) `### Session` block out of a review-log slice.
- * Returns `{ date, prNumber, unchecked, blocking }` or `null` if no session
- * is present.
+ * Returns `{ date, prNumber, unchecked, blocking, must, should, nits }` or
+ * `null` if no session is present.
  *
  * @param {string} log
- * @returns {{ date: string|null, prNumber: string|null, unchecked: number, blocking: number }|null}
+ * @returns {{ date: string|null, prNumber: string|null, unchecked: number, blocking: number, must: number, should: number, nits: number }|null}
  */
 export function parseLatestSession(log) {
   if (!log) return null;
@@ -136,6 +140,41 @@ export function summarizeLatestReviewSession(body) {
   const log = extractReviewLog(body);
   if (log == null) return null;
   return parseLatestSession(log);
+}
+
+/** `1 nit`, `2 nits`. */
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * The words that say how a finished review round ended, for `bl review`'s
+ * end line and `bl status`'s `review:` line; `null` for a `review_status`
+ * other than `pending` or `addressed`. `session` is the latest Review Log
+ * session (`parseLatestSession`), or `null`.
+ *
+ * @param {string|undefined} reviewStatus
+ * @param {ReturnType<typeof parseLatestSession>} session
+ * @returns {string|null}
+ */
+export function reviewOutcome(reviewStatus, session) {
+  if (reviewStatus === 'addressed') {
+    const nits = session?.nits ?? 0;
+    return `nothing left to fix${nits > 0 ? ` (${plural(nits, 'open nit')} left)` : ''}`;
+  }
+  if (reviewStatus !== 'pending') return null;
+  if (!session || session.unchecked === 0) {
+    return 'review_status: pending, but the latest Review Log session has no open item';
+  }
+  const { unchecked, must, should, nits } = session;
+  const other = unchecked - must - should - nits;
+  const parts = [
+    must > 0 && `${must} Must fix`,
+    should > 0 && `${should} Should fix`,
+    nits > 0 && plural(nits, 'nit'),
+    other > 0 && `${other} other`,
+  ].filter(Boolean);
+  return `${plural(unchecked, 'open item')} (${parts.join(', ')})`;
 }
 
 /**
