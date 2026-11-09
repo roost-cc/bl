@@ -55,6 +55,7 @@ import {
   pathEntryProblem,
 } from './story.js';
 import { renderTemplate, templatePath } from './template.js';
+import { VALID_STORY_KEYS } from './validate.js';
 import { implementPluginProblem } from './scripted.js';
 import { normalizeFeatureId, findFeature, closedFeatureRefusal, storyMoveRefusal } from './feature.js';
 import { acquireLock } from './lock.js';
@@ -157,6 +158,35 @@ function readBodyFile(args, required = ['title', 'points']) {
     }
     throw err;
   }
+}
+
+/**
+ * The keys of `--frontmatter <json>`: a JSON object of frontmatter keys a client finds its
+ * stories by again, such as the update job's `update_advisory` (F-80 B4). Each key is one
+ * `bl validate` accepts, and none is a key bl new writes itself (its templates' and `plugins`).
+ * Exits 1 otherwise.
+ * @returns {Record<string, unknown>}
+ */
+function extraFrontmatter(args) {
+  if (args.frontmatter == null) return {};
+  const refuse = (why) => {
+    console.error(`--frontmatter: ${why}`);
+    process.exit(1);
+  };
+  let extra;
+  try {
+    extra = JSON.parse(String(args.frontmatter === true ? '' : args.frontmatter));
+  } catch (err) {
+    refuse(`not a JSON object (${err.message})`);
+  }
+  if (extra === null || typeof extra !== 'object' || Array.isArray(extra)) refuse('not a JSON object');
+  const own = new Set(['plugins']);
+  for (const t of ['story', 'story-feature']) {
+    for (const k of Object.keys(parseFrontmatter(readFileSync(templatePath(t), 'utf8')).fm)) own.add(k);
+  }
+  const bad = Object.keys(extra).filter((k) => !VALID_STORY_KEYS.has(k) || own.has(k));
+  if (bad.length > 0) refuse(`${bad.join(', ')}: not a story key bl validate accepts, or one bl new writes`);
+  return extra;
 }
 
 /**
@@ -473,6 +503,7 @@ const COMPONENT_DISALLOWED_FLAGS = [
   'required-for',
   'plugins-from',
   'implement',
+  'frontmatter',
   'from',
 ];
 
@@ -1025,6 +1056,10 @@ Options:
   --body-file <path>   Use file content as the body (or "-" for stdin).
                        Strips <!-- ... --> outside code fences. Errors
                        if the file contains frontmatter.
+  --frontmatter <json> More frontmatter keys, as one JSON object, for a
+                       client that finds its stories again by a key (the
+                       update job's update_advisory). Each key must be one
+                       bl validate accepts and not one bl new writes.
   --print-template <kind>
                        Print bl/templates/<kind>.md to stdout and exit.
                        kind ∈ {story, story-feature, component, feature,
@@ -1190,6 +1225,7 @@ Example:
   if (args.feature === true) return newFeature(args, listed);
 
   const customBody = readBodyFile(args);
+  const extra = extraFrontmatter(args);
   const pluginsFromId = parsePluginsFromId(args);
 
   let dependsOn, requiredFor;
@@ -1392,8 +1428,8 @@ Example:
     }
   }
 
-  // The inherited plugins go after the feature, which the template holds.
-  // No repo: a story's repo is its component's (F-52 D1).
+  // The inherited plugins and the --frontmatter keys go after the feature,
+  // which the template holds. No repo: a story's repo is its component's (F-52 D1).
   atomicWriteFile(
     cfg.backlogRoot,
     storyIndex,
@@ -1401,7 +1437,7 @@ Example:
       values: storyValues(storyVars, { feature, dependsOn }),
       vars: storyVars,
       body: customBody,
-      after: ['feature', plugins],
+      after: ['feature', { ...plugins, ...extra }],
     }),
   );
 
@@ -1469,6 +1505,7 @@ const BATCH_DISALLOWED_FLAGS = [
   'feature',
   'plugins-from',
   'implement',
+  'frontmatter',
   'theme',
   'epic',
 ];

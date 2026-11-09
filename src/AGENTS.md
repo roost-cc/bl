@@ -42,6 +42,7 @@ Per-command stdout contracts:
 | `bl next-id`         | one ID per line                                           |
 | `bl which`           | one line: absolute path                                   |
 | `bl list` / `ls`     | the table                                                 |
+| `bl list --json`     | one JSON object (schema `bl-list-json/v1`)                |
 | `bl status` (no ids) | the table, as `bl list`                                   |
 | `bl tree`            | the rendered tree                                         |
 | `bl history`         | the week table (`--json`: one object)                     |
@@ -164,11 +165,12 @@ per-repo setting:
 }
 ```
 
-- `path` (relative to the backlog), `deployable` (a release manifest records
-  the repo, `bl merge F-n`) and `update_tests` (the `plugins:` `bl updates
-sync` writes on the repo's update stories; `[]` for none) are required.
-  `loadConfig` fails naming the repo and the key, and has no defaults. Any
-  other key but `plugins-<stage>` and `overrides` is an error.
+- `path` (relative to the backlog) and `deployable` (a release manifest
+  records the repo, `bl merge F-n`) are required. `loadConfig` fails naming
+  the repo and the key, and has no defaults. `update_tests` (the `plugins:`
+  the deprecated `bl updates sync` writes on the repo's update stories) is
+  optional since F-80 G3, `[]` when absent. Any other key but
+  `plugins-<stage>` and `overrides` is an error.
 - `plugins-<stage>` is the repo layer of the plugin cascade (see
   **Activation via Frontmatter**); there is no generic `plugins:` form here.
 - `overrides` is merged over the top level by `mergeConfig` for work in that
@@ -2558,6 +2560,7 @@ bl list --theme backlog       # stories in a theme (Themes and Epics)
 bl list --component C32 --feature F-51   # filters combine
 bl list --epic E-62           # an epic's features, grouped, with progress
 bl list --features --theme backlog       # a theme's features, grouped by epic
+bl list --json                # the stories with their whole frontmatter, as JSON
 bl tree --epic E62            # trees containing the epic's pending stories
 bl what-next --theme backlog  # next startable story in the theme
 ```
@@ -3387,6 +3390,13 @@ feature whose theme is missing or unreadable only warns.
 
 ### `bl updates`
 
+Deprecated since F-80 (G3): running-man's update job gates and merges
+Renovate's branches, and `bl inbox` reads its heartbeat. Every verb below
+still works and first prints one warning on stderr, `bl updates is
+deprecated: running-man's update job (F-80) does this` (`src/bl.js`);
+`--help` prints none, as no verb's help writes to stderr. A later story
+removes the verbs and the code only they use.
+
 Renovate's dependency updates as backlog stories (F-32). Renovate opens the
 branch and the PR and, at the end of each cycle, writes a report
 (`backlog.json` `updates.report`, relative to the backlog's parent directory, for
@@ -3553,8 +3563,8 @@ produced. Per story:
    An outcome written but not committed when something stops the run is
    committed (the counts as message) before the error surfaces; then the
    tmux bell. One still uncommitted after that fails the run, naming the
-   paths to commit by hand. A run with nothing open still writes `## Run <time>` (`No open update stories.`): it is the
-   heartbeat `bl inbox` reads. stdout: one line per story (`merged`,
+   paths to commit by hand. A run with nothing open still writes `## Run <time>` (`No open update stories.`); since
+   F-80, `bl inbox` reads the update job's heartbeat instead. stdout: one line per story (`merged`,
    `dropped`, `held`, `decision`, `skipped`, or `would run` with
    `--dry-run`).
 
@@ -3714,19 +3724,48 @@ Everything waiting on the operator, in one list (F-42 Design D1,
 `src/inbox.js`). It scans the backlog on every call (no index) and prints
 the groups below, each by unit id, newest first, features before stories:
 
-| Kind         | Source                                                                                                                                                                                 | Id           | Answered by                                                 |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ----------------------------------------------------------- |
-| `escalation` | an active (not `done` or `superseded`) feature's or story's `## Escalation` with content                                                                                               | `F-42:esc`   | `bl status F-42`                                            |
-| `task`       | an open task (`tasks/`, see **`bl task`**) of any unit, open or closed, with a `holds:` line per edge of it in `blockers.json` that holds now                                          | `T-7`        | `bl task done T-7 [note]`                                   |
-| `change`     | unmerged work (F-48 D4): an open feature, or an open story with no `feature:`, whose current change document is `status: open` and names a branch with commits ahead of `main` (below) | `S-7:change` | `bl run S-7`; `bl merge S-7` once its review is `addressed` |
-| `update`     | an F-32 update story in the `decision needed` or `held` state of `bl updates status`                                                                                                   | `S-842`      | `bl updates approve S-842` / `drop … --reason`              |
-| `pending`    | an update story in the `approve pending` or `drop pending` state: it waits on the runner, not on the operator (F-50 D8)                                                                | `S-842`      | nothing: the runner's next `bl updates run`                 |
+| Kind         | Source                                                                                                                                                                                 | Id                         | Answered by                                                         |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------- |
+| `escalation` | an active (not `done` or `superseded`) feature's or story's `## Escalation` with content                                                                                               | `F-42:esc`                 | `bl status F-42`                                                    |
+| `task`       | an open task (`tasks/`, see **`bl task`**) of any unit, open or closed, with a `holds:` line per edge of it in `blockers.json` that holds now                                          | `T-7`                      | `bl task done T-7 [note]`                                           |
+| `change`     | unmerged work (F-48 D4): an open feature, or an open story with no `feature:`, whose current change document is `status: open` and names a branch with commits ahead of `main` (below) | `S-7:change`               | `bl run S-7`; `bl merge S-7` once its review is `addressed`         |
+| `update`     | an entry in the red list of the update job's latest heartbeat (F-80 D4, B2, below)                                                                                                     | `tools:renovate/glob-11.x` | nothing here: the next update run tests it again; read its gate log |
 
-One more line comes first, `runner: no bl updates run since <time> …`
-(kind `runner`, id `updates:run`), when the newest `## Run <time>` heading
-under `updates/` (`lastRun`: the newest report holding one) is more than 8 h
-old, twice the runner's cadence (F-50 D7); none when it is newer or when no
-report holds a run. A `pending` item is not counted by `inboxCountLine`.
+One more line comes first, `runner: …` (kind `runner`, id `updates:run`),
+when the latest heartbeat is more than 8 h old (twice the job's 4 h timer)
+or records `"result": "failure"`: `no update run since <time> (<n> h, more
+than 8 h)`, `the update run of <time> failed at <step>: <subject>`, or both
+joined by `; ` (F-80 B3).
+
+The heartbeat (F-80 B3, D6) is one orphan commit on the branch
+`updates.heartbeat.branch` of the repo `updates.heartbeat.repo`, which
+running-man's update job force-pushes after every update run. `readHeartbeat`
+reads it with git alone, in that repo's clone as `backlog.json` `repos`
+registers it: `git fetch --quiet origin
++refs/heads/<branch>:refs/remotes/origin/<branch>`, then `git log -1
+--format=%cI%n%B refs/remotes/origin/<branch>`. It reads that ref, not
+`FETCH_HEAD`, because any other fetch in the clone rewrites `FETCH_HEAD`.
+The first line is the update run's time, the
+next the subject (its summary), and the rest of the message JSON with
+`"schema": "roost-update-heartbeat/v1"`, `result`, `failed_step` and `red`
+(a list of `{ repo, branch, update, head, main, notes, log }`, or `null`
+when the update run failed before the job wrote it). The fetch has no
+`--depth=1`: on a full clone that marks the repository shallow, and the
+heartbeat has no parent, so it moves the same objects without it. No `gh`
+and no forge op is used. Each red entry is one `update` item,
+`<update> · red · notes: <url or none>`, `next: read the gate log <log>;
+the next update run tests it again`, in the heartbeat's order; an entry
+leaves the inbox when a later heartbeat no longer lists it. A `"red": null`
+is a warning that the red updates are not known.
+
+`updateSettings` (`src/config.js`) reads the `updates` block: `namespace`,
+`push_attempts`, `heartbeat.repo` and `heartbeat.branch`, every key required
+with no defaults, and other keys (the deprecated `report`) left alone. A
+backlog.json with no `updates` block has no update job, and the inbox reads
+no heartbeat. A missing key, a fetch that fails, or a message that is not a
+heartbeat is one warning on stderr (`update job heartbeat not read: …`), and
+the other kinds are still listed. `loadConfig` never reads the block, so a
+backlog.json from before F-80's cutover still loads.
 
 A `change` item is one per unit, naming every repo with unmerged commits:
 `tools, web: <title> · tools 2 commit(s) on <branch>, web 1 commit(s) on <branch>, not merged`
@@ -3753,7 +3792,8 @@ their files and the holds from `blockers.json`, never from a unit's body; a `blo
 
 `bl inbox done` closes nothing (F-65 D3): every id exits 1 naming the verb that answers it, a
 `T-<n>` and a retired `F-<n>:op<k>` id `bl task done` (an alias would be a second way to close a
-task), an escalation, change, update or pending id its own; an id not in the inbox is unknown.
+task), an escalation or change id its own. A red update or the runner line names what clears
+it: a later heartbeat. An id not in the inbox is unknown.
 
 The S-970 operator tasks (a `### Operator tasks` sub-list, or legacy `operator:` bullets, in a
 unit's `## Deferred`, or a story's former `## To Do`) are retired: nothing in `bl` reads a
@@ -3775,9 +3815,12 @@ a closed unit keeps its items as history. Their reader, `scanOperatorTasks`, wen
   `migrate-worktree-layout`.
 - `bl run` and `bl merge` end with `inbox: <n> item(s) need you (bl inbox)`
   on stderr when the count is non-zero (`printInboxCount`). A failed scan
-  prints nothing and never fails the command.
-- When the update stories cannot be read (no `updates.namespace` in
-  `backlog.json`), `bl inbox` warns on stderr and lists the rest.
+  prints nothing and never fails the command. The count includes red updates
+  and the runner line, so it fetches the heartbeat too.
+- `bl merge` imports `src/inbox.js` after its git merge, when the process
+  may still hold the pre-merge `config.js` (F-49 D6). So `inbox.js` reads
+  `updateSettings` through `import * as configModule`, not a named import: a
+  config.js without it is a warning, not a failed merge.
 
 ### Testing
 

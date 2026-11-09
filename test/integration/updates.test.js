@@ -114,6 +114,9 @@ test("bl updates: help, missing verb, unknown verb, the verbs' argument errors",
     const status = runBl(['updates', 'status'], { cwd: dir });
     assert.equal(status.status, 0, status.stderr);
     assert.equal(status.stdout, 'no open update stories\n\nno report yet\n');
+    // Deprecated (F-80 G3): one warning on stderr, and the verb works as before.
+    const deprecated = "warning: bl updates is deprecated: running-man's update job (F-80) does this\n";
+    assert.equal(status.stderr.split(deprecated).length - 1, 1, status.stderr);
     const json = runBl(['updates', 'status', '--json'], { cwd: dir });
     assert.equal(json.status, 0, json.stderr);
     assert.deepEqual(JSON.parse(json.stdout), { stories: [], last_report: null });

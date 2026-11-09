@@ -151,31 +151,6 @@ export function lastReport(config) {
 }
 
 /**
- * The time of the newest `## Run <ISO time>` heading under
- * `<backlog>/updates/` (the newest report that has one; an answer entry is
- * not a run), as `{ at, path }`, or null when no report holds a run. What
- * `bl inbox` reads to see that the runner is alive (F-50 D7).
- */
-export function lastRun(config) {
-  const dir = join(config.backlogRoot, REPORT_DIR);
-  if (!existsSync(dir)) return null;
-  const files = readdirSync(dir)
-    .filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-    .sort()
-    .reverse();
-  for (const file of files) {
-    const text = readFileSync(join(dir, file), 'utf8');
-    const runs = [...text.matchAll(/^## Run (\S+)\s*$/gm)]
-      .map((m) => m[1])
-      .filter((at) => !Number.isNaN(Date.parse(at)));
-    if (runs.length > 0) {
-      return { at: runs[runs.length - 1], path: `${REPORT_DIR}/${file}` };
-    }
-  }
-  return null;
-}
-
-/**
  * `bl updates status`: every open update story (`Flow.isRunnable`),
  * by repo name, security first, then oldest first, each
  * with its state, then the vulns stories (`vulns: true`) the same way, and
@@ -218,7 +193,8 @@ export function statusUpdates(config) {
       (a, b) =>
         Number(a.vulns) - Number(b.vulns) ||
         a.repo.localeCompare(b.repo) ||
-        Number(b.security) - Number(a.security) || storyNum(a.id) - storyNum(b.id),
+        Number(b.security) - Number(a.security) ||
+        storyNum(a.id) - storyNum(b.id),
     );
   return { stories, lastReport: lastReport(config) };
 }
@@ -251,13 +227,7 @@ export function renderStatus({ stories, lastReport }) {
       const n = stories.filter((x) => groupOf(x) === current).length;
       lines.push(`${current} (${n})`);
     }
-    const cols = [
-      e.id.padEnd(idW),
-      e.state.padEnd(stateW),
-      typeText(e).padEnd(typeW),
-      prText(e).padEnd(prW),
-      e.title,
-    ];
+    const cols = [e.id.padEnd(idW), e.state.padEnd(stateW), typeText(e).padEnd(typeW), prText(e).padEnd(prW), e.title];
     lines.push(`  ${cols.join('  ')}${e.detail ? ` · ${e.detail}` : ''}`.trimEnd());
   }
   lines.push('');

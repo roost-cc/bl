@@ -1360,8 +1360,8 @@ function throwIfUncommitted(commit) {
  * `bl updates run`. See the module comment for the machine.
  *
  * Every live run appends a `## Run <at>` entry to the day's report, even
- * one with nothing open: `bl inbox` reads the newest one to see that the
- * runner is alive (F-50 D7). With stories, each one's outcome is committed
+ * one with nothing open (F-50 D7; since F-80, `bl inbox` reads the update
+ * job's heartbeat instead). With stories, each one's outcome is committed
  * and pushed as it finishes, with the run's report block rewritten in place
  * (F-74 D2); `result.commit` is the last of those commits.
  *
