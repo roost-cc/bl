@@ -50,7 +50,7 @@ import {
 } from '../../src/feature-run.js';
 import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
 import { spawnSync } from 'child_process';
-import { featureReviewGate } from '../../src/review-log.js';
+import { featureReviewGate, summarizeLatestReviewSession } from '../../src/review-log.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { initGitBacklog, git as backlogGit, GIT_ENV } from '../helpers/git-backlog.js';
 import { parseChange, serializeChange } from '../../src/change-doc.js';
@@ -140,6 +140,53 @@ test('reviewEnd: an addressed round points at bl merge, at the cap too', () => {
       cap: '',
       next: 'bl merge S-7',
     });
+  }
+});
+
+test('reviewEnd: addressed with an open Must fix gives no merge command', () => {
+  assert.deepEqual(end({ review_round: '1', review_status: 'addressed' }), {
+    outcome: 'review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item',
+    cap: '',
+    // The command the merge gate names when it blocks.
+    next: 'bl implement S-7',
+  });
+});
+
+test('reviewEnd: pending with no open item at the cap adds no fix sentence', () => {
+  const body = MUST_LOG.replace('[ ]', '[x]');
+  assert.deepEqual(end({ review_round: '2', review_status: 'pending' }, { body }), {
+    outcome: 'review_status: pending, but the latest Review Log session has no open item',
+    cap: ' The round cap (2) is reached.',
+    next: 'bl run S-7 --resume',
+  });
+});
+
+// The invariant: the end lines never claim what the latest session contradicts.
+test('reviewEnd: no "nothing left to fix" or bl merge with an open Must/Should box, no "these items" with none', () => {
+  const log = (box) => `## Review Log\n\n### Session 2026-11-09 (PR #1)\n\n${box}\n`;
+  const bodies = {
+    none: '',
+    checked: log('**Must fix**\n\n- [x] one'),
+    must: log('**Must fix**\n\n- [ ] one'),
+    should: log('**Should fix**\n\n- [ ] one'),
+    nit: log('**Nits**\n\n- [ ] one'),
+    other: log('- [ ] one'),
+  };
+  for (const [name, body] of Object.entries(bodies)) {
+    const session = summarizeLatestReviewSession(body);
+    for (const review_status of ['pending', 'addressed']) {
+      for (const review_round of ['1', '2', '3']) {
+        for (const state of [null, { integrationReview: 3 }]) {
+          const r = end({ review_round, review_status }, { body, state });
+          const at = `${name}, ${review_status}, round ${review_round}, state ${JSON.stringify(state)}`;
+          if ((session?.blocking ?? 0) > 0) {
+            assert.doesNotMatch(r.outcome, /nothing left to fix/, at);
+            assert.notEqual(r.next, 'bl merge S-7', at);
+          }
+          if ((session?.unchecked ?? 0) === 0) assert.doesNotMatch(r.cap, /these items/, at);
+        }
+      }
+    }
   }
 });
 

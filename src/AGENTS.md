@@ -2471,17 +2471,23 @@ command (`reviewEnd`, `src/feature-run.js`, S-1348). No line shows a raw
   `review_status: pending, but the latest Review Log session has no open item`.
 - Nothing left (`addressed`): `Review round <n> done: nothing left to fix.`,
   or `nothing left to fix (<c> open nit(s) left).` while the session has open nits.
+  If the session still has an open Must fix or Should fix box, the line is
+  `review_status: addressed, but the latest Review Log session has <k> open Must fix/Should fix item(s)`.
 - Any other value: `Review round <n> done: no verdict recorded (review_status: <value>).`
   (`unset` when empty), with no `Next:` line. Escalated:
   `Review round <n>: escalated.`
 
 The second line is `Next: <command>`:
 
-- `addressed`: `bl merge <id>`.
+- `addressed`: `bl merge <id>`. If the session still has an open Must fix or
+  Should fix box, the merge gate (`featureReviewGate`) blocks the merge, so
+  the command is `bl implement <id>`, the one the merge gate's refusal names.
+  `bl status` prints no next command.
 - Open items below the round cap: `bl run <id> --resume`.
 - Open items in the round that reached the cap: the outcome line adds
   ` The round cap (<cap>) is reached: the next run fixes these items and runs one closing round on them.`
-  and the command is `bl run <id> --resume`.
+  and the command is `bl run <id> --resume`. If the session has no open box,
+  the outcome line adds only ` The round cap (<cap>) is reached.`.
 - Open items past what the cap allows: the outcome line adds
   ` The round cap (<cap>) is reached.` and the command is
   `bl run <id> --resume --max-rounds <n+1>`.

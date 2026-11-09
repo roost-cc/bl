@@ -146,6 +146,17 @@ test('reviewOutcome on an addressed round names the open nits left', () => {
   );
 });
 
+test('reviewOutcome on an addressed round with an open Must fix or Should fix item says so, not "nothing left to fix"', () => {
+  assert.equal(
+    reviewOutcome('addressed', session({ unchecked: 1, blocking: 1, must: 1 })),
+    'review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item',
+  );
+  assert.equal(
+    reviewOutcome('addressed', session({ unchecked: 3, blocking: 2, must: 1, should: 1, nits: 1 })),
+    'review_status: addressed, but the latest Review Log session has 2 open Must fix/Should fix items',
+  );
+});
+
 test('reviewOutcome is null for any other review_status', () => {
   for (const s of ['fixed', '', undefined, 'bogus']) assert.equal(reviewOutcome(s, null), null);
 });

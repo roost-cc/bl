@@ -159,6 +159,11 @@ function plural(n, word) {
  */
 export function reviewOutcome(reviewStatus, session) {
   if (reviewStatus === 'addressed') {
+    // The merge gate blocks on these, so this is not "nothing left to fix".
+    const blocking = session?.blocking ?? 0;
+    if (blocking > 0) {
+      return `review_status: addressed, but the latest Review Log session has ${plural(blocking, 'open Must fix/Should fix item')}`;
+    }
     const nits = session?.nits ?? 0;
     return `nothing left to fix${nits > 0 ? ` (${plural(nits, 'open nit')} left)` : ''}`;
   }

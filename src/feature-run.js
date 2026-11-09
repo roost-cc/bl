@@ -4365,17 +4365,23 @@ function higherCapCommand(id, round) {
 export function reviewEnd({ id, unitRelPath, maxRounds, fm, body, state, escalated }) {
   if (escalated) return { outcome: 'escalated', cap: '', next: `read ## Escalation in ${unitRelPath}` };
   const status = fm.review_status;
-  const outcome = reviewOutcome(status, summarizeLatestReviewSession(body ?? ''));
+  const session = summarizeLatestReviewSession(body ?? '');
+  const outcome = reviewOutcome(status, session);
   if (outcome == null) {
     return { outcome: `no verdict recorded (review_status: ${status || 'unset'})`, cap: '', next: null };
   }
-  if (changeNextVerb(status) === 'merge') return { outcome, cap: '', next: `bl merge ${id}` };
+  if (changeNextVerb(status) === 'merge') {
+    // Open Must/Should boxes block the merge gate: name the command it names.
+    const next = (session?.blocking ?? 0) > 0 ? `bl implement ${id}` : `bl merge ${id}`;
+    return { outcome, cap: '', next };
+  }
   const standing = roundCapStanding(state, fm, maxRounds);
   if (standing === 'below') return { outcome, cap: '', next: `bl run ${id} --resume` };
   if (standing === 'closing') {
+    const items = (session?.unchecked ?? 0) > 0;
     return {
       outcome,
-      cap: ` The round cap (${maxRounds}) is reached: the next run fixes these items and runs one closing round on them.`,
+      cap: ` The round cap (${maxRounds}) is reached${items ? ': the next run fixes these items and runs one closing round on them' : ''}.`,
       next: `bl run ${id} --resume`,
     };
   }
