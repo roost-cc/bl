@@ -1,50 +1,12 @@
-/**
- * Integration tests for `bl block add|remove|list` (F-66 D4) against a git
- * backlog: the sorted line it writes and commits alone, its refusals, the
- * operator's remove, `list --fix`, and two clones whose adds merge.
- */
-import { spawnSync } from 'child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { mkTempBacklog } from '../helpers/tempdir.js';
 import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
 import { BLOCKERS_FILE, formatBlockers, readBlockers, writeBlockers } from '../../src/blockers.js';
-
-const bl = (args, cwd) => runBl(args, { cwd, env: GIT_ENV });
-
-/**
- * F-1 (S-11, S-14) and F-2 (S-12, S-13), each approved, standalone S-1 and S-2,
- * and a done S-9. `deps` maps a story to the one it depends on.
- */
-function backlog({ deps = {}, features = [] } = {}) {
-  const story = (id, extra = {}) => ({
-    id,
-    component: 'C01',
-    title: id,
-    depends_on: deps[id] ?? undefined,
-    ...extra,
-  });
-  return mkTempBacklog({
-    components: [{ id: 'C01', title: 'Work' }],
-    stories: [
-      story('S-11', { feature: 'F-1' }),
-      story('S-14', { feature: 'F-1' }),
-      story('S-12', { feature: 'F-2' }),
-      story('S-13', { feature: 'F-2' }),
-      story('S-1'),
-      story('S-2'),
-      story('S-9', { status: 'done' }),
-    ],
-    features: [
-      { id: 'F-1', title: 'One', status: 'approved', stories: ['S-11', 'S-14'] },
-      { id: 'F-2', title: 'Two', status: 'approved', stories: ['S-12', 'S-13'] },
-      ...features,
-    ],
-  });
-}
+import { backlog, bl } from '../helpers/block-fixture.js';
 
 test('bl block add writes one sorted line, commits blockers.json alone, and list shows it unmet', () => {
   const { dir } = backlog();
@@ -245,106 +207,6 @@ test('bl block list stops on a missing flow.json, naming the file', () => {
   const r = bl(['block', 'list'], dir);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /flow\.json: missing/);
-});
-
-test("bl block add and remove on two clones merge without a conflict wherever the edges land, by git merge and by bl's pull", () => {
-  const on = (unit) => ({ blocker: 'S-1', gate: 'merge', unit, until: 'done' });
-  const add = (unit) => ['block', 'add', 'S-1', '--gate', 'merge', '--unit', unit, '--until', 'done'];
-  const remove = (unit) => ['block', 'remove', 'S-1', '--gate', 'merge', '--unit', unit];
-  // Each: the seeded edges, Alice's and Bob's commands, and the edges after.
-  const cases = [
-    { name: 'empty graph', seed: [], alice: add('F-2'), bob: add('F-4'), want: ['F-2', 'F-4'] },
-    { name: 'both before the first', seed: ['F-5'], alice: add('F-2'), bob: add('F-4'), want: ['F-2', 'F-4', 'F-5'] },
-    { name: 'both after the last', seed: ['F-1'], alice: add('F-2'), bob: add('F-4'), want: ['F-1', 'F-2', 'F-4'] },
-    {
-      name: 'one interior gap',
-      seed: ['F-1', 'F-5'],
-      alice: add('F-2'),
-      bob: add('F-4'),
-      want: ['F-1', 'F-2', 'F-4', 'F-5'],
-    },
-    {
-      name: 'gaps apart',
-      seed: ['F-1', 'F-3', 'F-5'],
-      alice: add('F-2'),
-      bob: add('F-4'),
-      want: ['F-1', 'F-2', 'F-3', 'F-4', 'F-5'],
-    },
-    { name: 'remove beside an add', seed: ['F-1', 'F-3'], alice: remove('F-3'), bob: add('F-4'), want: ['F-1', 'F-4'] },
-    { name: 'both remove one edge', seed: ['F-1', 'F-3'], alice: remove('F-3'), bob: remove('F-3'), want: ['F-1'] },
-    {
-      name: 'two removes side by side',
-      seed: ['F-1', 'F-3', 'F-5'],
-      alice: remove('F-3'),
-      bob: remove('F-5'),
-      want: ['F-1'],
-    },
-  ];
-  for (const how of ['git merge', 'bl pull']) {
-    for (const c of cases) {
-      const at = `${c.name}, ${how}`;
-      const { dir: alice } = backlog({
-        features: ['F-3', 'F-4', 'F-5'].map((id) => ({ id, title: id, status: 'approved' })),
-      });
-      const tmp = mkTempDir('bl-block-clones-');
-      try {
-        initGitBacklog(alice);
-        writeBlockers(alice, c.seed.map(on));
-        git(alice, 'add', BLOCKERS_FILE);
-        git(alice, 'commit', '-q', '-m', 'seed edges');
-        const origin = join(tmp, 'origin.git');
-        const bob = join(tmp, 'bob');
-        git(tmp, 'init', '-q', '--bare', '-b', 'main', origin);
-        git(alice, 'remote', 'add', 'origin', origin);
-        git(alice, 'push', '-q', 'origin', 'main');
-        git(tmp, 'clone', '-q', origin, bob);
-        // Alice's push goes nowhere, so her commit stays local while Bob's lands.
-        git(alice, 'remote', 'set-url', '--push', 'origin', join(tmp, 'nowhere.git'));
-
-        const a = bl(c.alice, alice);
-        assert.equal(a.status, 0, `${at}: ${a.stderr}`);
-        const b = bl(c.bob, bob);
-        assert.equal(b.status, 0, `${at}: ${b.stderr}`);
-        assert.equal(git(origin, 'rev-parse', 'main'), git(bob, 'rev-parse', 'HEAD'));
-
-        let want = c.want;
-        if (how === 'git merge') {
-          git(alice, 'pull', '-q', '--no-rebase', '--no-edit', 'origin', 'main');
-        } else {
-          // bl pulls (a rebase of Alice's commit onto Bob's) before it adds.
-          const bobs = git(bob, 'rev-parse', 'HEAD');
-          const pulled = bl(add('S-2'), alice);
-          assert.equal(pulled.status, 0, `${at}: ${pulled.stderr}`);
-          // The pull rebased onto Bob's commit, not a warning and a local add.
-          assert.doesNotMatch(pulled.stderr, /backlog pull|backlog fetch/, `${at}: ${pulled.stderr}`);
-          const rebased = spawnSync('git', ['merge-base', '--is-ancestor', bobs, 'HEAD'], {
-            cwd: alice,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-          assert.equal(rebased.status, 0, `${at}: Alice's HEAD has Bob's commit: ${pulled.stderr}`);
-          want = [...want, 'S-2'];
-        }
-        for (const clone of [alice, bob]) {
-          assert.match(
-            git(clone, 'show', 'HEAD:.gitattributes'),
-            /^\/blockers\.json merge=bl-blockers$/m,
-            `${at}: ${clone}`,
-          );
-        }
-        const text = readFileSync(join(alice, BLOCKERS_FILE), 'utf8');
-        assert.doesNotMatch(text, /<<<<<<<|>>>>>>>/, at);
-        const { edges } = readBlockers(alice);
-        assert.deepEqual(
-          edges.map((e) => e.unit),
-          want,
-          at,
-        );
-        assert.equal(text, formatBlockers(edges), `${at}: still sorted, one edge per line`);
-      } finally {
-        rmSync(tmp, { recursive: true, force: true });
-      }
-    }
-  }
 });
 
 test('block_setup_failure_preserves_retriable_graph_and_attributes: add, remove and list --fix change nothing when .gitattributes cannot be read or written', () => {
