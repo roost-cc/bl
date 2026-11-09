@@ -2588,6 +2588,9 @@ bl's prompts and plugin commands use, not a new format.
   gives it back: under tmux it turns the window's `automatic-rename` on again, elsewhere it
   pops the title the terminal saved on its title stack (XTWINOPS 22/23) when the first title
   was set. No tab keeps a title for work that is over; the bell at a run's end is the signal.
+- The title width only grows while the process runs: `showTabTitle` pads a shorter title with
+  trailing spaces to the widest title shown, so the tmux status bar does not move.
+  `currentTabTitle` and `renderTabTitle` stay unpadded; `restoreTabTitle` resets the width at exit.
 
 ### Pre-task discussion (`-P, --prompt`)
 
