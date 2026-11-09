@@ -79,7 +79,8 @@ Sets the story's status; its directory stays where it is. Commits the backlog
 change (the story file and every index the sync rewrote) on the backlog's
 current branch, under the backlog lock. Other
 uncommitted edits in the backlog stay out of the commit. When the backlog is
-not a git repository, the commit is skipped.`);
+not a git repository, the commit is skipped. If the commit fails, a rerun
+commits what the failed run wrote, while the story file is unchanged.`);
     process.exit(0);
   }
 
