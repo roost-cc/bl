@@ -1746,9 +1746,11 @@ a headless session; `_outcome-file.md`, the outcome file, when
   retry, no agent) also puts the rest of the change document back.
 - **Fix** (`fixed`). `true`: bl writes `review_status: fixed`. `false`: the
   run escalates with `open` and the summary, and the status stays `pending`.
+  Every exit without `fixed` (an open `## Escalation`, a scope stop,
+  `fixed: false`) puts back the fields the fix session found.
 - **Self-review** (`ok`, `changed`). `ok: false` escalates with the summary;
-  `changed: true` runs the test gate again. After the fix self-review, bl
-  keeps `fixed`.
+  `changed: true` runs the test gate again. On every exit of the fix
+  self-review, bl keeps `fixed`.
 - **What a session wrote is a warning, never a decision.** bl reads the
   fields when a session starts and again before it writes
   (`writeReviewFields`, through `setReviewFields` in `change-doc.js` under
@@ -1760,8 +1762,8 @@ a headless session; `_outcome-file.md`, the outcome file, when
 - **`bl implement` with a review pending** (story and feature) runs the fix
   prompt interactively with `schema: fix`; the agent writes the outcome file.
   After the session `applyFixOutcome` (`change-doc.js`) writes and commits
-  `review_status: fixed` when `fixed` is true, else prints why and leaves the
-  status.
+  `review_status: fixed` when `fixed` is true. Otherwise it prints why and
+  puts back the review fields the session found (`reviewFieldsAt`).
 - `test/unit/prompts-no-status-writes.test.js` fails when a prompt names
   `review_status:` or `review_round:`.
 

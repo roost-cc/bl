@@ -122,6 +122,7 @@ import {
   openUnitChange,
   readChange,
   recordMerge,
+  reviewFieldsAt,
   setRepo,
   updateChange,
 } from './change-doc.js';
@@ -1181,6 +1182,8 @@ export async function cmdWorkon(args, config, feature) {
   }
   const sessionPrompt = loadPrompt(promptName, vars, { agent: cfg.agent, config: cfg });
 
+  // What a fix session found; applyFixOutcome puts it back unless the outcome is `fixed`.
+  const fixBefore = reviewPending ? reviewFieldsAt(vars.changeAbsPath) : {};
   const ret = launchSession({
     mode: 'workon',
     parsed,
@@ -1208,7 +1211,9 @@ export async function cmdWorkon(args, config, feature) {
   });
   const status = reviewPending ? ret.status : ret;
   recordFeatureTokens(feature, cfg);
-  if (reviewPending) applyFixOutcome(cfg.backlogRoot, { id: feature.id, changePath: vars.changeAbsPath }, ret);
+  if (reviewPending) {
+    applyFixOutcome(cfg.backlogRoot, { id: feature.id, changePath: vars.changeAbsPath }, ret, fixBefore);
+  }
   if (!status) info(implementNextSteps(feature.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.
   process.exit(status);

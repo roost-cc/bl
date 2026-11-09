@@ -193,31 +193,46 @@ export function setReviewFields(backlogRoot, path, fields) {
 }
 
 /**
+ * The review fields of the change document at `path` (strings, `''` when
+ * unset), or `{}` when there is no document.
+ * @param {string} path
+ * @returns {{ review_round?: string, review_status?: string }}
+ */
+export function reviewFieldsAt(path) {
+  const doc = readChange(path);
+  return doc ? Object.fromEntries(REVIEW_FIELDS.map((k) => [k, String(doc.fm[k] ?? '')])) : {};
+}
+
+/**
  * Apply the outcome of an interactive fix session (`bl implement` while a
  * review is pending, F-68 D3): with `fixed: true`, set `review_status: fixed`
- * in the change document at `changePath` and commit it; otherwise leave the
- * status and print why. Returns whether the status is now `fixed`.
+ * in the change document at `changePath`; otherwise put back the review
+ * fields `before` (what they held when the session started) and print why.
+ * bl commits the document when it wrote it. Returns whether the status is now
+ * `fixed`.
  * @param {string} backlogRoot
  * @param {{ id: string, changePath: string }} unit
  * @param {{ structured: object|null, structuredError: string|null }} outcome
+ * @param {{ review_round?: string, review_status?: string }} [before]
  * @returns {boolean}
  */
-export function applyFixOutcome(backlogRoot, { id, changePath }, { structured, structuredError }) {
+export function applyFixOutcome(backlogRoot, { id, changePath }, { structured, structuredError }, before = {}) {
+  const fixed = Boolean(structured?.fixed);
   if (!structured) {
     warn(`no fix outcome (${structuredError}); ${id}'s review status is unchanged`);
-    return false;
-  }
-  if (!structured.fixed) {
+  } else if (!fixed) {
     warn(`${id}: ${structured.open} review item(s) still open; the review status is unchanged: ${structured.summary}`);
-    return false;
   }
   if (!existsSync(changePath)) {
-    warn(`${id}: no change document at ${changePath}; the review status is not written`);
+    if (fixed) warn(`${id}: no change document at ${changePath}; the review status is not written`);
     return false;
   }
-  setReviewFields(backlogRoot, changePath, { review_status: 'fixed' });
-  commitChangeDoc(backlogRoot, changePath, `chore: ${id} review fixed`);
-  return true;
+  const next = fixed ? { ...before, review_status: 'fixed' } : before;
+  const found = setReviewFields(backlogRoot, changePath, next);
+  if (Object.entries(next).some(([k, v]) => found[k] !== v)) {
+    commitChangeDoc(backlogRoot, changePath, fixed ? `chore: ${id} review fixed` : `chore: ${id} review not fixed`);
+  }
+  return fixed;
 }
 
 /**

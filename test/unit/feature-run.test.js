@@ -3617,6 +3617,54 @@ test('a fix self-review that changes review_status is a warning: bl keeps fixed 
   }
 });
 
+test('a fix session that sets review_status and reports fixed false leaves the status as it found it', async () => {
+  // Every exit of the fix and fix self-review steps: the session writes the
+  // review fields, then the step stops. bl puts back what the step found:
+  // the verdict before the fix, `fixed` before the fix self-review.
+  const escalate = (feature) =>
+    editFile(feature.indexPath, (fm, body) => body.replace(/## Escalation\n\nNone\./, '## Escalation\n\nStop.'));
+  const breakStory = (feature, prep) =>
+    writeFileSync(prep.ordered.find((s) => s.id === 'S-1').indexPath, '---\neffort: [\n---\n');
+  const NOT_FIXED = { summary: 'item 1 needs the operator', fixed: false, open: 1 };
+  const NOT_READY = { summary: 'item 1 needs a redesign', ok: false, changed: false };
+  const rows = [
+    { name: 'fix: fixed false', at: 'fix', outcome: NOT_FIXED, error: /left 1 item\(s\) open/ },
+    { name: 'fix: an open ## Escalation', at: 'fix', act: escalate, error: /while addressing review feedback/ },
+    { name: 'fix: a scope stop', at: 'fix', act: breakStory, error: /could not be re-read/ },
+    { name: 'fix self-review: ok false', at: 'fixSelfReview', outcome: NOT_READY, error: /self-review .* failed/ },
+    { name: 'fix self-review: an open ## Escalation', at: 'fixSelfReview', act: escalate, error: /fix self-review$/ },
+    { name: 'fix self-review: a scope stop', at: 'fixSelfReview', act: breakStory, error: /could not be re-read/ },
+  ];
+  for (const r of rows) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const fields = () => {
+        const { fm } = parseChange(readFileSync(CH(feature), 'utf8'));
+        return `${fm.review_round}/${fm.review_status ?? ''}`;
+      };
+      let found = null;
+      const session = () => {
+        found = fields();
+        editFile(CH(feature), (fm, body) => {
+          fm.review_round = '5';
+          fm.review_status = 'addressed';
+          return body.replaceAll('- [ ] invariant', '- [x] invariant');
+        });
+        r.act?.(feature, prep);
+        return r.outcome;
+      };
+      const runner = fakeRunner({ dir, feature, behaviour: { [r.at]: session } });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'escalated', r.name);
+      assert.match(state.lastError, r.error, `${r.name}: ${state.lastError}`);
+      assert.equal(found, r.at === 'fix' ? '1/pending' : '1/fixed', `${r.name}: the fields the session found`);
+      assert.equal(fields(), found, `${r.name}: the fields after the step`);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
 /**
  * Wrap a fake runner with a scripted container table. `during` maps a session
  * prompt name to the containers that session "starts".

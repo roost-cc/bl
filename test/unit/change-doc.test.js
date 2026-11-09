@@ -16,6 +16,7 @@ import {
   parseChange,
   readChange,
   recordMerge,
+  reviewFieldsAt,
   serializeChange,
   setRepo,
   setReviewFields,
@@ -744,4 +745,38 @@ test('applyFixOutcome: fixed writes and commits review_status fixed; anything el
   // A change document the session deleted is a warning, as the other branches are.
   const gone = { id: 'F-42', changePath: join(dir, 'missing', 'change.md') };
   assert.equal(applyFixOutcome(root, gone, outcome({ summary: 's', fixed: true, open: 0 })), false);
+});
+
+test('applyFixOutcome: a session that wrote the review fields gets them put back unless the outcome is fixed', () => {
+  const NOT_FIXED = { summary: 's', fixed: false, open: 2 };
+  const cases = [
+    { name: 'no outcome', outcome: { structured: null, structuredError: 'no outcome file at x' }, want: '1/pending' },
+    { name: 'not fixed', outcome: { structured: NOT_FIXED, structuredError: null }, want: '1/pending' },
+    {
+      name: 'fixed',
+      outcome: { structured: { summary: 's', fixed: true, open: 0 }, structuredError: null },
+      want: '1/fixed',
+    },
+  ];
+  for (const c of cases) {
+    const { root, dir } = unitDir();
+    const path = changePath(dir);
+    const doc = newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
+    Object.assign(doc.fm, { review_round: '1', review_status: 'pending' });
+    writeChange(root, path, doc);
+    const git = (...args) => gitIn(root, ...args);
+    git('init', '-q', '-b', 'main');
+    git('add', '.');
+    git('commit', '-q', '-m', 'base');
+    const before = reviewFieldsAt(path);
+    assert.deepEqual(before, { review_round: '1', review_status: 'pending' });
+    // The session writes both fields, and commits them.
+    setReviewFields(root, path, { review_round: '5', review_status: 'addressed' });
+    git('commit', '-q', '-am', 'session');
+    applyFixOutcome(root, { id: 'F-42', changePath: path }, c.outcome, before);
+    const { fm } = readChange(path);
+    assert.equal(`${fm.review_round}/${fm.review_status}`, c.want, c.name);
+    assert.equal(git('status', '--porcelain'), '', `${c.name}: the write is committed`);
+  }
+  assert.deepEqual(reviewFieldsAt('/no/such/change.md'), {});
 });

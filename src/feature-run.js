@@ -4731,11 +4731,20 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
       label: `${feature.id}: address review r${fixRound}`,
       schema: loadSchema('fix'),
     });
-    if (escalationOpen(feature.indexPath))
+    // Every exit without `fixed` puts back the fields the session found.
+    const keepFixFields = () =>
+      writeReviewFields(ctx, 'fix', fixBefore, {}, `chore: ${feature.id} review round ${fixRound} not fixed`);
+    if (escalationOpen(feature.indexPath)) {
+      keepFixFields();
       return finish(ctx, 'escalated', 'agent escalated while addressing review feedback');
+    }
     const afterFix = rescope(ctx);
-    if (afterFix.stop) return afterFix.stop;
+    if (afterFix.stop) {
+      keepFixFields();
+      return afterFix.stop;
+    }
     if (!fix.structured.fixed) {
+      keepFixFields();
       return finish(
         ctx,
         'escalated',
@@ -4770,10 +4779,18 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
       label: `${feature.id}: self-review fix r${fixRound}`,
       schema: loadSchema('self-review'),
     });
-    if (escalationOpen(feature.indexPath))
+    // The fix round's `fixed` stands on every exit: bl keeps it whatever the session wrote.
+    const keepFixedFields = () =>
+      writeReviewFields(ctx, 'fix-self-review', fixedFields, {}, `chore: ${feature.id} review round ${fixRound} fixed`);
+    if (escalationOpen(feature.indexPath)) {
+      keepFixedFields();
       return finish(ctx, 'escalated', 'agent escalated during the fix self-review');
+    }
     const afterSelfReview = rescope(ctx);
-    if (afterSelfReview.stop) return afterSelfReview.stop;
+    if (afterSelfReview.stop) {
+      keepFixedFields();
+      return afterSelfReview.stop;
+    }
     // A fix diff nobody re-read is what this step exists to prevent.
     // A denied command is a warning, not a failure: the agent sees a tool
     // error and takes another route (runSession has already recorded it in
@@ -4783,6 +4800,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     // job (operator decision 2026-09-24).
     if (!selfReview.ok || selfReview.isError || !selfReview.structured.ok) {
       const why = selfReview.structured?.ok === false ? selfReview.structured.summary : sessionError(selfReview);
+      keepFixedFields();
       return finish(
         ctx,
         'escalated',
@@ -4790,8 +4808,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         openItemsSummary(ctx),
       );
     }
-    // The fix round's `fixed` stands: bl keeps it whatever the session wrote.
-    writeReviewFields(ctx, 'fix-self-review', fixedFields, {}, `chore: ${feature.id} review round ${fixRound} fixed`);
+    keepFixedFields();
     setStep(ctx, 'test');
     if (!testGateWithFix(ctx)) return state;
   }

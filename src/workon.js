@@ -47,7 +47,7 @@ import {
 } from './session.js';
 import { featureSessionVars } from './feature.js';
 import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
-import { applyFixOutcome, openUnitChange, unitChange } from './change-doc.js';
+import { applyFixOutcome, openUnitChange, reviewFieldsAt, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
 import { loadFlow } from './flow.js';
 import { acquireLock, releaseLock } from './lock.js';
@@ -477,6 +477,8 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     info('Review pending in story — using review-feedback prompt.\n');
   }
 
+  // What a fix session found; applyFixOutcome puts it back unless the outcome is `fixed`.
+  const fixBefore = prep.reviewPending ? reviewFieldsAt(prep.promptVars.changeAbsPath) : {};
   const ret = launchSession({
     mode: 'workon',
     parsed,
@@ -503,7 +505,7 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   });
   const status = prep.reviewPending ? ret.status : ret;
   if (prep.reviewPending) {
-    applyFixOutcome(config.backlogRoot, { id: parsed.id, changePath: prep.promptVars.changeAbsPath }, ret);
+    applyFixOutcome(config.backlogRoot, { id: parsed.id, changePath: prep.promptVars.changeAbsPath }, ret, fixBefore);
   }
   if (!status) info(implementNextSteps(parsed.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.
