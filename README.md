@@ -55,6 +55,10 @@ The backlog's configuration. A minimal one:
 - `repos` registers each code repo, with its path relative to the backlog.
 - `agent` and `review_agent` are the agent configurations, in order of preference, for
   implementing and for reviewing.
+- `local` (optional) is the local server, today llama-server, that the `local` agent runs
+  Claude Code against: `{ "url", "token" }`, two non-empty strings, no defaults. bl needs it
+  only when a configuration names `local`. bl reads it from the top level only; a repo's
+  `overrides` may not set it.
 - `effort` is the effort level (`low`, `medium`, `high`, `xhigh` or `max`) of refine sessions,
   of review sessions, and of a story that sets no `effort:` of its own.
 - `plugins`, `language_dispatch` and `forge` wire in formatters, linters, test commands and the
