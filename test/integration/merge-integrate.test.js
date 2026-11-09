@@ -444,6 +444,24 @@ test('a conflict the agent resolves is gated, re-reviewed outside the round cap,
   }
 });
 
+test('reviewRound refuses an unreadable review_round', () => {
+  // `bl merge` reaches the review round without the entry checks of `bl run`
+  // and `bl review`: the round itself refuses, and writes no "NaN".
+  const fx = fixture({ reviewRound: 'two' });
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const { runner, calls } = scriptedRunner({ test: 'true', resolve: resolveBoth });
+    const res = integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /aborted before a verdict: review_round "two" in .*change\.md is not a number/);
+    assert.deepEqual(calls.sessions, ['merge-resolve'], 'no review session ran');
+    assert.equal(String(parseFrontmatter(readFileSync(changeFile(fx), 'utf8')).fm.review_round), 'two');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('an agent that leaves the merge unfinished is aborted and escalated, and main is untouched', () => {
   const fx = fixture();
   try {

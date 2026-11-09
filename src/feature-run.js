@@ -3328,7 +3328,12 @@ function branchFiles(ctx) {
  * worktree cannot be restored, or any session fails.
  */
 function reviewRound(ctx, { reReview, closing = false, scope = null }) {
-  const round = parseRound(changeFm(ctx).review_round);
+  const raw = changeFm(ctx).review_round;
+  const round = parseRound(raw);
+  // Every caller gets this refusal, `bl merge`'s integration round included:
+  // bl would otherwise write review_round "NaN" with a verdict.
+  if (Number.isNaN(round))
+    return roundAborted(ctx, round, `review_round "${raw}" in ${changeRelPath(ctx)} is not a number`);
   const locks = holdReviewLocks(ctx);
   if (locks.error) return roundAborted(ctx, round, locks.error);
   try {
