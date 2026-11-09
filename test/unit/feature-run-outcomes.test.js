@@ -141,7 +141,7 @@ test('a second failure escalates with the fault and the last 20 lines of text', 
   }
 });
 
-test('a step without a schema reads no outcome and is never retried', () => {
+test('a step without a schema reads no outcome, records none of its text, and is never retried', () => {
   const { ctx, calls, step, cleanup } = setup([
     { structured: null, structuredError: null, output: 'all done\nDONE S-1\n' },
   ]);
@@ -150,7 +150,22 @@ test('a step without a schema reads no outcome and is never retried', () => {
     assert.equal(r.ok, true);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].schema, undefined);
-    assert.equal(ctx.state.history[0].note, 'said: DONE S-1');
+    const [h] = ctx.state.history;
+    assert.equal(h.note, '');
+    assert.equal(h.outcome, undefined);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a story step records its story and its outcome summary beside the note', () => {
+  const { ctx, step, cleanup } = setup([VALID]);
+  try {
+    step({ schema: SCHEMA, story: 'S-1' });
+    const [h] = ctx.state.history;
+    assert.equal(h.story, 'S-1');
+    assert.equal(h.outcome, 'implemented S-1');
+    assert.equal(h.note, 'outcome: implemented S-1');
   } finally {
     cleanup();
   }

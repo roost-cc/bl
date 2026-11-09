@@ -776,6 +776,7 @@ function printUnitTail(config, unit) {
       if (run.status === 'running' && last?.step === 'waiting') {
         console.log(`  waiting until ${localTime(last.until)} — ${last.message ?? last.note ?? ''}`);
       }
+      for (const line of outcomeLines(run.history)) console.log(line);
       // The out-list (F-64 D3): the configurations the walk skips, and until
       // when, so the operator sees why a run is not on its first choice.
       if (run.status !== 'clean') {
@@ -800,6 +801,23 @@ function printUnitTail(config, unit) {
       // unreadable run state is not an error for status
     }
   }
+}
+
+/**
+ * `bl status`'s outcome lines (F-68 D4): the latest outcome summary of each
+ * step of a run (and story, for an implement step), in the order the steps
+ * last ran. A step without an outcome (a review dimension pass, a gate) has
+ * no line.
+ */
+export function outcomeLines(history) {
+  const latest = new Map();
+  for (const h of Array.isArray(history) ? history : []) {
+    if (typeof h?.outcome !== 'string') continue;
+    const key = `${h.step}${h.story ? ` ${h.story}` : ''}`;
+    latest.delete(key);
+    latest.set(key, h.outcome);
+  }
+  return [...latest].map(([key, outcome]) => `  ${key}: outcome: ${outcome}`);
 }
 
 /**

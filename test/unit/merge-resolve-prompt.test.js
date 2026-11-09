@@ -50,7 +50,10 @@ test("merge-resolve renders every variable and the session's rules", () => {
       assert.match(text, /\/b\/\.bl\/run\/F-9\.merge-resolve\.scratch/);
       assert.match(text, /bl sync --commit -m "chore: escalate F-9 merge with main" --path features\/F9-t\/index\.md/);
       assert.match(text, /## Escalation/);
-      assert.match(text, /`RESOLVED`[\s\S]*`ESCALATED`/);
+      // The session returns an outcome object (F-68 D2), not a RESOLVED/ESCALATED line.
+      assert.match(text, /## Outcome\n\nEnd the session with this JSON object as your final message/);
+      assert.match(text, /"resolved": true, "reason": null/);
+      assert.doesNotMatch(text, /`RESOLVED`|`ESCALATED`/);
     }
   } finally {
     cleanup();

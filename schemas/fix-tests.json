@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "fix-tests outcome",
+  "description": "The outcome of a fix-tests session (feature-fix-tests.md), its final message (F-68 D2). fixed: the loop reruns the gate. rerun: the loop reruns the gate once, and a failure goes to one more session. unrelated: the loop escalates with the reason, unless the reason sounds flaky (looksFlaky), which sends the session back once. reason is required for every outcome, so Codex's strict --output-schema has no optional field to refuse.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "outcome", "reason"],
+  "properties": {
+    "summary": {
+      "description": "One line: what the session did.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\n]*$"
+    },
+    "outcome": {
+      "description": "fixed: a fix is committed. rerun: the failure would not reproduce after a real attempt. unrelated: nothing in the repos can make the gate pass.",
+      "enum": ["fixed", "unrelated", "rerun"]
+    },
+    "reason": {
+      "description": "fixed: the cause you fixed. rerun: what you tried. unrelated: why nothing in the repos can make the gate pass.",
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

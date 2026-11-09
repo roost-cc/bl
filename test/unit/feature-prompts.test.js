@@ -184,6 +184,35 @@ test('feature-fix-tests names the failing repo and its worktree, and has the fix
   }
 });
 
+test('the implement prompts end with the implement outcome object, as the final message or in the outcome file (F-68 D2)', () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const config = loadConfig({ backlogRoot: dir });
+    for (const name of ['feature-story', 'story-run']) {
+      for (const agent of ['claude', 'codex']) {
+        const where = `${name} (${agent})`;
+        const text = loadPrompt(name, CASES[name], { agent, config });
+        assert.match(text, /## Outcome\n\nEnd the session with this JSON object as your final message/, where);
+        assert.match(text, /"done": true, "blocked": null/, where);
+        assert.match(
+          text,
+          new RegExp(`when every acceptance criterion of ${CASES[name].storyId} is checked off`),
+          where,
+        );
+        assert.match(text, /- End with the outcome object that \*\*Outcome\*\* above describes\.\n?$/, where);
+        const file = loadPrompt(
+          name,
+          { ...CASES[name], outcomeCarrier: 'file', outcomePath: '/o.json' },
+          { agent, config },
+        );
+        assert.match(file, /write this JSON object, and nothing\nelse, to `\/o\.json`/, `${where}: file carrier`);
+      }
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test("feature-story derives the feature's repos from its stories' components and escalates a missing repo as a missing story", () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
@@ -565,13 +594,14 @@ test('implement, fix-tests and review-fix sessions write diagnostics to the scra
       'rule 1 redirects into the scratch dir',
     );
     assert.match(fix, /Move any that do not belong into `\/b\/\.bl\/run\/F-9\.x\.scratch`/, 'rule 5 moves strays out');
-    assert.match(fix, /`UNRELATED`\s+stops the run and escalates/, 'the agent knows UNRELATED escalates');
-    assert.match(fix, /^  - `FIXED`: /m, 'FIXED is one final line');
-    assert.match(fix, /^  - `RERUN: <what you tried>`: /m, 'RERUN is one final line');
-    assert.match(fix, /^  - `UNRELATED: <reason>`: use it only when nothing in the repos/m, 'UNRELATED is narrowed');
+    assert.match(fix, /`unrelated` stops the run and escalates/, 'the agent knows unrelated escalates');
+    assert.match(fix, /^- `fixed`: /m, 'fixed is one outcome');
+    assert.match(fix, /^- `rerun`: the failure would not reproduce/m, 'rerun is one outcome');
+    assert.match(fix, /^- `unrelated`: use it only when nothing in the repos/m, 'unrelated is narrowed');
+    assert.match(fix, /"outcome": "fixed", "reason": "<one line>"/, 'the outcome object');
     assert.match(
       fix,
-      /"Flaky", "intermittent", "timeout"\s+and "not caused by this branch" are never reasons for `UNRELATED`/,
+      /"Flaky", "intermittent", "timeout" and "not caused by this branch" are never reasons\s+for `unrelated`/,
     );
     assert.match(
       fix,
@@ -778,16 +808,16 @@ test('every feature prompt that can escalate carries the escalation guide once',
   }
 });
 
-test('fix-tests asks for the UNRELATED explanation in the scratch escalation file; the verifier puts open items under Details', () => {
+test('fix-tests asks for the unrelated explanation in the scratch escalation file; the verifier puts open items under Details', () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const config = loadConfig({ backlogRoot: dir });
     const fix = loadPrompt('feature-fix-tests', CASES['feature-fix-tests'], { agent: 'claude', config });
     assert.match(
       fix,
-      /write the full explanation for the\s+operator to `\/b\/\.bl\/run\/F-9\.x\.scratch\/escalation\.md`/,
+      /write the full explanation for the operator\s+to `\/b\/\.bl\/run\/F-9\.x\.scratch\/escalation\.md`/,
     );
-    assert.match(fix, /Keep the line itself to a short\s+summary/);
+    assert.match(fix, /Keep\s+`reason` to a short summary/);
     const verify = loadPrompt('review-verify', CASES['review-verify'], { agent: 'claude', config });
     assert.match(
       verify,

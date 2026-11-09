@@ -52,8 +52,8 @@ The lines of the output around every failure marker (runner failure headers,
    green. If a test is truly obsolete, say so in the commit body and name the Design decision.
 3. If a service the tests run against exited during startup, read its log first. The services
    under test may run code other than this worktree's, for example a main checkout's.
-   Then the gate is testing the wrong code: do not change code to satisfy it. End with
-   `UNRELATED: <which service runs which code, and why>`.
+   Then the gate is testing the wrong code: do not change code to satisfy it. Return the outcome
+   `unrelated`, with the reason "which service runs which code, and why".
 4. A failure this branch did not cause is still a bug, and it is yours to fix. That covers a
    flaky or intermittent failure, a timeout, a race, and a failure that is already on `main`.
    Check `main` in a scratch worktree of `main`, never by stashing in a worktree. Do not stop at
@@ -65,13 +65,14 @@ The lines of the output around every failure marker (runner failure headers,
 
    Then fix it in its own commit, even when the code is outside this {{unitKind}}'s scope. Record
    it as **Blocked by a bug** below describes. If the failure will not reproduce after a real
-   attempt, end with `RERUN: <what you tried>`. Never end with `UNRELATED` for it.
+   attempt, return the outcome `rerun`, with what you tried as the reason. Never return
+   `unrelated` for it.
 
 5. If the failing command is `git status`, the gate refused a dirty worktree. Commit the listed
    files that belong to the {{unitKind}}, with a message ending in ` ({{featureId}})`.
-   Move any that do not belong into `{{scratchDir}}`. If your tools cannot move them, leave them and end
-   with `UNRELATED: stray files in the worktree: <paths>`, so that the operator removes them.
-   Leave the tree clean.
+   Move any that do not belong into `{{scratchDir}}`. If your tools cannot move them, leave them
+   and return the outcome `unrelated`, with the reason "stray files in the worktree: <paths>", so
+   that the operator removes them. Leave the tree clean.
 6. Rerun the failing command until it passes, then run the full command once more. Commit with a
    Conventional Commits message ending in ` ({{featureId}})`. An ad-hoc bug fix ends in
    ` ({{featureId}} S-<id>)`.
@@ -95,25 +96,35 @@ headless session cannot remove files.
 
 {{toolGuide}}
 
+## Outcome
+
+{{outcomeDelivery}}
+
+```json
+{ "summary": "<one line: what you did>", "outcome": "fixed", "reason": "<one line>" }
+```
+
+Set `outcome` to exactly one of these values:
+
+- `fixed`: you committed a fix. `bl run` reruns the gate. `reason` names the cause you fixed.
+- `rerun`: the failure would not reproduce after a real attempt. `reason` says which runs you
+  made. `bl run` reruns the gate once. If it fails again, a new session gets the failure to fix.
+- `unrelated`: use it only when nothing in the repos can make the gate pass. There are three
+  cases:
+  1. the stack runs code other than this worktree's (rule 3);
+  2. stray files your tools cannot move (rule 5);
+  3. infrastructure outside the repos is down, such as an expired certificate or an
+     unreachable registry.
+
+  `unrelated` stops the run and escalates with your reason, without rerunning the gate. Keep
+  `reason` to a short summary. Before you return it, write the full explanation for the operator
+  to `{{scratchDir}}/escalation.md` with the {{writeTool}} tool, in the shape **Writing an
+  escalation** describes. `bl run` copies that file into the {{unitKind}} file's
+  **## Escalation**. It adds the gate's command, log path and excerpt after it, so do not repeat
+  those. "Flaky", "intermittent", "timeout" and "not caused by this branch" are never reasons
+  for `unrelated`.
+
 ## IMPORTANT
 
 - Do NOT push, open a PR, or run any `bl sync` other than a `bl sync --commit` line shown above.
-- End your response with exactly one of these lines:
-  - `FIXED`: you committed a fix. `bl run` reruns the gate.
-  - `RERUN: <what you tried>`: the failure would not reproduce after a real attempt. Say which
-    runs you made. `bl run` reruns the gate once. If it fails again, a new session gets the
-    failure to fix.
-  - `UNRELATED: <reason>`: use it only when nothing in the repos can make the gate pass. There
-    are three cases:
-    1. the stack runs code other than this worktree's (rule 3);
-    2. stray files your tools cannot move (rule 5);
-    3. infrastructure outside the repos is down, such as an expired certificate or an
-       unreachable registry.
-
-    `UNRELATED` stops the run and escalates with your reason, without rerunning the gate.
-    Keep the line itself to a short summary. Before you end with it,
-    write the full explanation for the operator to `{{scratchDir}}/escalation.md` with the
-    {{writeTool}} tool, in the shape **Writing an escalation** describes. `bl run` copies that file into the {{unitKind}} file's
-    **## Escalation**. It adds the gate's command, log path and excerpt after it, so do not repeat
-    those. "Flaky", "intermittent", "timeout"
-    and "not caused by this branch" are never reasons for `UNRELATED`.
+- End with the outcome object that **Outcome** above describes.

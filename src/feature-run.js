@@ -1213,77 +1213,40 @@ export function shellMerged(cmd, cwd, { scope = null } = {}) {
 }
 
 /**
- * The last non-blank line of an agent's output, trimmed: the line the loop
- * prompts reserve for the verdict (DONE S-1, FIXED, UNRELATED: …).
- */
-export function lastLine(output) {
-  return (
-    String(output ?? '')
-      .split('\n')
-      .filter((l) => l.trim())
-      .pop() ?? ''
-  ).trim();
-}
-
-/**
- * The reason of a fix-tests session that ended `UNRELATED: <reason>`, or null.
- * Only the last non-blank line counts, and a reason is required. Markdown
- * emphasis around the keyword (`**UNRELATED:**`, a backtick span) is ignored.
- */
-export function unrelatedReason(output) {
-  return verdictReason(output, 'UNRELATED');
-}
-
-/**
- * The reason of a fix-tests session that ended `RERUN: <reason>` (a failure
- * that would not reproduce after a real attempt), or null. Same parsing as
- * `unrelatedReason`.
- */
-export function rerunReason(output) {
-  return verdictReason(output, 'RERUN');
-}
-
-function verdictReason(output, keyword) {
-  const line = lastLine(output)
-    .replace(/^[`*_]+/, '')
-    .replace(/[`*_]+$/, '');
-  const m = line.match(new RegExp(`^${keyword}:[\`*_]*\\s*(.+)$`));
-  return m && m[1].trim() ? m[1].trim() : null;
-}
-
-/**
- * Whether an `UNRELATED` reason describes a flaky failure: flaky,
- * intermittent, a timeout, or "not caused by" this branch. Those are bugs to
- * fix, not reasons to stop (F-22 escalated a page-load timeout that had
- * failed 2 of its 4 gate runs), so the loop sends the session back once.
+ * Whether the reason of an `unrelated` fix-tests outcome describes a flaky
+ * failure: flaky, intermittent, a timeout, or "not caused by" this branch.
+ * Those are bugs to fix, not reasons to stop (F-22 escalated a page-load
+ * timeout that had failed 2 of its 4 gate runs), so the loop sends the session
+ * back once.
  */
 export function looksFlaky(reason) {
   return /flak|intermittent|time[sd]?[ -]?out|not caused by/i.test(String(reason ?? ''));
 }
 
-/** The note a fix-tests session gets when its flaky `UNRELATED` is refused. */
+/** The note a fix-tests session gets when its flaky `unrelated` outcome is refused. */
 export function flakyPushbackNote(reason) {
   return [
     '',
     '## Your previous session was sent back',
     '',
-    `A fix-tests session on this failure ended \`UNRELATED: ${reason}\`. A flaky, intermittent or`,
-    'timing failure, or one this branch did not cause, is a bug to fix, not a reason to stop. Find its',
-    'cause and fix it in its own commit with an ad-hoc story (rule 4 and **Blocked by a bug**), or end',
-    '`RERUN: <what you tried>` if it truly will not reproduce. A second `UNRELATED` escalates.',
+    `A fix-tests session on this failure returned \`unrelated\` with the reason "${reason}". A flaky,`,
+    'intermittent or timing failure, or one this branch did not cause, is a bug to fix, not a reason to',
+    'stop. Find its cause and fix it in its own commit with an ad-hoc story (rule 4 and **Blocked by a',
+    'bug**), or return `rerun` with what you tried if it truly will not reproduce. A second `unrelated`',
+    'escalates.',
     '',
   ].join('\n');
 }
 
-/** The note a fix-tests session gets when the gate failed again after `RERUN`. */
+/** The note a fix-tests session gets when the gate failed again after a `rerun` outcome. */
 export function rerunFailedNote(reason) {
   return [
     '',
     '## The failure reproduced',
     '',
-    `The previous fix-tests session ended \`RERUN: ${reason}\`, and the gate was rerun and failed`,
-    'again (the excerpt below is from that run). It reproduces: find its cause and fix it. `RERUN`',
-    'is not available again for this failure.',
+    `The previous fix-tests session returned \`rerun\` with the reason "${reason}", and the gate was`,
+    'rerun and failed again (the excerpt below is from that run). It reproduces: find its cause and fix',
+    'it. `rerun` is not available again for this failure.',
     '',
   ].join('\n');
 }
@@ -1601,26 +1564,25 @@ export function runSession(
     // carries on), but the operator must see it in `bl status`.
     const denials = Array.isArray(r.denials) ? r.denials : [];
     // A step with a schema says what its outcome was, or why it has none
-    // (F-68 D1). One without keeps the agent's last line (DONE S-1, FIXED,
-    // UNRELATED: …), the cheapest diagnostic when a step goes wrong.
+    // (F-68 D1, D4); `outcome` keeps the summary for `bl status`. A step
+    // without one (a review dimension pass) says nothing: its text is no verdict.
     const noOutcome = Boolean(schema) && r.structured == null;
-    let said = '';
-    if (noOutcome) said = `outcome error: ${outcomeFault(r)}`;
-    else if (schema) said = `outcome: ${String(r.structured.summary ?? '').slice(0, 160)}`;
-    else if (lastLine(r.output)) said = `said: ${lastLine(r.output).slice(0, 160)}`;
+    const outcome = schema && !noOutcome ? String(r.structured.summary).slice(0, 160) : null;
     const notes = [
       r.error ?? (r.isError ? 'agent reported an error' : ''),
       denials.length ? `denied: ${denials.join('; ')}` : '',
-      said,
+      noOutcome ? `outcome error: ${outcomeFault(r)}` : outcome != null ? `outcome: ${outcome}` : '',
     ];
     record(ctx, {
       step,
+      ...(story ? { story } : {}),
       promptName,
       startedAt: started,
       agent: c.agent,
       model: c.model ?? null,
       effort,
       ok: r.ok && denials.length === 0 && !noOutcome,
+      ...(outcome != null ? { outcome } : {}),
       note: notes.filter(Boolean).join(' — '),
     });
     return { ...r, configuration: { agent: c.agent, model: c.model ?? null } };
@@ -2253,15 +2215,15 @@ function fenced(text) {
 }
 
 /**
- * The file in a fix-tests session's scratch dir where a session ending
- * `UNRELATED:` writes its explanation for the operator, in the shape
- * `prompts/_escalation.md` describes. The final line stays one line.
+ * The file in a fix-tests session's scratch dir where a session returning
+ * `unrelated` writes its explanation for the operator, in the shape
+ * `prompts/_escalation.md` describes. The outcome's reason stays short.
  */
 export const ESCALATION_FILE = 'escalation.md';
 
 /**
- * The details of a fix-tests `UNRELATED` escalation: the session's written
- * explanation when it left one (then its one-line reason as a label), else
+ * The details of a fix-tests `unrelated` escalation: the session's written
+ * explanation when it left one (then its outcome's reason as a label), else
  * the reason alone; the gate's details follow either way.
  */
 function unrelatedDetails(reason, explanationPath, gate) {
@@ -2269,10 +2231,10 @@ function unrelatedDetails(reason, explanationPath, gate) {
   try {
     written = readFileSync(explanationPath, 'utf8').trim();
   } catch {
-    // No file: the session left only its one-line reason.
+    // No file: the session left only its outcome's reason.
   }
   if (!written) return `${reason}\n\n${gateDetails(gate)}`;
-  return `${written}\n\nfix-tests ended \`UNRELATED: ${reason}\`. The failed gate:\n\n${gateDetails(gate)}`;
+  return `${written}\n\nfix-tests returned \`unrelated\`: ${reason}. The failed gate:\n\n${gateDetails(gate)}`;
 }
 
 /** A failed gate's escalation details: command, log path, excerpt, tail. */
@@ -2504,6 +2466,7 @@ function implementStories(ctx) {
       promptName: implementPrompt,
       vars: storyVars,
       label: isStory(feature) ? `${s.id}: ${s.title}` : `${feature.id}: ${s.id} ${s.title}`,
+      schema: loadSchema('implement'),
     });
     if (escalationOpen(feature.indexPath)) {
       return finish(ctx, 'escalated', `agent escalated while implementing ${s.id}`);
@@ -2512,7 +2475,7 @@ function implementStories(ctx) {
     if (stopped) return stopped;
     let open = unmetCriteria(storyAbsPath);
     if (open.length > 0) {
-      runSession(ctx, {
+      const retry = runSession(ctx, {
         step: 'implement',
         story: s.id,
         mode: 'workon',
@@ -2522,6 +2485,7 @@ function implementStories(ctx) {
           nudge: `A previous session on this story ended with these acceptance criteria still unchecked. Finish them (or, if one cannot be met, say why in the story file and escalate):\n${open.map((o) => `- ${o}`).join('\n')}`,
         },
         label: isStory(feature) ? `${s.id} (retry)` : `${feature.id}: ${s.id} (retry)`,
+        schema: loadSchema('implement'),
       });
       if (escalationOpen(feature.indexPath)) {
         return finish(ctx, 'escalated', `agent escalated while implementing ${s.id}`);
@@ -2530,11 +2494,12 @@ function implementStories(ctx) {
       if (stopped) return stopped;
       open = unmetCriteria(storyAbsPath);
       if (open.length > 0) {
+        const blocked = retry.structured.blocked;
         return finish(
           ctx,
           'escalated',
           `${s.id} acceptance criteria unmet after two sessions`,
-          open.map((o) => `- [ ] ${o}`).join('\n'),
+          [...open.map((o) => `- [ ] ${o}`), ...(blocked ? ['', `The agent was blocked: ${blocked}`] : [])].join('\n'),
         );
       }
     }
@@ -2992,13 +2957,14 @@ function changedFilesSince(ctx, sha) {
  * Test gate with a fix session. Returns true when green (or skipped).
  *
  * gate → fix-tests → gate, escalating when the second gate fails, with two
- * bounded detours, each taken at most once per call:
- * - a session ending `UNRELATED:` with a flaky-sounding reason (looksFlaky)
- *   is sent back to fix-tests with a note instead of escalating; a second
- *   `UNRELATED` escalates.
- * - a session ending `RERUN:` (the failure would not reproduce) reruns the
- *   gate as FIXED does; if that gate fails, the failure goes to one more
- *   fix-tests session instead of escalating.
+ * bounded detours, each taken at most once per call. The session's outcome
+ * (`schemas/fix-tests.json`, F-68 D2) decides:
+ * - `unrelated` with a flaky-sounding reason (looksFlaky) is sent back to
+ *   fix-tests with a note instead of escalating; a second `unrelated`
+ *   escalates.
+ * - `rerun` (the failure would not reproduce) reruns the gate as `fixed`
+ *   does; if that gate fails, the failure goes to one more fix-tests session
+ *   instead of escalating.
  * So a call runs at most three fix-tests sessions and three gates.
  */
 function testGateWithFix(ctx) {
@@ -3015,7 +2981,7 @@ function testGateWithFix(ctx) {
   for (;;) {
     setStep(ctx, 'fix-tests');
     const scratchDir = scratchFor(ctx, `fix-tests-${ctx.state.testAttempts}`);
-    // Where a session ending UNRELATED writes the operator's explanation
+    // Where a session returning `unrelated` writes the operator's explanation
     // (prompts/_escalation.md). A send-back shares the slot, so an earlier
     // session's file is cleared first.
     const explanationPath = join(scratchDir, ESCALATION_FILE);
@@ -3037,34 +3003,35 @@ function testGateWithFix(ctx) {
         scratchDir,
       },
       label: `${ctx.feature.id}: fix tests`,
+      schema: loadSchema('fix-tests'),
     });
+    const { outcome, reason } = fix.structured;
     // An agent that judged the failure environmental (an expired certificate,
     // a stack running other code) has nothing to fix; rerunning the gate would
     // only cost minutes and replace its reason with a second identical failure.
     // `--resume` after the operator fixes the environment starts at the gate.
     // A flaky failure is not environmental: it goes back to be fixed, once.
-    const unrelated = unrelatedReason(fix?.output);
-    if (unrelated) {
-      if (!pushedBack && looksFlaky(unrelated)) {
+    if (outcome === 'unrelated') {
+      if (!pushedBack && looksFlaky(reason)) {
         pushedBack = true;
-        fixNote = flakyPushbackNote(unrelated);
+        fixNote = flakyPushbackNote(reason);
         record(ctx, {
           step: 'fix-tests',
           ok: false,
-          note: `UNRELATED refused — a flaky failure is a bug to fix; sent back once: ${unrelated.slice(0, 120)}`,
+          note: `unrelated refused — a flaky failure is a bug to fix; sent back once: ${reason.slice(0, 120)}`,
         });
         continue;
       }
       finish(
         ctx,
         'escalated',
-        'test gate failure is environmental (fix-tests: UNRELATED)',
-        unrelatedDetails(unrelated, explanationPath, gate),
+        'test gate failure is environmental (fix-tests: unrelated)',
+        unrelatedDetails(reason, explanationPath, gate),
       );
       return false;
     }
     if (rescope(ctx).stop) return false;
-    const rerun = rerunUsed ? null : rerunReason(fix?.output);
+    const rerun = !rerunUsed && outcome === 'rerun' ? reason : null;
     setStep(ctx, 'test');
     gate = runTestGate(ctx);
     if (gate.ok) return true;
@@ -3929,7 +3896,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
     runner.log(`  ${session ? 'resolution agent' : 'checks'}: ${what}...`);
     setStep(ctx, 'merge-resolve');
     const r = !session
-      ? { ok: true, output: '' }
+      ? { ok: true, structured: null }
       : runSession(ctx, {
           step: 'merge-resolve',
           mode: 'workon',
@@ -3940,10 +3907,13 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
             scratchDir: scratchFor(ctx, 'merge-resolve'),
           },
           label: `${unit.id}: resolve the merge with main`,
+          schema: loadSchema('merge-resolve'),
         });
     const problems = checked.flatMap((e) => resolutionProblems(ctx, e));
     if (escalationOpen(unit.indexPath)) problems.unshift('the agent wrote an escalation');
     else if (!r.ok || r.isError) problems.unshift(`the session failed: ${sessionError(r)}`);
+    else if (r.structured?.resolved === false)
+      problems.unshift(`the agent did not resolve it: ${r.structured.reason ?? '(no reason given)'}`);
     if (problems.length > 0) {
       const stuck = work.filter((e) => !abortIntegration(ctx, e.worktreePath));
       const left = agentCommits(ctx, repos);
@@ -3953,7 +3923,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
         blocks.join('\n\n'),
         gate ? gateDetails(gate) : '',
         `After the session:\n\n${problems.map((p) => `- ${p}`).join('\n')}`,
-        `The agent's last line: ${fenced(lastLine(r.output) || '(none)')}`,
+        r.structured ? `The agent's outcome: ${r.structured.summary}` : '',
         `${abortNote(stuck).trim()}${left}`.trim(),
         restored,
       ].filter(Boolean);

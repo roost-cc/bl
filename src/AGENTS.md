@@ -1134,8 +1134,25 @@ bl reads an outcome out of prose. Two carriers deliver the value:
   `OUTCOME_RETRY_NOTE`. A session with no id starts again with the note after
   its prompt. A second failure escalates with the fault and the last 20 lines
   of the session's text, and throws `OutcomeError`. A step with a valid
-  outcome records `outcome: <summary>`; a step without a schema still records
-  `said: <last line>` until its prompt gets a schema.
+  outcome records `outcome: <summary>` in its note and the summary as the
+  history entry's `outcome` field (with `story` for an implement step); `bl
+status` prints the latest one of each step (`outcomeLines()` in
+  `feature-cmd.js`). A step without a schema (a review dimension pass)
+  records nothing of its text.
+- **Implement, fix-tests and merge-resolve outcomes (D2, D4).** The implement
+  step (`feature-story.md`, `story-run.md`) passes `schemas/implement.json`
+  (`{ summary, done, blocked }`); the loop still decides from the story's
+  criteria and `## Escalation`, and names `blocked` when it escalates unmet
+  criteria. fix-tests passes `fix-tests.json`
+  (`{ summary, outcome: fixed | rerun | unrelated, reason }`) and the
+  resolution `merge-resolve.json` (`{ summary, resolved, reason }`;
+  `resolved: false` is a resolution problem). Every property of the three is
+  required, `blocked` and the resolution's `reason` nullable, so Codex's
+  strict `--output-schema` has no optional field to refuse. The prompts end
+  with `{{outcomeDelivery}}` and the object (`_implement-outcome.md` is
+  shared by the two implement prompts). No prompt asks for a verdict line
+  (`DONE S-n`, `ESCALATED`, `RESOLVED`, `FIXED`, `UNRELATED:`, `RERUN:`), and
+  `prompts-no-status-writes.test.js` guards it.
 
 #### The local provider (S-1371)
 
@@ -1424,29 +1441,28 @@ to read the log rather than rerun the suite. A second failed attempt escalates
 as `test gate failed twice` with the command, the log path, the excerpt and
 the tail, in that order.
 
-The fix-tests session ends with one of three lines. The last non-blank line is
-the one that counts. Markdown emphasis around the keyword is ignored, a reason
-is required, and a keyword on an earlier line does not count
-(`unrelatedReason()` / `rerunReason()`).
+The fix-tests session returns an outcome object (`schemas/fix-tests.json`,
+F-68 D2): `outcome` is one of three values, and `reason` is required for each.
+Nothing is read from the session's text; a session without a valid outcome is
+resumed once and then escalates (D5).
 
-- `FIXED`: the agent committed a fix, and the loop reruns the gate. A second
-  failure escalates as `test gate failed twice`. Any ending the loop does not
-  recognise is treated the same way.
-- `RERUN: <what it tried>`: the failure would not reproduce after a real
-  attempt. The loop reruns the gate. If that gate fails too, the failure is
-  real, and one more fix-tests session gets it (`fixNote` says it reproduced)
-  instead of escalating. `RERUN` is honoured once per gate. After that it
-  counts as `FIXED`.
-- `UNRELATED: <reason>`: nothing in the repos can make the gate pass. That
+- `fixed`: the agent committed a fix, and the loop reruns the gate. A second
+  failure escalates as `test gate failed twice`.
+- `rerun`: the failure would not reproduce after a real attempt; `reason`
+  says what it tried. The loop reruns the gate. If that gate fails too, the
+  failure is real, and one more fix-tests session gets it (`fixNote` says it
+  reproduced) instead of escalating. `rerun` is honoured once per gate. After
+  that it counts as `fixed`.
+- `unrelated`: nothing in the repos can make the gate pass. That
   means the stack runs other code than this worktree's, stray files the
   session cannot move, or infrastructure outside the repos is down. The loop
   does not rerun the gate. It escalates at once as `test gate failure is
-environmental (fix-tests: UNRELATED)`, with the agent's reason followed by
-  the first attempt's details. The line stays one line; the session writes
+environmental (fix-tests: unrelated)`, with the agent's reason followed by
+  the first attempt's details. The reason stays short; the session writes
   its full explanation for the operator to `escalation.md` in its scratch
   directory (`ESCALATION_FILE`), and when that file has content it replaces
   the bare reason in `## Escalation`, followed by
-  ``fix-tests ended `UNRELATED: <reason>` `` and the gate's details
+  ``fix-tests returned `unrelated`: <reason>`` and the gate's details
   (`unrelatedDetails()`). The loop clears the file before every fix-tests
   session, so a sent-back session never inherits the previous one's. On F-4 an expired dev certificate was diagnosed
   correctly, and a rerun would have cost five minutes and replaced the reason
@@ -1456,11 +1472,11 @@ environmental (fix-tests: UNRELATED)`, with the agent's reason followed by
 
 A flaky failure is a bug to fix, not an environment problem. F-22 escalated a
 page-load timeout with `UNRELATED` after it had failed 2 of its 4 gate runs.
-So the first `UNRELATED` whose reason reads as flaky (`looksFlaky()`: flaky,
-intermittent, timeout / timed out, "not caused by") does not escalate. The
-loop sends the session back to fix-tests once, without rerunning the gate, and
-`fixNote` (`flakyPushbackNote()`) tells the agent to fix the failure. The
-refusal is recorded in the run history. A second `UNRELATED` escalates. With
+So the first `unrelated` outcome whose reason reads as flaky (`looksFlaky()`:
+flaky, intermittent, timeout / timed out, "not caused by") does not escalate.
+The loop sends the session back to fix-tests once, without rerunning the gate,
+and `fixNote` (`flakyPushbackNote()`) tells the agent to fix the failure. The
+refusal is recorded in the run history. A second `unrelated` escalates. With
 both detours, one `testGateWithFix()` call runs at most three fix-tests
 sessions and three gates.
 
@@ -1533,7 +1549,7 @@ Where the text comes from:
   in the same shape: one block per decision, its code / design /
   test-infrastructure diagnosis under **Why the agents can't fix it**, and the
   open items under **Details**.
-- fix-tests ends with a one-line `UNRELATED: <reason>`, so its explanation
+- fix-tests returns `unrelated` with a short reason, so its explanation
   goes to `<scratch>/escalation.md`, which the loop copies in (see **The test
   gate**).
 - Escalations the loop raises on its own (a gate that failed twice, a push or
@@ -1560,8 +1576,9 @@ every loop session that may need to diagnose something gets a
 
 The prompts tell the agent to write probe scripts, redirected test output and
 scratch configs there, never in the worktree, and none tells it to delete
-files. A stray file fix-tests cannot move out ends the session with
-`UNRELATED: stray files in the worktree: <paths>` for the operator.
+files. A stray file fix-tests cannot move out ends the session with the
+outcome `unrelated` and the reason "stray files in the worktree: <paths>" for
+the operator.
 
 ### Worktree hygiene in the loop
 
@@ -3533,10 +3550,12 @@ HEAD`): one merged or committed on by a session, and one an earlier
   repo must have no `MERGE_HEAD`, an empty `git ls-files -u`, the ref merged,
   and no conflict marker (`git grep -nE '^(<{7}|>{7})( |$)' <merge> --
 <files>` in each merge since the integration began, over the conflicted
-  files and those a retained resolution merged); a failed session, an escalation or any failed check runs
+  files and those a retained resolution merged); a failed session, an
+  outcome with `resolved: false` (`schemas/merge-resolve.json`), an escalation
+  or any failed check runs
   `git merge --abort` where a merge is still in progress, rolls back and
   escalates `merge with main: <what failed>, and the resolution agent did not
-resolve it`, with what bl found, the agent's last line and where its
+resolve it`, with what bl found, the outcome's summary and where its
   commits are kept (`git reset --keep <sha>` restores them). A merge that
   failed with no conflicted file (git refused to start it) has nothing to
   resolve and escalates `merge with main: <repo> conflicts with main` as

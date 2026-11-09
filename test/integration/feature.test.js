@@ -1023,6 +1023,43 @@ test('bl run --plan prints the steps; run refuses unapproved features and unknow
   }
 });
 
+test('bl status prints the latest outcome of each step under the run line (F-68 D4)', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    repos: REPOS,
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'running', branch: 'f1-feat' }],
+  });
+  try {
+    mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
+    writeFileSync(
+      join(dir, '.bl', 'run', 'F-1.json'),
+      JSON.stringify({
+        feature: 'F-1',
+        status: 'clean',
+        step: 'review',
+        updatedAt: '2026-11-09T12:00:00Z',
+        history: [
+          { step: 'implement', story: 'S-1', ok: true, outcome: 'first try', note: 'outcome: first try' },
+          { step: 'implement', story: 'S-2', ok: true, outcome: 'built S-2', note: 'outcome: built S-2' },
+          { step: 'implement', story: 'S-1', ok: true, outcome: 'finished S-1', note: 'outcome: finished S-1' },
+          { step: 'test', ok: false, note: 'node exited 1' },
+          { step: 'fix-tests', ok: true, outcome: 'fixed the race', note: 'outcome: fixed the race' },
+          { step: 'review:correctness', ok: true, note: '' },
+          { step: 'review:verify', ok: true, outcome: 'clean', note: 'outcome: clean' },
+        ],
+      }),
+    );
+    const r = runBl(['status', 'F-1'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(
+      r.stdout,
+      /\(updated 2026-11-09T12:00:00Z, 7 events, last: outcome: clean\)\n {2}implement S-2: outcome: built S-2\n {2}implement S-1: outcome: finished S-1\n {2}fix-tests: outcome: fixed the race\n {2}review:verify: outcome: clean\n/,
+    );
+    assert.doesNotMatch(r.stdout, /first try|review:correctness: outcome|said:/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("bl status reports the last run's state from .bl/run", () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,

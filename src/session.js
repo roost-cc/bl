@@ -159,19 +159,22 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * D1): the object to write to `{{outcomePath}}` as the session's last act.
  * The batch refine passes its sub-agents `_refine-outcome-subagent` in its
  * place: they reply with the object, and the orchestrator writes the file.
- * `outcomeDelivery` is the sentence that tells a review, fix or self-review
- * session how to return its outcome object (F-68 D1): as its final message
+ * `outcomeDelivery` is the sentence that tells a loop session how to return
+ * its outcome object (F-68 D1): as its final message
  * (`_outcome-message`), or, with `vars.outcomeCarrier === "file"` (an
  * interactive session), written to `{{outcomePath}}` (`_outcome-file`).
  * `fixOutcome` is the fix round's outcome object, shared by
  * `feature-workon-review` and `workon-review`; `selfReviewOutcome` the
- * self-review's, shared by `feature-self-review` and `feature-fix-self-review`.
+ * self-review's, shared by `feature-self-review` and `feature-fix-self-review`;
+ * `implementOutcome` the implement step's, shared by `feature-story` and
+ * `story-run`.
  */
 const PROMPT_PARTIALS = {
   refineOutcome: '_refine-outcome',
   outcomeDelivery: '_outcome-message',
   fixOutcome: '_fix-outcome',
   selfReviewOutcome: '_self-review-outcome',
+  implementOutcome: '_implement-outcome',
   blockedByBug: '_blocked-by-bug',
   escalationGuide: '_escalation',
   validateBeforeSync: '_validate-before-sync',

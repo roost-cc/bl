@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "implement outcome",
+  "description": "The outcome of an implement session of bl run (feature-story.md, story-run.md), its final message (F-68 D2). The loop still decides from the story's acceptance criteria and the unit's ## Escalation; it records the summary, and names blocked when it escalates unmet criteria.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "done", "blocked"],
+  "properties": {
+    "summary": {
+      "description": "One line: what the session did.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^\\n]*$"
+    },
+    "done": {
+      "description": "true when every acceptance criterion of the story is checked off.",
+      "type": "boolean"
+    },
+    "blocked": {
+      "description": "What stopped the session, in one line, when done is false; null when nothing did.",
+      "anyOf": [{ "type": "string", "minLength": 1, "pattern": "^[^\\n]*$" }, { "type": "null" }]
+    }
+  }
+}

@@ -136,13 +136,25 @@ function landOnMain(fx, { featTxt = null } = {}) {
   g(c, 'push', '-q', 'origin', 'main');
 }
 
-/** Real git and plugin commands through the default runner; sessions refused. */
+/**
+ * Real git and plugin commands through the default runner. The resolution
+ * agent resolves nothing (`resolved: false`, F-68 D2); every other session is
+ * refused.
+ */
 function stubRunner(testCmd = 'true') {
   const calls = { gates: 0, sessions: 0, log: [] };
   const runner = {
     ...defaultRunner(),
-    session() {
+    session({ promptName }) {
       calls.sessions++;
+      if (promptName === 'merge-resolve') {
+        return {
+          ok: true,
+          output: '',
+          isError: false,
+          structured: { summary: 'could not resolve', resolved: false, reason: 'no agent in this test' },
+        };
+      }
       return { ok: false, output: 'no sessions in this test', isError: true };
     },
     testPlugins() {

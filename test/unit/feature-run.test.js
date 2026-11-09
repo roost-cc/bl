@@ -34,10 +34,7 @@ import {
   parseMaxRounds,
   acquireRunLock,
   RUN_DIR,
-  unrelatedReason,
-  rerunReason,
   looksFlaky,
-  lastLine,
   shellMerged,
   ESCALATION_FILE,
   localTime,
@@ -61,7 +58,13 @@ import { _hooks as atomicHooks } from '../../src/atomic-write.js';
 import { installPartialWrites } from '../helpers/partial-write.js';
 import { startTokenWriter } from '../helpers/token-writer.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
-import { defaultOutcome, FIX_OUTCOME, reviewOutcome, SELF_REVIEW_OUTCOME } from '../helpers/outcomes.js';
+import {
+  defaultOutcome,
+  FIX_OUTCOME,
+  fixTestsOutcome,
+  reviewOutcome,
+  SELF_REVIEW_OUTCOME,
+} from '../helpers/outcomes.js';
 import { outcomeFor, validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
 
@@ -386,8 +389,10 @@ function fakeRunner({ dir, feature, behaviour = {}, testResults = [], clock = Da
         if (b.review) b.review(o);
       } else if (o.promptName === 'review-verify') out = b.verify(o);
       else if (o.promptName === 'feature-workon-review') out = b.fix(o);
-      else if (o.promptName === 'feature-fix-tests' && b.fixTests) b.fixTests(o);
-      else if (o.promptName === 'feature-self-review' && b.selfReview) out = b.selfReview(o);
+      else if (o.promptName === 'feature-fix-tests') {
+        if (b.fixTests) b.fixTests(o);
+        if (b.fixTestsOutcome) out = b.fixTestsOutcome(o);
+      } else if (o.promptName === 'feature-self-review' && b.selfReview) out = b.selfReview(o);
       else if (o.promptName === 'feature-fix-self-review' && b.fixSelfReview) out = b.fixSelfReview(o);
       return {
         ok: true,
@@ -686,7 +691,7 @@ test('the test gate asks the runner for merged streams', async () => {
   }
 });
 
-test('a fix-tests session ending UNRELATED escalates after one gate run with its reason', async () => {
+test('a fix-tests session returning unrelated escalates after one gate run with its reason', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
     const runner = fakeRunner({
@@ -694,21 +699,19 @@ test('a fix-tests session ending UNRELATED escalates after one gate run with its
       feature,
       testResults: [1, 1],
       behaviour: {
-        output: (o) =>
-          o.promptName === 'feature-fix-tests'
-            ? 'Looked at the log.\n\nUNRELATED: dev certificate expired (CERT_HAS_EXPIRED on every client test)\n\n'
-            : '',
+        fixTestsOutcome: () =>
+          fixTestsOutcome('unrelated', 'dev certificate expired (CERT_HAS_EXPIRED on every client test)'),
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'escalated');
-    assert.equal(state.lastError, 'test gate failure is environmental (fix-tests: UNRELATED)');
+    assert.equal(state.lastError, 'test gate failure is environmental (fix-tests: unrelated)');
     assert.equal(runner.calls.filter((c) => c.cmd === 'npm test').length, 1, 'the gate is not rerun');
     assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no PR');
     const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation').trim();
     assert.match(
       esc,
-      /^test gate failure is environmental \(fix-tests: UNRELATED\)\n\ndev certificate expired \(CERT_HAS_EXPIRED on every client test\)\n\nCommand: `npm test`/,
+      /^test gate failure is environmental \(fix-tests: unrelated\)\n\ndev certificate expired \(CERT_HAS_EXPIRED on every client test\)\n\nCommand: `npm test`/,
     );
     assert.ok(esc.includes(`Full log: ${join(dir, RUN_DIR, 'F-1.test-1.log')}`), esc);
     assert.match(esc, /Failure excerpt:[\s\S]*AssertionError: boom[\s\S]*Last 30 lines:/);
@@ -726,7 +729,7 @@ test('a fix-tests session ending UNRELATED escalates after one gate run with its
   }
 });
 
-test("an UNRELATED session's escalation file becomes the Escalation, followed by its reason and the gate details", async () => {
+test("an unrelated session's escalation file becomes the Escalation, followed by its reason and the gate details", async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
     const explanation =
@@ -737,7 +740,7 @@ test("an UNRELATED session's escalation file becomes the Escalation, followed by
       testResults: [1, 1],
       behaviour: {
         fixTests: (o) => writeFileSync(join(o.vars.scratchDir, ESCALATION_FILE), `${explanation}\n\n`),
-        output: (o) => (o.promptName === 'feature-fix-tests' ? 'UNRELATED: dev certificate expired\n' : ''),
+        fixTestsOutcome: () => fixTestsOutcome('unrelated', 'dev certificate expired'),
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -745,7 +748,7 @@ test("an UNRELATED session's escalation file becomes the Escalation, followed by
     const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation').trim();
     assert.ok(
       esc.startsWith(
-        `test gate failure is environmental (fix-tests: UNRELATED)\n\n${explanation}\n\nfix-tests ended \`UNRELATED: dev certificate expired\`. The failed gate:\n\nCommand: \`npm test\``,
+        `test gate failure is environmental (fix-tests: unrelated)\n\n${explanation}\n\nfix-tests returned \`unrelated\`: dev certificate expired. The failed gate:\n\nCommand: \`npm test\``,
       ),
       esc,
     );
@@ -769,7 +772,7 @@ test("a sent-back fix-tests session does not inherit the previous session's esca
           seen.push(existsSync(file));
           if (++n === 1) writeFileSync(file, 'stale explanation\n');
         },
-        output: (o) => (o.promptName === 'feature-fix-tests' ? 'UNRELATED: a flaky timeout\n' : ''),
+        fixTestsOutcome: () => fixTestsOutcome('unrelated', 'a flaky timeout'),
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -783,13 +786,11 @@ test("a sent-back fix-tests session does not inherit the previous session's esca
   }
 });
 
-test('any other fix-tests ending reruns the gate', async () => {
-  for (const [label, said] of [
-    ['FIXED', 'Fixed the off-by-one.\nFIXED\n'],
-    ['empty', ''],
-    ['UNRELATED not on the last line', 'UNRELATED: maybe the certificate\nActually it was my bug.\nFIXED'],
-    ['UNRELATED without a reason', 'UNRELATED:   '],
-    ['UNRELATED inside a sentence', 'I first thought UNRELATED: cert, but no'],
+test('a fixed outcome reruns the gate, whatever the session text says', async () => {
+  for (const [label, text] of [
+    ['no text', ''],
+    ['an old verdict line', 'UNRELATED: maybe the certificate'],
+    ['an old RERUN line', 'RERUN: 20 passes'],
   ]) {
     const { dir, cleanup, config, feature, prep } = setup();
     try {
@@ -797,18 +798,48 @@ test('any other fix-tests ending reruns the gate', async () => {
         dir,
         feature,
         testResults: [1, 0],
-        behaviour: { output: (o) => (o.promptName === 'feature-fix-tests' ? said : '') },
+        behaviour: { output: (o) => (o.promptName === 'feature-fix-tests' ? text : '') },
       });
       const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
       assert.equal(state.status, 'clean', label);
+      assert.equal(runner.calls.filter((c) => c.prompt === 'feature-fix-tests').length, 1, label);
       assert.ok(runner.calls.filter((c) => c.cmd === 'npm test').length >= 2, `${label}: gate rerun`);
+      const fix = state.history.find((h) => h.step === 'fix-tests');
+      assert.equal(fix.outcome, 'fix-tests: fixed', label);
+      assert.equal(fix.note, 'outcome: fix-tests: fixed', label);
     } finally {
       cleanup();
     }
   }
 });
 
-test('a flaky UNRELATED is sent back to fix-tests once with a note, and a second UNRELATED escalates', async () => {
+test('a fix-tests session that ends with a verdict line and no outcome is no verdict: resumed once, then escalated', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      testResults: [1],
+      behaviour: {
+        output: (o) => (o.promptName === 'feature-fix-tests' ? 'Looked.\nUNRELATED: dev certificate expired\n' : ''),
+        // A session that returns text, not the schema's object.
+        fixTestsOutcome: () => 'UNRELATED: dev certificate expired',
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(runner.calls.filter((c) => c.prompt === 'feature-fix-tests').length, 2, 'resumed once');
+    assert.equal(runner.calls.filter((c) => c.cmd === 'npm test').length, 1, 'the gate is not rerun');
+    assert.equal(state.status, 'escalated');
+    assert.match(state.lastError, /^fix-tests: no valid outcome after one retry \(not JSON/);
+    const failed = state.history.filter((h) => h.step === 'fix-tests' && h.ok === false);
+    assert.equal(failed.length, 2);
+    for (const h of failed) assert.match(h.note, /^outcome error: not JSON/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a flaky unrelated is sent back to fix-tests once with a note, and a second unrelated escalates', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
     const runner = fakeRunner({
@@ -816,23 +847,20 @@ test('a flaky UNRELATED is sent back to fix-tests once with a note, and a second
       feature,
       testResults: [1, 1],
       behaviour: {
-        output: (o) =>
-          o.promptName === 'feature-fix-tests'
-            ? 'Deferred it.\nUNRELATED: a flaky page.goto load timeout in debounce.int.test.js\n'
-            : '',
+        fixTestsOutcome: () => fixTestsOutcome('unrelated', 'a flaky page.goto load timeout in debounce.int.test.js'),
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     const fixes = runner.calls.filter((c) => c.prompt === 'feature-fix-tests');
     assert.equal(fixes.length, 2, 'sent back once, not more');
     assert.equal(fixes[0].vars.fixNote, '', 'the first session gets no note');
-    assert.match(fixes[1].vars.fixNote, /ended `UNRELATED: a flaky page\.goto load timeout/);
-    assert.match(fixes[1].vars.fixNote, /is a bug to fix, not a reason to stop/);
+    assert.match(fixes[1].vars.fixNote, /returned `unrelated` with the reason "a flaky page\.goto load timeout/);
+    assert.match(fixes[1].vars.fixNote, /is a bug to fix, not a reason to\nstop/);
     assert.equal(runner.calls.filter((c) => c.cmd === 'npm test').length, 1, 'the gate is not rerun in between');
     assert.equal(state.status, 'escalated');
-    assert.equal(state.lastError, 'test gate failure is environmental (fix-tests: UNRELATED)');
+    assert.equal(state.lastError, 'test gate failure is environmental (fix-tests: unrelated)');
     assert.ok(
-      state.history.some((h) => h.step === 'fix-tests' && /UNRELATED refused/.test(h.note ?? '')),
+      state.history.some((h) => h.step === 'fix-tests' && /unrelated refused/.test(h.note ?? '')),
       'the pushback is in the history',
     );
   } finally {
@@ -840,7 +868,7 @@ test('a flaky UNRELATED is sent back to fix-tests once with a note, and a second
   }
 });
 
-test('a flaky UNRELATED sent back and then FIXED reruns the gate and carries on', async () => {
+test('a flaky unrelated sent back and then fixed reruns the gate and carries on', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
     let n = 0;
@@ -849,12 +877,10 @@ test('a flaky UNRELATED sent back and then FIXED reruns the gate and carries on'
       feature,
       testResults: [1, 0],
       behaviour: {
-        output: (o) =>
-          o.promptName === 'feature-fix-tests'
-            ? ++n === 1
-              ? 'UNRELATED: intermittent, not caused by this branch'
-              : 'Fixed the race (S-9).\nFIXED'
-            : '',
+        fixTestsOutcome: () =>
+          ++n === 1
+            ? fixTestsOutcome('unrelated', 'intermittent, not caused by this branch')
+            : fixTestsOutcome('fixed', 'the race (S-9)'),
       },
     });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -865,11 +891,11 @@ test('a flaky UNRELATED sent back and then FIXED reruns the gate and carries on'
   }
 });
 
-test('RERUN reruns the gate; when it fails again one more fix session gets it, then the cap escalates', async () => {
+test('rerun reruns the gate; when it fails again one more fix session gets it, then the cap escalates', async () => {
   for (const [label, results, expected, sessions] of [
     ['rerun passes', [1, 0], 'clean', 1],
     ['rerun fails, then fixed', [1, 1, 0], 'clean', 2],
-    ['rerun fails, RERUN again is FIXED', [1, 1, 1], 'escalated', 2],
+    ['rerun fails, a second rerun counts as fixed', [1, 1, 1], 'escalated', 2],
   ]) {
     const { dir, cleanup, config, feature, prep } = setup();
     try {
@@ -877,12 +903,7 @@ test('RERUN reruns the gate; when it fails again one more fix session gets it, t
         dir,
         feature,
         testResults: [...results],
-        behaviour: {
-          output: (o) =>
-            o.promptName === 'feature-fix-tests'
-              ? 'Ran it 20 times at 4 workers, never failed.\nRERUN: 20 passes at --workers=4'
-              : '',
-        },
+        behaviour: { fixTestsOutcome: () => fixTestsOutcome('rerun', '20 passes at --workers=4') },
       });
       const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
       const fixes = runner.calls.filter((c) => c.prompt === 'feature-fix-tests');
@@ -891,7 +912,7 @@ test('RERUN reruns the gate; when it fails again one more fix session gets it, t
       if (sessions > 1)
         assert.match(
           fixes[1].vars.fixNote,
-          /ended `RERUN: 20 passes at --workers=4`, and the gate was rerun and failed/,
+          /returned `rerun` with the reason "20 passes at --workers=4", and the gate was\nrerun and failed/,
           label,
         );
       if (expected === 'escalated') assert.match(state.lastError, /test gate failed twice/, label);
@@ -924,35 +945,34 @@ test('looksFlaky matches flaky, intermittent, timeout and not-caused-by reasons 
   }
 });
 
-test('rerunReason parses a RERUN last line like unrelatedReason', () => {
-  assert.equal(rerunReason('tried\nRERUN: 20 passes\n'), '20 passes');
-  assert.equal(rerunReason('**RERUN:** 5 passes'), '5 passes');
-  for (const no of ['FIXED', 'RERUN:', 'RERUN: x\nFIXED', 'rerun: x', 'UNRELATED: x', null]) {
-    assert.equal(rerunReason(no), null, JSON.stringify(no));
+test('the fix-tests schema takes fixed, rerun and unrelated, each with a reason', () => {
+  const schema = loadSchema('fix-tests');
+  for (const outcome of ['fixed', 'rerun', 'unrelated']) {
+    assert.equal(validateOutcome(schema, fixTestsOutcome(outcome, 'x')).structuredError, null, outcome);
   }
-  assert.equal(unrelatedReason('RERUN: x'), null);
+  for (const [label, value, fault] of [
+    ['no reason', { summary: 's', outcome: 'unrelated' }, /at \$\/reason: must have required property 'reason'/],
+    ['an empty reason', { summary: 's', outcome: 'rerun', reason: '' }, /at \$\/reason:/],
+    ['an old keyword', { summary: 's', outcome: 'UNRELATED', reason: 'x' }, /at \$\/outcome:/],
+    ['an extra field', { ...fixTestsOutcome(), said: 'FIXED' }, /at \$\/said:/],
+  ]) {
+    assert.match(validateOutcome(schema, value).structuredError, fault, label);
+  }
 });
 
-test('unrelatedReason reads only the last non-blank line and tolerates markdown around the keyword', () => {
-  assert.equal(unrelatedReason('x\nUNRELATED: cert expired\n\n'), 'cert expired');
-  assert.equal(unrelatedReason('**UNRELATED:** stack runs main'), 'stack runs main');
-  assert.equal(unrelatedReason('`UNRELATED: flaky`'), 'flaky');
-  assert.equal(unrelatedReason('UNRELATED: a\r\n'), 'a');
-  for (const no of [
-    'FIXED',
-    '',
-    null,
-    undefined,
-    'UNRELATED:',
-    'UNRELATED',
-    'unrelated: x',
-    'UNRELATED: x\nFIXED',
-    'see UNRELATED: x',
-  ]) {
-    assert.equal(unrelatedReason(no), null, JSON.stringify(no));
-  }
-  assert.equal(lastLine('a\n  b  \n\n  \n'), 'b');
-  assert.equal(lastLine(undefined), '');
+test('the implement and merge-resolve schemas take a null blocked or reason, and refuse a multi-line one', () => {
+  const implement = loadSchema('implement');
+  const resolve = loadSchema('merge-resolve');
+  assert.equal(validateOutcome(implement, { summary: 's', done: true, blocked: null }).structuredError, null);
+  assert.equal(validateOutcome(implement, { summary: 's', done: false, blocked: 'no db' }).structuredError, null);
+  assert.match(validateOutcome(implement, { summary: 's', done: true }).structuredError, /\$\/blocked/);
+  assert.match(
+    validateOutcome(implement, { summary: 's', done: false, blocked: 'a\nb' }).structuredError,
+    /\$\/blocked/,
+  );
+  assert.equal(validateOutcome(resolve, { summary: 's', resolved: true, reason: null }).structuredError, null);
+  assert.equal(validateOutcome(resolve, { summary: 's', resolved: false, reason: 'x' }).structuredError, null);
+  assert.match(validateOutcome(resolve, { summary: 's', resolved: true }).structuredError, /\$\/reason/);
 });
 
 test('implement, fix-tests and review-fix sessions each get a scratch dir under .bl/run, created before they start', async () => {

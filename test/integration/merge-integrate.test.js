@@ -26,7 +26,7 @@ import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { installPartialWrites } from '../helpers/partial-write.js';
 import { runBl } from '../helpers/run-bl.js';
 import { noAgentEnv } from '../helpers/fake-agent.js';
-import { defaultOutcome, reviewOutcome } from '../helpers/outcomes.js';
+import { defaultOutcome, fixTestsOutcome, MERGE_RESOLVE_OUTCOME, reviewOutcome } from '../helpers/outcomes.js';
 import { loadConfig, normalizeId, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { findStoryDir } from '../../src/story.js';
 import { extractSection, findFeature, normalizeFeatureId } from '../../src/feature.js';
@@ -147,13 +147,20 @@ function landOnMain(fx, file, content, message) {
   return g(c, 'rev-parse', '--short', 'HEAD');
 }
 
-/** Real git through the default runner; the test plugin is `test`, sessions refused. */
+/**
+ * Real git through the default runner; the test plugin is `test`. The
+ * resolution agent resolves nothing (`resolved: false`, F-68 D2), fix-tests
+ * returns `fixed` without changing anything, and every other session is
+ * refused.
+ */
 function stubRunner(testCmd) {
   const calls = { gates: 0, sessions: 0, log: [] };
   const runner = {
     ...defaultRunner(),
-    session() {
+    session({ promptName }) {
       calls.sessions++;
+      if (promptName === 'merge-resolve') return UNRESOLVED;
+      if (promptName === 'feature-fix-tests') return FIXED_TESTS;
       return { ok: false, output: 'no sessions in this test', isError: true };
     },
     testPlugins() {
@@ -168,7 +175,17 @@ function stubRunner(testCmd) {
 }
 
 const REFUSED = { ok: false, output: 'no agent in this test', isError: true };
-const RESOLVED = { ok: true, output: 'RESOLVED', isError: false };
+/** A resolution session's outcome (F-68 D2): every merge committed. */
+const RESOLVED = { ok: true, output: '', isError: false, structured: MERGE_RESOLVE_OUTCOME };
+/** A resolution session that says it could not resolve the merge. */
+const UNRESOLVED = {
+  ok: true,
+  output: '',
+  isError: false,
+  structured: { summary: 'could not resolve', resolved: false, reason: 'no agent in this test' },
+};
+/** A fix-tests session that committed a fix. */
+const FIXED_TESTS = { ok: true, output: '', isError: false, structured: fixTestsOutcome() };
 const REVIEW_SESSIONS = ['review-correctness', 'review-failure-paths', 'review-verify'];
 
 /** The resolution `both\n` for the f1-feat.txt conflict, committed as the merge. */
@@ -196,7 +213,8 @@ function writeVerdict(path, verdict, must) {
 /**
  * Real git through the default runner, the test plugin `test`, and scripted
  * sessions: `resolve(worktreePath, vars)` plays the resolution agent, the
- * dimension passes find nothing, and the verifier returns `verdict`.
+ * dimension passes find nothing, the verifier returns `verdict`, and a
+ * fix-tests session returns `fixed` without changing anything.
  */
 function scriptedRunner({ test: testCmd, resolve, verdict = 'addressed', must = 'None.' }) {
   const calls = { gates: 0, sessions: [], vars: {}, log: [] };
@@ -211,6 +229,7 @@ function scriptedRunner({ test: testCmd, resolve, verdict = 'addressed', must = 
         return { ok: true, output: '', isError: false, structured };
       }
       if (promptName.startsWith('review-')) return { ok: true, output: 'no findings', isError: false };
+      if (promptName === 'feature-fix-tests') return FIXED_TESTS;
       return REFUSED;
     },
     testPlugins() {
@@ -317,7 +336,7 @@ test('a red gate after a clean merge reaches the resolution agent; its failure e
     const { config, unit, prep } = featureCtx(fx);
     const head = g(fx.wts['f1-feat'], 'rev-parse', 'HEAD');
     const pushed = g(fx.repo, 'rev-parse', 'origin/f1-feat');
-    const { runner, calls } = scriptedRunner({ test: 'echo boom; false', resolve: () => REFUSED });
+    const { runner, calls } = scriptedRunner({ test: 'echo boom; false', resolve: () => UNRESOLVED });
     const res = integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
@@ -338,7 +357,8 @@ test('a red gate after a clean merge reaches the resolution agent; its failure e
       /^merge with main: the test gate failed after merging main into code, and the resolution agent did not resolve it/,
     );
     assert.match(esc, /Command: `echo boom; false`/);
-    assert.match(esc, /- the session failed: no agent in this test/);
+    assert.match(esc, /- the agent did not resolve it: no agent in this test/);
+    assert.match(esc, /The agent's outcome: could not resolve/);
     assert.match(esc, /rerun `bl merge F-1`/);
     assert.equal(parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm.status, 'escalated');
   } finally {
@@ -449,8 +469,37 @@ test('an agent that leaves the merge unfinished is aborted and escalated, and ma
     assert.ok(esc.includes(`main: ${mainSha} `), esc);
     assert.match(esc, /- code: the merge is still in progress/);
     assert.match(esc, /- code: the index still has unmerged entries/);
-    assert.match(esc, /The agent's last line: `{3}\nRESOLVED\n`{3}/);
+    assert.match(esc, /The agent's outcome: resolved the merge/);
     assert.match(esc, /rerun `bl merge F-1`/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a resolution session that ends with RESOLVED text and no outcome is resumed once, then rolled back and escalated', () => {
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const wt = fx.wts['f1-feat'];
+    const head = g(wt, 'rev-parse', 'HEAD');
+    const { runner, calls } = scriptedRunner({
+      test: 'true',
+      resolve: () => ({ ok: true, output: 'All merged.\nRESOLVED\n', isError: false }),
+    });
+    const res = integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.ok, false);
+    assert.equal(res.escalated, true);
+    assert.deepEqual(calls.sessions, ['merge-resolve', 'merge-resolve'], 'resumed once, no gate or review');
+    assert.equal(calls.gates, 0);
+    assert.equal(ok(wt, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'), false, 'the merge is aborted');
+    assert.equal(g(wt, 'status', '--porcelain'), '');
+    assert.equal(g(wt, 'rev-parse', 'HEAD'), head);
+    const esc = escalation(featureFile(fx));
+    assert.match(esc, /^merge with main: merge-resolve: no valid outcome after one retry \(no output\)/);
+    assert.match(esc, /All merged\.\nRESOLVED/, 'the text is evidence, not a verdict');
+    assert.match(esc, /- `f1-feat\.txt`\n {4}- main: \S+ main edits f1-feat\.txt/);
+    assert.match(esc, /The merges were rolled back/);
   } finally {
     fx.cleanup();
   }
@@ -707,7 +756,9 @@ test('bl merge S-n stops on a conflict before any main checkout is touched', () 
     const before = g(fx.repo, 'rev-parse', 'main');
     const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
     assert.equal(r.status, 1, r.stderr);
-    assert.match(r.stderr, /S-1: integration with main stopped — merge with main: code conflicts with main/);
+    // The test PATH's agent refuses, so the resolution session returns no
+    // outcome, is resumed once, and escalates (F-68 D5).
+    assert.match(r.stderr, /S-1: integration with main stopped — merge-resolve: no valid outcome after one retry/);
     assert.match(r.stderr, /No main checkout was touched\./);
     assert.equal(g(fx.repo, 'rev-parse', 'main'), before);
     assert.equal(g(fx.repo, 'status', '--porcelain'), '');
@@ -1029,7 +1080,7 @@ test('integration_resolution_tracks_changes_in_current_merged_and_conflicted_rep
         calls.sessions.push(o.promptName);
         commitSecond(second.wt, 'test fix\n', 'fix the tests');
         unlinkSync(flag);
-        return { ok: true, output: 'FIXED', isError: false };
+        return FIXED_TESTS;
       };
       const res = integrateUnit({ ...ctx, runner });
       const scope = calls.vars['review-correctness']?.reviewScope ?? '';
@@ -1137,7 +1188,7 @@ test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: ever
       name: 'red gate, failed resolution',
       main: clean,
       review: [],
-      runner: () => scriptedRunner({ test: 'false', resolve: () => REFUSED }),
+      runner: () => scriptedRunner({ test: 'false', resolve: () => UNRESOLVED }),
     },
     {
       name: 'misconfigured gate',
@@ -1492,7 +1543,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
       if (o.promptName !== 'feature-fix-tests') return scripted(o);
       commitSecond(second.wt, 'test fix\n', 'fix the tests');
       unlinkSync(flag);
-      return { ok: true, output: 'FIXED', isError: false };
+      return FIXED_TESTS;
     };
     failReset(s.runner);
     assert.equal(integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: s.runner }).escalated, true);
