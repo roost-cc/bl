@@ -287,6 +287,8 @@ test('agentEnv turns titles off for every spawn and marks a headless one with BL
     BL_TAB_TITLE: '',
     BL_BACKLOG_DIR: '/b',
   });
+  // An operator's own format does not reach the agent session.
+  assert.equal(agentEnv({ base: { BL_TAB_TITLE: '{{status}}' } }).BL_TAB_TITLE, '');
   assert.equal(isHeadless({ BL_HEADLESS: '1' }), true);
   assert.equal(isHeadless({ BL_HEADLESS: '' }), false);
   assert.equal(isHeadless({}), false);

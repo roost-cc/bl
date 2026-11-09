@@ -2912,7 +2912,8 @@ bl rank S-40 --remove                 # back into the dated tail
 **`BL_HEADLESS`.** Every agent bl starts headless has `BL_HEADLESS=1` in its environment: each
 adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it
 when `headless` is set (`runHeadlessSession` passes `headless: true`); an interactive spawn adds
-no marker (it still gets `BL_TAB_TITLE=''`, see "Tab titles"). With it set, a `bl rank` edit exits 1 before it pulls or writes anything, and
+no marker (it still gets `BL_TAB_TITLE=''`, see "Tab titles"). With `BL_HEADLESS` set, a
+`bl rank` edit exits 1 before it pulls or writes anything, and
 `commitPaths`, the one commit path every bl command uses, refuses any commit whose paths, taken
 as one Git pathspec set (an exclusion such as `:!priority.md` counts), select `priority.md`
 (`headlessPriorityRefusal`), so a hand edit cannot be
