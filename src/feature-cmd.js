@@ -1493,12 +1493,10 @@ async function reviewUnitPRs(
     process.exit(1);
   }
   const { end } = result;
-  info(
-    end.outcome === 'escalated'
-      ? `\nReview round ${result.round}: escalated.`
-      : `\nReview round ${result.round} done: ${end.outcome}.${end.cap}`,
-  );
-  if (end.next) info(`Next: ${end.next}`);
+  if (!end) info('\nThe review round did not finish.');
+  else if (end.outcome === 'escalated') info(`\nReview round ${result.round}: escalated.`);
+  else info(`\nReview round ${result.round} done: ${end.outcome}.${end.cap}`);
+  if (end?.next) info(`Next: ${end.next}`);
   if (result.error) console.error(`bl review: ${result.error}`);
   const ok = !result.error && !result.escalated && (result.status === 'pending' || result.status === 'addressed');
   process.exit(ok ? 0 : 1);

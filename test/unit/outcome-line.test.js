@@ -14,7 +14,7 @@ import { mkTempBacklog } from '../helpers/tempdir.js';
 
 const MUST_LOG = '### Session 2026-11-09 (PR #4)\n\n**Must fix**\n\n- [ ] one\n';
 
-function reviewedLine(story) {
+function reviewedLine(story, code = 0) {
   // The change document's one repos: entry carries the PR the line names.
   story = { primary_repo: 'demo-repo', pr: '4', ...story };
   const { dir, cleanup } = mkTempBacklog({
@@ -26,7 +26,7 @@ function reviewedLine(story) {
     const config = loadConfig({ backlogRoot: dir });
     const record = readAllStories(config).find((s) => s.id === 'S-1');
     const target = { kind: 'story', id: 'S-1', record };
-    return outcomeLine('review', { target, code: 0, outPath: join(dir, '.bl', 'run', 'S-1.out') }, config);
+    return outcomeLine('review', { target, code, outPath: join(dir, '.bl', 'run', 'S-1.out') }, config);
   } finally {
     cleanup();
   }
@@ -47,6 +47,14 @@ test('outcomeLine: an addressed story says nothing is left and names bl merge', 
       ok: true,
     },
   );
+});
+
+test('outcomeLine: a child that exited 1 gets no outcome and no next command from its change document', () => {
+  // A stale addressed review must not read as done.
+  const { line, ok } = reviewedLine({ review_round: 1, review_status: 'addressed', reviewLog: MUST_LOG }, 1);
+  assert.equal(ok, false);
+  assert.match(line, /^S-1: failed \(exit 1\), PR #4 — see /);
+  assert.doesNotMatch(line, /done:|— next:/);
 });
 
 test('outcomeLine: a pending story at its round cap is owed the closing round', () => {

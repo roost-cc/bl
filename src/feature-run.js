@@ -4167,7 +4167,8 @@ function escalateIntegration(ctx, reason, details, { save = false } = {}) {
  * review step, so there is one review path per feature and a later
  * `run --resume` re-reviews from the base this round recorded. Refuses while
  * a run holds the feature, and at the round cap. Returns
- * `{ status, round, escalated, error, end }` (`end` from `reviewEnd`) or a
+ * `{ status, round, escalated, error, end }` (`end` from `reviewEnd`, `null`
+ * for a round that did not finish: `error` set and no escalation) or a
  * refusal.
  *
  * `prep` and `pr` are the lead repo's (the PR the run state keeps);
@@ -4235,16 +4236,18 @@ export async function reviewFeature({
     state.lastError = result.abortError ?? null;
     saveRunState(config, state);
     const escalated = escalationOpen(feature.indexPath);
+    const error = result.abortError
+      ? result.abortError
+      : result.round !== result.expected
+        ? `the verifier left review_round at "${result.rawRound}" (expected ${result.expected})`
+        : null;
     return {
       status: result.status,
       round: result.round,
       escalated,
-      end: endOfReview(ctx, maxRounds, escalated),
-      error: result.abortError
-        ? result.abortError
-        : result.round !== result.expected
-          ? `the verifier left review_round at "${result.rawRound}" (expected ${result.expected})`
-          : null,
+      // A round that did not finish left the change document as it was: no end.
+      end: error && !escalated ? null : endOfReview(ctx, maxRounds, escalated),
+      error,
     };
   } finally {
     releaseRunLock(config, feature.id, lock.content);

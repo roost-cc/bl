@@ -340,6 +340,110 @@ test('bl review S-n: a second round re-reviews and advances the round again', as
   assert.equal((extractSection(after.body, 'Review Log').match(/^### Session/gm) ?? []).length, 2);
 });
 
+/** `reviewRunner` with the verifier session replaced by `verify(o)`. */
+function verifierRunner(storyPath, verify) {
+  const runner = reviewRunner(storyPath);
+  const real = runner.session;
+  runner.session = (o) => (o.promptName === 'review-verify' ? verify(o) : real(o));
+  return runner;
+}
+
+/** The verifier's edit: `fn(doc)` on the change document it is given. */
+function verifierEdit(o, fn) {
+  const doc = parseChange(readFileSync(o.vars.changeAbsPath, 'utf8'));
+  fn(doc);
+  writeFileSync(o.vars.changeAbsPath, serializeChange(doc));
+}
+
+/** Open the story's `## Escalation`, as an escalating step does. */
+function openEscalation(storyPath) {
+  writeFileSync(storyPath, readFileSync(storyPath, 'utf8') + '\n## Escalation\n\nThe verifier stopped.\n');
+}
+
+// A round that did not finish leaves the change document as it was, so no
+// end line is built from it: a stale review_status is no verdict.
+for (const c of [
+  {
+    name: 'a verifier that fails',
+    stale: { review_round: '1', review_status: 'addressed' },
+    verify: () => ({ ok: false, output: 'provider crashed', isError: true, usage: null }),
+    error: /bl review: .*provider crashed|bl review: the verifier/,
+  },
+  {
+    name: 'a verifier that leaves review_round unchanged',
+    stale: { review_round: '0', review_status: '' },
+    verify: () => ({ ok: true, output: '', isError: false, usage: null }),
+    error: /bl review: the verifier left review_round at "0" \(expected 1\)/,
+  },
+  {
+    name: 'a verifier that fails on a stale pending round',
+    stale: { review_round: '1', review_status: 'pending' },
+    verify: () => ({ ok: false, output: 'provider crashed', isError: true, usage: null }),
+    error: /bl review: /,
+  },
+]) {
+  test(`bl review S-n: ${c.name} prints no done line and no Next line`, async () => {
+    const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
+    editChange(storyPath, (doc) => Object.assign(doc.fm, c.stale));
+    const runner = verifierRunner(storyPath, c.verify);
+    const { exit, stderr, error } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
+    assert.equal(error, undefined, error?.stack);
+    assert.equal(exit, 1, stderr);
+    assert.match(stderr, /The review round did not finish\.\n/);
+    assert.match(stderr, c.error);
+    assert.doesNotMatch(stderr, /done:/);
+    assert.doesNotMatch(stderr, /^Next:/m);
+  });
+}
+
+test('bl review S-n: an escalated round that has an error still prints the escalation and its Next line', async () => {
+  const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
+  editChange(storyPath, (doc) => Object.assign(doc.fm, { review_round: '1', review_status: 'addressed' }));
+  // The verifier leaves review_round unchanged (an error) and escalates.
+  const runner = verifierRunner(storyPath, () => {
+    openEscalation(storyPath);
+    return { ok: true, output: '', isError: false, usage: null };
+  });
+  const { exit, stderr, error } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
+  assert.equal(error, undefined, error?.stack);
+  assert.equal(exit, 1, stderr);
+  assert.match(stderr, /bl review: the verifier left review_round at "1" \(expected 2\)/);
+  assert.match(
+    stderr,
+    /Review round \d+: escalated\.\nNext: read ## Escalation in stories\/S99-test-review\/index\.md\n/,
+  );
+  assert.doesNotMatch(stderr, /done:/);
+});
+
+test('bl review S-n prints the escalation line and the Escalation next command', async () => {
+  const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
+  const runner = verifierRunner(storyPath, (o) => {
+    verifierEdit(o, (doc) => Object.assign(doc.fm, { review_round: '1', review_status: 'pending' }));
+    openEscalation(storyPath);
+    return { ok: true, output: '', isError: false, usage: null };
+  });
+  const { exit, stderr, error } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
+  assert.equal(error, undefined, error?.stack);
+  assert.equal(exit, 1, stderr);
+  assert.match(
+    stderr,
+    /Review round 1: escalated\.\nNext: read ## Escalation in stories\/S99-test-review\/index\.md\n/,
+  );
+});
+
+test('bl review S-n prints no verdict and no Next line for another review_status', async () => {
+  const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
+  const runner = verifierRunner(storyPath, (o) => {
+    verifierEdit(o, (doc) => Object.assign(doc.fm, { review_round: '1', review_status: 'fixed' }));
+    return { ok: true, output: '', isError: false, usage: null };
+  });
+  const { exit, stderr, error } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
+  assert.equal(error, undefined, error?.stack);
+  assert.equal(exit, 1, stderr);
+  assert.match(stderr, /Review round 1 done: no verdict recorded \(review_status: fixed\)\.\n/);
+  assert.doesNotMatch(stderr, /^Next:/m);
+});
+
 test('bl review S-n: refuses at the review round cap', async () => {
   const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
   editChange(storyPath, (doc) => {
