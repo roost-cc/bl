@@ -2455,6 +2455,44 @@ repo, each worktree is synced with main first (a conflict exits, pointing at
 the change document. With no
 open PR it says why, including a PR that merged before review.
 
+`bl review` ends with the round's outcome and, when there is one, the next
+command (`reviewEnd`, `src/feature-run.js`, S-1348). No line shows a raw
+`review_status` value without its field name.
+
+- Open items (`pending`): `Review round <n> done: <k> open item(s) (<a> Must fix, <b> Should fix, <c> nit(s)).`
+  The counts come from the latest Review Log session, zero counts are left
+  out, and boxes under any other heading count as `<o> other`. A `pending`
+  round whose session has no open box says so with
+  `review_status: pending, but the latest Review Log session has no open item`.
+- Nothing left (`addressed`): `Review round <n> done: nothing left to fix.`,
+  or `nothing left to fix (<c> open nit(s) left).` while the session has open nits.
+- Any other value: `Review round <n> done: no verdict recorded (review_status: <value>).`
+  (`unset` when empty), with no `Next:` line. Escalated:
+  `Review round <n>: escalated.`
+
+The second line is `Next: <command>`:
+
+- `addressed`: `bl merge <id>`.
+- Open items below the round cap: `bl run <id> --resume`.
+- Open items in the round that reached the cap: the outcome line adds
+  ` The round cap (<cap>) is reached: the next run fixes these items and runs one closing round on them.`
+  and the command is `bl run <id> --resume`.
+- Open items past what the cap allows: the outcome line adds
+  ` The round cap (<cap>) is reached.` and the command is
+  `bl run <id> --resume --max-rounds <n+1>`.
+- Escalated: `read ## Escalation in <the unit's index.md>`.
+
+The cap cases come from `roundCapStanding`, the check by which `bl run`
+refuses a run at the cap, so the two cannot disagree. `bl status <id>` prints
+the same outcome words on its `review:` line
+(`review: round <r>/<cap> done: <outcome>`; `review: round <r>/<cap>, review_status: <value>`
+for another value; `review: none (round <r>/<cap>)` when unset; each with
+`, latest session <date>` when the change document has a session). With
+several targets, each child that exited 0 gets
+`<id>: reviewed, round <n> done: <outcome><pr> — next: <command>`. The exit
+codes are as before: 0 after a `pending` or `addressed` round with no error
+and no escalation, else 1.
+
 ```bash
 bl review S34                 # alias: bl pr S34
 ```
