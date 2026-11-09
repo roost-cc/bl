@@ -2476,7 +2476,9 @@ command (`reviewEnd`, `src/feature-run.js`, S-1348). No line shows a raw
 - Any other value: `Review round <n> done: no verdict recorded (review_status: <value>).`
   (`unset` when empty), with no `Next:` line. A `review_round` that is not a
   number gives `no verdict recorded (review_round: <value>)`, also with no
-  `Next:` line. Escalated: `Review round <n>: escalated.`
+  `Next:` line. This is a guard only: `bl review` refuses such a round before
+  it starts and exits non-zero, so neither its own lines nor the
+  several-target summary print it today. Escalated: `Review round <n>: escalated.`
 - A round that did not finish (an error and no escalation, for example a
   verifier that failed or left `review_round` unchanged):
   `The review round did not finish.`, then the error line, with no `done`
