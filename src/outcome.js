@@ -60,8 +60,8 @@ export function validateOutcome(schema, value) {
     } catch (e) {
       return fail(`not JSON: ${e.message}`);
     }
-  }
-  if (obj == null) return fail('no output');
+    // The text `null` is output: the schema names its fault.
+  } else if (obj == null) return fail('no output');
   const validate = validatorFor(schema);
   if (validate(obj)) return { structured: obj, structuredError: null };
   const [err] = validate.errors;

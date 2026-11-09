@@ -66,6 +66,8 @@ test('validateOutcome: no output and not JSON are faults of their own', () => {
   assert.match(r.structuredError, /^not JSON: /);
   // A fenced block is not the object: nothing is dug out of text.
   assert.match(validateOutcome(SCHEMA, '```json\n{"summary":"s","refined":true}\n```').structuredError, /^not JSON/);
+  // The JSON text null is output, and not an object.
+  assert.equal(validateOutcome(SCHEMA, 'null').structuredError, 'schema violation at $: must be object');
 });
 
 test('outcomeFor reads nothing for a step without a schema', () => {
