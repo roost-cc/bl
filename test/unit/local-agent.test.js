@@ -11,9 +11,17 @@ import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { getProvider } from '../../src/agents/index.js';
 import { ClaudeProvider, parseClaudeJsonResult } from '../../src/agents/claude.js';
-import { LocalProvider, localCapacity, localEnv, localServer } from '../../src/agents/local.js';
+import {
+  LocalProvider,
+  checkLocalConfiguration,
+  localCapacity,
+  localEnv,
+  localServer,
+} from '../../src/agents/local.js';
 import { healthUrl, probeLocalServer } from '../../src/agents/local-capacity.js';
-import { loadConfig } from '../../src/config.js';
+import { capacityRows } from '../../src/capacity.js';
+import { agentFlagOf, configForRepo, loadConfig } from '../../src/config.js';
+import { launchSession, runHeadlessSession } from '../../src/session.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 
 const LOCAL_KEY = { url: 'http://localhost:8090', token: 'local' };
@@ -21,14 +29,14 @@ const MODEL = 'qwen3.8-27b';
 
 /**
  * A fixture backlog whose backlog.json has the top-level `local` key `local`,
- * loaded once with `-A local --model`, as a command loads it before a spawn.
+ * and its `config`, loaded once with `-A local --model`, as a command loads it
+ * before a spawn.
  */
 function localBacklog(local = LOCAL_KEY) {
   const t = mkTempBacklog({ repos: ['../demo-repo'] });
   const path = join(t.dir, 'backlog.json');
   writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), local }, null, 2) + '\n');
-  loadConfig({ backlogRoot: t.dir, agent: 'local', model: MODEL });
-  return t;
+  return { ...t, config: loadConfig({ backlogRoot: t.dir, agent: 'local', model: MODEL }) };
 }
 
 /** `run` for spawn(): records each call's environment. */
@@ -70,9 +78,9 @@ function* replacedRoleBacklogs() {
       if (list === undefined) delete raw[key];
       else raw[key] = list;
       writeFileSync(path, JSON.stringify(raw));
-      loadConfig({ backlogRoot: t.dir, agent: 'local', model: MODEL, agentRole: role });
+      const config = loadConfig({ backlogRoot: t.dir, agent: 'local', model: MODEL, agentRole: role });
       try {
-        yield { label: `${role} ${shape}`, dir: t.dir };
+        yield { label: `${role} ${shape}`, dir: t.dir, config };
       } finally {
         t.cleanup();
       }
@@ -81,12 +89,13 @@ function* replacedRoleBacklogs() {
 }
 
 test('local_spawn_keeps_replaced_role_override: spawn() reaches the server for every role list -A replaced', () => {
-  for (const { label, dir } of replacedRoleBacklogs()) {
+  for (const { label, dir, config } of replacedRoleBacklogs()) {
     const envs = [];
     getProvider('local').spawn({
       prompt: 'p',
       worktreePath: dir,
       backlogRoot: dir,
+      topLevel: config.topLevel,
       headless: true,
       model: MODEL,
       run: recordingRun(envs),
@@ -97,72 +106,192 @@ test('local_spawn_keeps_replaced_role_override: spawn() reaches the server for e
 });
 
 test('local_capacity_keeps_replaced_role_override: capacity() asks the server for every role list -A replaced', () => {
-  for (const { label, dir } of replacedRoleBacklogs()) {
+  for (const { label, config } of replacedRoleBacklogs()) {
     const urls = [];
-    const c = getProvider('local').capacity({ backlogRoot: dir, run: healthyRun(urls) });
+    const c = getProvider('local').capacity({ topLevel: config.topLevel, run: healthyRun(urls) });
     assert.equal(c.state, 'available', `${label}: ${c.message}`);
     assert.deepEqual(urls, [LOCAL_KEY.url], label);
   }
 });
 
-test('local_spawn_uses_validated_configuration_snapshot: spawn() and capacity() use the server the loader checked', () => {
-  const { dir, cleanup } = localBacklog();
+test('local_spawn_uses_validated_configuration_snapshot: spawn() and capacity() use the server of the loaded config', () => {
+  const { dir, cleanup, config } = localBacklog();
+  /** spawn() for `topLevel`, recording its environment in `envs`. */
+  const spawnWith = (topLevel, envs) =>
+    getProvider('local').spawn({
+      prompt: 'p',
+      worktreePath: dir,
+      backlogRoot: dir,
+      topLevel,
+      headless: true,
+      model: MODEL,
+      run: recordingRun(envs),
+    });
   try {
-    // An edit after the check names another server: nothing checked it.
+    // An edit after the load names another server: the loaded config does not.
     const path = join(dir, 'backlog.json');
     const edited = { url: 'http://localhost:8091', token: 'new' };
     writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), local: edited }));
     const urls = [];
     const envs = [];
-    getProvider('local').capacity({ backlogRoot: dir, run: healthyRun(urls) });
-    getProvider('local').spawn({
-      prompt: 'p',
-      worktreePath: dir,
-      backlogRoot: dir,
-      headless: true,
-      model: MODEL,
-      run: recordingRun(envs),
-    });
+    getProvider('local').capacity({ topLevel: config.topLevel, run: healthyRun(urls) });
+    spawnWith(config.topLevel, envs);
     assert.deepEqual(urls, [LOCAL_KEY.url]);
     assert.deepEqual([envs[0].ANTHROPIC_BASE_URL, envs[0].ANTHROPIC_AUTH_TOKEN], [LOCAL_KEY.url, LOCAL_KEY.token]);
-    // A reload (sync.js after a pull) checks the edit, and both use it from then on.
-    loadConfig({ backlogRoot: dir, agent: 'local', model: MODEL });
-    getProvider('local').capacity({ backlogRoot: dir, run: healthyRun(urls) });
-    getProvider('local').spawn({
-      prompt: 'p',
-      worktreePath: dir,
-      backlogRoot: dir,
-      headless: true,
-      model: MODEL,
-      run: recordingRun(envs),
-    });
+    // A reload (sync.js after a pull) checks the edit, and its config uses it.
+    const reloaded = loadConfig({ backlogRoot: dir, agent: 'local', model: MODEL });
+    getProvider('local').capacity({ topLevel: reloaded.topLevel, run: healthyRun(urls) });
+    spawnWith(reloaded.topLevel, envs);
     assert.deepEqual(urls, [LOCAL_KEY.url, edited.url]);
     assert.deepEqual([envs[1].ANTHROPIC_BASE_URL, envs[1].ANTHROPIC_AUTH_TOKEN], [edited.url, edited.token]);
+    // A top level that names no server (a backlog without the key, or a
+    // caller with no config): spawn() throws, capacity() is unknown.
+    for (const topLevel of [{}, null, undefined]) {
+      const label = String(JSON.stringify(topLevel));
+      const none = [];
+      assert.throws(() => spawnWith(topLevel, none), /backlog\.json "local" is missing/, label);
+      assert.equal(none.length, 0, label);
+      const c = getProvider('local').capacity({ topLevel, run: healthyRun() });
+      assert.equal(c.state, 'unknown', label);
+      assert.match(c.message, /"local" is missing/, label);
+    }
   } finally {
     cleanup();
   }
-  // A backlog whose local configuration nothing checked: spawn() throws, capacity() is unknown.
-  const { dir: unchecked, cleanup: done } = mkTempBacklog({ repos: ['../demo-repo'] });
-  try {
+});
+
+/** A local server at `port`, with a token of its own. */
+const serverAt = (port) => ({ url: `http://127.0.0.1:${port}`, token: `t${port}` });
+
+test('local_server_binding_survives_other_and_failed_loads: a loaded config keeps the server its load checked', () => {
+  const t = mkTempBacklog({
+    repos: ['../demo-repo'],
+    config: { local: serverAt(18090), agent: [{ agent: 'local', model: MODEL }], review_agent: [{ agent: 'claude' }] },
+  });
+  const path = join(t.dir, 'backlog.json');
+  /** Write backlog.json with the server `local` and the keys `extra`. */
+  const write = (local, extra = {}) =>
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), local, ...extra }));
+  /** What spawn() and capacity() reach for `config`: [spawn URL, spawn token, capacity URL]. */
+  const reached = (config) => {
     const envs = [];
-    assert.throws(
-      () =>
-        getProvider('local').spawn({
-          prompt: 'p',
-          worktreePath: unchecked,
-          backlogRoot: unchecked,
-          headless: true,
-          model: MODEL,
-          run: recordingRun(envs),
-        }),
-      /no local configuration of the backlog .* was checked/,
+    const urls = [];
+    getProvider('local').spawn({
+      prompt: 'p',
+      worktreePath: t.dir,
+      backlogRoot: t.dir,
+      topLevel: config.topLevel,
+      headless: true,
+      model: MODEL,
+      run: recordingRun(envs),
+    });
+    getProvider('local').capacity({ topLevel: config.topLevel, run: healthyRun(urls) });
+    return [envs[0].ANTHROPIC_BASE_URL, envs[0].ANTHROPIC_AUTH_TOKEN, urls[0]];
+  };
+  try {
+    const first = loadConfig({ backlogRoot: t.dir });
+    // Each held config and the server it must keep.
+    const held = [
+      ['first load', first, serverAt(18090)],
+      ['first load, configForRepo', configForRepo(first, 'demo-repo'), serverAt(18090)],
+    ];
+    // Each event that could move a held config's server, in order. A
+    // successful load returns its own config, which is held from then on.
+    const events = [
+      [
+        'a second successful load',
+        () => {
+          write(serverAt(18091));
+          return ['second load', loadConfig({ backlogRoot: t.dir }), serverAt(18091)];
+        },
+      ],
+      [
+        'a rejected load',
+        () => {
+          write(serverAt(18092), { review_agent: [] });
+          assert.throws(() => loadConfig({ backlogRoot: t.dir }), /review_agent/);
+          write(serverAt(18092), { review_agent: [{ agent: 'claude' }] });
+        },
+      ],
+      [
+        'a rejected -A local load',
+        () => {
+          write(serverAt(18093));
+          assert.throws(() => loadConfig({ backlogRoot: t.dir, agent: 'local' }), /"model"/);
+        },
+      ],
+      [
+        "a sync.js reload with the first load's -A handling",
+        () => {
+          write(serverAt(18094));
+          const flag = agentFlagOf(first);
+          const config = loadConfig({
+            backlogRoot: t.dir,
+            agent: flag.agent ?? undefined,
+            model: flag.model ?? undefined,
+            agentRole: flag.role,
+            lenientAgents: flag.lenient,
+          });
+          return ['sync.js reload', config, serverAt(18094)];
+        },
+      ],
+      [
+        'checks outside a load: no model, a bad key, an overrides key, a usable one',
+        () => {
+          const top = { local: serverAt(18095) };
+          assert.ok(checkLocalConfiguration({ model: null }, { topLevel: top, raw: top }));
+          const bad = { local: { url: '' } };
+          assert.ok(checkLocalConfiguration({ model: MODEL }, { topLevel: bad, raw: bad }));
+          assert.ok(checkLocalConfiguration({ model: MODEL }, { topLevel: top, raw: { local: serverAt(18096) } }));
+          assert.equal(checkLocalConfiguration({ model: MODEL }, { topLevel: top, raw: top }), null);
+        },
+      ],
+      ['an edit with no load', () => write(serverAt(18097))],
+    ];
+    for (const [event, run] of events) {
+      const added = run();
+      if (added) held.push(added);
+      for (const [label, config, local] of held) {
+        assert.deepEqual(reached(config), [local.url, local.token, local.url], `${label}, after ${event}`);
+      }
+    }
+    // The callers that take a config: a headless and an interactive session,
+    // and capacityRows's default ask. The ask runs the real helper; whatever
+    // it answers, its message names the URL it asked.
+    const envs = [];
+    const provider = new (class extends LocalProvider {
+      spawn(opts) {
+        envs.push(this.spawnEnv(opts));
+        return { status: 0, output: '', isError: false, usage: null };
+      }
+    })();
+    const common = {
+      mode: 'workon',
+      parsed: { id: 'F-1', num: '1' },
+      worktreePath: t.dir,
+      config: first,
+      roostDir: first.roostDir,
+      backlogRoot: t.dir,
+      provider,
+    };
+    assert.equal(runHeadlessSession({ ...common, prompt: 'p', label: 'F-1' }).status, 0);
+    launchSession({
+      ...common,
+      title: 'T',
+      sessionPrompt: 'p',
+      isNewWorktree: false,
+      returnOnExit: true,
+      recordTokens: false,
+    });
+    assert.deepEqual(
+      envs.map((e) => e.ANTHROPIC_BASE_URL),
+      [serverAt(18090).url, serverAt(18090).url],
     );
-    assert.equal(envs.length, 0);
-    const c = getProvider('local').capacity({ backlogRoot: unchecked, run: healthyRun() });
-    assert.equal(c.state, 'unknown');
-    assert.match(c.message, /was checked/);
+    const [row] = capacityRows(first);
+    assert.equal(row.agent, 'local');
+    assert.ok(row.message.includes(serverAt(18090).url), row.message);
   } finally {
-    done();
+    t.cleanup();
   }
 });
 
@@ -189,7 +318,7 @@ test('localEnv sets the four variables and keeps the rest of base', () => {
 });
 
 test('spawn runs claude with --model and the local environment', () => {
-  const { dir, cleanup } = localBacklog();
+  const { dir, cleanup, config } = localBacklog();
   try {
     const calls = [];
     const run = (cmd, args, opts) => {
@@ -200,6 +329,7 @@ test('spawn runs claude with --model and the local environment', () => {
       prompt: 'hello',
       worktreePath: dir,
       backlogRoot: dir,
+      topLevel: config.topLevel,
       headless: true,
       model: MODEL,
       scopes: {},
@@ -316,7 +446,7 @@ test('local_capacity_rejects_incomplete_health_records: only ok false with ECONN
 });
 
 test('LocalProvider.capacity runs the helper with the backlog URL and maps its answer; never throws', () => {
-  const { dir, cleanup } = localBacklog();
+  const { cleanup, config } = localBacklog();
   try {
     const p = getProvider('local');
     let seen;
@@ -326,20 +456,20 @@ test('LocalProvider.capacity runs the helper with the backlog URL and maps its a
         seen = { cmd, args, opts };
         return { status: 0, stdout, ...extra };
       };
-    const up = p.capacity({ backlogRoot: dir, run: fake('{"ok":true,"status":200}\n'), timeoutMs: 100 });
+    const up = p.capacity({ topLevel: config.topLevel, run: fake('{"ok":true,"status":200}\n'), timeoutMs: 100 });
     assert.equal(up.state, 'available');
     assert.equal(seen.cmd, process.execPath);
     assert.match(seen.args[0], /local-capacity\.js$/);
     assert.deepEqual(seen.args.slice(1), ['--url', LOCAL_KEY.url, '--timeout', '100']);
     assert.equal(
-      p.capacity({ backlogRoot: dir, run: fake('{"ok":false,"code":"ECONNREFUSED"}') }).state,
+      p.capacity({ topLevel: config.topLevel, run: fake('{"ok":false,"code":"ECONNREFUSED"}') }).state,
       'unavailable',
     );
-    const crashed = p.capacity({ backlogRoot: dir, run: fake('', { status: 1 }) });
+    const crashed = p.capacity({ topLevel: config.topLevel, run: fake('', { status: 1 }) });
     assert.equal(crashed.state, 'unknown');
     assert.match(crashed.message, /exit 1/);
     const thrown = p.capacity({
-      backlogRoot: dir,
+      topLevel: config.topLevel,
       run: () => {
         throw new Error('spawn boom');
       },
@@ -348,10 +478,11 @@ test('LocalProvider.capacity runs the helper with the backlog URL and maps its a
   } finally {
     cleanup();
   }
-  // No local key, so nothing was checked: unknown with the reason, not a throw.
+  // No local key: unknown with the reason, not a throw.
   const { dir: bare, cleanup: done } = mkTempBacklog({ repos: ['../demo-repo'] });
   try {
-    assert.match(getProvider('local').capacity({ backlogRoot: bare }).message, /was checked/);
+    const { topLevel } = loadConfig({ backlogRoot: bare });
+    assert.match(getProvider('local').capacity({ topLevel }).message, /"local" is missing/);
   } finally {
     done();
   }

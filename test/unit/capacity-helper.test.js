@@ -51,9 +51,9 @@ test('capacity_helper_rejects_json_after_failed_exit: local and codex read unkno
     const path = join(t.dir, 'backlog.json');
     const local = { url: 'http://localhost:8090', token: 'local' };
     writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), local }));
-    loadConfig({ backlogRoot: t.dir, agent: 'local', model: 'qwen3.8-27b' });
+    const { topLevel } = loadConfig({ backlogRoot: t.dir, agent: 'local', model: 'qwen3.8-27b' });
     for (const [label, exit, want] of FAILED_AFTER_ANSWER) {
-      const l = getProvider('local').capacity({ backlogRoot: t.dir, run: () => ({ ...exit, stdout: LOCAL_UP }) });
+      const l = getProvider('local').capacity({ topLevel, run: () => ({ ...exit, stdout: LOCAL_UP }) });
       assert.equal(l.state, 'unknown', `local ${label}`);
       assert.match(l.message, want, `local ${label}`);
       const c = getProvider('codex').capacity({ run: () => ({ ...exit, stdout: CODEX_UP }) });

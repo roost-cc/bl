@@ -796,6 +796,7 @@ export function runHeadlessSession({
       sessionId: null,
       roostDir,
       backlogRoot,
+      topLevel: config?.topLevel ?? null,
       scopes,
       headless: true,
       // The configuration's own model, which the walk always passes (F-64
@@ -985,6 +986,7 @@ export function launchSession({
       sessionId: existingSessionId,
       roostDir,
       backlogRoot,
+      topLevel: config?.topLevel ?? null,
       scopes,
       model: sessionModel(model, agent, config),
       effort,

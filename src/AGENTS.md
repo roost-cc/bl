@@ -1031,10 +1031,10 @@ against a local model server; see **The local provider** below. Besides `spawn`,
 `translatePermissions`, `getToolHints`, `findSession`, `parseLogs`,
 `getTokens` and `supportsHeadless`, the contract has:
 
-- `capacity({ model, backlogRoot })` → `{ state, scope, until, windows, message }`: whether a
+- `capacity({ model, topLevel })` → `{ state, scope, until, windows, message }`: whether a
   configuration can take work now. Both callers (`capacityRows` in `src/capacity.js`, the runner's
-  `capacity` in `src/feature-run.js`) pass the backlog root, for an adapter that reads
-  `backlog.json` (`local`); the base ignores it. `state` is `available`, `unavailable` or
+  `capacity` in `src/feature-run.js`) pass their config's `topLevel` (`backlog.json`'s top level
+  as that load read it), for an adapter that reads `backlog.json` (`local`); the base ignores it. `state` is `available`, `unavailable` or
   `unknown`; `scope` is `account` (every model of the agent) or `model`;
   `until` is when an `unavailable` one may be tried again, or null; `windows`
   is `[{ name, remainingPercent, resetsAt }]`. It never throws: a failed read
@@ -1044,10 +1044,9 @@ against a local model server; see **The local provider** below. Besides `spawn`,
   report capacity"). Codex and `local` run their read as a Node child
   (`runCapacityHelper`, `src/agents/capacity-helper.js`), because
   `capacity()` is synchronous.
-- `checkConfiguration({ model }, { topLevel, raw, backlogRoot })` → a reason string, or
+- `checkConfiguration({ model }, { topLevel, raw })` → a reason string, or
   null when the configuration is usable. `topLevel` is `backlog.json`'s top
-  level; `raw` is it with the repo's `overrides` merged over it; `backlogRoot`
-  is the backlog the loader loads. The config
+  level; `raw` is it with the repo's `overrides` merged over it. The config
   loader calls it for each `agent` and `review_agent` entry and for -A, and
   throws the reason after the entry's location (`backlog.json "agent"[2]:
 …`, `-A local: …`), so `config.js` names no agent. The base returns null;
@@ -1060,7 +1059,8 @@ against a local model server; see **The local provider** below. Besides `spawn`,
 backlogRoot })`, which also sets `BL_BACKLOG_DIR` where the adapter passes
   it; an interactive spawn adds no marker. `isHeadless()` reads it (F-78 D3,
   see `bl rank`). `ClaudeProvider.spawn()` takes it from
-  `spawnEnv({ headless, backlogRoot, model })`, which `local` overrides.
+  `spawnEnv({ headless, backlogRoot, model, topLevel })`, which `local`
+  overrides. Every caller of `spawn()` passes its config's `topLevel`.
 - `supportsModel()`: whether `spawn({ model })` selects the model (Claude's
   `--model`, Codex's `-m`; Gemini no). The config loader refuses a
   configuration that names a model for an adapter that does not, and `bl run`
@@ -1097,11 +1097,13 @@ bl does not start or stop the server.
   `"local": { "url": "http://localhost:8090", "token": "local" }`. Both keys
   are required non-empty strings, and no other key is allowed. bl reads it
   from the top level only: `spawn()` knows the backlog, not the repo.
-- `spawnEnv` and `capacity` use the server that `checkConfiguration` last
-  checked for the backlog (the loader passes `backlogRoot` in its context).
-  They do not read `backlog.json` again: a new read without the command's
-  `-A` and `--model` fails on a role list that `-A` replaced, and a read
-  after an edit could name a server that nothing checked.
+- `spawnEnv` and `capacity` use the server in the `topLevel` that the caller
+  passes: the top level of the config the caller loaded, which that load
+  checked. They do not read `backlog.json` again and keep no state between
+  loads: a new read without the command's `-A` and `--model` fails on a role
+  list that `-A` replaced, a read after an edit could name a server that
+  nothing checked, and a later load (also a rejected one) of the same backlog
+  does not change the server of a config loaded before it.
 - `spawnEnv` sets `ANTHROPIC_BASE_URL` to `url`, `ANTHROPIC_AUTH_TOKEN` to
   `token`, `ANTHROPIC_API_KEY` to the empty string (so the operator's real
   key never reaches the server) and `ANTHROPIC_SMALL_FAST_MODEL` to the
@@ -1231,8 +1233,8 @@ fix steps, the merge resolution) walks `agent`, each from the top:
    log line `<step>: skipping <agent> <model>: <why>`. An entry whose `until` has
    passed is dropped with a log line, so the run returns to the operator's
    first choice at the next step.
-2. The runner's `capacity(agent, model, backlogRoot)` (the adapter's
-   `capacity({ model, backlogRoot })`) is asked; an `account`-scoped answer is kept for the rest of the walk, so
+2. The runner's `capacity(agent, model, topLevel)` (the adapter's
+   `capacity({ model, topLevel })`) is asked; an `account`-scoped answer is kept for the rest of the walk, so
    each agent is asked once. `unavailable` puts the configuration on the
    out-list (kind `quota`) until the reading's `until` plus the margin below.
    `available` and `unknown`, and a read that throws, spawn.
@@ -2513,7 +2515,7 @@ per configuration of `agent`, then `review_agent`, in list order, with its
 role, agent, model (`-` for the account's own), state (`available`,
 `unavailable`, `unknown`), each quota window's remaining percent and reset in
 local time, and the adapter's message. It calls each adapter's
-`capacity({ model, backlogRoot })`, the call the run loop makes, so it shows
+`capacity({ model, topLevel })`, the call the run loop makes, so it shows
 what the loop will see. An
 `account`-scoped answer (Codex) is asked once per agent, a `model`-scoped one
 once per model. It reports and does not gate: it exits 0 whatever the

@@ -58,6 +58,7 @@ Aliases: claude`);
     args: args.positional,
     roostDir,
     backlogRoot,
+    topLevel: config.topLevel,
     scopes: resolvePermissionScopes(config, { unitDir: process.cwd() }),
     model: config.agentModel,
   });

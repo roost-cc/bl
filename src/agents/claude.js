@@ -558,8 +558,9 @@ export class ClaudeProvider extends AgentProvider {
    * inherits it: the session's own backlog, whatever another backlog's
    * `bl init` or launch wrote meanwhile; and a headless session is marked
    * BL_HEADLESS (F-78 D3). `local` overrides it to point `claude` at its
-   * server; `model` is for that.
-   * @param {{ headless: boolean, backlogRoot: string|null, model: string|null }} opts
+   * server; `model` and `topLevel` are for that.
+   * @param {{ headless: boolean, backlogRoot: string|null, model: string|null,
+   *   topLevel: object|null }} opts
    */
   spawnEnv({ headless, backlogRoot }) {
     return agentEnv({ headless, backlogRoot });
@@ -580,9 +581,10 @@ export class ClaudeProvider extends AgentProvider {
     model = null,
     effort = null,
     backlogRoot = null,
+    topLevel = null,
     run = spawnSync,
   }) {
-    const env = this.spawnEnv({ headless, backlogRoot, model });
+    const env = this.spawnEnv({ headless, backlogRoot, model, topLevel });
     const claudeArgs = buildClaudeArgs({
       name,
       prompt,

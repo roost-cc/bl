@@ -44,17 +44,17 @@ Exit codes:
 
 /**
  * Every configuration of both roles with its adapter's answer. `ask(agent,
- * model)` is the adapter call, given the config's backlog root (a test
- * passes its own).
+ * model)` is the adapter call, given the config's `backlog.json` top level
+ * (a test passes its own).
  *
- * @param {{ backlogRoot: string, agents: {agent: string, model: string|null}[],
+ * @param {{ topLevel: object, agents: {agent: string, model: string|null}[],
  *           reviewAgents: {agent: string, model: string|null}[] }} config
  * @param {(agent: string, model: string|null) => object} [ask]
  * @returns {object[]}
  */
 export function capacityRows(
   config,
-  ask = (agent, model) => getProvider(agent).capacity({ model, backlogRoot: config.backlogRoot }),
+  ask = (agent, model) => getProvider(agent).capacity({ model, topLevel: config.topLevel }),
 ) {
   const byAgent = new Map();
   const byConfiguration = new Map();

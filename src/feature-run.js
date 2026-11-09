@@ -501,11 +501,11 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     // An interactive run attaches each session and does not walk the list.
     interactive,
     /**
-     * The adapter's capacity reading for one configuration (F-64 D1), in the
-     * run's backlog `backlogRoot`; never throws.
+     * The adapter's capacity reading for one configuration (F-64 D1), with
+     * the run config's `backlog.json` top level `topLevel`; never throws.
      */
-    capacity(agent, model, backlogRoot) {
-      return getProvider(agent).capacity({ model, backlogRoot });
+    capacity(agent, model, topLevel) {
+      return getProvider(agent).capacity({ model, topLevel });
     },
     session({
       mode,
@@ -1433,14 +1433,15 @@ function markOut(ctx, { step, configuration: c, kind, scope, message, until }) {
  * `account`-scoped answer is the agent's for every model, so `asked` keeps
  * it and the agent is asked once per walk. A runner without `capacity`, or
  * one that throws or answers nothing usable, reads `unknown`: a broken read
- * costs at most a refused spawn. `backlogRoot` is the run's backlog, which an
- * adapter may read its settings from (`local`).
+ * costs at most a refused spawn. `topLevel` is the run config's
+ * `backlog.json` top level, which an adapter may read its settings from
+ * (`local`).
  */
-function readCapacity(runner, c, asked, backlogRoot) {
+function readCapacity(runner, c, asked, topLevel) {
   if (asked.has(c.agent)) return asked.get(c.agent);
   let reading = null;
   try {
-    reading = typeof runner.capacity === 'function' ? runner.capacity(c.agent, c.model ?? null, backlogRoot) : null;
+    reading = typeof runner.capacity === 'function' ? runner.capacity(c.agent, c.model ?? null, topLevel) : null;
   } catch (e) {
     reading = { state: 'unknown', scope: 'model', until: null, message: describeThrown(e) };
   }
@@ -1529,7 +1530,7 @@ function runSession(ctx, { step, mode, role = 'implement', story = null, promptN
               runner.log(`  ${step}: skipping ${name}: ${skip}`);
               continue;
             }
-            const reading = readCapacity(runner, c, asked, config.backlogRoot);
+            const reading = readCapacity(runner, c, asked, config.topLevel);
             if (reading.state === 'unavailable') {
               const until = reading.until == null ? NaN : new Date(reading.until).getTime();
               markOut(ctx, {

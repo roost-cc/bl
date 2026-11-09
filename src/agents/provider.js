@@ -138,6 +138,9 @@ export class AgentProvider {
    * @param {string} [opts.sessionId]    - ID of session to resume
    * @param {string} [opts.roostDir]
    * @param {string} [opts.backlogRoot]
+   * @param {object|null} [opts.topLevel] - `backlog.json`'s top level as the
+   *                                       caller's config loaded it (`local`
+   *                                       reads its server from it)
    * @param {string|null} [opts.model]   - The model to run; null for the
    *                                       account's own. Only an adapter whose
    *                                       supportsModel() is true selects it.
@@ -189,11 +192,12 @@ export class AgentProvider {
    * again, or null; `windows` lists the quota windows read, for
    * `bl capacity`; `message` is the adapter's own words.
    *
-   * `backlogRoot` is the backlog the run works in: an adapter whose answer
-   * depends on `backlog.json` (`local` reads its server URL) loads it from
-   * there. Both callers pass it; the base ignores it.
+   * `topLevel` is `backlog.json`'s top level as the caller's config loaded
+   * it: an adapter whose answer depends on `backlog.json` (`local` reads its
+   * server URL) reads it there, never from the file. Both callers pass it;
+   * the base ignores it.
    *
-   * @param {{ model?: string|null, backlogRoot?: string }} [opts]
+   * @param {{ model?: string|null, topLevel?: object }} [opts]
    * @returns {{ state: "available"|"unavailable"|"unknown",
    *             scope: "account"|"model", until: Date|null,
    *             windows: { name: string, remainingPercent: number,
@@ -216,12 +220,9 @@ export class AgentProvider {
    * `review_agent` entry and for -A, and throws the reason after the entry's
    * location. `topLevel` is `backlog.json`'s top level; `raw` is it with the
    * repo's `overrides` merged over it (`raw` is `topLevel` without them).
-   * `backlogRoot` is the backlog the loader loads (absent outside it):
-   * `local` records the server it checked under it, for spawn() and
-   * capacity().
    *
    * @param {{ model: string|null }} _configuration
-   * @param {{ topLevel: object, raw: object, backlogRoot?: string }} _ctx
+   * @param {{ topLevel: object, raw: object }} _ctx
    * @returns {string|null}
    */
   checkConfiguration(_configuration, _ctx) {

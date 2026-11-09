@@ -145,7 +145,7 @@ function localBacklog(url) {
   });
 }
 
-test("capacityRows's default ask gives the adapter the config's backlog root: local reads its server there", async () => {
+test("capacityRows's default ask gives the adapter the config's top level: local reads its server there", async () => {
   // Another backlog (BL_BACKLOG_DIR, or the cwd's) names another server, so
   // the URL in the message says which backlog the adapter read.
   const url = await closedPortUrl();
