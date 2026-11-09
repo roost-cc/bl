@@ -41,4 +41,28 @@ set -e
 assert_exit "no temp directory: exit" "1" "$rc"
 assert_eq "no temp directory: nothing runs" "" "$out"
 
+# The runner removes its temp directory for any TMPDIR, even one with a quote.
+QUOTED="$DIR/it's"
+mkdir -p "$QUOTED"
+set +e
+err=$(env TMPDIR="$QUOTED" bash "$RUN_PARALLEL" demo bash "$DIR/fast" 2>&1 >/dev/null)
+rc=$?
+set -e
+assert_exit "TMPDIR with a quote: exit" "0" "$rc"
+assert_eq "TMPDIR with a quote: no error" "" "$err"
+assert_eq "TMPDIR with a quote: temp directory removed" "" "$(ls -A "$QUOTED")"
+
+# Two calls in one shell remove both temp directories and keep the caller's
+# EXIT trap.
+TWICE="$DIR/twice"
+mkdir -p "$TWICE"
+out=$(env TMPDIR="$TWICE" RUN_PARALLEL="$RUN_PARALLEL" ITEM="$DIR/fast" bash -c '
+  source "$RUN_PARALLEL"
+  trap "echo caller-trap-ran" EXIT
+  run_parallel a bash "$ITEM" >/dev/null
+  run_parallel b bash "$ITEM" >/dev/null
+')
+assert_eq "two calls: the caller's EXIT trap runs" "caller-trap-ran" "$out"
+assert_eq "two calls: both temp directories removed" "" "$(ls -A "$TWICE")"
+
 summary_and_exit

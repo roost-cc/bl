@@ -21,9 +21,8 @@ run_parallel() {
   local items=("$@") pids=() failed=() pass=0 dir i
   # Without its directory no item can write its output: start none.
   dir=$(mktemp -d) || return 1
-  # Expanded now: $dir is local and is gone when the EXIT trap runs.
-  # shellcheck disable=SC2064
-  trap "rm -rf '$dir'" EXIT
+  # The function removes $dir itself and sets no EXIT trap: the EXIT trap
+  # belongs to the caller, and a sourced runner can run more than once.
 
   for i in "${!items[@]}"; do
     # shellcheck disable=SC2086 # the runner is split into words on purpose
@@ -41,6 +40,7 @@ run_parallel() {
     cat "$dir/$i"
     echo
   done
+  rm -rf -- "$dir"
 
   if ((${#failed[@]} > 0)); then
     echo "$label summary: ${#failed[@]} failed, $pass passed" >&2
