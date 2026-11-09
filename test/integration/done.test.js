@@ -1,11 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { mkTempBacklog, STORY_INDEX_TEMPLATE } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { parseFrontmatter } from '../../src/config.js';
-import { GIT_ENV, git, initGitBacklog, headFiles, dirtyBystanders, statusLines } from '../helpers/git-backlog.js';
+import {
+  GIT_ENV,
+  git,
+  initGitBacklog,
+  addOrigin,
+  headFiles,
+  dirtyBystanders,
+  statusLines,
+} from '../helpers/git-backlog.js';
 
 const FOUNDATION = { id: 'C00', title: 'Foundation', dirSuffix: 'foundation' };
 
@@ -380,6 +388,108 @@ test('bl done exits 1 and names the paths when the commit fails, leaving the edi
     assert.match(r.stderr, new RegExp(`${S1}/index\\.md`));
     assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
     assert.equal(parseFrontmatter(readFileSync(join(dir, S1, 'index.md'), 'utf8')).fm.status, 'done');
+    assert.ok(existsSync(join(dir, '.bl', 'run', 'commit-failed', 'done_S-1.json')), 'the failed commit is recorded');
+  } finally {
+    cleanup();
+  }
+});
+
+// S-1347: a rerun after a failed commit commits what the failed run left.
+
+const DONE_RECORD = join('.bl', 'run', 'commit-failed', 'done_S-1.json');
+
+/** A git backlog with an origin whose commits fail; returns the hook path. */
+function failingDoneBacklog() {
+  const t = gitDoneBacklog();
+  addOrigin(t.dir);
+  const hook = join(t.dir, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+  chmodSync(hook, 0o755);
+  return { ...t, hook };
+}
+
+test('done_retry_commits_after_failed_commit', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const first = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV });
+    assert.equal(first.status, 1, first.stderr);
+    assert.ok(existsSync(join(dir, DONE_RECORD)), 'the failed commit leaves a record');
+
+    const second = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(second.status, 1, second.stderr);
+    assert.match(second.stderr, /committing what an earlier bl done left uncommitted/);
+    assert.match(second.stderr, /backlog commit failed/);
+    assert.match(second.stderr, new RegExp(`Commit these backlog paths by hand:\\n  ${S1}\\n`));
+    assert.ok(existsSync(join(dir, DONE_RECORD)), 'a second failed commit keeps the record');
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+
+    rmSync(hook);
+    // The rerun's own flags do not change what the failed run wrote.
+    const third = runBl(['done', '--superseded', 'S-1', 'cafe123'], { cwd: dir, env: GIT_ENV });
+    assert.equal(third.status, 0, third.stderr);
+    assert.match(third.stderr, /Done\. Story S-1 marked done\./);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: mark S-1 done');
+    assert.deepEqual(headFiles(dir), [`M\t${S1}/index.md`]);
+    assert.equal(parseFrontmatter(git(dir, 'show', `HEAD:${S1}/index.md`)).fm.commit, 'deadbeef');
+    assert.equal(git(dir, 'ls-remote', 'origin', 'main').split('\t')[0], git(dir, 'rev-parse', 'HEAD'));
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'the record is gone');
+    assertOnlyBystandersDirty(dir);
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_retry_after_edit_names_the_file_and_commits_nothing', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 1);
+    writeFileSync(join(dir, S1, 'index.md'), '\nAn operator edit.\n', { flag: 'a' });
+    rmSync(hook);
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Story S-1 is already marked done\./);
+    assert.match(r.stderr, new RegExp(`${S1}/index\\.md has uncommitted changes`));
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+    assert.ok(!existsSync(join(dir, DONE_RECORD)));
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_retry_unreadable_record_exits_1', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    const head = git(dir, 'rev-parse', 'HEAD');
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 1);
+    writeFileSync(join(dir, DONE_RECORD), 'not json');
+    rmSync(hook);
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /cannot read \.bl\/run\/commit-failed\/done_S-1\.json/);
+    assert.match(r.stderr, new RegExp(`status -- ${S1}/index\\.md`));
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'the record is gone');
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_success_leaves_no_record, and a rerun on the committed story commits nothing', () => {
+  const { dir, cleanup } = gitDoneBacklog();
+  try {
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 0);
+    assert.ok(!existsSync(join(dir, DONE_RECORD)));
+    const head = git(dir, 'rev-parse', 'HEAD');
+
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Story S-1 is already marked done\./);
+    assert.doesNotMatch(r.stderr, /uncommitted/);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
   } finally {
     cleanup();
   }
@@ -391,6 +501,7 @@ test('bl done in a backlog that is not a git repo skips the commit with a notice
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /not a git repository; skipping commit/);
+    assert.ok(!existsSync(join(dir, DONE_RECORD)), 'leaves no failed-commit record');
   } finally {
     cleanup();
   }

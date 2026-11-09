@@ -37,6 +37,7 @@ import { acquireLock, releaseLock } from './lock.js';
 import {
   commitPaths,
   dirtySnapshot,
+  hashPath,
   hasOriginRemote,
   hasOwnRepo,
   leaveRegenerationPending,
@@ -48,6 +49,7 @@ import {
   pushIfAhead,
   pushWarning,
   reportBacklogPull,
+  saveFailedCommit,
 } from './backlog-commit.js';
 import { ensureAllowedTools } from './allowed-tools.js';
 import { findStoryDir } from './story.js';
@@ -323,6 +325,24 @@ export async function syncAndCommit(config, { message, storyIds = [], extraPaths
   } finally {
     releaseLock(root);
   }
+}
+
+/**
+ * `syncAndCommit` for a command that writes one file, `rel` (`bl approve`,
+ * `bl done`; S-1347). A failed commit records `rel` and its content in
+ * `owner`'s failed-commit record, so a rerun of the command commits it while
+ * the content is the same (`failedCommitPending`); any other result removes
+ * the record. The hash is taken after the attempt, which formats the file.
+ * @param {object} config
+ * @param {string} owner  e.g. `done S-1`
+ * @param {string} rel  backlog-relative path
+ * @param {{ message: string, storyIds?: string[], extraPaths?: string[] }} opts
+ */
+export async function commitAndRecord(config, owner, rel, opts) {
+  const root = config.backlogRoot;
+  const res = await syncAndCommit(config, opts);
+  saveFailedCommit(root, owner, { commit: res.error ? [[rel, hashPath(root, rel)]] : [], unsure: [] });
+  return res;
 }
 
 /**

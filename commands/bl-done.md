@@ -19,12 +19,8 @@ The script will:
 
 1. Update the story frontmatter (`status: done`, `commit`, `completed`); the story stays in
    `stories/`, since status is frontmatter, not location
-2. Run sync automatically
+2. Commit the story's directory on the backlog's current branch and push it
 
-After the script succeeds, commit and push the changed backlog files. Use `git -C <backlogPath>` form (no `cd`) — the backlog path comes from `backlog.json` (key: `backlog`), resolved from the repo root. The backlog repo is shared and uses an unstable `main` — direct commits to `main` are expected; do NOT create branches or worktrees in it.
-
-```
-git -C <backlogPath> add <changed-files>
-git -C <backlogPath> commit -m "chore: <message> (<storyId>)"
-git -C <backlogPath> push
-```
+Do not commit the backlog yourself. If the backlog commit fails, `bl done` exits 1 and names the
+paths. Fix the cause and run `bl done <story-id>` again: it commits what the failed run wrote,
+while the story file is unchanged since then.

@@ -92,6 +92,8 @@ in the backlog stay out. The commit notice goes to stderr. When the backlog is
 not a git repo they skip the commit; when the commit fails they exit 1 and
 list the paths to commit by hand. `bl task` and `bl task done` commit the
 same way, with the task file and `blockers.json` among the paths.
+After a failed commit, a rerun of `bl done` or `bl approve` commits the file that the failed run
+left, if its content is the same (`commitAndRecord` and `failedCommitPending`, S-1347).
 
 When adding a new command, ask: "what is the one piece of information
 the caller needs?" That goes on stdout. Everything else goes through
