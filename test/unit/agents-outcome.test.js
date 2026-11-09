@@ -2,7 +2,7 @@
 // argument construction and result parsing, with fake CLI outputs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { ClaudeProvider, buildClaudeArgs, parseClaudeJsonResult } from '../../src/agents/claude.js';
 import { CodexProvider, buildCodexArgs, parseCodexJsonEvents } from '../../src/agents/codex.js';
 import { GeminiProvider } from '../../src/agents/gemini.js';
@@ -45,6 +45,20 @@ test('buildClaudeArgs passes --json-schema with the schema as JSON, headless onl
   assert.deepEqual(JSON.parse(args[i + 1]), SCHEMA);
   assert.ok(i < args.indexOf('--'), 'before the prompt');
   assert.equal(buildClaudeArgs({ prompt: 'p', headless: true }).includes('--json-schema'), false);
+});
+
+test('buildClaudeArgs leaves out $schema: Claude Code rejects draft 2020-12 (T-60)', () => {
+  const dir = new URL('../../schemas/', import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+  assert.ok(files.length > 0);
+  for (const file of files) {
+    const schema = JSON.parse(readFileSync(new URL(file, dir), 'utf8'));
+    const args = buildClaudeArgs({ prompt: 'p', headless: true, schema });
+    const sent = JSON.parse(args[args.indexOf('--json-schema') + 1]);
+    assert.equal(Object.hasOwn(sent, '$schema'), false, file);
+    const { $schema: _draft, ...rest } = schema;
+    assert.deepEqual(sent, rest, file);
+  }
 });
 
 test('buildClaudeArgs resumes a headless session by id (the outcome retry)', () => {

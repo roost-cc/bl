@@ -140,7 +140,14 @@ export function buildClaudeArgs({
     // makes the loop unattended.
     claudeArgs.push('-p', '--output-format', 'json');
     if (sessionId) claudeArgs.push('--resume', sessionId);
-    if (schema) claudeArgs.push('--json-schema', JSON.stringify(schema));
+    // Claude Code's --json-schema check does not know draft 2020-12 and
+    // rejects a schema whose `$schema` names it, before the session starts
+    // (T-60). bl's own check (outcome.js) keeps the draft; claude gets the
+    // schema without the `$schema` line. No schema uses a 2020-12-only keyword.
+    if (schema) {
+      const { $schema: _draft, ...forClaude } = schema;
+      claudeArgs.push('--json-schema', JSON.stringify(forClaude));
+    }
     // acceptEdits: file writes inside the granted write roots (`--add-dir`: the
     // worktree and the backlog, including the run's `.bl/run/*.scratch` dirs)
     // are approved without a prompt. Without it, print mode denies every shell
