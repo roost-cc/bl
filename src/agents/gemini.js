@@ -6,6 +6,7 @@
 
 import { spawnSync } from 'child_process';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import { writeFileSync, unlinkSync } from 'fs';
 import { AgentProvider, agentEnv } from './provider.js';
 
@@ -125,7 +126,7 @@ export class GeminiProvider extends AgentProvider {
 
     // Generate a temporary policy file to allow tools without confirmation.
     // Write tools are confined to the write roots; reads/shell are global.
-    const policyPath = join('/tmp', `bl-gemini-policy-${sessionId || name || 'session'}.toml`);
+    const policyPath = join(tmpdir(), `bl-gemini-policy-${sessionId || name || 'session'}.toml`);
     const policy = this.generatePolicy(permissions, scopes.write ?? [], denied);
     writeFileSync(policyPath, policy);
     geminiArgs.push('--policy', policyPath);

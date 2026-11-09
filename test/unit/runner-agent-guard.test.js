@@ -5,15 +5,18 @@
  * `capacity` on its runner, puts `noAgentEnv()` / `withNoAgent()` into its
  * env, or is in ALLOWED with the reason it starts no real agent. A plain
  * text search per file; it does not check which runner a key belongs to.
+ * The helpers in `test/helpers/` are searched too: the fixtures of a split
+ * integration test file (F-99 D2) hold runners its parts use.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { basename, join, relative } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const DIR = join(ROOT, 'test/integration');
+const HELPERS = join(ROOT, 'test/helpers');
 
 const CALLS = /\bdefaultRunner\(/;
 // A property `capacity: …` or a method `capacity(…) {` at the start of a line;
@@ -32,8 +35,17 @@ function unguarded(text) {
 }
 
 test('every integration test that calls defaultRunner() has an agent guard', () => {
-  const files = readdirSync(DIR).filter((f) => f.endsWith('.test.js'));
-  const failing = files.filter((f) => !ALLOWED.has(f) && unguarded(readFileSync(join(DIR, f), 'utf8')));
+  const files = [
+    ...readdirSync(DIR)
+      .filter((f) => f.endsWith('.test.js'))
+      .map((f) => join(DIR, f)),
+    ...readdirSync(HELPERS)
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => join(HELPERS, f)),
+  ];
+  const failing = files
+    .filter((p) => !ALLOWED.has(basename(p)) && unguarded(readFileSync(p, 'utf8')))
+    .map((p) => relative(ROOT, p));
   assert.deepEqual(
     failing,
     [],
