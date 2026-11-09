@@ -18,10 +18,11 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const DIRS = ['test/cli', 'test/e2e', 'test/helpers'];
 
 // `/tmp`, `/var/tmp`, `/dev/shm`, or a path under `$TMPDIR` / `${TMPDIR}` /
-// `${TMPDIR:-…}`, with or without a closing quote before the `/`. `~/tmp` is
-// in the home directory, `$TMPDIR_ROOT` is another variable, and `TMPDIR=…`
-// sets TMPDIR for mktemp.
-const FIXED = /(^|[^\w.~])\/(tmp|var\/tmp|dev\/shm)\b|\$(\{TMPDIR\b[^}]*\}|TMPDIR\b)"?\//;
+// `${TMPDIR:-…}`, with or without a closing quote before the `/`. A `/tmp`
+// after a name, `~`, `}` or `)` (with or without a closing quote) is under
+// another directory: `~/tmp`, `"$DIR"/tmp`, `${HOME}/tmp`, `$(pwd)/tmp`.
+// `$TMPDIR_ROOT` is another variable, and `TMPDIR=…` sets TMPDIR for mktemp.
+const FIXED = /(?<![\w.~})]["']?)\/(tmp|var\/tmp|dev\/shm)\b|\$(\{TMPDIR\b[^}]*\}|TMPDIR\b)"?\//;
 
 /** @param {string} text @returns {string[]} the lines with a fixed temp path */
 function fixedPaths(text) {
@@ -52,7 +53,11 @@ test('a fixed temp path is found in each form, and a mktemp path is not', () => 
     ['f="${TMPDIR}"/bl-x', true],
     ['echo x >/var/tmp/bl-x', true],
     ['echo x >/dev/shm/bl-x', true],
+    ['f="/tmp/bl-x"', true],
     ['f=~/tmp/x', false],
+    ['f="$DIR"/tmp/x', false],
+    ['f=${HOME}/tmp/x', false],
+    ['f=$(pwd)/tmp/x', false],
     ['DIR=$(mktemp -d)', false],
     ['mktemp -d -t bl-test-XXXXXX', false],
     ['rm -rf "$TMPDIR_ROOT/x"', false],
