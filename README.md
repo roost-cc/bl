@@ -3,8 +3,8 @@
 `bl` is a file-based backlog CLI. Themes, epics, features, components and stories are markdown
 files with YAML frontmatter in one shared git repository, the **backlog**, kept beside the code
 repositories it plans work for. `bl` creates and indexes them, checks them, and drives agent
-sessions (Claude Code, Codex, Gemini) that refine, implement, review and merge the work, each in
-its own git worktree.
+sessions (Claude Code, Codex, Gemini, and `local`: Claude Code against a local model server) that
+refine, implement, review and merge the work, each in its own git worktree.
 
 ## Install
 
