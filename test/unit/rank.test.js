@@ -278,11 +278,15 @@ test('checkUnit takes an open feature or loose story and refuses everything else
   assert.match(checkUnit(graph, 'C01').refused, /not a feature \(F-<n>\) or story \(S-<n>\) id/);
 });
 
-test('agentEnv marks a headless spawn with BL_HEADLESS=1 and leaves an interactive one alone', () => {
+test('agentEnv turns titles off for every spawn and marks a headless one with BL_HEADLESS=1', () => {
   const base = { PATH: '/bin' };
-  assert.equal(agentEnv({ base }), base);
-  assert.deepEqual(agentEnv({ headless: true, base }), { PATH: '/bin', BL_HEADLESS: '1' });
-  assert.deepEqual(agentEnv({ backlogRoot: '/b', base }), { PATH: '/bin', BL_BACKLOG_DIR: '/b' });
+  assert.deepEqual(agentEnv({ base }), { PATH: '/bin', BL_TAB_TITLE: '' });
+  assert.deepEqual(agentEnv({ headless: true, base }), { PATH: '/bin', BL_TAB_TITLE: '', BL_HEADLESS: '1' });
+  assert.deepEqual(agentEnv({ backlogRoot: '/b', base }), {
+    PATH: '/bin',
+    BL_TAB_TITLE: '',
+    BL_BACKLOG_DIR: '/b',
+  });
   assert.equal(isHeadless({ BL_HEADLESS: '1' }), true);
   assert.equal(isHeadless({ BL_HEADLESS: '' }), false);
   assert.equal(isHeadless({}), false);
@@ -312,6 +316,9 @@ test('every adapter gives a headless spawn BL_HEADLESS=1 and an interactive spaw
     ]) {
       assert.equal(launch(provider, true, extra)[HEADLESS_ENV], '1', `${name} headless`);
       assert.equal(launch(provider, false, extra)[HEADLESS_ENV], undefined, `${name} interactive`);
+      // S-1388: titles off in every agent session, headless or not.
+      assert.equal(launch(provider, true, extra).BL_TAB_TITLE, '', `${name} headless title`);
+      assert.equal(launch(provider, false, extra).BL_TAB_TITLE, '', `${name} interactive title`);
     }
   });
 });

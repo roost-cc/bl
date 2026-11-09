@@ -20,7 +20,9 @@
  * as `: S-210 : implement` and a feature with no story as `F-123 :  : refine`.
  * `{{name}}` is the placeholder bl already uses in its prompts and plugin
  * commands (F-63 row 2), not a new format. An empty `BL_TAB_TITLE` turns
- * titles off; `bl` sets it so for the child `bl` processes it runs.
+ * titles off; `bl` sets it so for the child `bl` processes it runs and for
+ * every agent session (`agentEnv`, S-1388). The tab belongs to the `bl` the
+ * operator started, so nothing below an agent session renames the window.
  *
  * An external tool `bl` runs with the terminal (an agent, an editor) may set
  * its own title. The code that ran it calls `reassertTabTitle` afterwards,
@@ -41,6 +43,9 @@ import { spawnSync } from 'child_process';
 
 export const DEFAULT_TAB_TITLE_FORMAT = '{{feature}} : {{story}} : {{status}}';
 
+/** The variable that holds the title format; empty turns titles off. */
+export const TAB_TITLE_ENV = 'BL_TAB_TITLE';
+
 /** The fields set so far in this process. ESM modules load once per process, so this is the one copy. */
 const fields = new Map();
 
@@ -49,12 +54,12 @@ let shown = false;
 
 /** The format in force: `BL_TAB_TITLE`, or the default when it is unset. */
 export function tabTitleFormat() {
-  return process.env.BL_TAB_TITLE ?? DEFAULT_TAB_TITLE_FORMAT;
+  return process.env[TAB_TITLE_ENV] ?? DEFAULT_TAB_TITLE_FORMAT;
 }
 
 /** Whether titles are off: an empty `BL_TAB_TITLE`. */
 export function tabTitleOff() {
-  return process.env.BL_TAB_TITLE === '';
+  return process.env[TAB_TITLE_ENV] === '';
 }
 
 /**

@@ -1064,7 +1064,10 @@ against a local model server; see **The local provider** below. Besides `spawn`,
   `BL_HEADLESS=1` (`HEADLESS_ENV`), built by `agentEnv({ headless,
 backlogRoot })`, which also sets `BL_BACKLOG_DIR` where the adapter passes
   it; an interactive spawn adds no marker. `isHeadless()` reads it (F-78 D3,
-  see `bl rank`). `ClaudeProvider.spawn()` takes it from
+  see `bl rank`). `agentEnv` also sets `BL_TAB_TITLE=''` (`TAB_TITLE_ENV`)
+  for every spawn, headless or not, so titles are off in the agent session
+  (S-1388, see "Tab titles"). Every adapter's spawn passes an `env` built by
+  `agentEnv`. `ClaudeProvider.spawn()` takes it from
   `spawnEnv({ headless, backlogRoot, model, topLevel })`, which `local`
   overrides. Every caller of `spawn()` passes its config's `topLevel`.
 - `supportsModel()`: whether `spawn({ model })` selects the model (Claude's
@@ -2572,8 +2575,13 @@ bl's prompts and plugin commands use, not a new format.
 - After a tool that had the terminal returns (the agent in `launchSession` and triage, the
   editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
   its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
-- An empty `BL_TAB_TITLE` turns titles off; `verbs.js` sets it for the child `bl` processes it
-  runs, so the parent's window keeps the parent's title. `openTmuxWindow` names a new window
+- An empty `BL_TAB_TITLE` (`TAB_TITLE_ENV`) turns titles off; `verbs.js` `childEnv` sets it for
+  the child `bl` processes it runs, so the parent's window keeps the parent's title. `agentEnv`
+  sets it for every agent session (S-1388): the tab belongs to the `bl` that started the session,
+  so no `bl` the agent runs, and no test it starts, renames the window or turns its
+  `automatic-rename` back on. `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
+  `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
+  (`test/unit/tmux-free-env.test.js` guards it). `openTmuxWindow` names a new window
   with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
 - When `bl` exits after setting a title, `restoreTabTitle` (registered on the first title)
   gives it back: under tmux it turns the window's `automatic-rename` on again, elsewhere it
@@ -2904,7 +2912,7 @@ bl rank S-40 --remove                 # back into the dated tail
 **`BL_HEADLESS`.** Every agent bl starts headless has `BL_HEADLESS=1` in its environment: each
 adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it
 when `headless` is set (`runHeadlessSession` passes `headless: true`); an interactive spawn adds
-nothing. With it set, a `bl rank` edit exits 1 before it pulls or writes anything, and
+no marker (it still gets `BL_TAB_TITLE=''`, see "Tab titles"). With it set, a `bl rank` edit exits 1 before it pulls or writes anything, and
 `commitPaths`, the one commit path every bl command uses, refuses any commit whose paths, taken
 as one Git pathspec set (an exclusion such as `:!priority.md` counts), select `priority.md`
 (`headlessPriorityRefusal`), so a hand edit cannot be
