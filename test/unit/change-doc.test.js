@@ -741,4 +741,7 @@ test('applyFixOutcome: fixed writes and commits review_status fixed; anything el
   }
   assert.equal(git('log', '-1', '--format=%s'), 'chore: F-42 review fixed');
   assert.equal(git('status', '--porcelain'), '', 'the write is committed');
+  // A change document the session deleted is a warning, as the other branches are.
+  const gone = { id: 'F-42', changePath: join(dir, 'missing', 'change.md') };
+  assert.equal(applyFixOutcome(root, gone, outcome({ summary: 's', fixed: true, open: 0 })), false);
 });

@@ -211,6 +211,10 @@ export function applyFixOutcome(backlogRoot, { id, changePath }, { structured, s
     warn(`${id}: ${structured.open} review item(s) still open; the review status is unchanged: ${structured.summary}`);
     return false;
   }
+  if (!existsSync(changePath)) {
+    warn(`${id}: no change document at ${changePath}; the review status is not written`);
+    return false;
+  }
   setReviewFields(backlogRoot, changePath, { review_status: 'fixed' });
   commitChangeDoc(backlogRoot, changePath, `chore: ${id} review fixed`);
   return true;
