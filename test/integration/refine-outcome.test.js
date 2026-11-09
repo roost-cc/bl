@@ -111,6 +111,12 @@ test('a batch of 60 stories starts, and bl sets each status from the outcome', (
 for (const [label, outcome, status, said] of [
   ['refined: true sets refined', { premise_holds: true, refined: true }, 'refined', /F-1: status refined\./],
   [
+    'refined: true with a reason prints no reason',
+    { premise_holds: true, refined: true, reason: 'a note for the operator' },
+    'refined',
+    /F-1: status refined\.$/m,
+  ],
+  [
     'premise_holds: false sets draft and prints the reason',
     { premise_holds: false, refined: false, reason: 'the cache already does it' },
     'draft',
