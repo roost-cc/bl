@@ -90,6 +90,13 @@ test('outcomeLine: a review child whose story file cannot be read still gets a l
   }
 });
 
+test('outcomeLine: an addressed story with an open Must fix names bl implement', () => {
+  assert.deepEqual(reviewedLine({ review_round: 1, review_status: 'addressed', reviewLog: MUST_LOG }), {
+    line: 'S-1: reviewed, round 1 done: review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item, PR #4 — next: bl implement S-1',
+    ok: true,
+  });
+});
+
 test('outcomeLine: a pending story at its round cap is owed the closing round', () => {
   assert.deepEqual(reviewedLine({ review_round: 2, review_status: 'pending', reviewLog: MUST_LOG }), {
     line: 'S-1: reviewed, round 2 done: 1 open item (1 Must fix), PR #4 — next: bl run S-1 --resume',

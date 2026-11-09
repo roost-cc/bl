@@ -1133,6 +1133,11 @@ test('bl status words the review line by outcome, and shows any other review_sta
       statusWith('addressed', 2),
       'review: round 2/2 done: nothing left to fix (1 open nit left), latest session 2026-11-09',
     );
+    // An open Must fix box under addressed: never "nothing left to fix".
+    assert.equal(
+      statusWith('addressed', 1, log.replace('[x] done', '[ ] open')),
+      'review: round 1/2 done: review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item, latest session 2026-11-09',
+    );
     assert.equal(statusWith('', 0, ''), 'review: none (round 0/2)');
     assert.equal(statusWith('', 0), 'review: none (round 0/2), latest session 2026-11-09');
   } finally {
