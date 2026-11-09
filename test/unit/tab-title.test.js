@@ -257,6 +257,15 @@ test('a title set while titles are off does not change the width', () => {
   });
 });
 
+test('reassertTabTitle pads to the current width', () => {
+  underFakeTmux((fake) => {
+    updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
+    updateTabTitle('status', 'test');
+    reassertTabTitle();
+    assert.equal(fake.calls()[2], `rename-window\n-t\n@7\n--\n${'F-56 : S-210 : test'.padEnd(24)}\n`);
+  });
+});
+
 test('clearTabTitle keeps the width', () => {
   underFakeTmux((fake) => {
     updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
