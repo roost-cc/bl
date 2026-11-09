@@ -15,7 +15,7 @@ run_bash_suite() {
   local label="$1" dir="$2"
   local scripts=() f
   for f in "$dir"/*.sh; do
-    [[ "$(basename "$f")" == "run-all.sh" ]] && continue
+    [[ "$(basename -- "$f")" == "run-all.sh" ]] && continue
     scripts+=("$f")
   done
   run_parallel "$label" bash "${scripts[@]}"

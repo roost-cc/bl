@@ -50,7 +50,7 @@ run_parallel() {
     if wait "${pids[$i]}"; then
       pass=$((pass + 1))
     else
-      failed+=("$(basename "${items[$i]}")")
+      failed+=("$(basename -- "${items[$i]}")")
     fi
     _run_parallel_print "$i"
     next=$((i + 1))
@@ -70,7 +70,7 @@ run_parallel() {
 # Prints the output of item $1 under its line. It reads `items` and `dir` of
 # the run_parallel call that runs it.
 _run_parallel_print() {
-  echo "──── $(basename "${items[$1]}")"
+  echo "──── $(basename -- "${items[$1]}")"
   cat "$dir/$1"
   echo
 }

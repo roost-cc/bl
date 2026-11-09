@@ -33,6 +33,10 @@ assert_contains "one fails: its output is printed" $'──── broken\nbroken
 assert_contains "one fails: the other still runs" $'──── fast\nfast-out' "$out"
 assert_eq "one fails: the summary names it" $'demo summary: 1 failed, 1 passed\n  failed: broken' "$err"
 
+# An item that starts with `-` is a name, not an option of basename.
+out=$(bash "$RUN_PARALLEL" demo echo -n 2>&1)
+assert_eq "an item that starts with -: its line names it" $'──── -n\n\ndemo summary: 1 passed' "$out"
+
 # Without a temp directory no item starts, and the runner fails.
 set +e
 out=$(env TMPDIR="$DIR/missing" bash "$RUN_PARALLEL" demo bash "$DIR/fast" 2>/dev/null)
