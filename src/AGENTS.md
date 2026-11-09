@@ -3992,7 +3992,8 @@ Adding a test:
   call `mk_temp_backlog`, then drive `"$BL"` with the assert\_\* helpers.
   `cli/run-all.sh` picks it up automatically and runs it at the same time
   as the other scripts, so it uses only its own `mktemp` paths
-  (`unit/bash-temp-paths.test.js` fails on a `/tmp` or `$TMPDIR/` path).
+  (`unit/bash-temp-paths.test.js` fails on a fixed path under `/tmp`,
+  `/var/tmp`, `/dev/shm`, `$TMPDIR` or `${TMPDIR}`).
 - **file time** — no file in `unit/` or `integration/` takes more than 15 s
   alone (`node --test <file>`): `node --test` runs the tests of one file in
   order, so the longest file sets the suite's time. Split a longer file
