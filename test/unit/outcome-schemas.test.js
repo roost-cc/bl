@@ -55,3 +55,39 @@ test("a batch sub-agent's reply is a valid entry of the batch outcome", () => {
   const outcome = { summary: 's', stories: { 'S-1': entry } };
   assert.equal(validateOutcome(loadSchema('refine-batch'), outcome).structuredError, null);
 });
+
+// Cross-field consistency (F-68 review round 1): bl trusts each field, so an
+// outcome whose fields contradict each other is refused at the boundary. Each
+// row is [schema, outcome, accepted].
+const CONSISTENCY = [
+  ['fix', { summary: 's', fixed: true, open: 0 }, true],
+  ['fix', { summary: 's', fixed: false, open: 2 }, true],
+  // fix outcome with fixed true and open above 0 is refused
+  ['fix', { summary: 's', fixed: true, open: 3 }, false],
+  // and its mirror: fixed false with open 0
+  ['fix', { summary: 's', fixed: false, open: 0 }, false],
+  ['implement', { summary: 's', done: true, blocked: null }, true],
+  ['implement', { summary: 's', done: false, blocked: 'no access to the repo' }, true],
+  ['implement', { summary: 's', done: true, blocked: 'no access to the repo' }, false],
+  ['implement', { summary: 's', done: false, blocked: null }, false],
+  ['merge-resolve', { summary: 's', resolved: true, reason: null }, true],
+  ['merge-resolve', { summary: 's', resolved: false, reason: 'a.js has two meanings' }, true],
+  ['merge-resolve', { summary: 's', resolved: true, reason: 'a.js has two meanings' }, false],
+  ['merge-resolve', { summary: 's', resolved: false, reason: null }, false],
+  ['feature-refine', { summary: 's', premise_holds: true, refined: true }, true],
+  ['feature-refine', { summary: 's', premise_holds: true, refined: false, reason: 'r' }, true],
+  ['feature-refine', { summary: 's', premise_holds: false, refined: false, reason: 'r' }, true],
+  ['feature-refine', { summary: 's', premise_holds: false, refined: true, reason: 'r' }, false],
+  // Not contradictions: a self-review can commit a correction and still find
+  // the branch not ready, and a verifier can escalate a round with no open
+  // items (a premise or test-infrastructure problem).
+  ['self-review', { summary: 's', ok: false, changed: true }, true],
+  ['review', { summary: 's', must: 0, should: 0, nits: 0, escalated: true }, true],
+];
+
+test('outcome schemas refuse fields that contradict each other', () => {
+  for (const [schemaName, outcome, accepted] of CONSISTENCY) {
+    const { structuredError } = validateOutcome(loadSchema(schemaName), outcome);
+    assert.equal(structuredError === null, accepted, `${schemaName} ${JSON.stringify(outcome)}: ${structuredError}`);
+  }
+});

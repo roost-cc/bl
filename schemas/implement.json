@@ -20,5 +20,8 @@
       "description": "What stopped the session, in one line, when done is false; null when nothing did.",
       "anyOf": [{ "type": "string", "minLength": 1, "pattern": "^[^\\n]*$" }, { "type": "null" }]
     }
-  }
+  },
+  "if": { "properties": { "done": { "const": true } } },
+  "then": { "properties": { "blocked": { "type": "null" } } },
+  "else": { "properties": { "blocked": { "type": "string" } } }
 }

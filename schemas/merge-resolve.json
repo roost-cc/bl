@@ -20,5 +20,8 @@
       "description": "Why a merge is not resolved, in one line, when resolved is false; null when it is.",
       "anyOf": [{ "type": "string", "minLength": 1, "pattern": "^[^\\n]*$" }, { "type": "null" }]
     }
-  }
+  },
+  "if": { "properties": { "resolved": { "const": true } } },
+  "then": { "properties": { "reason": { "type": "null" } } },
+  "else": { "properties": { "reason": { "type": "string" } } }
 }

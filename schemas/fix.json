@@ -21,5 +21,8 @@
       "type": "integer",
       "minimum": 0
     }
-  }
+  },
+  "if": { "properties": { "fixed": { "const": true } } },
+  "then": { "properties": { "open": { "const": 0 } } },
+  "else": { "properties": { "open": { "type": "integer", "minimum": 1 } } }
 }

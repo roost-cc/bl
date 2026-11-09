@@ -26,6 +26,14 @@
       "minLength": 1
     }
   },
-  "if": { "properties": { "premise_holds": { "const": true }, "refined": { "const": true } } },
-  "else": { "properties": { "reason": true }, "required": ["reason"] }
+  "allOf": [
+    {
+      "if": { "properties": { "premise_holds": { "const": true }, "refined": { "const": true } } },
+      "else": { "properties": { "reason": true }, "required": ["reason"] }
+    },
+    {
+      "if": { "properties": { "premise_holds": { "const": false } } },
+      "then": { "properties": { "refined": { "const": false } } }
+    }
+  ]
 }
