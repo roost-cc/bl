@@ -3,8 +3,8 @@
 `bl` is a file-based backlog CLI. Themes, epics, features, components and stories are markdown
 files with YAML frontmatter in one shared git repository, the **backlog**, kept beside the code
 repositories it plans work for. `bl` creates and indexes them, checks them, and drives agent
-sessions (Claude Code, Codex, Gemini) that refine, implement, review and merge the work, each in
-its own git worktree.
+sessions (Claude Code, Codex, Gemini, and `local`: Claude Code against a local model server) that
+refine, implement, review and merge the work, each in its own git worktree.
 
 ## Install
 
@@ -55,6 +55,10 @@ The backlog's configuration. A minimal one:
 - `repos` registers each code repo, with its path relative to the backlog.
 - `agent` and `review_agent` are the agent configurations, in order of preference, for
   implementing and for reviewing.
+- `local` (optional) is the local server, today llama-server, that the `local` agent runs
+  Claude Code against: `{ "url", "token" }`, two non-empty strings, no defaults. bl needs it
+  only when a configuration names `local`. bl reads it from the top level only; a repo's
+  `overrides` may not set it.
 - `effort` is the effort level (`low`, `medium`, `high`, `xhigh` or `max`) of refine sessions,
   of review sessions, and of a story that sets no `effort:` of its own.
 - `plugins`, `language_dispatch` and `forge` wire in formatters, linters, test commands and the
@@ -80,6 +84,9 @@ A field that is not set renders as nothing: `: S-210 : implement` for a story wi
 feature, `F-123 :  : refine` for a feature. When `bl` exits it gives the title back to the
 terminal (tmux's automatic rename, or the title the terminal had before), so no tab keeps a
 title for work that is over; a run's end rings the bell.
+
+`bl` sets `BL_TAB_TITLE=''` for every agent session and for the child processes that `bl run`
+and `bl review` start in parallel for several targets.
 
 ## Quickstart
 

@@ -212,6 +212,69 @@ test('a title starting with - is still a name, never a tmux option', () => {
   });
 });
 
+test('a shorter title is padded to the widest title shown; a longer one raises the width', () => {
+  underFakeTmux((fake) => {
+    updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
+    updateTabTitle('status', 'test');
+    assert.equal(currentTabTitle(), 'F-56 : S-210 : test');
+    updateTabTitle('status', 'implementing');
+    updateTabTitle('status', 'x');
+    const name = (i) => fake.calls()[i].split('\n')[4];
+    assert.equal(name(0), 'F-56 : S-210 : implement');
+    assert.equal(name(1), 'F-56 : S-210 : test'.padEnd(24));
+    assert.equal(name(2), 'F-56 : S-210 : implementing');
+    assert.equal(name(3), 'F-56 : S-210 : x'.padEnd(27));
+  });
+});
+
+test('OSC 2 path pads a shorter title', () => {
+  const tty = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY');
+  const write = process.stderr.write;
+  const out = [];
+  withEnv({ TMUX: undefined, BL_TAB_TITLE: undefined }, () => {
+    process.stderr.isTTY = true;
+    process.stderr.write = (s) => (out.push(s), true);
+    try {
+      updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
+      updateTabTitle('status', 'test');
+    } finally {
+      process.stderr.write = write;
+      if (tty) Object.defineProperty(process.stderr, 'isTTY', tty);
+      else delete process.stderr.isTTY;
+    }
+  });
+  assert.equal(out[0], '\x1b[22;2t\x1b]2;F-56 : S-210 : implement\x07');
+  assert.equal(out[1], `\x1b]2;${'F-56 : S-210 : test'.padEnd(24)}\x07`);
+});
+
+test('a title set while titles are off does not change the width', () => {
+  underFakeTmux((fake) => {
+    updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'test' });
+    withEnv({ BL_TAB_TITLE: '' }, () => updateTabTitle('status', 'implementing'));
+    updateTabTitle('status', 'x');
+    assert.equal(fake.calls().length, 2);
+    assert.equal(fake.calls()[1], `rename-window\n-t\n@7\n--\n${'F-56 : S-210 : x'.padEnd(19)}\n`);
+  });
+});
+
+test('reassertTabTitle pads to the current width', () => {
+  underFakeTmux((fake) => {
+    updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
+    updateTabTitle('status', 'test');
+    reassertTabTitle();
+    assert.equal(fake.calls()[2], `rename-window\n-t\n@7\n--\n${'F-56 : S-210 : test'.padEnd(24)}\n`);
+  });
+});
+
+test('clearTabTitle keeps the width', () => {
+  underFakeTmux((fake) => {
+    updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
+    clearTabTitle();
+    assert.equal(fake.calls()[1], `rename-window\n-t\n@7\n--\n${':  :'.padEnd(24)}\n`);
+    assert.equal(currentTabTitle(), ':  :');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // restore on exit
 // ---------------------------------------------------------------------------
@@ -241,6 +304,15 @@ test('restoreTabTitle does nothing with titles off', () => {
     assert.deepEqual(fake.calls(), ['rename-window\n-t\n@7\n--\n:  : x\n']);
     restoreTabTitle(); // titles on again: the restore owed is paid
     assert.equal(fake.calls().length, 2);
+  });
+});
+
+test('after restoreTabTitle the next title is not padded', () => {
+  underFakeTmux((fake) => {
+    updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
+    restoreTabTitle();
+    updateTabTitle({ feature: null, story: null, status: 'x' });
+    assert.equal(fake.calls()[2], 'rename-window\n-t\n@7\n--\n:  : x\n');
   });
 });
 

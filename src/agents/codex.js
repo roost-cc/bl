@@ -915,6 +915,8 @@ export class CodexProvider extends AgentProvider {
     return run('codex', codexArgs, {
       stdio: 'inherit',
       cwd,
+      // Titles off in the session (S-1388): the tab is the calling bl's.
+      env: agentEnv(),
     });
   }
 }

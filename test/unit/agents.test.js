@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import fs, { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { execFileSync } from 'child_process';
 import { AgentProvider } from '../../src/agents/provider.js';
 import { getProvider, hasProvider, PROVIDER_NAMES } from '../../src/agents/index.js';
@@ -229,6 +229,35 @@ test('GeminiProvider.generatePolicy with no write roots grants no write tools', 
   const policy = new GeminiProvider().generatePolicy(['fs:write', 'fs:read'], []);
   assert.ok(!policy.includes('write_file'));
   assert.ok(policy.includes('read_file'));
+});
+
+test("GeminiProvider.spawn writes its policy file in the process's TMPDIR and removes it", () => {
+  const dir = mkTempDir('bl-gemini-tmpdir-');
+  const saved = process.env.TMPDIR;
+  process.env.TMPDIR = dir;
+  let policyPath;
+  let existed;
+  try {
+    new GeminiProvider().spawn({
+      name: 'x',
+      prompt: 'p',
+      worktreePath: '/wt',
+      cwd: '/wt',
+      backlogRoot: '/bl',
+      permissions: [],
+      run: (_cmd, args) => {
+        policyPath = args[args.indexOf('--policy') + 1];
+        existed = existsSync(policyPath);
+        return { status: 0, stdout: '' };
+      },
+    });
+  } finally {
+    if (saved === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = saved;
+  }
+  assert.equal(dirname(policyPath), dir);
+  assert.ok(existed, 'the policy file is there while gemini runs');
+  assert.ok(!existsSync(policyPath), 'the policy file is removed after the run');
 });
 
 test('CodexProvider exposes Codex-oriented prompt tool hints', () => {

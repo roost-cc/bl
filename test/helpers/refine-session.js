@@ -102,7 +102,8 @@ export function refine(dir, args, { write = [], exit = 0, tmuxLog = null, outcom
       STUB_WRITE: write.map((p) => join(dir, p)).join(' '),
       STUB_EXIT: String(exit),
       ...(outcome == null ? {} : { STUB_OUTCOME: outcome, STUB_OUTCOME_PATH: outcomePath(dir, outcomeUnit) }),
-      ...(tmuxLog ? { TMUX: 'stub', TMUX_STUB_LOG: tmuxLog } : {}),
+      // BL_TAB_TITLE unset (S-1388): the window names checked are the default format's.
+      ...(tmuxLog ? { TMUX: 'stub', TMUX_STUB_LOG: tmuxLog, BL_TAB_TITLE: undefined } : {}),
     },
     encoding: 'utf8',
   });
