@@ -227,6 +227,26 @@ test('a shorter title is padded to the widest title shown; a longer one raises t
   });
 });
 
+test('OSC 2 path pads a shorter title', () => {
+  const tty = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY');
+  const write = process.stderr.write;
+  const out = [];
+  withEnv({ TMUX: undefined, BL_TAB_TITLE: undefined }, () => {
+    process.stderr.isTTY = true;
+    process.stderr.write = (s) => (out.push(s), true);
+    try {
+      updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
+      updateTabTitle('status', 'test');
+    } finally {
+      process.stderr.write = write;
+      if (tty) Object.defineProperty(process.stderr, 'isTTY', tty);
+      else delete process.stderr.isTTY;
+    }
+  });
+  assert.equal(out[0], '\x1b[22;2t\x1b]2;F-56 : S-210 : implement\x07');
+  assert.equal(out[1], `\x1b]2;${'F-56 : S-210 : test'.padEnd(24)}\x07`);
+});
+
 test('a title set while titles are off does not change the width', () => {
   underFakeTmux((fake) => {
     updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'test' });
