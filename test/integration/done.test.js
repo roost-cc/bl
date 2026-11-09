@@ -98,13 +98,13 @@ test('bl done refuses a story that is already done', () => {
   }
 });
 
-/** Write the story's change document with `reviewStatus` and a Review Log of `items`. */
-function writeReview(dir, rel, reviewStatus, date, items) {
+/** Write the story's change document with `reviewStatus` and a Review Log of Must-fix `items` and `nits`. */
+function writeReview(dir, rel, reviewStatus, date, items, nits = 'None.') {
   const { fm } = parseFrontmatter(readFileSync(join(dir, rel), 'utf8'));
   const log =
     items == null
       ? ''
-      : `\n## Review Log\n\n### Session ${date} (PR #1)\n\n**Must fix**\n\n${items}\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n`;
+      : `\n## Review Log\n\n### Session ${date} (PR #1)\n\n**Must fix**\n\n${items}\n\n**Should fix**\nNone.\n\n**Nits**\n${nits}\n`;
   writeFileSync(
     join(dirname(join(dir, rel)), 'change.md'),
     `---\nchange_of: S-1\nstatus: open\nreview_status: ${reviewStatus}\n---\n\n# ${fm.title}\n${log}`,
@@ -118,7 +118,7 @@ test('bl done refuses while review_status: pending', () => {
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /review_status: pending/);
-    assert.match(r.stderr, /1 unchecked item/);
+    assert.match(r.stderr, /1 unchecked Must\/Should/);
     assert.match(r.stderr, /2026-05-11/);
     assert.equal(storyFm(dir, rel).status, 'backlog', 'the story is left as it was');
   } finally {
@@ -145,7 +145,19 @@ test('bl done refuses when addressed but the latest session has unchecked items'
     writeReview(dir, rel, 'addressed', '2026-07-01', '- [ ] never actually fixed');
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.notEqual(r.status, 0, 'unchecked items must block done even when frontmatter says addressed');
-    assert.match(r.stderr, /1 unchecked item/);
+    assert.match(r.stderr, /1 unchecked Must\/Should/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl done proceeds when addressed with only an open nit, as bl merge does', () => {
+  const { dir, rel, cleanup } = backlogWithStory('Addressed With Nit');
+  try {
+    writeReview(dir, rel, 'addressed', '2026-11-07', '- [x] fixed in abc1234', '- [ ] [safe] optional tidy-up');
+    const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(storyFm(dir, rel).status, 'done');
   } finally {
     cleanup();
   }

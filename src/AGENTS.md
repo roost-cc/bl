@@ -1793,9 +1793,10 @@ Gates and effects:
   info line `Review pending in story — using review-feedback prompt.`;
   otherwise the standard `workon` prompt is used.
 - `bl done` refuses while `review_status` is `pending` or `fixed`, and
-  also while the latest `## Review Log` session has unchecked items
-  regardless of the frontmatter value. It prints the story ID, latest
-  session date, and unchecked-item count, then exits non-zero. `bl merge`
+  also while the latest `## Review Log` session has unchecked Must or
+  Should items regardless of the frontmatter value (an open nit does not
+  block). It prints the story ID, latest session date, and the count of
+  unchecked Must/Should items, then exits non-zero. `bl merge`
   applies the feature's rule to both kinds (F-36 D1): `pending`/`fixed`
   or an unchecked Must or Should box blocks, an open nit does not, and a
   unit with no session is refused unless `--no-review` (see `### bl merge`).
@@ -1818,7 +1819,8 @@ Gates and effects:
 - `bl validate` enforces two integrity rules:
   `review-log-missing` (`pending`/`fixed` but no `## Review Log`
   session) and `review-log-unaddressed` (`fixed`/`addressed` but the
-  latest session still has unchecked items).
+  latest session still has unchecked Must/Should items; open nits
+  do not count, as in `bl merge`).
 
 ### `## Review Log` section
 
