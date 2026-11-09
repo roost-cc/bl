@@ -4223,13 +4223,13 @@ export async function reviewFeature({
       result = reviewRound(ctx, { reReview: fm.review_status === 'fixed', closing: owed && round >= maxRounds });
     } catch (e) {
       if (!(e instanceof RunStoppedError)) throw e;
-      const after = changeFm(ctx);
+      const after = readChangeText(ctx);
       return {
-        status: after.review_status ?? '',
-        round: parseRound(after.review_round),
+        status: after.fm.review_status ?? '',
+        round: parseRound(after.fm.review_round),
         escalated: true,
         error: e.message,
-        end: endOfReview(ctx, maxRounds, true),
+        end: endOfReview(ctx, maxRounds, true, after),
       };
     }
     state.status = result.abortError ? 'failed' : 'reviewed';
@@ -4254,9 +4254,12 @@ export async function reviewFeature({
   }
 }
 
-/** `reviewEnd` for the round `bl review` just ran, from the change document it left. */
-function endOfReview(ctx, maxRounds, escalated) {
-  const { fm, body } = readChangeText(ctx);
+/**
+ * `reviewEnd` for the round `bl review` just ran, from the change document it
+ * left (`text`, read here when the caller has not read it).
+ */
+function endOfReview(ctx, maxRounds, escalated, text = readChangeText(ctx)) {
+  const { fm, body } = text;
   return reviewEnd({
     id: ctx.feature.id,
     unitRelPath: ctx.feature.featureRelPath,
