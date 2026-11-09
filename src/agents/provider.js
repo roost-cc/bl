@@ -38,8 +38,16 @@
  * D3): each adapter builds the child's environment with `agentEnv`, so every
  * agent bl starts headless is marked and the `bl` it calls can refuse what
  * only a person may do (`bl rank`, a backlog commit of `priority.md`). An
- * interactive spawn adds nothing.
+ * interactive spawn has no headless marker.
+ *
+ * Every spawn, headless or not, runs with `BL_TAB_TITLE=''` (`TAB_TITLE_ENV`,
+ * S-1388): titles are off in the agent session. The tab belongs to the `bl`
+ * that started the session, which sets the title before and after it
+ * (`reassertTabTitle`). So no `bl` an agent runs, and no test it starts, can
+ * rename the operator's tmux window or turn its `automatic-rename` back on.
  */
+
+import { TAB_TITLE_ENV } from '../tab-title.js';
 
 /** The variable that marks an agent bl started headless (F-78 D3). */
 export const HEADLESS_ENV = 'BL_HEADLESS';
@@ -55,16 +63,16 @@ export function isHeadless(env = process.env) {
 }
 
 /**
- * The environment an adapter's spawn gives the agent: `base` with
- * `BL_HEADLESS=1` when `headless`, and `BL_BACKLOG_DIR` when `backlogRoot` is
- * given. `base` itself when there is nothing to add.
+ * The environment an adapter's spawn gives the agent: a copy of `base` with
+ * `BL_TAB_TITLE=''` (titles off, always), `BL_HEADLESS=1` when `headless`,
+ * and `BL_BACKLOG_DIR` when `backlogRoot` is given.
  * @param {{ headless?: boolean, backlogRoot?: string | null,
  *   base?: Record<string, string | undefined> }} [opts]
  */
 export function agentEnv({ headless = false, backlogRoot = null, base = process.env } = {}) {
-  if (!headless && !backlogRoot) return base;
   return {
     ...base,
+    [TAB_TITLE_ENV]: '',
     ...(backlogRoot ? { BL_BACKLOG_DIR: backlogRoot } : {}),
     ...(headless ? { [HEADLESS_ENV]: '1' } : {}),
   };
