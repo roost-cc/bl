@@ -319,7 +319,8 @@ test('bl review S-n: two dimension passes and the verifier on the review agent, 
   for (const k of ['branch', 'pr', 'review_round', 'review_status'])
     assert.equal(story.fm[k], undefined, `no ${k}: on the story`);
   assert.equal(extractSection(story.body, 'Review Log'), null);
-  assert.match(stderr, /Review round 1: pending/);
+  assert.match(stderr, /Review round 1 done: 1 open item \(1 Must fix\)\.\nNext: bl run S-\d+ --resume/);
+  assert.doesNotMatch(stderr, /Review round \d+: pending/);
 });
 
 test('bl review S-n: a second round re-reviews and advances the round again', async () => {
@@ -329,8 +330,9 @@ test('bl review S-n: a second round re-reviews and advances the round again', as
     doc.fm.review_status = 'fixed';
   });
   const runner = reviewRunner(storyPath, { status: 'addressed' });
-  const { exit } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
+  const { exit, stderr } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
   assert.equal(exit, 0);
+  assert.match(stderr, /Review round 2 done: nothing left to fix\.\nNext: bl merge S-99\n/);
   assert.equal(runner.sessions[0].vars.reReview, 'true');
   const after = parseChange(readFileSync(changeOf(storyPath), 'utf8'));
   assert.equal(after.fm.review_round, '2');
