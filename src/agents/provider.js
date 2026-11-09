@@ -32,7 +32,8 @@
  *
  * A headless spawn's result carries `refusal` (see supportsHeadless()): the
  * adapter classifies its own refusals inside spawn(), and callers read the
- * field rather than the agent's words.
+ * field rather than the agent's words. It also carries the step's outcome,
+ * `structured` and `structuredError` (F-68 D1, `spawn({ schema })`).
  *
  * A headless spawn's child runs with `BL_HEADLESS=1` (`HEADLESS_ENV`, F-78
  * D3): each adapter builds the child's environment with `agentEnv`, so every
@@ -152,6 +153,19 @@ export class AgentProvider {
    *                                       terminal (supportsHeadless()); the
    *                                       child's env then has BL_HEADLESS=1
    *                                       (`agentEnv`).
+   * @param {object|null} [opts.schema]  - Headless only: the step's outcome
+   *                                       JSON Schema (F-68 D1). The adapter
+   *                                       asks the CLI for a final message
+   *                                       that matches it and returns it,
+   *                                       validated by `validateOutcome`
+   *                                       (src/outcome.js), as `structured`;
+   *                                       see supportsHeadless(). An adapter
+   *                                       without structured output returns
+   *                                       `structuredError: "provider has no
+   *                                       structured output"` and runs nothing.
+   *                                       With `sessionId`, a headless spawn
+   *                                       resumes that session (the loop's one
+   *                                       outcome retry, F-68 D5).
    */
   spawn(opts) {
     throw new Error('spawn() not implemented');
@@ -175,6 +189,12 @@ export class AgentProvider {
    * when the agent names no time. Only a result with `isError` and a
    * `refusal` is a refusal: a session that succeeded and merely quoted the
    * sentence ran.
+   *
+   * The result also carries the outcome (F-68 D1): `structured`, the final
+   * message as an object that matched `opts.schema`, and `structuredError`,
+   * the fault when it did not (`no output`, `not JSON: …`, `schema violation
+   * at <JSON path>: …`). Both are null when the spawn had no schema. Nothing
+   * reads an outcome from `output`.
    */
   supportsHeadless() {
     return false;

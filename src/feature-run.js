@@ -530,11 +530,17 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       model = undefined,
       effort = null,
       scope = null,
+      schema = null,
+      retry = null,
     }) {
       const base = loadPrompt(promptName, vars, { agent, config });
-      const prompt = extraPrompt ? `${base}\n\n## Additional instructions from the operator\n\n${extraPrompt}\n` : base;
+      let prompt = extraPrompt ? `${base}\n\n## Additional instructions from the operator\n\n${extraPrompt}\n` : base;
+      // The outcome retry (F-68 D5): a resumed headless session hears only the
+      // note; any other session gets the whole prompt with the note after it.
+      const resume = !interactive && retry?.sessionId ? retry.sessionId : null;
+      if (retry) prompt = resume ? retry.note : `${prompt}\n\n${retry.note}\n`;
       if (interactive) {
-        const status = launchSession({
+        const ret = launchSession({
           mode,
           parsed,
           title: label,
@@ -555,9 +561,20 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
           tokensIndexPath: usageIndexPath,
           model,
           effort,
+          schema,
         });
-        // launchSession returns exitStatus of the agent: a kill is nonzero.
-        return { ok: status === 0, output: '', isError: status !== 0, usage: null, refusal: null };
+        // launchSession returns exitStatus of the agent (a kill is nonzero),
+        // with the outcome beside it when the step has a schema.
+        const { status, structured = null, structuredError = null } = schema ? ret : { status: ret };
+        return {
+          ok: status === 0,
+          output: '',
+          isError: status !== 0,
+          usage: null,
+          refusal: null,
+          structured,
+          structuredError,
+        };
       }
       const r = runHeadlessSession({
         mode,
@@ -575,6 +592,8 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         logCommand: `feature ${mode}`,
         model,
         effort,
+        schema,
+        sessionId: resume,
         // The agent and all it starts live in the step's scope (F-70 D4).
         run: scope ? processScope.scopedSpawn(scope) : undefined,
       });
@@ -586,6 +605,9 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         error: r.error,
         denials: r.denials ?? [],
         refusal: r.refusal ?? null,
+        sessionId: r.sessionId ?? null,
+        structured: r.structured ?? null,
+        structuredError: r.structuredError ?? null,
       };
     },
     /** `scope`: run `cmd` as `sh -c <cmd>` inside that user systemd scope (F-70 D4). */
@@ -939,6 +961,9 @@ export class ProcessCleanupError extends RunStoppedError {}
 
 /** The agent refused for a usage limit the loop could not wait out. */
 export class AgentUnavailableError extends RunStoppedError {}
+
+/** A step's session returned no valid outcome, retried once (F-68 D5). */
+export class OutcomeError extends RunStoppedError {}
 
 /** Remove what `label` left behind; returns why it could not, or null. Never throws. */
 function removeFreshContainers(ctx, label, before) {
@@ -1496,8 +1521,19 @@ function readCapacity(runner, c, asked, topLevel) {
  * `vars` may be a function of the configuration about to spawn (the
  * verifier names itself among the reviewers). The result carries
  * `configuration`, the `{ agent, model }` that ran it.
+ *
+ * With `schema` (F-68 D1, D5), the step's outcome is the result's
+ * `structured`, and its history entry says `outcome: <summary>`. A session
+ * that returns `structured: null` is recorded as a failed event with its
+ * `structuredError`, and the same session is resumed once with
+ * `OUTCOME_RETRY_NOTE` (a session with no id to resume starts again with the
+ * note after its prompt). A second failure escalates with the text's last 20
+ * lines and throws an OutcomeError. Nothing reads an outcome from the text.
  */
-function runSession(ctx, { step, mode, role = 'implement', story = null, promptName, vars, label }) {
+export function runSession(
+  ctx,
+  { step, mode, role = 'implement', story = null, promptName, vars, label, schema = null },
+) {
   const { runner, prep, config, feature } = ctx;
   const unitDir = prepUnitDir(prep);
   // Picked once, before the walk, so every configuration it walks to runs at
@@ -1510,6 +1546,81 @@ function runSession(ctx, { step, mode, role = 'implement', story = null, promptN
       .filter((s) => story == null || s.id === story)
       .map((s) => withCurrentEffort(config.backlogRoot, s)),
   });
+  // One spawn of configuration `c`, recorded in the history; null when it was
+  // a refusal, which puts `c` on the out-list instead. `retry` is the outcome
+  // retry's `{ sessionId, note }` (F-68 D5).
+  const spawnRecorded = (c, retry) => {
+    const started = new Date().toISOString();
+    const r = runner.session({
+      mode,
+      agent: c.agent,
+      promptName,
+      vars: {
+        ...prep.baseVars,
+        unitDir,
+        changeAbsPath: changeFile(ctx),
+        changeRelPath: changeRelPath(ctx),
+        ...(typeof vars === 'function' ? vars(c) : vars),
+      },
+      worktreePath: prep.worktreePath,
+      unitDir,
+      config: prep.cfg ?? config,
+      parsed: prep.parsed,
+      label,
+      usageIndexPath: feature.indexPath,
+      tokensStep: tokensStepKey(step, ctx.state.round),
+      model: c.model ?? null,
+      effort,
+      scope: newScope(ctx),
+      ...(schema ? { schema } : {}),
+      ...(retry ? { retry } : {}),
+    });
+    // Usage first, on every spawn: the provider has already added it to the
+    // unit file, and the run state must agree even when the spawn was a
+    // refusal (marked out, waited out or escalated, all of which save it).
+    if (r?.usage) {
+      for (const k of Object.keys(ctx.state.usage)) ctx.state.usage[k] += r.usage[k] ?? 0;
+    }
+    if (r?.refusal && r.isError) {
+      const reset = r.refusal.resetsAt == null ? NaN : new Date(r.refusal.resetsAt).getTime();
+      markOut(ctx, {
+        step,
+        configuration: c,
+        kind: r.refusal.kind,
+        scope: r.refusal.scope,
+        message: r.refusal.message,
+        until: Number.isFinite(reset) ? reset + LIMIT_WAIT_MARGIN_MS : null,
+      });
+      return null;
+    }
+    // A denied tool does not fail the session (the agent sees a tool error and
+    // carries on), but the operator must see it in `bl status`.
+    const denials = Array.isArray(r.denials) ? r.denials : [];
+    // A step with a schema says what its outcome was, or why it has none
+    // (F-68 D1). One without keeps the agent's last line (DONE S-1, FIXED,
+    // UNRELATED: …), the cheapest diagnostic when a step goes wrong.
+    const noOutcome = Boolean(schema) && r.structured == null;
+    let said = '';
+    if (noOutcome) said = `outcome error: ${outcomeFault(r)}`;
+    else if (schema) said = `outcome: ${String(r.structured.summary ?? '').slice(0, 160)}`;
+    else if (lastLine(r.output)) said = `said: ${lastLine(r.output).slice(0, 160)}`;
+    const notes = [
+      r.error ?? (r.isError ? 'agent reported an error' : ''),
+      denials.length ? `denied: ${denials.join('; ')}` : '',
+      said,
+    ];
+    record(ctx, {
+      step,
+      promptName,
+      startedAt: started,
+      agent: c.agent,
+      model: c.model ?? null,
+      effort,
+      ok: r.ok && denials.length === 0 && !noOutcome,
+      note: notes.filter(Boolean).join(' — '),
+    });
+    return { ...r, configuration: { agent: c.agent, model: c.model ?? null } };
+  };
   // The session is recorded before its containers are cleaned, so a failed
   // cleanup cannot hide what the session did. A headless session runs in a
   // user systemd scope stopped afterwards (F-70 D4); an interactive one is
@@ -1558,74 +1669,57 @@ function runSession(ctx, { step, mode, role = 'implement', story = null, promptN
               continue;
             }
           }
-          const started = new Date().toISOString();
-          const r = runner.session({
-            mode,
-            agent: c.agent,
-            promptName,
-            vars: {
-              ...prep.baseVars,
-              unitDir,
-              changeAbsPath: changeFile(ctx),
-              changeRelPath: changeRelPath(ctx),
-              ...(typeof vars === 'function' ? vars(c) : vars),
-            },
-            worktreePath: prep.worktreePath,
-            unitDir,
-            config: prep.cfg ?? config,
-            parsed: prep.parsed,
-            label,
-            usageIndexPath: feature.indexPath,
-            tokensStep: tokensStepKey(step, ctx.state.round),
-            model: c.model ?? null,
-            effort,
-            scope: newScope(ctx),
-          });
-          // Usage first, on every spawn: the provider has already added it to the
-          // unit file, and the run state must agree even when the spawn was a
-          // refusal (marked out, waited out or escalated, all of which save it).
-          if (r?.usage) {
-            for (const k of Object.keys(ctx.state.usage)) ctx.state.usage[k] += r.usage[k] ?? 0;
+          let r = spawnRecorded(c, null);
+          if (!r) continue;
+          // No valid outcome: the same session once more with the note (F-68 D5).
+          if (schema && r.structured == null) {
+            runner.log(`  ${step}: no valid outcome (${outcomeFault(r)}); resuming the session once`);
+            r = spawnRecorded(c, { sessionId: r.sessionId ?? null, note: OUTCOME_RETRY_NOTE });
+            if (!r) continue;
+            if (r.structured == null) escalateNoOutcome(ctx, step, r);
           }
-          if (r?.refusal && r.isError) {
-            const reset = r.refusal.resetsAt == null ? NaN : new Date(r.refusal.resetsAt).getTime();
-            markOut(ctx, {
-              step,
-              configuration: c,
-              kind: r.refusal.kind,
-              scope: r.refusal.scope,
-              message: r.refusal.message,
-              until: Number.isFinite(reset) ? reset + LIMIT_WAIT_MARGIN_MS : null,
-            });
-            continue;
-          }
-          // A denied tool does not fail the session (the agent sees a tool error and
-          // carries on), but the operator must see it in `bl status`.
-          const denials = Array.isArray(r.denials) ? r.denials : [];
-          // The agent's last line (DONE S-1, FIXED, UNRELATED: …, REVIEW pending …)
-          // is the cheapest diagnostic when a step goes wrong; keep it in history.
-          const said = lastLine(r.output);
-          const notes = [
-            r.error ?? (r.isError ? 'agent reported an error' : ''),
-            denials.length ? `denied: ${denials.join('; ')}` : '',
-            said ? `said: ${said.slice(0, 160)}` : '',
-          ];
-          record(ctx, {
-            step,
-            promptName,
-            startedAt: started,
-            agent: c.agent,
-            model: c.model ?? null,
-            effort,
-            ok: r.ok && denials.length === 0,
-            note: notes.filter(Boolean).join(' — '),
-          });
-          return { ...r, configuration: { agent: c.agent, model: c.model ?? null } };
+          return r;
         }
         waitedUntil = waitOrEscalate(ctx, { step, role, list, excluded, waitedUntil });
       }
     }),
   );
+}
+
+/** The one-line note a resumed session gets when its final message was no valid outcome (F-68 D5). */
+export const OUTCOME_RETRY_NOTE =
+  'Your final message must be the JSON object the schema describes; nothing else was read.';
+
+/** Why a session has no outcome: its `structuredError`, else its error, else `no output`. */
+function outcomeFault(r) {
+  return r.structuredError ?? r.error ?? 'no output';
+}
+
+/**
+ * A step's session returned no valid outcome twice (F-68 D5): escalate with
+ * the fault and the last 20 lines of the session's text, and throw an
+ * OutcomeError. The text is evidence for the operator, never a verdict.
+ */
+function escalateNoOutcome(ctx, step, r) {
+  const reason = `${step}: no valid outcome after one retry (${outcomeFault(r)})`;
+  const tail = String(r.output ?? '')
+    .trimEnd()
+    .split('\n')
+    .slice(-20)
+    .join('\n');
+  const resume = ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`;
+  const details = [
+    `The ${step} session's final message was not the JSON object its schema describes, and the resumed session's was not either. The loop reads no outcome from text, so it stops.`,
+    '',
+    `Fault: ${outcomeFault(r)}`,
+    '',
+    tail ? 'The last 20 lines of the session text:' : 'The session left no text.',
+    ...(tail ? ['', '````text', tail, '````'] : []),
+    '',
+    `Find why the agent did not return the outcome, then run \`${resume}\`.`,
+  ].join('\n');
+  finish(ctx, 'escalated', reason, details);
+  throw new OutcomeError(reason, ctx.state);
 }
 
 // Added to the reset time the agent named: the limit lifts on the minute, and

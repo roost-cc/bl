@@ -100,8 +100,20 @@ export class GeminiProvider extends AgentProvider {
     args = [],
     scopes = {},
     headless = false,
+    schema = null,
     run = spawnSync,
   }) {
+    // Gemini has no structured output (F-68 D1): a step that needs an outcome
+    // is refused before anything runs, and nothing is read from text.
+    if (schema) {
+      return {
+        status: 1,
+        output: '',
+        isError: true,
+        structured: null,
+        structuredError: 'provider has no structured output',
+      };
+    }
     const geminiArgs = [...args];
 
     if (sessionId) {

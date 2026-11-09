@@ -1078,12 +1078,48 @@ review` prints the prompt-guidance note for one that does not (Codex).
 - `syncNativeApprovals(patterns, config, opts)`: `bl allow` hands every
   agent the granted patterns; Codex installs them as prefix rules (see
   **Codex native approvals**), the others do nothing.
+- The headless result's outcome, `structured` and `structuredError` (see
+  **Session outcomes** below).
 
 Nothing under `src/` outside `src/agents/` imports an adapter file or compares
 a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
 `test/unit/agent-boundary.test.js` fails on either and names its one
 exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
 a name as a literal (a default argument, a prompt variant) is allowed.
+
+#### Session outcomes (F-68 D1, D5)
+
+A session's outcome is `{ structured, structuredError }`: the JSON object the
+agent returned, validated against the step's JSON Schema, or `null` with the
+fault named. `validateOutcome(schema, value)` in `src/outcome.js` does the
+validation, with `ajv` (draft 2020-12). It takes the object or the text that
+holds it, and its faults are `no output`, `not JSON: <parser message>` and
+`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). Nothing in
+bl reads an outcome out of prose. Two carriers deliver the value:
+
+| Session     | Carrier                                                                                                                                                                                                                                                                                                                                     | Read by                                 |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the run), and the last message parsed as JSON. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
+| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                | `launchSession`, after the agent exits  |
+
+- **The outcome file.** It lives under the git-ignored `.bl/`, so nothing
+  commits it. `launchSession` removes a stale one before the spawn, and after
+  the agent exits reads, validates and deletes it (`readOutcomeFile`); a
+  missing file is the fault `no outcome file at <path>`. With `returnOnExit`
+  and a schema, `launchSession` returns
+  `{ status, structured, structuredError }`; without a schema it returns the
+  bare exit status.
+- **A step without a schema** reads no outcome: both fields are null.
+- **No valid outcome is an error, not a verdict (D5).** `runSession` in
+  `feature-run.js` takes `schema` and passes it through the runner. A session
+  with `structured: null` is recorded as a failed event,
+  `outcome error: <fault>`. The loop then resumes the same session once (`sessionId`: claude's
+  `--resume`, codex's `exec … resume <thread id>`) with the one-line note
+  `OUTCOME_RETRY_NOTE`. A session with no id starts again with the note after
+  its prompt. A second failure escalates with the fault and the last 20 lines
+  of the session's text, and throws `OutcomeError`. A step with a valid
+  outcome records `outcome: <summary>`; a step without a schema still records
+  `said: <last line>` until its prompt gets a schema.
 
 #### The local provider (S-1371)
 
