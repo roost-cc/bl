@@ -20,7 +20,7 @@ import { closeSync, openSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { loadConfig, parseArgs, info, openTmuxWindow } from './config.js';
-import { renderTabTitle, unitTitleFields } from './tab-title.js';
+import { renderTabTitle, TAB_TITLE_ENV, unitTitleFields } from './tab-title.js';
 import { readAllStories } from './story.js';
 import { classifyId, resolveTargets } from './targets.js';
 import { schedule, dependencyOrder, byId } from './schedule.js';
@@ -468,7 +468,7 @@ function openWindows(verb, targets, flags, outsideTmux) {
 /** A child `bl` process's environment: tab titles off (`tab-title.js`) and no tmux, so this window's title stays ours. */
 function childEnv() {
   const env = { ...process.env };
-  env.BL_TAB_TITLE = '';
+  env[TAB_TITLE_ENV] = '';
   delete env.TMUX;
   delete env.TMUX_PANE;
   delete env.BL_TMUX_WINDOW_ID;

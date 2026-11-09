@@ -358,6 +358,25 @@ test("claude's spawnEnv is agentEnv: no ANTHROPIC_BASE_URL of its own", () => {
   assert.equal(env.ANTHROPIC_BASE_URL, process.env.ANTHROPIC_BASE_URL);
 });
 
+test('claude and local spawnEnv turn titles off for a headless and an interactive spawn (S-1388)', () => {
+  const saved = process.env.BL_TAB_TITLE;
+  process.env.BL_TAB_TITLE = '{{status}}'; // an operator's own format
+  try {
+    for (const [name, provider] of [
+      ['claude', new ClaudeProvider()],
+      ['local', getProvider('local')],
+    ]) {
+      for (const headless of [true, false]) {
+        const env = provider.spawnEnv({ headless, backlogRoot: '/b', model: MODEL, topLevel: { local: LOCAL_KEY } });
+        assert.equal(env.BL_TAB_TITLE, '', `${name} headless=${headless}`);
+      }
+    }
+  } finally {
+    if (saved === undefined) delete process.env.BL_TAB_TITLE;
+    else process.env.BL_TAB_TITLE = saved;
+  }
+});
+
 test('checkConfiguration: a reason for no model, a bad local key and overrides that set it; else null', () => {
   const p = getProvider('local');
   const top = { local: LOCAL_KEY };
