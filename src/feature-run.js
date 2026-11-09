@@ -3535,6 +3535,24 @@ function writeReviewFields(ctx, step, before, fields, message) {
 }
 
 /**
+ * Run a step's session (`run`). When it throws (no valid outcome, no agent),
+ * `keep` first puts back the review fields the step found; the session's
+ * error is the one thrown.
+ */
+function keepingReviewFields(ctx, keep, run) {
+  try {
+    return run();
+  } catch (e) {
+    try {
+      keep();
+    } catch (k) {
+      ctx.runner.log(`  warning: cannot put back the review fields: ${k.message}`);
+    }
+    throw e;
+  }
+}
+
+/**
  * A failed container cleanup or an unavailable agent unwinds past the
  * caller's quarantine; move the reviewer's changes aside anyway so the
  * escalated run does not inherit them.
@@ -4725,17 +4743,19 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     setStep(ctx, 'fix', { round: fixRound });
     const preFixSha = headSha(ctx);
     const fixBefore = reviewFields(ctx);
-    const fix = runSession(ctx, {
-      step: 'fix',
-      mode: 'workon',
-      promptName: 'feature-workon-review',
-      vars: { scratchDir: scratchFor(ctx, `r${fixRound}.fix`) },
-      label: `${feature.id}: address review r${fixRound}`,
-      schema: loadSchema('fix'),
-    });
     // Every exit without `fixed` puts back the fields the session found.
     const keepFixFields = () =>
       writeReviewFields(ctx, 'fix', fixBefore, {}, `chore: ${feature.id} review round ${fixRound} not fixed`);
+    const fix = keepingReviewFields(ctx, keepFixFields, () =>
+      runSession(ctx, {
+        step: 'fix',
+        mode: 'workon',
+        promptName: 'feature-workon-review',
+        vars: { scratchDir: scratchFor(ctx, `r${fixRound}.fix`) },
+        label: `${feature.id}: address review r${fixRound}`,
+        schema: loadSchema('fix'),
+      }),
+    );
     if (escalationOpen(feature.indexPath)) {
       keepFixFields();
       return finish(ctx, 'escalated', 'agent escalated while addressing review feedback');
@@ -4770,20 +4790,22 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     const fixBaseSha = ctx.state.reviewBaseSha ?? preFixSha;
     setStep(ctx, 'fix-self-review', { round: fixRound });
     const fixedFields = reviewFields(ctx);
-    const selfReview = runSession(ctx, {
-      step: 'fix-self-review',
-      mode: 'workon',
-      promptName: 'feature-fix-self-review',
-      vars: {
-        fixBaseSha: fixBaseSha ?? '',
-        fixDiff: fixBaseSha ? `git diff ${fixBaseSha}..HEAD` : 'git diff main...HEAD',
-      },
-      label: `${feature.id}: self-review fix r${fixRound}`,
-      schema: loadSchema('self-review'),
-    });
     // The fix round's `fixed` stands on every exit: bl keeps it whatever the session wrote.
     const keepFixedFields = () =>
       writeReviewFields(ctx, 'fix-self-review', fixedFields, {}, `chore: ${feature.id} review round ${fixRound} fixed`);
+    const selfReview = keepingReviewFields(ctx, keepFixedFields, () =>
+      runSession(ctx, {
+        step: 'fix-self-review',
+        mode: 'workon',
+        promptName: 'feature-fix-self-review',
+        vars: {
+          fixBaseSha: fixBaseSha ?? '',
+          fixDiff: fixBaseSha ? `git diff ${fixBaseSha}..HEAD` : 'git diff main...HEAD',
+        },
+        label: `${feature.id}: self-review fix r${fixRound}`,
+        schema: loadSchema('self-review'),
+      }),
+    );
     if (escalationOpen(feature.indexPath)) {
       keepFixedFields();
       return finish(ctx, 'escalated', 'agent escalated during the fix self-review');

@@ -3631,9 +3631,17 @@ test('a fix session that sets review_status and reports fixed false leaves the s
     { name: 'fix: fixed false', at: 'fix', outcome: NOT_FIXED, error: /left 1 item\(s\) open/ },
     { name: 'fix: an open ## Escalation', at: 'fix', act: escalate, error: /while addressing review feedback/ },
     { name: 'fix: a scope stop', at: 'fix', act: breakStory, error: /could not be re-read/ },
+    // Text, not the schema's object, twice: the step throws.
+    { name: 'fix: no valid outcome', at: 'fix', outcome: 'done', error: /^fix: no valid outcome after one retry/ },
     { name: 'fix self-review: ok false', at: 'fixSelfReview', outcome: NOT_READY, error: /self-review .* failed/ },
     { name: 'fix self-review: an open ## Escalation', at: 'fixSelfReview', act: escalate, error: /fix self-review$/ },
     { name: 'fix self-review: a scope stop', at: 'fixSelfReview', act: breakStory, error: /could not be re-read/ },
+    {
+      name: 'fix self-review: no valid outcome',
+      at: 'fixSelfReview',
+      outcome: 'done',
+      error: /^fix-self-review: no valid outcome after one retry/,
+    },
   ];
   for (const r of rows) {
     const { dir, cleanup, config, feature, prep } = setup();
@@ -3644,7 +3652,8 @@ test('a fix session that sets review_status and reports fixed false leaves the s
       };
       let found = null;
       const session = () => {
-        found = fields();
+        // The first session's view: a retry finds what the first one wrote.
+        found ??= fields();
         editFile(CH(feature), (fm, body) => {
           fm.review_round = '5';
           fm.review_status = 'addressed';

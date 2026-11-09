@@ -1750,7 +1750,8 @@ a headless session; `_outcome-file.md`, the outcome file, when
 - **Fix** (`fixed`). `true`: bl writes `review_status: fixed`. `false`: the
   run escalates with `open` and the summary, and the status stays `pending`.
   Every exit without `fixed` (an open `## Escalation`, a scope stop,
-  `fixed: false`) puts back the fields the fix session found.
+  `fixed: false`, a session that throws) puts back the fields the fix
+  session found.
 - **Self-review** (`ok`, `changed`). `ok: false` escalates with the summary;
   `changed: true` runs the test gate again. On every exit of the fix
   self-review, bl keeps `fixed`.
