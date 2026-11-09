@@ -1080,7 +1080,7 @@ export function launchSession({
   // The agent had the terminal and may have set its own title.
   reassertTabTitle();
 
-  // The outcome file is read (and deleted) whatever the exit: a launch that
+  // The outcome file is read and validated whatever the exit: a launch that
   // failed leaves none, which is its fault.
   const outcome = outcomeFile ? readOutcomeFile(outcomeFile, schema) : null;
   const exitWith = (status) => {
