@@ -148,9 +148,14 @@ function storyRefineContext(found, fm, config) {
  */
 export function applyRefineStatus(backlogRoot, { id, indexPath }, status, reason) {
   if (status) {
-    updateSpecFile(backlogRoot, indexPath, (fm) => {
-      fm.status = status;
-    });
+    // The error names the unit: in a batch, the units before it are set.
+    try {
+      updateSpecFile(backlogRoot, indexPath, (fm) => {
+        fm.status = status;
+      });
+    } catch (e) {
+      throw new Error(`${id}: ${e.message}`);
+    }
     // A draft (the premise does not hold) says why.
     info(reason ? `${id}: status ${status}: ${reason}` : `${id}: status ${status}.`);
   } else {

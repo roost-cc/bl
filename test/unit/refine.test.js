@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../../src/config.js';
-import { resolveRefineTargets, refineBatchId } from '../../src/refine.js';
+import { resolveRefineTargets, refineBatchId, applyRefineStatus } from '../../src/refine.js';
 import { loadPrompt } from '../../src/session.js';
 import { outcomePath } from '../../src/outcome.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
@@ -12,6 +12,16 @@ test('two batch refines with different stories use different outcome files', () 
   assert.equal(a, '/b/.bl/outcome/refine-batch-S-1-S-2.json');
   assert.notEqual(a, b);
   assert.notEqual(a, outcomePath('/b', refineBatchId(['S-1'])), 'a batch that holds one story more');
+});
+
+test('a status write that fails names its story', () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const unit = { id: 'S-9', indexPath: `${dir}/stories/S9-gone/index.md` };
+    assert.throws(() => applyRefineStatus(dir, unit, 'refined'), /^Error: S-9: /);
+  } finally {
+    cleanup();
+  }
 });
 
 function fixture() {
