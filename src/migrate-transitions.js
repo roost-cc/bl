@@ -41,7 +41,7 @@ import { liveLockHolder } from './pid-lock.js';
 import { extractReviewLog, sessionDates } from './review-log.js';
 import { RUN_DIR } from './run-lock.js';
 import { SpecLockError, updateSpecFile, withSpecLock } from './spec-file.js';
-import { DATE_RE, ENTRY_FIELDS, isoAt, legacyLog, logShape, readsChange, setLog } from './transition.js';
+import { COMPLETED_KEY, DATE_RE, ENTRY_FIELDS, isoAt, legacyLog, logShape, readsChange, setLog } from './transition.js';
 
 const str = (v) => (typeof v === 'string' ? v : '');
 
@@ -226,6 +226,19 @@ function recordPaths(root, paths) {
   saveFailedCommit(root, OWNER, { commit: paths.map((p) => [p, hashPath(root, p)]), unsure: [] });
 }
 
+/**
+ * The dates the writer sets (D2), for a unit that had none: `added` from the
+ * log's first entry, and `completed` (a task's `done`) from its entry to a
+ * terminal status. A date the unit has stays.
+ */
+function setDates(kind, fm, log) {
+  const day = (e) => (typeof e?.at === 'string' ? e.at.slice(0, 10) : null);
+  if (!DATE_RE.test(str(fm.added)) && day(log[0])) fm.added = day(log[0]);
+  const last = log.at(-1);
+  const key = COMPLETED_KEY[kind];
+  if (LEGACY_LOG.terminal.includes(last.to) && !DATE_RE.test(str(fm[key])) && day(last)) fm[key] = day(last);
+}
+
 const PLURAL = { story: 'stories', feature: 'features', task: 'tasks' };
 
 /** `stories: 3 (entries: 7, placed by a change document: 0); …; change documents: 1; flow.json: v2`. */
@@ -293,6 +306,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
             planned = planUnit(root, rel, kind, fm, change);
             if (!planned || planned.skip || dryRun) return false;
             setLog(fm, planned.log);
+            if (planned.entries > 0) setDates(kind, fm, planned.log);
           });
         } catch (e) {
           if (!(e instanceof SpecLockError)) throw new Error(`${rel}: ${e.message}`, { cause: e });

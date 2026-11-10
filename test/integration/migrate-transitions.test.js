@@ -379,6 +379,35 @@ test('a rerun after a failed commit, or after a unit that failed to convert, com
   }
 });
 
+test('the migration sets added and completed from the log for a unit that has neither, so bl validate reports no error', () => {
+  const { dir } = mkTempBacklog({
+    flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
+    repos: ['core'],
+    components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
+    stories: [
+      { id: 'S-1', title: 'One', component: 'C01', status: 'refined' },
+      { id: 'S-2', title: 'Two', component: 'C01', status: 'done' },
+      { id: 'S-3', title: 'Three', component: 'C01', status: 'done', added: '2026-10-01', completed: '2026-10-05' },
+    ],
+  });
+  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  git(dir, 'init', '-q', '-b', 'main');
+  commitAt(dir, '2026-11-01T10:00:00Z', 'base');
+  const r = script(dir);
+  assert.equal(r.status, 0, r.stderr);
+  // [story, added, completed]: the commit that added the file, or the dates the unit had.
+  for (const [id, added, completed] of [
+    ['S-1', '2026-11-01', undefined],
+    ['S-2', '2026-11-01', '2026-11-01'],
+    ['S-3', '2026-10-01', '2026-10-05'],
+  ]) {
+    const after = fm(dir, `stories/${id.replace('-', '')}/index.md`);
+    assert.equal(after.added, added, id);
+    assert.equal(after.completed, completed, id);
+  }
+  assert.deepEqual(errors(dir), []);
+});
+
 test('migration writes the synthesized log for a unit whose transitions: is empty or blank, and never removes status: without a log', () => {
   // [story, status:, the transitions: line, the log it gets (null: kept as it is)]
   const cases = [

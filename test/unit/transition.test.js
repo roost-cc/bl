@@ -642,7 +642,13 @@ test('transition-log: one finding per fault (errors)', () => {
   );
   assert.match(
     one('story', log(entry(T0, 'refined', 'new'))),
-    /no story verb "new" goes from \(no status\) to refined/,
+    /entry 1 goes to "refined" by "new"; a log starts at draft by new/,
+  );
+  assert.match(one('story', log(entry(T0, 'draft', 'operator'))), /entry 1 goes to "draft" by "operator"/);
+  assert.match(one('story', { transitions: [entry(T0, 'draft', 'new')] }), /^added: is not set; .*\(2026-11-01\)$/);
+  assert.match(
+    one('feature', log(entry(T0, 'draft', 'new'), entry(AT, 'superseded', 'supersede'))),
+    /^completed: is not set, and the log ends at superseded$/,
   );
   assert.match(
     one('story', { ...log(entry(AT, 'draft', 'new'), entry(T0, 'refined', 'refine')), added: '2026-11-09' }),
@@ -658,6 +664,24 @@ test('transition-log: one finding per fault (errors)', () => {
     /the log has no entry to done or superseded/,
   );
   assert.match(one('task', { ...log(entry(T0, 'draft', 'new')), done: '2026-11-01' }), /done: 2026-11-01 is set/);
+});
+
+test('transition-log reports a log that ends terminal with no completed: and a log with no added:', () => {
+  const closed = (to, by) => [entry(T0, 'draft', 'new'), entry(AT, to, by)];
+  // [kind, fm, the missing-field messages]
+  const cases = [
+    ['story', { transitions: closed('done', 'done') }, [/^added: is not set/, /^completed: is not set, .* done$/]],
+    ['feature', { added: '2026-11-01', transitions: closed('superseded', 'supersede') }, [/^completed: is not set/]],
+    ['story', { completed: '2026-11-09', transitions: closed('superseded', 'supersede') }, [/^added: is not set/]],
+    ['feature', { added: '2026-11-01', transitions: [entry(T0, 'draft', 'new')] }, []],
+    // A task's added: and done: are task-field's (task.js), not reported twice.
+    ['task', { transitions: closed('done', 'done') }, []],
+  ];
+  for (const [kind, fm, want] of cases) {
+    const got = findings(kind, fm).map(([, , m]) => m);
+    assert.equal(got.length, want.length, `${kind} ${JSON.stringify(fm)}: ${got.join(' | ')}`);
+    want.forEach((re, i) => assert.match(got[i], re));
+  }
 });
 
 test('an entry with note: migrated, or by: operator along any verb, is exempt from the edge check', () => {

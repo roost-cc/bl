@@ -14,13 +14,14 @@ import { BL_BIN, runBl } from '../helpers/run-bl.js';
  */
 /**
  * A unit in the shape after the migration (F-69 D2): a `draft` transition
- * log, no `status:`, so it has no `legacy-status` warning. A fixture unit that
- * sets a status or a log keeps it.
+ * log and its `added:`, no `status:`, so it has no `legacy-status` warning. A
+ * fixture unit that sets a status or a log keeps it.
  */
-const migrated = (u) =>
-  u.status != null || u.transitions != null
-    ? u
-    : { ...u, transitions: [{ at: `${u.added ?? '2026-01-01'}T00:00:00Z`, to: 'draft', by: 'new' }] };
+const migrated = (u) => {
+  if (u.status != null || u.transitions != null) return u;
+  const added = u.added ?? '2026-01-01';
+  return { ...u, added, transitions: [{ at: `${added}T00:00:00Z`, to: 'draft', by: 'new' }] };
+};
 
 function cleanBacklog(fixture = {}) {
   return mkTempBacklog({

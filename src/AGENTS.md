@@ -3449,11 +3449,14 @@ feature-no-stories, transition-log, legacy-status
 `transition-log` (F-69 D2, `findTransitionFindings` in `src/transition.js`, error) is at a story,
 feature or task file whose `transitions:` is not a list of entries, or has an entry with a field
 outside `at`, `to`, `by`, `via`, `outcome` and `note`, no `by`, an `at` that is not ISO 8601
-UTC or is before the entry above it, or a `to` that is not a status of the type. It is also an
-entry whose pair with the entry above it (the first entry: from no status) is no edge of the
-table under its `by` (`by: operator` matches any verb), unless the entry has `note: migrated`.
-And it is an `added` that is not the first entry's date, or a `completed` (a task's `done`)
-that is not the date of the entry to a terminal status. `legacy-status` (warning) is a
+UTC or is before the entry above it, or a `to` that is not a status of the type. It is also a
+first entry that is not the type's initial status by `new`, and an entry after it whose pair
+with the entry above it is no edge of the table under its `by` (`by: operator` matches any
+verb), unless the entry has `note: migrated`. And it is an `added` that is not the first
+entry's date, or a `completed` (a task's `done`) that is not the date of the entry to a
+terminal status; for a story or a feature, also a missing `added`, or a missing `completed` on
+a log that ends terminal (a task's are `task-field`'s). The migration sets both from the log
+for a unit that has neither. `legacy-status` (warning) is a
 `status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
 a log, which bl does not read. A unit with a log needs no `status:` (`missing-required-key`).
 

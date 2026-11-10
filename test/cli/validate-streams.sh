@@ -79,6 +79,7 @@ transitions:
   - at: 2026-01-01T00:00:00Z
     to: draft
     by: new
+added: 2026-01-01
 ---
 MD
   # The priority (F-78 D1): an empty `ranked:` is a clean one.

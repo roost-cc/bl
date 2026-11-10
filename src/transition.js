@@ -598,8 +598,10 @@ export function requireBranch(flow, kind, verb, outcome, ctx) {
  * with a field outside `ENTRY_FIELDS`, no `by`, or an `at` that is not ISO
  * 8601 UTC; a `to` that is not a status of the type; a consecutive pair no
  * verb defines (an entry with `note: migrated` is exempt); an `at` before
- * the one above it; an `added` or `completed` (a task's `done`) that
- * disagrees with the log. Warnings (`legacy-status`): `status:` with no log,
+ * the one above it; a first entry that is not the type's initial status by
+ * `new`; an `added` or `completed` (a task's `done`) that disagrees with the
+ * log, or a story's or feature's that is missing (no `added`, or no
+ * `completed` on a log that ends terminal; a task's are `task-field`'s). Warnings (`legacy-status`): `status:` with no log,
  * and `status:` beside a log.
  * @param {import("./flow.js").Flow} flow
  * @param {"story" | "feature" | "task"} kind
@@ -646,19 +648,32 @@ export function findTransitionFindings(flow, kind, fm, location) {
       error(
         `${at} goes to "${str(e.to)}", which is not a ${kind} status (flow.json ${kind} statuses: ${statuses.join(', ')})`,
       );
-    } else if (!isMigrated(e) && str(e.by) && !hasEdge(flow, kind, prev?.to ?? null, e.to, e.by)) {
+    } else if (i > 0 && !isMigrated(e) && str(e.by) && !hasEdge(flow, kind, prev?.to ?? null, e.to, e.by)) {
       error(`${at}: no ${kind} verb "${e.by}" goes from ${prev?.to ?? '(no status)'} to ${e.to} (flow.json)`);
     }
     if (terminal.includes(e.to)) terminalAt = str(e.at);
     prev = e;
   });
-  const first = str(raw[0]?.at);
-  if (str(fm.added) && ISO_UTC_RE.test(first) && fm.added !== dayOf(first)) {
+  // Entry 1 has no edge check above: it has this rule. A wrong status or a
+  // missing `by` is reported above already.
+  const head = raw[0];
+  const initial = flow.initial(kind);
+  if (statuses.includes(head?.to) && str(head.by) && (head.to !== initial || head.by !== 'new')) {
+    error(`transitions entry 1 goes to "${str(head.to)}" by "${str(head.by)}"; a log starts at ${initial} by new`);
+  }
+  const first = str(head?.at);
+  // A task's missing `added` and `done` are `task-field` findings (task.js).
+  if (!str(fm.added) && kind !== 'task') {
+    error(`added: is not set; the log's first entry gives it${ISO_UTC_RE.test(first) ? ` (${dayOf(first)})` : ''}`);
+  } else if (str(fm.added) && ISO_UTC_RE.test(first) && fm.added !== dayOf(first)) {
     error(`added: ${fm.added} disagrees with the log's first entry (${dayOf(first)})`);
   }
   const key = COMPLETED_KEY[kind];
   const completed = str(fm[key]);
-  if (completed && terminalAt == null) {
+  const last = raw.at(-1);
+  if (!completed && kind !== 'task' && terminal.includes(last?.to)) {
+    error(`${key}: is not set, and the log ends at ${last.to}`);
+  } else if (completed && terminalAt == null) {
     error(`${key}: ${completed} is set, and the log has no entry to ${statusWords(terminal)}`);
   } else if (completed && ISO_UTC_RE.test(terminalAt) && completed !== dayOf(terminalAt)) {
     error(`${key}: ${completed} disagrees with the log's entry to a terminal status (${dayOf(terminalAt)})`);
