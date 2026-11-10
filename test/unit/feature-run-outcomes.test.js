@@ -136,6 +136,25 @@ test('a second failure escalates with the fault and the last 20 lines of text', 
     assert.match(escalation, /line 11\nline 12/);
     assert.match(escalation, /line 30/);
     assert.doesNotMatch(escalation, /line 10\n/);
+    assert.doesNotMatch(escalation, /stderr/, 'no stderr, no stderr block');
+  } finally {
+    cleanup();
+  }
+});
+
+test("an escalation after a CLI failure names the exit and shows the CLI's stderr (S-1398)", () => {
+  const failed = {
+    structured: null,
+    structuredError: 'claude exited 1: Error: bad flag',
+    stderrTail: 'warn\nError: bad flag',
+    output: '',
+  };
+  const { step, cleanup, feature } = setup([failed, failed]);
+  try {
+    assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
+    const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    assert.match(escalation, /implement: no valid outcome after one retry \(claude exited 1: Error: bad flag\)/);
+    assert.match(escalation, /The last 20 lines of the CLI's stderr:\n\n````text\nwarn\nError: bad flag\n````/);
   } finally {
     cleanup();
   }
