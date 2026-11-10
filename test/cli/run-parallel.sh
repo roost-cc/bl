@@ -170,6 +170,8 @@ for run in 1 2 3; do
   assert_exit "nested $run: the runner ends by the signal" "143" "$rc"
   assert_contains "nested $run: the inner item's output so far is printed" "stubborn-start" "$out"
   assert_contains "nested $run: the inner runner says it was stopped" "inner: stopped by SIGTERM" "$out"
+  # The signal to the inner runner's group also ends the `sleep` of its poll.
+  if [[ "$out" == *Terminated* ]]; then fail "nested $run: a job line is printed"; else pass; fi
   assert_ended "nested $run" "$DIR/stubborn.pid"
   assert_eq "nested $run: both temp directories removed" "" "$(ls -A "$STOP")"
 done

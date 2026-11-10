@@ -64,7 +64,9 @@ run_parallel() {
     # A signal that comes after the check and before `wait` starts would not
     # end the wait, so the runner polls until the item ends or a signal comes.
     while [[ -z "$pending" ]] && kill -0 "${pids[$i]}" 2>/dev/null; do
-      sleep 0.1 || :
+      # A parent runner's signal to this runner's group also ends the `sleep`.
+      # The braces send bash's "Terminated" job line to /dev/null.
+      { sleep 0.1; } 2>/dev/null || :
     done
     _run_parallel_check
     rc=0
