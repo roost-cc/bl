@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync, chmodSync } from 'fs';
+import { existsSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'fs';
 import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -461,6 +461,34 @@ test('a Ctrl+C while the gate-line commit waits for the backlog lock exits 130, 
         // the group is gone
       }
       await run.closed;
+    }
+    fx.cleanup();
+  }
+});
+
+test('a throwaway worktree that cannot be removed is a warning: the merge still pushes and exits 0', () => {
+  const fx = fixture({ verdicts: ['pass'] });
+  const u = UNITS[0];
+  let left = null;
+  try {
+    // The merge in the throwaway worktree leaves a read-only directory there.
+    const hook = join(fx.code, '.git', 'hooks', 'post-merge');
+    writeFileSync(
+      hook,
+      '#!/bin/sh\ncase "$PWD" in */bl-merge-*) mkdir -p ro/sub && touch ro/sub/f && chmod 555 ro/sub ;; esac\n',
+    );
+    chmodSync(hook, 0o755);
+    const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
+    left = r.stderr.match(/^code: warning: could not remove the throwaway worktree (\S+): .*EACCES/m)?.[1] ?? null;
+    assert.ok(left, `a warning names the worktree: ${r.stderr}`);
+    assert.equal(r.status, 0, r.stderr);
+    const [[commit]] = calls(fx);
+    assert.equal(g(fx.origin, 'rev-parse', 'main'), commit, 'the checked commit is pushed');
+    assert.equal(g(fx.code, 'rev-parse', 'main'), commit, 'the main checkout is on it');
+  } finally {
+    if (left) {
+      chmodSync(join(left, 'code', 'ro', 'sub'), 0o755);
+      rmSync(left, { recursive: true, force: true });
     }
     fx.cleanup();
   }

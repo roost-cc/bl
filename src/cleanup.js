@@ -809,7 +809,12 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
     if (removed) return;
     removed = true;
     git(['worktree', 'remove', '--force', wt], repoPath);
-    rmSync(tmp, { recursive: true, force: true });
+    // A removal that throws is a warning: the prune and the raised signal still follow.
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch (err) {
+      console.error(`${repoName}: warning: could not remove the throwaway worktree ${tmp}: ${err.message}`);
+    }
     git(['worktree', 'prune'], repoPath);
   };
   process.once('exit', removeThrowaway);
