@@ -14,7 +14,7 @@
  * commits with markers, a dirty worktree and a held run lock. `bl merge`
  * itself covers a branch behind main landing, a story conflict stopping
  * before main, and main moving between the integration and the merge into
- * main (aborted, clean, the rerun lands). Every path that may start an agent
+ * main (stopped before the main checkout, the rerun lands). Every path that may start an agent
  * finds refusing stubs first on PATH (`runBl` for spawned commands,
  * `noAgentEnv` for direct calls).
  */

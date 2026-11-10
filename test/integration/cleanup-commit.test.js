@@ -913,16 +913,17 @@ test('a repo with no local branch whose push fails records nothing', async () =>
 });
 
 /**
- * A `git` on PATH that fails `git rev-parse --short HEAD` and passes every
- * other call to the real git: the one lookup `cleanupOneRepo` reads a landed
- * SHA with, on both the local-branch and the no-branch path.
+ * A `git` on PATH that fails `git rev-parse --short` of `HEAD` or of a
+ * commit ID and passes every other call to the real git: the lookups
+ * `cleanupOneRepo` reads a landed SHA with, `HEAD` on the no-branch path and
+ * the merge commit (`landedMergeCommit`) on the local-branch path.
  */
 function gitWithBrokenShortHead(dir) {
   const realGit = execSync('command -v git', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'git'),
-    `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "--short" ] && [ "$3" = "HEAD" ]; then\n  echo "fatal: rev-parse broken by the test" >&2\n  exit 128\nfi\nexec "${realGit}" "$@"\n`,
+    `#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "--short" ]; then\n  case "$3" in HEAD|[0-9a-f]*)\n    echo "fatal: rev-parse broken by the test" >&2\n    exit 128;;\n  esac\nfi\nexec "${realGit}" "$@"\n`,
     { mode: 0o755 },
   );
   return dir;

@@ -16,8 +16,7 @@
  * process only.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { execSync, execFileSync, spawnSync } from 'child_process';
 import {
@@ -36,6 +35,7 @@ import {
   normalizeId,
   info,
   unitDirFor,
+  worktreeRoot,
 } from './config.js';
 import {
   findStoryDir,
@@ -55,6 +55,7 @@ import { GATE_TAIL_LINES, codeSpan, interpolateCommand, tail } from './scripted.
 import { storyUnit } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
 import { integrateForMerge } from './merge-integrate.js';
+import { installCommand } from './updates-run.js';
 import { extractSection } from './feature.js';
 import { DEFERRED_HEADING } from './deferred.js';
 import { resolvePermissionScopes } from './permissions.js';
@@ -649,7 +650,7 @@ export async function cleanupOneRepo({
   }
 
   let mergeCommitHash = null;
-  // Set when the check path below pushed the merge commit itself.
+  // Set when `checkedMerge` below pushed the merge commit itself.
   let pushed = false;
   if (branchExists) {
     const unmergedCommits = execSync(`git rev-list main..${branchName} --count`, {
@@ -658,42 +659,28 @@ export async function cleanupOneRepo({
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
 
-    // A repo with a `check` plugin (F-96 D3) gets its merge commit made at
-    // origin/main, checked, and pushed as it is; the main checkout then
-    // fast-forwards to it. Every other repo merges in the main checkout.
+    // Every merge commit is made at origin/main in a throwaway worktree,
+    // checked when the repo has a `check` plugin (F-96 D3), and pushed as it
+    // is; the main checkout then fast-forwards to it. A failed merge or push
+    // leaves the main checkout as it was (S-1452).
     const checkPlugins = resolvePlugins('check', config.plugins ?? {}, {
       backlogRoot: config.backlogRoot,
       repo: repoOf(config),
     });
-    if (parseInt(unmergedCommits, 10) > 0 && checkPlugins.length > 0) {
-      info(`Branch '${branchName}' has ${unmergedCommits} unmerged commit(s). Merging and checking...`);
+    if (parseInt(unmergedCommits, 10) > 0) {
+      info(
+        `Branch '${branchName}' has ${unmergedCommits} unmerged commit(s). ${checkPlugins.length > 0 ? 'Merging and checking' : 'Merging'}...`,
+      );
       if (!(await checkedMerge({ parsed, repoName, repoPath, branchName, plugins: checkPlugins, config, changeDir }))) {
         return { ok: false };
       }
       pushed = true;
-    } else if (parseInt(unmergedCommits, 10) > 0) {
-      info(`Branch '${branchName}' has ${unmergedCommits} unmerged commit(s). Merging...`);
-      try {
-        execSync(`git merge --no-ff "${branchName}" -m "Merge branch '${branchName}' into main (${parsed.id})"`, {
-          cwd: repoPath,
-          stdio: ['inherit', process.stderr, process.stderr],
-        });
-      } catch {
-        abortFailedMerge({ repoPath, repoName, id: parsed.id });
-        return { ok: false };
-      }
     } else {
       info(`Branch '${branchName}' is already merged into main.`);
     }
-    try {
-      mergeCommitHash = execSync('git rev-parse --short HEAD', {
-        cwd: repoPath,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim();
-    } catch {
-      // ignore
-    }
+    // Not main's tip: a rerun after a failure past the push may find a later
+    // unit's landing there (S-1452).
+    mergeCommitHash = landedMergeCommit(repoPath, branchName);
   } else {
     // The branch was merged on the forge (or by an earlier run that already
     // deleted it). The pull above fast-forwarded main to origin/main and the
@@ -733,6 +720,26 @@ export async function cleanupOneRepo({
     }
   }
 
+  // Main moved under the main checkout, but its installed modules did not:
+  // `bl` and other repos' sessions run from it (S-1452). Every path runs
+  // the install, so a rerun after a failed one still gets it.
+  const install = installCommand(repoPath);
+  if (install) {
+    info(`Installing ${repoName}'s dependencies in the main checkout (${install})...`);
+    // No shell: a shell would turn the command's signal into an exit code
+    // (143), and `raiseSignal` below needs the signal. `install` is one of
+    // two fixed commands with no quoted words.
+    const [cmd, ...args] = install.split(' ');
+    const r = spawnSync(cmd, args, { cwd: repoPath, stdio: ['ignore', process.stderr, process.stderr] });
+    if (r.status !== 0) {
+      console.error(
+        `${repoName}: main is pushed, but \`${install}\` in the main checkout ${isInterrupt(r.signal) ? 'was interrupted' : 'failed'}. Run it by hand, then rerun \`bl merge ${parsed.id}\`:\n  cd ${shellQuote(repoPath)} && ${install}`,
+      );
+      raiseSignal(r.signal);
+      return { ok: false };
+    }
+  }
+
   // The branch's open PR is closed through the forge ops (F-42 D4):
   // `change.find` by branch, then `change.close`. Without a forge, an op or
   // the binary, or with no open PR, there is nothing to close — not fatal.
@@ -764,13 +771,17 @@ export async function cleanupOneRepo({
 const CHECK_RUNS = 2;
 
 /**
- * The merge of a repo with a `check` plugin (F-96 D3, Decision A5):
+ * The merge of every repo (F-96 D3, Decision A5; S-1452 for a repo with no
+ * `check` plugin):
  *
  * 1. In a throwaway worktree detached at origin/main, `git merge --no-ff` the
- *    branch with the usual message. A conflict means main moved after the
- *    integration: stop, and the operator reruns `bl merge`.
- * 2. Run the `check` plugins with `{{commit}}` (that merge commit) and
- *    `{{repoPath}}` (the main checkout). A failed run runs once more. Each run
+ *    branch with the usual message. The worktree is under the worktree root,
+ *    where a session stack serves an app.roost.cc worktree's own client. A
+ *    conflict means main moved after the integration: stop, and the operator
+ *    reruns `bl merge`.
+ * 2. With no `plugins`, skip to step 3. Otherwise run the `check` plugins
+ *    with `{{commit}}` (that merge commit) and `{{repoPath}}` (the main
+ *    checkout). A failed run runs once more. Each run
  *    adds a `## Gate` line naming the commit to the unit's change document
  *    in `changeDir`.
  * 3. On a pass, check that the main checkout can fast-forward to the commit
@@ -800,7 +811,9 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
   const mainMoved = () => console.error(`${repoName}: main moved; rerun \`bl merge ${parsed.id}\`. Nothing is pushed.`);
   const interrupted = (what) =>
     console.error(`${repoName}: ${what} was ended by ${signal}; rerun \`bl merge ${parsed.id}\`.`);
-  const tmp = mkdtempSync(join(tmpdir(), 'bl-merge-'));
+  const root = worktreeRoot(config);
+  mkdirSync(root, { recursive: true });
+  const tmp = mkdtempSync(join(root, 'bl-merge-'));
   const wt = join(tmp, basename(repoPath));
   // Removes the throwaway worktree, once. It also runs on `exit`, because a
   // listener can end bl inside a call: a Ctrl+C during the lock wait of the
@@ -872,7 +885,8 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
     }
     const shown = codeSpan(commands.map((c) => c.cmd).join(' && '));
 
-    let passed = false;
+    // A repo with no `check` plugin has nothing to check.
+    let passed = plugins.length === 0;
     let output = '';
     for (let run = 1; run <= CHECK_RUNS && !passed; run++) {
       output = '';
@@ -943,8 +957,12 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
     }
 
     info(`Pushing ${commit} to main in ${repoName}...`);
-    const push = git(['push', 'origin', `${commit}:refs/heads/main`], wt);
-    if (push.stderr) process.stderr.write(push.stderr);
+    // Streamed: a pre-push hook's test run prints as it goes.
+    const push = spawnSync('git', ['push', 'origin', `${commit}:refs/heads/main`], {
+      cwd: wt,
+      stdio: ['ignore', process.stderr, process.stderr],
+    });
+    if (isInterrupt(push.signal)) signal ??= push.signal;
     if (signal) {
       interrupted(`the push of ${commit}`);
       return false;
@@ -1004,44 +1022,29 @@ export function fastForwardBlocker(git, repoPath, commit) {
 }
 
 /**
- * After a failed `git merge --no-ff` into main (F-36 D9): abort it, then
- * confirm the main checkout is back where it was, with no `MERGE_HEAD` and no
- * tracked change (the operator's untracked files are not the merge's). A
- * merge git refused outright (an untracked file in the way) leaves no
- * `MERGE_HEAD`, so there is nothing to abort. Prints the outcome; the caller
- * returns `{ ok: false }`. Returns whether the checkout is clean.
+ * The short SHA of the commit that brought `branchName`'s tip into main: the
+ * oldest commit on main's first-parent line that contains the tip. That is
+ * the branch's merge commit, or the tip itself when main took it with no
+ * merge commit. Null when git gives no answer. A git command ended by SIGINT
+ * or SIGTERM raises that signal again (`raiseSignal`).
+ * @param {string} repoPath
+ * @param {string} branchName
+ * @returns {string | null}
  */
-export function abortFailedMerge({ repoPath, repoName, id }) {
-  const git = (args) =>
-    spawnSync('git', args, {
-      cwd: repoPath,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  const mergeHead = () => git(['rev-parse', '-q', '--verify', 'MERGE_HEAD']).status === 0;
-  const byHand = `git -C ${shellQuote(repoPath)} merge --abort`;
-  if (mergeHead()) {
-    const abort = git(['merge', '--abort']);
-    if (abort.status !== 0) {
-      const why = String(abort.stderr || abort.stdout || '').trim();
-      console.error(
-        `\n${repoName}: the merge into main failed, and so did \`git merge --abort\`${why ? `:\n  ${why}` : '.'}\nRun it by hand before anything else:\n  ${byHand}`,
-      );
-      return false;
-    }
-  }
-  const status = git(['status', '--porcelain', '--untracked-files=no']);
-  const left = status.status === 0 ? status.stdout.trim() : '(git status failed)';
-  if (mergeHead() || left) {
-    console.error(
-      `\n${repoName}: the merge into main failed and the main checkout is not clean after the abort${left ? `:\n${left}` : '.'}\nRun:\n  ${byHand}\nand check \`git -C ${shellQuote(repoPath)} status\` before rerunning \`bl merge ${id}\`.`,
-    );
-    return false;
-  }
-  console.error(
-    `\n${repoName}: the merge into main failed and was aborted; the main checkout is clean.\nmain moved since the branch was integrated; rerun \`bl merge ${id}\`.`,
-  );
-  return true;
+export function landedMergeCommit(repoPath, branchName) {
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: repoPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    raiseSignal(r.signal);
+    return r.status === 0 ? r.stdout.trim() : null;
+  };
+  const tip = git('rev-parse', '--verify', `${branchName}^{commit}`);
+  if (!tip) return null;
+  const above = git('rev-list', '--first-parent', '--ancestry-path', '--reverse', `${tip}..main`);
+  if (above == null) return null;
+  const oldest = above.split('\n')[0];
+  // Main at the tip, or the tip on main's first-parent line (a fast-forward).
+  const commit = !oldest || git('rev-parse', `${oldest}^1`) === tip ? tip : oldest;
+  return git('rev-parse', '--short', commit);
 }
 
 /**
@@ -1195,7 +1198,10 @@ refused.
 Then the branch is brought up to date with main in its worktree (main merged
 into the branch), gated by the test plugins when it took commits, and pushed.
 A conflict or a red gate rolls that back, writes ## Escalation and stops with
-no main checkout touched. A merge into main that still fails is aborted.`);
+no main checkout touched. The merge commit is made at origin/main in a
+throwaway worktree and pushed; the main checkout then fast-forwards to it and
+installs its dependencies. A conflict, a refused push or a moved main leaves
+the main checkout as it was.`);
     process.exit(0);
   }
 
