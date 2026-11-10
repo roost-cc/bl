@@ -112,6 +112,32 @@ test('sleepSync writes `say` once on stderr on every path', () => {
   }
 });
 
+test('sleepSync still sleeps when its sleep child ends on SIGPIPE, SIGHUP, SIGQUIT or SIGKILL', () => {
+  // SIGPIPE is the real case: the child writes `say` to a stderr pipe with no
+  // reader. Only SIGINT and SIGTERM end the wait; any other signal must not.
+  for (const signal of ['PIPE', 'HUP', 'QUIT', 'KILL']) {
+    const bin = mkTempDir('bl-sleep-stub-');
+    writeFileSync(join(bin, 'sleep'), `#!/bin/sh\nulimit -c 0\nkill -${signal} $$\n`);
+    chmodSync(join(bin, 'sleep'), 0o755);
+    for (const say of [undefined, 'waiting…']) {
+      const script = [
+        `import { sleepSync } from ${JSON.stringify(SLEEP_SYNC)};`,
+        'const t = performance.now();',
+        `sleepSync(200, ${JSON.stringify(say)});`,
+        'process.stdout.write(String(performance.now() - t));',
+      ].join('\n');
+      const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const name = `SIG${signal}, say ${say ?? 'none'}`;
+      assert.equal(r.status, 0, `${name}: ${r.stderr}`);
+      assert.ok(Number(r.stdout) >= 200, `${name}: slept ${r.stdout} ms`);
+    }
+  }
+});
+
 for (const signal of ['SIGINT', 'SIGTERM']) {
   test(`sleepSync runs the ${signal} listener when its sleep child ends on ${signal}`, async () => {
     const r = await signalTheSleep(signal, true);

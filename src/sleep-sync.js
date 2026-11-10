@@ -44,15 +44,16 @@ export function sleepSync(ms, say) {
       : spawnSync('sh', ['-c', 'printf "%s\\n" "$2" >&2; exec sleep "$1"', 'sh', secs, say], {
           stdio: ['ignore', 'ignore', 'inherit'],
         });
-  if (r.error || (r.signal == null && r.status !== 0)) {
-    // The child did not start (it wrote nothing) or did not sleep (it refused
-    // the argument): sleep in this process, deaf to signals as before.
-    if (r.error) tell();
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-    return;
-  }
   if (r.signal === 'SIGINT' || r.signal === 'SIGTERM') {
     if (process.listenerCount(r.signal) > 0) process.emit(r.signal, r.signal);
     else process.kill(process.pid, r.signal);
+    return;
+  }
+  if (r.status !== 0) {
+    // The child did not start (it wrote nothing), did not sleep (it refused
+    // the argument) or ended on another signal (SIGPIPE when it wrote `say` to
+    // a pipe with no reader): sleep in this process, deaf to signals as before.
+    if (r.error) tell();
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   }
 }
