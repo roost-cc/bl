@@ -156,7 +156,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // snapshot keeps s as the snapshot to draw, and returns the commands of its notes against the
-// snapshot before (D8): one bell for them all, and each sender for each note.
+// snapshot before (D8): one bell for them all, and each sender for each note it wants.
 func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	m.snap = &s
 	notes := m.differ.Diff(m.snap)
@@ -166,7 +166,9 @@ func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	}
 	for _, n := range notes {
 		for _, s := range m.senders {
-			cmds = append(cmds, s.Send(n))
+			if s.Wants(n) {
+				cmds = append(cmds, s.Send(n))
+			}
 		}
 	}
 	return m, cmds

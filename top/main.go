@@ -22,23 +22,24 @@ func main() {
 	version := flag.Bool("version", false, "print bl-top's version and exit")
 	noBell := flag.Bool("no-bell", false, "ring no terminal bell for a notification")
 	noDesktop := flag.Bool("no-desktop", false, "send no desktop notification (notify-send)")
+	pushArgv := flag.String("push-argv", "", "the phone push command, as a JSON array (from backlog.json's top.push)")
+	noPush := flag.Bool("no-push", false, "send no phone push")
 	flag.Parse()
 	if *version {
 		fmt.Println("bl-top", runtime.Version())
 		return
 	}
-	var argv []string
-	if err := json.Unmarshal([]byte(*blArgv), &argv); err != nil || len(argv) == 0 {
-		fmt.Fprintf(os.Stderr, "bl top: --bl-argv must be a JSON array of strings, not %s\n", *blArgv)
+	argv, err := argvFlag("bl-argv", *blArgv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bl top: %v\n", err)
 		os.Exit(1)
 	}
-	var senders []notify.Sender
-	if !*noDesktop {
-		if desktop, ok := notify.Desktop(); ok {
-			senders = append(senders, desktop)
-		}
+	list, err := senders(!*noDesktop, *pushArgv, !*noPush)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bl top: %v\n", err)
+		os.Exit(1)
 	}
-	final, err := tea.NewProgram(ui.New(argv, *interval, !*noBell, senders)).Run()
+	final, err := tea.NewProgram(ui.New(argv, *interval, !*noBell, list)).Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bl top: %v\n", err)
 		os.Exit(1)
@@ -47,4 +48,32 @@ func main() {
 		fmt.Fprintf(os.Stderr, "bl top: the snapshot stream ended: %s\n", reason)
 		os.Exit(1)
 	}
+}
+
+// argvFlag decodes the value of the flag name: a non-empty JSON array of strings.
+func argvFlag(name, value string) ([]string, error) {
+	var argv []string
+	if err := json.Unmarshal([]byte(value), &argv); err != nil || len(argv) == 0 {
+		return nil, fmt.Errorf("--%s must be a JSON array of strings, not %s", name, value)
+	}
+	return argv, nil
+}
+
+// senders are the notification senders (D8): notify-send when desktop is true and it is on PATH,
+// and the phone push when push is true and pushArgv (--push-argv) names a command.
+func senders(desktop bool, pushArgv string, push bool) ([]notify.Sender, error) {
+	var list []notify.Sender
+	if desktop {
+		if s, ok := notify.Desktop(); ok {
+			list = append(list, s)
+		}
+	}
+	if push && pushArgv != "" {
+		argv, err := argvFlag("push-argv", pushArgv)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, notify.Push(argv))
+	}
+	return list, nil
 }

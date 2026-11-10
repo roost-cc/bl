@@ -171,7 +171,7 @@ _roost_bl() {
       COMPREPLY=( $(compgen -W "--json --help" -- "$cur") )
       ;;
     top)
-      COMPREPLY=( $(compgen -W "--json --stream --interval --version --no-bell --no-desktop --help" -- "$cur") )
+      COMPREPLY=( $(compgen -W "--json --stream --interval --version --no-bell --no-desktop --no-push --help" -- "$cur") )
       ;;
     inbox)
       if [[ ${COMP_CWORD} -eq 2 ]]; then

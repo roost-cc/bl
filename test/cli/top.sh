@@ -98,7 +98,7 @@ assert_eq "--stream: every line a snapshot; capacity read again after the capaci
 assert_empty "bl top --stream stderr" "$(cat "$ERR")"
 
 # A bad flag: exit 1, nothing on stdout.
-for args in "--json --stream" "--stream --interval 50" "--interval 50" "--json --interval 1000" "--json --version" "--json --no-bell" "--stream --no-desktop" "--nope"; do
+for args in "--json --stream" "--stream --interval 50" "--interval 50" "--json --interval 1000" "--json --version" "--json --no-bell" "--stream --no-desktop" "--json --no-push" "--nope"; do
   set +e
   # shellcheck disable=SC2086
   OUT=$("$BL" top $args 2>"$ERR"); CODE=$?
@@ -139,20 +139,51 @@ set -e
 assert_exit "bl top passes --no-bell and --no-desktop to the view" 0 "$CODE"
 assert_contains "bl top --no-bell --no-desktop --version" "bl-top go" "$OUT"
 
-# The view runs bl top --stream; when the stream ends, the view prints its last stderr line and
-# exits 1. Here the stream finds no backlog. The view needs a terminal: util-linux's script gives
-# it one, with sh as its shell, so that no shell profile sets BL_BACKLOG_DIR again.
-if script --version >/dev/null 2>&1; then
-  NOWHERE=$(mktemp -d)
-  set +e
-  (cd "$NOWHERE" && env -u BL_BACKLOG_DIR SHELL=/bin/sh timeout 60 script -qec "'$BL' top 2>'$ERR'" /dev/null </dev/null >/dev/null)
-  CODE=$?
-  set -e
-  rm -rf "$NOWHERE"
-  assert_exit "bl top with no backlog" 1 "$CODE"
-  assert_contains "bl top with no backlog prints its stream's last stderr line" "bl top: the snapshot stream ended: Set BL_BACKLOG_DIR" "$(cat "$ERR")"
-else
-  echo "SKIP: bl top with no backlog needs util-linux's script"
-fi
+# The phone push (D8a). bl top reads backlog.json's "top" block before it starts the view: a bad
+# block exits 1 and names the key; --json and --stream do not read it. A good block reaches the
+# view as --push-argv; here a fake view, newer than every file under top/, prints its arguments.
+CFG="$TMPDIR_ROOT/backlog.json"
+cp "$CFG" "$TMPDIR_ROOT/backlog.json.good"
+set_top() {
+  node -e '
+    const f = process.argv[1], c = JSON.parse(require("fs").readFileSync(f, "utf8"));
+    c.top = JSON.parse(process.argv[2]);
+    require("fs").writeFileSync(f, JSON.stringify(c));
+  ' "$CFG" "$1"
+}
+set_top '{"push": []}'
+set +e
+OUT=$("$BL" top --version 2>"$ERR"); CODE=$?
+set -e
+assert_exit "bl top with a bad top block" 1 "$CODE"
+assert_empty "bl top with a bad top block: stdout" "$OUT"
+assert_contains "bl top with a bad top block names the key" 'backlog.json "top" needs a non-empty array of non-empty strings for "push"' "$(cat "$ERR")"
+set +e
+"$BL" top --json >/dev/null 2>"$ERR"; CODE=$?
+set -e
+assert_exit "bl top --json does not read the top block" 0 "$CODE"
+set_top '{"push": ["phone-push", "--topic", "bl top"]}'
+mv "$BL_ROOT/top/bin/bl-top" "$BL_ROOT/top/bin/bl-top.real"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' > "$BL_ROOT/top/bin/bl-top"
+chmod +x "$BL_ROOT/top/bin/bl-top"
+set +e
+OUT=$("$BL" top 2>"$ERR")
+NO_PUSH=$("$BL" top --no-push 2>"$ERR")
+set -e
+# The real view goes back first, so a failed assert leaves no fake behind.
+mv "$BL_ROOT/top/bin/bl-top.real" "$BL_ROOT/top/bin/bl-top"
+assert_contains "bl top passes the push argv to the view" "$(printf -- '--push-argv\n["phone-push","--topic","bl top"]')" "$OUT"
+assert_contains "bl top --no-push passes --no-push to the view" "--no-push" "$NO_PUSH"
+mv "$TMPDIR_ROOT/backlog.json.good" "$CFG"
+
+# With no backlog, bl top exits 1 before it starts the view, and says how to name one.
+NOWHERE=$(mktemp -d)
+set +e
+(cd "$NOWHERE" && env -u BL_BACKLOG_DIR "$BL" top </dev/null >/dev/null 2>"$ERR")
+CODE=$?
+set -e
+rm -rf "$NOWHERE"
+assert_exit "bl top with no backlog" 1 "$CODE"
+assert_contains "bl top with no backlog says how to name one" "Set BL_BACKLOG_DIR" "$(cat "$ERR")"
 
 summary_and_exit

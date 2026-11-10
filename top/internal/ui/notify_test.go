@@ -116,6 +116,24 @@ func TestAFailedSenderWarnsInTheBottomBorderUntilItSucceeds(t *testing.T) {
 	}
 }
 
+func TestAFailedPushWarnsInTheBottomBorder(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "phone-push")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'ntfy: 403 forbidden' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := notifying(t, true, []notify.Sender{notify.Push([]string{path})})
+	m, _ = receive(t, m, inbox())
+	_, msgs := receive(t, m, inbox("T-2"))
+	if len(msgs) != 2 || msgs[1] != (notify.ResultMsg{Sender: "push", Err: "ntfy: 403 forbidden"}) {
+		t.Fatalf("a new task with a failing push: %#v", msgs)
+	}
+	m, _ = update(t, m, msgs[1])
+	golden(t, "push-warning-100x40", screen(t, m))
+	if !strings.Contains(m.render(), styleError.Render("push failed: ntfy: 403 forbidden")) {
+		t.Error("the warning is not red")
+	}
+}
+
 func TestALongWarningFitsTheBottomBorder(t *testing.T) {
 	long := "desktop failed: " + strings.Repeat("x", 200)
 	for _, w := range []int{80, 171} {

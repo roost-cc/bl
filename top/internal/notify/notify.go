@@ -82,10 +82,17 @@ func Bell() tea.Cmd {
 var timeout = 10 * time.Second
 
 // Sender is a command that gets each note (D8): its argv, to which it appends `<id> <kind>` and
-// `<line>`. Name is what the bottom border names when it fails.
+// `<line>`. Name is what the bottom border names when it fails. Kinds, when it is not nil, are the
+// only note kinds it gets.
 type Sender struct {
-	Name string
-	Argv []string
+	Name  string
+	Argv  []string
+	Kinds map[string]bool
+}
+
+// Wants says whether the sender gets n.
+func (s Sender) Wants(n Note) bool {
+	return s.Kinds == nil || s.Kinds[n.Kind]
 }
 
 // ResultMsg is the end of a sender's command: Err is "" when it exited 0, else its last stderr
@@ -103,6 +110,12 @@ func Desktop() (Sender, bool) {
 		return Sender{}, false
 	}
 	return Sender{Name: "desktop", Argv: []string{path, "-a", "bl top"}}, true
+}
+
+// Push is the phone push sender (D8a): the command that backlog.json's `top.push` names. It gets
+// a new escalation and a new task only, not a run that ends (Decision A6).
+func Push(argv []string) Sender {
+	return Sender{Name: "push", Argv: argv, Kinds: notifyKinds}
 }
 
 // Send runs the command for n in the background, and sends its ResultMsg when it ends.

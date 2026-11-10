@@ -1,7 +1,7 @@
 /**
  * top.js — `bl top`: a live view of bl's runs, inbox and next work (F-87).
  *
- *   bl top [--interval <ms>] [--no-bell] [--no-desktop]
+ *   bl top [--interval <ms>] [--no-bell] [--no-desktop] [--no-push]
  *   bl top --json
  *   bl top --stream [--interval <ms>]
  *
@@ -17,7 +17,7 @@ import { existsSync, readdirSync, readFileSync, statSync, utimesSync } from 'fs'
 import { join, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { parseArgs } from 'util';
-import { loadConfig } from './config.js';
+import { loadConfig, topSettings } from './config.js';
 import { problemLines, TOP_SCHEMA, topSnapshot } from './top-snapshot.js';
 import { ATTENTION_MAX_AGE_MS, CAPACITY_EVERY_MS, HISTORY_EVERY_MS, runStream } from './top-stream.js';
 
@@ -34,7 +34,7 @@ const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 /** `30 s`, `5 min`. */
 const s = (ms) => (ms >= 60000 ? `${ms / 60000} min` : `${ms / 1000} s`);
 
-const HELP = `Usage: bl top [--interval <ms>] [--no-bell] [--no-desktop]
+const HELP = `Usage: bl top [--interval <ms>] [--no-bell] [--no-desktop] [--no-push]
        bl top --json
        bl top --stream [--interval <ms>]
 
@@ -54,9 +54,15 @@ on the window, and runs notify-send -a "bl top" "<id> <kind>" "<line>" when
 notify-send is on PATH. If notify-send fails or runs longer than 10 s, the
 bottom border shows a red warning until it next succeeds.
 
+A new escalation or task also runs the phone push command, when backlog.json
+names one in "top": { "push": ["<command>", "<arg>", …] }, with the same two
+last arguments as notify-send. It fails and warns as notify-send does. A run
+that ends sends no phone push.
+
 Options:
   --no-bell          Ring no bell for a notification (the view)
   --no-desktop       Run no notify-send for a notification (the view)
+  --no-push          Run no phone push command (the view)
   --version          Print the view's version (after a build when it needs
                      one) and exit
   --json             Print one snapshot (schema "${TOP_SCHEMA}") and exit
@@ -88,8 +94,9 @@ Output:
 
 Exit codes:
   0   Printed (--json, --version), stdin closed (--stream), or the view quit.
-  1   A bad flag or interval, no backlog, a build that is needed and fails or
-      finds no Go, or the view's stream ended.`;
+  1   A bad flag or interval, no backlog, a bad "top" block in backlog.json
+      (the view), a build that is needed and fails or finds no Go, or the
+      view's stream ended.`;
 
 /** Parse the flags, or print why not and exit 1. */
 function flags(argv) {
@@ -103,6 +110,7 @@ function flags(argv) {
         version: { type: 'boolean' },
         'no-bell': { type: 'boolean' },
         'no-desktop': { type: 'boolean' },
+        'no-push': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     }).values;
@@ -156,14 +164,28 @@ function buildTui() {
   utimesSync(TOP_BIN, now, now);
 }
 
-/** Run the TUI with the terminal's stdio and exit with its code; build it first when it needs a build. */
+/**
+ * Run the TUI with the terminal's stdio and exit with its code; build it
+ * first when it needs a build. The phone push command comes from
+ * backlog.json's `top` block (D8a), read before the build: a bad block exits
+ * 1. `--no-push` passes no command.
+ */
 function runTui(opts) {
+  let push;
+  try {
+    push = topSettings(loadConfig());
+  } catch (e) {
+    console.error(`bl top: ${e.message}`);
+    process.exit(1);
+  }
   if (tuiNeedsBuild()) buildTui();
   const args = ['--bl-argv', JSON.stringify([process.execPath, BL_PATH])];
   if (opts.interval !== undefined) args.push('--interval', opts.interval);
   if (opts.version) args.push('--version');
   if (opts['no-bell']) args.push('--no-bell');
   if (opts['no-desktop']) args.push('--no-desktop');
+  if (opts['no-push']) args.push('--no-push');
+  if (push) args.push('--push-argv', JSON.stringify(push));
   const r = spawnSync(TOP_BIN, args, { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
@@ -182,8 +204,8 @@ export async function main(argv) {
     console.error('bl top: --version goes without --json and --stream');
     process.exit(1);
   }
-  if ((opts['no-bell'] || opts['no-desktop']) && (opts.json || opts.stream)) {
-    console.error('bl top: --no-bell and --no-desktop go with the view, not --json or --stream');
+  if ((opts['no-bell'] || opts['no-desktop'] || opts['no-push']) && (opts.json || opts.stream)) {
+    console.error('bl top: --no-bell, --no-desktop and --no-push go with the view, not --json or --stream');
     process.exit(1);
   }
   const interval = opts.interval === undefined ? DEFAULT_INTERVAL_MS : Number(opts.interval);

@@ -150,6 +150,42 @@ func TestSender(t *testing.T) {
 	}
 }
 
+func TestPushGetsNewEscalationsAndTasksOnly(t *testing.T) {
+	args := filepath.Join(t.TempDir(), "args")
+	push := Push([]string{script(t, "push", `printf '%s|' "$@" >> "$1"; echo >> "$1"`), args})
+	if push.Name != "push" {
+		t.Errorf("Push().Name = %q", push.Name)
+	}
+	var d Differ
+	d.Diff(snap([]string{"task:T-2"}, []string{"F-81:running"}))
+	notes := d.Diff(snap(
+		[]string{"task:T-2", "escalation:F-83:esc", "task:T-52", "change:S-9:change"},
+		[]string{"F-81:done", "S-2:escalated"}))
+	if got, want := titles(notes), []string{"F-83:esc escalation", "T-52 task", "F-81 done", "S-2 escalated"}; !slices.Equal(got, want) {
+		t.Fatalf("notes %q, want %q", got, want)
+	}
+	for _, n := range notes {
+		if push.Wants(n) {
+			if got := push.Send(n)(); got != (ResultMsg{Sender: "push"}) {
+				t.Errorf("%s %s: %#v", n.ID, n.Kind, got)
+			}
+		}
+	}
+	data, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := args + "|F-83:esc escalation|line of F-83:esc|\n" + args + "|T-52 task|line of T-52|\n"; string(data) != want {
+		t.Errorf("push ran with %q, want %q", data, want)
+	}
+	desktop := Sender{Name: "desktop", Argv: []string{"notify-send"}}
+	for _, n := range notes {
+		if !desktop.Wants(n) {
+			t.Errorf("the desktop sender does not want %s %s", n.ID, n.Kind)
+		}
+	}
+}
+
 func TestDesktopNeedsNotifySendOnPath(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if _, ok := Desktop(); ok {

@@ -2827,6 +2827,7 @@ picks, token use and agent capacity, the stories done per day, and the newest ru
 bl top                             # the view, refreshed every 2000 ms
 bl top --interval 1000             # the view's interval in ms, 500 to 10000
 bl top --no-bell --no-desktop      # the view without the bell or the desktop notification
+bl top --no-push                   # the view without the phone push
 bl top --version                   # build the view if it needs a build; print its version
 bl top --json                      # one snapshot, then exit 0
 bl top --stream                    # one snapshot per line every 2000 ms until stdin closes
@@ -2899,14 +2900,31 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   own, and is killed after 10 s. The desktop sender is `notify-send -a "bl top"`, when
   `notify-send` is on `PATH` and there is no `--no-desktop`. A sender that exits other than 0
   or times out puts `<name> failed: <its last stderr line, or timeout>` in red at the right of
-  the bottom border, until its command next exits 0. `src/top.js` refuses `--no-bell` and
-  `--no-desktop` with `--json` or `--stream`.
+  the bottom border, until its command next exits 0. A sender may take only some kinds of note
+  (`Sender.Kinds`). `src/top.js` refuses `--no-bell`, `--no-desktop` and `--no-push` with
+  `--json` or `--stream`.
+- **Phone push** (D8a, `notify.Push`). The push sender, named `push`, is the command of
+  backlog.json's `top` block (below), and it gets only `escalation` and `task` notes, never a
+  run that ends (Decision A6). `src/top.js` reads the block before the build and passes the argv
+  to the view as `--push-argv '<JSON array>'`, an internal flag that the view decodes with
+  `encoding/json`, so the view still reads no backlog file. `--no-push` (passed on to the view)
+  drops the sender. A push that fails warns as `push failed: …` in the bottom border. bl holds
+  no secret and names no push service: the command does that.
+- **backlog.json `top`.** `"top": { "push": ["<command>", "<arg>", …] }`. `topSettings`
+  (`src/config.js`) reads it as `updateSettings` reads `updates`: only when used, never by
+  `loadConfig`, and only for the view (`--json` and `--stream` do not read it). No `top` block
+  means no phone push. With one, `push` is required, with no default: a non-empty array of
+  non-empty strings. Otherwise `bl top` exits 1 with an error that names `backlog.json "top"`
+  and the key.
 - **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
   `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, the
-  frame at 100×40 with a fake `notify-send` that exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
+  frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
+  exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
   `testdata/snapshot.json` in a fixed zone (UTC−5), without colors;
   `go test ./internal/ui -update` writes them again.
-  `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`.
+  `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
+  then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
+  and `--no-push`.
 
 #### The snapshot
 
