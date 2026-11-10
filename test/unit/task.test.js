@@ -242,7 +242,7 @@ test('findTaskFindings: task-unit for a unit that is not a feature or story; tas
   ]);
   assert.deepEqual(find(task('T-1', { owner: 'agent' })), ['error task-field: owner "agent" is not one of operator']);
   assert.deepEqual(find(task('T-1', { status: 'blocked' })), [
-    'error task-field: status "blocked" not in known set (flow.json task statuses: open, done)',
+    'error task-field: status "blocked" not in known set (flow.json task statuses: draft, done)',
   ]);
   assert.deepEqual(find(task('T-1', { status: 'done' })), ['error task-field: a done task needs its done: date']);
   assert.deepEqual(find(task('T-1', { owner: '' })), ['error task-field: task missing required key "owner"']);
@@ -336,10 +336,10 @@ test('flow.json needs the task type (F-65 D1)', () => {
   const raw = JSON.parse(JSON.stringify(flow.types));
   delete raw.task;
   assert.throws(
-    () => new Flow('flow.json', { schema: 'bl-flow/v1', types: raw }),
+    () => new Flow('flow.json', { schema: 'bl-flow/v2', types: raw }),
     (err) => err instanceof FlowError && /no "task" type/.test(err.message),
   );
-  assert.deepEqual(flow.statusesOf('task'), ['open', 'done']);
-  assert.equal(flow.meets('task', 'done', 'open'), true);
+  assert.deepEqual(flow.statusesOf('task'), ['draft', 'done']);
+  assert.equal(flow.meets('task', 'done', 'draft'), true);
   assert.deepEqual(flow.gatesOf('task'), {});
 });

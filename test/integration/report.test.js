@@ -694,7 +694,12 @@ test('report_outside_backlog_formats_site_pages: the report page and every rende
   for (const out of [join(dir, 'reports'), join(outside, 'reports')]) {
     const r = runBl(['report', '--out', out], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    for (const rel of ['index.md', 'site/index.md', 'site/reports/index.md', ...renderedPages.map((p) => `site/${p}`)]) {
+    for (const rel of [
+      'index.md',
+      'site/index.md',
+      'site/reports/index.md',
+      ...renderedPages.map((p) => `site/${p}`),
+    ]) {
       assert.ok(readFileSync(join(out, rel), 'utf8').trimEnd().endsWith(FORMATTED), `${out}: ${rel} is not formatted`);
     }
   }
@@ -790,7 +795,7 @@ test('report_uses_one_flow_snapshot_when_flow_changes_during_write', async () =>
     render: () => {
       if (!edited) {
         const raw = JSON.parse(readFileSync(path, 'utf8'));
-        raw.types.story.statuses = Object.fromEntries(Object.entries(raw.types.story.statuses).reverse());
+        raw.types.story.statuses = [...raw.types.story.statuses].reverse();
         writeFileSync(path, JSON.stringify(raw));
         edited = true;
       }

@@ -112,8 +112,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
                                   each, all by hand (F-53 D2)
   coding-dictionary.yaml        ← the coding dictionary: bl init's copy of
                                   bl's seed, curated by the project (F-82)
-  flow.json                     ← every story and feature status, what each
-                                  implies, and the gates per type (F-66 D1)
+  flow.json                     ← per type the statuses, the verbs between
+                                  them and the gates (F-66 D1, F-69 D1)
   blockers.json                 ← every hold between units, one edge per line,
                                   sorted, written only by bl block (F-66 D2)
   tasks/
@@ -701,58 +701,107 @@ backlog → refined → in_progress → done
 A status change rewrites no other file: the index tables are rendered from the frontmatter when
 a page is read.
 
-## Statuses and gates (`flow.json`, F-66 D1)
+## Statuses and gates (`flow.json`, F-66 D1, F-69 D1)
 
-`flow.json`, at the backlog root, names every status of a story and a feature, what each
-status implies, and the gates a unit of each type can be held at. It is plain JSON, read by
-`src/flow.js`:
+`flow.json`, at the backlog root, names per type (story, feature, task) its statuses in
+lifecycle order, the terminal ones, the verbs that move a unit between them, and the gates a
+unit can be held at. It is plain JSON, read by `src/flow.js`:
 
 ```json
 {
-  "schema": "bl-flow/v1",
+  "schema": "bl-flow/v2",
   "types": {
-    "story": {
-      "statuses": {
-        "backlog": { "implies": [] },
-        "refined": { "implies": ["backlog"] },
-        "in_progress": { "implies": ["refined", "backlog"] },
-        "done": { "implies": ["in_progress", "refined", "backlog"] },
-        "superseded": { "implies": ["done", "in_progress", "refined", "backlog"] }
+    "feature": {
+      "statuses": [
+        "draft",
+        "refined",
+        "approved",
+        "in_progress",
+        "in_review",
+        "fixing",
+        "ready_for_merge",
+        "escalated",
+        "done",
+        "superseded"
+      ],
+      "terminal": ["done", "superseded"],
+      "verbs": {
+        "run": {
+          "from": ["approved", "in_progress", "escalated"],
+          "when": ["gate_free:run", "escalation_cleared"],
+          "during": "in_progress",
+          "via": ["implement", "test", "self_review", "open_pr"],
+          "success": [{ "to": "in_review", "then": "review" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "review": {
+          "from": ["in_review"],
+          "during": "in_review",
+          "via": ["review"],
+          "success": [{ "to": "ready_for_merge" }],
+          "failure": [{ "when": ["round_within_cap"], "to": "fixing", "then": "fix" }, { "to": "escalated" }]
+        },
+        "supersede": { "from": "*", "success": [{ "to": "superseded" }] }
       },
       "gates": { "run": { "verbs": ["run", "implement"] }, "merge": { "verbs": ["merge"] } }
-    },
-    "feature": { "statuses": { "draft": …, "superseded": … }, "gates": { … } }
+    }
   }
 }
 ```
 
-- **Meets.** A status meets `X` when it is `X` or lists `X` in `implies`. `implies` is
-  written in full, never derived, because the flows are not a line: a feature loops
-  `running → escalated → running`, and `superseded` is reached from any status. So
-  `superseded` meets `done` (F-66 A4) and `escalated` meets `running` but not `done`.
+- **The tables.** The template's are F-69 D1's. Feature: `new`, `refine`, `approve`, `run`,
+  `implement` (`bl implement F-n`), `review`, `fix`, `merge`, `supersede`. Story: the same
+  without `approve`, `run` from `refined`, plus `implement`, `side` and `done`, and a `merge`
+  from `in_progress` or `ready_for_merge`. Task: `new` (to `draft`) and `done`. A story uses
+  the ten words of F-69 A3 except `approved`; a task uses `draft` and `done`.
+- **A verb row.** `from` is the statuses it starts from, or `*` for every status that is not
+  terminal. `when` names guards that must hold before it starts. `during` is the status recorded
+  when it starts; its `from` lists its own `during`, so invoking it again resumes it. `via` names
+  capabilities, in order; a verb without one is a hand transition. `success` and `failure` are
+  branches `{ when?, to, then? }`, tried in order. In F-69 bl validates `then` but does not
+  follow it: `bl run` chains in code.
+- **Meets.** A status meets `X` when it is `X` or comes after `X` in `statuses`. Terminal
+  statuses come last, so `superseded` meets `done` (F-66 A4), and `escalated` meets
+  `in_progress` but not `done`. Order, not reachability, decides: `refine`'s failure branch
+  makes `draft` and `refined` a cycle, and a draft unit must not meet `refined`.
+- **Guards and capabilities** are names of functions in two registries, `src/guards.js`
+  (`GUARDS`: `gate_free:<gate>`, `escalation_cleared`, `round_within_cap`) and
+  `src/capabilities.js` (`CAPABILITIES`: every `DISPATCH` cell of `src/verbs.js`, which
+  `bl <verb> <id>` calls through it, and the steps the loop still runs in code). The file wires
+  them; the registries define them. A guard name may carry one argument after a colon.
 - **Gates** name what a unit of the type can be held at and the verbs that check each. bl
   checks gates only at `run`, `implement` and `merge`.
 - **`src/flow.js`.** `loadFlow(backlogRoot)` returns the parsed flow (cached while the file's
-  mtime and size are unchanged) with `statusesOf(type)`, `openStatusesOf(type)` (those that do
-  not meet `done`, most `implies` first, ties in file order), `listRankOf(type, status)` (the
-  sort rank of `bl list` and `bl grep`: open statuses that meet `in_progress`, then the other open
-  statuses with any unknown one, then closed statuses in file order), `meets(type, status, wanted)`,
-  `isRunnable(type, status)` (meets `refined` and not `done`), `isUnstarted(type, status)` (a status
-  of the type that does not meet `in_progress`; an unknown one is neither), `closedStatusesOf(type)`,
-  `runnableStatusesOf(type)`, `unstartedStatusesOf(type)` (those sets in file order, which messages
-  name through `statusWords(names)`) and `gatesOf(type)`. It
-  throws a `FlowError` whose message starts with the file's path when the
-  file is missing, not JSON, has a `schema` other than `bl-flow/v1`, lacks the `story`,
-  `feature` or `task` type (`FLOW_TYPES`), or has a `statuses` or `gates` of the wrong shape;
-  a command that reads it
-  stops there. A backlog's flow is its own: code reads the running backlog's file through
-  `loadFlow`, never the template, and a pure function takes `flow` as a parameter. `bl init`
-  writes `templates/flow.json` into a backlog that has none and leaves an
-  existing one alone; test fixtures (`mkTempBacklog`, `mk_temp_backlog`) copy the same file. Only
-  `--help` falls back to the template (`flowForHelp`), since help works outside a backlog. `bl report`
-  and `bl history` read the flow once in `main` and pass it down, so a run's parts agree.
-- **The `task` type** (F-65 D1): `open` (implies nothing) and `done` (implies `open`), with
-  `gates: {}`. A task can block a unit; nothing holds a task.
+  mtime and size are unchanged) with `statusesOf(type)` (lifecycle order), `initial(type)` (the
+  first status), `openStatusesOf(type)` (those that do not meet `done`, furthest along first),
+  `listRankOf(type, status)` (the sort rank of `bl list` and `bl grep`: open statuses that meet
+  `in_progress`, then the other open statuses with any unknown one, then closed statuses in
+  order), `meets(type, status, wanted)`, `isRunnable(type, status)` (meets `refined` and not
+  `done`), `isUnstarted(type, status)` (a status of the type that does not meet `in_progress`;
+  an unknown one is neither), `closedStatusesOf(type)`, `runnableStatusesOf(type)`,
+  `unstartedStatusesOf(type)` (those sets in lifecycle order, which messages name through
+  `statusWords(names)`), `gatesOf(type)`, `verbOf(type, verb)` (the row with its optional keys
+  filled, or null), `fromOf(type, row)` (`from` with `*` expanded) and `edges(type)` (every
+  `{ from, to, by }` the table defines: each `from` to the `during`, unless they are equal, and
+  each branch's `to` from the `during`, or from each `from` when there is none; `new` gives
+  `from: null`). It throws a `FlowError` whose message starts with the file's path when the
+  file is missing, not JSON, has a `schema` other than `bl-flow/v2` or `bl-flow/v1`, lacks the
+  `story`, `feature` or `task` type (`FLOW_TYPES`), or has a part of the wrong shape; a command
+  that reads it stops there. A backlog's flow is its own: code reads the running backlog's file
+  through `loadFlow`, and a pure function takes `flow` as a parameter. `bl init` writes
+  `templates/flow.json` into a backlog that has none and leaves an existing one alone; test
+  fixtures (`mkTempBacklog`, `mk_temp_backlog`) copy the same file. `--help` falls back to the
+  template (`flowForHelp`), since help works outside a backlog. `bl report` and `bl history` read
+  the flow once in `main` and pass it down, so a run's parts agree.
+- **A v1 file** (`bl-flow/v1`: statuses with `implies`, no verbs) still loads until the
+  migration rewrites it (F-69 D4): as the template with the file's own `gates`, and
+  `flow.legacy` set. `bl validate` reports it as one `flow-json` warning that names
+  `bl/scripts/migrate-transitions.js`. The v1 words map through `LEGACY_STATUSES`
+  (`fromLegacy(type, status)`: story `backlog`, feature `running` and task `open` read as
+  `draft`, `in_progress` and `draft`). `makeUnit` (`src/backlog-graph.js`) sets `.status`
+  through it, and every `Flow` helper that takes a status reads one through it.
+- **The `task` type** (F-65 D1): `draft` and `done`, with `gates: {}`. A task can block a unit;
+  nothing holds a task.
 - **Who reads it.** `bl validate` takes story, feature and task statuses from it (`bad-status`,
   `task-field`), and reports `flow-json` for the file's own faults (see **`bl validate`**). Story
   status sets, closed checks and status tables all derive from it (S-1166), so a command that
@@ -3291,9 +3340,14 @@ validate` loads with `lenientAgents` so it reports the error instead of stopping
 `bad-status` on a story or a feature is a status `flow.json` does not name for its type, so
 removing a status from the file makes every unit at it a finding, and adding one makes it
 valid. A missing or unreadable `flow.json` is not a finding: `bl validate` stops with the
-`FlowError` naming the file. `flow-json` (F-66 D1, `findFlowFindings`, error at `flow.json`) is
-an `implies` that names a status its type lacks, one that is not closed (A implies B, B implies
-C, A does not list C), or a gate verb other than `run`, `implement` and `merge`.
+`FlowError` naming the file. `flow-json` (F-66 D1, F-69 D1, `findFlowFindings`, at
+`flow.json`) is an error for: a `from`, `during`, `to` or terminal status the type lacks; a
+`when` or `via` name `src/guards.js` or `src/capabilities.js` does not register; a `then` that
+is not a verb of the type, or one whose `from` lacks the branch's `to`; a status that is no
+branch's `to`; a terminal status before an open one, or one that a verb other than `supersede`
+starts from; a verb `DISPATCH` (`src/verbs.js`) has for a type whose table lacks it (`status`
+only reads, `READ_VERBS`); a gate verb other than `run`, `implement` and `merge`. A `bl-flow/v1`
+file is one `flow-json` warning that names `bl/scripts/migrate-transitions.js`.
 
 The `blockers-*` findings (F-66 D5, `findBlockersFindings`) are at `blockers.json`; a missing
 file has none. All are errors except `blockers-order`:

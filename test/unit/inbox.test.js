@@ -164,8 +164,8 @@ test('collectInbox: escalations of active units only, with their first line and 
 
 test("collectInbox: a unit is closed by its own type's statuses", () => {
   const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
-  const { statuses } = flow.types.feature;
-  statuses.cancelled = { implies: ['done', ...statuses.done.implies] };
+  flow.types.feature.statuses.push('cancelled');
+  flow.types.feature.terminal.push('cancelled');
   const { dir, cleanup } = mkTempBacklog({
     flow,
     components: [{ id: 'C01', title: 'Work' }],

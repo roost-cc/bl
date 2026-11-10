@@ -266,7 +266,7 @@ test('bl validate reports task-unit and task-field on hand-edited task files', (
       'tasks/T2-no-unit.md error task-unit: unit F-9 is not a feature or story in the backlog',
       'tasks/T3-a-task.md error task-unit: unit T-1 is not a feature or story in the backlog',
       'tasks/T4-owner.md error task-field: owner "agent" is not one of operator',
-      'tasks/T5-status.md error task-field: status "closed" not in known set (flow.json task statuses: open, done)',
+      'tasks/T5-status.md error task-field: status "closed" not in known set (flow.json task statuses: draft, done)',
       'tasks/T6-undated.md error task-field: a done task needs its done: date',
       'tasks/T7-missing.md error task-field: task missing required key "added"',
       'tasks/T7-missing.md error task-field: task missing required key "owner"',

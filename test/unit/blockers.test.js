@@ -13,6 +13,7 @@ import {
   formatBlockers,
   gateIds,
   gatesAt,
+  heldAt,
   heldBy,
   heldLines,
   holdGraph,
@@ -28,6 +29,7 @@ import {
 } from '../../src/blockers.js';
 import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
+import { GUARDS } from '../../src/guards.js';
 
 // templates/ holds bl init's flow.json, so it reads as a backlog root.
 const flow = loadFlow(dirname(FLOW_TEMPLATE));
@@ -301,6 +303,19 @@ test("heldBy: an edge on a feature's story holds the feature at the verb's gate,
   assert.equal(held[0].line, 'S-2 is held at merge by S-3 (in_progress, needs done)');
   assert.deepEqual(heldBy(config, 'F-1', 'run'), []);
   assert.deepEqual(heldBy(config, 'S-1', 'merge'), []);
+});
+
+test('heldAt and the gate_free guard: the holds at one gate, a feature through its stories (F-69 D1)', () => {
+  const config = heldBacklog([edge('S-3', 'merge', 'S-2')]);
+  assert.deepEqual(
+    heldAt(config, 'F-1', 'merge').map((h) => h.line),
+    ['S-2 is held at merge by S-3 (in_progress, needs done)'],
+  );
+  assert.deepEqual(heldAt(config, 'F-1', 'run'), []);
+  const free = GUARDS.get('gate_free');
+  assert.equal(free({ config, id: 'F-1' }, 'merge'), false);
+  assert.equal(free({ config, id: 'F-1' }, 'run'), true);
+  assert.equal(free({ config, id: 'S-1' }, 'merge'), true);
 });
 
 test('heldBy: a wildcard is named on the unit asked about; a superseded blocker holds nothing', () => {

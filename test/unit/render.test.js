@@ -219,7 +219,8 @@ test('the root renders the Total backlog line, Themes, Components and Priority, 
       '[S-6](stories/S6-x/index.md)',
       'feature',
       'Orphan',
-      'backlog',
+      // A v1 word renders as its current one (F-69 D4).
+      'draft',
       '6',
       // A component with no directory is named, not linked.
       'C09',
@@ -229,7 +230,7 @@ test('the root renders the Total backlog line, Themes, Components and Priority, 
       '[F-1](features/F1-web-flow/index.md)',
       'feature',
       'Web flow',
-      'running',
+      'in_progress',
       '7',
       '[C00](components/C00-core/index.md), [C01](components/C01-web/index.md)',
     ]);
@@ -273,7 +274,7 @@ test('a component renders its open stories in priority order and its open featur
     assert.deepEqual(rowIn(web, 'Features', 'F-1'), [
       '[F-1](../../features/F1-web-flow/index.md)',
       'Web flow',
-      'running',
+      'in_progress',
       '2',
     ]);
     // S-7 (unranked, added 2026-01-01) before S-1 (in F-1, added 2026-01-03).
@@ -332,7 +333,7 @@ test('an epic renders its Features table after Outcome; a theme its epics, then 
     assert.deepEqual(rowIn(e50, 'Features', 'F-1'), [
       '[F-1](../../features/F1-invites/index.md)',
       'Invites',
-      'running',
+      'in_progress',
       '1/2',
       '2/5',
     ]);

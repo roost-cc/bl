@@ -23,7 +23,10 @@ import { extractReviewLog, parseLatestSession } from './review-log.js';
 import { probePluginBinaries } from './plugin-binaries.js';
 import { scanDeferred, DEFERRED_HEADING, RETIRED_SECTION } from './deferred.js';
 import { CHANGE_STATUSES, RUN_STATE_KEYS, listChanges, unitIdOfDir } from './change-doc.js';
-import { FLOW_FILE, findFlowFindings, loadFlow } from './flow.js';
+import { FLOW_FILE, findFlowFindings, fromLegacy, loadFlow } from './flow.js';
+import { GUARDS } from './guards.js';
+import { CAPABILITIES } from './capabilities.js';
+import { DISPATCH } from './verbs.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
 import { implementPluginProblem } from './scripted.js';
@@ -348,8 +351,9 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
     }
   }
 
-  // bad-status: a story's and a feature's statuses are flow.json's.
-  if (statuses && fm.status && !statuses.has(fm.status)) {
+  // bad-status: a story's and a feature's statuses are flow.json's; a v1 word
+  // reads as its current one until the migration (F-69 D4).
+  if (statuses && fm.status && !statuses.has(fromLegacy(kind, fm.status))) {
     const known = kind === 'story' || kind === 'feature' ? ` (${FLOW_FILE} ${kind} statuses)` : '';
     findings.push({
       severity: 'error',
@@ -1486,7 +1490,10 @@ export function runAll(config, opts = {}) {
     );
   }
 
-  const findings = [...frontmatter.findings, ...findFlowFindings(flow)];
+  const findings = [
+    ...frontmatter.findings,
+    ...findFlowFindings(flow, { guards: GUARDS, capabilities: CAPABILITIES, dispatch: DISPATCH }),
+  ];
 
   const knownRepos = new Set(Object.keys(config.reposByName ?? {}));
 

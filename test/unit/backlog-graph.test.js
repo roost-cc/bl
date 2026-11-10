@@ -72,6 +72,24 @@ test('loadBacklog returns one Map per kind keyed by canonical id, and get() for 
   assert.equal(g.get(''), null);
 });
 
+test('a unit at a v1 status word reads as its current one; the frontmatter keeps the word (F-69 D4)', () => {
+  const { config } = fixture();
+  const g = loadBacklog(config);
+  assert.equal(g.flow.legacy, true, 'the fixture is a v1 backlog');
+  for (const [id, stored, read] of [
+    ['S-5', 'backlog', 'draft'],
+    ['S-1', 'done', 'done'],
+    ['F-2', 'running', 'in_progress'],
+    ['F-3', 'draft', 'draft'],
+    ['T-1', 'open', 'draft'],
+    ['T-2', 'done', 'done'],
+  ]) {
+    assert.equal(g.get(id).fm.status, stored, id);
+    assert.equal(g.get(id).status, read, id);
+  }
+  assert.equal(g.get('F-2').done, false);
+});
+
 test('every unit carries the common fields, its frontmatter frozen', () => {
   const { root, config } = fixture();
   const g = loadBacklog(config);

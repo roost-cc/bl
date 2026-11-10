@@ -37,6 +37,7 @@ import { graphOf } from './backlog-graph.js';
 import { findFeature, normalizeFeatureId } from './feature.js';
 import { withLock } from './lock.js';
 import { BLOCKERS_FILE, WILDCARD } from './blockers.js';
+import { fromLegacy } from './flow.js';
 
 export const TASKS_DIR = 'tasks';
 
@@ -451,7 +452,8 @@ export function findTaskFindings(tasks, units, flow) {
     if (t.owner && !TASK_OWNERS.includes(t.owner)) {
       add('task-field', `owner "${t.owner}" is not one of ${TASK_OWNERS.join(', ')}`);
     }
-    if (t.status && !statuses.includes(t.status)) {
+    // A v1 `open` reads as `draft` until the migration (F-69 D4).
+    if (t.status && !statuses.includes(fromLegacy('task', t.status))) {
       add('task-field', `status "${t.status}" not in known set (flow.json task statuses: ${statuses.join(', ')})`);
     }
     if (t.status && flow.meets('task', t.status, 'done') && !t.done) {

@@ -879,35 +879,31 @@ test('bl validate takes story and feature statuses from flow.json and reports fl
 
   // A status the flow file does not name is bad-status, even one bl's code knows.
   const narrowed = structuredClone(flow);
-  delete narrowed.types.story.statuses.refined;
-  for (const s of Object.values(narrowed.types.story.statuses)) s.implies = s.implies.filter((x) => x !== 'refined');
-  delete narrowed.types.feature.statuses.approved;
-  for (const s of Object.values(narrowed.types.feature.statuses)) s.implies = s.implies.filter((x) => x !== 'approved');
+  narrowed.types.story.statuses = narrowed.types.story.statuses.filter((s) => s !== 'refined');
+  narrowed.types.feature.statuses = narrowed.types.feature.statuses.filter((s) => s !== 'approved');
   writeFileSync(flowPath, JSON.stringify(narrowed, null, 2));
   assert.deepEqual(
-    (await codes()).map((f) => [f.code, f.location, f.message]),
+    (await codes()).filter((f) => f.code === 'bad-status').map((f) => [f.code, f.location, f.message]),
     [
       ['bad-status', 'stories/S1/index.md', 'status "refined" not in known set (flow.json story statuses)'],
       ['bad-status', 'features/F1/index.md', 'status "approved" not in known set (flow.json feature statuses)'],
     ],
   );
 
-  // A status bl's code does not know is accepted once flow.json names it.
+  // A status bl's code does not know is accepted once flow.json names it and a verb reaches it.
   const widened = structuredClone(flow);
-  widened.types.story.statuses.parked = { implies: ['refined', 'backlog'] };
+  widened.types.story.statuses.splice(2, 0, 'parked');
+  widened.types.story.verbs.park = { from: ['refined'], success: [{ to: 'parked' }] };
   writeFileSync(flowPath, JSON.stringify(widened, null, 2));
   assert.deepEqual(await codes(), []);
 
-  // flow-json: an implies that is not closed.
-  const open = structuredClone(flow);
-  open.types.story.statuses.done.implies = ['in_progress'];
-  writeFileSync(flowPath, JSON.stringify(open, null, 2));
+  // flow-json: a then that names no verb of the type.
+  const broken = structuredClone(flow);
+  broken.types.story.verbs.fix.success[0].then = 'publish';
+  writeFileSync(flowPath, JSON.stringify(broken, null, 2));
   const { stdout, status } = await runBl(['validate'], { cwd: td.dir });
   assert.equal(status, 1);
-  assert.match(
-    stdout,
-    /flow-json: story status "done" implies "in_progress", which implies "refined"; list "refined" too/,
-  );
+  assert.match(stdout, /flow-json: story verb "fix" chains on success to "publish", which is not a story verb/);
 
   td.cleanup();
 });

@@ -40,7 +40,7 @@ test('moveRefusal: backlog and refined move; every other status is refused', () 
   for (const status of ['in_progress', 'done', 'superseded']) {
     assert.equal(
       moveRefusal({ ...base, fm: { status } }),
-      `S-2 is ${status}; only a backlog or refined story moves to another component.`,
+      `S-2 is ${status}; only a draft or refined story moves to another component.`,
     );
   }
   assert.match(moveRefusal({ ...base, fm: {} }), /S-2 is \(no status\)/);
@@ -77,7 +77,7 @@ test('moveRefusal: any running or escalated feature among several refuses a repo
   assert.match(moveRefusal({ ...base, features }), /S-2 is in F-1, which is running/);
 });
 
-test("storyFeatures: the feature its feature: names, the only membership (F-77 D3)", () => {
+test('storyFeatures: the feature its feature: names, the only membership (F-77 D3)', () => {
   const all = [
     { id: 'F-1', status: 'running' },
     { id: 'F-2', status: 'draft' },

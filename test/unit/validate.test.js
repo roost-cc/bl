@@ -1150,11 +1150,11 @@ test('frontmatter_list_members_cannot_silently_remove_blockers', async () => {
 
 test("bad-status: story and feature statuses are the flow's, not bl's code's (F-66 D1)", () => {
   const flow = new Flow('flow.json', {
-    schema: 'bl-flow/v1',
+    schema: 'bl-flow/v2',
     types: {
-      story: { statuses: { open: { implies: [] }, done: { implies: ['open'] } }, gates: {} },
-      feature: { statuses: { draft: { implies: [] } }, gates: {} },
-      task: { statuses: { open: { implies: [] } }, gates: {} },
+      story: { statuses: ['open', 'done'], terminal: ['done'], verbs: {}, gates: {} },
+      feature: { statuses: ['draft'], terminal: [], verbs: {}, gates: {} },
+      task: { statuses: ['open'], terminal: [], verbs: {}, gates: {} },
     },
   });
   const status = (fm, kind) =>

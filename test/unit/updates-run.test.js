@@ -1962,7 +1962,7 @@ test('approve and drop only write a request: no gate, fetch, merge or close; a s
     });
     await assert.rejects(
       approveUpdate(t.config(), { id: 'S-1' }),
-      /S-1 is done; only a refined or in_progress story can be approved/,
+      /S-1 is done; only a refined, in_progress, in_review, fixing, ready_for_merge or escalated story can be approved/,
     );
   } finally {
     t.cleanup();

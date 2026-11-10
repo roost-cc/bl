@@ -350,15 +350,11 @@ export function heldTargets(verb, targets, config) {
   return out;
 }
 
-/** Run `verb` on one target, `argv` and `args` naming only it. */
+/** Run `verb` on one target, `argv` and `args` naming only it: its cell's capability. */
 async function runTarget(verb, target, args, argv, config) {
-  const cell = DISPATCH[verb][target.kind];
-  if (!cell.startsWith('./')) {
-    const handlers = await import('./feature-cmd.js');
-    return handlers[cell](args, config, target.record);
-  }
-  const { main } = await import(cell);
-  return main(argv);
+  // Imported here: capabilities.js derives its registry from DISPATCH.
+  const { CAPABILITIES } = await import('./capabilities.js');
+  return CAPABILITIES.get(DISPATCH[verb][target.kind])(args, config, target.record, argv);
 }
 
 /** `runTarget` for one of several targets: the shared flags plus its id. */

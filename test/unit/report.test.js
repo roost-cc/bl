@@ -187,7 +187,7 @@ test('leadCycle_returns_empty_when_since_excludes_all_days', () => {
 test('flowChart_keeps_distinct_statuses_with_equal_display_names', () => {
   const add = (names) => {
     const raw = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
-    for (const name of names) raw.types.story.statuses[name] = { implies: ['refined', 'backlog'] };
+    raw.types.story.statuses.splice(2, 0, ...names);
     return new Flow('flow.json', raw);
   };
   const shapes = [
@@ -211,6 +211,6 @@ test('flowChart_keeps_distinct_statuses_with_equal_display_names', () => {
   const { series } = flowChart(history([]), flow);
   assert.deepEqual(
     series.map((s) => s.name),
-    ['done', 'in progress', 'refined', 'backlog'],
+    ['done', 'escalated', 'ready for merge', 'fixing', 'in review', 'in progress', 'refined', 'draft'],
   );
 });

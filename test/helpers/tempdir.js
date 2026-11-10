@@ -17,11 +17,10 @@ import { serializeFrontmatter } from '../../src/config.js';
 /** The flow.json `bl init` writes, and every fixture backlog gets. */
 export const FLOW_TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates', 'flow.json');
 
-/** The template flow with a story status `blocked`, implying `backlog`, right after `backlog`. */
+/** The template flow with a story status `blocked` right after `draft`, so it meets `draft`. */
 export function blockedFlow() {
   const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
-  const { backlog, ...rest } = flow.types.story.statuses;
-  flow.types.story.statuses = { backlog, blocked: { implies: ['backlog'] }, ...rest };
+  flow.types.story.statuses.splice(1, 0, 'blocked');
   return flow;
 }
 

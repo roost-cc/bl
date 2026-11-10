@@ -203,7 +203,7 @@ test('bl move refuses the whole call, writing nothing and naming every offending
     {
       opts: { stories: { 'S-2': { status: 'in_progress' }, 'S-3': { status: 'done' } } },
       args: ['S-2', 'S-3', 'C01'],
-      err: /S-2 is in_progress; only a backlog or refined story moves to another component\.\n {2}S-3 is done; only a backlog/,
+      err: /S-2 is in_progress; only a draft or refined story moves to another component\.\n {2}S-3 is done; only a draft/,
     },
     {
       opts: { stories: { 'S-3': { status: 'superseded' } } },
@@ -347,7 +347,7 @@ test('bl move --help lists the flags and the refusals, and bl --help lists the v
     'bl-move-json/v1',
     'does not exist',
     'names no repo',
-    'backlog or refined',
+    'draft or refined',
     'running or escalated',
   ]) {
     assert.ok(r.stdout.includes(s), s);

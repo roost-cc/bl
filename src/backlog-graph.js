@@ -66,7 +66,7 @@ import {
   normalizeId,
   parseFrontmatter,
 } from './config.js';
-import { FlowError, loadFlow } from './flow.js';
+import { FlowError, fromLegacy, loadFlow } from './flow.js';
 import { FEATURES_DIR, extractSection, normalizeFeatureId, orderStoriesByDeps } from './feature.js';
 import { parseIdList } from './story.js';
 import { THEME_ID_RE, normalizeEpicId } from './theme.js';
@@ -711,10 +711,10 @@ const unitText = new WeakMap();
 function makeUnit(kind, slot, rec, root, flow, flowError) {
   const { fm } = rec;
   const id = canonicalId(kind, fm, slot.entry);
+  // A v1 word (`backlog`, `running`, `open`) reads as its current one (F-69 D4).
   let status = '';
-  if (kind === 'story') status = str(fm.status) || 'backlog';
-  else if (kind === 'feature') status = str(fm.status) || 'draft';
-  else if (kind === 'task') status = str(fm.status);
+  if (kind === 'story' || kind === 'feature') status = fromLegacy(kind, str(fm.status) || 'draft');
+  else if (kind === 'task') status = fromLegacy(kind, str(fm.status));
   let body;
   const sections = new Map();
   const hasFlow = kind === 'story' || kind === 'feature' || kind === 'task';

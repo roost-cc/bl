@@ -357,13 +357,31 @@ function holding(edges, units, flow, id, gatesFor) {
  * @returns {Array<{ edge: Edge, line: string }>}
  */
 export function heldBy(config, id, verb, { units = null } = {}) {
+  return heldWhere(config, id, units, (flow, type) => gatesAt(flow, type, verb));
+}
+
+/**
+ * `heldBy` for one gate rather than a verb's gates: the unmet edges that hold
+ * unit `id` (and a feature's stories) at `gate`. The `gate_free` guard
+ * (`guards.js`, F-69 D1) reads it.
+ * @param {{ backlogRoot: string }} config
+ * @param {string} id
+ * @param {string} gate
+ * @returns {Array<{ edge: Edge, line: string }>}
+ */
+export function heldAt(config, id, gate) {
+  return heldWhere(config, id, null, (flow, type) => (Object.hasOwn(flow.gatesOf(type), gate) ? [gate] : []));
+}
+
+/** `heldBy` and `heldAt`: the holds at the gates `gatesFor(flow, type)` names per member type. */
+function heldWhere(config, id, units, gatesFor) {
   const { edges } = readBlockers(config.backlogRoot);
   if (edges.length === 0) return [];
   const flow = loadFlow(config.backlogRoot);
   const all = units ?? readUnits(config);
   const unit = all.get(id);
   if (!unit) return [];
-  return holding(edges, all, flow, id, (type) => gatesAt(flow, type, verb)).map((edge) => ({
+  return holding(edges, all, flow, id, (type) => gatesFor(flow, type)).map((edge) => ({
     edge,
     line: heldLine(edge, id, all),
   }));

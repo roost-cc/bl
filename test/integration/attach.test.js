@@ -145,11 +145,11 @@ test('bl attach refuses, writing nothing, for bad ids, missing units, closed fea
     },
     {
       opts: { story: { status: 'in_progress' } },
-      err: /^S-2 is in_progress; only a backlog or refined story moves into a feature\.$/m,
+      err: /^S-2 is in_progress; only a draft or refined story moves into a feature\.$/m,
     },
     {
       opts: { story: { status: 'done' } },
-      err: /^S-2 is done; only a backlog or refined story moves into a feature\.$/m,
+      err: /^S-2 is done; only a draft or refined story moves into a feature\.$/m,
     },
     {
       opts: { featureStatus: 'running', story: { component: 'C02' } },
@@ -292,7 +292,7 @@ test('bl attach --help lists the flags and the refusals', () => {
     'bl-attach-json/v1',
     'done or superseded',
     'another feature',
-    'backlog or refined',
+    'draft or refined',
     'bl side <repo> --from F-<n>',
   ]) {
     assert.ok(r.stdout.includes(s), s);

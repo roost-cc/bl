@@ -29,6 +29,10 @@ const STATUSES = new Set(loadFlow(join(ROOT, 'templates')).statusesOf('story'));
 const ALLOWED = {
   // A ternary choosing which closing status a write sets, not a set of statuses.
   'src/done.js': 1,
+  // Feature start-state checks and the refine write (`cmdRefine`, `cmdApprove`,
+  // `prepareFeatureWorktree`): since F-69 a feature's `draft` and `refined` are
+  // story words too. F-69 S-1130 replaces them with the table's `assertFrom`.
+  'src/feature-cmd.js': 3,
   // `ROADMAP_STATUSES` is `roadmap.md`'s own vocabulary; it shares two words with story statuses.
   'src/roadmap.js': 1,
   // A ternary choosing which closing status a write sets, not a set of statuses.
@@ -192,18 +196,18 @@ test('src/list.js and src/grep.js restate no story status set', () => {
 
 test('the status set is the template flow.json', () => {
   const raw = JSON.parse(readFileSync(join(ROOT, 'templates/flow.json'), 'utf8'));
-  assert.deepEqual([...STATUSES], Object.keys(raw.types.story.statuses));
+  assert.deepEqual([...STATUSES], raw.types.story.statuses);
 });
 
 const CASES = [
   {
     name: 'a multi-line Map',
-    src: `const ORDER = new Map([\n  ['in_progress', 1],\n  ['backlog', 2],\n]);`,
+    src: `const ORDER = new Map([\n  ['in_progress', 1],\n  ['draft', 2],\n]);`,
     hits: 1,
   },
   { name: 'an object table', src: `const ORDER = {\n  in_progress: 1,\n  done: 3,\n};`, hits: 1 },
   { name: 'quoted object keys', src: `const ORDER = { 'in_progress': 1, 'done': 3 };`, hits: 1 },
-  { name: 'an array of statuses', src: `const OPEN = ['backlog', 'refined'];`, hits: 1 },
+  { name: 'an array of statuses', src: `const OPEN = ['draft', 'refined'];`, hits: 1 },
   { name: 'a closed check', src: `const closed = a === 'done' || a === 'superseded';`, hits: 1 },
   { name: 'a negated closed check', src: `const open = a !== 'done' && a !== 'superseded';`, hits: 1 },
   {
@@ -216,7 +220,7 @@ const CASES = [
     src: `const x = s === 'done' ? 1 : s === 'superseded' ? 2 : 3;`,
     hits: 1,
   },
-  { name: 'a ternary between two statuses', src: `const x = c ? 'done' : 'backlog';`, hits: 1 },
+  { name: 'a ternary between two statuses', src: `const x = c ? 'done' : 'draft';`, hits: 1 },
   {
     name: 'switch cases',
     src: `switch (s) {\n  case 'done':\n    f();\n    break;\n  case 'superseded':\n    g();\n}`,
