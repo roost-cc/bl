@@ -45,10 +45,14 @@ test('the suite runs without BL_BACKLOG_DIR', () => {
   assert.equal(process.env.BL_BACKLOG_DIR, undefined, 'run `npm run test:unit`, which unsets BL_BACKLOG_DIR');
 });
 
-/** Run the wrapper with `true` and `TMPDIR` set, in an env free of git's repository variables. */
-function runWrapper(tmpdir) {
+/**
+ * Run the wrapper with `true` and `TMPDIR` set, in an env free of git's
+ * repository variables, plus `extra`.
+ */
+function runWrapper(tmpdir, extra = {}) {
   const env = { ...process.env, TMPDIR: tmpdir };
   for (const v of localEnvVars()) delete env[v];
+  Object.assign(env, extra);
   return spawnSync('bash', [WRAPPER, 'true'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
@@ -85,4 +89,9 @@ test('the wrapper accepts a TMPDIR outside every git repository', () => {
   const r = runWrapper(mkTempDir('bl-tmpdir-plain-'));
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stderr, '');
+});
+
+test('an exported GIT_DIR does not decide where the temporary directory is', () => {
+  const r = runWrapper(mkTempDir('bl-tmpdir-plain-'), { GIT_DIR: join(tempRepo(), '.git') });
+  assert.equal(r.status, 0, r.stderr);
 });
