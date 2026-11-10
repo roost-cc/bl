@@ -23,6 +23,10 @@
 # removes the directory. bash makes a background child ignore SIGINT, and
 # `env --default-signal=INT` gives it back; `<&0` keeps its stdin, which bash
 # would set to /dev/null. Guarded by test/cli/suite-tmpdir.sh.
+#
+# Requires GNU env (coreutils 8.31 or later) for --default-signal. BSD and
+# macOS env lack it, so there every suite fails at once; install coreutils
+# and put its env first on PATH.
 # shellcheck disable=SC2046 # one variable name per word
 unset $(git rev-parse --local-env-vars)
 unset TMUX TMUX_PANE BL_TMUX_WINDOW_ID BL_TAB_TITLE
