@@ -162,7 +162,7 @@ func TestBoxFiveShowsPointsAndEventsInLocalTime(t *testing.T) {
 	m, _ := update(t, sized(t, 171, 63), snapshot(t))
 	out := screen(t, m)
 	for _, want := range []string{
-		"points done / day · last 30 days",
+		"points done / UTC day · 30 days",
 		"last 7 days 41",
 		"Oct 12", "Oct 26", "Nov 09",
 		// 23:16 UTC is 18:16 in the test's zone.

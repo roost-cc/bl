@@ -87,7 +87,7 @@ func TestRunsBoxShowsStatesSummaryAndColumns(t *testing.T) {
 		"F-83    ✗ esc   closing-review  -       2/2    2h05m    151k     codex gpt-6-sol    bl#12",
 		// A step longer than its column is cut with …; a stale run's time runs to the snapshot.
 		"F-79    ◌ stale a step name lo… S-1201  -      3h00m    950      claude sonnet low  -",
-		"2 running · 0 stopped · 1 stale · done today: 1 stories, 10 points",
+		"2 running · 0 stopped · 1 stale · done today (UTC): 1 stories, 10 points",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("box ¹ has no %q:\n%s", want, out)

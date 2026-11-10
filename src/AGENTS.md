@@ -2875,7 +2875,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   (`1/2`), elapsed (to the snapshot while it runs or is stale, else to its last update), output
   tokens, agent, model and effort (from an inner width of 103, so not in Mockup B), and the pull
   request as `<repo>#<n>`. A done row is dim. The summary line counts the runs that are running,
-  stopped and stale, and the stories and points of the newest `history` day.
+  stopped and stale, and the stories and points of the newest `history` day, labelled
+  `done today (UTC)`: `history` days are UTC dates, as `bl report` counts them.
 - **Box ² attention** (`attention.go`). A row per inbox item: its kind tag (`RUN` teal, `ESC`
   red, `TASK` yellow, `CHG` blue, `UPD` peach), id, unit and line. The last line is
   `next: <the selected item's next>`. In the stacked layout two or more update items fold into
@@ -2894,8 +2895,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   account quota) shows once. A configuration with no window shows `<agent>  <state>: <message>`,
   for example `unknown: claude cannot report capacity`, once per distinct line. Then today's
   totals of the four kinds, and the local time capacity was last read.
-- **Box ⁵ activity** (`activity.go`). The graph of points done per day over the `history`
-  days, with the total of the last 7 days and a date axis. Then the `activity` events, newest
+- **Box ⁵ activity** (`activity.go`). The graph of points done per UTC day over the `history`
+  days (`points done / UTC day`), with the total of the last 7 days and a date axis. Then the `activity` events, newest
   first, as many as fit: local time, work unit, step with its story or round, `✓` or `✗` and
   the duration, then the agent, model and effort, or the note for a failed session or an event
   with no agent.

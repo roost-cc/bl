@@ -211,6 +211,42 @@ test("runs, activity, tokens: a run state that cannot be read is skipped and nam
     assert.equal(sectionReaders(config)[name](NOW).error, undefined, name);
 });
 
+test('history: the last day is the UTC date of now, in any zone (box ¹ and ⁵ label it UTC)', () => {
+  const { dir } = mkTempBacklog();
+  const git = (...args) =>
+    spawnSync('git', ['-C', dir, ...args], {
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_AUTHOR_NAME: 't',
+        GIT_AUTHOR_EMAIL: 't@t',
+        GIT_COMMITTER_NAME: 't',
+        GIT_COMMITTER_EMAIL: 't@t',
+      },
+    });
+  git('init', '-q', '-b', 'main');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  const history = sectionReaders(loadConfig({ backlogRoot: dir })).history;
+  const tz = process.env.TZ;
+  try {
+    for (const [zone, now, want] of [
+      // Just after local midnight: Nov 8 in Tokyo, still Nov 7 in UTC.
+      ['Asia/Tokyo', '2026-11-07T15:30:00Z', '2026-11-07'],
+      // Just after UTC midnight: Nov 8 in UTC, still Nov 7 in New York.
+      ['America/New_York', '2026-11-08T00:30:00Z', '2026-11-08'],
+    ]) {
+      process.env.TZ = zone;
+      const { days } = history(Date.parse(now));
+      assert.equal(days.at(-1).date, want, `${zone} at ${now}`);
+      assert.equal(days.length, 30, zone);
+    }
+  } finally {
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  }
+});
+
 test('readSection: a read that throws keeps the last good value and carries error; the next good read clears it', () => {
   let s = readSection(undefined, () => ({ rows: [1] }), NOW);
   assert.deepEqual(s, { read_at: '2026-11-07T12:00:00.000Z', rows: [1] });

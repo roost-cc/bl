@@ -4,7 +4,7 @@
 │ S-1330  ● run   review          -       1/2    38m      109k     bl#15                           │
 │ F-85    ✓ done  merged          -       2/2    5h14m    257k     bl#14                           │
 │ F-83    ✗ esc   closing-review  -       2/2    2h05m    151k     bl#12                           │
-│ 2 running · 0 stopped · 1 stale · done today: 1 stories, 10 points                               │
+│ 2 running · 0 stopped · 1 stale · done today (UTC): 1 stories, 10 points                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─┐²attention┌─────────────────────────────────────────────────────────────────────────────────────╮
 │ Kind  Id            For     Line                                                                 │
@@ -28,7 +28,7 @@
 │ bl next → F-81 (running) · 185 work units not ranked                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─┐⁴tokens┌───────────────────────────────┐2h┌─╮╭─┐⁵activity┌────────────────────────────────┐30d┌─╮
-│ out tok / min · ended sessions     peak 8.7k ││ points done / day · last 30 days  last 7 days 41 │
+│ out tok / min · ended sessions     peak 8.7k ││ points done / UTC day · 30 days   last 7 days 41 │
 │          ⢀  ⡀ ⢀                    ⢠⣶⣇⣶⣇⣴⡆   ││            ⢀⣀         ⢸⣿             ⣀⡀          │
 │        ⢠⣶⣿⣴⣾⣧⣴⣿⣴⡇     ⣀⡄⢀⣠⡄⡀       ⣿⣿⣿⣿⣿⣿⡇   ││   ⣀⣠⣤⣶⣆⣀   ⢸⣿⣤⣄⣀   ⢀⣀⣶⣾⣿⣤⣤ ⢀⣀⣀⡀   ⣤⣴⣶⣿⣇⣀  ⣀⣠⣤⣶⣾⣿ │
 │ ⢀⡀⡄⡀   ⢸⣿⣿⣿⣿⣿⣿⣿⣿⡇     ⣿⣿⣿⣿⣿⡇       ⣿⣿⣿⣿⣿⣿⡇   ││ 18:16  F-81    implement S-1310  ✓ 3m    claude …│

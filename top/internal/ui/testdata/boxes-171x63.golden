@@ -6,7 +6,7 @@
 │ F-83    ✗ esc   closing-review  -       2/2    2h05m    151k     codex gpt-6-sol    bl#12              ││ TASK  T-2           F-54    re-mint the Apple sign-in key     │
 │ F-79    ◌ stale a step name lo… S-1201  -      3h00m    950      claude sonnet low  -                  ││ CHG   F-81:change   F-81    4 repos · 11 commits · not merged │
 │                                                                                                        ││ CHG   S-1330:change S-1330  bl · 3 commits · not merged       │
-│ 2 running · 0 stopped · 1 stale · done today: 1 stories, 10 points                                     ││ UPD   tools:renova… tools   eslint 9.39.1 · red · notes: none │
+│ 2 running · 0 stopped · 1 stale · done today (UTC): 1 stories, 10 points                               ││ UPD   tools:renova… tools   eslint 9.39.1 · red · notes: none │
 │                                                                                                        ││ UPD   bl:renovate/… bl      ws 8.19.0 · red · notes: 1 adviso…│
 │                                                                                                        ││ UPD   logr:renovat… logr    x/net 0.47.0 · red · notes: none  │
 │                                                                                                        ││ next: bl run S-1330                                           │
@@ -36,7 +36,7 @@
 │                                                                                                        ││ capacity read 18:14 · c reads it now                          │
 │                                                                                                        │╰───────────────────────────────────────────────────────────────╯
 │                                                                                                        │╭─┐⁵activity┌─────────────────────────────────────────────┐30d┌─╮
-│                                                                                                        ││ points done / day · last 30 days               last 7 days 41 │
+│                                                                                                        ││ points done / UTC day · 30 days                last 7 days 41 │
 │                                                                                                        ││                             ⢸⣿⡇                               │
 │                                                                                                        ││                             ⢸⣿⡇                               │
 │                                                                                                        ││               ⢰⣶⡆           ⢸⣿⡇                ⣶⣶             │

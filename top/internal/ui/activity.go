@@ -11,7 +11,7 @@ import (
 // weekDays is how many of the newest days the `last 7 days` total of box ⁵ adds.
 const weekDays = 7
 
-// drawActivity draws box ⁵ (D4) in w×h inner cells: the braille graph of points done per day
+// drawActivity draws box ⁵ (D4) in w×h inner cells: the braille graph of points done per UTC day
 // (section `history`) with the last 7 days' total and a date axis, then the newest run events
 // (section `activity`, D3c) in local time, as many as fit.
 func drawActivity(s *stream.Snapshot, w, h int) []string {
@@ -28,7 +28,7 @@ func drawActivity(s *stream.Snapshot, w, h int) []string {
 	}
 	rows := min(max((h-2)/3, 2), 6)
 	lines := []string{spread(
-		styleText.Render(fmt.Sprintf("points done / day · last %d days", len(days))),
+		styleText.Render(fmt.Sprintf("points done / UTC day · %d days", len(days))),
 		styleDim.Render(fmt.Sprintf("last %d days %g", weekDays, week)), cw)}
 	lines = append(lines, colorGraph(graph(points, cw, rows))...)
 	if !compact {

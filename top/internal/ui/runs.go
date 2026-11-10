@@ -73,7 +73,8 @@ func (m Model) drawRuns(w, h int) []string {
 }
 
 // runSummary is box ¹'s summary line: how many runs are running, stopped and stale, and the
-// stories and points done today (the newest day of `history`).
+// stories and points done today (the newest day of `history`, a UTC date as `bl report` counts
+// days; box ⁴'s `today` is the local date).
 func runSummary(s *stream.Snapshot) string {
 	n := map[string]int{}
 	for _, r := range s.Runs.Rows {
@@ -83,7 +84,7 @@ func runSummary(s *stream.Snapshot) string {
 	if days := s.History.Days; len(days) > 0 {
 		stories, points = len(days[len(days)-1].Stories), days[len(days)-1].Points
 	}
-	return fmt.Sprintf("%d running · %d stopped · %d stale · done today: %d stories, %g points",
+	return fmt.Sprintf("%d running · %d stopped · %d stale · done today (UTC): %d stories, %g points",
 		n["running"], n["stopped"], n["stale"], stories, points)
 }
 

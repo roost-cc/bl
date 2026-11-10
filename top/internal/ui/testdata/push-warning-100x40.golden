@@ -1,7 +1,7 @@
 ╭─┐¹runs┌──────────────────────────────────────────────────────────────────┐16:07:02┌─┐- 2000ms +┌─╮
 │ Id      State   Step            Story   Round  Elapsed  Out tok  Pull request                    │
 │                                                                                                  │
-│ 0 running · 0 stopped · 0 stale · done today: 0 stories, 0 points                                │
+│ 0 running · 0 stopped · 0 stale · done today (UTC): 0 stories, 0 points                          │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
@@ -28,7 +28,7 @@
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─┐⁴tokens┌───────────────────────────────┐2h┌─╮╭─┐⁵activity┌────────────────────────────────┐30d┌─╮
-│ output tokens / min · ended sessions  peak 0 ││ points done / day · last 0 days    last 7 days 0 │
+│ output tokens / min · ended sessions  peak 0 ││ points done / UTC day · 0 days     last 7 days 0 │
 │                                              ││                                                  │
 │                                              ││                                                  │
 │                                              ││                                                  │
