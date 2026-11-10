@@ -38,9 +38,7 @@ import { liveLockHolder } from './pid-lock.js';
 import { extractReviewLog, sessionDates } from './review-log.js';
 import { RUN_DIR } from './run-lock.js';
 import { SpecLockError, updateSpecFile, withSpecLock } from './spec-file.js';
-import { ENTRY_FIELDS, isoAt, legacyLog, readsChange, setLog } from './transition.js';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { DATE_RE, ENTRY_FIELDS, isoAt, legacyLog, readsChange, setLog } from './transition.js';
 
 const str = (v) => (typeof v === 'string' ? v : '');
 

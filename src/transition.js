@@ -54,7 +54,8 @@ const commandOf = (verb) => (IMPLEMENT_VERBS.includes(verb) ? IMPLEMENT_VERBS[0]
 export const COMPLETED_KEY = { story: 'completed', feature: 'completed', task: 'done' };
 
 const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** A date field's value (`added`, `completed`): `YYYY-MM-DD`. */
+export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Whether an entry is one the migration (or a first write) synthesized. */
 export const isMigrated = (entry) => typeof entry?.note === 'string' && /^migrated\b/.test(entry.note);
