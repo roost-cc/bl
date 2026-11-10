@@ -520,7 +520,11 @@ test('exit 0 with no change: the story is done with a note and nothing is pushed
   assert.ok(!cmds.includes('npm test'));
   const { fm, body } = parseFrontmatter(textOf(unit.indexPath));
   assert.equal(statusOf('story', fm), 'done');
-  assert.equal(fm.completed, '2026-11-01');
+  // The runner's clock (2026-11-01) is behind the entries bl wrote at the run
+  // start, so the entry takes the one above it's time and completed its date.
+  const [prev, last] = fm.transitions.slice(-2);
+  assert.ok(last.at >= prev.at, `${last.at} before ${prev.at}`);
+  assert.equal(fm.completed, last.at.slice(0, 10));
   assert.equal(fm.commit, 'abc1234');
   assert.match(extractSection(body, 'Notes'), /no change needed/);
 });
