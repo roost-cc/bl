@@ -149,8 +149,8 @@ func TestALongWarningFitsTheBottomBorder(t *testing.T) {
 }
 
 // TestBoxOneAndTheNotesAgreeOnTheEndOfARun: for every status a runs row can have (those
-// src/feature-run.js writes, and stale), box ¹ shows a run that goes on (● run, ◌ stale) exactly
-// when a change to that status makes no note, and stream.Ended says the same.
+// src/feature-run.js writes, stale, and none), box ¹ shows a run that ended (✓ done, ■ stop, ✗)
+// exactly when a change to that status makes a note, and stream.Ended says the same.
 func TestBoxOneAndTheNotesAgreeOnTheEndOfARun(t *testing.T) {
 	read := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	runs := func(status string) *stream.Snapshot {
@@ -159,9 +159,9 @@ func TestBoxOneAndTheNotesAgreeOnTheEndOfARun(t *testing.T) {
 		s.Runs.Rows = []stream.Run{{ID: "F-81", Status: status}}
 		return s
 	}
-	for _, status := range []string{"running", "stale", "clean", "no-change", "reviewed", "escalated", "failed", "stopped"} {
+	for _, status := range []string{"running", "stale", "clean", "no-change", "reviewed", "escalated", "failed", "stopped", ""} {
 		glyph, _, _ := runState(status)
-		goesOn := glyph == "● run" || glyph == "◌ stale"
+		goesOn := glyph == "● run" || glyph == "◌ stale" || glyph == "? unk"
 		var d notify.Differ
 		d.Diff(runs("running"))
 		if notes := d.Diff(runs(status)); goesOn != (len(notes) == 0) || goesOn == stream.Ended(status) {

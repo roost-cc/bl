@@ -2871,7 +2871,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   at the top. A quota meter has a `■` for each share left and a `·` for each share used. Its
   `■` are green above 50 % left, yellow from 20 to 50 %, and red below 20 %.
 - **Box ¹ runs** (`runs.go`). A row per `runs` row: id, state (`● run`, `◌ stale`, `■ stop`,
-  `✗ esc`, `✗ fail`, and `✓ done` for every other status, such as `clean`), step, story, round
+  `✗ esc`, `✗ fail`, `? unk` for no status (a missing or mistyped one), and `✓ done` for every
+  other status, such as `clean`), step, story, round
   (`1/2`), elapsed (to the snapshot while it runs or is stale, else to its last update), output
   tokens, agent, model and effort (from an inner width of 103, so not in Mockup B), and the pull
   request as `<repo>#<n>`. A done row is dim. The summary line counts the runs that are running,
@@ -2910,9 +2911,10 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   help, and any key closes it; `q` or `ctrl+c` quits.
 - **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
   before. A new `escalation` or `task` item (by item id) and a run that gets an end status
-  (every status but `running` and `stale`: `clean`, `no-change`, `reviewed`, `escalated`,
+  (every status but `running`, `stale` and none: `clean`, `no-change`, `reviewed`, `escalated`,
   `failed`, `stopped`; `stream.Ended`; by run id and status) each make a note
-  `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)`. The first read of a
+  `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)` (`ended` for a run
+  with no step). The first read of a
   section only sets its baseline, so an item notifies once, and again only after it left the
   inbox and came back. For the notes of a snapshot the view rings the terminal bell (`\a`) once,
   unless `--no-bell`, and hands each note to each sender. A sender is a command argv to which

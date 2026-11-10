@@ -136,6 +136,23 @@ func TestDiffKeepsARunThatWasSkipped(t *testing.T) {
 	}
 }
 
+// TestARunWithNoStatusIsNotAnEnd: a run state with a missing or mistyped status reaches the view as
+// status "" (JSON null), which is no end, so a running run that gets it makes no note.
+func TestARunWithNoStatusIsNotAnEnd(t *testing.T) {
+	if stream.Ended("") {
+		t.Error(`Ended("") is true`)
+	}
+	var d Differ
+	d.Diff(snap(nil, []string{"F-2:running"}))
+	if notes := d.Diff(snap(nil, []string{"F-2:"})); notes != nil {
+		t.Errorf("running → no status: %q", titles(notes))
+	}
+	// Its real end, read later, notifies.
+	if got := titles(d.Diff(snap(nil, []string{"F-2:failed"}))); !slices.Equal(got, []string{"F-2 failed"}) {
+		t.Errorf("no status → failed: %q", got)
+	}
+}
+
 func TestDiffWaitsForASectionsFirstRead(t *testing.T) {
 	var d Differ
 	unread := snap(nil, []string{"F-81:running"})
@@ -152,10 +169,11 @@ func TestDiffWaitsForASectionsFirstRead(t *testing.T) {
 func TestRunLine(t *testing.T) {
 	notes := (&Differ{runs: map[string]string{}}).Diff(&stream.Snapshot{Runs: stream.Runs{
 		Section: stream.Section{ReadAt: readAt},
-		Rows:    []stream.Run{{ID: "F-81", Status: "clean", Step: "closing-review"}, {ID: "F-87", Status: "stopped", Step: "implement", Story: "S-1337"}},
+		Rows:    []stream.Run{{ID: "F-81", Status: "clean", Step: "closing-review"}, {ID: "F-87", Status: "stopped", Step: "implement", Story: "S-1337"}, {ID: "F-88", Status: "failed"}},
 	}})
-	got := []string{notes[0].Line, notes[1].Line}
-	if want := []string{"ended at closing-review", "ended at implement (S-1337)"}; !slices.Equal(got, want) {
+	got := []string{notes[0].Line, notes[1].Line, notes[2].Line}
+	// A run state with no step (null) says no step.
+	if want := []string{"ended at closing-review", "ended at implement (S-1337)", "ended"}; !slices.Equal(got, want) {
 		t.Errorf("lines %q, want %q", got, want)
 	}
 }

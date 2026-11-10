@@ -113,6 +113,8 @@ func TestRunStatesHaveD5Glyphs(t *testing.T) {
 		{"clean", "✓ done", sgr(colorGreen), true},
 		{"no-change", "✓ done", sgr(colorGreen), true},
 		{"reviewed", "✓ done", sgr(colorGreen), true},
+		// A run state with a missing or mistyped status: unknown, not done.
+		{"", "? unk", sgr(colorPeach), false},
 	} {
 		glyph, style, dim := runState(c.status)
 		if glyph != c.glyph || dim != c.dim || !strings.Contains(style.Render("x"), c.color) {

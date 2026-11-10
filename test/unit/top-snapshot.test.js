@@ -380,6 +380,9 @@ test('runs, activity, tokens: a run state with round "2" (and every other mistyp
   );
   const s9 = rows.find((r) => r.id === 'S-9');
   assert.deepEqual([s9.pr, s9.usage], [null, null]);
+  // A run state with a numeric status: null, which the view shows as unknown (stream.Ended("") is false).
+  writeFileSync(join(run, 'S-10.json'), JSON.stringify(runState('S-10', { status: 7, updatedAt: recent })));
+  assert.equal(readers.runs(NOW).rows.find((r) => r.id === 'S-10').status, null);
   const { events } = readers.activity(NOW);
   assert.ok(events.length >= 4);
   for (const e of events) assert.deepEqual(undecodable(e, GO_EVENT), [], `${e.unit} ${e.at}`);

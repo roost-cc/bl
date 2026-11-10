@@ -15,11 +15,13 @@ import (
 const agentColumnFrom = 103
 
 // runState is how box ¹ shows a run status (D4, D5): its glyph and word, their style, and whether
-// the row is dim. Every status that is not running, stale, stopped, escalated or failed is a run
-// that ended well (`clean`, `no-change`, `reviewed`); stream.Ended names the statuses that end a
-// run.
+// the row is dim. No status (a run state with a missing or mistyped `status`) is unknown. Every
+// other status that is not running, stale, stopped, escalated or failed is a run that ended well
+// (`clean`, `no-change`, `reviewed`); stream.Ended names the statuses that end a run.
 func runState(status string) (string, lipgloss.Style, bool) {
 	switch status {
+	case "":
+		return "? unk", styleWarn, false
 	case "running":
 		return "● run", styleOK, false
 	case "stale":

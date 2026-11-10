@@ -77,9 +77,12 @@ func (d *Differ) Diff(s *stream.Snapshot) []Note {
 	return notes
 }
 
-// runLine is the line of a run that ended: its step, and its story when it has one.
+// runLine is the line of a run that ended: its step when it has one, and its story when it has one.
 func runLine(r stream.Run) string {
-	line := "ended at " + r.Step
+	line := "ended"
+	if r.Step != "" {
+		line += " at " + r.Step
+	}
 	if r.Story != "" {
 		line += " (" + r.Story + ")"
 	}
