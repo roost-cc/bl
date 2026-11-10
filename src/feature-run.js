@@ -1611,16 +1611,13 @@ function readCapacity(runner, c, asked, topLevel) {
   // A reset that has passed says nothing about now: the local clock may run
   // ahead of the agent's, or the reading may lag a reset. The spawn finds out,
   // and a refusal puts the configuration on the out-list (S-1444).
-  if (reading.state === 'unavailable' && reading.until != null) {
-    const until = new Date(reading.until).getTime();
-    if (until <= runnerNow(runner).getTime()) {
-      reading = {
-        ...reading,
-        state: 'unknown',
-        until: null,
-        message: `${reading.message ?? ''} (its reset, ${localTime(until)}, has passed)`.trim(),
-      };
-    }
+  if (reading.state === 'unavailable' && untilMs(reading) <= runnerNow(runner).getTime()) {
+    reading = {
+      ...reading,
+      state: 'unknown',
+      until: null,
+      message: `${reading.message ?? ''} (its reset, ${localTime(reading.until)}, has passed)`.trim(),
+    };
   }
   if (reading.scope === 'account') asked.set(c.agent, reading);
   return reading;
