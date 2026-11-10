@@ -40,9 +40,10 @@ Per repo, in that order:
    root, runs the repo's `check` plugins on it when it has any, and pushes that commit to main.
    Then the main checkout fast-forwards to it. A conflict, a refused push or a moved `main` stops
    with the main checkout as it was; rerun `bl merge <id>`.
-2. Installs the main checkout's dependencies: `npm ci` for a `package-lock.json`, `pnpm install
---frozen-lockfile` for a `pnpm-lock.yaml`, nothing for neither. If the install fails, `bl merge`
-   stops and prints the command to run by hand, then rerun `bl merge <id>`.
+2. Installs the main checkout's dependencies: `npm ci` for a `package-lock.json`,
+   `pnpm install --frozen-lockfile` for a `pnpm-lock.yaml`, nothing for neither. If the install
+   fails, `bl merge` stops and prints the command to run by hand; run it, then rerun
+   `bl merge <id>`.
 3. Closes the branch's open PR (forge ops `change.find` and `change.close`)
 4. Removes the worktree directory and deletes the local branch (unless `--keep`)
 
