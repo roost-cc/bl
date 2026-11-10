@@ -14,6 +14,8 @@
  * it (`checkedMerge`, the push of main and the install in `cleanupOneRepo`,
  * `landedMergeCommit` and `removeWorktreeAndBranch` in `cleanup.js`,
  * `main-sync.js`'s git commands, and `reportBacklogCommit` in `sync.js`).
+ * Those callers pass `interruptOf(r)`, which is null when Node itself killed
+ * the child (`r.error` set, such as `ENOBUFS`), so that kill is not raised.
  */
 
 let registered = false;
