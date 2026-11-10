@@ -18,6 +18,7 @@ import { join } from 'path';
 import { RUN_DIR, liveLockHolder, loadRunState, runLockPath } from './feature-run.js';
 import { collectInbox } from './inbox.js';
 import { nextPlan } from './next.js';
+import { parseFilter } from './filter.js';
 import { capacityJson, capacityRows } from './capacity.js';
 import { addDays, buildHistory } from './history.js';
 import { firstSeen } from './report.js';
@@ -222,7 +223,8 @@ function readAttention(config, now) {
 
 /** `next`: `bl next`'s pick, the first NEXT_SHOWN ranked units, and how many are unranked. */
 function readNext(config) {
-  const plan = nextPlan(config, { theme: null, epic: null, feature: null, component: null });
+  // `parseFilter` with no flags: the filter that matches every unit.
+  const plan = nextPlan(config, parseFilter({}));
   const fields = ({ unit, ...e }) => e;
   return {
     pick: plan.pick && {
