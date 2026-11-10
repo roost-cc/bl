@@ -14,9 +14,14 @@ import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { mkTempBacklog } from '../helpers/tempdir.js';
-import { runBl } from '../helpers/run-bl.js';
+import { BL_BIN, lockOwnerVisible, personEnv, runBl } from '../helpers/run-bl.js';
+import { addOrigin } from '../helpers/git-backlog.js';
+import { withNoAgent } from '../helpers/fake-agent.js';
+import { spawnToFiles, untilStderrHas } from '../helpers/spawn-files.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { extractSection } from '../../src/feature.js';
+import { mainSyncLockPath } from '../../src/main-sync.js';
+import { waitingForLock } from '../../src/pid-lock.js';
 import { statusOf } from '../../src/transition.js';
 
 const ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
@@ -388,6 +393,75 @@ test('a check killed by a signal writes no ## Gate line, is not retried and push
     assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
     assertNoThrowaway(fx);
   } finally {
+    fx.cleanup();
+  }
+});
+
+// A SIGINT that ends the backlog commit of the first ## Gate line: the
+// backlog's pre-commit hook kills its parent, `git commit`, as a Ctrl+C would.
+const GATE_COMMIT_KILLER = `#!/bin/sh
+git diff --cached | grep -q '(attempt 1)' && kill -INT $PPID
+exit 0
+`;
+
+for (const verdicts of [['pass'], ['fail', 'pass']]) {
+  test(`a SIGINT during the gate-line commit stops the merge (check verdict ${verdicts[0]})`, () => {
+    // With a failing check, a commit that read as a mere warning would run the check again.
+    const fx = fixture({ verdicts });
+    const u = UNITS[0];
+    try {
+      const hook = join(fx.dir, '.git', 'hooks', 'pre-commit');
+      writeFileSync(hook, GATE_COMMIT_KILLER);
+      chmodSync(hook, 0o755);
+      const before = g(fx.origin, 'rev-parse', 'main');
+      const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
+      assert.equal(r.status, 130, `${r.stdout}\n${r.stderr}`);
+      assert.equal(calls(fx).length, 1, 'one check run');
+      assert.match(
+        r.stderr,
+        /^code: the backlog commit of the gate line was ended by SIGINT; rerun `bl merge S-1`\.$/m,
+      );
+      assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
+      assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
+      assertNoThrowaway(fx);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+test('a Ctrl+C while the gate-line commit waits for the backlog lock exits 130, pushes nothing and leaves no worktree', async (t) => {
+  if (!lockOwnerVisible(t)) return;
+  // The check passes, then makes this process the holder of the backlog's
+  // main sync lock, which the gate line's commit takes (the backlog has an origin).
+  const lock = `{{backlogDir}}/.git/bl-main-sync.lock`;
+  const fx = fixture({ verdicts: ['pass'], check: `${CHECK_COMMAND} && echo ${process.pid} > ${lock}` });
+  const u = UNITS[0];
+  let run = null;
+  try {
+    addOrigin(fx.dir);
+    const before = g(fx.origin, 'rev-parse', 'main');
+    const env = withNoAgent({ ...personEnv(), BL_BACKLOG_DIR: fx.dir, ...ENV });
+    run = spawnToFiles(BL_BIN, ['merge', u.id], { cwd: fx.dir, env, detached: true });
+    await untilStderrHas(run, waitingForLock(mainSyncLockPath(fx.dir), process.pid));
+    // A terminal's Ctrl+C: SIGINT to the whole process group.
+    process.kill(-run.child.pid, 'SIGINT');
+    const r = await run.closed;
+    run = null;
+    assert.equal(r.status, 130, `signal ${r.signal}: ${r.stderr}`);
+    assert.equal(calls(fx).length, 1, 'one check run');
+    assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
+    assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
+    assertNoThrowaway(fx);
+  } finally {
+    if (run) {
+      try {
+        process.kill(-run.child.pid, 'SIGKILL');
+      } catch {
+        // the group is gone
+      }
+      await run.closed;
+    }
     fx.cleanup();
   }
 });

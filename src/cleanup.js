@@ -801,6 +801,18 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
     console.error(`${repoName}: ${what} was ended by ${signal}; rerun \`bl merge ${parsed.id}\`.`);
   const tmp = mkdtempSync(join(tmpdir(), 'bl-merge-'));
   const wt = join(tmp, basename(repoPath));
+  // Removes the throwaway worktree, once. It also runs on `exit`, because a
+  // listener can end bl inside a call: a Ctrl+C during the lock wait of the
+  // gate line's backlog commit (`sleepSync` raises it, `lock.js` exits 130).
+  let removed = false;
+  const removeThrowaway = () => {
+    if (removed) return;
+    removed = true;
+    git(['worktree', 'remove', '--force', wt], repoPath);
+    rmSync(tmp, { recursive: true, force: true });
+    git(['worktree', 'prune'], repoPath);
+  };
+  process.once('exit', removeThrowaway);
   try {
     const add = git(['worktree', 'add', '--detach', wt, 'origin/main'], repoPath);
     if (add.status !== 0) {
@@ -881,9 +893,15 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
         );
         if (written == null) {
           console.error(`${repoName}: could not write the gate line (the unit has no change document): ${line}`);
+        } else if (isInterrupt(written.signal)) {
+          signal ??= written.signal;
         }
       } catch (err) {
         console.error(`${repoName}: could not write the gate line (${err.message}): ${line}`);
+      }
+      if (signal) {
+        interrupted('the backlog commit of the gate line');
+        return false;
       }
       if (!passed && run < CHECK_RUNS) info(`${repoName}: the check of ${commit} failed; running it once more.`);
     }
@@ -939,9 +957,8 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
     return true;
   } finally {
     const raise = signal;
-    git(['worktree', 'remove', '--force', wt], repoPath);
-    rmSync(tmp, { recursive: true, force: true });
-    git(['worktree', 'prune'], repoPath);
+    process.off('exit', removeThrowaway);
+    removeThrowaway();
     raiseSignal(raise);
   }
 }

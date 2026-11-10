@@ -46,6 +46,11 @@ function git(root, args) {
   });
 }
 
+/** `{ signal }` when a signal ended the child `r`, else `{}`: spread into a result. */
+function signalOf(r) {
+  return r.signal ? { signal: r.signal } : {};
+}
+
 /** What git had to say, or a fallback naming the exit status. */
 function gitMessage(r, what) {
   if (r.error) return r.error.message;
@@ -303,6 +308,8 @@ function addablePaths(root, paths) {
  * `pushError` are present only when the backlog has an `origin` remote;
  * `pushConflicts` names the paths a retry's rebase conflicted in, and
  * `pushResolved` the generated paths it settled (left pending regeneration).
+ * `signal` is present when a signal ended `git add`, `git commit` or a
+ * `git push`, so a caller can stop as the signal says (`checkedMerge`).
  *
  * With an `origin` remote the commit and push hold the main sync lock that
  * `pullBacklog` takes, so a commit never lands mid-rebase and a pull's
@@ -315,7 +322,7 @@ function addablePaths(root, paths) {
  * (`headlessPriorityRefusal`).
  * @returns {{ committed: boolean, paths: string[], error?: string,
  *   pushed?: boolean, pushError?: string, pushConflicts?: string[],
- *   pushResolved?: string[] }}
+ *   pushResolved?: string[], signal?: string }}
  */
 export function commitPaths(root, paths, message) {
   if (paths.length === 0) return { committed: false, paths };
@@ -378,7 +385,7 @@ function commitLocked(root, paths, message, push) {
   const addable = addablePaths(root, paths);
   const add = addable.length === 0 ? { status: 0 } : git(root, ['add', '-A', '--', ...addable]);
   if (add.status !== 0) {
-    return { committed: false, paths, error: (add.stderr || '').trim() || 'git add failed' };
+    return { committed: false, paths, error: (add.stderr || '').trim() || 'git add failed', ...signalOf(add) };
   }
   const c = git(root, ['commit', '-q', '-m', message, '--only', '--', ...paths]);
   // A failure with no output (a silent hook) still has to read as an error.
@@ -387,6 +394,7 @@ function commitLocked(root, paths, message, push) {
       committed: false,
       paths,
       error: (c.stderr || c.stdout || '').trim() || `git commit exited ${c.status}`,
+      ...signalOf(c),
     };
   }
   if (!push) return { committed: true, paths };
@@ -395,6 +403,7 @@ function commitLocked(root, paths, message, push) {
     committed: true,
     paths,
     pushed: p.pushed,
+    ...signalOf(p),
     ...(p.error ? { pushError: p.error } : {}),
     ...(p.paths ? { pushConflicts: p.paths } : {}),
     ...(p.resolved?.length ? { pushResolved: p.resolved } : {}),
@@ -422,6 +431,8 @@ export function isNonFastForwardRejection(stderr) {
  * @property {string[]} [paths] the paths that rebase conflicted in (`conflict`).
  * @property {string[]} [resolved] generated paths that rebase settled by
  *   taking a side; their regeneration is left pending (`PULL_REGEN_PENDING`).
+ * @property {string} [signal] the signal that ended a `git push`; that push
+ *   is not retried.
  */
 
 /**
@@ -446,6 +457,8 @@ export function pushBacklog(root) {
   const r = git(root, ['push', '-q', 'origin', 'main']);
   if (r.status === 0) return { pushed: true };
   const error = gitMessage(r, 'git push');
+  // A push ended by a signal is not retried: the caller decides whether to go on.
+  if (r.signal) return { pushed: false, error, signal: r.signal };
   const branch = git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).stdout?.trim() ?? '';
   // The rebase moves the checked-out branch: only retry when that is `main`.
   if (!isNonFastForwardRejection(r.stderr) || branch !== 'main') return { pushed: false, error };
@@ -486,7 +499,7 @@ export function pushBacklog(root) {
   const again = git(root, ['push', '-q', 'origin', 'main']);
   return again.status === 0
     ? { pushed: true, retry: 'pulled', resolved }
-    : { pushed: false, error: gitMessage(again, 'git push'), retry: 'pulled', resolved };
+    : { pushed: false, error: gitMessage(again, 'git push'), retry: 'pulled', resolved, ...signalOf(again) };
 }
 
 /**
