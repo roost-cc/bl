@@ -40,6 +40,16 @@ const side = verb === 'side';
 const write = fs.writeFileSync;
 const rename = fs.renameSync;
 const rm = fs.rmSync;
+
+/**
+ * Whether `path` is the temp file `pid-lock.js` writes the backlog lock to
+ * before it links it into place: the first step of taking the lock.
+ */
+function isLockWrite(root, path) {
+  const p = String(path);
+  const lock = join(root, '.bl-new.lock');
+  return p.startsWith(`${lock}.`) && /^\d+\.[a-z0-9]+\.tmp$/.test(p.slice(lock.length + 1));
+}
 if (side && faults.has('mark')) {
   const story = /\/stories\/S\d+-[^/]+\/index\.md$/;
   fs.writeFileSync = (path, ...rest) => {
@@ -68,7 +78,7 @@ if (side && faults.has('adopt') && process.env.BL_SIDE_FAULT_OUT) {
   let done = false;
   const inner = fs.writeFileSync;
   fs.writeFileSync = (path, ...rest) => {
-    if (!done && String(path) === join(root, '.bl-new.lock')) {
+    if (!done && isLockWrite(root, path)) {
       done = true;
       const env = { ...process.env, BL_SIDE_FAULT: '' };
       const r = spawnSyncFiles(
@@ -88,7 +98,7 @@ if (side && faults.has('gone') && process.env.BL_SIDE_FAULT_REPO) {
   let done = false;
   const inner = fs.writeFileSync;
   fs.writeFileSync = (path, ...rest) => {
-    if (!done && String(path) === join(root, '.bl-new.lock')) {
+    if (!done && isLockWrite(root, path)) {
       done = true;
       const list = spawnSync('git', ['-C', repo, 'worktree', 'list', '--porcelain'], {
         encoding: 'utf8',

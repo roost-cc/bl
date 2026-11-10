@@ -27,7 +27,7 @@
 import { spawnSync } from 'child_process';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { isPidAlive } from './lock.js';
+import { isPidAlive } from './pid-lock.js';
 import { spawnSyncFiles } from './child-stdio.js';
 
 /** How long `systemctl stop` lets a scope's processes exit on SIGTERM before SIGKILL. */

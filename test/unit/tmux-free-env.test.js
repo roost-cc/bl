@@ -1,8 +1,8 @@
 /**
  * The suite runs without tmux's variables and bl's title variables (S-1388).
  * A test `bl` that inherited `TMUX` and `BL_TMUX_WINDOW_ID` renamed the
- * operator's real tmux window, and turned its `automatic-rename` back on when
- * it exited. `test/helpers/without-repo-env.sh` unsets them for every
+ * operator's real tmux window, and left its title there when it exited.
+ * `test/helpers/without-repo-env.sh` unsets them for every
  * `npm run test:*` script. Tests that need tmux set a stub of their own.
  */
 

@@ -329,6 +329,27 @@ test('bl task refuses a missing or unknown --gate, writing nothing', () => {
   assert.equal(git(dir, 'status', '--porcelain'), '');
 });
 
+test('bl task files a Decide: task with --gate merge only, refusing none and next (S-1403)', () => {
+  const dir = backlog();
+  initGitBacklog(dir);
+  const head = git(dir, 'rev-parse', 'HEAD');
+  for (const gate of ['none', 'next']) {
+    const r = bl(['task', 'F-1', '--title', '  Decide:   pick A or B', '--gate', gate], dir);
+    assert.equal(r.status, 1, gate);
+    assert.match(r.stderr, new RegExp(`^bl task: a decision task .*takes --gate merge; got --gate ${gate}\\n$`));
+  }
+  assert.deepEqual(tasksIn(dir), []);
+  assert.equal(existsSync(join(dir, 'blockers.json')), false);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+
+  const r = bl(['task', 'F-1', '--title', 'Decide: pick A or B', '--gate', 'merge', '--json'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  const edge = { blocker: 'T-1', gate: 'merge', unit: 'F-1', until: 'done' };
+  assert.deepEqual(JSON.parse(r.stdout).edges, [edge]);
+  assert.deepEqual(JSON.parse(read(dir, 'blockers.json')).edges, [edge]);
+});
+
 test("an edge bl task cannot file refuses with bl block add's message and leaves no task file and no commit", async () => {
   const dir = backlog();
   initGitBacklog(dir);
