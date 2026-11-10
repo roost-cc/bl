@@ -123,7 +123,7 @@ test('bl agents outside a backlog prints the reference, the plain-writing rule, 
   }
 });
 
-test('bl agents in a backlog prints the reference, the rule and then each listed dictionary', async () => {
+test('bl agents in a backlog prints the reference, the rule, the collaboration rules and then each listed dictionary', async () => {
   const dir = mkTempDir('bl-agents-');
   try {
     const root = join(dir, 'backlog');
@@ -142,8 +142,12 @@ test('bl agents in a backlog prints the reference, the rule and then each listed
     const dict = join(root, 'coding-dictionary.yaml');
     const reference = out.indexOf('Stream policy');
     const rule = out.indexOf(MARKER);
+    const collaboration = out.indexOf('## Working with the operator');
     const heading = out.indexOf(`## Dictionary: ${dict}`);
-    assert.ok(reference >= 0 && reference < rule && rule < heading, 'reference, rule, dictionary in order');
+    assert.ok(
+      reference >= 0 && reference < rule && rule < collaboration && collaboration < heading,
+      'reference, rule, collaboration rules, dictionary in order',
+    );
     assert.equal(count(out, '`' + dict + '`'), 1, 'the rule names the path');
     assert.ok(out.trimEnd().endsWith('entries:\n  - term: work unit'), 'the dictionary closes the output');
   } finally {
