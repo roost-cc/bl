@@ -35,6 +35,7 @@ import {
   spendLimit,
 } from '../helpers/feature-run-fixture.js';
 import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
+import { claudeCapacity } from '../../src/agents/claude.js';
 
 // ---------------------------------------------------------------------------
 // An agent usage limit: wait it out and rerun the step (S-835)
@@ -846,6 +847,68 @@ test('an unavailable capacity reading skips the spawn; an account-scoped one is 
     }
   } finally {
     cleanup();
+  }
+});
+
+test('an unavailable Claude reading from claudeCapacity() keeps the walk off that configuration until its reset (S-1143)', async () => {
+  // A used-up session window applies to every model: the walk waits for its reset, then runs opus.
+  {
+    const { dir, cleanup, config, feature, prep } = setup({}, MODELS);
+    try {
+      const runner = fakeRunner({ dir, feature });
+      const reset = runner.clock() + 30 * 60_000;
+      const body = () => ({
+        limits: [
+          {
+            kind: 'session',
+            percent: runner.clock() < reset ? 100 : 10,
+            resets_at: new Date(reset).toISOString(),
+            scope: null,
+          },
+        ],
+      });
+      runner.capacity = (agent, model) => claudeCapacity(body(), model);
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'clean', JSON.stringify(state.history.filter((h) => !h.ok)));
+      const waits = state.history.filter((h) => h.step === 'waiting');
+      assert.equal(waits.length, 1);
+      assert.equal(waits[0].until, new Date(reset + 60_000).toISOString(), 'resetsAt + 60 s');
+      const firstStory = runner.calls.findIndex((c) => c.prompt === 'feature-story');
+      const firstSleep = runner.calls.findIndex((c) => c.type === 'sleep');
+      assert.ok(firstSleep >= 0 && firstSleep < firstStory, 'no feature-story spawn before the wait');
+      assert.equal(runner.calls[firstStory].model, 'opus');
+    } finally {
+      cleanup();
+    }
+  }
+  // A used-up limit scoped to Opus takes only opus out: sonnet runs, and nothing waits.
+  {
+    const { dir, cleanup, config, feature, prep } = setup({}, MODELS);
+    try {
+      const runner = fakeRunner({ dir, feature });
+      const body = {
+        limits: [
+          {
+            kind: 'weekly_scoped',
+            percent: 100,
+            resets_at: new Date(runner.clock() + 2 * 86_400_000).toISOString(),
+            scope: { model: { id: null, display_name: 'Opus' }, surface: null },
+          },
+        ],
+      };
+      runner.capacity = (agent, model) => claudeCapacity(body, model);
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'clean', JSON.stringify(state.history.filter((h) => !h.ok)));
+      const stories = configsOf(runner.calls, (c) => c.prompt === 'feature-story');
+      assert.ok(stories.length > 0);
+      assert.ok(
+        stories.every((c) => c === 'claude sonnet'),
+        stories.join(', '),
+      );
+      assert.equal(state.history.filter((h) => h.step === 'waiting').length, 0);
+    } finally {
+      cleanup();
+    }
   }
 });
 

@@ -10,10 +10,15 @@ import { fileURLToPath } from 'url';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv } from './provider.js';
 import { loadHookDenyMessage } from '../tool-guide.js';
-import { checkModel, exitStatus } from '../config.js';
+import { checkModel, exitStatus, isPlainObject } from '../config.js';
 import { checkEffort } from '../effort.js';
+import { runCapacityHelper } from './capacity-helper.js';
+import { CLAUDE_CAPACITY_TIMEOUT_MS } from './claude-capacity.js';
 import { checkLocalConfiguration, localServerCapacity, localSpawnEnv } from './local.js';
 import { outcomeFor, withExitFault } from '../outcome.js';
+
+// The script that asks Claude Code's OAuth usage endpoint (see its JSDoc).
+const CAPACITY_HELPER = fileURLToPath(new URL('./claude-capacity.js', import.meta.url));
 
 // Resolve Claude Code's config directory the same way the CLI does: honour
 // `CLAUDE_CONFIG_DIR` when set, else fall back to `~/.claude`. Hardcoding
@@ -21,8 +26,8 @@ import { outcomeFor, withExitFault } from '../outcome.js';
 // config, and — because nothing redirected it — let `bl`'s own integration
 // tests leak their throwaway `/tmp/bl-test-*` paths into the real settings
 // file. Tests now point `CLAUDE_CONFIG_DIR` at a temp dir for isolation.
-export function claudeConfigDir() {
-  const override = process.env.CLAUDE_CONFIG_DIR;
+export function claudeConfigDir(env = process.env) {
+  const override = env.CLAUDE_CONFIG_DIR;
   return override && override.trim() ? override : join(homedir(), '.claude');
 }
 
@@ -331,6 +336,89 @@ function formatDenial(d) {
   return arg ? `${tool}(${String(arg).slice(0, 120)})` : tool;
 }
 
+/**
+ * Whether a model-scoped limit's `scope.model` names `model` (S-1143,
+ * case-insensitive): its `id` is the model, or its `display_name` is the
+ * model or one dash-separated part of it (`Fable` ↔ `fable`,
+ * `claude-fable-5-2`). A configuration with no model matches none.
+ */
+function scopedModelMatches(scopeModel, model) {
+  if (model == null) return false;
+  const m = model.toLowerCase();
+  if (typeof scopeModel.id === 'string' && scopeModel.id.toLowerCase() === m) return true;
+  if (typeof scopeModel.display_name !== 'string') return false;
+  const name = scopeModel.display_name.toLowerCase();
+  return name === m || m.split('-').includes(name);
+}
+
+/** A limit's window as `bl capacity` names it: `claude 5h`, `claude 7d`, `claude 7d Fable`. */
+function claudeWindowName({ kind, scope }) {
+  if (kind === 'session') return 'claude 5h';
+  if (kind === 'weekly_all') return 'claude 7d';
+  if (kind === 'weekly_scoped') return `claude 7d ${scope?.model?.display_name ?? scope?.model?.id ?? ''}`.trim();
+  return `claude ${kind}`;
+}
+
+/**
+ * The capacity (provider.js `capacity()`) of the configuration with `model`
+ * that a usage-endpoint `body` means (S-1143). The limits are `body.limits`,
+ * else `five_hour` and `seven_day` (`utilization`) as the `session` and
+ * `weekly_all` limits. A limit with `scope: null` applies to every model; a
+ * model-scoped one only when `scopedModelMatches`; any other scope is left
+ * out. Each kept limit is a window (`remainingPercent` = 100 - `percent`, at
+ * least 0). A window at 0% makes the configuration `unavailable` until the
+ * latest such window's reset (null when one has none). `extra_usage` and
+ * `spend` are not read: bl never spends paid credits on its own. `scope` is
+ * `model` when any limit names a model, else `account`; a body that is not
+ * an object is `model`. No window, or a reset that is not a time, is
+ * `unknown`.
+ *
+ * @param {unknown} body
+ * @param {string|null} model
+ * @returns {ReturnType<AgentProvider["capacity"]>}
+ */
+export function claudeCapacity(body, model) {
+  const reading = (state, scope, message, windows = [], until = null) => ({ state, scope, until, windows, message });
+  if (!isPlainObject(body)) return reading('unknown', 'model', 'the Claude usage endpoint returned no usage');
+  const limits = Array.isArray(body.limits)
+    ? body.limits
+    : [
+        ['session', body.five_hour],
+        ['weekly_all', body.seven_day],
+      ]
+        .filter(([, w]) => isPlainObject(w) && Number.isFinite(w.utilization))
+        .map(([kind, w]) => ({ kind, percent: w.utilization, resets_at: w.resets_at, scope: null }));
+  const scope = limits.some((l) => isPlainObject(l) && isPlainObject(l.scope) && isPlainObject(l.scope.model))
+    ? 'model'
+    : 'account';
+  const windows = [];
+  for (const limit of limits) {
+    if (!isPlainObject(limit) || !Number.isFinite(limit.percent)) continue;
+    const s = limit.scope;
+    const applies =
+      s == null ||
+      (isPlainObject(s) && isPlainObject(s.model) && s.surface == null && scopedModelMatches(s.model, model));
+    if (!applies) continue;
+    const name = claudeWindowName(limit);
+    const resetsAt = limit.resets_at == null ? null : new Date(limit.resets_at);
+    if (resetsAt && !Number.isFinite(resetsAt.getTime())) {
+      return reading(
+        'unknown',
+        scope,
+        `the Claude usage endpoint reported a reset that is not a time (${name}: ${limit.resets_at})`,
+      );
+    }
+    windows.push({ name, remainingPercent: Math.max(0, 100 - limit.percent), resetsAt });
+  }
+  if (windows.length === 0) return reading('unknown', scope, 'the Claude usage endpoint reported no quota windows');
+  const usedUp = windows.filter((w) => w.remainingPercent <= 0);
+  if (usedUp.length === 0) return reading('available', scope, '', windows);
+  const until = usedUp.some((w) => w.resetsAt == null)
+    ? null
+    : new Date(Math.max(...usedUp.map((w) => w.resetsAt.getTime())));
+  return reading('unavailable', scope, `no quota left in ${usedUp.map((w) => w.name).join(', ')}`, windows, until);
+}
+
 export class ClaudeProvider extends AgentProvider {
   get name() {
     return 'claude';
@@ -340,11 +428,32 @@ export class ClaudeProvider extends AgentProvider {
     return true;
   }
 
-  // `--model` (buildClaudeArgs) and `--disallowedTools`. capacity() stays the
-  // base `unknown`: Claude Code has no usage command, and a probe would spend
-  // a request to learn what a refusal says for free (F-64 D5).
+  // `--model` (buildClaudeArgs) and `--disallowedTools`.
   supportsModel() {
     return true;
+  }
+
+  /**
+   * The configuration's quota, read from Claude Code's OAuth usage endpoint
+   * by `claude-capacity.js` with the token in
+   * `$CLAUDE_CONFIG_DIR/.credentials.json` (never refreshed), and mapped by
+   * `claudeCapacity()` for `model` (S-1143). Any failure (no credentials, an
+   * expired token, a non-200 answer, the deadline, a body that is not JSON,
+   * output that is not the helper's) is `unknown` with the reason; never
+   * throws. `run`, `env` and `timeoutMs` are for tests. The helper is a Node
+   * child (`runCapacityHelper`), so its answer comes back through a file.
+   */
+  capacity({ model, run, env, timeoutMs = CLAUDE_CAPACITY_TIMEOUT_MS } = {}) {
+    const unknown = (message) => ({ state: 'unknown', scope: 'model', until: null, windows: [], message });
+    const credentials = join(claudeConfigDir(env ?? process.env), '.credentials.json');
+    const { out, reason } = runCapacityHelper(
+      CAPACITY_HELPER,
+      ['--credentials', credentials, '--timeout', String(timeoutMs)],
+      { run, env, timeoutMs },
+    );
+    if (!out) return unknown(`claude capacity read failed (${reason})`);
+    if (!out.ok) return unknown(String(out.error ?? 'claude capacity read failed'));
+    return claudeCapacity(out.body, model ?? null);
   }
 
   supportsDeny() {

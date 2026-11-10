@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { BL_BIN, runBl } from '../helpers/run-bl.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
 import { createServer } from 'http';
@@ -15,6 +15,11 @@ import { loadConfig } from '../../src/config.js';
 // states.
 
 const FAKE_BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'bin');
+
+// An empty Claude config dir for every bl this file runs and every in-process
+// ask, so a Claude row never reads the operator's token (S-1143), even when
+// the file runs outside test/helpers/without-repo-env.sh.
+process.env.CLAUDE_CONFIG_DIR = mkTempDir('bl-claude-config-');
 
 const CONFIG = {
   agent: [
@@ -42,7 +47,10 @@ test("bl capacity prints a row per configuration of both roles, with Codex's win
   const lines = r.stdout.trim().split('\n');
   assert.match(lines[0], /^ROLE\s+AGENT\s+MODEL\s+STATE\s+DETAIL$/);
   assert.equal(lines.length, 6);
-  assert.match(lines[1], /^agent\s+claude\s+opus\s+unknown\s+claude cannot report capacity$/);
+  assert.match(
+    lines[1],
+    /^agent\s+claude\s+opus\s+unknown\s+no Claude credentials at \S+\/\.credentials\.json; run claude to log in$/,
+  );
   assert.match(
     lines[3],
     /^review\s+codex\s+gpt-6-sol\s+available\s+codex 5h 80% left \(resets \d{4}-\d\d-\d\d \d\d:\d\d \S+\); codex 7d 87% left/,
@@ -66,6 +74,10 @@ test('bl capacity --json prints bl-capacity-json/v1', () => {
       ['review', 'codex', 'gpt-6-astra', 'unavailable'],
       ['review', 'claude', 'sonnet', 'unknown'],
     ],
+  );
+  assert.match(
+    out.configurations[0].message,
+    /^no Claude credentials at \S+\/\.credentials\.json; run claude to log in$/,
   );
   const codex = out.configurations[2];
   assert.equal(codex.scope, 'account');

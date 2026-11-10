@@ -1231,9 +1231,10 @@ against a local model server; see **The local provider** below. Besides `spawn`,
   `until` is when an `unavailable` one may be tried again, or null; `windows`
   is `[{ name, remainingPercent, resetsAt }]`. It never throws: a failed read
   is `unknown` with the reason in `message`. Codex reads its quota over
-  `codex app-server` (see `bl capacity`); `local` asks its server's
-  `/health`; Claude and Gemini answer the base `unknown` ("<agent> cannot
-  report capacity"). Codex and `local` run their read as a Node child
+  `codex app-server` (see `bl capacity`); Claude reads Claude Code's OAuth
+  usage endpoint, once per model (see `bl capacity`); `local` asks its
+  server's `/health`; Gemini answers the base `unknown` ("gemini cannot
+  report capacity"). Claude, Codex and `local` run their read as a Node child
   (`runCapacityHelper`, `src/agents/capacity-helper.js`), because
   `capacity()` is synchronous.
 - `checkConfiguration({ model }, { topLevel, raw })` → a reason string, or
@@ -2984,7 +2985,7 @@ states, and 1 only when the backlog or its `backlog.json` cannot be loaded.
 ```bash
 bl capacity
 # ROLE    AGENT   MODEL      STATE      DETAIL
-# agent   claude  opus       unknown    claude cannot report capacity
+# agent   claude  opus       available  claude 7d 34% left (resets 2026-11-13 04:59 America/Los_Angeles)
 # review  codex   gpt-6-sol  available  codex 5h 80% left (resets 2026-10-29 00:52 America/Los_Angeles); codex 7d 87% left (…)
 bl capacity --json   # {"schema":"bl-capacity-json/v1","configurations":[{role, agent, model,
                      #   state, scope, until, windows:[{name, remainingPercent, resetsAt}], message}]}
@@ -3001,6 +3002,24 @@ with a 20-second deadline and stops app-server on every path;
 `spendControlReached`, makes every Codex model `unavailable` until the latest
 such reset (none for a spend cap). A timeout, an exit, a JSON-RPC error or an
 answer with no windows is `unknown`, with the reason.
+
+Claude's reading comes from Claude Code's OAuth usage endpoint,
+`GET https://api.anthropic.com/api/oauth/usage` (undocumented; S-1143).
+`src/agents/claude-capacity.js` reads the token from
+`$CLAUDE_CONFIG_DIR/.credentials.json` (else `~/.claude`) and asks within 10
+seconds; bl never refreshes the token, because Claude Code owns it.
+`claudeCapacity()` in `claude.js` maps the answer. Each entry of `limits`
+(else `five_hour` and `seven_day`) is a window: `claude 5h` for `session`,
+`claude 7d` for `weekly_all`, `claude 7d <model>` for `weekly_scoped`. A
+limit with no scope applies to every model. A model-scoped one applies only
+to the configuration whose model it names (its `id`, or its `display_name`
+as the model or one dash-separated part of it: `Fable` ↔ `claude-fable-5-2`).
+The reading is `account` only when no limit names a model, so Claude is
+asked once per model. A window at 0% makes the configuration `unavailable`
+until the latest such reset. `extra_usage` and `spend` are not read: bl never
+spends paid credits on its own. Missing credentials, an expired token, a
+non-200 answer, the deadline, a body that is not JSON, an answer with no
+windows or a reset that is not a time is `unknown`, with the reason.
 
 The `local` row comes from the server's `/health` (see **The local
 provider**): `available` on a 200, `unavailable` when the connection is
@@ -3084,7 +3103,7 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   one meter per quota window of `bl capacity`, with the percent left and the reset (local
   `15:04` within a day, else `Nov 12`). A window that two configurations report (Codex's
   account quota) shows once. A configuration with no window shows `<agent>  <state>: <message>`,
-  for example `unknown: claude cannot report capacity`, once per distinct line. Then today's
+  for example `unknown: gemini cannot report capacity`, once per distinct line. Then today's
   totals of the four kinds, and the local time capacity was last read.
 - **Box ⁵ activity** (`activity.go`). The graph of points done per UTC day over the `history`
   days (`points done / UTC day`), with the total of the last 7 days and a date axis. Then the
