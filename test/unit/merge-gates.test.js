@@ -9,6 +9,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeGates, noReviewLines, unitBranch } from '../../src/merge-gates.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { mkdirSync } from 'fs';
+import { join } from 'path';
+import { execFileSync } from 'child_process';
 
 const SESSION = (must = 'None.', should = 'None.', nits = 'None.') =>
   `## Review Log\n\n### Session 2026-10-20 (PR #4)\n\n**Must fix**\n\n${must}\n\n**Should fix**\n\n${should}\n\n**Nits**\n\n${nits}\n`;
@@ -266,4 +269,32 @@ test('the default held check reads blockers.json at the merge gate, and an empty
     preflight: () => ({ ok: true, findings: [] }),
   });
   assert.deepEqual(res.findings, []);
+});
+
+test('a story with no session and a branch with no commits passes only while its status is ready_for_merge (S-1437)', () => {
+  const dir = mkTempDir('bl-merge-gates-nocommits-');
+  const repo = join(dir, 'code');
+  mkdirSync(repo);
+  const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+  git('branch', 's7-thing', 'main');
+  const config = { reposByName: { code: repo } };
+  // [log after in_progress, noCommits, gates]
+  const cases = [
+    [['in_review', 'ready_for_merge'], true, []],
+    [['in_review', 'ready_for_merge', 'in_progress'], false, ['never-reviewed']],
+    [['in_review', 'ready_for_merge', 'escalated'], false, ['never-reviewed']],
+    [['in_progress'], false, ['never-reviewed']],
+  ];
+  for (const [log, noCommits, found] of cases) {
+    const story = units({ status: log.at(-1), log, changeBody: '' }).story;
+    const res = gates(story, { config });
+    assert.equal(res.noCommits, noCommits, log.join(' → '));
+    assert.deepEqual(
+      res.findings.map((f) => f.gate),
+      found,
+      log.join(' → '),
+    );
+  }
 });

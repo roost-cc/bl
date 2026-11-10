@@ -9,13 +9,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { rendered } from '../helpers/rendered.js';
-import { parseFrontmatter } from '../../src/config.js';
+import { loadConfig, parseFrontmatter } from '../../src/config.js';
+import { cleanupOneRepo } from '../../src/cleanup.js';
 import { extractSection } from '../../src/feature.js';
 import { mergeGates, unitBranch } from '../../src/merge-gates.js';
 import { writeBlockers } from '../../src/blockers.js';
@@ -261,6 +262,124 @@ test('--no-review merges a never-reviewed story and feature and records the choi
       assert.match(merge, new RegExp(`^- Merged without review \\(operator, ${today}\\)$`, 'm'), id);
       assert.match(merge, /^- code: PR #12 merged on the forge at deadbeef before any review$/m, id);
     }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// A story `bl run` finished with no commits on its branch (S-1437).
+
+/** S-1's log as `bl run` leaves a story with no commits: ready_for_merge by review. */
+const NO_COMMIT_LOG = {
+  transitions: ['draft', 'refined', 'in_progress', 'in_review', 'ready_for_merge'].map((to, i) => ({
+    at: `2026-11-0${i + 1}T00:00:00Z`,
+    to,
+    by: i >= 3 ? 'review' : 'operator',
+  })),
+};
+
+/** S-1's branch with no commits (`empty`), else its fixture commit, in a worktree. */
+function noCommitStory(review, { empty = true } = {}) {
+  const fx = fixture({ review });
+  if (empty) g(fx.repos.code, 'branch', '-f', 's1-loose', 'main');
+  const wt = join(fx.dir, 'wt-s1');
+  g(fx.repos.code, 'worktree', 'add', '-q', wt, 's1-loose');
+  return { ...fx, wt };
+}
+
+const storyFm = (fx) => parseFrontmatter(readFileSync(join(fx.dir, 'stories', 'S1-loose', 'index.md'), 'utf8')).fm;
+
+test('bl merge S-n finishes a story at ready_for_merge whose branch has no commits: nothing merged, worktree and branch gone', () => {
+  const fx = noCommitStory(NO_COMMIT_LOG);
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const before = g(fx.repos.code, 'rev-parse', 'main');
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout + r.stderr, /no changes in code/);
+    const fm = storyFm(fx);
+    assert.equal(logStatusOf('story', fm), 'done');
+    assert.equal(fm.commit, undefined, 'no commit: key');
+    const change = readFileSync(join(fx.dir, 'stories', 'S1-loose', 'change.md'), 'utf8');
+    assert.match(
+      extractSection(change, 'Merge'),
+      new RegExp(`^- ${today} · code · no commits on the branch: nothing merged$`, 'm'),
+    );
+    assert.equal(parseFrontmatter(change).fm.status, 'merged');
+    assert.ok(!existsSync(fx.wt), 'worktree removed');
+    assert.equal(g(fx.repos.code, 'branch', '--list', 's1-loose'), '');
+    assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'main unchanged');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('bl merge S-n refuses as never reviewed a ready_for_merge story whose branch has commits', () => {
+  const fx = noCommitStory(NO_COMMIT_LOG, { empty: false });
+  try {
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /^S-1 has never been reviewed/m);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('cleanupOneRepo with noCommits refuses a branch that got a commit after the gate, and merges nothing', () => {
+  const fx = noCommitStory(NO_COMMIT_LOG, { empty: false });
+  const prevDir = process.env.BL_BACKLOG_DIR;
+  const prevErr = console.error;
+  let err = '';
+  try {
+    process.env.BL_BACKLOG_DIR = fx.dir;
+    console.error = (...a) => {
+      err += `${a.join(' ')}\n`;
+    };
+    const before = g(fx.repos.code, 'rev-parse', 'main');
+    const result = cleanupOneRepo({
+      parsed: { id: 'S-1', num: '1' },
+      storyEntry: 'S1-loose',
+      repoName: 'code',
+      repoPath: fx.repos.code,
+      keepBranch: false,
+      config: loadConfig({ backlogRoot: fx.dir }),
+      noCommits: true,
+    });
+    assert.deepEqual(result, { ok: false });
+    assert.match(err, /^code: s1-loose has 1 commit\(s\) ahead of main, but the merge gate passed it with none/m);
+    assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'nothing merged');
+    assert.ok(existsSync(fx.wt), 'worktree kept');
+    assert.notEqual(g(fx.repos.code, 'branch', '--list', 's1-loose'), '', 'branch kept');
+  } finally {
+    console.error = prevErr;
+    if (prevDir == null) delete process.env.BL_BACKLOG_DIR;
+    else process.env.BL_BACKLOG_DIR = prevDir;
+    fx.cleanup();
+  }
+});
+
+test('bl merge S-n refuses as never reviewed a story reopened in_progress after ready_for_merge whose branch has no commits', () => {
+  const log = {
+    transitions: [...NO_COMMIT_LOG.transitions, { at: '2026-11-06T00:00:00Z', to: 'in_progress', by: 'operator' }],
+  };
+  const fx = noCommitStory(log);
+  try {
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /^S-1 has never been reviewed/m);
+    assert.ok(existsSync(fx.wt), 'worktree kept');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('bl merge S-n refuses as never reviewed an in_progress story whose branch has no commits', () => {
+  const fx = noCommitStory({ review_status: '' });
+  try {
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /^S-1 has never been reviewed/m);
+    assert.ok(existsSync(fx.wt), 'worktree kept');
   } finally {
     fx.cleanup();
   }
