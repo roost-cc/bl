@@ -10,7 +10,7 @@ import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadBacklog } from '../../src/backlog-graph.js';
 import { FrontmatterError, serializeFrontmatter } from '../../src/config.js';
-import { PriorityError, parseRanked } from '../../src/priority.js';
+import { PriorityError, isUpdateStory, parseRanked } from '../../src/priority.js';
 import { findPriorityFindings } from '../../src/validate.js';
 import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 
@@ -102,6 +102,12 @@ test('parseRanked refuses every other shape', () => {
       JSON.stringify(raw),
     );
   }
+});
+
+test('isUpdateStory: a non-blank update_repo: names an update story', () => {
+  assert.equal(isUpdateStory({ update_repo: 'acme/core' }), true);
+  assert.equal(isUpdateStory({ update_repo: '  ' }), false);
+  assert.equal(isUpdateStory({}), false);
 });
 
 // ---------------------------------------------------------------------------

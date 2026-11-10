@@ -918,7 +918,11 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   `.bl/run/commit-failed/migrate-transitions.json`. The rerun commits each one that is still
   uncommitted with the recorded content along with its own paths, and names each one that was
   committed or edited since. `--dry-run` prints the same counts and the paths it would carry,
-  and writes nothing.
+  and writes nothing. The migration leaves an update story (`update_repo:`, `isUpdateStory` in
+  `src/priority.js`) and its change documents in the old shape, because the updates flow still
+  reads and writes its `status:` (F-69 Out of Scope). The run and the dry run print
+  `kept in the old shape (update stories, F-69 Out of Scope): <n>`; the counts and the commit
+  message leave those stories out.
 - **The review state (D5).** `reviewOf(kind, fm, change)` reads it from the log: `round`, the
   rounds the log opened; `reviewed`, the rounds with a verdict (`round`, less the open one);
   `position`, the last of `in_review` (a round open), `fixing` (its items open) and
@@ -3712,7 +3716,9 @@ terminal status; for a story or a feature, also a missing `added`, or a missing 
 a log that ends terminal (a task's are `task-field`'s). The migration sets both from the log
 for a unit that has neither. `legacy-status` (warning) is a
 `status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
-a log, which bl does not read. A unit with a log needs no `status:` (`missing-required-key`).
+a log, which bl does not read. An update story keeps this warning until the updates flow moves
+onto the transition log: the migration leaves it in the old shape. A unit with a log needs no
+`status:` (`missing-required-key`).
 
 `derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's
 `required_for:` (even empty), a feature's `stories:`, `points:` or `components:`, or an epic's
