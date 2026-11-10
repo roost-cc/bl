@@ -29,9 +29,9 @@ export const LOCK_FILE = '.bl-new.lock';
 const LOCK_TIMEOUT_MS = 30_000;
 const LOCK_POLL_MS = 500;
 
-// Locks held by this process, mapped to their re-entrancy depth. Cleanup
-// handlers are registered once at module init (below) and walk this map on
-// exit/SIGINT/SIGTERM.
+// Locks held by this process, mapped to their re-entrancy depth. The `exit`
+// listener registered at module init (below) walks this map. On SIGINT or
+// SIGTERM, the handler in signal-exit.js calls process.exit, so it runs too.
 const heldLocks = new Map();
 
 function cleanupAll() {
