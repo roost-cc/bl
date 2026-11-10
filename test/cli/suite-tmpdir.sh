@@ -45,4 +45,32 @@ for sig in TERM INT HUP; do
   assert_eq "SIG$sig: temp directory removed" "" "$(ls -A "$CASE")"
 done
 
+# A signal to the wrapper's pid alone, as `kill <pid>` sends it. The wrapper
+# sends it on to the child and ends within seconds, not when the child would
+# have ended. The child execs sleep, so the signal reaches sleep itself.
+for sig in TERM INT HUP; do
+  CASE="$DIR/pid-$sig"
+  mkdir -p "$CASE"
+  set -m
+  env --default-signal=INT TMPDIR="$CASE" bash "$WRAPPER" bash -c 'echo "$TMPDIR" >"$1"; exec sleep 30' _ "$CASE.started" 2>/dev/null &
+  pid=$!
+  set +m
+  wait_for "$CASE.started"
+  kill -s "$sig" "$pid"
+  start=$SECONDS
+  while kill -0 "$pid" 2>/dev/null && ((SECONDS - start < 5)); do sleep 0.1; done
+  if kill -0 "$pid" 2>/dev/null; then
+    fail "SIG$sig to the pid: the wrapper still runs 5 s after the signal"
+    kill -s KILL -- "-$pid" 2>/dev/null || true
+  else
+    pass
+  fi
+  set +e
+  wait "$pid" 2>/dev/null
+  rc=$?
+  set -e
+  assert_exit "SIG$sig to the pid: the wrapper ends by the signal" "$((128 + $(kill -l "$sig")))" "$rc"
+  assert_eq "SIG$sig to the pid: temp directory removed" "" "$(ls -A "$CASE")"
+done
+
 summary_and_exit

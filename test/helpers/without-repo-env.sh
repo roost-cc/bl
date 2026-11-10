@@ -17,16 +17,32 @@
 # SIGINT, SIGTERM or SIGHUP. A suite run then leaves /tmp as it found it.
 # CLAUDE_CONFIG_DIR, where the claude provider writes its settings, is a
 # directory inside it. "$@" runs as a child, not by exec, so that the EXIT
-# trap can run. Guarded by test/cli/suite-tmpdir.sh.
+# trap can run. The child runs in the background and the wrapper waits for
+# it, so a signal to the wrapper's pid alone runs its trap at once. The trap
+# sends the signal on to the child and waits for it before the EXIT trap
+# removes the directory. bash makes a background child ignore SIGINT, and
+# `env --default-signal=INT` gives it back; `<&0` keeps its stdin, which bash
+# would set to /dev/null. Guarded by test/cli/suite-tmpdir.sh.
 # shellcheck disable=SC2046 # one variable name per word
 unset $(git rev-parse --local-env-vars)
 unset TMUX TMUX_PANE BL_TMUX_WINDOW_ID BL_TAB_TITLE
 TMPDIR=$(mktemp -d -t bl-test-XXXXXX) || exit 1
 export TMPDIR
+child=
 trap 'rm -rf -- "$TMPDIR"' EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
+# stop SIG STATUS: send SIG to the child, wait for it, and exit with STATUS.
+stop() {
+  if [[ -n "$child" ]]; then
+    kill -s "$1" "$child" 2>/dev/null
+    wait "$child"
+  fi
+  exit "$2"
+}
+trap 'stop INT 130' INT
+trap 'stop TERM 143' TERM
+trap 'stop HUP 129' HUP
 CLAUDE_CONFIG_DIR=$(mktemp -d) || exit 1
 export CLAUDE_CONFIG_DIR
-"$@"
+env --default-signal=INT "$@" <&0 &
+child=$!
+wait "$child"
