@@ -412,6 +412,33 @@ test('activity: a startedAt after at gives no duration, not a negative one', () 
   );
 });
 
+test('an activity entry with a year above 9999 or below 0 is left out', () => {
+  const kept = ['0000-01-01T00:00:00.000Z', '9999-12-31T23:59:59.999Z', at(NOW)];
+  const out = [
+    '+010000-01-01T00:00:00.000Z',
+    '+012345-01-01T00:00:00Z',
+    '-000001-01-01T00:00:00Z',
+    '-000001-12-31T23:59:59.999Z',
+    '+275760-09-13T00:00:00.000Z',
+  ];
+  const states = [
+    {
+      feature: 'F-1',
+      history: [
+        ...[...kept, ...out].map((t) => ({ step: 'test', at: t, usage: usage(5) })),
+        // A start out of the years gives no duration.
+        { step: 'setup', startedAt: '+010000-01-01T00:00:00Z', at: at(NOW - MIN) },
+      ],
+    },
+  ];
+  const { events } = readActivity(states);
+  assert.deepEqual(events.map((e) => e.at).sort(), [...kept, at(NOW - MIN)].sort());
+  for (const e of events) assert.deepEqual(undecodable(e, GO_EVENT), [], e.at);
+  assert.equal(events.find((e) => e.step === 'setup').durationMs, null);
+  // `tokens` counts none of the out-of-range entries either.
+  assert.equal(readTokens(states, NOW).today.output, 5);
+});
+
 test('readSection: a read that throws keeps the last good value and carries error; the next good read clears it', () => {
   let s = readSection(undefined, () => ({ rows: [1] }), NOW);
   assert.deepEqual(s, { read_at: '2026-11-07T12:00:00.000Z', rows: [1] });

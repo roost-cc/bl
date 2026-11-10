@@ -2982,7 +2982,8 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 - The view decodes each field as one Go type, and a field of another type would end its
   stream. So each run-state field that `runs`, `activity` and `tokens` copy is null when it does
   not have its type (a hand-edited `round: "2"`), token counts are whole numbers, and an
-  `activity` `at` is a full ISO time.
+  `activity` `at` is a full ISO time in the years 0000 to 9999 (Go reads four-digit years only):
+  an entry with another `at` is left out, and a `startedAt` outside them gives no duration.
 - A `runs` row whose run state says `running` while its run lock (`.bl/run/<id>.lock`) has no
   live holder has `status: "stale"`: its bl was killed. The stream parses a run state again
   only when the file's mtime changes.

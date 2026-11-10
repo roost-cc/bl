@@ -70,6 +70,25 @@ func TestDecodeRecordedLines(t *testing.T) {
 	}
 }
 
+// TestDecodeTheYearsAnActivityTimeKeeps checks the Go side of `ms()` in src/top-snapshot.js: an
+// `at` at either end of the years 0000 to 9999, as `toISOString()` writes it, decodes, and an `at`
+// outside them, which the snapshot leaves out, would end the stream.
+func TestDecodeTheYearsAnActivityTimeKeeps(t *testing.T) {
+	line := func(at string) []byte {
+		return []byte(`{"schema":"` + Schema + `","activity":{"events":[{"at":"` + at + `"}]}}`)
+	}
+	for _, at := range []string{"0000-01-01T00:00:00.000Z", "9999-12-31T23:59:59.999Z"} {
+		if _, err := Decode(line(at)); err != nil {
+			t.Errorf("at %s: %v", at, err)
+		}
+	}
+	for _, at := range []string{"+010000-01-01T00:00:00.000Z", "-000001-01-01T00:00:00.000Z"} {
+		if _, err := Decode(line(at)); err == nil {
+			t.Errorf("at %s decodes: the snapshot need not leave it out", at)
+		}
+	}
+}
+
 func TestDecodeRefusesOtherLines(t *testing.T) {
 	for _, line := range []string{`not json`, `{"schema":"bl-top-json/v2"}`} {
 		if _, err := Decode([]byte(line)); err == nil {

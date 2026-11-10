@@ -58,8 +58,14 @@ const iso = (ms) => new Date(ms).toISOString();
 const str = (v) => (typeof v === 'string' ? v : null);
 const int = (v) => (Number.isSafeInteger(v) ? v : null);
 const bool = (v) => (typeof v === 'boolean' ? v : null);
-/** The ms of an ISO time string, else NaN. */
-const ms = (v) => (typeof v === 'string' ? Date.parse(v) : NaN);
+// The first and last ms of the years 0000 to 9999: Go's time.Time decodes four-digit years only.
+const MS_MIN = Date.parse('0000-01-01T00:00:00.000Z');
+const MS_MAX = Date.parse('9999-12-31T23:59:59.999Z');
+/** The ms of an ISO time string in the years 0000 to 9999, else NaN. */
+const ms = (v) => {
+  const t = typeof v === 'string' ? Date.parse(v) : NaN;
+  return t >= MS_MIN && t <= MS_MAX ? t : NaN;
+};
 /** Token counts by kind, each a whole number (0 when it is not a number), or null. */
 const usageOf = (u) =>
   u && typeof u === 'object'
