@@ -3148,7 +3148,9 @@ Ctrl+C during either wait exits 130 and removes the locks the process holds. The
 is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
 that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C right
 after it always reaches the child. A SIGINT that lands between two sleeps is lost (2 in 150 at
-random times in a probe), and a second Ctrl+C ends `bl`.
+random times in a probe), and a second Ctrl+C ends `bl`. Two other synchronous waits sleep in
+`sleepSync` the same way: the prepare-lock wait (`session.js` `prepareWorktreeOnce`) and the
+usage-limit wait (`feature-run.js` `waitOrEscalate`).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each
