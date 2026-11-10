@@ -210,3 +210,14 @@ func TestCKeyWritesCapacityToTheStream(t *testing.T) {
 		t.Fatal("no message from the stream in 10 s")
 	}
 }
+
+func TestCountPicksTheUnitAfterRounding(t *testing.T) {
+	for n, want := range map[float64]string{
+		0: "0", 999.4: "999", 999.6: "1.0k", 9949: "9.9k", 9999.9: "10k", 412000: "412k",
+		999499: "999k", 999999: "1.0M", 9.94e6: "9.9M", 9.96e6: "10M", 2.3e7: "23M",
+	} {
+		if got := count(n); got != want {
+			t.Errorf("count(%v) = %q, want %q", n, got, want)
+		}
+	}
+}

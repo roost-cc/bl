@@ -131,14 +131,15 @@ func resetLabel(resetsAt string, now time.Time) string {
 
 // count is a token count in a few characters: 950, 9.1k, 640k, 2.3M, 51M.
 func count(n float64) string {
+	// Each bound is where the rounded number reaches the next unit: 999.5 shows as 1.0k, not 1000.
 	switch {
-	case n < 1e3:
+	case n < 999.5:
 		return fmt.Sprintf("%.0f", n)
-	case n < 1e4:
+	case n < 9950:
 		return fmt.Sprintf("%.1fk", n/1e3)
-	case n < 1e6:
+	case n < 999500:
 		return fmt.Sprintf("%.0fk", n/1e3)
-	case n < 1e7:
+	case n < 9.95e6:
 		return fmt.Sprintf("%.1fM", n/1e6)
 	}
 	return fmt.Sprintf("%.0fM", n/1e6)
