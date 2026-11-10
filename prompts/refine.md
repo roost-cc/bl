@@ -74,6 +74,8 @@ Backlog repo : {{backlogDir}}
 
 {{sideChangeGuide}}
 
+{{collaborationGuide}}
+
 {{writingGuide}}
 
 {{toolGuide}}

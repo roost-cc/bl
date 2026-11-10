@@ -5,8 +5,8 @@
  *
  * The `claude` stub appends a line to each file in `STUB_WRITE`, writes
  * `STUB_OUTCOME` to `STUB_OUTCOME_PATH` when its prompt names that path (the
- * outcome file, F-68 D1), and exits with `STUB_EXIT` (`TERM` ends it by that
- * signal).
+ * outcome file, F-68 D1), appends its arguments to `STUB_ARGV` when it is set,
+ * and exits with `STUB_EXIT` (`TERM` ends it by that signal).
  */
 
 import { chmodSync, symlinkSync, writeFileSync } from 'fs';
@@ -30,6 +30,7 @@ function writingClaude() {
   writeFileSync(
     bin,
     `#!/bin/sh\nfor f in $STUB_WRITE; do printf 'Written by the session.\\n' >> "$f"; done\n` +
+      `[ -n "$STUB_ARGV" ] && printf '%s' "$*" >> "$STUB_ARGV"\n` +
       `if [ -n "$STUB_OUTCOME" ]; then case "$*" in *"$STUB_OUTCOME_PATH"*) ` +
       `printf '%s' "$STUB_OUTCOME" > "$STUB_OUTCOME_PATH";; esac; fi\n` +
       `[ "$STUB_EXIT" = TERM ] && kill -TERM $$\nexit \${STUB_EXIT:-0}\n`,
@@ -88,9 +89,14 @@ function runningTmux() {
 /**
  * `bl refine <args>` in `dir`. `outcome` is the text the agent writes to the
  * outcome file of `outcomeUnit` (the refined unit's id, `refineBatchId(<ids>)` for a
- * batch); with none, the agent writes no outcome file.
+ * batch); with none, the agent writes no outcome file. With `argvLog`, the
+ * agent appends its arguments (the session prompt among them) to that file.
  */
-export function refine(dir, args, { write = [], exit = 0, tmuxLog = null, outcome = null, outcomeUnit = null } = {}) {
+export function refine(
+  dir,
+  args,
+  { write = [], exit = 0, tmuxLog = null, outcome = null, outcomeUnit = null, argvLog = null } = {},
+) {
   const path = `${writingClaude()}:${process.env.PATH}`;
   return spawnSyncFiles(BL_BIN, ['refine', ...args], {
     cwd: dir,
@@ -101,6 +107,7 @@ export function refine(dir, args, { write = [], exit = 0, tmuxLog = null, outcom
       PATH: tmuxLog ? `${runningTmux()}:${path}` : path,
       STUB_WRITE: write.map((p) => join(dir, p)).join(' '),
       STUB_EXIT: String(exit),
+      ...(argvLog ? { STUB_ARGV: argvLog } : {}),
       ...(outcome == null ? {} : { STUB_OUTCOME: outcome, STUB_OUTCOME_PATH: outcomePath(dir, outcomeUnit) }),
       // BL_TAB_TITLE unset (S-1388): the window names checked are the default format's.
       ...(tmuxLog ? { TMUX: 'stub', TMUX_STUB_LOG: tmuxLog, BL_TAB_TITLE: undefined } : {}),

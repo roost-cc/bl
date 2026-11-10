@@ -10,7 +10,10 @@ say how you read the situation, and agree with the operator on the way
 forward. Do **not** edit files, run commands, modify story frontmatter,
 or otherwise do the task during this phase.
 
-When the discussion comes to an end, ask the operator exactly this:
+{{collaborationGuide}}
+
+When the discussion comes to an end, ask the operator exactly this. It is
+the one offer to do the task that this phase allows:
 
 > Shall I proceed with the original `bl {{mode}}` task for
 > {{storyId}}?

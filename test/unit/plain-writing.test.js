@@ -108,12 +108,14 @@ async function agentsOutput(cwd) {
   return chunks.join('');
 }
 
-test('bl agents outside a backlog prints the reference and then the plain-writing rule', async () => {
+test('bl agents outside a backlog prints the reference, the plain-writing rule, then the collaboration rules', async () => {
   const dir = mkTempDir('bl-agents-');
   try {
     const out = await agentsOutput(dir);
     assert.ok(out.includes('Stream policy'), 'the AGENTS.md reference');
-    assert.ok(out.trimEnd().endsWith(GUIDE.trimEnd()), 'the rule closes the output');
+    const collaboration = readFileSync(new URL('_collaboration.md', PROMPTS_DIR), 'utf8').trimEnd();
+    assert.ok(out.includes(`${GUIDE.trimEnd()}\n\n${collaboration}`), 'the rule, then the collaboration rules');
+    assert.ok(out.trimEnd().endsWith(collaboration), 'the collaboration rules close the output');
     assert.equal(count(out, MARKER), 1);
     assert.doesNotMatch(out.slice(out.indexOf(MARKER)), /## Dictionary:|Take the names from/);
   } finally {
@@ -121,7 +123,7 @@ test('bl agents outside a backlog prints the reference and then the plain-writin
   }
 });
 
-test('bl agents in a backlog prints the reference, the rule and then each listed dictionary', async () => {
+test('bl agents in a backlog prints the reference, the rule, the collaboration rules and then each listed dictionary', async () => {
   const dir = mkTempDir('bl-agents-');
   try {
     const root = join(dir, 'backlog');
@@ -140,8 +142,12 @@ test('bl agents in a backlog prints the reference, the rule and then each listed
     const dict = join(root, 'coding-dictionary.yaml');
     const reference = out.indexOf('Stream policy');
     const rule = out.indexOf(MARKER);
+    const collaboration = out.indexOf('## Working with the operator');
     const heading = out.indexOf(`## Dictionary: ${dict}`);
-    assert.ok(reference >= 0 && reference < rule && rule < heading, 'reference, rule, dictionary in order');
+    assert.ok(
+      reference >= 0 && reference < rule && rule < collaboration && collaboration < heading,
+      'reference, rule, collaboration rules, dictionary in order',
+    );
     assert.equal(count(out, '`' + dict + '`'), 1, 'the rule names the path');
     assert.ok(out.trimEnd().endsWith('entries:\n  - term: work unit'), 'the dictionary closes the output');
   } finally {

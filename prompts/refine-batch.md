@@ -69,6 +69,8 @@ Each sub-agent's file also carries this rule. You open no PR yourself.
 
 {{sideChangeGuide}}
 
+{{collaborationGuide}}
+
 ## The writing rule each sub-agent follows
 
 Each sub-agent's file also carries this rule, and your summary table follows it too.

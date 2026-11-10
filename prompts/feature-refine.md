@@ -173,6 +173,8 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
 
 {{sideChangeGuide}}
 
+{{collaborationGuide}}
+
 {{writingGuide}}
 
 {{toolGuide}}

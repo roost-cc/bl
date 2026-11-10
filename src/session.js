@@ -150,7 +150,13 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * facts and hedges kept exact), carried by every top-level prompt because
  * every session writes something the operator or another agent reads; its
  * `{{dictionaryGuide}}` slot names the backlog's listed dictionaries
- * (`renderDictionaryGuide`). `simplicityGuide` is the simple, surgical change rule (build what the
+ * (`renderDictionaryGuide`). `collaborationGuide` is the nine collaboration
+ * rules (one question at a time, every decision the operator's), carried only
+ * by the discussion sessions (F-97 A1): `agent`, `refine`, `re-refine`,
+ * `feature-refine`, `refine-batch` and `_pre-task-discussion`. The batch
+ * refine's sub-agents, and a preamble before a prompt that already has the
+ * rules, turn it off with `collaborationGuide: ''`.
+ * `simplicityGuide` is the simple, surgical change rule (build what the
  * criteria ask, abstractions follow shared behaviour, every changed line
  * traces to the story or a named finding); it rides with
  * `selfConsistencyGuide`, in every refine and implementation prompt and the
@@ -182,9 +188,13 @@ const PROMPT_PARTIALS = {
   sideChangeGuide: '_side-changes',
   selfConsistencyGuide: '_self-consistency',
   writingGuide: '_plain-writing',
+  collaborationGuide: '_collaboration',
   simplicityGuide: '_simplicity',
   effortGuide: '_effort',
 };
+
+/** The heading `_collaboration.md` opens with: a prompt that has it carries the rules. */
+const COLLABORATION_HEADING = '## Working with the operator';
 
 /**
  * Partials a story run (`bl run S-n`, `vars.unitKind === "story"`) gets in
@@ -350,12 +360,11 @@ export function applyAdditionalPrompt(
   if (typeof additionalPrompt !== 'string' || additionalPrompt.length === 0) {
     return sessionPrompt;
   }
-  const preamble = loadPrompt(
-    '_pre-task-discussion',
-    // The `workon` permission mode is the `bl implement` verb.
-    { additionalPrompt, mode: mode === 'workon' ? 'implement' : mode, storyId },
-    { agent, config },
-  );
+  // The `workon` permission mode is the `bl implement` verb.
+  const vars = { additionalPrompt, mode: mode === 'workon' ? 'implement' : mode, storyId };
+  // The session carries the collaboration rules once (F-97 D2).
+  if (sessionPrompt?.includes(COLLABORATION_HEADING)) vars.collaborationGuide = '';
+  const preamble = loadPrompt('_pre-task-discussion', vars, { agent, config });
   return preamble + (sessionPrompt ?? '');
 }
 

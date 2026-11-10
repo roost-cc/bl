@@ -289,10 +289,15 @@ function refineBatch(targets, config) {
   info('');
 
   // Each sub-agent replies with its story's outcome; the orchestrator writes the file.
+  // A sub-agent talks with the orchestrator, which carries the collaboration rules (F-97 D2).
   const refineOutcome = loadPrompt('_refine-outcome-subagent', {}, { agent: config.agent, config });
   const items = targets.map((t) => {
     const { promptName, vars } = storyRefineContext(t.found, t.fm, config);
-    const body = loadPrompt(promptName, { ...vars, refineOutcome }, { agent: config.agent, config });
+    const body = loadPrompt(
+      promptName,
+      { ...vars, refineOutcome, collaborationGuide: '' },
+      { agent: config.agent, config },
+    );
     return { id: t.id, title: t.title, body };
   });
 
