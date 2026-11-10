@@ -453,6 +453,30 @@ for (const [signal, number] of [
     assert.deepEqual(r.calls, []);
   });
 
+  test(`a signalled process ends its title as interrupted (${signal})`, async () => {
+    const r = await signalChild(
+      `const t = await import(src(tab-title.js));
+       t.updateTabTitle({ story: 'S-1', status: 'implement', next: '→ x' });
+       setInterval(() => {}, 1000);`,
+      signal,
+    );
+    assert.deepEqual([r.exitCode, r.exitSignal], [number, null]);
+    assert.equal(r.calls.at(-1), 'rename-window\n-t\n@7\n--\n: S-1 : interrupted\n');
+  });
+
+  test(`a signal after finalTabTitle keeps the final title (${signal})`, async () => {
+    const r = await signalChild(
+      `const t = await import(src(tab-title.js));
+       t.updateTabTitle({ feature: 'F-2', status: 'review' });
+       t.finalTabTitle({ status: 'clean', next: '→ bl merge' });
+       setInterval(() => {}, 1000);`,
+      signal,
+    );
+    assert.deepEqual([r.exitCode, r.exitSignal], [number, null]);
+    assert.equal(r.calls.length, 2);
+    assert.equal(r.calls.at(-1), 'rename-window\n-t\n@7\n--\nF-2 :  : clean → bl merge\n');
+  });
+
   test(`a process that loads lock.js ends on ${signal} with exit ${number}`, async () => {
     const r = await signalChild(`await import(src(lock.js)); setInterval(() => {}, 1000);`, signal);
     assert.deepEqual([r.exitCode, r.exitSignal], [number, null]);
