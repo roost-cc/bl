@@ -240,13 +240,16 @@ export async function applyFixOutcome(
 /**
  * Commit the change document at `path` (or the files at `path`, a list) in
  * the backlog, skipped when the backlog is not a git repository; a failed
- * commit is a warning.
+ * commit is a warning. Returns the signal that ended a git command of the
+ * commit or its push, or null.
+ * @returns {Promise<string | null>}
  */
 async function commitChangeDoc(backlogRoot, path, message) {
-  if (!existsSync(join(backlogRoot, '.git'))) return;
+  if (!existsSync(join(backlogRoot, '.git'))) return null;
   const rels = [path].flat().map((p) => relative(backlogRoot, p));
   const c = await commitPaths(backlogRoot, rels, message);
   if (!c.committed) warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
+  return c.signal ?? null;
 }
 
 /**
@@ -366,6 +369,41 @@ export function recordMerge(backlogRoot, unitDir, { commits, date, extra = [] })
   if (lines.length > 0) doc.body = appendSection(doc.body, 'Merge', lines.join('\n'));
   writeChange(backlogRoot, cur.path, doc);
   return cur.path;
+}
+
+/**
+ * One `## Gate` line, the shape every gate writer uses:
+ * `- <date> · <repo> · <command> · <verdict>[ (<detail>)][ · commit <sha>]`.
+ * `command` is written as given (a code span, or a placeholder such as
+ * `(no test plugin)`); `detail` is, for example, `attempt 2`; `commit` is the
+ * commit the gate ran on, when it ran on one (F-96 D3).
+ * @param {{ date: string, repo: string, command: string, verdict: string,
+ *   detail?: string, commit?: string }} p
+ * @returns {string}
+ */
+export function gateLine({ date, repo, command, verdict, detail = '', commit = '' }) {
+  return `- ${date} · ${repo} · ${command} · ${verdict}${detail ? ` (${detail})` : ''}${commit ? ` · commit ${commit}` : ''}`;
+}
+
+/**
+ * Add `line` to `## Gate` in the unit's current change document and commit
+ * it, as `message`. Returns the path written and `signal`, the signal that
+ * ended a git command of the commit (or null), so the caller can stop as it
+ * says. Returns null when the unit has no change document. A failed commit
+ * is a warning.
+ * @param {string} backlogRoot
+ * @param {string | null} unitDir
+ * @param {string} line
+ * @param {string} message
+ * @returns {{ path: string, signal: string | null } | null}
+ */
+export function addGateLine(backlogRoot, unitDir, line, message) {
+  const cur = currentChange(unitDir);
+  if (!cur?.doc) return null;
+  cur.doc.body = appendSection(cur.doc.body, 'Gate', line);
+  writeChange(backlogRoot, cur.path, cur.doc);
+  const signal = commitChangeDoc(backlogRoot, cur.path, message);
+  return { path: cur.path, signal };
 }
 
 /**

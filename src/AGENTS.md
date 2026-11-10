@@ -12,8 +12,9 @@ The `backlog` key is the relative path to the backlog directory. Stories, compon
 Markdown files with YAML frontmatter. No committed file holds a derived list: `bl report` and
 `bl view` render the index tables from the frontmatter when a page is read.
 
-Run `bl agents` from any repo to print this file, the plain-writing guide and, inside a backlog,
-each dictionary its `backlog.json` `"dictionaries"` lists.
+Run `bl agents` from any repo to print this file, the plain-writing guide, the collaboration rules
+(how a session works with the operator) and, inside a backlog, each dictionary its `backlog.json`
+`"dictionaries"` lists.
 
 ### Stream policy
 
@@ -53,7 +54,7 @@ Per-command stdout contracts:
 | `bl rank`            | no args: the order; an edit: nothing (progress → stderr)  |
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
-| `bl agents`          | AGENTS.md, the writing guide, each listed dictionary      |
+| `bl agents`          | AGENTS.md, writing and collaboration rules, dictionaries  |
 | `bl view`            | the rendered page when redirected; else nothing (editor)  |
 | `bl edit`            | nothing (opens editor)                                    |
 | `bl init`            | nothing (status → stderr)                                 |
@@ -2996,6 +2997,8 @@ bl review -P "focus on the retry logic, the rest looks fine" S34
 
 The preamble lives in `prompts/_pre-task-discussion.md` and is
 prepended by `session.js` so both launchers stay in lockstep.
+The preamble carries the collaboration rules (`_collaboration.md`, F-97 D2)
+unless the session prompt already has them, so a session has them once.
 Empty string (`--prompt ""`) behaves identically to omitting the flag.
 
 ### `bl capacity`
@@ -4159,6 +4162,38 @@ integrated; rerun \`bl merge <id>\``. When the abort fails, or the checkout is
 not clean after it, it prints the exact `git -C <repo> merge --abort`to run.
 The rerun integrates the moved`main` again.
 
+**A repo with a `check` plugin pushes the commit it checked** (F-96 D3). When
+the repo's `check` stage resolves (`"plugins-check": ["ci-check"]` on its
+`backlog.json` `repos` entry), `cleanupOneRepo` calls `checkedMerge` in place
+of the merge in the main checkout:
+
+1. It adds a throwaway worktree detached at `origin/main` (under the system
+   temp directory) and runs `git merge --no-ff` there with the usual message.
+2. It runs the `check` plugins with `{{commit}}` (the merge commit),
+   `{{repoPath}}` (the main checkout), `{{repoName}}`, `{{branchName}}`,
+   `{{storyId}}`, `{{roostDir}}` and `{{backlogDir}}`. Interpolation is
+   `interpolateCommand`: an unresolved placeholder stops the repo. A failed run
+   runs once more (E70 R10). Each run adds a `## Gate` line to the change
+   document: `- <date> · <repo> · <command> · <verdict> (attempt <n>) · commit <40 hex>`.
+3. On a pass it checks that the main checkout can fast-forward to the commit
+   (`fastForwardBlocker`: local `main` is an ancestor of it, and
+   `git read-tree -n -m -u HEAD <commit>` finds no changed or untracked file
+   in the way). If it cannot, it prints the cause and pushes nothing.
+4. It runs `git push origin <commit>:refs/heads/main` from the worktree, and
+   then `git merge --ff-only <commit>` in the main checkout.
+5. It removes the worktree, whatever happened.
+
+A conflict, or a push git refuses because `main` moved, prints "main moved;
+rerun `bl merge <id>`" and pushes nothing. A check that fails twice pushes
+nothing and prints the last lines of its output. A check or git command ended
+by SIGINT or SIGTERM (`INTERRUPT_SIGNALS` in `src/signal-exit.js`) stops the
+merge at once: no `## Gate` line, no second run, no push. After the worktree
+is removed, that signal is raised again (`raiseSignal`), so `bl` exits
+130 or 143. A check ended by any other signal (SIGABRT, SIGKILL) is a failed
+run, and a git command ended by one is a failed command. Every `## Gate` line
+(this one, the test gate's `recordGateLine` and a scripted story's) comes from
+`gateLine` in `src/change-doc.js`.
+
 After the merge the branch's open PR, if any, is closed through
 `change.find` and `change.close`.
 
@@ -4792,6 +4827,7 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_simplicity.md`                 | `{{simplicityGuide}}`: build what the criteria ask, abstractions follow shared behaviour, every changed line traces to the story or a named finding. Wherever `{{selfConsistencyGuide}}` is.         |
 | `_effort.md`                     | `{{effortGuide}}`: the effort-level rubric (F-85 D6); the refiner picks the lowest level that fits and writes the `**Effort:**` line. `refine`, `re-refine` and `feature-refine`.                    |
 | `_plain-writing.md`              | `{{writingGuide}}`: about 80% of ASD-STE100, so the operator or the next agent reads the text right once. Every top-level prompt; `bl agents` prints it after this reference.                        |
+| `_collaboration.md`              | `{{collaborationGuide}}`: the nine rules for a discussion with the operator (F-97). `agent`, the refines and `_pre-task-discussion`; `bl agents` prints it after the writing guide.                  |
 | `_dictionaries.md`               | `{{dictionaryGuide}}` in `_plain-writing.md`, under "Give each thing one name": names each listed dictionary (`renderDictionaryGuide`); "" when none are listed or there is no config.               |
 | `_refine-outcome.md`             | `{{refineOutcome}}`: the story refine's closing **Outcome** section, the object to write to `{{outcomePath}}` as the session's last act (F-68 D1). `refine` and `re-refine`.                         |
 | `_refine-outcome-subagent.md`    | `{{refineOutcome}}` in a batch refine's per-story files: the sub-agent replies with the object, and the orchestrator writes the batch's outcome file.                                                |
@@ -4938,10 +4974,11 @@ project's business domain may have its own, which the project writes; bl ships n
   when a refine introduces a concept or an operator decision renames a term. With none listed,
   or with no config, the slot is empty. So every top-level prompt carries it through
   `{{writingGuide}}`, and `test/unit/plain-writing.test.js` holds both cases in place.
-- **`bl agents`** prints this reference, the writing guide with the slot filled, and then the
-  contents of each listed dictionary under `## Dictionary: <path>` (the absolute path). It skips
-  a listed file it cannot read, with a warning on stderr. Outside a backlog (`findBacklogRoot`
-  finds none) it prints the reference and the guide only.
+- **`bl agents`** prints this reference, the writing guide with the slot filled, the
+  collaboration rules (`_collaboration.md`), and then the contents of each listed dictionary
+  under `## Dictionary: <path>` (the absolute path). It skips a listed file it cannot read, with
+  a warning on stderr. Outside a backlog (`findBacklogRoot` finds none) it prints the reference,
+  the guide and the collaboration rules only.
 
 ### Per-agent variants
 
@@ -5139,6 +5176,7 @@ plugins: [session-stack]
 | `format`     | On `bl format --story <id>` and during `bl sync` (`.md` only)                                                                                                               |
 | `lint`       | On `bl lint --story <id>`                                                                                                                                                   |
 | `cleanup`    | During `bl merge`, before worktree removal                                                                                                                                  |
+| `check`      | During `bl merge`, on the merge commit before it is pushed to `main`, with `{{commit}}` (that commit, 40 hex) and `{{repoPath}}` (F-96 D3; see `bl merge`)                  |
 | `done`       | After `bl done` marks the story complete and syncs                                                                                                                          |
 | `test`       | The test gate of `bl run`, in each prepared repo's worktree with that repo's config (`plugins-test: [<name>]`); each attempt's output goes to `.bl/run/<F-id>.test-<n>.log` |
 | `implement`  | In place of the agent session, for a story with `plugins-implement: [<name>]` (scripted stories, below)                                                                     |
