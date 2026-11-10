@@ -47,10 +47,10 @@ import {
 } from './session.js';
 import { featureSessionVars } from './feature.js';
 import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
-import { applyFixOutcome, openUnitChange, reviewFieldsAt, unitChange } from './change-doc.js';
+import { applyFixOutcome, openUnitChange, readChange, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
 import { loadFlow } from './flow.js';
-import { IMPLEMENT_VERBS, enterVerb, nowAt, startOf, statusOf } from './transition.js';
+import { IMPLEMENT_VERBS, enterVerb, nowAt, roundOf, startOf, statusOf } from './transition.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { syncAndCommit } from './sync.js';
 import { sessionEffort, storyEffort } from './effort.js';
@@ -251,8 +251,8 @@ export function otherWorktreesLine(list) {
  * Create/resume a story's worktree through `prepareStoryRepo`, record the
  * branch in the story's change document (change-doc.js), and build the
  * prompt-template variables. Shared by the interactive flow and
- * `bl run S-n`'s prep. The change document's `review_status`
- * selects the `workon-review` prompt over `workon`.
+ * `bl run S-n`'s prep. A story in `fixing` (its transition log, F-69 D5)
+ * gets the `workon-review` prompt over `workon`.
  *
  * Side-effecting and may `process.exit(1)` on a hard guard (no repo,
  * uncommitted changes, local main ahead) — same guards as a single workon.
@@ -306,9 +306,9 @@ function prepareStoryWorktree(parsed, found, config, { strict = false } = {}) {
   };
 
   const unitState = unitChange(dirname(indexPath), repoName);
-  // A unit in `fixing` gets the fix session (F-69 D3).
+  // A unit in `fixing` gets the fix session (F-69 D3), for its log's round (D5).
   const reviewPending = statusOf('story', fm, unitState.change) === 'fixing';
-  const reviewRound = parseInt(unitState.reviewRoundRaw, 10) || 0;
+  const reviewRound = roundOf('story', fm, unitState.change);
   const legacyPrReview = existsSync(join(effectiveWorktreePath, '.pr-review.md'));
   const promptName = reviewPending ? 'workon-review' : 'workon';
 
@@ -450,7 +450,7 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   if (prep.legacyPrReview && !prep.reviewPending) {
     console.error(
       `Found a legacy .pr-review.md in ${prep.effectiveWorktreePath} but the` +
-        ` story has no review_status: pending. The .pr-review.md flow was` +
+        ` story is not in fixing. The .pr-review.md flow was` +
         ` retired in S-458 — review feedback now lives in the ## Review Log` +
         ` of the story's change.md. Delete the stale file by hand and re-run` +
         ` bl review if you actually need a feedback cycle.`,
@@ -478,8 +478,8 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     info('Review pending in story — using review-feedback prompt.\n');
   }
 
-  // What a fix session found; applyFixOutcome puts it back unless the outcome is `fixed`.
-  const fixBefore = prep.reviewPending ? reviewFieldsAt(prep.promptVars.changeAbsPath) : {};
+  // The change document the fix session found, which places a story with no log.
+  const changeBefore = prep.reviewPending ? readChange(prep.promptVars.changeAbsPath) : null;
   const ret = launchSession({
     mode: 'workon',
     parsed,
@@ -506,8 +506,8 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   });
   const status = prep.reviewPending ? ret.status : ret;
   if (prep.reviewPending) {
-    const unit = { id: parsed.id, kind: 'story', indexPath: prep.indexPath, changePath: prep.promptVars.changeAbsPath };
-    applyFixOutcome(config.backlogRoot, unit, ret, fixBefore);
+    const unit = { id: parsed.id, kind: 'story', indexPath: prep.indexPath };
+    applyFixOutcome(config.backlogRoot, unit, ret, changeBefore);
   }
   if (!status) info(implementNextSteps(parsed.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.

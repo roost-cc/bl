@@ -129,51 +129,54 @@ test('parseLatestSession counts open boxes by heading', () => {
 
 const session = (counts) => ({ date: 'd', prNumber: null, blocking: 0, must: 0, should: 0, nits: 0, ...counts });
 
-test('reviewOutcome counts the open items of a pending round, singular and plural, without zeros', () => {
-  assert.equal(reviewOutcome('pending', session({ unchecked: 1, must: 1 })), '1 open item (1 Must fix)');
+test('reviewOutcome counts the open items of a round in fixing, singular and plural, without zeros', () => {
+  assert.equal(reviewOutcome('fixing', session({ unchecked: 1, must: 1 })), '1 open item (1 Must fix)');
   assert.equal(
-    reviewOutcome('pending', session({ unchecked: 6, must: 2, should: 1, nits: 3 })),
+    reviewOutcome('fixing', session({ unchecked: 6, must: 2, should: 1, nits: 3 })),
     '6 open items (2 Must fix, 1 Should fix, 3 nits)',
   );
   assert.equal(
-    reviewOutcome('pending', session({ unchecked: 2, should: 1, nits: 1 })),
+    reviewOutcome('fixing', session({ unchecked: 2, should: 1, nits: 1 })),
     '2 open items (1 Should fix, 1 nit)',
   );
   assert.equal(
-    reviewOutcome('pending', session({ unchecked: 3, must: 1, nits: 1 })),
+    reviewOutcome('fixing', session({ unchecked: 3, must: 1, nits: 1 })),
     '3 open items (1 Must fix, 1 nit, 1 other)',
   );
 });
 
-test('reviewOutcome says when a pending round has no open item', () => {
-  const words = 'review_status: pending, but the latest Review Log session has no open item';
-  assert.equal(reviewOutcome('pending', null), words);
-  assert.equal(reviewOutcome('pending', session({ unchecked: 0 })), words);
+test('reviewOutcome says when a round in fixing has no open item', () => {
+  const words = 'fixing, but the latest Review Log session has no open item';
+  assert.equal(reviewOutcome('fixing', null), words);
+  assert.equal(reviewOutcome('fixing', session({ unchecked: 0 })), words);
 });
 
-test('reviewOutcome on an addressed round names the open nits left', () => {
-  assert.equal(reviewOutcome('addressed', null), 'nothing left to fix');
-  assert.equal(reviewOutcome('addressed', session({ unchecked: 0 })), 'nothing left to fix');
-  assert.equal(reviewOutcome('addressed', session({ unchecked: 1, nits: 1 })), 'nothing left to fix (1 open nit left)');
+test('reviewOutcome on a ready_for_merge round names the open nits left', () => {
+  assert.equal(reviewOutcome('ready_for_merge', null), 'nothing left to fix');
+  assert.equal(reviewOutcome('ready_for_merge', session({ unchecked: 0 })), 'nothing left to fix');
   assert.equal(
-    reviewOutcome('addressed', session({ unchecked: 2, nits: 2 })),
+    reviewOutcome('ready_for_merge', session({ unchecked: 1, nits: 1 })),
+    'nothing left to fix (1 open nit left)',
+  );
+  assert.equal(
+    reviewOutcome('ready_for_merge', session({ unchecked: 2, nits: 2 })),
     'nothing left to fix (2 open nits left)',
   );
 });
 
-test('reviewOutcome on an addressed round with an open Must fix or Should fix item says so, not "nothing left to fix"', () => {
+test('reviewOutcome on a ready_for_merge round with an open Must fix or Should fix item says so, not "nothing left to fix"', () => {
   assert.equal(
-    reviewOutcome('addressed', session({ unchecked: 1, blocking: 1, must: 1 })),
-    'review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item',
+    reviewOutcome('ready_for_merge', session({ unchecked: 1, blocking: 1, must: 1 })),
+    'ready_for_merge, but the latest Review Log session has 1 open Must fix/Should fix item',
   );
   assert.equal(
-    reviewOutcome('addressed', session({ unchecked: 3, blocking: 2, must: 1, should: 1, nits: 1 })),
-    'review_status: addressed, but the latest Review Log session has 2 open Must fix/Should fix items',
+    reviewOutcome('ready_for_merge', session({ unchecked: 3, blocking: 2, must: 1, should: 1, nits: 1 })),
+    'ready_for_merge, but the latest Review Log session has 2 open Must fix/Should fix items',
   );
 });
 
-test('reviewOutcome is null for any other review_status', () => {
-  for (const s of ['fixed', '', undefined, 'bogus']) assert.equal(reviewOutcome(s, null), null);
+test('reviewOutcome is null for any other review position', () => {
+  for (const s of ['in_review', 'escalated', '', null, undefined]) assert.equal(reviewOutcome(s, null), null);
 });
 
 test('parseLatestSession counts every checkbox marker and leaves nits out of blocking', () => {

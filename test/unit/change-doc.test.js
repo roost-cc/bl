@@ -17,10 +17,8 @@ import {
   parseChange,
   readChange,
   recordMerge,
-  reviewFieldsAt,
   serializeChange,
   setRepo,
-  setReviewFields,
   unitChange,
   unitIdOfDir,
   writeChange,
@@ -43,7 +41,7 @@ function unitDir(name = 'F42-hub') {
   return { root, dir };
 }
 
-test('a new change document: change_of, status open, round 0, one entry per repo, the four sections in order', () => {
+test('a new change document: change_of, status open, no review fields (F-69 D5), one entry per repo, the four sections in order', () => {
   const { root, dir } = unitDir();
   const res = ensureChange(root, dir, {
     changeOf: 'F-42',
@@ -63,8 +61,6 @@ test('a new change document: change_of, status open, round 0, one entry per repo
       '---',
       'change_of: F-42',
       'status: open',
-      'review_round: 0',
-      'review_status:',
       'repos:',
       '  - repo: bl',
       '    branch: f42-hub',
@@ -91,7 +87,7 @@ test('a new change document: change_of, status open, round 0, one entry per repo
     ].join('\n'),
   );
   const doc = readChange(res.path);
-  assert.deepEqual(doc.fm, { change_of: 'F-42', status: 'open', review_round: '0', review_status: '' });
+  assert.deepEqual(doc.fm, { change_of: 'F-42', status: 'open' });
   assert.deepEqual(
     doc.repos.map((r) => r.repo),
     ['bl', 'tools'],
@@ -162,7 +158,7 @@ test('a unit whose change is merged gets change-2.md, and bl reads the highest-n
   assert.equal(changeName('F-42', 2), 'F-42.2');
 });
 
-test("unitChange reads the primary repo's branch and PR, the review state and the body; empty without a document", () => {
+test("unitChange reads the primary repo's branch and PR and the body; empty without a document", () => {
   const { root, dir } = unitDir();
   assert.deepEqual(unitChange(dir, 'bl'), {
     changePath: null,
@@ -171,8 +167,6 @@ test("unitChange reads the primary repo's branch and PR, the review state and th
     branch: '',
     pr: '',
     prUrl: '',
-    reviewStatus: '',
-    reviewRoundRaw: '',
     changeBody: '',
   });
   const { path } = ensureChange(root, dir, {
@@ -184,15 +178,12 @@ test("unitChange reads the primary repo's branch and PR, the review state and th
   });
   const doc = readChange(path);
   setRepo(doc, 'bl', { pr: 12, url: 'https://x/pull/12' });
-  doc.fm.review_status = 'pending';
-  doc.fm.review_round = '1';
   writeChange(root, path, doc);
   const u = unitChange(dir, 'bl');
   assert.equal(u.branch, 'f42-hub');
   assert.equal(u.pr, '12');
   assert.equal(u.prUrl, 'https://x/pull/12');
-  assert.equal(u.reviewStatus, 'pending');
-  assert.equal(u.reviewRoundRaw, '1');
+  assert.equal(Object.hasOwn(u, 'reviewStatus'), false, "the review state is the unit's log's (F-69 D5)");
   assert.match(u.changeBody, /## Review Log/);
   assert.equal(unitChange(dir, 'nope').branch, 'f42-hub', 'an unknown primary falls back to the first entry');
 });
@@ -236,7 +227,7 @@ test('a CRLF change document reads like an LF one and is written back as CRLF', 
   assert.equal(doc.eol, '\r\n');
   assert.deepEqual(doc.fm, parseChange(lf).fm);
   assert.deepEqual(doc.repos, [{ repo: 'bl', branch: 'f42-hub', pr: '9', url: '', merged: '' }]);
-  assert.equal(unitChange(dir, 'bl').reviewStatus, 'fixed');
+  assert.equal(unitChange(dir, 'bl').change.fm.review_status, 'fixed', 'an old document keeps its fields');
   doc.body = appendSection(doc.body, 'Gate', '- g2');
   writeChange(root, path, doc);
   const raw = readFileSync(path, 'utf8');
@@ -301,7 +292,7 @@ test('unitIdOfDir names the unit a directory holds', () => {
 test('the change template, and the unit templates no longer carry run state', () => {
   const change = readFileSync(join(TEMPLATES, 'change.md'), 'utf8');
   const doc = parseChange(change);
-  assert.deepEqual(Object.keys(doc.fm), ['change_of', 'status', 'review_round', 'review_status']);
+  assert.deepEqual(Object.keys(doc.fm), ['change_of', 'status']);
   assert.deepEqual(
     [...doc.body.matchAll(/^## (.+)$/gm)].map((m) => m[1]),
     ['Description', 'Gate', 'Review Log', 'Merge'],
@@ -660,8 +651,6 @@ test("a change document's repos: is its frontmatter's sequence of mappings, writ
     '---',
     'change_of: F-42',
     'status: open',
-    'review_round: 0',
-    'review_status:',
     'repos:',
     '  # the lead repo first',
     '  - repo: bl',
@@ -693,7 +682,7 @@ test("a change document's repos: is its frontmatter's sequence of mappings, writ
   const out = serializeChange(doc);
   assert.equal(
     out,
-    '---\nchange_of: F-42\nstatus: open\nreview_round: 0\nreview_status:\nrepos:\n  - repo: bl\n    branch: "f42: hub"\n    pr: 9\n    url:\n    merged:\n  - repo: tools\n    branch:\n    pr:\n    url:\n    merged: 3300025\n---\nbody\n',
+    '---\nchange_of: F-42\nstatus: open\nrepos:\n  - repo: bl\n    branch: "f42: hub"\n    pr: 9\n    url:\n    merged:\n  - repo: tools\n    branch:\n    pr:\n    url:\n    merged: 3300025\n---\nbody\n',
   );
   assert.deepEqual(parseChange(out).repos[1], { repo: 'tools', branch: '', pr: '', url: '', merged: '3300025' });
   assert.deepEqual(serializeChange({ fm: { change_of: 'F-1' }, repos: [] }), '---\nchange_of: F-1\nrepos: []\n---\n');
@@ -709,47 +698,28 @@ test('readChange names the file of a change document that is not YAML', () => {
   );
 });
 
-test('setReviewFields writes only a field that differs and returns what the document held before', () => {
-  const { root, dir } = unitDir();
-  const path = changePath(dir);
-  writeChange(root, path, newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] }));
-  const before = readFileSync(path, 'utf8');
-  assert.deepEqual(setReviewFields(root, path, { review_round: '0' }), { review_round: '0', review_status: '' });
-  assert.equal(readFileSync(path, 'utf8'), before, 'no change, no write');
-  assert.deepEqual(setReviewFields(root, path, { review_round: '1', review_status: 'pending' }), {
-    review_round: '0',
-    review_status: '',
-  });
-  const { fm, repos } = readChange(path);
-  assert.equal(fm.review_round, '1');
-  assert.equal(fm.review_status, 'pending');
-  assert.equal(repos[0].branch, 'f42-hub', 'the rest of the document is kept');
-  assert.throws(
-    () => setReviewFields(root, join(dir, 'change-9.md'), { review_status: 'fixed' }),
-    /no change document/,
-  );
-});
-
 /** A feature unit in `dir`, in the v1 shape (`status: in_progress`), in a backlog with a flow.json. */
-function fixUnit(root, dir, changePath) {
+function fixUnit(root, dir) {
   copyFileSync(FLOW_TEMPLATE, join(root, 'flow.json'));
   const indexPath = join(dir, 'index.md');
   writeFileSync(indexPath, '---\nfeature_id: F-42\nstatus: in_progress\nadded: 2026-11-01\n---\n\n# F-42\n');
-  return { id: 'F-42', kind: 'feature', indexPath, changePath };
+  return { id: 'F-42', kind: 'feature', indexPath };
 }
 
-test('applyFixOutcome: fixed writes and commits review_status fixed; anything else leaves the status', () => {
+test('applyFixOutcome: fixed records in_review by fix and commits the unit file; anything else leaves it in fixing', () => {
   const { root, dir } = unitDir();
   const path = changePath(dir);
+  // The old shape (F-69 D4): the change document's pending review places the unit in fixing.
   const doc = newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
-  doc.fm.review_status = 'pending';
+  Object.assign(doc.fm, { review_round: '1', review_status: 'pending' });
   writeChange(root, path, doc);
-  const unit = fixUnit(root, dir, path);
+  const unit = fixUnit(root, dir);
   const git = (...args) => gitIn(root, ...args);
   git('init', '-q', '-b', 'main');
   git('add', '.');
   git('commit', '-q', '-m', 'base');
-  const before = reviewFieldsAt(path);
+  const change = readChange(path);
+  const changeText = readFileSync(path, 'utf8');
   const outcome = (structured, structuredError = null) => ({ structured, structuredError });
   const cases = [
     { name: 'no outcome', outcome: outcome(null, 'no outcome file at x'), fixed: false },
@@ -757,52 +727,14 @@ test('applyFixOutcome: fixed writes and commits review_status fixed; anything el
     { name: 'fixed', outcome: outcome({ summary: 's', fixed: true, open: 0 }), fixed: true },
   ];
   for (const c of cases) {
-    assert.equal(applyFixOutcome(root, unit, c.outcome, before), c.fixed, c.name);
-    assert.equal(readChange(path).fm.review_status, c.fixed ? 'fixed' : 'pending', c.name);
-    // The unit's log: back in review by `fix` only when fixed (F-69 D3).
+    assert.equal(applyFixOutcome(root, unit, c.outcome, change), c.fixed, c.name);
+    // The unit's log: back in review by `fix` only when fixed (F-69 D3, D5).
     const fm = parseFrontmatter(readFileSync(unit.indexPath, 'utf8')).fm;
-    assert.equal(statusOf('feature', fm, { fm: before }), c.fixed ? 'in_review' : 'fixing', c.name);
+    assert.equal(statusOf('feature', fm, change), c.fixed ? 'in_review' : 'fixing', c.name);
+    assert.equal(readFileSync(path, 'utf8'), changeText, `${c.name}: bl writes nothing to the change document`);
   }
   const last = parseFrontmatter(readFileSync(unit.indexPath, 'utf8')).fm.transitions.at(-1);
   assert.deepEqual([last.to, last.by, last.via, last.outcome], ['in_review', 'fix', 'fix', 's']);
   assert.equal(git('log', '-1', '--format=%s'), 'chore: F-42 review fixed');
-  assert.equal(git('status', '--porcelain'), '', 'the change document and the unit file are committed');
-  // A change document the session deleted is a warning, as the other branches are.
-  const gone = { id: 'F-42', changePath: join(dir, 'missing', 'change.md') };
-  assert.equal(applyFixOutcome(root, gone, outcome({ summary: 's', fixed: true, open: 0 })), false);
-});
-
-test('applyFixOutcome: a session that wrote the review fields gets them put back unless the outcome is fixed', () => {
-  const NOT_FIXED = { summary: 's', fixed: false, open: 2 };
-  const cases = [
-    { name: 'no outcome', outcome: { structured: null, structuredError: 'no outcome file at x' }, want: '1/pending' },
-    { name: 'not fixed', outcome: { structured: NOT_FIXED, structuredError: null }, want: '1/pending' },
-    {
-      name: 'fixed',
-      outcome: { structured: { summary: 's', fixed: true, open: 0 }, structuredError: null },
-      want: '1/fixed',
-    },
-  ];
-  for (const c of cases) {
-    const { root, dir } = unitDir();
-    const path = changePath(dir);
-    const doc = newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
-    Object.assign(doc.fm, { review_round: '1', review_status: 'pending' });
-    writeChange(root, path, doc);
-    const unit = fixUnit(root, dir, path);
-    const git = (...args) => gitIn(root, ...args);
-    git('init', '-q', '-b', 'main');
-    git('add', '.');
-    git('commit', '-q', '-m', 'base');
-    const before = reviewFieldsAt(path);
-    assert.deepEqual(before, { review_round: '1', review_status: 'pending' });
-    // The session writes both fields, and commits them.
-    setReviewFields(root, path, { review_round: '5', review_status: 'addressed' });
-    git('commit', '-q', '-am', 'session');
-    applyFixOutcome(root, unit, c.outcome, before);
-    const { fm } = readChange(path);
-    assert.equal(`${fm.review_round}/${fm.review_status}`, c.want, c.name);
-    assert.equal(git('status', '--porcelain'), '', `${c.name}: the write is committed`);
-  }
-  assert.deepEqual(reviewFieldsAt('/no/such/change.md'), {});
+  assert.equal(git('status', '--porcelain'), '', 'the unit file is committed');
 });

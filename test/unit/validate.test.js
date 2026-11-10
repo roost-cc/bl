@@ -762,14 +762,29 @@ test('validateFrontmatter accepts pending, fixed, and addressed', async () => {
   }
 });
 
-test('validateReviewLog: pending without a Review Log section fires', async () => {
+/** The unit logs the review findings read (F-69 D5): each name is the status it ends at. */
+const REVIEW_LOGS = {
+  in_progress: ['draft', 'in_progress'],
+  fixing: ['draft', 'in_progress', 'in_review', 'fixing'],
+  fixed: ['draft', 'in_progress', 'in_review', 'fixing', 'in_review'],
+  ready_for_merge: ['draft', 'in_progress', 'in_review', 'ready_for_merge'],
+  done: ['draft', 'in_progress', 'in_review', 'ready_for_merge', 'done'],
+};
+
+/** validateReviewLog on a feature whose log ends as `state` names, against a change body. */
+async function reviewLogFindings(state, body) {
   const { validateReviewLog } = await import('../../src/validate.js');
-  const findings = validateReviewLog({ review_status: 'pending' }, '# Title\n\n## Summary\nfoo\n', 'path/1');
+  const flow = loadFlow(dirname(FLOW_TEMPLATE));
+  const fm = { feature_id: 'F-1', transitions: REVIEW_LOGS[state].map((to) => ({ to, by: 'operator' })) };
+  return validateReviewLog({ kind: 'feature', fm, flow }, { fm: {}, body }, 'path/1');
+}
+
+test('validateReviewLog: fixing without a Review Log section fires', async () => {
+  const findings = await reviewLogFindings('fixing', '# Title\n\n## Summary\nfoo\n');
   assert.ok(findings.some((f) => f.code === 'review-log-missing'));
 });
 
-test('validateReviewLog: pending with a session passes', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: fixing with a session passes', async () => {
   const body = `# Title
 
 ## Review Log
@@ -780,12 +795,11 @@ test('validateReviewLog: pending with a session passes', async () => {
 
 - [ ] open
 `;
-  const findings = validateReviewLog({ review_status: 'pending' }, body, 'path/1');
+  const findings = await reviewLogFindings('fixing', body);
   assert.equal(findings.length, 0);
 });
 
-test('validateReviewLog: addressed with unchecked items fires', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: ready_for_merge with unchecked items fires', async () => {
   const body = `# Title
 
 ## Review Log
@@ -796,12 +810,11 @@ test('validateReviewLog: addressed with unchecked items fires', async () => {
 
 - [ ] still open
 `;
-  const findings = validateReviewLog({ review_status: 'addressed' }, body, 'path/1');
+  const findings = await reviewLogFindings('ready_for_merge', body);
   assert.ok(findings.some((f) => f.code === 'review-log-unaddressed'));
 });
 
-test('validateReviewLog: addressed with only an open nit passes, as bl merge does', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: ready_for_merge with only an open nit passes, as bl merge does', async () => {
   const body = `# Title
 
 ## Review Log
@@ -820,12 +833,11 @@ None.
 
 - [ ] [safe] optional tidy-up
 `;
-  const findings = validateReviewLog({ review_status: 'addressed' }, body, 'path/1');
+  const findings = await reviewLogFindings('ready_for_merge', body);
   assert.equal(findings.length, 0);
 });
 
-test('validateReviewLog: addressed with all items checked passes', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: ready_for_merge with all items checked passes', async () => {
   const body = `# Title
 
 ## Review Log
@@ -836,18 +848,16 @@ test('validateReviewLog: addressed with all items checked passes', async () => {
 
 - [x] done
 `;
-  const findings = validateReviewLog({ review_status: 'addressed' }, body, 'path/1');
+  const findings = await reviewLogFindings('ready_for_merge', body);
   assert.equal(findings.length, 0);
 });
 
-test('validateReviewLog: fixed without a Review Log section fires', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
-  const findings = validateReviewLog({ review_status: 'fixed' }, '# Title\n\n## Summary\nfoo\n', 'path/1');
+test('validateReviewLog: in_review after a fix without a Review Log section fires', async () => {
+  const findings = await reviewLogFindings('fixed', '# Title\n\n## Summary\nfoo\n');
   assert.ok(findings.some((f) => f.code === 'review-log-missing'));
 });
 
-test('validateReviewLog: fixed with unchecked items fires', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: in_review after a fix with unchecked items fires', async () => {
   const body = `# Title
 
 ## Review Log
@@ -858,12 +868,11 @@ test('validateReviewLog: fixed with unchecked items fires', async () => {
 
 - [ ] still open
 `;
-  const findings = validateReviewLog({ review_status: 'fixed' }, body, 'path/1');
+  const findings = await reviewLogFindings('fixed', body);
   assert.ok(findings.some((f) => f.code === 'review-log-unaddressed'));
 });
 
-test('validateReviewLog: fixed with all items checked passes', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: in_review after a fix with all items checked passes', async () => {
   const body = `# Title
 
 ## Review Log
@@ -874,14 +883,30 @@ test('validateReviewLog: fixed with all items checked passes', async () => {
 
 - [x] done → fixed in abc1234
 `;
-  const findings = validateReviewLog({ review_status: 'fixed' }, body, 'path/1');
+  const findings = await reviewLogFindings('fixed', body);
   assert.equal(findings.length, 0);
 });
 
-test('validateReviewLog: no review_status returns no findings', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
-  const findings = validateReviewLog({}, '# Title\n', 'path/1');
+test('validateReviewLog: a unit with no review returns no findings', async () => {
+  const findings = await reviewLogFindings('in_progress', '# Title\n');
   assert.equal(findings.length, 0);
+});
+
+test('validateReviewLog: a closed unit is not checked, whatever its Review Log holds', async () => {
+  const body = '## Review Log\n\n### Session 2026-05-11 (PR #1)\n\n**Must fix**\n\n- [ ] still open\n';
+  assert.deepEqual(await reviewLogFindings('done', body), []);
+});
+
+test('validateReviewLog: a unit with no log reads its change document, the old shape (F-69 D4)', async () => {
+  const { validateReviewLog } = await import('../../src/validate.js');
+  const flow = loadFlow(dirname(FLOW_TEMPLATE));
+  const fm = { feature_id: 'F-1', status: 'running' };
+  const change = { fm: { review_round: '1', review_status: 'pending' }, body: '# F-1\n' };
+  const findings = validateReviewLog({ kind: 'feature', fm, flow }, change, 'path/1');
+  assert.deepEqual(
+    findings.map((f) => [f.code, f.message]),
+    [['review-log-missing', 'the unit is fixing but no ## Review Log session is present']],
+  );
 });
 
 test('headless token keys written by the feature loop are known frontmatter keys', async () => {

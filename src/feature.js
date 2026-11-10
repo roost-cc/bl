@@ -122,8 +122,10 @@ function featureRecord(unit, config) {
   return {
     id: fm.feature_id,
     title: fm.title ?? '',
-    // A v1 word reads as its current one (`makeUnit`, F-69 D4).
-    status: unit.status,
+    // The log's last `to` and its review rounds (F-69 D2, D5); with no log,
+    // `status:` (a v1 word mapped) placed by the change document (D4).
+    status: statusOf('feature', fm, change.change) || unit.status,
+    round: unit.round,
     // The value axis (F-51 D1): the theme slug and the epic id as written.
     theme: String(fm.theme ?? '').trim(),
     epic: String(fm.epic ?? '').trim(),
@@ -135,8 +137,6 @@ function featureRecord(unit, config) {
     branch: change.branch,
     pr: change.pr,
     prUrl: change.prUrl,
-    reviewStatus: change.reviewStatus,
-    reviewRound: toInt(change.reviewRoundRaw),
     reviewRoundsMax: toInt(fm.review_rounds_max, DEFAULT_REVIEW_ROUNDS_MAX),
     changePath: change.changePath,
     change: change.change,

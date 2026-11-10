@@ -564,7 +564,7 @@ test('bl validate fires review-log-unaddressed on addressed with open items', as
   td.cleanup();
 });
 
-test('bl validate fires bad-review-status and bad-change-status on unknown values', async () => {
+test('bl validate warns on the old review fields, whatever their value, and errors on an unknown change status (F-69 D5)', async () => {
   const td = cleanBacklog();
   writeStoryWithChange(td, 'review_status: garbage\n');
   writeFileSync(
@@ -573,7 +573,11 @@ test('bl validate fires bad-review-status and bad-change-status on unknown value
   );
   const { stdout, status } = await runBl(['validate'], { cwd: td.dir });
   assert.equal(status, 1);
-  assert.match(stdout, /bad-review-status: "review_status:" "garbage" not in known set/);
+  assert.match(
+    stdout,
+    /legacy-review-fields: "review_round:" "1", "review_status:" "garbage": the unit's transition log holds the review state; node bl\/scripts\/migrate-transitions\.js removes them/,
+  );
+  assert.doesNotMatch(stdout, /bad-review-status/);
   assert.match(stdout, /bad-change-status: "status:" "shipped" not in known set/);
   td.cleanup();
 });
@@ -613,6 +617,42 @@ test('bl validate passes when pending matches a real session', async () => {
   assert.equal(status, 0, stdout);
   assert.doesNotMatch(stdout, /review-log-|change-/);
   td.cleanup();
+});
+
+test('bl validate checks the log against the latest Review Log session: fixing with none, in_review after a fix with open items (F-69 D5)', async () => {
+  const log = (...tos) =>
+    tos
+      .map((to, i) => `  - at: 2026-11-0${i + 1}T00:00:00Z\n    to: ${to.split(':')[0]}\n    by: ${to.split(':')[1]}\n`)
+      .join('');
+  const cases = [
+    {
+      log: log('draft:new', 'in_progress:implement', 'in_review:run', 'fixing:review'),
+      body: '',
+      code: 'review-log-missing',
+    },
+    {
+      log: log('draft:new', 'in_progress:implement', 'in_review:run', 'fixing:review', 'in_review:fix'),
+      body: '\n## Review Log\n\n### Session 2026-11-04 (PR #1)\n\n**Must fix**\n\n- [ ] still open\n',
+      code: 'review-log-unaddressed',
+    },
+  ];
+  for (const c of cases) {
+    const td = cleanBacklog();
+    writeStory(td, 'S100-x', STORY_FM.replace('status: in_progress\n', `transitions:\n${c.log}added: 2026-11-01\n`));
+    writeChange(
+      td,
+      'S100-x',
+      `---\nchange_of: S-100\nstatus: open\nrepos:\n  - repo: demo\n    branch: s100-x\n---\n\n# S-100\n${c.body}`,
+    );
+    const { stdout } = await runBl(['validate', '--json'], { cwd: td.dir });
+    const hits = JSON.parse(stdout).findings.filter((f) => /^review-log-|legacy-review/.test(f.code));
+    assert.deepEqual(
+      hits.map((f) => [f.code, f.location]),
+      [[c.code, CHANGE_REL]],
+      stdout,
+    );
+    td.cleanup();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -846,7 +886,7 @@ test("bl validate reports frontmatter-yaml at the parser's line and frontmatter-
     s2,
     readFileSync(s2, 'utf8').replace('status: refined\n', 'status: refined\ndepends_on: S-1\nrequired_for:\n  a: b\n'),
   );
-  // F-1's change document is not YAML (a bad indent at line 8): the feature is not read either.
+  // F-1's change document is not YAML (a bad indent at line 6): the feature is not read either.
   const change = join(td.dir, 'features', 'F1-feat', 'change.md');
   writeFileSync(change, readFileSync(change, 'utf8').replace('    branch: f1-feat', '   branch: f1-feat'));
 
@@ -856,7 +896,7 @@ test("bl validate reports frontmatter-yaml at the parser's line and frontmatter-
   const of = (code) => findings.filter((f) => f.code === code).map((f) => [f.location, f.line]);
   assert.deepEqual(of('frontmatter-yaml'), [
     ['stories/S3-colon/index.md', 4],
-    ['features/F1-feat/change.md', 8],
+    ['features/F1-feat/change.md', 6],
   ]);
   assert.match(
     findings.find((f) => f.location === 'stories/S3-colon/index.md').message,

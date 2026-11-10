@@ -23,7 +23,6 @@ import { accumulateTokensOnFile } from '../../src/tokens.js';
 import {
   PENDING_END,
   setup,
-  CH,
   editFile,
   checkAll,
   fakeRunner,
@@ -34,7 +33,7 @@ import {
   F41_LIMIT,
   spendLimit,
 } from '../helpers/feature-run-fixture.js';
-import { statusOf as logStatusOf } from '../../src/transition.js';
+import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
 // An agent usage limit: wait it out and rerun the step (S-835)
@@ -105,7 +104,14 @@ test('a usage limit on a review pass under bl review reruns the pass without spe
       behaviour: { limit: (o) => (o.promptName === 'review-correctness' && hits++ === 0 ? spendLimit(runner) : null) },
     });
     const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
-    assert.deepEqual(result, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
+    assert.deepEqual(result, {
+      status: 'fixing',
+      round: 1,
+      verdict: true,
+      escalated: false,
+      error: null,
+      end: PENDING_END,
+    });
     assert.deepEqual(
       runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt),
       ['review-correctness', 'review-correctness', 'review-failure-paths', 'review-verify'],
@@ -116,7 +122,11 @@ test('a usage limit on a review pass under bl review reruns the pass without spe
     assert.equal(waits.length, 1);
     assert.equal(waits[0].session, 'review:correctness');
     assert.ok(!saved.history.some((h) => h.step === 'review:abort'), 'the refused pass did not abort the round');
-    assert.equal(parseFrontmatter(readFileSync(CH(feature), 'utf8')).fm.review_round, '1', 'one round spent');
+    assert.equal(
+      reviewOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm).reviewed,
+      1,
+      'one round spent',
+    );
     assert.ok(runner.calls.filter((c) => c.type === 'sleep').length > 0);
   } finally {
     cleanup();
@@ -149,7 +159,14 @@ test('a usage limit on the verifier under bl review reruns the verifier without 
     const start = runner.clock();
     const until = start + 30 * 60_000 + 60_000;
     const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
-    assert.deepEqual(result, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
+    assert.deepEqual(result, {
+      status: 'fixing',
+      round: 1,
+      verdict: true,
+      escalated: false,
+      error: null,
+      end: PENDING_END,
+    });
     assert.deepEqual(
       runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt),
       ['review-correctness', 'review-failure-paths', 'review-verify', 'review-verify'],
@@ -164,7 +181,11 @@ test('a usage limit on the verifier under bl review reruns the verifier without 
     assert.equal(waits[0].until, new Date(until).toISOString(), 'resetsAt + 60 s');
     assert.equal(waits[0].note, `review:verify: other limit — ${S865_LIMIT} — waiting until ${localTime(until)}`);
     assert.ok(!saved.history.some((h) => h.step === 'review:abort'), 'the refused verifier did not abort the round');
-    assert.equal(parseFrontmatter(readFileSync(CH(feature), 'utf8')).fm.review_round, '1', 'one round spent');
+    assert.equal(
+      reviewOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm).reviewed,
+      1,
+      'one round spent',
+    );
     assert.ok(runner.calls.filter((c) => c.type === 'sleep').length > 0);
     assert.equal(runner.clock(), until);
   } finally {
@@ -329,7 +350,14 @@ test('a capacity refusal on a review pass runs the pass on the next configuratio
     const logs = [];
     runner.log = (m) => logs.push(m);
     const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
-    assert.deepEqual(result, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
+    assert.deepEqual(result, {
+      status: 'fixing',
+      round: 1,
+      verdict: true,
+      escalated: false,
+      error: null,
+      end: PENDING_END,
+    });
     assert.deepEqual(
       configsOf(runner.calls, () => true),
       ['codex gpt-6-sol', 'codex gpt-6-astra', 'codex gpt-6-astra', 'codex gpt-6-astra'],
@@ -344,7 +372,11 @@ test('a capacity refusal on a review pass runs the pass on the next configuratio
       0,
       'no wait: another configuration was available',
     );
-    assert.equal(parseFrontmatter(readFileSync(CH(feature), 'utf8')).fm.review_round, '1', 'one round spent');
+    assert.equal(
+      reviewOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm).reviewed,
+      1,
+      'one round spent',
+    );
     const saved = loadRunState(config, 'F-1');
     assert.ok(!saved.history.some((h) => h.step === 'review:abort'), 'the refused pass did not abort the round');
     // The history records both configurations: the refusal and the pass that ran.

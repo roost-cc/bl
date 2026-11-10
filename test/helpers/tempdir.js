@@ -180,8 +180,10 @@ ${entries.map((e) => `\n## ${e.title}\n\n_Added ${e.added}._ Prose for ${e.title
 export const CHANGE_TEMPLATE = (id, c) => `${serializeFrontmatter({
   change_of: id,
   status: c.change_status ?? 'open',
-  review_round: c.review_round ?? 0,
-  review_status: c.review_status ?? '',
+  // The old shape (F-69 D4), written only when a fixture gives it: the review
+  // state is the unit's transition log's (D5).
+  review_round: c.review_round ?? undefined,
+  review_status: c.review_status ?? undefined,
   repos: c.repo ? [{ repo: c.repo, branch: c.branch ?? '', pr: c.pr ?? '', url: '', merged: '' }] : [],
 })}
 # ${id}

@@ -7,10 +7,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { serializeChange } from '../../src/change-doc.js';
-import { loadConfig } from '../../src/config.js';
+import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { collectInbox, doneRefusal, inboxCountLine } from '../../src/inbox.js';
 import { git } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -45,7 +45,7 @@ function writeChangeDoc(unitDir, id, repos, fm = {}) {
   writeFileSync(
     join(unitDir, 'change.md'),
     serializeChange({
-      fm: { change_of: id, status: 'open', review_round: 0, review_status: '', ...fm },
+      fm: { change_of: id, status: 'open', ...fm },
       repos: repos.map((r) => ({ repo: r.repo, branch: r.branch, pr: '', url: '', merged: '' })),
       body: `\n# ${id}\n\n## Description\n`,
     }),
@@ -117,6 +117,7 @@ test('collectInbox: change lists a standalone story and a feature with unmerged 
         id: 'F-70:change',
         unit: 'F-70',
         line: 'tools, web: Sweep · tools 2 commit(s) on f70-sweep, web 1 commit(s) on f70-sweep, not merged',
+        status: 'in_progress',
         next: 'bl run F-70',
         path: 'features/F70/change.md',
       },
@@ -125,6 +126,7 @@ test('collectInbox: change lists a standalone story and a feature with unmerged 
         id: 'S-60:change',
         unit: 'S-60',
         line: 'tools: Side fix · 1 commit(s) on s60-side, not merged',
+        status: 'in_progress',
         next: 'bl run S-60',
         path: 'stories/S60/change.md',
       },
@@ -134,12 +136,42 @@ test('collectInbox: change lists a standalone story and a feature with unmerged 
   }
 });
 
-test('collectInbox: a change whose review is addressed is answered by bl merge', () => {
+test('collectInbox: a change whose unit is ready_for_merge is the merge gate, answered by bl merge (F-69 D5)', () => {
   const t = setupChanges();
   try {
-    writeChangeDoc(t.story('S-60'), 'S-60', [{ repo: 'tools', branch: 's60-side' }], { review_status: 'addressed' });
+    // The unit's log, not its change document, says where the review stands.
+    const index = join(t.story('S-60'), 'index.md');
+    const { fm, body } = parseFrontmatter(readFileSync(index, 'utf8'));
+    delete fm.status;
+    fm.transitions = ['draft:new', 'in_progress:implement', 'in_review:run', 'ready_for_merge:review'].map((s) => {
+      const [to, by] = s.split(':');
+      return { at: '2026-11-01T00:00:00Z', to, by };
+    });
+    writeFileSync(index, serializeFrontmatter(fm) + body);
+    const items = changes(collectInbox(t.config()).items);
+    assert.deepEqual(
+      items.map((e) => [e.id, e.status, e.next]),
+      [
+        ['F-70:change', 'in_progress', 'bl run F-70'],
+        ['S-60:change', 'ready_for_merge', 'bl merge S-60'],
+      ],
+      'grouped by status in lifecycle order',
+    );
+    const human = runBl(['inbox'], { cwd: t.dir });
+    assert.match(human.stdout, /^change · in_progress \(1\)\n {2}F-70:change/m);
+    assert.match(human.stdout, /^change · ready_for_merge, the merge gate \(1\)\n {2}S-60:change/m);
+    // The old shape reads the same: a story with no log, placed by its change document (D4).
+    writeFileSync(
+      index,
+      readFileSync(index, 'utf8').replace(/transitions:[\s\S]*?(?=\n[a-z_]+:|\n---)/, 'status: in_progress'),
+    );
+    writeChangeDoc(t.story('S-60'), 'S-60', [{ repo: 'tools', branch: 's60-side' }], {
+      review_round: 1,
+      review_status: 'addressed',
+    });
+    assert.equal(parseFrontmatter(readFileSync(index, 'utf8')).fm.transitions, undefined, 'no log');
     const item = changes(collectInbox(t.config()).items).find((e) => e.id === 'S-60:change');
-    assert.equal(item.next, 'bl merge S-60');
+    assert.deepEqual([item.status, item.next], ['ready_for_merge', 'bl merge S-60']);
   } finally {
     t.cleanup();
   }
@@ -174,7 +206,7 @@ test('change items: bl inbox done refuses with the verb, --json and the human li
       ['F-70:change', 'S-60:change'],
     );
     const human = runBl(['inbox'], { cwd: t.dir });
-    assert.match(human.stdout, /^change \(2\)$/m);
+    assert.match(human.stdout, /^change · in_progress \(2\)$/m);
     assert.match(human.stdout, /next: bl run S-60$/m);
     assert.equal(inboxCountLine(t.config()), 'inbox: 3 item(s) need you (bl inbox)');
   } finally {

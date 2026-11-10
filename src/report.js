@@ -29,6 +29,7 @@ import { formatTable } from './render.js';
 import { addDays, isoWeek, pointsByStatus, scopeStories, weeklyDays } from './history.js';
 import { statusWords } from './flow.js';
 import { epicStatus } from './backlog-graph.js';
+import { roundOf, storedLog } from './transition.js';
 
 /** Bumped whenever `data.json`'s shape changes. */
 export const REPORT_VERSION = 3;
@@ -259,10 +260,12 @@ export function ages(history, flow, { seen = firstSeen(history, flow) } = {}) {
 }
 
 /**
- * The review round of a unit's highest-numbered `change*.md`, or null when it
- * has none (or it records none).
+ * A unit's review round: its transition log's (`roundOf`, F-69 D5) when it
+ * has one; else the `review_round` of its highest-numbered `change*.md`, or
+ * null when it has none (or it records none).
  */
-export function reviewRoundOf(unitDir) {
+export function reviewRoundOf(unitDir, kind, fm) {
+  if (storedLog(fm)) return roundOf(kind, fm);
   const change = listChanges(unitDir).at(-1);
   const raw = change ? readChange(change.path)?.fm.review_round : undefined;
   const n = parseInt(String(raw ?? ''), 10);
@@ -346,7 +349,7 @@ export function units(tree) {
   const record = (base, fm, dir) => ({
     ...base,
     done: base.status === 'done',
-    reviewRound: reviewRoundOf(dir),
+    reviewRound: reviewRoundOf(dir, base.kind, fm),
     tokens: tokenFields(fm),
     headless: tokenFields(fm, 'tokens_headless_'),
     updated: isDate(fm.tokens_updated) ? String(fm.tokens_updated) : '',
@@ -707,7 +710,7 @@ export function buildReport(history, config, flow, tree = readTree(config)) {
         status: featureStatus(f),
         storiesDone: inScope.filter((s) => s.status === 'done').length,
         storiesTotal: inScope.length,
-        reviewRound: reviewRoundOf(f.featureDir),
+        reviewRound: reviewRoundOf(f.featureDir, 'feature', f.fm),
         ...progress(own),
       };
     });
@@ -993,7 +996,7 @@ export function renderMarkdown(data, markdownById, flow) {
           e.byType.map((r) => [r.type, r.count, tok(r.median), tok(r.p90)]),
         ),
     '### Review rounds',
-    `The highest-numbered change document's \`review_round\`; a unit with none counts as 0.`,
+    `The unit's review rounds: its transition log's entries into \`in_review\`, else its highest-numbered change document's \`review_round\`; a unit with none counts as 0.`,
     formatTable(
       ['Review rounds', 'Units', 'Median output tokens per point'],
       [

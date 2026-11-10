@@ -24,7 +24,7 @@ import { appendSection, parseChange, serializeChange } from '../../src/change-do
 import { cmdReview, cmdReviewStory } from '../../src/feature-cmd.js';
 import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 import { reviewOutcome } from '../helpers/outcomes.js';
-import { transition } from '../../src/transition.js';
+import { reviewOf, transition } from '../../src/transition.js';
 
 function writeJsonShim(dir) {
   const path = join(dir, 'shim.mjs');
@@ -288,7 +288,7 @@ function queueFile(lines) {
   return p;
 }
 
-test('bl review S-n: two dimension passes and the verifier on the review agent, one session, review_round up by one', async () => {
+test('bl review S-n: two dimension passes and the verifier on the review agent, one session, one verdict in the log', async () => {
   const { backlog, worktrees, branch, storyPath } = buildBacklog({
     repoNames: ['repoA'],
     plugins: STD_PLUGIN,
@@ -311,8 +311,10 @@ test('bl review S-n: two dimension passes and the verifier on the review agent, 
     assert.equal(s.vars.prNumber, '100');
   }
   const { fm, body } = parseChange(readFileSync(changeOf(storyPath), 'utf8'));
-  assert.equal(fm.review_round, '1');
-  assert.equal(fm.review_status, 'pending');
+  // The round and its verdict are the story's log's (F-69 D5); the change document has neither.
+  const { reviewed, position } = reviewOf('story', parseFrontmatter(readFileSync(storyPath, 'utf8')).fm);
+  assert.deepEqual([reviewed, position], [1, 'fixing']);
+  assert.deepEqual([fm.review_round, fm.review_status], [undefined, undefined]);
   assert.deepEqual(
     parseChange(readFileSync(changeOf(storyPath), 'utf8')).repos,
     [{ repo: 'repoA', branch, pr: '100', url: 'https://x/pr/100', merged: '' }],
@@ -331,9 +333,6 @@ test('bl review S-n: a second round re-reviews and advances the round again', as
   const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
   await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner: reviewRunner(storyPath) });
   // A fix by hand, recorded as `bl implement` records one (F-69 D3).
-  editChange(storyPath, (doc) => {
-    doc.fm.review_status = 'fixed';
-  });
   transition(backlog, { kind: 'story', indexPath: storyPath }, 'in_review', { by: 'fix', via: 'fix' });
   const runner = reviewRunner(storyPath, { status: 'addressed' });
   const { exit, stderr } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
@@ -341,8 +340,8 @@ test('bl review S-n: a second round re-reviews and advances the round again', as
   assert.match(stderr, /Review round 2 done: nothing left to fix\.\nNext: bl merge S-99\n/);
   assert.equal(runner.sessions[0].vars.reReview, 'true');
   const after = parseChange(readFileSync(changeOf(storyPath), 'utf8'));
-  assert.equal(after.fm.review_round, '2');
-  assert.equal(after.fm.review_status, 'addressed');
+  const { reviewed, position } = reviewOf('story', parseFrontmatter(readFileSync(storyPath, 'utf8')).fm);
+  assert.deepEqual([reviewed, position], [2, 'ready_for_merge']);
   assert.equal((extractSection(after.body, 'Review Log').match(/^### Session/gm) ?? []).length, 2);
 });
 
@@ -441,7 +440,7 @@ test('bl review S-n prints the escalation line and the Escalation next command',
   );
 });
 
-test("bl review S-n: a verifier's own review_status is replaced by the outcome's, with a warning", async () => {
+test("bl review S-n: a verifier's own review fields decide nothing: the outcome's verdict goes to the log", async () => {
   const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
   const runner = verifierRunner(storyPath, (o) => {
     verifierEdit(o, (doc) => Object.assign(doc.fm, { review_round: '7', review_status: 'fixed' }));
@@ -451,22 +450,19 @@ test("bl review S-n: a verifier's own review_status is replaced by the outcome's
   assert.equal(error, undefined, error?.stack);
   assert.equal(exit, 0, stderr);
   assert.match(stderr, /Review round 1 done: nothing left to fix\.\nNext: bl merge S-99\n/);
+  const { reviewed, position } = reviewOf('story', parseFrontmatter(readFileSync(storyPath, 'utf8')).fm);
+  assert.deepEqual([reviewed, position], [1, 'ready_for_merge']);
+  // bl leaves the fields as the verifier wrote them; `bl validate` reports them (legacy-review-fields).
   const { fm } = parseChange(readFileSync(changeOf(storyPath), 'utf8'));
-  assert.equal(fm.review_round, '1');
-  assert.equal(fm.review_status, 'addressed');
-  const history = JSON.parse(readFileSync(join(backlog, '.bl', 'run', 'S-99.json'), 'utf8')).history;
-  const notes = history.filter((h) => h.warning).map((h) => h.note);
-  assert.ok(
-    notes.some((n) => /the session changed review_round to "7"; bl writes "1"/.test(n)),
-    notes.join('\n'),
-  );
-  assert.ok(notes.some((n) => /the session changed review_status to "fixed"; bl writes "addressed"/.test(n)));
+  assert.deepEqual([fm.review_round, fm.review_status], ['7', 'fixed']);
 });
 
 test('bl review S-n: refuses at the review round cap', async () => {
   const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
+  // The old shape (F-69 D4): two rounds reviewed, the second clean.
   editChange(storyPath, (doc) => {
     doc.fm.review_round = '2';
+    doc.fm.review_status = 'addressed';
   });
   const runner = reviewRunner(storyPath);
   const { exit, stderr } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });

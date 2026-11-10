@@ -25,7 +25,7 @@ test('bl implement refuses unapproved features with a hint', () => {
   }
 });
 
-test('bl status prints stories in dependency order plus review and blocker state', () => {
+test('bl status prints the log, stories in dependency order plus review and blocker state', () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,
     components: [{ id: 'C00', title: 'Core', dirSuffix: 'core' }],
@@ -47,10 +47,18 @@ test('bl status prints stories in dependency order plus review and blocker state
         id: 'F-1',
         title: 'Feat',
         dirSuffix: 'feat',
-        status: 'running',
+        // The log (F-69 D2): bl status prints its status, round and last three entries (D5).
+        transitions: [
+          { at: '2026-09-18T08:00:00Z', to: 'draft', by: 'new' },
+          { at: '2026-09-18T09:00:00Z', to: 'refined', by: 'refine', via: 'refine' },
+          { at: '2026-09-18T10:00:00Z', to: 'approved', by: 'approve' },
+          { at: '2026-09-19T08:00:00Z', to: 'in_progress', by: 'run' },
+          { at: '2026-09-19T15:00:00Z', to: 'in_review', by: 'run', via: 'open_pr' },
+          { at: '2026-09-20T09:30:00Z', to: 'fixing', by: 'review', via: 'review', outcome: '1 open (1 must)' },
+        ],
+        added: '2026-09-18',
         stories: ['S-1', 'S-2'],
         branch: 'f1-feat',
-        review_status: 'pending',
         reviewLog:
           '### Session 2026-09-20 (PR #7)\n\n**Must fix**\n\n- [ ] invariant X — Repro: y. Test: z.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.',
         escalation: 'Design problem: premise false.',
@@ -60,9 +68,20 @@ test('bl status prints stories in dependency order plus review and blocker state
   try {
     const r = runBl(['status', 'F-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /status: in_progress/);
+    assert.match(r.stdout, /status: fixing/);
     assert.match(r.stdout, /branch: f1-feat/);
-    assert.match(r.stdout, /review: round 0\/2 done: 1 open item \(1 Must fix\), latest session 2026-09-20\n/);
+    assert.match(r.stdout, /review: round 1\/2 done: 1 open item \(1 Must fix\), latest session 2026-09-20\n/);
+    assert.ok(
+      r.stdout.includes(
+        [
+          'transitions (last 3 of 6):',
+          '  2026-09-19T08:00:00Z  in_progress  by run',
+          '  2026-09-19T15:00:00Z  in_review  by run via open_pr',
+          '  2026-09-20T09:30:00Z  fixing  by review via review: 1 open (1 must)',
+        ].join('\n'),
+      ),
+      r.stdout,
+    );
     // S-2 first (S-1 depends on it)
     const s2 = r.stdout.indexOf('S-2');
     const s1 = r.stdout.indexOf('S-1');
@@ -451,7 +470,7 @@ test("bl status prints each repo's branch, PR, URL and merge state from the chan
   }
 });
 
-test('bl status words the review line by outcome, and shows any other review_status with its field name', () => {
+test('bl status words the review line by outcome; a feature with no log reads its change document (F-69 D4, D5)', () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,
     features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'running', branch: 'f1-feat' }],
@@ -464,23 +483,23 @@ test('bl status words the review line by outcome, and shows any other review_sta
       writeFileSync(
         change,
         base
-          .replace(/review_round:.*\n/, `review_round: ${round}\n`)
-          .replace(/review_status:.*\n/, `review_status: ${status}\n`)
+          .replace('status: open\n', `status: open\nreview_round: ${round}\nreview_status: ${status}\n`)
           .replace('No reviews yet.', reviewLog),
       );
       const r = runBl(['status', 'F-1'], { cwd: dir });
       assert.equal(r.status, 0, r.stderr);
       return r.stdout.match(/^review: .*$/m)[0];
     };
-    assert.equal(statusWith('fixed', 1), 'review: round 1/2, review_status: fixed, latest session 2026-11-09');
+    // Fixed after round 1: round 2 is in review, with no verdict yet.
+    assert.equal(statusWith('fixed', 1), 'review: round 2/2, in_review, latest session 2026-11-09');
     assert.equal(
       statusWith('addressed', 2),
       'review: round 2/2 done: nothing left to fix (1 open nit left), latest session 2026-11-09',
     );
-    // An open Must fix box under addressed: never "nothing left to fix".
+    // An open Must fix box at ready_for_merge: never "nothing left to fix".
     assert.equal(
       statusWith('addressed', 1, log.replace('[x] done', '[ ] open')),
-      'review: round 1/2 done: review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item, latest session 2026-11-09',
+      'review: round 1/2 done: ready_for_merge, but the latest Review Log session has 1 open Must fix/Should fix item, latest session 2026-11-09',
     );
     assert.equal(statusWith('', 0, ''), 'review: none (round 0/2)');
     assert.equal(statusWith('', 0), 'review: none (round 0/2), latest session 2026-11-09');

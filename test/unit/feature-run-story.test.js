@@ -14,7 +14,7 @@ import { unitVars } from '../../src/unit.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
 import { CH, creates, editFile, fakeRunner, storySetup, captureLog } from '../helpers/feature-run-fixture.js';
 import { reviewOutcome } from '../helpers/outcomes.js';
-import { statusOf as logStatusOf } from '../../src/transition.js';
+import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
 // A single story through the loop: `bl run S-n` (F-35 Design §3)
@@ -88,8 +88,9 @@ test('a story run: implement, gate, self-review, one PR titled S-n: <title>, rev
       assert.equal(fm[k], undefined, `no ${k}: in index.md`);
     const change = parseChange(readFileSync(CH(unit), 'utf8'));
     assert.equal(change.fm.change_of, 'S-5');
-    assert.equal(change.fm.review_round, '2');
-    assert.equal(change.fm.review_status, 'addressed');
+    // The review state is the story's log (F-69 D5), not the change document's.
+    assert.equal(reviewOf('story', fm).reviewed, 2);
+    assert.deepEqual(Object.keys(change.fm).sort(), ['change_of', 'status']);
     assert.deepEqual(
       change.repos.map((r) => [r.repo, r.branch, r.pr]),
       [['demo-repo', 's5-loose', '7']],
@@ -153,7 +154,7 @@ test("a story's first run writes review_rounds_max from --max-rounds and keeps f
     const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
     assert.equal(fm.review_rounds_max, '3');
     const change = parseChange(readFileSync(CH(unit), 'utf8'));
-    assert.equal(change.fm.review_round, '0');
+    assert.equal(change.fm.review_round, undefined, 'the change document holds no review field');
     assert.deepEqual(
       change.repos.map((r) => [r.repo, r.branch, r.pr]),
       [['demo-repo', 's5-loose', '']],

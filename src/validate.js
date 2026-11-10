@@ -22,14 +22,22 @@ import { findRoadmapFindings } from './roadmap.js';
 import { extractReviewLog, parseLatestSession } from './review-log.js';
 import { probePluginBinaries } from './plugin-binaries.js';
 import { scanDeferred, DEFERRED_HEADING, RETIRED_SECTION } from './deferred.js';
-import { CHANGE_STATUSES, RUN_STATE_KEYS, changeStatus, listChanges, unitIdOfDir } from './change-doc.js';
+import {
+  CHANGE_STATUSES,
+  REVIEW_FIELDS,
+  RUN_STATE_KEYS,
+  changeStatus,
+  currentChange,
+  listChanges,
+  unitIdOfDir,
+} from './change-doc.js';
 import { findFlowFindings, loadFlow, statusWordProblem } from './flow.js';
 import { GUARDS } from './guards.js';
 import { CAPABILITIES } from './capabilities.js';
 import { DISPATCH } from './verbs.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
-import { findTransitionFindings, storedLog } from './transition.js';
+import { findTransitionFindings, reviewOf, statusOf, storedLog } from './transition.js';
 import { implementPluginProblem } from './scripted.js';
 import { GENERATED_SECTIONS, UNIT_PAGE_KINDS, generatedColumns, isGeneratedBody } from './render.js';
 import { checkEffort, storyEffort } from './effort.js';
@@ -513,18 +521,22 @@ export function findRunStateInSpec(fm, body, location) {
  * Every change document of the unit in `unitDir`, checked: its frontmatter
  * (`change-of-mismatch` when `change_of` does not name the unit the
  * directory holds, `change-repo-incomplete` for a `repos:` entry without
- * `repo` or `branch`, `bad-change-status`, `bad-review-status`), then its
- * Review Log against its `review_status` (validateReviewLog). Locations are
- * backlog-relative. A unit whose change document is not YAML is not in the
- * tolerant graph, so this is never called for it.
+ * `repo` or `branch`, `bad-change-status`, and the warning
+ * `legacy-review-fields` for a `review_round` or `review_status` left from
+ * before F-69), then the current document's Review Log against the unit's
+ * status (validateReviewLog, F-69 D5). Locations are backlog-relative. A
+ * unit whose change document is not YAML is not in the tolerant graph, so
+ * this is never called for it.
  *
  * @param {string} backlogRoot
  * @param {string} unitDir
+ * @param {{ kind: "story" | "feature", fm: object, flow: import("./flow.js").Flow }} unit
  * @returns {Finding[]}
  */
-export function validateChanges(backlogRoot, unitDir) {
+export function validateChanges(backlogRoot, unitDir, unit) {
   const findings = [];
   const unitId = unitIdOfDir(unitDir);
+  const current = currentChange(unitDir, (p) => changeDoc(backlogRoot, p))?.path ?? null;
   for (const { path } of listChanges(unitDir)) {
     const location = relative(backlogRoot, path);
     // The text the tolerant graph read, unless the file changed since (`changeDoc`).
@@ -568,67 +580,67 @@ export function validateChanges(backlogRoot, unitDir) {
             },
       );
     }
-    if (fm.review_status && !VALID_REVIEW_STATUSES.has(fm.review_status)) {
+    // The review state moved to the unit's log (F-69 D5); bl reads these
+    // only for a unit with no log, and the migration removes them.
+    const legacy = REVIEW_FIELDS.filter((k) => Object.hasOwn(fm, k));
+    if (legacy.length > 0) {
       findings.push({
-        severity: 'error',
-        code: 'bad-review-status',
-        message: `"review_status:" "${fm.review_status}" not in known set`,
+        severity: 'warning',
+        code: 'legacy-review-fields',
+        message: `${legacy.map((k) => `"${k}:" "${fm[k] ?? ''}"`).join(', ')}: the unit's transition log holds the review state; node bl/scripts/migrate-transitions.js removes ${legacy.length === 1 ? 'it' : 'them'}`,
         location,
       });
     }
-    findings.push(...validateReviewLog(fm, doc.body, location));
+    if (path === current) findings.push(...validateReviewLog(unit, doc, location));
   }
   return findings;
 }
 
 /**
- * Cross-check a change document's `review_status` frontmatter against its
- * `## Review Log` section. Two integrity errors fire here:
+ * Cross-check an open unit's status (its transition log's, F-69 D5)
+ * against the latest session of its current change document's `## Review
+ * Log`. Two integrity errors fire here:
  *
- *   - `review_status: pending` or `fixed` but no `## Review Log` section,
- *     OR no `### Session` block inside it. The reviewer always writes a
- *     session when it flips to pending (and `fixed` only ever follows
- *     pending), so a missing log means the field was hand-edited or the
- *     session was deleted.
- *   - `review_status: fixed` or `addressed` but the latest session still
- *     has unchecked Must/Should items. Open nits do not count, as in
- *     `bl merge`: the verifier leaves `[safe]` nits open on a session it
- *     signs off as `addressed`. Means the agent set the frontmatter without
- *     actually checking the items off — or someone reverted the checks
- *     after committing.
+ *   - `review-log-missing`: the unit is in `fixing`, or in `in_review`
+ *     after a fix, but the change document has no `### Session` block. The
+ *     verifier always writes a session before bl records `fixing`, so a
+ *     missing session means it was deleted, or the log was edited by hand.
+ *   - `review-log-unaddressed`: the unit is in `in_review` after a fix, or
+ *     `ready_for_merge`, but the latest session still has unchecked
+ *     Must/Should items. Open nits do not count, as in `bl merge`: the
+ *     verifier leaves `[safe]` nits open on a clean session. Means the fix
+ *     left the items unchecked, or someone reverted the checks.
  *
- * @param {any} fm
- * @param {string} body
+ * @param {{ kind: "story" | "feature", fm: object, flow: import("./flow.js").Flow }} unit
+ * @param {{ fm: object, body: string }} change  the unit's current change document
  * @param {string} location
  * @returns {Finding[]}
  */
-export function validateReviewLog(fm, body, location) {
+export function validateReviewLog({ kind, fm, flow }, change, location) {
   const findings = [];
-  const status = fm.review_status;
-  if (!status) return findings;
+  const status = statusOf(kind, fm, change);
+  if (flow.meets(kind, status, 'done')) return findings;
+  const afterFix = status === 'in_review' && reviewOf(kind, fm, change).fixed;
+  const what = afterFix ? 'in_review after a fix' : status;
 
-  const log = extractReviewLog(body);
+  const log = extractReviewLog(change.body);
   const latest = log ? parseLatestSession(log) : null;
 
-  if (status === 'pending' || status === 'fixed') {
-    if (!latest) {
-      findings.push({
-        severity: 'error',
-        code: 'review-log-missing',
-        message: `review_status: ${status} but no ## Review Log session is present`,
-        location,
-      });
-    }
+  if ((status === 'fixing' || afterFix) && !latest) {
+    findings.push({
+      severity: 'error',
+      code: 'review-log-missing',
+      message: `the unit is ${what} but no ## Review Log session is present`,
+      location,
+    });
   }
-  if (status === 'fixed' || status === 'addressed') {
-    if (latest && latest.blocking > 0) {
-      findings.push({
-        severity: 'error',
-        code: 'review-log-unaddressed',
-        message: `review_status: ${status} but latest session (${latest.date}) has ${latest.blocking} unchecked Must/Should item${latest.blocking === 1 ? '' : 's'}`,
-        location,
-      });
-    }
+  if ((afterFix || status === 'ready_for_merge') && latest && latest.blocking > 0) {
+    findings.push({
+      severity: 'error',
+      code: 'review-log-unaddressed',
+      message: `the unit is ${what} but the latest session (${latest.date}) has ${latest.blocking} unchecked Must/Should item${latest.blocking === 1 ? '' : 's'}`,
+      location,
+    });
   }
 
   return findings;
@@ -1520,7 +1532,7 @@ export function runAll(config, opts = {}) {
       }),
     );
     findings.push(...findRunStateInSpec(fm, unit.body(), s.storyRelPath));
-    findings.push(...validateChanges(config.backlogRoot, unit.dir));
+    findings.push(...validateChanges(config.backlogRoot, unit.dir, { kind: 'story', fm, flow }));
     findings.push(...findDeferredErrors(s.id, s.status, unit.text(), s.storyRelPath, flow, 'story'));
   }
 
@@ -1549,7 +1561,7 @@ export function runAll(config, opts = {}) {
       }),
     );
     findings.push(...findRunStateInSpec(f.fm, f.body, f.featureRelPath));
-    findings.push(...validateChanges(config.backlogRoot, f.featureDir));
+    findings.push(...validateChanges(config.backlogRoot, f.featureDir, { kind: 'feature', fm: f.fm, flow }));
     findings.push(...findEscalationNotNone(f, flow));
     findings.push(...findDeferredErrors(f.id, f.status, f.content, f.featureRelPath, flow, 'feature'));
   }
@@ -1725,7 +1737,7 @@ Findings codes:
   review-log-unaddressed, plugin-binary, derived-key, dangling-feature,
   found-by, feature-no-stories, verification-only-title, run-state-in-spec,
   change-of-mismatch, change-repo-incomplete, bad-change-status,
-  forge-plugin, forge-op, forge-op-reads-body, component-unknown,
+  legacy-review-fields, forge-plugin, forge-op, forge-op-reads-body, component-unknown,
   home-component, component-has-status, component-paths,
   feature-theme, feature-epic, epic-theme, theme-repo, repo-key,
   priority-file, priority-unit, generated-section, roadmap-file,

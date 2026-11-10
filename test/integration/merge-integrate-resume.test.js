@@ -4,9 +4,9 @@ import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from '../../src/config.js';
 import { integrateUnit, runFeature } from '../../src/feature-run.js';
+import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
 import { defaultOutcome } from '../helpers/outcomes.js';
 import {
-  changeFile,
   clearEscalation,
   escalation,
   featureCtx,
@@ -52,7 +52,9 @@ test('resume_pending_integration_review_below_at_and_above_cap: bl run --resume 
       });
       const first = integrateUnit({ ...ctx, runner: pending.runner });
       assert.match(first.reason ?? '', /left open items/, c.name);
-      assert.equal(parseFrontmatter(readFileSync(changeFile(fx), 'utf8')).fm.review_round, String(c.round), c.name);
+      // The integration round's verdict is in the log: its items in fixing (F-69 D5).
+      const after = reviewOf('feature', parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm);
+      assert.deepEqual([after.reviewed, after.position], [c.round, 'fixing'], c.name);
       assert.match(escalation(featureFile(fx)), /run `bl run F-1 --resume`/, c.name);
       assert.equal(readyToResume(fx).integrationReview, c.round, `${c.name}: the run state names the round`);
 
@@ -77,7 +79,9 @@ test('resume_pending_integration_review_below_at_and_above_cap: bl run --resume 
       assert.equal(res.status, 'clean', `${c.name}: ${res.lastError}`);
       assert.ok(calls.sessions.includes('feature-workon-review'), `${c.name}: the open items were fixed`);
       assert.ok(calls.sessions.includes('review-verify'), `${c.name}: and the fix was verified`);
-      assert.equal(parseFrontmatter(readFileSync(changeFile(fx), 'utf8')).fm.review_status, 'addressed', c.name);
+      const unitFm = parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm;
+      assert.equal(logStatusOf('feature', unitFm), 'ready_for_merge', c.name);
+      assert.equal(reviewOf('feature', unitFm).reviewed, c.round + 1, `${c.name}: the closing round after the fix`);
     } finally {
       fx.cleanup();
     }

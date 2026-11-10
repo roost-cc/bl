@@ -1,8 +1,6 @@
 ---
 change_of:
 status: open
-review_round: 0
-review_status:
 repos:
 ---
 

@@ -87,6 +87,20 @@ export const LEGACY_LOG = {
 };
 
 /**
+ * The statuses a review round moves a unit between (F-69 D5), by role:
+ * `open`, a round in review with no verdict yet; `items`, the round's open
+ * items, being fixed; `clean`, the round passed. `reviewOf`
+ * (`transition.js`) reads a unit's review state from them, and the merge
+ * gate refuses `blocked`.
+ */
+export const REVIEW = Object.freeze({
+  open: 'in_review',
+  items: 'fixing',
+  clean: 'ready_for_merge',
+  blocked: Object.freeze(['in_review', 'fixing']),
+});
+
+/**
  * `status` in the current words: a v1 word of `type` mapped, anything else
  * unchanged.
  * @param {string} type

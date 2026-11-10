@@ -23,6 +23,8 @@
  * in `bl`'s code path generates session blocks.
  */
 
+import { REVIEW } from './flow.js';
+
 /**
  * Find the `## Review Log` section in a story body and return its
  * content (everything between the heading and the next `##` or EOF).
@@ -161,27 +163,28 @@ function plural(n, word) {
 
 /**
  * The words that say how a finished review round ended, for `bl review`'s
- * end line and `bl status`'s `review:` line; `null` for a `review_status`
- * other than `pending` or `addressed`. `session` is the latest Review Log
- * session (`parseLatestSession`), or `null`.
+ * end line and `bl status`'s `review:` line; `null` for a review position
+ * other than `fixing` or `ready_for_merge` (`reviewOf` in transition.js,
+ * F-69 D5). `session` is the latest Review Log session
+ * (`parseLatestSession`), or `null`.
  *
- * @param {string|undefined} reviewStatus
+ * @param {string|null|undefined} position
  * @param {ReturnType<typeof parseLatestSession>} session
  * @returns {string|null}
  */
-export function reviewOutcome(reviewStatus, session) {
-  if (reviewStatus === 'addressed') {
+export function reviewOutcome(position, session) {
+  if (position === 'ready_for_merge') {
     // The merge gate blocks on these, so this is not "nothing left to fix".
     const blocking = session?.blocking ?? 0;
     if (blocking > 0) {
-      return `review_status: addressed, but the latest Review Log session has ${plural(blocking, 'open Must fix/Should fix item')}`;
+      return `ready_for_merge, but the latest Review Log session has ${plural(blocking, 'open Must fix/Should fix item')}`;
     }
     const nits = session?.nits ?? 0;
     return `nothing left to fix${nits > 0 ? ` (${plural(nits, 'open nit')} left)` : ''}`;
   }
-  if (reviewStatus !== 'pending') return null;
+  if (position !== 'fixing') return null;
   if (!session || session.unchecked === 0) {
-    return 'review_status: pending, but the latest Review Log session has no open item';
+    return 'fixing, but the latest Review Log session has no open item';
   }
   const { unchecked, must, should, nits } = session;
   const other = unchecked - must - should - nits;
@@ -195,14 +198,15 @@ export function reviewOutcome(reviewStatus, session) {
 }
 
 /**
- * The feature merge gate: blocked while the review is `pending`/`fixed` or
- * the latest session has an open Must or Should box. Open nits do not block.
+ * The merge gate's review rule: blocked while the unit's status is `fixing`
+ * or `in_review` (F-69 D5), or the latest session has an open Must or Should
+ * box. Open nits do not block; `ready_for_merge` passes.
  *
- * @param {string} reviewStatus
+ * @param {string} status  the unit's status, with its review position (`positionOf`)
  * @param {string} body
  */
-export function featureReviewGate(reviewStatus, body) {
+export function featureReviewGate(status, body) {
   const review = summarizeLatestReviewSession(body);
-  const blocked = reviewStatus === 'pending' || reviewStatus === 'fixed' || (review?.blocking ?? 0) > 0;
+  const blocked = REVIEW.blocked.includes(status) || (review?.blocking ?? 0) > 0;
   return { blocked, review };
 }

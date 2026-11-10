@@ -13,16 +13,17 @@ import { mkTempDir } from '../helpers/tempdir.js';
 const SESSION = (must = 'None.', should = 'None.', nits = 'None.') =>
   `## Review Log\n\n### Session 2026-10-20 (PR #4)\n\n**Must fix**\n\n${must}\n\n**Should fix**\n\n${should}\n\n**Nits**\n\n${nits}\n`;
 
-/** A story unit and a feature unit with the same run state. */
-function units({ reviewStatus = 'addressed', changeBody = SESSION(), body = '' } = {}) {
+/** A story unit and a feature unit with the same run state: a status and round from the log (F-69 D5). */
+function units({ status = 'ready_for_merge', round = 1, changeBody = SESSION(), body = '' } = {}) {
   return {
-    story: { kind: 'story', id: 'S-7', storyEntry: 'S7-thing', reviewStatus, changeBody, body },
+    story: { kind: 'story', id: 'S-7', storyEntry: 'S7-thing', status, round, changeBody, body },
     feature: {
       kind: 'feature',
       id: 'F-7',
       featureEntry: 'F7-thing',
       branch: 'f7-thing',
-      reviewStatus,
+      status,
+      round,
       changeBody,
       body,
     },
@@ -101,21 +102,27 @@ test('an open Must or Should refuses both kinds with the same message', () => {
     assert.equal(s.findings[0].gate, 'review');
     assert.equal(
       messages(u.story, s)[0],
-      '<id> has unresolved review state (review_status: addressed, latest session 2026-10-20, 1 unchecked Must/Should).\nAddress the review feedback (bl implement <id>) before merging, or edit its change document to override.',
+      '<id> has unresolved review state (ready_for_merge, round 1, latest session 2026-10-20, 1 unchecked Must/Should).\nAddress the review feedback (bl implement <id>) before merging.',
     );
     assert.equal(s.preflightCalls.length, 0, 'no preflight on a refused unit');
   }
 });
 
-test('review_status pending or fixed refuses both kinds, naming the next step', () => {
-  let { s } = bothKinds({ reviewStatus: 'pending' });
-  assert.match(s.findings[0].message, /review_status: pending.*\nAddress the review feedback \(bl implement S-7\)/);
-  ({ s } = bothKinds({ reviewStatus: 'fixed' }));
-  assert.match(s.findings[0].message, /review_status: fixed.*\nRe-review the fixes \(bl review S-7\)/);
+test('fixing or in_review refuses both kinds, naming the next verb (F-69 D5)', () => {
+  let { s } = bothKinds({ status: 'fixing' });
+  assert.match(
+    s.findings[0].message,
+    /\(fixing, round 1,.*\nAddress the review feedback \(bl implement S-7\) before merging\.$/,
+  );
+  ({ s } = bothKinds({ status: 'in_review', round: 2 }));
+  assert.match(s.findings[0].message, /\(in_review, round 2,.*\nReview it \(bl review S-7\) before merging\.$/);
+  // ready_for_merge passes; so does a unit still in progress (the never-reviewed gate is its own).
+  assert.deepEqual(bothKinds({ status: 'ready_for_merge' }).s.findings, []);
+  assert.deepEqual(bothKinds({ status: 'in_progress' }).s.findings, []);
 });
 
 test("a unit never reviewed is refused with D3's message, forge or not", () => {
-  const { s, u } = bothKinds({ reviewStatus: '', changeBody: '## Review Log\n\nNo reviews yet.\n' });
+  const { s, u } = bothKinds({ status: 'in_progress', round: 0, changeBody: '## Review Log\n\nNo reviews yet.\n' });
   assert.equal(s.findings.length, 1);
   assert.equal(s.findings[0].gate, 'never-reviewed');
   assert.equal(
@@ -141,7 +148,7 @@ test('a PR the forge merged before review is named: repo, PR, URL and headRefOid
       ],
     };
   };
-  const { s, f } = bothKinds({ reviewStatus: '', changeBody: '' }, { find });
+  const { s, f } = bothKinds({ status: 'in_progress', round: 0, changeBody: '' }, { find });
   for (const res of [s, f]) {
     assert.match(res.findings[0].message, /never been reviewed/);
     assert.match(
@@ -156,7 +163,7 @@ test('a PR the forge merged before review is named: repo, PR, URL and headRefOid
 
 test('--no-review lets a never-reviewed unit through and returns what ## Merge records', () => {
   const find = () => ({ ok: true, prs: [{ number: 12, url: 'u', state: 'MERGED', headRefOid: 'deadbeef' }] });
-  const { s } = bothKinds({ reviewStatus: '', changeBody: '' }, { args: { 'no-review': true }, find });
+  const { s } = bothKinds({ status: 'in_progress', round: 0, changeBody: '' }, { args: { 'no-review': true }, find });
   assert.deepEqual(s.findings, []);
   assert.equal(s.preflightCalls.length, 1);
   assert.deepEqual(noReviewLines(s.unreviewed, '2026-10-26'), [
@@ -166,8 +173,8 @@ test('--no-review lets a never-reviewed unit through and returns what ## Merge r
   assert.deepEqual(noReviewLines(null, '2026-10-26'), []);
 });
 
-test('--no-review does not lift a pending review', () => {
-  const { s } = bothKinds({ reviewStatus: 'pending' }, { args: { 'no-review': true } });
+test('--no-review does not lift a review in fixing', () => {
+  const { s } = bothKinds({ status: 'fixing' }, { args: { 'no-review': true } });
   assert.equal(s.findings[0].gate, 'review');
   assert.equal(s.unreviewed, null);
 });
@@ -183,7 +190,7 @@ test('an open ## Escalation refuses both kinds with the same message', () => {
 });
 
 test('every failing gate is reported, not just the first', () => {
-  const { s } = bothKinds({ reviewStatus: 'pending', body: '## Escalation\n\nStop.\n' });
+  const { s } = bothKinds({ status: 'fixing', body: '## Escalation\n\nStop.\n' });
   assert.deepEqual(
     s.findings.map((x) => x.gate),
     ['review', 'escalation'],
@@ -204,7 +211,7 @@ test('an unmet merge edge is a blocker finding per edge, first, for both kinds, 
     { edge: edge('S-3'), line: 'S-9 is held at merge by S-3 (in_progress, needs done)' },
     { edge: edge('S-4'), line: 'S-9 is held at merge by S-4 (refined, needs done)' },
   ];
-  const { s, f } = bothKinds({ reviewStatus: 'pending', changeBody: SESSION('- [ ] broken') }, { held });
+  const { s, f } = bothKinds({ status: 'fixing', changeBody: SESSION('- [ ] broken') }, { held });
   assert.deepEqual(
     s.findings.map((x) => x.gate),
     ['blocker', 'blocker', 'review'],

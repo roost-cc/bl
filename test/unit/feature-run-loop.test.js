@@ -32,7 +32,6 @@ import {
   creates,
   editFile,
   checkAll,
-  writeSession,
   verifySession,
   fakeRunner,
   statusOf,
@@ -40,18 +39,30 @@ import {
 import { fixTestsOutcome, reviewOutcome } from '../helpers/outcomes.js';
 import { validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
-import { statusOf as logStatusOf } from '../../src/transition.js';
+import { reviewOf, statusOf as logStatusOf, transition } from '../../src/transition.js';
 
 // --- how `bl review` ends (S-1348) ---
 
 const MUST_LOG = '## Review Log\n\n### Session 2026-11-09 (PR #1)\n\n**Must fix**\n\n- [ ] one\n';
 
-const end = (fm, extra = {}) =>
+/**
+ * A review state as `reviewOf` reads it from a log (F-69 D5): `reviewed`
+ * rounds with a verdict, the unit at `position`; `fixed`, a fix opened the
+ * round in review.
+ */
+const review = (reviewed, position, fixed = false) => ({
+  round: reviewed + (position === 'in_review' ? 1 : 0),
+  reviewed,
+  position,
+  fixed,
+});
+
+const end = (r, extra = {}) =>
   reviewEnd({
     id: 'S-7',
     unitRelPath: 'stories/S7-x/index.md',
     maxRounds: 2,
-    fm,
+    review: r,
     body: MUST_LOG,
     state: null,
     ...extra,
@@ -60,24 +71,23 @@ const end = (fm, extra = {}) =>
 const CLOSING = ' The round cap (2) is reached: the next run fixes these items and runs one closing round on them.';
 
 test('roundCapStanding: below the cap, owed a closing round, or reached', () => {
-  assert.equal(roundCapStanding(null, { review_round: '1', review_status: 'pending' }, 2), 'below');
-  assert.equal(roundCapStanding(null, { review_round: '2', review_status: 'pending' }, 2), 'closing');
-  assert.equal(roundCapStanding(null, { review_round: '2', review_status: 'fixed' }, 2), 'closing');
-  assert.equal(roundCapStanding(null, { review_round: '2', review_status: 'addressed' }, 2), 'reached');
-  assert.equal(roundCapStanding(null, { review_round: '3', review_status: 'pending' }, 2), 'reached');
-  // A round bl merge's integration review left open is owed whatever the cap (F-36 D7).
+  assert.equal(roundCapStanding(null, review(1, 'fixing'), 2), 'below');
+  assert.equal(roundCapStanding(null, review(2, 'fixing'), 2), 'closing');
+  assert.equal(roundCapStanding(null, review(2, 'in_review', true), 2), 'closing');
   assert.equal(
-    roundCapStanding({ integrationReview: 3 }, { review_round: '3', review_status: 'pending' }, 2),
-    'closing',
-  );
-  assert.equal(
-    roundCapStanding({ integrationReview: 2 }, { review_round: '3', review_status: 'pending' }, 2),
+    roundCapStanding(null, review(2, 'in_review'), 2),
     'reached',
+    'an open round no fix opened owes nothing',
   );
+  assert.equal(roundCapStanding(null, review(2, 'ready_for_merge'), 2), 'reached');
+  assert.equal(roundCapStanding(null, review(3, 'fixing'), 2), 'reached');
+  // A round bl merge's integration review left open is owed whatever the cap (F-36 D7).
+  assert.equal(roundCapStanding({ integrationReview: 3 }, review(3, 'fixing'), 2), 'closing');
+  assert.equal(roundCapStanding({ integrationReview: 2 }, review(3, 'fixing'), 2), 'reached');
 });
 
 test('reviewEnd: open items below the cap point at bl run --resume', () => {
-  assert.deepEqual(end({ review_round: '1', review_status: 'pending' }), {
+  assert.deepEqual(end(review(1, 'fixing')), {
     outcome: '1 open item (1 Must fix)',
     cap: '',
     next: 'bl run S-7 --resume',
@@ -86,7 +96,7 @@ test('reviewEnd: open items below the cap point at bl run --resume', () => {
 
 test('reviewEnd: open items in the round that reached the cap are owed a closing round', () => {
   for (const state of [null, { integrationReview: null }]) {
-    assert.deepEqual(end({ review_round: '2', review_status: 'pending' }, { state }), {
+    assert.deepEqual(end(review(2, 'fixing'), { state }), {
       outcome: '1 open item (1 Must fix)',
       cap: CLOSING,
       next: 'bl run S-7 --resume',
@@ -95,7 +105,7 @@ test('reviewEnd: open items in the round that reached the cap are owed a closing
 });
 
 test('reviewEnd: open items past what the cap allows need a higher cap', () => {
-  assert.deepEqual(end({ review_round: '3', review_status: 'pending' }), {
+  assert.deepEqual(end(review(3, 'fixing')), {
     outcome: '1 open item (1 Must fix)',
     cap: ' The round cap (2) is reached.',
     next: 'bl run S-7 --resume --max-rounds 4',
@@ -103,16 +113,16 @@ test('reviewEnd: open items past what the cap allows need a higher cap', () => {
 });
 
 test('reviewEnd: an open integration round past the cap is still owed its closing round', () => {
-  assert.deepEqual(end({ review_round: '3', review_status: 'pending' }, { state: { integrationReview: 3 } }), {
+  assert.deepEqual(end(review(3, 'fixing'), { state: { integrationReview: 3 } }), {
     outcome: '1 open item (1 Must fix)',
     cap: CLOSING,
     next: 'bl run S-7 --resume',
   });
 });
 
-test('reviewEnd: an addressed round points at bl merge, at the cap too', () => {
-  for (const round of ['1', '2', '3']) {
-    assert.deepEqual(end({ review_round: round, review_status: 'addressed' }, { body: '' }), {
+test('reviewEnd: a ready_for_merge round points at bl merge, at the cap too', () => {
+  for (const round of [1, 2, 3]) {
+    assert.deepEqual(end(review(round, 'ready_for_merge'), { body: '' }), {
       outcome: 'nothing left to fix',
       cap: '',
       next: 'bl merge S-7',
@@ -120,19 +130,19 @@ test('reviewEnd: an addressed round points at bl merge, at the cap too', () => {
   }
 });
 
-test('reviewEnd: addressed with an open Must fix gives no merge command', () => {
-  assert.deepEqual(end({ review_round: '1', review_status: 'addressed' }), {
-    outcome: 'review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item',
+test('reviewEnd: ready_for_merge with an open Must fix gives no merge command', () => {
+  assert.deepEqual(end(review(1, 'ready_for_merge')), {
+    outcome: 'ready_for_merge, but the latest Review Log session has 1 open Must fix/Should fix item',
     cap: '',
-    // The command the merge gate names when it blocks.
-    next: 'bl implement S-7',
+    // A review checks the boxes again; the table's implement row does not start from ready_for_merge.
+    next: 'bl review S-7',
   });
 });
 
-test('reviewEnd: pending with no open item at the cap adds no fix sentence', () => {
+test('reviewEnd: fixing with no open item at the cap adds no fix sentence', () => {
   const body = MUST_LOG.replace('[ ]', '[x]');
-  assert.deepEqual(end({ review_round: '2', review_status: 'pending' }, { body }), {
-    outcome: 'review_status: pending, but the latest Review Log session has no open item',
+  assert.deepEqual(end(review(2, 'fixing'), { body }), {
+    outcome: 'fixing, but the latest Review Log session has no open item',
     cap: ' The round cap (2) is reached.',
     next: 'bl run S-7 --resume',
   });
@@ -151,11 +161,11 @@ test('reviewEnd: no "nothing left to fix" or bl merge with an open Must/Should b
   };
   for (const [name, body] of Object.entries(bodies)) {
     const session = summarizeLatestReviewSession(body);
-    for (const review_status of ['pending', 'addressed']) {
-      for (const review_round of ['1', '2', '3']) {
+    for (const position of ['fixing', 'ready_for_merge']) {
+      for (const round of [1, 2, 3]) {
         for (const state of [null, { integrationReview: 3 }]) {
-          const r = end({ review_round, review_status }, { body, state });
-          const at = `${name}, ${review_status}, round ${review_round}, state ${JSON.stringify(state)}`;
+          const r = end(review(round, position), { body, state });
+          const at = `${name}, ${position}, round ${round}, state ${JSON.stringify(state)}`;
           if ((session?.blocking ?? 0) > 0) {
             assert.doesNotMatch(r.outcome, /nothing left to fix/, at);
             assert.notEqual(r.next, 'bl merge S-7', at);
@@ -167,31 +177,21 @@ test('reviewEnd: no "nothing left to fix" or bl merge with an open Must/Should b
   }
 });
 
-test('reviewEnd: no verdict shows the raw review_status with its field name and no next command', () => {
-  assert.deepEqual(end({ review_round: '1', review_status: 'fixed' }), {
-    outcome: 'no verdict recorded (review_status: fixed)',
+test('reviewEnd: no verdict names the review position and no next command', () => {
+  assert.deepEqual(end(review(1, 'in_review', true)), {
+    outcome: 'no verdict recorded (in_review)',
     cap: '',
     next: null,
   });
-  assert.deepEqual(end({ review_round: '1' }), {
-    outcome: 'no verdict recorded (review_status: unset)',
+  assert.deepEqual(end(review(0, null)), {
+    outcome: 'no verdict recorded (never reviewed)',
     cap: '',
     next: null,
   });
-});
-
-test('reviewEnd: a review_round that is not a number is no verdict, with no next command', () => {
-  for (const review_status of ['pending', 'addressed']) {
-    assert.deepEqual(end({ review_round: 'two', review_status }), {
-      outcome: 'no verdict recorded (review_round: two)',
-      cap: '',
-      next: null,
-    });
-  }
 });
 
 test('reviewEnd: an escalation points at the unit index.md', () => {
-  assert.deepEqual(end({ review_round: '1', review_status: 'pending' }, { escalated: true }), {
+  assert.deepEqual(end(review(1, 'fixing'), { escalated: true }), {
     outcome: 'escalated',
     cap: '',
     next: 'read ## Escalation in stories/S7-x/index.md',
@@ -309,13 +309,15 @@ test('happy path: stories, gate, self-review, PR, review → fix → re-review �
       'each session hop carries its outcome',
     );
     assert.equal(logStatusOf('feature', fm), 'ready_for_merge');
+    assert.deepEqual(reviewOf('feature', fm), { round: 2, reviewed: 2, position: 'ready_for_merge', fixed: false });
     for (const k of ['branch', 'pr', 'review_round', 'review_status'])
       assert.equal(fm[k], undefined, `no ${k}: in index.md`);
-    // The change document holds the PR, the review state and a line per gate run.
+    // The change document holds the PR and a line per gate run; the review
+    // state is the log's (F-69 D5).
     const change = parseChange(readFileSync(CH(feature), 'utf8'));
     assert.equal(change.fm.change_of, 'F-1');
     assert.equal(change.fm.status, 'open');
-    assert.equal(change.fm.review_status, 'addressed');
+    assert.deepEqual(Object.keys(change.fm).sort(), ['change_of', 'status']);
     assert.deepEqual(change.repos, [
       { repo: 'demo-repo', branch: 'f1-feat', pr: '7', url: 'https://github.com/x/y/pull/7', merged: '' },
     ]);
@@ -908,8 +910,12 @@ test('items still open after the last full round get one closing round, and esca
     const { body } = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));
     assert.match(body, /## Escalation\n\nthe closing round/);
     assert.match(body, /- \[ \] invariant X/);
+    // The log: three rounds reviewed, the closing round's items open, escalated (F-69 D5).
+    const unitFm = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm;
+    const { round: rounds, reviewed, position } = reviewOf('feature', unitFm);
+    assert.deepEqual([rounds, reviewed, position], [3, 3, 'fixing']);
+    assert.equal(logStatusOf('feature', unitFm), 'escalated');
     const change = parseFrontmatter(readFileSync(CH(feature), 'utf8'));
-    assert.equal(change.fm.review_round, '3');
     assert.match(change.body, /## Review Log\n\n### Session[\s\S]*- \[ \] invariant X/);
   } finally {
     cleanup();
@@ -1001,37 +1007,26 @@ test('a closing round that closes the last items finishes clean', async () => {
   }
 });
 
-test('a verifier that writes the review fields only warns: bl numbers the round and sets the status from the outcome', async () => {
-  // Every way a verifier can write the round bl owns (F-68 D3): leave it
-  // unchanged, write something that is not a number, lower it after a proper
-  // round, or bump it twice. The cap still bounds the loop: two full rounds,
-  // then the closing one.
-  const classes = {
-    unchanged: () => () =>
-      editFile(CH_OF(), (fm) => {
-        fm.review_status = 'addressed';
-      }),
-    'non-numeric': () => () =>
-      editFile(CH_OF(), (fm) => {
-        fm.review_status = 'addressed';
-        fm.review_round = 'r1';
-      }),
-    lowered: () => {
-      let n = 0;
-      return () => {
-        n += 1;
-        writeSession(CH_OF(), { pending: false, round: n === 1 ? 1 : 0 });
-      };
+test('a verifier that writes the old review fields changes nothing bl decides: the log counts the rounds', async () => {
+  // The review state is the unit's log (F-69 D5): a session that writes
+  // `review_round` or `review_status` into the change document, as before F-68,
+  // decides nothing. The cap still bounds the loop: two full rounds, then the
+  // closing one.
+  const edits = {
+    addressed: (fm) => {
+      fm.review_status = 'addressed';
     },
-    'bumped twice': () => () => writeSession(CH_OF(), { pending: false, round: 2 }),
+    'non-numeric round': (fm) => {
+      fm.review_status = 'addressed';
+      fm.review_round = 'r1';
+    },
+    'round 0': (fm) => {
+      fm.review_round = '0';
+    },
   };
-  let current;
-  const CH_OF = () => current;
-  for (const [name, make] of Object.entries(classes)) {
+  for (const [name, edit] of Object.entries(edits)) {
     const { dir, cleanup, config, feature, prep } = setup();
-    current = CH(feature);
     try {
-      const verify = make();
       let verifies = 0;
       const runner = fakeRunner({
         dir,
@@ -1039,8 +1034,8 @@ test('a verifier that writes the review fields only warns: bl numbers the round 
         behaviour: {
           verify: () => {
             verifies += 1;
-            verify();
-            return reviewOutcome({ pending: true });
+            editFile(CH(feature), edit);
+            return verifySession(CH(feature), { pending: true, round: verifies });
           },
         },
       });
@@ -1048,48 +1043,11 @@ test('a verifier that writes the review fields only warns: bl numbers the round 
       assert.equal(state.status, 'escalated', name);
       assert.match(state.lastError, /the closing round after the review round cap \(2\) left open items/, name);
       assert.equal(verifies, 3, `${name}: two full rounds and the closing one`);
-      const { fm } = parseChange(readFileSync(CH(feature), 'utf8'));
-      assert.equal(fm.review_round, '3', name);
-      assert.equal(fm.review_status, 'pending', `${name}: the outcome's status, not the session's`);
-      const warnings = state.history.filter((h) => h.step === 'review:verify' && h.warning);
-      assert.ok(warnings.length > 0, `${name}: the edit is a warning`);
-      for (const w of warnings) {
-        assert.ok(w.ok, name);
-        assert.match(
-          w.note,
-          /the session changed review_(round|status) to ".*"; bl writes ".*" from the outcome/,
-          name,
-        );
-      }
+      const unitFm = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm;
+      assert.equal(reviewOf('feature', unitFm).reviewed, 3, name);
     } finally {
       cleanup();
     }
-  }
-});
-
-test('a verifier that writes the review fields bl writes anyway is no warning', async () => {
-  const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
-  try {
-    const runner = fakeRunner({
-      dir,
-      feature,
-      behaviour: {
-        verify: () => {
-          editFile(CH(feature), (fm) => {
-            fm.review_round = '1';
-            fm.review_status = 'pending';
-          });
-          return verifySession(CH(feature), { pending: true, round: 1 });
-        },
-      },
-    });
-    const r = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 3 });
-    assert.equal(r.round, 1);
-    assert.equal(r.status, 'pending');
-    const warnings = loadRunState(config, 'F-1').history.filter((h) => h.warning);
-    assert.deepEqual(warnings, []);
-  } finally {
-    cleanup();
   }
 });
 
@@ -1454,18 +1412,17 @@ test('a backlog commit that fails is recorded at the escalation and the pr: writ
     assert.equal(state.status, 'escalated');
     const failed = state.history.filter((h) => h.ok === false && /backlog commit failed/.test(h.note ?? ''));
     // The run's start, each story's start, each gate line, the PR record and
-    // the hop to in_review, the review fields bl writes after the verifier and
-    // the fix, the hops to fixing and back to in_review, and the escalation.
+    // the hop to in_review, the verdict's hop to fixing and the fix's back to
+    // in_review, and the escalation. The change document holds no review
+    // field to commit (F-69 D5).
     assert.deepEqual(failed.map((h) => h.step).sort(), [
       'escalate',
-      'fix',
       'fix-self-review',
       'implement',
       'implement',
       'pr',
       'pr',
       'review',
-      'review:verify',
       'setup',
       'test',
       'test',
@@ -1661,7 +1618,14 @@ test("bl review takes the loop's review path: split passes, verifier, shared run
   try {
     const runner = fakeRunner({ dir, feature });
     const first = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
-    assert.deepEqual(first, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
+    assert.deepEqual(first, {
+      status: 'fixing',
+      round: 1,
+      verdict: true,
+      escalated: false,
+      error: null,
+      end: PENDING_END,
+    });
     assert.deepEqual(
       runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt),
       ['review-correctness', 'review-failure-paths', 'review-verify'],
@@ -1671,10 +1635,9 @@ test("bl review takes the loop's review path: split passes, verifier, shared run
     assert.equal(saved.reviewBaseSha, 'sha0', 'a later re-review narrows from this base');
     assert.ok(!existsSync(runLockPath(config, 'F-1')), 'lock released');
 
-    // After a fix, the re-review narrows to the files the fix changed.
-    editFile(CH(feature), (fm) => {
-      fm.review_status = 'fixed';
-    });
+    // After a fix (`in_review` by `fix` in the log, F-69 D5), the re-review
+    // narrows to the files the fix changed.
+    transition(dir, { kind: 'feature', indexPath: feature.indexPath }, 'in_review', { by: 'fix' });
     const second = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
     assert.equal(second.round, 2);
     const reverify = runner.calls.filter((c) => c.prompt === 'review-verify')[1];
@@ -2011,7 +1974,7 @@ test('resume after the round cap fixes the pending session first and skips self-
     });
     // The first run spent two full rounds and the closing round (round 3).
     // Another full round needs the cap raised explicitly.
-    assert.equal(parseFrontmatter(readFileSync(CH(feature), 'utf8')).fm.review_round, '3');
+    assert.equal(reviewOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm).reviewed, 3);
     const state = await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 4 } });
     assert.equal(state.status, 'clean');
     const prompts = runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt);
@@ -2034,21 +1997,50 @@ test('resume after the round cap fixes the pending session first and skips self-
 });
 
 test('a run that enters at the cap runs only the closing round it is owed, and never a round past it', async () => {
-  // At the cap: pending is fixed then verified, fixed is verified; addressed and
-  // unset have nothing owed. Past the cap (the closing round done): nothing runs.
+  // At the cap: items in fixing are fixed then verified, fixed items are
+  // verified; ready_for_merge, and a round no fix opened, have nothing owed.
+  // Past the cap (the closing round done): nothing runs. Each state is a log
+  // (F-69 D5); `rounds` reviewed rounds, each with open items, then `end`.
+  const reviewed = (rounds, end) => [
+    { to: 'in_progress', by: 'run' },
+    ...Array.from({ length: rounds }, (_, i) => [
+      { to: 'in_review', by: i === 0 ? 'run' : 'fix' },
+      { to: 'fixing', by: 'review', via: 'review' },
+    ]).flat(),
+    ...end,
+  ];
   const cases = [
-    { round: '2', status: 'pending', fixes: 1, verifies: 1 },
-    { round: '2', status: 'fixed', fixes: 0, verifies: 1 },
-    { round: '2', status: 'addressed', fixes: 0, verifies: 0 },
-    { round: '2', status: '', fixes: 0, verifies: 0 },
-    { round: '3', status: 'pending', fixes: 0, verifies: 0 },
-    { round: '3', status: 'fixed', fixes: 0, verifies: 0 },
+    { round: '2', status: 'fixing', log: reviewed(2, []), fixes: 1, verifies: 1 },
+    { round: '2', status: 'fixed', log: reviewed(2, [{ to: 'in_review', by: 'fix' }]), fixes: 0, verifies: 1 },
+    {
+      round: '2',
+      status: 'ready_for_merge',
+      log: reviewed(1, [
+        { to: 'in_review', by: 'fix' },
+        { to: 'ready_for_merge', by: 'review' },
+      ]),
+      fixes: 0,
+      verifies: 0,
+    },
+    {
+      round: '2',
+      status: 'in_review, no fix',
+      log: reviewed(1, [
+        { to: 'in_review', by: 'fix' },
+        { to: 'ready_for_merge', by: 'review' },
+        { to: 'in_review', by: 'review' },
+      ]),
+      fixes: 0,
+      verifies: 0,
+    },
+    { round: '3', status: 'fixing', log: reviewed(3, []), fixes: 0, verifies: 0 },
+    { round: '3', status: 'fixed', log: reviewed(3, [{ to: 'in_review', by: 'fix' }]), fixes: 0, verifies: 0 },
   ];
   for (const c of cases) {
     for (const resume of [false, true]) {
       const { dir, cleanup, config, feature, prep } = setup({
-        ...(c.status ? { review_status: c.status } : {}),
-        review_round: c.round,
+        status: undefined,
+        transitions: [{ to: 'draft', by: 'new' }, { to: 'approved', by: 'operator' }, ...c.log],
         pr: '7',
       });
       try {
@@ -2086,12 +2078,13 @@ test('a run that enters at the cap runs only the closing round it is owed, and n
           assert.equal(state.status, 'clean', label);
           continue;
         }
-        if (c.status === 'addressed' && resume) {
+        if (c.status === 'ready_for_merge' && resume) {
           // Signed off on the code this run already published: nothing left to review.
           assert.equal(state.status, 'clean', label);
           continue;
         }
-        assert.equal(parseFrontmatter(readFileSync(CH(feature), 'utf8')).fm.review_round, c.round, label);
+        const unitFm = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm;
+        assert.equal(reviewOf('feature', unitFm).reviewed, Number(c.round), label);
         assert.equal(state.status, 'escalated', label);
         assert.match(state.lastError, new RegExp(`round cap \\(2\\) already reached at round ${c.round}`), label);
         const { body } = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));

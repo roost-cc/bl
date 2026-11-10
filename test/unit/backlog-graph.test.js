@@ -511,7 +511,7 @@ test('no body is sliced and no change document read unless asked; each is cached
   const f1 = g.get('F-1');
   assert.equal(f1.change().branch, 'f1-alpha');
   assert.equal(f1.change().pr, '7');
-  assert.equal(f1.change().reviewStatus, 'addressed');
+  assert.equal(f1.change().prUrl, 'https://forge.example/pull/7');
   assert.equal(loadStats.changes, 1);
   assert.equal(g.get('S-1').change().change, null);
   assert.throws(() => g.get('S-5').change(), FrontmatterError);

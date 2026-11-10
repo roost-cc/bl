@@ -25,7 +25,7 @@
  * position from its change document's `review_round` and `review_status`.
  */
 
-import { FlowError, LEGACY_LOG, fromLegacy, loadFlow, statusWords } from './flow.js';
+import { FlowError, LEGACY_LOG, REVIEW, fromLegacy, loadFlow, statusWords } from './flow.js';
 import { GUARDS } from './guards.js';
 import { updateSpecFile } from './spec-file.js';
 
@@ -188,14 +188,59 @@ export function statusOf(kind, fm, change = null) {
 }
 
 /**
- * The unit's round: the number of entries into `in_review`.
+ * The unit's review state, read from its log (F-69 D5). An entry into
+ * `in_review` opens a round, except an entry that returns to a round with
+ * no verdict yet, or a resumed run's (`by: run`) return to open items that
+ * no fix has addressed: a run resumed after an escalation goes `escalated` →
+ * `in_progress` → `in_review`, and that is not a review. A verdict is an
+ * entry to `fixing` or `ready_for_merge`, or a review's own entry to
+ * `escalated` (`via: review`: the closing round left items open), which
+ * leaves the items in `fixing`.
+ *
+ * - `round`: the rounds the log opened.
+ * - `reviewed`: the rounds with a verdict (`round`, less the open one).
+ * - `position`: the last of `in_review` (a round open), `fixing` (its items
+ *   open) and `ready_for_merge` (clean), or null before the first review.
+ * - `fixed`: the open round follows a fix (`fixing` before it), so its
+ *   review is a re-review of the fixes.
+ * @param {string} kind
+ * @param {object} fm
+ * @param {{ fm: object } | null} [change]
+ * @returns {{ round: number, reviewed: number, position: string | null, fixed: boolean }}
+ */
+export function reviewOf(kind, fm, change = null) {
+  let round = 0;
+  let position = null;
+  let fixed = false;
+  for (const e of logOf(kind, fm, change)) {
+    if (e.to === REVIEW.open) {
+      // A return to a round with no verdict, or a resumed run's return to open items.
+      if (position === REVIEW.open) continue;
+      if (position === REVIEW.items && e.by === 'run') continue;
+      fixed = position === REVIEW.items;
+      position = REVIEW.open;
+      round++;
+    } else if (e.to === REVIEW.items || e.to === REVIEW.clean) {
+      position = e.to;
+      fixed = false;
+    } else if (e.to === 'escalated' && e.via === 'review' && position === REVIEW.open) {
+      position = REVIEW.items;
+      fixed = false;
+    }
+  }
+  return { round, reviewed: position === REVIEW.open ? round - 1 : round, position, fixed };
+}
+
+/**
+ * The unit's round: the review rounds its log opened (`reviewOf`), its
+ * entries into `in_review` less the returns.
  * @param {string} kind
  * @param {object} fm
  * @param {{ fm: object } | null} [change]
  * @returns {number}
  */
 export function roundOf(kind, fm, change = null) {
-  return logOf(kind, fm, change).filter((e) => e.to === 'in_review').length;
+  return reviewOf(kind, fm, change).round;
 }
 
 /** The unit's id, for a message: its id key, else `the <kind>`. */

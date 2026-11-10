@@ -122,7 +122,6 @@ import {
   openUnitChange,
   readChange,
   recordMerge,
-  reviewFieldsAt,
   setRepo,
   updateChange,
 } from './change-doc.js';
@@ -135,7 +134,9 @@ import {
   applyNew,
   applyTransition,
   enterVerb,
+  logOf,
   nowAt,
+  reviewOf,
   startOf,
   statusOf,
 } from './transition.js';
@@ -862,8 +863,15 @@ export function tokensLines(fm) {
   return lines;
 }
 
-/** The header lines `bl status` prints for a feature or a story; `repos` is its repo list. */
-function printUnitHead(unit, repos) {
+/** How many of the log's last entries `bl status` prints (F-69 D5). */
+const STATUS_TRANSITIONS = 3;
+
+/**
+ * The header lines `bl status` prints for a feature or a story: its status,
+ * its review round and outcome, and the last transitions of its log (F-69
+ * D5); `repos` is its repo list.
+ */
+function printUnitHead(unit, repos, kind) {
   const review = summarizeLatestReviewSession(unit.changeBody ?? '');
   console.log(`${unit.id} · ${unit.title}`);
   // A side story's `found_by` (F-48 D2): a record, printed when set.
@@ -871,15 +879,31 @@ function printUnitHead(unit, repos) {
   console.log(
     `status: ${unit.status}   repo: ${repos || '-'}   branch: ${unit.branch || '-'}   pr: ${unit.pr ? `#${unit.pr}` : '-'}   points: ${unit.points}${foundBy ? `   found by: ${foundBy}` : ''}`,
   );
-  const rounds = `${unit.reviewRound}/${unit.reviewRoundsMax}`;
-  const outcome = reviewOutcome(unit.reviewStatus, review);
-  const state = !unit.reviewStatus
-    ? `none (round ${rounds})`
-    : outcome != null
-      ? `round ${rounds} done: ${outcome}`
-      : `round ${rounds}, review_status: ${unit.reviewStatus}`;
+  const { round, position } = reviewOf(kind, unit.fm, unit.change ?? null);
+  const rounds = `${round}/${unit.reviewRoundsMax}`;
+  const outcome = reviewOutcome(position, review);
+  const state =
+    position == null
+      ? `none (round ${rounds})`
+      : outcome != null
+        ? `round ${rounds} done: ${outcome}`
+        : `round ${rounds}, ${position}`;
   console.log(`review: ${state}${review ? `, latest session ${review.date}` : ''}`);
+  const log = logOf(kind, unit.fm, unit.change ?? null);
+  if (log.length > 0) {
+    const shown = log.slice(-STATUS_TRANSITIONS);
+    console.log(`transitions (last ${shown.length} of ${log.length}):`);
+    for (const e of shown) console.log(`  ${transitionLine(e)}`);
+  }
   printChanges(unit);
+}
+
+/** One log entry as `bl status` prints it: `at  to  by <verb> via <capability>: <outcome> (<note>)`. */
+function transitionLine(e) {
+  const via = e.via ? ` via ${e.via}` : '';
+  const outcome = e.outcome ? `: ${e.outcome}` : '';
+  const note = e.note ? ` (${e.note})` : '';
+  return `${e.at ?? '-'}  ${e.to}  by ${e.by ?? '-'}${via}${outcome}${note}`;
 }
 
 /**
@@ -908,7 +932,7 @@ export function cmdStatus(args, config, feature) {
   const all = readAllStories(config);
   const { stories } = resolveFeatureStories(feature, config, all);
   const ordered = orderStoriesByDeps(stories);
-  printUnitHead(feature, featureRepoOrder(stories).join(', '));
+  printUnitHead(feature, featureRepoOrder(stories).join(', '), 'feature');
   console.log('');
   if (ordered.length > 0) {
     printTable(
@@ -932,7 +956,7 @@ export function cmdStatus(args, config, feature) {
  */
 export function cmdStatusStory(args, config, story) {
   const { unit } = loadStoryUnit(story, config);
-  printUnitHead(unit, unit.primaryRepo);
+  printUnitHead(unit, unit.primaryRepo, 'story');
   const all = readAllStories(config);
   const blockers = outsideBlockers([storyAsOrdered(unit)], all, loadFlow(config.backlogRoot));
   if (blockers.length > 0) {
@@ -1205,13 +1229,13 @@ export async function cmdWorkon(args, config, feature) {
     vars.outcomeCarrier = 'file';
     // The same slot `bl run` gives this round's fix session.
     ensureRunDir(cfg);
-    vars.scratchDir = join(cfg.backlogRoot, RUN_DIR, `${feature.id}.r${feature.reviewRound}.fix.scratch`);
+    vars.scratchDir = join(cfg.backlogRoot, RUN_DIR, `${feature.id}.r${feature.round}.fix.scratch`);
     mkdirSync(vars.scratchDir, { recursive: true });
   }
   const sessionPrompt = loadPrompt(promptName, vars, { agent: cfg.agent, config: cfg });
 
-  // What a fix session found; applyFixOutcome puts it back unless the outcome is `fixed`.
-  const fixBefore = reviewPending ? reviewFieldsAt(vars.changeAbsPath) : {};
+  // The change document the fix session found, which places a feature with no log.
+  const changeBefore = reviewPending ? readChange(vars.changeAbsPath) : null;
   const ret = launchSession({
     mode: 'workon',
     parsed,
@@ -1231,7 +1255,7 @@ export async function cmdWorkon(args, config, feature) {
     recordTokens: false,
     // The same key `bl run` gives this session (S-904): the round's fix
     // while a review is pending.
-    tokensStep: reviewPending ? tokensStepKey('fix', feature.reviewRound) : 'implement',
+    tokensStep: reviewPending ? tokensStepKey('fix', feature.round) : 'implement',
     tokensIndexPath: feature.indexPath,
     // One session for every story: the highest of their levels (F-85 D4).
     effort: sessionEffort(cfg, { mode: 'workon', stories: prep.ordered }),
@@ -1240,8 +1264,8 @@ export async function cmdWorkon(args, config, feature) {
   const status = reviewPending ? ret.status : ret;
   recordFeatureTokens(feature, cfg);
   if (reviewPending) {
-    const unit = { id: feature.id, kind: 'feature', indexPath: feature.indexPath, changePath: vars.changeAbsPath };
-    applyFixOutcome(cfg.backlogRoot, unit, ret, fixBefore);
+    const unit = { id: feature.id, kind: 'feature', indexPath: feature.indexPath };
+    applyFixOutcome(cfg.backlogRoot, unit, ret, changeBefore);
   }
   if (!status) info(implementNextSteps(feature.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.
@@ -1431,7 +1455,12 @@ async function reviewUnitPRs(
 ) {
   const reviewAgent = config.reviewAgent;
   const parsed = unit.kind === 'story' ? normalizeId(unit.id) : parsedFor(unit);
-  const round = unit.reviewRound;
+  // The rounds with a verdict, and whether the open one re-reviews fixes (F-69 D5).
+  const {
+    reviewed: round,
+    position,
+    fixed,
+  } = reviewOf(unit.kind === 'story' ? 'story' : 'feature', unit.fm, unit.change ?? null);
   // The same review step `bl run` takes: two dimension passes and a
   // verifier, headless unless the agent has no headless mode or
   // --interactive asks to attach each session.
@@ -1445,14 +1474,14 @@ async function reviewUnitPRs(
     });
 
   // One invocation is one review round over every PR the unit has: one
-  // verifier, one Review Log session, `review_round` up by one. The primary
-  // repo's PR (else the first found) is the one the run state keeps.
+  // verifier, one Review Log session, one verdict in the unit's log. The
+  // primary repo's PR (else the first found) is the one the run state keeps.
   const primary = prs.find((p) => p.isPrimary) ?? prs[0];
   const targets = [primary, ...prs.filter((p) => p !== primary)];
   info(`${unit.kind === 'story' ? 'Story   ' : 'Feature '} : ${unit.id} — ${unit.title}`);
   info(`Branch   : ${branchName}`);
   info(
-    `Round    : ${round + 1} of ${unit.reviewRoundsMax}${unit.reviewStatus === 'fixed' ? ' (re-review of claimed fixes)' : ''}`,
+    `Round    : ${round + 1} of ${unit.reviewRoundsMax}${position === 'in_review' && fixed ? ' (re-review of claimed fixes)' : ''}`,
   );
   const syncs = new Map();
   for (const pr of targets) {
@@ -1551,7 +1580,7 @@ async function reviewUnitPRs(
   else info(`\nReview round ${result.round} done: ${end.outcome}.${end.cap}`);
   if (end?.next) info(`Next: ${end.next}`);
   if (result.error) console.error(`bl review: ${result.error}`);
-  const ok = !result.error && !result.escalated && (result.status === 'pending' || result.status === 'addressed');
+  const ok = !result.error && !result.escalated && result.verdict;
   process.exit(ok ? 0 : 1);
 }
 

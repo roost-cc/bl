@@ -46,7 +46,11 @@ function reportBacklog() {
     join(dir, 'features/F1-one/change.md'),
     CHANGE_TEMPLATE('F-1', { review_round: 1, change_status: 'merged' }),
   );
-  writeFileSync(join(dir, 'features/F1-one/change-2.md'), CHANGE_TEMPLATE('F-1', { review_round: 3 }));
+  // The old shape (F-69 D4): round 3's items open, which places the running feature in fixing (D5).
+  writeFileSync(
+    join(dir, 'features/F1-one/change-2.md'),
+    CHANGE_TEMPLATE('F-1', { review_round: 3, review_status: 'pending' }),
+  );
   const sync = runBl(['sync'], { cwd: dir });
   assert.equal(sync.status, 0, sync.stderr);
   shas['2026-04-28'] = commitAt(dir, '2026-04-28T18:00:00', 'sync');
@@ -303,7 +307,7 @@ test('renderMarkdown lays the sections out in Design D5 order, a placeholder for
   assert.match(page, /- Total: input 110, output 27,000, cache creation 3,000, cache read 74,900; headless 47\.6%/);
   assert.match(
     page,
-    /\| \[F-1\]\(\.\.\/features\/F1-one\/index\.md\) +\| Feature one \| feature \| in_progress \| 11 +\| 100 +\| 22,000 \| 3,000 +\| 74,900 +\| 50% +\| 2,000 +\| 2026-04-28 \|/,
+    /\| \[F-1\]\(\.\.\/features\/F1-one\/index\.md\) +\| Feature one \| feature \| fixing \| 11 +\| 100 +\| 22,000 \| 3,000 +\| 74,900 +\| 50% +\| 2,000 +\| 2026-04-28 \|/,
   );
   assert.match(page, /### Per step\n\n— \(no done unit records per-step tokens yet/);
 });
@@ -329,7 +333,7 @@ test('cost and token efficiency: features and stand-alone stories from the curre
         id: 'F-1',
         kind: 'feature',
         type: 'feature',
-        status: 'in_progress',
+        status: 'fixing',
         points: 11,
         reviewRound: 3,
         outputPerPoint: 2000,

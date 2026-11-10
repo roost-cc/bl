@@ -20,6 +20,7 @@ import {
   findTransitionFindings,
   legacyLog,
   logOf,
+  reviewOf,
   roundOf,
   startOf,
   statusOf,
@@ -251,6 +252,62 @@ test('statusOf and roundOf read the log, else the legacy shape; a log wins over 
   assert.equal(logOf('story', fm), fm.transitions);
   // A malformed log is no log: the reader falls back to status:.
   assert.equal(statusOf('story', { status: 'refined', transitions: 'x' }), 'refined');
+});
+
+test('reviewOf: rounds, verdicts and the review position; a return to a round opens none (F-69 D5)', () => {
+  const of = (...steps) =>
+    reviewOf('feature', {
+      transitions: steps.map((s) => {
+        const [to, by = 'operator', via] = s.split(':');
+        return { to, by, ...(via ? { via } : {}) };
+      }),
+    });
+  const base = ['draft:new', 'approved:approve', 'in_progress:run'];
+  assert.deepEqual(of(...base), { round: 0, reviewed: 0, position: null, fixed: false });
+  assert.deepEqual(of(...base, 'in_review:run'), { round: 1, reviewed: 0, position: 'in_review', fixed: false });
+  const fixing1 = [...base, 'in_review:run', 'fixing:review:review'];
+  assert.deepEqual(of(...fixing1), { round: 1, reviewed: 1, position: 'fixing', fixed: false });
+  assert.deepEqual(of(...fixing1, 'in_review:fix'), { round: 2, reviewed: 1, position: 'in_review', fixed: true });
+  assert.deepEqual(of(...fixing1, 'in_review:fix', 'ready_for_merge:review'), {
+    round: 2,
+    reviewed: 2,
+    position: 'ready_for_merge',
+    fixed: false,
+  });
+  // More work after a clean verdict: the next review opens a round.
+  assert.equal(of(...base, 'in_review:run', 'ready_for_merge:review', 'in_review:review').round, 2);
+
+  // Resumed after an escalation in review, before a verdict: the same round.
+  const aborted = [...base, 'in_review:run', 'escalated:review', 'in_progress:run', 'in_review:run'];
+  assert.deepEqual(of(...aborted), { round: 1, reviewed: 0, position: 'in_review', fixed: false });
+  // Resumed after an escalation in fixing: the run's return to review opens no
+  // round, and the items stay open until the fix.
+  const resumed = [...fixing1, 'escalated:fix', 'in_progress:run', 'in_review:run'];
+  assert.deepEqual(of(...resumed), { round: 1, reviewed: 1, position: 'fixing', fixed: false });
+  assert.deepEqual(of(...resumed, 'fixing:review', 'in_review:fix'), {
+    round: 2,
+    reviewed: 1,
+    position: 'in_review',
+    fixed: true,
+  });
+  // The closing round's items escalate through the review's own entry: a verdict, its items open.
+  const closing = [...fixing1, 'in_review:fix', 'escalated:review:review'];
+  assert.deepEqual(of(...closing), { round: 2, reviewed: 2, position: 'fixing', fixed: false });
+  // An escalation the review did not decide (an aborted round) is no verdict.
+  assert.deepEqual(of(...fixing1, 'in_review:fix', 'escalated:review'), {
+    round: 2,
+    reviewed: 1,
+    position: 'in_review',
+    fixed: true,
+  });
+  // The legacy shape reads the same through legacyLog.
+  const pending = { fm: { review_round: '2', review_status: 'pending' } };
+  assert.deepEqual(reviewOf('feature', { status: 'running' }, pending), {
+    round: 2,
+    reviewed: 2,
+    position: 'fixing',
+    fixed: false,
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -145,8 +145,9 @@ const CASES = [
   },
   {
     name: 'a fixed review',
+    // The old shape (F-69 D4): a fixed review reads as in_review after a fix (D5).
     review: { review_status: 'fixed', reviewLog: SESSION({ must: '- [x] broken → fixed' }) },
-    want: /^<id> has unresolved review state \(review_status: fixed.*\nRe-review the fixes \(bl review <id>\)/,
+    want: /^<id> has unresolved review state \(in_review, round 1,.*\nReview it \(bl review <id>\) before merging\.$/m,
   },
   {
     name: 'an open Should',

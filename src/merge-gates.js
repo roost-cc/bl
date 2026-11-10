@@ -67,14 +67,16 @@ function prLine(p) {
  * which prints its own detail and with `--switch-main` may switch a stale
  * checkout back).
  *
- * The review rule is `featureReviewGate` for both kinds: blocked while
- * `review_status` is `pending` or `fixed` or the latest Review Log session has
- * an open Must or Should box; open nits pass. A unit with no Review Log session
+ * The review rule is `featureReviewGate` for both kinds: blocked while the
+ * unit's status is `fixing` or `in_review` (F-69 D5) or the latest Review Log
+ * session has an open Must or Should box; `ready_for_merge` and open nits
+ * pass. The refusal names `bl implement` for `fixing` and `bl review` for
+ * `in_review`. A unit with no Review Log session
  * is refused unless `args["no-review"]`; then `unreviewed` carries what the
  * change document's `## Merge` records (`noReviewLines`). A scripted story
  * without `review: true` is not refused: it has no review to wait for (F-71 D3).
  *
- * @param {object} unit — a `storyUnit` or `featureUnit`
+ * @param {object} unit — a `storyUnit` or `featureUnit`: its `status` and `round` are its log's
  * @param {{ config: object, args?: object, repos: string[], find?: Function, preflight?: Function, held?: Function }} opts
  *   `repos` are the unit's repos, in merge order; `held(id)` is the gate
  *   check, `heldBy` at `merge` by default
@@ -104,15 +106,13 @@ export function mergeGates(
     });
   }
 
-  const { blocked, review } = featureReviewGate(unit.reviewStatus, unit.changeBody ?? '');
+  const { blocked, review } = featureReviewGate(unit.status, unit.changeBody ?? '');
   if (blocked) {
     const next =
-      unit.reviewStatus === 'fixed'
-        ? `Re-review the fixes (bl review ${id})`
-        : `Address the review feedback (bl implement ${id})`;
+      unit.status === 'in_review' ? `Review it (bl review ${id})` : `Address the review feedback (bl implement ${id})`;
     findings.push({
       gate: 'review',
-      message: `${id} has unresolved review state (review_status: ${unit.reviewStatus || 'unset'}, latest session ${review?.date ?? 'unknown'}, ${review?.blocking ?? 0} unchecked Must/Should).\n${next} before merging, or edit its change document to override.`,
+      message: `${id} has unresolved review state (${unit.status}, round ${unit.round ?? 0}, latest session ${review?.date ?? 'unknown'}, ${review?.blocking ?? 0} unchecked Must/Should).\n${next} before merging.`,
     });
   } else if (!review && !(unit.kind === 'story' && reviewSkipped(unit.fm))) {
     // Never reviewed (D3). The PR lookup only sharpens the message; a forge

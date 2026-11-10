@@ -84,7 +84,16 @@ function oldBacklog() {
     ],
     features: [
       { id: 'F-1', title: 'Refined', status: 'draft', added: '2026-11-01' },
-      { id: 'F-2', title: 'Run', status: 'running', added: '2026-11-01', branch: 'f2' },
+      // A change document as bl wrote it before F-69: round 0, no status.
+      {
+        id: 'F-2',
+        title: 'Run',
+        status: 'running',
+        added: '2026-11-01',
+        branch: 'f2',
+        review_round: 0,
+        review_status: '',
+      },
       {
         id: 'F-3',
         title: 'Pending',
