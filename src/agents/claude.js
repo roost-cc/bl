@@ -365,8 +365,8 @@ function claudeWindowName({ kind, scope }) {
  * else `five_hour` and `seven_day` (`utilization`) as the `session` and
  * `weekly_all` limits. A limit with `scope: null` applies to every model; a
  * model-scoped one only when `scopedModelMatches`; any other scope is left
- * out. Each kept limit is a window (`remainingPercent` = 100 - `percent`, at
- * least 0). A window at 0% makes the configuration `unavailable` until the
+ * out. Each kept limit is a window (`remainingPercent` = 100 - `percent`, from 0
+ * to 100). A window at 0% makes the configuration `unavailable` until the
  * latest such window's reset (null when one has none). `extra_usage` and
  * `spend` are not read: bl never spends paid credits on its own. `scope` is
  * `model` when any limit names a model, else `account`; a body that is not
@@ -411,7 +411,7 @@ export function claudeCapacity(body, model) {
     if (r != null && typeof r !== 'string') return unreadable('a reset that is not a time', name, r);
     const resetsAt = r == null ? null : new Date(r);
     if (resetsAt && !Number.isFinite(resetsAt.getTime())) return unreadable('a reset that is not a time', name, r);
-    windows.push({ name, remainingPercent: Math.max(0, 100 - limit.percent), resetsAt });
+    windows.push({ name, remainingPercent: Math.min(100, Math.max(0, 100 - limit.percent)), resetsAt });
   }
   if (windows.length === 0) return unknown(scope, 'the Claude usage endpoint reported no quota windows');
   return windowsCapacity(windows, scope);

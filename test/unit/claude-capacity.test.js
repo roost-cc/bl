@@ -154,6 +154,9 @@ test('a reset that is not a time, or a body with no windows, is unknown; a perce
   over.limits[0].percent = 130;
   assert.equal(claudeCapacity(over, 'opus').windows[0].remainingPercent, 0);
   assert.equal(claudeCapacity(over, 'opus').state, 'unavailable');
+  const under = PROBE1();
+  under.limits[0].percent = -20;
+  assert.equal(claudeCapacity(under, 'opus').windows[0].remainingPercent, 100);
 });
 
 // The two shapes a limit comes in: an entry of `limits`, and the
