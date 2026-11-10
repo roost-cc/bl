@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { extractSection } from '../../src/feature.js';
@@ -206,6 +206,50 @@ test('a failed install stops bl merge after the push, names the command, and the
     fx.cleanup();
   }
 });
+
+// Each child that `cleanupOneRepo` starts after the push, ended by SIGTERM,
+// ends `bl merge` as SIGTERM, as the push in `checkedMerge` does. `fail`
+// makes the first run's install fail, so the second run takes the "already
+// merged" path that looks up the merge commit (`landedMergeCommit`).
+const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+for (const { child, fail, npm, git, message } of [
+  {
+    child: 'the install',
+    fail: false,
+    npm: 'kill -TERM $$',
+    git: null,
+    message: /`npm ci` in the main checkout was interrupted/,
+  },
+  {
+    child: 'the merge-commit lookup',
+    fail: true,
+    npm: 'exit 0',
+    git: `case "$*" in *--ancestry-path*) kill -TERM $$;; esac\nexec '${REAL_GIT}' "$@"`,
+    message: /Branch 's1-loose' is already merged into main\./,
+  },
+]) {
+  test(`${child} ended by SIGTERM ends bl merge as SIGTERM`, () => {
+    const fx = fixture();
+    const npmFake = fakeNpm();
+    const dir = mkTempDir('bl-sigterm-');
+    writeFileSync(join(dir, 'npm'), `#!/bin/sh\n${npm}\nsleep 5\n`, { mode: 0o755 });
+    if (git) writeFileSync(join(dir, 'git'), `#!/bin/sh\n${git}\n`, { mode: 0o755 });
+    try {
+      landOnMain(fx, 'package-lock.json', '{}\n', 'add a lockfile');
+      if (fail) {
+        writeFileSync(npmFake.exitFile, '1');
+        assert.equal(runBl(['merge', 'S-1'], { cwd: fx.dir, env: npmFake.env }).status, 1);
+      }
+      const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: { ...ENV, PATH: `${dir}:${process.env.PATH}` } });
+      assert.match(r.stderr, message);
+      assert.ok(r.status === 143 || r.signal === 'SIGTERM', `status ${r.status}, signal ${r.signal}\n${r.stderr}`);
+      // The kill stopped bl merge, so it does not go on to "Resume with".
+      assert.doesNotMatch(r.stderr, /Cleanup of code failed/);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
 
 test('a failed install keeps the merge commit SHA when main moves before the rerun', () => {
   const fx = fixture();

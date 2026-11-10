@@ -726,11 +726,16 @@ export async function cleanupOneRepo({
   const install = installCommand(repoPath);
   if (install) {
     info(`Installing ${repoName}'s dependencies in the main checkout (${install})...`);
-    const r = spawnSync(install, { cwd: repoPath, shell: true, stdio: ['ignore', process.stderr, process.stderr] });
+    // No shell: a shell would turn the command's signal into an exit code
+    // (143), and `raiseSignal` below needs the signal. `install` is one of
+    // two fixed commands with no quoted words.
+    const [cmd, ...args] = install.split(' ');
+    const r = spawnSync(cmd, args, { cwd: repoPath, stdio: ['ignore', process.stderr, process.stderr] });
     if (r.status !== 0) {
       console.error(
         `${repoName}: main is pushed, but \`${install}\` in the main checkout ${isInterrupt(r.signal) ? 'was interrupted' : 'failed'}. Run it by hand, then rerun \`bl merge ${parsed.id}\`:\n  cd ${shellQuote(repoPath)} && ${install}`,
       );
+      raiseSignal(r.signal);
       return { ok: false };
     }
   }
@@ -1028,6 +1033,7 @@ export function fastForwardBlocker(git, repoPath, commit) {
 export function landedMergeCommit(repoPath, branchName) {
   const git = (...args) => {
     const r = spawnSync('git', args, { cwd: repoPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    raiseSignal(r.signal);
     return r.status === 0 ? r.stdout.trim() : null;
   };
   const tip = git('rev-parse', '--verify', `${branchName}^{commit}`);
