@@ -301,7 +301,9 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   const skipped = [];
   const prior = carriedPaths(root);
   const carried = prior.carry;
-  if (prior.committed.length > 0) log(`an earlier run's paths are committed already: ${prior.committed.join(' ')}`);
+  if (prior.committed.length > 0) {
+    log(`left out, committed or reverted since an earlier run wrote them: ${prior.committed.join(' ')}`);
+  }
   if (prior.edited.length > 0) {
     log(`left out, edited since an earlier run wrote them; commit them yourself: ${prior.edited.join(' ')}`);
   }

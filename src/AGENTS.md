@@ -877,10 +877,13 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   position, for a unit with no log) and checks it with `assertFrom`. `bl run` passes its `then`
   chain (`Flow.chainOf`: `run`, `review`, `fix`), so it resumes a unit in review or fixing;
   `bl implement` passes `implementVerbOf(kind, unit)`: `fix` when the unit's review position
-  (`reviewOf`) is `fixing`, whatever its status, else `implement`; a started `fix` records
+  (`reviewOf`) is `fixing`, whatever its status, else `implement` (a `done` or `superseded`
+  unit always gets `implement`, whose row refuses it); a started `fix` records
   `fixing`, its `during`;
   `bl review`, `bl merge`, `bl refine` and `bl approve` their own verb. `bl merge` checks the
-  `when` guards in `mergeGates` with their own messages (`guards: false`).
+  `when` guards in `mergeGates` with their own messages (`guards: false`). A malformed
+  `transitions:` (`malformedLogRefusal`) refuses every verb; `bl merge F-n` and
+  `prepareFeatureWorktree` also refuse a feature whose story has one, before the first repo step.
 - **A unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the log the
   migration would write, `legacyLog(kind, fm, change)`: `draft` at `added`, then its `status:`
   through `LEGACY_STATUSES`; a terminal status at `completed`. A unit at `in_progress` or
@@ -905,11 +908,14 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
   (`liveSessionLocks`, by the worktree's branch) has a live holder other than the script and its
   parent processes is skipped and listed, with the stories of such a feature, and so is a unit
-  whose `transitions:` is malformed (`logShape`); a rerun converts it and, with nothing left,
-  prints `nothing to do`. A run that fails after it wrote (a step throws, or the commit fails)
-  records the paths it wrote in `.bl/run/commit-failed/migrate-transitions.json`, and the rerun
-  commits each one whose content is unchanged with its own paths. `--dry-run` prints the same
-  counts and writes nothing.
+  whose `transitions:` is malformed (`logShape`); a rerun converts a held unit, a malformed one
+  once someone fixes it, and, with nothing left, prints `nothing to do`. It sets `added` and
+  `completed` to the days of the new log's first and terminal entries (`setDates`). A run that
+  fails after it wrote (a step throws, or the commit fails) records the paths it wrote in
+  `.bl/run/commit-failed/migrate-transitions.json`. The rerun commits each one that is still
+  uncommitted with the recorded content along with its own paths, and names each one that was
+  committed or edited since. `--dry-run` prints the same counts and the paths it would carry,
+  and writes nothing.
 - **The review state (D5).** `reviewOf(kind, fm, change)` reads it from the log: `round`, the
   rounds the log opened; `reviewed`, the rounds with a verdict (`round`, less the open one);
   `position`, the last of `in_review` (a round open), `fixing` (its items open) and

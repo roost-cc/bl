@@ -410,6 +410,10 @@ test('a rerun after the operator committed the recorded paths by hand exits 0, c
     assert.equal(r.status, 0, `${run}: ${r.stderr}`);
     assert.equal(head(dir), before, run);
     assert.equal(hasRecord(dir), false, run);
+    // The rerun names each recorded path it leaves out; the second has no record left.
+    const named = /^left out, committed or reverted since an earlier run wrote them: .*stories\/S1\/index\.md/m;
+    if (run === 'the rerun') assert.match(r.stdout, named, run);
+    else assert.doesNotMatch(r.stdout, named, run);
   }
 });
 

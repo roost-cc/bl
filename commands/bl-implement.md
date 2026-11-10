@@ -26,8 +26,9 @@ bl implement <id...>                # several targets: one tmux window each
 `flow.json`'s `implement` row names the statuses it starts from: a story `draft`, `refined`,
 `in_progress` or `escalated`; a feature `approved`, `in_progress` or `escalated`. A unit whose
 review position is `fixing` (a review round left items open), whatever its status, starts the
-`fix` row instead, and bl records `fixing` before the session. A feature refuses on open
-dependencies outside it.
+`fix` row instead, and bl records `fixing` before the session. A `done` or `superseded` unit is
+refused under `implement`. A feature refuses on open dependencies outside it, and on a story
+whose `transitions:` is malformed.
 
 ## One or several
 
