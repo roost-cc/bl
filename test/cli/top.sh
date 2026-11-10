@@ -153,7 +153,7 @@ set_top() {
 }
 set_top '{"push": []}'
 set +e
-OUT=$("$BL" top --version 2>"$ERR"); CODE=$?
+OUT=$("$BL" top </dev/null 2>"$ERR"); CODE=$?
 set -e
 assert_exit "bl top with a bad top block" 1 "$CODE"
 assert_empty "bl top with a bad top block: stdout" "$OUT"
@@ -162,6 +162,10 @@ set +e
 "$BL" top --json >/dev/null 2>"$ERR"; CODE=$?
 set -e
 assert_exit "bl top --json does not read the top block" 0 "$CODE"
+set +e
+"$BL" top --version >/dev/null 2>"$ERR"; CODE=$?
+set -e
+assert_exit "bl top --version does not read the top block" 0 "$CODE"
 set_top '{"push": ["phone-push", "--topic", "bl top"]}'
 mv "$BL_ROOT/top/bin/bl-top" "$BL_ROOT/top/bin/bl-top.real"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' > "$BL_ROOT/top/bin/bl-top"
@@ -184,13 +188,18 @@ assert_exit "bl top with a view that cannot start" 1 "$NOT_RUN"
 assert_contains "bl top says why the view did not start" "bl top: cannot run $BL_ROOT/top/bin/bl-top: " "$NOT_RUN_ERR"
 mv "$TMPDIR_ROOT/backlog.json.good" "$CFG"
 
-# With no backlog, bl top exits 1 before it starts the view, and says how to name one.
+# With no backlog, bl top exits 1 before it starts the view, and says how to name one;
+# bl top --version reads no backlog.
 NOWHERE=$(mktemp -d)
 set +e
 (cd "$NOWHERE" && env -u BL_BACKLOG_DIR "$BL" top </dev/null >/dev/null 2>"$ERR")
 CODE=$?
+VERSION=$(cd "$NOWHERE" && env -u BL_BACKLOG_DIR "$BL" top --version 2>/dev/null)
+VERSION_CODE=$?
 set -e
 rm -rf "$NOWHERE"
+assert_exit "bl top --version with no backlog" 0 "$VERSION_CODE"
+assert_contains "bl top --version with no backlog prints the version" "bl-top go" "$VERSION"
 assert_exit "bl top with no backlog" 1 "$CODE"
 assert_contains "bl top with no backlog says how to name one" "Set BL_BACKLOG_DIR" "$(cat "$ERR")"
 

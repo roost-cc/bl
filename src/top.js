@@ -201,12 +201,13 @@ export function tuiArgs(opts, interval, push) {
  * Run the TUI with the terminal's stdio and exit with its code; build it
  * first when it needs a build. The phone push command comes from
  * backlog.json's `top` block (D8a), read before the build: a bad block exits
- * 1. `--no-push` passes no command.
+ * 1. `--no-push` passes no command. `--version` reads no backlog, so it
+ * works outside one.
  */
 function runTui(opts, interval) {
-  let push;
+  let push = null;
   try {
-    push = topSettings(loadConfig());
+    if (!opts.version) push = topSettings(loadConfig());
   } catch (e) {
     console.error(`bl top: ${e.message}`);
     process.exit(1);

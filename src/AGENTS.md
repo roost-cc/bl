@@ -2927,7 +2927,7 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `--json` or `--stream`.
 - **Phone push** (D8a, `notify.Push`). The push sender, named `push`, is the command of
   backlog.json's `top` block (below), and it gets only `escalation` and `task` notes, never a
-  run that ends (Decision A6). `src/top.js` reads the block before the build and passes the argv
+  run that ends (Decision A6). `src/top.js` reads the block before the build (not for `--version`, which reads no backlog) and passes the argv
   to the view as `--push-argv '<JSON array>'`, an internal flag that the view decodes with
   `encoding/json`, so the view still reads no backlog file. `--no-push` (passed on to the view)
   drops the sender. A push that fails warns as `push failed: …` in the bottom border. bl holds
