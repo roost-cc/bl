@@ -920,9 +920,9 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   committed or edited since. `--dry-run` prints the same counts and the paths it would carry,
   and writes nothing. The migration leaves an update story (`update_repo:`, `isUpdateStory` in
   `src/priority.js`) and its change documents in the old shape, because the updates flow still
-  reads and writes its `status:` (F-69 Out of Scope). The run and the dry run print `kept in the
-old shape (update stories, F-69 Out of Scope): <n>`; the counts and the commit message leave
-  those stories out.
+  reads and writes its `status:` (F-69 Out of Scope). The run and the dry run print
+  `kept in the old shape (update stories, F-69 Out of Scope): <n>`; the counts and the commit
+  message leave those stories out.
 - **The review state (D5).** `reviewOf(kind, fm, change)` reads it from the log: `round`, the
   rounds the log opened; `reviewed`, the rounds with a verdict (`round`, less the open one);
   `position`, the last of `in_review` (a round open), `fixing` (its items open) and
