@@ -487,3 +487,13 @@ export function sectionHasContent(text) {
   if (stripped === '') return false;
   return !/^(none|n\/a|tbd|nothing|—|-)?\.?$/i.test(stripped);
 }
+
+/**
+ * Whether the unit file at `indexPath` has an open `## Escalation`: one with
+ * content (`sectionHasContent`). Here, not in `feature-run.js`, so the guards
+ * (`guards.js`) load without the loop.
+ */
+export function escalationOpen(indexPath) {
+  const text = readFileSync(indexPath, 'utf8').replace(/\r\n/g, '\n');
+  return sectionHasContent(extractSection(parseFrontmatterOf(text, indexPath).body, 'Escalation'));
+}

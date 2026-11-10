@@ -13,7 +13,7 @@
  */
 
 import { heldAt } from './blockers.js';
-import { escalationOpen } from './feature-run.js';
+import { escalationOpen } from './feature.js';
 
 /**
  * @typedef {{ config: { backlogRoot: string }, id: string, indexPath: string,

@@ -59,6 +59,7 @@ import {
   configForRepo,
 } from './config.js';
 import {
+  escalationOpen,
   extractSection,
   replaceSection,
   sectionHasContent,
@@ -334,10 +335,7 @@ export function parseRound(value) {
 
 const isStory = (unit) => unit?.kind === 'story';
 
-export function escalationOpen(featureIndexPath) {
-  const { body } = parseFrontmatter(readText(featureIndexPath).text);
-  return sectionHasContent(extractSection(body, 'Escalation'));
-}
+export { escalationOpen };
 
 /**
  * The unit's change document: the current one, else where the first one
