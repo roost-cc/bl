@@ -156,6 +156,31 @@ test('withSpecLock throws SpecLockError naming the spec when another live proces
   }
 });
 
+test('two processes that write the same spec at once take turns, and no write is lost', async () => {
+  const { dir, path } = spec();
+  const specFile = new URL('../../src/spec-file.js', import.meta.url).href;
+  // Each process adds 1 to `n`, 10 times, holding the lock a moment each time.
+  const code = `
+    const { updateSpecFile } = await import(${JSON.stringify(specFile)});
+    for (let i = 0; i < 10; i++) {
+      await updateSpecFile(${JSON.stringify(dir)}, ${JSON.stringify(path)}, (fm) => {
+        const n = Number(fm.n ?? 0);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+        fm.n = n + 1;
+      });
+    }`;
+  const writer = () =>
+    new Promise((resolve) =>
+      spawn(process.execPath, ['--input-type=module', '-e', code], {
+        stdio: 'ignore',
+        env: { ...process.env, NODE_OPTIONS: '' },
+      }).on('exit', resolve),
+    );
+  assert.deepEqual(await Promise.all([writer(), writer()]), [0, 0]);
+  assert.equal(Number(parseFrontmatter(readFileSync(path, 'utf8')).fm.n), 20);
+  assert.equal(existsSync(specLockPath(path)), false, 'released');
+});
+
 test('withSpecLock refuses an async fn and still releases the lock', async () => {
   const { path } = spec();
   await assert.rejects(async () => withSpecLock(path, async () => {}), TypeError);
