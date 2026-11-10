@@ -29,12 +29,11 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { awaitLock, LockWaitTimeout } from './lock-wait.js';
+import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
 import { exitOnSignal } from './signal-exit.js';
 
 export const LOCK_FILE = '.bl-new.lock';
-const LOCK_TIMEOUT_MS = 60_000;
 const LOCK_POLL_MS = 500;
 
 // Locks held by this process, mapped to their re-entrancy depth and the
@@ -76,7 +75,7 @@ export async function acquireLock(backlogRoot, options = {}) {
   const {
     now = () => new Date(),
     sleep,
-    timeoutMs = LOCK_TIMEOUT_MS,
+    timeoutMs = LOCK_WAIT_MS,
     pollMs = LOCK_POLL_MS,
     exit = process.exit,
     error = console.error,

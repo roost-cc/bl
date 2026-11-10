@@ -10,6 +10,9 @@
 
 import { setTimeout as delay } from 'node:timers/promises';
 
+/** How long the backlog lock and the spec lock wait for a live holder (F-104 D2). */
+export const LOCK_WAIT_MS = 60_000;
+
 /**
  * The line a lock wait prints once, when it first finds a live holder, so a
  * person (or a test) can tell a process blocked on a lock from one still

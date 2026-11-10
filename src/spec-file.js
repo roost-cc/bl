@@ -24,7 +24,7 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { createHash } from 'crypto';
 import { FrontmatterError, info, parseFrontmatterOf, serializeFrontmatter } from './config.js';
-import { awaitLock, LockWaitTimeout } from './lock-wait.js';
+import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 
@@ -79,7 +79,7 @@ function runSync(fn, indexPath) {
  * re-entrancy map is per process, so an `await` inside `fn` would let another
  * task of this process skip the lock.
  */
-export async function withSpecLock(indexPath, fn, { waitMs = 60_000 } = {}) {
+export async function withSpecLock(indexPath, fn, { waitMs = LOCK_WAIT_MS } = {}) {
   const lockPath = specLockPath(indexPath);
   if (held.has(lockPath)) return runSync(fn, indexPath);
   const content = `${process.pid}\n${new Date().toISOString()}\nspec ${indexPath}\n`;
