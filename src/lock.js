@@ -43,16 +43,6 @@ function cleanupAll() {
   heldLocks.clear();
 }
 
-export function isPidAlive(pid, kill = process.kill) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function releaseLock(backlogRoot) {
   const lockPath = join(backlogRoot, LOCK_FILE);
   const held = heldLocks.get(lockPath);

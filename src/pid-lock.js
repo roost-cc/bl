@@ -23,16 +23,21 @@ export function liveLockHolder(lockPath) {
   return content == null ? null : liveHolderOf(content);
 }
 
+/** Whether `pid` names a live process. */
+export function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** PID on lock content's first line when that process is alive, else null. */
 function liveHolderOf(content) {
   const pid = parseInt(content.split('\n', 1)[0], 10);
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  try {
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return null;
-  }
+  return isPidAlive(pid) ? pid : null;
 }
 
 /** Create `path` holding `content`, atomically and only if it does not exist. */
