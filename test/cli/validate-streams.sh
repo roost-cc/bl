@@ -75,7 +75,10 @@ story_id: S-1
 title: First
 type: feature
 points: 1
-status: draft
+transitions:
+  - at: 2026-01-01T00:00:00Z
+    to: draft
+    by: new
 ---
 MD
   # The priority (F-78 D1): an empty `ranked:` is a clean one.

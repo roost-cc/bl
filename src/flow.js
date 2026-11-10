@@ -71,6 +71,21 @@ export const LEGACY_STATUSES = {
 };
 
 /**
+ * How a unit with no transition log reads (F-69 D4), beside
+ * `LEGACY_STATUSES`; `legacyLog` (`transition.js`) and the migration use it.
+ * `reviewed`: the statuses (in the current words) whose log takes its change
+ * document's review part. `terminal`: the ones whose entry is dated at
+ * `completed`. `review`: the statuses that follow the `in_review` entries for
+ * each v1 `review_status` of a change document (`fixed`: the fix put the unit
+ * back in review for the next round).
+ */
+export const LEGACY_LOG = {
+  reviewed: ['in_progress', 'escalated'],
+  terminal: ['done', 'superseded'],
+  review: { pending: ['fixing'], fixed: ['fixing', 'in_review'], addressed: ['ready_for_merge'] },
+};
+
+/**
  * `status` in the current words: a v1 word of `type` mapped, anything else
  * unchanged.
  * @param {string} type

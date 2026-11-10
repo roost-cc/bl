@@ -817,6 +817,46 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
   `test/unit/status-literals.test.js` counts every set of story statuses in `src/`. Status names in
   this document are the shipped flow's; messages and help name the running backlog's.
 
+## The transition log (`transitions:`, F-69 D2, D4)
+
+A story's, feature's and task's frontmatter holds `transitions:`, an append-only list of entries
+`{ at, to, by, via?, outcome?, note? }`: `at` is ISO 8601 UTC, `to` a status of the type, `by`
+the verb (`operator` for a hand edit), `via` the last capability that ran, `outcome` one line
+from its outcome, `note` free text (`migrated` on a synthesized entry). An entry's `from` is the
+previous entry's `to`.
+
+- **Derived.** The status is the last entry's `to`, and the round is the number of entries into
+  `in_review`. Neither is stored. `added` (the first entry's date) and `completed` (a task's
+  `done`: the date of the entry to a terminal status) stay as fields for one release; the writer
+  sets them and `bl validate` checks them (`transition-log`).
+- **The one writer** is `src/transition.js`. `applyTransition(flow, kind, fm, to, { by, via,
+outcome, note, at, change })` is pure: it appends the entry when the type's table has the edge
+  from the current status to `to` under `by` (`Flow.edges`: the verb's `during`, or a `success`
+  or `failure` branch), and throws `FlowError` with `fm` unchanged when it does not. A `during`
+  equal to the current status records nothing (null), so a review started on a unit already
+  `in_review` does not count twice. `transition(backlogRoot, unit, to, opts)` is
+  `updateSpecFile` around it and returns the entry. A caller that changes other fields in the
+  same locked write calls `applyTransition` inside its own mutate. Until S-1130 no production
+  writer calls it.
+- **A unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the log the
+  migration would write, `legacyLog(kind, fm, change)`: `draft` at `added`, then its `status:`
+  through `LEGACY_STATUSES`; a terminal status at `completed`. A unit at `in_progress` or
+  `escalated` takes its review position from its change document: one `in_review` per
+  `review_round` (a `fixing` between two), then `fixing` for `pending`, `fixing` and `in_review`
+  for `fixed`, `ready_for_merge` for `addressed`, and last `escalated` for an escalated unit. The
+  first `applyTransition` on such a unit writes that log (an entry with no date takes the new
+  entry's `at`), then the new entry, and removes `status:`; `transitions:` takes its place.
+- **Readers.** `statusOf`, `roundOf` and `logOf(kind, fm, change)` read the log, or `legacyLog`.
+  `makeUnit` sets `.status`, `.round` and `.transitions` through them. For a unit with no log,
+  `.status` reads no change document, so it is the `status:` word (a v1 word mapped) as before
+  F-69; at `in_progress` or `escalated`, `.round` and `.transitions` are getters that read the
+  change document when asked, and `statusOf(kind, fm, change)` gives the review position. A
+  change document bl cannot read gives no review part. `storyUnit` (`src/unit.js`) sets
+  `.status` as `makeUnit` does.
+- **`assertFrom(flow, unit, verb, ctx)`** returns null, or the refusal "S-5 is draft; run starts
+  from refined, in_progress or escalated (bl refine S-5 reaches refined)": the unit's status must
+  be in the row's `from`, and then each `when` guard (`src/guards.js`) must hold on `ctx`.
+
 ## Holds between units (`blockers.json`, F-66 D2)
 
 `blockers.json`, at the backlog root, holds every edge: a unit held at a gate until another
@@ -3325,7 +3365,18 @@ flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
 task-unit, task-field, deferred-unsized, deferred-duplicate, operator-tasks-retired,
 deferred-heading-retired, bad-tokens-by-step, agent-config, derived-key, dangling-feature,
-feature-no-stories
+feature-no-stories, transition-log, legacy-status
+
+`transition-log` (F-69 D2, `findTransitionFindings` in `src/transition.js`, error) is at a story,
+feature or task file whose `transitions:` is not a list of entries, or has an entry with a field
+outside `at`, `to`, `by`, `via`, `outcome` and `note`, no `by`, an `at` that is not ISO 8601
+UTC or is before the entry above it, or a `to` that is not a status of the type. It is also an
+entry whose pair with the entry above it (the first entry: from no status) is no edge of the
+table under its `by` (`by: operator` matches any verb), unless the entry has `note: migrated`.
+And it is an `added` that is not the first entry's date, or a `completed` (a task's `done`)
+that is not the date of the entry to a terminal status. `legacy-status` (warning) is a
+`status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
+a log, which bl does not read. A unit with a log needs no `status:` (`missing-required-key`).
 
 `derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's
 `required_for:` (even empty), a feature's `stories:`, `points:` or `components:`, or an epic's

@@ -66,7 +66,8 @@ import {
   normalizeId,
   parseFrontmatter,
 } from './config.js';
-import { FlowError, fromLegacy, loadFlow } from './flow.js';
+import { FlowError, loadFlow } from './flow.js';
+import { logOf, readsChange, roundOf, statusOf } from './transition.js';
 import { FEATURES_DIR, extractSection, normalizeFeatureId, orderStoriesByDeps } from './feature.js';
 import { parseIdList } from './story.js';
 import { THEME_ID_RE, normalizeEpicId } from './theme.js';
@@ -102,10 +103,17 @@ import {
  * @property {string} relPath     `file` relative to the backlog root
  * @property {Readonly<Record<string, any>>} fm  its frontmatter, deep-frozen
  * @property {string} title
- * @property {string} status      `draft` for a story or feature when unset;
- *                                an epic's is derived (`epicStatus`); a component and a theme have none
+ * @property {string} status      a story's, feature's or task's is its transition log's last
+ *                                `to` (`statusOf`, F-69 D2): with no log, its `status:` (a v1
+ *                                word mapped, no review position), and `draft` for a story or
+ *                                feature when unset; an epic's is derived (`epicStatus`); a
+ *                                component and a theme have none
  * @property {string} added
- * @property {boolean} done       whether `flow.meets(kind, status, 'done')` (an epic: status `done`);
+ * @property {number} [round]     a story's, feature's or task's: its log's entries into `in_review` (`roundOf`)
+ * @property {readonly object[]} [transitions]  a story's, feature's or task's log (`logOf`): the
+ *                                stored one, or the one `legacyLog` reads from `status:` and its
+ *                                change document
+ * @property {boolean} done      whether `flow.meets(kind, status, 'done')` (an epic: status `done`);
  *                                with no readable `flow.json` it throws the `FlowError`, as an epic's `status` does
  * @property {() => string} text  the whole file as read, LF line ends (its line numbers are the file's)
  * @property {() => string} body  the text after the frontmatter, sliced on first call and cached
@@ -713,13 +721,13 @@ const unitText = new WeakMap();
 function makeUnit(kind, slot, rec, root, flow, flowError) {
   const { fm } = rec;
   const id = canonicalId(kind, fm, slot.entry);
-  // A v1 word (`backlog`, `running`, `open`) reads as its current one (F-69 D4).
+  const hasFlow = kind === 'story' || kind === 'feature' || kind === 'task';
+  // The status is the transition log's last `to`; a unit with no log reads
+  // its `status:`, a v1 word as its current one (F-69 D2, D4).
   let status = '';
-  if (kind === 'story' || kind === 'feature') status = fromLegacy(kind, str(fm.status) || 'draft');
-  else if (kind === 'task') status = fromLegacy(kind, str(fm.status));
+  if (hasFlow) status = statusOf(kind, fm) || (kind === 'task' ? '' : 'draft');
   let body;
   const sections = new Map();
-  const hasFlow = kind === 'story' || kind === 'feature' || kind === 'task';
   /** @type {any} */
   const unit = {
     id,
@@ -796,6 +804,27 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
   } else if (kind === 'task') {
     const n = Number(slot.entry.match(TASK_FILE_RE)[1]);
     Object.assign(unit, { num: Number.isSafeInteger(n) ? n : null, unit: null });
+  }
+  if (hasFlow) Object.assign(unit, { round: roundOf(kind, fm), transitions: logOf(kind, fm) });
+  // A unit with no log at `in_progress` or `escalated`: its round and log
+  // take the review part from its change document (D4), read when asked.
+  // Its `status` stays its `status:` word, as before F-69, so no reader of
+  // `unit.status` changes before the migration; `statusOf` with the change
+  // document gives the review position. A change document bl cannot read
+  // gives no review part (`bl validate` reports it).
+  if (hasFlow && readsChange(kind, fm)) {
+    const change = () => {
+      try {
+        return unit.change().change;
+      } catch (e) {
+        if (e instanceof FrontmatterError || e instanceof FrontmatterListError) return null;
+        throw e;
+      }
+    };
+    Object.defineProperties(unit, {
+      round: { get: () => roundOf(kind, fm, change()), enumerable: true },
+      transitions: { get: () => logOf(kind, fm, change()), enumerable: true },
+    });
   }
   // No flow: what needs one throws the flow's error when asked (`flowOf`).
   if (!flow) {

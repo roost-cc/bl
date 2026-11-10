@@ -29,6 +29,7 @@ import { CAPABILITIES } from './capabilities.js';
 import { DISPATCH } from './verbs.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
+import { findTransitionFindings, storedLog } from './transition.js';
 import { implementPluginProblem } from './scripted.js';
 import { GENERATED_SECTIONS, UNIT_PAGE_KINDS, generatedColumns, isGeneratedBody } from './render.js';
 import { checkEffort, storyEffort } from './effort.js';
@@ -46,6 +47,8 @@ export const VALID_STORY_KEYS = new Set([
   // The effort level the refiner chose (F-85 D1); `bad-effort` checks it.
   'effort',
   'status',
+  // The transition log (F-69 D2); `transition-log` checks it.
+  'transitions',
   'added',
   'completed',
   'commit',
@@ -130,6 +133,7 @@ export const VALID_FEATURE_KEYS = new Set([
   'feature_id',
   'title',
   'status',
+  'transitions',
   // No `primary_repo` or `secondary_repos`: a feature's repos come from its
   // stories' components (F-52 D3); either one still set is `repo-key`. No
   // `stories`, `points` or `components`: derived (`DERIVED_KEYS`), so one
@@ -282,8 +286,10 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
   };
   const { required, validKeys, idKey, idRegex } = KINDS[kind];
 
-  // missing-required-key
+  // missing-required-key. A unit with a transition log needs no `status:`
+  // (F-69 D2).
   for (const key of required) {
+    if (key === 'status' && storedLog(fm)) continue;
     if (!fm[key]) {
       findings.push({
         severity: 'error',
@@ -1515,7 +1521,7 @@ export function runAll(config, opts = {}) {
     );
     findings.push(...findRunStateInSpec(fm, unit.body(), s.storyRelPath));
     findings.push(...validateChanges(config.backlogRoot, unit.dir));
-    findings.push(...findDeferredErrors(s.id, fm.status, unit.text(), s.storyRelPath, flow, 'story'));
+    findings.push(...findDeferredErrors(s.id, s.status, unit.text(), s.storyRelPath, flow, 'story'));
   }
 
   // 2. Frontmatter checks for components.
@@ -1545,7 +1551,7 @@ export function runAll(config, opts = {}) {
     findings.push(...findRunStateInSpec(f.fm, f.body, f.featureRelPath));
     findings.push(...validateChanges(config.backlogRoot, f.featureDir));
     findings.push(...findEscalationNotNone(f, flow));
-    findings.push(...findDeferredErrors(f.id, f.fm.status, f.content, f.featureRelPath, flow, 'feature'));
+    findings.push(...findDeferredErrors(f.id, f.status, f.content, f.featureRelPath, flow, 'feature'));
   }
 
   // 2c. Themes and epics (F-51 D1): their frontmatter, then the value-axis
@@ -1601,6 +1607,10 @@ export function runAll(config, opts = {}) {
   findings.push(...findBlockersFindings(config.backlogRoot, units, flow));
   // The task files (F-65 D1): `task-unit`, `task-field`.
   findings.push(...findTaskFindings(allTasks, units, flow));
+  // The transition logs (F-69 D2, D4): `transition-log`, `legacy-status`.
+  for (const kind of ['story', 'feature', 'task']) {
+    for (const u of graph.list(kind)) findings.push(...findTransitionFindings(flow, kind, u.fm, u.relPath));
+  }
 
   findings.push(...findPriorityFindings(graph));
   findings.push(...findGeneratedSectionFindings(graph));
@@ -1721,7 +1731,8 @@ Findings codes:
   priority-file, priority-unit, generated-section, roadmap-file,
   roadmap-section, theme-brief, dictionary-file, flow-json, blockers-json, agent-config,
   blockers-unit, blockers-gate, blockers-status, blockers-duplicate,
-  blockers-cycle, blockers-unmeetable, blockers-order
+  blockers-cycle, blockers-unmeetable, blockers-order, transition-log,
+  legacy-status
 
 Reads flow.json at the backlog root for story and feature statuses;
 a missing or unreadable one stops validate with its name. Checks every

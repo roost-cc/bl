@@ -16,6 +16,8 @@ import { fileURLToPath } from 'url';
 import { epicStatus, loadBacklog, loadStats, resetLoadStats, unitFiles } from '../../src/backlog-graph.js';
 import { FrontmatterError, FrontmatterListError } from '../../src/config.js';
 import { FlowError, loadFlow } from '../../src/flow.js';
+import { legacyLog } from '../../src/transition.js';
+import { updateSpecFile } from '../../src/spec-file.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'backlog-graph');
@@ -88,6 +90,54 @@ test('a unit at a v1 status word reads as its current one; the frontmatter keeps
     assert.equal(g.get(id).status, read, id);
   }
   assert.equal(g.get('F-2').done, false);
+});
+
+// F-69 D2, D4: a unit reads the same with or without its transition log. One
+// exception: an unmigrated running unit's status is its `status:` word, as
+// before F-69, and the migration moves it to its review position.
+test('every story, feature and task reads the same status, round and log migrated and unmigrated', () => {
+  const { root, config } = fixture();
+  // F-2 is running with one review round whose items are open: it is fixing.
+  replace(
+    join(root, 'features', 'F2-beta', 'change.md'),
+    '---\nchange_of: F-2\nstatus: open\nreview_round: "1"\nreview_status: pending\nrepos: []\n---\n',
+  );
+  const read = (g) =>
+    ['story', 'feature', 'task'].flatMap((kind) =>
+      g.list(kind).map((u) => [u.id, u.status, u.round, u.transitions.map((e) => e.to).join(' ')]),
+    );
+  const before = read(loadBacklog(config, { reload: true }));
+  const f2 = before.find(([id]) => id === 'F-2');
+  assert.deepEqual(f2, ['F-2', 'in_progress', 1, 'draft in_progress in_review fixing']);
+  assert.deepEqual(
+    before.find(([id]) => id === 'T-1'),
+    ['T-1', 'draft', 0, 'draft'],
+  );
+
+  const g = loadBacklog(config);
+  for (const kind of ['story', 'feature', 'task']) {
+    for (const u of g.list(kind)) {
+      const change = kind === 'task' ? null : u.change().change;
+      updateSpecFile(root, u.file, (fm) => {
+        fm.transitions = legacyLog(kind, fm, change).map((e) => ({ at: '2026-11-01T00:00:00Z', ...e }));
+        delete fm.status;
+      });
+    }
+  }
+  const after = loadBacklog(config);
+  assert.ok(after.list('story').every((s) => s.fm.status === undefined && s.fm.transitions.length > 0));
+  f2[1] = 'fixing';
+  assert.deepEqual(read(after), before);
+});
+
+test('an unmigrated running unit whose change document cannot be read has no review part', () => {
+  const { root, config } = fixture();
+  replace(join(root, 'features', 'F2-beta', 'change.md'), '---\nchange_of: F-2\nrepos: bl\n---\n');
+  const f2 = loadBacklog(config).get('F-2');
+  assert.equal(f2.status, 'in_progress');
+  assert.equal(f2.round, 0);
+  assert.equal(f2.transitions.at(-1).to, 'in_progress');
+  assert.throws(() => f2.change(), FrontmatterListError);
 });
 
 test('every unit carries the common fields, its frontmatter frozen', () => {

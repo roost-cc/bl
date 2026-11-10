@@ -258,6 +258,10 @@ test('findTaskFindings: task-unit for a unit that is not a feature or story; tas
     'error task-field: task_id T-1 is also tasks/T1-x.md',
   ]);
   assert.deepEqual(find(task('T-1', { gate: 'merge' })), ['warning task-field: unknown frontmatter key "gate"']);
+  // A task with a transition log needs no status: (F-69 D2).
+  const transitions = [{ at: '2026-10-27T00:00:00Z', to: 'draft', by: 'new' }];
+  assert.deepEqual(find(task('T-1', { status: undefined, transitions })), []);
+  assert.deepEqual(find(task('T-1', { status: undefined })), ['error task-field: task missing required key "status"']);
 });
 
 test('tasks are units in the graph: a blocker, never held, and a wildcard from a task is no cycle', () => {

@@ -126,7 +126,9 @@ export const FEATURE_INDEX_TEMPLATE = (f) => `${serializeFrontmatter({
   title: f.title,
   theme: f.theme === null ? undefined : (f.theme ?? DEFAULT_THEME),
   epic: f.epic || undefined,
-  status: f.status ?? 'draft',
+  // A fixture with a transition log (F-69 D2) has no status:.
+  status: f.transitions ? undefined : (f.status ?? 'draft'),
+  transitions: f.transitions ?? undefined,
   added: f.added || undefined,
   primary_repo: f.primary_repo || undefined,
   review_rounds_max: f.review_rounds_max ?? 2,
@@ -216,7 +218,8 @@ export const STORY_INDEX_TEMPLATE = (story) => `${serializeFrontmatter({
   type: story.type ?? 'feature',
   points: story.points ?? 1,
   effort: story.effort || undefined,
-  status: story.status ?? 'draft',
+  status: story.transitions ? undefined : (story.status ?? 'draft'),
+  transitions: story.transitions ?? undefined,
   added: story.added || undefined,
   depends_on: refList(story.depends_on),
   // Derived since F-77 D3; a fixture sets it only to test `derived-key`
@@ -245,15 +248,18 @@ ${story.body ?? ''}
  *           same way, an `E<nn>` id becoming `C<nn>`.
  * @property {Array<{ id: string, component?: string,
  *           epic?: string, title: string, type?: string, points?: number,
- *           effort?: string, status?: string, added?: string, depends_on?: string, required_for?: string,
+ *           effort?: string, status?: string, transitions?: object[], added?: string,
+ *           depends_on?: string, required_for?: string,
  *           completed?: string, dirSuffix?: string, body?: string,
  *           feature?: string, primary_repo?: string,
  *           secondary_repos?: string[] }>} [stories]
- *           Written under stories/S<n>-<dirSuffix>/ whatever the status.
+ *           Written under stories/S<n>-<dirSuffix>/ whatever the status. A
+ *           story or feature with `transitions` (F-69 D2) gets no `status:`.
  *           `component` (or a pre-F-49 `epic`, `E<nn>` → `C<nn>`) is the
  *           story's `component:`.
  * @property {Array<{ id: string, title: string, dirSuffix?: string,
- *           status?: string, added?: string, changeRepo?: string, stories?: string[],
+ *           status?: string, transitions?: object[], added?: string, changeRepo?: string,
+ *           stories?: string[],
  *           review_status?: string, branch?: string, premise?: string,
  *           deferred?: string, reviewLog?: string, escalation?: string }>} [features]
  *           Written under features/F<n>-<dirSuffix>/ whatever the status.

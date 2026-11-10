@@ -12,9 +12,21 @@ import { BL_BIN, runBl } from '../helpers/run-bl.js';
  * has one home component. `fixture.repos`, `fixture.components` and
  * `fixture.stories` add to demo-repo and its C00.
  */
+/**
+ * A unit in the shape after the migration (F-69 D2): a `draft` transition
+ * log, no `status:`, so it has no `legacy-status` warning. A fixture unit that
+ * sets a status or a log keeps it.
+ */
+const migrated = (u) =>
+  u.status != null || u.transitions != null
+    ? u
+    : { ...u, transitions: [{ at: `${u.added ?? '2026-01-01'}T00:00:00Z`, to: 'draft', by: 'new' }] };
+
 function cleanBacklog(fixture = {}) {
   return mkTempBacklog({
     ...fixture,
+    stories: fixture.stories?.map(migrated),
+    features: fixture.features?.map(migrated),
     repos: ['../demo-repo', ...(fixture.repos ?? [])],
     components: [
       { id: 'C00', title: 'Foundation', dirSuffix: 'foundation', repo: 'demo-repo', home: true },

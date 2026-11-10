@@ -38,6 +38,7 @@ import { findFeature, normalizeFeatureId } from './feature.js';
 import { withLock } from './lock.js';
 import { BLOCKERS_FILE, WILDCARD } from './blockers.js';
 import { loadFlow, statusWordProblem } from './flow.js';
+import { storedLog } from './transition.js';
 
 export const TASKS_DIR = 'tasks';
 
@@ -47,7 +48,7 @@ export const TASK_JSON_SCHEMA = 'bl-task-json/v1';
 export const TASK_OWNERS = ['operator'];
 
 /** A task file's keys, in the order bl writes them. */
-export const TASK_KEYS = ['task_id', 'title', 'unit', 'owner', 'status', 'added', 'done', 'note'];
+export const TASK_KEYS = ['task_id', 'title', 'unit', 'owner', 'status', 'transitions', 'added', 'done', 'note'];
 
 const REQUIRED_KEYS = ['task_id', 'title', 'unit', 'owner', 'status', 'added'];
 
@@ -434,6 +435,8 @@ export function findTaskFindings(tasks, units, flow) {
   for (const t of tasks) {
     const add = (code, message, severity = 'error') => findings.push({ severity, code, message, location: t.relPath });
     for (const key of REQUIRED_KEYS) {
+      // A task with a transition log needs no `status:` (F-69 D2).
+      if (key === 'status' && storedLog(t.fm)) continue;
       const v = t.fm[key];
       if (typeof v !== 'string' || v.trim() === '') add('task-field', `task missing required key "${key}"`);
     }

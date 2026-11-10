@@ -305,6 +305,21 @@ test('validateFrontmatter checks required keys', () => {
   assert.ok(findings.some((f) => f.message.includes('title')));
 });
 
+test('a story or feature with a transition log needs no status: (F-69 D2)', () => {
+  const transitions = [{ at: '2026-11-01T00:00:00Z', to: 'draft', by: 'new' }];
+  for (const [kind, fm] of [
+    ['story', { story_id: 'S-1', title: 'T', transitions }],
+    ['feature', { feature_id: 'F-1', title: 'T', transitions }],
+  ]) {
+    assert.deepEqual(validateFrontmatter(fm, kind, 'path/1'), [], kind);
+    const missing = validateFrontmatter({ ...fm, transitions: [] }, kind, 'path/1');
+    assert.deepEqual(
+      missing.map((f) => f.message),
+      [`${kind} missing required key "status"`],
+    );
+  }
+});
+
 test('validateFrontmatter checks status against the flow it is given', () => {
   const fm = { story_id: 'S-1', title: 'T', status: 'nope', component: 'C01' };
   const flow = loadFlow(new URL('../fixtures/flow/', import.meta.url).pathname);
