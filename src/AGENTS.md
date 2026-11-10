@@ -2712,7 +2712,12 @@ item already holds where the work landed. The run history gets a `pr` and a
 `review` entry with the note "skipped: no commits, nothing to review", the log
 records `in_review` and then `ready_for_merge` by `review`, and the run ends
 `clean`. A run resumed after a `pr` step that opened no pull request (the
-S-1379 escalation) takes the same path. A failed self-review escalates as
+S-1379 escalation) takes the same path. The path is taken only by a story
+with no Review Log session, at a status the `review` verb starts from
+(flow.json). The run records the history entries after the log is at
+`ready_for_merge`, and escalates when the log could not record it. A resumed
+story that this path already took to `ready_for_merge` ends `clean` again and
+records nothing. A failed self-review escalates as
 always, a scripted story keeps its own path, and a feature run (`bl run F-n`)
 never takes this path.
 

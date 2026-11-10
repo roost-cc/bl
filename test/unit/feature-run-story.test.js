@@ -318,6 +318,52 @@ test('a story escalated at the pr step with no PR takes the no-commit path on --
   }
 });
 
+test('a no-commit resume with the log at fixing does not end clean', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const first = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    assert.equal(
+      (await runFeature({ feature: unit, config, prep, runner: first, opts: { maxRounds: 2 } })).status,
+      'clean',
+    );
+    editFile(unit.indexPath, (fm) => {
+      fm.transitions.push({ at: '2026-11-10T08:00:00Z', to: 'in_review', by: 'review' });
+      fm.transitions.push({ at: '2026-11-10T08:00:01Z', to: 'fixing', by: 'review' });
+    });
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });
+    assert.notEqual(state.status, 'clean');
+    assert.ok(!state.history.some((h) => h.warning), 'no unrecorded hop');
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.notEqual(logStatusOf('story', fm), 'ready_for_merge');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a resumed run of a story already at ready_for_merge with no commits records nothing twice', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const first = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const run1 = await runFeature({ feature: unit, config, prep, runner: first, opts: { maxRounds: 2 } });
+    assert.equal(run1.status, 'clean');
+    const logLength = parseFrontmatter(readFileSync(unit.indexPath, 'utf8')).fm.transitions.length;
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });
+    assert.equal(state.status, 'clean');
+    for (const step of ['pr', 'review']) {
+      assert.equal(state.history.filter((h) => h.step === step && h.note === NO_COMMITS).length, 1, step);
+    }
+    assert.ok(!state.history.some((h) => h.warning), 'no unrecorded hop');
+    assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no forge call');
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.equal(fm.transitions.length, logLength, 'no new log entry');
+    assert.equal(logStatusOf('story', fm), 'ready_for_merge');
+  } finally {
+    cleanup();
+  }
+});
+
 test("a story's review finding routed to its Deferred: the review sessions get the story's kind", async () => {
   const { cleanup, config, unit, prep } = storySetup();
   try {

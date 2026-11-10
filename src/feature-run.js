@@ -4806,15 +4806,34 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
 
   // A story whose self-review passed with nothing on its branch did its work
   // elsewhere (the backlog, S-1437): no push, no PR, no review. A resumed run
-  // with no PR passed its self-review before its `pr` step.
-  if (isStory(feature) && !skipsReview(ctx) && !state.pr && gateTargets(ctx).every((t) => branchEmpty(ctx, t))) {
+  // with no PR passed its self-review before its `pr` step. A story with a
+  // review session goes on below. A story this path already took to
+  // ready_for_merge ends clean again with nothing recorded (what `bl merge`
+  // takes, `mergeGates`); any other status takes it only when the `review`
+  // verb starts from that status.
+  const noCommitStatus = unitStatus(ctx);
+  const noCommits =
+    isStory(feature) &&
+    !skipsReview(ctx) &&
+    !state.pr &&
+    !featureReviewGate(reviewState(ctx).position, readChangeText(ctx).body).review &&
+    gateTargets(ctx).every((t) => branchEmpty(ctx, t));
+  if (noCommits && noCommitStatus === REVIEW.clean) return finish(ctx, 'clean');
+  if (noCommits && flow.fromOf(unitKind(ctx), flow.verbOf(unitKind(ctx), 'review')).includes(noCommitStatus)) {
     setStep(ctx, 'pr');
-    const note = 'skipped: no commits, nothing to review';
-    record(ctx, { step: 'pr', ok: true, note });
-    record(ctx, { step: 'review', ok: true, note });
     // The `review` verb's edges pass through its `during` status (flow.json).
     enterHop(ctx, 'review', 'review');
     hop(ctx, 'review', REVIEW.clean, { by: 'review', note: 'no commits: nothing to review' });
+    if (unitStatus(ctx) !== REVIEW.clean) {
+      return finish(
+        ctx,
+        'escalated',
+        `the story has no commits, but its log could not record ${REVIEW.clean} (it is ${unitStatus(ctx)})`,
+      );
+    }
+    const note = 'skipped: no commits, nothing to review';
+    record(ctx, { step: 'pr', ok: true, note });
+    record(ctx, { step: 'review', ok: true, note });
     return finish(ctx, 'clean');
   }
 
