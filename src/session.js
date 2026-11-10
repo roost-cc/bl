@@ -47,6 +47,7 @@ import { renderToolGuide, renderFragment } from './tool-guide.js';
 import { renderSessionStack, sessionStackOf } from './session-stack.js';
 import { resolveLocale, fragmentCandidates } from './locale.js';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { sleepSync } from './sleep-sync.js';
 import { syncMain, reportMainSync } from './main-sync.js';
 import { outcomePath, readOutcomeFile } from './outcome.js';
 
@@ -621,9 +622,12 @@ export function prepareWorktreeOnce(repoPath, branchName, fn) {
   for (;;) {
     const taken = acquirePidLock(lockPath, content);
     if (taken.content) break;
-    if (!waiting) info(`Waiting for pid ${taken.holder} to finish preparing ${branchName} in ${repoPath}...`);
+    // The sleep's child says it, so a Ctrl+C after the line reaches the child.
+    const say = waiting
+      ? undefined
+      : `Waiting for pid ${taken.holder} to finish preparing ${branchName} in ${repoPath}...`;
     waiting = true;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    sleepSync(100, say);
   }
   try {
     return fn();
@@ -741,12 +745,14 @@ function sessionModel(model, agent, config) {
  * did not run has the reason it did not as its `structuredError`. With
  * `sessionId`, the spawn resumes that session and sends `prompt` as it is:
  * the loop's one outcome retry (F-68 D5), whose session already has the
- * headless rules.
+ * headless rules. `stderrTail` is the last 20 non-empty lines of the agent
+ * CLI's stderr (S-1398), or `''`.
  *
  * @returns {{ status: number, output: string, isError: boolean,
  *             usage: object|null, sessionId: string|null, denials: string[],
  *             refusal?: object|null, error?: string,
- *             structured: object|null, structuredError: string|null }}
+ *             structured: object|null, structuredError: string|null,
+ *             stderrTail: string }}
  */
 export function runHeadlessSession({
   mode,
@@ -780,6 +786,7 @@ export function runHeadlessSession({
     error,
     structured: null,
     structuredError: schema ? error : null,
+    stderrTail: '',
   });
   // `provider` is a test seam; production resolves it from `agent`. `run`,
   // when given, replaces the adapter's `spawnSync` for the agent itself: `bl
@@ -886,6 +893,7 @@ export function runHeadlessSession({
     refusal: result?.refusal ?? null,
     structured: result?.structured ?? null,
     structuredError: result?.structuredError ?? null,
+    stderrTail: result?.stderrTail ?? '',
   };
   if (usageIndexPath && out.usage) accumulateTokensOnFile(backlogRoot, usageIndexPath, out.usage, usageStep);
   return out;

@@ -150,7 +150,7 @@ export function landOnMain(fx, file, content, message) {
  * refused.
  */
 export function stubRunner(testCmd) {
-  const calls = { gates: 0, sessions: 0, log: [] };
+  const calls = { gates: 0, sessions: 0, log: [], titles: [] };
   const runner = {
     ...defaultRunner(),
     session({ promptName }) {
@@ -165,6 +165,7 @@ export function stubRunner(testCmd) {
     },
     listContainers: () => null,
     notify() {},
+    title: (fields, opts) => calls.titles.push({ ...fields, final: opts?.final ?? false }),
     log: (m) => calls.log.push(m),
   };
   return { runner, calls };

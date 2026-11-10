@@ -47,7 +47,7 @@ import {
   info,
 } from './config.js';
 import { removeUnitDirIfEmpty } from './story.js';
-import { updateTabTitle } from './tab-title.js';
+import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { checkCriteria, extractSection, replaceSection, sectionHasContent } from './feature.js';
 import { RUN_DIR, ensureRunDir, acquireRunLock, runLockPath, shellMerged } from './feature-run.js';
 import { releasePidLock } from './pid-lock.js';
@@ -578,9 +578,10 @@ export function defaultUpdatesRunner() {
     notify() {
       process.stderr.write('\x07');
     },
-    /** Set tab-title fields (`tab-title.js`). */
-    title(fields) {
-      updateTabTitle(fields);
+    /** Set tab-title fields (`tab-title.js`). With `final`, the title is an end state that stays after bl exits. */
+    title(fields, { final = false } = {}) {
+      if (final) finalTabTitle(fields);
+      else updateTabTitle(fields);
     },
     log: info,
   };
@@ -1564,7 +1565,10 @@ export async function runUpdates(config, opts = {}) {
         failure ??= e;
       }
     }
-    runner.title?.({ feature: 'updates', story: '', status: counts.join(', ') || 'nothing to do' });
+    // A run that throws below sets no final title, so the exit shows `failed (exit 1)` (S-1393).
+    const final = !failure && !result.commit?.error;
+    const next = final && result.outcomes.some((o) => o.kind === 'decision') ? '→ approve/drop' : '';
+    runner.title?.({ feature: 'updates', story: '', status: counts.join(', ') || 'nothing to do', next }, { final });
     runner.notify(`updates run: ${counts.join(', ')}`);
     if (failure) throw failure;
     throwIfUncommitted(result.commit);

@@ -96,6 +96,10 @@ checkout.
      - `--gate next` holds every `bl run` and `bl implement` once {{featureId}} is done. Use it
        for a step right after the merge, such as a shared-service restart.
      - `--gate none` holds nothing. Use it for a fact or warning the operator must see.
+     - If the operator must choose between options before the unit can merge, title the task
+       `Decide: <the choice>` and use `--gate merge`; `bl task` refuses another gate for it. A
+       fix or review agent may still act on the recommended option, and records that in the
+       unit's `## Notes`. The task stays open for the operator to close.
 
      `bl task` commits the backlog itself; only the operator runs `bl task done`.
 

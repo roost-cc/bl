@@ -265,6 +265,27 @@ export function updateSettings(config) {
   };
 }
 
+/**
+ * `backlog.json` `top` (F-87 D8a): the phone push command of `bl top`'s
+ * view. Null when backlog.json has no `top` block: no phone push. Otherwise
+ * `push` is required, with no default: a non-empty argv of non-empty
+ * strings, to which the view appends `"<id> <kind>"` and `"<line>"`. Read
+ * when used, never by `loadConfig`, as `updateSettings()` is.
+ * @param {{ topLevel?: object } | null | undefined} config
+ * @returns {string[] | null}
+ */
+export function topSettings(config) {
+  if (!config?.topLevel || !Object.hasOwn(config.topLevel, 'top')) return null;
+  const t = config.topLevel.top;
+  if (!isPlainObject(t)) throw new Error('backlog.json "top" must be an object { push: [<command>, <arg>, …] }');
+  if (!Object.hasOwn(t, 'push'))
+    throw new Error('backlog.json "top" has no "push": the phone push command, as an argv');
+  if (!isNameList(t.push) || t.push.length === 0) {
+    throw new Error('backlog.json "top" needs a non-empty array of non-empty strings for "push"');
+  }
+  return t.push;
+}
+
 /** The keys every `repos` entry must set (F-51 D4); there are no defaults. */
 const REQUIRED_REPO_KEYS = ['path', 'deployable'];
 

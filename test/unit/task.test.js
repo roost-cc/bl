@@ -19,6 +19,8 @@ import {
   writeBlockers,
 } from '../../src/blockers.js';
 import {
+  DECISION_PREFIX,
+  decisionGateProblem,
   findMaxTaskNum,
   findTaskFindings,
   formatTask,
@@ -85,6 +87,17 @@ function backlogWithTasks(files) {
 test('normalizeTaskId takes T1, T-1 and t-1; anything else is null', () => {
   for (const raw of ['T1', 'T-1', 't-1']) assert.deepEqual(normalizeTaskId(raw), { num: '1', id: 'T-1' });
   for (const raw of ['S-1', 'T-', 'T-1a', '', undefined]) assert.equal(normalizeTaskId(raw), null);
+});
+
+test('decisionGateProblem: a Decide: title takes --gate merge only, case as written (S-1403)', () => {
+  assert.equal(DECISION_PREFIX, 'Decide:');
+  assert.equal(decisionGateProblem('Decide: x', 'merge'), null);
+  for (const gate of ['none', 'next']) {
+    const problem = decisionGateProblem('Decide: x', gate);
+    assert.match(problem, /takes --gate merge/);
+    assert.match(problem, new RegExp(`got --gate ${gate}$`));
+  }
+  for (const title of ['Run it', 'decide: x', 'Decided: x']) assert.equal(decisionGateProblem(title, 'none'), null);
 });
 
 test('task_ids_preserve_integer_identity_at_numeric_boundaries', () => {

@@ -119,7 +119,9 @@ assert_eq "bl cap<TAB> completes to capacity" "capacity" "$first_word"
 for file in "$COMPLETIONS/_bl" "$COMPLETIONS/backlog.zsh"; do
   if grep -q "'capacity:" "$file"; then pass; else fail "$(basename "$file") lists the capacity verb"; fi
   if grep -q "'rank:" "$file"; then pass; else fail "$(basename "$file") lists the rank verb"; fi
+  if grep -q "'top:" "$file"; then pass; else fail "$(basename "$file") lists the top verb"; fi
 done
+assert_eq "bl top completes its flags" "--json --stream --interval --version --no-bell --no-desktop --no-push --help" "$(complete_bash top "")"
 assert_eq "bl rank completes feature and story ids" "F-1 S-1" "$(complete_bash rank "")"
 assert_eq "bl rank completes its flags" "--top --bottom --before --after --why --remove --help" "$(complete_bash rank "-")"
 

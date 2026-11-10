@@ -425,6 +425,19 @@ export function unitFiles(config, kind) {
 }
 
 /**
+ * The signature `loadBacklog` compares to reuse a graph, from a tolerant
+ * listing: every unit file, change document and `priority.md`, each with its
+ * stat key, listed and never read. Equal signatures mean no such file
+ * changed. `bl top`'s stream reads the inbox and `bl next` again when it
+ * changes (F-87 D3a).
+ * @param {{ backlogRoot: string }} config
+ * @returns {string}
+ */
+export function backlogSignature(config) {
+  return listBacklog(resolve(config.backlogRoot), true).sig;
+}
+
+/**
  * List the backlog: every unit file with its stat key (a tolerant listing:
  * the root `index.md` and every change document too), `priority.md`'s
  * (null when it is missing), and the highest number per kind among the

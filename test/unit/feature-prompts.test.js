@@ -401,6 +401,16 @@ test('no prompt commits the backlog with a raw git add / git commit', () => {
   }
 });
 
+test('each prompt that documents the task gates files a decision as Decide: with --gate merge (S-1403)', () => {
+  for (const f of ['feature-story.md', 'feature-workon.md', 'story-run.md', 'workon.md']) {
+    assert.match(
+      readFileSync(PROMPTS_DIR + f, 'utf8'),
+      /title the task\s+`Decide: <the choice>` and\s+use `--gate merge`/,
+      f,
+    );
+  }
+});
+
 test('each loop prompt that commits the backlog names its bl sync --commit line', () => {
   const { dir, cleanup } = mkTempBacklog();
   try {

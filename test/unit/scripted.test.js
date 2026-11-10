@@ -433,6 +433,9 @@ function loopRunner({ exit = 0, dirty = ' M lock\n', sessions = {}, testExits = 
       return { plugins: [{ name: 'node', command: 'npm test' }], unknown: [] };
     },
     notify() {},
+    title(fields, opts) {
+      calls.push({ type: 'title', fields, final: opts?.final ?? false });
+    },
     log() {},
     now: () => new Date('2026-11-01T12:00:00Z'),
     sleep() {},
@@ -514,6 +517,14 @@ test('exit 0 with no change: the story is done with a note and nothing is pushed
   const runner = loopRunner({ dirty: '' });
   const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
   assert.equal(state.status, 'no-change');
+  assert.deepEqual(
+    runner.calls.findLast((c) => c.type === 'title'),
+    {
+      type: 'title',
+      fields: { feature: 'S-3', story: '', status: 'done', next: '' },
+      final: true,
+    },
+  );
   assert.deepEqual(agentCalls(runner), []);
   const cmds = shellCmds(runner);
   assert.ok(!cmds.some((c) => c.startsWith('git push') || c.startsWith("git commit -q -m 'chore: Solo")));

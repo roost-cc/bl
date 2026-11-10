@@ -281,8 +281,10 @@ function undoOnFailure() {
     }
     if (hint) console.error(hint);
   };
-  // Ahead of lock.js's exit cleanup, so the undo runs while the backlog lock
-  // is still held and no other bl sees (or commits) the half-made story.
+  // Ahead of lock.js's `exit` listener, which removes the lock file (also
+  // after a signal: the signal-exit.js handler calls process.exit). So the undo
+  // runs while the backlog lock is still held and no other bl sees (or commits)
+  // the half-made story.
   process.prependListener('exit', run);
   return {
     add: (what, how, fn) => steps.push({ what, how, fn }),

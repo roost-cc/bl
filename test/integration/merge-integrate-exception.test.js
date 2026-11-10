@@ -63,6 +63,8 @@ test('resolution_exception_aborts_all_repos_and_escalates_before_unlock: an ordi
         if (/F-1 escalated — /.test(m)) lockHeld.push(existsSync(runLockPath(config, 'F-1')));
         log(m);
       };
+      const titles = [];
+      runner.title = (fields, opts) => titles.push({ ...fields, final: opts?.final ?? false });
       const res = integrateUnit({ unit, config, prep, runner });
       assert.equal(res.ok, false, c.name);
       assert.equal(res.escalated, true, c.name);
@@ -72,6 +74,11 @@ test('resolution_exception_aborts_all_repos_and_escalates_before_unlock: an ordi
       assert.equal(g(wt, 'status', '--porcelain'), '', c.name);
       assert.match(escalation(featureFile(fx)), /^merge with main: stopped by an error: injected failure/, c.name);
       assert.match(escalation(featureFile(fx)), /rerun `bl merge F-1`/, c.name);
+      assert.deepEqual(
+        titles.at(-1),
+        { feature: 'F-1', story: '', status: 'escalated', next: '→ fix, bl merge', final: true },
+        `${c.name}: the final title`,
+      );
       assert.deepEqual(lockHeld, [true], `${c.name}: escalated under the run lock`);
       assert.equal(existsSync(runLockPath(config, 'F-1')), false, `${c.name}: the lock is released`);
     } finally {

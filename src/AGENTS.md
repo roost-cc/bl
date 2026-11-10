@@ -79,6 +79,9 @@ Per-command stdout contracts:
 | `bl updates drop`    | one line: requested                                       |
 | `bl inbox`           | the items by kind (`--json`: an array); `inbox: empty`    |
 | `bl inbox done`      | nothing: refuses, naming the verb (stderr)                |
+| `bl top --json`      | one JSON object (schema `bl-top-json/v1`)                 |
+| `bl top --stream`    | one JSON object per line until stdin closes               |
+| `bl top`             | the view (a terminal UI); `--version`: one line           |
 | `bl help`            | help text                                                 |
 | `bl <cmd> --help`    | help text                                                 |
 
@@ -1276,13 +1279,21 @@ agent returned, validated against the step's JSON Schema, or `null` with the
 fault named. `validateOutcome(schema, value)` in `src/outcome.js` does the
 validation, with `ajv` (draft 2020-12). It takes the object or the text that
 holds it, and its faults are `no output`, `not JSON: <parser message>` and
-`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). Nothing in
-bl reads an outcome out of prose. Two carriers deliver the value:
+`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). The parser
+message in `not JSON` and the JSON path in `schema violation` have their ANSI
+codes and control characters (except tab) removed and are cut to 500
+characters, as a stderr line is (`cleanStderrLine`, S-1404, S-1405). Every agent
+text field in `schemas/` refuses control characters: a one-line field keeps only
+tab, and a multi-line `reason` keeps tab, LF and CR. So a valid outcome carries
+none into a commit message (S-1405). A headless result replaces `no output`,
+and only that fault, with `<cli> exited <status>[: <last stderr line>]` when
+the agent CLI exited non-zero or wrote stderr (`withExitFault`, S-1398).
+Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
 
-| Session     | Carrier                                                                                                                                                                                                                                                                                                                                     | Read by                                 |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the run), and the last message parsed as JSON. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
-| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                | `launchSession`, after the agent exits  |
+| Session     | Carrier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Read by                                 |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the run), and the last message parsed as JSON. Both capture the CLI's stderr, copy it to bl's stderr when the CLI exits, and return its last 20 non-empty lines as `stderrTail`, which the no-outcome escalation shows. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
+| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                                                                                                                                                                                         | `launchSession`, after the agent exits  |
 
 - **The outcome file.** It lives under the git-ignored `.bl/`, so nothing
   commits it. `launchSession` removes a stale one before the spawn, and after
@@ -1406,6 +1417,11 @@ sessions of one key add up.
   re-read. `bl implement`
   records under `implement`, or `fix.<round>` (the log's round) while the
   unit is in `fixing`.
+- **Run state** (F-87 D3b): `runSession` also writes the session's `usage`
+  (the four kinds, as numbers) on the history entry it records in
+  `.bl/run/<id>.json`, when the result has usage. An entry written before
+  F-87, or for a session with no usage, has no `usage` key and counts 0.
+  `bl top`'s `tokens` section reads it.
 - A session with no usage writes no entry; a `bl` killed mid-session records
   nothing for it, so the map may sum to less than the totals, never more.
   The writers read CRLF files and leave a file with no `---` block alone.
@@ -2555,9 +2571,9 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   driver's line) in one commit: `chore: task T-<n> (<unit>)`. The unit's file is not
   written: its `## Tasks` table is rendered when the page is read. stdout is `T-<n>`; `--json` prints
   `{ schema: "bl-task-json/v1", id, path, unit, edges }`. An unknown unit, a missing `--title`,
-  a missing `--gate` or one outside the three, an unreadable body file or one with frontmatter
-  is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A failure before
-  the commit puts the files back.
+  a missing `--gate` or one outside the three, a `Decide:` title with a gate other than `merge`,
+  an unreadable body file or one with frontmatter is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A
+  failure before the commit puts the files back.
 - **`--gate`** is a shorthand for the task's edge (F-65 D2), the one `bl block add` would file
   and checked the same way (`writeEdge` in `src/block.js`, which `bl block add` shares:
   `edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied first). The holds are
@@ -2577,11 +2593,16 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   gate) is `bl block add T-<n> …`. There is no override flag: `bl task done` with a note saying
   what was done, or why the hold is moot, is the record.
 
+- **A decision task** has a title that starts with `Decide:` (`DECISION_PREFIX` in
+  `src/task.js`, case as written) and takes `--gate merge` only, so no unit merges past an open
+  decision (S-1403); `bl task` refuses `none` and `next` for it.
+
 - **`bl task done <T-n> [note]`** records `done` by `done` (which sets `done: <today>`) and `note:`, syncs and
   commits `chore: task T-<n> done[: <note>]`; a task already done refuses. Its edges stay in
   `blockers.json`, met. It is the operator's: `MODE_DENY` in `src/allowed-tools.js` denies
   `bl task done:*` in every mode (generator v15), beside `bl block remove:*`, since closing a
   task lifts the holds its edges make. `bl task` and `bl task list` stay allowed through `bl:*`.
+
 - **`bl task list [--open] [<F-n|S-n>]`** prints one line per task,
   `T-<n>  <unit>  <status>[ <done date>]  <title>`, in id order. `--open` keeps the tasks that
   are not `done`.
@@ -2871,8 +2892,10 @@ bl run S-1 S-2 S-3            # S-2 depends on S-1: S-1 and S-3 start
 Every title `bl` gives a terminal tab goes through `updateTabTitle`: the tmux window name
 under tmux (targeting the window `bl` started in, captured at startup), the OSC 2 window
 title when stderr is a terminal outside tmux, nothing otherwise. The title is rendered from
-named fields with the `BL_TAB_TITLE` format, default `{{feature}} : {{story}} : {{status}}`;
-an unset field renders as nothing and the result is trimmed. The placeholder is the `{{var}}`
+named fields with the `BL_TAB_TITLE` format, default
+`{{feature}} : {{story}} : {{status}} {{next}}` (`next` is the step that the operator does
+next, arrow included, such as `→ bl merge`); an unset field renders as nothing and the result
+is trimmed. The placeholder is the `{{var}}`
 bl's prompts and plugin commands use, not a new format.
 
 - A code path sets the fields it knows, by name, at any time: `updateTabTitle('story', 'S-34')`
@@ -2880,8 +2903,15 @@ bl's prompts and plugin commands use, not a new format.
 - `launchSession` sets the unit `parsed.id` names (`F-n` the feature, `S-n` the story) and
   the mode as `status` (`workon` shows as `implement`); a caller that knows more, such as a
   story's `feature:`, sets it first. The `bl run` loop sets the feature, the story in hand and
-  the step in `setStep`, and the end state in `finish`, through the runner's `title(fields)`;
-  `notify` only rings the bell now.
+  the step in `setStep`, and the end state in `finish` and `escalateIntegration` (`finalTitle`),
+  through the runner's `title(fields, { final })`; `notify` only rings the bell now.
+- A code path that reaches an end state sets it with `finalTabTitle`, which marks the title
+  final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
+  only when the code path sets it. The run loop's ends: `clean → bl merge`,
+  `escalated → fix, --resume` (`→ fix, bl review` under `bl review`, `→ fix, bl merge` under
+  `bl merge`), `done` for no change, `failed`. `bl updates run` ends with its outcome counts,
+  and `→ approve/drop` when an outcome is a decision; a run that throws sets no final title.
+  A later `updateTabTitle` or `clearTabTitle` clears the mark.
 - After a tool that had the terminal returns (the agent in `launchSession` and triage, the
   editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
   its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
@@ -2889,18 +2919,30 @@ bl's prompts and plugin commands use, not a new format.
   the child processes that `bl run` and `bl review` start in parallel for several targets
   (`runChildren`), so the parent's window keeps the parent's title. `agentEnv` sets it for
   every agent session (S-1388): the tab belongs to the `bl` that started the session,
-  so no `bl` the agent runs, and no test it starts, renames the window or turns its
-  `automatic-rename` back on. `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
+  so no `bl` the agent runs, and no test it starts, renames the window.
+  `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
   `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
-  (`test/unit/tmux-free-env.test.js` guards it). `openTmuxWindow` names a new window
+  (`test/unit/tmux-free-env.test.js` guards it). The same wrapper unsets `BL_BACKLOG_DIR`
+  and refuses a temporary directory (`os.tmpdir()`) inside a git repository, where git in a
+  test's temp dir would act on that repository (S-1394; `test/unit/repo-free-env.test.js`
+  guards both). `openTmuxWindow` names a new window
   with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
-- When `bl` exits after setting a title, `restoreTabTitle` (registered on the first title)
-  gives it back: under tmux it turns the window's `automatic-rename` on again, elsewhere it
-  pops the title the terminal saved on its title stack (XTWINOPS 22/23) when the first title
-  was set. No tab keeps a title for work that is over; the bell at a run's end is the signal.
+- When `bl` exits, the last title stays (S-1393): under tmux `rename-window` turned the
+  window's `automatic-rename` off and bl leaves it off (`tmux set -w automatic-rename on`
+  gives tmux's name back); outside tmux bl never pushes or pops the terminal's title.
+  `endTabTitle`, the `exit` hook registered on the first title, sends nothing after a final
+  title, whatever the exit code (an `OutcomeError` after an escalation exits non-zero and
+  keeps the escalated title). Otherwise it sets the status from the exit code (`ended` for 0,
+  `interrupted` for 130 or 143, `failed (exit N)` otherwise), unsets `next` and sends the
+  title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
+  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `lock.js` registers when it loads:
+  they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
+  registered once per process. A command that sets no title and loads no `lock.js` keeps
+  Node's default signal action.
 - The title width only grows while the process runs: `showTabTitle` pads a shorter title with
-  trailing spaces to the widest title shown, so the tmux status bar does not move.
-  `currentTabTitle` and `renderTabTitle` stay unpadded; `restoreTabTitle` resets the width at exit.
+  trailing spaces to the widest title shown, so the tmux status bar does not move. A final
+  title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`
+  resets the width at exit.
 
 ### Pre-task discussion (`-P, --prompt`)
 
@@ -2959,6 +3001,199 @@ answer with no windows is `unknown`, with the reason.
 The `local` row comes from the server's `/health` (see **The local
 provider**): `available` on a 200, `unavailable` when the connection is
 refused, `unknown` otherwise; the message names the URL.
+
+### `bl top`
+
+`bl top` is a live view of bl (F-87): the runs, what waits on the operator, what `bl next`
+picks, token use and agent capacity, the stories done per day, and the newest run events. It has two halves. The JSON half,
+`--json` and `--stream` (`src/top.js`), reads the backlog. The view, a terminal UI in Go
+(`top/`), draws the stream's snapshots and never reads a backlog file.
+
+```bash
+bl top                             # the view, refreshed every 2000 ms
+bl top --interval 1000             # the view's interval in ms, 500 to 10000
+bl top --no-bell --no-desktop      # the view without the bell or the desktop notification
+bl top --no-push                   # the view without the phone push
+bl top --version                   # build the view if it needs a build; print its version
+bl top --json                      # one snapshot, then exit 0
+bl top --stream                    # one snapshot per line every 2000 ms until stdin closes
+bl top --stream --interval 1000    # the interval in ms, 500 to 10000
+```
+
+#### The view
+
+- **Build.** `top/` is a Go module of its own (`top/go.mod`): its `go` line and its Charm v2
+  versions (Bubble Tea, Lipgloss, Bubbles) are logr's. With no `--json` or `--stream`,
+  `src/top.js` runs `go build -o top/bin/bl-top` in `top/` when `top/bin/bl-top` is missing or
+  older than a file under `top/` outside `top/bin/`. The build's output goes to stderr. If the
+  build is needed and `go` is not on `PATH`, `bl top` exits 1 and names the Go version of
+  `top/go.mod`. Then it runs `top/bin/bl-top` with the terminal's stdio, passes `--interval`
+  and `--version` on, and exits with its code. `top/bin/` is in `.gitignore`. `bin/bl` does
+  not change, so no other command checks the build.
+- **Stream.** The view starts `bl top --stream --interval <ms>` once, through
+  `--bl-argv '<JSON array>'` (`[node, src/bl.js]`, from `src/top.js`), and redraws on each line
+  (`top/internal/stream`). Bubble Tea redraws only the cells that change, so the screen does not
+  flicker. The stream runs in a process group of its own. A line that is not a `bl-top-json/v1`
+  snapshot kills that group and ends the stream. When the stream ends, the view exits 1 with
+  `bl top: the snapshot stream ended: <its last stderr line>`.
+- **Boxes and layout** (D4, `top/internal/ui/layout.go`). Box ¹ runs, ² attention, ³ next,
+  ⁴ tokens (sections `tokens` and `capacity`) and ⁵ activity (sections `activity` and
+  `history`). Each box's drawer is in the `boxes` table. Box ⁶ comes with F-88. At
+  171×50 or larger the view draws the two columns of Mockup A; from 80×24 up to that it stacks
+  the boxes as in Mockup B; below 80×24 it prints `bl top needs at least 80x24`. Each node of a
+  layout takes its weight's share of its parent; a hidden box's share goes to the boxes left in
+  its split.
+- **Look** (D5, `top/internal/ui/box.go`, `styles.go`). btop's rounded box, with the
+  superscript number and the name in the top border and the options at its right; the key bar
+  is the screen's bottom border. Colors are Catppuccin Mocha with logr's names: border surface2,
+  number and name mauve, key letters peach, the screen's background base. The box with the
+  focus has a mauve border. Box ¹'s options are the time of the last snapshot and the interval
+  (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data, and its
+  box's top border shows a red `! <error>`.
+- **Graphs and meters** (`top/internal/ui/braille.go`, `meter.go`). A graph is a braille area
+  graph: two samples per cell, four dot rows per cell, the highest sample at full height. A
+  series longer than the graph keeps the highest value of each share, so a peak stays. Each
+  graph line takes btop's gradient by its height: green at the bottom, yellow in the middle, red
+  at the top. A quota meter has a `■` for each share left and a `·` for each share used. Its
+  `■` are green above 50 % left, yellow from 20 to 50 %, and red below 20 %.
+- **Box ¹ runs** (`runs.go`). A row per `runs` row: id, state (`● run`, `◌ stale`, `■ stop`,
+  `✗ esc`, `✗ fail`, `? unk` for no status (a missing or mistyped one), and `✓ done` for every
+  other status, such as `clean`), step, story, round
+  (`1/2`), elapsed (to the snapshot while it runs or is stale, else to its last update), output
+  tokens, agent, model and effort (from an inner width of 103, so not in Mockup B), and the pull
+  request as `<repo>#<n>`. A done row is dim. The summary line counts the runs that are running,
+  stopped and stale, and the stories and points of the newest `history` day, labelled
+  `done today (UTC)`: `history` days are UTC dates, as `bl report` counts them.
+- **Box ² attention** (`attention.go`). A row per inbox item: its kind tag (`RUN` teal, `ESC`
+  red, `TASK` yellow, `CHG` blue, `UPD` peach), id, unit and line. The last line is
+  `next: <the selected item's next>`. In the stacked layout two or more update items fold into
+  one row, `UPD   <n> red updates`; `↵` on it opens the group (the items follow it) or closes it.
+- **Box ³ next** (`next.go`). The `next` section's ranked units: rank, id, status, points (`-`
+  for none), held by (`heldBy`) and title. The line under them is the pick, the ranked unit it
+  unblocks when that is another, and how many units are not ranked.
+- **Selection** (`selection.go`). Each of boxes ¹ to ³ has a selected row, kept by its id: after
+  a new snapshot the same row stays selected while its id is there, else the row at its place.
+  `↑` and `↓` move the selection of the box with the focus, and the box scrolls to keep it on
+  screen. The selected row has the surface0 background. A cell that does not fit is cut with `…`.
+- **Box ⁴ tokens** (`tokens.go`). The graph of output tokens per minute over 2 h, labelled
+  `ended sessions` (D3b), with its peak and an axis of the local half hours and `now`. Then
+  one meter per quota window of `bl capacity`, with the percent left and the reset (local
+  `15:04` within a day, else `Nov 12`). A window that two configurations report (Codex's
+  account quota) shows once. A configuration with no window shows `<agent>  <state>: <message>`,
+  for example `unknown: claude cannot report capacity`, once per distinct line. Then today's
+  totals of the four kinds, and the local time capacity was last read.
+- **Box ⁵ activity** (`activity.go`). The graph of points done per UTC day over the `history`
+  days (`points done / UTC day`), with the total of the last 7 days and a date axis. Then the
+  `activity` events, newest first, as many as fit: local time, work unit, step with its story or
+  round, `✓` or `✗` and the duration, then the agent, model and effort, or the note for a failed
+  session or an event with no agent.
+- Below an inner height of 12 lines, boxes ⁴ and ⁵ leave out their axis and blank lines (Mockup
+  B).
+- **Keys** (D6, `top/internal/ui/model.go`): `1`–`5` hide or show a box; `tab` and `⇧tab` move
+  the focus to the next or previous shown box; `↑` and `↓` select a row; `↵` opens or closes
+  the grouped update row; `c` writes `capacity` to the stream's stdin, so
+  the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
+  500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
+  help, and any key closes it; `q` or `ctrl+c` quits.
+- **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
+  before. A new `escalation` or `task` item (by item id) and a run that gets an end status
+  (every status but `running`, `stale` and none: `clean`, `no-change`, `reviewed`, `escalated`,
+  `failed`, `stopped`; `stream.Ended`; by run id and status) each make a note
+  `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)` (`ended` for a run
+  with no step). The first read of a
+  section only sets its baseline, so an item notifies once, and again only after it left the
+  inbox and came back. For the notes of a snapshot the view rings the terminal bell (`\a`) once,
+  unless `--no-bell`, and hands each note to each sender. A sender is a command argv to which
+  it appends `<id> <kind>` and `<line>`; it runs in the background, in a process group of its
+  own, and is killed after 10 s. The command's own exit is the result: after it exits, the
+  sender waits at most 1 s for a child that holds its stderr, so an exit 0 is never `timeout`.
+  The stream's end waits the same 1 s for its stderr. The desktop sender is
+  `notify-send -a "bl top" --`, when `notify-send` is on `PATH` and there is no `--no-desktop`.
+  A sender that exits other than 0 or times out puts
+  `<name> failed: <its last stderr line, or timeout>` in red at the right of the bottom border,
+  until its command next exits 0. A sender may take only some kinds of note (`Sender.Kinds`).
+  `src/top.js` refuses `--no-bell`, `--no-desktop` and `--no-push` with `--json` or `--stream`.
+- **Phone push** (D8a, `notify.Push`). The push sender, named `push`, is the command of
+  backlog.json's `top` block (below), and it gets only `escalation` and `task` notes, never a
+  run that ends (Decision A6). `src/top.js` reads the block before the build (not for
+  `--version`, which reads no backlog) and passes the argv to the view as
+  `--push-argv '<JSON array>'`, an internal flag that the view decodes with `encoding/json`, so
+  the view still reads no backlog file. `--no-push` (passed on to the view) drops the sender. A
+  push that fails warns as `push failed: …` in the bottom border. bl holds no secret and names
+  no push service: the command does that. The view cannot put `--` before the two arguments it
+  appends, because it does not know the command's options. So a line that starts with `-` can
+  reach the command as an option: when the command needs it, the operator puts `--` at the end
+  of `top.push`.
+- **backlog.json `top`.** `"top": { "push": ["<command>", "<arg>", …] }`. `topSettings`
+  (`src/config.js`) reads it as `updateSettings` reads `updates`: only when used, never by
+  `loadConfig`, and only for the view (`--json` and `--stream` do not read it). No `top` block
+  means no phone push. With one, `push` is required, with no default: a non-empty array of
+  non-empty strings. Otherwise `bl top` exits 1 with an error that names `backlog.json "top"`
+  and the key.
+- **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
+  `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, the
+  frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
+  exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
+  `testdata/snapshot.json` (Mockup A's data) in a fixed zone (UTC−5), without colors, with a row
+  selected in boxes ¹ to ³;
+  `go test ./internal/ui -update` writes them again.
+  `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
+  then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
+  and `--no-push`.
+
+#### The snapshot
+
+The snapshot is one object, schema `bl-top-json/v1`:
+`{ schema, at, runs, attention, next, capacity, history, activity, tokens }`. `at` and every time in it are ISO
+times with a zone. Each section is an object with `read_at`, the ISO time of its last good
+read. A section whose read throws keeps its last good value and carries `error`, the message;
+the next good read drops `error`. Each section comes from bl's own reader, in the same process
+(`src/top-snapshot.js`), so nothing else parses a backlog file:
+
+| Section     | Holds                                                                                                                                                                                                                                                                                                    | Read (`--stream`)                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's live holder or null), and `agent`, `model`, `effort` of its newest session entry                                                      | every snapshot                                           |
+| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                    | when the backlog changes, and at least every 30 s        |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                     | as `attention`                                           |
+| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                   | every 5 min, and at the snapshot after a `capacity` line |
+| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                    | every 5 min                                              |
+| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                              | every snapshot                                           |
+| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date | every snapshot                                           |
+
+- `activity` and `tokens` read the run states' history entries (F-87 D3b, D3c). A session that
+  is still running counts only when it ends: its run state holds no usage until then. The
+  `runs`, `activity` and `tokens` readers share one parse cache (`runStatesReader`).
+- Each run state is read on its own. A file that cannot be read (not JSON, not a run state, or
+  gone since the listing; a read can race `saveRunState`, which truncates the file first) keeps
+  its last good parse, or is left out when it has none, and `runs`, `activity` and `tokens`
+  still read the others: each carries `error: "skipped: <why>"` and `skipped: [<id>, …]` with
+  its new `read_at`. The view's notifications keep the last status of a skipped run, and a run
+  skipped before the view saw it only sets its baseline when it is read. The `error` stays for
+  as long as the file cannot be read. `--stream` writes it to stderr once when it first
+  appears, as one line per section: three lines for one bad file. A history entry that is not
+  an object is left out, and so is an `activity` entry with no time.
+- The view decodes each field as one Go type, and a field of another type would end its
+  stream. So each run-state field that `runs`, `activity` and `tokens` copy is null when it does
+  not have its type (a hand-edited `round: "2"`), a token count that is not a whole
+  non-negative number counts 0, and an
+  `activity` `at` is a full ISO time in the years 0000 to 9999 (Go reads four-digit years only):
+  an entry with another `at` is left out, and a `startedAt` outside them gives no duration.
+- A `runs` row whose run state says `running` while its run lock (`.bl/run/<id>.lock`) has no
+  live holder has `status: "stale"`: its bl was killed. The stream parses a run state again
+  only when the file's mtime changes.
+- "The backlog changes" means git `HEAD` moves, or a unit file, change document or
+  `priority.md` changes: `backlogStamp()` (`src/top-stream.js`) compares `HEAD` and
+  `backlogSignature()`, the stat signature `loadBacklog()` compares (`src/backlog-graph.js`).
+- The first `--stream` snapshot reads every section. `attention` and `next` have a schedule
+  each. When the read of `attention`, `next`, `capacity` or `history` throws, the section is
+  read again after 10 s, then after twice as long at each further failure, never later than its
+  period, and a backlog change does not read it sooner (`RETRY_FIRST_MS`). A good read goes
+  back to the usual schedule. A `stamp()` that throws counts as a change once, not at every
+  snapshot. A line `capacity` on stdin makes the next snapshot read capacity. When stdin
+  closes, the stream exits 0.
+- stdout carries only the JSON. A section that could not be read
+  (`bl top: <section> not read: <message>`) and each inbox warning (`warning: …`) go to stderr,
+  in `--stream` once when they first appear.
 
 ### `bl list`
 
@@ -3173,7 +3408,7 @@ its component's repo's themes and no epic. An unknown or malformed theme or epic
 `--feature`, `--component` or a positional argument. With no `priority.md`, or a `ranked:` of
 the wrong shape, stderr says so and every unit is unranked; a `priority.md` that is not YAML
 exits 1. The order is a preference: hard dependencies override it, and `bl next` never reads
-the roadmap.
+the roadmap. The walk is `nextPlan(config, filter)`, which `bl top`'s `next` section reads too.
 
 ### `bl rank`
 
@@ -3320,7 +3555,18 @@ value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 `src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
 turns. A command that finds the lock held by a live process says so once on stderr
 (`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
-30 s pass. The lock is re-entrant within a process.
+30 s pass. The lock is re-entrant within a process. As the spec lock is, it is created whole
+and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock name never
+exists without its holder's pid and two processes cannot both hold it. The main sync lock wait
+(`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
+the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
+Ctrl+C during either wait exits 130 and removes the locks the process holds. The main sync wait
+is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
+that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C after it
+reaches the child within the first poll. A SIGINT that lands between two sleeps is lost (2 in
+150 at random times in a probe), and a second Ctrl+C ends `bl`. Two other synchronous waits sleep in
+`sleepSync` the same way: the prepare-lock wait (`session.js` `prepareWorktreeOnce`) and the
+usage-limit wait (`feature-run.js` `waitOrEscalate`).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each
@@ -4328,6 +4574,13 @@ npm run test:all    # everything
 
 Adding a test:
 
+- **suite temp directory** — every `npm run test:*` script runs through
+  `test/helpers/without-repo-env.sh`, which gives the suite a `TMPDIR` of
+  its own and removes it when the suite ends (S-1392). A temp file that a
+  test leaves behind does not leak into `/tmp`. The rules below
+  (`mkTempDir`, own `mktemp` paths) still apply, because a script or a file
+  can run alone. The wrapper needs GNU `env` (coreutils 8.31 or later) for
+  `--default-signal`: BSD and macOS `env` lack it.
 - **unit** — write `test/unit/<module>.test.js` using `node:test` and
   `node:assert/strict`. Import the module under test from `../../src/...`.
   No fs writes outside `os.tmpdir()`. No spawning, with one exception: a

@@ -1,0 +1,504 @@
+{
+  "schema": "bl-top-json/v1",
+  "at": "2026-11-09T23:17:31.000Z",
+  "runs": {
+    "read_at": "2026-11-09T23:17:31.000Z",
+    "rows": [
+      {
+        "id": "F-81",
+        "status": "running",
+        "pid": 4242,
+        "step": "implement",
+        "round": null,
+        "maxRounds": 2,
+        "story": "S-1277",
+        "startedAt": "2026-11-09T22:15:31.000Z",
+        "updatedAt": "2026-11-09T23:16:31.000Z",
+        "pr": null,
+        "usage": { "input": 94000, "output": 412000, "cache_creation": 0, "cache_read": 0 },
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high"
+      },
+      {
+        "id": "S-1330",
+        "status": "running",
+        "pid": 4343,
+        "step": "review",
+        "round": 1,
+        "maxRounds": 2,
+        "story": null,
+        "startedAt": "2026-11-09T22:39:31.000Z",
+        "updatedAt": "2026-11-09T23:05:31.000Z",
+        "pr": { "number": "15", "url": "https://example.invalid/roost-cc/bl/pull/15" },
+        "usage": { "input": 0, "output": 109000, "cache_creation": 0, "cache_read": 0 },
+        "agent": "codex",
+        "model": "gpt-6-sol",
+        "effort": null
+      },
+      {
+        "id": "F-85",
+        "status": "clean",
+        "pid": null,
+        "step": "merged",
+        "round": 2,
+        "maxRounds": 2,
+        "story": null,
+        "startedAt": "2026-11-09T16:53:31.000Z",
+        "updatedAt": "2026-11-09T22:07:31.000Z",
+        "pr": { "number": "14", "url": "https://example.invalid/roost-cc/bl/pull/14" },
+        "usage": { "input": 0, "output": 257000, "cache_creation": 0, "cache_read": 0 },
+        "agent": "claude",
+        "model": "opus",
+        "effort": null
+      },
+      {
+        "id": "F-83",
+        "status": "escalated",
+        "pid": null,
+        "step": "closing-review",
+        "round": 2,
+        "maxRounds": 2,
+        "story": null,
+        "startedAt": "2026-11-09T19:00:31.000Z",
+        "updatedAt": "2026-11-09T21:05:31.000Z",
+        "pr": { "number": "12", "url": "https://example.invalid/roost-cc/bl/pull/12" },
+        "usage": { "input": 0, "output": 151000, "cache_creation": 0, "cache_read": 0 },
+        "agent": "codex",
+        "model": "gpt-6-sol",
+        "effort": null
+      },
+      {
+        "id": "F-79",
+        "status": "stale",
+        "pid": null,
+        "step": "a step name longer than its column",
+        "round": null,
+        "maxRounds": 2,
+        "story": "S-1201",
+        "startedAt": "2026-11-09T20:17:31.000Z",
+        "updatedAt": "2026-11-09T20:30:31.000Z",
+        "pr": null,
+        "usage": { "input": 0, "output": 950, "cache_creation": 0, "cache_read": 0 },
+        "agent": "claude",
+        "model": "sonnet",
+        "effort": "low"
+      }
+    ]
+  },
+  "attention": {
+    "read_at": "2026-11-09T23:17:31.000Z",
+    "items": [
+      {
+        "kind": "runner",
+        "id": "updates:run",
+        "unit": "updates",
+        "line": "no update run since 14:02 (9 h)",
+        "next": "check the update job where it runs (its journal or log)",
+        "path": null
+      },
+      {
+        "kind": "escalation",
+        "id": "F-83:esc",
+        "unit": "F-83",
+        "line": "round cap: 2 open review items",
+        "next": "bl status F-83",
+        "path": null
+      },
+      {
+        "kind": "task",
+        "id": "T-52",
+        "unit": "F-81",
+        "line": "Renovate image: 8 advisories",
+        "next": "bl task done T-52",
+        "path": null
+      },
+      {
+        "kind": "task",
+        "id": "T-2",
+        "unit": "F-54",
+        "line": "re-mint the Apple sign-in key",
+        "next": "bl task done T-2",
+        "path": null
+      },
+      {
+        "kind": "change",
+        "id": "F-81:change",
+        "unit": "F-81",
+        "line": "4 repos · 11 commits · not merged",
+        "next": "bl merge F-81",
+        "path": null
+      },
+      {
+        "kind": "change",
+        "id": "S-1330:change",
+        "unit": "S-1330",
+        "line": "bl · 3 commits · not merged",
+        "next": "bl run S-1330",
+        "path": null
+      },
+      {
+        "kind": "update",
+        "id": "tools:renovate/eslint-9.x",
+        "unit": "tools",
+        "line": "eslint 9.39.1 · red · notes: none",
+        "next": "read the gate log .bl/updates/tools.log; the next update run tests it again",
+        "path": null
+      },
+      {
+        "kind": "update",
+        "id": "bl:renovate/ws-8.x",
+        "unit": "bl",
+        "line": "ws 8.19.0 · red · notes: 1 advisory",
+        "next": "read the gate log .bl/updates/bl.log; the next update run tests it again",
+        "path": null
+      },
+      {
+        "kind": "update",
+        "id": "logr:renovate/golang.org-x-net-0.x",
+        "unit": "logr",
+        "line": "x/net 0.47.0 · red · notes: none",
+        "next": "read the gate log .bl/updates/logr.log; the next update run tests it again",
+        "path": null
+      }
+    ],
+    "warnings": []
+  },
+  "next": {
+    "read_at": "2026-11-09T23:17:31.000Z",
+    "pick": { "id": "F-81", "title": "Every repo's pre-push gate", "status": "running", "from": "F-81", "path": [] },
+    "ranked": [
+      {
+        "position": 3,
+        "id": "F-81",
+        "title": "Every repo's pre-push gate runs the tests that prove a change, and nothing else runs them twice",
+        "status": "running",
+        "points": 21,
+        "why": "",
+        "holds": [],
+        "heldBy": []
+      },
+      {
+        "position": 4,
+        "id": "F-84",
+        "title": "Every repo's gate passes in a throwaway worktree on the guest",
+        "status": "approved",
+        "points": 8,
+        "why": "",
+        "holds": ["S-1350 depends on S-1310 (in_progress)"],
+        "heldBy": ["F-81"]
+      },
+      {
+        "position": 5,
+        "id": "F-80",
+        "title": "Dependency updates are one job: Renovate applies, the gate tests, the job merges",
+        "status": "refined",
+        "points": 13,
+        "why": "",
+        "holds": ["S-1360 depends on S-1351 (backlog)"],
+        "heldBy": ["F-84"]
+      },
+      {
+        "position": 6,
+        "id": "F-86",
+        "title": "AGENTS.md in plain English: rewrite bl's reference in about 80% of ASD-STE100",
+        "status": "draft",
+        "points": 0,
+        "why": "",
+        "holds": [],
+        "heldBy": []
+      },
+      {
+        "position": 7,
+        "id": "F-16",
+        "title": "Inspection quick condition assessment",
+        "status": "draft",
+        "points": 0,
+        "why": "",
+        "holds": [],
+        "heldBy": []
+      },
+      {
+        "position": 8,
+        "id": "F-13",
+        "title": "Maintenance requests",
+        "status": "draft",
+        "points": 0,
+        "why": "",
+        "holds": [],
+        "heldBy": []
+      }
+    ],
+    "rankedCount": 6,
+    "unrankedCount": 185
+  },
+  "capacity": {
+    "read_at": "2026-11-09T23:14:31.000Z",
+    "configurations": [
+      {
+        "role": "agent",
+        "agent": "claude",
+        "model": "opus",
+        "state": "unknown",
+        "scope": "model",
+        "until": null,
+        "windows": [],
+        "message": "claude cannot report capacity"
+      },
+      {
+        "role": "agent",
+        "agent": "claude",
+        "model": "sonnet",
+        "state": "unknown",
+        "scope": "model",
+        "until": null,
+        "windows": [],
+        "message": "claude cannot report capacity"
+      },
+      {
+        "role": "review",
+        "agent": "codex",
+        "model": "gpt-6-sol",
+        "state": "available",
+        "scope": "account",
+        "until": null,
+        "windows": [
+          { "name": "codex 5h", "remainingPercent": 80, "resetsAt": "2026-11-10T00:52:00.000Z" },
+          { "name": "codex 7d", "remainingPercent": 13, "resetsAt": "2026-11-12T15:04:17.000Z" }
+        ],
+        "message": ""
+      },
+      {
+        "role": "review",
+        "agent": "codex",
+        "model": "gpt-6-astra",
+        "state": "available",
+        "scope": "account",
+        "until": null,
+        "windows": [
+          { "name": "codex 5h", "remainingPercent": 80, "resetsAt": "2026-11-10T00:52:00.000Z" },
+          { "name": "codex 7d", "remainingPercent": 13, "resetsAt": "2026-11-12T15:04:17.000Z" }
+        ],
+        "message": ""
+      },
+      {
+        "role": "review",
+        "agent": "claude",
+        "model": "opus",
+        "state": "unknown",
+        "scope": "model",
+        "until": null,
+        "windows": [],
+        "message": "claude cannot report capacity"
+      }
+    ]
+  },
+  "history": {
+    "read_at": "2026-11-09T23:14:31.000Z",
+    "days": [
+      { "date": "2026-10-11", "stories": [], "points": 0 },
+      { "date": "2026-10-12", "stories": ["S-1001"], "points": 3 },
+      { "date": "2026-10-13", "stories": ["S-1002"], "points": 5 },
+      { "date": "2026-10-14", "stories": ["S-1003"], "points": 8 },
+      { "date": "2026-10-15", "stories": ["S-1004"], "points": 2 },
+      { "date": "2026-10-16", "stories": [], "points": 0 },
+      { "date": "2026-10-17", "stories": [], "points": 0 },
+      { "date": "2026-10-18", "stories": ["S-1007"], "points": 13 },
+      { "date": "2026-10-19", "stories": ["S-1008"], "points": 5 },
+      { "date": "2026-10-20", "stories": ["S-1009"], "points": 1 },
+      { "date": "2026-10-21", "stories": [], "points": 0 },
+      { "date": "2026-10-22", "stories": [], "points": 0 },
+      { "date": "2026-10-23", "stories": ["S-1012"], "points": 3 },
+      { "date": "2026-10-24", "stories": ["S-1013"], "points": 8 },
+      { "date": "2026-10-25", "stories": ["S-1014"], "points": 21 },
+      { "date": "2026-10-26", "stories": ["S-1015"], "points": 5 },
+      { "date": "2026-10-27", "stories": [], "points": 0 },
+      { "date": "2026-10-28", "stories": ["S-1017"], "points": 2 },
+      { "date": "2026-10-29", "stories": ["S-1018"], "points": 3 },
+      { "date": "2026-10-30", "stories": [], "points": 0 },
+      { "date": "2026-10-31", "stories": [], "points": 0 },
+      { "date": "2026-11-01", "stories": ["S-1021"], "points": 5 },
+      { "date": "2026-11-02", "stories": ["S-1022"], "points": 8 },
+      { "date": "2026-11-03", "stories": ["S-1023"], "points": 13 },
+      { "date": "2026-11-04", "stories": ["S-1024"], "points": 2 },
+      { "date": "2026-11-05", "stories": [], "points": 0 },
+      { "date": "2026-11-06", "stories": ["S-1026"], "points": 3 },
+      { "date": "2026-11-07", "stories": ["S-1027"], "points": 5 },
+      { "date": "2026-11-08", "stories": ["S-1028"], "points": 8 },
+      { "date": "2026-11-09", "stories": ["S-1029"], "points": 10 }
+    ]
+  },
+  "activity": {
+    "read_at": "2026-11-09T23:17:31.000Z",
+    "events": [
+      {
+        "at": "2026-11-09T23:16:31.000Z",
+        "unit": "F-81",
+        "step": "implement",
+        "story": "S-1310",
+        "round": null,
+        "ok": true,
+        "durationMs": 180000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "low",
+        "note": "outcome: implemented S-1310"
+      },
+      {
+        "at": "2026-11-09T23:12:31.000Z",
+        "unit": "F-81",
+        "step": "implement",
+        "story": "S-1277",
+        "round": null,
+        "ok": true,
+        "durationMs": 1620000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T23:05:31.000Z",
+        "unit": "S-1330",
+        "step": "review:verify",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": 540000,
+        "agent": "codex",
+        "model": "gpt-6-sol",
+        "effort": null,
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T23:01:31.000Z",
+        "unit": "S-1330",
+        "step": "review:round",
+        "story": null,
+        "round": 1,
+        "ok": true,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": "round 1 reviewed by codex gpt-6-sol"
+      },
+      {
+        "at": "2026-11-09T22:56:31.000Z",
+        "unit": "S-1330",
+        "step": "fix-tests",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": 360000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": "2 attempts"
+      },
+      {
+        "at": "2026-11-09T22:50:31.000Z",
+        "unit": "S-1330",
+        "step": "self-review",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": 240000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T22:45:31.000Z",
+        "unit": "F-81",
+        "step": "implement",
+        "story": "S-1309",
+        "round": null,
+        "ok": false,
+        "durationMs": 660000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": "denied: Bash(cd /home/robert/work/roost/worktrees/f81-every-repo-s-pre-push-gate && git…"
+      },
+      {
+        "at": "2026-11-09T22:34:31.000Z",
+        "unit": "F-81",
+        "step": "setup",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": "resumed"
+      },
+      {
+        "at": "2026-11-09T22:26:31.000Z",
+        "unit": "S-1330",
+        "step": "implement",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": 1440000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T22:24:31.000Z",
+        "unit": "S-1330",
+        "step": "setup",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T22:07:31.000Z",
+        "unit": "F-85",
+        "step": "test",
+        "story": null,
+        "round": null,
+        "ok": false,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": "bl · test exited 1 — log: .bl/run/F-85.test-2.log"
+      },
+      {
+        "at": "2026-11-09T21:42:31.000Z",
+        "unit": "F-85",
+        "step": "pr",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": "https://example.invalid/bl/pull/14"
+      }
+    ]
+  },
+  "tokens": {
+    "read_at": "2026-11-09T23:17:31.000Z",
+    "from": "2026-11-09T21:18:00.000Z",
+    "minutes": [
+      0, 300, 900, 400, 0, 1200, 0, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4040, 4417, 4794, 5171, 5548, 5925, 6302,
+      4179, 4556, 4933, 5310, 5687, 6064, 6441, 4318, 4695, 5072, 5449, 5826, 6203, 4080, 4457, 4834, 5211, 5588, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3660, 3871, 4082, 4293, 3004, 3215, 3426, 3637, 3848, 4059, 4270, 4481,
+      3192, 3403, 3614, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6085, 6608, 7131, 7654, 8177, 8700,
+      6123, 6646, 7169, 7692, 8215, 8738, 6161, 6684, 7207, 7730, 8253, 0, 0, 0, 0, 0, 0, 0, 0
+    ],
+    "today": { "input": 1200000, "output": 640000, "cache_creation": 2300000, "cache_read": 51000000 }
+  }
+}
