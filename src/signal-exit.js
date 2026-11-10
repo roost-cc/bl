@@ -14,8 +14,10 @@
  * it (`checkedMerge`, the push of main and the install in `cleanupOneRepo`,
  * `landedMergeCommit` and `removeWorktreeAndBranch` in `cleanup.js`,
  * `main-sync.js`'s git commands, and `reportBacklogCommit` in `sync.js`).
- * Those callers pass `interruptOf(r)`, which is null when Node itself killed
- * the child (`r.error` set, such as `ENOBUFS`), so that kill is not raised.
+ * Those callers read the signal of their own git children through
+ * `interruptOf(r)`, which is null when Node itself killed the child (`r.error`
+ * set, such as `ENOBUFS`), so that kill is not raised. The signal that
+ * `commitPaths` returns is not read through `interruptOf` yet.
  */
 
 let registered = false;
