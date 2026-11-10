@@ -35,6 +35,7 @@ import {
   writeSession,
   verifySession,
   fakeRunner,
+  lastTitle,
   statusOf,
 } from '../helpers/feature-run-fixture.js';
 import { fixTestsOutcome, reviewOutcome } from '../helpers/outcomes.js';
@@ -321,6 +322,13 @@ test('happy path: stories, gate, self-review, PR, review → fix → re-review �
     assert.ok(existsSync(runStatePath(config, 'F-1')));
     assert.ok(existsSync(join(dir, RUN_DIR, '.gitignore')));
     assert.ok(runner.calls.some((c) => c.type === 'notify' && c.label === 'F-1 clean'));
+    assert.deepEqual(lastTitle(runner), {
+      feature: 'F-1',
+      story: '',
+      status: 'clean',
+      next: '→ bl merge',
+      final: true,
+    });
     assert.ok(runner.calls.some((c) => c.type === 'shell' && /git commit .*PR opened/.test(c.cmd)));
     assert.equal(state.usage.input, 11, 'one unit per session, including the fix self-review');
     // test gate ran: after stories, and after the fix round
@@ -374,6 +382,13 @@ test('a test gate that fails twice escalates with the log and never opens a PR',
     const runner = fakeRunner({ dir, feature, testResults: [1, 1] });
     const state = await runFeature({ feature, config, prep, runner });
     assert.equal(state.status, 'escalated');
+    assert.deepEqual(lastTitle(runner), {
+      feature: 'F-1',
+      story: '',
+      status: 'escalated',
+      next: '→ fix, --resume',
+      final: true,
+    });
     assert.match(state.lastError, /test gate failed twice/);
     assert.equal(runner.calls.filter((c) => c.prompt === 'feature-fix-tests').length, 1);
     assert.ok(!runner.calls.some((c) => c.type === 'forge'));
@@ -1780,15 +1795,11 @@ test('resume skips stories that are already complete and an open escalation bloc
 
     // Now leave an escalation open and try again.
     editFile(feature.indexPath, (fm, body) => body.replace(/## Escalation\n\nNone\./, '## Escalation\n\nStill open.'));
-    const again = await runFeature({
-      feature,
-      config,
-      prep,
-      runner: fakeRunner({ dir, feature }),
-      opts: { resume: true },
-    });
+    const againRunner = fakeRunner({ dir, feature });
+    const again = await runFeature({ feature, config, prep, runner: againRunner, opts: { resume: true } });
     assert.equal(again.status, 'failed');
     assert.match(again.lastError, /Escalation is not empty/);
+    assert.deepEqual(lastTitle(againRunner), { feature: 'F-1', story: '', status: 'failed', next: '', final: true });
   } finally {
     cleanup();
   }

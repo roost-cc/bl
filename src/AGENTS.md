@@ -2694,8 +2694,10 @@ bl run S-1 S-2 S-3            # S-2 depends on S-1: S-1 and S-3 start
 Every title `bl` gives a terminal tab goes through `updateTabTitle`: the tmux window name
 under tmux (targeting the window `bl` started in, captured at startup), the OSC 2 window
 title when stderr is a terminal outside tmux, nothing otherwise. The title is rendered from
-named fields with the `BL_TAB_TITLE` format, default `{{feature}} : {{story}} : {{status}}`;
-an unset field renders as nothing and the result is trimmed. The placeholder is the `{{var}}`
+named fields with the `BL_TAB_TITLE` format, default
+`{{feature}} : {{story}} : {{status}} {{next}}` (`next` is the step that the operator does
+next, arrow included, such as `→ bl merge`); an unset field renders as nothing and the result
+is trimmed. The placeholder is the `{{var}}`
 bl's prompts and plugin commands use, not a new format.
 
 - A code path sets the fields it knows, by name, at any time: `updateTabTitle('story', 'S-34')`
@@ -2703,8 +2705,15 @@ bl's prompts and plugin commands use, not a new format.
 - `launchSession` sets the unit `parsed.id` names (`F-n` the feature, `S-n` the story) and
   the mode as `status` (`workon` shows as `implement`); a caller that knows more, such as a
   story's `feature:`, sets it first. The `bl run` loop sets the feature, the story in hand and
-  the step in `setStep`, and the end state in `finish`, through the runner's `title(fields)`;
-  `notify` only rings the bell now.
+  the step in `setStep`, and the end state in `finish` and `escalateIntegration` (`finalTitle`),
+  through the runner's `title(fields, { final })`; `notify` only rings the bell now.
+- A code path that reaches an end state sets it with `finalTabTitle`, which marks the title
+  final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
+  only when the code path sets it. The run loop's ends: `clean → bl merge`,
+  `escalated → fix, --resume` (`→ fix, bl review` under `bl review`, `→ fix, bl merge` under
+  `bl merge`), `done` for no change, `failed`. `bl updates run` ends with its outcome counts,
+  and `→ approve/drop` when an outcome is a decision; a run that throws sets no final title.
+  A later `updateTabTitle` or `clearTabTitle` clears the mark.
 - After a tool that had the terminal returns (the agent in `launchSession` and triage, the
   editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
   its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
@@ -2712,18 +2721,27 @@ bl's prompts and plugin commands use, not a new format.
   the child processes that `bl run` and `bl review` start in parallel for several targets
   (`runChildren`), so the parent's window keeps the parent's title. `agentEnv` sets it for
   every agent session (S-1388): the tab belongs to the `bl` that started the session,
-  so no `bl` the agent runs, and no test it starts, renames the window or turns its
-  `automatic-rename` back on. `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
+  so no `bl` the agent runs, and no test it starts, renames the window.
+  `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
   `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
   (`test/unit/tmux-free-env.test.js` guards it). `openTmuxWindow` names a new window
   with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
-- When `bl` exits after setting a title, `restoreTabTitle` (registered on the first title)
-  gives it back: under tmux it turns the window's `automatic-rename` on again, elsewhere it
-  pops the title the terminal saved on its title stack (XTWINOPS 22/23) when the first title
-  was set. No tab keeps a title for work that is over; the bell at a run's end is the signal.
+- When `bl` exits, the last title stays (S-1393): under tmux `rename-window` turned the
+  window's `automatic-rename` off and bl leaves it off (`tmux set -w automatic-rename on`
+  gives tmux's name back); outside tmux bl never pushes or pops the terminal's title.
+  `endTabTitle`, the `exit` hook registered on the first title, sends nothing after a final
+  title, whatever the exit code (an `OutcomeError` after an escalation exits non-zero and
+  keeps the escalated title). Otherwise it sets the status from the exit code (`ended` for 0,
+  `interrupted` for 130 or 143, `failed (exit N)` otherwise), unsets `next` and sends the
+  title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
+  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `lock.js` registers when it loads:
+  they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
+  registered once per process. A command that sets no title and loads no `lock.js` keeps
+  Node's default signal action.
 - The title width only grows while the process runs: `showTabTitle` pads a shorter title with
-  trailing spaces to the widest title shown, so the tmux status bar does not move.
-  `currentTabTitle` and `renderTabTitle` stay unpadded; `restoreTabTitle` resets the width at exit.
+  trailing spaces to the widest title shown, so the tmux status bar does not move. A final
+  title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`
+  resets the width at exit.
 
 ### Pre-task discussion (`-P, --prompt`)
 

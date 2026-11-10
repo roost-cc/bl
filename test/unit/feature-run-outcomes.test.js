@@ -35,6 +35,7 @@ function setup(results) {
   const feature = findFeature(normalizeFeatureId('F-1'), config);
   const worktreePath = mkTempDir('bl-wt-');
   const calls = [];
+  const titles = [];
   const runner = {
     session(o) {
       calls.push(o);
@@ -50,6 +51,9 @@ function setup(results) {
     },
     shell: () => ({ status: 0, output: '' }),
     notify() {},
+    title(fields, opts) {
+      titles.push({ ...fields, final: opts?.final ?? false });
+    },
     log() {},
   };
   const prep = {
@@ -71,7 +75,7 @@ function setup(results) {
       label: 'F-1',
       ...extra,
     });
-  return { ctx, calls, step, cleanup, feature };
+  return { ctx, calls, titles, step, cleanup, feature };
 }
 
 test('a valid outcome is returned and recorded as outcome: <summary>', () => {
@@ -124,7 +128,7 @@ test('a session that ran but returned no outcome at all is a fault too, whatever
 
 test('a second failure escalates with the fault and the last 20 lines of text', () => {
   const text = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n');
-  const { ctx, calls, step, cleanup, feature } = setup([INVALID, { ...INVALID, output: `${text}\n` }]);
+  const { ctx, calls, titles, step, cleanup, feature } = setup([INVALID, { ...INVALID, output: `${text}\n` }]);
   try {
     assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
     assert.equal(calls.length, 2, 'retried once, not twice');
@@ -139,6 +143,14 @@ test('a second failure escalates with the fault and the last 20 lines of text', 
     assert.match(escalation, /line 30/);
     assert.doesNotMatch(escalation, /line 10\n/);
     assert.doesNotMatch(escalation, /stderr/, 'no stderr, no stderr block');
+    // No resumeHint in this context: the title falls back to bl run's --resume.
+    assert.deepEqual(titles.at(-1), {
+      feature: 'F-1',
+      story: '',
+      status: 'escalated',
+      next: '→ fix, --resume',
+      final: true,
+    });
   } finally {
     cleanup();
   }

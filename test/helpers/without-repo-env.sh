@@ -7,7 +7,7 @@
 #
 # Also run it without tmux's variables and bl's title variables (S-1388). A
 # test `bl` that inherited TMUX and BL_TMUX_WINDOW_ID renamed the operator's
-# real tmux window and turned its automatic-rename back on. BL_TAB_TITLE is
+# real tmux window and left its title there. BL_TAB_TITLE is
 # unset, not emptied, so tests see the default format. Guarded by
 # test/unit/tmux-free-env.test.js.
 # shellcheck disable=SC2046 # one variable name per word
