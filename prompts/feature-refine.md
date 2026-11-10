@@ -77,7 +77,12 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
    not on one story alone.
 
 6. Cut the stories. Rules:
-   - Give each story 2 to 5 points, never 1. Fold small work into a sibling.
+   - Cut stories along functional, code-organization and dependency boundaries. Each story is
+     one change that later stories can build on. For example, a story that converts a data file
+     comes first, so that every later story starts from representative data. Points estimate a
+     story; they never decide where you cut it. Give each story its Fibonacci estimate (1, 2, 3
+     or 5). If you estimate a story at 8 or more, it is too big for one session: split it along
+     those boundaries.
    - Give the feature {{pointsMin}} to {{pointsMax}} points in total. Above that, split the
      feature. Below that, ask whether it is a feature at all.
    - Make no check-only stories ("confirm…", "verify…", "re-run…"). A check is an acceptance
