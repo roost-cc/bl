@@ -3619,8 +3619,9 @@ the push and the commit) says so the same way, with the lock's path, and polls f
 The prepare-lock wait (`session.js` `prepareWorktreeOnce`) says so the same way and has no
 deadline, because the lock is held while bootstrap and `workon` plugins run. Every lock wait is
 awaited: the backlog, spec, main sync and prepare lock waits all go through `awaitLock`, so one
-Ctrl+C during any of them runs the SIGINT listener at once, exits 130 and removes the locks the
-process holds. No lock wait sleeps synchronously. The run loop's usage-limit wait
+Ctrl+C during any of them runs the SIGINT listener at once and exits 130. The `exit` listener in
+`lock.js` removes only the backlog lock. A Ctrl+C while `prepareWorktreeOnce` runs its async
+`fn` leaves `bl-prepare-*.lock` with a dead pid, and the next preparer reclaims it. No lock wait sleeps synchronously. The run loop's usage-limit wait
 (`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that
 calls a lock wait is async, and every caller awaits it (`test/unit/awaited-calls.test.js`).
 
