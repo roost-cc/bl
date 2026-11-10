@@ -561,8 +561,20 @@ export function preflightMainCheckouts({
 // Per-repo cleanup (merge, push, close PR, remove worktree, delete branch)
 // ---------------------------------------------------------------------------
 
-export function cleanupOneRepo({ parsed, storyEntry, repoName, repoPath, keepBranch, config, isSecondary = false }) {
+export function cleanupOneRepo({
+  parsed,
+  storyEntry,
+  repoName,
+  repoPath,
+  keepBranch,
+  config,
+  isSecondary = false,
+  noCommits = false,
+}) {
   const branchName = storyEntry.toLowerCase();
+  // A repo whose branch may have nothing to merge: a secondary no story
+  // changed (S-862), or a story whose branch has no commits (S-1437).
+  const mayBeEmpty = isSecondary || noCommits;
 
   const wt = findExistingWorktree(repoPath, branchName);
   const unitDir = unitDirFor(config, branchName);
@@ -571,9 +583,9 @@ export function cleanupOneRepo({ parsed, storyEntry, repoName, repoPath, keepBra
     return { ok: false };
   }
 
-  // A secondary's worktree is removed even when its branch has nothing to
-  // merge (below), so uncommitted work in it is refused up front.
-  if (isSecondary && wt) {
+  // Such a worktree is removed even when its branch has nothing to merge
+  // (below), so uncommitted work in it is refused up front.
+  if (mayBeEmpty && wt) {
     const changes = worktreeChanges(wt.path);
     if (changes == null || changes.length > 0) {
       console.error(`${repoName}: worktree ${wt.path} has uncommitted changes — commit or discard them first.`);
@@ -614,9 +626,9 @@ export function cleanupOneRepo({ parsed, storyEntry, repoName, repoPath, keepBra
   })();
 
   // A secondary `bl run` prepared up front that the story never changed
-  // (S-862): nothing to merge, push or record, so only its worktree and
-  // branch go.
-  if (isSecondary && branchExists && commitsAhead(repoPath, branchName) === 0) {
+  // (S-862), or a story whose branch has no commits (S-1437): nothing to
+  // merge, push or record, so only its worktree and branch go.
+  if (mayBeEmpty && branchExists && commitsAhead(repoPath, branchName) === 0) {
     info(`Skipping the merge: no changes in ${repoName}.`);
     removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists, keepBranch, config });
     return { ok: true, mergeCommitHash: null, branchExists, noChanges: true };
@@ -762,7 +774,7 @@ export function abortFailedMerge({ repoPath, repoName, id }) {
  * Commits on `branchName` that origin/main (local main when there is no
  * origin/main) does not have.
  */
-function commitsAhead(repoPath, branchName) {
+export function commitsAhead(repoPath, branchName) {
   for (const base of ['origin/main', 'main']) {
     try {
       return parseInt(
@@ -1000,6 +1012,7 @@ no main checkout touched. A merge into main that still fails is aborted.`);
       repoPath,
       keepBranch: !!args.keep,
       config,
+      noCommits: gates.noCommits,
     });
     if (!result.ok) {
       console.error(`\nCleanup of ${repoName} failed. Stopping. Resume with:\n  bl merge ${parsed.id}`);
@@ -1070,7 +1083,12 @@ no main checkout touched. A merge into main that still fails is aborted.`);
           recordMerge(config.backlogRoot, dirname(indexPath), {
             commits: doneWrite.commitMap,
             date: today,
-            extra: noReviewLines(gates.unreviewed, today),
+            extra: [
+              ...noReviewLines(gates.unreviewed, today),
+              ...(gates.noCommits
+                ? targetRepoNames.map((r) => `- ${today} · ${r} · no commits on the branch: nothing merged`)
+                : []),
+            ],
           });
         }
       } catch (err) {
