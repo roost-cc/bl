@@ -1631,7 +1631,8 @@ function readCapacity(runner, c, asked, topLevel) {
  *
  * Each configuration, from the top: skipped while the out-list has it, or
  * when its adapter has no headless mode; then its capacity is read, and an
- * `unavailable` reading puts it on the out-list; then it is spawned, and a
+ * `unavailable` reading puts it on the out-list, unless its `until` has
+ * passed (S-1444); then it is spawned, and a
  * refusal puts it on the out-list. The review role also skips every
  * configuration that ran an implementing step of this run (F-64 D4): the
  * reviewer is never the implementer. A refused or skipped configuration is not
