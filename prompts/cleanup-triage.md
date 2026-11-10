@@ -67,7 +67,7 @@ Deferred section :
      `--depends-on` order stays), and say so in your final list.
    - Stories that touch nothing in common with the others stay standalone.
    - If `bl new --feature` refuses, do not retry. It refuses when a story is already in a feature,
-     or is not `backlog` / `refined`. Leave the stories standalone, and say so in your final list.
+     or is not `draft` / `refined`. Leave the stories standalone, and say so in your final list.
 
 4. Remove the **## Deferred** section from the story file with the {{editTool}} tool. The file is
    the path that `bl which {{storyId}}` prints (under `{{backlogDir}}/stories/`).
