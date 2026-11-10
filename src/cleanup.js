@@ -729,7 +729,7 @@ export async function cleanupOneRepo({
     const r = spawnSync(install, { cwd: repoPath, shell: true, stdio: ['ignore', process.stderr, process.stderr] });
     if (r.status !== 0) {
       console.error(
-        `${repoName}: main is pushed, but \`${install}\` in the main checkout failed. Run it by hand, then rerun \`bl merge ${parsed.id}\`:\n  cd ${shellQuote(repoPath)} && ${install}`,
+        `${repoName}: main is pushed, but \`${install}\` in the main checkout ${isInterrupt(r.signal) ? 'was interrupted' : 'failed'}. Run it by hand, then rerun \`bl merge ${parsed.id}\`:\n  cd ${shellQuote(repoPath)} && ${install}`,
       );
       return { ok: false };
     }
