@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
-import { mkdirSync, statSync, utimesSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { loadConfig } from '../../src/config.js';
@@ -13,6 +13,7 @@ import {
   readSection,
   readTokens,
   runsReader,
+  sectionReaders,
   snapshotOf,
   problemLines,
   ACTIVITY_SHOWN,
@@ -149,6 +150,65 @@ test('runs: a run state is parsed again only when its mtime changes', () => {
   );
   assert.notEqual(statSync(path).mtimeMs, mtime.getTime());
   assert.equal(read(NOW).rows[0].step, 'test');
+});
+
+test("runs, activity, tokens: a run state that cannot be read is skipped and named in the section's error, and the other rows stay", () => {
+  const cases = [
+    ['truncated JSON (a killed bl)', (run) => writeFileSync(join(run, 'F-8.json'), '{"feature":"F-8","hist')],
+    ['not a run state', (run) => writeFileSync(join(run, 'F-8.json'), '{"x":1}')],
+    [
+      'a run state of another id',
+      (run) =>
+        writeFileSync(join(run, 'F-8.json'), JSON.stringify(runState('F-1', { status: 'clean', updatedAt: at(NOW) }))),
+    ],
+    // Listed, then gone when it is read (ENOENT).
+    ['gone since the listing', (run) => symlinkSync(join(run, 'nowhere.json'), join(run, 'F-8.json'))],
+  ];
+  for (const [what, breakIt] of cases) {
+    const { run, config } = runsBacklog();
+    // A history entry that is not an object is left out; its run state stays.
+    const f1 = JSON.parse(readFileSync(join(run, 'F-1.json'), 'utf8'));
+    f1.history.push(null, 'x', { step: 'test', ok: true, at: 42 });
+    f1.history[0].usage = usage(600);
+    f1.history[0].startedAt = at(NOW - 2 * HOUR);
+    writeFileSync(join(run, 'F-1.json'), JSON.stringify(f1));
+    breakIt(run);
+    const readers = sectionReaders(config);
+    const runs = readSection(undefined, () => readers.runs(NOW), NOW);
+    const activity = readSection(undefined, () => readers.activity(NOW), NOW);
+    const tokens = readSection(undefined, () => readers.tokens(NOW), NOW);
+    for (const [name, section] of [
+      ['runs', runs],
+      ['activity', activity],
+      ['tokens', tokens],
+    ]) {
+      assert.equal(section.read_at, at(NOW), `${what}: ${name} was read`);
+      assert.match(section.error ?? '', /^skipped: .*F-8\.json/, `${what}: ${name} names the file`);
+    }
+    assert.deepEqual(
+      runs.rows.map((r) => r.id),
+      ['F-1', 'S-4', 'F-2', 'S-5'],
+      `${what}: the other rows stay`,
+    );
+    assert.equal(runs.rows[0].agent, 'claude', what);
+    assert.deepEqual(
+      activity.events.map((e) => [e.unit, e.step]),
+      [
+        ['F-1', 'implement'],
+        ['F-1', 'review:round'],
+      ],
+      `${what}: the readable entries stay`,
+    );
+    assert.equal(
+      Math.round(tokens.minutes.reduce((a, b) => a + b, 0)),
+      590,
+      `${what}: F-1’s 600 from 10:00 to 11:00, less its first minute, before the window`,
+    );
+  }
+  // With nothing to skip, no error.
+  const { config } = runsBacklog();
+  for (const name of ['runs', 'activity', 'tokens'])
+    assert.equal(sectionReaders(config)[name](NOW).error, undefined, name);
 });
 
 test('readSection: a read that throws keeps the last good value and carries error; the next good read clears it', () => {

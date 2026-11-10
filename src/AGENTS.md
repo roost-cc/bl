@@ -2968,6 +2968,10 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 - `activity` and `tokens` read the run states' history entries (F-87 D3b, D3c). A session that
   is still running counts only when it ends: its run state holds no usage until then. The
   `runs`, `activity` and `tokens` readers share one parse cache (`runStatesReader`).
+- Each run state is read on its own. A file that cannot be read (not JSON, not a run state, or
+  gone since the listing) is left out, and `runs`, `activity` and `tokens` still read the
+  others: each carries `error: "skipped: <why>"` with its new `read_at`. A history entry that
+  is not an object is left out, and so is an `activity` entry with no time.
 - A `runs` row whose run state says `running` while its run lock (`.bl/run/<id>.lock`) has no
   live holder has `status: "stale"`: its bl was killed. The stream parses a run state again
   only when the file's mtime changes.

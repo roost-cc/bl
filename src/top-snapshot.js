@@ -106,7 +106,12 @@ function runRow(config, state, now) {
  * Every run state under `.bl/run/`. It keeps each run state it parsed with
  * the file's mtime, and parses a file again only when its mtime changes. The
  * `runs`, `activity` and `tokens` readers of one stream share it.
- * @returns {() => object[]}
+ *
+ * Each file is read on its own: a file that cannot be read (not JSON, not a
+ * run state, or gone since the listing; a killed `bl` can leave a truncated
+ * one) is left out and named in `skipped`, and the other run states stay. A
+ * history entry that is not an object is left out.
+ * @returns {() => { states: object[], skipped: string[] }}
  */
 export function runStatesReader(config) {
   const cache = new Map();
@@ -114,33 +119,58 @@ export function runStatesReader(config) {
     const dir = join(config.backlogRoot, RUN_DIR);
     const seen = new Set();
     const states = [];
+    const skipped = [];
     for (const name of existsSync(dir) ? readdirSync(dir) : []) {
       const id = RUN_STATE_RE.exec(name)?.[1];
       if (!id) continue;
       seen.add(id);
-      const { mtimeMs } = statSync(join(dir, name));
-      let hit = cache.get(id);
-      if (hit?.mtimeMs !== mtimeMs) cache.set(id, (hit = { mtimeMs, state: loadRunState(config, id) }));
-      states.push(hit.state);
+      try {
+        const { mtimeMs } = statSync(join(dir, name));
+        let hit = cache.get(id);
+        if (hit?.mtimeMs !== mtimeMs) {
+          const state = loadRunState(config, id);
+          if (!state) throw new Error(`run state ${join(dir, name)} is gone`);
+          state.history = state.history.filter((h) => h && typeof h === 'object');
+          cache.set(id, (hit = { mtimeMs, state }));
+        }
+        states.push(hit.state);
+      } catch (e) {
+        cache.delete(id);
+        skipped.push(e.message);
+      }
     }
     for (const id of cache.keys()) if (!seen.has(id)) cache.delete(id);
-    return states;
+    return { states, skipped };
+  };
+}
+
+/**
+ * A section reader over the run states: `read(states, now)`, with `error`
+ * naming each run state that `states` skipped. The section is still read, so
+ * `read_at` moves on.
+ * @param {() => { states: object[], skipped: string[] }} states
+ * @param {(states: object[], now: number) => object} read
+ * @returns {(now: number) => object}
+ */
+function overRunStates(states, read) {
+  return (now) => {
+    const { states: list, skipped } = states();
+    const value = read(list, now);
+    return skipped.length ? { ...value, error: `skipped: ${skipped.join('; ')}` } : value;
   };
 }
 
 /**
  * The `runs` reader: a row for each run state that `runRow` lists, newest
  * first.
- * @returns {(now: number) => { rows: object[] }}
+ * @returns {(now: number) => { rows: object[], error?: string }}
  */
 export function runsReader(config, states = runStatesReader(config)) {
-  return (now) => {
-    const rows = states()
-      .map((state) => runRow(config, state, now))
-      .filter(Boolean);
+  return overRunStates(states, (list, now) => {
+    const rows = list.map((state) => runRow(config, state, now)).filter(Boolean);
     rows.sort((a, b) => String(b.updatedAt ?? b.startedAt).localeCompare(String(a.updatedAt ?? a.startedAt)));
     return { rows };
-  };
+  });
 }
 
 /**
@@ -150,14 +180,20 @@ export function runsReader(config, states = runStatesReader(config)) {
  */
 export function readActivity(states) {
   const events = [];
-  for (const state of states) for (const h of state.history) if (h.at) events.push({ unit: state.feature, h });
-  events.sort((a, b) => b.h.at.localeCompare(a.h.at));
+  for (const state of states) {
+    for (const h of state.history) {
+      // An entry with no time it can be sorted by is left out.
+      const at = typeof h.at === 'string' ? Date.parse(h.at) : NaN;
+      if (Number.isFinite(at)) events.push({ unit: state.feature, h, at });
+    }
+  }
+  events.sort((a, b) => b.at - a.at);
   return {
-    events: events.slice(0, ACTIVITY_SHOWN).map(({ unit, h }) => {
+    events: events.slice(0, ACTIVITY_SHOWN).map(({ unit, h, at }) => {
       const note = String(h.note ?? '');
-      const duration = Date.parse(h.at) - Date.parse(h.startedAt ?? '');
+      const duration = at - Date.parse(h.startedAt ?? '');
       return {
-        at: h.at,
+        at: iso(at),
         unit,
         step: h.step ?? null,
         story: h.story ?? null,
@@ -284,8 +320,8 @@ export function sectionReaders(config) {
     next: () => readNext(config),
     capacity: () => readCapacity(config),
     history: (now) => readHistory(config, now),
-    activity: () => readActivity(states()),
-    tokens: (now) => readTokens(states(), now),
+    activity: overRunStates(states, (list) => readActivity(list)),
+    tokens: overRunStates(states, (list, now) => readTokens(list, now)),
   };
 }
 
