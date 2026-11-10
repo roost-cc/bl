@@ -880,7 +880,10 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   through `LEGACY_STATUSES`; a terminal status at `completed`. A unit at `in_progress` or
   `escalated` takes its review position from its change document: one `in_review` per
   `review_round` (a `fixing` between two), then `fixing` for `pending`, `fixing` and `in_review`
-  for `fixed`, `ready_for_merge` for `addressed`, and last `escalated` for an escalated unit. The
+  for `fixed`, `ready_for_merge` for `addressed`, and last `escalated` for an escalated unit. A
+  `done` or `superseded` unit whose change document records a round gets `in_progress` and that
+  review part before its terminal entry, so its rounds survive the migration, which removes
+  `review_round` (`bl report` reads them). The
   first `applyTransition` on such a unit writes that log (an entry with no date takes the new
   entry's `at`), then the new entry, and removes `status:`; `transitions:` takes its place.
 - **The migration**, `node scripts/migrate-transitions.js [--dry-run] [--backlog <dir>]`
@@ -913,8 +916,8 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
 - **Readers.** `statusOf`, `roundOf` and `logOf(kind, fm, change)` read the log, or `legacyLog`.
   `makeUnit` sets `.status`, `.round` and `.transitions` through them. For a unit with no log,
   `makeUnit`'s `.status` reads no change document, so it is the `status:` word (a v1 word
-  mapped) as before F-69; at `in_progress` or `escalated`, `.round` and `.transitions` are
-  getters that read the change document when asked. A change document bl cannot read gives no
+  mapped) as before F-69; at `in_progress`, `escalated` or a terminal status (`readsChange`),
+  `.round` and `.transitions` are getters that read the change document when asked. A change document bl cannot read gives no
   review part. The records the review readers take, `storyUnit` (`src/unit.js`) and the feature
   record (`readAllFeatures`), set `.status` with the review position (`statusOf` with the
   change document) and `.round`; the merge gates, `bl done`, `bl inbox`, `bl status`, `bl

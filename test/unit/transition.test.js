@@ -232,11 +232,19 @@ test('legacyLog: a running unit takes its position from the change document', ()
     'in_review',
     'ready_for_merge',
   ]);
-  assert.deepEqual(
-    after('feature', { status: 'done' }, change('1', 'addressed')),
-    ['draft', 'done'],
-    'a closed unit ignores it',
-  );
+  // A closed unit keeps the rounds its change document records, which the
+  // migration removes from the document (S-1131); with none, no review part.
+  assert.deepEqual(after('feature', { status: 'done' }, change('2', 'addressed')), [
+    ...base,
+    'in_review',
+    'fixing',
+    'in_review',
+    'ready_for_merge',
+    'done',
+  ]);
+  assert.equal(roundOf('feature', { status: 'done' }, change('2', 'addressed')), 2);
+  assert.deepEqual(after('feature', { status: 'done' }, change('0', '')), ['draft', 'done']);
+  assert.deepEqual(after('story', { status: 'superseded' }), ['draft', 'superseded']);
 });
 
 test('statusOf and roundOf read the log, else the legacy shape; a log wins over a stale status:', () => {

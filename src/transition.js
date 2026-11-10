@@ -86,14 +86,16 @@ export function storedLog(fm) {
 
 /**
  * Whether a unit with no log reads its change document: its `status:` is
- * `in_progress` or `escalated`, so its review position (D4) matters.
+ * `in_progress` or `escalated`, so its review position (D4) matters, or
+ * terminal, so its review rounds do (`legacyLog`).
  * @param {string} kind
  * @param {object} fm
  * @returns {boolean}
  */
 export function readsChange(kind, fm) {
   if (kind === 'task' || storedLog(fm)) return false;
-  return LEGACY_LOG.reviewed.includes(fromLegacy(kind, str(fm.status)));
+  const word = fromLegacy(kind, str(fm.status));
+  return LEGACY_LOG.reviewed.includes(word) || LEGACY_LOG.terminal.includes(word);
 }
 
 /** A change document's `review_round` as a count: 0 when unset or not a number. */
@@ -114,12 +116,15 @@ function reviewRoundOf(change) {
  * | `refined`, `approved`        | that status                                            |
  * | `in_progress`                | `in_progress`, then the change document's review part  |
  * | `escalated`                  | the same, then `escalated`                             |
- * | `done`, `superseded`         | that status, at `completed`                            |
+ * | `done`, `superseded`         | the review part, if any; then that status, at `completed` |
  *
  * The review part: one `in_review` per `review_round`, a `fixing` between
  * two; then `fixing` for `pending`, `fixing` and `in_review` for `fixed`
  * (the fix put it back in review for the next round), `ready_for_merge` for
- * `addressed`. Any other word (an unknown one) follows `draft` as it is.
+ * `addressed`. A closed unit has one only when its change document records a
+ * round: `in_progress`, then the review part, so the round survives the
+ * migration, which removes `review_round` (`bl report` reads it, D5). Any
+ * other word (an unknown one) follows `draft` as it is.
  * @param {string} kind
  * @param {object} fm
  * @param {{ fm: object } | null} [change]  the unit's current change document (`readChange`)
@@ -136,9 +141,20 @@ export function legacyLog(kind, fm, change = null) {
     const when = at && prev && at < prev ? prev : (at ?? prev ?? null);
     log.push({ ...(when ? { at: when } : {}), to, by, note });
   };
+  // `in_progress`, then the change document's rounds and verdict.
+  const pushReview = () => {
+    push('in_progress', MIGRATED_BY);
+    for (let i = 1; i <= reviewRoundOf(change); i++) {
+      if (i > 1) push('fixing', MIGRATED_BY);
+      push('in_review', MIGRATED_BY);
+    }
+    const review = str(change?.fm?.review_status);
+    for (const to of Object.hasOwn(LEGACY_LOG.review, review) ? LEGACY_LOG.review[review] : []) push(to, MIGRATED_BY);
+  };
   push('draft', 'new');
   if (word === 'draft') return log;
   if (LEGACY_LOG.terminal.includes(word)) {
+    if (reviewRoundOf(change) > 0) pushReview();
     const completed = str(fm[COMPLETED_KEY[kind]]);
     const supersededBy = str(fm.superseded_by);
     push(
@@ -153,13 +169,7 @@ export function legacyLog(kind, fm, change = null) {
     push(word, MIGRATED_BY);
     return log;
   }
-  push('in_progress', MIGRATED_BY);
-  for (let i = 1; i <= reviewRoundOf(change); i++) {
-    if (i > 1) push('fixing', MIGRATED_BY);
-    push('in_review', MIGRATED_BY);
-  }
-  const review = str(change?.fm?.review_status);
-  for (const to of Object.hasOwn(LEGACY_LOG.review, review) ? LEGACY_LOG.review[review] : []) push(to, MIGRATED_BY);
+  pushReview();
   if (word === 'escalated') push(word, MIGRATED_BY);
   return log;
 }
