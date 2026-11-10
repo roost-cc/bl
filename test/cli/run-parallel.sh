@@ -152,7 +152,9 @@ done
 # A signal just before `wait` starts still stops the run at once (S-1414). The
 # runner's first `kill -0` of its poll sends SIGTERM to the runner, so the
 # signal comes after the poll's flag check. A `wait` there would block for the
-# whole `sleep 30` of the item.
+# whole `sleep 30` of the item. The case needs the poll to use `kill -0`: it
+# proves that the poll ends within 0.1 s after a signal that comes after the
+# flag check.
 printf 'sleep 30\n' >"$DIR/long"
 STOP="$DIR/before-wait"
 mkdir -p "$STOP"
