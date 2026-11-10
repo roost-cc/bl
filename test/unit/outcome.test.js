@@ -77,6 +77,14 @@ test('validateOutcome: no output and not JSON are faults of their own', () => {
   assert.equal(validateOutcome(SCHEMA, 'null').structuredError, 'schema violation at $: must be object');
 });
 
+test('validateOutcome removes control characters from the parser message (S-1404)', () => {
+  const r = validateOutcome(SCHEMA, '\0\x1b[31m\x07oops');
+  assert.equal(r.structured, null);
+  assert.match(r.structuredError, /^not JSON: /);
+  assert.match(r.structuredError, /oops/);
+  assert.doesNotMatch(r.structuredError, /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/);
+});
+
 test('outcomeFor reads nothing for a step without a schema', () => {
   assert.deepEqual(outcomeFor(null, { summary: 's' }), { structured: null, structuredError: null });
   assert.deepEqual(outcomeFor(SCHEMA, null), { structured: null, structuredError: 'no output' });

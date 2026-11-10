@@ -53,9 +53,10 @@ const STDERR_LINE_MAX = 500;
 const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
 
 /**
- * One stderr line, fit for an operator-facing record, a commit message and a
- * spawn argument: ANSI codes and every control character except tab removed,
- * cut to `STDERR_LINE_MAX` characters.
+ * One stderr line, or the `JSON.parse` message of a `not JSON` fault (it
+ * quotes the agent's raw text, S-1404), fit for an operator-facing record, a
+ * commit message and a spawn argument: ANSI codes and every control character
+ * except tab removed, cut to `STDERR_LINE_MAX` characters.
  *
  * @param {string} line
  */
@@ -73,8 +74,8 @@ function cleanStderrLine(line) {
  * Validate `value` against `schema` (JSON Schema draft 2020-12). `value` is
  * the parsed object, or the text that holds it (a last message, a file's
  * contents), which is parsed here. The faults: `no output` (null, undefined
- * or blank text), `not JSON: <parser message>`, and
- * `schema violation at <JSON path>: <rule>`.
+ * or blank text), `not JSON: <parser message>` (the message cleaned by
+ * `cleanStderrLine`), and `schema violation at <JSON path>: <rule>`.
  *
  * @param {object} schema
  * @param {unknown} value
@@ -88,7 +89,7 @@ export function validateOutcome(schema, value) {
     try {
       obj = JSON.parse(obj);
     } catch (e) {
-      return fail(`not JSON: ${e.message}`);
+      return fail(`not JSON: ${cleanStderrLine(e.message)}`);
     }
     // The text `null` is output: the schema names its fault.
   } else if (obj == null) return fail(NO_OUTPUT);

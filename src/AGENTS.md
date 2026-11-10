@@ -1097,7 +1097,10 @@ agent returned, validated against the step's JSON Schema, or `null` with the
 fault named. `validateOutcome(schema, value)` in `src/outcome.js` does the
 validation, with `ajv` (draft 2020-12). It takes the object or the text that
 holds it, and its faults are `no output`, `not JSON: <parser message>` and
-`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). A headless
+`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). The parser
+message in `not JSON` has its ANSI codes and control characters (except tab)
+removed and is cut to 500 characters, as a stderr line is (`cleanStderrLine`,
+S-1404). A headless
 result replaces `no output`, and only that fault, with
 `<cli> exited <status>[: <last stderr line>]` when the agent CLI exited non-zero
 or wrote stderr (`withExitFault`, S-1398). Nothing in bl reads an outcome out of
