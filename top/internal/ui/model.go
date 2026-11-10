@@ -237,7 +237,12 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if key.Matches(msg, keys.shorter) {
 			step = -step
 		}
-		m.interval = min(max(m.interval+step, minInterval), maxInterval)
+		interval := min(max(m.interval+step, minInterval), maxInterval)
+		if interval == m.interval {
+			// At the bound: no new interval, so no restart.
+			return m, nil
+		}
+		m.interval = interval
 		m.presses++
 		press := m.presses
 		return m, tea.Tick(restartDelay, func(time.Time) tea.Msg { return restartMsg{press} })

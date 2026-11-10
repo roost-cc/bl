@@ -269,6 +269,17 @@ func TestPlusAndMinusRestartTheStreamWithTheNewInterval(t *testing.T) {
 	if m.interval != minInterval {
 		t.Errorf("interval %d after many -, want %d", m.interval, minInterval)
 	}
+	// At either bound a press changes nothing, so it starts no restart.
+	for _, c := range []struct {
+		key      string
+		interval int
+	}{{"-", minInterval}, {"+", maxInterval}} {
+		m.interval = c.interval
+		presses := m.presses
+		if m, cmd = press(t, m, text(c.key)); cmd != nil || m.presses != presses || m.interval != c.interval {
+			t.Errorf("%s at %dms: cmd %v, presses %d → %d", c.key, c.interval, cmd, presses, m.presses)
+		}
+	}
 }
 
 func TestHelpOpensAndAnyKeyClosesIt(t *testing.T) {
