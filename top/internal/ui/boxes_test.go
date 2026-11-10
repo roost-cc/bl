@@ -110,13 +110,16 @@ func snapshot(t *testing.T) stream.SnapshotMsg {
 	return stream.SnapshotMsg{Gen: 1, Snapshot: snap}
 }
 
-func TestTokensAndActivityGolden(t *testing.T) {
+// TestBoxesGolden draws the recorded snapshot (Mockup A's data) in every box, with a row selected
+// in boxes ¹ to ³: S-1330 in ¹, S-1330:change in ², F-84 in ³.
+func TestBoxesGolden(t *testing.T) {
 	msg := snapshot(t)
 	for _, size := range []struct {
 		name string
 		w, h int
 	}{{"boxes-171x63", 171, 63}, {"boxes-100x40", 100, 40}} {
 		m, _ := update(t, sized(t, size.w, size.h), msg)
+		m, _ = press(t, m, down, tab, down, down, down, down, down, tab, down)
 		golden(t, size.name, screen(t, m))
 	}
 }

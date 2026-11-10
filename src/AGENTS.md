@@ -2870,6 +2870,23 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   graph line takes btop's gradient by its height: green at the bottom, yellow in the middle, red
   at the top. A quota meter has a `■` for each share left and a `·` for each share used. Its
   `■` are green above 50 % left, yellow from 20 to 50 %, and red below 20 %.
+- **Box ¹ runs** (`runs.go`). A row per `runs` row: id, state (`● run`, `◌ stale`, `■ stop`,
+  `✗ esc`, `✗ fail`, and `✓ done` for every other status, such as `clean`), step, story, round
+  (`1/2`), elapsed (to the snapshot while it runs or is stale, else to its last update), output
+  tokens, agent, model and effort (from an inner width of 103, so not in Mockup B), and the pull
+  request as `<repo>#<n>`. A done row is dim. The summary line counts the runs that are running,
+  stopped and stale, and the stories and points of the newest `history` day.
+- **Box ² attention** (`attention.go`). A row per inbox item: its kind tag (`RUN` teal, `ESC`
+  red, `TASK` yellow, `CHG` blue, `UPD` peach), id, unit and line. The last line is
+  `next: <the selected item's next>`. In the stacked layout two or more update items fold into
+  one row, `UPD   <n> red updates`; `↵` on it opens the group (the items follow it) or closes it.
+- **Box ³ next** (`next.go`). The `next` section's ranked units: rank, id, status, points (`-`
+  for none), held by (`heldBy`) and title. The line under them is the pick, the ranked unit it
+  unblocks when that is another, and how many units are not ranked.
+- **Selection** (`selection.go`). Each of boxes ¹ to ³ has a selected row, kept by its id: after
+  a new snapshot the same row stays selected while its id is there, else the row at its place.
+  `↑` and `↓` move the selection of the box with the focus, and the box scrolls to keep it on
+  screen. The selected row has the surface0 background. A cell that does not fit is cut with `…`.
 - **Box ⁴ tokens** (`tokens.go`). The graph of output tokens per minute over 2 h, labelled
   `ended sessions` (D3b), with its peak and an axis of the local half hours and `now`. Then
   one meter per quota window of `bl capacity`, with the percent left and the reset (local
@@ -2885,7 +2902,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
 - Below an inner height of 12 lines, boxes ⁴ and ⁵ leave out their axis and blank lines (Mockup
   B).
 - **Keys** (D6, `top/internal/ui/model.go`): `1`–`5` hide or show a box; `tab` and `⇧tab` move
-  the focus to the next or previous shown box; `c` writes `capacity` to the stream's stdin, so
+  the focus to the next or previous shown box; `↑` and `↓` select a row; `↵` opens or closes
+  the grouped update row; `c` writes `capacity` to the stream's stdin, so
   the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
   help, and any key closes it; `q` or `ctrl+c` quits.
@@ -2920,7 +2938,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, the
   frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
   exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
-  `testdata/snapshot.json` in a fixed zone (UTC−5), without colors;
+  `testdata/snapshot.json` (Mockup A's data) in a fixed zone (UTC−5), without colors, with a row
+  selected in boxes ¹ to ³;
   `go test ./internal/ui -update` writes them again.
   `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
   then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
@@ -2939,7 +2958,7 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's live holder or null), and `agent`, `model`, `effort` of its newest session entry                                                      | every snapshot                                           |
 | `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                    | when the backlog changes, and at least every 30 s        |
-| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                                                       | as `attention`                                           |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                     | as `attention`                                           |
 | `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                   | every 5 min, and at the snapshot after a `capacity` line |
 | `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                    | every 5 min                                              |
 | `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                              | every snapshot                                           |

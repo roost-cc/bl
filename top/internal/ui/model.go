@@ -27,13 +27,15 @@ const restartDelay = 400 * time.Millisecond
 
 // keyMap holds the keys of D6 that F-87 has. The help overlay lists them.
 type keyMap struct {
-	boxes, next, prev, capacity, longer, shorter, help, quit key.Binding
+	boxes, next, prev, move, open, capacity, longer, shorter, help, quit key.Binding
 }
 
 var keys = keyMap{
 	boxes:    key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "hide or show a box")),
 	next:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "move the focus to the next box")),
 	prev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "move the focus to the previous box")),
+	move:     key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "select a row in the box with the focus")),
+	open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "open or close the grouped update row")),
 	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
 	longer:   key.NewBinding(key.WithKeys("+"), key.WithHelp("+", fmt.Sprintf("refresh interval up (to %d s)", maxInterval/1000))),
 	shorter:  key.NewBinding(key.WithKeys("-"), key.WithHelp("-", fmt.Sprintf("refresh interval down (to %d ms)", minInterval))),
@@ -52,8 +54,10 @@ type Model struct {
 	blArgv        []string
 	interval      int
 	width, height int
-	hidden        [6]bool // by box number, 1 to 5
-	focus         int     // a box number; 0 when every box is hidden
+	hidden        [6]bool      // by box number, 1 to 5
+	focus         int          // a box number; 0 when every box is hidden
+	sel           [6]selection // by box number: the selected row of boxes 1 to 3
+	updatesOpen   bool         // whether box ²'s grouped update row is open
 	help          bool
 	snap          *stream.Snapshot
 	stream        *stream.Stream
@@ -159,6 +163,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // snapshot before (D8): one bell for them all, and each sender for each note it wants.
 func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	m.snap = &s
+	m.keepSelection()
 	notes := m.differ.Diff(m.snap)
 	var cmds []tea.Cmd
 	if m.bell && len(notes) > 0 {
@@ -207,6 +212,19 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.focus = m.nextFocus(m.focus, 1)
 	case key.Matches(msg, keys.prev):
 		m.focus = m.nextFocus(m.focus, -1)
+	case key.Matches(msg, keys.move):
+		dir := 1
+		if msg.String() == "up" {
+			dir = -1
+		}
+		m.move(dir)
+	case key.Matches(msg, keys.open):
+		if m.focus == 2 && m.snap != nil {
+			if i := m.selected(2); i >= 0 && m.attentionRows()[i].item == nil {
+				m.updatesOpen = !m.updatesOpen
+				m.keepSelection()
+			}
+		}
 	case key.Matches(msg, keys.capacity):
 		if s := m.stream; s != nil {
 			return m, func() tea.Msg {
@@ -253,7 +271,7 @@ func (m Model) View() tea.View {
 
 // helpBox draws the help overlay: each key of keyMap and what it does.
 func helpBox() []string {
-	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
+	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
 	lines := []string{""}
 	for _, b := range bindings {
 		lines = append(lines, fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc)))

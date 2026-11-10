@@ -66,6 +66,9 @@ func text(s string) tea.KeyPressMsg { return tea.KeyPressMsg{Code: []rune(s)[0],
 var (
 	tab      = tea.KeyPressMsg{Code: tea.KeyTab}
 	shiftTab = tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	up       = tea.KeyPressMsg{Code: tea.KeyUp}
+	down     = tea.KeyPressMsg{Code: tea.KeyDown}
+	enter    = tea.KeyPressMsg{Code: tea.KeyEnter}
 )
 
 // screen is the model's screen without its colors, after a check that it fills the terminal.
@@ -140,7 +143,7 @@ func TestHiddenBoxGivesItsSpace(t *testing.T) {
 		t.Fatal("box ³ is drawn while hidden")
 	}
 	// Box ¹ takes the whole left column: its side runs to the line above the key bar.
-	if !strings.HasPrefix(lines[61], "│") || !strings.HasPrefix(lines[62], "╰┘tab box└") {
+	if !strings.HasPrefix(lines[61], "│") || !strings.HasPrefix(lines[62], "╰┘↑↓ select└┘tab box└") {
 		t.Errorf("left column ends: %q / %q", lines[61], lines[62])
 	}
 	// Hide the right column too: box ¹ takes the whole width.
@@ -152,7 +155,7 @@ func TestHiddenBoxGivesItsSpace(t *testing.T) {
 	// Hide every box: the key bar stays.
 	m, _ = press(t, m, text("1"))
 	lines = strings.Split(screen(t, m), "\n")
-	if strings.TrimSpace(lines[0]) != "" || !strings.HasPrefix(lines[62], "╰┘tab box└") || m.focus != 0 {
+	if strings.TrimSpace(lines[0]) != "" || !strings.HasPrefix(lines[62], "╰┘↑↓ select└┘tab box└") || m.focus != 0 {
 		t.Errorf("no box: %q / %q, focus %d", lines[0], lines[62], m.focus)
 	}
 }
@@ -194,12 +197,12 @@ func TestBoxColorsAreD5s(t *testing.T) {
 
 func TestKeyBarFitsItsWidth(t *testing.T) {
 	for _, w := range []int{80, 100, 171} {
-		if got := ansi.Strip(keyBar(w, nil)); lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘tab box└┘+- interval└┘h help└┘q quit└─") {
+		if got := ansi.Strip(keyBar(w, nil)); lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘↑↓ select└┘tab box└┘+- interval└┘h help└┘q quit└─") {
 			t.Errorf("keyBar(%d) = %q", w, got)
 		}
 	}
-	if got := ansi.Strip(keyBar(20, nil)); got != "╰┘tab└┘+-└┘h└┘q└───╯" {
-		t.Errorf("keyBar(20) = %q, want the keys alone", got)
+	if got := ansi.Strip(keyBar(20, nil)); got != "╰┘↑↓└┘tab└┘+-└┘h└──╯" {
+		t.Errorf("keyBar(20) = %q, want the keys alone, as many as fit", got)
 	}
 }
 
