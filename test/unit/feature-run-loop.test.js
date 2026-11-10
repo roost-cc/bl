@@ -395,6 +395,28 @@ test("every session of a run starts in the prep's unit directory; the gate and g
   }
 });
 
+test('a feature run with no commits still opens its PR (S-1437 is for stories only)', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        shell: (cmd) => (cmd === 'git rev-list --count main..HEAD' ? { status: 0, output: '0\n' } : null),
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(runner.calls.filter((c) => c.type === 'forge' && c.op === 'change.open').length, 1);
+    assert.ok(
+      runner.calls.some((c) => c.prompt === 'review-verify'),
+      'the run reaches the review loop',
+    );
+    assert.ok(!state.history.some((h) => /no commits/.test(h.note ?? '')));
+  } finally {
+    cleanup();
+  }
+});
+
 test('a test gate that fails twice escalates with the log and never opens a PR', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {

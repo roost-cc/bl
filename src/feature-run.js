@@ -3222,13 +3222,13 @@ function pushBranch(ctx, step) {
  */
 function publishTargets(ctx) {
   const [lead, ...others] = gateTargets(ctx);
-  return [
-    lead,
-    ...others.filter((t) => {
-      const r = ctx.runner.shell('git rev-list --count main..HEAD', t.worktreePath);
-      return !(r?.status === 0 && String(r.output ?? '').trim() === '0');
-    }),
-  ];
+  return [lead, ...others.filter((t) => !branchEmpty(ctx, t))];
+}
+
+/** Whether `t`'s branch has no commits ahead of main (`git rev-list --count main..HEAD` is 0). */
+function branchEmpty(ctx, t) {
+  const r = ctx.runner.shell('git rev-list --count main..HEAD', t.worktreePath);
+  return r?.status === 0 && String(r.output ?? '').trim() === '0';
 }
 
 /**
@@ -4802,6 +4802,20 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
       setStep(ctx, 'test');
       if (!testGateWithFix(ctx)) return state;
     }
+  }
+
+  // A story whose self-review passed with nothing on its branch did its work
+  // elsewhere (the backlog, S-1437): no push, no PR, no review. A resumed run
+  // with no PR passed its self-review before its `pr` step.
+  if (isStory(feature) && !skipsReview(ctx) && !state.pr && gateTargets(ctx).every((t) => branchEmpty(ctx, t))) {
+    setStep(ctx, 'pr');
+    const note = 'skipped: no commits, nothing to review';
+    record(ctx, { step: 'pr', ok: true, note });
+    record(ctx, { step: 'review', ok: true, note });
+    // The `review` verb's edges pass through its `during` status (flow.json).
+    enterHop(ctx, 'review', 'review');
+    hop(ctx, 'review', REVIEW.clean, { by: 'review', note: 'no commits: nothing to review' });
+    return finish(ctx, 'clean');
   }
 
   // 4. Push + one PR.

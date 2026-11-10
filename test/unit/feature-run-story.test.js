@@ -241,6 +241,83 @@ test('a story run --resume after the escalation is cleared picks up at the gate'
   }
 });
 
+// A branch with no commits ahead of main (S-1437).
+const emptyBranch = (cmd) => (cmd === 'git rev-list --count main..HEAD' ? { status: 0, output: '0\n' } : null);
+const NO_COMMITS = 'skipped: no commits, nothing to review';
+
+test('a story run whose self-review passes with no commits ends clean at ready_for_merge: no push, no PR, no review', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    const prompts = runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt);
+    assert.deepEqual(prompts, ['story-run', 'feature-self-review']);
+    assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no forge call');
+    assert.ok(!runner.calls.some((c) => c.type === 'shell' && c.cmd.startsWith('git push')), 'no push');
+    for (const step of ['pr', 'review']) {
+      assert.ok(
+        state.history.some((h) => h.step === step && h.note === NO_COMMITS),
+        `a ${step} entry notes the skip`,
+      );
+    }
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.equal(logStatusOf('story', fm), 'ready_for_merge');
+    assert.equal(fm.transitions.at(-1).by, 'review');
+    const change = parseChange(readFileSync(CH(unit), 'utf8'));
+    assert.ok(
+      change.repos.every((r) => !r.pr),
+      'no PR in the change document',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('a story run with no commits whose self-review fails escalates as it does today', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const runner = fakeRunner({
+      dir: config.backlogRoot,
+      feature: unit,
+      behaviour: {
+        shell: emptyBranch,
+        selfReview: () => ({ summary: 'misses its case', ok: false, changed: false }),
+      },
+    });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no forge call');
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.equal(logStatusOf('story', fm), 'escalated');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a story escalated at the pr step with no PR takes the no-commit path on --resume (S-1379)', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const first = fakeRunner({ dir: config.backlogRoot, feature: unit });
+    first.forge = (op, vars) => {
+      first.calls.push({ type: 'forge', op, vars });
+      return { configured: true, status: 1, stdout: '', stderr: 'No commits between main and s5-loose' };
+    };
+    const run1 = await runFeature({ feature: unit, config, prep, runner: first, opts: { maxRounds: 2 } });
+    assert.equal(run1.status, 'escalated');
+    assert.match(run1.lastError, /no pull request could be opened/);
+    editFile(unit.indexPath, (fm, body) => body.replace(/## Escalation\n\n[\s\S]*$/, '## Escalation\n\nNone.\n'));
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });
+    assert.equal(state.status, 'clean');
+    assert.ok(!runner.calls.some((c) => c.type === 'forge' && c.op === 'change.open'), 'no change.open');
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.equal(logStatusOf('story', fm), 'ready_for_merge');
+  } finally {
+    cleanup();
+  }
+});
+
 test("a story's review finding routed to its Deferred: the review sessions get the story's kind", async () => {
   const { cleanup, config, unit, prep } = storySetup();
   try {

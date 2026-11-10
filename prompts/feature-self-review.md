@@ -15,7 +15,10 @@ The stories on this branch:
 
 1. **Acceptance.** Check every acceptance item in the {{unitKind}} file and every story's
    acceptance criteria against the code, not the checkboxes. Check off the {{unitKind}}-level
-   items that the branch satisfies; leave the rest and note why.
+   items that the branch satisfies; leave the rest and note why. If the branch has no commits
+   (`git log {{mainRef}}..HEAD` prints nothing), it passes only when each acceptance item already
+   holds where the work landed (for example the backlog); `bl run` then finishes without a pull
+   request.
 2. **Sibling inputs.** For each function you changed, list its input classes (empty, malformed,
    second shape, boundary, concurrent). Probe at least one that the tests do not already cover.
    If it fails, add the test.
