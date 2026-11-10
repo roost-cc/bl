@@ -357,6 +357,26 @@ test('a later update clears the final mark, so the exit shows ended', () => {
   });
 });
 
+test('a later update after a final title drops next', () => {
+  for (const [name, update, title] of [
+    ['one field, no next', () => updateTabTitle('status', 'implement'), 'F-2 :  : implement'],
+    ['several fields, no next', () => updateTabTitle({ story: 'S-1', status: 'fix' }), 'F-2 : S-1 : fix'],
+    ['next set again', () => updateTabTitle({ status: 'fix', next: '→ x' }), 'F-2 :  : fix → x'],
+  ]) {
+    underFakeTmux((fake) => {
+      updateTabTitle({ feature: 'F-2', story: null });
+      finalTabTitle({ status: 'clean', next: '→ bl merge' });
+      update();
+      assert.equal(fake.calls().at(-1).split('\n')[4].trimEnd(), title, name);
+    });
+  }
+  underFakeTmux((fake) => {
+    updateTabTitle({ feature: 'F-2', story: null, status: 'review', next: '→ y' });
+    updateTabTitle('status', 'fix');
+    assert.equal(fake.calls().at(-1).split('\n')[4].trimEnd(), 'F-2 :  : fix → y', 'no final title: next stays');
+  });
+});
+
 test('the exit hook does nothing before a title or with titles off', () => {
   underFakeTmux((fake) => {
     endTabTitle(1);

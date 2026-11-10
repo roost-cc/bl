@@ -118,12 +118,14 @@ export function currentTabTitle() {
  * Set one field (`updateTabTitle('story', 'S-34')`) or several
  * (`updateTabTitle({ feature: 'F-56', status: 'testing' })`), then show the
  * title. A null, undefined or empty value unsets the field. Clears the final
- * mark that `finalTabTitle` set.
+ * mark that `finalTabTitle` set, and the final title's `next` unless the
+ * caller sets `next` again.
  *
  * @param {string | Record<string, unknown>} keyOrFields
  * @param {unknown} [value]
  */
 export function updateTabTitle(keyOrFields, value) {
+  if (final) fields.delete('next');
   setFields(typeof keyOrFields === 'string' ? [[keyOrFields, value]] : Object.entries(keyOrFields ?? {}));
   final = false;
   showTabTitle();
