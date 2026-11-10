@@ -184,7 +184,7 @@ test('awaitLock sleeps at most the time left to the deadline', async () => {
 
 test('every lock wait with a live holder gives up near its deadline, not after a full poll', async () => {
   const repo = mkTempDir('bl-lock-wait-');
-  execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+  execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: ['ignore', 'pipe', 'pipe'] });
   const holderContent = `${process.pid}\n${new Date().toISOString()}\nheld by the test\n`;
   const spec = join(repo, 'index.md');
   writeFileSync(spec, '---\na: 1\n---\nbody\n');
