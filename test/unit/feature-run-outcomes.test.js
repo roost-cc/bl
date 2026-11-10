@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
 import { loadConfig } from '../../src/config.js';
 import { findFeature, normalizeFeatureId, extractSection } from '../../src/feature.js';
-import { runSession, newRunState, OutcomeError, OUTCOME_RETRY_NOTE } from '../../src/feature-run.js';
+import { defaultRunner, runSession, newRunState, OutcomeError, OUTCOME_RETRY_NOTE } from '../../src/feature-run.js';
+import { ClaudeProvider } from '../../src/agents/claude.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 
 const SCHEMA = {
@@ -156,6 +157,44 @@ test("an escalation after a CLI failure names the exit and shows the CLI's stder
     assert.match(escalation, /implement: no valid outcome after one retry \(claude exited 1: Error: bad flag\)/);
     assert.match(escalation, /The last 20 lines of the CLI's stderr:\n\n```text\nwarn\nError: bad flag\n```/);
   } finally {
+    cleanup();
+  }
+});
+
+test('defaultRunner().session returns the headless stderrTail', () => {
+  const { spawn } = ClaudeProvider.prototype;
+  const { dir, cleanup } = mkTempBacklog();
+  const failed = {
+    status: 1,
+    output: '',
+    isError: true,
+    structured: null,
+    structuredError: 'claude exited 1: Error: bad flag',
+    stderrTail: 'warn\nError: bad flag',
+  };
+  try {
+    const config = loadConfig({ backlogRoot: dir });
+    const session = (ret) => {
+      ClaudeProvider.prototype.spawn = () => ret;
+      return defaultRunner().session({
+        mode: 'workon',
+        agent: 'claude',
+        promptName: 'feature-self-review',
+        vars: {},
+        worktreePath: mkTempDir('bl-wt-'),
+        config,
+        parsed: { id: 'F-1' },
+        label: 'F-1: T',
+        schema: SCHEMA,
+      });
+    };
+    const r = session(failed);
+    assert.equal(r.stderrTail, 'warn\nError: bad flag');
+    assert.equal(r.structuredError, 'claude exited 1: Error: bad flag');
+    const { stderrTail, ...without } = failed;
+    assert.equal(session(without).stderrTail, '', 'an adapter result without stderrTail gives none');
+  } finally {
+    ClaudeProvider.prototype.spawn = spawn;
     cleanup();
   }
 });
