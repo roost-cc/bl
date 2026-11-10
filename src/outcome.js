@@ -56,9 +56,9 @@ const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
  * One stderr line, the `JSON.parse` message of a `not JSON` fault (it
  * quotes the agent's raw text, S-1404), the JSON path of a `schema violation`
  * fault (it holds the agent's property names), or one line of session text
- * (S-1405), fit for an operator-facing record, a
- * commit message and a spawn argument: ANSI codes and every control character
- * except tab removed, cut to `STDERR_LINE_MAX` characters.
+ * (S-1405), fit for an operator-facing record, a commit message and a spawn
+ * argument: ANSI codes and every control character except tab removed, cut to
+ * `STDERR_LINE_MAX` characters.
  *
  * @param {string} line
  */
