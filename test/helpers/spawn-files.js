@@ -11,6 +11,7 @@
 import { spawn } from 'child_process';
 import { closeSync, openSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
+import { setTimeout as delay } from 'timers/promises';
 import { mkTempDir } from './tempdir.js';
 
 /**
@@ -74,4 +75,17 @@ export function spawnToFiles(command, args, opts = {}) {
     });
   });
   return { child, stderrPath: errPath, read, closed };
+}
+
+/**
+ * Resolve once `run`'s stderr holds `text`, or once the child has closed
+ * without it (the caller's assertions then show what it wrote).
+ *
+ * @param {ReturnType<typeof spawnToFiles>} run
+ * @param {string} text
+ */
+export async function untilStderrHas(run, text) {
+  let closed = false;
+  run.closed.then(() => (closed = true));
+  while (!closed && !run.read().stderr.includes(text)) await delay(20);
 }

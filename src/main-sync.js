@@ -21,7 +21,8 @@
 import { spawnSync } from 'child_process';
 import { resolve } from 'path';
 import { info } from './config.js';
-import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { acquirePidLock, releasePidLock, waitingForLock } from './pid-lock.js';
+import { sleepSync } from './sleep-sync.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
 /**
@@ -64,10 +65,6 @@ const LOCK_POLL_MS = 200;
  * @property {number} [lockTimeoutMs=120000] how long to wait for the lock.
  * @property {number} [pollMs=200] how often to retry the lock while held.
  */
-
-function sleepMs(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
 
 /** Run git with an argument vector, capturing both streams. */
 function git(cwd, args) {
@@ -158,6 +155,10 @@ export function syncMain(repoPath, opts = {}) {
  * `bl`'s backlog pull (`backlog-commit.js` `pullBacklog`) takes it too, so a
  * pull never interleaves with a `syncMain` of the same checkout.
  *
+ * The first poll that finds a live holder says so once on stderr, in the
+ * shape `lock.js` uses for `.bl-new.lock`. Ctrl+C during the wait ends `bl`
+ * at once (`sleepSync`, S-1394).
+ *
  * @template T
  * @param {string} repoPath
  * @param {() => T} fn
@@ -170,12 +171,17 @@ export function withMainSyncLock(repoPath, fn, opts = {}) {
   const content = `${process.pid}\n${new Date().toISOString()}\nbl main sync ${repoPath}\n`;
   const deadline = Date.now() + lockTimeoutMs;
   let taken = acquirePidLock(lockPath, content);
+  let announced = false;
   while (taken.holder != null) {
+    // The sleep's child says it, so a Ctrl+C after the line reaches the child.
+    const say = announced ? undefined : waitingForLock(lockPath, taken.holder);
+    announced = true;
     const left = deadline - Date.now();
     if (left <= 0) {
+      if (say) info(say);
       return { state: 'lock-timeout', holder: taken.holder, lockPath };
     }
-    sleepMs(Math.min(pollMs, left));
+    sleepSync(Math.min(pollMs, left), say);
     taken = acquirePidLock(lockPath, content);
   }
   try {
