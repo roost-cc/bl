@@ -3146,9 +3146,9 @@ turns. A command that finds the lock held by a live process says so once on stde
 the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
 Ctrl+C during either wait exits 130 and removes the locks the process holds. The main sync wait
 is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
-that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C right
-after it always reaches the child. A SIGINT that lands between two sleeps is lost (2 in 150 at
-random times in a probe), and a second Ctrl+C ends `bl`. Two other synchronous waits sleep in
+that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C after it
+reaches the child within the first poll. A SIGINT that lands between two sleeps is lost (2 in
+150 at random times in a probe), and a second Ctrl+C ends `bl`. Two other synchronous waits sleep in
 `sleepSync` the same way: the prepare-lock wait (`session.js` `prepareWorktreeOnce`) and the
 usage-limit wait (`feature-run.js` `waitOrEscalate`).
 
