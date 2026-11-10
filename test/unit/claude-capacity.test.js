@@ -128,7 +128,13 @@ test('a reset that is not a time, or a body with no windows, is unknown; a perce
   const r = claudeCapacity(bad, 'opus');
   assert.equal(r.state, 'unknown');
   assert.equal(r.until, null);
-  assert.equal(r.message, 'the Claude usage endpoint reported a reset that is not a time (claude 7d: soon)');
+  assert.equal(r.message, 'the Claude usage endpoint reported a reset that is not a time (claude 7d: "soon")');
+  // Every value is shown as JSON, so an empty string shows as "".
+  bad.limits[1].resets_at = '';
+  assert.equal(
+    claudeCapacity(bad, 'opus').message,
+    'the Claude usage endpoint reported a reset that is not a time (claude 7d: "")',
+  );
   for (const body of [null, [], 'x', {}, { limits: [] }, { limits: [null, { kind: 'session', percent: 'x' }] }]) {
     const u = claudeCapacity(body, 'opus');
     assert.equal(u.state, 'unknown', JSON.stringify(body));
@@ -222,7 +228,7 @@ test('claudeCapacity: a resets_at that is not a string, null or absent is unknow
 test('claudeCapacity: a limit whose percent is not a number is unknown', () => {
   for (const { shape, field, set } of LIMIT_SHAPES) {
     for (const [value, shown] of [
-      ['100', '100'],
+      ['100', '"100"'],
       [null, 'null'],
       [undefined, 'undefined'],
       [true, 'true'],
@@ -262,7 +268,7 @@ test('claudeCapacity: a five_hour or seven_day that is not an object or null is 
     for (const [value, shown] of [
       [100, '100'],
       [0, '0'],
-      ['x', 'x'],
+      ['x', '"x"'],
       [true, 'true'],
       [false, 'false'],
       [[], '[]'],
@@ -292,7 +298,7 @@ test('claudeCapacity: a five_hour or seven_day that is not an object or null is 
   // A limits that is present but not a list is unknown; limits: null falls back.
   for (const [value, shown] of [
     [{}, '{}'],
-    ['x', 'x'],
+    ['x', '"x"'],
     [5, '5'],
     [true, 'true'],
   ]) {

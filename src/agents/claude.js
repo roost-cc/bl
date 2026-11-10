@@ -387,10 +387,7 @@ function claudeWindowName({ kind, scope }) {
 export function claudeCapacity(body, model) {
   const unknown = (scope, message) => ({ state: 'unknown', scope, until: null, windows: [], message });
   const unreadableIn = (scope, what, name, value) =>
-    unknown(
-      scope,
-      `the Claude usage endpoint reported ${what} (${name}: ${typeof value === 'string' ? value : JSON.stringify(value)})`,
-    );
+    unknown(scope, `the Claude usage endpoint reported ${what} (${name}: ${JSON.stringify(value)})`);
   if (!isPlainObject(body)) return unknown('model', 'the Claude usage endpoint returned no usage');
   let limits = body.limits;
   if (limits != null && !Array.isArray(limits))
