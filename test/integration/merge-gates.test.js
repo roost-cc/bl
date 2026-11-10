@@ -317,7 +317,10 @@ test('bl merge S-n finishes a story at ready_for_merge whose branch has no commi
 
 // The no-changes call site of `removeWorktreeAndBranch` (S-1463): a signal
 // that ends its worktree removal ends `bl merge` on that signal.
-const REAL_GIT = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+const REAL_GIT = spawnSync('sh', ['-c', 'command -v git'], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'pipe'],
+}).stdout.trim();
 for (const signal of ['SIGINT', 'SIGTERM']) {
   test(`the no-changes removal ended by ${signal} ends bl merge as ${signal}`, () => {
     const fx = noCommitStory(NO_COMMIT_LOG);

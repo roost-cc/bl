@@ -151,7 +151,10 @@ for (const prune of [false, true]) {
   test(`a fetch Node kills for output over 1 MiB (prune: ${prune}) → fetch-failed, no SIGTERM raised`, async () => {
     const { root, repo } = makeClone();
     try {
-      const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+      const real = execFileSync('sh', ['-c', 'command -v git'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
       const bin = join(root, 'bin');
       mkdirSync(bin);
       writeFileSync(
@@ -185,7 +188,10 @@ for (const [command, pattern] of [
       try {
         advanceOrigin(root, origin);
         const before = git(repo, 'rev-parse', 'main');
-        const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+        const real = execFileSync('sh', ['-c', 'command -v git'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }).trim();
         const bin = join(root, 'bin');
         mkdirSync(bin);
         writeFileSync(
