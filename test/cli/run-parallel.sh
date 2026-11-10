@@ -117,6 +117,102 @@ for sig in TERM INT HUP; do
   assert_eq "SIG$sig: temp directory removed" "" "$(ls -A "$STOP")"
 done
 
+# A signal while the runner starts its items still ends every item that has
+# started (S-1414). Each `eager` item sends SIGTERM to the runner as it starts
+# and ignores SIGTERM itself, so the signal comes while later items start, and
+# only the stop's SIGKILL ends an item. Before S-1414 a signal right after an
+# `&` left that item running in most runs. pgrep also finds an item that has
+# not yet run exec: until then its command line is the runner's.
+eager=()
+for n in $(seq 20); do
+  printf 'trap "" TERM; kill -TERM $PPID; while :; do sleep 0.1; done\n' >"$DIR/eager-$n"
+  eager+=("$DIR/eager-$n")
+done
+for run in 1 2 3; do
+  STOP="$DIR/start-$run"
+  mkdir -p "$STOP"
+  env RUN_PARALLEL_GRACE=5 TMPDIR="$STOP" bash "$RUN_PARALLEL" demo bash "${eager[@]}" >"$STOP.out" 2>&1 &
+  runner=$!
+  set +e
+  wait "$runner" 2>/dev/null
+  rc=$?
+  set -e
+  out=$(cat "$STOP.out")
+  assert_exit "start $run: the runner ends by the signal" "143" "$rc"
+  assert_contains "start $run: the runner says it was stopped" "demo: stopped by SIGTERM" "$out"
+  if pgrep -f -- "$DIR/eager-" >/dev/null; then
+    fail "start $run: an item still runs"
+    pkill -KILL -f -- "$DIR/eager-"
+  else
+    pass
+  fi
+  assert_eq "start $run: temp directory removed" "" "$(ls -A "$STOP")"
+done
+
+# A signal just before `wait` starts still stops the run at once (S-1414). The
+# runner's first `kill -0` of its poll sends SIGTERM to the runner, so the
+# signal comes after the poll's flag check. A `wait` there would block for the
+# whole `sleep 30` of the item. The case needs the poll to use `kill -0`: it
+# proves that the poll ends soon after a signal that comes after the flag
+# check (about 0.1 s; the time bound below allows 5 s for a loaded host).
+# The item names its `sleep` "$DIR/long-sleep", so pgrep finds the child too.
+printf '(exec -a "$0-sleep" sleep 30)\n' >"$DIR/long"
+STOP="$DIR/before-wait"
+mkdir -p "$STOP"
+started=$EPOCHREALTIME
+env TMPDIR="$STOP" RUN_PARALLEL="$RUN_PARALLEL" bash -c '
+  source "$RUN_PARALLEL"
+  fired=
+  kill() {
+    if [[ "$1" == -0 && -z "$fired" ]]; then
+      fired=1
+      builtin kill -TERM $$
+    fi
+    builtin kill "$@"
+  }
+  run_parallel demo bash "$1"
+' _ "$DIR/long" >"$STOP.out" 2>&1 &
+runner=$!
+set +e
+wait "$runner" 2>/dev/null
+rc=$?
+set -e
+# A locale with a decimal comma writes EPOCHREALTIME with a comma.
+took=$(((${EPOCHREALTIME//[.,]/} - ${started//[.,]/}) / 1000))
+out=$(cat "$STOP.out")
+assert_exit "signal before wait: the runner ends by the signal" "143" "$rc"
+assert_contains "signal before wait: the runner says it was stopped" "demo: stopped by SIGTERM" "$out"
+# About 0.1 s on an idle host; the bound leaves room for a loaded one.
+if ((took < 5000)); then pass; else fail "signal before wait: the runner took ${took} ms"; fi
+if pgrep -f -- "$DIR/long" >/dev/null; then
+  fail "signal before wait: an item still runs"
+  pkill -KILL -f -- "$DIR/long"
+else
+  pass
+fi
+assert_eq "signal before wait: temp directory removed" "" "$(ls -A "$STOP")"
+
+# A signal after the last wait still ends the runner by that signal (S-1414).
+# The print of the last item sends SIGTERM to the runner, so the signal comes
+# after the last wait and before the runner removes its traps.
+STOP="$DIR/after-wait"
+mkdir -p "$STOP"
+env TMPDIR="$STOP" RUN_PARALLEL="$RUN_PARALLEL" bash -c '
+  source "$RUN_PARALLEL"
+  _run_parallel_print() { kill -TERM $$; }
+  run_parallel demo bash "$1"
+' _ "$DIR/fast" >"$STOP.out" 2>&1 &
+runner=$!
+set +e
+wait "$runner" 2>/dev/null
+rc=$?
+set -e
+out=$(cat "$STOP.out")
+assert_exit "signal after the last wait: the runner ends by the signal" "143" "$rc"
+assert_contains "signal after the last wait: the runner says it was stopped" "demo: stopped by SIGTERM" "$out"
+if [[ "$out" == *summary* ]]; then fail "signal after the last wait: the runner prints its summary"; else pass; fi
+assert_eq "signal after the last wait: temp directory removed" "" "$(ls -A "$STOP")"
+
 # A signal to a nested runner ends an item of the inner runner that ignores
 # SIGTERM: the inner runner has half the grace time, so it sends SIGKILL to
 # its item before the outer runner sends SIGKILL to it. Three runs, because a
@@ -138,6 +234,8 @@ for run in 1 2 3; do
   assert_exit "nested $run: the runner ends by the signal" "143" "$rc"
   assert_contains "nested $run: the inner item's output so far is printed" "stubborn-start" "$out"
   assert_contains "nested $run: the inner runner says it was stopped" "inner: stopped by SIGTERM" "$out"
+  # The signal to the inner runner's group also ends the `sleep` of its poll.
+  if [[ "$out" == *Terminated* ]]; then fail "nested $run: a job line is printed"; else pass; fi
   assert_ended "nested $run" "$DIR/stubborn.pid"
   assert_eq "nested $run: both temp directories removed" "" "$(ls -A "$STOP")"
 done
