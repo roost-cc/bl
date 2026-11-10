@@ -11,8 +11,9 @@ import assert from 'node:assert/strict';
 import { existsSync, rmSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import { syncMain, mainSyncLockPath, reportMainSync, MAIN_SYNC_LOCK } from '../../src/main-sync.js';
+import { waitingForLock } from '../../src/pid-lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
 
@@ -182,6 +183,57 @@ test('a lock held by a live process → lock-timeout, nothing synced', () => {
     assert.ok(Date.now() - started >= 250, 'waited for the timeout');
     assert.equal(git(repo, 'rev-parse', 'main'), before, 'main untouched');
     assert.ok(existsSync(lockPath), "the holder's lock is left alone");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * `withMainSyncLock(repo, () => 'ran', opts)` in a child node process, with
+ * stderr on a file: the `sleep` child writes the announcement to fd 2, which
+ * no `process.stderr.write` stub here can see (S-1394).
+ */
+function lockInChild(repo, opts) {
+  const script = `import { withMainSyncLock } from ${JSON.stringify(pathToFileURL(SRC).href)};
+process.stdout.write(JSON.stringify(withMainSyncLock(process.env.BL_TEST_REPO, () => 'ran', ${JSON.stringify(opts)})));`;
+  return spawnToFiles(process.execPath, ['--input-type=module', '-e', script], {
+    env: { ...process.env, BL_TEST_REPO: repo },
+  }).closed;
+}
+
+/** The lock wait's announcements in `stderr`. */
+const waitLines = (stderr) => stderr.split('\n').filter((l) => l.startsWith('Waiting for lock ('));
+
+test('withMainSyncLock announces the wait once over several polls', async () => {
+  const { root, repo } = makeClone();
+  const lockPath = mainSyncLockPath(repo);
+  // A live holder that ends after about 12 polls; its lock is then stale.
+  const holder = spawn('sleep', ['0.6'], { stdio: 'ignore' });
+  try {
+    writeFileSync(lockPath, `${holder.pid}\n${new Date().toISOString()}\ntest\n`);
+    const started = Date.now();
+    const r = await lockInChild(repo, { pollMs: 50 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout), 'ran');
+    assert.ok(Date.now() - started >= 300, 'waited over several polls');
+    assert.deepEqual(waitLines(r.stderr), [waitingForLock(lockPath, holder.pid)]);
+  } finally {
+    holder.kill();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('withMainSyncLock announces a wait that times out once, at once or after several polls', async () => {
+  const { root, repo } = makeClone();
+  const lockPath = mainSyncLockPath(repo);
+  try {
+    writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\ntest\n`);
+    for (const opts of [{ lockTimeoutMs: 0 }, { lockTimeoutMs: 300, pollMs: 50 }]) {
+      const r = await lockInChild(repo, opts);
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(JSON.parse(r.stdout).state, 'lock-timeout', JSON.stringify(opts));
+      assert.deepEqual(waitLines(r.stderr), [waitingForLock(lockPath, process.pid)], JSON.stringify(opts));
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
