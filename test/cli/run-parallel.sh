@@ -155,7 +155,8 @@ done
 # whole `sleep 30` of the item. The case needs the poll to use `kill -0`: it
 # proves that the poll ends within 0.1 s after a signal that comes after the
 # flag check.
-printf 'sleep 30\n' >"$DIR/long"
+# The item names its `sleep` "$DIR/long-sleep", so pgrep finds the child too.
+printf '(exec -a "$0-sleep" sleep 30)\n' >"$DIR/long"
 STOP="$DIR/before-wait"
 mkdir -p "$STOP"
 started=$EPOCHREALTIME
