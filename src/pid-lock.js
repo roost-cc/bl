@@ -40,7 +40,11 @@ function liveHolderOf(content) {
   return isPidAlive(pid) ? pid : null;
 }
 
-/** Create `path` holding `content`, atomically and only if it does not exist. */
+/**
+ * Create `path` holding `content`, atomically and only if it does not exist.
+ * False when `path` exists, or when the temp file was gone before the link
+ * (a `git clean` in the directory removed it): the caller tries again.
+ */
 function createExclusive(path, content) {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   writeFileSync(tmp, content, { flag: 'wx' });
@@ -48,7 +52,7 @@ function createExclusive(path, content) {
     linkSync(tmp, path);
     return true;
   } catch (e) {
-    if (e.code === 'EEXIST') return false;
+    if (e.code === 'EEXIST' || e.code === 'ENOENT') return false;
     throw e;
   } finally {
     try {
@@ -114,6 +118,10 @@ function readMaybe(path) {
  */
 export function acquirePidLock(lockPath, content, hooks = {}) {
   for (let attempt = 0; attempt < 100; attempt++) {
+    // A live holder is seen without a write, so a process that waits for it
+    // leaves no temp file beside the lock while the holder works (S-1397).
+    const live = liveLockHolder(lockPath);
+    if (live != null) return { holder: live };
     if (createExclusive(lockPath, content)) return { content };
     const holder = liveLockHolder(lockPath);
     if (holder != null) return { holder };

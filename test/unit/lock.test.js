@@ -213,3 +213,82 @@ test('acquireLock never writes the lock name in place', async () => {
     cleanup();
   }
 });
+
+test('a waiter that polls a live lock leaves no untracked file in the backlog root', async () => {
+  const { dir, lockPath, cleanup } = mkBacklogRoot();
+  const git = (...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  writeFileSync(join(dir, '.git', 'info', 'exclude'), `${LOCK_FILE}\n`);
+  // This live test process stands in for the holder.
+  writeFileSync(lockPath, `${process.pid}\n2026-01-01T00:00:00.000Z\n`);
+  // A file the waiter writes in the backlog root, even for a moment, is one
+  // that the holder's `git status` (migration-txn.js) lists or its `git clean`
+  // removes under the waiter.
+  const write = fs.writeFileSync;
+  const writes = [];
+  fs.writeFileSync = (path, ...rest) => {
+    if (String(path).startsWith(dir)) writes.push(String(path));
+    return write(path, ...rest);
+  };
+  syncBuiltinESMExports();
+  const statuses = [];
+  try {
+    await assert.rejects(
+      acquireLock(dir, {
+        pollMs: 1,
+        error: () => {},
+        sleep: async () => {
+          statuses.push(git('status', '--porcelain', '--untracked-files=all').stdout);
+          if (statuses.length === 5) throw new Error('stop polling');
+        },
+      }),
+      /stop polling/,
+    );
+  } finally {
+    fs.writeFileSync = write;
+    syncBuiltinESMExports();
+  }
+  try {
+    assert.deepEqual(writes, []);
+    assert.deepEqual(statuses, ['', '', '', '', '']);
+    assert.deepEqual(readdirSync(dir).sort(), ['.bl-new.lock', '.git']);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a poll whose temp file vanished retries and does not throw', async () => {
+  const { dir, lockPath, cleanup } = mkBacklogRoot();
+  // A `git clean` in the backlog root removes the temp file between its
+  // write and its link.
+  const link = fs.linkSync;
+  let vanished = 0;
+  fs.linkSync = (from, to) => {
+    if (to === lockPath && vanished === 0) {
+      vanished += 1;
+      rmSync(from);
+    }
+    return link(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    await acquireLock(dir, {
+      now: () => new Date('2026-01-08T00:00:00.000Z'),
+      sleep: async () => {
+        throw new Error('acquiring a free lock must not wait');
+      },
+    });
+
+    assert.equal(vanished, 1);
+    assert.equal(readFileSync(lockPath, 'utf8'), `${process.pid}\n2026-01-08T00:00:00.000Z\n`);
+    assert.deepEqual(
+      readdirSync(dir).filter((name) => name.endsWith('.tmp')),
+      [],
+    );
+  } finally {
+    fs.linkSync = link;
+    syncBuiltinESMExports();
+    releaseLock(dir);
+    cleanup();
+  }
+});
