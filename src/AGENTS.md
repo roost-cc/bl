@@ -2982,8 +2982,10 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   its last good parse, or is left out when it has none, and `runs`, `activity` and `tokens`
   still read the others: each carries `error: "skipped: <why>"` and `skipped: [<id>, …]` with
   its new `read_at`. The view's notifications keep the last status of a skipped run, and a run
-  skipped before the view saw it only sets its baseline when it is read. A history entry that
-  is not an object is left out, and so is an `activity` entry with no time.
+  skipped before the view saw it only sets its baseline when it is read. The `error` stays for
+  as long as the file cannot be read. `--stream` writes it to stderr once when it first
+  appears, as one line per section: three lines for one bad file. A history entry that is not
+  an object is left out, and so is an `activity` entry with no time.
 - The view decodes each field as one Go type, and a field of another type would end its
   stream. So each run-state field that `runs`, `activity` and `tokens` copy is null when it does
   not have its type (a hand-edited `round: "2"`), a token count that is not a whole
