@@ -136,6 +136,7 @@ import {
   enterVerb,
   implementVerbOf,
   logOf,
+  malformedLogRefusal,
   nowAt,
   reviewOf,
   startOf,
@@ -241,6 +242,19 @@ function exitOnStoryWithoutRepo(feature, stories) {
     console.error(
       `Feature ${feature.id}: ${noRepo.map((s) => `${s.id} (component ${s.componentId || '(none)'})`).join(', ')} has no repo; a story's repo is its component's, so give the component a repo or move the story to one that has it.`,
     );
+    process.exit(1);
+  }
+}
+
+/**
+ * Exit when a story of the feature has a malformed `transitions:`
+ * (`malformedLogRefusal`): its log is written later (its start, its merge),
+ * after a worktree, a merge or a tag that the refusal would not undo.
+ */
+function exitOnMalformedStoryLog(stories) {
+  const refusal = malformedLogRefusal(stories.map((s) => ({ id: s.id, fm: s.frontmatter })));
+  if (refusal) {
+    console.error(refusal);
     process.exit(1);
   }
 }
@@ -1127,6 +1141,7 @@ export function prepareFeatureWorktree(config, feature, verb = 'run') {
     process.exit(1);
   }
   exitOnStoryWithoutRepo(feature, stories);
+  exitOnMalformedStoryLog(stories);
   const names = featureRepoOrder(stories);
   for (const name of names) {
     if (!config.reposByName[name]) {
@@ -1729,6 +1744,7 @@ export async function cmdMerge(args, config, feature) {
   const { stories } = resolveFeatureStories(feature, config, all);
   // Before any repo lands: every story is merged and marked done below.
   exitOnStoryWithoutRepo(feature, stories);
+  exitOnMalformedStoryLog(stories);
 
   // The release manifest written after the merge records every deployable
   // repo (`deployable: true` in `repos`, which every entry must set).

@@ -190,6 +190,85 @@ test('bl merge and bl review accept a unit that a merge or a review escalated, o
   }
 });
 
+test('bl merge refuses a feature whose story has a malformed transitions: before it touches any repo', () => {
+  const at = (n) => `2026-11-0${n}T00:00:00Z`;
+  const started = [
+    { at: at(1), to: 'draft', by: 'new' },
+    { at: at(2), to: 'in_progress', by: 'operator' },
+  ];
+  const reviewed = [
+    ...started,
+    { at: at(3), to: 'in_review', by: 'run' },
+    { at: at(4), to: 'ready_for_merge', by: 'review' },
+  ];
+  // An entry with no `to`: `bl validate` reports it, and no writer may append to it.
+  const malformed = [{ at: at(1), by: 'new' }];
+  // [command, the unit whose log is malformed]: each refuses before a worktree, a merge or a tag.
+  const cases = [
+    [['merge', 'F-1'], 'S-2'],
+    [['merge', 'F-1'], 'F-1'],
+    [['implement', 'F-1'], 'S-2'],
+    [['implement', 'F-1'], 'F-1'],
+    [['run', 'F-1'], 'S-2'],
+    [['merge', 'S-3'], 'S-3'],
+    [['implement', 'S-3'], 'S-3'],
+  ];
+  for (const [args, bad] of cases) {
+    const log = (id, good) => (id === bad ? malformed : good);
+    const merging = args[0] === 'merge';
+    const { dir, cleanup } = mkTempBacklog({
+      repos: REPOS,
+      components: [HOME],
+      stories: [
+        { id: 'S-1', component: 'C00', title: 'One', dirSuffix: 'one', feature: 'F-1', transitions: started },
+        {
+          id: 'S-2',
+          component: 'C00',
+          title: 'Two',
+          dirSuffix: 'two',
+          feature: 'F-1',
+          transitions: log('S-2', started),
+        },
+        {
+          id: 'S-3',
+          component: 'C00',
+          title: 'Three',
+          dirSuffix: 'three',
+          transitions: log('S-3', merging ? reviewed : started),
+          branch: 's3-three',
+        },
+      ],
+      features: [
+        {
+          id: 'F-1',
+          title: 'Feat',
+          dirSuffix: 'feat',
+          transitions: log('F-1', merging ? reviewed : started),
+          stories: ['S-1', 'S-2'],
+          branch: 'f1-feat',
+        },
+      ],
+    });
+    const name = `bl ${args.join(' ')} with ${bad} malformed`;
+    try {
+      const files = ['stories/S1-one/index.md', 'stories/S2-two/index.md', 'features/F1-feat/index.md'];
+      const before = files.map((f) => readFileSync(join(dir, f), 'utf8'));
+      const r = runBl(args, { cwd: dir });
+      assert.equal(r.status, 1, `${name}\n${r.stdout}\n${r.stderr}`);
+      assert.match(r.stderr, new RegExp(`^${bad} has a transitions: that is not a list of entries`, 'm'), name);
+      // Refused before the first repo step: no repo line, no worktree, no unit written.
+      assert.doesNotMatch(`${r.stdout}${r.stderr}`, /^(Repos|Branch|Worktree)\s+:/m, name);
+      assert.deepEqual(
+        files.map((f) => readFileSync(join(dir, f), 'utf8')),
+        before,
+        name,
+      );
+    } finally {
+      cleanup();
+    }
+  }
+});
+
 test('bl validate reports feature link drift and verification-only titles', () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,

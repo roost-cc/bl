@@ -305,13 +305,28 @@ function hasEdge(flow, kind, from, to, by) {
  * replace its entries.
  */
 function writableLog(flowPath, kind, fm, change, at) {
-  if (logShape(fm) === 'malformed') {
-    throw new FlowError(
-      flowPath,
-      `${idOf(kind, fm)} has a transitions: that is not a list of entries; fix it (bl validate names the fault) before bl writes an entry`,
-    );
-  }
+  const refusal = malformedLogRefusal([{ id: idOf(kind, fm), fm }]);
+  if (refusal) throw new FlowError(flowPath, refusal);
   return storedLog(fm) ?? legacyLog(kind, fm, change).map((e) => ({ at, ...e }));
+}
+
+/**
+ * The refusal for the units whose `transitions:` is malformed (`logShape`),
+ * one line each, or null. No writer appends to such a log (`writableLog`),
+ * so a command checks its units with it before its first step that it
+ * cannot undo (a worktree, a merge, a tag): `startOf` for the unit, `bl
+ * merge F-n` and `prepareFeatureWorktree` for the feature's stories.
+ * @param {{ id: string, fm: object }[]} units
+ * @returns {string | null}
+ */
+export function malformedLogRefusal(units) {
+  const lines = units
+    .filter((u) => logShape(u.fm ?? {}) === 'malformed')
+    .map(
+      (u) =>
+        `${u.id} has a transitions: that is not a list of entries; fix it (bl validate names the fault) before bl writes an entry`,
+    );
+  return lines.length > 0 ? lines.join('\n') : null;
 }
 
 /**
@@ -525,7 +540,8 @@ export function assertFrom(flow, unit, verb, ctx) {
  * over its frontmatter and its current change document, which places a unit
  * with no log (D4). The verb is the first whose `from` holds the
  * status, checked with `assertFrom` (its `when` guards too). When none
- * does, `refusal` is the first verb's. Every hand-written start-state check
+ * does, `refusal` is the first verb's. A malformed `transitions:`
+ * (`malformedLogRefusal`) refuses every verb. Every hand-written start-state check
  * of a verb handler became this. `bl run` passes its `then` chain
  * (`Flow.chainOf`), so it resumes a unit in review or fixing.
  * @param {{ backlogRoot: string }} config
@@ -546,7 +562,10 @@ export function startOf(config, kind, unit, verbs, { guards = true } = {}) {
   };
   const verb = list.find(fits) ?? null;
   const ctx = guards ? { config, id: unit.id, indexPath: unit.indexPath } : null;
-  const refusal = assertFrom(flow, { id: unit.id, kind, status }, verb ?? list[0], ctx);
+  // Every verb writes the unit's log, which a malformed one refuses.
+  const refusal =
+    malformedLogRefusal([{ id: unit.id, fm: unit.fm }]) ??
+    assertFrom(flow, { id: unit.id, kind, status }, verb ?? list[0], ctx);
   return { verb: refusal ? null : verb, status, refusal };
 }
 
