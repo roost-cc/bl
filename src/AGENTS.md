@@ -427,7 +427,8 @@ title: User Login # short title (used in index tables)
 type: feature # feature | bug | chore
 points: 3 # story-point estimate (Fibonacci: 1 2 3 5 8 13)
 effort: medium # optional — the refiner's effort level (low | medium | high | xhigh | max)
-status: draft # draft | refined | in_progress | in_review | fixing | ready_for_merge | escalated | done | superseded
+transitions: # the status log; bl writes it (see **The transition log**)
+  - { at: 2026-03-15T09:12:40Z, to: draft, by: new } # draft | refined | in_progress | in_review | fixing | ready_for_merge | escalated | done | superseded
 added: 2026-03-15 # date the story was added (YYYY-MM-DD)
 parent: S-10 # optional — parent story ID
 superseded_by: S-50 # optional — replacement story ID
@@ -481,7 +482,7 @@ positional `[commit-hash]` and `--commit` are mutually exclusive.
 | `parent`            | no       | `S-<nn>`                                       | Parent story if this was split from one                                                                           |
 | `superseded_by`     | no       | `S-<nn>`                                       | Replacement story ID                                                                                              |
 | `commit`            | on done  | short hash _or_ map `<repo>: <sha>`            | String for single-repo stories; map for multi-repo                                                                |
-| `completed`         | on done  | `YYYY-MM-DD`                                   | Set with `status: done`                                                                                           |
+| `completed`         | on done  | `YYYY-MM-DD`                                   | Set by the log's entry to `done` or `superseded`                                                                  |
 | `feature`           | no       | `F-<n>`                                        | The feature this story is part of (see **Features**); set by `bl new --feature`                                   |
 | `found_by`          | no       | `F-<n>` or `S-<n>`                             | The unit whose work found a side story; set by `bl side --from` (F-48 D2)                                         |
 | `review_rounds_max` | no       | integer                                        | Written by a story run; caps review rounds                                                                        |
@@ -736,7 +737,7 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
           "failure": [{ "to": "escalated" }]
         },
         "review": {
-          "from": ["in_review"],
+          "from": ["in_progress", "in_review", "ready_for_merge"],
           "during": "in_review",
           "via": ["review"],
           "success": [{ "to": "ready_for_merge" }],
@@ -752,8 +753,12 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
 
 - **The tables.** The template's are F-69 D1's. Feature: `new`, `refine`, `approve`, `run`,
   `implement` (`bl implement F-n`), `review`, `fix`, `merge`, `supersede`. Story: the same
-  without `approve`, `run` from `refined`, plus `implement`, `side` and `done`, and a `merge`
-  from `in_progress` or `ready_for_merge`. Task: `new` (to `draft`) and `done`. A story uses
+  without `approve`, `run` from `refined`, plus `implement`, `side` and `done`. Task: `new` (to
+  `draft`) and `done`. Two rows start from more than D1 says (S-1130): `review` from
+  `in_progress` and `ready_for_merge` too, so `bl review` follows `bl implement` and re-reviews a
+  unit ready for merge; `merge` from `in_progress`, `in_review` and `ready_for_merge` for both
+  types, so `--no-review` has an edge. `mergeGates` still refuses a merge with open review
+  items. A story uses
   the ten words of F-69 A3 except `approved`; a task uses `draft` and `done`.
 - **A verb row.** `from` is the statuses it starts from, or `*` for every status that is not
   terminal. `when` names guards that must hold before it starts. `during` is the status recorded
@@ -807,13 +812,12 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
   `task-field`), and reports `flow-json` for the file's own faults (see **`bl validate`**). Story
   status sets, closed checks and status tables all derive from it (S-1166), so a command that
   reads a status stops on a `flow.json` it cannot read. The feature sets derive from it too
-  (F-69 D6): `isFeatureWorkable` (`approved` up to `escalated`: `bl run`, `bl side`, the
+  (F-69 D6): `isFeatureWorkable` (`approved` up to `escalated`: `bl side`, the
   `feature-no-stories` check) and `isFeatureBranched` (`in_progress` up to `escalated`:
-  `bl move`, `bl attach`, `bl review`, `bl merge`) in `src/feature.js`, and
-  `escalation-not-none`'s (`Flow.isRunnable` short of `escalated`). What still lives in code:
-  the feature start-state checks in `src/feature-cmd.js`, comparisons that name the one
-  status a line acts on (`s.status === 'superseded'` in `progress()`), and the writes that choose a
-  closing status (`src/done.js`, `src/updates.js`), which S-1130 moves.
+  `bl move`, `bl attach`) in `src/feature.js`, and `escalation-not-none`'s (`Flow.isRunnable`
+  short of `escalated`). Every verb handler's start-state check is the table's (`startOf`, F-69
+  D3). What still lives in code: comparisons that name the one status a line acts on
+  (`s.status === 'superseded'` in `progress()`), and `src/updates.js`'s closing write.
   `test/unit/status-literals.test.js` counts every set of story statuses in `src/`. Status names in
   this document are the shipped flow's; messages and help name the running backlog's.
 
@@ -836,8 +840,36 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   equal to the current status records nothing (null), so a review started on a unit already
   `in_review` does not count twice. `transition(backlogRoot, unit, to, opts)` is
   `updateSpecFile` around it and returns the entry. A caller that changes other fields in the
-  same locked write calls `applyTransition` inside its own mutate. Until S-1130 no production
-  writer calls it.
+  same locked write calls `applyTransition` inside its own mutate.
+  `test/unit/single-writer.test.js` fails when another module in `src/` assigns or deletes a
+  frontmatter `status` or `transitions`, renders one into a template, or writes a `status:`
+  line; `updates.js`, `updates-run.js` and `updates-vulns.js` are exempt (Out of Scope).
+- **The writers (F-69 D3).** `applyNew` gives a new story, feature or task its first entry,
+  `draft` by `new` (the templates hold `transitions:`, no `status:`). `bl refine` records
+  `refined` or `draft` by `refine`; `bl approve` `approved` by `approve` (`--force` on a draft
+  first records `refined` by `operator`); `bl side` `in_progress` by `side`; `bl done`
+  `done` by `done` or `superseded` by `supersede`; `bl task done` `done` by `done`; a scripted
+  run `in_progress` by `implement` or `done` by `done`. `enterVerb(backlogRoot, unit, verb)`
+  records a verb's start, its `during` or a hand verb's success, unless the unit is there
+  already: `bl implement` records `in_progress` by `implement` on the story (on each story of
+  a feature) before the session, and the loop does so for each story it starts or finds
+  complete. The loop records `in_progress` by `run` at run start, `in_review` by `run` via
+  `open_pr` after the PR, the review verdict (`branchOf` over the `review` row: `ready_for_merge`,
+  `fixing` while `round_within_cap`, else `escalated`) by `review`, `in_review` by `fix` via
+  `fix_self_review` after a fix, and `escalated` with every escalation (`writeEscalation`, by
+  the verb whose failure branch leaves the current status: `merge` inside `bl merge`'s
+  integration). Each session hop carries the session summary as `outcome`. `bl review` records
+  `in_review` by `review` when it starts on a unit in progress or ready for merge, and its
+  verdict. `bl merge` records `done` by `merge` via `merge` on the feature and each story
+  (`applyMerged`; a story never started, by `done`). `ensureLog` writes a unit's synthesized
+  log when a run or a review starts on a unit with no log, so its hops read the stored log.
+- **Start states (F-69 D3).** `startOf(config, kind, unit, verbs)` picks the first of `verbs`
+  whose `from` holds the unit's status (`positionOf`: with its change document's review
+  position, for a unit with no log) and checks it with `assertFrom`. `bl run` passes its `then`
+  chain (`Flow.chainOf`: `run`, `review`, `fix`), so it resumes a unit in review or fixing;
+  `bl implement` passes `IMPLEMENT_VERBS` (`implement`, or `fix` on a unit in `fixing`);
+  `bl review`, `bl merge`, `bl refine` and `bl approve` their own verb. `bl merge` checks the
+  `when` guards in `mergeGates` with their own messages (`guards: false`).
 - **A unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the log the
   migration would write, `legacyLog(kind, fm, change)`: `draft` at `added`, then its `status:`
   through `LEGACY_STATUSES`; a terminal status at `completed`. A unit at `in_progress` or
@@ -995,7 +1027,8 @@ see **`bl run` for a story** below), or through the manual steps
 ---
 feature_id: F-3
 title: Invite codes & redemption engine
-status: draft # draft | refined | approved | in_progress | in_review | fixing | ready_for_merge | escalated | done | superseded
+transitions: # draft | refined | approved | in_progress | in_review | fixing | ready_for_merge | escalated | done | superseded
+  - { at: 2026-09-24T09:12:40Z, to: draft, by: new }
 theme: residence # required: the theme it serves (see **Themes and Epics**)
 epic: E52 # optional: the epic it belongs to, in the same theme
 # no stories:, points: or components: — derived from the stories naming it (F-77 D3)
@@ -1230,10 +1263,11 @@ bl reads an outcome out of prose. Two carriers deliver the value:
   (`{ summary, stories: { "S-n": { refined, reason? } } }`) or
   `feature-refine.json` (`{ summary, premise_holds, refined, reason? }`) to
   `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
-  before its backlog commit. `refined: true` writes `status: refined`;
-  `premise_holds: false` writes a feature's `status: draft`; otherwise the
-  status stays and `reason` is printed (`applyRefineStatus`, through
-  `updateSpecFile`). A batch story the outcome does not name stays as it is. A
+  before its backlog commit. `refined: true` records the `refine` row's
+  success, `refined`; `premise_holds: false` records its failure, a feature's
+  `draft`; otherwise the status stays and `reason` is printed
+  (`applyRefineStatus`, through `transition`, with `reason` as the entry's
+  `outcome`). A batch story the outcome does not name stays as it is. A
   session without a valid outcome file changes no status and prints the
   fault; the agent's own commit of the refinement is not affected. No refine
   prompt asks the agent to write a status
@@ -2333,8 +2367,8 @@ bl side <repo|C-id> --from <F-n|S-n> --title <t> --points <n> [--type chore|bug|
   its own `change.md`. Neither switches a main checkout.
 - **Creation.** The story is written by `bl new [<F-n>] <C-id> … --no-sync
 --json`, run as a child, so story creation keeps one implementation; `bl
-side` then sets `status: in_progress` and `found_by:` through
-  `serializeFrontmatter`. `--type` defaults to `chore`; the `--body-file`
+side` then records `in_progress` by `side` in its log and sets `found_by:`
+  through `updateSpecFile`. `--type` defaults to `chore`; the `--body-file`
   text (stdin for `-`) is read and checked by `bl side` first, then given to
   `bl new` on its stdin.
 - **Commit.** One hold of the backlog lock covers `bl new`, the marks, the
@@ -2483,8 +2517,8 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   `task_id` (`bl next-id task`). `bl task` takes the next one under the backlog lock, so two
   calls in a row get consecutive ids.
 - **`bl task <F-n|S-n> --title <t> --gate <merge|next|none> [--body-file <path>|-] [--json]`**
-  checks the unit exists, takes the backlog lock, writes the file (`status: draft`,
-  `owner: operator`, `added: <today>`), then the task's edge in `blockers.json` (below), and
+  checks the unit exists, takes the backlog lock, writes the file (the log's first entry,
+  `draft` by `new`; `owner: operator`; `added: <today>`), then the task's edge in `blockers.json` (below), and
   commits the task file and `blockers.json` (with `.gitattributes` while HEAD lacks the merge
   driver's line) in one commit: `chore: task T-<n> (<unit>)`. The unit's file is not
   written: its `## Tasks` table is rendered when the page is read. stdout is `T-<n>`; `--json` prints
@@ -2511,7 +2545,7 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   gate) is `bl block add T-<n> …`. There is no override flag: `bl task done` with a note saying
   what was done, or why the hold is moot, is the record.
 
-- **`bl task done <T-n> [note]`** sets `status: done`, `done: <today>` and `note:`, syncs and
+- **`bl task done <T-n> [note]`** records `done` by `done` (which sets `done: <today>`) and `note:`, syncs and
   commits `chore: task T-<n> done[: <note>]`; a task already done refuses. Its edges stay in
   `blockers.json`, met. It is the operator's: `MODE_DENY` in `src/allowed-tools.js` denies
   `bl task done:*` in every mode (generator v15), beside `bl block remove:*`, since closing a
@@ -2575,8 +2609,10 @@ bl refine -t S34              # detach into a new tmux window
 
 ### `bl implement`
 
-Requires `status: refined` or `status: in_progress`. Creates a git worktree and launches
-an agent session to implement the story. Refused while an unmet `blockers.json` edge holds the
+Starts from what `flow.json`'s `implement` row allows (`draft`, `refined`, `in_progress`), or
+from `fixing` with the `fix` session (`IMPLEMENT_VERBS`, `startOf`). Records `in_progress` by
+`implement` before the session (F-69 D3), creates a git worktree and launches an agent session to
+implement the story. Refused while an unmet `blockers.json` edge holds the
 story at its `run` gate (F-66 D3; see "The gate checks" above), naming each blocker.
 
 ```bash
@@ -4316,7 +4352,8 @@ them.
 - `story_id` format is always `S-<number>` with a hyphen (e.g. `S-40`). Directory names omit
   the hyphen (e.g. `S40-my-feature/`).
 - Points use the Fibonacci sequence: 1, 2, 3, 5, 8, 13. Never use other values.
-- Only set `status: done` after a real commit exists. Set `commit` and `completed` simultaneously.
+- Never write `status:` or `transitions:` by hand: `bl done`, `bl merge` and the loop record
+  them (F-69 D3), and `bl done` only after a real commit exists.
 - A story, component or feature directory never moves: status is frontmatter. Do not
   create `.completed/` directories; bl does not read them.
 - **Commit story edits with `bl validate`, then `bl sync --commit`.** Run `bl validate`
