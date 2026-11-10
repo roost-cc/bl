@@ -768,6 +768,9 @@ const REVIEW_LOGS = {
   fixing: ['draft', 'in_progress', 'in_review', 'fixing'],
   fixed: ['draft', 'in_progress', 'in_review', 'fixing', 'in_review'],
   ready_for_merge: ['draft', 'in_progress', 'in_review', 'ready_for_merge'],
+  // Escalated, with the review position the escalation left (fixing, clean).
+  escalated_fixing: ['draft', 'in_progress', 'in_review', 'fixing', 'escalated'],
+  escalated_clean: ['draft', 'in_progress', 'in_review', 'ready_for_merge', 'escalated'],
   done: ['draft', 'in_progress', 'in_review', 'ready_for_merge', 'done'],
 };
 
@@ -885,6 +888,22 @@ test('validateReviewLog: in_review after a fix with all items checked passes', a
 `;
   const findings = await reviewLogFindings('fixed', body);
   assert.equal(findings.length, 0);
+});
+
+test('validateReviewLog reads the review position, whatever the status (F-69 D5)', async () => {
+  const open = '## Review Log\n\n### Session 2026-05-11 (PR #1)\n\n**Must fix**\n\n- [ ] still open\n';
+  const cases = [
+    ['escalated_fixing', '# Title\n', 'review-log-missing', 'the unit is escalated with its review at fixing'],
+    ['escalated_clean', open, 'review-log-unaddressed', 'the unit is escalated with its review at ready_for_merge'],
+  ];
+  for (const [state, body, code, message] of cases) {
+    const findings = await reviewLogFindings(state, body);
+    assert.deepEqual(
+      findings.map((f) => [f.code, f.message.startsWith(message)]),
+      [[code, true]],
+      state,
+    );
+  }
 });
 
 test('validateReviewLog: a unit with no review returns no findings', async () => {

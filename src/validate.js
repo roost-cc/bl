@@ -597,9 +597,10 @@ export function validateChanges(backlogRoot, unitDir, unit) {
 }
 
 /**
- * Cross-check an open unit's status (its transition log's, F-69 D5)
- * against the latest session of its current change document's `## Review
- * Log`. Two integrity errors fire here:
+ * Cross-check an open unit's review position (`reviewOf`, from its
+ * transition log, F-69 D5), whatever its status, against the latest session
+ * of its current change document's `## Review Log`. Two integrity errors
+ * fire here:
  *
  *   - `review-log-missing`: the unit is in `fixing`, or in `in_review`
  *     after a fix, but the change document has no `### Session` block. The
@@ -620,13 +621,16 @@ export function validateReviewLog({ kind, fm, flow }, change, location) {
   const findings = [];
   const status = statusOf(kind, fm, change);
   if (flow.meets(kind, status, 'done')) return findings;
-  const afterFix = status === 'in_review' && reviewOf(kind, fm, change).fixed;
-  const what = afterFix ? 'in_review after a fix' : status;
+  // The review position, whatever the status: an escalated unit keeps its open items (F-69 D5).
+  const { position, fixed } = reviewOf(kind, fm, change);
+  const afterFix = position === 'in_review' && fixed;
+  const where = afterFix ? 'in_review after a fix' : position;
+  const what = status === position ? where : `${status} with its review at ${where}`;
 
   const log = extractReviewLog(change.body);
   const latest = log ? parseLatestSession(log) : null;
 
-  if ((status === 'fixing' || afterFix) && !latest) {
+  if ((position === 'fixing' || afterFix) && !latest) {
     findings.push({
       severity: 'error',
       code: 'review-log-missing',
@@ -634,7 +638,7 @@ export function validateReviewLog({ kind, fm, flow }, change, location) {
       location,
     });
   }
-  if ((afterFix || status === 'ready_for_merge') && latest && latest.blocking > 0) {
+  if ((afterFix || position === 'ready_for_merge') && latest && latest.blocking > 0) {
     findings.push({
       severity: 'error',
       code: 'review-log-unaddressed',

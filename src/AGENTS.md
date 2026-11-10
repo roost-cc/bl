@@ -2119,7 +2119,8 @@ Log` session has unchecked Must or Should items whatever the status (an
   in review, the verifier checks each claimed resolution, and the outcome
   either records `ready_for_merge` or `fixing` with a new session.
 - `bl validate` enforces two integrity rules on an open unit, comparing its
-  status with the latest session of its current change document:
+  review position (`reviewOf`), whatever its status, with the latest session
+  of its current change document:
   `review-log-missing` (`fixing`, or `in_review` after a fix, but no
   `## Review Log` session) and `review-log-unaddressed` (`in_review` after a
   fix, or `ready_for_merge`, but the latest session still has unchecked
