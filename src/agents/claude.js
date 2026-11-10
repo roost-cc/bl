@@ -10,10 +10,10 @@ import { fileURLToPath } from 'url';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv } from './provider.js';
 import { loadHookDenyMessage } from '../tool-guide.js';
-import { checkModel } from '../config.js';
+import { checkModel, exitStatus } from '../config.js';
 import { checkEffort } from '../effort.js';
 import { checkLocalConfiguration, localServerCapacity, localSpawnEnv } from './local.js';
-import { outcomeFor } from '../outcome.js';
+import { outcomeFor, withExitFault } from '../outcome.js';
 
 // Resolve Claude Code's config directory the same way the CLI does: honour
 // `CLAUDE_CONFIG_DIR` when set, else fall back to `~/.claude`. Hardcoding
@@ -623,17 +623,20 @@ export class ClaudeProvider extends AgentProvider {
     });
 
     if (headless) {
-      // Capture stdout (the JSON result); let stderr through so a watching
-      // operator sees progress.
+      // Capture stdout (the JSON result) and stderr. The stderr is copied to
+      // bl's stderr when claude exits, and names the exit in a missing
+      // outcome's fault (S-1398).
       const r = run('claude', claudeArgs, {
         cwd,
         env,
         encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'inherit'],
+        stdio: ['ignore', 'pipe', 'pipe'],
         maxBuffer: 256 * 1024 * 1024,
       });
+      if (r.stderr) process.stderr.write(r.stderr);
       if (r.error) return r;
-      return { ...r, ...parseClaudeJsonResult(r.stdout, schema) };
+      const parsed = parseClaudeJsonResult(r.stdout, schema);
+      return { ...r, ...parsed, ...withExitFault(parsed, 'claude', exitStatus(r), r.stderr) };
     }
 
     return run('claude', claudeArgs, {

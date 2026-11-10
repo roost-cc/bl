@@ -74,11 +74,12 @@ import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE, readComponents, readAllStories } from './story.js';
-import { updateTabTitle } from './tab-title.js';
+import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
   codeSpan,
+  fenced,
   isScripted,
   recordScriptedRun,
   reviewSkipped,
@@ -108,6 +109,7 @@ import {
   writeChange,
 } from './change-doc.js';
 import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
+import { sleepSync } from './sleep-sync.js';
 import { RUN_DIR, runLockPath, ensureRunDir } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
@@ -612,6 +614,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         sessionId: r.sessionId ?? null,
         structured: r.structured ?? null,
         structuredError: r.structuredError ?? null,
+        stderrTail: r.stderrTail ?? '',
       };
     },
     /** `scope`: run `cmd` as `sh -c <cmd>` inside that user systemd scope (F-70 D4). */
@@ -684,9 +687,13 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     notify() {
       process.stderr.write('\x07');
     },
-    /** Set tab-title fields (`tab-title.js`): the feature, the story in hand, the step or end state. */
-    title(fields) {
-      updateTabTitle(fields);
+    /**
+     * Set tab-title fields (`tab-title.js`): the feature, the story in hand, the step or end state.
+     * With `final`, the title is an end state that stays after bl exits.
+     */
+    title(fields, { final = false } = {}) {
+      if (final) finalTabTitle(fields);
+      else updateTabTitle(fields);
     },
     now() {
       return new Date();
@@ -694,9 +701,10 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     /**
      * Block for `ms`. The loop is synchronous, so the usage-limit wait cannot
      * yield to a timer; it calls this in slices of at most a second.
+     * `sleepSync` lets Ctrl+C end the wait (S-1394).
      */
     sleep(ms) {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+      sleepSync(ms);
     },
     log: info,
   };
@@ -790,6 +798,24 @@ function writeEscalation(ctx, reason, details = '', { fold = false } = {}) {
   commitFeatureFile(ctx, 'escalate', `chore: ${feature.id} escalated — ${reason}`);
 }
 
+/**
+ * Set the tab title's end state for a run status (S-1393) as a final title,
+ * which stays after bl exits: the status shown and the step the operator
+ * does next, short enough for the tmux status bar. The next step after an
+ * escalation is the loop's resume command (`ctx.resumeHint`) without the
+ * unit id.
+ */
+function finalTitle(ctx, status) {
+  let next = '';
+  if (status === 'clean') next = '→ bl merge';
+  else if (status === 'escalated') {
+    const hint = ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`;
+    next = `→ fix, ${hint.endsWith(' --resume') ? '--resume' : hint.replace(` ${ctx.feature.id}`, '')}`;
+  }
+  const shown = status === 'no-change' ? 'done' : status;
+  ctx.runner.title?.({ feature: ctx.feature.id, story: '', status: shown, next }, { final: true });
+}
+
 function finish(ctx, status, reason = null, details = '') {
   // Inside `bl merge`'s integration a stop is a merge escalation (F-36 D8):
   // its reason says so, and it names the repos, files and next step.
@@ -803,7 +829,7 @@ function finish(ctx, status, reason = null, details = '') {
   // `step` keeps the step the run stopped in — that is what `bl status`
   // shows and where `--resume` picks up.
   saveRunState(ctx.config, ctx.state);
-  ctx.runner.title?.({ feature: ctx.feature.id, story: '', status });
+  finalTitle(ctx, status);
   ctx.runner.notify(`${ctx.feature.id} ${status}`);
   const log = ctx.runner.log;
   log('');
@@ -1663,8 +1689,10 @@ function outcomeFault(r) {
 
 /**
  * A step's session returned no valid outcome twice (F-68 D5): escalate with
- * the fault and the last 20 lines of the session's text, and throw an
- * OutcomeError. The text is evidence for the operator, never a verdict.
+ * the fault, the last 20 lines of the session's text and, when the agent CLI
+ * wrote any, the last 20 non-empty lines of its stderr (`stderrTail`, S-1398),
+ * and throw an OutcomeError. The text is evidence for the operator, never a
+ * verdict.
  */
 function escalateNoOutcome(ctx, step, r) {
   const reason = `${step}: no valid outcome after one retry (${outcomeFault(r)})`;
@@ -1680,7 +1708,8 @@ function escalateNoOutcome(ctx, step, r) {
     `Fault: ${outcomeFault(r)}`,
     '',
     tail ? 'The last 20 lines of the session text:' : 'The session left no text.',
-    ...(tail ? ['', '````text', tail, '````'] : []),
+    ...(tail ? ['', fenced(tail)] : []),
+    ...(r.stderrTail ? ['', "The last 20 non-empty lines of the CLI's stderr:", '', fenced(r.stderrTail)] : []),
     '',
     `Find why the agent did not return the outcome, then run \`${resume}\`.`,
   ].join('\n');
@@ -1798,13 +1827,10 @@ function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUntil }) {
     note,
   });
   runner.log(`  (${note})`);
-  // Slices of at most a second, re-reading the clock each time: Ctrl-C lands
-  // within a second, and a machine suspended through the deadline sees that
-  // it has passed instead of sleeping the whole stretch again.
-  const sleep =
-    typeof runner.sleep === 'function'
-      ? (ms) => runner.sleep(ms)
-      : (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  // Slices of at most a second, re-reading the clock each time: a machine
+  // suspended through the deadline sees that it has passed instead of
+  // sleeping the whole stretch again. `sleepSync` lets Ctrl-C end the wait.
+  const sleep = typeof runner.sleep === 'function' ? (ms) => runner.sleep(ms) : sleepSync;
   for (;;) {
     const t = runnerNow(runner).getTime();
     if (t >= until) break;
@@ -2204,14 +2230,6 @@ function gateFailure(ctx, { command, logPath, log, output, excerpt, repo, worktr
     worktreePath,
     perRepo,
   };
-}
-
-/** A fence longer than any backtick run in `text`, so the text cannot close it. */
-function fenced(text) {
-  const s = String(text ?? '');
-  const longest = Math.max(2, ...(s.match(/`+/g) ?? []).map((m) => m.length));
-  const f = '`'.repeat(longest + 1);
-  return `${f}\n${s}\n${f}`;
 }
 
 /**
@@ -4310,6 +4328,7 @@ function escalateIntegration(ctx, reason, details, { save = false } = {}) {
     ctx.state.lastError = reason;
     saveRunState(ctx.config, ctx.state);
   }
+  finalTitle(ctx, 'escalated');
   ctx.runner.log(`\n${ctx.feature.id} escalated — ${reason}`);
   ctx.runner.log(`See ## Escalation in ${ctx.feature.featureRelPath}.`);
 }

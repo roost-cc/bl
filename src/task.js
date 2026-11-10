@@ -57,6 +57,26 @@ export const TASK_FILE_RE = /^T(\d+)(?:-[^/]*)?\.md$/;
 export const TASK_GATES = ['merge', 'next', 'none'];
 
 /**
+ * The title prefix that marks a decision task: a choice the operator must make
+ * before the unit merges (S-1403). Case as written, colon included.
+ */
+export const DECISION_PREFIX = 'Decide:';
+
+/**
+ * Why `bl task` refuses `gate` for a task titled `title`, or null (S-1403): a
+ * decision task (`DECISION_PREFIX`) takes `--gate merge` only, so no unit merges
+ * past an open decision. `next` is refused too: a decision about the unit's own
+ * Acceptance comes before its merge, not after it.
+ * @param {string} title  whitespace-collapsed and trimmed
+ * @param {string} gate  one of `TASK_GATES`
+ * @returns {string | null}
+ */
+export function decisionGateProblem(title, gate) {
+  if (!title.startsWith(DECISION_PREFIX) || gate === 'merge') return null;
+  return `a decision task (title starting "${DECISION_PREFIX}") takes --gate merge; got --gate ${gate}`;
+}
+
+/**
  * The edges `bl task <unit> --gate <gate>` files for task `taskId` (F-65
  * D2): `merge` holds `bl merge` of the unit until the task is done; `next`
  * holds `bl run` and `bl implement` of every unit (`*`) until the task is
@@ -484,7 +504,9 @@ renders when the page is read (F-65 D1, F-79 D2).
   <unit>       File a task on the feature or story: write the file
                (status: open, owner: operator, added: today) and its
                edge in blockers.json, and commit them; print T-<n>
-    --title <t>          Required. What to do, in a few words
+    --title <t>          Required. What to do, in a few words. A title
+                         that starts with "${DECISION_PREFIX}" is a decision for the
+                         operator and takes --gate merge
     --gate <g>           Required. What the task holds until it is done:
                          merge  bl merge of the unit
                          next   bl run and bl implement of every unit,
@@ -576,6 +598,8 @@ export async function main(argv) {
   const { gate } = values;
   if (gate == null) fail(`--gate <${TASK_GATES.join('|')}> is required`);
   if (!TASK_GATES.includes(gate)) fail(`--gate ${gate} is not one of ${TASK_GATES.join(', ')}`);
+  const problem = decisionGateProblem(title, gate);
+  if (problem) fail(problem);
   const unit = findTaskUnit(config, positionals[0]);
   if (!unit) fail(`${positionals[0]} is not a feature (F-<n>) or story (S-<n>) in the backlog`);
   const bodyFile = values['body-file'];

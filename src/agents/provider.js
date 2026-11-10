@@ -33,7 +33,8 @@
  * A headless spawn's result carries `refusal` (see supportsHeadless()): the
  * adapter classifies its own refusals inside spawn(), and callers read the
  * field rather than the agent's words. It also carries the step's outcome,
- * `structured` and `structuredError` (F-68 D1, `spawn({ schema })`).
+ * `structured` and `structuredError` (F-68 D1, `spawn({ schema })`), and
+ * `stderrTail`, the last 20 non-empty lines of the CLI's stderr (S-1398).
  *
  * A headless spawn's child runs with `BL_HEADLESS=1` (`HEADLESS_ENV`, F-78
  * D3): each adapter builds the child's environment with `agentEnv`, so every
@@ -45,7 +46,7 @@
  * S-1388): titles are off in the agent session. The tab belongs to the `bl`
  * that started the session, which sets the title before and after it
  * (`reassertTabTitle`). So no `bl` an agent runs, and no test it starts, can
- * rename the operator's tmux window or turn its `automatic-rename` back on.
+ * rename the operator's tmux window.
  */
 
 import { TAB_TITLE_ENV } from '../tab-title.js';
@@ -201,8 +202,12 @@ export class AgentProvider {
    * The result also carries the outcome (F-68 D1): `structured`, the final
    * message as an object that matched `opts.schema`, and `structuredError`,
    * the fault when it did not (`no output`, `not JSON: …`, `schema violation
-   * at <JSON path>: …`). Both are null when the spawn had no schema. Nothing
-   * reads an outcome from `output`.
+   * at <JSON path>: …`). When there was nothing to validate and the CLI
+   * exited non-zero or wrote stderr, the fault is `<cli> exited <status>[:
+   * <last stderr line>]` in place of `no output` (`withExitFault`, S-1398).
+   * Both are null when the spawn had no schema. Nothing reads an outcome from
+   * `output`. The result also carries `stderrTail`: the last 20 non-empty
+   * lines of the CLI's stderr joined by `\n`, or `''`.
    */
   supportsHeadless() {
     return false;

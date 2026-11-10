@@ -283,6 +283,13 @@ test("a conflict is aborted and escalated naming the file and both sides' commit
     const res = integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
+    assert.deepEqual(calls.titles.at(-1), {
+      feature: unit.id,
+      story: '',
+      status: 'escalated',
+      next: '→ fix, bl merge',
+      final: true,
+    });
     assert.deepEqual(
       res.repos.map((r) => [r.state, r.conflicted]),
       [['conflicted', ['f1-feat.txt']]],

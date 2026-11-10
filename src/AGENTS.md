@@ -1097,13 +1097,19 @@ agent returned, validated against the step's JSON Schema, or `null` with the
 fault named. `validateOutcome(schema, value)` in `src/outcome.js` does the
 validation, with `ajv` (draft 2020-12). It takes the object or the text that
 holds it, and its faults are `no output`, `not JSON: <parser message>` and
-`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). Nothing in
-bl reads an outcome out of prose. Two carriers deliver the value:
+`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). The parser
+message in `not JSON` has its ANSI codes and control characters (except tab)
+removed and is cut to 500 characters, as a stderr line is (`cleanStderrLine`,
+S-1404). A headless
+result replaces `no output`, and only that fault, with
+`<cli> exited <status>[: <last stderr line>]` when the agent CLI exited non-zero
+or wrote stderr (`withExitFault`, S-1398). Nothing in bl reads an outcome out of
+prose. Two carriers deliver the value:
 
-| Session     | Carrier                                                                                                                                                                                                                                                                                                                                     | Read by                                 |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the run), and the last message parsed as JSON. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
-| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                | `launchSession`, after the agent exits  |
+| Session     | Carrier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Read by                                 |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the run), and the last message parsed as JSON. Both capture the CLI's stderr, copy it to bl's stderr when the CLI exits, and return its last 20 non-empty lines as `stderrTail`, which the no-outcome escalation shows. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
+| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                                                                                                                                                                                         | `launchSession`, after the agent exits  |
 
 - **The outcome file.** It lives under the git-ignored `.bl/`, so nothing
   commits it. `launchSession` removes a stale one before the spawn, and after
@@ -2381,9 +2387,9 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   driver's line) in one commit: `chore: task T-<n> (<unit>)`. The unit's file is not
   written: its `## Tasks` table is rendered when the page is read. stdout is `T-<n>`; `--json` prints
   `{ schema: "bl-task-json/v1", id, path, unit, edges }`. An unknown unit, a missing `--title`,
-  a missing `--gate` or one outside the three, an unreadable body file or one with frontmatter
-  is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A failure before
-  the commit puts the files back.
+  a missing `--gate` or one outside the three, a `Decide:` title with a gate other than `merge`,
+  an unreadable body file or one with frontmatter is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A
+  failure before the commit puts the files back.
 - **`--gate`** is a shorthand for the task's edge (F-65 D2), the one `bl block add` would file
   and checked the same way (`writeEdge` in `src/block.js`, which `bl block add` shares:
   `edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied first). The holds are
@@ -2402,6 +2408,10 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   with the task file removed and nothing committed. Any other hold (on another unit, at another
   gate) is `bl block add T-<n> …`. There is no override flag: `bl task done` with a note saying
   what was done, or why the hold is moot, is the record.
+
+- **A decision task** has a title that starts with `Decide:` (`DECISION_PREFIX` in
+  `src/task.js`, case as written) and takes `--gate merge` only, so no unit merges past an open
+  decision (S-1403); `bl task` refuses `none` and `next` for it.
 
 - **`bl task done <T-n> [note]`** sets `status: done`, `done: <today>` and `note:`, syncs and
   commits `chore: task T-<n> done[: <note>]`; a task already done refuses. Its edges stay in
@@ -2691,8 +2701,10 @@ bl run S-1 S-2 S-3            # S-2 depends on S-1: S-1 and S-3 start
 Every title `bl` gives a terminal tab goes through `updateTabTitle`: the tmux window name
 under tmux (targeting the window `bl` started in, captured at startup), the OSC 2 window
 title when stderr is a terminal outside tmux, nothing otherwise. The title is rendered from
-named fields with the `BL_TAB_TITLE` format, default `{{feature}} : {{story}} : {{status}}`;
-an unset field renders as nothing and the result is trimmed. The placeholder is the `{{var}}`
+named fields with the `BL_TAB_TITLE` format, default
+`{{feature}} : {{story}} : {{status}} {{next}}` (`next` is the step that the operator does
+next, arrow included, such as `→ bl merge`); an unset field renders as nothing and the result
+is trimmed. The placeholder is the `{{var}}`
 bl's prompts and plugin commands use, not a new format.
 
 - A code path sets the fields it knows, by name, at any time: `updateTabTitle('story', 'S-34')`
@@ -2700,8 +2712,15 @@ bl's prompts and plugin commands use, not a new format.
 - `launchSession` sets the unit `parsed.id` names (`F-n` the feature, `S-n` the story) and
   the mode as `status` (`workon` shows as `implement`); a caller that knows more, such as a
   story's `feature:`, sets it first. The `bl run` loop sets the feature, the story in hand and
-  the step in `setStep`, and the end state in `finish`, through the runner's `title(fields)`;
-  `notify` only rings the bell now.
+  the step in `setStep`, and the end state in `finish` and `escalateIntegration` (`finalTitle`),
+  through the runner's `title(fields, { final })`; `notify` only rings the bell now.
+- A code path that reaches an end state sets it with `finalTabTitle`, which marks the title
+  final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
+  only when the code path sets it. The run loop's ends: `clean → bl merge`,
+  `escalated → fix, --resume` (`→ fix, bl review` under `bl review`, `→ fix, bl merge` under
+  `bl merge`), `done` for no change, `failed`. `bl updates run` ends with its outcome counts,
+  and `→ approve/drop` when an outcome is a decision; a run that throws sets no final title.
+  A later `updateTabTitle` or `clearTabTitle` clears the mark.
 - After a tool that had the terminal returns (the agent in `launchSession` and triage, the
   editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
   its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
@@ -2709,18 +2728,30 @@ bl's prompts and plugin commands use, not a new format.
   the child processes that `bl run` and `bl review` start in parallel for several targets
   (`runChildren`), so the parent's window keeps the parent's title. `agentEnv` sets it for
   every agent session (S-1388): the tab belongs to the `bl` that started the session,
-  so no `bl` the agent runs, and no test it starts, renames the window or turns its
-  `automatic-rename` back on. `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
+  so no `bl` the agent runs, and no test it starts, renames the window.
+  `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
   `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
-  (`test/unit/tmux-free-env.test.js` guards it). `openTmuxWindow` names a new window
+  (`test/unit/tmux-free-env.test.js` guards it). The same wrapper unsets `BL_BACKLOG_DIR`
+  and refuses a temporary directory (`os.tmpdir()`) inside a git repository, where git in a
+  test's temp dir would act on that repository (S-1394; `test/unit/repo-free-env.test.js`
+  guards both). `openTmuxWindow` names a new window
   with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
-- When `bl` exits after setting a title, `restoreTabTitle` (registered on the first title)
-  gives it back: under tmux it turns the window's `automatic-rename` on again, elsewhere it
-  pops the title the terminal saved on its title stack (XTWINOPS 22/23) when the first title
-  was set. No tab keeps a title for work that is over; the bell at a run's end is the signal.
+- When `bl` exits, the last title stays (S-1393): under tmux `rename-window` turned the
+  window's `automatic-rename` off and bl leaves it off (`tmux set -w automatic-rename on`
+  gives tmux's name back); outside tmux bl never pushes or pops the terminal's title.
+  `endTabTitle`, the `exit` hook registered on the first title, sends nothing after a final
+  title, whatever the exit code (an `OutcomeError` after an escalation exits non-zero and
+  keeps the escalated title). Otherwise it sets the status from the exit code (`ended` for 0,
+  `interrupted` for 130 or 143, `failed (exit N)` otherwise), unsets `next` and sends the
+  title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
+  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `lock.js` registers when it loads:
+  they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
+  registered once per process. A command that sets no title and loads no `lock.js` keeps
+  Node's default signal action.
 - The title width only grows while the process runs: `showTabTitle` pads a shorter title with
-  trailing spaces to the widest title shown, so the tmux status bar does not move.
-  `currentTabTitle` and `renderTabTitle` stay unpadded; `restoreTabTitle` resets the width at exit.
+  trailing spaces to the widest title shown, so the tmux status bar does not move. A final
+  title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`
+  resets the width at exit.
 
 ### Pre-task discussion (`-P, --prompt`)
 
@@ -3138,7 +3169,18 @@ value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 `src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
 turns. A command that finds the lock held by a live process says so once on stderr
 (`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
-30 s pass. The lock is re-entrant within a process.
+30 s pass. The lock is re-entrant within a process. As the spec lock is, it is created whole
+and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock name never
+exists without its holder's pid and two processes cannot both hold it. The main sync lock wait
+(`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
+the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
+Ctrl+C during either wait exits 130 and removes the locks the process holds. The main sync wait
+is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
+that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C after it
+reaches the child within the first poll. A SIGINT that lands between two sleeps is lost (2 in
+150 at random times in a probe), and a second Ctrl+C ends `bl`. Two other synchronous waits sleep in
+`sleepSync` the same way: the prepare-lock wait (`session.js` `prepareWorktreeOnce`) and the
+usage-limit wait (`feature-run.js` `waitOrEscalate`).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each
