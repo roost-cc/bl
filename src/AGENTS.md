@@ -2896,10 +2896,10 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   for example `unknown: claude cannot report capacity`, once per distinct line. Then today's
   totals of the four kinds, and the local time capacity was last read.
 - **Box ⁵ activity** (`activity.go`). The graph of points done per UTC day over the `history`
-  days (`points done / UTC day`), with the total of the last 7 days and a date axis. Then the `activity` events, newest
-  first, as many as fit: local time, work unit, step with its story or round, `✓` or `✗` and
-  the duration, then the agent, model and effort, or the note for a failed session or an event
-  with no agent.
+  days (`points done / UTC day`), with the total of the last 7 days and a date axis. Then the
+  `activity` events, newest first, as many as fit: local time, work unit, step with its story or
+  round, `✓` or `✗` and the duration, then the agent, model and effort, or the note for a failed
+  session or an event with no agent.
 - Below an inner height of 12 lines, boxes ⁴ and ⁵ leave out their axis and blank lines (Mockup
   B).
 - **Keys** (D6, `top/internal/ui/model.go`): `1`–`5` hide or show a box; `tab` and `⇧tab` move
@@ -2919,19 +2919,20 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   it appends `<id> <kind>` and `<line>`; it runs in the background, in a process group of its
   own, and is killed after 10 s. The command's own exit is the result: after it exits, the
   sender waits at most 1 s for a child that holds its stderr, so an exit 0 is never `timeout`.
-  The stream's end waits the same 1 s for its stderr. The desktop sender is `notify-send -a "bl top" --`, when
-  `notify-send` is on `PATH` and there is no `--no-desktop`. A sender that exits other than 0
-  or times out puts `<name> failed: <its last stderr line, or timeout>` in red at the right of
-  the bottom border, until its command next exits 0. A sender may take only some kinds of note
-  (`Sender.Kinds`). `src/top.js` refuses `--no-bell`, `--no-desktop` and `--no-push` with
-  `--json` or `--stream`.
+  The stream's end waits the same 1 s for its stderr. The desktop sender is
+  `notify-send -a "bl top" --`, when `notify-send` is on `PATH` and there is no `--no-desktop`.
+  A sender that exits other than 0 or times out puts
+  `<name> failed: <its last stderr line, or timeout>` in red at the right of the bottom border,
+  until its command next exits 0. A sender may take only some kinds of note (`Sender.Kinds`).
+  `src/top.js` refuses `--no-bell`, `--no-desktop` and `--no-push` with `--json` or `--stream`.
 - **Phone push** (D8a, `notify.Push`). The push sender, named `push`, is the command of
   backlog.json's `top` block (below), and it gets only `escalation` and `task` notes, never a
-  run that ends (Decision A6). `src/top.js` reads the block before the build (not for `--version`, which reads no backlog) and passes the argv
-  to the view as `--push-argv '<JSON array>'`, an internal flag that the view decodes with
-  `encoding/json`, so the view still reads no backlog file. `--no-push` (passed on to the view)
-  drops the sender. A push that fails warns as `push failed: …` in the bottom border. bl holds
-  no secret and names no push service: the command does that.
+  run that ends (Decision A6). `src/top.js` reads the block before the build (not for
+  `--version`, which reads no backlog) and passes the argv to the view as
+  `--push-argv '<JSON array>'`, an internal flag that the view decodes with `encoding/json`, so
+  the view still reads no backlog file. `--no-push` (passed on to the view) drops the sender. A
+  push that fails warns as `push failed: …` in the bottom border. bl holds no secret and names
+  no push service: the command does that.
 - **backlog.json `top`.** `"top": { "push": ["<command>", "<arg>", …] }`. `topSettings`
   (`src/config.js`) reads it as `updateSettings` reads `updates`: only when used, never by
   `loadConfig`, and only for the view (`--json` and `--stream` do not read it). No `top` block

@@ -34,8 +34,9 @@ type Differ struct {
 
 // Diff returns the notes of s against the snapshot before, and keeps s as the new baseline. An
 // inbox item notifies when its id was not in the snapshot before, so it notifies once, and again
-// only after it left the inbox and came back. A run notifies when it has an end status (stream.Ended) that it
-// did not have before. A section that was never read (no read_at) changes nothing.
+// only after it left the inbox and came back. A run notifies when it has an end status
+// (stream.Ended) that it did not have before. A section that was never read (no read_at) changes
+// nothing.
 func (d *Differ) Diff(s *stream.Snapshot) []Note {
 	var notes []Note
 	if !s.Attention.ReadAt.IsZero() {
