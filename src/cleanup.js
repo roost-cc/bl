@@ -50,7 +50,7 @@ import {
 import { getAllowedTools, loadPrompt } from './session.js';
 import { addGateLine, gateLine, recordMerge } from './change-doc.js';
 import { shellMerged } from './feature-run.js';
-import { isInterrupt, raiseSignal } from './signal-exit.js';
+import { interruptOf, isInterrupt, raiseSignal } from './signal-exit.js';
 import { GATE_TAIL_LINES, codeSpan, interpolateCommand, tail } from './scripted.js';
 import { storyUnit } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
@@ -711,7 +711,7 @@ export async function cleanupOneRepo({
       cwd: repoPath,
       stdio: ['inherit', process.stderr, process.stderr],
     });
-    if (isInterrupt(push.signal)) {
+    if (interruptOf(push)) {
       console.error(
         `${repoName}: the push of main to origin was ended by ${push.signal}; rerun \`bl merge ${parsed.id}\`.`,
       );
@@ -739,9 +739,9 @@ export async function cleanupOneRepo({
     const r = spawnSync(cmd, args, { cwd: repoPath, stdio: ['ignore', process.stderr, process.stderr] });
     if (r.status !== 0) {
       console.error(
-        `${repoName}: main is pushed, but \`${install}\` in the main checkout ${isInterrupt(r.signal) ? 'was interrupted' : 'failed'}. Run it by hand, then rerun \`bl merge ${parsed.id}\`:\n  cd ${shellQuote(repoPath)} && ${install}`,
+        `${repoName}: main is pushed, but \`${install}\` in the main checkout ${interruptOf(r) ? 'was interrupted' : 'failed'}. Run it by hand, then rerun \`bl merge ${parsed.id}\`:\n  cd ${shellQuote(repoPath)} && ${install}`,
       );
-      raiseSignal(r.signal);
+      raiseSignal(interruptOf(r));
       return { ok: false };
     }
   }
@@ -812,7 +812,7 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
   let signal = null;
   const git = (args, cwd) => {
     const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    if (isInterrupt(r.signal)) signal ??= r.signal;
+    signal ??= interruptOf(r);
     return r;
   };
   const outputOf = (r) => `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
@@ -970,7 +970,7 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
       cwd: wt,
       stdio: ['ignore', process.stderr, process.stderr],
     });
-    if (isInterrupt(push.signal)) signal ??= push.signal;
+    signal ??= interruptOf(push);
     if (signal) {
       interrupted(`the push of ${commit}`);
       return false;
@@ -1042,7 +1042,7 @@ export function fastForwardBlocker(git, repoPath, commit) {
 export function landedMergeCommit(repoPath, branchName) {
   const git = (...args) => {
     const r = spawnSync('git', args, { cwd: repoPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    raiseSignal(r.signal);
+    raiseSignal(interruptOf(r));
     return r.status === 0 ? r.stdout.trim() : null;
   };
   const tip = git('rev-parse', '--verify', `${branchName}^{commit}`);
@@ -1109,7 +1109,7 @@ function removeWorktreeAndBranch({ parsed, repoPath, repoName, branchName, branc
   // git succeeded, false when it failed, null when a signal ended it.
   const git = (args, stdio = ['ignore', 'pipe', 'pipe']) => {
     const r = spawnSync('git', args, { cwd: repoPath, stdio });
-    if (!isInterrupt(r.signal)) return r.status === 0;
+    if (!interruptOf(r)) return r.status === 0;
     console.error(`${repoName}: \`git ${args.join(' ')}\` was ended by ${r.signal}; rerun \`bl merge ${parsed.id}\`.`);
     raiseSignal(r.signal);
     return null;

@@ -36,6 +36,17 @@ export function isInterrupt(signal) {
 }
 
 /**
+ * The interrupt (`INTERRUPT_SIGNALS`) that ended the synchronous child `r`, or
+ * null. A child that Node itself killed (`r.error` set: `ENOBUFS` past
+ * `maxBuffer`, `ETIMEDOUT` past `timeout`) is a failed child, not an interrupt.
+ * @param {{ signal?: string | null, error?: Error }} r  a `spawnSync` result
+ * @returns {string | null}
+ */
+export function interruptOf(r) {
+  return !r.error && isInterrupt(r.signal) ? r.signal : null;
+}
+
+/**
  * Take the action of an interrupt (`INTERRUPT_SIGNALS`) that ended a
  * synchronous child. Node runs no listener during a synchronous wait, so a
  * caller that sees the child end on one of them raises it here: the listeners

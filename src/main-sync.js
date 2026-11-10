@@ -23,7 +23,7 @@ import { resolve } from 'path';
 import { info } from './config.js';
 import { awaitLock, LockWaitTimeout } from './lock-wait.js';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
-import { raiseSignal } from './signal-exit.js';
+import { interruptOf, raiseSignal } from './signal-exit.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
 /**
@@ -78,7 +78,7 @@ function git(cwd, args) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  raiseSignal(r.signal);
+  raiseSignal(interruptOf(r));
   return {
     ok: r.status === 0,
     status: r.status,

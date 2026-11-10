@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync, spawn } from 'child_process';
@@ -61,12 +61,12 @@ function advanceOrigin(root, origin, name = 'upstream') {
   return git(other, 'rev-parse', 'main');
 }
 
-/** `syncMain(repo)` in a child node process; resolves to its result. */
-function syncInChild(repo) {
+/** `syncMain(repo, opts)` in a child node process with `env` added; resolves to its result. */
+function syncInChild(repo, opts = {}, env = {}) {
   const script = `import { syncMain } from ${JSON.stringify(pathToFileURL(SRC).href)};
-process.stdout.write(JSON.stringify(await syncMain(process.env.BL_TEST_REPO)));`;
+process.stdout.write(JSON.stringify(await syncMain(process.env.BL_TEST_REPO, JSON.parse(process.env.BL_TEST_OPTS))));`;
   return spawnToFiles(process.execPath, ['--input-type=module', '-e', script], {
-    env: { ...process.env, BL_TEST_REPO: repo },
+    env: { ...process.env, BL_TEST_REPO: repo, BL_TEST_OPTS: JSON.stringify(opts), ...env },
   }).closed.then(({ stdout, stderr, status }) => {
     if (status !== 0) throw new Error(`child exited ${status}: ${stderr}`);
     return JSON.parse(stdout);
@@ -139,6 +139,29 @@ test("origin at a missing path → fetch-failed with git's message and local mai
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Node kills a child past spawnSync's 1 MiB maxBuffer with SIGTERM and sets
+// `r.error` (ENOBUFS): a failed fetch, not an interrupt to raise.
+for (const prune of [false, true]) {
+  test(`a fetch Node kills for output over 1 MiB (prune: ${prune}) → fetch-failed, no SIGTERM raised`, async () => {
+    const { root, repo } = makeClone();
+    try {
+      const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+      const bin = join(root, 'bin');
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, 'git'),
+        `#!/bin/sh\ncase "$*" in 'fetch '*) head -c 2097152 /dev/zero | tr '\\0' x >&2;; esac\nexec '${real}' "$@"\n`,
+      );
+      chmodSync(join(bin, 'git'), 0o755);
+      const r = await syncInChild(repo, { prune }, { PATH: `${bin}:${process.env.PATH}` });
+      assert.equal(r.state, 'fetch-failed', JSON.stringify(r).slice(0, 200));
+      assert.match(r.message, /ENOBUFS/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test("diverged main → ff-failed carrying git's stderr", async () => {
   const { root, origin, repo } = makeClone();
