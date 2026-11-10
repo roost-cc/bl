@@ -106,12 +106,48 @@ test('an at before the last entry’s is recorded at that entry’s, so the log 
   );
 });
 
-test('an at that is not a time throws and writes nothing', () => {
-  for (const bad of ['not a time', '', null]) {
-    const fm = at('story', 'draft');
-    const before = structuredClone(fm);
-    assert.throws(() => applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: bad }), /is not a time/);
-    assert.deepEqual(fm, before, String(bad));
+test('applyTransition refuses an at that is not ISO 8601 UTC', () => {
+  // What the writer accepts, `bl validate` accepts: for a unit with a log, a
+  // unit with only a legacy status: (each synthesized entry takes the at), and
+  // a new unit (`applyNew`, which `newTaskFile` uses).
+  const units = {
+    log: () => at('story', 'draft'),
+    legacy: () => ({ story_id: 'S-5', title: 'x', status: 'draft', added: '2026-11-01' }),
+  };
+  const bad = [
+    'not a time',
+    '',
+    null,
+    '2026-11-09',
+    'Nov 9 2026',
+    '2026-11-09T10:00:00+02:00',
+    '2026-11-09 10:00',
+    '2026-11-09T10:00Z',
+  ];
+  for (const value of bad) {
+    for (const [name, make] of Object.entries(units)) {
+      const fm = make();
+      const before = structuredClone(fm);
+      assert.throws(
+        () => applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: value }),
+        /is not an ISO 8601 UTC time; no entry written/,
+        `${name}: ${value}`,
+      );
+      assert.deepEqual(fm, before, `${name}: ${value}`);
+    }
+    assert.throws(
+      () => applyNew(flow, 'task', { task_id: 'T-5' }, value),
+      /is not an ISO 8601 UTC time/,
+      String(value),
+    );
+  }
+  for (const good of [AT, '2026-11-09T10:00:00.123Z']) {
+    for (const [name, make] of Object.entries(units)) {
+      const fm = make();
+      applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: good });
+      const errors = findTransitionFindings(flow, 'story', fm, 'x').filter((f) => f.severity === 'error');
+      assert.deepEqual(errors, [], `${name}: ${good}`);
+    }
   }
 });
 
