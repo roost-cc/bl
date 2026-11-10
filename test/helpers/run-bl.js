@@ -107,7 +107,8 @@ export function runBl(args, opts = {}) {
  *            closed: Promise<{ stdout: string, stderr: string,
  *                              status: number | null,
  *                              signal: NodeJS.Signals | null }> }}
- *          `child` is the spawned process. `blocked` resolves on the announced wait. Otherwise it rejects
+ *          `child` is the spawned process. `blocked` resolves on the
+ *          announced wait. Otherwise it rejects
  *          once the child is gone, never before: when the child exits first,
  *          fails to start, or stays silent past `timeoutMs` (killed with
  *          SIGTERM, then SIGKILL if it is still running a second later), so
