@@ -3388,7 +3388,7 @@ function finishClean(ctx) {
     return finish(
       ctx,
       'escalated',
-      `${ctx.feature.id} is ${status} and the latest session has ${gate.review?.blocking ?? 0} open Must/Should item(s)`,
+      `${ctx.feature.id} is ${status ?? unitStatus(ctx)} and the latest session has ${gate.review?.blocking ?? 0} open Must/Should item(s)`,
       openItemsSummary(ctx),
     );
   }
