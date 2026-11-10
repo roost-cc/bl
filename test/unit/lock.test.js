@@ -62,15 +62,15 @@ test('acquireLock keeps a live lock and exits after the configured timeout', asy
     writeFileSync(lockPath, originalContent);
     const sleeps = [];
     const errors = [];
-    const times = [0, 5, 5, 11, 11];
 
     await assert.rejects(
       acquireLock(dir, {
-        now: () => new Date(times.shift() ?? 11),
+        // A real wait past the timeout, so the second poll is the last.
         sleep: async (ms) => {
           sleeps.push(ms);
+          await new Promise((resolve) => setTimeout(resolve, 80));
         },
-        timeoutMs: 10,
+        timeoutMs: 50,
         pollMs: 2,
         error: (message) => errors.push(message),
         exit: (code) => {
@@ -82,12 +82,12 @@ test('acquireLock keeps a live lock and exits after the configured timeout', asy
 
     assert.deepEqual(sleeps, [2]);
     assert.equal(readFileSync(lockPath, 'utf8'), originalContent);
-    // The wait is announced once (two polls, one line), then the timeout.
-    assert.equal(errors.length, 3, errors.join('\n'));
-    assert.equal(errors[0], `Waiting for lock (.bl-new.lock) held by pid ${process.pid}…`);
-    assert.match(errors[1], /Timed out waiting for lock/);
-    assert.match(errors[1], /Another bl process may be stuck/);
-    assert.match(errors[2], /Remove manually:/);
+    // The wait is announced once (two polls, one line), then the timeout,
+    // which names the holder and never tells anyone to remove the file.
+    assert.deepEqual(errors, [
+      `Waiting for lock (.bl-new.lock) held by pid ${process.pid}…`,
+      `Timed out after 50 ms waiting for lock (.bl-new.lock) held by pid ${process.pid}.`,
+    ]);
   } finally {
     cleanup();
   }

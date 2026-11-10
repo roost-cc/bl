@@ -29,11 +29,12 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { acquirePidLock, releasePidLock, waitingForLock } from './pid-lock.js';
+import { awaitLock, LockWaitTimeout } from './lock-wait.js';
+import { acquirePidLock, releasePidLock } from './pid-lock.js';
 import { exitOnSignal } from './signal-exit.js';
 
 export const LOCK_FILE = '.bl-new.lock';
-const LOCK_TIMEOUT_MS = 30_000;
+const LOCK_TIMEOUT_MS = 60_000;
 const LOCK_POLL_MS = 500;
 
 // Locks held by this process, mapped to their re-entrancy depth and the
@@ -65,10 +66,16 @@ process.on('exit', cleanupAll);
 // SIGINT and SIGTERM end the process with process.exit(130|143), so the exit listener above runs.
 exitOnSignal();
 
+/**
+ * Take the backlog lock, waiting through `awaitLock` (`lock-wait.js`) up to
+ * `timeoutMs` (60 s, F-104 D2) for a live holder. The wait is announced once
+ * on `error`. On a timeout it prints the holder on `error` and calls
+ * `exit(1)`. `now` stamps the lock's content; `sleep` is the wait's test seam.
+ */
 export async function acquireLock(backlogRoot, options = {}) {
   const {
     now = () => new Date(),
-    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep,
     timeoutMs = LOCK_TIMEOUT_MS,
     pollMs = LOCK_POLL_MS,
     exit = process.exit,
@@ -81,29 +88,20 @@ export async function acquireLock(backlogRoot, options = {}) {
     return;
   }
   if (heldByParent(lockPath)) return;
-  const start = now().getTime();
-  let announced = false;
-
-  while (true) {
-    const taken = acquirePidLock(lockPath, `${process.pid}\n${now().toISOString()}\n`);
-    if ('content' in taken) {
-      heldLocks.set(lockPath, { depth: 1, content: taken.content });
-      return;
-    }
-    if (!announced) {
-      // Said once, so a caller (or a test) can tell a process blocked on a
-      // live holder from one still doing its pre-lock work.
-      announced = true;
-      error(waitingForLock(LOCK_FILE, taken.holder));
-    }
-    if (now().getTime() - start > timeoutMs) {
-      error(`Timed out waiting for lock (${LOCK_FILE}). Another bl process may be stuck.`);
-      error(`Remove manually: rm "${lockPath}"`);
-      exit(1);
-      return;
-    }
-    await sleep(pollMs);
+  const take = () => {
+    const got = acquirePidLock(lockPath, `${process.pid}\n${now().toISOString()}\n`);
+    return 'content' in got ? { taken: got.content } : got;
+  };
+  let content;
+  try {
+    content = await awaitLock(LOCK_FILE, take, { deadlineMs: timeoutMs, pollMs, announce: error, sleep });
+  } catch (e) {
+    if (!(e instanceof LockWaitTimeout)) throw e;
+    error(e.message);
+    exit(1);
+    return;
   }
+  heldLocks.set(lockPath, { depth: 1, content });
 }
 
 /** Whether the lock file names this process's parent, which passed it down in `BL_LOCK_HOLDER`. */

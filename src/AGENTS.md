@@ -3605,7 +3605,9 @@ value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 `src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
 turns. A command that finds the lock held by a live process says so once on stderr
 (`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
-30 s pass. The lock is re-entrant within a process. As the spec lock is, it is created whole
+60 s pass (F-104 D2). The wait is `awaitLock` (`src/lock-wait.js`, F-105 W1), which awaits a
+timer between tries; on a timeout `bl` names the holder and exits 1, and never tells anyone to
+remove the lock file. The lock is re-entrant within a process. As the spec lock is, it is created whole
 and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock name never
 exists without its holder's pid and two processes cannot both hold it. The main sync lock wait
 (`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
@@ -3944,7 +3946,7 @@ mode when stdout is not a TTY.
 
 Exit codes:
 0 Completed cleanly.
-1 The backlog lock was not free within 30 s (`Timed out waiting for lock`).
+1 The backlog lock was not free within 60 s (`Timed out after 60000 ms waiting for lock`).
 2 Invalid arguments: an option `bl fix` does not accept
 (`bl fix: unknown option "--bogus"`), a stray positional
 (`bl fix: unexpected argument "S-1"`), or an unknown `--code`, `--theme`

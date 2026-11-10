@@ -170,7 +170,7 @@ Output:
 Exit codes:
   0   Completed cleanly (zero or more fixes applied).
   1   At least one finding could not be fixed, or the backlog lock
-      was not free within 30 s (another bl process holds it).
+      was not free within 60 s (another bl process holds it).
   2   Invalid arguments: an option bl fix does not accept, a stray
       positional, or an unknown --code, --theme or --story. Nothing
       is written.
