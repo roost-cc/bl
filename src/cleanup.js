@@ -917,7 +917,8 @@ story done, syncs the backlog, closes the PR and removes the worktree.
 The gates are a feature's (one set, F-36): refused while the story is in
 fixing or in_review or the latest Review Log session has an open Must or Should
 (open nits pass), when it was never reviewed (naming a PR the forge merged
-first) unless --no-review, while ## Escalation is open, and when a worktree on
+first) unless --no-review (a story at ready_for_merge whose branch has no
+commits passes and merges nothing), while ## Escalation is open, and when a worktree on
 the story's branch is in any other repo (work in another repo is another
 story).
 
