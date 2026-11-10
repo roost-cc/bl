@@ -48,6 +48,17 @@ assert_nonempty() {
   if [[ -n "$actual" ]]; then pass; else fail "$label — expected non-empty, got empty"; fi
 }
 
+# Waits up to 5 s for each file $@ until it is written.
+wait_for() {
+  local f
+  for f in "$@"; do
+    for _ in $(seq 50); do
+      [[ -s "$f" ]] && break
+      sleep 0.1
+    done
+  done
+}
+
 summary_and_exit() {
   if (( FAIL > 0 )); then
     echo "FAIL: $FAIL test(s) failed; $PASS passed" >&2

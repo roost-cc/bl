@@ -78,17 +78,6 @@ assert_eq "two calls: both temp directories removed" "" "$(ls -A "$TWICE")"
 printf 'echo slow-start; sleep 30 & echo $! >"%s/slow.child"; echo $$ >"%s/slow.pid"; wait; echo slow-end\n' "$DIR" "$DIR" >"$DIR/slow"
 printf 'trap "" TERM; echo stubborn-start; echo $$ >"%s/stubborn.pid"; while :; do sleep 0.1; done\n' "$DIR" >"$DIR/stubborn"
 
-# Waits up to 5 s until every file $@ is written.
-wait_for() {
-  local f
-  for f in "$@"; do
-    for _ in $(seq 50); do
-      [[ -s "$f" ]] && break
-      sleep 0.1
-    done
-  done
-}
-
 # Passes if the process whose pid file $2 names has ended; ends it if not.
 assert_ended() {
   if [[ ! -s "$2" ]]; then

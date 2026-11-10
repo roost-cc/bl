@@ -25,14 +25,6 @@ if [[ "$(dirname "$suite_tmp")" == "$CASE" && "$(basename "$suite_tmp")" == bl-t
 if [[ "$(dirname "$claude_dir")" == "$suite_tmp" ]]; then pass; else fail "normal exit: CLAUDE_CONFIG_DIR is not in TMPDIR: '$claude_dir'"; fi
 assert_eq "normal exit: temp directory removed" "" "$(ls -A "$CASE")"
 
-# Waits up to 5 s until file $1 is written.
-wait_for() {
-  for _ in $(seq 50); do
-    [[ -s "$1" ]] && break
-    sleep 0.1
-  done
-}
-
 # A signal to the wrapper's process group, as run-parallel.sh sends it. `set -m`
 # starts the wrapper in a process group of its own; the background wrapper would
 # ignore SIGINT, and `env --default-signal` gives it back.
