@@ -12,8 +12,8 @@
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written. A story in another feature, or one that
  * has started (`Flow.isUnstarted`), is refused as `bl new --feature … S-<n>`
- * refuses it; a closed feature as `bl new F-<n>` refuses it. A running or
- * escalated feature has branches and worktrees only in its stories' repos,
+ * refuses it; a closed feature as `bl new F-<n>` refuses it. A started feature
+ * (`isFeatureBranched`) has branches and worktrees only in its stories' repos,
  * so a story in another repo is refused there: `bl side` brings a repo in.
  * Before the feature runs, a story in a new repo simply joins it.
  *
@@ -25,16 +25,21 @@
 import { readFileSync } from 'fs';
 import { loadConfig, parseArgs, parseFrontmatterOf, normalizeId, info } from './config.js';
 import { findStoryDir, storyRepoOrExit } from './story.js';
-import { closedFeatureRefusal, findFeature, normalizeFeatureId, reposForFeature, storyMoveRefusal } from './feature.js';
+import {
+  branchedStatusesOf,
+  closedFeatureRefusal,
+  findFeature,
+  isFeatureBranched,
+  normalizeFeatureId,
+  reposForFeature,
+  storyMoveRefusal,
+} from './feature.js';
 import { updateSpecFile } from './spec-file.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 export const ATTACH_JSON_SCHEMA = 'bl-attach-json/v1';
-
-/** Feature statuses with branches and worktrees, so a fixed set of repos. */
-const BRANCHED = new Set(['running', 'escalated']);
 
 const help = (flow) => `Usage: bl attach <S-n> <F-n> [options]
 
@@ -51,8 +56,8 @@ Refused, with nothing written:
   - a feature that is ${statusWords(flow.closedStatusesOf('feature'))}
   - a story whose feature: names another feature
   - a story that is not ${statusWords(flow.unstartedStatusesOf('story'))}
-  - for a running or escalated feature, a story whose component's repo the
-    feature's branches do not span (bl side <repo> --from F-<n> brings a
+  - for a ${statusWords(branchedStatusesOf(flow))} feature, a story whose
+    component's repo the feature's branches do not span (bl side <repo> --from F-<n> brings a
     repo in)
 
 Options:
@@ -139,7 +144,7 @@ export async function main(argv) {
   if (refusal) fail(refusal);
   // A story's repo is its component's, in every feature status.
   const repo = storyRepoOrExit(storyRef, found);
-  if (BRANCHED.has(feature.status)) {
+  if (isFeatureBranched(flow, feature.status)) {
     const repos = reposForFeature(feature, config).map((r) => r.repoName);
     if (!repos.includes(repo)) {
       fail(

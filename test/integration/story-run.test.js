@@ -137,11 +137,11 @@ test("bl run S-n --plan prints the loop's steps for the story and touches nothin
   );
 });
 
-test('bl run S-n refuses a backlog story, pointing at bl refine', async () => {
+test('bl run S-n refuses a draft story (a v1 backlog one too), pointing at bl refine', async () => {
   const { backlog } = build({ status: 'backlog' });
   const { exit, err } = await run(backlog, {});
   assert.equal(exit, 1);
-  assert.match(err, /Story S-7 is backlog — run `bl refine S-7` first\./);
+  assert.match(err, /Story S-7 is draft — run `bl refine S-7` first\./);
 });
 
 test('bl run S-n refuses while a dependency is not merged', async () => {

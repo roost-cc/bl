@@ -566,6 +566,22 @@ test('bl validate fires bad-review-status and bad-change-status on unknown value
   td.cleanup();
 });
 
+test('bl validate warns on a change document whose status is the old closed (F-69 D6)', async () => {
+  const td = cleanBacklog();
+  writeStoryWithChange(td, '');
+  writeFileSync(
+    join(td.dir, CHANGE_REL),
+    readFileSync(join(td.dir, CHANGE_REL), 'utf8').replace('status: open', 'status: closed'),
+  );
+  const { stdout } = await runBl(['validate', '--json'], { cwd: td.dir });
+  const found = JSON.parse(stdout).findings.filter((f) => f.code === 'bad-change-status');
+  assert.deepEqual(
+    found.map((f) => [f.severity, f.message]),
+    [['warning', '"status:" "closed" is the old word for "dropped"; write "dropped"']],
+  );
+  td.cleanup();
+});
+
 test('bl validate passes when pending matches a real session', async () => {
   const td = cleanBacklog();
   writeStoryWithChange(
@@ -885,8 +901,16 @@ test('bl validate takes story and feature statuses from flow.json and reports fl
   assert.deepEqual(
     (await codes()).filter((f) => f.code === 'bad-status').map((f) => [f.code, f.location, f.message]),
     [
-      ['bad-status', 'stories/S1/index.md', 'status "refined" not in known set (flow.json story statuses)'],
-      ['bad-status', 'features/F1/index.md', 'status "approved" not in known set (flow.json feature statuses)'],
+      [
+        'bad-status',
+        'stories/S1/index.md',
+        'status "refined" not in known set (flow.json story statuses: draft, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+      ],
+      [
+        'bad-status',
+        'features/F1/index.md',
+        'status "approved" not in known set (flow.json feature statuses: draft, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+      ],
     ],
   );
 

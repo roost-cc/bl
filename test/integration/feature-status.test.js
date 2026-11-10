@@ -60,7 +60,7 @@ test('bl status prints stories in dependency order plus review and blocker state
   try {
     const r = runBl(['status', 'F-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /status: running/);
+    assert.match(r.stdout, /status: in_progress/);
     assert.match(r.stdout, /branch: f1-feat/);
     assert.match(r.stdout, /review: round 0\/2 done: 1 open item \(1 Must fix\), latest session 2026-09-20\n/);
     // S-2 first (S-1 depends on it)
@@ -69,8 +69,8 @@ test('bl status prints stories in dependency order plus review and blocker state
     assert.ok(s2 < s1, 'S-2 should be listed before S-1');
     // Each story's effort, an unset one at effort.default (F-85 D1).
     assert.match(r.stdout, /# +ID +Status +Pts +Effort +Component +Title/);
-    assert.match(r.stdout, /S-2 +backlog +5 +high \(default\) +C00 +Second/);
-    assert.match(r.stdout, /S-1 +backlog +3 +low +C00 +First/);
+    assert.match(r.stdout, /S-2 +draft +5 +high \(default\) +C00 +Second/);
+    assert.match(r.stdout, /S-1 +draft +3 +low +C00 +First/);
     assert.match(r.stdout, /escalation:\nDesign problem/);
   } finally {
     cleanup();
@@ -248,7 +248,7 @@ test('bl list shows a Feature column only when a listed story belongs to one; bl
     const storyPath = join(dir, 'stories', 'S1-plain', 'index.md');
     writeFileSync(
       storyPath,
-      readFileSync(storyPath, 'utf8').replace('status: backlog\n', 'status: backlog\nfeature: F-1\n'),
+      readFileSync(storyPath, 'utf8').replace('status: draft\n', 'status: draft\nfeature: F-1\n'),
     );
     r = runBl(['list'], { cwd: dir });
     assert.match(r.stdout, /Feature/);
@@ -393,7 +393,7 @@ test("bl status reports the last run's state from .bl/run", () => {
     assert.match(r.stdout, /✗ implement S-1: denied: Bash\(touch x\)\n {2}✗ test: node exited 1/);
 
     // An open escalation refuses the run before the worktree is touched, so
-    // the feature stays `escalated` instead of flipping to `running`.
+    // the feature stays `escalated` instead of flipping to `in_progress`.
     const fpath = join(dir, 'features', 'F1-feat', 'index.md');
     writeFileSync(
       fpath,
@@ -484,7 +484,7 @@ test('bl status words the review line by outcome, and shows any other review_sta
   }
 });
 
-test('bl validate warns escalation-not-none for a refined/approved/running feature, not for an escalated one', () => {
+test('bl validate warns escalation-not-none for a refined to ready_for_merge feature, not for an escalated one', () => {
   const esc = 'Resolved 2026-10-04. The operator chose A1.';
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,
@@ -493,17 +493,24 @@ test('bl validate warns escalation-not-none for a refined/approved/running featu
       { id: 'S-1', component: 'C00', title: 'One', dirSuffix: 'one', feature: 'F-1' },
       { id: 'S-2', component: 'C00', title: 'Two', dirSuffix: 'two', feature: 'F-2' },
       { id: 'S-3', component: 'C00', title: 'Three', dirSuffix: 'three', feature: 'F-3' },
+      { id: 'S-4', component: 'C00', title: 'Four', dirSuffix: 'four', feature: 'F-4' },
     ],
     features: [
       { id: 'F-1', title: 'Refined', dirSuffix: 'refined', status: 'refined', stories: ['S-1'], escalation: esc },
       { id: 'F-2', title: 'Escalated', dirSuffix: 'escalated', status: 'escalated', stories: ['S-2'], escalation: esc },
       { id: 'F-3', title: 'Clean', dirSuffix: 'clean', status: 'approved', stories: ['S-3'] },
+      { id: 'F-4', title: 'Fixing', dirSuffix: 'fixing', status: 'fixing', stories: ['S-4'], escalation: esc },
     ],
   });
   try {
     const r = runBl(['validate', '--json'], { cwd: dir });
-    const hits = JSON.parse(r.stdout).findings.filter((f) => f.code === 'escalation-not-none');
-    assert.equal(hits.length, 1, JSON.stringify(hits));
+    const hits = JSON.parse(r.stdout)
+      .findings.filter((f) => f.code === 'escalation-not-none')
+      .sort((a, b) => a.location.localeCompare(b.location));
+    assert.deepEqual(
+      hits.map((f) => f.location),
+      ['features/F1-refined/index.md', 'features/F4-fixing/index.md'],
+    );
     assert.equal(hits[0].severity, 'warning');
     assert.equal(hits[0].location, 'features/F1-refined/index.md');
     assert.match(hits[0].message, /feature F-1 is refined/);

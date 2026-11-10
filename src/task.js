@@ -9,7 +9,7 @@
  *   title: Re-mint the Sign in with Apple key
  *   unit: F-54
  *   owner: operator
- *   status: open
+ *   status: draft
  *   added: 2026-10-26
  *   ---
  *
@@ -37,7 +37,7 @@ import { graphOf } from './backlog-graph.js';
 import { findFeature, normalizeFeatureId } from './feature.js';
 import { withLock } from './lock.js';
 import { BLOCKERS_FILE, WILDCARD } from './blockers.js';
-import { fromLegacy } from './flow.js';
+import { loadFlow, statusWordProblem } from './flow.js';
 
 export const TASKS_DIR = 'tasks';
 
@@ -127,7 +127,8 @@ export function readAllTasks(config) {
         title: str(fm.title),
         unit: str(fm.unit),
         owner: str(fm.owner),
-        status: str(fm.status),
+        // A v1 word reads as its current one (`makeUnit`, F-69 D4).
+        status: unit.status,
         added: str(fm.added),
         done: str(fm.done),
         note: str(fm.note),
@@ -197,7 +198,7 @@ function taskFileName(id, title) {
 }
 
 /**
- * A new task's file: its path under `tasks/` and its text (`status: open`,
+ * A new task's file: its path under `tasks/` and its text (`status: draft`,
  * `owner: operator`, `added: <date>`, a `# T-<n> · <title>` heading, then
  * `body`). `createTask` writes it.
  * @param {object} config
@@ -206,7 +207,7 @@ function taskFileName(id, title) {
  */
 export function newTaskFile(config, { id, title, unit, body = null, date }) {
   if (normalizeTaskId(id)?.id !== id) throw new Error(`${id} is not a task id (T-1 … T-${MAX_TASK_NUM})`);
-  const fm = { task_id: id, title, unit, owner: TASK_OWNERS[0], status: 'open', added: date };
+  const fm = { task_id: id, title, unit, owner: TASK_OWNERS[0], status: 'draft', added: date };
   const text = body == null || body.trim() === '' ? '' : `${body.replace(/^\n+/, '').trimEnd()}\n`;
   return {
     path: join(tasksRoot(config), taskFileName(id, title)),
@@ -259,7 +260,7 @@ function snapshot(root, paths, left = '') {
 
 /**
  * `bl task <unit> --gate <gate>`: file a task. Under the backlog lock it
- * takes the next id, writes `tasks/T<n>-<slug>.md` (`status: open`,
+ * takes the next id, writes `tasks/T<n>-<slug>.md` (`status: draft`,
  * `owner: operator`, `added: <today>`), then the `--gate` edge
  * (`gateEdges`) through `bl block add`'s check and write (`writeEdge`, once
  * the task file makes the task a unit), and commits the task file and
@@ -429,7 +430,6 @@ export function taskTableRows(tasks, edges, flow, link) {
  */
 export function findTaskFindings(tasks, units, flow) {
   const findings = [];
-  const statuses = flow.statusesOf('task');
   const seen = new Map();
   for (const t of tasks) {
     const add = (code, message, severity = 'error') => findings.push({ severity, code, message, location: t.relPath });
@@ -452,10 +452,9 @@ export function findTaskFindings(tasks, units, flow) {
     if (t.owner && !TASK_OWNERS.includes(t.owner)) {
       add('task-field', `owner "${t.owner}" is not one of ${TASK_OWNERS.join(', ')}`);
     }
-    // A v1 `open` reads as `draft` until the migration (F-69 D4).
-    if (t.status && !statuses.includes(fromLegacy('task', t.status))) {
-      add('task-field', `status "${t.status}" not in known set (flow.json task statuses: ${statuses.join(', ')})`);
-    }
+    // The stored word: a v1 `open` is a warning until the migration (F-69 D4).
+    const problem = t.fm.status ? statusWordProblem(flow, 'task', t.fm.status) : null;
+    if (problem) add('task-field', problem.message, problem.severity);
     if (t.status && flow.meets('task', t.status, 'done') && !t.done) {
       add('task-field', `a ${t.status} task needs its done: date`);
     }
@@ -484,7 +483,7 @@ one feature or story, whose page shows it in a ## Tasks table that bl
 renders when the page is read (F-65 D1, F-79 D2).
 
   <unit>       File a task on the feature or story: write the file
-               (status: open, owner: operator, added: today) and its
+               (status: draft, owner: operator, added: today) and its
                edge in blockers.json, and commit them; print T-<n>
     --title <t>          Required. What to do, in a few words
     --gate <g>           Required. What the task holds until it is done:
@@ -498,7 +497,7 @@ renders when the page is read (F-65 D1, F-79 D2).
                          unit, edges }
   done         Close the task: status: done, done: today, note:; commit
                the task file (operator only)
-  list         Print every task, --open only open ones, <unit> only that
+  list         Print every task, --open only those not done, <unit> only that
                unit's`;
 
 function fail(message) {
@@ -527,7 +526,7 @@ function readBody(bodyFile) {
   return text;
 }
 
-/** `T-3  F-54  open  Re-mint the key`, `done 2026-10-27` for a done one. */
+/** `T-3  F-54  draft  Re-mint the key`, `done 2026-10-27` for a done one. */
 export function listLine(t) {
   return `${t.id}  ${t.unit}  ${t.status}${t.done ? ` ${t.done}` : ''}  ${t.title}`;
 }
@@ -546,8 +545,9 @@ export async function main(argv) {
     if (positionals.length > 1) fail(`list takes one unit; got ${positionals.join(', ')}`);
     const unit = positionals[0] ? findTaskUnit(config, positionals[0]) : null;
     if (positionals[0] && !unit) fail(`${positionals[0]} is not a feature or story in the backlog`);
+    const flow = loadFlow(config.backlogRoot);
     const tasks = readAllTasks(config).filter(
-      (t) => (!values.open || t.status === 'open') && (!unit || t.unit === unit.id),
+      (t) => (!values.open || !flow.meets('task', t.status, 'done')) && (!unit || t.unit === unit.id),
     );
     if (tasks.length === 0) info(unit ? `No tasks on ${unit.id}.` : 'No tasks.');
     for (const t of tasks) console.log(listLine(t));

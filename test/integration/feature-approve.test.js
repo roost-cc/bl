@@ -136,7 +136,7 @@ test('bl approve warns about open dependencies outside the feature', () => {
   try {
     const r = runBl(['approve', 'F-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /S-2 depends on S-1 \(backlog\)/);
+    assert.match(r.stderr, /S-2 depends on S-1 \(draft\)/);
     assert.match(r.stderr, /^ {2}S-2 {2}effort: xhigh {2}Inside$/m, "each story's effort (F-85 D1)");
     // workon refuses on the same blocker (before touching git).
     const w = runBl(['implement', 'F-1'], { cwd: dir });

@@ -66,10 +66,10 @@ test("buildReport counts the last snapshot's units by status", () => {
   assert.equal(data.unreadable, 1, 'the S-9 blob of 2026-04-21');
   const s = data.summary;
   assert.equal(s.themes, 1);
-  assert.deepEqual(s.epics, { total: 1, byStatus: { open: 1 } });
-  assert.deepEqual(s.features, { total: 1, byStatus: { running: 1 } });
-  assert.deepEqual(s.stories, { total: 4, byStatus: { done: 2, superseded: 1, backlog: 1 } });
-  assert.deepEqual(s.points, { total: 17, byStatus: { done: 4, superseded: 5, backlog: 8 } });
+  assert.deepEqual(s.epics, { total: 1, byStatus: { in_progress: 1 } });
+  assert.deepEqual(s.features, { total: 1, byStatus: { in_progress: 1 } });
+  assert.deepEqual(s.stories, { total: 4, byStatus: { done: 2, superseded: 1, draft: 1 } });
+  assert.deepEqual(s.points, { total: 17, byStatus: { done: 4, superseded: 5, draft: 8 } });
   assert.deepEqual(s.open, { stories: 1, points: 8 });
   assert.deepEqual(s.progress, { scope: 12, done: 4, remaining: 8, percent: 33 });
 });
@@ -123,7 +123,7 @@ test('theme, epic, feature and component rows: scope, done, remaining, percent a
       title: undefined,
       theme: 'demo',
       link: '../epics/E50-epic/index.md',
-      status: 'open',
+      status: 'in_progress',
       features: 1,
       ...progress,
     },
@@ -135,7 +135,7 @@ test('theme, epic, feature and component rows: scope, done, remaining, percent a
       theme: 'demo',
       epic: 'E50',
       link: '../features/F1-one/index.md',
-      status: 'running',
+      status: 'in_progress',
       storiesDone: 1,
       storiesTotal: 2,
       reviewRound: 3,
@@ -296,14 +296,14 @@ test('renderMarkdown lays the sections out in Design D5 order, a placeholder for
   assert.match(page, /- Unreadable: 1 `index.md` blob/);
   assert.match(
     page,
-    /\| \[F-1\]\(\.\.\/features\/F1-one\/index\.md\) \| Feature one \| E50 +\| 11 +\| 3 +\| 8 +\| 27% +\| 1\/2 +\| running \| 3 +\|/,
+    /\| \[F-1\]\(\.\.\/features\/F1-one\/index\.md\) \| Feature one \| E50 +\| 11 +\| 3 +\| 8 +\| 27% +\| 1\/2 +\| in_progress \| 3 +\|/,
   );
   assert.match(page, /\| Lead time +\| 2 +\| 10 +\| 15\.6 +\|/);
-  assert.match(page, /No story is `refined` or `in_progress`\./);
+  assert.match(page, /No story is `refined`, `in_progress`, `in_review`, `fixing`, `ready_for_merge` or `escalated`\./);
   assert.match(page, /- Total: input 110, output 27,000, cache creation 3,000, cache read 74,900; headless 47\.6%/);
   assert.match(
     page,
-    /\| \[F-1\]\(\.\.\/features\/F1-one\/index\.md\) +\| Feature one \| feature \| running \| 11 +\| 100 +\| 22,000 \| 3,000 +\| 74,900 +\| 50% +\| 2,000 +\| 2026-04-28 \|/,
+    /\| \[F-1\]\(\.\.\/features\/F1-one\/index\.md\) +\| Feature one \| feature \| in_progress \| 11 +\| 100 +\| 22,000 \| 3,000 +\| 74,900 +\| 50% +\| 2,000 +\| 2026-04-28 \|/,
   );
   assert.match(page, /### Per step\n\n— \(no done unit records per-step tokens yet/);
 });
@@ -329,7 +329,7 @@ test('cost and token efficiency: features and stand-alone stories from the curre
         id: 'F-1',
         kind: 'feature',
         type: 'feature',
-        status: 'running',
+        status: 'in_progress',
         points: 11,
         reviewRound: 3,
         outputPerPoint: 2000,
@@ -746,21 +746,24 @@ test('a story status flow.json adds shows in the status table and the flow chart
     blockedFlow(),
   );
   const data = report(dir);
-  assert.deepEqual(statusRows(renderMarkdown(data, {}, loadFlow(dir))), ['backlog', 'blocked', 'refined', 'done']);
+  assert.deepEqual(statusRows(renderMarkdown(data, {}, loadFlow(dir))), ['draft', 'blocked', 'refined', 'done']);
   const chart = data.charts.find((c) => c.id === 'flow');
   assert.deepEqual(
     chart.series.map((s) => s.name),
-    ['done', 'in progress', 'refined', 'blocked', 'backlog'],
+    ['done', 'escalated', 'ready for merge', 'fixing', 'in review', 'in progress', 'refined', 'blocked', 'draft'],
   );
   assert.equal(chart.series.find((s) => s.name === 'blocked').values.at(-1).y, 2);
-  assert.match(chart.desc, /stacked: done, in progress, refined, blocked and backlog\./);
+  assert.match(
+    chart.desc,
+    /stacked: done, escalated, ready for merge, fixing, in review, in progress, refined, blocked and draft\./,
+  );
 });
 
 test("the flow chart's description reads as it always did on the template flow", () => {
   const { dir } = scriptedBacklog();
   assert.equal(
     report(dir).charts.find((c) => c.id === 'flow').desc,
-    'Points by status per week, stacked: done, in progress, refined and backlog. A band that widens is work piling up in that status.',
+    'Points by status per week, stacked: done, escalated, ready for merge, fixing, in review, in progress, refined and draft. A band that widens is work piling up in that status.',
   );
 });
 
@@ -773,16 +776,16 @@ test("a status today's flow.json lacks stays in the status table, after the stat
     ['S-5', 'parked'],
   ]);
   const page = renderMarkdown(report(dir), {}, loadFlow(dir));
-  assert.deepEqual(statusRows(page), ['backlog', 'done', 'superseded', 'parked', 'triage']);
+  assert.deepEqual(statusRows(page), ['draft', 'done', 'superseded', 'parked', 'triage']);
 });
 
-test('the Summary lists an escalated feature in file order, between running and done', () => {
+test('the Summary lists an escalated feature in file order, between in_progress and done', () => {
   const { dir } = scriptedBacklog();
   const other = (id, status) => feature('[S-3]', status).replaceAll('F-1', id);
   put(dir, 'features/F2-two/index.md', other('F-2', 'escalated'));
   put(dir, 'features/F3-three/index.md', other('F-3', 'done'));
   commitAt(dir, '2026-04-29T09:00:00', 'day 5');
-  assert.match(renderMarkdown(report(dir), {}, loadFlow(dir)), /- Features: 3 \(1 running, 1 escalated, 1 done\)/);
+  assert.match(renderMarkdown(report(dir), {}, loadFlow(dir)), /- Features: 3 \(1 in_progress, 1 escalated, 1 done\)/);
 });
 
 test('report_uses_one_flow_snapshot_when_flow_changes_during_write', async () => {

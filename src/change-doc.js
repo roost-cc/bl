@@ -9,7 +9,7 @@
  *
  *   ---
  *   change_of: F-42          # the unit; must match the directory
- *   status: open             # open | merged | closed
+ *   status: open             # open | merged | dropped
  *   review_round: 0
  *   review_status:           # pending | fixed | addressed
  *   repos:
@@ -42,7 +42,26 @@ import { substituteVars, templatePath } from './template.js';
 
 export const CHANGE_FILE = 'change.md';
 
-export const CHANGE_STATUSES = new Set(['open', 'merged', 'closed']);
+/**
+ * A change document's statuses (F-69 A3): the change, like a pull request, is
+ * `open`, `merged` or `dropped` (closed without a merge). They are not a work
+ * unit's statuses, which are `flow.json`'s.
+ */
+export const CHANGE_STATUSES = new Set(['open', 'merged', 'dropped']);
+
+/** The change-document words before F-69 (A3), each with the word it reads as. */
+export const LEGACY_CHANGE_STATUSES = { closed: 'dropped' };
+
+/**
+ * A change document's status: `open` when unset, and an old word
+ * (`LEGACY_CHANGE_STATUSES`) read as its current one.
+ * @param {object} fm  the document's frontmatter
+ * @returns {string}
+ */
+export function changeStatus(fm) {
+  const status = fm.status || 'open';
+  return Object.hasOwn(LEGACY_CHANGE_STATUSES, status) ? LEGACY_CHANGE_STATUSES[status] : status;
+}
 
 /** The body sections, in the order a document holds them. */
 export const CHANGE_SECTIONS = ['Description', 'Gate', 'Review Log', 'Merge'];
@@ -83,12 +102,13 @@ export function currentChange(unitDir, read = readChange) {
   const all = listChanges(unitDir);
   const docs = all.map((c) => ({ ...c, doc: read(c.path) }));
   for (let i = docs.length - 1; i >= 0; i--) {
-    if (isOpen(docs[i].doc)) return docs[i];
+    if (isOpenChange(docs[i].doc)) return docs[i];
   }
   return docs.at(-1) ?? null;
 }
 
-const isOpen = (doc) => doc != null && (doc.fm.status || 'open') === 'open';
+/** Whether a document (`readChange`; null for none) is an open change. */
+export const isOpenChange = (doc) => doc != null && changeStatus(doc.fm) === 'open';
 
 /**
  * The unit id a change directory belongs to: `F-42` for `F42-…`, `S-890` for
@@ -275,7 +295,7 @@ export function setRepo(doc, repo, fields = {}) {
  * Make sure the unit has an open change document naming every repo in
  * `repos` (`[{ repo, branch }]`). The current open document gains the
  * entries it lacks, and an entry without a branch gets the one given; with
- * no open document (none yet, or the last one merged or closed) the next
+ * no open document (none yet, or the last one merged or dropped) the next
  * number is created. The entries take the order of `repos`, so a resumed
  * document's first entry is the lead repo of the order derived now (F-52
  * D3); an entry `repos` does not name keeps its place after them. Writes
@@ -288,7 +308,7 @@ export function ensureChange(backlogRoot, unitDir, { changeOf, title = '', repos
   let path;
   let doc;
   let created = false;
-  if (cur && isOpen(cur.doc)) {
+  if (cur && isOpenChange(cur.doc)) {
     ({ path, doc } = cur);
   } else {
     path = changePath(unitDir, cur ? cur.n + 1 : 1);

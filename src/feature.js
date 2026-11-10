@@ -35,8 +35,37 @@ import { graphOf } from './backlog-graph.js';
 
 export const FEATURES_DIR = 'features';
 
-/** Statuses from which `bl run` / `bl implement` may start or resume a feature. */
-export const FEATURE_WORKABLE_STATUSES = new Set(['approved', 'running', 'escalated']);
+/**
+ * Whether `bl run` / `bl implement` may start or resume a feature at `status`:
+ * it meets `approved` and does not meet `done` (`approved` up to `escalated`).
+ * @param {import("./flow.js").Flow} flow
+ * @param {string} status
+ * @returns {boolean}
+ */
+export function isFeatureWorkable(flow, status) {
+  return flow.meets('feature', status, 'approved') && !flow.meets('feature', status, 'done');
+}
+
+/**
+ * Whether a feature at `status` has branches and worktrees, so a fixed set of
+ * repos: it meets `in_progress` and does not meet `done`.
+ * @param {import("./flow.js").Flow} flow
+ * @param {string} status
+ * @returns {boolean}
+ */
+export function isFeatureBranched(flow, status) {
+  return isFeatureWorkable(flow, status) && flow.meets('feature', status, 'in_progress');
+}
+
+/**
+ * The feature statuses `isFeatureBranched` accepts, in lifecycle order, for a
+ * message.
+ * @param {import("./flow.js").Flow} flow
+ * @returns {string[]}
+ */
+export function branchedStatusesOf(flow) {
+  return flow.statusesOf('feature').filter((s) => isFeatureBranched(flow, s));
+}
 
 export const DEFAULT_REVIEW_ROUNDS_MAX = 2;
 
@@ -92,7 +121,8 @@ function featureRecord(unit, config) {
   return {
     id: fm.feature_id,
     title: fm.title ?? '',
-    status: fm.status ?? 'draft',
+    // A v1 word reads as its current one (`makeUnit`, F-69 D4).
+    status: unit.status,
     // The value axis (F-51 D1): the theme slug and the epic id as written.
     theme: String(fm.theme ?? '').trim(),
     epic: String(fm.epic ?? '').trim(),

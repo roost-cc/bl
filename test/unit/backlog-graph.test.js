@@ -214,8 +214,9 @@ test('component, epic and theme links, with the epic status derived', () => {
   const e51 = g.get('E51');
   assert.equal(e51.theme, null);
   assert.deepEqual(ids(e51.features), ['F-2']);
-  assert.equal(e51.status, 'open');
-  assert.equal(g.get('E52').status, 'open');
+  assert.equal(e51.status, 'in_progress');
+  // No features: draft (F-69 D6).
+  assert.equal(g.get('E52').status, 'draft');
   assert.deepEqual(ids(g.get('E52').features), []);
 
   assert.deepEqual(ids(g.get('demo').epics), ['E50']);
@@ -229,11 +230,13 @@ test('component, epic and theme links, with the epic status derived', () => {
   }
 });
 
-test('epicStatus: done once it has features and every one is closed', () => {
+test('epicStatus: draft with no features or only draft ones, done when every one is closed, else in_progress', () => {
   const flow = loadFlow(FIXTURE);
-  assert.equal(epicStatus([], flow), 'open');
+  assert.equal(epicStatus([], flow), 'draft');
+  assert.equal(epicStatus([{ status: 'draft' }, { status: 'draft' }], flow), 'draft');
+  assert.equal(epicStatus([{ status: 'draft' }, { status: 'refined' }], flow), 'in_progress');
+  assert.equal(epicStatus([{ status: 'done' }, { status: 'in_progress' }], flow), 'in_progress');
   assert.equal(epicStatus([{ status: 'done' }, { status: 'superseded' }], flow), 'done');
-  assert.equal(epicStatus([{ status: 'done' }, { status: 'running' }], flow), 'open');
 });
 
 test("list(kind) keeps every readable unit, a duplicate id's later copies included", () => {

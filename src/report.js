@@ -28,6 +28,7 @@ import { readAllEpics, readAllThemes } from './theme.js';
 import { formatTable } from './render.js';
 import { addDays, isoWeek, pointsByStatus, scopeStories, weeklyDays } from './history.js';
 import { statusWords } from './flow.js';
+import { epicStatus } from './backlog-graph.js';
 
 /** Bumped whenever `data.json`'s shape changes. */
 export const REPORT_VERSION = 3;
@@ -667,13 +668,15 @@ export function buildReport(history, config, flow, tree = readTree(config)) {
     .sort((a, b) => byNum(a.id, b.id))
     .map((e) => {
       const own = tree.features.filter((f) => history.groups.features[f.id]?.epic === e.id);
-      const closed = own.length > 0 && own.every((f) => flow.meets('feature', featureStatus(f), 'done'));
       return {
         id: e.id,
         title: e.title,
         theme: e.theme,
         link: link(EPICS_DIR, e.epicEntry),
-        status: closed ? 'done' : 'open',
+        status: epicStatus(
+          own.map((f) => ({ status: featureStatus(f) })),
+          flow,
+        ),
         features: own.length,
         ...progress(snaps(scoped('epic', e.id))),
       };
@@ -846,7 +849,7 @@ export function renderMarkdown(data, markdownById, flow) {
     'Summary',
     [
       `- Themes: ${s.themes}`,
-      `- Epics: ${s.epics.total} (${byStatus(s.epics.byStatus, ['open', 'done'])})`,
+      `- Epics: ${s.epics.total} (${byStatus(s.epics.byStatus, flow.statusesOf('feature'))})`,
       `- Features: ${s.features.total} (${byStatus(s.features.byStatus, flow.statusesOf('feature'))})`,
       `- Stories: ${s.stories.total}, ${s.points.total} points`,
       `- Open (not ${statusWords(flow.closedStatusesOf('story'))}): ${s.open.stories} stories, ${s.open.points} points`,

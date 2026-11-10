@@ -36,7 +36,7 @@ test('bl block add writes one sorted line, commits blockers.json alone, and list
 
   const list = bl(['block', 'list', 'F-1'], dir);
   assert.equal(list.status, 0, list.stderr);
-  assert.equal(list.stdout, 'F-1 held at merge by S-1 (backlog, needs done): unmet\n');
+  assert.equal(list.stdout, 'F-1 held at merge by S-1 (draft, needs done): unmet\n');
   // On a story of F-1 too, and by the blocker.
   assert.equal(bl(['block', 'list', 'S-1'], dir).stdout.split('\n').filter(Boolean).length, 2);
   assert.equal(bl(['block', 'list'], dir).stdout.split('\n').filter(Boolean).length, 2);
@@ -69,7 +69,7 @@ test('bl block add with --active-when files an inactive edge; a met blocker list
   const list = bl(['block', 'list', 'S-1'], dir);
   assert.equal(
     list.stdout,
-    '* held at run by S-2 (backlog, needs done): inactive, active when F-2 is done (approved)\n' +
+    '* held at run by S-2 (draft, needs done): inactive, active when F-2 is done (approved)\n' +
       'S-1 held at run by S-9 (done, needs done): met\n',
   );
   assert.equal(

@@ -144,7 +144,7 @@ test('a ranked loose story held by another loose story gives way to it, naming t
   assert.equal(r.stdout, 'S-11\n');
   assert.match(
     r.stderr,
-    /S-10 \(ranked 1\) is held: S-10 depends on S-11 \(backlog\)\. S-11 comes first; it unblocks S-10\.\nNext: S-11 /,
+    /S-10 \(ranked 1\) is held: S-10 depends on S-11 \(draft\)\. S-11 comes first; it unblocks S-10\.\nNext: S-11 /,
   );
 });
 
@@ -153,17 +153,14 @@ test("a feature held by a story in another feature offers that feature, followin
   let r = next(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'F-5\n');
-  assert.match(
-    r.stderr,
-    /F-3 \(ranked 1\) is held: S-3 depends on S-5 \(backlog\)\. F-5 comes first; it unblocks F-3\./,
-  );
+  assert.match(r.stderr, /F-3 \(ranked 1\) is held: S-3 depends on S-5 \(draft\)\. F-5 comes first; it unblocks F-3\./);
 
   ({ dir } = unitBacklog({ deps: { 'S-3': 'S-5', 'S-5': 'S-11' } }));
   r = next(dir);
   assert.equal(r.stdout, 'S-11\n');
   assert.match(
     r.stderr,
-    /F-3 \(ranked 1\) is held: S-3 depends on S-5 \(backlog\), then S-5 depends on S-11 \(backlog\)\. S-11 comes first; it unblocks F-3\./,
+    /F-3 \(ranked 1\) is held: S-3 depends on S-5 \(draft\), then S-5 depends on S-11 \(draft\)\. S-11 comes first; it unblocks F-3\./,
   );
 
   // A dependency inside the feature holds nothing; a done one neither.
@@ -185,7 +182,7 @@ test('a unit held only by a task is passed over and the task named; a story bloc
   let r = next(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'S-10\n');
-  assert.match(r.stderr, /Passed over F-3 \(ranked 1\): F-3 is held at run by T-1 \(open, needs done\)\./);
+  assert.match(r.stderr, /Passed over F-3 \(ranked 1\): F-3 is held at run by T-1 \(draft, needs done\)\./);
 
   writeBlockers(dir, [
     { blocker: 'T-1', gate: 'run', unit: 'F-3', until: 'done' },
@@ -195,7 +192,7 @@ test('a unit held only by a task is passed over and the task named; a story bloc
   assert.equal(r.stdout, 'S-11\n');
   assert.match(
     r.stderr,
-    /S-10 \(ranked 2\) is held: S-10 is held at run by S-11 \(backlog, needs done\)\. S-11 comes first/,
+    /S-10 \(ranked 2\) is held: S-10 is held at run by S-11 \(draft, needs done\)\. S-11 comes first/,
   );
 
   // Every unit held by a task: nothing on stdout.

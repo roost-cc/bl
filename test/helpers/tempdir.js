@@ -216,7 +216,7 @@ export const STORY_INDEX_TEMPLATE = (story) => `${serializeFrontmatter({
   type: story.type ?? 'feature',
   points: story.points ?? 1,
   effort: story.effort || undefined,
-  status: story.status ?? 'backlog',
+  status: story.status ?? 'draft',
   added: story.added || undefined,
   depends_on: refList(story.depends_on),
   // Derived since F-77 D3; a fixture sets it only to test `derived-key`

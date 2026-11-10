@@ -19,13 +19,13 @@ import { legacyRepaired, listOfString } from './migrate-frontmatter-yaml.js';
 import { readAllStories } from './story.js';
 import { readAllFeatures, normalizeFeatureId } from './feature.js';
 import { normalizeEpicId } from './theme.js';
-import { loadFlow } from './flow.js';
+import { fromLegacy, loadFlow } from './flow.js';
 
 /** The cache file, under the backlog's git-ignored `.bl/`. */
 export const CACHE_FILE = join('.bl', 'report-cache.json');
 
 /** Bumped whenever a cached day's shape or content would change. */
-export const CACHE_VERSION = 4;
+export const CACHE_VERSION = 5;
 
 const BLOCK_RE = /^---\n([\s\S]*?)\n---(?:\n|$)/;
 const STORY_ID_RE = /^S-\d+$/;
@@ -146,7 +146,9 @@ function unitOf(fm) {
       kind: 'story',
       id: storyId,
       snap: {
-        status: str(fm.status) || 'backlog',
+        // A v1 word reads as its current one, so a day before F-69's
+        // rename counts the same states as a day after it (D4).
+        status: fromLegacy('story', str(fm.status) || 'draft'),
         points: parseInt(str(fm.points), 10) || 0,
         feature: featureOf(fm.feature),
       },
@@ -157,7 +159,7 @@ function unitOf(fm) {
     return {
       kind: 'feature',
       id: featureId,
-      snap: { status: str(fm.status) || 'draft', stories: storyList(fm.stories) },
+      snap: { status: fromLegacy('feature', str(fm.status) || 'draft'), stories: storyList(fm.stories) },
     };
   }
   return null;
@@ -264,7 +266,7 @@ export function addDays(date, n) {
  * The days before `firstDate` projected from the current stories: one per
  * calendar day from the earliest `added`, a story in scope from its `added`
  * and closed from its `completed`, with its current points;
- * every other status is unknown and reads `backlog`. No feature is known
+ * every other status is unknown and reads `draft`. No feature is known
  * for a projected day, so its stories name none and it lists none.
  * @param {Groups} groups
  * @param {Map<string, { status: string, points: number }>} current  the stories' current status and points
@@ -283,9 +285,9 @@ export function backfill(groups, current, firstDate, flow) {
     const stories = {};
     for (const [id, g] of Object.entries(groups.stories)) {
       if (!g.added || g.added > date) continue;
-      const now = current.get(id) ?? { status: 'backlog', points: 0 };
+      const now = current.get(id) ?? { status: 'draft', points: 0 };
       const closed = flow.meets('story', now.status, 'done') && g.completed && g.completed <= date;
-      stories[id] = { status: closed ? now.status : 'backlog', points: now.points, feature: '' };
+      stories[id] = { status: closed ? now.status : 'draft', points: now.points, feature: '' };
     }
     days.push({ date, commit: null, backfilled: true, stories, features: {} });
   }

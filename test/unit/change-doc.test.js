@@ -9,6 +9,7 @@ import {
   applyFixOutcome,
   changeName,
   changePath,
+  changeStatus,
   currentChange,
   ensureChange,
   listChanges,
@@ -123,6 +124,14 @@ test('ensureChange reuses the open document, adds missing repos, fills an empty 
   assert.equal(readChange(first.path).repos[0].branch, 'f42-hub');
 });
 
+test('changeStatus: unset reads open, and the old closed reads dropped (F-69 D6)', () => {
+  assert.equal(changeStatus({}), 'open');
+  assert.equal(changeStatus({ status: 'merged' }), 'merged');
+  assert.equal(changeStatus({ status: 'dropped' }), 'dropped');
+  assert.equal(changeStatus({ status: 'closed' }), 'dropped');
+  assert.equal(changeStatus({ status: 'shipped' }), 'shipped');
+});
+
 test('a unit whose change is merged gets change-2.md, and bl reads the highest-numbered open one', () => {
   const { root, dir } = unitDir();
   ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
@@ -135,8 +144,8 @@ test('a unit whose change is merged gets change-2.md, and bl reads the highest-n
     [1, 2],
   );
   assert.equal(currentChange(dir).path, second.path);
-  // A third, closed, does not displace the open second; with none open the highest wins.
-  writeFileSync(changePath(dir, 3), '---\nchange_of: F-42\nstatus: closed\nrepos:\n---\n');
+  // A third, dropped, does not displace the open second; with none open the highest wins.
+  writeFileSync(changePath(dir, 3), '---\nchange_of: F-42\nstatus: dropped\nrepos:\n---\n');
   assert.equal(currentChange(dir).n, 2);
   writeFileSync(second.path, readFileSync(second.path, 'utf8').replace('status: open', 'status: merged'));
   assert.equal(currentChange(dir).n, 3);

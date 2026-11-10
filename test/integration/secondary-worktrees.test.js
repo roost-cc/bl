@@ -222,10 +222,7 @@ function writeFeature(backlog, others = []) {
   });
   const dir = join(backlog, 'features', 'F1-pair');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, 'index.md'),
-    '---\nfeature_id: F-1\ntitle: Pair\nstatus: approved\n---\n\n# Pair\n',
-  );
+  writeFileSync(join(dir, 'index.md'), '---\nfeature_id: F-1\ntitle: Pair\nstatus: approved\n---\n\n# Pair\n');
 }
 
 function prepFeature(backlog, others) {
@@ -341,10 +338,7 @@ test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, a
   }
   const fdir = join(backlog, 'features', 'F1-trio');
   mkdirSync(fdir, { recursive: true });
-  writeFileSync(
-    join(fdir, 'index.md'),
-    '---\nfeature_id: F-1\ntitle: Trio\nstatus: approved\n---\n\n# Trio\n',
-  );
+  writeFileSync(join(fdir, 'index.md'), '---\nfeature_id: F-1\ntitle: Trio\nstatus: approved\n---\n\n# Trio\n');
   const { exit, err, value } = withBacklog(backlog, () => {
     const config = loadConfig({ backlogRoot: backlog });
     return capture(() => prepareFeatureWorktree(config, findFeature(normalizeFeatureId('F-1'), config)));
@@ -637,7 +631,7 @@ test("prepareStoryRun retries a failed workon plugin or bootstrap in the story's
   }
 });
 
-test("prepareFeatureWorktree retries another repo's failed workon plugin before marking running", () => {
+test("prepareFeatureWorktree retries another repo's failed workon plugin before marking in_progress", () => {
   for (const r of RETRIES) {
     const { tmp, backlog } = build(r.opts(r.failing));
     const first = prepFeature(backlog, ['repoB']);
@@ -647,7 +641,7 @@ test("prepareFeatureWorktree retries another repo's failed workon plugin before 
     const second = prepFeature(backlog, ['repoB']);
     assert.equal(second.exit, null, `${r.kind}: ${second.err}`);
     assert.equal(workonRuns(tmp, r.failing, 'f1-pair'), 1, r.kind);
-    assert.match(readFileSync(second.feature.indexPath, 'utf8'), /^status: running$/m, r.kind);
+    assert.match(readFileSync(second.feature.indexPath, 'utf8'), /^status: in_progress$/m, r.kind);
   }
 });
 

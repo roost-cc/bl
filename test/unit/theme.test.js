@@ -79,8 +79,8 @@ test('readAllThemes and readAllEpics read themes/ and epics/; findTheme and find
   assert.deepEqual(
     epics.map((e) => [e.id, e.title, e.theme, e.status, e.features, e.relPath]),
     [
-      ['E50', 'Invites', 'demo', 'open', [], 'epics/E50-invites/index.md'],
-      ['E62', 'Taxonomy', 'backlog', 'open', [], 'epics/E62-taxonomy/index.md'],
+      ['E50', 'Invites', 'demo', 'draft', [], 'epics/E50-invites/index.md'],
+      ['E62', 'Taxonomy', 'backlog', 'draft', [], 'epics/E62-taxonomy/index.md'],
     ],
   );
 

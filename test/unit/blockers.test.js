@@ -343,7 +343,7 @@ test('heldLines: every unmet edge on the unit and its stories at any gate', () =
   ]);
   // In the file's order: by unit, so F-1's own edge first.
   assert.deepEqual(heldLines(config, 'F-1'), [
-    'F-1 is held at run by S-1 (backlog, needs done)',
+    'F-1 is held at run by S-1 (draft, needs done)',
     'S-2 is held at merge by S-3 (in_progress, needs done)',
   ]);
   assert.deepEqual(heldLines(config, 'S-1'), []);

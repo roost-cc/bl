@@ -152,8 +152,8 @@ test('bl attach refuses, writing nothing, for bad ids, missing units, closed fea
       err: /^S-2 is done; only a draft or refined story moves into a feature\.$/m,
     },
     {
-      opts: { featureStatus: 'running', story: { component: 'C02' } },
-      err: /F-1 is running, and its branches do not span other-repo \(S-2's repo\); they span demo-repo\. Bring the repo in with bl side other-repo --from F-1\./,
+      opts: { featureStatus: 'in_progress', story: { component: 'C02' } },
+      err: /F-1 is in_progress, and its branches do not span other-repo \(S-2's repo\); they span demo-repo\. Bring the repo in with bl side other-repo --from F-1\./,
     },
     {
       opts: { featureStatus: 'escalated', story: { component: 'C02' } },

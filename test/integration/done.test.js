@@ -120,7 +120,7 @@ test('bl done refuses while review_status: pending', () => {
     assert.match(r.stderr, /review_status: pending/);
     assert.match(r.stderr, /1 unchecked Must\/Should/);
     assert.match(r.stderr, /2026-05-11/);
-    assert.equal(storyFm(dir, rel).status, 'backlog', 'the story is left as it was');
+    assert.equal(storyFm(dir, rel).status, 'draft', 'the story is left as it was');
   } finally {
     cleanup();
   }

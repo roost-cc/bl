@@ -97,7 +97,7 @@ test('a dependency outside the targets blocks until it is done', () => {
       ['S-5'],
       "S-5's dependency S-8 is done",
     );
-    assert.equal(deferred[0].reason, 'S-3 depends on S-9, which is backlog; merge S-9 first');
+    assert.equal(deferred[0].reason, 'S-3 depends on S-9, which is draft; merge S-9 first');
     assert.deepEqual(deferred[0].blockers, ['S-9']);
   });
 });

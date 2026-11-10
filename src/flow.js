@@ -82,6 +82,31 @@ export function fromLegacy(type, status) {
   return map && typeof status === 'string' && Object.hasOwn(map, status) ? map[status] : status;
 }
 
+/**
+ * `bl validate`'s reading of a stored status word of `type` (F-69 D6): null
+ * when it is one of the type's statuses, a warning when it is a v1 word
+ * `LEGACY_STATUSES` maps (the migration rewrites it), and an error otherwise.
+ * @param {Flow} flow
+ * @param {string} type
+ * @param {string} status
+ * @returns {{ severity: "error" | "warning", message: string } | null}
+ */
+export function statusWordProblem(flow, type, status) {
+  const statuses = flow.statusesOf(type);
+  if (statuses.includes(status)) return null;
+  const word = fromLegacy(type, status);
+  if (statuses.includes(word)) {
+    return {
+      severity: 'warning',
+      message: `status "${status}" is the old word for "${word}"; node ${MIGRATION_SCRIPT} rewrites it`,
+    };
+  }
+  return {
+    severity: 'error',
+    message: `status "${status}" not in known set (${FLOW_FILE} ${type} statuses: ${statuses.join(', ')})`,
+  };
+}
+
 /** A `flow.json` bl cannot read: the message names the file and the fault. */
 export class FlowError extends Error {
   constructor(path, reason) {

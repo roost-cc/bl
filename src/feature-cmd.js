@@ -62,7 +62,8 @@ import {
   extractSection,
   sectionHasContent,
   resolveFeaturePlugins,
-  FEATURE_WORKABLE_STATUSES,
+  isFeatureBranched,
+  isFeatureWorkable,
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
 import { heldLines } from './blockers.js';
@@ -117,6 +118,7 @@ import { applyRefineStatus, refineAndCommit } from './refine.js';
 import {
   applyFixOutcome,
   changeName,
+  changeStatus,
   ensureChange,
   listChanges,
   openUnitChange,
@@ -873,7 +875,7 @@ function printChanges(unit) {
     const doc = readChange(c.path);
     if (!doc) continue;
     const current = all.length > 1 && c.path === unit.changePath ? ', current' : '';
-    console.log(`\nchange ${relative(dir, c.path)} (${doc.fm.status || 'open'}${current}):`);
+    console.log(`\nchange ${relative(dir, c.path)} (${changeStatus(doc.fm)}${current}):`);
     if (doc.repos.length === 0) console.log('  (no repos recorded)');
     for (const r of doc.repos) {
       console.log(
@@ -1034,7 +1036,7 @@ export function prepareFeatureRepo(config, feature, repoName, { strict = false }
 
 /**
  * Everything `workon` and `run` share: gates, worktrees, bootstrap, stage
- * plugins, the `running` transition, and the prompt variables every feature
+ * plugins, the `in_progress` transition, and the prompt variables every feature
  * session receives. Exits the process on a hard guard (same as `bl implement`
  * on a story). Every repo of the feature (`featureRepoOrder`, F-52 D3) gets
  * its worktree, in that order and strictly, before any agent starts (S-862),
@@ -1046,7 +1048,7 @@ export function prepareFeatureRepo(config, feature, repoName, { strict = false }
  *             otherWorktrees }}
  */
 export function prepareFeatureWorktree(config, feature) {
-  if (!FEATURE_WORKABLE_STATUSES.has(feature.status)) {
+  if (!isFeatureWorkable(loadFlow(config.backlogRoot), feature.status)) {
     const hint =
       feature.status === 'draft'
         ? `run \`bl refine ${feature.id}\` and then \`bl approve ${feature.id}\``
@@ -1117,7 +1119,7 @@ export function prepareFeatureWorktree(config, feature) {
   const sessionVars = featureSessionVars(feature);
 
   updateFeature(config, feature, (fm) => {
-    if (fm.status === 'approved' || fm.status === 'escalated') fm.status = 'running';
+    if (fm.status === 'approved' || fm.status === 'escalated') fm.status = 'in_progress';
   });
   // The branch is recorded in the change document, with every repo prepared.
   const change = openUnitChange(cfg.backlogRoot, feature, branchName, names);
@@ -1246,7 +1248,7 @@ export async function cmdReview(args, config, feature, opts = {}) {
     );
     process.exit(1);
   }
-  if (feature.status !== 'running' && feature.status !== 'escalated') {
+  if (!isFeatureBranched(loadFlow(config.backlogRoot), feature.status)) {
     console.error(`Feature ${feature.id} is ${feature.status}; nothing to review.`);
     process.exit(1);
   }
@@ -1547,7 +1549,7 @@ export async function cmdRunStory(args, baseConfig, story) {
     // Only the shipped key keeps its prose spelling; any other is named as flow.json has it.
     const named = flow.runnableStatusesOf('story').map((s) => (s === 'in_progress' ? 'in-progress' : s));
     const runnable = statusWords(named);
-    const hint = unit.status === 'backlog' ? `run \`bl refine ${unit.id}\` first` : `only a ${runnable} story runs`;
+    const hint = unit.status === 'draft' ? `run \`bl refine ${unit.id}\` first` : `only a ${runnable} story runs`;
     console.error(`Story ${unit.id} is ${unit.status} — ${hint}.`);
     process.exit(1);
   }
@@ -1611,8 +1613,8 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
     );
     process.exit(1);
   }
-  // Checked before prep, which would flip `escalated` back to `running`
-  // and leave the feature running with an open escalation.
+  // Checked before prep, which would flip `escalated` back to `in_progress`
+  // and leave the feature in progress with an open escalation.
   if (escalationOpen(unit.indexPath)) {
     console.error(
       `${kind} ${unit.id} has an open ## Escalation — resolve it and set the section to "None." before running again.`,
@@ -1651,7 +1653,7 @@ export async function cmdMerge(args, config, feature) {
     console.error(`Feature ${feature.id} is already ${feature.status}.`);
     process.exit(1);
   }
-  if (feature.status !== 'running' && feature.status !== 'escalated') {
+  if (!isFeatureBranched(loadFlow(config.backlogRoot), feature.status)) {
     console.error(`Feature ${feature.id} is ${feature.status} — nothing has been implemented on a branch yet.`);
     process.exit(1);
   }

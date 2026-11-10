@@ -13,7 +13,7 @@
  * story is: an unknown story or component, a target component with no repo,
  * a story that is not unstarted (`Flow.isUnstarted`; a started story has a
  * worktree in its current repo), and a story whose repo would change while
- * a feature it is in is `running` or `escalated` (that feature's branches
+ * a feature it is in has started and is not closed (`isFeatureBranched`: its branches
  * span a fixed set of repos, as `bl attach` refuses it). A story is in the
  * feature its `feature:` names (F-77 D3). A story already in the target is
  * left alone, whatever its status, and reported as unchanged.
@@ -27,7 +27,7 @@
 import { readFileSync } from 'fs';
 import { loadConfig, parseArgs, parseFrontmatterOf, normalizeId, normalizeComponentId, info } from './config.js';
 import { findComponentDir, findStoryDir } from './story.js';
-import { readAllFeatures, normalizeFeatureId } from './feature.js';
+import { branchedStatusesOf, isFeatureBranched, readAllFeatures, normalizeFeatureId } from './feature.js';
 import { failPoint } from './feature-links.js';
 import { updateSpecFile } from './spec-file.js';
 import { acquireLock } from './lock.js';
@@ -35,9 +35,6 @@ import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
 
 export const MOVE_JSON_SCHEMA = 'bl-move-json/v1';
-
-/** Feature statuses with branches and worktrees, so a fixed set of repos. */
-const BRANCHED = new Set(['running', 'escalated']);
 
 const help = (flow) => `Usage: bl move <S-n>… <C-n> [options]
 
@@ -53,8 +50,8 @@ Refused, with nothing written, naming every offending story:
   - a component that names no repo
   - a story that is not ${statusWords(flow.unstartedStatusesOf('story'))}
   - a story whose repo would change while its feature (the one its
-    feature: names) is running or escalated (the feature's branches span
-    a fixed set of repos)
+    feature: names) is ${statusWords(branchedStatusesOf(flow))} (the
+    feature's branches span a fixed set of repos)
 
 Options:
   --no-sync   Write the stories under the backlog lock and leave them
@@ -117,7 +114,7 @@ export function moveRefusal({ id, fm, fromRepo, to, toRepo, features, flow }) {
   if (!flow.isUnstarted('story', fm.status)) {
     return `${id} is ${fm.status ?? '(no status)'}; only a ${statusWords(flow.unstartedStatusesOf('story'))} story moves to another component.`;
   }
-  const feature = features.find((f) => BRANCHED.has(f.status));
+  const feature = features.find((f) => isFeatureBranched(flow, f.status));
   if (feature && fromRepo !== toRepo) {
     return (
       `${id} is in ${feature.id}, which is ${feature.status}: moving it to ${to} changes its repo ` +

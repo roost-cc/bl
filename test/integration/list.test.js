@@ -85,7 +85,8 @@ test('bl list --json prints the listed stories with their whole frontmatter', ()
       {
         id: 'S-2',
         title: 'Story S-2',
-        status: 'backlog',
+        // A v1 word is listed as its current one (F-69 D4).
+        status: 'draft',
         component: 'C00',
         feature: 'F-1',
         path: two.path,
@@ -298,9 +299,9 @@ test("bl list --epic lists the epic's features with stories and points done/tota
     const r = runBl(['list', '--epic', 'E-50'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     const lines = r.stdout.split('\n');
-    assert.equal(lines[0], 'E50 · Sign-up [open] — 0/1 features done');
+    assert.equal(lines[0], 'E50 · Sign-up [in_progress] — 0/1 features done');
     assert.match(lines[1], /^ID\s+Status\s+Stories\s+Points\s+Theme\s+Title\s*$/);
-    assert.match(r.stdout, /^F-1\s+running\s+1\/2\s+2\/5\s+product\s+Invites$/m);
+    assert.match(r.stdout, /^F-1\s+in_progress\s+1\/2\s+2\/5\s+product\s+Invites$/m);
     assert.doesNotMatch(r.stdout, /\bF-2\b/);
   } finally {
     cleanup();
@@ -313,7 +314,7 @@ test("bl list --features --theme groups the theme's features by epic, those with
     const r = runBl(['list', '--features', '--theme', 'product'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     const out = r.stdout;
-    assert.match(out, /^E50 · Sign-up \[open\] — 0\/1 features done$/m);
+    assert.match(out, /^E50 · Sign-up \[in_progress\] — 0\/1 features done$/m);
     assert.match(out, /^No epic$/m);
     assert.ok(out.indexOf('E50 ·') < out.indexOf('No epic'), out);
     assert.ok(out.indexOf('F-1') < out.indexOf('No epic'), out);

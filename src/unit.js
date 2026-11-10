@@ -12,6 +12,7 @@ import { readFileSync } from 'fs';
 import { basename, dirname, relative } from 'path';
 import { parseFrontmatter, normalizeComponentId } from './config.js';
 import { DEFAULT_REVIEW_ROUNDS_MAX } from './feature.js';
+import { fromLegacy } from './flow.js';
 import { unitChange } from './change-doc.js';
 import { storyEffort } from './effort.js';
 
@@ -45,7 +46,8 @@ export function storyUnit(story, config) {
     kind: 'story',
     id,
     title: fm.title ?? storyEntry,
-    status: fm.status ?? 'backlog',
+    // A v1 word reads as its current one (F-69 D4).
+    status: fromLegacy('story', fm.status ?? 'draft'),
     primaryRepo,
     // featureSessionVars numbers the test session after the first story.
     stories: [id],

@@ -102,7 +102,7 @@ import {
  * @property {string} relPath     `file` relative to the backlog root
  * @property {Readonly<Record<string, any>>} fm  its frontmatter, deep-frozen
  * @property {string} title
- * @property {string} status      story `backlog` and feature `draft` when unset;
+ * @property {string} status      `draft` for a story or feature when unset;
  *                                an epic's is derived (`epicStatus`); a component and a theme have none
  * @property {string} added
  * @property {boolean} done       whether `flow.meets(kind, status, 'done')` (an epic: status `done`);
@@ -661,21 +661,23 @@ export const DERIVED_KEYS = Object.freeze({
   }),
   epic: Object.freeze({
     features: 'the features whose epic: names it',
-    status: 'its features: done when every one is done',
+    status: 'its features: done when every one is done, draft when it has none or every one is draft',
   }),
 });
 
 /**
- * An epic's derived status: `done` once it has features and every one is
- * closed (meets `done`), else `open` (F-77 D3).
+ * An epic's derived status (F-77 D3), in the feature words (F-69 D6): `draft`
+ * when it has no features or every one is `draft`, `done` when every one
+ * is closed (meets `done`), else `in_progress`.
  * @param {Array<{ status: string }>} epicFeatures
  * @param {import("./flow.js").Flow} flow
- * @returns {"open" | "done"}
+ * @returns {"draft" | "in_progress" | "done"}
  */
 export function epicStatus(epicFeatures, flow) {
-  return epicFeatures.length > 0 && epicFeatures.every((f) => flow.meets('feature', f.status, 'done'))
-    ? 'done'
-    : 'open';
+  const draft = flow.initial('feature');
+  if (epicFeatures.every((f) => f.status === draft)) return draft;
+  if (epicFeatures.every((f) => flow.meets('feature', f.status, 'done'))) return 'done';
+  return 'in_progress';
 }
 
 /** The canonical id a unit's frontmatter gives it (empty when its id key is missing). */
@@ -788,7 +790,7 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
       features: [],
     });
   } else if (kind === 'epic') {
-    Object.assign(unit, { status: 'open', theme: null, features: [] });
+    Object.assign(unit, { status: 'draft', theme: null, features: [] });
   } else if (kind === 'theme') {
     Object.assign(unit, { epics: [], features: [] });
   } else if (kind === 'task') {

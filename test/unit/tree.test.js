@@ -49,8 +49,8 @@ test('renderTree renders a chain root-down with status markers', () => {
   const { graph, byId, cleanup } = loadGraph();
   try {
     const { lines, stats } = renderTree('S-4', graph, byId, new Set(), flow);
-    // Root line: S-4 (backlog)
-    assert.match(lines[0], /^S-4 Fourth \(backlog\)$/);
+    // Root line: S-4 (draft), its v1 word read as the current one
+    assert.match(lines[0], /^S-4 Fourth \(draft\)$/);
     // Should include a "(done)" marker for S-1.
     assert.ok(
       lines.some((l) => /\bS-1\b First \(done\)/.test(l)),
@@ -72,8 +72,8 @@ test('renderTree dims done nodes when color is on', () => {
     assert.ok(doneLine, 'expected a (done) S-1 line, got:\n' + lines.join('\n'));
     assert.ok(doneLine.includes('\x1b[2m'), 'done line should contain a dim escape');
     assert.ok(doneLine.includes('\x1b[0m'), 'done line should contain a reset escape');
-    // The backlog root line is untouched — no dim escapes.
-    assert.match(lines[0], /^S-4 Fourth \(backlog\)$/);
+    // The draft root line is untouched — no dim escapes.
+    assert.match(lines[0], /^S-4 Fourth \(draft\)$/);
     assert.ok(!lines[0].includes('\x1b[2m'), 'root line should not be dimmed');
   } finally {
     cleanup();

@@ -159,7 +159,7 @@ stopping at the first that fails.`,
 
 Arguments:
   <id...>              A feature (F-3), or stories (S-34) and/or components
-                       (C01). A component expands to its 'backlog' stories.
+                       (C01). A component expands to its 'draft' stories.
 
 Options:
   -A, --agent <id>     Agent provider

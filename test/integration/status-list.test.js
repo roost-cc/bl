@@ -87,8 +87,8 @@ test('bl status: a refined story with a worktree stays in its group; bl list sti
     ['S-2', 'refined'],
     ['S-9', 'refined'],
     ['S-10', 'refined'],
-    ['S-4', 'backlog'],
-    ['S-20', 'backlog'],
+    ['S-4', 'draft'],
+    ['S-20', 'draft'],
   ]);
   const list = runBl(['list'], { cwd: dir });
   assert.equal(ids(list.stdout)[0], 'S-5');

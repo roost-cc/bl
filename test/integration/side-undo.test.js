@@ -156,11 +156,7 @@ test('a failed markSideStory write leaves the previous story file and no staging
   assert.equal(r.status, 1, r.stderr);
   assert.match(r.stderr, /ENOSPC/);
   const fm = fmOf(storyPath);
-  assert.deepEqual(
-    [fm.story_id, fm.status, fm.found_by],
-    ['S-4', 'backlog', undefined],
-    'the story as bl new wrote it',
-  );
+  assert.deepEqual([fm.story_id, fm.status, fm.found_by], ['S-4', 'draft', undefined], 'the story as bl new wrote it');
   const tmpDir = join(dir, '.bl', 'tmp');
   assert.deepEqual(
     existsSync(tmpDir) ? readdirSync(tmpDir).filter((f) => f.startsWith('index.md.')) : [],

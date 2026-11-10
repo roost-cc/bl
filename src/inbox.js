@@ -34,7 +34,7 @@ import { dirname, relative } from 'path';
 // it is read from the namespace: a pre-F-80 config.js leaves it undefined,
 // which collectInbox reports as a warning.
 import * as configModule from './config.js';
-import { changeNextVerb, currentChange } from './change-doc.js';
+import { changeNextVerb, currentChange, isOpenChange } from './change-doc.js';
 import { extractSection, sectionHasContent } from './feature.js';
 import { loadBacklog } from './backlog-graph.js';
 import { loadFlow } from './flow.js';
@@ -68,7 +68,7 @@ function readUnits(config) {
       id: fm.feature_id,
       title: fm.title ?? '',
       feature: '',
-      status: fm.status ?? 'draft',
+      status: u.status,
       indexPath: u.file,
       text: u.text(),
       body: u.body(),
@@ -82,7 +82,7 @@ function readUnits(config) {
       id: fm.story_id,
       title: fm.title ?? '',
       feature: fm.feature ?? '',
-      status: fm.status ?? 'backlog',
+      status: u.status,
       indexPath: u.file,
       text: u.text(),
       body: u.body(),
@@ -101,7 +101,7 @@ function readUnits(config) {
 function taskItems(config, warnings, flow) {
   let tasks;
   try {
-    tasks = readAllTasks(config).filter((t) => t.status === 'open');
+    tasks = readAllTasks(config).filter((t) => !flow.meets('task', t.status, 'done'));
   } catch (e) {
     warnings.push(`tasks not read: ${e.message}`);
     return [];
@@ -288,7 +288,7 @@ function changeItems(config, units, warnings, flow) {
       continue;
     }
     const doc = cur?.doc;
-    if (!doc || (doc.fm.status || 'open') !== 'open') continue;
+    if (!isOpenChange(doc)) continue;
     const ahead = [];
     for (const r of doc.repos) {
       if (!r.branch || !branchesOf(r.repo)?.has(r.branch)) continue;

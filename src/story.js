@@ -511,7 +511,8 @@ export function readAllStories(config) {
       ...placeStory(fm, graph),
       id: fm.story_id,
       title: fm.title ?? '',
-      status: fm.status ?? 'backlog',
+      // A v1 word reads as its current one (`makeUnit`, F-69 D4).
+      status: unit.status,
       type: fm.type ?? '',
       points: fm.points ?? '',
       // The refiner's effort level (F-85 D1); null when the key is unset or empty.

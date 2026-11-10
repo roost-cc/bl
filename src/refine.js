@@ -1,9 +1,9 @@
 /**
- * refine.js — refine backlog stories for implementation.
+ * refine.js — refine stories for implementation.
  *
  * Runs in the backlog repo (not a worktree). Accepts one or more targets: a
  * story ID (S-34) refines just that story interactively; a component ID (C01)
- * expands to every backlog story in the component. When more than one story is
+ * expands to every draft story in the component. When more than one story is
  * resolved, a single orchestrator session is launched that delegates each
  * story to its own sub-agent (Task tool), refining them in parallel.
  *
@@ -34,7 +34,7 @@ import { sessionEffort } from './effort.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
- * `status: backlog` stories; explicitly-named story IDs are always included
+ * `status: draft` stories; explicitly-named story IDs are always included
  * (only closed ones are rejected). Results are deduped by story ID —
  * an explicitly-named story wins over the same story pulled in via a component, so
  * an already-refined story named on the command line is still re-refined.
@@ -68,9 +68,9 @@ export function resolveRefineTargets(positionals, config) {
         errors.push(`Component ${component.id} not found under components/.`);
         continue;
       }
-      const stories = readAllStories(config).filter((s) => s.componentId === component.id && s.status === 'backlog');
+      const stories = readAllStories(config).filter((s) => s.componentId === component.id && s.status === 'draft');
       if (stories.length === 0) {
-        notices.push(`Component ${component.id} has no backlog stories to refine.`);
+        notices.push(`Component ${component.id} has no draft stories to refine.`);
         continue;
       }
       for (const s of stories) {
@@ -375,7 +375,7 @@ export async function main(argv) {
 
 Arguments:
   <id...>              One or more story IDs (S34, S-34) and/or component IDs (C01).
-                       A component expands to every 'backlog' story it contains.
+                       A component expands to every 'draft' story it contains.
                        Naming a story directly refines it even if already
                        refined (only ${flowForHelp().closedStatusesOf('story').join('/')} are skipped).
 

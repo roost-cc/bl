@@ -34,8 +34,8 @@ test('buildHistory reads one snapshot per commit day across both layouts', () =>
 
   const d1 = days.get('2026-04-21');
   assert.deepEqual(d1.stories, {
-    'S-1': { status: 'backlog', points: 3, feature: 'F-1' },
-    'S-2': { status: 'backlog', points: 2, feature: 'F-1' },
+    'S-1': { status: 'draft', points: 3, feature: 'F-1' },
+    'S-2': { status: 'draft', points: 2, feature: 'F-1' },
     'S-4': { status: 'done', points: 1, feature: 'F-2' },
   });
   assert.deepEqual(d1.features, { 'F-1': { status: 'draft', stories: ['S-1', 'S-2'] } });
@@ -44,15 +44,15 @@ test('buildHistory reads one snapshot per commit day across both layouts', () =>
   assert.equal(days.get('2026-04-23').stories['S-1'].status, 'refined');
   assert.deepEqual(
     days.get('2026-04-25').stories['S-2'],
-    { status: 'backlog', points: 5, feature: 'F-1' },
+    { status: 'draft', points: 5, feature: 'F-1' },
     're-estimated',
   );
-  assert.deepEqual(days.get('2026-04-25').stories['S-3'], { status: 'backlog', points: 8, feature: '' }, 'added');
+  assert.deepEqual(days.get('2026-04-25').stories['S-3'], { status: 'draft', points: 8, feature: '' }, 'added');
 
   const d4 = days.get('2026-04-28');
   assert.equal(d4.stories['S-1'].status, 'done', "the day's last commit");
   assert.equal(d4.stories['S-2'].status, 'superseded');
-  assert.deepEqual(d4.features['F-1'], { status: 'running', stories: ['S-1', 'S-3'] });
+  assert.deepEqual(d4.features['F-1'], { status: 'in_progress', stories: ['S-1', 'S-3'] });
 
   assert.deepEqual(h.groups.stories['S-1'], {
     feature: 'F-1',
@@ -119,19 +119,15 @@ test('buildHistory backfills the days before the first commit from added and com
   assert.ok(early.every((d) => d.commit === null && Object.keys(d.features).length === 0));
   const days = byDate(h);
   // A projected day knows no feature.
-  assert.deepEqual(days.get('2026-04-11').stories, { 'S-1': { status: 'backlog', points: 3, feature: '' } });
+  assert.deepEqual(days.get('2026-04-11').stories, { 'S-1': { status: 'draft', points: 3, feature: '' } });
   assert.deepEqual(
     days.get('2026-04-13').stories['S-4'],
-    { status: 'backlog', points: 1, feature: '' },
+    { status: 'draft', points: 1, feature: '' },
     'before completed',
   );
-  assert.deepEqual(
-    days.get('2026-04-14').stories['S-4'],
-    { status: 'done', points: 1, feature: '' },
-    'from completed',
-  );
+  assert.deepEqual(days.get('2026-04-14').stories['S-4'], { status: 'done', points: 1, feature: '' }, 'from completed');
   // Current points; S-2 is superseded now but has no completed date.
-  assert.deepEqual(days.get('2026-04-15').stories['S-2'], { status: 'backlog', points: 5, feature: '' });
+  assert.deepEqual(days.get('2026-04-15').stories['S-2'], { status: 'draft', points: 5, feature: '' });
   assert.equal(days.get('2026-04-15').stories['S-3'], undefined, 'added later');
 });
 
@@ -167,7 +163,7 @@ test('the cache serves known commits, reads new ones, and a changed version disc
   // Another version: the file is discarded and rewritten.
   writeFileSync(cachePath, JSON.stringify({ ...cache, version: CACHE_VERSION + 1 }));
   const third = buildHistory(config);
-  assert.equal(byDate(third).get('2026-04-25').stories['S-3'].status, 'backlog');
+  assert.equal(byDate(third).get('2026-04-25').stories['S-3'].status, 'draft');
   assert.equal(JSON.parse(readFileSync(cachePath, 'utf8')).version, CACHE_VERSION);
 
   // Deleting the file is safe.
@@ -245,10 +241,19 @@ test('bl history prints ISO weeks by points per status; an unknown scope exits 1
   const r = runBl(['history', '--since', '2026-04-20'], { cwd: dir });
   assert.equal(r.status, 0, r.stderr);
   const lines = r.stdout.trim().split('\n');
-  assert.match(lines[0], /^\| Week +\| Date +\| backlog \| refined \| in_progress \| done \| superseded \| scope \|$/);
+  assert.match(
+    lines[0],
+    /^\| Week +\| Date +\| draft \| refined \| in_progress \| in_review \| fixing \| ready_for_merge \| escalated \| done \| superseded \| scope \|$/,
+  );
   // W17 ends on 2026-04-25, W18 holds 2026-04-28.
-  assert.match(lines[2], /^\| 2026-W17 \| 2026-04-25 +\| 13 +\| 3 +\| 0 +\| 1 +\| 0 +\| 17 +\|$/);
-  assert.match(lines[3], /^\| 2026-W18 \| 2026-04-28 +\| 8 +\| 0 +\| 0 +\| 4 +\| 5 +\| 12 +\|$/);
+  assert.match(
+    lines[2],
+    /^\| 2026-W17 \| 2026-04-25 +\| 13 +\| 3 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 1 +\| 0 +\| 17 +\|$/,
+  );
+  assert.match(
+    lines[3],
+    /^\| 2026-W18 \| 2026-04-28 +\| 8 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 4 +\| 5 +\| 12 +\|$/,
+  );
   assert.match(r.stderr, /1 index\.md blob\(s\) could not be read/);
 
   const bad = runBl(['history', '--scope', 'F-99'], { cwd: dir });
@@ -273,10 +278,14 @@ test('bl history shows a story status flow.json adds as a column, in the file or
   assert.deepEqual(historyColumns(dir), [
     'Week',
     'Date',
-    'backlog',
+    'draft',
     'blocked',
     'refined',
     'in_progress',
+    'in_review',
+    'fixing',
+    'ready_for_merge',
+    'escalated',
     'done',
     'superseded',
     'scope',
@@ -290,9 +299,13 @@ test("bl history keeps a status only an old commit holds, after the statuses tod
   assert.deepEqual(historyColumns(dir), [
     'Week',
     'Date',
-    'backlog',
+    'draft',
     'refined',
     'in_progress',
+    'in_review',
+    'fixing',
+    'ready_for_merge',
+    'escalated',
     'done',
     'superseded',
     'triage',

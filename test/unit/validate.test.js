@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   findCycles,
   findDanglingFindings,
@@ -13,7 +13,7 @@ import {
   VALID_STORY_KEYS,
 } from '../../src/validate.js';
 import { loadBacklog } from '../../src/backlog-graph.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 import { MALFORMED_UPDATE_REQUESTS } from '../helpers/update-requests.js';
 import { Flow, loadFlow } from '../../src/flow.js';
 import { EFFORT_LEVELS } from '../../src/effort.js';
@@ -71,7 +71,7 @@ test('repo-key: either repo key on a story or a feature is an error, once each, 
 
 test("findFeatureFindings no longer reads a feature's repo keys (F-52 D5)", () => {
   const f = feat({ fm: { primary_repo: 'bl', secondary_repos: '[x]' } });
-  assert.deepEqual(featureCodes(findFeatureFindings([f])), []);
+  assert.deepEqual(featureCodes(findFeatureFindings([f], loadFlow(dirname(FLOW_TEMPLATE)))), []);
 });
 
 test('found-by: a found_by naming no feature or story is an error; a real one, or none, is not (F-48 D2)', () => {
@@ -1163,11 +1163,34 @@ test("bad-status: story and feature statuses are the flow's, not bl's code's (F-
       .map((f) => f.message);
   assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'open' }, 'story'), []);
   assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'refined' }, 'story'), [
-    'status "refined" not in known set (flow.json story statuses)',
+    'status "refined" not in known set (flow.json story statuses: open, done)',
   ]);
   assert.deepEqual(status({ feature_id: 'F-1', title: 'X', status: 'draft' }, 'feature'), []);
   assert.deepEqual(status({ feature_id: 'F-1', title: 'X', status: 'running' }, 'feature'), [
-    'status "running" not in known set (flow.json feature statuses)',
+    'status "running" not in known set (flow.json feature statuses: draft)',
+  ]);
+});
+
+test('bad-status: a v1 word is a warning naming its current word; an unknown word stays an error (F-69 D6)', () => {
+  const flow = loadFlow(dirname(FLOW_TEMPLATE));
+  const status = (fm, kind) =>
+    validateFrontmatter(fm, kind, 'p', { flow })
+      .filter((f) => f.code === 'bad-status')
+      .map((f) => `${f.severity}: ${f.message}`);
+  const migrate = 'node bl/scripts/migrate-transitions.js rewrites it';
+  assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'backlog' }, 'story'), [
+    `warning: status "backlog" is the old word for "draft"; ${migrate}`,
+  ]);
+  assert.deepEqual(status({ feature_id: 'F-1', title: 'X', status: 'running' }, 'feature'), [
+    `warning: status "running" is the old word for "in_progress"; ${migrate}`,
+  ]);
+  assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'draft' }, 'story'), []);
+  assert.deepEqual(status({ feature_id: 'F-1', title: 'X', status: 'ready_for_merge' }, 'feature'), []);
+  assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'approved' }, 'story'), [
+    'error: status "approved" not in known set (flow.json story statuses: draft, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+  ]);
+  assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'open' }, 'story'), [
+    'error: status "open" not in known set (flow.json story statuses: draft, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
   ]);
 });
 

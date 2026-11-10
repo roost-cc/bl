@@ -405,11 +405,11 @@ test('a merge task (bl task --gate merge) holds bl merge of its story and its fe
     assert.equal(s.status, 1, s.stderr);
     assert.match(
       s.stderr,
-      /^S-1 is held at merge by T-1 \(open, needs done\): S-1 merges once T-1 meets "done" \(bl status T-1\)\.$/m,
+      /^S-1 is held at merge by T-1 \(draft, needs done\): S-1 merges once T-1 meets "done" \(bl status T-1\)\.$/m,
     );
     const f = runBl(['merge', 'F-1'], { cwd: fx.dir, env: ENV });
     assert.equal(f.status, 1, f.stderr);
-    assert.match(f.stderr, /^F-1 is held at merge by T-2 \(open, needs done\)/m);
+    assert.match(f.stderr, /^F-1 is held at merge by T-2 \(draft, needs done\)/m);
     assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'nothing merged');
     const inbox = runBl(['inbox'], { cwd: fx.dir, env: ENV }).stdout;
     assert.match(inbox, /^  T-2 +F-1 +Migrate F-1\n +holds: bl merge F-1\n +next: bl task done T-2 \[note\]$/m);

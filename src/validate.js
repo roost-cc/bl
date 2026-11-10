@@ -16,14 +16,14 @@ import {
 } from './config.js';
 import { DERIVED_KEYS, changeDoc, loadBacklog } from './backlog-graph.js';
 import { readAllStories, readComponents, parseIdList, pathEntryProblem } from './story.js';
-import { readAllFeatures, extractSection, sectionHasContent } from './feature.js';
+import { readAllFeatures, extractSection, isFeatureWorkable, sectionHasContent } from './feature.js';
 import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID_RE } from './theme.js';
 import { findRoadmapFindings } from './roadmap.js';
 import { extractReviewLog, parseLatestSession } from './review-log.js';
 import { probePluginBinaries } from './plugin-binaries.js';
 import { scanDeferred, DEFERRED_HEADING, RETIRED_SECTION } from './deferred.js';
-import { CHANGE_STATUSES, RUN_STATE_KEYS, listChanges, unitIdOfDir } from './change-doc.js';
-import { FLOW_FILE, findFlowFindings, fromLegacy, loadFlow } from './flow.js';
+import { CHANGE_STATUSES, RUN_STATE_KEYS, changeStatus, listChanges, unitIdOfDir } from './change-doc.js';
+import { findFlowFindings, loadFlow, statusWordProblem } from './flow.js';
 import { GUARDS } from './guards.js';
 import { CAPABILITIES } from './capabilities.js';
 import { DISPATCH } from './verbs.js';
@@ -249,7 +249,6 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
       validKeys: VALID_STORY_KEYS,
       idKey: 'story_id',
       idRegex: /^S-\d+$/,
-      statuses: context.flow ? new Set(context.flow.statusesOf('story')) : null,
     },
     // `points` and `status` are `component-has-status` (findComponentFindings).
     component: {
@@ -257,14 +256,12 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
       validKeys: new Set([...VALID_COMPONENT_KEYS, ...COMPONENT_STATUS_KEYS]),
       idKey: 'component_id',
       idRegex: /^C\d+$/,
-      statuses: null,
     },
     feature: {
       required: ['feature_id', 'title', 'status'],
       validKeys: VALID_FEATURE_KEYS,
       idKey: 'feature_id',
       idRegex: /^F-\d+$/,
-      statuses: context.flow ? new Set(context.flow.statusesOf('feature')) : null,
     },
     // `repos` is `theme-repo` (findValueAxisFindings); `brief` is
     // `theme-brief` (findThemeBriefFindings).
@@ -273,7 +270,6 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
       validKeys: VALID_THEME_KEYS,
       idKey: 'theme_id',
       idRegex: THEME_ID_RE,
-      statuses: null,
     },
     // `theme` is `epic-theme` (findValueAxisFindings). Epics are E50 upward;
     // an epic's status is derived, so none is checked here.
@@ -282,10 +278,9 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
       validKeys: VALID_EPIC_KEYS,
       idKey: 'epic_id',
       idRegex: /^E(?:[5-9]\d|[1-9]\d{2,})$/,
-      statuses: null,
     },
   };
-  const { required, validKeys, idKey, idRegex, statuses } = KINDS[kind];
+  const { required, validKeys, idKey, idRegex } = KINDS[kind];
 
   // missing-required-key
   for (const key of required) {
@@ -352,16 +347,12 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
   }
 
   // bad-status: a story's and a feature's statuses are flow.json's; a v1 word
-  // reads as its current one until the migration (F-69 D4).
-  if (statuses && fm.status && !statuses.has(fromLegacy(kind, fm.status))) {
-    const known = kind === 'story' || kind === 'feature' ? ` (${FLOW_FILE} ${kind} statuses)` : '';
-    findings.push({
-      severity: 'error',
-      code: 'bad-status',
-      message: `status "${fm.status}" not in known set${known}`,
-      location,
-    });
-  }
+  // is a warning until the migration rewrites it (F-69 D4, D6).
+  const statusProblem =
+    context.flow && (kind === 'story' || kind === 'feature') && fm.status
+      ? statusWordProblem(context.flow, kind, fm.status)
+      : null;
+  if (statusProblem) findings.push({ ...statusProblem, code: 'bad-status', location });
 
   // bad-update-request
   const requestProblem = kind === 'story' ? updateRequestProblem(fm) : null;
@@ -552,13 +543,24 @@ export function validateChanges(backlogRoot, unitDir) {
         });
       }
     });
+    // An old word (`closed`) reads as its current one, a warning (F-69 D6).
     if (fm.status && !CHANGE_STATUSES.has(fm.status)) {
-      findings.push({
-        severity: 'error',
-        code: 'bad-change-status',
-        message: `"status:" "${fm.status}" not in known set (${[...CHANGE_STATUSES].join(', ')})`,
-        location,
-      });
+      const word = changeStatus(fm);
+      findings.push(
+        CHANGE_STATUSES.has(word)
+          ? {
+              severity: 'warning',
+              code: 'bad-change-status',
+              message: `"status:" "${fm.status}" is the old word for "${word}"; write "${word}"`,
+              location,
+            }
+          : {
+              severity: 'error',
+              code: 'bad-change-status',
+              message: `"status:" "${fm.status}" not in known set (${[...CHANGE_STATUSES].join(', ')})`,
+              location,
+            },
+      );
     }
     if (fm.review_status && !VALID_REVIEW_STATUSES.has(fm.review_status)) {
       findings.push({
@@ -730,21 +732,20 @@ function storyDuplicateFinding(id, copies) {
   };
 }
 
-/** Feature statuses in which a non-empty `## Escalation` blocks the next step. */
-const ESCALATION_GATED_STATUSES = new Set(['refined', 'approved', 'running']);
-
 /**
- * `escalation-not-none` (warning): a refined, approved or running feature
- * whose `## Escalation` holds anything but `None.`. `bl approve` and
- * `bl run` both refuse such a feature, so a decision the operator
- * already made (left as a "resolved" note) would stall the loop. Escalated
- * features are exempt: their open escalation is expected.
+ * `escalation-not-none` (warning): a feature from `refined` up to, not
+ * including, `escalated` (`Flow.isRunnable`) whose `## Escalation` holds
+ * anything but `None.`. `bl approve` and `bl run` both refuse such a
+ * feature, so a decision the operator already made (left as a "resolved"
+ * note) would stall the loop. Escalated features are exempt: their open
+ * escalation is expected.
  *
  * @param {{ id: string, status: string, body: string, featureRelPath: string }} f
+ * @param {import("./flow.js").Flow} flow
  * @returns {Finding[]}
  */
-export function findEscalationNotNone(f) {
-  if (!ESCALATION_GATED_STATUSES.has(f.status)) return [];
+export function findEscalationNotNone(f, flow) {
+  if (!flow.isRunnable('feature', f.status) || flow.meets('feature', f.status, 'escalated')) return [];
   const escalation = extractSection(f.body ?? '', 'Escalation');
   if (!sectionHasContent(escalation)) return [];
   const first = escalation.trim().split('\n')[0];
@@ -830,7 +831,7 @@ export function findDeferredErrors(id, status, text, location, flow, type) {
  * A feature's stories are the stories whose `feature:` names it (F-77 D3),
  * so there is nothing to cross-check; what is left:
  *
- *   - `feature-no-stories`     (warning) approved/running feature with no stories
+ *   - `feature-no-stories`     (warning) a workable feature (`isFeatureWorkable`) with no stories
  *
  * A feature that still names a repo is validateFrontmatter's `repo-key`, one
  * that stores `stories:` its `derived-key`; a story naming a feature that
@@ -839,10 +840,10 @@ export function findDeferredErrors(id, status, text, location, flow, type) {
  * @param {Array} features — readAllFeatures records
  * @returns {Finding[]}
  */
-export function findFeatureFindings(features) {
+export function findFeatureFindings(features, flow) {
   const findings = [];
   for (const f of features) {
-    if (f.stories.length === 0 && (f.status === 'approved' || f.status === 'running' || f.status === 'escalated')) {
+    if (f.stories.length === 0 && isFeatureWorkable(flow, f.status)) {
       findings.push({
         severity: 'warning',
         code: 'feature-no-stories',
@@ -1543,7 +1544,7 @@ export function runAll(config, opts = {}) {
     );
     findings.push(...findRunStateInSpec(f.fm, f.body, f.featureRelPath));
     findings.push(...validateChanges(config.backlogRoot, f.featureDir));
-    findings.push(...findEscalationNotNone(f));
+    findings.push(...findEscalationNotNone(f, flow));
     findings.push(...findDeferredErrors(f.id, f.fm.status, f.content, f.featureRelPath, flow, 'feature'));
   }
 
@@ -1573,7 +1574,7 @@ export function runAll(config, opts = {}) {
   for (const s of allStories) fullMap.set(s.id, s);
   const cycles = findCycles(fullMap);
 
-  const featureLinks = findFeatureFindings(allFeatures);
+  const featureLinks = findFeatureFindings(allFeatures, flow);
   const foundBy = findFoundByFindings(allFeatures, fullMap);
   const implementPlugins = findImplementPluginFindings(fullMap.values(), config);
   const verificationTitles = skip.has('verification-only-title') ? [] : findVerificationOnlyTitles(allStories, flow);
