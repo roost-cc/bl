@@ -715,7 +715,7 @@ export async function cleanupOneRepo({
       console.error(
         `${repoName}: the push of main to origin was ended by ${push.signal}; rerun \`bl merge ${parsed.id}\`.`,
       );
-      raiseSignal(push.signal);
+      raiseSignal(interruptOf(push));
       return { ok: false };
     }
     if (push.status !== 0) {
@@ -1111,7 +1111,7 @@ function removeWorktreeAndBranch({ parsed, repoPath, repoName, branchName, branc
     const r = spawnSync('git', args, { cwd: repoPath, stdio });
     if (!interruptOf(r)) return r.status === 0;
     console.error(`${repoName}: \`git ${args.join(' ')}\` was ended by ${r.signal}; rerun \`bl merge ${parsed.id}\`.`);
-    raiseSignal(r.signal);
+    raiseSignal(interruptOf(r));
     return null;
   };
 
