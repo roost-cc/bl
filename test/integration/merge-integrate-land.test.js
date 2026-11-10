@@ -1,11 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { parseFrontmatter } from '../../src/config.js';
-import { abortFailedMerge } from '../../src/cleanup.js';
 import { ENV, escalation, featureFile, fixture, g, landOnMain, ok } from '../helpers/merge-integrate-fixture.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
 
@@ -48,7 +47,7 @@ test('bl merge S-n stops on a conflict before any main checkout is touched', () 
   }
 });
 
-test('main moving between integration and the merge into main is aborted, and the rerun lands it', () => {
+test('main moving between integration and the merge into main stops before the main checkout, and the rerun lands it', () => {
   // The gate (it runs because the branch took main's first commit) lands a
   // conflicting commit on origin's main once, as a concurrent merge would.
   const scratch = mkTempDir('bl-integrate-mover-');
@@ -76,10 +75,7 @@ git(clone, "push", "-q", "origin", "main");
 
     const first = runBl(['merge', 'F-1'], { cwd: fx.dir, env: ENV });
     assert.equal(first.status, 1, first.stderr);
-    assert.match(
-      first.stderr,
-      /code: the merge into main failed and was aborted; the main checkout is clean\.\nmain moved since the branch was integrated; rerun `bl merge F-1`\./,
-    );
+    assert.match(first.stderr, /code: main moved; rerun `bl merge F-1`\. Nothing is pushed\./);
     assert.equal(g(fx.repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
     assert.equal(ok(fx.repo, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'), false);
     assert.equal(g(fx.repo, 'status', '--porcelain', '--untracked-files=no'), '');
@@ -98,39 +94,6 @@ git(clone, "push", "-q", "origin", "main");
     assert.match(second.stderr + second.stdout, /code: current with origin\/main/);
     assert.equal(readFileSync(join(fx.repo, 'f1-feat.txt'), 'utf8'), 'both\n');
     assert.equal(logStatusOf('feature', parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm), 'done');
-  } finally {
-    fx.cleanup();
-  }
-});
-
-test('a failed merge into main whose abort fails names the exact command to run', () => {
-  const fx = fixture();
-  try {
-    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
-    g(fx.repo, 'pull', '-q', '--ff-only', 'origin', 'main');
-    assert.equal(ok(fx.repo, 'merge', '--no-ff', 'f1-feat'), false);
-    // A stale index lock makes `git merge --abort` fail.
-    const lock = join(fx.repo, '.git', 'index.lock');
-    writeFileSync(lock, '');
-    const errors = [];
-    const orig = console.error;
-    console.error = (m) => errors.push(String(m));
-    let clean;
-    try {
-      clean = abortFailedMerge({ repoPath: fx.repo, repoName: 'code', id: 'F-1' });
-    } finally {
-      console.error = orig;
-    }
-    assert.equal(clean, false);
-    assert.match(
-      errors.join('\n'),
-      new RegExp(
-        `and so did \`git merge --abort\`[\\s\\S]*Run it by hand before anything else:\\n  git -C '${fx.repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}' merge --abort`,
-      ),
-    );
-    unlinkSync(lock);
-    assert.equal(abortFailedMerge({ repoPath: fx.repo, repoName: 'code', id: 'F-1' }), true);
-    assert.equal(ok(fx.repo, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'), false);
   } finally {
     fx.cleanup();
   }
