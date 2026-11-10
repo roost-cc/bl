@@ -173,15 +173,15 @@ export function withMainSyncLock(repoPath, fn, opts = {}) {
   let taken = acquirePidLock(lockPath, content);
   let announced = false;
   while (taken.holder != null) {
-    if (!announced) {
-      announced = true;
-      info(waitingForLock(lockPath, taken.holder));
-    }
+    // The sleep's child says it, so a Ctrl+C after the line reaches the child.
+    const say = announced ? undefined : waitingForLock(lockPath, taken.holder);
+    announced = true;
     const left = deadline - Date.now();
     if (left <= 0) {
+      if (say) info(say);
       return { state: 'lock-timeout', holder: taken.holder, lockPath };
     }
-    sleepSync(Math.min(pollMs, left));
+    sleepSync(Math.min(pollMs, left), say);
     taken = acquirePidLock(lockPath, content);
   }
   try {

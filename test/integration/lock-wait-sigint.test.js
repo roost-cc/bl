@@ -33,12 +33,9 @@ function refineBacklog() {
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Start `bl refine S-1` behind `lockPath`, Ctrl+C its process group once it
- * waits, and return how it ended and how many ms after the first Ctrl+C.
- *
- * A SIGINT that lands while `bl` runs between two `sleep` children is lost
- * (`src/sleep-sync.js`), so the test presses Ctrl+C again every 250 ms, as a
- * person would. After 2 s it kills the group.
+ * Start `bl refine S-1` behind `lockPath`, Ctrl+C its process group once,
+ * right after it says it waits, and return how it ended and how many ms after
+ * the Ctrl+C. After 2 s it kills the group.
  */
 async function interruptRefine(dir, lockPath) {
   const run = startBlBehindLock(['refine', 'S-1'], { cwd: dir, env: GIT_ENV, lockPath, detached: true });
@@ -56,10 +53,8 @@ async function interruptRefine(dir, lockPath) {
     }
   };
   const sent = Date.now();
-  while (!ended && Date.now() - sent < 2000) {
-    signal('SIGINT');
-    await Promise.race([closed, delay(250)]);
-  }
+  signal('SIGINT');
+  await Promise.race([closed, delay(2000)]);
   const ms = Date.now() - sent;
   if (!ended) signal('SIGKILL');
   return { ...(await closed), ms };
@@ -80,6 +75,23 @@ test('Ctrl+C while bl waits for the main sync lock exits 130 and removes only it
     assert.doesNotMatch(r.stderr, /^Story/m, 'no refine session started');
     assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'bl removed the backlog lock it took');
     assert.equal(readFileSync(lockPath, 'utf8'), ours, 'the test’s main sync lock is untouched');
+  } finally {
+    cleanup();
+  }
+});
+
+test('one Ctrl+C right after the main sync wait’s announcement ends bl, 20 times in 20', async (t) => {
+  // `bl` used to say it waited before it started its first `sleep` child, so
+  // a Ctrl+C sent at once reached `bl` alone and was lost. The child now says it.
+  if (!lockOwnerVisible(t)) return;
+  const { dir, cleanup } = refineBacklog();
+  try {
+    const lockPath = mainSyncLockPath(dir);
+    writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\nthe test\n`);
+    for (let i = 1; i <= 20; i++) {
+      const r = await interruptRefine(dir, lockPath);
+      assert.equal(r.status, 130, `run ${i}: signal ${r.signal}, ${r.ms} ms: ${r.stderr}`);
+    }
   } finally {
     cleanup();
   }

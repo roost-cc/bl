@@ -622,9 +622,12 @@ export function prepareWorktreeOnce(repoPath, branchName, fn) {
   for (;;) {
     const taken = acquirePidLock(lockPath, content);
     if (taken.content) break;
-    if (!waiting) info(`Waiting for pid ${taken.holder} to finish preparing ${branchName} in ${repoPath}...`);
+    // The sleep's child says it, so a Ctrl+C after the line reaches the child.
+    const say = waiting
+      ? undefined
+      : `Waiting for pid ${taken.holder} to finish preparing ${branchName} in ${repoPath}...`;
     waiting = true;
-    sleepSync(100);
+    sleepSync(100, say);
   }
   try {
     return fn();

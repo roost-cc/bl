@@ -3146,8 +3146,9 @@ turns. A command that finds the lock held by a live process says so once on stde
 the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
 Ctrl+C during either wait exits 130 and removes the locks the process holds. The main sync wait
 is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
-that the terminal's Ctrl+C ends too; a SIGINT that lands between two sleeps is lost, and a
-second Ctrl+C ends `bl`.
+that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C right
+after it always reaches the child. A SIGINT that lands between two sleeps is lost (2 in 150 at
+random times in a probe), and a second Ctrl+C ends `bl`.
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each

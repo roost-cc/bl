@@ -15,6 +15,7 @@ import { fileURLToPath } from 'url';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
 import { sleepSync } from '../../src/sleep-sync.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 /** Run `fn` with `PATH` set to `path`, and give `PATH` back afterwards. */
 function withPath(path, fn) {
@@ -88,6 +89,28 @@ async function signalTheSleep(signal, listener) {
   clearTimeout(kill);
   return r;
 }
+
+test('sleepSync writes `say` once on stderr on every path', () => {
+  const bin = mkTempDir('bl-sleep-stub-');
+  writeFileSync(join(bin, 'sleep'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(bin, 'sleep'), 0o755);
+  const cases = [
+    { name: 'the child sleeps', ms: 50, path: process.env.PATH },
+    { name: 'no sleep for 0 ms', ms: 0, path: process.env.PATH },
+    { name: 'no child can start', ms: 50, path: '' },
+    { name: 'sleep refuses its argument', ms: 50, path: `${bin}:${process.env.PATH}` },
+  ];
+  for (const c of cases) {
+    const script = `import { sleepSync } from ${JSON.stringify(SLEEP_SYNC)}; sleepSync(${c.ms}, 'waiting…');`;
+    const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
+      env: { ...process.env, PATH: c.path },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(r.status, 0, `${c.name}: ${r.stderr}`);
+    assert.equal(r.stderr, 'waiting…\n', c.name);
+  }
+});
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   test(`sleepSync runs the ${signal} listener when its sleep child ends on ${signal}`, async () => {
