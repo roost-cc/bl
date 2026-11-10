@@ -522,6 +522,65 @@ test('the migration leaves an update story in the old shape, and a rerun prints 
   assert.equal(head(dir), after);
 });
 
+test('the migration keeps an update story’s change document and counts a held update story as kept', (t) => {
+  const { dir } = mkTempBacklog({
+    flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
+    repos: ['core'],
+    components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
+    stories: [
+      { id: 'S-1', title: 'One', component: 'C01', status: 'refined' },
+      {
+        id: 'S-2',
+        title: 'Two',
+        component: 'C01',
+        status: 'in_review',
+        branch: 'renovate/dep-2',
+        review_round: '1',
+        review_status: 'pending',
+        reviewLog: session('2026-11-05', 1),
+      },
+      { id: 'S-3', title: 'Three', component: 'C01', status: 'in_progress' },
+    ],
+  });
+  // S-2 has a change document with `review_round` and `review_status`; a live bl run holds S-3.
+  for (const [p, status] of [
+    [rel.s2, 'in_review'],
+    [rel.s3, 'in_progress'],
+  ]) {
+    writeFileSync(
+      join(dir, p),
+      read(dir, p).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\nupdate_repo: acme/core\n`),
+    );
+  }
+  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  git(dir, 'init', '-q', '-b', 'main');
+  commitAt(dir, '2026-11-01T10:00:00Z', 'base');
+  const holder = spawn('sleep', ['300'], { stdio: 'ignore' });
+  t.after(() => holder.kill());
+  mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
+  writeFileSync(join(dir, '.bl', 'run', 'S-3.lock'), `${holder.pid}\n2026-11-09T00:00:00Z\nrun S-3\n`);
+  const change2 = 'stories/S2/change.md';
+  const files = [rel.s2, change2, rel.s3];
+  const before = Object.fromEntries(files.map((p) => [p, read(dir, p)]));
+  const kept = /^kept in the old shape \(update stories, F-69 Out of Scope\): 2$/m;
+
+  for (const [args, verb] of [
+    [['--dry-run'], 'would convert'],
+    [[], 'converted'],
+  ]) {
+    const r = script(dir, ...args);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, kept, verb);
+    assert.doesNotMatch(r.stdout, /^skipped /m, verb);
+    // counts.changes stays 0: the update story's change document is not counted.
+    assert.match(r.stdout, new RegExp(`^${verb}: stories: 1 \\(.*; change documents: 0; `, 'm'), verb);
+    for (const p of files) assert.equal(read(dir, p), before[p], `${verb}: ${p}`);
+  }
+  const c = fm(dir, change2);
+  assert.equal(c.review_round, '1');
+  assert.equal(c.review_status, 'pending');
+});
+
 test('migration leaves added and completed equal to the log’s first and terminal entries, also when the clamp moved an entry', () => {
   const { dir } = mkTempBacklog({
     flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
