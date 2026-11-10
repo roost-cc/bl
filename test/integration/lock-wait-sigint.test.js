@@ -102,7 +102,7 @@ test('one Ctrl+C right after the main sync wait’s announcement ends bl, 20 tim
   }
 });
 
-test('Ctrl+C while bl waits for the backlog lock exits 130 and leaves the holder’s lock', async (t) => {
+test('Ctrl+C while bl waits for the backlog lock exits 130 within 1 s and leaves the holder’s lock', async (t) => {
   if (!lockOwnerVisible(t)) return;
   const { dir, cleanup } = refineBacklog();
   try {
@@ -111,6 +111,9 @@ test('Ctrl+C while bl waits for the backlog lock exits 130 and leaves the holder
     writeFileSync(lockPath, ours);
     const r = await interrupt(dir, undefined);
     assert.equal(r.status, 130, `signal ${r.signal}: ${r.stderr}`);
+    assert.ok(r.ms < 1000, `bl took ${r.ms} ms to exit`);
+    const waiting = waitingForLock(LOCK_FILE, process.pid);
+    assert.equal(r.stderr.split(waiting).length - 1, 1, `said once: ${r.stderr}`);
     assert.equal(readFileSync(lockPath, 'utf8'), ours, 'the test’s backlog lock is untouched');
   } finally {
     cleanup();
