@@ -67,7 +67,7 @@ blrun run S-3 S-2 S-1 S-6 --plan
 assert_exit "run S-3 S-2 S-1 S-6 --plan" 0 "$RC"
 assert_contains "a dependent waits, naming its blocker" "  S-2: S-2 depends on S-1; run it after S-1 merges" "$ERR"
 assert_contains "an overlap waits, naming the shared file" "  S-3: S-3 overlaps S-1 on src/a.js; run it after S-1 merges" "$ERR"
-assert_contains "an undone outside dependency waits" "  S-6: S-6 depends on S-9, which is backlog; merge S-9 first" "$ERR"
+assert_contains "an undone outside dependency waits" "  S-6: S-6 depends on S-9, which is draft; merge S-9 first" "$ERR"
 assert_contains "the deferred list comes first" $'Deferred:\n' "${ERR%%Starting:*}"
 assert_contains "only S-1 starts" "Starting: S-1" "$ERR"
 assert_contains "the one started unit runs in place" "S-1 · story S-1 — run plan" "$OUT"

@@ -262,8 +262,8 @@ test('checkUnit takes an open feature or loose story and refuses everything else
   writeFileSync(
     join(dir, 'stories', 'S12-update', 'index.md'),
     STORY_INDEX_TEMPLATE({ id: 'S-12', component: 'C01', title: 'Update' }).replace(
-      'status: backlog\n',
-      'status: backlog\nupdate_repo: bl\n',
+      'status: draft\n',
+      'status: draft\nupdate_repo: bl\n',
     ),
   );
   const graph = loadBacklog({ backlogRoot: dir });

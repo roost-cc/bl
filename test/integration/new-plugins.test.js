@@ -145,7 +145,7 @@ test('bl new --plugins-from finds a done source', () => {
   const { dir, cleanup } = pluginsBacklog();
   try {
     const p = join(dir, SOURCE);
-    writeFileSync(p, readFileSync(p, 'utf8').replace('status: backlog\n', 'status: done\n'));
+    writeFileSync(p, readFileSync(p, 'utf8').replace('status: draft\n', 'status: done\n'));
     const r = runBl([...NEW_CHILD, '--plugins-from', 'S-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     assert.ok(childFrontmatter(dir).includes(PLUGIN_KEYS), childFrontmatter(dir));
@@ -291,7 +291,7 @@ test('bl new --plugins-from rereads and compares its source under the creation l
     },
     {
       name: 'source is done while waiting',
-      mutate: (dir) => rewrite(dir, 'status: backlog\n', 'status: done\n'),
+      mutate: (dir) => rewrite(dir, 'status: draft\n', 'status: done\n'),
       status: 0,
       copied: PLUGIN_KEYS,
     },

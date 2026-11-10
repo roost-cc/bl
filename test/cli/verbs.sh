@@ -149,7 +149,7 @@ assert_contains "run S-1 plan implements the story" " 2. implement S-1" "$OUT"
 
 blrun run S-3
 assert_exit "run S-3" 1 "$RC"
-assert_contains "run refuses a backlog story" 'Story S-3 is backlog — run `bl refine S-3` first.' "$ERR"
+assert_contains "run refuses a draft story (a v1 backlog one)" 'Story S-3 is draft — run `bl refine S-3` first.' "$ERR"
 
 blrun run S-6
 assert_exit "run S-6" 1 "$RC"
