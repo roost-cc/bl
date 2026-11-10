@@ -384,6 +384,24 @@ test('a resume after a no-commit finish, with commits now on the branch, runs th
   }
 });
 
+test('a no-commit run whose flow has no in_review → ready_for_merge edge escalates and records no pr or review entry', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const flowFile = join(config.backlogRoot, 'flow.json');
+    const raw = JSON.parse(readFileSync(flowFile, 'utf8'));
+    raw.types.story.verbs.review.success = [];
+    writeFileSync(flowFile, JSON.stringify(raw));
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    assert.match(state.lastError, /the story has no commits, but its log could not record ready_for_merge/);
+    assert.ok(!state.history.some((h) => h.note === NO_COMMITS), 'no pr or review entry for the skip');
+    assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no forge call');
+  } finally {
+    cleanup();
+  }
+});
+
 test("a story's review finding routed to its Deferred: the review sessions get the story's kind", async () => {
   const { cleanup, config, unit, prep } = storySetup();
   try {
