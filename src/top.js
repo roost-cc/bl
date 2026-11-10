@@ -213,6 +213,7 @@ function runTui(opts, interval) {
   }
   if (tuiNeedsBuild()) buildTui();
   const r = spawnSync(TOP_BIN, tuiArgs(opts, interval, push), { stdio: 'inherit' });
+  if (r.error) console.error(`bl top: cannot run ${TOP_BIN}: ${r.error.message}`);
   process.exit(r.status ?? 1);
 }
 

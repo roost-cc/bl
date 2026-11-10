@@ -170,12 +170,18 @@ set +e
 OUT=$("$BL" top 2>"$ERR")
 NO_PUSH=$("$BL" top --no-push 2>"$ERR")
 INTERVAL=$("$BL" top --interval 1e3 --version 2>"$ERR")
+# A view that cannot start (not executable): exit 1, and stderr says why.
+chmod -x "$BL_ROOT/top/bin/bl-top"
+"$BL" top 2>"$ERR"; NOT_RUN=$?
+NOT_RUN_ERR=$(cat "$ERR")
 set -e
 # The real view goes back first, so a failed assert leaves no fake behind.
 mv "$BL_ROOT/top/bin/bl-top.real" "$BL_ROOT/top/bin/bl-top"
 assert_contains "bl top passes the push argv to the view" "$(printf -- '--push-argv\n["phone-push","--topic","bl top"]')" "$OUT"
 assert_contains "bl top --no-push passes --no-push to the view" "--no-push" "$NO_PUSH"
 assert_contains "bl top --interval 1e3 passes the checked number to the view" "$(printf -- '--interval\n1000\n')" "$INTERVAL"
+assert_exit "bl top with a view that cannot start" 1 "$NOT_RUN"
+assert_contains "bl top says why the view did not start" "bl top: cannot run $BL_ROOT/top/bin/bl-top: " "$NOT_RUN_ERR"
 mv "$TMPDIR_ROOT/backlog.json.good" "$CFG"
 
 # With no backlog, bl top exits 1 before it starts the view, and says how to name one.
