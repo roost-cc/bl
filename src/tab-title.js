@@ -133,12 +133,14 @@ export function updateTabTitle(keyOrFields, value) {
 
 /**
  * Set the fields of an end state, as `updateTabTitle` does, mark the title
- * final and show it without padding. The exit keeps a final title as it is.
+ * final and show it without padding. An earlier `next` is dropped: the final
+ * title shows `next` only when `values` sets it. The exit keeps a final title as it is.
  * A later `updateTabTitle` or `clearTabTitle` clears the mark.
  *
  * @param {Record<string, unknown>} values  e.g. `{ status: 'clean', next: '→ bl merge' }`
  */
 export function finalTabTitle(values) {
+  fields.delete('next');
   setFields(Object.entries(values ?? {}));
   final = true;
   showTabTitle();

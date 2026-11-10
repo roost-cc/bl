@@ -376,6 +376,25 @@ test('a later update after a final title drops next', () => {
   });
 });
 
+test('a final title without next drops an earlier next', () => {
+  for (const [name, before] of [
+    ['after finalTabTitle', () => finalTabTitle({ status: 'clean', next: '→ bl merge' })],
+    ['after updateTabTitle', () => updateTabTitle({ status: 'review', next: '→ y' })],
+  ]) {
+    for (const [values, title] of [
+      [{ status: 'failed' }, 'F-1 :  : failed'],
+      [{ status: 'done', next: '→ z' }, 'F-1 :  : done → z'],
+    ]) {
+      underFakeTmux((fake) => {
+        updateTabTitle({ feature: 'F-1', story: null });
+        before();
+        finalTabTitle(values);
+        assert.equal(fake.calls().at(-1).split('\n')[4], title, `${name}: ${title}`);
+      });
+    }
+  }
+});
+
 test('the exit hook does nothing before a title or with titles off', () => {
   underFakeTmux((fake) => {
     endTabTitle(1);
