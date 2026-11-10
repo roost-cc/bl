@@ -122,6 +122,7 @@ _roost_bl() {
     'log:Show bl activity log'
     'allow:Add permission patterns from agent logs'
     'capacity:Whether each agent configuration can take work now'
+    'top:A live view of the runs, the inbox, bl next, capacity and history'
     'help:Show help'
   )
 
@@ -181,6 +182,12 @@ _roost_bl() {
       ;;
     capacity)
       _arguments -s '--json[Print the configurations as JSON (bl-capacity-json/v1)]'
+      ;;
+    top)
+      _arguments -s \
+        '(--stream --interval)--json[Print one snapshot (bl-top-json/v1)]' \
+        '(--json)--stream[Print one snapshot per line until stdin closes]' \
+        '(--json)--interval[The stream interval in ms]:ms:'
       ;;
     inbox)
       if [[ "${words[2]}" == done ]]; then

@@ -79,6 +79,8 @@ Per-command stdout contracts:
 | `bl updates drop`    | one line: requested                                       |
 | `bl inbox`           | the items by kind (`--json`: an array); `inbox: empty`    |
 | `bl inbox done`      | nothing: refuses, naming the verb (stderr)                |
+| `bl top --json`      | one JSON object (schema `bl-top-json/v1`)                 |
+| `bl top --stream`    | one JSON object per line until stdin closes               |
 | `bl help`            | help text                                                 |
 | `bl <cmd> --help`    | help text                                                 |
 
@@ -2808,6 +2810,46 @@ The `local` row comes from the server's `/health` (see **The local
 provider**): `available` on a 200, `unavailable` when the connection is
 refused, `unknown` otherwise; the message names the URL.
 
+### `bl top`
+
+`bl top` is a live view of bl (F-87): the runs, what waits on the operator, what `bl next`
+picks, agent capacity, and the stories done per day. This section covers its JSON half,
+`--json` and `--stream` (`src/top.js`). With neither flag, `bl top` exits 1 with
+`bl top: the TUI is not built yet; use --json or --stream`.
+
+```bash
+bl top --json                      # one snapshot, then exit 0
+bl top --stream                    # one snapshot per line every 2000 ms until stdin closes
+bl top --stream --interval 1000    # the interval in ms, 500 to 10000
+```
+
+The snapshot is one object, schema `bl-top-json/v1`:
+`{ schema, at, runs, attention, next, capacity, history }`. `at` and every time in it are ISO
+times with a zone. Each section is an object with `read_at`, the ISO time of its last good
+read. A section whose read throws keeps its last good value and carries `error`, the message;
+the next good read drops `error`. Each section comes from bl's own reader, in the same process
+(`src/top-snapshot.js`), so nothing else parses a backlog file:
+
+| Section     | Holds                                                                                                                                                                                                                                               | Read (`--stream`)                                        |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's live holder or null), and `agent`, `model`, `effort` of its newest session entry | every snapshot                                           |
+| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                               | when the backlog changes, and at least every 30 s        |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                  | as `attention`                                           |
+| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                              | every 5 min, and at the snapshot after a `capacity` line |
+| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                               | every 5 min                                              |
+
+- A `runs` row whose run state says `running` while its run lock (`.bl/run/<id>.lock`) has no
+  live holder has `status: "stale"`: its bl was killed. The stream parses a run state again
+  only when the file's mtime changes.
+- "The backlog changes" means git `HEAD` moves, or a unit file, change document or
+  `priority.md` changes: `backlogStamp()` (`src/top-stream.js`) compares `HEAD` and
+  `backlogSignature()`, the stat signature `loadBacklog()` compares (`src/backlog-graph.js`).
+- The first `--stream` snapshot reads every section. A line `capacity` on stdin makes the next
+  snapshot read capacity. When stdin closes, the stream exits 0.
+- stdout carries only the JSON. A section that could not be read
+  (`bl top: <section> not read: <message>`) and each inbox warning (`warning: …`) go to stderr,
+  in `--stream` once when they first appear.
+
 ### `bl list`
 
 List backlog stories. Active worktrees show their worktree status with a trailing `*`.
@@ -3019,7 +3061,7 @@ its component's repo's themes and no epic. An unknown or malformed theme or epic
 `--feature`, `--component` or a positional argument. With no `priority.md`, or a `ranked:` of
 the wrong shape, stderr says so and every unit is unranked; a `priority.md` that is not YAML
 exits 1. The order is a preference: hard dependencies override it, and `bl next` never reads
-the roadmap.
+the roadmap. The walk is `nextPlan(config, filter)`, which `bl top`'s `next` section reads too.
 
 ### `bl rank`
 
