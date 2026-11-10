@@ -132,6 +132,24 @@ test('withExitFault bounds and cleans the stderr line (S-1398)', () => {
       error: `claude exited 1: ${'y'.repeat(500)}`,
       tail: 'y'.repeat(500),
     },
+    {
+      name: 'a cut at an odd offset keeps the surrogate pair whole',
+      stderr: `a${'😀'.repeat(600)}`,
+      error: `claude exited 1: a${'😀'.repeat(499)}…`,
+      tail: `a${'😀'.repeat(499)}…`,
+    },
+    {
+      name: '500 emoji stay whole',
+      stderr: '😀'.repeat(500),
+      error: `claude exited 1: ${'😀'.repeat(500)}`,
+      tail: '😀'.repeat(500),
+    },
+    {
+      name: 'a line of 1000 emoji is cut',
+      stderr: '😀'.repeat(1000),
+      error: `claude exited 1: ${'😀'.repeat(500)}…`,
+      tail: `${'😀'.repeat(500)}…`,
+    },
   ];
   for (const c of cases) {
     const r = fault(c.stderr);

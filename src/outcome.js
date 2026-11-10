@@ -61,7 +61,12 @@ const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
  */
 function cleanStderrLine(line) {
   const clean = stripVTControlCharacters(line).replace(CONTROL_CHARS, '');
-  return clean.length > STDERR_LINE_MAX ? `${clean.slice(0, STDERR_LINE_MAX)}…` : clean;
+  if (clean.length <= STDERR_LINE_MAX) return clean;
+  // Cut by code point, so a surrogate pair is never split.
+  const cut = Array.from(clean.slice(0, 2 * STDERR_LINE_MAX))
+    .slice(0, STDERR_LINE_MAX)
+    .join('');
+  return cut.length < clean.length ? `${cut}…` : clean;
 }
 
 /**
