@@ -29,7 +29,7 @@
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { acquirePidLock, releasePidLock, waitingForLock } from './pid-lock.js';
 import { exitOnSignal } from './signal-exit.js';
 
 export const LOCK_FILE = '.bl-new.lock';
@@ -94,7 +94,7 @@ export async function acquireLock(backlogRoot, options = {}) {
       // Said once, so a caller (or a test) can tell a process blocked on a
       // live holder from one still doing its pre-lock work.
       announced = true;
-      error(`Waiting for lock (${LOCK_FILE}) held by pid ${taken.holder}…`);
+      error(waitingForLock(LOCK_FILE, taken.holder));
     }
     if (now().getTime() - start > timeoutMs) {
       error(`Timed out waiting for lock (${LOCK_FILE}). Another bl process may be stuck.`);

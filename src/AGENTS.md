@@ -1101,13 +1101,15 @@ fault named. `validateOutcome(schema, value)` in `src/outcome.js` does the
 validation, with `ajv` (draft 2020-12). It takes the object or the text that
 holds it, and its faults are `no output`, `not JSON: <parser message>` and
 `schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). The parser
-message in `not JSON` has its ANSI codes and control characters (except tab)
-removed and is cut to 500 characters, as a stderr line is (`cleanStderrLine`,
-S-1404). A headless
-result replaces `no output`, and only that fault, with
-`<cli> exited <status>[: <last stderr line>]` when the agent CLI exited non-zero
-or wrote stderr (`withExitFault`, S-1398). Nothing in bl reads an outcome out of
-prose. Two carriers deliver the value:
+message in `not JSON` and the JSON path in `schema violation` have their ANSI
+codes and control characters (except tab) removed and are cut to 500
+characters, as a stderr line is (`cleanStderrLine`, S-1404, S-1405). Every agent
+text field in `schemas/` refuses control characters: a one-line field keeps only
+tab, and a multi-line `reason` keeps tab, LF and CR. So a valid outcome carries
+none into a commit message (S-1405). A headless result replaces `no output`,
+and only that fault, with `<cli> exited <status>[: <last stderr line>]` when
+the agent CLI exited non-zero or wrote stderr (`withExitFault`, S-1398).
+Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
 
 | Session     | Carrier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Read by                                 |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
@@ -2739,7 +2741,10 @@ bl's prompts and plugin commands use, not a new format.
   so no `bl` the agent runs, and no test it starts, renames the window.
   `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
   `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
-  (`test/unit/tmux-free-env.test.js` guards it). `openTmuxWindow` names a new window
+  (`test/unit/tmux-free-env.test.js` guards it). The same wrapper unsets `BL_BACKLOG_DIR`
+  and refuses a temporary directory (`os.tmpdir()`) inside a git repository, where git in a
+  test's temp dir would act on that repository (S-1394; `test/unit/repo-free-env.test.js`
+  guards both). `openTmuxWindow` names a new window
   with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
 - When `bl` exits, the last title stays (S-1393): under tmux `rename-window` turned the
   window's `automatic-rename` off and bl leaves it off (`tmux set -w automatic-rename on`
@@ -3369,7 +3374,16 @@ turns. A command that finds the lock held by a live process says so once on stde
 (`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
 30 s pass. The lock is re-entrant within a process. As the spec lock is, it is created whole
 and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock name never
-exists without its holder's pid and two processes cannot both hold it.
+exists without its holder's pid and two processes cannot both hold it. The main sync lock wait
+(`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
+the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
+Ctrl+C during either wait exits 130 and removes the locks the process holds. The main sync wait
+is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
+that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C after it
+reaches the child within the first poll. A SIGINT that lands between two sleeps is lost (2 in
+150 at random times in a probe), and a second Ctrl+C ends `bl`. Two other synchronous waits sleep in
+`sleepSync` the same way: the prepare-lock wait (`session.js` `prepareWorktreeOnce`) and the
+usage-limit wait (`feature-run.js` `waitOrEscalate`).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each
@@ -4348,6 +4362,13 @@ npm run test:all    # everything
 
 Adding a test:
 
+- **suite temp directory** — every `npm run test:*` script runs through
+  `test/helpers/without-repo-env.sh`, which gives the suite a `TMPDIR` of
+  its own and removes it when the suite ends (S-1392). A temp file that a
+  test leaves behind does not leak into `/tmp`. The rules below
+  (`mkTempDir`, own `mktemp` paths) still apply, because a script or a file
+  can run alone. The wrapper needs GNU `env` (coreutils 8.31 or later) for
+  `--default-signal`: BSD and macOS `env` lack it.
 - **unit** — write `test/unit/<module>.test.js` using `node:test` and
   `node:assert/strict`. Import the module under test from `../../src/...`.
   No fs writes outside `os.tmpdir()`. No spawning, with one exception: a

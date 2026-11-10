@@ -6,7 +6,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
 import { loadConfig } from '../../src/config.js';
 import { findFeature, normalizeFeatureId, extractSection } from '../../src/feature.js';
-import { defaultRunner, runSession, newRunState, OutcomeError, OUTCOME_RETRY_NOTE } from '../../src/feature-run.js';
+import {
+  defaultRunner,
+  runSession,
+  newRunState,
+  OutcomeError,
+  OUTCOME_RETRY_NOTE,
+  sessionError,
+} from '../../src/feature-run.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
 import { withExitFault } from '../../src/outcome.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
@@ -246,6 +253,31 @@ test('escalateNoOutcome keeps a backtick-fenced stderr tail inside its block', (
       cleanup();
     }
   }
+});
+
+test('escalateNoOutcome removes control characters from the session text (S-1405)', () => {
+  const failed = {
+    structured: null,
+    structuredError: 'claude exited 1',
+    output: 'first\n\u0000\u001b[31mred\u001b[0m\u0007 words\n',
+  };
+  const { step, cleanup, feature } = setup([failed, failed]);
+  try {
+    assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
+    const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    assert.match(escalation, /\nfirst\nred words\n/);
+    // LF stays: the section has many lines.
+    assert.doesNotMatch(escalation, /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("sessionError cleans the session text's last line, and keeps bl's own error as is (S-1405)", () => {
+  assert.equal(sessionError({ output: 'x\n\u0000\u001b[31mboom\u001b[0m\u0007' }), 'boom');
+  assert.equal(sessionError({ output: '\u0000\u0007\n' }), 'agent reported an error');
+  assert.equal(sessionError({ output: '' }), 'agent reported an error');
+  assert.equal(sessionError({ error: 'spawn claude ENOENT', output: 'x' }), 'spawn claude ENOENT');
 });
 
 test('a step without a schema reads no outcome, records none of its text, and is never retried', () => {
