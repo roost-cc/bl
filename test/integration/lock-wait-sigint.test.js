@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { lockOwnerVisible, startBlBehindLock } from '../helpers/run-bl.js';
@@ -18,6 +18,7 @@ import { GIT_ENV, addOrigin, initGitBacklog } from '../helpers/git-backlog.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { mainSyncLockPath } from '../../src/main-sync.js';
 import { waitingForLock } from '../../src/lock-wait.js';
+import { specLockPath } from '../../src/spec-file.js';
 
 /** A git backlog with an `origin`, so `bl refine` pulls first, and the story S-1. */
 function refineBacklog() {
@@ -33,12 +34,12 @@ function refineBacklog() {
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Start `bl refine S-1` behind `lockPath`, Ctrl+C its process group once,
- * right after it says it waits, and return how it ended and how many ms after
- * the Ctrl+C. After 2 s it kills the group.
+ * Start `bl <args>` (`bl refine S-1` by default) behind `lockPath`, Ctrl+C its
+ * process group once, right after it says it waits, and return how it ended
+ * and how many ms after the Ctrl+C. After 2 s it kills the group.
  */
-async function interruptRefine(dir, lockPath) {
-  const run = startBlBehindLock(['refine', 'S-1'], { cwd: dir, env: GIT_ENV, lockPath, detached: true });
+async function interrupt(dir, lockPath, args = ['refine', 'S-1']) {
+  const run = startBlBehindLock(args, { cwd: dir, env: GIT_ENV, lockPath, detached: true });
   await run.blocked;
   let ended = false;
   const closed = run.closed.then((r) => {
@@ -67,7 +68,7 @@ test('Ctrl+C while bl waits for the main sync lock exits 130 and removes only it
     const lockPath = mainSyncLockPath(dir);
     const ours = `${process.pid}\n${new Date().toISOString()}\nthe test\n`;
     writeFileSync(lockPath, ours);
-    const r = await interruptRefine(dir, lockPath);
+    const r = await interrupt(dir, lockPath);
     assert.equal(r.status, 130, `signal ${r.signal}: ${r.stderr}`);
     assert.ok(r.ms < 2000, `bl took ${r.ms} ms to exit`);
     const waiting = waitingForLock(lockPath, process.pid);
@@ -89,7 +90,7 @@ test('one Ctrl+C right after the main sync wait’s announcement ends bl, 20 tim
     const lockPath = mainSyncLockPath(dir);
     writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\nthe test\n`);
     for (let i = 1; i <= 20; i++) {
-      const r = await interruptRefine(dir, lockPath);
+      const r = await interrupt(dir, lockPath);
       assert.equal(r.status, 130, `run ${i}: signal ${r.signal}, ${r.ms} ms: ${r.stderr}`);
     }
   } finally {
@@ -104,10 +105,43 @@ test('Ctrl+C while bl waits for the backlog lock exits 130 and leaves the holder
     const lockPath = join(dir, LOCK_FILE);
     const ours = `${process.pid}\n${new Date().toISOString()}\n`;
     writeFileSync(lockPath, ours);
-    const r = await interruptRefine(dir, undefined);
+    const r = await interrupt(dir, undefined);
     assert.equal(r.status, 130, `signal ${r.signal}: ${r.stderr}`);
     assert.equal(readFileSync(lockPath, 'utf8'), ours, 'the test’s backlog lock is untouched');
   } finally {
+    cleanup();
+  }
+});
+
+test('Ctrl+C while bl waits for a spec lock exits 130 within 1 s and leaves the story and the holder’s lock', async (t) => {
+  // `withSpecLock` polled with `Atomics.wait`, which never reached the event
+  // loop: `bl` sat out a Ctrl+C until the lock freed or its wait ran out.
+  if (!lockOwnerVisible(t)) return;
+  const { dir, cleanup } = mkTempBacklog({
+    repos: ['../demo-repo'],
+    components: [
+      { id: 'C00', title: 'Core', dirSuffix: 'core', repo: 'demo-repo', home: true },
+      { id: 'C01', title: 'Widgets', dirSuffix: 'widgets', repo: 'demo-repo' },
+    ],
+    stories: [{ id: 'S-1', component: 'C00', title: 'One', dirSuffix: 'one' }],
+  });
+  const story = join(dir, 'stories', 'S1-one', 'index.md');
+  const lockPath = specLockPath(story);
+  try {
+    const before = readFileSync(story, 'utf8');
+    const ours = `${process.pid}\n${new Date().toISOString()}\nspec ${story}\n`;
+    writeFileSync(lockPath, ours);
+    // `bl move` writes the story through `updateSpecFile`, inside the backlog lock.
+    const r = await interrupt(dir, lockPath, ['move', 'S-1', 'C01', '--no-sync']);
+    assert.equal(r.status, 130, `signal ${r.signal}: ${r.stderr}`);
+    assert.ok(r.ms < 1000, `bl took ${r.ms} ms to exit`);
+    const waiting = waitingForLock(lockPath, process.pid);
+    assert.equal(r.stderr.split(waiting).length - 1, 1, `said once: ${r.stderr}`);
+    assert.equal(readFileSync(story, 'utf8'), before, 'the story is not written');
+    assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'bl removed the backlog lock it took');
+    assert.equal(readFileSync(lockPath, 'utf8'), ours, 'the test’s spec lock is untouched');
+  } finally {
+    rmSync(lockPath, { force: true });
     cleanup();
   }
 });

@@ -368,7 +368,7 @@ naming the file (a writer would otherwise prepend a second block), parses it wit
 new body, `undefined` (body unchanged) or `false` (write nothing). It writes
 `serializeFrontmatter(fm) + body` back with the file's line end through `atomicWriteFile`, so a
 failed write leaves the previous file whole and its staging file only in `.bl/tmp/`; bytes equal
-to the file's are not written. It returns whether it wrote. `backlogRoot` is passed, never
+to the file's are not written. It resolves whether it wrote. `backlogRoot` is passed, never
 worked out from the path. A write of a whole new file, or a snapshot restore, calls
 `atomicWriteFile` directly; epic, theme and component index files are written only under the
 backlog lock and need `atomicWriteFile` only.
@@ -376,10 +376,15 @@ backlog lock and need `atomicWriteFile` only.
 - **The lock.** `withSpecLock(indexPath, fn, { waitMs })` is a pid lock in the temp dir keyed
   by the spec's real path (`specLockPath`; the `bl-tokens-<hash>.lock` file the token writers
   took before F-67, so an older `bl` and a newer one exclude each other). It is re-entrant within
-  a process: a nested call for a lock this process holds runs `fn` directly. It waits up to
-  `waitMs` (10 s) for a live holder, reclaims a dead holder's lock, and otherwise throws
-  `SpecLockError` naming the spec and the holder. `fn` is synchronous; a returned promise is an
-  error.
+  a process: a nested call for a lock this process holds runs `fn` directly. It is async: it
+  waits through `awaitLock` (`lock-wait.js`, F-105 W1) up to `waitMs` (60 s, F-104 D2) for a
+  live holder, says so once on stderr (`Waiting for lock (<lock path>) held by pid <n>…`),
+  reclaims a dead holder's lock, and otherwise rejects with `SpecLockError` naming the spec and
+  the holder. The wait awaits a timer, so Ctrl+C ends `bl` at once during it. `fn` is
+  synchronous; a returned promise is an error (F-105 W4: the re-entrancy map is per process, so
+  an `await` inside `fn` would let another task of the process skip the lock). A write nested in
+  a hold calls `updateSpecFileHeld`, the same read-modify-write without the lock, which throws
+  unless this process holds the spec's lock.
 - **Failure.** Token bookkeeping is best-effort: the token writers catch and return false. Every
   other writer lets the error propagate, so a write that could not happen fails the command
   instead of being lost.
@@ -389,8 +394,7 @@ backlog lock and need `atomicWriteFile` only.
   spec locks at once. A caller that adds a spec lock says so in a comment at the call.
 - **Who is on it.** The token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
   `recordStoryTokens`) write through `updateSpecFile`, and `recordFeatureTokens` holds
-  `withSpecLock` across its transcript read and nests `updateFeature` in that hold (the lock is
-  re-entrant). `feature-cmd.js` `updateFeature` (approve, the run's status, the totals re-read),
+  `withSpecLock` across its transcript read and nests `updateSpecFileHeld` in that hold. `feature-cmd.js` `updateFeature` (approve, the run's status, the totals re-read),
   writes through it too, as do `bl merge F-n`'s fold (`markFeatureMerged`: each story, then the feature, one spec lock at a
   time inside the backlog lock) and `bl done`'s one write (status, commit, completed and the
   transcript totals collected inside the hold; a collection failure is non-fatal, a write
@@ -3612,7 +3616,9 @@ and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock nam
 exists without its holder's pid and two processes cannot both hold it. The main sync lock wait
 (`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
 the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
-Ctrl+C during either wait exits 130 and removes the locks the process holds. The main sync wait
+Ctrl+C during the backlog lock wait, a spec lock wait or the main sync wait exits 130 and removes
+the locks the process holds. The backlog and spec lock waits await a timer (`awaitLock`), so
+the SIGINT listener runs at once. The main sync wait
 is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
 that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C after it
 reaches the child within the first poll. A SIGINT that lands between two sleeps is lost (2 in
@@ -4619,6 +4625,8 @@ test/
     tempdir.js     # mkTempDir(prefix) — a temp dir removed when the test process exits;
                    # mkTempBacklog() — scaffolds a tempdir backlog the same way
     token-writer.js    # startTokenWriter() — a node child holding a spec lock (unit lock tests)
+    spec-writer.js     # updateSpecInChild() — another writer of a spec, in a node child
+                       # that a synchronous test seam waits for
     sample-backlog.js  # 2-component / 4-story chain used by graph tests
     tempdir.sh     # bash equivalent for cli/ + e2e/
     run-parallel.sh    # run_parallel: runs test commands at the same time, prints
@@ -4654,7 +4662,8 @@ Adding a test:
   `node:assert/strict`. Import the module under test from `../../src/...`.
   No fs writes outside `os.tmpdir()`. No spawning, with one exception: a
   test of a spec-lock overlap may start the second lock holder as a `node`
-  child — `startTokenWriter` (`test/helpers/token-writer.js`), which runs
+  child — `startTokenWriter` (`test/helpers/token-writer.js`) or
+  `updateSpecInChild` (`test/helpers/spec-writer.js`), which run
   `updateSpecFile` from `src/`, or a bare live pid to stand for a holder.
   `withSpecLock` is re-entrant within a process, so only another pid can
   hold the lock against the code under test, and the writers whose overlap
