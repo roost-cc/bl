@@ -61,7 +61,7 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
    one URL where two mounts would do, or one flag where a config already exists. Record the attempt
    as a paragraph that starts with `Challenged:`: what you checked and why the premise holds.
 
-   If the premise does not hold, write that, and stop after step 11, with `"premise_holds": false`
+   If the premise does not hold, write that, and stop after step 12, with `"premise_holds": false`
    in the outcome (see **Outcome** below). `bl refine` then puts the feature back to draft. A wrong
    premise costs a revert later, and this paragraph is the cheapest place to catch
    it. A feature that touches authentication, storage contracts or a cross-service boundary always
@@ -151,7 +151,17 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
     and pushes. It never commits what another session has staged.
     Never run `git add` or `git commit` in the backlog repo.
 
-11. Write the outcome as the last act of the session (see **Outcome** below).
+11. Walk the operator through the feature. Give one item at a time, and wait after each:
+
+    1. A short summary of the feature's intended outcome.
+    2. For each story, in order: a short summary of what it does and how it moves the feature
+       toward the outcome.
+
+    The operator may ask questions or ask for changes. Make each approved change in the backlog
+    and commit it as in step 10. Move to the next item only when the operator says so.
+
+12. Write the outcome as the last act of the session, after the walkthrough (see **Outcome**
+    below).
 
 ## Operator decisions and `## Escalation`
 
@@ -189,8 +199,8 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
 
 ## Outcome
 
-As the last act of the session, after your commit, use the {{writeTool}} tool to write this JSON
-object, and nothing else, to `{{outcomePath}}`:
+As the last act of the session, after your commit and the walkthrough, use the {{writeTool}} tool
+to write this JSON object, and nothing else, to `{{outcomePath}}`:
 
 ```json
 { "summary": "<one line: what you decided and planned>", "premise_holds": true, "refined": true }
