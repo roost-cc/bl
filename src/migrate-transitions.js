@@ -247,16 +247,18 @@ function recordPaths(root, paths) {
 }
 
 /**
- * The dates the writer sets (D2), for a unit that had none: `added` from the
- * log's first entry, and `completed` (a task's `done`) from its entry to a
- * terminal status. A date the unit has stays.
+ * The dates the writer sets (D2), from the new log: `added` from its first
+ * entry, and `completed` (a task's `done`) from its entry to a terminal
+ * status. `datedLog` takes them from the unit's dates, but moves an entry
+ * that would come before the one above it (a `completed:` before `added:`, a
+ * review session after `completed:`); the field then takes the log's day, so
+ * `bl validate` finds them equal.
  */
 function setDates(kind, fm, log) {
   const day = (e) => (typeof e?.at === 'string' ? e.at.slice(0, 10) : null);
-  if (!DATE_RE.test(str(fm.added)) && day(log[0])) fm.added = day(log[0]);
+  if (day(log[0])) fm.added = day(log[0]);
   const last = log.at(-1);
-  const key = COMPLETED_KEY[kind];
-  if (LEGACY_LOG.terminal.includes(last.to) && !DATE_RE.test(str(fm[key])) && day(last)) fm[key] = day(last);
+  if (LEGACY_LOG.terminal.includes(last.to) && day(last)) fm[COMPLETED_KEY[kind]] = day(last);
 }
 
 const PLURAL = { story: 'stories', feature: 'features', task: 'tasks' };

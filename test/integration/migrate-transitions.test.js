@@ -465,6 +465,72 @@ test('the migration sets added and completed from the log for a unit that has ne
   assert.deepEqual(errors(dir), []);
 });
 
+test('migration leaves added and completed equal to the log’s first and terminal entries, also when the clamp moved an entry', () => {
+  const { dir } = mkTempBacklog({
+    flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
+    repos: ['core'],
+    components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
+    stories: [
+      // completed: before added:, which the log cannot hold.
+      { id: 'S-1', title: 'One', component: 'C01', status: 'done', added: '2026-10-05', completed: '2026-10-01' },
+      // The dates agree: they stay.
+      { id: 'S-2', title: 'Two', component: 'C01', status: 'done', added: '2026-10-01', completed: '2026-10-05' },
+    ],
+    features: [
+      // The latest Review Log session is after completed:.
+      {
+        id: 'F-1',
+        title: 'Late review',
+        status: 'done',
+        added: '2026-10-01',
+        completed: '2026-10-03',
+        branch: 'f1',
+        review_round: '1',
+        review_status: 'addressed',
+        reviewLog: session('2026-10-09'),
+      },
+      // An in_progress feature whose session is before added:: no terminal entry.
+      {
+        id: 'F-2',
+        title: 'Early review',
+        status: 'running',
+        added: '2026-10-05',
+        branch: 'f2',
+        review_round: '1',
+        review_status: 'pending',
+        reviewLog: session('2026-10-01', 1),
+      },
+    ],
+  });
+  mkdirSync(join(dir, 'tasks'), { recursive: true });
+  // done: before added:, the task's terminal date.
+  writeFileSync(
+    join(dir, rel.t1),
+    '---\ntask_id: T-1\ntitle: Check\nunit: F-1\nowner: operator\nstatus: done\nadded: 2026-10-05\ndone: 2026-10-01\n---\n\n# Check\n',
+  );
+  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  git(dir, 'init', '-q', '-b', 'main');
+  commitAt(dir, '2026-11-01T10:00:00Z', 'base');
+  const r = script(dir);
+  assert.equal(r.status, 0, r.stderr);
+  // [unit file, the terminal date field, added, completed (null: none)]
+  for (const [p, key, added, completed] of [
+    [rel.s1, 'completed', '2026-10-05', '2026-10-05'],
+    [rel.s2, 'completed', '2026-10-01', '2026-10-05'],
+    [rel.f(1), 'completed', '2026-10-01', '2026-10-09'],
+    [rel.f(2), 'completed', '2026-10-05', null],
+    [rel.t1, 'done', '2026-10-05', '2026-10-05'],
+  ]) {
+    const after = fm(dir, p);
+    const log = after.transitions;
+    assert.equal(after.added, log[0].at.slice(0, 10), `${p}: added is the first entry's day`);
+    assert.equal(after.added, added, p);
+    assert.equal(after[key] ?? null, completed, p);
+    if (completed) assert.equal(after[key], log.at(-1).at.slice(0, 10), `${p}: ${key} is the terminal entry's day`);
+  }
+  assert.deepEqual(errors(dir), []);
+});
+
 test('migration writes the synthesized log for a unit whose transitions: is empty or blank, and never removes status: without a log', () => {
   // [story, status:, the transitions: line, the log it gets (null: kept as it is)]
   const cases = [
