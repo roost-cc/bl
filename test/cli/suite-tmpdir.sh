@@ -25,6 +25,26 @@ if [[ "$(dirname "$suite_tmp")" == "$CASE" && "$(basename "$suite_tmp")" == bl-t
 if [[ "$(dirname "$claude_dir")" == "$suite_tmp" ]]; then pass; else fail "normal exit: CLAUDE_CONFIG_DIR is not in TMPDIR: '$claude_dir'"; fi
 assert_eq "normal exit: temp directory removed" "" "$(ls -A "$CASE")"
 
+# stdin and signal status pass through: the child reads the wrapper's stdin,
+# and a child that a signal kills gives the wrapper status 128 + its number.
+CASE="$DIR/stdin"
+mkdir -p "$CASE"
+set +e
+out=$(echo hello | env TMPDIR="$CASE" bash "$WRAPPER" bash -c 'cat')
+rc=$?
+set -e
+assert_eq "stdin and signal status pass through: stdin reaches the child" "hello" "$out"
+assert_exit "stdin and signal status pass through: exit status with stdin" "0" "$rc"
+assert_eq "stdin and signal status pass through: temp directory removed after stdin" "" "$(ls -A "$CASE")"
+CASE="$DIR/killed"
+mkdir -p "$CASE"
+set +e
+env TMPDIR="$CASE" bash "$WRAPPER" bash -c 'kill -9 $$' 2>/dev/null
+rc=$?
+set -e
+assert_exit "stdin and signal status pass through: a child killed by SIGKILL gives 137" "137" "$rc"
+assert_eq "stdin and signal status pass through: temp directory removed after SIGKILL" "" "$(ls -A "$CASE")"
+
 # A signal to the wrapper's process group, as run-parallel.sh sends it. `set -m`
 # starts the wrapper in a process group of its own; the background wrapper would
 # ignore SIGINT, and `env --default-signal` gives it back.
