@@ -3616,15 +3616,13 @@ and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock nam
 exists without its holder's pid and two processes cannot both hold it. The main sync lock wait
 (`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
 the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
-Ctrl+C during the backlog lock wait, a spec lock wait or the main sync wait exits 130 and removes
-the locks the process holds. The backlog and spec lock waits await a timer (`awaitLock`), so
-the SIGINT listener runs at once. The main sync wait
-is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
-that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C after it
-reaches the child within the first poll. A SIGINT that lands between two sleeps is lost (2 in
-150 at random times in a probe), and a second Ctrl+C ends `bl`. The prepare-lock wait (`session.js`
-`prepareWorktreeOnce`) sleeps in `sleepSync` the same way. The run loop's usage-limit wait
-(`waitOrEscalate`) awaits a timer, so Ctrl+C ends it at once (F-105 A2).
+The prepare-lock wait (`session.js` `prepareWorktreeOnce`) says so the same way and has no
+deadline, because the lock is held while bootstrap and `workon` plugins run. Every lock wait is
+awaited: the backlog, spec, main sync and prepare lock waits all go through `awaitLock`, so one
+Ctrl+C during any of them runs the SIGINT listener at once, exits 130 and removes the locks the
+process holds. No lock wait sleeps synchronously. The run loop's usage-limit wait
+(`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that
+calls a lock wait is async, and every caller awaits it (`test/unit/awaited-calls.test.js`).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each
