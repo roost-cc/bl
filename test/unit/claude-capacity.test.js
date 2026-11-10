@@ -83,6 +83,11 @@ test('an exhausted model-scoped window takes out only the model it names', () =>
   assert.equal(claudeCapacity(byId, 'opus').state, 'unavailable');
   assert.equal(claudeCapacity(byId, 'opus').windows[2].name, 'claude 7d opus');
   assert.equal(claudeCapacity(byId, 'sonnet').state, 'available');
+  // A display_name that is not a string does not name the window.
+  for (const display_name of [{}, [], 5, true]) {
+    byId.limits[2].scope.model.display_name = display_name;
+    assert.equal(claudeCapacity(byId, 'opus').windows[2].name, 'claude 7d opus', JSON.stringify(display_name));
+  }
   // A limit for a surface, or a scope of another shape, is left out.
   for (const scope of [
     { model: { id: null, display_name: 'Fable' }, surface: 'web' },

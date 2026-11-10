@@ -355,7 +355,11 @@ function scopedModelMatches(scopeModel, model) {
 function claudeWindowName({ kind, scope }) {
   if (kind === 'session') return 'claude 5h';
   if (kind === 'weekly_all') return 'claude 7d';
-  if (kind === 'weekly_scoped') return `claude 7d ${scope?.model?.display_name ?? scope?.model?.id ?? ''}`.trim();
+  if (kind === 'weekly_scoped') {
+    const m = scope?.model;
+    const label = [m?.display_name, m?.id].find((v) => typeof v === 'string') ?? '';
+    return `claude 7d ${label}`.trim();
+  }
   return typeof kind === 'string' ? `claude ${kind}` : 'claude';
 }
 
