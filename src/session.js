@@ -47,6 +47,7 @@ import { renderToolGuide, renderFragment } from './tool-guide.js';
 import { renderSessionStack, sessionStackOf } from './session-stack.js';
 import { resolveLocale, fragmentCandidates } from './locale.js';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { sleepSync } from './sleep-sync.js';
 import { syncMain, reportMainSync } from './main-sync.js';
 import { outcomePath, readOutcomeFile } from './outcome.js';
 
@@ -623,7 +624,7 @@ export function prepareWorktreeOnce(repoPath, branchName, fn) {
     if (taken.content) break;
     if (!waiting) info(`Waiting for pid ${taken.holder} to finish preparing ${branchName} in ${repoPath}...`);
     waiting = true;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    sleepSync(100);
   }
   try {
     return fn();

@@ -108,6 +108,7 @@ import {
   writeChange,
 } from './change-doc.js';
 import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
+import { sleepSync } from './sleep-sync.js';
 import { RUN_DIR, runLockPath, ensureRunDir } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
@@ -694,9 +695,10 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     /**
      * Block for `ms`. The loop is synchronous, so the usage-limit wait cannot
      * yield to a timer; it calls this in slices of at most a second.
+     * `sleepSync` lets Ctrl+C end the wait (S-1394).
      */
     sleep(ms) {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+      sleepSync(ms);
     },
     log: info,
   };
@@ -1798,13 +1800,10 @@ function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUntil }) {
     note,
   });
   runner.log(`  (${note})`);
-  // Slices of at most a second, re-reading the clock each time: Ctrl-C lands
-  // within a second, and a machine suspended through the deadline sees that
-  // it has passed instead of sleeping the whole stretch again.
-  const sleep =
-    typeof runner.sleep === 'function'
-      ? (ms) => runner.sleep(ms)
-      : (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  // Slices of at most a second, re-reading the clock each time: a machine
+  // suspended through the deadline sees that it has passed instead of
+  // sleeping the whole stretch again. `sleepSync` lets Ctrl-C end the wait.
+  const sleep = typeof runner.sleep === 'function' ? (ms) => runner.sleep(ms) : sleepSync;
   for (;;) {
     const t = runnerNow(runner).getTime();
     if (t >= until) break;
