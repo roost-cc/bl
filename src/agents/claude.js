@@ -357,7 +357,7 @@ function claudeWindowName({ kind, scope }) {
   if (kind === 'weekly_all') return 'claude 7d';
   if (kind === 'weekly_scoped') {
     const m = scope?.model;
-    const label = [m?.display_name, m?.id].find((v) => typeof v === 'string') ?? '';
+    const label = [m?.display_name, m?.id].find((v) => typeof v === 'string' && v !== '') ?? '';
     return `claude 7d ${label}`.trim();
   }
   return typeof kind === 'string' ? `claude ${kind}` : 'claude';
