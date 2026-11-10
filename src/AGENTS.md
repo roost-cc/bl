@@ -1103,8 +1103,8 @@ codes and control characters (except tab) removed and are cut to 500
 characters, as a stderr line is (`cleanStderrLine`, S-1404, S-1405). Every agent
 text field in `schemas/` refuses control characters: a one-line field keeps only
 tab, and a multi-line `reason` keeps tab, LF and CR. So a valid outcome carries
-none into a commit message (S-1405). A headless result replaces `no output`, and only that fault, with
-`<cli> exited <status>[: <last stderr line>]` when the agent CLI exited non-zero
+none into a commit message (S-1405). A headless result replaces `no output`,
+and only that fault, with `<cli> exited <status>[: <last stderr line>]` when the agent CLI exited non-zero
 or wrote stderr (`withExitFault`, S-1398). Nothing in bl reads an outcome out of
 prose. Two carriers deliver the value:
 
