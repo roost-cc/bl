@@ -114,6 +114,23 @@ test('acquireLock is re-entrant: only the outermost release removes the lock', a
   }
 });
 
+test('releaseLock leaves a lock that another process took meanwhile', async () => {
+  const { dir, lockPath, cleanup } = mkBacklogRoot();
+  try {
+    await acquireLock(dir, { now: () => new Date('2026-01-06T00:00:00.000Z') });
+    // Another process reclaimed the lock (as if this one had looked dead).
+    const other = `${process.ppid}\n2026-01-07T00:00:00.000Z\n`;
+    writeFileSync(lockPath, other);
+
+    releaseLock(dir);
+
+    assert.equal(readFileSync(lockPath, 'utf8'), other);
+  } finally {
+    releaseLock(dir);
+    cleanup();
+  }
+});
+
 test('withLock releases the lock when the callback throws', async () => {
   const { dir, lockPath, cleanup } = mkBacklogRoot();
   try {
