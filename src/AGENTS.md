@@ -4177,9 +4177,10 @@ rerun `bl merge <id>`" and pushes nothing. A check that fails twice pushes
 nothing and prints the last lines of its output. A check or git command ended
 by SIGINT or SIGTERM (`INTERRUPT_SIGNALS` in `src/signal-exit.js`) stops the
 merge at once: no `## Gate` line, no second run, no push. After the worktree
-is removed, that signal is raised again (`raiseSignal`), so `bl` exits 130 or 143. A check ended by any other signal (SIGABRT, SIGKILL) is a failed run, and
-a git command ended by one is a failed command. Every `## Gate` line (this
-one, the test gate's `recordGateLine` and a scripted story's) comes from
+is removed, that signal is raised again (`raiseSignal`), so `bl` exits
+130 or 143. A check ended by any other signal (SIGABRT, SIGKILL) is a failed
+run, and a git command ended by one is a failed command. Every `## Gate` line
+(this one, the test gate's `recordGateLine` and a scripted story's) comes from
 `gateLine` in `src/change-doc.js`.
 
 After the merge the branch's open PR, if any, is closed through
