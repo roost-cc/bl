@@ -8,7 +8,19 @@ import { mkdirSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { loadConfig } from '../../src/config.js';
-import { readSection, runsReader, snapshotOf, problemLines, TOP_SCHEMA, SECTIONS } from '../../src/top-snapshot.js';
+import {
+  readActivity,
+  readSection,
+  readTokens,
+  runsReader,
+  snapshotOf,
+  problemLines,
+  ACTIVITY_SHOWN,
+  NOTE_CHARS,
+  TOKEN_MINUTES,
+  TOP_SCHEMA,
+  SECTIONS,
+} from '../../src/top-snapshot.js';
 
 const NOW = Date.parse('2026-11-07T12:00:00Z');
 const HOUR = 60 * 60 * 1000;
@@ -177,4 +189,116 @@ test('snapshotOf holds every section with read_at; problemLines names the failed
   assert.deepEqual(Object.keys(snap), ['schema', 'at', ...SECTIONS]);
   for (const name of SECTIONS) assert.ok('read_at' in snap[name], name);
   assert.deepEqual(problemLines(snap), ['bl top: history not read: git log failed', 'warning: heartbeat not read']);
+});
+
+const MIN = 60 * 1000;
+const at = (ms) => new Date(ms).toISOString();
+const usage = (output, rest = 0) => ({ input: rest, output, cache_creation: rest, cache_read: rest });
+
+test("tokens: each entry's output spread over its minutes, the last 120 minutes, and today's totals by local date (D3b)", () => {
+  // New York: NOW (12:00 UTC) is 07:00 local on Nov 7, and 04:30 UTC is 23:30 local on Nov 6.
+  const tz = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  try {
+    const states = [
+      {
+        feature: 'F-1',
+        history: [
+          // Ten minutes, 11:30 to 11:40: ten bins of 100.
+          { step: 'implement', startedAt: at(NOW - 30 * MIN), at: at(NOW - 20 * MIN), usage: usage(1000, 1) },
+          // No startedAt: all of it in the minute of `at`, the last bin.
+          { step: 'review:verify', at: at(NOW), usage: usage(50, 2) },
+          // No usage: counts 0.
+          { step: 'test', ok: true, at: at(NOW - 5 * MIN) },
+        ],
+      },
+      {
+        feature: 'S-2',
+        history: [
+          // 09:00 to 11:00, 10 a minute: only 10:01 to 11:00 is in the window.
+          { step: 'implement', startedAt: at(NOW - 3 * HOUR), at: at(NOW - HOUR), usage: usage(1200, 4) },
+          // Yesterday by the local date, today by the UTC date: not in today's totals.
+          { step: 'implement', startedAt: at(NOW - 8 * HOUR), at: at(NOW - 7.5 * HOUR), usage: usage(7000, 8) },
+        ],
+      },
+    ];
+    const { from, minutes, today } = readTokens(states, NOW);
+    assert.equal(minutes.length, TOKEN_MINUTES);
+    // The last bin is the minute of NOW, 12:00; the first is 10:01.
+    assert.equal(from, '2026-11-07T10:01:00.000Z');
+    const bin = (ms) => (ms - Date.parse(from)) / MIN;
+    const want = new Array(TOKEN_MINUTES).fill(0);
+    for (let i = bin(NOW - 30 * MIN); i < bin(NOW - 20 * MIN); i++) want[i] = 100;
+    want[bin(NOW)] = 50;
+    for (let i = 0; i < bin(NOW - HOUR); i++) want[i] = 10;
+    assert.deepEqual(minutes, want);
+    assert.deepEqual(today, { input: 7, output: 2250, cache_creation: 7, cache_read: 7 });
+  } finally {
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  }
+});
+
+test('activity: the newest 50 history entries of all run states, newest first, with D3c fields and notes cut to 80 (D3c)', () => {
+  const entries = (unit, offset) =>
+    Array.from({ length: 30 }, (_, i) => ({
+      step: 'implement',
+      story: `S-${i}`,
+      startedAt: at(NOW - (2 * i + offset + 1) * MIN),
+      at: at(NOW - (2 * i + offset) * MIN),
+      agent: 'claude',
+      model: 'opus',
+      effort: 'high',
+      ok: true,
+      note: `${unit} ${i}`,
+    }));
+  const f1 = entries('F-1', 0);
+  f1[0].note = 'x'.repeat(200);
+  const s2 = entries('S-2', 1);
+  s2[0] = { step: 'review:round', round: 1, ok: true, at: s2[0].at, note: 'round 1 reviewed' };
+  const { events } = readActivity([
+    { feature: 'F-1', history: f1 },
+    { feature: 'S-2', history: s2 },
+  ]);
+  assert.equal(events.length, ACTIVITY_SHOWN);
+  assert.deepEqual(
+    events.slice(0, 3).map((e) => [e.unit, e.at]),
+    [
+      ['F-1', at(NOW)],
+      ['S-2', at(NOW - MIN)],
+      ['F-1', at(NOW - 2 * MIN)],
+    ],
+  );
+  assert.ok(
+    events.every((e, i) => i === 0 || e.at < events[i - 1].at),
+    'newest first',
+  );
+  assert.equal(events.at(-1).at, at(NOW - 49 * MIN), 'the oldest 10 are left out');
+  assert.deepEqual(events[0], {
+    at: at(NOW),
+    unit: 'F-1',
+    step: 'implement',
+    story: 'S-0',
+    round: null,
+    ok: true,
+    durationMs: MIN,
+    agent: 'claude',
+    model: 'opus',
+    effort: 'high',
+    note: `${'x'.repeat(NOTE_CHARS - 1)}…`,
+  });
+  assert.equal(events[0].note.length, NOTE_CHARS);
+  assert.deepEqual(events[1], {
+    at: at(NOW - MIN),
+    unit: 'S-2',
+    step: 'review:round',
+    story: null,
+    round: 1,
+    ok: true,
+    durationMs: null,
+    agent: null,
+    model: null,
+    effort: null,
+    note: 'round 1 reviewed',
+  });
 });

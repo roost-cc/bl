@@ -1,4 +1,4 @@
-// F-87 D3: the stream reads `runs` every tick, `attention` and `next` when the
+// F-87 D3: the stream reads `runs`, `activity` and `tokens` every tick, `attention` and `next` when the
 // backlog changes and at least every 30 s, `capacity` every 5 min and after a
 // `capacity` line, and `history` every 5 min. Counted over 10 simulated
 // minutes at the default 2000 ms interval.
@@ -47,10 +47,18 @@ function simulate({ before = () => {}, throwing = null } = {}) {
   return { counts, snapshots };
 }
 
-test('with no change, runs is read every tick, attention and next every 30 s, capacity and history every 5 min', () => {
+test('with no change, runs, activity and tokens are read every tick, attention and next every 30 s, capacity and history every 5 min', () => {
   const { counts, snapshots } = simulate();
   assert.equal(TICKS, 300);
-  assert.deepEqual(counts, { runs: 300, attention: 20, next: 20, capacity: 2, history: 2 });
+  assert.deepEqual(counts, {
+    runs: 300,
+    attention: 20,
+    next: 20,
+    capacity: 2,
+    history: 2,
+    activity: 300,
+    tokens: 300,
+  });
   // Every snapshot holds every section, and a section not read this tick keeps its read_at.
   const last = snapshots.at(-1);
   assert.equal(last.runs.read_at, new Date(598000).toISOString());

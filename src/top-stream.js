@@ -6,6 +6,8 @@
  * due:
  *
  *   runs       every tick
+ *   activity   every tick
+ *   tokens     every tick
  *   attention  when the backlog changes (D3a: git HEAD moves, or a unit file,
  *   next       change document or priority.md changes: `backlogStamp`), and
  *              at least every ATTENTION_MAX_AGE_MS
@@ -67,6 +69,8 @@ export function createStream({ readers, now = Date.now, stamp }) {
     tick() {
       const t = now();
       read('runs', t);
+      read('activity', t);
+      read('tokens', t);
       const s = stamp();
       if (s !== lastStamp || due('attention', t, ATTENTION_MAX_AGE_MS)) {
         read('attention', t);

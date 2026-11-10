@@ -52,7 +52,7 @@ set +e
 OUT=$("$BL" top --json 2>"$ERR"); CODE=$?
 set -e
 assert_exit "bl top --json" 0 "$CODE"
-assert_eq "--json shape" "bl-top-json/v1 runs,attention,next,capacity,history all-read" "$(printf '%s' "$OUT" | node -e '
+assert_eq "--json shape" "bl-top-json/v1 runs,attention,next,capacity,history,activity,tokens all-read" "$(printf '%s' "$OUT" | node -e '
   const s = JSON.parse(require("fs").readFileSync(0, "utf8"));
   const names = Object.keys(s).filter((k) => k !== "schema" && k !== "at");
   const iso = names.every((k) => /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(s[k].read_at ?? "") && !s[k].error);
