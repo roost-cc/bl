@@ -4164,13 +4164,20 @@ of the merge in the main checkout:
    `interpolateCommand`: an unresolved placeholder stops the repo. A failed run
    runs once more (E70 R10). Each run adds a `## Gate` line to the change
    document: `- <date> · <repo> · <command> · <verdict> (attempt <n>) · commit <40 hex>`.
-3. On a pass it runs `git push origin <commit>:refs/heads/main` from the
-   worktree, and then `git merge --ff-only <commit>` in the main checkout.
-4. It removes the worktree, whatever happened.
+3. On a pass it checks that the main checkout can fast-forward to the commit
+   (`fastForwardBlocker`: local `main` is an ancestor of it, and
+   `git read-tree -n -m -u HEAD <commit>` finds no changed or untracked file
+   in the way). If it cannot, it prints the cause and pushes nothing.
+4. It runs `git push origin <commit>:refs/heads/main` from the worktree, and
+   then `git merge --ff-only <commit>` in the main checkout.
+5. It removes the worktree, whatever happened.
 
 A conflict, or a push git refuses because `main` moved, prints "main moved;
 rerun `bl merge <id>`" and pushes nothing. A check that fails twice pushes
-nothing and prints the last lines of its output. Every `## Gate` line (this
+nothing and prints the last lines of its output. A check or git command ended
+by a signal stops the merge at once: no `## Gate` line, no second run, no
+push. After the worktree is removed, a SIGINT or SIGTERM is raised again
+(`raiseSignal` in `src/signal-exit.js`), so `bl` exits 130 or 143. Every `## Gate` line (this
 one, the test gate's `recordGateLine` and a scripted story's) comes from
 `gateLine` in `src/change-doc.js`.
 

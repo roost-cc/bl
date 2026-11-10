@@ -50,6 +50,7 @@ import {
 import { getAllowedTools, loadPrompt } from './session.js';
 import { gateLine, recordGateLines, recordMerge } from './change-doc.js';
 import { shellMerged } from './feature-run.js';
+import { raiseSignal } from './signal-exit.js';
 import { GATE_TAIL_LINES, codeSpan, interpolateCommand, tail } from './scripted.js';
 import { storyUnit } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
@@ -772,17 +773,31 @@ const CHECK_RUNS = 2;
  *    `{{repoPath}}` (the main checkout). A failed run runs once more. Each run
  *    adds a `## Gate` line naming the commit to the unit's change document
  *    in `changeDir`.
- * 3. On a pass, push exactly that commit to main. A push that git refuses
- *    because main moved stops with the same rerun message.
- * 4. Fast-forward the main checkout to the commit.
+ * 3. On a pass, check that the main checkout can fast-forward to the commit
+ *    (`fastForwardBlocker`); if it cannot, stop and push nothing.
+ * 4. Push exactly that commit to main. A push that git refuses because main
+ *    moved stops with the same rerun message.
+ * 5. Fast-forward the main checkout to the commit.
+ *
+ * A check or git command ended by a signal stops it at once: no `## Gate`
+ * line, no second run, no push. After the cleanup, a SIGINT or SIGTERM is
+ * raised again (`raiseSignal`), so `bl` ends as the signal says.
  *
  * The throwaway worktree is removed whatever happens. Prints why it stopped;
  * returns whether the commit is pushed and the main checkout is on it.
  */
 export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, config, changeDir }) {
-  const git = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  // The first signal that ended a child; checked before every step that acts on a result.
+  let signal = null;
+  const git = (args, cwd) => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    signal ??= r.signal;
+    return r;
+  };
   const outputOf = (r) => `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
   const mainMoved = () => console.error(`${repoName}: main moved; rerun \`bl merge ${parsed.id}\`. Nothing is pushed.`);
+  const interrupted = (what) =>
+    console.error(`${repoName}: ${what} was ended by ${signal}; rerun \`bl merge ${parsed.id}\`.`);
   const tmp = mkdtempSync(join(tmpdir(), 'bl-merge-'));
   const wt = join(tmp, basename(repoPath));
   try {
@@ -797,7 +812,8 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
     );
     if (merge.status !== 0) {
       console.error(outputOf(merge));
-      mainMoved();
+      if (signal) interrupted('git merge');
+      else mainMoved();
       return false;
     }
     const commit = git(['rev-parse', 'HEAD'], wt).stdout.trim();
@@ -831,6 +847,11 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
         info(`  check plugin ${name}: ${cmd}`);
         const r = shellMerged(cmd, repoPath);
         output += r.output;
+        if (r.signal) {
+          signal = r.signal;
+          interrupted(`the check of ${commit}`);
+          return false;
+        }
         if (r.status !== 0) {
           passed = false;
           break;
@@ -859,9 +880,26 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
       return false;
     }
 
+    // A push the main checkout cannot follow would leave its main behind origin.
+    const blocker = fastForwardBlocker(git, repoPath, commit);
+    if (signal) {
+      interrupted('the fast-forward dry run');
+      return false;
+    }
+    if (blocker) {
+      console.error(
+        `${repoName}: the main checkout (${repoPath}) cannot fast-forward to ${commit}; nothing is pushed.\n${blocker}\nThen rerun \`bl merge ${parsed.id}\`.`,
+      );
+      return false;
+    }
+
     info(`Pushing ${commit} to main in ${repoName}...`);
     const push = git(['push', 'origin', `${commit}:refs/heads/main`], wt);
     if (push.stderr) process.stderr.write(push.stderr);
+    if (signal) {
+      interrupted(`the push of ${commit}`);
+      return false;
+    }
     if (push.status !== 0) {
       // Main moved when origin/main is no longer an ancestor of the commit;
       // anything else is a refusal of its own (a hook, the remote).
@@ -872,18 +910,47 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
     }
 
     const ff = git(['merge', '--ff-only', commit], repoPath);
+    if (signal) {
+      interrupted('the fast-forward of the main checkout');
+      return false;
+    }
     if (ff.status !== 0) {
+      // A rerun fast-forwards the main checkout to origin/main (`syncMain`),
+      // which is now the commit, and finds the branch merged.
       console.error(
-        `${repoName}: ${commit} is pushed to main, but the main checkout could not fast-forward to it:\n${outputOf(ff)}\nRun:\n  git -C ${shellQuote(repoPath)} merge --ff-only ${commit}\nthen rerun \`bl merge ${parsed.id}\`.`,
+        `${repoName}: ${commit} is pushed to main, but the main checkout could not fast-forward to it:\n${outputOf(ff)}\nRemove the cause above, then rerun \`bl merge ${parsed.id}\`.`,
       );
       return false;
     }
     return true;
   } finally {
+    const raise = signal;
     git(['worktree', 'remove', '--force', wt], repoPath);
     rmSync(tmp, { recursive: true, force: true });
     git(['worktree', 'prune'], repoPath);
+    raiseSignal(raise);
   }
+}
+
+/**
+ * Why the main checkout at `repoPath`, on main, cannot fast-forward to
+ * `commit`, or null when it can. Either main has a commit that `commit` lacks,
+ * or a changed or untracked file is in the way. `git read-tree -n -m -u` is a
+ * dry run of the fast-forward's two-tree merge; the index is refreshed first,
+ * so a file whose timestamp alone changed is not in the way.
+ * @param {(args: string[], cwd: string) => import('child_process').SpawnSyncReturns<string>} git
+ * @param {string} repoPath
+ * @param {string} commit
+ * @returns {string | null}
+ */
+export function fastForwardBlocker(git, repoPath, commit) {
+  if (git(['merge-base', '--is-ancestor', 'HEAD', commit], repoPath).status !== 0) {
+    return 'Its main has commits that origin/main does not have. Push them through a unit, or remove them from main.';
+  }
+  git(['update-index', '-q', '--refresh'], repoPath);
+  const dry = git(['read-tree', '-n', '-m', '-u', 'HEAD', commit], repoPath);
+  if (dry.status === 0) return null;
+  return `${`${dry.stdout ?? ''}${dry.stderr ?? ''}`.trim()}\nCommit, move or remove those files.`;
 }
 
 /**

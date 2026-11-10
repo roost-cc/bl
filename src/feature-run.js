@@ -1336,7 +1336,9 @@ function spawnShell(cmd, scope, { stdout, stderr, ...options }) {
  * Run `cmd` with stdout and stderr on one file descriptor, so the output
  * keeps the order the command printed it: a pipe per stream would put every
  * stderr line after all of stdout, and a runner's error would land below its
- * teardown noise in the gate log. Returns the runner's `{ status, output }`.
+ * teardown noise in the gate log. Returns the runner's `{ status, output }`,
+ * and `signal`: the signal that ended the command, or null. A command ended
+ * by a signal has `status` 1.
  */
 export function shellMerged(cmd, cwd, { scope = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'bl-gate-'));
@@ -1350,6 +1352,7 @@ export function shellMerged(cmd, cwd, { scope = null } = {}) {
     const output = readFileSync(file, 'utf8');
     return {
       status: r.error ? 127 : (r.status ?? 1),
+      signal: r.signal ?? null,
       output: r.error ? `${output}${output && !output.endsWith('\n') ? '\n' : ''}${r.error.message}\n` : output,
     };
   } finally {

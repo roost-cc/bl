@@ -57,8 +57,11 @@ console.error('verdict ' + first + ' for ' + commit);
 process.exit(first === 'pass' ? 0 : 1);
 `;
 
-/** The backlog, the `code` repo with its origin, the check plugin and the hook. */
-function fixture({ verdicts }) {
+/** The default check plugin command: CHECK_SCRIPT. */
+const CHECK_COMMAND = `node ${join('{{backlogDir}}', 'check.mjs')} {{backlogDir}} {{commit}} {{repoPath}}`;
+
+/** The backlog, the `code` repo with its origin, the check plugin `check` and the hook. */
+function fixture({ verdicts, check = CHECK_COMMAND }) {
   const review = { review_status: 'addressed', reviewLog: SESSION };
   const { dir, cleanup } = mkTempBacklog({
     repos: { code: { path: './code', deployable: true, 'plugins-check': ['ci-check'] } },
@@ -96,7 +99,7 @@ function fixture({ verdicts }) {
     ],
     config: {
       plugins: {
-        'ci-check': { check: `node ${join('{{backlogDir}}', 'check.mjs')} {{backlogDir}} {{commit}} {{repoPath}}` },
+        'ci-check': { check },
       },
     },
   });
@@ -272,6 +275,102 @@ test('main moving during the check: the push is refused, nothing is pushed, and 
     assert.equal(calls(fx).length, 1, 'the check ran and passed; the push was refused');
     assert.equal(g(fx.origin, 'rev-parse', 'main'), moved, 'only the other push landed');
     assert.equal(g(fx.code, 'rev-parse', 'main'), before, 'the main checkout is unchanged');
+    assertNoThrowaway(fx);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/**
+ * Every way the main checkout can be unable to fast-forward to the checked
+ * commit. `block` sets it up in the main checkout and returns the cause the
+ * error must name; `pushes` is false when bl merge must push nothing.
+ */
+const FAST_FORWARD_CASES = [
+  {
+    name: 'bl merge pushes nothing when the main checkout has a local commit that origin/main lacks',
+    block: (fx) => {
+      writeFileSync(join(fx.code, 'local.txt'), 'local\n');
+      g(fx.code, 'add', 'local.txt');
+      g(fx.code, 'commit', '-q', '-m', 'local only');
+      return /Its main has commits that origin\/main does not have\./;
+    },
+  },
+  {
+    name: 'bl merge pushes nothing when an untracked file in the main checkout would be overwritten by the merge',
+    block: (fx) => {
+      writeFileSync(join(fx.code, 's1-loose.txt'), 'loose\n');
+      return /Untracked working tree file 's1-loose\.txt' would be overwritten/;
+    },
+  },
+  {
+    name: 'bl merge pushes nothing when a tracked change in the main checkout is in the way of the merge',
+    block: (fx) => {
+      g(fx.code, 'checkout', '-q', 's1-loose');
+      writeFileSync(join(fx.code, 'base.txt'), 'base, changed on the branch\n');
+      g(fx.code, 'commit', '-q', '-am', 'change base on the branch');
+      g(fx.code, 'checkout', '-q', 'main');
+      writeFileSync(join(fx.code, 'base.txt'), 'base, changed locally\n');
+      return /Entry 'base\.txt' not uptodate/;
+    },
+  },
+];
+
+for (const c of FAST_FORWARD_CASES) {
+  test(c.name, () => {
+    const fx = fixture({ verdicts: ['pass'] });
+    const u = UNITS[0];
+    try {
+      const originBefore = g(fx.origin, 'rev-parse', 'main');
+      const cause = c.block(fx);
+      const localBefore = g(fx.code, 'rev-parse', 'main');
+      const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
+      assert.equal(r.status, 1, r.stdout);
+      assert.match(
+        r.stderr,
+        /^code: the main checkout \(.*\) cannot fast-forward to [0-9a-f]{40}; nothing is pushed\.$/m,
+      );
+      assert.match(r.stderr, cause);
+      assert.equal(g(fx.origin, 'rev-parse', 'main'), originBefore, "origin's main is unchanged");
+      assert.equal(g(fx.code, 'rev-parse', 'main'), localBefore, 'the main checkout is unchanged');
+      assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
+      assertNoThrowaway(fx);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+test('an untracked file the merge does not touch does not stop the push', () => {
+  const fx = fixture({ verdicts: ['pass'] });
+  try {
+    writeFileSync(join(fx.code, 'unrelated.txt'), 'x\n');
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(g(fx.code, 'rev-parse', 'main'), g(fx.origin, 'rev-parse', 'main'));
+    assertNoThrowaway(fx);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a check killed by a signal writes no ## Gate line, is not retried and pushes nothing', () => {
+  // The first run fails and is then killed: a run that read as a failure would be retried.
+  const fx = fixture({ verdicts: ['fail', 'pass'], check: `${CHECK_COMMAND}; kill -INT $$` });
+  const u = UNITS[0];
+  try {
+    const before = g(fx.origin, 'rev-parse', 'main');
+    const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 130, `${r.stdout}\n${r.stderr}`);
+    const runs = calls(fx);
+    assert.equal(runs.length, 1, 'one plugin call');
+    assert.match(
+      r.stderr,
+      new RegExp(`^code: the check of ${runs[0][0]} was ended by SIGINT; rerun \`bl merge S-1\`\\.$`, 'm'),
+    );
+    assert.equal(gateOf(fx, u), '', 'no ## Gate line');
+    assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
+    assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
     assertNoThrowaway(fx);
   } finally {
     fx.cleanup();

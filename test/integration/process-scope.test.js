@@ -88,7 +88,7 @@ test("the test gate's merged shell runs its command in the scope, output and sta
   const unit = scopeUnitName(UNIT, 5);
   try {
     const r = shellMerged('setsid sleep 300 & echo out; echo err >&2; exit 4', mkTempDir('bl-scope-'), { scope: unit });
-    assert.deepEqual(r, { status: 4, output: 'out\nerr\n' });
+    assert.deepEqual(r, { status: 4, signal: null, output: 'out\nerr\n' });
     let sleep;
     assert.ok(
       eventually(() => (sleep = scopeProcesses(unit).find((p) => p.command === 'sleep 300'))),
