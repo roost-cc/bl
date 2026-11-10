@@ -28,7 +28,8 @@ import { spawnSync } from 'child_process';
  *
  * `say` is a line for stderr, such as a wait's announcement. The child writes
  * it and then sleeps, so a Ctrl+C sent once the line shows reaches the child,
- * not `bl` alone before the child starts.
+ * not `bl` alone before the child starts. The child writes to the inherited
+ * fd 2, so a caller that replaces `process.stderr.write` does not see `say`.
  *
  * @param {number} ms
  * @param {string} [say]
