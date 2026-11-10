@@ -155,7 +155,8 @@ export function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * by the discussion sessions (F-97 A1): `agent`, `refine`, `re-refine`,
  * `feature-refine`, `refine-batch` and `_pre-task-discussion`. The batch
  * refine's sub-agents, and a preamble before a prompt that already has the
- * rules, turn it off with `collaborationGuide: ''`. `simplicityGuide` is the simple, surgical change rule (build what the
+ * rules, turn it off with `collaborationGuide: ''`.
+ * `simplicityGuide` is the simple, surgical change rule (build what the
  * criteria ask, abstractions follow shared behaviour, every changed line
  * traces to the story or a named finding); it rides with
  * `selfConsistencyGuide`, in every refine and implementation prompt and the
