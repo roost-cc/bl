@@ -565,7 +565,11 @@ test('migration writes the synthesized log for a unit whose transitions: is empt
     const name = `${id}: ${line}`;
     if (log == null) {
       assert.equal(read(dir, path(id)), before[id], `${name}: the file is as it was`);
-      assert.match(r.stdout, new RegExp(`^skipped ${id}: transitions: is not a list of entries`, 'm'), name);
+      assert.match(
+        r.stdout,
+        new RegExp(`^skipped ${id}: transitions: is not a list of entries .*; fix it, then a rerun converts it$`, 'm'),
+        name,
+      );
       continue;
     }
     const after = fm(dir, path(id));

@@ -322,7 +322,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
             ? `its feature ${feature}: ${held.get(feature)}`
             : null;
         if (why) {
-          skipped.push(`${unit.id}: ${why}`);
+          skipped.push(`${unit.id}: ${why}; a rerun converts it`);
           continue;
         }
         const rel = relative(root, unit.file);
@@ -337,11 +337,12 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
           });
         } catch (e) {
           if (!(e instanceof SpecLockError)) throw new Error(`${rel}: ${e.message}`, { cause: e });
-          skipped.push(`${unit.id}: ${e.message}`);
+          skipped.push(`${unit.id}: ${e.message}; a rerun converts it`);
           continue;
         }
         if (planned?.skip) {
-          skipped.push(`${unit.id}: ${planned.skip}`);
+          // Unlike a held unit, a rerun alone does not convert it.
+          skipped.push(`${unit.id}: ${planned.skip}; fix it, then a rerun converts it`);
           continue;
         }
         if (planned) {
@@ -365,7 +366,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
     }
   }
 
-  for (const s of skipped) log(`skipped ${s}; a rerun converts it`);
+  for (const s of skipped) log(`skipped ${s}`);
   const earlier = carried.filter((p) => !paths.includes(p));
   const all = [...paths, ...earlier];
   if (all.length === 0) {
