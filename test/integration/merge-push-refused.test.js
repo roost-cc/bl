@@ -6,13 +6,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'child_process';
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { readFileSync, realpathSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { extractSection } from '../../src/feature.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { BL_BIN, personEnv, runBl } from '../helpers/run-bl.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
+import { spawnToFiles, untilStderrHas } from '../helpers/spawn-files.js';
 import { loadConfig, parseFrontmatter, worktreeRoot } from '../../src/config.js';
 import { ENV, fixture, g, landOnMain } from '../helpers/merge-integrate-fixture.js';
 
@@ -30,18 +31,14 @@ function waitForGo(line, go, result) {
  * stderr. A child whose output `bl` buffers until it ends never sees `go`.
  * Resolves with the exit status and the stderr.
  */
-function runCreatingGoOnLine(args, cwd, env, line, go) {
-  const child = spawn(BL_BIN, args, {
+async function runCreatingGoOnLine(args, cwd, env, line, go) {
+  const run = spawnToFiles(BL_BIN, args, {
     cwd,
     env: withNoAgent({ ...personEnv(), BL_BACKLOG_DIR: cwd, ...env }),
-    stdio: ['ignore', 'ignore', 'pipe'],
   });
-  let stderr = '';
-  child.stderr.on('data', (d) => {
-    stderr += d;
-    if (stderr.includes(line) && !existsSync(go)) writeFileSync(go, '');
-  });
-  return new Promise((resolve) => child.on('close', (status) => resolve({ status, stderr })));
+  await untilStderrHas(run, line);
+  writeFileSync(go, '');
+  return run.closed;
 }
 
 test("the push's hook output reaches stderr before the push ends", async () => {
@@ -211,7 +208,10 @@ test('a failed install stops bl merge after the push, names the command, and the
 // ends `bl merge` as SIGTERM, as the push in `checkedMerge` does. `fail`
 // makes the first run's install fail, so the second run takes the "already
 // merged" path that looks up the merge commit (`landedMergeCommit`).
-const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'pipe'],
+}).trim();
 for (const { child, fail, npm, git, message } of [
   {
     child: 'the install',
