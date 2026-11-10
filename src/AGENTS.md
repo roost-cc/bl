@@ -3990,7 +3990,9 @@ merges once <blocker> meets "<until>" (bl status <blocker>).` No flag
   the worktree and the branch, and appends
   `- <date> · <repo> · no commits on the branch: nothing merged` to `## Merge`.
   A branch with commits, or a story at another status (for example
-  `in_progress`), is still refused.
+  `in_progress`), is still refused. So a no-commit story that `bl merge`
+  escalated (its status is now `escalated`, not `ready_for_merge`) fails this
+  gate on the rerun; `--no-review` merges it.
 - **Escalation gate** — an open `## Escalation` in the story or feature file.
 - **Stray worktree** — a worktree on the unit's branch in a registered repo
   the unit does not own (a story's one repo, a feature's stories' repos) is
