@@ -846,6 +846,21 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   for `fixed`, `ready_for_merge` for `addressed`, and last `escalated` for an escalated unit. The
   first `applyTransition` on such a unit writes that log (an entry with no date takes the new
   entry's `at`), then the new entry, and removes `status:`; `transitions:` takes its place.
+- **The migration**, `node scripts/migrate-transitions.js [--dry-run] [--backlog <dir>]`
+  (`src/migrate-transitions.js`, F-69 D4), writes that log with git dates (`datedLog`): the
+  entry to the stored status, when it is neither `draft` nor terminal, at the last commit that
+  set the `status:` line (`git log --follow -S`); the `in_review` entries at the Review Log
+  session dates (`sessionDates`), the newest session for the newest round; a unit with no
+  `added` starts at the commit that added its file; no entry is before the one above it. It
+  converts one unit at a time through `updateSpecFile` (`setLog` puts the log in `status:`'s
+  place), then removes `review_round` and `review_status` from the unit's change documents
+  through `updateChange`, writes `flow.json` v2 (`migratedFlowText`: the template with the
+  backlog's gates), and commits the changed paths once (`commitPaths`) with the counts. It does
+  not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
+  (`liveSessionLocks`, by the worktree's branch) has a live holder other than the script and its
+  parent processes is skipped and listed, with the stories of such a feature; a rerun converts it
+  and, with nothing left, prints `nothing to do`. `--dry-run` prints the same counts and writes
+  nothing.
 - **Readers.** `statusOf`, `roundOf` and `logOf(kind, fm, change)` read the log, or `legacyLog`.
   `makeUnit` sets `.status`, `.round` and `.transitions` through them. For a unit with no log,
   `.status` reads no change document, so it is the `status:` word (a v1 word mapped) as before

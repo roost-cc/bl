@@ -3,7 +3,15 @@ import { test } from 'node:test';
 import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { FLOW_FILE, FlowError, LEGACY_STATUSES, findFlowFindings, fromLegacy, loadFlow } from '../../src/flow.js';
+import {
+  FLOW_FILE,
+  FlowError,
+  LEGACY_STATUSES,
+  findFlowFindings,
+  fromLegacy,
+  loadFlow,
+  migratedFlowText,
+} from '../../src/flow.js';
 import { GUARDS } from '../../src/guards.js';
 import { CAPABILITIES } from '../../src/capabilities.js';
 import { DISPATCH } from '../../src/verbs.js';
@@ -251,6 +259,17 @@ test('a v1 file loads as the v2 template with its own gates, and flow.legacy is 
   assert.deepEqual(flow.verbOf('feature', 'run'), loadFlow(TEMPLATE_DIR).verbOf('feature', 'run'));
   assert.deepEqual(flow.gatesOf('story'), { hold: ['run'] });
   assert.deepEqual(flow.gatesOf('feature'), { run: ['run', 'implement'], merge: ['merge'] });
+});
+
+test("migratedFlowText: the template with a v1 file's own gates, the template's text when they match, null for v2", () => {
+  const raw = v1();
+  raw.types.story.gates = { hold: { verbs: ['run'] } };
+  const text = migratedFlowText(backlogWith(raw));
+  const expected = template();
+  expected.types.story.gates = { hold: { verbs: ['run'] } };
+  assert.deepEqual(JSON.parse(text), expected);
+  assert.equal(migratedFlowText(backlogWith(v1())), readFileSync(FLOW_TEMPLATE, 'utf8'));
+  assert.equal(migratedFlowText(TEMPLATE_DIR), null);
 });
 
 test('loadFlow throws naming the file when it is missing, unparsable, of a wrong schema or of a wrong shape', () => {

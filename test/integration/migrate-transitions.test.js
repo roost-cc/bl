@@ -1,0 +1,317 @@
+/**
+ * Integration tests for `scripts/migrate-transitions.js` (F-69 D4): on a
+ * backlog in the v1 shape it gives every story, feature and task the log
+ * `legacyLog` synthesizes with git dates in place of `status:`, removes the
+ * change documents' review fields, writes `flow.json` v2 and commits once;
+ * `--dry-run` prints the same counts and writes nothing; a unit a live run
+ * holds is skipped, with its feature's stories, until a rerun; and a rerun
+ * with nothing left reports nothing to do. `bl validate` on the migrated
+ * backlog reports no errors.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { once } from 'events';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
+import { parseFrontmatter } from '../../src/config.js';
+import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
+import { GIT_ENV, git, statusLines } from '../helpers/git-backlog.js';
+import { runBl } from '../helpers/run-bl.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
+
+const SCRIPT = fileURLToPath(new URL('../../scripts/migrate-transitions.js', import.meta.url));
+const V1_FLOW = fileURLToPath(new URL('../fixtures/flow/flow.json', import.meta.url));
+
+const session = (date, open = 0) =>
+  `### Session ${date} (PR #1)\n\n**Must fix**\n\n${open ? '- [ ] an item' : '- [x] an item'}\n`;
+
+/** Commit everything in `dir` as of `date` (UTC), as author and committer. */
+function commitAt(dir, date, message) {
+  const env = { ...process.env, ...GIT_ENV, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
+  for (const args of [
+    ['add', '-A'],
+    ['commit', '-q', '-m', message],
+  ]) {
+    const r = spawnSync('git', args, { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  }
+}
+
+const rel = {
+  s1: 'stories/S1/index.md',
+  s2: 'stories/S2/index.md',
+  s3: 'stories/S3/index.md',
+  t1: 'tasks/T1-check.md',
+  f: (n) => `features/F${n}/index.md`,
+  change: (n) => `features/F${n}/change.md`,
+};
+const read = (dir, p) => readFileSync(join(dir, p), 'utf8');
+const fm = (dir, p) => parseFrontmatter(read(dir, p)).fm;
+/** A file's frontmatter with `status: <from>` turned into `status: <to>`. */
+const setStatus = (dir, p, from, to) =>
+  writeFileSync(join(dir, p), read(dir, p).replace(`\nstatus: ${from}\n`, `\nstatus: ${to}\n`));
+
+/**
+ * A backlog in git as bl wrote it before F-69, with history:
+ *
+ * - S-1 a draft story (`backlog`); S-2 superseded by S-1; T-1 a done task.
+ * - F-1 refined on 11-02, back to draft on 11-03, refined again on 11-04,
+ *   then edited on 11-06: its `refined` entry is dated 11-04.
+ * - F-2 to F-5 running, one per review state of the change document: none,
+ *   `pending` (round 1), `fixed` (round 1), `addressed` (round 2); F-6
+ *   escalated with a `pending` review.
+ * - F-7 running, with its story S-3 in progress, and a review the run holds.
+ */
+function oldBacklog() {
+  const { dir } = mkTempBacklog({
+    flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
+    repos: ['core'],
+    components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
+    stories: [
+      { id: 'S-1', title: 'One', component: 'C01', status: 'backlog', added: '2026-11-01' },
+      {
+        id: 'S-2',
+        title: 'Two',
+        component: 'C01',
+        status: 'superseded',
+        added: '2026-11-01',
+        completed: '2026-11-02',
+        body: '## Summary\n',
+      },
+      { id: 'S-3', title: 'Three', component: 'C01', status: 'in_progress', added: '2026-11-01', feature: 'F-7' },
+    ],
+    features: [
+      { id: 'F-1', title: 'Refined', status: 'draft', added: '2026-11-01' },
+      { id: 'F-2', title: 'Run', status: 'running', added: '2026-11-01', branch: 'f2' },
+      {
+        id: 'F-3',
+        title: 'Pending',
+        branch: 'f3',
+        status: 'running',
+        added: '2026-11-01',
+        review_round: '1',
+        review_status: 'pending',
+        reviewLog: session('2026-11-05', 1),
+      },
+      {
+        id: 'F-4',
+        title: 'Fixed',
+        branch: 'f4',
+        status: 'running',
+        added: '2026-11-01',
+        review_round: '1',
+        review_status: 'fixed',
+        reviewLog: session('2026-11-05'),
+      },
+      {
+        id: 'F-5',
+        title: 'Addressed',
+        branch: 'f5',
+        status: 'running',
+        added: '2026-11-01',
+        review_round: '2',
+        review_status: 'addressed',
+        reviewLog: `${session('2026-11-07')}\n${session('2026-11-05')}`,
+      },
+      {
+        id: 'F-6',
+        title: 'Escalated',
+        branch: 'f6',
+        status: 'escalated',
+        added: '2026-11-01',
+        review_round: '1',
+        review_status: 'pending',
+        reviewLog: session('2026-11-05', 1),
+      },
+      {
+        id: 'F-7',
+        title: 'Live',
+        branch: 'f7',
+        status: 'running',
+        added: '2026-11-01',
+        review_round: '1',
+        review_status: 'pending',
+        reviewLog: session('2026-11-05', 1),
+      },
+    ],
+  });
+  // The `superseded_by:` of S-2, and T-1, which the fixture helper does not write.
+  writeFileSync(
+    join(dir, rel.s2),
+    read(dir, rel.s2).replace('\ncompleted: 2026-11-02\n', '\ncompleted: 2026-11-02\nsuperseded_by: S-1\n'),
+  );
+  mkdirSync(join(dir, 'tasks'), { recursive: true });
+  writeFileSync(
+    join(dir, rel.t1),
+    '---\ntask_id: T-1\ntitle: Check\nunit: F-1\nowner: operator\nstatus: done\nadded: 2026-11-02\ndone: 2026-11-03\n---\n\n# Check\n',
+  );
+  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  git(dir, 'init', '-q', '-b', 'main');
+  commitAt(dir, '2026-11-01T10:00:00Z', 'base');
+  setStatus(dir, rel.f(1), 'draft', 'refined');
+  commitAt(dir, '2026-11-02T10:00:00Z', 'refine F-1');
+  setStatus(dir, rel.f(1), 'refined', 'draft');
+  commitAt(dir, '2026-11-03T10:00:00Z', 'F-1 back to draft');
+  setStatus(dir, rel.f(1), 'draft', 'refined');
+  commitAt(dir, '2026-11-04T10:00:00Z', 'refine F-1 again');
+  writeFileSync(join(dir, rel.f(1)), `${read(dir, rel.f(1))}\nAn edit.\n`);
+  commitAt(dir, '2026-11-06T10:00:00Z', 'edit F-1');
+  return dir;
+}
+
+/** Hold F-7's run lock with a live process that is not the script's parent. */
+function holdRunLock(dir) {
+  const holder = spawn('sleep', ['300'], { stdio: 'ignore' });
+  mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
+  writeFileSync(join(dir, '.bl', 'run', 'F-7.lock'), `${holder.pid}\n2026-11-09T00:00:00Z\nrun F-7\n`);
+  return holder;
+}
+
+const script = (dir, ...args) =>
+  spawnSyncFiles(process.execPath, [SCRIPT, '--backlog', dir, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...GIT_ENV },
+  });
+const head = (dir) => git(dir, 'rev-parse', 'HEAD');
+const errors = (dir) => {
+  const v = runBl(['validate', '--json'], { cwd: dir });
+  return JSON.parse(v.stdout).findings.filter((f) => f.severity === 'error');
+};
+const legacyWarnings = (dir) => {
+  const v = runBl(['validate', '--json'], { cwd: dir });
+  return JSON.parse(v.stdout)
+    .findings.filter((f) => f.code === 'legacy-status')
+    .map((f) => f.location)
+    .sort();
+};
+
+/** Entries as `to@at` (`by` when it is not `migrated`), for a short assertion. */
+const entries = (dir, p) =>
+  fm(dir, p).transitions.map((e) => {
+    assert.equal(e.note.startsWith('migrated'), true, `${p}: ${JSON.stringify(e)}`);
+    return `${e.to}@${e.at}${e.by === 'migrated' ? '' : ` by ${e.by}`}`;
+  });
+
+const COUNTS =
+  'stories: 2 (entries: 3, placed by a change document: 0); features: 6 (entries: 24, placed by a change document: 4); ' +
+  'tasks: 1 (entries: 2, placed by a change document: 0); change documents: 5; flow.json: v2';
+const SKIPPED = [
+  /^skipped S-3: its feature F-7: a bl run holds \.bl\/run\/F-7\.lock \(pid \d+\); a rerun converts it$/m,
+  /^skipped F-7: a bl run holds \.bl\/run\/F-7\.lock \(pid \d+\); a rerun converts it$/m,
+];
+
+test('--dry-run prints the counts and the skipped units, and writes nothing', (t) => {
+  const dir = oldBacklog();
+  const holder = holdRunLock(dir);
+  t.after(() => holder.kill());
+  const before = head(dir);
+  const r = script(dir, '--dry-run');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`^would convert: ${COUNTS.replace(/[().]/g, '\\$&')}$`, 'm'));
+  for (const re of SKIPPED) assert.match(r.stdout, re);
+  assert.equal(head(dir), before);
+  assert.deepEqual(statusLines(dir), []);
+});
+
+test('a run writes each log with git dates in one commit, skips the live run, and a rerun converts it', async (t) => {
+  const dir = oldBacklog();
+  const holder = holdRunLock(dir);
+  t.after(() => holder.kill());
+  const before = head(dir);
+  const f7 = read(dir, rel.f(7));
+  const f7Change = read(dir, rel.change(7));
+
+  const r = script(dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`^converted: ${COUNTS.replace(/[().]/g, '\\$&')}$`, 'm'));
+  assert.match(r.stdout, /^committed 15 backlog path\(s\) in \w+ chore: F-69 transition-log migration: stories: 2 /m);
+  for (const re of SKIPPED) assert.match(r.stdout, re);
+  assert.equal(git(dir, 'rev-list', '--count', `${before}..HEAD`), '1');
+  assert.deepEqual(statusLines(dir), []);
+
+  const day = (d) => `2026-11-${d}T00:00:00Z`;
+  const base = '2026-11-01T10:00:00Z';
+  assert.deepEqual(entries(dir, rel.s1), [`draft@${day('01')} by new`]);
+  assert.deepEqual(entries(dir, rel.s2), [`draft@${day('01')} by new`, `superseded@${day('02')}`]);
+  assert.equal(fm(dir, rel.s2).transitions[1].note, 'migrated; superseded_by: S-1');
+  assert.deepEqual(entries(dir, rel.t1), [`draft@${day('02')} by new`, `done@${day('03')}`]);
+  // The last commit that set `refined`, not the last that touched the file.
+  assert.deepEqual(entries(dir, rel.f(1)), [`draft@${day('01')} by new`, 'refined@2026-11-04T10:00:00Z']);
+  assert.deepEqual(entries(dir, rel.f(2)), [`draft@${day('01')} by new`, `in_progress@${base}`]);
+  // `in_review` at the Review Log session, never before the entry above it.
+  assert.deepEqual(entries(dir, rel.f(3)), [
+    `draft@${day('01')} by new`,
+    `in_progress@${base}`,
+    `in_review@${day('05')}`,
+    `fixing@${day('05')}`,
+  ]);
+  assert.deepEqual(entries(dir, rel.f(4)), [
+    `draft@${day('01')} by new`,
+    `in_progress@${base}`,
+    `in_review@${base}`,
+    `fixing@${base}`,
+    `in_review@${day('05')}`,
+  ]);
+  assert.deepEqual(entries(dir, rel.f(5)), [
+    `draft@${day('01')} by new`,
+    `in_progress@${base}`,
+    `in_review@${day('05')}`,
+    `fixing@${day('05')}`,
+    `in_review@${day('07')}`,
+    `ready_for_merge@${day('07')}`,
+  ]);
+  // The git date is the `escalated` entry's, which stays after the review.
+  assert.deepEqual(entries(dir, rel.f(6)), [
+    `draft@${day('01')} by new`,
+    `in_progress@${day('01')}`,
+    `in_review@${day('05')}`,
+    `fixing@${day('05')}`,
+    `escalated@${day('05')}`,
+  ]);
+
+  // status: is gone and no other field changed; the log takes its place.
+  const f3 = fm(dir, rel.f(3));
+  assert.deepEqual(Object.keys(f3), ['feature_id', 'title', 'theme', 'transitions', 'added', 'review_rounds_max']);
+  for (const n of [2, 3, 4, 5, 6]) {
+    const c = fm(dir, rel.change(n));
+    assert.equal(Object.hasOwn(c, 'review_round') || Object.hasOwn(c, 'review_status'), false, `F-${n}`);
+    assert.equal(c.change_of, `F-${n}`);
+  }
+  assert.equal(read(dir, 'flow.json'), readFileSync(FLOW_TEMPLATE, 'utf8'));
+
+  // The live run's feature, story and change document are as they were.
+  assert.equal(read(dir, rel.f(7)), f7);
+  assert.equal(read(dir, rel.change(7)), f7Change);
+  assert.equal(fm(dir, rel.s3).status, 'in_progress');
+  assert.deepEqual(errors(dir), []);
+  assert.deepEqual(legacyWarnings(dir), [rel.f(7), rel.s3]);
+
+  holder.kill();
+  await once(holder, 'exit');
+  const after = head(dir);
+  const rerun = script(dir);
+  assert.equal(rerun.status, 0, rerun.stderr);
+  assert.match(
+    rerun.stdout,
+    /^converted: stories: 1 \(entries: 2, placed by a change document: 0\); features: 1 \(entries: 4, placed by a change document: 1\); tasks: 0 .*; change documents: 1; flow\.json: unchanged$/m,
+  );
+  assert.equal(git(dir, 'rev-list', '--count', `${after}..HEAD`), '1');
+  assert.deepEqual(entries(dir, rel.s3), [`draft@${day('01')} by new`, `in_progress@${base}`]);
+  assert.deepEqual(entries(dir, rel.f(7)), [
+    `draft@${day('01')} by new`,
+    `in_progress@${base}`,
+    `in_review@${day('05')}`,
+    `fixing@${day('05')}`,
+  ]);
+  assert.deepEqual(errors(dir), []);
+  assert.deepEqual(legacyWarnings(dir), []);
+
+  const done = head(dir);
+  const again = script(dir);
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(again.stdout, 'nothing to do\n');
+  assert.equal(head(dir), done);
+  assert.deepEqual(statusLines(dir), []);
+});

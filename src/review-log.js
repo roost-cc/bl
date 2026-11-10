@@ -131,6 +131,18 @@ export function parseLatestSession(log) {
 }
 
 /**
+ * The dates (`YYYY-MM-DD`) of every `### Session` heading in a review-log
+ * slice, oldest first. A heading without a date gives none.
+ *
+ * @param {string|null} log
+ * @returns {string[]}
+ */
+export function sessionDates(log) {
+  const re = /^###[ \t]+Session[ \t]+(\d{4}-\d{2}-\d{2})\b/gm;
+  return [...String(log ?? '').matchAll(re)].map((m) => m[1]).sort();
+}
+
+/**
  * Convenience: pull the latest session out of a full story body.
  * Returns `null` if there's no Review Log or no session inside it.
  *

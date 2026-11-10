@@ -6,7 +6,22 @@ import {
   summarizeLatestReviewSession,
   openCheckboxItems,
   reviewOutcome,
+  sessionDates,
 } from '../../src/review-log.js';
+
+test('sessionDates: every session heading date, oldest first; a heading without a date gives none', () => {
+  const log = [
+    '### Session 2026-11-07 (PR #3; reviewed by codex)',
+    '',
+    '### Session 2026-11-05 (PR #3)',
+    '',
+    '### Session (PR #3)',
+    '',
+    '#### Session 2026-11-01',
+  ].join('\n');
+  assert.deepEqual(sessionDates(log), ['2026-11-05', '2026-11-07']);
+  assert.deepEqual(sessionDates(null), []);
+});
 
 test("extractReviewLog pulls the section between '## Review Log' and the next '##'", () => {
   const body = `# Title

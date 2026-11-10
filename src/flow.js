@@ -35,6 +35,7 @@
 import { readFileSync, statSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { isDeepStrictEqual } from 'util';
 import { findBacklogRoot } from './config.js';
 
 /** The file's name, at the backlog root. */
@@ -222,6 +223,24 @@ function legacyAsV2(path, raw) {
     types[type] = { ...def, gates: raw.types[type].gates };
   }
   return types;
+}
+
+/**
+ * The `flow.json` text the migration writes over a v1 file (F-69 D4): bl's
+ * template with the file's own gates per type, or null when the file is v2
+ * already. When the gates are the template's, the text is the template's.
+ * Throws `FlowError` as `loadFlow` does.
+ * @param {string} backlogRoot
+ * @returns {string | null}
+ */
+export function migratedFlowText(backlogRoot) {
+  const flow = loadFlow(backlogRoot);
+  if (!flow.legacy) return null;
+  const templatePath = join(TEMPLATE_DIR, FLOW_FILE);
+  const template = readJson(templatePath);
+  const types = legacyAsV2(flow.path, readJson(flow.path));
+  if (isDeepStrictEqual(types, template.types)) return readFileSync(templatePath, 'utf8');
+  return `${JSON.stringify({ ...template, types }, null, 2)}\n`;
 }
 
 /** A branch list, checked; `at` names it in a message. */
