@@ -1,7 +1,7 @@
 /**
  * top.js — `bl top`: a live view of bl's runs, inbox and next work (F-87).
  *
- *   bl top [--interval <ms>]
+ *   bl top [--interval <ms>] [--no-bell] [--no-desktop]
  *   bl top --json
  *   bl top --stream [--interval <ms>]
  *
@@ -34,7 +34,7 @@ const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 /** `30 s`, `5 min`. */
 const s = (ms) => (ms >= 60000 ? `${ms / 60000} min` : `${ms / 1000} s`);
 
-const HELP = `Usage: bl top [--interval <ms>]
+const HELP = `Usage: bl top [--interval <ms>] [--no-bell] [--no-desktop]
        bl top --json
        bl top --stream [--interval <ms>]
 
@@ -47,7 +47,16 @@ missing or older than a file under top/; that build needs Go. Keys: 1-5 hide
 or show a box, tab and shift+tab move the focus, + and - change the refresh
 interval, h shows the help, q quits.
 
+The view notifies for a new escalation, a new task, and a run that ends
+(done, escalated, failed or stopped); the first snapshot only sets what is
+not new. A notification rings the terminal bell, which tmux shows as a flag
+on the window, and runs notify-send -a "bl top" "<id> <kind>" "<line>" when
+notify-send is on PATH. If notify-send fails or runs longer than 10 s, the
+bottom border shows a red warning until it next succeeds.
+
 Options:
+  --no-bell          Ring no bell for a notification (the view)
+  --no-desktop       Run no notify-send for a notification (the view)
   --version          Print the view's version (after a build when it needs
                      one) and exit
   --json             Print one snapshot (schema "${TOP_SCHEMA}") and exit
@@ -92,6 +101,8 @@ function flags(argv) {
         stream: { type: 'boolean' },
         interval: { type: 'string' },
         version: { type: 'boolean' },
+        'no-bell': { type: 'boolean' },
+        'no-desktop': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     }).values;
@@ -151,6 +162,8 @@ function runTui(opts) {
   const args = ['--bl-argv', JSON.stringify([process.execPath, BL_PATH])];
   if (opts.interval !== undefined) args.push('--interval', opts.interval);
   if (opts.version) args.push('--version');
+  if (opts['no-bell']) args.push('--no-bell');
+  if (opts['no-desktop']) args.push('--no-desktop');
   const r = spawnSync(TOP_BIN, args, { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
@@ -167,6 +180,10 @@ export async function main(argv) {
   }
   if (opts.version && (opts.json || opts.stream)) {
     console.error('bl top: --version goes without --json and --stream');
+    process.exit(1);
+  }
+  if ((opts['no-bell'] || opts['no-desktop']) && (opts.json || opts.stream)) {
+    console.error('bl top: --no-bell and --no-desktop go with the view, not --json or --stream');
     process.exit(1);
   }
   const interval = opts.interval === undefined ? DEFAULT_INTERVAL_MS : Number(opts.interval);

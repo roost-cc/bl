@@ -111,7 +111,7 @@ func (s *Stream) send(m any) bool {
 func (s *Stream) read(stdout, stderr io.Reader) {
 	defer close(s.msgs)
 	last := make(chan string, 1)
-	go func() { last <- lastLine(stderr) }()
+	go func() { last <- LastLine(stderr) }()
 	reason := ""
 	r := bufio.NewReader(stdout)
 	for {
@@ -145,8 +145,9 @@ func (s *Stream) read(stdout, stderr io.Reader) {
 	s.send(EndMsg{Gen: s.Gen, Reason: reason})
 }
 
-// lastLine reads r to its end and returns its last line that is not blank.
-func lastLine(r io.Reader) string {
+// LastLine reads r to its end and returns its last line that is not blank. The notification
+// senders (top/internal/notify) report a failed command's stderr with it too.
+func LastLine(r io.Reader) string {
 	last := ""
 	br := bufio.NewReader(r)
 	for {

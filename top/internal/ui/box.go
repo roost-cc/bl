@@ -56,15 +56,30 @@ type barKey struct{ key, label string }
 var barKeys = []barKey{{"tab", "box"}, {"+-", "interval"}, {"h", "help"}, {"q", "quit"}}
 
 // keyBar draws the bottom border of the screen, w cells wide, with the key bar in it
-// (`╰┘tab box└┘h help└──╯`). When the labels do not fit, it shows the keys alone; when those do
-// not fit either, it leaves out the keys at the end.
-func keyBar(w int) string {
-	// `╰`, the entries, at least one `─`, `╯`.
-	bar, shown, room := keyEntries(w-3, true)
-	if shown < len(barKeys) {
-		bar, _, room = keyEntries(w-3, false)
+// (`╰┘tab box└┘h help└──╯`), and the red warnings at its right (`┐desktop failed: …┌─╯`, D8).
+// When the labels do not fit, it shows the keys alone; when those do not fit either, it leaves out
+// the keys at the end. The warnings come before the labels: they take the room the keys alone
+// leave, and a warning that does not fit is cut with `…`.
+func keyBar(w int, warnings []string) string {
+	// `╰`, the entries, at least one `─`, the warnings, `╯`.
+	_, _, room := keyEntries(w-3, false)
+	right := ""
+	for _, warn := range warnings {
+		if room-3 < 2 {
+			break
+		}
+		if 3+lipgloss.Width(warn) > room {
+			warn = ansi.Truncate(warn, room-3, "…")
+		}
+		right += styleBorder.Render("┐") + styleError.Render(warn) + styleBorder.Render("┌─")
+		room -= 3 + lipgloss.Width(warn)
 	}
-	return styleBorder.Render("╰") + bar + styleBorder.Render(strings.Repeat("─", room+1)+"╯")
+	rw := lipgloss.Width(right)
+	bar, shown, room := keyEntries(w-3-rw, true)
+	if shown < len(barKeys) {
+		bar, _, room = keyEntries(w-3-rw, false)
+	}
+	return styleBorder.Render("╰") + bar + styleBorder.Render(strings.Repeat("─", room+1)) + right + styleBorder.Render("╯")
 }
 
 // keyEntries draws the barKeys that fit in room cells, each as `┘key label└`, or `┘key└` without

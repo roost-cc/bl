@@ -48,7 +48,7 @@ func update(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 // sized is a model of a w×h terminal. Its commands never run, so it starts no stream.
 func sized(t *testing.T, w, h int) Model {
 	t.Helper()
-	m, _ := update(t, New([]string{"bl"}, 2000), tea.WindowSizeMsg{Width: w, Height: h})
+	m, _ := update(t, New([]string{"bl"}, 2000, true, nil), tea.WindowSizeMsg{Width: w, Height: h})
 	return m
 }
 
@@ -176,7 +176,7 @@ func TestBoxGolden(t *testing.T) {
 func TestBoxColorsAreD5s(t *testing.T) {
 	plain := strings.Join(drawBox(1, "runs", nil, false, nil, 30, 3), "\n")
 	focus := strings.Join(drawBox(1, "runs", nil, true, nil, 30, 3), "\n")
-	bar := keyBar(80)
+	bar := keyBar(80, nil)
 	for _, c := range []struct {
 		what, out, color string
 	}{
@@ -194,11 +194,11 @@ func TestBoxColorsAreD5s(t *testing.T) {
 
 func TestKeyBarFitsItsWidth(t *testing.T) {
 	for _, w := range []int{80, 100, 171} {
-		if got := ansi.Strip(keyBar(w)); lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘tab box└┘+- interval└┘h help└┘q quit└─") {
+		if got := ansi.Strip(keyBar(w, nil)); lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘tab box└┘+- interval└┘h help└┘q quit└─") {
 			t.Errorf("keyBar(%d) = %q", w, got)
 		}
 	}
-	if got := ansi.Strip(keyBar(20)); got != "╰┘tab└┘+-└┘h└┘q└───╯" {
+	if got := ansi.Strip(keyBar(20, nil)); got != "╰┘tab└┘+-└┘h└┘q└───╯" {
 		t.Errorf("keyBar(20) = %q, want the keys alone", got)
 	}
 }

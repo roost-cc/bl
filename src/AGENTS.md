@@ -2826,6 +2826,7 @@ picks, token use and agent capacity, the stories done per day, and the newest ru
 ```bash
 bl top                             # the view, refreshed every 2000 ms
 bl top --interval 1000             # the view's interval in ms, 500 to 10000
+bl top --no-bell --no-desktop      # the view without the bell or the desktop notification
 bl top --version                   # build the view if it needs a build; print its version
 bl top --json                      # one snapshot, then exit 0
 bl top --stream                    # one snapshot per line every 2000 ms until stdin closes
@@ -2887,9 +2888,22 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
   help, and any key closes it; `q` or `ctrl+c` quits.
+- **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
+  before. A new `escalation` or `task` item (by item id) and a run that gets an end status
+  (`done`, `escalated`, `failed`, `stopped`; by run id and status) each make a note
+  `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)`. The first read of a
+  section only sets its baseline, so an item notifies once, and again only after it left the
+  inbox and came back. For the notes of a snapshot the view rings the terminal bell (`\a`) once,
+  unless `--no-bell`, and hands each note to each sender. A sender is a command argv to which
+  it appends `<id> <kind>` and `<line>`; it runs in the background, in a process group of its
+  own, and is killed after 10 s. The desktop sender is `notify-send -a "bl top"`, when
+  `notify-send` is on `PATH` and there is no `--no-desktop`. A sender that exits other than 0
+  or times out puts `<name> failed: <its last stderr line, or timeout>` in red at the right of
+  the bottom border, until its command next exits 0. `src/top.js` refuses `--no-bell` and
+  `--no-desktop` with `--json` or `--stream`.
 - **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
-  `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, one set
-  of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
+  `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, the
+  frame at 100×40 with a fake `notify-send` that exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
   `testdata/snapshot.json` in a fixed zone (UTC−5), without colors;
   `go test ./internal/ui -update` writes them again.
   `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`.

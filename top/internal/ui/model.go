@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/roost-cc/bl/top/internal/notify"
 	"github.com/roost-cc/bl/top/internal/stream"
 )
 
@@ -59,12 +60,17 @@ type Model struct {
 	gen           int // the generation of the stream the model reads
 	presses       int // how many times `+` or `-` was pressed
 	ended         string
+	bell          bool
+	senders       []notify.Sender
+	differ        notify.Differ
+	failed        map[string]string // by sender name: why its last command failed
 }
 
 // New is the model of a screen that reads `bl top --stream` through blArgv (the command that runs
-// bl) every interval ms.
-func New(blArgv []string, interval int) Model {
-	return Model{blArgv: blArgv, interval: interval, focus: 1, gen: 1}
+// bl) every interval ms. For each new note (D8) it rings the bell when bell is true, and runs each
+// sender.
+func New(blArgv []string, interval int, bell bool, senders []notify.Sender) Model {
+	return Model{blArgv: blArgv, interval: interval, focus: 1, gen: 1, bell: bell, senders: senders}
 }
 
 // Ended is why the stream ended, when it ended while bl top ran: its last stderr line.
@@ -119,9 +125,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, wait(m.stream)
 	case stream.SnapshotMsg:
 		if msg.Gen == m.gen {
-			m.snap = &msg.Snapshot
-			return m, wait(m.stream)
+			var cmds []tea.Cmd
+			m, cmds = m.snapshot(msg.Snapshot)
+			return m, tea.Batch(append(cmds, wait(m.stream))...)
 		}
+	case notify.ResultMsg:
+		failed := map[string]string{}
+		for name, why := range m.failed {
+			failed[name] = why
+		}
+		if msg.Err == "" {
+			delete(failed, msg.Sender)
+		} else {
+			failed[msg.Sender] = msg.Err
+		}
+		m.failed = failed
 	case stream.EndMsg:
 		if msg.Gen == m.gen {
 			m.ended = msg.Reason
@@ -135,6 +153,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// snapshot keeps s as the snapshot to draw, and returns the commands of its notes against the
+// snapshot before (D8): one bell for them all, and each sender for each note.
+func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
+	m.snap = &s
+	notes := m.differ.Diff(m.snap)
+	var cmds []tea.Cmd
+	if m.bell && len(notes) > 0 {
+		cmds = append(cmds, notify.Bell())
+	}
+	for _, n := range notes {
+		for _, s := range m.senders {
+			cmds = append(cmds, s.Send(n))
+		}
+	}
+	return m, cmds
+}
+
+// warnings are the bottom border's red warnings: `<sender> failed: <why>` for each sender whose
+// last command failed, in the senders' order.
+func (m Model) warnings() []string {
+	var out []string
+	for _, s := range m.senders {
+		if why, ok := m.failed[s.Name]; ok {
+			out = append(out, s.Name+" failed: "+why)
+		}
+	}
+	return out
 }
 
 // key handles a key of D6. With the help open, any key but quit closes it.

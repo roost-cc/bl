@@ -98,7 +98,7 @@ assert_eq "--stream: every line a snapshot; capacity read again after the capaci
 assert_empty "bl top --stream stderr" "$(cat "$ERR")"
 
 # A bad flag: exit 1, nothing on stdout.
-for args in "--json --stream" "--stream --interval 50" "--interval 50" "--json --interval 1000" "--json --version" "--nope"; do
+for args in "--json --stream" "--stream --interval 50" "--interval 50" "--json --interval 1000" "--json --version" "--json --no-bell" "--stream --no-desktop" "--nope"; do
   set +e
   # shellcheck disable=SC2086
   OUT=$("$BL" top $args 2>"$ERR"); CODE=$?
@@ -133,6 +133,11 @@ set +e
 "$BL" top --version >/dev/null 2>"$ERR"
 set -e
 assert_empty "a second bl top --version does not build again" "$(cat "$ERR")"
+set +e
+OUT=$("$BL" top --version --no-bell --no-desktop 2>"$ERR"); CODE=$?
+set -e
+assert_exit "bl top passes --no-bell and --no-desktop to the view" 0 "$CODE"
+assert_contains "bl top --no-bell --no-desktop --version" "bl-top go" "$OUT"
 
 # The view runs bl top --stream; when the stream ends, the view prints its last stderr line and
 # exits 1. Here the stream finds no backlog. The view needs a terminal: util-linux's script gives

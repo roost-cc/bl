@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/roost-cc/bl/top/internal/notify"
 	"github.com/roost-cc/bl/top/internal/ui"
 )
 
@@ -19,6 +20,8 @@ func main() {
 	blArgv := flag.String("bl-argv", `["bl"]`, "the command that runs bl, as a JSON array")
 	interval := flag.Int("interval", 2000, "the stream's refresh interval in ms")
 	version := flag.Bool("version", false, "print bl-top's version and exit")
+	noBell := flag.Bool("no-bell", false, "ring no terminal bell for a notification")
+	noDesktop := flag.Bool("no-desktop", false, "send no desktop notification (notify-send)")
 	flag.Parse()
 	if *version {
 		fmt.Println("bl-top", runtime.Version())
@@ -29,7 +32,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "bl top: --bl-argv must be a JSON array of strings, not %s\n", *blArgv)
 		os.Exit(1)
 	}
-	final, err := tea.NewProgram(ui.New(argv, *interval)).Run()
+	var senders []notify.Sender
+	if !*noDesktop {
+		if desktop, ok := notify.Desktop(); ok {
+			senders = append(senders, desktop)
+		}
+	}
+	final, err := tea.NewProgram(ui.New(argv, *interval, !*noBell, senders)).Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bl top: %v\n", err)
 		os.Exit(1)
