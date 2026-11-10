@@ -8,7 +8,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, unlink
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { clockTime, matchLimit } from './limit.js';
-import { AgentProvider, agentEnv } from './provider.js';
+import { AgentProvider, agentEnv, windowsCapacity } from './provider.js';
 import { loadHookDenyMessage } from '../tool-guide.js';
 import { checkModel, exitStatus, isPlainObject } from '../config.js';
 import { checkEffort } from '../effort.js';
@@ -378,8 +378,8 @@ function claudeWindowName({ kind, scope }) {
  * @returns {ReturnType<AgentProvider["capacity"]>}
  */
 export function claudeCapacity(body, model) {
-  const reading = (state, scope, message, windows = [], until = null) => ({ state, scope, until, windows, message });
-  if (!isPlainObject(body)) return reading('unknown', 'model', 'the Claude usage endpoint returned no usage');
+  const unknown = (scope, message) => ({ state: 'unknown', scope, until: null, windows: [], message });
+  if (!isPlainObject(body)) return unknown('model', 'the Claude usage endpoint returned no usage');
   const limits = Array.isArray(body.limits)
     ? body.limits
     : [
@@ -402,21 +402,15 @@ export function claudeCapacity(body, model) {
     const name = claudeWindowName(limit);
     const resetsAt = limit.resets_at == null ? null : new Date(limit.resets_at);
     if (resetsAt && !Number.isFinite(resetsAt.getTime())) {
-      return reading(
-        'unknown',
+      return unknown(
         scope,
         `the Claude usage endpoint reported a reset that is not a time (${name}: ${limit.resets_at})`,
       );
     }
     windows.push({ name, remainingPercent: Math.max(0, 100 - limit.percent), resetsAt });
   }
-  if (windows.length === 0) return reading('unknown', scope, 'the Claude usage endpoint reported no quota windows');
-  const usedUp = windows.filter((w) => w.remainingPercent <= 0);
-  if (usedUp.length === 0) return reading('available', scope, '', windows);
-  const until = usedUp.some((w) => w.resetsAt == null)
-    ? null
-    : new Date(Math.max(...usedUp.map((w) => w.resetsAt.getTime())));
-  return reading('unavailable', scope, `no quota left in ${usedUp.map((w) => w.name).join(', ')}`, windows, until);
+  if (windows.length === 0) return unknown(scope, 'the Claude usage endpoint reported no quota windows');
+  return windowsCapacity(windows, scope);
 }
 
 export class ClaudeProvider extends AgentProvider {
