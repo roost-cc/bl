@@ -1025,7 +1025,8 @@ export function fastForwardBlocker(git, repoPath, commit) {
  * The short SHA of the commit that brought `branchName`'s tip into main: the
  * oldest commit on main's first-parent line that contains the tip. That is
  * the branch's merge commit, or the tip itself when main took it with no
- * merge commit. Null when git gives no answer.
+ * merge commit. Null when git gives no answer. A git command ended by SIGINT
+ * or SIGTERM raises that signal again (`raiseSignal`).
  * @param {string} repoPath
  * @param {string} branchName
  * @returns {string | null}

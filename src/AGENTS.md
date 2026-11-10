@@ -4192,7 +4192,9 @@ run, and a git command ended by one is a failed command. Every `## Gate` line
 After the push, `cleanupOneRepo` runs the command that `installCommand` gives
 (`npm ci` or `pnpm install --frozen-lockfile`) in the main checkout, because
 `bl` and other repos' sessions run from it. A failed install stops `bl merge`
-with the command to run by hand, and the rerun installs again.
+with the command to run by hand, and the rerun installs again. An install, or
+a git command of `landedMergeCommit`, ended by SIGINT or SIGTERM raises that
+signal again (`raiseSignal`), so `bl` exits 130 or 143.
 
 After the merge the branch's open PR, if any, is closed through
 `change.find` and `change.close`.
