@@ -2705,7 +2705,8 @@ bl's prompts and plugin commands use, not a new format.
   the step in `setStep`, and the end state in `finish` and `escalateIntegration` (`finalTitle`),
   through the runner's `title(fields, { final })`; `notify` only rings the bell now.
 - A code path that reaches an end state sets it with `finalTabTitle`, which marks the title
-  final and sends it unpadded. The run loop's ends: `clean → bl merge`,
+  final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
+  only when the code path sets it. The run loop's ends: `clean → bl merge`,
   `escalated → fix, --resume` (`→ fix, bl review` under `bl review`, `→ fix, bl merge` under
   `bl merge`), `done` for no change, `failed`. `bl updates run` ends with its outcome counts,
   and `→ approve/drop` when an outcome is a decision; a run that throws sets no final title.

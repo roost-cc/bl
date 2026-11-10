@@ -134,8 +134,8 @@ export function updateTabTitle(keyOrFields, value) {
 /**
  * Set the fields of an end state, as `updateTabTitle` does, mark the title
  * final and show it without padding. An earlier `next` is dropped: the final
- * title shows `next` only when `values` sets it. The exit keeps a final title as it is.
- * A later `updateTabTitle` or `clearTabTitle` clears the mark.
+ * title shows `next` only when `values` sets it. The exit keeps a final title
+ * as it is. A later `updateTabTitle` or `clearTabTitle` clears the mark.
  *
  * @param {Record<string, unknown>} values  e.g. `{ status: 'clean', next: '→ bl merge' }`
  */
