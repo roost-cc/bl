@@ -11,7 +11,10 @@
  * and releases it: the file is created whole (its name never exists without
  * the holder's PID in it), a lock whose holder is dead is reclaimed only under
  * its `.reclaim` mutex, and a release removes the file only while it still
- * holds this process's content (S-1397).
+ * holds this process's content (S-1397). The exit and signal handlers remove
+ * only the lock itself: a temp file (`.bl-new.lock.<pid>.<random>.tmp`) or a
+ * `.bl-new.lock.reclaim` mutex that a killed process leaves stays in the
+ * backlog root.
  *
  * The lock is re-entrant within a process: `bl new` acquires it and then calls
  * `syncAndCommit`, which acquires it again. Each acquire bumps a depth count; only
@@ -34,7 +37,8 @@ const LOCK_POLL_MS = 500;
 
 // Locks held by this process, mapped to their re-entrancy depth and the
 // content this process wrote. Cleanup handlers are registered once at module
-// init (below) and walk this map on exit/SIGINT/SIGTERM.
+// init (below) and walk this map on exit/SIGINT/SIGTERM; they remove the lock
+// files only, not a temp file that a killed process leaves.
 /** @type {Map<string, { depth: number, content: string }>} */
 const heldLocks = new Map();
 
