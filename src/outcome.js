@@ -53,14 +53,16 @@ const STDERR_LINE_MAX = 500;
 const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
 
 /**
- * One stderr line, or the `JSON.parse` message of a `not JSON` fault (it
- * quotes the agent's raw text, S-1404), fit for an operator-facing record, a
+ * One stderr line, the `JSON.parse` message of a `not JSON` fault (it
+ * quotes the agent's raw text, S-1404), the JSON path of a `schema violation`
+ * fault (it holds the agent's property names), or one line of session text
+ * (S-1405), fit for an operator-facing record, a
  * commit message and a spawn argument: ANSI codes and every control character
  * except tab removed, cut to `STDERR_LINE_MAX` characters.
  *
  * @param {string} line
  */
-function cleanStderrLine(line) {
+export function cleanStderrLine(line) {
   const clean = stripVTControlCharacters(line).replace(CONTROL_CHARS, '');
   if (clean.length <= STDERR_LINE_MAX) return clean;
   // Cut by code point, so a surrogate pair is never split.
@@ -75,7 +77,8 @@ function cleanStderrLine(line) {
  * the parsed object, or the text that holds it (a last message, a file's
  * contents), which is parsed here. The faults: `no output` (null, undefined
  * or blank text), `not JSON: <parser message>` (the message cleaned by
- * `cleanStderrLine`), and `schema violation at <JSON path>: <rule>`.
+ * `cleanStderrLine`), and `schema violation at <JSON path>: <rule>` (the JSON
+ * path cleaned by `cleanStderrLine` too, S-1405; the rule is not).
  *
  * @param {object} schema
  * @param {unknown} value
@@ -96,7 +99,7 @@ export function validateOutcome(schema, value) {
   const validate = validatorFor(schema);
   if (validate(obj)) return { structured: obj, structuredError: null };
   const [err] = validate.errors;
-  return fail(`schema violation at ${errorPath(err)}: ${err.message}`);
+  return fail(`schema violation at ${cleanStderrLine(errorPath(err))}: ${err.message}`);
 }
 
 /**

@@ -85,6 +85,29 @@ test('validateOutcome removes control characters from the parser message (S-1404
   assert.doesNotMatch(r.structuredError, /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/);
 });
 
+test('validateOutcome removes control characters from the JSON path and cuts it (S-1405)', () => {
+  const key = 'bad\u0000\u001b[31m\u0007key\nx';
+  assert.deepEqual(validateOutcome(SCHEMA, { summary: 's', refined: true, [key]: 1 }), {
+    structured: null,
+    structuredError: 'schema violation at $/badkeyx: must NOT have additional properties',
+  });
+  // A key one level down reaches the path through ajv's instance path.
+  assert.equal(
+    validateOutcome(SCHEMA, { summary: 's', refined: true, stories: { 'S-1\u0000\u001b[31m\n': {} } }).structuredError,
+    "schema violation at $/stories/S-1/refined: must have required property 'refined'",
+  );
+  // A tab stays, as it does in a stderr line.
+  assert.equal(
+    validateOutcome(SCHEMA, { summary: 's', refined: true, 'a\tb': 1 }).structuredError,
+    'schema violation at $/a\tb: must NOT have additional properties',
+  );
+  // The path is cut to 500 characters and `…`; the prefix and the rule stay whole.
+  assert.equal(
+    validateOutcome(SCHEMA, { summary: 's', refined: true, [`k${'x'.repeat(5000)}`]: 1 }).structuredError,
+    `schema violation at $/k${'x'.repeat(497)}…: must NOT have additional properties`,
+  );
+});
+
 test('outcomeFor reads nothing for a step without a schema', () => {
   assert.deepEqual(outcomeFor(null, { summary: 's' }), { structured: null, structuredError: null });
   assert.deepEqual(outcomeFor(SCHEMA, null), { structured: null, structuredError: 'no output' });

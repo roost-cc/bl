@@ -77,6 +77,49 @@ test('every schema refuses a summary of spaces only', () => {
   }
 });
 
+test('every schema refuses control characters in its text fields, and keeps a tab (S-1405)', () => {
+  // NUL, ESC with an ANSI color, BEL, DEL and a C1 character (NEL).
+  const dirty = ['a\u0000b', 'a\u001b[31mb', 'a\u0007b', 'a\u007fb', 'a\u0085b'];
+  for (const [schemaName, promptName] of Object.entries(EXAMPLES)) {
+    const [example] = jsonBlocks(promptName);
+    const schema = loadSchema(schemaName);
+    for (const summary of dirty) {
+      assert.match(
+        validateOutcome(schema, { ...example, summary }).structuredError ?? '',
+        /^schema violation at \$\/summary: must match pattern/,
+        `${schemaName} ${JSON.stringify(summary)}`,
+      );
+    }
+    assert.equal(validateOutcome(schema, { ...example, summary: 'a\tb' }).structuredError, null, schemaName);
+  }
+  // The other text fields: [schema, outcome with the field set to the text, the field's path].
+  const fields = [
+    ['implement', (t) => ({ summary: 's', done: false, blocked: t }), /\$\/blocked/],
+    ['merge-resolve', (t) => ({ summary: 's', resolved: false, reason: t }), /\$\/reason/],
+    ['fix-tests', (t) => ({ summary: 's', outcome: 'unrelated', reason: t }), /\$\/reason/],
+    ['refine', (t) => ({ summary: 's', refined: false, reason: t }), /\$\/reason/],
+    ['feature-refine', (t) => ({ summary: 's', premise_holds: false, refined: false, reason: t }), /\$\/reason/],
+    [
+      'refine-batch',
+      (t) => ({ summary: 's', stories: { 'S-1': { refined: false, reason: t } } }),
+      /\$\/stories\/S-1\/reason/,
+    ],
+  ];
+  for (const [schemaName, outcome, at] of fields) {
+    const schema = loadSchema(schemaName);
+    for (const text of dirty) {
+      const { structuredError } = validateOutcome(schema, outcome(text));
+      assert.match(structuredError ?? '', /must match pattern/, `${schemaName} ${JSON.stringify(text)}`);
+      assert.match(structuredError ?? '', at, `${schemaName} ${JSON.stringify(text)}`);
+    }
+    assert.equal(validateOutcome(schema, outcome('a\tb')).structuredError, null, `${schemaName} keeps a tab`);
+  }
+  // A multi-line reason keeps LF and CR.
+  for (const [schemaName, outcome] of fields.slice(2)) {
+    assert.equal(validateOutcome(loadSchema(schemaName), outcome('a\nb\r\nc')).structuredError, null, schemaName);
+  }
+});
+
 test("a batch sub-agent's reply is a valid entry of the batch outcome", () => {
   const [entry] = jsonBlocks('_refine-outcome-subagent');
   const outcome = { summary: 's', stories: { 'S-1': entry } };
