@@ -108,13 +108,13 @@ export function runBl(args, opts = {}) {
  *                              status: number | null,
  *                              signal: NodeJS.Signals | null }> }}
  *          `child` is the spawned process. `blocked` resolves on the
- *          announced wait. Otherwise it rejects
- *          once the child is gone, never before: when the child exits first,
- *          fails to start, or stays silent past `timeoutMs` (killed with
- *          SIGTERM, then SIGKILL if it is still running a second later), so
- *          a caller that then releases the lock and removes the tempdir does
- *          not do so under a running child. `closed` always resolves, with
- *          `status` and `signal` null when the child never started.
+ *          announced wait. Otherwise it rejects once the child is gone, never
+ *          before: when the child exits first, fails to start, or stays
+ *          silent past `timeoutMs` (killed with SIGTERM, then SIGKILL if it
+ *          is still running a second later), so a caller that then releases
+ *          the lock and removes the tempdir does not do so under a running
+ *          child. `closed` always resolves, with `status` and `signal` null
+ *          when the child never started.
  */
 export function startBlBehindLock(args, opts = {}) {
   const { cwd, timeoutMs = 15_000, bin = BL_BIN, detached = false } = opts;
