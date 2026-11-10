@@ -274,9 +274,10 @@ export function countsText(c) {
   ].join('; ');
 }
 
-/** The backlog commit message, with the counts. */
-export function commitMessage(c) {
-  return `chore: F-69 transition-log migration: ${countsText(c)}`;
+/** The backlog commit message, with the counts and the number of paths carried from an earlier run. */
+export function commitMessage(c, carried = 0) {
+  const earlier = carried > 0 ? `; carried from an earlier run: ${carried} path(s)` : '';
+  return `chore: F-69 transition-log migration: ${countsText(c)}${earlier}`;
 }
 
 /**
@@ -377,7 +378,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   log(`${dryRun ? 'would convert' : 'converted'}: ${countsText(counts)}`);
   if (earlier.length > 0) log(`an earlier run wrote and did not commit: ${earlier.join(' ')}`);
   if (dryRun) return { counts, skipped, commit: null };
-  const commit = commitPaths(root, all, commitMessage(counts));
+  const commit = commitPaths(root, all, commitMessage(counts, earlier.length));
   recordPaths(root, commit.error ? all : []);
   return { counts, skipped, commit };
 }

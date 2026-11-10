@@ -373,6 +373,7 @@ test('a rerun after a failed commit, or after a unit that failed to convert, com
     const rerun = script(dir);
     assert.equal(rerun.status, 0, `${name}: ${rerun.stderr}`);
     assert.deepEqual(statusLines(dir), [], `${name}: every path of both runs is committed`);
+    assert.match(git(dir, 'log', '-1', '--format=%s'), /; carried from an earlier run: [1-9]\d* path\(s\)$/, name);
     for (const n of [1, 2, 3]) assert.equal(fm(dir, story(n)).transitions[0].to, 'draft', `${name}: S-${n}`);
     const again = script(dir);
     assert.equal(again.stdout, 'nothing to do\n', name);
