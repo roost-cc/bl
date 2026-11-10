@@ -28,10 +28,12 @@ import { spawnSync } from 'child_process';
  * @param {number} ms
  */
 export function sleepSync(ms) {
-  if (ms <= 0) return;
+  // `!(ms > 0)` also catches NaN, which `Atomics.wait` takes as "forever".
+  if (!(ms > 0)) return;
   const r = spawnSync('sleep', [(ms / 1000).toFixed(3)], { stdio: 'ignore' });
-  if (r.error) {
-    // No `sleep` to run: sleep in this process, deaf to signals as before.
+  if (r.error || (r.signal == null && r.status !== 0)) {
+    // `sleep` did not start or did not sleep (it refused the argument): sleep
+    // in this process, deaf to signals as before.
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
     return;
   }
