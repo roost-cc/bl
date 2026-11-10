@@ -6,16 +6,79 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, realpathSync, writeFileSync } from 'fs';
+import { spawn } from 'child_process';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { extractSection } from '../../src/feature.js';
 import { mkTempDir } from '../helpers/tempdir.js';
-import { runBl } from '../helpers/run-bl.js';
+import { BL_BIN, personEnv, runBl } from '../helpers/run-bl.js';
+import { withNoAgent } from '../helpers/fake-agent.js';
 import { loadConfig, parseFrontmatter, worktreeRoot } from '../../src/config.js';
 import { ENV, fixture, g, landOnMain } from '../helpers/merge-integrate-fixture.js';
 
-// "The push's output prints while the push runs" has no test: a buffered
-// push leaves the same final stderr, so a unit test cannot tell the two apart.
+/**
+ * A shell snippet that prints `line` to stderr, then waits up to 10 s for the
+ * file `go`, and writes `yes` to `result` when `go` existed at the end of the
+ * wait, `no` otherwise.
+ */
+function waitForGo(line, go, result) {
+  return `echo '${line}' >&2; i=0; while [ ! -e '${go}' ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done; if [ -e '${go}' ]; then echo yes > '${result}'; else echo no > '${result}'; fi`;
+}
+
+/**
+ * Start `bl <args>` in the background, and create `go` once `line` reaches its
+ * stderr. A child whose output `bl` buffers until it ends never sees `go`.
+ * Resolves with the exit status and the stderr.
+ */
+function runCreatingGoOnLine(args, cwd, env, line, go) {
+  const child = spawn(BL_BIN, args, {
+    cwd,
+    env: withNoAgent({ ...personEnv(), BL_BACKLOG_DIR: cwd, ...env }),
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.on('data', (d) => {
+    stderr += d;
+    if (stderr.includes(line) && !existsSync(go)) writeFileSync(go, '');
+  });
+  return new Promise((resolve) => child.on('close', (status) => resolve({ status, stderr })));
+}
+
+test("the push's hook output reaches stderr before the push ends", async () => {
+  const fx = fixture();
+  const scratch = mkTempDir('bl-push-stream-');
+  const go = join(scratch, 'go');
+  const result = join(scratch, 'result');
+  writeFileSync(
+    join(fx.repo, '.git', 'hooks', 'pre-push'),
+    `#!/bin/sh\nwhile read l ls r rs; do\n  if [ "$r" = refs/heads/main ]; then ${waitForGo('hook: running', go, result)}; fi\ndone\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  try {
+    const r = await runCreatingGoOnLine(['merge', 'S-1'], fx.dir, ENV, 'hook: running', go);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(result, 'utf8').trim(), 'yes');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("the install's output reaches stderr before the install ends", async () => {
+  const fx = fixture();
+  const dir = mkTempDir('bl-install-stream-');
+  const go = join(dir, 'go');
+  const result = join(dir, 'result');
+  writeFileSync(join(dir, 'npm'), `#!/bin/sh\n${waitForGo('npm: running', go, result)}\n`, { mode: 0o755 });
+  try {
+    landOnMain(fx, 'package-lock.json', '{}\n', 'add a lockfile');
+    const env = { ...ENV, PATH: `${dir}:${process.env.PATH}` };
+    const r = await runCreatingGoOnLine(['merge', 'S-1'], fx.dir, env, 'npm: running', go);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(result, 'utf8').trim(), 'yes');
+  } finally {
+    fx.cleanup();
+  }
+});
 
 test('a refused push of main leaves the main checkout as it was, and the next merge holds only its own unit', () => {
   const fx = fixture();
