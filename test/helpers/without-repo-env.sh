@@ -20,8 +20,8 @@
 # trap can run. The child runs in the background and the wrapper waits for
 # it, so a signal to the wrapper's pid alone runs its trap at once. The trap
 # sends the signal on to the child and waits for it before the EXIT trap
-# removes the directory. bash makes a background child ignore SIGINT, and
-# `env --default-signal=INT` gives it back; `<&0` keeps its stdin, which bash
+# removes the directory. bash makes a background child ignore SIGINT and
+# SIGQUIT, and `env --default-signal=INT,QUIT` gives them back; `<&0` keeps its stdin, which bash
 # would set to /dev/null. Guarded by test/cli/suite-tmpdir.sh.
 #
 # Requires GNU env (coreutils 8.31 or later) for --default-signal. BSD and
@@ -60,7 +60,7 @@ trap 'stop TERM 143' TERM
 trap 'stop HUP 129' HUP
 CLAUDE_CONFIG_DIR=$(mktemp -d) || exit 1
 export CLAUDE_CONFIG_DIR
-env --default-signal=INT "$@" <&0 &
+env --default-signal=INT,QUIT "$@" <&0 &
 child=$!
 if ((${#pending[@]})); then stop "${pending[@]}"; fi
 wait "$child"
