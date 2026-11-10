@@ -10,6 +10,7 @@
 
 import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { stripVTControlCharacters } from 'util';
 import Ajv2020 from 'ajv/dist/2020.js';
 
 /** Where interactive sessions write their outcome file, under the git-ignored `.bl/`. */
@@ -44,6 +45,20 @@ export const NO_OUTPUT = 'no output';
 
 /** How many non-empty stderr lines a headless result keeps as `stderrTail`. */
 const STDERR_TAIL_LINES = 20;
+
+/** The longest stderr line a fault or `stderrTail` keeps, in characters. */
+const STDERR_LINE_MAX = 500;
+
+/**
+ * One stderr line, fit for an operator-facing record: ANSI codes and bare
+ * `\r` removed, cut to `STDERR_LINE_MAX` characters.
+ *
+ * @param {string} line
+ */
+function cleanStderrLine(line) {
+  const clean = stripVTControlCharacters(line).replaceAll('\r', '');
+  return clean.length > STDERR_LINE_MAX ? `${clean.slice(0, STDERR_LINE_MAX)}…` : clean;
+}
 
 /**
  * Validate `value` against `schema` (JSON Schema draft 2020-12). `value` is
@@ -100,7 +115,8 @@ export function outcomeFor(schema, value) {
  */
 export function withExitFault(outcome, cli, status, stderr) {
   const lines = String(stderr ?? '')
-    .split('\n')
+    .split(/\r?\n/)
+    .map(cleanStderrLine)
     .filter((l) => l.trim());
   const stderrTail = lines.slice(-STDERR_TAIL_LINES).join('\n');
   if (outcome.structuredError !== NO_OUTPUT || (status === 0 && !lines.length)) {

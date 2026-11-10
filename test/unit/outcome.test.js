@@ -104,6 +104,42 @@ test('withExitFault names the CLI exit in place of no output only, and keeps the
   assert.deepEqual(fault(1, 'x', noSchema), { ...noSchema, stderrTail: 'x' });
 });
 
+test('withExitFault bounds and cleans the stderr line (S-1398)', () => {
+  const none = { structured: null, structuredError: NO_OUTPUT };
+  const fault = (stderr) => withExitFault(none, 'claude', 1, stderr);
+  const long = 'x'.repeat(5_000_000);
+  const cut = `${'x'.repeat(500)}…`;
+  const cases = [
+    { name: 'CRLF line ends', stderr: 'a\r\nb\r\n', error: 'claude exited 1: b', tail: 'a\nb' },
+    {
+      name: 'bare \\r inside a line',
+      stderr: '10%\r50%\rdone\n',
+      error: 'claude exited 1: 10%50%done',
+      tail: '10%50%done',
+    },
+    {
+      name: 'ANSI codes',
+      stderr: '\x1b[31mError:\x1b[0m bad\n',
+      error: 'claude exited 1: Error: bad',
+      tail: 'Error: bad',
+    },
+    { name: 'a line of only ANSI codes is blank', stderr: 'a\n\x1b[0m\r\n', error: 'claude exited 1: a', tail: 'a' },
+    { name: 'a 5 MB last line', stderr: `${long}\n`, error: `claude exited 1: ${cut}`, tail: cut },
+    { name: 'a 5 MB line in the tail', stderr: `${long}\nb`, error: 'claude exited 1: b', tail: `${cut}\nb` },
+    {
+      name: 'a 500-character line stays whole',
+      stderr: 'y'.repeat(500),
+      error: `claude exited 1: ${'y'.repeat(500)}`,
+      tail: 'y'.repeat(500),
+    },
+  ];
+  for (const c of cases) {
+    const r = fault(c.stderr);
+    assert.equal(r.structuredError, c.error, c.name);
+    assert.equal(r.stderrTail, c.tail, c.name);
+  }
+});
+
 test('outcomePath is <backlogRoot>/.bl/outcome/<unit id>.json', () => {
   assert.equal(outcomePath('/b', 'S-7'), '/b/.bl/outcome/S-7.json');
 });
