@@ -202,7 +202,7 @@ export function reviewOutcome(position, session) {
  * or `in_review` (F-69 D5), or the latest session has an open Must or Should
  * box. Open nits do not block; `ready_for_merge` passes.
  *
- * @param {string} status  the unit's status, with its review position (`positionOf`)
+ * @param {string} status  the unit's status, with its review position (`statusOf` with its change document)
  * @param {string} body
  */
 export function featureReviewGate(status, body) {

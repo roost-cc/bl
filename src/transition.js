@@ -465,20 +465,10 @@ export function assertFrom(flow, unit, verb, ctx) {
 }
 
 /**
- * The status of a unit record (a feature record, a story unit) with its
- * review position: `statusOf` over its frontmatter and its current change
- * document, which matters for a unit with no log (D4).
- * @param {"story" | "feature"} kind
- * @param {{ fm: object, change?: { fm: object } | null }} unit
- * @returns {string}
- */
-export function positionOf(kind, unit) {
-  return statusOf(kind, unit.fm, unit.change ?? null);
-}
-
-/**
- * Which of `verbs` a command starts on a unit record at `positionOf`, by
- * `flow.json`'s table (F-69 D3): the first verb whose `from` holds the
+ * Which of `verbs` a command starts on a unit record (a feature record, a
+ * story unit), by `flow.json`'s table (F-69 D3). The status is `statusOf`
+ * over its frontmatter and its current change document, which places a unit
+ * with no log (D4). The verb is the first whose `from` holds the
  * status, checked with `assertFrom` (its `when` guards too). When none
  * does, `refusal` is the first verb's. Every hand-written start-state check
  * of a verb handler became this. `bl run` passes its `then` chain
@@ -494,7 +484,7 @@ export function positionOf(kind, unit) {
 export function startOf(config, kind, unit, verbs, { guards = true } = {}) {
   const flow = loadFlow(config.backlogRoot);
   const list = [verbs].flat();
-  const status = positionOf(kind, unit);
+  const status = statusOf(kind, unit.fm, unit.change ?? null);
   const fits = (v) => {
     const row = flow.verbOf(kind, v);
     return row != null && flow.fromOf(kind, row).includes(status);

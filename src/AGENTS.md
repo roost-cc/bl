@@ -869,7 +869,7 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   `in_review` and its verdict too, outside the round cap (`round_within_cap` always holds), so
   open items leave the unit in `fixing` and the escalation that follows is by `fix`.
 - **Start states (F-69 D3).** `startOf(config, kind, unit, verbs)` picks the first of `verbs`
-  whose `from` holds the unit's status (`positionOf`: with its change document's review
+  whose `from` holds the unit's status (`statusOf` with its change document's review
   position, for a unit with no log) and checks it with `assertFrom`. `bl run` passes its `then`
   chain (`Flow.chainOf`: `run`, `review`, `fix`), so it resumes a unit in review or fixing;
   `bl implement` passes `IMPLEMENT_VERBS` (`implement`, or `fix` on a unit in `fixing`);

@@ -379,7 +379,7 @@ export function appendSection(body, name, text) {
  * The verb that moves an open change on: `merge` once its unit is
  * `ready_for_merge` (F-69 D5), else `run` (`bl review`'s summary line, `bl
  * inbox`'s change items). `status` is the unit's, with its review position
- * (`positionOf`). `reviewEnd` refines it by the session counts:
+ * (`statusOf` with its change document). `reviewEnd` refines it by the session counts:
  * `ready_for_merge` with an open Must fix/Should fix box gives `bl review`,
  * not `bl merge`.
  */
