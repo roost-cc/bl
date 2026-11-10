@@ -23,6 +23,7 @@ import { resolve } from 'path';
 import { info } from './config.js';
 import { awaitLock, LockWaitTimeout } from './lock-wait.js';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { interruptOf, raiseSignal } from './signal-exit.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
 /**
@@ -66,13 +67,20 @@ const LOCK_POLL_MS = 200;
  * @property {number} [pollMs=200] how often to retry the lock while held.
  */
 
-/** Run git with an argument vector, capturing both streams. */
+/**
+ * Run git with an argument vector, capturing both streams. A git ended by
+ * SIGINT or SIGTERM (`INTERRUPT_SIGNALS`) raises that signal again
+ * (`raiseSignal`): it is not a failed fetch to go on from.
+ */
 function git(cwd, args) {
   const r = spawnSync('git', args, {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  // A raise inside `withMainSyncLock` leaves the lock file with a dead PID;
+  // the next `acquirePidLock` reclaims it.
+  raiseSignal(interruptOf(r));
   return {
     ok: r.status === 0,
     status: r.status,
@@ -136,7 +144,9 @@ function syncLocked(repoPath, { checkAhead, prune }) {
 /**
  * Fetch `origin/main` and fast-forward the checked-out `main` of `repoPath` to
  * it, under the per-repo lock. The checkout must be on `main`; callers guard
- * that. Never throws for git failures: they come back as states. Throws when
+ * that. Never throws for git failures: they come back as states. A git
+ * command ended by SIGINT or SIGTERM is not a state: that signal is raised
+ * again (`raiseSignal`). Throws when
  * `repoPath` is not a git repository or the lock file cannot be written.
  *
  * @param {string} repoPath
@@ -188,7 +198,9 @@ export async function withMainSyncLock(repoPath, fn, opts = {}) {
  * Print a `syncMain` result for `label` (a repo path or name) and say whether
  * the caller may go on. `updated` and `no-remote` are notes; `fetch-failed` is
  * a warning that names the local `main` commit used instead; `ahead`,
- * `ff-failed` and `lock-timeout` are errors and return false.
+ * `ff-failed` and `lock-timeout` are errors and return false. A git command
+ * ended by SIGINT or SIGTERM gives no result to report: `syncMain` raises that
+ * signal again.
  *
  * @param {MainSyncResult} result
  * @param {string} label

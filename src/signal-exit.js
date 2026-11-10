@@ -12,7 +12,12 @@
  * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
  * `raiseSignal` raises one of them again after a synchronous child ended on
  * it (`checkedMerge`, the push of main and the install in `cleanupOneRepo`,
- * and `landedMergeCommit` in `cleanup.js`).
+ * `landedMergeCommit` and `removeWorktreeAndBranch` in `cleanup.js`,
+ * `main-sync.js`'s git commands, and `reportBacklogCommit` in `sync.js`).
+ * Those callers read the signal of their own git children through
+ * `interruptOf(r)`, which is null when Node itself killed the child (`r.error`
+ * set, such as `ENOBUFS`), so that kill is not raised. The signal that
+ * `commitPaths` returns is not read through `interruptOf` yet.
  */
 
 let registered = false;
@@ -32,6 +37,17 @@ export const INTERRUPT_SIGNALS = Object.freeze(['SIGINT', 'SIGTERM']);
  */
 export function isInterrupt(signal) {
   return INTERRUPT_SIGNALS.includes(signal);
+}
+
+/**
+ * The interrupt (`INTERRUPT_SIGNALS`) that ended the synchronous child `r`, or
+ * null. A child that Node itself killed (`r.error` set: `ENOBUFS` past
+ * `maxBuffer`, `ETIMEDOUT` past `timeout`) is a failed child, not an interrupt.
+ * @param {{ signal?: string | null, error?: Error }} r  a `spawnSync` result
+ * @returns {string | null}
+ */
+export function interruptOf(r) {
+  return !r.error && isInterrupt(r.signal) ? r.signal : null;
 }
 
 /**
