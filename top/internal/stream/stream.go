@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // Stream is one running `bl top --stream`. Gen tells its messages from those of a stream that
@@ -105,10 +106,14 @@ func (s *Stream) send(m any) bool {
 	}
 }
 
+// stderrDelay is how long the end of the stream waits for stderr to close after stdout ended: a
+// child that the stream left behind may hold stderr open.
+var stderrDelay = time.Second
+
 // read decodes stdout line by line to its end. It reads stdout to the end even after Stop: bl
 // writes a snapshot to a pipe in one blocking write, and a full pipe would hold it there, so it
 // would never see stdin close.
-func (s *Stream) read(stdout, stderr io.Reader) {
+func (s *Stream) read(stdout io.Reader, stderr io.ReadCloser) {
 	defer close(s.msgs)
 	last := make(chan string, 1)
 	go func() { last <- LastLine(stderr) }()
@@ -130,7 +135,14 @@ func (s *Stream) read(stdout, stderr io.Reader) {
 			break
 		}
 	}
-	stderrLine := <-last
+	var stderrLine string
+	select {
+	case stderrLine = <-last:
+	case <-time.After(stderrDelay):
+		// A child holds stderr open: close it, so the end does not wait for that child.
+		stderr.Close()
+		stderrLine = <-last
+	}
 	werr := s.cmd.Wait()
 	if reason == "" {
 		reason = stderrLine

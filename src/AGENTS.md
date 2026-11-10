@@ -2916,7 +2916,9 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   inbox and came back. For the notes of a snapshot the view rings the terminal bell (`\a`) once,
   unless `--no-bell`, and hands each note to each sender. A sender is a command argv to which
   it appends `<id> <kind>` and `<line>`; it runs in the background, in a process group of its
-  own, and is killed after 10 s. The desktop sender is `notify-send -a "bl top"`, when
+  own, and is killed after 10 s. The command's own exit is the result: after it exits, the
+  sender waits at most 1 s for a child that holds its stderr, so an exit 0 is never `timeout`.
+  The stream's end waits the same 1 s for its stderr. The desktop sender is `notify-send -a "bl top"`, when
   `notify-send` is on `PATH` and there is no `--no-desktop`. A sender that exits other than 0
   or times out puts `<name> failed: <its last stderr line, or timeout>` in red at the right of
   the bottom border, until its command next exits 0. A sender may take only some kinds of note

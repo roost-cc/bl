@@ -168,6 +168,29 @@ func TestSender(t *testing.T) {
 	}
 }
 
+// A command that ends, leaving a child that holds its stderr: its own exit is the result, within
+// the wait delay, and never `timeout`.
+func TestSenderDoesNotWaitForAChildOfAnExit0Command(t *testing.T) {
+	timeout = 3 * time.Second
+	t.Cleanup(func() { timeout = 10 * time.Second })
+	note := Note{ID: "T-52", Kind: "task", Line: "x"}
+	for _, c := range []struct {
+		body, want string
+	}{
+		{"sleep 5 >&2 &\nexit 0\n", ""},
+		{"sleep 5 >&2 &\necho 'no daemon' >&2\nexit 1\n", "no daemon"},
+	} {
+		s := Sender{Name: "push", Argv: []string{script(t, "bg", c.body)}}
+		start := time.Now()
+		if got := s.Send(note)(); got != (ResultMsg{Sender: "push", Err: c.want}) {
+			t.Errorf("%q: %#v, want Err %q", c.body, got, c.want)
+		}
+		if took := time.Since(start); took >= timeout {
+			t.Errorf("%q: the sender took %s, the timeout is %s", c.body, took, timeout)
+		}
+	}
+}
+
 func TestPushGetsNewEscalationsAndTasksOnly(t *testing.T) {
 	args := filepath.Join(t.TempDir(), "args")
 	push := Push([]string{script(t, "push", `printf '%s|' "$@" >> "$1"; echo >> "$1"`), args})

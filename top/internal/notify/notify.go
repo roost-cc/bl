@@ -120,8 +120,13 @@ func (s Sender) Send(n Note) tea.Cmd {
 	return func() tea.Msg { return ResultMsg{Sender: s.Name, Err: s.run(n)} }
 }
 
+// waitDelay is how long a sender waits for its stderr to close after its command exited: a child
+// that the command left behind may hold it open.
+var waitDelay = time.Second
+
 // run runs the command for n, in a process group of its own, so that a timeout kills what it
-// started too.
+// started too. The command's own exit counts: one that exited 0 succeeded, even when a child that
+// it left holds stderr, and only a command that was still running at the timeout is `timeout`.
 func (s Sender) run(n Note) string {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -129,14 +134,16 @@ func (s Sender) run(n Note) string {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = waitDelay
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	if ps := cmd.ProcessState; ps != nil && ps.Exited() {
+		if ps.Success() {
+			return ""
+		}
+	} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return "timeout"
-	}
-	if err == nil {
-		return ""
 	}
 	if line := stream.LastLine(&stderr); line != "" {
 		return line

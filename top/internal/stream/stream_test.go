@@ -132,6 +132,21 @@ func TestStreamEndsOnALineThatIsNotASnapshot(t *testing.T) {
 	}
 }
 
+func TestStreamEndDoesNotWaitForAChildThatHoldsStderr(t *testing.T) {
+	// The stream exits; the `sleep` it left holds stderr open for 5 s.
+	s, err := Start([]string{"sh", "-c", `sleep 5 >&2 & echo 'bl: no backlog here' >&2; exit 1`}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if m := next(t, s); !reflect.DeepEqual(m, EndMsg{Gen: 1, Reason: "bl: no backlog here"}) {
+		t.Fatalf("end = %#v", m)
+	}
+	if took := time.Since(start); took > 4*time.Second {
+		t.Errorf("the end took %s: it waited for the child", took)
+	}
+}
+
 func TestStreamExitWithNoStderrNamesTheExit(t *testing.T) {
 	s, err := Start([]string{"sh", "-c", `exit 3`}, 1)
 	if err != nil {
