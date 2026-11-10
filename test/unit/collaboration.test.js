@@ -66,6 +66,34 @@ test('a pre-task discussion before workon has the rules once, from the preamble'
   assert.doesNotMatch(out, /\{\{collaborationGuide\}\}/);
 });
 
+// The rules never order the task itself, and never forbid the proceed question:
+// in every discussion prompt, and before "(Original task follows.)" with --prompt.
+const DO_THE_TASK = /(^|[.:!]\s+)Do (that|the) task\b/m;
+const ORIGINAL = '(Original task follows.)';
+const discussionText = [
+  ...DISCUSSION.map((name) => [name, loadPrompt(name, VARS)]),
+  ...['workon', 'agent', 'refine'].map((mode) => {
+    const out = applyAdditionalPrompt(loadPrompt(mode, VARS), 'talk first', { mode, storyId: 'S-7' });
+    return [`a pre-task discussion before ${mode}`, out.slice(0, out.indexOf(ORIGINAL))];
+  }),
+];
+for (const [label, text] of discussionText) {
+  test(`${label} has no contradicting scope text`, () => {
+    assert.doesNotMatch(text, DO_THE_TASK);
+    if (!text.includes(RULE_ONE)) return;
+    const prose = text.replace(/\s+/g, ' ');
+    assert.match(prose, /Follow its instructions, in their order\. They come before rule 4/);
+    assert.match(prose, /a pre-task discussion asks its proceed question/);
+  });
+}
+
+test('the preamble names its proceed question as the one allowed offer', () => {
+  const out = applyAdditionalPrompt(loadPrompt('workon', VARS), 'talk first', { mode: 'workon', storyId: 'S-7' });
+  const before = out.slice(0, out.indexOf(ORIGINAL)).replace(/\s+/g, ' ');
+  assert.ok(before.indexOf('the one offer to do the task that this phase allows') < before.indexOf('Shall I proceed'));
+  assert.ok(before.includes(RULE_ONE), 'the rules are in the preamble');
+});
+
 test('a batch refine sub-agent body has no rules', () => {
   for (const name of ['refine', 're-refine']) {
     const body = loadPrompt(name, { ...VARS, refineOutcome: '-', collaborationGuide: '' });

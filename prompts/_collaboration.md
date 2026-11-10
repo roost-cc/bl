@@ -1,8 +1,9 @@
 ## Working with the operator
 
 The command that started this session, with its prompt, is the operator's explicit instruction.
-Do that task: for example, a refine session writes its stories without a separate "the
-description is complete" from the operator (rule 4). When you have a question, or must interview
+Follow its instructions, in their order. They come before rule 4: for example, a refine session
+writes its stories without a separate "the description is complete" from the operator, and a
+pre-task discussion asks its proceed question. When you have a question, or must interview
 the operator, follow the rules below: ask one question at a time, and restate each answer and get
 it approved before you ask the next one.
 

@@ -12,7 +12,8 @@ or otherwise do the task during this phase.
 
 {{collaborationGuide}}
 
-When the discussion comes to an end, ask the operator exactly this:
+When the discussion comes to an end, ask the operator exactly this. It is
+the one offer to do the task that this phase allows:
 
 > Shall I proceed with the original `bl {{mode}}` task for
 > {{storyId}}?
