@@ -16,7 +16,8 @@
  *   history    every HISTORY_EVERY_MS
  *
  * The first tick reads every section. A read that throws keeps the last good
- * value (`readSection`), and the stream goes on.
+ * value (`readSection`), the section is read again at the next tick, and the
+ * stream goes on.
  */
 
 import { spawnSync } from 'child_process';
@@ -57,9 +58,20 @@ export function createStream({ readers, now = Date.now, stamp }) {
   const readAt = {};
   let lastStamp;
   let capacityAsked = false;
+  // A read that throws is not a read for the schedule: the section is due again at the next tick.
   const read = (name, t) => {
-    sections[name] = readSection(sections[name], () => readers[name](t), t);
-    readAt[name] = t;
+    let ok = false;
+    sections[name] = readSection(
+      sections[name],
+      () => {
+        const value = readers[name](t);
+        ok = true;
+        return value;
+      },
+      t,
+    );
+    if (ok) readAt[name] = t;
+    else delete readAt[name];
   };
   const due = (name, t, every) => readAt[name] === undefined || t - readAt[name] >= every;
   return {
@@ -72,7 +84,7 @@ export function createStream({ readers, now = Date.now, stamp }) {
       read('activity', t);
       read('tokens', t);
       const s = stamp();
-      if (s !== lastStamp || due('attention', t, ATTENTION_MAX_AGE_MS)) {
+      if (s !== lastStamp || due('attention', t, ATTENTION_MAX_AGE_MS) || due('next', t, ATTENTION_MAX_AGE_MS)) {
         read('attention', t);
         read('next', t);
       }

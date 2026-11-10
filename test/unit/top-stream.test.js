@@ -16,18 +16,22 @@ const TICKS = (10 * 60 * 1000) / INTERVAL;
 /**
  * A stream over counting readers and a clock the test moves. `before(i)`
  * runs before tick i; `throwing` names a reader that throws from its
- * second call on.
+ * second call on, `failOnce` one that throws on its second call only.
+ * `times` holds the clock of each call of each reader.
  */
-function simulate({ before = () => {}, throwing = null } = {}) {
+function simulate({ before = () => {}, throwing = null, failOnce = null } = {}) {
   let t = 0;
   let stamp = 'a';
   const counts = Object.fromEntries(SECTIONS.map((s) => [s, 0]));
+  const times = Object.fromEntries(SECTIONS.map((s) => [s, []]));
   const readers = Object.fromEntries(
     SECTIONS.map((name) => [
       name,
       (now) => {
         counts[name] += 1;
+        times[name].push(now);
         if (name === throwing && counts[name] > 1) throw new Error(`${name} broke`);
+        if (name === failOnce && counts[name] === 2) throw new Error(`${name} broke once`);
         return { n: counts[name], now };
       },
     ]),
@@ -44,7 +48,7 @@ function simulate({ before = () => {}, throwing = null } = {}) {
     snapshots.push(stream.tick());
     t += INTERVAL;
   }
-  return { counts, snapshots };
+  return { counts, times, snapshots };
 }
 
 test('with no change, runs, activity and tokens are read every tick, attention and next every 30 s, capacity and history every 5 min', () => {
@@ -88,6 +92,26 @@ test('a reader that throws keeps its last good value with error, and the stream 
   assert.deepEqual(snapshots[0].runs, { read_at: new Date(0).toISOString(), n: 1, now: 0 });
   assert.deepEqual(snapshots.at(-1).runs, { read_at: new Date(0).toISOString(), n: 1, now: 0, error: 'runs broke' });
   assert.equal(snapshots.at(-1).attention.error, undefined);
+});
+
+test('a failed read of a due section is read again at the next tick', () => {
+  // name, the clock of its second read (which fails), its read count with no failure.
+  for (const [name, second, reads] of [
+    ['attention', 30000, 20],
+    ['next', 30000, 20],
+    ['capacity', 300000, 2],
+    ['history', 300000, 2],
+  ]) {
+    const { counts, times, snapshots } = simulate({ failOnce: name });
+    assert.equal(times[name][1], second, name);
+    assert.equal(times[name][2], second + INTERVAL, `${name}: read again at the next tick`);
+    const failed = snapshots[second / INTERVAL][name];
+    assert.equal(failed.error, `${name} broke once`, name);
+    assert.equal(snapshots[second / INTERVAL + 1][name].error, undefined, `${name}: the good read drops the error`);
+    // From the good read on, the usual period (capacity and history have no fourth read in 10 min).
+    if (name === 'attention' || name === 'next') assert.equal(times[name][3] - times[name][2], 30000, name);
+    assert.equal(counts[name], reads + 1, name);
+  }
 });
 
 test('backlogStamp changes when a unit file, a change document or a new task changes the backlog', () => {
