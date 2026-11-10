@@ -678,15 +678,9 @@ export async function cleanupOneRepo({
     } else {
       info(`Branch '${branchName}' is already merged into main.`);
     }
-    try {
-      mergeCommitHash = execSync('git rev-parse --short HEAD', {
-        cwd: repoPath,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim();
-    } catch {
-      // ignore
-    }
+    // Not main's tip: a rerun after a failure past the push may find a later
+    // unit's landing there (S-1452).
+    mergeCommitHash = landedMergeCommit(repoPath, branchName);
   } else {
     // The branch was merged on the forge (or by an earlier run that already
     // deleted it). The pull above fast-forwarded main to origin/main and the
@@ -1020,6 +1014,30 @@ export function fastForwardBlocker(git, repoPath, commit) {
   const dry = git(['read-tree', '-n', '-m', '-u', 'HEAD', commit], repoPath);
   if (dry.status === 0) return null;
   return `${`${dry.stdout ?? ''}${dry.stderr ?? ''}`.trim()}\nCommit, move or remove those files.`;
+}
+
+/**
+ * The short SHA of the commit that brought `branchName`'s tip into main: the
+ * oldest commit on main's first-parent line that contains the tip. That is
+ * the branch's merge commit, or the tip itself when main took it with no
+ * merge commit. Null when git gives no answer.
+ * @param {string} repoPath
+ * @param {string} branchName
+ * @returns {string | null}
+ */
+export function landedMergeCommit(repoPath, branchName) {
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: repoPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return r.status === 0 ? r.stdout.trim() : null;
+  };
+  const tip = git('rev-parse', '--verify', `${branchName}^{commit}`);
+  if (!tip) return null;
+  const above = git('rev-list', '--first-parent', '--ancestry-path', '--reverse', `${tip}..main`);
+  if (above == null) return null;
+  const oldest = above.split('\n')[0];
+  // Main at the tip, or the tip on main's first-parent line (a fast-forward).
+  const commit = !oldest || git('rev-parse', `${oldest}^1`) === tip ? tip : oldest;
+  return git('rev-parse', '--short', commit);
 }
 
 /**

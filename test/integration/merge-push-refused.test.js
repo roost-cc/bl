@@ -10,7 +10,7 @@ import { readFileSync, realpathSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
-import { loadConfig, worktreeRoot } from '../../src/config.js';
+import { loadConfig, parseFrontmatter, worktreeRoot } from '../../src/config.js';
 import { ENV, fixture, g, landOnMain } from '../helpers/merge-integrate-fixture.js';
 
 test('a refused push of main leaves the main checkout as it was, and the next merge holds only its own unit', () => {
@@ -115,6 +115,28 @@ test('a failed install stops bl merge after the push, names the command, and the
     const second = runBl(['merge', 'S-1'], { cwd: fx.dir, env: npm.env });
     assert.equal(second.status, 0, second.stderr);
     assert.equal(npm.calls().length, 2);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a failed install keeps the merge commit SHA when main moves before the rerun', () => {
+  const fx = fixture();
+  const npm = fakeNpm();
+  try {
+    landOnMain(fx, 'package-lock.json', '{}\n', 'add a lockfile');
+    writeFileSync(npm.exitFile, '1');
+    const first = runBl(['merge', 'S-1'], { cwd: fx.dir, env: npm.env });
+    assert.equal(first.status, 1, first.stderr);
+    const merge = g(fx.repo, 'rev-parse', '--short', 'origin/main');
+    assert.match(g(fx.repo, 'log', '-1', '--format=%s', merge), /\(S-1\)/);
+
+    landOnMain(fx, 'x.txt', 'x\n', 'other');
+    writeFileSync(npm.exitFile, '0');
+    const second = runBl(['merge', 'S-1'], { cwd: fx.dir, env: npm.env });
+    assert.equal(second.status, 0, second.stderr);
+    const { fm } = parseFrontmatter(readFileSync(join(fx.dir, 'stories', 'S1-loose', 'index.md'), 'utf8'));
+    assert.equal(fm.commit, merge);
   } finally {
     fx.cleanup();
   }
