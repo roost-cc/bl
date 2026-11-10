@@ -72,12 +72,20 @@ export function parseRanked(raw, key = 'unit', file = PRIORITY_FILE) {
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
 /**
+ * Whether a story's frontmatter `fm` is an update story's, one `bl updates`
+ * writes: a non-blank `update_repo:`.
+ */
+export function isUpdateStory(fm) {
+  return str(fm.update_repo) !== '';
+}
+
+/**
  * Whether story unit `s` is a loose story, a unit of its own: no `feature:`
- * and no `update_repo:` (an update story, written by `bl updates`). The raw
- * keys, so a story naming a feature that does not exist is not loose either.
+ * and not an update story (`isUpdateStory`). The raw keys, so a story naming
+ * a feature that does not exist is not loose either.
  */
 export function isLooseStory(s) {
-  return !str(s.fm.feature) && !str(s.fm.update_repo);
+  return !str(s.fm.feature) && !isUpdateStory(s.fm);
 }
 
 /**
@@ -113,7 +121,7 @@ export function resolveRanked(ranked, { features, stories }) {
       bad(`is a story inside ${str(unit.fm.feature)}; rank its feature instead`);
       continue;
     }
-    if (unit.kind === 'story' && str(unit.fm.update_repo)) {
+    if (unit.kind === 'story' && isUpdateStory(unit.fm)) {
       bad('is an update story; update stories are never ranked');
       continue;
     }
