@@ -257,7 +257,7 @@ test('getAllowedTools adds backlog.json session_stack.allow, resolved, before th
 // ---------------------------------------------------------------------------
 
 /** launchSession with a provider stub; returns the unit file's frontmatter after. */
-function launchWithTokens(getTokens, extra = {}, spawnResult = () => ({ status: 0 })) {
+async function launchWithTokens(getTokens, extra = {}, spawnResult = () => ({ status: 0 })) {
   const { dir, cleanup } = mkTempBacklog();
   const tmux = process.env.TMUX;
   delete process.env.TMUX;
@@ -282,7 +282,7 @@ function launchWithTokens(getTokens, extra = {}, spawnResult = () => ({ status: 
     })();
     let status;
     try {
-      status = launchSession({
+      status = await launchSession({
         mode: 'workon',
         parsed: { id: 'S-1' },
         title: 'T',
@@ -311,10 +311,10 @@ function launchWithTokens(getTokens, extra = {}, spawnResult = () => ({ status: 
   }
 }
 
-test('launchSession records the transcript difference across the session under tokensStep', () => {
+test('launchSession records the transcript difference across the session under tokensStep', async () => {
   const before = { input: 10, output: 5, cache_creation: 2, cache_read: 50 };
   const after = { input: 25, output: 9, cache_creation: 2, cache_read: 40 };
-  const { status, calls, fm } = launchWithTokens((spawned) => (spawned ? after : before));
+  const { status, calls, fm } = await launchWithTokens((spawned) => (spawned ? after : before));
   assert.equal(status, 0);
   assert.deepEqual(calls, ['getTokens wt S-1:', 'spawn', 'getTokens wt S-1:']);
   assert.deepEqual(fm.tokens_by_step, {
@@ -324,7 +324,7 @@ test('launchSession records the transcript difference across the session under t
   assert.equal(fm.tokens_headless_input, undefined, 'the transcript holds an interactive session');
 });
 
-test('interactive_usage_and_totals_remain_consistent_on_every_exit', () => {
+test('interactive_usage_and_totals_remain_consistent_on_every_exit', async () => {
   const before = { input: 10, output: 0, cache_creation: 0, cache_read: 0 };
   const after = { input: 25, output: 0, cache_creation: 0, cache_read: 0 };
   const exits = [
@@ -340,25 +340,25 @@ test('interactive_usage_and_totals_remain_consistent_on_every_exit', () => {
     ],
   ];
   for (const [name, spawnResult, expected] of exits) {
-    const { status, fm } = launchWithTokens((spawned) => (spawned ? after : before), {}, spawnResult);
+    const { status, fm } = await launchWithTokens((spawned) => (spawned ? after : before), {}, spawnResult);
     assert.equal(status, expected, name);
     assert.equal(fm.tokens_by_step?.implement?.input, '15', `${name}: step`);
     assert.equal(fm.tokens_input, '115', `${name}: totals`);
   }
 });
 
-test('launchSession records nothing per step for a provider without tokens, no change, or no tokensStep', () => {
+test('launchSession records nothing per step for a provider without tokens, no change, or no tokensStep', async () => {
   const notImplemented = () => {
     throw new Error('getTokens() not implemented');
   };
-  assert.equal(launchWithTokens(notImplemented).fm.tokens_by_step, undefined);
+  assert.equal((await launchWithTokens(notImplemented)).fm.tokens_by_step, undefined);
   const same = { input: 3, output: 3, cache_creation: 3, cache_read: 3 };
-  assert.equal(launchWithTokens(() => same).fm.tokens_by_step, undefined);
-  assert.equal(launchWithTokens(() => null).fm.tokens_by_step, undefined);
-  const r = launchWithTokens(() => same, { tokensStep: null });
+  assert.equal((await launchWithTokens(() => same)).fm.tokens_by_step, undefined);
+  assert.equal((await launchWithTokens(() => null)).fm.tokens_by_step, undefined);
+  const r = await launchWithTokens(() => same, { tokensStep: null });
   assert.deepEqual(r.calls, ['spawn'], 'no transcript read without a step');
   // A first session in a fresh worktree: no transcript before, some after.
-  const fresh = launchWithTokens((spawned) => (spawned ? same : null)).fm;
+  const fresh = (await launchWithTokens((spawned) => (spawned ? same : null))).fm;
   assert.deepEqual(fresh.tokens_by_step, {
     implement: { input: '3', output: '3', cache_creation: '3', cache_read: '3' },
   });

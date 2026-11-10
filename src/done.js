@@ -245,7 +245,7 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   // step map. A failed write leaves the previous spec and fails `bl done`.
   let closedAs = null;
   try {
-    updateSpecFile(config.backlogRoot, indexPath, (fm) => {
+    await updateSpecFile(config.backlogRoot, indexPath, (fm) => {
       // Re-checked on the file read in the hold.
       const now = statusOf('story', fm, change.change);
       if (flow.meets('story', now, 'done')) {

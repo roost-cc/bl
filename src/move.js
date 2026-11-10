@@ -228,14 +228,14 @@ export async function main(argv) {
   for (const m of moves) {
     try {
       failPoint(m.id);
-      updateSpecFile(config.backlogRoot, m.indexPath, (specFm) => {
+      await updateSpecFile(config.backlogRoot, m.indexPath, (specFm) => {
         specFm.component = to;
       });
     } catch (e) {
       const notRestored = [];
       for (const w of written) {
         try {
-          updateSpecFile(config.backlogRoot, w.indexPath, (specFm) => {
+          await updateSpecFile(config.backlogRoot, w.indexPath, (specFm) => {
             if (w.prior === undefined) delete specFm.component;
             else specFm.component = w.prior;
           });

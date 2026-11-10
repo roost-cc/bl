@@ -161,7 +161,7 @@ export async function persistLandedCommits(
   await acquireLock(backlogRoot);
   try {
     // Spec lock inside the backlog lock (F-67 D4).
-    return withSpecLock(indexPath, () => {
+    return await withSpecLock(indexPath, () => {
       const { content, crlf } = readSpecText(read(indexPath, 'utf8'), indexPath);
       const { fm, body } = parseFrontmatterOf(content, indexPath);
       const commitMap = unionLandedCommits(fm.commit, landed, tips);

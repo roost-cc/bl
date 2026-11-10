@@ -31,7 +31,7 @@ export function startTokenWriter(backlogRoot, indexPath, step, { holdMs = 500 } 
     import { writeFileSync } from "fs";
     const { updateSpecFile } = await import(${JSON.stringify(specUrl)});
     const { addStepUsageToFrontmatter } = await import(${JSON.stringify(tokensUrl)});
-    updateSpecFile(${JSON.stringify(backlogRoot)}, ${JSON.stringify(indexPath)}, (fm) => {
+    await updateSpecFile(${JSON.stringify(backlogRoot)}, ${JSON.stringify(indexPath)}, (fm) => {
       writeFileSync(${JSON.stringify(marker)}, "");
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${holdMs});
       addStepUsageToFrontmatter(fm, ${JSON.stringify(step)}, { input: 7, output: 0, cache_creation: 0, cache_read: 0 });

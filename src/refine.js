@@ -152,13 +152,13 @@ function storyRefineContext(found, fm, config) {
  * @param {"success" | "failure" | null} result
  * @param {string} [reason]
  */
-export function applyRefineStatus(backlogRoot, { id, kind, indexPath }, result, reason) {
+export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, result, reason) {
   if (result) {
     let status;
     // The error names the unit: in a batch, the units before it are set.
     try {
       status = requireBranch(loadFlow(backlogRoot), kind, 'refine', result, {}).to;
-      transition(backlogRoot, { kind, indexPath }, status, { by: 'refine', via: 'refine', outcome: reason });
+      await transition(backlogRoot, { kind, indexPath }, status, { by: 'refine', via: 'refine', outcome: reason });
     } catch (e) {
       throw new Error(`${id}: ${e.message}`);
     }
@@ -185,16 +185,16 @@ export function applyRefineStatus(backlogRoot, { id, kind, indexPath }, result, 
  * @param {string[]} ids  the refined units: a failed commit's paths go to
  *   the next refine of the same units (`refine <ids>`), whether it is a
  *   refine or a re-refine
- * @param {(structured: object) => void} apply  writes the statuses from the
- *   validated outcome
+ * @param {(structured: object) => Promise<void>} apply  writes the statuses
+ *   from the validated outcome
  */
-export function refineAndCommit(opts, message, ids, apply) {
+export async function refineAndCommit(opts, message, ids, apply) {
   const before = dirtySnapshot(opts.backlogRoot);
-  const { status, structured, structuredError } = launchSession({ ...opts, returnOnExit: true });
+  const { status, structured, structuredError } = await launchSession({ ...opts, returnOnExit: true });
   let applyFailed = false;
   if (structured) {
     try {
-      apply(structured);
+      await apply(structured);
     } catch (e) {
       applyFailed = true;
       console.error(`Error: cannot set the status from the refine outcome: ${e.message}`);
@@ -214,7 +214,7 @@ export function refineAndCommit(opts, message, ids, apply) {
 }
 
 /** Single-story interactive refine (the original `bl refine <story>` flow). */
-function refineOne(target, config, { additionalPrompt } = {}) {
+async function refineOne(target, config, { additionalPrompt } = {}) {
   const { backlogRoot, roostDir } = config;
   const { parsed, title, storyRelPath, promptName, vars } = storyRefineContext(target.found, target.fm, config);
 
@@ -234,7 +234,7 @@ function refineOne(target, config, { additionalPrompt } = {}) {
     config,
   });
 
-  refineAndCommit(
+  return refineAndCommit(
     {
       mode: 'refine',
       parsed,
@@ -253,7 +253,7 @@ function refineOne(target, config, { additionalPrompt } = {}) {
     },
     `chore: ${promptName} ${parsed.id}`,
     [parsed.id],
-    ({ refined, reason }) =>
+    async ({ refined, reason }) =>
       applyRefineStatus(
         backlogRoot,
         { id: parsed.id, kind: 'story', indexPath: target.found.indexPath },
@@ -279,7 +279,7 @@ export function refineBatchId(ids) {
 }
 
 /** Batch refine: one orchestrator session that fans out to per-story sub-agents. */
-function refineBatch(targets, config) {
+async function refineBatch(targets, config) {
   const { backlogRoot, roostDir } = config;
 
   info(`Refining ${targets.length} stories via sub-agents:`);
@@ -319,7 +319,7 @@ function refineBatch(targets, config) {
   // No single story: the count stands in its place (`refine-batch` names no unit).
   updateTabTitle({ story: `${targets.length} stories` });
 
-  refineAndCommit(
+  return refineAndCommit(
     {
       mode: 'refine',
       parsed: { id: refineBatchId(targets.map((t) => t.id)) },
@@ -340,7 +340,7 @@ function refineBatch(targets, config) {
     },
     `chore: refine ${targets.map((t) => t.id).join(', ')}`,
     targets.map((t) => t.id),
-    ({ stories }) => applyBatchStatuses(backlogRoot, targets, stories),
+    async ({ stories }) => applyBatchStatuses(backlogRoot, targets, stories),
   );
 }
 
@@ -352,14 +352,14 @@ function refineBatch(targets, config) {
  * @param {Array<{ id: string, found: { indexPath: string } }>} targets
  * @param {Record<string, { refined: boolean, reason?: string }>} stories
  */
-export function applyBatchStatuses(backlogRoot, targets, stories) {
+export async function applyBatchStatuses(backlogRoot, targets, stories) {
   const set = [];
   const failed = [];
   for (const t of targets) {
     const entry = stories[t.id] ?? { refined: false, reason: 'the outcome has no entry for it' };
     const unit = { id: t.id, kind: 'story', indexPath: t.found.indexPath };
     try {
-      applyRefineStatus(backlogRoot, unit, entry.refined ? 'success' : null, entry.reason);
+      await applyRefineStatus(backlogRoot, unit, entry.refined ? 'success' : null, entry.reason);
       if (entry.refined) set.push(t.id);
     } catch (e) {
       failed.push(e.message);

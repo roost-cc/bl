@@ -412,7 +412,7 @@ export async function implementScripted(parsed, found, config, prep, runner) {
   const summary = scriptedSummary(parsed.id, result);
   await acquireLock(config.backlogRoot);
   try {
-    recordScriptedRun({
+    await recordScriptedRun({
       backlogRoot: config.backlogRoot,
       indexPath: prep.indexPath,
       changePath: prep.promptVars.changeAbsPath,
@@ -423,7 +423,7 @@ export async function implementScripted(parsed, found, config, prep, runner) {
     });
     if (result.kind === 'failed') {
       const { reason, details } = scriptedEscalation(parsed.id, result, `bl implement ${parsed.id}`);
-      writeStoryEscalation(config.backlogRoot, prep.indexPath, `${reason}\n\n${details}`);
+      await writeStoryEscalation(config.backlogRoot, prep.indexPath, `${reason}\n\n${details}`);
     }
     await syncAndCommit(config, { message: `chore: ${summary.split('\n')[0].slice(0, 120)}`, storyIds: [parsed.id] });
   } finally {
@@ -470,7 +470,7 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   // bl, not the agent, records that the story started (F-69 D3): a fix from
   // `escalated` or `in_progress` goes back to `fixing`.
   const verb = prep.reviewPending ? 'fix' : 'implement';
-  enterVerb(config.backlogRoot, { kind: 'story', indexPath: prep.indexPath }, verb);
+  await enterVerb(config.backlogRoot, { kind: 'story', indexPath: prep.indexPath }, verb);
 
   // A fix session returns its outcome in the outcome file (F-68 D1, D3).
   const vars = prep.reviewPending ? { ...prep.promptVars, outcomeCarrier: 'file' } : prep.promptVars;
@@ -485,7 +485,7 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
 
   // The change document the fix session found, which places a story with no log.
   const changeBefore = prep.reviewPending ? readChange(prep.promptVars.changeAbsPath) : null;
-  const ret = launchSession({
+  const ret = await launchSession({
     mode: 'workon',
     parsed,
     title: prep.title,
@@ -512,7 +512,7 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   const status = prep.reviewPending ? ret.status : ret;
   if (prep.reviewPending) {
     const unit = { id: parsed.id, kind: 'story', indexPath: prep.indexPath };
-    applyFixOutcome(config.backlogRoot, unit, ret, changeBefore);
+    await applyFixOutcome(config.backlogRoot, unit, ret, changeBefore);
   }
   if (!status) info(implementNextSteps(parsed.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.

@@ -65,7 +65,7 @@ import { validateSpec, SpecError } from './spec.js';
 import { resolveTargets } from './targets.js';
 import { failPoint, settle, writeRecord } from './feature-links.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { updateSpecFile, withSpecLock } from './spec-file.js';
+import { updateSpecFile, updateSpecFileHeld, withSpecLock } from './spec-file.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
 import { applyNew } from './transition.js';
 
@@ -435,7 +435,7 @@ async function newFeature(args, stories) {
       for (const r of refusals) console.error(r);
       if (refusals.length > 0) process.exit(1);
     },
-    afterCreate: (feature) => {
+    afterCreate: async (feature) => {
       created = feature;
       if (stories.length === 0) return;
       // Each story's bytes before its rewrite go in the repair record first. A
@@ -454,7 +454,7 @@ async function newFeature(args, stories) {
       try {
         // One spec lock at a time, inside the backlog lock (F-67 D4).
         for (const s of stories) {
-          updateSpecFile(root, s.indexPath, (fm) => {
+          await updateSpecFile(root, s.indexPath, (fm) => {
             // An empty `feature:` key is filled in place; a missing one goes last.
             fm.feature = feature.id;
             failPoint(s.id);
@@ -850,9 +850,9 @@ function storyValues(cfg, vars, { feature = null, dependsOn = [], effort = null 
  * @param {any} cfg
  * @param {Map<string, string[]>} dependents
  * @param {string[]} created  absolute directories this `bl new` made
- * @returns {string[]}
+ * @returns {Promise<string[]>}
  */
-function appendDependsOn(cfg, dependents, created) {
+async function appendDependsOn(cfg, dependents, created) {
   if (dependents.size === 0) return [];
   const byId = new Map(readAllStories(cfg).map((s) => [s.id, s]));
   /** @type {Edge[]} */
@@ -863,12 +863,12 @@ function appendDependsOn(cfg, dependents, created) {
     /** @type {Edge | null} */
     let edge = null;
     try {
-      withSpecLock(target.indexPath, () => {
+      await withSpecLock(target.indexPath, () => {
         const before = readFileSync(target.indexPath, 'utf8');
         /** @type {string[]} */
         let added = [];
         let prev;
-        const wrote = updateSpecFile(cfg.backlogRoot, target.indexPath, (fm) => {
+        const wrote = updateSpecFileHeld(cfg.backlogRoot, target.indexPath, (fm) => {
           const list = listValue(fm.depends_on);
           if (list == null) {
             throw new Error(`${target.storyRelPath}: depends_on is not a list; cannot add ${newIds.join(', ')}`);
@@ -885,7 +885,7 @@ function appendDependsOn(cfg, dependents, created) {
         }
       });
     } catch (e) {
-      const left = undoNew(cfg.backlogRoot, written, created);
+      const left = await undoNew(cfg.backlogRoot, written, created);
       const state =
         left.length === 0
           ? 'nothing is written or committed: the new stories and the edges already added are undone, so bl new can run again'
@@ -916,16 +916,16 @@ function appendDependsOn(cfg, dependents, created) {
  * @param {string} backlogRoot
  * @param {Edge[]} written
  * @param {string[]} created
- * @returns {string[]}
+ * @returns {Promise<string[]>}
  */
-function undoNew(backlogRoot, written, created) {
+async function undoNew(backlogRoot, written, created) {
   const left = [];
   for (const w of [...written].reverse()) {
     try {
-      withSpecLock(w.path, () => {
+      await withSpecLock(w.path, () => {
         if (!existsSync(w.path)) return;
         if (readFileSync(w.path, 'utf8') === w.after) return atomicWriteFile(backlogRoot, w.path, w.before);
-        updateSpecFile(backlogRoot, w.path, (fm) => {
+        updateSpecFileHeld(backlogRoot, w.path, (fm) => {
           const list = listValue(fm.depends_on);
           if (list == null) throw new Error('its depends_on is no longer a list');
           const kept = list.filter((id) => !w.added.includes(id));
@@ -1449,7 +1449,7 @@ Example:
   );
 
   info(`Created story: ${relative(cfg.backlogRoot, storyIndex)}`);
-  const dependentPaths = appendDependsOn(cfg, dependents, [storyDir]);
+  const dependentPaths = await appendDependsOn(cfg, dependents, [storyDir]);
 
   await commitNew(cfg, args, {
     message: `chore: add ${storyId}`,
@@ -1870,7 +1870,7 @@ async function runBatchMode(args, jsonMode) {
 
   rmSync(tempRoot, { recursive: true, force: true });
 
-  const dependentPaths = appendDependsOn(cfg, dependents, [
+  const dependentPaths = await appendDependsOn(cfg, dependents, [
     ...renderedStories.map((r) => r.finalDir),
     ...(creatingNewComponent ? [componentAbsDir] : []),
   ]);

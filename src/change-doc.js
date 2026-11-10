@@ -209,9 +209,14 @@ export const REVIEW_FIELDS = ['review_round', 'review_status'];
  * @param {{ id: string, kind: "story" | "feature", indexPath: string }} unit
  * @param {{ structured: object|null, structuredError: string|null }} outcome
  * @param {{ fm: object } | null} [change]
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-export function applyFixOutcome(backlogRoot, { id, kind, indexPath }, { structured, structuredError }, change = null) {
+export async function applyFixOutcome(
+  backlogRoot,
+  { id, kind, indexPath },
+  { structured, structuredError },
+  change = null,
+) {
   const fixed = Boolean(structured?.fixed);
   if (!structured) {
     warn(`no fix outcome (${structuredError}); ${id} stays in fixing`);
@@ -221,7 +226,7 @@ export function applyFixOutcome(backlogRoot, { id, kind, indexPath }, { structur
   if (!fixed) return false;
   const opts = { by: 'fix', via: 'fix', outcome: structured.summary };
   try {
-    if (!transition(backlogRoot, { kind, indexPath, change }, 'in_review', opts)) return false;
+    if (!(await transition(backlogRoot, { kind, indexPath, change }, 'in_review', opts))) return false;
   } catch (e) {
     // The unit moved during the session (`NoEdgeError`), or its log is malformed.
     if (!(e instanceof FlowError)) throw e;

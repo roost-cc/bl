@@ -99,7 +99,7 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
   const { tmp, dir, repos, mainBranches } = build();
   const config = loadConfig({ backlogRoot: dir });
   const feature = findFeature(normalizeFeatureId('F-1'), config);
-  const prep = prepareFeatureWorktree(config, feature);
+  const prep = await prepareFeatureWorktree(config, feature);
   const changePath = join(dir, 'features', 'F1-run', 'change.md');
 
   let side = null;
@@ -213,7 +213,7 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
   assert.deepEqual(mainBranches(), { repoA: 'main', repoB: 'main' });
 });
 
-test('standalone_side_batch_merge_clears_inbox: three standalone side stories are listed as change once they have commits, and one bl merge clears them', () => {
+test('standalone_side_batch_merge_clears_inbox: three standalone side stories are listed as change once they have commits, and one bl merge clears them', async () => {
   const { tmp, dir, repos, mainBranches } = build();
   const made = [];
   for (const title of ['Side a', 'Side b', 'Side c']) {
@@ -241,8 +241,8 @@ test('standalone_side_batch_merge_clears_inbox: three standalone side stories ar
   for (const s of made) {
     markAddressed(join(dir, s.path.replace(/index\.md$/, 'change.md')), 1);
     const unit = { kind: 'story', indexPath: join(dir, s.path) };
-    transition(dir, unit, 'in_review', { by: 'run', via: 'open_pr' });
-    transition(dir, unit, 'ready_for_merge', { by: 'review', via: 'review', outcome: 'clean' });
+    await transition(dir, unit, 'in_review', { by: 'run', via: 'open_pr' });
+    await transition(dir, unit, 'ready_for_merge', { by: 'review', via: 'review', outcome: 'clean' });
   }
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'reviewed');

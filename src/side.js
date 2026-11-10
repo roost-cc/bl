@@ -251,9 +251,9 @@ function newStory({ feature, component, title, points, type, body }) {
  * feature), written through `updateSpecFile` (F-67), inside the backlog lock
  * (the outer lock, D4).
  */
-function markSideStory(backlogRoot, indexPath, fromId) {
+async function markSideStory(backlogRoot, indexPath, fromId) {
   const flow = loadFlow(backlogRoot);
-  updateSpecFile(backlogRoot, indexPath, (fm) => {
+  await updateSpecFile(backlogRoot, indexPath, (fm) => {
     applyTransition(flow, 'story', fm, 'in_progress', { by: 'side' });
     const out = insertAfter(fm, 'feature' in fm ? 'feature' : 'added', { found_by: fromId });
     // `updateSpecFile` serializes the object it passed in: refill it in `out`'s order.
@@ -478,7 +478,7 @@ export async function main(argv) {
       found = findStoryDir(normalizeId(storyId), cfg);
       if (!found) fail(`bl side: bl new reported ${storyId} at ${created.path}, but it is not there.`);
       const branch = feature ? featureBranch : found.storyEntry.toLowerCase();
-      markSideStory(cfg.backlogRoot, indexPath, fromId);
+      await markSideStory(cfg.backlogRoot, indexPath, fromId);
       let changePath;
       if (feature) {
         // The feature's repos are its stories' (F-52 D3), the side story now

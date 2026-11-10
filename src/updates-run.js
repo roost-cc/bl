@@ -812,8 +812,8 @@ function mergeOnMain(g, s, branch) {
  * commit on origin/main by its message (`mergeOnMain`) and finishes the
  * story the same way.
  */
-function recordMerge(ctx, s, commit) {
-  updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm) => {
+async function recordMerge(ctx, s, commit) {
+  await updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm) => {
     fm.commit = commit;
   });
 }
@@ -872,7 +872,7 @@ function finishMerge(ctx, s, { repoPath, branch }) {
  *             deleteError: string | null, readyError: string | null } |
  *           { ok: false, reason: string }}
  */
-function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
+async function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
   const g = gitIn(ctx.runner, repoPath);
   const current = g(['branch', '--show-current']);
   if (current.status !== 0 || current.stdout.trim() !== 'main') {
@@ -939,7 +939,7 @@ function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
     };
   }
   const commit = g(['rev-parse', '--short', 'HEAD']).stdout.trim() || '?';
-  recordMerge(ctx, s, commit);
+  await recordMerge(ctx, s, commit);
   if (!branch) return { ok: true, commit, branchDeleted: true, deleteError: null, readyError };
   const del = g(['push', 'origin', '--delete', branch]);
   return {
@@ -986,7 +986,7 @@ function markReady(ctx, s, repoPath) {
  * One story through the machine. Returns the outcome; the caller writes it
  * to the story and the report.
  */
-function processStory(ctx, s) {
+async function processStory(ctx, s) {
   const { runner, config, at } = ctx;
   const approve = s.request === 'approve';
   const repo = s.repo;
@@ -1077,7 +1077,7 @@ function processStory(ctx, s) {
         s.major ? { ...base, releaseNotes: releaseNotesSection(ctx, s, repoPath) } : base,
       );
     }
-    const merge = mergeBranch(ctx, s, {
+    const merge = await mergeBranch(ctx, s, {
       repoPath,
       branch,
       remoteHead,
@@ -1108,7 +1108,7 @@ function processStory(ctx, s) {
  * The worktree has no remote head, so a red is known by `origin/main` alone: a
  * story `bl updates vulns` changes has its `## Gate result` cleared, and runs.
  */
-function processVulnsStory(ctx, s) {
+async function processVulnsStory(ctx, s) {
   const { runner, config, at } = ctx;
   const approve = s.request === 'approve';
   if (!s.repo) return { kind: 'skipped', reason: `${s.fm.update_repo} is not a repo in backlog.json repos` };
@@ -1163,7 +1163,7 @@ function processVulnsStory(ctx, s) {
     const gate = runGate(ctx, s, worktreePath, 1, finalSha);
     const base = { gateSection: gateSection(gate.ok ? 'Green' : 'Red', at, finalSha, mainSha, gate) };
     if (!gate.ok) return held(gate.config ? gate.detail : `gate red: ${gate.detail}`, base);
-    const merge = mergeBranch(ctx, s, { repoPath, branch: null, finalSha });
+    const merge = await mergeBranch(ctx, s, { repoPath, branch: null, finalSha });
     if (!merge.ok) return held(merge.reason, base);
     const why = `gate green (${gate.detail})`;
     return {
@@ -1182,9 +1182,9 @@ function processVulnsStory(ctx, s) {
  * Execute a drop on a vulns story: it has no PR, so it is only superseded.
  * `update_dropped` tells `bl updates vulns` not to file the same findings again.
  */
-function dropVulnsStory(ctx, s) {
+async function dropVulnsStory(ctx, s) {
   const reason = String(s.fm.update_request_reason).trim();
-  updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm, body) => {
+  await updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm, body) => {
     fm.status = 'superseded';
     fm.completed = ctx.today;
     fm.update_dropped = ctx.today;
@@ -1207,7 +1207,7 @@ function dropVulnsStory(ctx, s) {
  * merged it. Renovate does not reopen a PR a user closed, and the sync
  * keeps the superseded story for that PR number, so nothing recreates it.
  */
-function dropStory(ctx, s) {
+async function dropStory(ctx, s) {
   if (isVulnsStory(s.fm)) return dropVulnsStory(ctx, s);
   const reason = String(s.fm.update_request_reason).trim();
   const pr = String(s.fm.update_pr ?? '').trim();
@@ -1221,7 +1221,7 @@ function dropStory(ctx, s) {
   // The snapshot a failed close puts back: no agent session runs between
   // it and the restore, so its bytes are the story's (F-67 D6).
   const text = readFileSync(s.indexPath, 'utf8');
-  updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm, body) => {
+  await updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm, body) => {
     fm.status = 'superseded';
     fm.completed = ctx.today;
     delete fm.update_request;
@@ -1265,11 +1265,11 @@ function dropStory(ctx, s) {
 }
 
 /** Write an outcome to its story file; returns true when the file changed. */
-function recordOutcome(ctx, s, o) {
+async function recordOutcome(ctx, s, o) {
   if (o.kind === 'skipped') return false;
   if (o.written) return o.kind === 'dropped';
   const approve = s.request === 'approve';
-  updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm, body) => writeOutcome(ctx, o, approve, fm, body));
+  await updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm, body) => writeOutcome(ctx, o, approve, fm, body));
   return true;
 }
 
@@ -1491,7 +1491,7 @@ export async function runUpdates(config, opts = {}) {
         } else if (drop) {
           runner.log(`\n── ${s.id} ${storyLabel(s)} (drop requested)`);
           try {
-            o = dropStory(ctx, s);
+            o = await dropStory(ctx, s);
           } catch (e) {
             o = held(`run error: ${e.message}`);
           }
@@ -1503,7 +1503,7 @@ export async function runUpdates(config, opts = {}) {
         } else {
           runner.log(`\n── ${s.id} ${storyLabel(s)}${s.major ? ' (major)' : ''}${s.security ? ' (security)' : ''}`);
           try {
-            o = isVulnsStory(s.fm) ? processVulnsStory(ctx, s) : processStory(ctx, s);
+            o = await (isVulnsStory(s.fm) ? processVulnsStory(ctx, s) : processStory(ctx, s));
           } catch (e) {
             o = held(`run error: ${e.message}`);
           }
@@ -1532,7 +1532,7 @@ export async function runUpdates(config, opts = {}) {
                 ? 'Drop'
                 : 'Approve',
         });
-        if (recordOutcome(ctx, s, o)) changed.push(s.id);
+        if (await recordOutcome(ctx, s, o)) changed.push(s.id);
         out(
           fmtLine(
             o.kind,

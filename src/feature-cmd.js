@@ -101,7 +101,7 @@ import {
   tokensStepKey,
   transcriptDirs,
 } from './tokens.js';
-import { updateSpecFile, withSpecLock } from './spec-file.js';
+import { updateSpecFile, updateSpecFileHeld, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { tok, tokenFields } from './report.js';
 import { acquireLock, releaseLock, withLock } from './lock.js';
@@ -153,7 +153,7 @@ const today = () => new Date().toISOString().slice(0, 10);
  * atomically. `mutate(fm, body)` returns the new body, `undefined` (body
  * unchanged) or `false` (write nothing). Every error propagates.
  */
-export function updateFeature(config, feature, mutate) {
+export async function updateFeature(config, feature, mutate) {
   return updateSpecFile(config.backlogRoot, feature.indexPath, mutate);
 }
 
@@ -171,7 +171,7 @@ export function updateFeature(config, feature, mutate) {
  * Each unit records `done` in its log (F-69 D3, `applyMerged`), at `at`,
  * which also sets its `completed:`.
  */
-export function markFeatureMerged(config, feature, stories, { decided, at = nowAt() }) {
+export async function markFeatureMerged(config, feature, stories, { decided, at = nowAt() }) {
   const flow = loadFlow(config.backlogRoot);
   const tokens = { input: 0n, output: 0n, cache_creation: 0n, cache_read: 0n };
   let anyTokens = false;
@@ -179,7 +179,7 @@ export function markFeatureMerged(config, feature, stories, { decided, at = nowA
   const note = `merged with ${feature.id}`;
   for (const s of stories) {
     // Spec lock inside the caller's backlog lock (F-67 D4).
-    const wrote = updateSpecFile(config.backlogRoot, s.indexPath, (fm) => {
+    const wrote = await updateSpecFile(config.backlogRoot, s.indexPath, (fm) => {
       if (addTokenTotals(tokens, fm)) anyTokens = true;
       storySteps = mergeStepTokens(storySteps, fm.tokens_by_step);
       if (!applyMerged(flow, 'story', fm, { at, note })) return false;
@@ -189,7 +189,7 @@ export function markFeatureMerged(config, feature, stories, { decided, at = nowA
   }
 
   // Spec lock inside the caller's backlog lock (F-67 D4), after every story's is released.
-  updateFeature(config, feature, (fm) => {
+  await updateFeature(config, feature, (fm) => {
     // The stories are folded in once, by the merge that marks the feature
     // done: a caller that loaded it before another merge finished finds it
     // closed here, under the lock, and adds nothing again.
@@ -269,13 +269,13 @@ function repoSource(stories, repoName) {
  * Sum agent token usage across the feature's worktrees and write it to the
  * feature frontmatter. Best-effort: never blocks a command.
  */
-export function recordFeatureTokens(feature, config) {
+export async function recordFeatureTokens(feature, config) {
   try {
     const provider = getProvider(config.agent);
     // Under the spec lock, like every token writer of the spec (S-904), the
     // transcript read included: totals read before it could predate a
     // session difference written meanwhile, and would put them below the map.
-    withSpecLock(feature.indexPath, () => {
+    await withSpecLock(feature.indexPath, () => {
       const totals = { input: 0n, output: 0n, cache_creation: 0n, cache_read: 0n };
       let any = false;
       for (const dir of transcriptDirs(reposForFeature(feature, config))) {
@@ -291,8 +291,8 @@ export function recordFeatureTokens(feature, config) {
         any = true;
       }
       if (!any) return;
-      // Nested in this hold: `withSpecLock` is re-entrant within a process.
-      updateFeature(config, feature, (fm) => {
+      // Nested in this hold, whose `fn` is synchronous: `updateSpecFileHeld`.
+      updateSpecFileHeld(config.backlogRoot, feature.indexPath, (fm) => {
         // A merged feature's totals hold its stories' too, folded in once by
         // `bl merge`: a re-read of its own transcripts must not replace them.
         if (!loadFlow(config.backlogRoot).meets('feature', statusOf('feature', fm), 'done'))
@@ -460,7 +460,7 @@ export function featureValueAxis(args, config) {
  *
  * @param {object} args
  * @param {object} config
- * @param {{ beforeCreate?: () => void, afterCreate?: (feature: object) => void }} [opts]
+ * @param {{ beforeCreate?: () => void, afterCreate?: (feature: object) => void | Promise<void> }} [opts]
  */
 export async function cmdNew(args, config, { beforeCreate = null, afterCreate = null } = {}) {
   const title = args.title && args.title !== true ? String(args.title) : '';
@@ -536,7 +536,7 @@ export async function cmdNew(args, config, { beforeCreate = null, afterCreate = 
     atomicWriteFile(config.backlogRoot, indexPath, content);
     info(`\nNew feature: ${id} — ${title}`);
     info(`Created: ${rel}`);
-    if (afterCreate) afterCreate(findFeature(normalizeFeatureId(id), config));
+    if (afterCreate) await afterCreate(findFeature(normalizeFeatureId(id), config));
   } catch (err) {
     if (err.keepFeature) {
       console.error(`bl new --feature: ${err.message}.`);
@@ -556,7 +556,7 @@ export async function cmdNew(args, config, { beforeCreate = null, afterCreate = 
 // refine
 // ---------------------------------------------------------------------------
 
-export function cmdRefine(args, config, feature) {
+export async function cmdRefine(args, config, feature) {
   const { refusal } = startOf(config, 'feature', feature, 'refine');
   if (refusal) {
     console.error(refusal);
@@ -594,7 +594,7 @@ export function cmdRefine(args, config, feature) {
     agent: config.agent,
     config,
   });
-  refineAndCommit(
+  return refineAndCommit(
     {
       mode: 'refine',
       parsed: parsedFor(feature),
@@ -616,7 +616,7 @@ export function cmdRefine(args, config, feature) {
     `chore: refine ${feature.id}`,
     [feature.id],
     // A premise that does not hold puts the feature back to draft (F-68 D2).
-    ({ premise_holds, refined, reason }) =>
+    async ({ premise_holds, refined, reason }) =>
       applyRefineStatus(
         config.backlogRoot,
         { ...feature, kind: 'feature' },
@@ -693,7 +693,7 @@ async function approveLocked(args, config, feature) {
   }
 
   // An edit outside bl since the read (an editor) is not approved over.
-  const wrote = updateFeature(config, feature, (fm) => {
+  const wrote = await updateFeature(config, feature, (fm) => {
     if (statusOf('feature', fm) !== feature.status) return false;
     if (forced) applyTransition(flow, 'feature', fm, 'refined', { by: OPERATOR, note: 'bl approve --force' });
     applyTransition(flow, 'feature', fm, 'approved', { by: 'approve' });
@@ -1112,7 +1112,7 @@ export function prepareFeatureRepo(config, feature, repoName, { strict = false }
  *             ordered, baseVars, reviewPending, targetRepoName,
  *             otherWorktrees }}
  */
-export function prepareFeatureWorktree(config, feature, verb = 'run') {
+export async function prepareFeatureWorktree(config, feature, verb = 'run') {
   const verbs =
     verb === 'run' ? loadFlow(config.backlogRoot).chainOf('feature', 'run') : implementVerbOf('feature', feature);
   const start = startOf(config, 'feature', feature, verbs);
@@ -1182,7 +1182,8 @@ export function prepareFeatureWorktree(config, feature, verb = 'run') {
   const sessionVars = featureSessionVars(feature);
 
   // `fix` from `escalated` or `in_progress` goes back to `fixing`, its `during`.
-  if (IMPLEMENT_VERBS.includes(start.verb)) enterVerb(config.backlogRoot, { ...feature, kind: 'feature' }, start.verb);
+  if (IMPLEMENT_VERBS.includes(start.verb))
+    await enterVerb(config.backlogRoot, { ...feature, kind: 'feature' }, start.verb);
   // The branch is recorded in the change document, with every repo prepared.
   const change = openUnitChange(cfg.backlogRoot, feature, branchName, names);
   const reviewPending = start.verb === 'fix';
@@ -1231,7 +1232,7 @@ export function prepareFeatureWorktree(config, feature, verb = 'run') {
 }
 
 export async function cmdWorkon(args, config, feature) {
-  const prep = prepareFeatureWorktree(config, feature, 'implement');
+  const prep = await prepareFeatureWorktree(config, feature, 'implement');
   const { cfg, parsed, reviewPending } = prep;
   const promptName = reviewPending ? 'feature-workon-review' : 'feature-workon';
   if (reviewPending) info('Review pending on the feature — using the review-feedback prompt.\n');
@@ -1240,7 +1241,7 @@ export async function cmdWorkon(args, config, feature) {
   const flow = loadFlow(cfg.backlogRoot);
   for (const s of reviewPending ? [] : prep.ordered) {
     if (flow.isUnstarted('story', s.status))
-      enterVerb(cfg.backlogRoot, { kind: 'story', indexPath: s.indexPath }, 'implement');
+      await enterVerb(cfg.backlogRoot, { kind: 'story', indexPath: s.indexPath }, 'implement');
   }
   const vars = { ...prep.baseVars };
   if (reviewPending) {
@@ -1255,7 +1256,7 @@ export async function cmdWorkon(args, config, feature) {
 
   // The change document the fix session found, which places a feature with no log.
   const changeBefore = reviewPending ? readChange(vars.changeAbsPath) : null;
-  const ret = launchSession({
+  const ret = await launchSession({
     mode: 'workon',
     parsed,
     title: feature.title,
@@ -1281,10 +1282,10 @@ export async function cmdWorkon(args, config, feature) {
     ...(reviewPending ? { schema: loadSchema('fix') } : {}),
   });
   const status = reviewPending ? ret.status : ret;
-  recordFeatureTokens(feature, cfg);
+  await recordFeatureTokens(feature, cfg);
   if (reviewPending) {
     const unit = { id: feature.id, kind: 'feature', indexPath: feature.indexPath };
-    applyFixOutcome(cfg.backlogRoot, unit, ret, changeBefore);
+    await applyFixOutcome(cfg.backlogRoot, unit, ret, changeBefore);
   }
   if (!status) info(implementNextSteps(feature.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.
@@ -1610,7 +1611,7 @@ async function reviewUnitPRs(
 export async function cmdRun(args, config, feature) {
   return runUnit(args, config, feature, {
     ordered: () => orderStoriesByDeps(resolveFeatureStories(feature, config, readAllStories(config)).stories),
-    prepare: () => prepareFeatureWorktree(config, feature),
+    prepare: async () => prepareFeatureWorktree(config, feature),
   });
 }
 
@@ -1711,7 +1712,7 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
     console.error(`Another bl run (pid ${holder}) is running ${unit.id}.`);
     process.exit(1);
   }
-  const prep = prepare();
+  const prep = await prepare();
   const runner = defaultRunner({ interactive });
   const state = await runFeature({
     feature: unit,
@@ -1722,7 +1723,7 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
   });
   // Headless sessions accumulate their usage on the unit as they finish
   // (into `tokens_headless_*` as well, which the re-read adds back).
-  if (interactive) recordFeatureTokens(unit, prep.cfg);
+  if (interactive) await recordFeatureTokens(unit, prep.cfg);
   const { printInboxCount } = await import('./inbox.js');
   printInboxCount(config);
   process.exit(state.status === 'clean' || state.status === 'no-change' ? 0 : 1);
@@ -1790,7 +1791,7 @@ export async function cmdMerge(args, config, feature) {
   // only what merge and sync changed — never the operator's own uncommitted
   // edits (a story in progress, a regenerated allowed-tools.json).
   const backlogBefore = dirtySnapshot(config.backlogRoot);
-  recordFeatureTokens(feature, config);
+  await recordFeatureTokens(feature, config);
 
   const parsed = parsedFor(feature);
   const landed = {};
@@ -1890,11 +1891,11 @@ export async function cmdMerge(args, config, feature) {
   // The keep-or-replace decision for a tip is made from the feature file
   // re-read under the backlog lock, in the same hold as the story and feature
   // writes, so an exact SHA another merge records meanwhile is never replaced.
-  const shape = await withLock(config.backlogRoot, () => {
+  const shape = await withLock(config.backlogRoot, async () => {
     const recorded = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm.commit;
     const union = unionLandedCommits(recorded, landed, tips);
     const decided = commitFmShape(union);
-    markFeatureMerged(config, feature, stories, { decided });
+    await markFeatureMerged(config, feature, stories, { decided });
     recordMerge(config.backlogRoot, feature.featureDir, {
       commits: union,
       date: stamp,

@@ -274,7 +274,7 @@ export function scriptedEscalation(id, r, rerun) {
  * @param {{ backlogRoot: string, indexPath: string, changePath: string|null, id: string,
  *   repo: string, at: string, result: object }} opts
  */
-export function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo, at, result }) {
+export async function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo, at, result }) {
   const date = at.slice(0, 10);
   const flow = loadFlow(backlogRoot);
   const change = changePath && existsSync(changePath) ? readFileSync(changePath, 'utf8') : null;
@@ -285,14 +285,14 @@ export function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo
   }
   try {
     if (result.kind === 'changed') {
-      updateSpecFile(backlogRoot, indexPath, (fm, body) => {
+      await updateSpecFile(backlogRoot, indexPath, (fm, body) => {
         if (flow.isUnstarted('story', statusOf('story', fm))) {
           applyTransition(flow, 'story', fm, 'in_progress', { by: 'implement', at });
         }
         return checkCriteria(body);
       });
     } else if (result.kind === 'unchanged') {
-      updateSpecFile(backlogRoot, indexPath, (fm, body) => {
+      await updateSpecFile(backlogRoot, indexPath, (fm, body) => {
         applyTransition(flow, 'story', fm, 'done', { by: 'done', via: 'implement', note: 'no change needed', at });
         fm.commit = result.sha;
         return appendSectionLine(checkCriteria(body), 'Notes', `- ${date}: no change needed (\`${result.plugin}\`).`);
@@ -311,8 +311,8 @@ export function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo
 }
 
 /** Write a story's `## Escalation`, adding the section when the story has none. */
-export function writeStoryEscalation(backlogRoot, indexPath, text) {
-  updateSpecFile(backlogRoot, indexPath, (fm, body) =>
+export async function writeStoryEscalation(backlogRoot, indexPath, text) {
+  await updateSpecFile(backlogRoot, indexPath, (fm, body) =>
     extractSection(body, 'Escalation') == null
       ? `${body.trimEnd()}\n\n## Escalation\n\n${text}\n`
       : replaceSection(body, 'Escalation', text),

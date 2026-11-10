@@ -376,7 +376,7 @@ function scanTargets(config, only) {
  * Bring one scanned repo's stories in step with its findings. Writes nothing
  * on a dry run. Returns what it did, one entry per story.
  */
-function applyRepo(ctx, repo, report) {
+async function applyRepo(ctx, repo, report) {
   const { config, dryRun, today, stories, closed } = ctx;
   const { slug, name: repoName, componentId } = repo;
   const { findings } = report;
@@ -398,7 +398,7 @@ function applyRepo(ctx, repo, report) {
         sameRows(rowsOf(s.body), rows),
     );
 
-  const keep = (want) => {
+  const keep = async (want) => {
     const { kind, lockfile, advisories, title, group } = want;
     const matches = (s) =>
       kind === 'fix' ? isScripted(s.fm) : !isScripted(s.fm) && advisoryIds(s.fm).some((id) => advisories.includes(id));
@@ -449,7 +449,7 @@ function applyRepo(ctx, repo, report) {
       return;
     }
     if (!dryRun) {
-      updateSpecFile(config.backlogRoot, story.indexPath, (fm, body) => {
+      await updateSpecFile(config.backlogRoot, story.indexPath, (fm, body) => {
         fm.title = title;
         if (advisories) fm.update_advisory = advisories;
         const summary = extractSection(next.body, 'Summary') ?? '';
@@ -463,10 +463,16 @@ function applyRepo(ctx, repo, report) {
   };
 
   for (const [lockfile, group] of fixes) {
-    keep({ kind: 'fix', lockfile, group, title: fixTitle(repoName, lockfile, group) });
+    await keep({ kind: 'fix', lockfile, group, title: fixTitle(repoName, lockfile, group) });
   }
   for (const { lockfile, advisories, findings: group } of decides) {
-    keep({ kind: 'decide', lockfile, advisories, group, title: decideTitle(repoName, lockfile, group, advisories[0]) });
+    await keep({
+      kind: 'decide',
+      lockfile,
+      advisories,
+      group,
+      title: decideTitle(repoName, lockfile, group, advisories[0]),
+    });
   }
 
   for (const s of open) {
@@ -480,7 +486,7 @@ function applyRepo(ctx, repo, report) {
       continue;
     }
     if (!dryRun) {
-      updateSpecFile(config.backlogRoot, s.indexPath, (fm, body) => {
+      await updateSpecFile(config.backlogRoot, s.indexPath, (fm, body) => {
         fm.status = 'superseded';
         fm.completed = today;
         return noteUnderSummary(body, `${today}: ${why}.`);
@@ -561,7 +567,7 @@ export async function vulnsUpdates(config, opts = {}) {
       nextNum: findMaxStoryNum(config) + 1,
     };
     for (const { repo, report } of scans) {
-      for (const a of applyRepo(ctx, repo, report)) {
+      for (const a of await applyRepo(ctx, repo, report)) {
         result.actions.push(a);
         out(
           `${a.action.padEnd(10)} ${a.id.padEnd(6)} ${a.repoName} ${a.lockfile}  ${a.title}${a.why ? ` (${a.why})` : ''}`,

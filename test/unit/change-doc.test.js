@@ -706,7 +706,7 @@ function fixUnit(root, dir) {
   return { id: 'F-42', kind: 'feature', indexPath };
 }
 
-test('applyFixOutcome: fixed records in_review by fix and commits the unit file; anything else leaves it in fixing', () => {
+test('applyFixOutcome: fixed records in_review by fix and commits the unit file; anything else leaves it in fixing', async () => {
   const { root, dir } = unitDir();
   const path = changePath(dir);
   // The old shape (F-69 D4): the change document's pending review places the unit in fixing.
@@ -727,7 +727,7 @@ test('applyFixOutcome: fixed records in_review by fix and commits the unit file;
     { name: 'fixed', outcome: outcome({ summary: 's', fixed: true, open: 0 }), fixed: true },
   ];
   for (const c of cases) {
-    assert.equal(applyFixOutcome(root, unit, c.outcome, change), c.fixed, c.name);
+    assert.equal(await applyFixOutcome(root, unit, c.outcome, change), c.fixed, c.name);
     // The unit's log: back in review by `fix` only when fixed (F-69 D3, D5).
     const fm = parseFrontmatter(readFileSync(unit.indexPath, 'utf8')).fm;
     assert.equal(statusOf('feature', fm, change), c.fixed ? 'in_review' : 'fixing', c.name);
@@ -739,7 +739,7 @@ test('applyFixOutcome: fixed records in_review by fix and commits the unit file;
   assert.equal(git('status', '--porcelain'), '', 'the unit file is committed');
 });
 
-test('bl implement on an escalated feature or story whose review position is fixing starts the fix session and records in_review by fix on a fixed outcome', () => {
+test('bl implement on an escalated feature or story whose review position is fixing starts the fix session and records in_review by fix on a fixed outcome', async () => {
   const at = (n) => `2026-11-0${n}T00:00:00Z`;
   const head = [
     { at: at(1), to: 'draft', by: 'new' },
@@ -771,9 +771,9 @@ test('bl implement on an escalated feature or story whose review position is fix
       const start = startOf({ backlogRoot: root }, kind, { id: 'X-42', indexPath, fm }, verb, { guards: false });
       assert.equal(start.refusal, null, name);
       // bl records the fix's start, `fixing` (nothing for a unit in fixing), then the fixed outcome.
-      enterVerb(root, { kind, indexPath }, verb);
+      await enterVerb(root, { kind, indexPath }, verb);
       const fixed = { structured: { summary: 's', fixed: true, open: 0 }, structuredError: null };
-      assert.equal(applyFixOutcome(root, { id: 'X-42', kind, indexPath }, fixed), true, name);
+      assert.equal(await applyFixOutcome(root, { id: 'X-42', kind, indexPath }, fixed), true, name);
       const log = parseFrontmatter(readFileSync(indexPath, 'utf8')).fm.transitions;
       assert.deepEqual(
         log.slice(-2).map((e) => [e.to, e.by]),
@@ -793,7 +793,7 @@ test('bl implement on an escalated feature or story whose review position is fix
   writeFileSync(indexPath, `${serializeFrontmatter(moved)}\n# F-43\n`);
   const text = readFileSync(indexPath, 'utf8');
   const fixed = { structured: { summary: 's', fixed: true, open: 0 }, structuredError: null };
-  assert.equal(applyFixOutcome(root, { id: 'F-43', kind: 'feature', indexPath }, fixed), false);
+  assert.equal(await applyFixOutcome(root, { id: 'F-43', kind: 'feature', indexPath }, fixed), false);
   assert.equal(readFileSync(indexPath, 'utf8'), text);
   // A unit with no open items gets the implement session.
   for (const to of ['in_progress', 'escalated', 'ready_for_merge']) {

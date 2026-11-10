@@ -653,7 +653,7 @@ export async function syncUpdates(config, opts = {}) {
         continue;
       }
       // Under the spec lock, inside the backlog lock (F-67 D4).
-      if (!dryRun) updateSpecFile(config.backlogRoot, story.indexPath, refresh);
+      if (!dryRun) await updateSpecFile(config.backlogRoot, story.indexPath, refresh);
       out(fmt('updated', story.id, b));
       result.updated.push(story.id);
       changedIds.push(story.id);
@@ -687,7 +687,7 @@ export async function syncUpdates(config, opts = {}) {
         : `${today}: ${GONE_NOTE}.`;
       // Under the spec lock, inside the backlog lock (F-67 D4).
       if (!dryRun) {
-        updateSpecFile(config.backlogRoot, s.indexPath, (fm, body) => {
+        await updateSpecFile(config.backlogRoot, s.indexPath, (fm, body) => {
           fm.status = merged ? 'done' : 'superseded';
           fm.completed = today;
           const b = noteUnderSummary(body, note);

@@ -10,7 +10,7 @@ import { rendered } from '../helpers/rendered.js';
 import { HOME, REPOS, fm, newFeature, newStory } from '../helpers/feature-fixture.js';
 import { statusOf as logStatusOf, transition } from '../../src/transition.js';
 
-test('bl approve gates on refined status and a non-empty, consistent story list, and commits and pushes the approval', () => {
+test('bl approve gates on refined status and a non-empty, consistent story list, and commits and pushes the approval', async () => {
   const { dir, cleanup } = mkTempBacklog({ repos: REPOS, components: [HOME] });
   try {
     initGitBacklog(dir);
@@ -29,7 +29,7 @@ test('bl approve gates on refined status and a non-empty, consistent story list,
     );
     assert.equal(head(), before);
     // refined but no stories → refuse, and no commit
-    transition(dir, { kind: 'feature', indexPath: featurePath }, 'refined', { by: 'refine', via: 'refine' });
+    await transition(dir, { kind: 'feature', indexPath: featurePath }, 'refined', { by: 'refine', via: 'refine' });
     r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /has no stories/);

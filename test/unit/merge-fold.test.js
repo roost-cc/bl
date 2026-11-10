@@ -44,9 +44,9 @@ const fm = (path) => parseFrontmatter(readFileSync(path, 'utf8')).fm;
 const staging = (dir) => (existsSync(join(dir, '.bl', 'tmp')) ? readdirSync(join(dir, '.bl', 'tmp')) : []);
 const MERGE = { decided: 'abc1234', at: '2026-10-27T10:00:00Z' };
 
-test('the merge fold writes the exact decimal sum of totals past 2^53 and past 1e21', () => {
+test('the merge fold writes the exact decimal sum of totals past 2^53 and past 1e21', async () => {
   const { config, feature, stories } = backlog();
-  markFeatureMerged(config, feature, stories, MERGE);
+  await markFeatureMerged(config, feature, stories, MERGE);
   const f = fm(feature.indexPath);
   // 9007199254740993 + 1e21 + 7, a sum a Number would round.
   assert.equal(f.tokens_input, '1000009007199254741000');
@@ -61,19 +61,19 @@ test('the merge fold writes the exact decimal sum of totals past 2^53 and past 1
   assert.equal(fm(stories[1].indexPath).commit, undefined, 'a closed story is folded, not rewritten');
 });
 
-test('the merge fold folds a step entry written after the stories were loaded', () => {
+test('the merge fold folds a step entry written after the stories were loaded', async () => {
   const { dir, config, feature, stories } = backlog();
   const use = { input: 4, output: 0, cache_creation: 0, cache_read: 0 };
-  assert.equal(accumulateStepTokensOnFile(dir, stories[0].indexPath, 'fix.1', use), true);
-  markFeatureMerged(config, feature, stories, MERGE);
+  assert.equal(await accumulateStepTokensOnFile(dir, stories[0].indexPath, 'fix.1', use), true);
+  await markFeatureMerged(config, feature, stories, MERGE);
   const f = fm(feature.indexPath);
   assert.equal(f.tokens_by_step['fix.1'].input, '4');
   assert.equal(f.tokens_input, '1000009007199254741004');
 });
 
-test('a merge of a feature already closed folds nothing again', () => {
+test('a merge of a feature already closed folds nothing again', async () => {
   const { config, feature, stories } = backlog({ feature: FEATURE.replace('running', 'done') });
-  markFeatureMerged(config, feature, stories, MERGE);
+  await markFeatureMerged(config, feature, stories, MERGE);
   assert.equal(fm(feature.indexPath).tokens_input, '7');
 });
 
@@ -81,13 +81,13 @@ test('a failed story write in the fold leaves the previous story and feature, an
   const { dir, config, feature, stories } = backlog();
   const story0 = readFileSync(stories[0].indexPath, 'utf8');
   const feature0 = readFileSync(feature.indexPath, 'utf8');
-  await withPartialWrites(stories[0].indexPath, () =>
-    assert.throws(() => markFeatureMerged(config, feature, stories, MERGE), /injected ENOSPC/),
+  await withPartialWrites(stories[0].indexPath, async () =>
+    assert.rejects(async () => markFeatureMerged(config, feature, stories, MERGE), /injected ENOSPC/),
   );
   assert.equal(readFileSync(stories[0].indexPath, 'utf8'), story0);
   assert.equal(readFileSync(feature.indexPath, 'utf8'), feature0, 'the feature is not marked done past a failed story');
   assert.deepEqual(staging(dir), []);
-  markFeatureMerged(config, feature, stories, MERGE);
+  await markFeatureMerged(config, feature, stories, MERGE);
   assert.equal(statusOf('story', fm(stories[0].indexPath)), 'done');
   assert.equal(fm(feature.indexPath).tokens_input, '1000009007199254741000');
 });
@@ -96,29 +96,26 @@ test('a failed updateFeature write leaves the previous feature and no staging fi
   const { dir, config, feature } = backlog();
   const before = readFileSync(feature.indexPath, 'utf8');
   const approve = (f) => void (f.status = 'approved');
-  await withPartialWrites(feature.indexPath, () =>
-    assert.throws(() => updateFeature(config, feature, approve), /injected ENOSPC/),
+  await withPartialWrites(feature.indexPath, async () =>
+    assert.rejects(async () => updateFeature(config, feature, approve), /injected ENOSPC/),
   );
   assert.equal(readFileSync(feature.indexPath, 'utf8'), before);
   assert.deepEqual(staging(dir), []);
-  assert.equal(updateFeature(config, feature, approve), true);
+  assert.equal(await updateFeature(config, feature, approve), true);
   assert.equal(fm(feature.indexPath).status, 'approved');
 });
 
-test('a CRLF feature through updateFeature keeps one block and its line end; one with no block is refused, named', () => {
+test('a CRLF feature through updateFeature keeps one block and its line end; one with no block is refused, named', async () => {
   const { config, feature } = backlog({ feature: FEATURE.replace(/\n/g, '\r\n') });
-  assert.equal(
-    updateFeature(config, feature, (f) => void (f.status = 'approved')),
-    true,
-  );
+  assert.equal(await updateFeature(config, feature, (f) => void (f.status = 'approved')), true);
   const text = readFileSync(feature.indexPath, 'utf8');
   assert.equal(text.match(/^---\r$/gm).length, 2, 'one block');
   assert.doesNotMatch(text.replace(/\r\n/g, ''), /\n/, 'every line ends CRLF');
   assert.equal(parseFrontmatter(text.replace(/\r\n/g, '\n')).fm.status, 'approved');
 
   const bare = backlog({ feature: '## Goal\n\nNo frontmatter.\n' });
-  assert.throws(
-    () => updateFeature(bare.config, bare.feature, (f) => void (f.status = 'approved')),
+  await assert.rejects(
+    async () => updateFeature(bare.config, bare.feature, (f) => void (f.status = 'approved')),
     (e) => e instanceof FrontmatterError && e.message.includes(bare.feature.indexPath),
   );
   assert.equal(readFileSync(bare.feature.indexPath, 'utf8'), '## Goal\n\nNo frontmatter.\n');

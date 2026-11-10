@@ -95,7 +95,7 @@ test('a unit at a v1 status word reads as its current one; the frontmatter keeps
 // F-69 D2, D4: a unit reads the same with or without its transition log. One
 // exception: an unmigrated running unit's status is its `status:` word, as
 // before F-69, and the migration moves it to its review position.
-test('every story, feature and task reads the same status, round and log migrated and unmigrated', () => {
+test('every story, feature and task reads the same status, round and log migrated and unmigrated', async () => {
   const { root, config } = fixture();
   // F-2 is running with one review round whose items are open: it is fixing.
   replace(
@@ -118,7 +118,7 @@ test('every story, feature and task reads the same status, round and log migrate
   for (const kind of ['story', 'feature', 'task']) {
     for (const u of g.list(kind)) {
       const change = kind === 'task' ? null : u.change().change;
-      updateSpecFile(root, u.file, (fm) => {
+      await updateSpecFile(root, u.file, (fm) => {
         fm.transitions = legacyLog(kind, fm, change).map((e) => ({ at: '2026-11-01T00:00:00Z', ...e }));
         delete fm.status;
       });

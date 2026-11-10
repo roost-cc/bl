@@ -748,13 +748,13 @@ function sessionModel(model, agent, config) {
  * headless rules. `stderrTail` is the last 20 non-empty lines of the agent
  * CLI's stderr (S-1398), or `''`.
  *
- * @returns {{ status: number, output: string, isError: boolean,
+ * @returns {Promise<{ status: number, output: string, isError: boolean,
  *             usage: object|null, sessionId: string|null, denials: string[],
  *             refusal?: object|null, error?: string,
  *             structured: object|null, structuredError: string|null,
- *             stderrTail: string }}
+ *             stderrTail: string }>}
  */
-export function runHeadlessSession({
+export async function runHeadlessSession({
   mode,
   parsed,
   prompt,
@@ -895,7 +895,7 @@ export function runHeadlessSession({
     structuredError: result?.structuredError ?? null,
     stderrTail: result?.stderrTail ?? '',
   };
-  if (usageIndexPath && out.usage) accumulateTokensOnFile(backlogRoot, usageIndexPath, out.usage, usageStep);
+  if (usageIndexPath && out.usage) await accumulateTokensOnFile(backlogRoot, usageIndexPath, out.usage, usageStep);
   return out;
 }
 
@@ -928,7 +928,7 @@ export function runHeadlessSession({
  * `returnOnExit` (it throws without one): the call then returns `{ status,
  * structured, structuredError }` in place of the bare exit status.
  */
-export function launchSession({
+export async function launchSession({
   mode,
   parsed,
   title,
@@ -1079,7 +1079,7 @@ export function launchSession({
     if (tokensBefore !== undefined) {
       try {
         const delta = usageDelta(tokensBefore, sessionTokens(provider, cwd, parsed.id));
-        accumulateStepTokensOnFile(backlogRoot, tokensIndexPath, tokensStep, delta);
+        await accumulateStepTokensOnFile(backlogRoot, tokensIndexPath, tokensStep, delta);
       } catch {
         // bookkeeping must never block exit
       }
@@ -1107,7 +1107,7 @@ export function launchSession({
   // sessions that don't map to a single story (e.g. a batch-refine orchestrator).
   if (recordTokens) {
     try {
-      recordStoryTokens(parsed.id, { ...config, agent, backlogRoot, roostDir });
+      await recordStoryTokens(parsed.id, { ...config, agent, backlogRoot, roostDir });
     } catch {
       // bookkeeping must never block exit
     }

@@ -125,10 +125,10 @@ function backlogDir() {
   return root;
 }
 
-test('recordScriptedRun preserves paired story and change state when the second write fails', () => {
+test('recordScriptedRun preserves paired story and change state when the second write fails', async () => {
   const story = '---\nstory_id: S-1\nstatus: refined\n---\n\n## Acceptance Criteria\n\n- [ ] Done\n';
   const result = (kind) => ({ kind, sha: 'abc1234', plugin: 'relock', command: 'relock', tail: '' });
-  const record = (root, changePath, kind) =>
+  const record = async (root, changePath, kind) =>
     recordScriptedRun({
       backlogRoot: root,
       indexPath: join(root, 'index.md'),
@@ -142,7 +142,7 @@ test('recordScriptedRun preserves paired story and change state when the second 
     // The change document cannot be written: the story reads as it did.
     const root = backlogDir();
     writeFileSync(join(root, 'index.md'), story);
-    assert.throws(() => record(root, join(root, 'missing-change.md'), kind), /no change document/, kind);
+    await assert.rejects(async () => record(root, join(root, 'missing-change.md'), kind), /no change document/, kind);
     assert.equal(readFileSync(join(root, 'index.md'), 'utf8'), story, kind);
     assert.equal(existsSync(join(root, 'missing-change.md')), false, kind);
 
@@ -151,18 +151,18 @@ test('recordScriptedRun preserves paired story and change state when the second 
     writeChange(root, changePath, newChange({ changeOf: 'S-1' }));
     const change = readFileSync(changePath, 'utf8');
     writeFileSync(join(root, 'index.md'), 'no frontmatter\n');
-    assert.throws(() => record(root, changePath, kind), /frontmatter|---/, kind);
+    await assert.rejects(async () => record(root, changePath, kind), /frontmatter|---/, kind);
     assert.equal(readFileSync(changePath, 'utf8'), change, kind);
 
     // Both can: both change.
     writeFileSync(join(root, 'index.md'), story);
-    record(root, changePath, kind);
+    await record(root, changePath, kind);
     assert.notEqual(readFileSync(join(root, 'index.md'), 'utf8'), story, kind);
     assert.match(readFileSync(changePath, 'utf8'), /scripted S-1/, kind);
   }
 });
 
-test('record-scripted-run-rollback-failure-preserves-recovery-state', () => {
+test('record-scripted-run-rollback-failure-preserves-recovery-state', async () => {
   const story = '---\nstory_id: S-1\nstatus: refined\n---\n\n## Acceptance Criteria\n\n- [ ] Done\n';
   const scripted = new URL('../../src/scripted.js', import.meta.url).href;
   // In a process of its own, as the failing rename is counted per process.
@@ -172,7 +172,7 @@ test('record-scripted-run-rollback-failure-preserves-recovery-state', () => {
     const code = `
       import { recordScriptedRun } from ${JSON.stringify(scripted)};
       try {
-        recordScriptedRun({ ...${JSON.stringify(opts)}, at: '2026-11-01T10:00:00Z', result: ${JSON.stringify(result)} });
+        await recordScriptedRun({ ...${JSON.stringify(opts)}, at: '2026-11-01T10:00:00Z', result: ${JSON.stringify(result)} });
       } catch (e) {
         console.log('THROWN ' + e.message);
       }`;
@@ -183,7 +183,7 @@ test('record-scripted-run-rollback-failure-preserves-recovery-state', () => {
     // Nothing to roll back: the first failure is the only one, and it is the one thrown.
     const missing = backlogDir();
     writeFileSync(join(missing, 'index.md'), story);
-    const absent = record(missing, join(missing, 'absent.md'), kind, 2);
+    const absent = await record(missing, join(missing, 'absent.md'), kind, 2);
     assert.match(absent.stdout, /THROWN .*no change document/, kind);
     assert.equal(readFileSync(join(missing, 'index.md'), 'utf8'), story, kind);
 
@@ -192,7 +192,7 @@ test('record-scripted-run-rollback-failure-preserves-recovery-state', () => {
     const changePath = join(root, 'change.md');
     writeChange(root, changePath, newChange({ changeOf: 'S-1' }));
     writeFileSync(join(root, 'index.md'), 'no frontmatter\n');
-    const both = record(root, changePath, kind, 2);
+    const both = await record(root, changePath, kind, 2);
     assert.match(both.stdout, /THROWN .*(frontmatter|---)/, `${kind}: the story's error, not the restore's`);
     assert.doesNotMatch(both.stdout, /BL_INTERNAL_TEST_FAIL_ON_RENAME/, kind);
     assert.match(both.stderr, /keeps a ## Gate line/, kind);
@@ -201,7 +201,7 @@ test('record-scripted-run-rollback-failure-preserves-recovery-state', () => {
 
     // The cause gone, a retry records the run.
     writeFileSync(join(root, 'index.md'), story);
-    assert.equal(record(root, changePath, kind).stdout, '', kind);
+    assert.equal((await record(root, changePath, kind)).stdout, '', kind);
     const { fm } = parseFrontmatter(readFileSync(join(root, 'index.md'), 'utf8'));
     assert.equal(statusOf('story', fm), kind === 'changed' ? 'in_progress' : 'done', kind);
   }

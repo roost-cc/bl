@@ -9,8 +9,10 @@
  *
  * `withSpecLock(indexPath, fn)` is the lock: a pid lock in the temp dir keyed
  * by the spec's real path (the file `withTokensLock` used, so an older `bl`
- * and this one still exclude each other). It is re-entrant within a process
- * and throws `SpecLockError` when the lock never frees.
+ * and this one still exclude each other). It is re-entrant within a process,
+ * awaits its wait (`awaitLock`, F-105 W1) and rejects with `SpecLockError`
+ * when the lock never frees. Its `fn` is synchronous, so a nested write in it
+ * calls `updateSpecFileHeld`.
  *
  * Lock order (F-67 D4): the backlog lock (`lock.js`) is the outer lock, a
  * spec lock the inner one. Nothing takes the backlog lock while holding a
@@ -21,7 +23,8 @@ import { readFileSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { createHash } from 'crypto';
-import { FrontmatterError, parseFrontmatterOf, serializeFrontmatter } from './config.js';
+import { FrontmatterError, info, parseFrontmatterOf, serializeFrontmatter } from './config.js';
+import { awaitLock, LockWaitTimeout } from './lock-wait.js';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 
@@ -67,18 +70,20 @@ function runSync(fn, indexPath) {
  * Run `fn` holding `indexPath`'s spec lock, so two writers of the same spec
  * (parallel headless sessions, an interactive session's difference, a totals
  * re-read, a status write) never both write from one snapshot and drop the
- * other's change. Waits up to `waitMs` for a live holder (a write takes
- * milliseconds); a dead holder's lock is reclaimed. A nested call for a lock
- * this process already holds runs `fn` directly. Returns `fn`'s result.
- * Throws `SpecLockError` naming the spec and the holder when the lock never
- * frees, or when it cannot be created. `fn` must be synchronous.
+ * other's change. Waits through `awaitLock` (`lock-wait.js`) up to `waitMs`
+ * (60 s, F-104 D2) for a live holder, and says so once on stderr; a dead
+ * holder's lock is reclaimed. A nested call for a lock this process already
+ * holds runs `fn` directly. Resolves `fn`'s result. Rejects with
+ * `SpecLockError` naming the spec and the holder when the lock never frees,
+ * or when it cannot be created. `fn` must be synchronous (F-105 W4): the
+ * re-entrancy map is per process, so an `await` inside `fn` would let another
+ * task of this process skip the lock.
  */
-export function withSpecLock(indexPath, fn, { waitMs = 10_000 } = {}) {
+export async function withSpecLock(indexPath, fn, { waitMs = 60_000 } = {}) {
   const lockPath = specLockPath(indexPath);
   if (held.has(lockPath)) return runSync(fn, indexPath);
   const content = `${process.pid}\n${new Date().toISOString()}\nspec ${indexPath}\n`;
-  const deadline = Date.now() + waitMs;
-  for (;;) {
+  const take = () => {
     let got;
     try {
       got = acquirePidLock(lockPath, content);
@@ -88,14 +93,20 @@ export function withSpecLock(indexPath, fn, { waitMs = 10_000 } = {}) {
         cause: e,
       });
     }
-    if (got.content != null) break;
-    if (Date.now() > deadline) {
-      throw new SpecLockError(
-        `${indexPath}: the spec lock ${lockPath} is held by pid ${got.holder} (waited ${waitMs} ms)`,
-        { indexPath, holder: got.holder },
-      );
-    }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    return got.content != null ? { taken: got.content } : got;
+  };
+  try {
+    await awaitLock(lockPath, take, { deadlineMs: waitMs, pollMs: 10, announce: info });
+  } catch (e) {
+    if (!(e instanceof LockWaitTimeout)) throw e;
+    throw new SpecLockError(
+      `${indexPath}: the spec lock ${lockPath} is held by pid ${e.holder} (waited ${waitMs} ms)`,
+      {
+        indexPath,
+        holder: e.holder,
+        cause: e,
+      },
+    );
   }
   held.set(lockPath, content);
   try {
@@ -139,23 +150,37 @@ export function specText(text, crlf) {
  * returns the new body, `undefined` (body unchanged) or `false` (write
  * nothing). The result goes back with the file's line end through
  * `atomicWriteFile`, so a failed write leaves the previous file whole; bytes
- * equal to the file's are not written. Returns whether it wrote. Every error
- * (a missing file, the lock, the write) propagates.
+ * equal to the file's are not written. Resolves whether it wrote. Every error
+ * (a missing file, the lock, the write) rejects.
  * @param {string} backlogRoot the backlog the spec is in (`atomicWriteFile` stages there)
+ * @param {string} indexPath
+ * @param {(fm: object, body: string) => string | undefined | false} mutate
+ * @returns {Promise<boolean>}
+ */
+export async function updateSpecFile(backlogRoot, indexPath, mutate) {
+  return withSpecLock(indexPath, () => updateSpecFileHeld(backlogRoot, indexPath, mutate));
+}
+
+/**
+ * `updateSpecFile` for a caller inside `withSpecLock(indexPath, …)`, whose
+ * `fn` is synchronous and so cannot await it. Returns whether it wrote.
+ * Throws a TypeError when this process does not hold the spec lock.
+ * @param {string} backlogRoot
  * @param {string} indexPath
  * @param {(fm: object, body: string) => string | undefined | false} mutate
  * @returns {boolean}
  */
-export function updateSpecFile(backlogRoot, indexPath, mutate) {
-  return withSpecLock(indexPath, () => {
-    const raw = readFileSync(indexPath, 'utf8');
-    const { content, crlf } = readSpecText(raw, indexPath);
-    const { fm, body } = parseFrontmatterOf(content, indexPath);
-    const next = mutate(fm, body);
-    if (next === false) return false;
-    const text = specText(serializeFrontmatter(fm) + (next === undefined ? body : next), crlf);
-    if (text === raw) return false;
-    atomicWriteFile(backlogRoot, indexPath, text);
-    return true;
-  });
+export function updateSpecFileHeld(backlogRoot, indexPath, mutate) {
+  if (!held.has(specLockPath(indexPath))) {
+    throw new TypeError(`updateSpecFileHeld(${indexPath}): the spec lock is not held; use updateSpecFile`);
+  }
+  const raw = readFileSync(indexPath, 'utf8');
+  const { content, crlf } = readSpecText(raw, indexPath);
+  const { fm, body } = parseFrontmatterOf(content, indexPath);
+  const next = mutate(fm, body);
+  if (next === false) return false;
+  const text = specText(serializeFrontmatter(fm) + (next === undefined ? body : next), crlf);
+  if (text === raw) return false;
+  atomicWriteFile(backlogRoot, indexPath, text);
+  return true;
 }

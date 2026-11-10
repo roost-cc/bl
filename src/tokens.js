@@ -271,10 +271,10 @@ export function addTokenTotals(totals, fm) {
  * there is no file, nothing to write, or any failure (the lock, a file with
  * no `---` block, the write), which leaves the previous file whole.
  */
-function updateTokensOnFile(backlogRoot, indexPath, update) {
+async function updateTokensOnFile(backlogRoot, indexPath, update) {
   if (!indexPath || !existsSync(indexPath)) return false;
   try {
-    return updateSpecFile(backlogRoot, indexPath, (fm) => (update(fm) === false ? false : undefined));
+    return await updateSpecFile(backlogRoot, indexPath, (fm) => (update(fm) === false ? false : undefined));
   } catch {
     return false;
   }
@@ -284,7 +284,7 @@ function updateTokensOnFile(backlogRoot, indexPath, update) {
  * Accumulate `usage` onto the frontmatter of `indexPath`, and with `step`
  * into `tokens_by_step[step]` in the same write. Best-effort.
  */
-export function accumulateTokensOnFile(backlogRoot, indexPath, usage, step = null) {
+export async function accumulateTokensOnFile(backlogRoot, indexPath, usage, step = null) {
   if (!usage) return false;
   return updateTokensOnFile(backlogRoot, indexPath, (fm) => addUsageToFrontmatter(fm, usage, step));
 }
@@ -297,7 +297,7 @@ export function accumulateTokensOnFile(backlogRoot, indexPath, usage, step = nul
  * since the transcript holds this session. Best-effort; false when there is
  * nothing to write.
  */
-export function accumulateStepTokensOnFile(backlogRoot, indexPath, step, usage) {
+export async function accumulateStepTokensOnFile(backlogRoot, indexPath, step, usage) {
   const kinds = usageKinds(usage);
   if (!step || !kinds) return false;
   return updateTokensOnFile(backlogRoot, indexPath, (fm) => {
@@ -312,7 +312,7 @@ export function accumulateStepTokensOnFile(backlogRoot, indexPath, step, usage) 
  * Best-effort: false on any failure (the transcripts, the lock, the file),
  * so an agent session never fails to exit cleanly because of bookkeeping.
  */
-export function recordStoryTokens(storyId, config) {
+export async function recordStoryTokens(storyId, config) {
   let indexPath;
   try {
     indexPath = reposForStory(storyId, config)[0]?.indexPath;
