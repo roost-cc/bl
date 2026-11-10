@@ -21,7 +21,9 @@
  * so an interrupted run leaves a working backlog. A run that fails after it
  * wrote (a step throws, or the commit fails) records the paths it wrote in
  * its failed-commit record (`backlog-commit.js`), and the rerun commits each
- * one whose content is still the same with its own. A unit whose run lock
+ * one whose content is still the same with its own. It names each recorded
+ * path that was committed or edited since, and a dry run lists the paths it
+ * would carry. A unit whose run lock
  * (`.bl/run/<id>.lock`) or session lock has a live holder other than this
  * process and its parents is skipped and listed, and so are the stories of
  * such a feature: the run reads and writes their old shape. A rerun converts
@@ -32,7 +34,14 @@ import { spawnSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
-import { commitPaths, failedCommitRecord, hashPath, readFailedCommit, saveFailedCommit } from './backlog-commit.js';
+import {
+  commitPaths,
+  dirtySnapshot,
+  failedCommitRecord,
+  hashPath,
+  readFailedCommit,
+  saveFailedCommit,
+} from './backlog-commit.js';
 import { loadBacklog } from './backlog-graph.js';
 import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChange } from './change-doc.js';
 import { FLOW_FILE, FLOW_TYPES, LEGACY_LOG, flowPath, fromLegacy, migratedFlowText } from './flow.js';
@@ -202,23 +211,34 @@ function stripChanges(root, unitDir, dryRun, onPath) {
 const OWNER = 'migrate-transitions';
 
 /**
- * The paths an earlier run wrote and did not commit: those of its record
- * whose content is still what it wrote. An edit since is not the migration's,
- * and stays out. A record that cannot be read throws.
+ * The paths an earlier run wrote and did not commit, reconciled with the tree
+ * now: `carry`, those still uncommitted with the content it wrote; `committed`,
+ * those git no longer lists as changed (someone committed or reverted them);
+ * `edited`, those changed since, which are not the migration's and stay out.
+ * `recorded` says whether a record holds any path. A record that cannot be
+ * read throws.
  * @param {string} root
- * @returns {string[]}
+ * @returns {{ carry: string[], committed: string[], edited: string[], recorded: boolean }}
  */
 function carriedPaths(root) {
+  let record;
   try {
-    return readFailedCommit(root, OWNER)
-      .commit.filter(([p, h]) => hashPath(root, p) === h)
-      .map(([p]) => p);
+    record = readFailedCommit(root, OWNER).commit;
   } catch (e) {
     throw new Error(
       `${failedCommitRecord(OWNER)}: ${e.message}; commit an earlier run's changes yourself (git status), then remove it`,
       { cause: e },
     );
   }
+  // With no `git status` (a backlog that is not a repo), only the hash decides.
+  const dirty = record.length > 0 ? dirtySnapshot(root) : null;
+  const out = { carry: [], committed: [], edited: [], recorded: record.length > 0 };
+  for (const [p, h] of record) {
+    if (dirty && !dirty.has(p)) out.committed.push(p);
+    else if (hashPath(root, p) === h) out.carry.push(p);
+    else out.edited.push(p);
+  }
+  return out;
 }
 
 /** Record `paths` with their content for the next run to commit; no paths removes the record. */
@@ -276,7 +296,12 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   for (const kind of FLOW_TYPES) counts[kind] = { units: 0, entries: 0, placed: 0 };
   const paths = [];
   const skipped = [];
-  const carried = dryRun ? [] : carriedPaths(root);
+  const prior = carriedPaths(root);
+  const carried = prior.carry;
+  if (prior.committed.length > 0) log(`an earlier run's paths are committed already: ${prior.committed.join(' ')}`);
+  if (prior.edited.length > 0) {
+    log(`left out, edited since an earlier run wrote them; commit them yourself: ${prior.edited.join(' ')}`);
+  }
   try {
     convertAll();
   } catch (e) {
@@ -342,6 +367,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   const earlier = carried.filter((p) => !paths.includes(p));
   const all = [...paths, ...earlier];
   if (all.length === 0) {
+    if (!dryRun && prior.recorded) recordPaths(root, []);
     log('nothing to do');
     return { counts, skipped, commit: null };
   }

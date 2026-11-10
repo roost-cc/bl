@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'child_process';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { once } from 'events';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
@@ -377,6 +377,63 @@ test('a rerun after a failed commit, or after a unit that failed to convert, com
     const again = script(dir);
     assert.equal(again.stdout, 'nothing to do\n', name);
   }
+});
+
+/** A v1 backlog of one draft story, in git, whose first migration run failed to commit; returns its root. */
+function failedFirstRun() {
+  const { dir } = mkTempBacklog({
+    flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
+    repos: ['core'],
+    components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
+    stories: [{ id: 'S-1', title: 'One', component: 'C01', status: 'backlog', added: '2026-11-01' }],
+  });
+  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  git(dir, 'init', '-q', '-b', 'main');
+  commitAt(dir, '2026-11-01T10:00:00Z', 'base');
+  const hook = join(dir, '.git/hooks/pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  assert.equal(script(dir).status, 1, 'the first run fails to commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  return dir;
+}
+const RECORD = '.bl/run/commit-failed/migrate-transitions.json';
+const hasRecord = (dir) => existsSync(join(dir, RECORD));
+
+test('a rerun after the operator committed the recorded paths by hand exits 0, commits nothing, and removes the record', () => {
+  const dir = failedFirstRun();
+  assert.equal(hasRecord(dir), true);
+  commitAt(dir, '2026-11-02T10:00:00Z', 'by hand');
+  const before = head(dir);
+  for (const run of ['the rerun', 'a second rerun']) {
+    const r = script(dir);
+    assert.equal(r.status, 0, `${run}: ${r.stderr}`);
+    assert.equal(head(dir), before, run);
+    assert.equal(hasRecord(dir), false, run);
+  }
+});
+
+test('a rerun names a recorded path that was edited since, and a dry run lists the carried paths', () => {
+  const dir = failedFirstRun();
+  const dry = script(dir, '--dry-run');
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.match(dry.stdout, /^an earlier run wrote and did not commit: .*stories\/S1\/index\.md/m);
+  assert.doesNotMatch(dry.stdout, /nothing to do/);
+  assert.equal(hasRecord(dir), true, 'a dry run keeps the record');
+
+  writeFileSync(join(dir, rel.s1), `${read(dir, rel.s1)}\nOperator note.\n`);
+  const r = script(dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(
+    r.stdout,
+    /^left out, edited since an earlier run wrote them; commit them yourself: stories\/S1\/index\.md$/m,
+  );
+  // The failed commit staged it (`MM`); the path is what counts.
+  assert.deepEqual(
+    statusLines(dir).map((l) => l.slice(3)),
+    [rel.s1],
+    'only the edited path is uncommitted',
+  );
+  assert.equal(hasRecord(dir), false);
 });
 
 test('the migration sets added and completed from the log for a unit that has neither, so bl validate reports no error', () => {
