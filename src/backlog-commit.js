@@ -31,19 +31,27 @@ import { atomicWriteFile } from './atomic-write.js';
 import { MAIN_REFSPEC, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
 import { RUN_DIR, ensureRunDir } from './run-lock.js';
+import { isInterrupt } from './signal-exit.js';
 
 // Never wait on a credential prompt; `GIT_EDITOR=true` keeps
 // `git rebase --continue` from opening an editor for the message.
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' };
 
+// The first interrupt (`isInterrupt`) that ended a `git` child since
+// `commitPaths` began, which it reports as `signal`: any of its git calls,
+// the rebase of a push retry (`pullLocked`) included.
+let interruptSeen = null;
+
 function git(root, args) {
-  return spawnSync('git', args, {
+  const r = spawnSync('git', args, {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
     env: GIT_ENV,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  if (isInterrupt(r.signal)) interruptSeen ??= r.signal;
+  return r;
 }
 
 /** What git had to say, or a fallback naming the exit status. */
@@ -303,6 +311,9 @@ function addablePaths(root, paths) {
  * `pushError` are present only when the backlog has an `origin` remote;
  * `pushConflicts` names the paths a retry's rebase conflicted in, and
  * `pushResolved` the generated paths it settled (left pending regeneration).
+ * `signal` is present when SIGINT or SIGTERM (`INTERRUPT_SIGNALS`) ended a
+ * git command of the commit or its push, the rebase of a push retry
+ * included, so a caller can stop as the signal says (`checkedMerge`).
  *
  * With an `origin` remote the commit and push hold the main sync lock that
  * `pullBacklog` takes, so a commit never lands mid-rebase and a pull's
@@ -315,9 +326,15 @@ function addablePaths(root, paths) {
  * (`headlessPriorityRefusal`).
  * @returns {{ committed: boolean, paths: string[], error?: string,
  *   pushed?: boolean, pushError?: string, pushConflicts?: string[],
- *   pushResolved?: string[] }}
+ *   pushResolved?: string[], signal?: string }}
  */
 export function commitPaths(root, paths, message) {
+  interruptSeen = null;
+  const res = commitPathsUnsignalled(root, paths, message);
+  return interruptSeen ? { ...res, signal: interruptSeen } : res;
+}
+
+function commitPathsUnsignalled(root, paths, message) {
   if (paths.length === 0) return { committed: false, paths };
   const refused = headlessPriorityRefusal(root, paths);
   if (refused) return { committed: false, paths, error: refused };
@@ -422,6 +439,8 @@ export function isNonFastForwardRejection(stderr) {
  * @property {string[]} [paths] the paths that rebase conflicted in (`conflict`).
  * @property {string[]} [resolved] generated paths that rebase settled by
  *   taking a side; their regeneration is left pending (`PULL_REGEN_PENDING`).
+ * @property {string} [signal] the signal that ended a `git push`; that push
+ *   is not retried.
  */
 
 /**
@@ -446,6 +465,8 @@ export function pushBacklog(root) {
   const r = git(root, ['push', '-q', 'origin', 'main']);
   if (r.status === 0) return { pushed: true };
   const error = gitMessage(r, 'git push');
+  // A push ended by a signal is not retried: the caller decides whether to go on.
+  if (r.signal) return { pushed: false, error, signal: r.signal };
   const branch = git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).stdout?.trim() ?? '';
   // The rebase moves the checked-out branch: only retry when that is `main`.
   if (!isNonFastForwardRejection(r.stderr) || branch !== 'main') return { pushed: false, error };
@@ -486,7 +507,13 @@ export function pushBacklog(root) {
   const again = git(root, ['push', '-q', 'origin', 'main']);
   return again.status === 0
     ? { pushed: true, retry: 'pulled', resolved }
-    : { pushed: false, error: gitMessage(again, 'git push'), retry: 'pulled', resolved };
+    : {
+        pushed: false,
+        error: gitMessage(again, 'git push'),
+        retry: 'pulled',
+        resolved,
+        ...(again.signal ? { signal: again.signal } : {}),
+      };
 }
 
 /**

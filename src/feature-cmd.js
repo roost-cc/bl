@@ -1808,6 +1808,7 @@ export async function cmdMerge(args, config, feature) {
       // Every repo is prepared up front (S-862), so any but the lead may
       // have nothing to merge.
       isSecondary: t !== primary,
+      changeDir: feature.featureDir,
     });
     if (!result.ok) {
       console.error(`\nMerge of ${t.repoName} failed. Stopping. Resume with:\n  bl merge ${feature.id}`);

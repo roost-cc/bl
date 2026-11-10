@@ -22,6 +22,7 @@
  */
 
 import { spawnSync } from 'child_process';
+import { raiseSignal } from './signal-exit.js';
 
 /**
  * Sleep `ms` milliseconds without returning to the event loop.
@@ -45,11 +46,7 @@ export function sleepSync(ms, say) {
       : spawnSync('sh', ['-c', 'printf "%s\\n" "$2" >&2; exec sleep "$1"', 'sh', secs, say], {
           stdio: ['ignore', 'ignore', 'inherit'],
         });
-  if (r.signal === 'SIGINT' || r.signal === 'SIGTERM') {
-    if (process.listenerCount(r.signal) > 0) process.emit(r.signal, r.signal);
-    else process.kill(process.pid, r.signal);
-    return;
-  }
+  if (raiseSignal(r.signal)) return;
   if (r.status !== 0) {
     // The child did not start (it wrote nothing), did not sleep (it refused
     // the argument) or ended on another signal (SIGPIPE when it wrote `say` to

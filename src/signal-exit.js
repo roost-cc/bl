@@ -8,9 +8,48 @@
  * remove its lock files), and `tab-title.js` on the first title (to end the
  * title as `interrupted`, S-1393). Any other `bl` command keeps Node's
  * default action. The handlers are registered once per process.
+ *
+ * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
+ * `raiseSignal` raises one of them again after a synchronous child ended on
+ * it (`sleep-sync.js`, and `checkedMerge` in `cleanup.js`).
  */
 
 let registered = false;
+
+/**
+ * The signals that interrupt `bl`. A synchronous child ended by one of them
+ * stops the command, and `raiseSignal` raises it again. A child ended by any
+ * other signal (SIGABRT, SIGSEGV, SIGKILL from the out-of-memory killer) has
+ * failed, as one with a non-zero exit code has.
+ */
+export const INTERRUPT_SIGNALS = Object.freeze(['SIGINT', 'SIGTERM']);
+
+/**
+ * Whether `signal` is one of `INTERRUPT_SIGNALS`.
+ * @param {string | null | undefined} signal
+ * @returns {boolean}
+ */
+export function isInterrupt(signal) {
+  return INTERRUPT_SIGNALS.includes(signal);
+}
+
+/**
+ * Take the action of an interrupt (`INTERRUPT_SIGNALS`) that ended a
+ * synchronous child. Node runs no listener during a synchronous wait, so a
+ * caller that sees the child end on one of them raises it here: the listeners
+ * run now (`lock.js` removes its locks and exits 130 or 143), or Node's
+ * default action ends the process when there are none. Any other signal is
+ * not raised. Returns whether `signal` was raised (a listener may let the
+ * process go on).
+ * @param {string | null | undefined} signal
+ * @returns {boolean}
+ */
+export function raiseSignal(signal) {
+  if (!isInterrupt(signal)) return false;
+  if (process.listenerCount(signal) > 0) process.emit(signal, signal);
+  else process.kill(process.pid, signal);
+  return true;
+}
 
 /** Register the SIGINT and SIGTERM handlers, once per process. */
 export function exitOnSignal() {
