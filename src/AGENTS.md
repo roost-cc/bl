@@ -2993,6 +2993,8 @@ bl review -P "focus on the retry logic, the rest looks fine" S34
 
 The preamble lives in `prompts/_pre-task-discussion.md` and is
 prepended by `session.js` so both launchers stay in lockstep.
+The preamble carries the collaboration rules (`_collaboration.md`, F-97 D2)
+unless the session prompt already has them, so a session has them once.
 Empty string (`--prompt ""`) behaves identically to omitting the flag.
 
 ### `bl capacity`
