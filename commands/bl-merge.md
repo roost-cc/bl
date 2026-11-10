@@ -17,8 +17,9 @@ A story that belongs to a feature is refused: merge the feature.
 
 - Every target repo's main checkout must be on `main` (a stale one is switched back with
   `--switch-main`).
-- `review_status` is not `pending`/`fixed`, and the latest review session has no unchecked
-  Must/Should items (open nits do not block).
+- The unit is not in `fixing` or `in_review` (its transition log, F-69), and the latest review
+  session has no unchecked Must/Should items (open nits do not block). The refusal names
+  `bl implement` for `fixing` and `bl review` for `in_review`.
 - `## Escalation` holds nothing but `None.` (stories and features alike).
 - For a feature, every `backlog.json` `repos` entry sets `deployable` (true for the repos a
   release manifest records; there is no default).

@@ -2,9 +2,9 @@
  * The outcome objects the fake agents of the loop tests return (F-68 D2):
  * the verifier's (`schemas/review.json`), the fix round's (`fix.json`), a
  * self-review's (`self-review.json`), and the implement, fix-tests and
- * merge-resolve sessions'. The loop decides from them and writes
- * `review_round` and `review_status` itself, so a fake agent leaves those
- * fields alone.
+ * merge-resolve sessions'. The loop decides from them and records the
+ * verdict in the unit's transition log itself (F-69 D5), so a fake agent
+ * leaves the log alone.
  */
 
 /** A verifier's outcome: one Must fix item when `pending`, none otherwise. */

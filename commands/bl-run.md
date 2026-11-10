@@ -13,7 +13,7 @@ bl refine F-3        # agent: premise, design, acceptance, story cut
 bl approve F-3       # the human gate (features only; a refined story may run)
 bl implement F-3     # one branch, a worktree per repo; implements stories in order (interactive)
 bl review F-3        # correctness + failure-paths passes, then the verifier writes a session
-bl implement F-3     # again when review_status is pending (fix round)
+bl implement F-3     # again when F-3 is in fixing (fix round)
 bl review F-3        # re-review: verifies the named tests
 bl run F-3           # or: all of the above, headless, until clean or escalated
 bl merge F-3         # gates, merges every repo, marks stories done
@@ -44,7 +44,7 @@ backlog/
   (`implement` refuses on those).
 - `implement` and `run` need a feature `approved`, `running`, or `escalated`; a story
   `refined` or `in_progress`.
-- `merge` refuses while `review_status` is `pending`/`fixed`, while the latest
+- `merge` refuses while the unit is in `fixing` or `in_review`, while the latest
   review session has unchecked Must/Should items (open nits do not block), or
   while `## Escalation` holds anything but `None.`. See `bl-merge.md`.
 
@@ -53,15 +53,16 @@ backlog/
 `bl run F-3` replaces the manual implement/review cycle with one
 unattended run: implement each story in dependency order, run the `test`
 stage plugin, self-review, push and open one PR, then review → fix → re-review
-until the verifier's outcome counts no open Must fix or Should fix item (bl then writes
-`review_status: addressed`) or the round cap
+until the verifier's outcome counts no open Must fix or Should fix item (bl then records
+`ready_for_merge` in the unit's transition log) or the round cap
 (`review_rounds_max`) is hit, which escalates with the open items in
 `## Escalation`. Agents can escalate too (a false premise, unmet criteria).
 
 `bl run S-34` does the same for one story: its branch is the story's own, its PR is titled
 `S-34: <title>`, and the story file takes the feature file's place (its Summary and Acceptance
-Criteria for the Premise, its own `## Deferred` for the feature's). The first run adds `branch`, `pr`,
-`review_round` and `review_rounds_max` to the story's frontmatter.
+Criteria for the Premise, its own `## Deferred` for the feature's). The first run adds `review_rounds_max` to
+the story's frontmatter; its branch and PR go to its change document, and its status and round
+to its transition log.
 
 A story has one repo, its component's. A feature names no repo: its repos are its stories'
 repos, in one order that every step uses: `bl` first when a story is in it, then every other repo

@@ -8,7 +8,7 @@
 # project's own: curate it here. A later change to bl's seed does not reach this copy.
 #
 # Limit: this dictionary shapes the words agents write in prose. It does not rename bl's CLI
-# verbs, frontmatter keys or section headings (`bl validate`, `review_round`, `## Review Log`).
+# verbs, frontmatter keys or section headings (`bl validate`, `review_rounds_max`, `## Review Log`).
 #
 # Each entry:
 #   term     the word to use
@@ -249,8 +249,9 @@ entries:
   - term: round
     meaning: >-
       One review of a work unit's change: the passes, then the verifier, which writes one Review
-      Log session. The change document's `review_round` counts rounds, and `review_rounds_max`
-      caps them.
+      Log session. A work unit's round is the number of entries into `in_review` in its
+      transition log (F-69), less a return to a round with no verdict yet; `review_rounds_max`
+      caps them. Before F-69 the change document's `review_round` counted them.
     avoid: [iteration, cycle]
     decided: bl src/AGENTS.md, "Review Cycle"
 

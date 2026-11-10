@@ -494,8 +494,8 @@ function withRaw(
 ) {
   // Each role is an ordered list of { agent, model } configurations (F-64
   // D2), both required. Reviews run on their own list so the configuration
-  // that wrote the code isn't the one signing it off (`review_status:
-  // addressed` is reviewer-only). -A (with --model) replaces one role's list:
+  // that wrote the code isn't the one signing it off (`ready_for_merge` is
+  // the reviewer's verdict only). -A (with --model) replaces one role's list:
   // the review list on `bl review`, the implementing list on every other verb.
   const where = repoName ? `backlog.json repos["${repoName}"] overrides` : 'backlog.json';
   // What an adapter's checkConfiguration reads: the top level and `raw`.

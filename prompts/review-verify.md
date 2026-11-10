@@ -132,9 +132,10 @@ absolute path, for example `{{worktreePath}}/src/<module>.js`. Quote the command
   wrote in step 6.
 - Set `escalated` to `true` when you wrote **## Escalation** in the {{unitKind}} file.
 
-bl owns the review state in the change document's frontmatter. From your outcome it sets the
-round to {{nextRound}} and the status: pending when `must` plus `should` is more than 0, else
-addressed. Do not edit either field.
+bl owns the review state: it records your verdict on round {{nextRound}} in the {{unitKind}}'s
+transition log. From your outcome it records `fixing` when `must` plus `should` is more than 0,
+else `ready_for_merge`. Do not edit the {{unitKind}}'s `transitions:`, and do not add review
+fields to the change document.
 
 {{escalationGuide}}
 

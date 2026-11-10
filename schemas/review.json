@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "review outcome",
-  "description": "The verifier's verdict on a review round (review-verify.md), its final message. The loop writes the change document's review_status from it: pending when must + should > 0, else addressed (F-68 D3).",
+  "description": "The verifier's verdict on a review round (review-verify.md), its final message. The loop records the verdict in the unit's transition log from it: fixing when must + should > 0, else ready_for_merge (F-68 D3, F-69 D5).",
   "type": "object",
   "additionalProperties": false,
   "required": ["summary", "must", "should", "nits", "escalated"],

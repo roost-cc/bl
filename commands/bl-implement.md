@@ -58,8 +58,8 @@ targets start.
 6. Writes a lock file in the unit directory while the session is running to prevent
    double-starts
 
-When the target's `review_status` is `pending`, the session addresses the review instead
-(the fix round).
+When the target is in `fixing` (its transition log), the session addresses the review instead
+(the fix round); a `fixed` outcome records `in_review` by `fix`.
 
 ## Resuming Interrupted Sessions
 
