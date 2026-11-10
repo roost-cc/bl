@@ -820,6 +820,10 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
   process.once('exit', removeThrowaway);
   try {
     const add = git(['worktree', 'add', '--detach', wt, 'origin/main'], repoPath);
+    if (signal) {
+      interrupted('git worktree add');
+      return false;
+    }
     if (add.status !== 0) {
       console.error(`${repoName}: could not add a worktree at origin/main; nothing is pushed:\n${outputOf(add)}`);
       return false;
@@ -947,7 +951,9 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
       // Main moved when origin/main is no longer an ancestor of the commit;
       // anything else is a refusal of its own (a hook, the remote).
       git(['fetch', 'origin', MAIN_REFSPEC], wt);
-      if (git(['merge-base', '--is-ancestor', 'origin/main', commit], wt).status !== 0) mainMoved();
+      const moved = git(['merge-base', '--is-ancestor', 'origin/main', commit], wt).status !== 0;
+      if (signal) interrupted(`the look-up of why the push of ${commit} was refused`);
+      else if (moved) mainMoved();
       else console.error(`${repoName}: the push of ${commit} to main was refused; nothing is pushed.`);
       return false;
     }

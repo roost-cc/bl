@@ -496,9 +496,9 @@ test('a throwaway worktree that cannot be removed is a warning: the merge still 
 
 /**
  * A `git` first on PATH that ends on SIGTERM when its arguments match the
- * glob `KILL_GIT` and its directory matches `KILL_IN`, and runs the real git
- * otherwise. `KILL_IN` tells the throwaway worktree (`bl-merge-*`) from the
- * main checkout.
+ * glob `KILL_GIT`, or exits 128 when they match `FAIL_GIT`, and its directory
+ * matches `KILL_IN`; it runs the real git otherwise. `KILL_IN` tells the
+ * throwaway worktree (`bl-merge-*`) from the main checkout.
  */
 function killingGit(dir) {
   const real = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
@@ -506,7 +506,7 @@ function killingGit(dir) {
   mkdirSync(bin, { recursive: true });
   writeFileSync(
     join(bin, 'git'),
-    `#!/bin/sh\ncase "$PWD" in $KILL_IN) case "$*" in $KILL_GIT) kill -TERM $$ ;; esac ;; esac\nexec '${real}' "$@"\n`,
+    `#!/bin/sh\ncase "$PWD" in $KILL_IN) case "$*" in $KILL_GIT) kill -TERM $$ ;; $FAIL_GIT) exit 128 ;; esac ;; esac\nexec '${real}' "$@"\n`,
   );
   chmodSync(join(bin, 'git'), 0o755);
   return `${bin}:${process.env.PATH}`;
@@ -518,6 +518,7 @@ function killingGit(dir) {
  * `pushed` whether origin's main is the merge commit when it stops.
  */
 const GIT_KILL_CASES = [
+  { args: 'worktree add *', at: '*', step: 'git worktree add', checks: 0, pushed: false },
   { args: 'merge --no-ff *', at: '*/bl-merge-*', step: 'git merge', checks: 0, pushed: false },
   { args: 'rev-parse HEAD', at: '*/bl-merge-*', step: 'git rev-parse', checks: 0, pushed: false },
   { args: 'read-tree *', at: '*', step: 'the fast-forward dry run', checks: 1, pushed: false },
@@ -529,22 +530,23 @@ const GIT_KILL_CASES = [
     checks: 1,
     pushed: true,
   },
+  {
+    // The push fails, then the fetch that looks for why ends on SIGTERM.
+    args: 'fetch origin *',
+    fails: 'push origin *:refs/heads/main',
+    at: '*/bl-merge-*',
+    step: 'the look-up of why the push of [0-9a-f]{40} was refused',
+    checks: 1,
+    pushed: false,
+  },
 ];
 
 test('a git rev-parse that gives no commit ID runs no check and pushes nothing', () => {
   const fx = fixture({ verdicts: ['pass'] });
   try {
     const before = g(fx.origin, 'rev-parse', 'main');
-    // The fake git fails `rev-parse HEAD` in the throwaway worktree.
-    const bin = join(fx.dir, '.bl', 'failing-git');
-    mkdirSync(bin, { recursive: true });
-    const real = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
-    writeFileSync(
-      join(bin, 'git'),
-      `#!/bin/sh\ncase "$PWD" in */bl-merge-*) test "$*" = "rev-parse HEAD" && exit 128 ;; esac\nexec '${real}' "$@"\n`,
-    );
-    chmodSync(join(bin, 'git'), 0o755);
-    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: { ...ENV, PATH: `${bin}:${process.env.PATH}` } });
+    const env = { ...ENV, PATH: killingGit(fx.dir), FAIL_GIT: 'rev-parse HEAD', KILL_IN: '*/bl-merge-*' };
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env });
     assert.equal(r.status, 1, r.stdout);
     assert.match(r.stderr, /^code: git rev-parse HEAD gave no commit ID for the merge \(''\); nothing is pushed\.$/m);
     assert.deepEqual(calls(fx), [], 'no check ran');
@@ -562,7 +564,7 @@ for (const c of GIT_KILL_CASES) {
     const u = UNITS[0];
     try {
       const before = g(fx.origin, 'rev-parse', 'main');
-      const env = { ...ENV, PATH: killingGit(fx.dir), KILL_GIT: c.args, KILL_IN: c.at };
+      const env = { ...ENV, PATH: killingGit(fx.dir), KILL_GIT: c.args, FAIL_GIT: c.fails, KILL_IN: c.at };
       const r = runBl(['merge', u.id], { cwd: fx.dir, env });
       assert.equal(r.status, 143, `${r.stdout}\n${r.stderr}`);
       assert.match(r.stderr, new RegExp(`^code: ${c.step} was ended by SIGTERM; rerun \`bl merge S-1\`\\.$`, 'm'));
