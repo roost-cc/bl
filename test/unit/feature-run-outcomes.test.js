@@ -154,9 +154,38 @@ test("an escalation after a CLI failure names the exit and shows the CLI's stder
     assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
     const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
     assert.match(escalation, /implement: no valid outcome after one retry \(claude exited 1: Error: bad flag\)/);
-    assert.match(escalation, /The last 20 lines of the CLI's stderr:\n\n````text\nwarn\nError: bad flag\n````/);
+    assert.match(escalation, /The last 20 lines of the CLI's stderr:\n\n```text\nwarn\nError: bad flag\n```/);
   } finally {
     cleanup();
+  }
+});
+
+test('escalateNoOutcome keeps a backtick-fenced stderr tail inside its block', () => {
+  const cases = [
+    {
+      name: 'stderr tail',
+      stderrTail: '````\nfoo\n````',
+      output: '',
+      heading: "The last 20 lines of the CLI's stderr:",
+    },
+    {
+      name: 'session text',
+      stderrTail: '',
+      output: '````\nfoo\n````\n',
+      heading: 'The last 20 lines of the session text:',
+    },
+  ];
+  for (const c of cases) {
+    const failed = { structured: null, structuredError: 'claude exited 1', stderrTail: c.stderrTail, output: c.output };
+    const { step, cleanup, feature } = setup([failed, failed]);
+    try {
+      assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
+      const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+      const block = escalation.slice(escalation.indexOf(c.heading));
+      assert.match(block, /\n\n`````text\n````\nfoo\n````\n`````\n/, c.name);
+    } finally {
+      cleanup();
+    }
   }
 });
 

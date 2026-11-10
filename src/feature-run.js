@@ -79,6 +79,7 @@ import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
   codeSpan,
+  fenced as fencedText,
   isScripted,
   recordScriptedRun,
   reviewSkipped,
@@ -1683,8 +1684,8 @@ function escalateNoOutcome(ctx, step, r) {
     `Fault: ${outcomeFault(r)}`,
     '',
     tail ? 'The last 20 lines of the session text:' : 'The session left no text.',
-    ...(tail ? ['', '````text', tail, '````'] : []),
-    ...(r.stderrTail ? ['', "The last 20 lines of the CLI's stderr:", '', '````text', r.stderrTail, '````'] : []),
+    ...(tail ? ['', fencedText(tail)] : []),
+    ...(r.stderrTail ? ['', "The last 20 lines of the CLI's stderr:", '', fencedText(r.stderrTail)] : []),
     '',
     `Find why the agent did not return the outcome, then run \`${resume}\`.`,
   ].join('\n');
