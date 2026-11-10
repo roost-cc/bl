@@ -41,7 +41,8 @@ export class LockWaitTimeout extends Error {
  * Take a lock, waiting for a live holder. `take()` tries once and returns
  * `{ taken: T }` or `{ holder: number | 'unknown' }`. On the first holder it
  * calls `announce(waitingForLock(name, holder))` once, then awaits `pollMs`
- * and tries again, until it takes the lock or `deadlineMs` (null: none) has
+ * (at most the time left to the deadline) and tries again, until it takes the
+ * lock or `deadlineMs` (null: none) has
  * passed. Resolves `T`; rejects with a LockWaitTimeout naming the lock and
  * the live holder. The message never tells anyone to remove the file. An
  * error that `take` throws rejects the wait as it is. `sleep` is a test seam.
@@ -63,7 +64,9 @@ export async function awaitLock(name, take, { deadlineMs, pollMs, announce, slee
       announced = true;
       announce(waitingForLock(name, got.holder));
     }
-    if (deadlineMs != null && Date.now() - start >= deadlineMs) throw new LockWaitTimeout(name, got.holder, deadlineMs);
-    await sleep(pollMs);
+    // Never sleeps past the deadline (`withMainSyncLock` before F-105 did the same).
+    const left = deadlineMs == null ? pollMs : deadlineMs - (Date.now() - start);
+    if (left <= 0) throw new LockWaitTimeout(name, got.holder, deadlineMs);
+    await sleep(Math.min(pollMs, left));
   }
 }

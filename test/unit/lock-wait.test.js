@@ -1,7 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
+import { execFileSync } from 'node:child_process';
+import { rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { awaitLock, LockWaitTimeout, waitingForLock } from '../../src/lock-wait.js';
+import { acquireLock, LOCK_FILE } from '../../src/lock.js';
+import { mainSyncLockPath, withMainSyncLock } from '../../src/main-sync.js';
+import { SpecLockError, specLockPath, withSpecLock } from '../../src/spec-file.js';
+import { mkTempDir } from '../helpers/tempdir.js';
 
 /** A `take` that finds `holders` in turn (one per try), then takes the lock as `value`. */
 function takeAfter(holders, value = 'mine') {
@@ -71,6 +78,73 @@ test('awaitLock rejects with a LockWaitTimeout naming the lock and the holder', 
   assert.doesNotMatch(err.message, /\brm\b|remove/i, 'the message never tells anyone to remove the file');
   assert.deepEqual(sleeps, [3]);
   assert.equal(said.length, 1);
+});
+
+test('awaitLock sleeps at most the time left to the deadline', async () => {
+  for (const { deadlineMs, pollMs } of [
+    { deadlineMs: 100, pollMs: 2000 },
+    { deadlineMs: 100, pollMs: 60 },
+    { deadlineMs: 30, pollMs: 31 },
+  ]) {
+    const sleeps = [];
+    const start = Date.now();
+    const err = await awaitLock('x.lock', () => ({ holder: 42 }), {
+      deadlineMs,
+      pollMs,
+      announce: () => {},
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        await delay(ms);
+      },
+    }).catch((e) => e);
+    const label = `deadline ${deadlineMs}, poll ${pollMs}`;
+    assert.ok(err instanceof LockWaitTimeout, `${label}: ${err}`);
+    assert.ok(sleeps.length > 0, `${label}: it slept`);
+    for (const ms of sleeps) assert.ok(ms > 0 && ms <= Math.min(pollMs, deadlineMs), `${label}: slept ${ms} ms`);
+    assert.ok(Date.now() - start < deadlineMs + 500, `${label}: took ${Date.now() - start} ms`);
+  }
+});
+
+test('every lock wait with a live holder gives up near its deadline, not after a full poll', async () => {
+  const repo = mkTempDir('bl-lock-wait-');
+  execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+  const holderContent = `${process.pid}\n${new Date().toISOString()}\nheld by the test\n`;
+  const spec = join(repo, 'index.md');
+  writeFileSync(spec, '---\na: 1\n---\nbody\n');
+  const cases = [
+    {
+      name: 'backlog lock (acquireLock)',
+      lockPath: join(repo, LOCK_FILE),
+      wait: async () => {
+        const exits = [];
+        await acquireLock(repo, { timeoutMs: 100, pollMs: 2000, exit: (c) => exits.push(c), error: () => {} });
+        return exits[0] === 1;
+      },
+    },
+    {
+      name: 'main-sync lock (withMainSyncLock)',
+      lockPath: mainSyncLockPath(repo),
+      wait: async () =>
+        (await withMainSyncLock(repo, () => 'ran', { lockTimeoutMs: 100, pollMs: 2000 })).state === 'lock-timeout',
+    },
+    {
+      name: 'spec lock (withSpecLock, fixed 10 ms poll)',
+      lockPath: specLockPath(spec),
+      wait: async () =>
+        (await withSpecLock(spec, () => 'ran', { waitMs: 100 }).catch((e) => e)) instanceof SpecLockError,
+    },
+  ];
+  for (const c of cases) {
+    writeFileSync(c.lockPath, holderContent);
+    try {
+      const start = Date.now();
+      assert.ok(await c.wait(), `${c.name}: timed out`);
+      const ms = Date.now() - start;
+      assert.ok(ms < 1000, `${c.name}: took ${ms} ms`);
+    } finally {
+      rmSync(c.lockPath, { force: true });
+    }
+  }
 });
 
 test('awaitLock with a deadline of 0 tries once, announces, and rejects with no sleep', async () => {
