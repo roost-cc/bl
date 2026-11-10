@@ -145,7 +145,10 @@ export function tuiNeedsBuild(topDir = TOP_DIR) {
   const built = statSync(bin).mtimeMs;
   return readdirSync(topDir, { recursive: true, withFileTypes: true }).some((e) => {
     const path = join(e.parentPath, e.name);
-    return e.isFile() && relative(topDir, path).split(sep)[0] !== 'bin' && statSync(path).mtimeMs > built;
+    if (!e.isFile() || relative(topDir, path).split(sep)[0] === 'bin') return false;
+    // A file gone since the listing (an editor's temp file) is skipped.
+    const mtimeMs = statSync(path, { throwIfNoEntry: false })?.mtimeMs;
+    return mtimeMs !== undefined && mtimeMs > built;
   });
 }
 
