@@ -422,6 +422,8 @@ function loopRunner({ exit = 0, dirty = ' M lock\n', sessions = {}, testExits = 
       if (cmd === 'git status --porcelain') return { status: 0, output: ran ? dirty : '' };
       if (cmd.startsWith('git commit')) ran = false;
       if (cmd.startsWith('git rev-parse')) return { status: 0, output: 'abc1234\n' };
+      // The scripted command's commit is on the branch (S-1437 finishes a story with none).
+      if (cmd === 'git rev-list --count main..HEAD') return { status: 0, output: '1\n' };
       if (cmd.startsWith('git rev-list --count')) return { status: 0, output: '0\n' };
       if (cmd === 'npm test') return { status: testExits.shift() ?? 0, output: 'ok\n' };
       return { status: 0, output: '' };
