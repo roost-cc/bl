@@ -106,6 +106,8 @@ export function outcomeFor(schema, value) {
  * the fault becomes `<cli> exited <status>: <last non-empty stderr line>`, or
  * `<cli> exited <status>` with no stderr. Every other outcome stays as it is.
  * `stderrTail` is the last 20 non-empty stderr lines, joined by `\n`, or `''`.
+ * Each kept line has its ANSI codes and `\r` removed and is cut to 500
+ * characters (`cleanStderrLine`).
  *
  * @param {{ structured: object|null, structuredError: string|null }} outcome
  * @param {string} cli — the command the adapter spawned (`claude`, `codex`)
