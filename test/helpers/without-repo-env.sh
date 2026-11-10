@@ -10,7 +10,23 @@
 # real tmux window and turned its automatic-rename back on. BL_TAB_TITLE is
 # unset, not emptied, so tests see the default format. Guarded by
 # test/unit/tmux-free-env.test.js.
+#
+# Also run it in a temp directory of its own (S-1392). TMPDIR names a new
+# bl-test-XXXXXX directory, so every mktemp, os.tmpdir() and bl process of the
+# suite writes inside it, and the wrapper removes it when "$@" ends, also on
+# SIGINT, SIGTERM or SIGHUP. A suite run then leaves /tmp as it found it.
+# CLAUDE_CONFIG_DIR, where the claude provider writes its settings, is a
+# directory inside it. "$@" runs as a child, not by exec, so that the EXIT
+# trap can run. Guarded by test/cli/suite-tmpdir.sh.
 # shellcheck disable=SC2046 # one variable name per word
 unset $(git rev-parse --local-env-vars)
 unset TMUX TMUX_PANE BL_TMUX_WINDOW_ID BL_TAB_TITLE
-exec "$@"
+TMPDIR=$(mktemp -d -t bl-test-XXXXXX) || exit 1
+export TMPDIR
+trap 'rm -rf -- "$TMPDIR"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+CLAUDE_CONFIG_DIR=$(mktemp -d) || exit 1
+export CLAUDE_CONFIG_DIR
+"$@"
