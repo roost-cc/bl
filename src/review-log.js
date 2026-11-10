@@ -39,11 +39,17 @@ export function extractReviewLog(body) {
   return m ? m[1] : null;
 }
 
-/** A checkbox list item, any marker: `-`, `*`, `+`, `1.`, `1)`. */
-export const CHECKBOX_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[ \]/;
+/** A list item's start, any marker: `-`, `*`, `+`, `1.`, `1)`. Every checkbox pattern is built on it. */
+const LIST_MARKER = String.raw`^[ \t]*(?:[-*+]|\d+[.)])[ \t]+`;
+
+/** An open checkbox list item (`[ ]`), any marker. */
+export const CHECKBOX_RE = new RegExp(String.raw`${LIST_MARKER}\[ \]`);
+
+/** A checked checkbox list item (`[x]` or `[X]`), any marker. */
+export const CHECKED_BOX_RE = new RegExp(String.raw`${LIST_MARKER}\[[xX]\]`);
 
 /** Any list item, checked, open or plain, with the same markers. */
-const LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/;
+const LIST_ITEM_RE = new RegExp(LIST_MARKER);
 
 /** A `**…**` category heading on a line of its own. */
 const HEADING_RE = /^[ \t]*\*\*([^*]+)\*\*[ \t]*$/;

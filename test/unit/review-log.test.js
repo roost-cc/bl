@@ -7,7 +7,33 @@ import {
   openCheckboxItems,
   reviewOutcome,
   sessionDates,
+  CHECKBOX_RE,
+  CHECKED_BOX_RE,
 } from '../../src/review-log.js';
+import { checkCriteria, extractSection } from '../../src/feature.js';
+
+test('one checkbox syntax: every marker reads open or checked the same way in each reader and in checkCriteria', () => {
+  const markers = ['-', '*', '+', '1.', '1)', '  -', '\t2.'];
+  // [box, open, checked]
+  const boxes = [
+    ['[ ]', true, false],
+    ['[x]', false, true],
+    ['[X]', false, true],
+    ['[-]', false, false],
+  ];
+  for (const marker of markers) {
+    for (const [box, open, checked] of boxes) {
+      const line = `${marker} ${box} a criterion`;
+      assert.equal(CHECKBOX_RE.test(line), open, `open: ${JSON.stringify(line)}`);
+      assert.equal(CHECKED_BOX_RE.test(line), checked, `checked: ${JSON.stringify(line)}`);
+      assert.equal(openCheckboxItems(line).length, open ? 1 : 0, `openCheckboxItems: ${JSON.stringify(line)}`);
+      // A merge checks every open box, whatever the marker; the readers then find it checked.
+      const after = extractSection(checkCriteria(`## Acceptance Criteria\n\n${line}\n`), 'Acceptance Criteria').trim();
+      assert.equal(CHECKBOX_RE.test(after), false, `checkCriteria left open: ${JSON.stringify(after)}`);
+      assert.equal(CHECKED_BOX_RE.test(after), open || checked, `checkCriteria: ${JSON.stringify(after)}`);
+    }
+  }
+});
 
 test('sessionDates: every session heading date, oldest first; a heading without a date gives none', () => {
   const log = [

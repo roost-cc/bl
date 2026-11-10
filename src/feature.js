@@ -30,6 +30,7 @@ import {
   warn,
 } from './config.js';
 import { statusWords } from './flow.js';
+import { CHECKBOX_RE } from './review-log.js';
 import { statusOf } from './transition.js';
 import { entryMatches, ownFm, parseIdList, readAllStories } from './story.js';
 import { graphOf } from './backlog-graph.js';
@@ -464,7 +465,7 @@ export function checkCriteria(body, { branchDeleted = true } = {}) {
   const checked = section
     .split('\n')
     .map((l) => {
-      if (!/^\s*[-*+]\s+\[ \]/.test(l)) return l;
+      if (!CHECKBOX_RE.test(l)) return l;
       if (!branchDeleted && /remote branch deleted/i.test(l)) return l;
       return l.replace('[ ]', '[x]');
     })

@@ -93,6 +93,7 @@ import {
   scriptedSummary,
 } from './scripted.js';
 import {
+  CHECKED_BOX_RE,
   parseLatestSession,
   extractReviewLog,
   featureReviewGate,
@@ -256,15 +257,12 @@ export function uncheckedCriteria(storyIndexPath) {
   return openCheckboxItems(section).map((i) => [i.text, ...i.lines].join(' '));
 }
 
-/** A checked checkbox item, whatever the list marker. */
-const CHECKED_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[[xX]\]/;
-
 /** How many checked items a story's `## Acceptance Criteria` has: 0 when the file or the section is missing. */
 function checkedCriteriaCount(storyIndexPath) {
   if (!existsSync(storyIndexPath)) return 0;
   const { body } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
   const section = extractSection(body, 'Acceptance Criteria') ?? '';
-  return section.split('\n').filter((line) => CHECKED_RE.test(line)).length;
+  return section.split('\n').filter((line) => CHECKED_BOX_RE.test(line)).length;
 }
 
 /** Open criteria as the loop reports them; a missing section is one of them. */
