@@ -121,9 +121,12 @@ test('every schema refuses control characters in its text fields, and keeps a ta
 });
 
 test('a long text field that fails its pattern is refused in linear time (S-1405)', () => {
-  // A one-line field (summary) and a multi-line field (reason) of every schema that has one.
+  // The summary of every schema, then every other text field.
   const fields = [
-    ['refine', (t) => ({ summary: t, refined: true })],
+    ...Object.entries(EXAMPLES).map(([schemaName, promptName]) => {
+      const [example] = jsonBlocks(promptName);
+      return [schemaName, (t) => ({ ...example, summary: t })];
+    }),
     ['implement', (t) => ({ summary: 's', done: false, blocked: t })],
     ['merge-resolve', (t) => ({ summary: 's', resolved: false, reason: t })],
     ['fix-tests', (t) => ({ summary: 's', outcome: 'unrelated', reason: t })],
