@@ -650,7 +650,7 @@ export async function cleanupOneRepo({
   }
 
   let mergeCommitHash = null;
-  // Set when the check path below pushed the merge commit itself.
+  // Set when `checkedMerge` below pushed the merge commit itself.
   let pushed = false;
   if (branchExists) {
     const unmergedCommits = execSync(`git rev-list main..${branchName} --count`, {
@@ -780,8 +780,9 @@ const CHECK_RUNS = 2;
  *    where a session stack serves an app.roost.cc worktree's own client. A
  *    conflict means main moved after the integration: stop, and the operator
  *    reruns `bl merge`.
- * 2. With no `plugins`, skip to step 3. Otherwise run the `check` plugins with `{{commit}}` (that merge commit) and
- *    `{{repoPath}}` (the main checkout). A failed run runs once more. Each run
+ * 2. With no `plugins`, skip to step 3. Otherwise run the `check` plugins
+ *    with `{{commit}}` (that merge commit) and `{{repoPath}}` (the main
+ *    checkout). A failed run runs once more. Each run
  *    adds a `## Gate` line naming the commit to the unit's change document
  *    in `changeDir`.
  * 3. On a pass, check that the main checkout can fast-forward to the commit

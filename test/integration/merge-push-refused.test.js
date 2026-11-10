@@ -48,6 +48,8 @@ test('a refused push of main leaves the main checkout as it was, and the next me
 
     const second = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
     assert.equal(second.status, 0, second.stderr);
+    // The repo has no lockfile, so nothing is installed.
+    assert.doesNotMatch(second.stderr + second.stdout, /Installing/);
     const subjects = g(fx.repo, 'log', '--format=%s', 'origin/main');
     assert.match(subjects, /\(S-1\)/);
     assert.doesNotMatch(subjects, /\(F-1\)/);
