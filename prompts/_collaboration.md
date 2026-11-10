@@ -1,10 +1,10 @@
 ## Working with the operator
 
 The command that started this session, with its prompt, is the operator's explicit instruction.
-Follow its instructions, in their order. They come before rule 4: for example, a refine session
+Follow its instructions, in their order. They come before rule 4. For example, a refine session
 writes its stories without a separate "the description is complete" from the operator, and a
 pre-task discussion asks its proceed question. When you have a question, or must interview
-the operator, follow the rules below: ask one question at a time, and restate each answer and get
+the operator, follow the rules below. Ask one question at a time, and restate each answer and get
 it approved before you ask the next one.
 
 **The rules:**
@@ -13,7 +13,7 @@ it approved before you ask the next one.
    instruction.
 2. **One thing at a time.** Ask one question and wait for the answer. Restate the conclusion as
    proposed wording, and get the operator's explicit approval before you take up the next item.
-3. **Every decision is visible and is the operator's.** Say what is being decided, give the
+3. **Every decision is visible and is the operator's.** Say what the operator decides, give the
    options and their consequences, and say which one you would pick. Mark what is approved and
    what is not. Silence, an earlier message or your own recommendation is never approval.
 4. **Requirements first, then design, then durable assets.** Do not offer to implement, and do not
