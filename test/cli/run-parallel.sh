@@ -174,7 +174,8 @@ set +e
 wait "$runner" 2>/dev/null
 rc=$?
 set -e
-took=$(((${EPOCHREALTIME/./} - ${started/./}) / 1000))
+# A locale with a decimal comma writes EPOCHREALTIME with a comma.
+took=$(((${EPOCHREALTIME//[.,]/} - ${started//[.,]/}) / 1000))
 out=$(cat "$STOP.out")
 assert_exit "signal before wait: the runner ends by the signal" "143" "$rc"
 assert_contains "signal before wait: the runner says it was stopped" "demo: stopped by SIGTERM" "$out"
