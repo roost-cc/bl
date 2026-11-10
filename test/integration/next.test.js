@@ -212,7 +212,7 @@ test("nextPlan() returns bl next's pick, the ranked units with their holds and h
   assert.equal(plan.pick.unit.id, next(dir).stdout.trim());
   assert.equal(plan.pick.unit.id, 'F-5');
   assert.equal(plan.pick.from.id, 'F-3');
-  assert.deepEqual(plan.pick.path, ['S-3 depends on S-5 (backlog)']);
+  assert.deepEqual(plan.pick.path, ['S-3 depends on S-5 (draft)']);
   assert.deepEqual(
     plan.ranked.map(({ position, id, title, status, points, holds, heldBy }) => ({
       position,
@@ -230,10 +230,10 @@ test("nextPlan() returns bl next's pick, the ranked units with their holds and h
         title: 'Unit order',
         status: 'draft',
         points: 1,
-        holds: ['S-3 depends on S-5 (backlog)'],
+        holds: ['S-3 depends on S-5 (draft)'],
         heldBy: ['F-5'],
       },
-      { position: 2, id: 'S-10', title: 'Loose tool', status: 'backlog', points: 1, holds: [], heldBy: [] },
+      { position: 2, id: 'S-10', title: 'Loose tool', status: 'draft', points: 1, holds: [], heldBy: [] },
       { position: 3, id: 'F-1', title: 'Sign in', status: 'draft', points: 1, holds: [], heldBy: [] },
     ],
   );
