@@ -216,7 +216,8 @@ test('acquireLock never writes the lock name in place', async () => {
 
 test('a waiter that polls a live lock leaves no untracked file in the backlog root', async () => {
   const { dir, lockPath, cleanup } = mkBacklogRoot();
-  const git = (...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  const git = (...args) =>
+    spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   git('init', '-q');
   writeFileSync(join(dir, '.git', 'info', 'exclude'), `${LOCK_FILE}\n`);
   // This live test process stands in for the holder.
