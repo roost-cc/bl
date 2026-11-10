@@ -48,7 +48,20 @@ Backlog repo : {{backlogDir}}
    with `bl new`. The backlog workflow commits to its `main` branch directly; do NOT branch
    first.
 
-8. Write the outcome as the last act of the session (see **Outcome** below).
+8. If this is a top-level refine (you work with the operator directly, not as a sub-agent of a
+   batch refine), walk the operator through the story. Give one item at a time, and wait after
+   each:
+
+   1. A short summary of the story's intended outcome.
+   2. For each acceptance criterion, in order: what it checks and how it shows the outcome is met.
+   3. If you split the story into child stories, each child story: a short summary of what it
+      does and how it moves the story toward the outcome.
+
+   The operator may ask questions or ask for changes. Make each approved change in the backlog and
+   commit it as in step 7. Move to the next item only when the operator says so.
+
+9. Write the outcome as the last act of the session, after the walkthrough (see **Outcome**
+   below).
 
 {{selfConsistencyGuide}}
 

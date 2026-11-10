@@ -1,7 +1,7 @@
 ## Outcome
 
-As the last act of the session, after your commit, use the {{writeTool}} tool to write this JSON
-object, and nothing else, to `{{outcomePath}}`:
+As the last act of the session, after your commit and the walkthrough,
+use the {{writeTool}} tool to write this JSON object, and nothing else, to `{{outcomePath}}`:
 
 ```json
 { "summary": "<one line: what you planned>", "refined": true }
