@@ -16,7 +16,7 @@
 import { createHash } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { atomicWriteFile } from './atomic-write.js';
-import { appendSection, updateChange } from './change-doc.js';
+import { appendSection, gateLine, updateChange } from './change-doc.js';
 import { parsePluginList, warn } from './config.js';
 import { appendSectionLine, checkCriteria, extractSection, replaceSection } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
@@ -205,7 +205,8 @@ export function scriptedSummary(id, r) {
 /** The `## Gate` entry for a scripted run: the command, its verdict and its last lines. */
 export function scriptedGateEntry(date, repo, id, r) {
   const verdict = r.kind === 'failed' ? 'fail' : r.kind === 'unchanged' ? 'no change needed' : 'pass';
-  const line = `- ${date} · ${repo} · ${codeSpan(r.command ?? r.plugin ?? 'plugins-implement')} · ${verdict} (scripted ${id})`;
+  const command = codeSpan(r.command ?? r.plugin ?? 'plugins-implement');
+  const line = gateLine({ date, repo, command, verdict, detail: `scripted ${id}` });
   if (!r.tail) return line;
   return `${line}\n\n${fenced(r.tail)
     .split('\n')

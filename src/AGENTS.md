@@ -4151,6 +4151,29 @@ integrated; rerun \`bl merge <id>\``. When the abort fails, or the checkout is
 not clean after it, it prints the exact `git -C <repo> merge --abort`to run.
 The rerun integrates the moved`main` again.
 
+**A repo with a `check` plugin pushes the commit it checked** (F-96 D3). When
+the repo's `check` stage resolves (`"plugins-check": ["ci-check"]` on its
+`backlog.json` `repos` entry), `cleanupOneRepo` calls `checkedMerge` in place
+of the merge in the main checkout:
+
+1. It adds a throwaway worktree detached at `origin/main` (under the system
+   temp directory) and runs `git merge --no-ff` there with the usual message.
+2. It runs the `check` plugins with `{{commit}}` (the merge commit),
+   `{{repoPath}}` (the main checkout), `{{repoName}}`, `{{branchName}}`,
+   `{{storyId}}`, `{{roostDir}}` and `{{backlogDir}}`. Interpolation is
+   `interpolateCommand`: an unresolved placeholder stops the repo. A failed run
+   runs once more (E70 R10). Each run adds a `## Gate` line to the change
+   document: `- <date> · <repo> · <command> · <verdict> (attempt <n>) · commit <40 hex>`.
+3. On a pass it runs `git push origin <commit>:refs/heads/main` from the
+   worktree, and then `git merge --ff-only <commit>` in the main checkout.
+4. It removes the worktree, whatever happened.
+
+A conflict, or a push git refuses because `main` moved, prints "main moved;
+rerun `bl merge <id>`" and pushes nothing. A check that fails twice pushes
+nothing and prints the last lines of its output. Every `## Gate` line (this
+one, the test gate's `recordGateLine` and a scripted story's) comes from
+`gateLine` in `src/change-doc.js`.
+
 After the merge the branch's open PR, if any, is closed through
 `change.find` and `change.close`.
 
@@ -5122,6 +5145,7 @@ plugins: [session-stack]
 | `format`     | On `bl format --story <id>` and during `bl sync` (`.md` only)                                                                                                               |
 | `lint`       | On `bl lint --story <id>`                                                                                                                                                   |
 | `cleanup`    | During `bl merge`, before worktree removal                                                                                                                                  |
+| `check`      | During `bl merge`, on the merge commit before it is pushed to `main`, with `{{commit}}` (that commit, 40 hex) and `{{repoPath}}` (F-96 D3; see `bl merge`)                  |
 | `done`       | After `bl done` marks the story complete and syncs                                                                                                                          |
 | `test`       | The test gate of `bl run`, in each prepared repo's worktree with that repo's config (`plugins-test: [<name>]`); each attempt's output goes to `.bl/run/<F-id>.test-<n>.log` |
 | `implement`  | In place of the agent session, for a story with `plugins-implement: [<name>]` (scripted stories, below)                                                                     |

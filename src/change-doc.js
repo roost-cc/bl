@@ -360,6 +360,39 @@ export function recordMerge(backlogRoot, unitDir, { commits, date, extra = [] })
 }
 
 /**
+ * One `## Gate` line, the shape every gate writer uses:
+ * `- <date> · <repo> · <command> · <verdict>[ (<detail>)][ · commit <sha>]`.
+ * `command` is written as given (a code span, or a placeholder such as
+ * `(no test plugin)`); `detail` is, for example, `attempt 2`; `commit` is the
+ * commit the gate ran on, when it ran on one (F-96 D3).
+ * @param {{ date: string, repo: string, command: string, verdict: string,
+ *   detail?: string, commit?: string }} p
+ * @returns {string}
+ */
+export function gateLine({ date, repo, command, verdict, detail = '', commit = '' }) {
+  return `- ${date} · ${repo} · ${command} · ${verdict}${detail ? ` (${detail})` : ''}${commit ? ` · commit ${commit}` : ''}`;
+}
+
+/**
+ * Add `lines` to `## Gate` in the unit's current change document and commit
+ * it, as `message`. Returns the path written, or null when the unit has no
+ * change document. A failed commit is a warning.
+ * @param {string} backlogRoot
+ * @param {string} unitDir
+ * @param {string[]} lines
+ * @param {string} message
+ * @returns {string | null}
+ */
+export function recordGateLines(backlogRoot, unitDir, lines, message) {
+  const cur = currentChange(unitDir);
+  if (!cur?.doc) return null;
+  for (const line of lines) cur.doc.body = appendSection(cur.doc.body, 'Gate', line);
+  writeChange(backlogRoot, cur.path, cur.doc);
+  commitChangeDoc(backlogRoot, cur.path, message);
+  return cur.path;
+}
+
+/**
  * Add `text` to the `## <name>` section of a change body, creating the
  * section in its place among `CHANGE_SECTIONS` when it is missing. Gate and
  * Merge lines go at the end of their list; a Review Log session goes first
