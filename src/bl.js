@@ -178,6 +178,9 @@ Commands:
                stories done per day: a terminal UI, built with Go on first use
                (--interval <ms>, default 2000)
                --version      Build the view if it needs a build; print its version
+               --no-bell, --no-desktop, --no-push
+                              The view without the bell, notify-send or the
+                              phone push
                --json         Print one snapshot (schema bl-top-json/v1)
                --stream       One snapshot per line until stdin closes
                               (--interval <ms>, default 2000)

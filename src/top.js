@@ -18,7 +18,15 @@ import { join, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { parseArgs } from 'util';
 import { loadConfig, topSettings } from './config.js';
-import { problemLines, TOP_SCHEMA, topSnapshot } from './top-snapshot.js';
+import {
+  ACTIVITY_SHOWN,
+  HISTORY_DAYS,
+  NEXT_SHOWN,
+  problemLines,
+  TOKEN_MINUTES,
+  TOP_SCHEMA,
+  topSnapshot,
+} from './top-snapshot.js';
 import { ATTENTION_MAX_AGE_MS, CAPACITY_EVERY_MS, HISTORY_EVERY_MS, runStream } from './top-stream.js';
 
 export const DEFAULT_INTERVAL_MS = 2000;
@@ -44,8 +52,9 @@ capacity and the stories done per day.
 With no --json or --stream, bl top runs the view, a terminal UI in btop's
 style. It builds the view with go build (top/ in bl) when top/bin/bl-top is
 missing or older than a file under top/; that build needs Go. Keys: 1-5 hide
-or show a box, tab and shift+tab move the focus, + and - change the refresh
-interval, h shows the help, q quits.
+or show a box, tab and shift+tab move the focus, up and down select a row,
+enter opens or closes the grouped update row, c reads capacity now, + and -
+change the refresh interval, h shows the help, q quits.
 
 The view notifies for a new escalation, a new task, and a run that ends
 (done, escalated, failed or stopped); the first snapshot only sets what is
@@ -72,7 +81,7 @@ Options:
   --interval <ms>    The refresh interval of the view or the stream,
                      ${MIN_INTERVAL_MS} to ${MAX_INTERVAL_MS} (default ${DEFAULT_INTERVAL_MS})
 
-The snapshot: {schema, at, runs, attention, next, capacity, history}. Each
+The snapshot is one object: schema, at, and one key per section below. Each
 section carries read_at (an ISO time), and error when its last read failed;
 it then keeps its last good value.
   runs        each run state that is running or stopped, or was updated in
@@ -80,11 +89,15 @@ it then keeps its last good value.
               run lock has no live holder (every snapshot)
   attention   bl inbox's items, in its order (when the backlog changes, and
               at least every ${s(ATTENTION_MAX_AGE_MS)})
-  next        bl next's pick and the first 10 ranked units with status,
+  next        bl next's pick and the first ${NEXT_SHOWN} ranked units with status,
               points and holds (as attention)
   capacity    bl capacity --json's configurations (every ${s(CAPACITY_EVERY_MS)})
-  history     per day over the last 30 days, the stories that first reached
+  history     per day over the last ${HISTORY_DAYS} days, the stories that first reached
               done and their points (every ${s(HISTORY_EVERY_MS)})
+  activity    the newest ${ACTIVITY_SHOWN} history entries of all run states, newest
+              first (every snapshot)
+  tokens      the output tokens of each of the last ${TOKEN_MINUTES} minutes, from the
+              ended sessions' usage, and today's totals (every snapshot)
 
 Output:
   stdout   Only the JSON (--json, --stream), or the version (--version).
