@@ -10,7 +10,7 @@
       "description": "One line: what the fix round did.",
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*[^\\s\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029][^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"
+      "pattern": "^[^\\S\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*[^\\s\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029][^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"
     },
     "fixed": {
       "description": "true when every Must fix and Should fix item of the latest session is checked off.",

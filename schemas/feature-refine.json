@@ -10,7 +10,7 @@
       "description": "One line: what the session decided and planned.",
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*[^\\s\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029][^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"
+      "pattern": "^[^\\S\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*[^\\s\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029][^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"
     },
     "premise_holds": {
       "description": "false: the premise does not hold, and bl sets the feature's status to draft.",
@@ -24,7 +24,7 @@
       "description": "Why the premise does not hold or the feature is not refined, in one line. Required unless premise_holds and refined are both true.",
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f][^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+      "pattern": "^[^\\S\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f][^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
     }
   },
   "allOf": [

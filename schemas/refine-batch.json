@@ -10,7 +10,7 @@
       "description": "One line: what the batch planned.",
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*[^\\s\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029][^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"
+      "pattern": "^[^\\S\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*[^\\s\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029][^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"
     },
     "stories": {
       "description": "One entry per story of the batch, keyed by its id (S-12).",
@@ -29,7 +29,7 @@
             "description": "Why the story is not refined, in one line. Required when refined is false.",
             "type": "string",
             "minLength": 1,
-            "pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f][^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+            "pattern": "^[^\\S\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f][^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
           }
         },
         "if": { "properties": { "refined": { "const": false } } },

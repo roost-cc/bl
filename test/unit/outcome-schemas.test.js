@@ -120,6 +120,29 @@ test('every schema refuses control characters in its text fields, and keeps a ta
   }
 });
 
+test('a long text field that fails its pattern is refused in linear time (S-1405)', () => {
+  // A one-line field (summary) and a multi-line field (reason) of every schema that has one.
+  const fields = [
+    ['refine', (t) => ({ summary: t, refined: true })],
+    ['implement', (t) => ({ summary: 's', done: false, blocked: t })],
+    ['merge-resolve', (t) => ({ summary: 's', resolved: false, reason: t })],
+    ['fix-tests', (t) => ({ summary: 's', outcome: 'unrelated', reason: t })],
+    ['refine', (t) => ({ summary: 's', refined: false, reason: t })],
+    ['feature-refine', (t) => ({ summary: 's', premise_holds: false, refined: false, reason: t })],
+    ['refine-batch', (t) => ({ summary: 's', stories: { 'S-1': { refined: false, reason: t } } })],
+  ];
+  for (const [schemaName, outcome] of fields) {
+    const schema = loadSchema(schemaName);
+    for (const text of ['x'.repeat(100000) + '\u0000', ' '.repeat(100000)]) {
+      const start = performance.now();
+      const { structuredError } = validateOutcome(schema, outcome(text));
+      const ms = performance.now() - start;
+      assert.match(structuredError ?? '', /must match pattern/, schemaName);
+      assert.ok(ms < 100, `${schemaName} ${JSON.stringify(text.slice(-1))}: ${ms} ms`);
+    }
+  }
+});
+
 test("a batch sub-agent's reply is a valid entry of the batch outcome", () => {
   const [entry] = jsonBlocks('_refine-outcome-subagent');
   const outcome = { summary: 's', stories: { 'S-1': entry } };
