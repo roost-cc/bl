@@ -253,13 +253,13 @@ export function fakeRunner({
   };
 }
 
-/** Fake `git status --porcelain -z` that reports whichever of `paths` exist under the worktree. */
 /** The last tab title the run set: its fields and whether it was final. */
 export function lastTitle(runner) {
   const { fields, final } = runner.calls.findLast((c) => c.type === 'title');
   return { ...fields, final };
 }
 
+/** Fake `git status --porcelain -z` that reports whichever of `paths` exist under the worktree. */
 export function statusOf(wt, paths) {
   return (cmd) => {
     if (!cmd.startsWith('git status --porcelain')) return null;

@@ -87,7 +87,8 @@ for a story with no feature, `F-123 :  : refine` for a feature.
 When `bl` exits, the last title stays on the tab until the next `bl` in that window or you
 replace it. A command that reaches an end state shows it with the next step, for example
 `F-56 :  : clean → bl merge`, `F-56 :  : escalated → fix, --resume` or
-`updates :  : 1 decision → approve/drop`. Any other exit sets the status from the exit code:
+`updates :  : 1 decision → approve/drop`. The end state stays even when `bl` then exits
+non-zero, for example after an escalation. Any other exit sets the status from the exit code:
 `ended` for 0, `interrupted` for Ctrl-C or SIGTERM, `failed (exit N)` otherwise. Under tmux,
 `bl` leaves the window's automatic rename off; `tmux set -w automatic-rename on` gives tmux's
 own name back.

@@ -234,7 +234,7 @@ function sendTabTitle(title) {
  * and sends the title unpadded. A final title stays as it is, so nothing is
  * sent. A no-op before the first title, or with titles off. Never throws.
  *
- * @param {number} code  the process exit code, which Node passes to `exit` listeners
+ * @param {number} code  the process exit code, which Node passes to `exit` listeners; required
  */
 export function endTabTitle(code) {
   if (!shown || tabTitleOff()) return;
