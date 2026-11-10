@@ -109,6 +109,7 @@ import {
   changePath,
   currentChange,
   ensureChange,
+  gateLine,
   readChange,
   setRepo,
   updateChange,
@@ -440,13 +441,13 @@ function recordGateLine(ctx, gate) {
   if (!existsSync(path)) return;
   const date = runnerNow(ctx.runner).toISOString().slice(0, 10);
   const verdict = !gate.ok ? 'fail' : gate.skipped ? 'skipped' : 'pass';
-  const attempt = ctx.state.testAttempts > 0 ? ` (attempt ${ctx.state.testAttempts})` : '';
+  const attempt = ctx.state.testAttempts > 0 ? `attempt ${ctx.state.testAttempts}` : '';
   const entries = gate.perRepo ?? [
     { repo: gate.repo ?? prepRepo(ctx), command: gate.command, config: gate.config, verdict },
   ];
   const lines = entries.map((e) => {
     const command = e.command ? codeSpan(e.command) : e.config ? '(misconfigured)' : '(no test plugin)';
-    return `- ${date} · ${e.repo} · ${command} · ${e.verdict}${attempt}`;
+    return gateLine({ date, repo: e.repo, command, verdict: e.verdict, detail: attempt });
   });
   try {
     updateChange(ctx.config.backlogRoot, path, (doc) => {
@@ -460,7 +461,7 @@ function recordGateLine(ctx, gate) {
     });
     return;
   }
-  commitChangeFile(ctx, 'test', `chore: ${ctx.feature.id} gate ${verdict}${attempt}`);
+  commitChangeFile(ctx, 'test', `chore: ${ctx.feature.id} gate ${verdict}${attempt ? ` (${attempt})` : ''}`);
 }
 
 /**
@@ -1335,7 +1336,9 @@ function spawnShell(cmd, scope, { stdout, stderr, ...options }) {
  * Run `cmd` with stdout and stderr on one file descriptor, so the output
  * keeps the order the command printed it: a pipe per stream would put every
  * stderr line after all of stdout, and a runner's error would land below its
- * teardown noise in the gate log. Returns the runner's `{ status, output }`.
+ * teardown noise in the gate log. Returns the runner's `{ status, output }`,
+ * and `signal`: the signal that ended the command, or null. A command ended
+ * by a signal has `status` 1.
  */
 export function shellMerged(cmd, cwd, { scope = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'bl-gate-'));
@@ -1349,6 +1352,7 @@ export function shellMerged(cmd, cwd, { scope = null } = {}) {
     const output = readFileSync(file, 'utf8');
     return {
       status: r.error ? 127 : (r.status ?? 1),
+      signal: r.signal ?? null,
       output: r.error ? `${output}${output && !output.endsWith('\n') ? '\n' : ''}${r.error.message}\n` : output,
     };
   } finally {

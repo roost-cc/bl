@@ -12,10 +12,12 @@ import {
   changeStatus,
   currentChange,
   ensureChange,
+  gateLine,
   listChanges,
   newChange,
   parseChange,
   readChange,
+  addGateLine,
   recordMerge,
   serializeChange,
   setRepo,
@@ -805,4 +807,25 @@ test('bl implement on an escalated feature or story whose review position is fix
     const fm = { transitions: [...head, { at: at(5), to, by: 'operator' }] };
     assert.equal(implementVerbOf('story', { fm }), 'implement', to);
   }
+});
+
+test('gateLine writes the one ## Gate shape, with the detail and the commit only when given', () => {
+  const base = { date: '2026-11-10', repo: 'code', command: '`npm test`', verdict: 'pass' };
+  assert.equal(gateLine(base), '- 2026-11-10 · code · `npm test` · pass');
+  assert.equal(gateLine({ ...base, detail: 'attempt 2' }), '- 2026-11-10 · code · `npm test` · pass (attempt 2)');
+  const sha = 'a'.repeat(40);
+  assert.equal(
+    gateLine({ ...base, verdict: 'fail', detail: 'attempt 1', commit: sha }),
+    `- 2026-11-10 · code · \`npm test\` · fail (attempt 1) · commit ${sha}`,
+  );
+});
+
+test('addGateLine returns null, and writes nothing, for a unit with no change document', () => {
+  const root = mkTempDir('bl-gate-lines-');
+  const empty = join(root, 'S1-empty');
+  mkdirSync(empty);
+  for (const unitDir of [empty, join(root, 'missing'), null]) {
+    assert.equal(addGateLine(root, unitDir, '- line', 'chore: x'), null, String(unitDir));
+  }
+  assert.deepEqual(listChanges(empty), []);
 });
