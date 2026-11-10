@@ -2712,7 +2712,10 @@ bl's prompts and plugin commands use, not a new format.
   so no `bl` the agent runs, and no test it starts, renames the window or turns its
   `automatic-rename` back on. `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
   `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
-  (`test/unit/tmux-free-env.test.js` guards it). `openTmuxWindow` names a new window
+  (`test/unit/tmux-free-env.test.js` guards it). The same wrapper unsets `BL_BACKLOG_DIR`
+  and refuses a temporary directory (`os.tmpdir()`) inside a git repository, where git in a
+  test's temp dir would act on that repository (S-1394; `test/unit/repo-free-env.test.js`
+  guards both). `openTmuxWindow` names a new window
   with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
 - When `bl` exits after setting a title, `restoreTabTitle` (registered on the first title)
   gives it back: under tmux it turns the window's `automatic-rename` on again, elsewhere it
@@ -3138,7 +3141,13 @@ value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 `src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
 turns. A command that finds the lock held by a live process says so once on stderr
 (`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
-30 s pass. The lock is re-entrant within a process.
+30 s pass. The lock is re-entrant within a process. The main sync lock wait
+(`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
+the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
+Ctrl+C during either wait exits 130 and removes the locks the process holds. The main sync wait
+is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
+that the terminal's Ctrl+C ends too; a SIGINT that lands between two sleeps is lost, and a
+second Ctrl+C ends `bl`.
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each

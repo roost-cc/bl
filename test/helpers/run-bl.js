@@ -72,30 +72,41 @@ export function runBl(args, opts = {}) {
 }
 
 /**
- * Start `bl <args>` while this process holds the backlog lock, and report
- * when the child says it is blocked on that lock. `acquireLock` prints
- * `Waiting for lock (.bl-new.lock) held by pid <ours>…` once, only for a
- * live holder and only after every pre-lock step, so a test that waits for
- * it observes the child at the lock instead of guessing from a delay.
+ * Start `bl <args>` while this process holds a lock, and report when the
+ * child says it is blocked on that lock. The lock is the backlog lock
+ * (`.bl-new.lock`) or the one `opts.lockPath` names, such as a main sync
+ * lock (`bl-main-sync.lock`, S-1394). `acquireLock` and `withMainSyncLock`
+ * print `Waiting for lock (<LOCK_FILE or the lock's path>) held by pid
+ * <ours>…` once, only for a live holder and only after every pre-lock step,
+ * so a test that waits for it observes the child at the lock instead of
+ * guessing from a delay.
  *
  * The caller takes the lock before calling (via `acquireLock`, or by writing
  * the lock file with this process's pid) and releases it afterwards. The
- * helper throws before spawning unless the lock file in the child's backlog
- * root (`BL_BACKLOG_DIR`, after `opts.env`) names this process, so a
- * caller cannot wait on a lock the child will never see as ours.
+ * helper throws before spawning unless the lock file (`opts.lockPath`, else
+ * `.bl-new.lock` in the child's backlog root, `BL_BACKLOG_DIR` after
+ * `opts.env`) names this process, so a caller cannot wait on a lock the
+ * child will never see as ours.
  *
  * @param {string[]} args              CLI args to pass to bl
  * @param {object}   opts
  * @param {string}   opts.cwd          working directory + BL_BACKLOG_DIR (required)
  * @param {object}   [opts.env]        extra env vars (override the inherited env)
+ * @param {string}   [opts.lockPath]   the lock this process holds, by absolute
+ *                                     path (default: the backlog lock)
+ * @param {boolean}  [opts.detached]   start the child as the leader of a
+ *                                     process group of its own, so a test can
+ *                                     signal the group as a terminal's Ctrl+C
+ *                                     does: `process.kill(-child.pid, 'SIGINT')`
  * @param {number}   [opts.timeoutMs]  how long to wait for the announcement
  * @param {string}   [opts.bin]        executable to run instead of bin/bl
  *                                     (tests of this helper only)
- * @returns {{ blocked: Promise<void>,
+ * @returns {{ child: import('child_process').ChildProcess,
+ *            blocked: Promise<void>,
  *            closed: Promise<{ stdout: string, stderr: string,
  *                              status: number | null,
  *                              signal: NodeJS.Signals | null }> }}
- *          `blocked` resolves on the announced wait. Otherwise it rejects
+ *          `child` is the spawned process. `blocked` resolves on the announced wait. Otherwise it rejects
  *          once the child is gone, never before: when the child exits first,
  *          fails to start, or stays silent past `timeoutMs` (killed with
  *          SIGTERM, then SIGKILL if it is still running a second later), so
@@ -104,7 +115,7 @@ export function runBl(args, opts = {}) {
  *          `status` and `signal` null when the child never started.
  */
 export function startBlBehindLock(args, opts = {}) {
-  const { cwd, timeoutMs = 15_000, bin = BL_BIN } = opts;
+  const { cwd, timeoutMs = 15_000, bin = BL_BIN, detached = false } = opts;
   if (!cwd) {
     throw new Error('startBlBehindLock: opts.cwd is required (must be a tempdir backlog root)');
   }
@@ -113,7 +124,7 @@ export function startBlBehindLock(args, opts = {}) {
     BL_BACKLOG_DIR: cwd,
     ...(opts.env ?? {}),
   });
-  const lockPath = join(env.BL_BACKLOG_DIR, LOCK_FILE);
+  const lockPath = opts.lockPath ?? join(env.BL_BACKLOG_DIR, LOCK_FILE);
   const lockText = () => {
     try {
       return readFileSync(lockPath, 'utf8');
@@ -130,14 +141,15 @@ export function startBlBehindLock(args, opts = {}) {
   // inside Codex's sandbox a Node child's writes to a socket vanish, so the
   // announcement would never arrive. A whole-file read decodes the "…" in it
   // intact however the writes were split.
-  const run = spawnToFiles(bin, args, { cwd, env });
+  const run = spawnToFiles(bin, args, { cwd, env, detached });
   const { child } = run;
   let failure = null;
   const closed = run.closed.then(({ stdout, stderr, status, signal, error }) => {
     failure = error;
     return { stdout, stderr, status, signal };
   });
-  const waiting = new RegExp(`^Waiting for lock \\(\\.bl-new\\.lock\\) held by pid ${process.pid}…$`, 'm');
+  const named = RegExp.escape(opts.lockPath ?? LOCK_FILE);
+  const waiting = new RegExp(`^Waiting for lock \\(${named}\\) held by pid ${process.pid}…$`, 'm');
   let announced = false;
   const blocked = new Promise((resolve, reject) => {
     let why = 'bl exited before waiting for the lock';
@@ -176,7 +188,7 @@ export function startBlBehindLock(args, opts = {}) {
       reject(new Error(`${why}, status ${status}, signal ${signal}: ${stderr}`));
     });
   });
-  return { blocked, closed };
+  return { child, blocked, closed };
 }
 
 /** Why a lock-wait test skips where its children cannot see it. */
