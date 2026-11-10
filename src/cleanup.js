@@ -50,7 +50,7 @@ import {
 import { getAllowedTools, loadPrompt } from './session.js';
 import { addGateLine, gateLine, recordMerge } from './change-doc.js';
 import { shellMerged } from './feature-run.js';
-import { raiseSignal } from './signal-exit.js';
+import { isInterrupt, raiseSignal } from './signal-exit.js';
 import { GATE_TAIL_LINES, codeSpan, interpolateCommand, tail } from './scripted.js';
 import { storyUnit } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
@@ -779,9 +779,10 @@ const CHECK_RUNS = 2;
  *    moved stops with the same rerun message.
  * 5. Fast-forward the main checkout to the commit.
  *
- * A check or git command ended by a signal stops it at once: no `## Gate`
- * line, no second run, no push. After the cleanup, a SIGINT or SIGTERM is
- * raised again (`raiseSignal`), so `bl` ends as the signal says.
+ * A check or git command ended by SIGINT or SIGTERM (`INTERRUPT_SIGNALS`)
+ * stops it at once: no `## Gate` line, no second run, no push. After the
+ * cleanup, that signal is raised again (`raiseSignal`), so `bl` ends as the
+ * signal says. A child ended by any other signal has failed.
  *
  * The throwaway worktree is removed whatever happens. Prints why it stopped;
  * returns whether the commit is pushed and the main checkout is on it.
@@ -791,7 +792,7 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
   let signal = null;
   const git = (args, cwd) => {
     const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    signal ??= r.signal;
+    if (isInterrupt(r.signal)) signal ??= r.signal;
     return r;
   };
   const outputOf = (r) => `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
@@ -851,7 +852,8 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
         info(`  check plugin ${name}: ${cmd}`);
         const r = shellMerged(cmd, repoPath);
         output += r.output;
-        if (r.signal) {
+        // Any other signal is a failed run: `shellMerged` gives it status 1.
+        if (isInterrupt(r.signal)) {
           signal = r.signal;
           interrupted(`the check of ${commit}`);
           return false;

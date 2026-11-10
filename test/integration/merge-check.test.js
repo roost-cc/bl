@@ -392,6 +392,28 @@ test('a check killed by a signal writes no ## Gate line, is not retried and push
   }
 });
 
+test('a check killed by SIGABRT counts as a failed attempt', () => {
+  // Only SIGINT and SIGTERM interrupt bl; SIGABRT (or the out-of-memory
+  // killer's SIGKILL) is a failed run, recorded and run once more.
+  const fx = fixture({ verdicts: ['pass', 'pass'], check: `${CHECK_COMMAND}; kill -ABRT $$` });
+  const u = UNITS[0];
+  try {
+    const before = g(fx.origin, 'rev-parse', 'main');
+    const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`);
+    const runs = calls(fx);
+    assert.equal(runs.length, 2, 'the check ran once more');
+    const commit = runs[0][0];
+    assert.match(gateOf(fx, u), new RegExp(`fail \\(attempt 1\\) · commit ${commit}\\n.*fail \\(attempt 2\\)`));
+    assert.match(r.stderr, new RegExp(`^code: the check of ${commit} failed 2 times; nothing is pushed\\.`, 'm'));
+    assert.doesNotMatch(r.stderr, /was ended by/);
+    assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
+    assertNoThrowaway(fx);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('no-change-doc: a unit with no change document still merges, and bl merge prints the gate line it could not write', () => {
   const fx = fixture({ verdicts: ['pass'] });
   const u = UNITS[0];
