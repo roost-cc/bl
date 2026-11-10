@@ -133,21 +133,60 @@ test('bl merge refuses on pending review and on an open escalation', () => {
   try {
     let r = runBl(['merge', 'F-1'], { cwd: dir });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /F-1 is fixing; merge starts from in_progress, in_review or ready_for_merge/);
+    assert.match(r.stderr, /F-1 is fixing; merge starts from in_progress, in_review, ready_for_merge or escalated/);
+    // An escalated feature passes the start state; its open ## Escalation refuses it.
     r = runBl(['merge', 'F-2'], { cwd: dir });
     assert.equal(r.status, 1);
-    assert.match(
-      r.stderr,
-      /F-2 is escalated; merge starts from in_progress, in_review or ready_for_merge \(bl run F-2 reaches in_progress\)/,
-    );
+    assert.doesNotMatch(r.stderr, /starts from/);
+    assert.match(r.stderr, /Escalation/);
     r = runBl(['merge', 'F-3'], { cwd: dir });
     assert.equal(r.status, 1);
     assert.match(
       r.stderr,
-      /F-3 is approved; merge starts from in_progress, in_review or ready_for_merge \(bl run F-3 reaches in_progress\)/,
+      /F-3 is approved; merge starts from in_progress, in_review, ready_for_merge or escalated \(bl run F-3 reaches in_progress\)/,
     );
   } finally {
     cleanup();
+  }
+});
+
+test('bl merge and bl review accept a unit that a merge or a review escalated, once its ## Escalation is cleared', () => {
+  const at = (n) => `2026-11-0${n}T00:00:00Z`;
+  const reviewed = [
+    { at: at(1), to: 'draft', by: 'new' },
+    { at: at(2), to: 'in_progress', by: 'operator' },
+    { at: at(3), to: 'in_review', by: 'run', via: 'open_pr' },
+  ];
+  // The escalation a merge records after a clean review, and a review's closing round.
+  const escalations = {
+    merge: [
+      ...reviewed,
+      { at: at(4), to: 'ready_for_merge', by: 'review' },
+      { at: at(5), to: 'escalated', by: 'merge' },
+    ],
+    review: [...reviewed, { at: at(4), to: 'escalated', by: 'review', via: 'review' }],
+  };
+  for (const [by, transitions] of Object.entries(escalations)) {
+    const { dir, cleanup } = mkTempBacklog({
+      repos: REPOS,
+      components: [HOME],
+      stories: [
+        { id: 'S-1', component: 'C00', title: 'One', dirSuffix: 'one', feature: 'F-1' },
+        { id: 'S-2', component: 'C00', title: 'Two', dirSuffix: 'two', transitions, branch: 's2-two' },
+      ],
+      features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', transitions, stories: ['S-1'], branch: 'f1-feat' }],
+    });
+    try {
+      for (const id of ['F-1', 'S-2']) {
+        for (const verb of ['merge', 'review']) {
+          const r = runBl([verb, id], { cwd: dir });
+          // A later step stops it (no PR, no worktree); the start state does not.
+          assert.doesNotMatch(r.stderr, /starts from/, `escalated by ${by}: bl ${verb} ${id}\n${r.stderr}`);
+        }
+      }
+    } finally {
+      cleanup();
+    }
   }
 });
 

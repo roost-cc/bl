@@ -100,7 +100,7 @@ test('loadFlow reads a v2 verb row with its optional keys filled', () => {
   const flow = loadFlow(TEMPLATE_DIR);
   assert.equal(flow.legacy, false);
   assert.deepEqual(flow.verbOf('feature', 'review'), {
-    from: ['in_progress', 'in_review', 'ready_for_merge'],
+    from: ['in_progress', 'in_review', 'ready_for_merge', 'escalated'],
     when: [],
     during: 'in_review',
     via: ['review'],

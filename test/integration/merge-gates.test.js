@@ -141,7 +141,7 @@ const CASES = [
     name: 'a pending review',
     review: { review_status: 'pending', reviewLog: SESSION({ must: '- [ ] broken' }) },
     // A pending review is `fixing`: the table refuses the merge (F-69 D3).
-    want: /^<id> is fixing; merge starts from in_progress, in_review or ready_for_merge \(bl implement <id> reaches in_review\)$/m,
+    want: /^<id> is fixing; merge starts from in_progress, in_review, ready_for_merge or escalated \(bl implement <id> reaches in_review\)$/m,
   },
   {
     name: 'a fixed review',

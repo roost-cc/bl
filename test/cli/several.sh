@@ -128,7 +128,7 @@ assert_contains "refine with a feature needs tmux" "several targets with a featu
 blrun merge S-8 S-10
 assert_exit "merge S-8 S-10" 1 "$RC"
 assert_contains "merge goes in dependency order" "Merging in dependency order: S-10, S-8" "$ERR"
-assert_contains "S-10 is gated" "S-10 is fixing; merge starts from in_progress, in_review or ready_for_merge" "$ERR"
+assert_contains "S-10 is gated" "S-10 is fixing; merge starts from in_progress, in_review, ready_for_merge or escalated" "$ERR"
 assert_contains "merge stops at the first failure" "bl merge: S-10 failed; stopped. Not merged: S-8." "$ERR"
 if [[ "$ERR" == *"== bl merge S-8 =="* ]]; then fail "S-8 is not attempted"; else pass; fi
 

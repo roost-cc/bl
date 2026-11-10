@@ -625,7 +625,7 @@ test('bl review S-n: a closed story is refused', async () => {
     runner: reviewRunner(storyPath),
   });
   assert.equal(exit, 1);
-  assert.match(stderr, /S-99 is done; review starts from in_progress, in_review or ready_for_merge\n/);
+  assert.match(stderr, /S-99 is done; review starts from in_progress, in_review, ready_for_merge or escalated\n/);
 });
 
 // ---------------------------------------------------------------------------

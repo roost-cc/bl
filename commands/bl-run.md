@@ -45,9 +45,10 @@ backlog/
 - Each verb starts from the statuses its `flow.json` row names. `run` needs a feature
   `approved`, `in_progress` or `escalated`, or a story `refined`, `in_progress` or `escalated`;
   it also resumes a unit in `in_review`, `fixing` or `ready_for_merge` through its `then`
-  chain. `implement` also starts a story that is `draft`, and starts `fix` on a unit in
-  `fixing`.
-- `merge` refuses while the unit is in `fixing` or `in_review`, while the latest
+  chain. `implement` also starts a story that is `draft`, and starts `fix` on a unit whose
+  review position is `fixing`. `review` and `merge` also start from `escalated`, so the command
+  an escalation names runs once `## Escalation` is `None.`.
+- `merge` refuses while the unit's review position is `fixing` or `in_review`, while the latest
   review session has unchecked Must/Should items (open nits do not block), or
   while `## Escalation` holds anything but `None.`. See `bl-merge.md`.
 

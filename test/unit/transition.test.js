@@ -378,8 +378,24 @@ test('a when guard guards.js does not register is a FlowError naming it, not a c
 test('assertFrom names bl implement for the fix verb, which is no command of its own', () => {
   assert.equal(
     assertFrom(flow, { id: 'F-5', kind: 'feature', status: 'fixing' }, 'merge', null),
-    'F-5 is fixing; merge starts from in_progress, in_review or ready_for_merge (bl implement F-5 reaches in_review)',
+    'F-5 is fixing; merge starts from in_progress, in_review, ready_for_merge or escalated (bl implement F-5 reaches in_review)',
   );
+});
+
+test('every resume command an escalation prints starts from escalated, for a story and a feature', () => {
+  // The commands the loop's and the merge's escalation texts name: each
+  // `resumeHint`, each "rerun `bl <verb>`", and `bl run <id> --resume`.
+  const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src');
+  const text = ['feature-run.js', 'cleanup.js'].map((f) => readFileSync(join(SRC, f), 'utf8')).join('\n');
+  const named = [...text.matchAll(/(?:resumeHint: `|rerun(?:ning)? \\`|`)bl (\w+) \$\{[^}]+\}(?: --resume)?/g)];
+  const resume = new Set(named.filter((m) => /resumeHint|rerun|--resume/.test(m[0])).map((m) => m[1]));
+  assert.deepEqual([...resume].sort(), ['merge', 'review', 'run']);
+  // Each starts from escalated, and so does bl implement.
+  for (const kind of ['story', 'feature']) {
+    for (const verb of [...resume, 'implement']) {
+      assert.equal(assertFrom(flow, { id: 'X-1', kind, status: 'escalated' }, verb, null), null, `${kind} ${verb}`);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

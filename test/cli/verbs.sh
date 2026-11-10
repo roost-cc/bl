@@ -84,7 +84,7 @@ assert_contains "review F-2 → feature review" "has no branch yet" "$ERR"
 
 blrun merge F-2
 assert_exit "merge F-2" 1 "$RC"
-assert_contains "merge F-2 → feature merge" "F-2 is refined; merge starts from in_progress, in_review or ready_for_merge" "$ERR"
+assert_contains "merge F-2 → feature merge" "F-2 is refined; merge starts from in_progress, in_review, ready_for_merge or escalated" "$ERR"
 
 blrun refine F-4
 assert_exit "refine F-4" 1 "$RC"
@@ -102,7 +102,7 @@ assert_contains "review S-1 → story review" "No open PR found for story S-1." 
 
 blrun merge S-4
 assert_exit "merge S-4" 1 "$RC"
-assert_contains "merge S-4 → cleanup" "S-4 is fixing; merge starts from in_progress, in_review or ready_for_merge" "$ERR"
+assert_contains "merge S-4 → cleanup" "S-4 is fixing; merge starts from in_progress, in_review, ready_for_merge or escalated" "$ERR"
 assert_contains "merge S-4 hint uses the new verb" "(bl implement S-4 reaches in_review)" "$ERR"
 
 blrun refine S-5

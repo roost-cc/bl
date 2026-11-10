@@ -737,7 +737,7 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
           "failure": [{ "to": "escalated" }]
         },
         "review": {
-          "from": ["in_progress", "in_review", "ready_for_merge"],
+          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
           "during": "in_review",
           "via": ["review"],
           "success": [{ "to": "ready_for_merge" }],
@@ -757,8 +757,11 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
   `draft`) and `done`. Two rows start from more than D1 says (S-1130): `review` from
   `in_progress` and `ready_for_merge` too, so `bl review` follows `bl implement` and re-reviews a
   unit ready for merge; `merge` from `in_progress`, `in_review` and `ready_for_merge` for both
-  types, so `--no-review` has an edge. `mergeGates` still refuses a merge with open review
-  items. A story uses
+  types, so `--no-review` has an edge. `review`, `merge` and `fix` start from `escalated` too,
+  and the story's `implement` as the feature's does, so the command an escalation names
+  (`bl review`, `bl merge`, `bl implement`) runs once `## Escalation` is `None.`; `fix` starts
+  from `in_progress` too, for a resumed run that stopped with items open. `mergeGates` still
+  refuses a merge with open review items, by the review position. A story uses
   the ten words of F-69 A3 except `approved`; a task uses `draft` and `done`.
 - **A verb row.** `from` is the statuses it starts from, or `*` for every status that is not
   terminal. `when` names guards that must hold before it starts. `during` is the status recorded
@@ -872,7 +875,9 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   whose `from` holds the unit's status (`statusOf` with its change document's review
   position, for a unit with no log) and checks it with `assertFrom`. `bl run` passes its `then`
   chain (`Flow.chainOf`: `run`, `review`, `fix`), so it resumes a unit in review or fixing;
-  `bl implement` passes `IMPLEMENT_VERBS` (`implement`, or `fix` on a unit in `fixing`);
+  `bl implement` passes `implementVerbOf(kind, unit)`: `fix` when the unit's review position
+  (`reviewOf`) is `fixing`, whatever its status, else `implement`; a started `fix` records
+  `fixing`, its `during`;
   `bl review`, `bl merge`, `bl refine` and `bl approve` their own verb. `bl merge` checks the
   `when` guards in `mergeGates` with their own messages (`guards: false`).
 - **A unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the log the
@@ -2625,8 +2630,9 @@ bl refine -t S34              # detach into a new tmux window
 
 ### `bl implement`
 
-Starts from what `flow.json`'s `implement` row allows (`draft`, `refined`, `in_progress`), or
-from `fixing` with the `fix` session (`IMPLEMENT_VERBS`, `startOf`). Records `in_progress` by
+Starts from what `flow.json`'s `implement` row allows (`draft`, `refined`, `in_progress`,
+`escalated`), or, for a story whose review position is `fixing`, with the `fix` session
+(`implementVerbOf`, `startOf`), which records `fixing` first. Records `in_progress` by
 `implement` before the session (F-69 D3), creates a git worktree and launches an agent session to
 implement the story. Refused while an unmet `blockers.json` edge holds the
 story at its `run` gate (F-66 D3; see "The gate checks" above), naming each blocker.
