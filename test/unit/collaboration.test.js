@@ -90,7 +90,9 @@ for (const [label, text] of discussionText) {
 test('the preamble names its proceed question as the one allowed offer', () => {
   const out = applyAdditionalPrompt(loadPrompt('workon', VARS), 'talk first', { mode: 'workon', storyId: 'S-7' });
   const before = out.slice(0, out.indexOf(ORIGINAL)).replace(/\s+/g, ' ');
-  assert.ok(before.indexOf('the one offer to do the task that this phase allows') < before.indexOf('Shall I proceed'));
+  const offer = before.indexOf('the one offer to do the task that this phase allows');
+  assert.ok(offer >= 0, 'the preamble names the one allowed offer');
+  assert.ok(offer < before.indexOf('Shall I proceed'));
   assert.ok(before.includes(RULE_ONE), 'the rules are in the preamble');
 });
 
