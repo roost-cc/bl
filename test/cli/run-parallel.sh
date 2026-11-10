@@ -12,7 +12,9 @@ DIR=$(mktemp -d) && CLEANUP_PATHS+=("$DIR")
 
 # `slow` ends last but is printed first; its stderr line stays with its stdout.
 printf 'sleep 0.3; echo slow-out; echo slow-err >&2\n' >"$DIR/slow"
-printf 'echo fast-out\n' >"$DIR/fast"
+# `fast` writes fast.done after its output, so a stop test can wait until it
+# has ended.
+printf 'echo fast-out; echo 1 >"%s/fast.done"\n' "$DIR" >"$DIR/fast"
 printf 'echo broken-out; exit 3\n' >"$DIR/broken"
 
 set +e
@@ -102,13 +104,13 @@ assert_ended() {
 for sig in TERM INT HUP; do
   STOP="$DIR/stop-$sig"
   mkdir -p "$STOP"
-  rm -f "$DIR"/*.pid "$DIR"/*.child
+  rm -f "$DIR"/*.pid "$DIR"/*.child "$DIR"/*.done
   items=("$DIR/fast" "$DIR/slow")
   watched=("$DIR/slow.pid" "$DIR/slow.child")
   [[ "$sig" == TERM ]] && items+=("$DIR/stubborn") && watched+=("$DIR/stubborn.pid")
   env --default-signal=INT TMPDIR="$STOP" bash "$RUN_PARALLEL" demo bash "${items[@]}" >"$STOP.out" 2>&1 &
   runner=$!
-  wait_for "${watched[@]}"
+  wait_for "${watched[@]}" "$DIR/fast.done"
   kill -s "$sig" "$runner"
   set +e
   wait "$runner" 2>/dev/null
@@ -177,7 +179,7 @@ assert_eq "second signal: temp directory removed" "" "$(ls -A "$STOP")"
 # item that has already ended fails.
 STOP="$DIR/errexit"
 mkdir -p "$STOP"
-rm -f "$DIR"/*.pid "$DIR"/*.child
+rm -f "$DIR"/*.pid "$DIR"/*.child "$DIR"/*.done
 env TMPDIR="$STOP" RUN_PARALLEL="$RUN_PARALLEL" bash -c '
   set -e
   source "$RUN_PARALLEL"
@@ -185,7 +187,7 @@ env TMPDIR="$STOP" RUN_PARALLEL="$RUN_PARALLEL" bash -c '
   echo after-the-runner
 ' _ "$DIR/fast" "$DIR/slow" >"$STOP.out" 2>&1 &
 runner=$!
-wait_for "$DIR/slow.pid" "$DIR/slow.child"
+wait_for "$DIR/slow.pid" "$DIR/slow.child" "$DIR/fast.done"
 kill -TERM "$runner"
 set +e
 wait "$runner" 2>/dev/null
