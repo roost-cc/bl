@@ -62,13 +62,17 @@ const commandOf = (verb) => (IMPLEMENT_VERBS.includes(verb) ? IMPLEMENT_VERBS[0]
 /**
  * The verb `bl implement` starts on a unit (F-69 D3): `fix` when its review
  * position is `fixing` (a round left items open), whatever its status, so a
- * fix session that escalated runs as a fix again; else `implement`.
+ * fix session that escalated runs as a fix again; else `implement`. A
+ * closed unit gets `implement`, whose row refuses it under the name the
+ * operator typed.
  * @param {"story" | "feature"} kind
  * @param {{ fm: object, change?: { fm: object } | null }} unit
  * @returns {"implement" | "fix"}
  */
 export function implementVerbOf(kind, unit) {
-  return reviewOf(kind, unit.fm, unit.change ?? null).position === REVIEW.items ? 'fix' : 'implement';
+  const change = unit.change ?? null;
+  if (LEGACY_LOG.terminal.includes(statusOf(kind, unit.fm, change))) return 'implement';
+  return reviewOf(kind, unit.fm, change).position === REVIEW.items ? 'fix' : 'implement';
 }
 
 /** The field that holds the date a unit reached a terminal status, per type. */

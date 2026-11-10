@@ -800,4 +800,9 @@ test('bl implement on an escalated feature or story whose review position is fix
     const fm = { transitions: [head[0], head[1], ...(to === 'in_progress' ? [] : [{ to, by: 'operator' }])] };
     assert.equal(implementVerbOf('feature', { fm }), 'implement', to);
   }
+  // A closed unit left in fixing: `implement`'s row refuses it, under the name the operator typed.
+  for (const to of ['done', 'superseded']) {
+    const fm = { transitions: [...head, { at: at(5), to, by: 'operator' }] };
+    assert.equal(implementVerbOf('story', { fm }), 'implement', to);
+  }
 });
