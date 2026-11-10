@@ -80,7 +80,7 @@ func TestANewTaskRingsTheBellAndRunsNotifySend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "-a\nbl top\nT-2 task\nre-mint the key\n"; string(data) != want {
+	if want := "-a\nbl top\n--\nT-2 task\nre-mint the key\n"; string(data) != want {
 		t.Errorf("notify-send got %q, want %q", data, want)
 	}
 	if _, msgs = receive(t, m, inbox("T-1", "T-2")); msgs != nil {

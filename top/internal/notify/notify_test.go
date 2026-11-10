@@ -232,10 +232,18 @@ func TestDesktopNeedsNotifySendOnPath(t *testing.T) {
 	if _, ok := Desktop(); ok {
 		t.Error("a desktop sender with no notify-send on PATH")
 	}
-	dir := filepath.Dir(script(t, "notify-send", "exit 0\n"))
+	args := filepath.Join(t.TempDir(), "args")
+	dir := filepath.Dir(script(t, "notify-send", `printf '%s\n' "$@" > "`+args+`"`+"\n"))
 	t.Setenv("PATH", dir)
 	s, ok := Desktop()
-	if want := []string{filepath.Join(dir, "notify-send"), "-a", "bl top"}; !ok || s.Name != "desktop" || !slices.Equal(s.Argv, want) {
+	if want := []string{filepath.Join(dir, "notify-send"), "-a", "bl top", "--"}; !ok || s.Name != "desktop" || !slices.Equal(s.Argv, want) {
 		t.Errorf("Desktop() = %#v, %v", s, ok)
+	}
+	// A title and a line that start with `-` come after `--`, so notify-send reads them as text.
+	if got := s.Send(Note{ID: "-T-9", Kind: "task", Line: "--help"})(); got != (ResultMsg{Sender: "desktop"}) {
+		t.Fatalf("send: %#v", got)
+	}
+	if data, _ := os.ReadFile(args); string(data) != "-a\nbl top\n--\n-T-9 task\n--help\n" {
+		t.Errorf("notify-send got %q", data)
 	}
 }

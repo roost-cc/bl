@@ -106,7 +106,8 @@ func Desktop() (Sender, bool) {
 	if err != nil {
 		return Sender{}, false
 	}
-	return Sender{Name: "desktop", Argv: []string{path, "-a", "bl top"}}, true
+	// `--` ends notify-send's options, so a title or line that starts with `-` is text.
+	return Sender{Name: "desktop", Argv: []string{path, "-a", "bl top", "--"}}, true
 }
 
 // Push is the phone push sender (D8a): the command that backlog.json's `top.push` names. It gets
