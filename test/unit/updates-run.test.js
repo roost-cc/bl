@@ -2710,12 +2710,15 @@ test('run_updates_last_story_commit_failure_remains_pending_and_fails: a failed 
       failingCommitHook(t.dir, c.fail);
       let res = null;
       let err = null;
+      const runner = fakeRunner({ gate: [0] });
       try {
-        ({ res } = await run(t, fakeRunner({ gate: [0] })));
+        ({ res } = await run(t, runner));
       } catch (e) {
         err = e;
       }
       assert.equal(Boolean(err), c.rejects, `${c.name}: ${err?.message}`);
+      // A run that throws sets no final title, so the exit shows `failed (exit 1)` (S-1393).
+      assert.equal(lastTitle(runner).final, !c.rejects, `${c.name}: final title`);
       if (err) {
         assert.match(
           err.message,
