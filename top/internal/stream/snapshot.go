@@ -106,7 +106,7 @@ type Pick struct {
 	Path   []string `json:"path"`
 }
 
-// Ranked is one ranked unit and what holds it from `bl run`.
+// Ranked is one ranked unit, what holds it from `bl run`, and the ids of those holders.
 type Ranked struct {
 	Position int      `json:"position"`
 	ID       string   `json:"id"`
@@ -115,6 +115,7 @@ type Ranked struct {
 	Points   float64  `json:"points"`
 	Why      string   `json:"why"`
 	Holds    []string `json:"holds"`
+	HeldBy   []string `json:"heldBy"`
 }
 
 // Capacity is the `capacity` section: the rows `bl capacity --json` prints.

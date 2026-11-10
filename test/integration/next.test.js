@@ -208,7 +208,7 @@ test('a unit held only by a task is passed over and the task named; a story bloc
   assert.match(r.stderr, /No unit can run: each is held by a task or by work bl cannot run\./);
 });
 
-test("nextPlan() returns bl next's pick, the ranked units with their holds and the unranked tail (F-87 D1)", () => {
+test("nextPlan() returns bl next's pick, the ranked units with their holds and holders, and the unranked tail (F-87 D1)", () => {
   const { dir } = unitBacklog({ deps: { 'S-3': 'S-5' } });
   const all = { theme: null, epic: null, feature: null, component: null };
   const plan = nextPlan(loadConfig({ backlogRoot: dir }), all);
@@ -217,13 +217,14 @@ test("nextPlan() returns bl next's pick, the ranked units with their holds and t
   assert.equal(plan.pick.from.id, 'F-3');
   assert.deepEqual(plan.pick.path, ['S-3 depends on S-5 (backlog)']);
   assert.deepEqual(
-    plan.ranked.map(({ position, id, title, status, points, holds }) => ({
+    plan.ranked.map(({ position, id, title, status, points, holds, heldBy }) => ({
       position,
       id,
       title,
       status,
       points,
       holds,
+      heldBy,
     })),
     [
       {
@@ -233,9 +234,10 @@ test("nextPlan() returns bl next's pick, the ranked units with their holds and t
         status: 'draft',
         points: 1,
         holds: ['S-3 depends on S-5 (backlog)'],
+        heldBy: ['F-5'],
       },
-      { position: 2, id: 'S-10', title: 'Loose tool', status: 'backlog', points: 1, holds: [] },
-      { position: 3, id: 'F-1', title: 'Sign in', status: 'draft', points: 1, holds: [] },
+      { position: 2, id: 'S-10', title: 'Loose tool', status: 'backlog', points: 1, holds: [], heldBy: [] },
+      { position: 3, id: 'F-1', title: 'Sign in', status: 'draft', points: 1, holds: [], heldBy: [] },
     ],
   );
   assert.deepEqual(

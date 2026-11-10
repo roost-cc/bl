@@ -115,15 +115,18 @@ function unitOf(graph, id) {
 /**
  * What holds unit `u` from `bl run`: `runnable`, each open blocker as the unit
  * it runs as (with the words that name the hold), and `waits`, every other
- * holder named (a task, a missing story, an update story).
- * @returns {{ runnable: Array<{ unit: any, why: string }>, waits: string[] }}
+ * holder named (a task, a missing story, an update story). `ids` names every
+ * holder once: the unit an open blocker runs as, or the holder's own id.
+ * @returns {{ runnable: Array<{ unit: any, why: string }>, waits: string[], ids: string[] }}
  */
 function holdsOf(state, u) {
   const { graph } = state;
   const runnable = [];
   const waits = [];
+  const ids = new Set();
   const add = (id, why) => {
     const target = unitOf(graph, id);
+    ids.add(target?.id ?? id);
     if (target) runnable.push({ unit: target, why });
     else waits.push(why);
   };
@@ -131,7 +134,7 @@ function holdsOf(state, u) {
     add(b.dep, `${b.story} depends on ${b.dep} (${b.status})`);
   }
   for (const h of heldBy(state.config, u.id, 'run', { units: state.units })) add(h.edge.blocker, h.line);
-  return { runnable, waits };
+  return { runnable, waits, ids: [...ids] };
 }
 
 /**
@@ -177,7 +180,8 @@ function placeOf(entry) {
 /**
  * The walk `bl next` prints (F-87 D1): the open units that match `filter`
  * in priority order, split into the ranked ones (each with `holds`, the
- * words of everything that holds it from `bl run`) and the unranked tail,
+ * words of everything that holds it from `bl run`, and `heldBy`, the ids of
+ * those holders) and the unranked tail,
  * and the pick. `pick.from` is the unit the walk started at, which the pick
  * unblocks when it is another; `pick.path` the hold words that led to it.
  * `waits` is each unit found held with no free blocker, and what holds it.
@@ -186,7 +190,7 @@ function placeOf(entry) {
  * @param {object} config  `loadConfig()`
  * @param {{ theme: string|null, epic: string|null }} filter  `parseFilter`'s, or all null
  * @param {{ ctx?: object, flow?: object }} [opts]  the filter context and flow, when the caller has read them
- * @returns {{ problems: object[], ranked: Array<PlanEntry & { holds: string[] }>, unranked: PlanEntry[],
+ * @returns {{ problems: object[], ranked: Array<PlanEntry & { holds: string[], heldBy: string[] }>, unranked: PlanEntry[],
  *   pick: { unit: any, from: PlanEntry, path: string[] } | null,
  *   waits: Array<{ entry: PlanEntry, why: string[] }> }}
  */
@@ -212,8 +216,8 @@ export function nextPlan(config, filter, { ctx = filterContext(config), flow = l
   const ranked = order
     .filter((u) => rankedEntry.has(u))
     .map((u) => {
-      const { runnable, waits } = holdsOf(state, u);
-      return { ...entry(u), holds: [...runnable.map((r) => r.why), ...waits] };
+      const { runnable, waits, ids } = holdsOf(state, u);
+      return { ...entry(u), holds: [...runnable.map((r) => r.why), ...waits], heldBy: ids };
     });
   const unranked = order.filter((u) => !rankedEntry.has(u)).map(entry);
 
