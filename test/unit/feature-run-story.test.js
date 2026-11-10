@@ -241,6 +241,167 @@ test('a story run --resume after the escalation is cleared picks up at the gate'
   }
 });
 
+// A branch with no commits ahead of main (S-1437).
+const emptyBranch = (cmd) => (cmd === 'git rev-list --count main..HEAD' ? { status: 0, output: '0\n' } : null);
+const NO_COMMITS = 'skipped: no commits, nothing to review';
+
+test('a story run whose self-review passes with no commits ends clean at ready_for_merge: no push, no PR, no review', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    const prompts = runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt);
+    assert.deepEqual(prompts, ['story-run', 'feature-self-review']);
+    assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no forge call');
+    assert.ok(!runner.calls.some((c) => c.type === 'shell' && c.cmd.startsWith('git push')), 'no push');
+    for (const step of ['pr', 'review']) {
+      assert.ok(
+        state.history.some((h) => h.step === step && h.note === NO_COMMITS),
+        `a ${step} entry notes the skip`,
+      );
+    }
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.equal(logStatusOf('story', fm), 'ready_for_merge');
+    assert.equal(fm.transitions.at(-1).by, 'review');
+    const change = parseChange(readFileSync(CH(unit), 'utf8'));
+    assert.ok(
+      change.repos.every((r) => !r.pr),
+      'no PR in the change document',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('a story run with no commits whose self-review fails escalates as it does today', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const runner = fakeRunner({
+      dir: config.backlogRoot,
+      feature: unit,
+      behaviour: {
+        shell: emptyBranch,
+        selfReview: () => ({ summary: 'misses its case', ok: false, changed: false }),
+      },
+    });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no forge call');
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.equal(logStatusOf('story', fm), 'escalated');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a story escalated at the pr step with no PR takes the no-commit path on --resume (S-1379)', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const first = fakeRunner({ dir: config.backlogRoot, feature: unit });
+    first.forge = (op, vars) => {
+      first.calls.push({ type: 'forge', op, vars });
+      return { configured: true, status: 1, stdout: '', stderr: 'No commits between main and s5-loose' };
+    };
+    const run1 = await runFeature({ feature: unit, config, prep, runner: first, opts: { maxRounds: 2 } });
+    assert.equal(run1.status, 'escalated');
+    assert.match(run1.lastError, /no pull request could be opened/);
+    editFile(unit.indexPath, (fm, body) => body.replace(/## Escalation\n\n[\s\S]*$/, '## Escalation\n\nNone.\n'));
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });
+    assert.equal(state.status, 'clean');
+    assert.ok(!runner.calls.some((c) => c.type === 'forge' && c.op === 'change.open'), 'no change.open');
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.equal(logStatusOf('story', fm), 'ready_for_merge');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a no-commit resume with the log at fixing does not end clean', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const first = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    assert.equal(
+      (await runFeature({ feature: unit, config, prep, runner: first, opts: { maxRounds: 2 } })).status,
+      'clean',
+    );
+    editFile(unit.indexPath, (fm) => {
+      fm.transitions.push({ at: '2026-11-10T08:00:00Z', to: 'in_review', by: 'review' });
+      fm.transitions.push({ at: '2026-11-10T08:00:01Z', to: 'fixing', by: 'review' });
+    });
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });
+    assert.notEqual(state.status, 'clean');
+    assert.ok(!state.history.some((h) => h.warning), 'no unrecorded hop');
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.notEqual(logStatusOf('story', fm), 'ready_for_merge');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a resumed run of a story already at ready_for_merge with no commits records nothing twice', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const first = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const run1 = await runFeature({ feature: unit, config, prep, runner: first, opts: { maxRounds: 2 } });
+    assert.equal(run1.status, 'clean');
+    const logLength = parseFrontmatter(readFileSync(unit.indexPath, 'utf8')).fm.transitions.length;
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });
+    assert.equal(state.status, 'clean');
+    for (const step of ['pr', 'review']) {
+      assert.equal(state.history.filter((h) => h.step === step && h.note === NO_COMMITS).length, 1, step);
+    }
+    assert.ok(!state.history.some((h) => h.warning), 'no unrecorded hop');
+    assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no forge call');
+    const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
+    assert.equal(fm.transitions.length, logLength, 'no new log entry');
+    assert.equal(logStatusOf('story', fm), 'ready_for_merge');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a resume after a no-commit finish, with commits now on the branch, runs the self-review', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const first = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    assert.equal(
+      (await runFeature({ feature: unit, config, prep, runner: first, opts: { maxRounds: 2 } })).status,
+      'clean',
+    );
+    editFile(unit.indexPath, (fm) => {
+      fm.transitions.push({ at: '2026-11-10T08:00:00Z', to: 'in_progress', by: 'implement' });
+    });
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit });
+    await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });
+    const prompts = runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt);
+    assert.ok(prompts.includes('feature-self-review'), `self-review ran: ${prompts.join(', ')}`);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a no-commit run whose flow has no in_review → ready_for_merge edge escalates and records no pr or review entry', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const flowFile = join(config.backlogRoot, 'flow.json');
+    const raw = JSON.parse(readFileSync(flowFile, 'utf8'));
+    raw.types.story.verbs.review.success = [];
+    writeFileSync(flowFile, JSON.stringify(raw));
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    assert.match(state.lastError, /the story has no commits, but its log could not record ready_for_merge/);
+    assert.ok(!state.history.some((h) => h.note === NO_COMMITS), 'no pr or review entry for the skip');
+    assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no forge call');
+  } finally {
+    cleanup();
+  }
+});
+
 test("a story's review finding routed to its Deferred: the review sessions get the story's kind", async () => {
   const { cleanup, config, unit, prep } = storySetup();
   try {

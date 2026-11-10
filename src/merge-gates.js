@@ -12,10 +12,11 @@ import { configForRepo, findChange } from './config.js';
 import { listWorktrees } from './story.js';
 import { featureReviewGate } from './review-log.js';
 import { extractSection, sectionHasContent, featureBranchName } from './feature.js';
-import { preflightMainCheckouts } from './cleanup.js';
+import { commitsAhead, preflightMainCheckouts } from './cleanup.js';
 import { heldBy } from './blockers.js';
 import { reviewSkipped } from './scripted.js';
 import { reviewOf } from './transition.js';
+import { REVIEW } from './flow.js';
 
 /**
  * The branch a unit merges: a story's is its directory name, lower case; a
@@ -77,13 +78,16 @@ function prLine(p) {
  * is refused unless `args["no-review"]`; then `unreviewed` carries what the
  * change document's `## Merge` records (`noReviewLines`). A scripted story
  * without `review: true` is not refused: it has no review to wait for (F-71 D3).
+ * Neither is a story at `ready_for_merge` with no session whose branch has no
+ * commits in any repo (`noCommits`, S-1437): `bl run` finished it without a
+ * pull request, and there is nothing to review or merge.
  *
  * @param {object} unit — a `storyUnit` or `featureUnit`: its `status` and `round` are its log's,
  *   and its `fm` and `change` give its review position
  * @param {{ config: object, args?: object, repos: string[], find?: Function, preflight?: Function, held?: Function }} opts
  *   `repos` are the unit's repos, in merge order; `held(id)` is the gate
  *   check, `heldBy` at `merge` by default
- * @returns {{ findings: Array<{ gate: string, message: string }>, unreviewed: null | { prs: object[] } }}
+ * @returns {{ findings: Array<{ gate: string, message: string }>, unreviewed: null | { prs: object[] }, noCommits: boolean }}
  */
 export function mergeGates(
   unit,
@@ -112,6 +116,16 @@ export function mergeGates(
   // The review position, whatever the status: an escalated unit keeps its open items (F-69 D5).
   const { position } = reviewOf(unit.kind, unit.fm, unit.change ?? null);
   const { blocked, review } = featureReviewGate(position, unit.changeBody ?? '');
+  // A story `bl run` finished with nothing on its branch (S-1437): the run
+  // recorded ready_for_merge without a round, and there is nothing to review.
+  // The current status decides, not the position: a later in_progress or
+  // escalated keeps the position at ready_for_merge.
+  const noCommits =
+    !review &&
+    unit.kind === 'story' &&
+    unit.status === REVIEW.clean &&
+    position === REVIEW.clean &&
+    repos.every((r) => commitsAhead(config.reposByName[r], branchName) === 0);
   if (blocked) {
     const next =
       position === 'in_review' ? `Review it (bl review ${id})` : `Address the review feedback (bl implement ${id})`;
@@ -119,7 +133,7 @@ export function mergeGates(
       gate: 'review',
       message: `${id} has unresolved review state (${unit.status}, round ${unit.round ?? 0}, latest session ${review?.date ?? 'unknown'}, ${review?.blocking ?? 0} unchecked Must/Should).\n${next} before merging.`,
     });
-  } else if (!review && !(unit.kind === 'story' && reviewSkipped(unit.fm))) {
+  } else if (!review && !noCommits && !(unit.kind === 'story' && reviewSkipped(unit.fm))) {
     // Never reviewed (D3). The PR lookup only sharpens the message; a forge
     // without `change.find` still gets the refusal.
     const prs = forgeMergedPRs(repos, branchName, config, find);
@@ -181,7 +195,7 @@ export function mergeGates(
     }
   }
 
-  return { findings, unreviewed };
+  return { findings, unreviewed, noCommits };
 }
 
 /**

@@ -3235,13 +3235,13 @@ function pushBranch(ctx, step) {
  */
 function publishTargets(ctx) {
   const [lead, ...others] = gateTargets(ctx);
-  return [
-    lead,
-    ...others.filter((t) => {
-      const r = ctx.runner.shell('git rev-list --count main..HEAD', t.worktreePath);
-      return !(r?.status === 0 && String(r.output ?? '').trim() === '0');
-    }),
-  ];
+  return [lead, ...others.filter((t) => !branchEmpty(ctx, t))];
+}
+
+/** Whether `t`'s branch has no commits ahead of main (`git rev-list --count main..HEAD` is 0). */
+function branchEmpty(ctx, t) {
+  const r = ctx.runner.shell('git rev-list --count main..HEAD', t.worktreePath);
+  return r?.status === 0 && String(r.output ?? '').trim() === '0';
 }
 
 /**
@@ -4754,7 +4754,8 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     commitUnitPaths(ctx, 'setup', started, `chore: ${feature.id} run started on ${prep.branchName}`);
   // A resumed run that already got as far as the PR has been self-reviewed;
   // it goes back through the gate and the push, then on to the review loop.
-  const reachedReview = Boolean(opts.resume && (state.pr || state.history.some((h) => h.step === 'pr')));
+  // A `pr` entry that a no-commit finish skipped (S-1437) opened no PR.
+  const reachedReview = Boolean(opts.resume && (state.pr || state.history.some((h) => h.step === 'pr' && !h.skipped)));
   saveRunState(config, state);
   record(ctx, {
     step: 'setup',
@@ -4815,6 +4816,39 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
       setStep(ctx, 'test');
       if (!testGateWithFix(ctx)) return state;
     }
+  }
+
+  // A story whose self-review passed with nothing on its branch did its work
+  // elsewhere (the backlog, S-1437): no push, no PR, no review. A resumed run
+  // with no PR passed its self-review before its `pr` step. A story with a
+  // review session goes on below. A story this path already took to
+  // ready_for_merge ends clean again with nothing recorded (what `bl merge`
+  // takes, `mergeGates`); any other status takes it only when the `review`
+  // verb starts from that status.
+  const noCommitStatus = unitStatus(ctx);
+  const noCommits =
+    isStory(feature) &&
+    !skipsReview(ctx) &&
+    !state.pr &&
+    !featureReviewGate(reviewState(ctx).position, readChangeText(ctx).body).review &&
+    gateTargets(ctx).every((t) => branchEmpty(ctx, t));
+  if (noCommits && noCommitStatus === REVIEW.clean) return finish(ctx, 'clean');
+  if (noCommits && flow.fromOf(unitKind(ctx), flow.verbOf(unitKind(ctx), 'review')).includes(noCommitStatus)) {
+    setStep(ctx, 'pr');
+    // The `review` verb's edges pass through its `during` status (flow.json).
+    enterHop(ctx, 'review', 'review');
+    hop(ctx, 'review', REVIEW.clean, { by: 'review', note: 'no commits: nothing to review' });
+    if (unitStatus(ctx) !== REVIEW.clean) {
+      return finish(
+        ctx,
+        'escalated',
+        `the story has no commits, but its log could not record ${REVIEW.clean} (it is ${unitStatus(ctx)})`,
+      );
+    }
+    const note = 'skipped: no commits, nothing to review';
+    record(ctx, { step: 'pr', ok: true, skipped: true, note });
+    record(ctx, { step: 'review', ok: true, skipped: true, note });
+    return finish(ctx, 'clean');
   }
 
   // 4. Push + one PR.

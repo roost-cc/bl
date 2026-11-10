@@ -151,11 +151,12 @@ Options:
 One gate set for stories and features: refused while the review is pending or
 fixed or the latest Review Log session has an open Must or Should (open nits
 pass), when the work was never reviewed (naming a PR the forge merged first)
-unless --no-review, while ## Escalation is open, on a worktree on the branch in
-a repo the work does not own, and when a main checkout is off main. Then merges
-every repo's branch, marks the work done, syncs the backlog, closes PRs and
-removes the worktrees. Several targets merge one at a time in dependency order,
-stopping at the first that fails.`,
+unless --no-review (a story at ready_for_merge whose branch has no commits
+passes and merges nothing), while ## Escalation is open, on a worktree on the
+branch in a repo the work does not own, and when a main checkout is off main.
+Then merges every repo's branch, marks the work done, syncs the backlog, closes
+PRs and removes the worktrees. Several targets merge one at a time in
+dependency order, stopping at the first that fails.`,
   refine: `Usage: bl refine <id...> [options]
 
 Arguments:

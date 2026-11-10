@@ -2706,6 +2706,24 @@ its stories), it is refused while an unmet `blockers.json` edge holds it at
 its `run` gate (F-66 D3; see "The gate checks" above), one line per edge
 naming the blocker, its status and `until`.
 
+**A branch with no commits (S-1437).** Some stories change only the backlog.
+After the self-review passes, a story run whose branch has no commits ahead of
+main (`branchEmpty`: `git rev-list --count main..HEAD` is 0 in the worktree)
+and that has no pull request yet runs no push, no `change.open` and no review.
+The guard is the self-review: it passes such a branch only when each acceptance
+item already holds where the work landed. The run history gets a `pr` and a
+`review` entry with the note "skipped: no commits, nothing to review", the log
+records `in_review` and then `ready_for_merge` by `review`, and the run ends
+`clean`. A run resumed after a `pr` step that opened no pull request (the
+S-1379 escalation) takes the same path. The path is taken only by a story
+with no Review Log session, at a status the `review` verb starts from
+(flow.json). The run records the history entries after the log is at
+`ready_for_merge`, and escalates when the log could not record it. A resumed
+story that this path already took to `ready_for_merge` ends `clean` again and
+records nothing. A failed self-review escalates as
+always, a scripted story keeps its own path, and a feature run (`bl run F-n`)
+never takes this path.
+
 **One repo per story (F-52 D1, D2).** A story's repo is its component's
 (`unitRepo`), and `reposForStory` returns that one repo; `primary_repo` and
 `secondary_repos` on a story are never read, and a story whose component has
@@ -2790,6 +2808,11 @@ untracked, the session lock aside) is refused before anything is touched. Its
 branch with no commits ahead of `origin/main` (local `main` when
 there is no origin) is not merged, pushed or recorded in `commit:`: the merge
 reports "no changes in <repo>" and removes the worktree and branch.
+`bl merge S34` passes `noCommits` for a story `mergeGates` let through with
+a branch with no commits (S-1437), and that story's repo takes the same path.
+If the branch has commits ahead when `cleanupOneRepo` counts again (a commit
+landed after the gate), it refuses and merges nothing: that commit had no
+review. The `## Merge` line names only the repos that took the no-changes path.
 
 ### `bl review`
 
@@ -3974,10 +3997,25 @@ merges once <blocker> meets "<until>" (bl status <blocker>).` No flag
   manifest.
 - **Never reviewed** (D3, S-755 folded in) — a unit whose change document has
   no Review Log session (or no change document) is refused:
-  `<id> has never been reviewed — run \`bl review <id>\` (or \`bl run <id>\`), or pass --no-review to merge without one.`Each repo's branch is looked up with`change.find`; a PR in state `MERGED`adds`<repo>: PR #<n> (<url>) merged on the forge at <headRefOid> before any review`.
-A forge without `change.find`, or a failing op, skips the lookup, not the
-check. `--no-review`merges anyway and appends`- Merged without review (operator, <date>)`to the change document's`## Merge`, plus `- <repo>: PR #<n> merged on the forge at <sha> before any review`
+  ``<id> has never been reviewed — run `bl review <id>` (or `bl run <id>`), or pass --no-review to merge without one.``
+  Each repo's branch is looked up with `change.find`; a PR in state `MERGED`
+  adds `<repo>: PR #<n> (<url>) merged on the forge at <headRefOid> before any review`.
+  A forge without `change.find`, or a failing op, skips the lookup, not the
+  check. `--no-review` merges anyway and appends
+  `- Merged without review (operator, <date>)` to the change document's
+  `## Merge`, plus `- <repo>: PR #<n> merged on the forge at <sha> before any review`
   for each forge-merged PR. There is no retrospective review (S-789).
+  A story at `ready_for_merge` whose branch has no commits ahead of
+  `origin/main` (local `main` when there is no origin) in every repo is not
+  refused (S-1437): `bl run` finished it without a pull request (see "A branch
+  with no commits" under `bl run` for a story). `mergeGates` returns
+  `noCommits: true`; `bl merge` merges nothing, writes no `commit:`, removes
+  the worktree and the branch, and appends
+  `- <date> · <repo> · no commits on the branch: nothing merged` to `## Merge`.
+  A branch with commits, or a story at another status (for example
+  `in_progress`), is still refused. So a no-commit story that `bl merge`
+  escalated (its status is now `escalated`, not `ready_for_merge`) fails this
+  gate on the rerun; `--no-review` merges it.
 - **Escalation gate** — an open `## Escalation` in the story or feature file.
 - **Stray worktree** — a worktree on the unit's branch in a registered repo
   the unit does not own (a story's one repo, a feature's stories' repos) is
