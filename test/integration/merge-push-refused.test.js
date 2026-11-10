@@ -121,7 +121,7 @@ test('a refused push of main leaves the main checkout as it was, and the next me
     assert.deepEqual(npm.calls(), []);
     // The repo has no `check` plugin, so its change document has no gate line.
     const change = readFileSync(join(fx.dir, 'stories', 'S1-loose', 'change.md'), 'utf8');
-    assert.equal(extractSection(parseFrontmatter(change).body, 'Gate')?.trim(), '');
+    assert.equal((extractSection(parseFrontmatter(change).body, 'Gate') ?? '').trim(), '');
     const subjects = g(fx.repo, 'log', '--format=%s', 'origin/main');
     assert.match(subjects, /\(S-1\)/);
     assert.doesNotMatch(subjects, /\(F-1\)/);
