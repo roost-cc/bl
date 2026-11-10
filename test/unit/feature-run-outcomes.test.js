@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
 import { loadConfig } from '../../src/config.js';
 import { findFeature, normalizeFeatureId, extractSection } from '../../src/feature.js';
-import { runSession, newRunState, OutcomeError, OUTCOME_RETRY_NOTE } from '../../src/feature-run.js';
+import { defaultRunner, runSession, newRunState, OutcomeError, OUTCOME_RETRY_NOTE } from '../../src/feature-run.js';
+import { ClaudeProvider } from '../../src/agents/claude.js';
+import { withExitFault } from '../../src/outcome.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 
 const SCHEMA = {
@@ -136,8 +138,101 @@ test('a second failure escalates with the fault and the last 20 lines of text', 
     assert.match(escalation, /line 11\nline 12/);
     assert.match(escalation, /line 30/);
     assert.doesNotMatch(escalation, /line 10\n/);
+    assert.doesNotMatch(escalation, /stderr/, 'no stderr, no stderr block');
   } finally {
     cleanup();
+  }
+});
+
+test("an escalation after a CLI failure names the exit and shows the CLI's stderr (S-1398)", () => {
+  const failed = {
+    structured: null,
+    structuredError: 'claude exited 1: Error: bad flag',
+    stderrTail: 'warn\nError: bad flag',
+    output: '',
+  };
+  const { step, cleanup, feature } = setup([failed, failed]);
+  try {
+    assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
+    const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    assert.match(escalation, /implement: no valid outcome after one retry \(claude exited 1: Error: bad flag\)/);
+    assert.match(escalation, /The last 20 non-empty lines of the CLI's stderr:\n\n```text\nwarn\nError: bad flag\n```/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('defaultRunner().shell takes a commit message built from a fault of NUL stderr (S-1398)', () => {
+  const none = { structured: null, structuredError: 'no output' };
+  const fault = withExitFault(none, 'claude', 1, 'Error: bad\0flag\n').structuredError;
+  const dir = mkTempDir('bl-shell-');
+  assert.equal(defaultRunner().shell(`echo 'chore: S-1 escalated — ${fault}'`, dir).status, 0);
+});
+
+test('defaultRunner().session returns the headless stderrTail', () => {
+  const { spawn } = ClaudeProvider.prototype;
+  const { dir, cleanup } = mkTempBacklog();
+  const failed = {
+    status: 1,
+    output: '',
+    isError: true,
+    structured: null,
+    structuredError: 'claude exited 1: Error: bad flag',
+    stderrTail: 'warn\nError: bad flag',
+  };
+  try {
+    const config = loadConfig({ backlogRoot: dir });
+    const session = (ret) => {
+      ClaudeProvider.prototype.spawn = () => ret;
+      return defaultRunner().session({
+        mode: 'workon',
+        agent: 'claude',
+        promptName: 'feature-self-review',
+        vars: {},
+        worktreePath: mkTempDir('bl-wt-'),
+        config,
+        parsed: { id: 'F-1' },
+        label: 'F-1: T',
+        schema: SCHEMA,
+      });
+    };
+    const r = session(failed);
+    assert.equal(r.stderrTail, 'warn\nError: bad flag');
+    assert.equal(r.structuredError, 'claude exited 1: Error: bad flag');
+    const { stderrTail, ...without } = failed;
+    assert.equal(session(without).stderrTail, '', 'an adapter result without stderrTail gives none');
+  } finally {
+    ClaudeProvider.prototype.spawn = spawn;
+    cleanup();
+  }
+});
+
+test('escalateNoOutcome keeps a backtick-fenced stderr tail inside its block', () => {
+  const cases = [
+    {
+      name: 'stderr tail',
+      stderrTail: '````\nfoo\n````',
+      output: '',
+      heading: "The last 20 non-empty lines of the CLI's stderr:",
+    },
+    {
+      name: 'session text',
+      stderrTail: '',
+      output: '````\nfoo\n````\n',
+      heading: 'The last 20 lines of the session text:',
+    },
+  ];
+  for (const c of cases) {
+    const failed = { structured: null, structuredError: 'claude exited 1', stderrTail: c.stderrTail, output: c.output };
+    const { step, cleanup, feature } = setup([failed, failed]);
+    try {
+      assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
+      const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+      const block = escalation.slice(escalation.indexOf(c.heading));
+      assert.match(block, /\n\n`````text\n````\nfoo\n````\n`````\n/, c.name);
+    } finally {
+      cleanup();
+    }
   }
 });
 

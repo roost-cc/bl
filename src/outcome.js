@@ -10,6 +10,7 @@
 
 import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { stripVTControlCharacters } from 'util';
 import Ajv2020 from 'ajv/dist/2020.js';
 
 /** Where interactive sessions write their outcome file, under the git-ignored `.bl/`. */
@@ -39,6 +40,35 @@ function errorPath(err) {
   return pointer ? `$${pointer}` : '$';
 }
 
+/** The fault of an outcome with nothing to validate. */
+export const NO_OUTPUT = 'no output';
+
+/** How many non-empty stderr lines a headless result keeps as `stderrTail`. */
+const STDERR_TAIL_LINES = 20;
+
+/** The longest stderr line a fault or `stderrTail` keeps, in characters. */
+const STDERR_LINE_MAX = 500;
+
+/** Control characters other than tab: C0, DEL and C1 (this covers `\r`, NUL and a lone ESC). */
+const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
+
+/**
+ * One stderr line, fit for an operator-facing record, a commit message and a
+ * spawn argument: ANSI codes and every control character except tab removed,
+ * cut to `STDERR_LINE_MAX` characters.
+ *
+ * @param {string} line
+ */
+function cleanStderrLine(line) {
+  const clean = stripVTControlCharacters(line).replace(CONTROL_CHARS, '');
+  if (clean.length <= STDERR_LINE_MAX) return clean;
+  // Cut by code point, so a surrogate pair is never split.
+  const cut = Array.from(clean.slice(0, 2 * STDERR_LINE_MAX))
+    .slice(0, STDERR_LINE_MAX)
+    .join('');
+  return cut.length < clean.length ? `${cut}…` : clean;
+}
+
 /**
  * Validate `value` against `schema` (JSON Schema draft 2020-12). `value` is
  * the parsed object, or the text that holds it (a last message, a file's
@@ -54,14 +84,14 @@ export function validateOutcome(schema, value) {
   const fail = (structuredError) => ({ structured: null, structuredError });
   let obj = value;
   if (typeof obj === 'string') {
-    if (!obj.trim()) return fail('no output');
+    if (!obj.trim()) return fail(NO_OUTPUT);
     try {
       obj = JSON.parse(obj);
     } catch (e) {
       return fail(`not JSON: ${e.message}`);
     }
     // The text `null` is output: the schema names its fault.
-  } else if (obj == null) return fail('no output');
+  } else if (obj == null) return fail(NO_OUTPUT);
   const validate = validatorFor(schema);
   if (validate(obj)) return { structured: obj, structuredError: null };
   const [err] = validate.errors;
@@ -77,6 +107,35 @@ export function validateOutcome(schema, value) {
  */
 export function outcomeFor(schema, value) {
   return schema ? validateOutcome(schema, value) : { structured: null, structuredError: null };
+}
+
+/**
+ * A headless result's outcome, with the agent CLI's exit named (S-1398). Only
+ * the fault `no output` changes: when the CLI exited non-zero or wrote stderr,
+ * the fault becomes `<cli> exited <status>: <last non-empty stderr line>`, or
+ * `<cli> exited <status>` with no stderr. Every other outcome stays as it is.
+ * `stderrTail` is the last 20 non-empty stderr lines, joined by `\n`, or `''`.
+ * Each kept line has its ANSI codes and control characters (except tab)
+ * removed and is cut to 500 characters (`cleanStderrLine`).
+ *
+ * @param {{ structured: object|null, structuredError: string|null }} outcome
+ * @param {string} cli — the command the adapter spawned (`claude`, `codex`)
+ * @param {number} status — `exitStatus` of the CLI's result
+ * @param {string|null|undefined} stderr
+ * @returns {{ structured: object|null, structuredError: string|null, stderrTail: string }}
+ */
+export function withExitFault(outcome, cli, status, stderr) {
+  const lines = String(stderr ?? '')
+    .split(/\r?\n/)
+    .map(cleanStderrLine)
+    .filter((l) => l.trim());
+  const stderrTail = lines.slice(-STDERR_TAIL_LINES).join('\n');
+  if (outcome.structuredError !== NO_OUTPUT || (status === 0 && !lines.length)) {
+    return { ...outcome, stderrTail };
+  }
+  const last = lines.at(-1);
+  const structuredError = last ? `${cli} exited ${status}: ${last}` : `${cli} exited ${status}`;
+  return { structured: null, structuredError, stderrTail };
 }
 
 /** The outcome file of the interactive session on unit `unitId` (F-68 D1). */

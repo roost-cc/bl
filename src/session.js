@@ -741,12 +741,14 @@ function sessionModel(model, agent, config) {
  * did not run has the reason it did not as its `structuredError`. With
  * `sessionId`, the spawn resumes that session and sends `prompt` as it is:
  * the loop's one outcome retry (F-68 D5), whose session already has the
- * headless rules.
+ * headless rules. `stderrTail` is the last 20 non-empty lines of the agent
+ * CLI's stderr (S-1398), or `''`.
  *
  * @returns {{ status: number, output: string, isError: boolean,
  *             usage: object|null, sessionId: string|null, denials: string[],
  *             refusal?: object|null, error?: string,
- *             structured: object|null, structuredError: string|null }}
+ *             structured: object|null, structuredError: string|null,
+ *             stderrTail: string }}
  */
 export function runHeadlessSession({
   mode,
@@ -780,6 +782,7 @@ export function runHeadlessSession({
     error,
     structured: null,
     structuredError: schema ? error : null,
+    stderrTail: '',
   });
   // `provider` is a test seam; production resolves it from `agent`. `run`,
   // when given, replaces the adapter's `spawnSync` for the agent itself: `bl
@@ -886,6 +889,7 @@ export function runHeadlessSession({
     refusal: result?.refusal ?? null,
     structured: result?.structured ?? null,
     structuredError: result?.structuredError ?? null,
+    stderrTail: result?.stderrTail ?? '',
   };
   if (usageIndexPath && out.usage) accumulateTokensOnFile(backlogRoot, usageIndexPath, out.usage, usageStep);
   return out;

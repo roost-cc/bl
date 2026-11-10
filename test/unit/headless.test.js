@@ -91,7 +91,8 @@ test('ClaudeProvider.spawn headless captures stdout through the injected runner'
   });
   assert.equal(seen.cmd, 'claude');
   assert.equal(seen.args[0], '-p');
-  assert.deepEqual(seen.opts.stdio, ['ignore', 'pipe', 'inherit']);
+  // stderr is captured and copied at exit (S-1398).
+  assert.deepEqual(seen.opts.stdio, ['ignore', 'pipe', 'pipe']);
   assert.equal(r.output, 'hi');
   assert.equal(r.usage.output, 2);
   assert.equal(p.supportsHeadless(), true);
@@ -664,6 +665,11 @@ test('runHeadlessSession maps a spawn error and a non-zero exit to isError', () 
     assert.equal(b.isError, true);
     assert.equal(b.status, 3);
     assert.equal(b.output, 'boom');
+    assert.equal(b.stderrTail, '', 'an adapter without stderrTail gives none');
+    // S-1398: the adapter's stderr tail reaches the caller; a refused session has none.
+    assert.equal(a.stderrTail, '');
+    const c = runHeadlessSession({ ...common, provider: mk({ status: 1, stderrTail: 'x\ny' }) });
+    assert.equal(c.stderrTail, 'x\ny');
   } finally {
     cleanup();
   }

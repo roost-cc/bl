@@ -79,6 +79,7 @@ import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
   codeSpan,
+  fenced,
   isScripted,
   recordScriptedRun,
   reviewSkipped,
@@ -612,6 +613,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         sessionId: r.sessionId ?? null,
         structured: r.structured ?? null,
         structuredError: r.structuredError ?? null,
+        stderrTail: r.stderrTail ?? '',
       };
     },
     /** `scope`: run `cmd` as `sh -c <cmd>` inside that user systemd scope (F-70 D4). */
@@ -1663,8 +1665,10 @@ function outcomeFault(r) {
 
 /**
  * A step's session returned no valid outcome twice (F-68 D5): escalate with
- * the fault and the last 20 lines of the session's text, and throw an
- * OutcomeError. The text is evidence for the operator, never a verdict.
+ * the fault, the last 20 lines of the session's text and, when the agent CLI
+ * wrote any, the last 20 non-empty lines of its stderr (`stderrTail`, S-1398),
+ * and throw an OutcomeError. The text is evidence for the operator, never a
+ * verdict.
  */
 function escalateNoOutcome(ctx, step, r) {
   const reason = `${step}: no valid outcome after one retry (${outcomeFault(r)})`;
@@ -1680,7 +1684,8 @@ function escalateNoOutcome(ctx, step, r) {
     `Fault: ${outcomeFault(r)}`,
     '',
     tail ? 'The last 20 lines of the session text:' : 'The session left no text.',
-    ...(tail ? ['', '````text', tail, '````'] : []),
+    ...(tail ? ['', fenced(tail)] : []),
+    ...(r.stderrTail ? ['', "The last 20 non-empty lines of the CLI's stderr:", '', fenced(r.stderrTail)] : []),
     '',
     `Find why the agent did not return the outcome, then run \`${resume}\`.`,
   ].join('\n');
@@ -2204,14 +2209,6 @@ function gateFailure(ctx, { command, logPath, log, output, excerpt, repo, worktr
     worktreePath,
     perRepo,
   };
-}
-
-/** A fence longer than any backtick run in `text`, so the text cannot close it. */
-function fenced(text) {
-  const s = String(text ?? '');
-  const longest = Math.max(2, ...(s.match(/`+/g) ?? []).map((m) => m.length));
-  const f = '`'.repeat(longest + 1);
-  return `${f}\n${s}\n${f}`;
 }
 
 /**
