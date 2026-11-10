@@ -265,6 +265,21 @@ test('a step without a schema reads no outcome, records none of its text, and is
   }
 });
 
+test("a session's history entry carries its usage when the result has one, and no usage key when not (F-87 D3b)", () => {
+  const usage = { input: 10, output: 20, cache_creation: 30, cache_read: 40 };
+  const { ctx, step, cleanup } = setup([{ usage }, {}]);
+  try {
+    step();
+    step();
+    const [withUsage, without] = ctx.state.history;
+    assert.deepEqual(withUsage.usage, usage);
+    assert.ok(!('usage' in without), 'a session without usage writes no usage key');
+    assert.deepEqual(ctx.state.usage, usage, "the run state's totals still add it");
+  } finally {
+    cleanup();
+  }
+});
+
 test('a story step records its story and its outcome summary beside the note', () => {
   const { ctx, step, cleanup } = setup([VALID]);
   try {

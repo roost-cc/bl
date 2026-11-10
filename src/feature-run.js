@@ -1608,6 +1608,8 @@ export function runSession(
       ok: r.ok && denials.length === 0 && !noOutcome,
       ...(outcome != null ? { outcome } : {}),
       note: notes.filter(Boolean).join(' — '),
+      // The session's own tokens, for bl top's graph (F-87 D3b).
+      ...(r.usage ? { usage: r.usage } : {}),
     });
     return { ...r, configuration: { agent: c.agent, model: c.model ?? null } };
   };
