@@ -8,13 +8,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, realpathSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { extractSection } from '../../src/feature.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { loadConfig, parseFrontmatter, worktreeRoot } from '../../src/config.js';
 import { ENV, fixture, g, landOnMain } from '../helpers/merge-integrate-fixture.js';
 
+// "The push's output prints while the push runs" has no test: a buffered
+// push leaves the same final stderr, so a unit test cannot tell the two apart.
+
 test('a refused push of main leaves the main checkout as it was, and the next merge holds only its own unit', () => {
   const fx = fixture();
+  const npm = fakeNpm();
   const scratch = mkTempDir('bl-push-refused-');
   const marker = join(scratch, 'refused');
   const where = join(scratch, 'where');
@@ -46,10 +51,14 @@ test('a refused push of main leaves the main checkout as it was, and the next me
     );
     assert.doesNotMatch(g(fx.repo, 'worktree', 'list'), /bl-merge-/);
 
-    const second = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
+    const second = runBl(['merge', 'S-1'], { cwd: fx.dir, env: npm.env });
     assert.equal(second.status, 0, second.stderr);
     // The repo has no lockfile, so nothing is installed.
     assert.doesNotMatch(second.stderr + second.stdout, /Installing/);
+    assert.deepEqual(npm.calls(), []);
+    // The repo has no `check` plugin, so its change document has no gate line.
+    const change = readFileSync(join(fx.dir, 'stories', 'S1-loose', 'change.md'), 'utf8');
+    assert.equal(extractSection(parseFrontmatter(change).body, 'Gate')?.trim(), '');
     const subjects = g(fx.repo, 'log', '--format=%s', 'origin/main');
     assert.match(subjects, /\(S-1\)/);
     assert.doesNotMatch(subjects, /\(F-1\)/);
@@ -61,18 +70,20 @@ test('a refused push of main leaves the main checkout as it was, and the next me
 });
 
 /**
- * A fake `npm` first on PATH: it records "<cwd> <args>" in `log` and exits
- * with the number in `exitFile`, 0 when that file is absent.
+ * A fake `npm` and `pnpm` first on PATH: each records "<cwd> <name> <args>"
+ * in `log` and exits with the number in `exitFile`, 0 when that file is absent.
  */
 function fakeNpm() {
   const dir = mkTempDir('bl-fake-npm-');
   const log = join(dir, 'calls');
   const exitFile = join(dir, 'exit');
-  writeFileSync(
-    join(dir, 'npm'),
-    `#!/bin/sh\necho "$(pwd -P) $*" >> '${log}'\nif [ -e '${exitFile}' ]; then exit "$(cat '${exitFile}')"; fi\nexit 0\n`,
-    { mode: 0o755 },
-  );
+  for (const name of ['npm', 'pnpm']) {
+    writeFileSync(
+      join(dir, name),
+      `#!/bin/sh\necho "$(pwd -P) ${name} $*" >> '${log}'\nif [ -e '${exitFile}' ]; then exit "$(cat '${exitFile}')"; fi\nexit 0\n`,
+      { mode: 0o755 },
+    );
+  }
   const calls = () => {
     try {
       return readFileSync(log, 'utf8').trim().split('\n');
@@ -91,7 +102,20 @@ test("after a merge, the main checkout's dependencies are installed with its loc
     const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: npm.env });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr + r.stdout, /Installing code's dependencies in the main checkout \(npm ci\)\.\.\./);
-    assert.deepEqual(npm.calls(), [`${realpathSync(fx.repo)} ci`]);
+    assert.deepEqual(npm.calls(), [`${realpathSync(fx.repo)} npm ci`]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a pnpm-lock.yaml repo installs with pnpm install --frozen-lockfile', () => {
+  const fx = fixture();
+  const npm = fakeNpm();
+  try {
+    landOnMain(fx, 'pnpm-lock.yaml', "lockfileVersion: '9.0'\n", 'add a lockfile');
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: npm.env });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(npm.calls(), [`${realpathSync(fx.repo)} pnpm install --frozen-lockfile`]);
   } finally {
     fx.cleanup();
   }
