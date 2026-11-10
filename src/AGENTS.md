@@ -2807,6 +2807,9 @@ there is no origin) is not merged, pushed or recorded in `commit:`: the merge
 reports "no changes in <repo>" and removes the worktree and branch.
 `bl merge S34` passes `noCommits` for a story `mergeGates` let through with
 a branch with no commits (S-1437), and that story's repo takes the same path.
+If the branch has commits ahead when `cleanupOneRepo` counts again (a commit
+landed after the gate), it refuses and merges nothing: that commit had no
+review. The `## Merge` line names only the repos that took the no-changes path.
 
 ### `bl review`
 

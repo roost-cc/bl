@@ -638,7 +638,7 @@ export function cleanupOneRepo({
   // that landed since has had no review, so it is not merged.
   if (noCommits && branchExists) {
     console.error(
-      `${repoName}: ${branchName} has ${ahead ?? 'unknown'} commit(s) ahead of main, but the merge gate passed it with none — review it (bl review ${parsed.id}) before merging.`,
+      `${repoName}: ${branchName} has ${ahead} commit(s) ahead of main, but the merge gate passed it with none — review it (bl review ${parsed.id}) before merging.`,
     );
     return { ok: false };
   }
