@@ -20,10 +20,13 @@ import {
   findTransitionFindings,
   legacyLog,
   logOf,
+  logShape,
   reviewOf,
   roundOf,
+  setLog,
   startOf,
   statusOf,
+  storedLog,
   transition,
 } from '../../src/transition.js';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -521,6 +524,38 @@ test('legacy-status: status: with no log, and status: beside a log (warnings)', 
     findings('story', { status: 'draft', added: '2026-11-01', transitions: [entry(T0, 'draft', 'new')] }),
     [['warning', 'legacy-status', 'status: "draft" beside a transitions: log; bl reads the log, so remove status:']],
   );
+});
+
+test('logShape decides "has a log" for every reader and writer: storedLog, setLog and bl validate agree', () => {
+  const good = [entry(T0, 'draft', 'new')];
+  // [transitions:, shape]
+  const cases = [
+    [undefined, 'none'],
+    [null, 'none'],
+    ['', 'none'],
+    [[], 'none'],
+    [good, 'log'],
+    ['draft', 'malformed'],
+    [{ to: 'draft' }, 'malformed'],
+    [[{ by: 'new' }], 'malformed'],
+    [[null], 'malformed'],
+  ];
+  for (const [raw, shape] of cases) {
+    const name = JSON.stringify(raw);
+    const fm = { status: 'refined', ...(raw === undefined ? {} : { transitions: raw }) };
+    assert.equal(logShape(fm), shape, name);
+    assert.equal(storedLog(fm), shape === 'log' ? raw : null, name);
+    // No log: a legacy warning, never an error; a malformed one: an error.
+    const codes = findings('story', fm).map(([severity, code]) => `${severity}:${code}`);
+    if (shape === 'none') assert.deepEqual(codes, ['warning:legacy-status'], name);
+    if (shape === 'malformed') assert.ok(codes.includes('error:transition-log'), name);
+    // setLog never removes status: for anything but a log.
+    if (shape !== 'log' && raw !== undefined) {
+      const copy = structuredClone(fm);
+      assert.throws(() => setLog(copy, raw), /needs at least one entry/, name);
+      assert.deepEqual(copy, fm, name);
+    }
+  }
 });
 
 test('transition-log: one finding per fault (errors)', () => {

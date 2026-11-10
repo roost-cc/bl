@@ -38,7 +38,7 @@ import { liveLockHolder } from './pid-lock.js';
 import { extractReviewLog, sessionDates } from './review-log.js';
 import { RUN_DIR } from './run-lock.js';
 import { SpecLockError, updateSpecFile, withSpecLock } from './spec-file.js';
-import { DATE_RE, ENTRY_FIELDS, isoAt, legacyLog, readsChange, setLog } from './transition.js';
+import { DATE_RE, ENTRY_FIELDS, isoAt, legacyLog, logShape, readsChange, setLog } from './transition.js';
 
 const str = (v) => (typeof v === 'string' ? v : '');
 
@@ -155,17 +155,22 @@ export function heldUnits(config) {
 const PLACED = ['in_review', ...Object.values(LEGACY_LOG.review).flat()];
 
 /**
- * What one unit's write is, from its frontmatter read under its lock: null
- * for nothing; for a unit with `transitions:` and a stale `status:`, its log
- * as it is (no entries written); else `datedLog`, and whether a change
- * document placed it (gave it a review part).
+ * What one unit's write is, from its frontmatter read under its lock
+ * (`logShape` decides whether it has a log): null for nothing; `skip` for a
+ * malformed `transitions:`, which keeps its `status:`; for a unit with a log
+ * and a stale `status:`, its log as it is (no entries written); else
+ * `datedLog` (an empty or blank `transitions:` counts as no log), and whether
+ * a change document placed it (gave it a review part).
  */
 function planUnit(root, rel, kind, fm, change) {
-  if (Object.hasOwn(fm, 'transitions')) {
+  const shape = logShape(fm);
+  if (shape === 'malformed') return { skip: 'transitions: is not a list of entries (bl validate names the fault)' };
+  if (shape === 'log') {
     return Object.hasOwn(fm, 'status') ? { log: fm.transitions, entries: 0, placed: false } : null;
   }
   if (!str(fm.status)) return null;
   const log = datedLog(kind, fm, change, gitDates(root, rel, kind, fm));
+  if (log.length === 0) return null;
   const placed = readsChange(kind, fm) && log.some((e) => PLACED.includes(e.to));
   return { log, entries: log.length, placed };
 }
@@ -245,12 +250,16 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
         updateSpecFile(root, unit.file, (fm) => {
           const change = kind === 'task' ? null : (currentChange(unit.dir)?.doc ?? null);
           planned = planUnit(root, rel, kind, fm, change);
-          if (!planned || dryRun) return false;
+          if (!planned || planned.skip || dryRun) return false;
           setLog(fm, planned.log);
         });
       } catch (e) {
         if (!(e instanceof SpecLockError)) throw new Error(`${rel}: ${e.message}`, { cause: e });
         skipped.push(`${unit.id}: ${e.message}`);
+        continue;
+      }
+      if (planned?.skip) {
+        skipped.push(`${unit.id}: ${planned.skip}`);
         continue;
       }
       if (planned) {

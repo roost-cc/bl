@@ -324,3 +324,52 @@ test('a run writes each log with git dates in one commit, skips the live run, an
   assert.equal(head(dir), done);
   assert.deepEqual(statusLines(dir), []);
 });
+
+test('migration writes the synthesized log for a unit whose transitions: is empty or blank, and never removes status: without a log', () => {
+  // [story, status:, the transitions: line, the log it gets (null: kept as it is)]
+  const cases = [
+    ['S-1', 'in_progress', 'transitions: []', ['draft', 'in_progress']],
+    ['S-2', 'refined', 'transitions:', ['draft', 'refined']],
+    ['S-3', 'refined', "transitions: ''", ['draft', 'refined']],
+    ['S-4', 'in_progress', 'transitions: oops', null],
+    ['S-5', 'refined', 'transitions:\n  to: refined', null],
+    ['S-6', 'refined', 'transitions:\n  - by: new', null],
+  ];
+  const { dir } = mkTempBacklog({
+    flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
+    repos: ['core'],
+    components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
+    stories: cases.map(([id, status]) => ({ id, title: id, component: 'C01', status, added: '2026-11-01' })),
+  });
+  const path = (id) => `stories/${id.replace('-', '')}/index.md`;
+  for (const [id, status, line] of cases) {
+    writeFileSync(
+      join(dir, path(id)),
+      read(dir, path(id)).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\n${line}\n`),
+    );
+  }
+  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  git(dir, 'init', '-q', '-b', 'main');
+  commitAt(dir, '2026-11-01T10:00:00Z', 'base');
+  const before = Object.fromEntries(cases.map(([id]) => [id, read(dir, path(id))]));
+
+  const r = script(dir);
+  assert.equal(r.status, 0, r.stderr);
+  for (const [id, status, line, log] of cases) {
+    const name = `${id}: ${line}`;
+    if (log == null) {
+      assert.equal(read(dir, path(id)), before[id], `${name}: the file is as it was`);
+      assert.match(r.stdout, new RegExp(`^skipped ${id}: transitions: is not a list of entries`, 'm'), name);
+      continue;
+    }
+    const after = fm(dir, path(id));
+    assert.equal(Object.hasOwn(after, 'status'), false, name);
+    assert.deepEqual(
+      after.transitions.map((e) => e.to),
+      log,
+      name,
+    );
+    assert.equal(fm(dir, path(id)).transitions.at(-1).to, status, name);
+  }
+  assert.deepEqual(statusLines(dir), []);
+});

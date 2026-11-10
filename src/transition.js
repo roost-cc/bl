@@ -84,17 +84,30 @@ export const nowAt = () => isoAt(Date.now());
 const str = (v) => (typeof v === 'string' ? v : '');
 
 /**
- * The unit's stored log, or null when it has none: no `transitions:`, an
- * empty one, or one that is not a list of entries with a `to` (`bl validate`
- * reports that one; readers fall back to `status:`).
+ * What a unit's `transitions:` holds: `none` (no key, a blank one, `''` or
+ * an empty list), `log` (a list of mappings, each with a `to`), or
+ * `malformed` (anything else; `bl validate` reports it). Every reader and
+ * writer decides whether a unit has a log by it.
+ * @param {object} fm
+ * @returns {"none" | "log" | "malformed"}
+ */
+export function logShape(fm) {
+  const raw = fm.transitions;
+  if (raw == null || raw === '' || (Array.isArray(raw) && raw.length === 0)) return 'none';
+  const ok =
+    Array.isArray(raw) &&
+    raw.every((e) => e != null && typeof e === 'object' && !Array.isArray(e) && typeof e.to === 'string');
+  return ok ? 'log' : 'malformed';
+}
+
+/**
+ * The unit's stored log, or null when it has none (`logShape` is not `log`;
+ * readers of a malformed one fall back to `status:`).
  * @param {object} fm
  * @returns {object[] | null}
  */
 export function storedLog(fm) {
-  const log = fm.transitions;
-  if (!Array.isArray(log) || log.length === 0) return null;
-  const ok = log.every((e) => e != null && typeof e === 'object' && !Array.isArray(e) && typeof e.to === 'string');
-  return ok ? log : null;
+  return logShape(fm) === 'log' ? fm.transitions : null;
 }
 
 /**
@@ -285,11 +298,15 @@ function writableLog(kind, fm, change, at) {
  * Store `log` as `fm`'s `transitions:` and remove `status:`, in place:
  * `transitions:` takes `status:`'s place, and a unit with neither gets it
  * last. `applyTransition` and the migration (`migrate-transitions.js`) write
- * the log through it.
+ * the log through it. A `log` that is not a log (`logShape`) throws and
+ * leaves `fm` unchanged, so `status:` never goes without a log.
  * @param {object} fm
  * @param {object[]} log
  */
 export function setLog(fm, log) {
+  if (logShape({ transitions: log }) !== 'log') {
+    throw new Error(`a transitions: log needs at least one entry with a "to"; status: stays`);
+  }
   const keys = Object.keys(fm);
   if (!Object.hasOwn(fm, 'transitions') && Object.hasOwn(fm, 'status')) {
     const entries = keys.map((k) => (k === 'status' ? ['transitions', log] : [k, fm[k]]));
@@ -556,7 +573,7 @@ export function findTransitionFindings(flow, kind, fm, location) {
   const legacy = (message) => findings.push({ severity: 'warning', code: 'legacy-status', message, location });
   const raw = fm.transitions;
   const hasStatus = str(fm.status) !== '';
-  if (raw === undefined || raw === '' || (Array.isArray(raw) && raw.length === 0)) {
+  if (logShape(fm) === 'none') {
     if (hasStatus) {
       legacy(`status: "${fm.status}" and no transitions: log; node bl/scripts/migrate-transitions.js writes the log`);
     }
