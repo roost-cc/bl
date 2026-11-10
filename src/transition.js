@@ -298,8 +298,19 @@ function hasEdge(flow, kind, from, to, by) {
   return flow.edges(kind).some((e) => e.from === from && e.to === to && (by === OPERATOR || e.by === by));
 }
 
-/** The unit's log to append to: the stored one, or `legacyLog`'s with each entry missing an `at` given `at`. */
-function writableLog(kind, fm, change, at) {
+/**
+ * The unit's log to append to: the stored one, or `legacyLog`'s with each
+ * entry missing an `at` given `at`. A malformed `transitions:` (`logShape`)
+ * throws a `FlowError` (`flowPath` is the flow's file): a write would
+ * replace its entries.
+ */
+function writableLog(flowPath, kind, fm, change, at) {
+  if (logShape(fm) === 'malformed') {
+    throw new FlowError(
+      flowPath,
+      `${idOf(kind, fm)} has a transitions: that is not a list of entries; fix it (bl validate names the fault) before bl writes an entry`,
+    );
+  }
   return storedLog(fm) ?? legacyLog(kind, fm, change).map((e) => ({ at, ...e }));
 }
 
@@ -332,7 +343,8 @@ export function setLog(fm, log) {
  * fields in one locked write calls it inside its `updateSpecFile` mutate.
  * The type's table must have an edge from the current status to `to` under
  * `by`: the verb's `during`, or one of its `success` or `failure` branches.
- * Else it throws `NoEdgeError` and leaves `fm` unchanged. A `during` equal to
+ * Else it throws `NoEdgeError` and leaves `fm` unchanged; a malformed
+ * `transitions:` throws a `FlowError` and is never replaced. A `during` equal to
  * the current status records nothing and returns null. An `at` before the
  * last entry's (a clock behind the last writer's) is recorded at that entry's.
  *
@@ -350,7 +362,7 @@ export function setLog(fm, log) {
  * @returns {object | null}  the entry, or null when nothing was recorded
  */
 export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at = nowAt(), change = null }) {
-  const log = writableLog(kind, fm, change, at);
+  const log = writableLog(flow.path, kind, fm, change, at);
   const current = log.at(-1)?.to ?? null;
   const row = flow.verbOf(kind, by);
   if (row?.during != null && row.during === to && current === to) return null;
@@ -387,7 +399,7 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
 export function ensureLog(backlogRoot, unit) {
   return updateSpecFile(backlogRoot, unit.indexPath, (fm) => {
     if (storedLog(fm)) return false;
-    const log = writableLog(unit.kind, fm, unit.change ?? null, nowAt());
+    const log = writableLog(loadFlow(backlogRoot).path, unit.kind, fm, unit.change ?? null, nowAt());
     if (log.length === 0) return false;
     setLog(fm, log);
   });

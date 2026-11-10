@@ -7,9 +7,10 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { parseFrontmatter } from '../../src/config.js';
+import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { FlowError, loadFlow } from '../../src/flow.js';
 import {
+  NoEdgeError,
   applyMerged,
   applyNew,
   applyTransition,
@@ -476,6 +477,31 @@ test('branchOf takes the first branch whose guards hold', () => {
   assert.equal(branchOf(flow, 'feature', 'review', 'failure', ctx(2)).to, 'fixing', 'within the cap');
   assert.equal(branchOf(flow, 'feature', 'review', 'failure', ctx(3)).to, 'escalated', 'past it');
   assert.equal(branchOf(flow, 'story', 'refine', 'failure', {}).to, 'draft');
+});
+
+test('applyTransition refuses a unit whose transitions: is malformed, even when status: is set', () => {
+  const malformed = [
+    [entry(T0, 'draft', 'new'), { at: AT, by: 'run', via: 'open_pr' }],
+    'in_progress',
+    { to: 'in_progress' },
+    [null],
+  ];
+  for (const raw of malformed) {
+    const name = JSON.stringify(raw);
+    const fm = { feature_id: 'F-5', status: 'in_progress', added: '2026-11-01', transitions: raw };
+    const before = structuredClone(fm);
+    assert.throws(
+      () => applyTransition(flow, 'feature', fm, 'in_review', { by: 'review', at: AT }),
+      (e) => e instanceof FlowError && !(e instanceof NoEdgeError) && /bl validate/.test(e.message),
+      name,
+    );
+    assert.deepEqual(fm, before, `${name}: fm unchanged`);
+    // ensureLog, the other writer, refuses it too and writes nothing.
+    const { root, file } = unitFile(`${serializeFrontmatter(fm)}\n# F-5\n`);
+    const text = readFileSync(file, 'utf8');
+    assert.throws(() => ensureLog(root, { kind: 'feature', indexPath: file, change: null }), FlowError, name);
+    assert.equal(readFileSync(file, 'utf8'), text, `${name}: the file unchanged`);
+  }
 });
 
 test('requireBranch throws a FlowError when no branch holds, where branchOf returns null', () => {
