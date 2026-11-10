@@ -118,9 +118,12 @@ export function mergeGates(
   const { blocked, review } = featureReviewGate(position, unit.changeBody ?? '');
   // A story `bl run` finished with nothing on its branch (S-1437): the run
   // recorded ready_for_merge without a round, and there is nothing to review.
+  // The current status decides, not the position: a later in_progress or
+  // escalated keeps the position at ready_for_merge.
   const noCommits =
     !review &&
     unit.kind === 'story' &&
+    unit.status === REVIEW.clean &&
     position === REVIEW.clean &&
     repos.every((r) => commitsAhead(config.reposByName[r], branchName) === 0);
   if (blocked) {

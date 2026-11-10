@@ -324,6 +324,21 @@ test('bl merge S-n refuses as never reviewed a ready_for_merge story whose branc
   }
 });
 
+test('bl merge S-n refuses as never reviewed a story reopened in_progress after ready_for_merge whose branch has no commits', () => {
+  const log = {
+    transitions: [...NO_COMMIT_LOG.transitions, { at: '2026-11-06T00:00:00Z', to: 'in_progress', by: 'operator' }],
+  };
+  const fx = noCommitStory(log);
+  try {
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /^S-1 has never been reviewed/m);
+    assert.ok(existsSync(fx.wt), 'worktree kept');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('bl merge S-n refuses as never reviewed an in_progress story whose branch has no commits', () => {
   const fx = noCommitStory({ review_status: '' });
   try {
