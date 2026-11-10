@@ -562,7 +562,8 @@ export class Flow {
 /**
  * `bl validate`'s `flow-json` findings (F-66 D1, F-69 D1) on a flow `loadFlow`
  * could read. Errors: a `from`, `during`, `to` or terminal status the type
- * lacks; a `when` or `via` name bl does not register; a `then` that is not a
+ * lacks; a `when` or `via` name bl does not register; a last `success` or
+ * `failure` branch with a `when`; a `then` that is not a
  * verb of the type starting from the branch's `to`; a status no branch goes
  * to; a terminal status before an open one, or one a verb other than
  * `supersede` starts from; a verb bl dispatches for a type that the type's
@@ -611,6 +612,10 @@ export function findFlowFindings(flow, wiring, location = FLOW_FILE) {
         ['success', row.success],
         ['failure', row.failure],
       ]) {
+        // When no guard holds, bl has no branch to record (`requireBranch`).
+        if (branches.at(-1)?.when.length > 0) {
+          add(`${at} has a "when" on its last ${outcome} branch; the last branch must hold always`);
+        }
         for (const b of branches) {
           reached.add(b.to);
           if (!isStatus(b.to)) notStatus(`verb "${verb}" goes on ${outcome} to`, b.to);

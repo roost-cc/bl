@@ -1166,6 +1166,49 @@ test('review_outcome_decides_the_round: the loop takes each branch from the outc
   }
 });
 
+test('a failed verdict write stops the run instead of continuing', async () => {
+  // [the verdict, the entry whose write fails]
+  const cases = [
+    [{ must: 1 }, 'to: fixing'],
+    [{}, 'to: ready_for_merge'],
+  ];
+  for (const [verdict, entry] of cases) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const steps = [];
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          verify: () => {
+            steps.push('verify');
+            verifySession(CH(feature), { pending: (verdict.must ?? 0) > 0, round: 1 });
+            atomicHooks.beforeRename = (tmp) => {
+              if (!readFileSync(tmp, 'utf8').includes(entry)) return;
+              atomicHooks.beforeRename = null;
+              throw new Error('injected log write failure');
+            };
+            return reviewOutcome(verdict);
+          },
+          fix: () => {
+            steps.push('fix');
+            return FIX_OUTCOME;
+          },
+        },
+      });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'failed', `${entry}: ${state.lastError}`);
+      assert.match(state.lastError, /^the transition log could not be written at review: .*injected log write failure/);
+      assert.deepEqual(steps, ['verify'], `${entry}: no step after the failed write`);
+      const r = reviewOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm);
+      assert.equal(r.position, 'in_review', `${entry}: no verdict in the log`);
+    } finally {
+      atomicHooks.beforeRename = null;
+      cleanup();
+    }
+  }
+});
+
 test('the fake agents return outcomes their schemas accept', () => {
   for (const [name, o] of [
     ['review', reviewOutcome({ pending: true })],

@@ -497,6 +497,19 @@ test('flow-json: a then that is not a verb of the type, or one that does not sta
   );
 });
 
+test('flow-json: a last success or failure branch with a when, which can leave no branch to record', () => {
+  assert.deepEqual(
+    findingsAfter((raw) => {
+      raw.types.feature.verbs.review.failure = [raw.types.feature.verbs.review.failure[0]];
+      raw.types.story.verbs.merge.success[0].when = ['escalation_cleared'];
+    }),
+    [
+      'error: story verb "merge" has a "when" on its last success branch; the last branch must hold always',
+      'error: feature verb "review" has a "when" on its last failure branch; the last branch must hold always',
+    ],
+  );
+});
+
 test("flow-json: a status that is no branch's to", () => {
   assert.deepEqual(
     findingsAfter((raw) => {

@@ -785,6 +785,16 @@ test('bl implement on an escalated feature or story whose review position is fix
       );
     }
   }
+  // A unit an operator moved during the session: the fix is not recorded, and nothing throws.
+  const { root, dir } = unitDir('F43-moved');
+  copyFileSync(FLOW_TEMPLATE, join(root, 'flow.json'));
+  const indexPath = join(dir, 'index.md');
+  const moved = { feature_id: 'F-43', transitions: [...head, { at: at(5), to: 'ready_for_merge', by: 'operator' }] };
+  writeFileSync(indexPath, `${serializeFrontmatter(moved)}\n# F-43\n`);
+  const text = readFileSync(indexPath, 'utf8');
+  const fixed = { structured: { summary: 's', fixed: true, open: 0 }, structuredError: null };
+  assert.equal(applyFixOutcome(root, { id: 'F-43', kind: 'feature', indexPath }, fixed), false);
+  assert.equal(readFileSync(indexPath, 'utf8'), text);
   // A unit with no open items gets the implement session.
   for (const to of ['in_progress', 'escalated', 'ready_for_merge']) {
     const fm = { transitions: [head[0], head[1], ...(to === 'in_progress' ? [] : [{ to, by: 'operator' }])] };

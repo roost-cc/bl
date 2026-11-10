@@ -21,6 +21,7 @@ import {
   legacyLog,
   logOf,
   logShape,
+  requireBranch,
   reviewOf,
   roundOf,
   setLog,
@@ -475,6 +476,21 @@ test('branchOf takes the first branch whose guards hold', () => {
   assert.equal(branchOf(flow, 'feature', 'review', 'failure', ctx(2)).to, 'fixing', 'within the cap');
   assert.equal(branchOf(flow, 'feature', 'review', 'failure', ctx(3)).to, 'escalated', 'past it');
   assert.equal(branchOf(flow, 'story', 'refine', 'failure', {}).to, 'draft');
+});
+
+test('requireBranch throws a FlowError when no branch holds, where branchOf returns null', () => {
+  const root = mkTempDir('bl-require-branch-');
+  const raw = JSON.parse(readFileSync(join(TEMPLATES, 'flow.json'), 'utf8'));
+  raw.types.feature.verbs.review.failure = [raw.types.feature.verbs.review.failure[0]];
+  writeFileSync(join(root, 'flow.json'), JSON.stringify(raw));
+  const capped = loadFlow(root);
+  const past = { round: 3, maxRounds: 2 };
+  assert.equal(branchOf(capped, 'feature', 'review', 'failure', past), null);
+  assert.throws(
+    () => requireBranch(capped, 'feature', 'review', 'failure', past),
+    (e) => e instanceof FlowError && /no failure branch of the feature verb "review" holds/.test(e.message),
+  );
+  assert.equal(requireBranch(flow, 'feature', 'review', 'failure', past).to, 'escalated');
 });
 
 test('applyMerged records done by merge, by done for a story never started, and nothing on a closed unit', () => {

@@ -120,11 +120,12 @@ import * as processScope from './process-scope.js';
 import { regenerateConflicts, regeneratePlugins } from './regenerate.js';
 import { REVIEW, loadFlow } from './flow.js';
 import {
+  NoEdgeError,
   applyTransition,
-  branchOf,
   enterVerb,
   ensureLog,
   isoAt,
+  requireBranch,
   reviewOf,
   statusOf,
   transition,
@@ -471,7 +472,7 @@ function startStory(ctx, s) {
   const root = ctx.config.backlogRoot;
   const path = join(root, s.storyRelPath);
   if (!loadFlow(root).isUnstarted('story', statusOf('story', readFm(path)))) return;
-  if (enterVerb(root, { kind: 'story', indexPath: path }, 'implement')) {
+  if (logWrite(ctx, 'implement', () => enterVerb(root, { kind: 'story', indexPath: path }, 'implement'))) {
     commitUnitPaths(ctx, 'implement', [s.storyRelPath], `chore: ${s.id} in_progress (implement)`);
   }
 }
@@ -803,8 +804,7 @@ function unitStatus(ctx) {
 
 /**
  * Record a hop of the loop in the unit's log (F-69 D3) and commit the unit
- * file. A unit whose status has no such edge (an operator moved it while the
- * run went on) gets no entry: a warning in the run's history says so.
+ * file, through `logWrite`.
  */
 function hop(ctx, step, to, opts) {
   writeHop(ctx, step, () => transition(ctx.config.backlogRoot, unitRef(ctx), to, opts));
@@ -815,17 +815,31 @@ function enterHop(ctx, step, verb) {
   writeHop(ctx, step, () => enterVerb(ctx.config.backlogRoot, unitRef(ctx), verb));
 }
 
-/** Run `write`, which returns the entry it recorded or null, as `hop` describes. */
+/** Run `write` through `logWrite`, and commit the unit file when it recorded an entry. */
 function writeHop(ctx, step, write) {
-  let entry;
+  const entry = logWrite(ctx, step, write);
+  if (entry) commitFeatureFile(ctx, step, `chore: ${ctx.feature.id} ${entry.to} (${entry.by})`);
+}
+
+/**
+ * Run `write`, a write to a transition log that returns the entry it
+ * recorded or null. A status with no such edge (`NoEdgeError`: an operator
+ * moved the unit while the run went on) records nothing, and a warning in
+ * the run's history says so. Any other error (a spec lock timeout, a disk
+ * error) stops the run: the next step depends on the entry.
+ */
+function logWrite(ctx, step, write) {
   try {
-    entry = write();
+    return write();
   } catch (e) {
+    if (!(e instanceof NoEdgeError)) {
+      const reason = `the transition log could not be written at ${step}: ${e.message}`;
+      throw new RunStoppedError(reason, finish(ctx, 'failed', reason));
+    }
     record(ctx, { step, ok: true, warning: true, note: `not recorded in the transition log: ${e.message}` });
     ctx.runner.log(`  warning: not recorded in the transition log: ${e.message}`);
-    return;
+    return null;
   }
-  if (entry) commitFeatureFile(ctx, step, `chore: ${ctx.feature.id} ${entry.to} (${entry.by})`);
 }
 
 /**
@@ -4452,7 +4466,9 @@ export async function reviewFeature({
  * one with no open item, else a `failure` one (`fixing` while the round is
  * within the cap, `round_within_cap`; then `escalated`). `bl merge`'s round
  * over a merge resolution is outside the cap (F-36 D7), so its open items go
- * to `fixing` whatever the round. Returns the status recorded.
+ * to `fixing` whatever the round. Returns the unit's status read back from
+ * its log, which is the branch's unless the hop was not recorded. No branch
+ * that holds stops the run.
  */
 function recordVerdict(ctx, { clean, round, summary }) {
   const guardCtx = {
@@ -4463,9 +4479,15 @@ function recordVerdict(ctx, { clean, round, summary }) {
     maxRounds: ctx.integration ? Infinity : ctx.state.maxRounds,
   };
   const outcome = clean ? 'success' : 'failure';
-  const { to } = branchOf(loadFlow(ctx.config.backlogRoot), unitKind(ctx), 'review', outcome, guardCtx);
-  hop(ctx, 'review', to, { by: 'review', via: 'review', outcome: summary });
-  return to;
+  let branch;
+  try {
+    branch = requireBranch(loadFlow(ctx.config.backlogRoot), unitKind(ctx), 'review', outcome, guardCtx);
+  } catch (e) {
+    const reason = `the round's verdict could not be recorded: ${e.message}`;
+    throw new RunStoppedError(reason, finish(ctx, 'failed', reason));
+  }
+  hop(ctx, 'review', branch.to, { by: 'review', via: 'review', outcome: summary });
+  return unitStatus(ctx);
 }
 
 /** `reviewEnd` for the round `bl review` just ran, from the log and the change document it left. */

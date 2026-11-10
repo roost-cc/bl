@@ -29,6 +29,15 @@ import { FlowError, LEGACY_LOG, REVIEW, fromLegacy, loadFlow, statusWords } from
 import { GUARDS } from './guards.js';
 import { updateSpecFile } from './spec-file.js';
 
+/**
+ * The `FlowError` `applyTransition` throws when the table has no edge from the
+ * unit's status to the one asked for: the unit moved (an operator's edit) or
+ * the caller asked for a wrong one. A caller that may skip the entry catches
+ * only this; any other error (a spec lock timeout, a disk error) is a write
+ * that failed.
+ */
+export class NoEdgeError extends FlowError {}
+
 /** The fields an entry may have, in the order the writer puts them. */
 export const ENTRY_FIELDS = ['at', 'to', 'by', 'via', 'outcome', 'note'];
 
@@ -323,7 +332,7 @@ export function setLog(fm, log) {
  * fields in one locked write calls it inside its `updateSpecFile` mutate.
  * The type's table must have an edge from the current status to `to` under
  * `by`: the verb's `during`, or one of its `success` or `failure` branches.
- * Else it throws `FlowError` and leaves `fm` unchanged. A `during` equal to
+ * Else it throws `NoEdgeError` and leaves `fm` unchanged. A `during` equal to
  * the current status records nothing and returns null. An `at` before the
  * last entry's (a clock behind the last writer's) is recorded at that entry's.
  *
@@ -347,7 +356,10 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
   if (row?.during != null && row.during === to && current === to) return null;
   if (!hasEdge(flow, kind, current, to, by)) {
     const from = current ?? '(no status)';
-    throw new FlowError(flow.path, `${idOf(kind, fm)} is ${from}; the ${kind} verb "${by}" has no transition to ${to}`);
+    throw new NoEdgeError(
+      flow.path,
+      `${idOf(kind, fm)} is ${from}; the ${kind} verb "${by}" has no transition to ${to}`,
+    );
   }
   // Never before the entry it follows: a clock behind the last writer's.
   const prev = log.at(-1)?.at;
@@ -550,6 +562,22 @@ function guardsHold(flow, when, ctx) {
  */
 export function branchOf(flow, kind, verb, outcome, ctx) {
   return flow.verbOf(kind, verb)?.[outcome].find((b) => guardsHold(flow, b.when, ctx)) ?? null;
+}
+
+/**
+ * `branchOf`, for a caller that records the branch: a `FlowError` when no
+ * branch holds (`bl validate` reports a last branch with a `when`).
+ * @param {import("./flow.js").Flow} flow
+ * @param {"story" | "feature" | "task"} kind
+ * @param {string} verb
+ * @param {"success" | "failure"} outcome
+ * @param {import("./guards.js").GuardContext} ctx
+ * @returns {import("./flow.js").Branch}
+ */
+export function requireBranch(flow, kind, verb, outcome, ctx) {
+  const branch = branchOf(flow, kind, verb, outcome, ctx);
+  if (!branch) throw new FlowError(flow.path, `no ${outcome} branch of the ${kind} verb "${verb}" holds`);
+  return branch;
 }
 
 /**

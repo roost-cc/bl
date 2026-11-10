@@ -28,7 +28,7 @@ import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { updateTabTitle } from './tab-title.js';
 import { launchSession, loadPrompt, loadSchema, spillSubagentPrompts } from './session.js';
 import { flowForHelp, loadFlow } from './flow.js';
-import { assertFrom, branchOf, statusOf, transition } from './transition.js';
+import { assertFrom, requireBranch, statusOf, transition } from './transition.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
 
@@ -157,7 +157,7 @@ export function applyRefineStatus(backlogRoot, { id, kind, indexPath }, result, 
     let status;
     // The error names the unit: in a batch, the units before it are set.
     try {
-      status = branchOf(loadFlow(backlogRoot), kind, 'refine', result, {}).to;
+      status = requireBranch(loadFlow(backlogRoot), kind, 'refine', result, {}).to;
       transition(backlogRoot, { kind, indexPath }, status, { by: 'refine', via: 'refine', outcome: reason });
     } catch (e) {
       throw new Error(`${id}: ${e.message}`);

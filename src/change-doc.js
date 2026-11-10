@@ -40,6 +40,7 @@ import { extractSection, replaceSection } from './feature.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { commitPaths } from './backlog-commit.js';
 import { substituteVars, templatePath } from './template.js';
+import { FlowError } from './flow.js';
 import { transition } from './transition.js';
 
 export const CHANGE_FILE = 'change.md';
@@ -199,7 +200,9 @@ export const REVIEW_FIELDS = ['review_round', 'review_status'];
  * Apply the outcome of an interactive fix session (`bl implement` on a unit
  * in `fixing`, F-68 D3): with `fixed: true`, record `in_review` by `fix` in
  * the unit's log (F-69 D3), the summary as its outcome, and commit the unit
- * file; otherwise the unit stays in `fixing`, and bl prints why. `change` is
+ * file; otherwise, or when the log refuses the entry (a `FlowError`: the
+ * unit moved during the session), the unit stays where it is, and bl prints
+ * why. Any other error throws. `change` is
  * the unit's change document as the session found it, which places a unit
  * with no log (D4). Returns whether the fix was recorded.
  * @param {string} backlogRoot
@@ -217,7 +220,14 @@ export function applyFixOutcome(backlogRoot, { id, kind, indexPath }, { structur
   }
   if (!fixed) return false;
   const opts = { by: 'fix', via: 'fix', outcome: structured.summary };
-  if (!transition(backlogRoot, { kind, indexPath, change }, 'in_review', opts)) return false;
+  try {
+    if (!transition(backlogRoot, { kind, indexPath, change }, 'in_review', opts)) return false;
+  } catch (e) {
+    // The unit moved during the session (`NoEdgeError`), or its log is malformed.
+    if (!(e instanceof FlowError)) throw e;
+    warn(`${id}: the fix is not recorded in the transition log: ${e.message}`);
+    return false;
+  }
   commitChangeDoc(backlogRoot, indexPath, `chore: ${id} review fixed`);
   return true;
 }
