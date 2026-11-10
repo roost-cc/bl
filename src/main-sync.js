@@ -21,7 +21,8 @@
 import { spawnSync } from 'child_process';
 import { resolve } from 'path';
 import { info } from './config.js';
-import { acquirePidLock, releasePidLock, waitingForLock } from './pid-lock.js';
+import { waitingForLock } from './lock-wait.js';
+import { acquirePidLock, releasePidLock } from './pid-lock.js';
 import { sleepSync } from './sleep-sync.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';

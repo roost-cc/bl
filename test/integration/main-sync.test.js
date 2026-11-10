@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync, spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { syncMain, mainSyncLockPath, reportMainSync, MAIN_SYNC_LOCK } from '../../src/main-sync.js';
-import { waitingForLock } from '../../src/pid-lock.js';
+import { waitingForLock } from '../../src/lock-wait.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { spawnToFiles, untilStderrHas } from '../helpers/spawn-files.js';
 

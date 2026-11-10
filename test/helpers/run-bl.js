@@ -14,7 +14,7 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { LOCK_FILE } from '../../src/lock.js';
-import { waitingForLock } from '../../src/pid-lock.js';
+import { waitingForLock } from '../../src/lock-wait.js';
 import { HEADLESS_ENV } from '../../src/agents/provider.js';
 import { withNoAgent } from './fake-agent.js';
 import { spawnToFiles } from './spawn-files.js';

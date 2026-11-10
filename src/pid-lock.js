@@ -17,18 +17,6 @@
 
 import { readFileSync, writeFileSync, unlinkSync, linkSync } from 'fs';
 
-/**
- * The line a lock wait prints once, when it first finds a live holder, so a
- * person (or a test) can tell a process blocked on a lock from one still
- * doing its pre-lock work.
- *
- * @param {string} lock  the lock's name or path, as the reader should see it
- * @param {number} pid   the live holder
- */
-export function waitingForLock(lock, pid) {
-  return `Waiting for lock (${lock}) held by pid ${pid}…`;
-}
-
 /** PID on a lock file's first line when that process is alive, else null. */
 export function liveLockHolder(lockPath) {
   const content = readMaybe(lockPath);

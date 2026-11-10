@@ -17,7 +17,7 @@ import { lockOwnerVisible, startBlBehindLock } from '../helpers/run-bl.js';
 import { GIT_ENV, addOrigin, initGitBacklog } from '../helpers/git-backlog.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { mainSyncLockPath } from '../../src/main-sync.js';
-import { waitingForLock } from '../../src/pid-lock.js';
+import { waitingForLock } from '../../src/lock-wait.js';
 
 /** A git backlog with an `origin`, so `bl refine` pulls first, and the story S-1. */
 function refineBacklog() {
