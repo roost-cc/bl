@@ -430,6 +430,44 @@ for (const verdicts of [['pass'], ['fail', 'pass']]) {
   });
 }
 
+test('a SIGINT that ends the rebase fetch of the gate-line push stops the merge', () => {
+  // The backlog's push of the first gate line is rejected as if origin moved
+  // (its pre-push hook prints git's rejection), so `pushBacklog` fetches to
+  // rebase; a `git` first on PATH ends that fetch on SIGINT.
+  const fx = fixture({ verdicts: ['fail', 'pass'] });
+  const u = UNITS[0];
+  try {
+    addOrigin(fx.dir);
+    const marker = join(fx.dir, '.bl', 'kill-fetch');
+    const real = spawnSync('which', ['git'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).stdout.trim();
+    const bin = join(fx.dir, '.bl', 'fake-git');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\ncase "$*" in "fetch -q origin "*) [ -e '${marker}' ] && kill -INT $$ ;; esac\nexec '${real}' "$@"\n`,
+    );
+    chmodSync(join(bin, 'git'), 0o755);
+    const hook = join(fx.dir, '.git', 'hooks', 'pre-push');
+    writeFileSync(
+      hook,
+      `#!/bin/sh\nread -r lref lsha rref rsha\ngit log -1 --format=%s "$lsha" | grep -q '(attempt 1)' || exit 0\n` +
+        `touch '${marker}'\necho ' ! [rejected]        main -> main (fetch first)' >&2\nexit 1\n`,
+    );
+    chmodSync(hook, 0o755);
+    const before = g(fx.origin, 'rev-parse', 'main');
+    const r = runBl(['merge', u.id], { cwd: fx.dir, env: { ...ENV, PATH: `${bin}:${process.env.PATH}` } });
+    assert.ok(existsSync(marker), `the gate-line push was rejected: ${r.stderr}`);
+    assert.equal(r.status, 130, `${r.stdout}\n${r.stderr}`);
+    assert.equal(calls(fx).length, 1, 'one check run');
+    assert.match(r.stderr, /^code: the backlog commit of the gate line was ended by SIGINT; rerun `bl merge S-1`\.$/m);
+    assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
+    assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
+    assertNoThrowaway(fx);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('a Ctrl+C while the gate-line commit waits for the backlog lock exits 130, pushes nothing and leaves no worktree', async (t) => {
   if (!lockOwnerVisible(t)) return;
   // The check passes, then makes this process the holder of the backlog's

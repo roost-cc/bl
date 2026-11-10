@@ -31,24 +31,27 @@ import { atomicWriteFile } from './atomic-write.js';
 import { MAIN_REFSPEC, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
 import { RUN_DIR, ensureRunDir } from './run-lock.js';
+import { isInterrupt } from './signal-exit.js';
 
 // Never wait on a credential prompt; `GIT_EDITOR=true` keeps
 // `git rebase --continue` from opening an editor for the message.
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' };
 
+// The first interrupt (`isInterrupt`) that ended a `git` child since
+// `commitPaths` began, which it reports as `signal`: any of its git calls,
+// the rebase of a push retry (`pullLocked`) included.
+let interruptSeen = null;
+
 function git(root, args) {
-  return spawnSync('git', args, {
+  const r = spawnSync('git', args, {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
     env: GIT_ENV,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-}
-
-/** `{ signal }` when a signal ended the child `r`, else `{}`: spread into a result. */
-function signalOf(r) {
-  return r.signal ? { signal: r.signal } : {};
+  if (isInterrupt(r.signal)) interruptSeen ??= r.signal;
+  return r;
 }
 
 /** What git had to say, or a fallback naming the exit status. */
@@ -308,8 +311,9 @@ function addablePaths(root, paths) {
  * `pushError` are present only when the backlog has an `origin` remote;
  * `pushConflicts` names the paths a retry's rebase conflicted in, and
  * `pushResolved` the generated paths it settled (left pending regeneration).
- * `signal` is present when a signal ended `git add`, `git commit` or a
- * `git push`, so a caller can stop as the signal says (`checkedMerge`).
+ * `signal` is present when SIGINT or SIGTERM (`INTERRUPT_SIGNALS`) ended a
+ * git command of the commit or its push, the rebase of a push retry
+ * included, so a caller can stop as the signal says (`checkedMerge`).
  *
  * With an `origin` remote the commit and push hold the main sync lock that
  * `pullBacklog` takes, so a commit never lands mid-rebase and a pull's
@@ -325,6 +329,12 @@ function addablePaths(root, paths) {
  *   pushResolved?: string[], signal?: string }}
  */
 export function commitPaths(root, paths, message) {
+  interruptSeen = null;
+  const res = commitPathsUnsignalled(root, paths, message);
+  return interruptSeen ? { ...res, signal: interruptSeen } : res;
+}
+
+function commitPathsUnsignalled(root, paths, message) {
   if (paths.length === 0) return { committed: false, paths };
   const refused = headlessPriorityRefusal(root, paths);
   if (refused) return { committed: false, paths, error: refused };
@@ -385,7 +395,7 @@ function commitLocked(root, paths, message, push) {
   const addable = addablePaths(root, paths);
   const add = addable.length === 0 ? { status: 0 } : git(root, ['add', '-A', '--', ...addable]);
   if (add.status !== 0) {
-    return { committed: false, paths, error: (add.stderr || '').trim() || 'git add failed', ...signalOf(add) };
+    return { committed: false, paths, error: (add.stderr || '').trim() || 'git add failed' };
   }
   const c = git(root, ['commit', '-q', '-m', message, '--only', '--', ...paths]);
   // A failure with no output (a silent hook) still has to read as an error.
@@ -394,7 +404,6 @@ function commitLocked(root, paths, message, push) {
       committed: false,
       paths,
       error: (c.stderr || c.stdout || '').trim() || `git commit exited ${c.status}`,
-      ...signalOf(c),
     };
   }
   if (!push) return { committed: true, paths };
@@ -403,7 +412,6 @@ function commitLocked(root, paths, message, push) {
     committed: true,
     paths,
     pushed: p.pushed,
-    ...signalOf(p),
     ...(p.error ? { pushError: p.error } : {}),
     ...(p.paths ? { pushConflicts: p.paths } : {}),
     ...(p.resolved?.length ? { pushResolved: p.resolved } : {}),
@@ -499,7 +507,13 @@ export function pushBacklog(root) {
   const again = git(root, ['push', '-q', 'origin', 'main']);
   return again.status === 0
     ? { pushed: true, retry: 'pulled', resolved }
-    : { pushed: false, error: gitMessage(again, 'git push'), retry: 'pulled', resolved, ...signalOf(again) };
+    : {
+        pushed: false,
+        error: gitMessage(again, 'git push'),
+        retry: 'pulled',
+        resolved,
+        ...(again.signal ? { signal: again.signal } : {}),
+      };
 }
 
 /**
