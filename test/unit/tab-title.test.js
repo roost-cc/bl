@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { delimiter, join } from 'path';
+import { spawn } from 'child_process';
+import { once } from 'events';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { withEnv } from '../helpers/fake-pagers.js';
 import {
@@ -376,6 +378,66 @@ test('after the exit hook the next title is not padded', () => {
     assert.equal(fake.calls()[2], 'rename-window\n-t\n@7\n--\n:  : x\n');
   });
 });
+
+// ---------------------------------------------------------------------------
+// signals (in a child process: the handlers belong to the whole process)
+// ---------------------------------------------------------------------------
+
+/**
+ * Run `body` as an ES module in a child `node` under a fake tmux, send it
+ * `signal` once it prints `ready`, and resolve with its exit code, signal
+ * and the fake tmux's calls. `src(name)` in `body` is the URL of `src/<name>`.
+ */
+async function signalChild(body, signal) {
+  const fake = fakeTmux();
+  const src = (name) => JSON.stringify(new URL(`../../src/${name}`, import.meta.url).href);
+  const code = `${body.replace(/src\((\w[\w.-]*)\)/g, (_, n) => src(n))}\nprocess.stdout.write('ready\\n');\n`;
+  const env = {
+    ...process.env,
+    PATH: `${fake.dir}${delimiter}${process.env.PATH}`,
+    TMUX: '/tmp/tmux-fake,1,0',
+    BL_TMUX_WINDOW_ID: '@7',
+  };
+  delete env.BL_TAB_TITLE;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const exited = once(child, 'exit');
+  let out = '';
+  for await (const chunk of child.stdout) {
+    out += chunk;
+    if (out.includes('ready\n')) break;
+  }
+  // A blocking spawnSync is called after `ready`; give the child a moment to enter it.
+  await new Promise((r) => setTimeout(r, 300));
+  const started = Date.now();
+  child.kill(signal);
+  const [exitCode, exitSignal] = await exited;
+  return { exitCode, exitSignal, ms: Date.now() - started, calls: fake.calls() };
+}
+
+for (const [signal, number] of [
+  ['SIGTERM', 143],
+  ['SIGINT', 130],
+]) {
+  test(`a command that sets no title still ends on ${signal} during spawnSync`, async () => {
+    // config.js is the import chain most commands load; it reaches tab-title.js.
+    const r = await signalChild(
+      `await import(src(config.js)); await import(src(tab-title.js));
+       setTimeout(() => import('child_process').then((cp) => cp.spawnSync('sleep', ['5'])), 0);`,
+      signal,
+    );
+    assert.equal(r.exitSignal, signal, `Node's default action (exit ${r.exitCode})`);
+    assert.ok(r.ms < 3000, `ended at once, not after the child (${r.ms} ms)`);
+    assert.deepEqual(r.calls, []);
+  });
+
+  test(`a process that loads lock.js ends on ${signal} with exit ${number}`, async () => {
+    const r = await signalChild(`await import(src(lock.js)); setInterval(() => {}, 1000);`, signal);
+    assert.deepEqual([r.exitCode, r.exitSignal], [number, null]);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // window id capture

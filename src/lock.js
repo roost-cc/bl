@@ -23,6 +23,7 @@
 
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { exitOnSignal } from './signal-exit.js';
 
 export const LOCK_FILE = '.bl-new.lock';
 const LOCK_TIMEOUT_MS = 30_000;
@@ -71,14 +72,8 @@ export function releaseLock(backlogRoot) {
 }
 
 process.on('exit', cleanupAll);
-process.on('SIGINT', () => {
-  cleanupAll();
-  process.exit(130);
-});
-process.on('SIGTERM', () => {
-  cleanupAll();
-  process.exit(143);
-});
+// SIGINT and SIGTERM end the process with process.exit(130|143), so the exit listener above runs.
+exitOnSignal();
 
 export async function acquireLock(backlogRoot, options = {}) {
   const {

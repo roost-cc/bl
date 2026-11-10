@@ -2728,9 +2728,11 @@ bl's prompts and plugin commands use, not a new format.
   `endTabTitle`, the `exit` hook registered on the first title, sends nothing after a final
   title. Otherwise it sets the status from the exit code (`ended` for 0, `interrupted` for 130
   or 143, `failed (exit N)` otherwise), unsets `next` and sends the title unpadded, so no tab
-  keeps a working status after bl stops. `tab-title.js` imports `lock.js`, whose SIGINT and
-  SIGTERM handlers end the process with `process.exit(130|143)`, so the hook sees an
-  interrupt; bl adds no signal handler of its own.
+  keeps a working status after bl stops. The first title also calls `exitOnSignal`
+  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `lock.js` registers when it loads:
+  they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
+  registered once per process. A command that sets no title and loads no `lock.js` keeps
+  Node's default signal action.
 - The title width only grows while the process runs: `showTabTitle` pads a shorter title with
   trailing spaces to the widest title shown, so the tmux status bar does not move. A final
   title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`

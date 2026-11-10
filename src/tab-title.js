@@ -50,8 +50,7 @@
  */
 
 import { spawnSync } from 'child_process';
-// Its SIGINT and SIGTERM handlers end the process with process.exit(130|143), so endTabTitle sees an interrupt.
-import './lock.js';
+import { exitOnSignal } from './signal-exit.js';
 
 export const DEFAULT_TAB_TITLE_FORMAT = '{{feature}} : {{story}} : {{status}} {{next}}';
 
@@ -191,14 +190,18 @@ export function captureTmuxWindowId() {
 
 /**
  * Show the rendered title, padded to the widest title so far unless it is
- * final. The first title registers the exit hook `endTabTitle`. With titles
- * off, nothing happens.
+ * final. The first title registers the exit hook `endTabTitle`, and
+ * `exitOnSignal` so that SIGINT and SIGTERM reach it as exit 130 and 143.
+ * With titles off, nothing happens.
  */
 function showTabTitle() {
   if (tabTitleOff()) return;
   const rendered = renderTabTitle(tabTitleFields());
   width = Math.max(width, rendered.length);
-  if (!shown) process.once('exit', endTabTitle);
+  if (!shown) {
+    process.once('exit', endTabTitle);
+    exitOnSignal();
+  }
   shown = true;
   sendTabTitle(final ? rendered : rendered.padEnd(width));
 }
