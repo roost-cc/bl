@@ -1583,9 +1583,9 @@ function markOut(ctx, { step, configuration: c, kind, scope, message, until }) {
  * The adapter's capacity reading for `c` (F-64 D1), through the runner. An
  * `account`-scoped answer is the agent's for every model, so `asked` keeps
  * it and the agent is asked once per walk. A runner without `capacity`, or
- * one that throws or answers nothing usable, reads `unknown`, as does an
- * `unavailable` reading whose reset has passed: a broken read
- * costs at most a refused spawn. `topLevel` is the run config's
+ * one that throws or answers nothing usable, reads `unknown`: a broken read
+ * costs at most a refused spawn. An `unavailable` reading whose reset has
+ * passed also reads `unknown`. `topLevel` is the run config's
  * `backlog.json` top level, which an adapter may read its settings from
  * (`local`).
  */
