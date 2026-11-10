@@ -128,6 +128,28 @@ test('a reset that is not a time, or a body with no windows, is unknown; a perce
   }
   assert.equal(claudeCapacity(null, 'opus').scope, 'model');
   assert.equal(claudeCapacity({ limits: [] }, 'opus').message, 'the Claude usage endpoint reported no quota windows');
+  // A limit of another kind is named by its kind; one with no kind is still a window.
+  assert.deepEqual(
+    claudeCapacity(
+      {
+        limits: [
+          { kind: 'daily', percent: 40, resets_at: null, scope: null },
+          { percent: 100, resets_at: null, scope: null },
+        ],
+      },
+      'opus',
+    ),
+    {
+      state: 'unavailable',
+      scope: 'account',
+      until: null,
+      windows: [
+        { name: 'claude daily', remainingPercent: 60, resetsAt: null },
+        { name: 'claude', remainingPercent: 0, resetsAt: null },
+      ],
+      message: 'no quota left in claude',
+    },
+  );
   const over = PROBE1();
   over.limits[0].percent = 130;
   assert.equal(claudeCapacity(over, 'opus').windows[0].remainingPercent, 0);

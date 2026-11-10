@@ -356,7 +356,7 @@ function claudeWindowName({ kind, scope }) {
   if (kind === 'session') return 'claude 5h';
   if (kind === 'weekly_all') return 'claude 7d';
   if (kind === 'weekly_scoped') return `claude 7d ${scope?.model?.display_name ?? scope?.model?.id ?? ''}`.trim();
-  return `claude ${kind}`;
+  return typeof kind === 'string' ? `claude ${kind}` : 'claude';
 }
 
 /**
