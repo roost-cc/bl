@@ -4,7 +4,7 @@
  *
  * `mergeGates` returns findings and never exits; the caller prints each
  * finding's message and exits 1. Kind-specific preconditions (a feature must
- * be `running` or `escalated`) and post-merge bookkeeping stay with the
+ * have started, `isFeatureBranched`) and post-merge bookkeeping stay with the
  * callers, `main` in cleanup.js and `cmdMerge` in feature-cmd.js.
  */
 
