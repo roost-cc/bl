@@ -1583,7 +1583,8 @@ function markOut(ctx, { step, configuration: c, kind, scope, message, until }) {
  * The adapter's capacity reading for `c` (F-64 D1), through the runner. An
  * `account`-scoped answer is the agent's for every model, so `asked` keeps
  * it and the agent is asked once per walk. A runner without `capacity`, or
- * one that throws or answers nothing usable, reads `unknown`: a broken read
+ * one that throws or answers nothing usable, reads `unknown`, as does an
+ * `unavailable` reading whose reset has passed: a broken read
  * costs at most a refused spawn. `topLevel` is the run config's
  * `backlog.json` top level, which an adapter may read its settings from
  * (`local`).
@@ -1606,6 +1607,20 @@ function readCapacity(runner, c, asked, topLevel) {
       until: null,
       message: `${reading.message ?? ''} (its reset is not a time)`.trim(),
     };
+  }
+  // A reset that has passed says nothing about now: the local clock may run
+  // ahead of the agent's, or the reading may lag a reset. The spawn finds out,
+  // and a refusal puts the configuration on the out-list (S-1444).
+  if (reading.state === 'unavailable' && reading.until != null) {
+    const until = new Date(reading.until).getTime();
+    if (until <= runnerNow(runner).getTime()) {
+      reading = {
+        ...reading,
+        state: 'unknown',
+        until: null,
+        message: `${reading.message ?? ''} (its reset, ${localTime(until)}, has passed)`.trim(),
+      };
+    }
   }
   if (reading.scope === 'account') asked.set(c.agent, reading);
   return reading;

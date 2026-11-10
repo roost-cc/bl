@@ -1522,6 +1522,8 @@ fix steps, the merge resolution) walks `agent`, each from the top:
    `capacity({ model, topLevel })`) is asked; an `account`-scoped answer is kept for the rest of the walk, so
    each agent is asked once. `unavailable` puts the configuration on the
    out-list (kind `quota`) until the reading's `until` plus the margin below.
+   An `unavailable` reading whose `until` has passed reads as `unknown` (S-1444):
+   the clock may run ahead, or the reading may lag a reset, so the spawn decides.
    `available` and `unknown`, and a read that throws, spawn.
 3. The spawn passes the configuration's `agent` and `model` (null: no model
    flag; `runHeadlessSession` adds no default of its own). A refusal puts it
