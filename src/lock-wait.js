@@ -39,27 +39,27 @@ export class LockWaitTimeout extends Error {
 
 /**
  * Take a lock, waiting for a live holder. `take()` tries once and returns
- * `{ taken: T }` or `{ holder: number | 'unknown' }`. On the first holder it
- * calls `announce(waitingForLock(name, holder))` once, then awaits `pollMs`
- * (at most the time left to the deadline) and tries again, until it takes the
- * lock or `deadlineMs` (null: none) has
- * passed. Resolves `T`; rejects with a LockWaitTimeout naming the lock and
- * the live holder. The message never tells anyone to remove the file. An
- * error that `take` throws rejects the wait as it is. `sleep` is a test seam.
+ * what `acquirePidLock` (`pid-lock.js`) returns: `{ content }` when taken,
+ * `{ holder: number | 'unknown' }` when a live process holds it. On the first
+ * holder it calls `announce(waitingForLock(name, holder))` once, then awaits
+ * `pollMs` (at most the time left to the deadline) and tries again, until it
+ * takes the lock or `deadlineMs` (null: none) has passed. Resolves the
+ * content; rejects with a LockWaitTimeout naming the lock and the live
+ * holder. The message never tells anyone to remove the file. An error that
+ * `take` throws rejects the wait as it is. `sleep` is a test seam.
  *
- * @template T
  * @param {string} name  the lock's name or path, as the reader should see it
- * @param {() => { taken: T } | { holder: number | 'unknown' }} take
+ * @param {() => { content: string } | { holder: number | 'unknown' }} take
  * @param {{ deadlineMs: number | null, pollMs: number, announce: (line: string) => void,
  *   sleep?: (ms: number) => Promise<unknown> }} opts
- * @returns {Promise<T>}
+ * @returns {Promise<string>}
  */
 export async function awaitLock(name, take, { deadlineMs, pollMs, announce, sleep = delay }) {
   const start = Date.now();
   let announced = false;
   for (;;) {
     const got = take();
-    if ('taken' in got) return got.taken;
+    if ('content' in got) return got.content;
     if (!announced) {
       announced = true;
       announce(waitingForLock(name, got.holder));

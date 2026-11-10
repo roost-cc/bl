@@ -170,10 +170,7 @@ export async function withMainSyncLock(repoPath, fn, opts = {}) {
   const { lockTimeoutMs = LOCK_TIMEOUT_MS, pollMs = LOCK_POLL_MS } = opts;
   const lockPath = mainSyncLockPath(repoPath);
   const content = `${process.pid}\n${new Date().toISOString()}\nbl main sync ${repoPath}\n`;
-  const take = () => {
-    const got = acquirePidLock(lockPath, content);
-    return got.holder == null ? { taken: true } : got;
-  };
+  const take = () => acquirePidLock(lockPath, content);
   try {
     await awaitLock(lockPath, take, { deadlineMs: lockTimeoutMs, pollMs, announce: info });
   } catch (e) {

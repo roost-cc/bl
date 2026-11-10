@@ -2,21 +2,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFileSync } from 'node:child_process';
-import { rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { awaitLock, LockWaitTimeout, waitingForLock } from '../../src/lock-wait.js';
+import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
 import { acquireLock, LOCK_FILE } from '../../src/lock.js';
 import { mainSyncLockPath, withMainSyncLock } from '../../src/main-sync.js';
 import { SpecLockError, specLockPath, withSpecLock } from '../../src/spec-file.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
-/** A `take` that finds `holders` in turn (one per try), then takes the lock as `value`. */
+/**
+ * A `take` that finds `holders` in turn (one per try), then takes the lock
+ * with content `value`, in `acquirePidLock`'s shape.
+ */
 function takeAfter(holders, value = 'mine') {
   const left = [...holders];
   const tries = { count: 0 };
   const take = () => {
     tries.count += 1;
-    return left.length > 0 ? { holder: left.shift() } : { taken: value };
+    return left.length > 0 ? { holder: left.shift() } : { content: value };
   };
   return { take, tries };
 }
@@ -78,6 +82,21 @@ test('awaitLock rejects with a LockWaitTimeout naming the lock and the holder', 
   assert.doesNotMatch(err.message, /\brm\b|remove/i, 'the message never tells anyone to remove the file');
   assert.deepEqual(sleeps, [3]);
   assert.equal(said.length, 1);
+});
+
+test("awaitLock takes acquirePidLock as it is: it resolves the lock's content, and waits while the lock is held", async () => {
+  const dir = mkTempDir('bl-lock-wait-');
+  const lockPath = join(dir, 'x.lock');
+  const mine = `${process.pid}\n${new Date().toISOString()}\nmine\n`;
+  const take = () => acquirePidLock(lockPath, mine);
+  const opts = { deadlineMs: 0, pollMs: 5, announce: () => {}, sleep: noSleep };
+  assert.equal(await awaitLock(lockPath, take, opts), mine);
+  assert.equal(readFileSync(lockPath, 'utf8'), mine);
+  const other = `${process.pid}\n${new Date().toISOString()}\nother\n`;
+  const err = await awaitLock(lockPath, () => acquirePidLock(lockPath, other), opts).catch((e) => e);
+  assert.ok(err instanceof LockWaitTimeout, String(err));
+  assert.equal(err.holder, process.pid);
+  releasePidLock(lockPath, mine);
 });
 
 test('awaitLock sleeps at most the time left to the deadline', async () => {
@@ -196,7 +215,7 @@ test('awaitLock awaits a timer by default, so the event loop runs while it waits
   const ticker = setInterval(() => (ticks += 1), 1);
   setTimeout(() => (held = false), 40);
   try {
-    await awaitLock('x.lock', () => (held ? { holder: 43 } : { taken: true }), {
+    await awaitLock('x.lock', () => (held ? { holder: 43 } : { content: 'mine' }), {
       deadlineMs: 5000,
       pollMs: 5,
       announce: () => {},

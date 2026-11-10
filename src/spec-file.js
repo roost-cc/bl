@@ -84,16 +84,14 @@ export async function withSpecLock(indexPath, fn, { waitMs = 60_000 } = {}) {
   if (held.has(lockPath)) return runSync(fn, indexPath);
   const content = `${process.pid}\n${new Date().toISOString()}\nspec ${indexPath}\n`;
   const take = () => {
-    let got;
     try {
-      got = acquirePidLock(lockPath, content);
+      return acquirePidLock(lockPath, content);
     } catch (e) {
       throw new SpecLockError(`${indexPath}: cannot take the spec lock ${lockPath}: ${e.message}`, {
         indexPath,
         cause: e,
       });
     }
-    return got.content != null ? { taken: got.content } : got;
   };
   try {
     await awaitLock(lockPath, take, { deadlineMs: waitMs, pollMs: 10, announce: info });

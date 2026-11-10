@@ -88,10 +88,7 @@ export async function acquireLock(backlogRoot, options = {}) {
     return;
   }
   if (heldByParent(lockPath)) return;
-  const take = () => {
-    const got = acquirePidLock(lockPath, `${process.pid}\n${now().toISOString()}\n`);
-    return 'content' in got ? { taken: got.content } : got;
-  };
+  const take = () => acquirePidLock(lockPath, `${process.pid}\n${now().toISOString()}\n`);
   let content;
   try {
     content = await awaitLock(LOCK_FILE, take, { deadlineMs: timeoutMs, pollMs, announce: error, sleep });

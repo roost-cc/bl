@@ -624,10 +624,7 @@ export async function prepareWorktreeOnce(repoPath, branchName, fn) {
   }).trim();
   const lockPath = join(commonDir, `bl-prepare-${branchName.replace(/[^\w.-]/g, '_')}.lock`);
   const content = `${process.pid}\n${new Date().toISOString()}\nprepare ${branchName}\n`;
-  const take = () => {
-    const got = acquirePidLock(lockPath, content);
-    return got.content ? { taken: true } : got;
-  };
+  const take = () => acquirePidLock(lockPath, content);
   await awaitLock(lockPath, take, { deadlineMs: null, pollMs: 100, announce: info });
   try {
     return await fn();
