@@ -73,6 +73,21 @@ test('awaitLock rejects with a LockWaitTimeout naming the lock and the holder', 
   assert.equal(said.length, 1);
 });
 
+test('awaitLock with a deadline of 0 tries once, announces, and rejects with no sleep', async () => {
+  const { take, tries } = takeAfter([44]);
+  const said = [];
+  const err = await awaitLock('x.lock', take, {
+    deadlineMs: 0,
+    pollMs: 5,
+    announce: (l) => said.push(l),
+    sleep: noSleep,
+  }).catch((e) => e);
+  assert.ok(err instanceof LockWaitTimeout, String(err));
+  assert.equal(err.holder, 44);
+  assert.equal(tries.count, 1);
+  assert.deepEqual(said, [waitingForLock('x.lock', 44)]);
+});
+
 test('awaitLock with no deadline keeps waiting until the lock frees', async () => {
   const { take, tries } = takeAfter(Array(500).fill('unknown'));
   const said = [];
