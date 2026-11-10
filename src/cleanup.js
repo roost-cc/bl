@@ -817,6 +817,10 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
       return false;
     }
     const commit = git(['rev-parse', 'HEAD'], wt).stdout.trim();
+    if (signal) {
+      interrupted('git rev-parse');
+      return false;
+    }
 
     const vars = {
       commit,
