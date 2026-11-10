@@ -217,7 +217,8 @@ export function readActivity(states) {
         story: str(h.story),
         round: int(h.round),
         ok: bool(h.ok),
-        durationMs: Number.isFinite(duration) ? duration : null,
+        // A `startedAt` after `at` gives no duration, not a negative one.
+        durationMs: Number.isFinite(duration) && duration >= 0 ? duration : null,
         agent: str(h.agent),
         model: str(h.model),
         effort: str(h.effort),

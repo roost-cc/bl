@@ -356,6 +356,23 @@ test('activity: a note is cut by code point, so an emoji is never split', () => 
   assert.ok(!events[0].note.includes('�') && events[0].note.isWellFormed());
 });
 
+test('activity: a startedAt after at gives no duration, not a negative one', () => {
+  const { events } = readActivity([
+    {
+      feature: 'F-1',
+      history: [
+        { step: 'test', startedAt: at(NOW + 10 * MIN), at: at(NOW) },
+        { step: 'test', startedAt: at(NOW - 2 * MIN), at: at(NOW - MIN) },
+        { step: 'setup', startedAt: at(NOW - 2 * MIN), at: at(NOW - 2 * MIN) },
+      ],
+    },
+  ]);
+  assert.deepEqual(
+    events.map((e) => e.durationMs),
+    [null, MIN, 0],
+  );
+});
+
 test('readSection: a read that throws keeps the last good value and carries error; the next good read clears it', () => {
   let s = readSection(undefined, () => ({ rows: [1] }), NOW);
   assert.deepEqual(s, { read_at: '2026-11-07T12:00:00.000Z', rows: [1] });
