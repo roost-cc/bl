@@ -112,7 +112,7 @@ _roost_bl() {
 
   # First arg: subcommand
   if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "init new side attach move next-id run implement approve status refine review pr edit view show which grep list ls tree history report next rank what-next done inbox block task sync s merge log allow agents capacity help" -- "$cur") )
+    COMPREPLY=( $(compgen -W "init new side attach move next-id run implement approve status refine review pr edit view show which grep list ls tree history report next rank what-next done inbox block task sync s merge log allow agents capacity top help" -- "$cur") )
     return
   fi
 
@@ -169,6 +169,9 @@ _roost_bl() {
       ;;
     capacity)
       COMPREPLY=( $(compgen -W "--json --help" -- "$cur") )
+      ;;
+    top)
+      COMPREPLY=( $(compgen -W "--json --stream --interval --version --no-bell --no-desktop --no-push --help" -- "$cur") )
       ;;
     inbox)
       if [[ ${COMP_CWORD} -eq 2 ]]; then
