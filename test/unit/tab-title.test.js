@@ -3,8 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { delimiter, join } from 'path';
-import { spawn } from 'child_process';
-import { once } from 'events';
+import { spawnToFiles } from '../helpers/spawn-files.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { withEnv } from '../helpers/fake-pagers.js';
 import {
@@ -419,21 +418,14 @@ async function signalChild(body, signal) {
     BL_TMUX_WINDOW_ID: '@7',
   };
   delete env.BL_TAB_TITLE;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const exited = once(child, 'exit');
-  let out = '';
-  for await (const chunk of child.stdout) {
-    out += chunk;
-    if (out.includes('ready\n')) break;
-  }
+  const run = spawnToFiles(process.execPath, ['--input-type=module', '-e', code], { env });
+  const { child } = run;
+  while (!run.read().stdout.includes('ready\n')) await new Promise((r) => setTimeout(r, 10));
   // A blocking spawnSync is called after `ready`; give the child a moment to enter it.
   await new Promise((r) => setTimeout(r, 300));
   const started = Date.now();
   child.kill(signal);
-  const [exitCode, exitSignal] = await exited;
+  const { status: exitCode, signal: exitSignal } = await run.closed;
   return { exitCode, exitSignal, ms: Date.now() - started, calls: fake.calls() };
 }
 
