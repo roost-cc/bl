@@ -456,7 +456,7 @@ export async function main(argv) {
   let created;
   let storyId;
   let found;
-  await withLock(cfg.backlogRoot, () =>
+  await withLock(cfg.backlogRoot, async () =>
     exitOnThrow(async () => {
       // The worktree prepared before the lock may be gone: another bl side that
       // failed in the meantime removes one it made and nobody had committed to.

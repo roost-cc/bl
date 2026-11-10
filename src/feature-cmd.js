@@ -718,7 +718,7 @@ const approvalOwner = (feature) => `approve ${feature.id}`;
  * after a failed commit commits that approval and nothing else
  * (`retryApprovalCommit`).
  */
-function approvalCommit(config, feature) {
+async function approvalCommit(config, feature) {
   const rel = feature.featureRelPath;
   return commitAndRecord(config, approvalOwner(feature), rel, {
     message: `chore: approve ${feature.id}`,

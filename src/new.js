@@ -1341,7 +1341,9 @@ Example:
   const feature = isFlagSet(args.feature) ? resolveFeatureRef(args.feature, cfg, { onError: closeRl }) : null;
 
   // --- Title ---
-  const title = await requireOrPrompt(args.title ? String(args.title) : null, 'title', () => prompt('Story title'));
+  const title = await requireOrPrompt(args.title ? String(args.title) : null, 'title', async () =>
+    prompt('Story title'),
+  );
   if (!title) {
     console.error('Story title is required.');
     rl.close();

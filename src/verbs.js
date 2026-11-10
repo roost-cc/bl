@@ -360,7 +360,7 @@ async function runTarget(verb, target, args, argv, config) {
 }
 
 /** `runTarget` for one of several targets: the shared flags plus its id. */
-function runOne(verb, target, flags, config) {
+async function runOne(verb, target, flags, config) {
   const argv = [...flags, target.id];
   return runTarget(verb, target, parseVerbArgs(argv), argv, config);
 }
