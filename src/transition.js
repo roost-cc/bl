@@ -50,6 +50,18 @@ export const IMPLEMENT_VERBS = ['implement', 'fix'];
 /** The command that runs table verb `verb`, for a hint: `bl implement` runs `fix`. */
 const commandOf = (verb) => (IMPLEMENT_VERBS.includes(verb) ? IMPLEMENT_VERBS[0] : verb);
 
+/**
+ * The verb `bl implement` starts on a unit (F-69 D3): `fix` when its review
+ * position is `fixing` (a round left items open), whatever its status, so a
+ * fix session that escalated runs as a fix again; else `implement`.
+ * @param {"story" | "feature"} kind
+ * @param {{ fm: object, change?: { fm: object } | null }} unit
+ * @returns {"implement" | "fix"}
+ */
+export function implementVerbOf(kind, unit) {
+  return reviewOf(kind, unit.fm, unit.change ?? null).position === REVIEW.items ? 'fix' : 'implement';
+}
+
 /** The field that holds the date a unit reached a terminal status, per type. */
 export const COMPLETED_KEY = { story: 'completed', feature: 'completed', task: 'done' };
 

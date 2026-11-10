@@ -13,10 +13,16 @@ import { mkTempDir } from '../helpers/tempdir.js';
 const SESSION = (must = 'None.', should = 'None.', nits = 'None.') =>
   `## Review Log\n\n### Session 2026-10-20 (PR #4)\n\n**Must fix**\n\n${must}\n\n**Should fix**\n\n${should}\n\n**Nits**\n\n${nits}\n`;
 
-/** A story unit and a feature unit with the same run state: a status and round from the log (F-69 D5). */
-function units({ status = 'ready_for_merge', round = 1, changeBody = SESSION(), body = '' } = {}) {
+/**
+ * A story unit and a feature unit with the same run state: a status and round
+ * from the log (F-69 D5). `log` is the statuses after `in_progress`; by
+ * default the one entry to `status`.
+ */
+function units({ status = 'ready_for_merge', round = 1, changeBody = SESSION(), body = '', log } = {}) {
+  const tos = ['draft', 'in_progress', ...(log ?? (status === 'in_progress' ? [] : [status]))];
+  const fm = { transitions: tos.map((to) => ({ to, by: 'operator' })) };
   return {
-    story: { kind: 'story', id: 'S-7', storyEntry: 'S7-thing', status, round, changeBody, body },
+    story: { kind: 'story', id: 'S-7', storyEntry: 'S7-thing', status, round, changeBody, body, fm },
     feature: {
       kind: 'feature',
       id: 'F-7',
@@ -26,6 +32,7 @@ function units({ status = 'ready_for_merge', round = 1, changeBody = SESSION(), 
       round,
       changeBody,
       body,
+      fm,
     },
   };
 }
@@ -119,6 +126,28 @@ test('fixing or in_review refuses both kinds, naming the next verb (F-69 D5)', (
   // ready_for_merge passes; so does a unit still in progress (the never-reviewed gate is its own).
   assert.deepEqual(bothKinds({ status: 'ready_for_merge' }).s.findings, []);
   assert.deepEqual(bothKinds({ status: 'in_progress' }).s.findings, []);
+});
+
+test('the review rule reads the review position, whatever the status (F-69 D5)', () => {
+  // [log after in_progress, refused?, next verb]
+  const cases = [
+    [['in_review', 'fixing', 'escalated'], true, 'bl implement'],
+    [['in_review', 'escalated'], true, 'bl review'],
+    [['in_review', 'fixing', 'in_progress'], true, 'bl implement'],
+    [['in_review', 'ready_for_merge', 'escalated'], false, null],
+    [['escalated'], false, null],
+  ];
+  for (const [log, refused, verb] of cases) {
+    const status = log.at(-1);
+    const { s } = bothKinds({ status, log });
+    const review = s.findings.filter((f) => f.gate === 'review');
+    assert.equal(review.length, refused ? 1 : 0, log.join(' → '));
+    if (verb)
+      assert.match(
+        review[0].message,
+        new RegExp(`^S-7 has unresolved review state \\(${status},.*\\n.*\\(${verb} S-7\\)`, 's'),
+      );
+  }
 });
 
 test("a unit never reviewed is refused with D3's message, forge or not", () => {

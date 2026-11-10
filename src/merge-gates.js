@@ -15,6 +15,7 @@ import { extractSection, sectionHasContent, featureBranchName } from './feature.
 import { preflightMainCheckouts } from './cleanup.js';
 import { heldBy } from './blockers.js';
 import { reviewSkipped } from './scripted.js';
+import { reviewOf } from './transition.js';
 
 /**
  * The branch a unit merges: a story's is its directory name, lower case; a
@@ -68,7 +69,8 @@ function prLine(p) {
  * checkout back).
  *
  * The review rule is `featureReviewGate` for both kinds: blocked while the
- * unit's status is `fixing` or `in_review` (F-69 D5) or the latest Review Log
+ * unit's review position (`reviewOf`) is `fixing` or `in_review`, whatever
+ * its status (F-69 D5), or the latest Review Log
  * session has an open Must or Should box; `ready_for_merge` and open nits
  * pass. The refusal names `bl implement` for `fixing` and `bl review` for
  * `in_review`. A unit with no Review Log session
@@ -76,7 +78,8 @@ function prLine(p) {
  * change document's `## Merge` records (`noReviewLines`). A scripted story
  * without `review: true` is not refused: it has no review to wait for (F-71 D3).
  *
- * @param {object} unit — a `storyUnit` or `featureUnit`: its `status` and `round` are its log's
+ * @param {object} unit — a `storyUnit` or `featureUnit`: its `status` and `round` are its log's,
+ *   and its `fm` and `change` give its review position
  * @param {{ config: object, args?: object, repos: string[], find?: Function, preflight?: Function, held?: Function }} opts
  *   `repos` are the unit's repos, in merge order; `held(id)` is the gate
  *   check, `heldBy` at `merge` by default
@@ -106,10 +109,12 @@ export function mergeGates(
     });
   }
 
-  const { blocked, review } = featureReviewGate(unit.status, unit.changeBody ?? '');
+  // The review position, whatever the status: an escalated unit keeps its open items (F-69 D5).
+  const { position } = reviewOf(unit.kind, unit.fm, unit.change ?? null);
+  const { blocked, review } = featureReviewGate(position, unit.changeBody ?? '');
   if (blocked) {
     const next =
-      unit.status === 'in_review' ? `Review it (bl review ${id})` : `Address the review feedback (bl implement ${id})`;
+      position === 'in_review' ? `Review it (bl review ${id})` : `Address the review feedback (bl implement ${id})`;
     findings.push({
       gate: 'review',
       message: `${id} has unresolved review state (${unit.status}, round ${unit.round ?? 0}, latest session ${review?.date ?? 'unknown'}, ${review?.blocking ?? 0} unchecked Must/Should).\n${next} before merging.`,

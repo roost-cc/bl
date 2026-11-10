@@ -38,7 +38,7 @@
           "failure": [{ "when": ["round_within_cap"], "to": "fixing", "then": "fix" }, { "to": "escalated" }]
         },
         "fix": {
-          "from": ["fixing"],
+          "from": ["in_progress", "fixing", "escalated"],
           "during": "fixing",
           "via": ["fix", "fix_self_review"],
           "success": [{ "to": "in_review", "then": "review" }],
@@ -105,7 +105,7 @@
           "failure": [{ "when": ["round_within_cap"], "to": "fixing", "then": "fix" }, { "to": "escalated" }]
         },
         "fix": {
-          "from": ["fixing"],
+          "from": ["in_progress", "fixing", "escalated"],
           "during": "fixing",
           "via": ["fix", "fix_self_review"],
           "success": [{ "to": "in_review", "then": "review" }],

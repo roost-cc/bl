@@ -134,6 +134,7 @@ import {
   applyNew,
   applyTransition,
   enterVerb,
+  implementVerbOf,
   logOf,
   nowAt,
   reviewOf,
@@ -1086,8 +1087,9 @@ export function prepareFeatureRepo(config, feature, repoName, { strict = false }
  * `verb` is `run` or `implement`. The start state is `flow.json`'s
  * (`startOf`): `run` starts from its own `from` or resumes into a verb of its
  * `then` chain (`review`, `fix`); `implement` starts from its own `from`, or
- * runs the `fix` session of a feature in `fixing`. A started `implement`
- * records `in_progress` (`enterVerb`, F-69 D3); the loop records a run's. Every repo of the feature (`featureRepoOrder`, F-52 D3) gets
+ * runs the `fix` session of a feature whose review position is `fixing`
+ * (`implementVerbOf`). A started `implement` records `in_progress`, and a
+ * started `fix` `fixing` (`enterVerb`, F-69 D3); the loop records a run's. Every repo of the feature (`featureRepoOrder`, F-52 D3) gets
  * its worktree, in that order and strictly, before any agent starts (S-862),
  * under the feature's unit directory `unitDir`, where the session starts
  * (F-60 D3). The lead repo is the first; its config is `cfg`.
@@ -1097,7 +1099,8 @@ export function prepareFeatureRepo(config, feature, repoName, { strict = false }
  *             otherWorktrees }}
  */
 export function prepareFeatureWorktree(config, feature, verb = 'run') {
-  const verbs = verb === 'run' ? loadFlow(config.backlogRoot).chainOf('feature', 'run') : IMPLEMENT_VERBS;
+  const verbs =
+    verb === 'run' ? loadFlow(config.backlogRoot).chainOf('feature', 'run') : implementVerbOf('feature', feature);
   const start = startOf(config, 'feature', feature, verbs);
   if (start.refusal) {
     console.error(start.refusal);
@@ -1163,7 +1166,8 @@ export function prepareFeatureWorktree(config, feature, verb = 'run') {
   }
   const sessionVars = featureSessionVars(feature);
 
-  if (start.verb === 'implement') enterVerb(config.backlogRoot, { ...feature, kind: 'feature' }, 'implement');
+  // `fix` from `escalated` or `in_progress` goes back to `fixing`, its `during`.
+  if (IMPLEMENT_VERBS.includes(start.verb)) enterVerb(config.backlogRoot, { ...feature, kind: 'feature' }, start.verb);
   // The branch is recorded in the change document, with every repo prepared.
   const change = openUnitChange(cfg.backlogRoot, feature, branchName, names);
   const reviewPending = start.verb === 'fix';

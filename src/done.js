@@ -33,7 +33,7 @@ import { acquireLock, releaseLock } from './lock.js';
 import { commitAndRecord, reportBacklogCommit, exitOnSyncError } from './sync.js';
 import { dirtySnapshot, failedCommitPending, failedCommitRecord, hasOwnRepo } from './backlog-commit.js';
 import { loadFlow } from './flow.js';
-import { applyTransition, roundOf, statusOf } from './transition.js';
+import { applyTransition, reviewOf, roundOf, statusOf } from './transition.js';
 
 function resolveCommitHash(config, primaryRepoName, rawCommit) {
   if (rawCommit) return rawCommit;
@@ -201,7 +201,7 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   // (open nits do not, as in `bl merge`), so a hand-recorded
   // `ready_for_merge` with open boxes doesn't slip through.
   const change = unitChange(dirname(indexPath), unitRepo);
-  const position = statusOf('story', fm, change.change);
+  const { position } = reviewOf('story', fm, change.change);
   const { blocked, review: reviewSummary } = featureReviewGate(position, change.changeBody);
   if (blocked) {
     const date = reviewSummary?.date ?? 'unknown date';
@@ -212,7 +212,7 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
         : `Address the review feedback (bl implement ${parsed.id})`;
     console.error(
       `Story ${parsed.id} has unresolved review state` +
-        ` (${position}, round ${roundOf('story', fm, change.change)}, latest session ${date},` +
+        ` (${position ?? current}, round ${roundOf('story', fm, change.change)}, latest session ${date},` +
         ` ${unchecked} unchecked Must/Should).` +
         `\n${next} before marking done.`,
     );

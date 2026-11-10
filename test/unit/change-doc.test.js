@@ -26,8 +26,8 @@ import {
 import { extractSection, featureRepoOrder } from '../../src/feature.js';
 import { deployableRepos, mainCommits, tagRepos } from '../../src/release.js';
 import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
-import { statusOf } from '../../src/transition.js';
-import { parseFrontmatter } from '../../src/config.js';
+import { enterVerb, implementVerbOf, startOf, statusOf } from '../../src/transition.js';
+import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { runBl } from '../helpers/run-bl.js';
 import { git as gitIn } from '../helpers/git-backlog.js';
 
@@ -737,4 +737,57 @@ test('applyFixOutcome: fixed records in_review by fix and commits the unit file;
   assert.deepEqual([last.to, last.by, last.via, last.outcome], ['in_review', 'fix', 'fix', 's']);
   assert.equal(git('log', '-1', '--format=%s'), 'chore: F-42 review fixed');
   assert.equal(git('status', '--porcelain'), '', 'the unit file is committed');
+});
+
+test('bl implement on an escalated feature or story whose review position is fixing starts the fix session and records in_review by fix on a fixed outcome', () => {
+  const at = (n) => `2026-11-0${n}T00:00:00Z`;
+  const head = [
+    { at: at(1), to: 'draft', by: 'new' },
+    { at: at(2), to: 'in_progress', by: 'operator' },
+    { at: at(3), to: 'in_review', by: 'run', via: 'open_pr' },
+    { at: at(4), to: 'fixing', by: 'review', via: 'review' },
+  ];
+  // The entries after fixing: a fix that escalated, the loop's escalation, a
+  // run resumed after one, and a unit still in fixing.
+  const tails = [
+    [{ at: at(5), to: 'escalated', by: 'fix' }],
+    [{ at: at(5), to: 'escalated', by: 'run' }],
+    [
+      { at: at(5), to: 'escalated', by: 'fix' },
+      { at: at(6), to: 'in_progress', by: 'run' },
+    ],
+    [],
+  ];
+  for (const kind of ['feature', 'story']) {
+    for (const tail of tails) {
+      const { root, dir } = unitDir(kind === 'story' ? 'S42-hub' : 'F42-hub');
+      copyFileSync(FLOW_TEMPLATE, join(root, 'flow.json'));
+      const indexPath = join(dir, 'index.md');
+      const fm = { [kind === 'story' ? 'story_id' : 'feature_id']: 'X-42', transitions: [...head, ...tail] };
+      writeFileSync(indexPath, `${serializeFrontmatter(fm)}\n# X-42\n`);
+      const name = `${kind}: ${fm.transitions.map((e) => e.to).join(' → ')}`;
+      const verb = implementVerbOf(kind, { fm });
+      assert.equal(verb, 'fix', name);
+      const start = startOf({ backlogRoot: root }, kind, { id: 'X-42', indexPath, fm }, verb, { guards: false });
+      assert.equal(start.refusal, null, name);
+      // bl records the fix's start, `fixing` (nothing for a unit in fixing), then the fixed outcome.
+      enterVerb(root, { kind, indexPath }, verb);
+      const fixed = { structured: { summary: 's', fixed: true, open: 0 }, structuredError: null };
+      assert.equal(applyFixOutcome(root, { id: 'X-42', kind, indexPath }, fixed), true, name);
+      const log = parseFrontmatter(readFileSync(indexPath, 'utf8')).fm.transitions;
+      assert.deepEqual(
+        log.slice(-2).map((e) => [e.to, e.by]),
+        [
+          ['fixing', tail.length === 0 ? 'review' : 'fix'],
+          ['in_review', 'fix'],
+        ],
+        name,
+      );
+    }
+  }
+  // A unit with no open items gets the implement session.
+  for (const to of ['in_progress', 'escalated', 'ready_for_merge']) {
+    const fm = { transitions: [head[0], head[1], ...(to === 'in_progress' ? [] : [{ to, by: 'operator' }])] };
+    assert.equal(implementVerbOf('feature', { fm }), 'implement', to);
+  }
 });

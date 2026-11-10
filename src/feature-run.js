@@ -3347,7 +3347,7 @@ function finishClean(ctx) {
   }
   // `clean` means `bl merge` will take it: the same gate, read the
   // same way.
-  const status = unitStatus(ctx);
+  const status = reviewState(ctx).position;
   const gate = featureReviewGate(status, readChangeText(ctx).body);
   if (gate.blocked) {
     return finish(

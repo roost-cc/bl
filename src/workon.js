@@ -50,7 +50,7 @@ import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { applyFixOutcome, openUnitChange, readChange, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
 import { loadFlow } from './flow.js';
-import { IMPLEMENT_VERBS, enterVerb, nowAt, roundOf, startOf, statusOf } from './transition.js';
+import { enterVerb, implementVerbOf, nowAt, roundOf, startOf } from './transition.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { syncAndCommit } from './sync.js';
 import { sessionEffort, storyEffort } from './effort.js';
@@ -74,7 +74,8 @@ export function idNum(id) {
  * Component IDs expand to their refined stories (draft stories must be
  * refined first; closed ones are complete). An explicitly-named story is
  * included when `flow.json`'s `implement` row starts from its status, or its
- * `fix` row (a review is pending) does (`IMPLEMENT_VERBS`, `startOf`); any
+ * `fix` row does when its review position is `fixing` (`implementVerbOf`,
+ * `startOf`); any
  * other is reported as a notice with the table's refusal. Named targets
  * outrank component-expanded ones on dedup.
  *
@@ -130,7 +131,8 @@ export function resolveWorkonTargets(positionals, config) {
       errors.push(`Story ${parsed.id} not found in backlog`);
       continue;
     }
-    const { refusal } = startOf(config, 'story', storyUnit(story, config), IMPLEMENT_VERBS);
+    const unit = storyUnit(story, config);
+    const { refusal } = startOf(config, 'story', unit, implementVerbOf('story', unit));
     if (refusal) {
       notices.push(`${refusal} — skipping.`);
       continue;
@@ -251,8 +253,8 @@ export function otherWorktreesLine(list) {
  * Create/resume a story's worktree through `prepareStoryRepo`, record the
  * branch in the story's change document (change-doc.js), and build the
  * prompt-template variables. Shared by the interactive flow and
- * `bl run S-n`'s prep. A story in `fixing` (its transition log, F-69 D5)
- * gets the `workon-review` prompt over `workon`.
+ * `bl run S-n`'s prep. A story whose review position is `fixing` (its
+ * transition log, F-69 D5) gets the `workon-review` prompt over `workon`.
  *
  * Side-effecting and may `process.exit(1)` on a hard guard (no repo,
  * uncommitted changes, local main ahead) — same guards as a single workon.
@@ -306,8 +308,9 @@ function prepareStoryWorktree(parsed, found, config, { strict = false } = {}) {
   };
 
   const unitState = unitChange(dirname(indexPath), repoName);
-  // A unit in `fixing` gets the fix session (F-69 D3), for its log's round (D5).
-  const reviewPending = statusOf('story', fm, unitState.change) === 'fixing';
+  // A unit whose review position is `fixing`, whatever its status, gets the
+  // fix session (F-69 D3), for its log's round (D5).
+  const reviewPending = implementVerbOf('story', { fm, change: unitState.change }) === 'fix';
   const reviewRound = roundOf('story', fm, unitState.change);
   const legacyPrReview = existsSync(join(effectiveWorktreePath, '.pr-review.md'));
   const promptName = reviewPending ? 'workon-review' : 'workon';
@@ -464,8 +467,10 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     process.exit(await implementScripted(parsed, found, config, prep, defaultRunner()));
   }
 
-  // bl, not the agent, records that the story started (F-69 D3).
-  if (!prep.reviewPending) enterVerb(config.backlogRoot, { kind: 'story', indexPath: prep.indexPath }, 'implement');
+  // bl, not the agent, records that the story started (F-69 D3): a fix from
+  // `escalated` or `in_progress` goes back to `fixing`.
+  const verb = prep.reviewPending ? 'fix' : 'implement';
+  enterVerb(config.backlogRoot, { kind: 'story', indexPath: prep.indexPath }, verb);
 
   // A fix session returns its outcome in the outcome file (F-68 D1, D3).
   const vars = prep.reviewPending ? { ...prep.promptVars, outcomeCarrier: 'file' } : prep.promptVars;
