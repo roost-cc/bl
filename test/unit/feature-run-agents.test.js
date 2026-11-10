@@ -36,6 +36,7 @@ import {
 } from '../helpers/feature-run-fixture.js';
 import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
 import { claudeCapacity } from '../../src/agents/claude.js';
+import { codexCapacity } from '../../src/agents/codex.js';
 
 // ---------------------------------------------------------------------------
 // An agent usage limit: wait it out and rerun the step (S-835)
@@ -956,6 +957,63 @@ test('an unavailable reading whose until is not a time is unknown: the configura
     assert.equal(loadRunState(config, 'F-1').unavailable[0].until, new Date(8.64e15).toISOString());
   } finally {
     cleanup();
+  }
+});
+
+test('an unavailable reading whose until has passed is unknown: the configuration is spawned, and nothing waits (S-1444)', async () => {
+  const claudeAt = (offsetMs) => (runner) => {
+    const body = {
+      limits: [
+        { kind: 'session', percent: 100, resets_at: new Date(runner.clock() + offsetMs).toISOString(), scope: null },
+      ],
+    };
+    return (agent, model) => claudeCapacity(body, model);
+  };
+  const cases = [
+    { label: 'claude, 10 minutes past', models: MODELS, first: 'claude opus', read: claudeAt(-600_000) },
+    { label: 'claude, exactly now', models: MODELS, first: 'claude opus', read: claudeAt(0) },
+    {
+      label: 'codex, 30 seconds past',
+      models: {
+        agent: [
+          { agent: 'codex', model: 'gpt-6-sol' },
+          { agent: 'claude', model: 'sonnet' },
+        ],
+      },
+      first: 'codex gpt-6-sol',
+      read: (runner) => {
+        const result = {
+          rateLimits: {
+            primary: {
+              usedPercent: 100,
+              windowDurationMins: 300,
+              resetsAt: Math.floor((runner.clock() - 30_000) / 1000),
+            },
+          },
+        };
+        return (agent) =>
+          agent === 'codex'
+            ? codexCapacity(result)
+            : { state: 'available', scope: 'model', until: null, windows: [], message: '' };
+      },
+    },
+  ];
+  for (const { label, models, first, read } of cases) {
+    const { dir, cleanup, config, feature, prep } = setup({}, models);
+    try {
+      const runner = fakeRunner({ dir, feature });
+      runner.capacity = read(runner);
+      const logs = [];
+      runner.log = (m) => logs.push(m);
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'clean', `${label}: ${JSON.stringify(state.history.filter((h) => !h.ok))}`);
+      assert.equal(configsOf(runner.calls, (c) => c.prompt === 'feature-story')[0], first, label);
+      assert.equal(state.history.filter((h) => h.step === 'waiting' || h.step === 'unavailable').length, 0, label);
+      assert.deepEqual(loadRunState(config, 'F-1').unavailable ?? [], [], label);
+      assert.ok(!logs.some((l) => l.includes('is unavailable')), `${label}: ${logs.join('\n')}`);
+    } finally {
+      cleanup();
+    }
   }
 });
 

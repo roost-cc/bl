@@ -1584,7 +1584,8 @@ function markOut(ctx, { step, configuration: c, kind, scope, message, until }) {
  * `account`-scoped answer is the agent's for every model, so `asked` keeps
  * it and the agent is asked once per walk. A runner without `capacity`, or
  * one that throws or answers nothing usable, reads `unknown`: a broken read
- * costs at most a refused spawn. `topLevel` is the run config's
+ * costs at most a refused spawn. An `unavailable` reading whose reset has
+ * passed also reads `unknown`. `topLevel` is the run config's
  * `backlog.json` top level, which an adapter may read its settings from
  * (`local`).
  */
@@ -1607,6 +1608,17 @@ function readCapacity(runner, c, asked, topLevel) {
       message: `${reading.message ?? ''} (its reset is not a time)`.trim(),
     };
   }
+  // A reset that has passed says nothing about now: the local clock may run
+  // ahead of the agent's, or the reading may lag a reset. The spawn finds out,
+  // and a refusal puts the configuration on the out-list (S-1444).
+  if (reading.state === 'unavailable' && untilMs(reading) <= runnerNow(runner).getTime()) {
+    reading = {
+      ...reading,
+      state: 'unknown',
+      until: null,
+      message: `${reading.message ?? ''} (its reset, ${localTime(reading.until)}, has passed)`.trim(),
+    };
+  }
   if (reading.scope === 'account') asked.set(c.agent, reading);
   return reading;
 }
@@ -1619,7 +1631,8 @@ function readCapacity(runner, c, asked, topLevel) {
  *
  * Each configuration, from the top: skipped while the out-list has it, or
  * when its adapter has no headless mode; then its capacity is read, and an
- * `unavailable` reading puts it on the out-list; then it is spawned, and a
+ * `unavailable` reading puts it on the out-list, unless its `until` has
+ * passed (S-1444); then it is spawned, and a
  * refusal puts it on the out-list. The review role also skips every
  * configuration that ran an implementing step of this run (F-64 D4): the
  * reviewer is never the implementer. A refused or skipped configuration is not
