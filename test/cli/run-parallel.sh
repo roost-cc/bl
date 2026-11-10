@@ -149,6 +149,66 @@ for run in 1 2 3; do
   assert_eq "start $run: temp directory removed" "" "$(ls -A "$STOP")"
 done
 
+# A signal just before `wait` starts still stops the run at once (S-1414). The
+# runner's first `kill -0` of its poll sends SIGTERM to the runner, so the
+# signal comes after the poll's flag check. A `wait` there would block for the
+# whole `sleep 30` of the item.
+printf 'sleep 30\n' >"$DIR/long"
+STOP="$DIR/before-wait"
+mkdir -p "$STOP"
+started=$EPOCHREALTIME
+env TMPDIR="$STOP" RUN_PARALLEL="$RUN_PARALLEL" bash -c '
+  source "$RUN_PARALLEL"
+  fired=
+  kill() {
+    if [[ "$1" == -0 && -z "$fired" ]]; then
+      fired=1
+      builtin kill -TERM $$
+    fi
+    builtin kill "$@"
+  }
+  run_parallel demo bash "$1"
+' _ "$DIR/long" >"$STOP.out" 2>&1 &
+runner=$!
+set +e
+wait "$runner" 2>/dev/null
+rc=$?
+set -e
+took=$(((${EPOCHREALTIME/./} - ${started/./}) / 1000))
+out=$(cat "$STOP.out")
+assert_exit "signal before wait: the runner ends by the signal" "143" "$rc"
+assert_contains "signal before wait: the runner says it was stopped" "demo: stopped by SIGTERM" "$out"
+# About 0.1 s on an idle host; the bound leaves room for a loaded one.
+if ((took < 5000)); then pass; else fail "signal before wait: the runner took ${took} ms"; fi
+if pgrep -f -- "$DIR/long" >/dev/null; then
+  fail "signal before wait: an item still runs"
+  pkill -KILL -f -- "$DIR/long"
+else
+  pass
+fi
+assert_eq "signal before wait: temp directory removed" "" "$(ls -A "$STOP")"
+
+# A signal after the last wait still ends the runner by that signal (S-1414).
+# The print of the last item sends SIGTERM to the runner, so the signal comes
+# after the last wait and before the runner removes its traps.
+STOP="$DIR/after-wait"
+mkdir -p "$STOP"
+env TMPDIR="$STOP" RUN_PARALLEL="$RUN_PARALLEL" bash -c '
+  source "$RUN_PARALLEL"
+  _run_parallel_print() { kill -TERM $$; }
+  run_parallel demo bash "$1"
+' _ "$DIR/fast" >"$STOP.out" 2>&1 &
+runner=$!
+set +e
+wait "$runner" 2>/dev/null
+rc=$?
+set -e
+out=$(cat "$STOP.out")
+assert_exit "signal after the last wait: the runner ends by the signal" "143" "$rc"
+assert_contains "signal after the last wait: the runner says it was stopped" "demo: stopped by SIGTERM" "$out"
+if [[ "$out" == *summary* ]]; then fail "signal after the last wait: the runner prints its summary"; else pass; fi
+assert_eq "signal after the last wait: temp directory removed" "" "$(ls -A "$STOP")"
+
 # A signal to a nested runner ends an item of the inner runner that ignores
 # SIGTERM: the inner runner has half the grace time, so it sends SIGKILL to
 # its item before the outer runner sends SIGKILL to it. Three runs, because a
