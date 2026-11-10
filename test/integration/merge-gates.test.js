@@ -269,12 +269,17 @@ test('--no-review merges a never-reviewed story and feature and records the choi
 // `mergeGates` called directly on real repos: its stray-worktree check reads
 // each registered repo's `git worktree list`. No forge, a passing preflight.
 
+/** A log reviewed clean: the merge gate reads the review position from it (F-69 D5). */
+const CLEAN = {
+  transitions: ['draft', 'in_progress', 'in_review', 'ready_for_merge'].map((to) => ({ to, by: 'operator' })),
+};
+
 const UNITS = {
   story: {
     kind: 'story',
     id: 'S-7',
     storyEntry: 'S7-thing',
-    reviewStatus: 'addressed',
+    fm: CLEAN,
     changeBody: `## Review Log\n\n${SESSION()}\n`,
     body: '',
   },
@@ -283,7 +288,7 @@ const UNITS = {
     id: 'F-7',
     featureEntry: 'F7-thing',
     branch: 'f7-thing',
-    reviewStatus: 'addressed',
+    fm: CLEAN,
     changeBody: `## Review Log\n\n${SESSION()}\n`,
     body: '',
   },
