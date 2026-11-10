@@ -117,6 +117,38 @@ for sig in TERM INT HUP; do
   assert_eq "SIG$sig: temp directory removed" "" "$(ls -A "$STOP")"
 done
 
+# A signal while the runner starts its items still ends every item that has
+# started (S-1414). Each `eager` item sends SIGTERM to the runner as it starts
+# and ignores SIGTERM itself, so the signal comes while later items start, and
+# only the stop's SIGKILL ends an item. Before S-1414 a signal right after an
+# `&` left that item running in most runs. pgrep also finds an item that has
+# not yet run exec: until then its command line is the runner's.
+eager=()
+for n in $(seq 20); do
+  printf 'trap "" TERM; kill -TERM $PPID; while :; do sleep 0.1; done\n' >"$DIR/eager-$n"
+  eager+=("$DIR/eager-$n")
+done
+for run in 1 2 3; do
+  STOP="$DIR/start-$run"
+  mkdir -p "$STOP"
+  env RUN_PARALLEL_GRACE=5 TMPDIR="$STOP" bash "$RUN_PARALLEL" demo bash "${eager[@]}" >"$STOP.out" 2>&1 &
+  runner=$!
+  set +e
+  wait "$runner" 2>/dev/null
+  rc=$?
+  set -e
+  out=$(cat "$STOP.out")
+  assert_exit "start $run: the runner ends by the signal" "143" "$rc"
+  assert_contains "start $run: the runner says it was stopped" "demo: stopped by SIGTERM" "$out"
+  if pgrep -f -- "$DIR/eager-" >/dev/null; then
+    fail "start $run: an item still runs"
+    pkill -KILL -f -- "$DIR/eager-"
+  else
+    pass
+  fi
+  assert_eq "start $run: temp directory removed" "" "$(ls -A "$STOP")"
+done
+
 # A signal to a nested runner ends an item of the inner runner that ignores
 # SIGTERM: the inner runner has half the grace time, so it sends SIGKILL to
 # its item before the outer runner sends SIGKILL to it. Three runs, because a
