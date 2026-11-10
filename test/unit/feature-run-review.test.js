@@ -1209,6 +1209,37 @@ test('a failed verdict write stops the run instead of continuing', async () => {
   }
 });
 
+test('a log write that fails during bl review is reported as failed, not escalated', async () => {
+  const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        verify: () => {
+          verifySession(CH(feature), { pending: true, round: 1 });
+          atomicHooks.beforeRename = (tmp) => {
+            if (!readFileSync(tmp, 'utf8').includes('to: fixing')) return;
+            atomicHooks.beforeRename = null;
+            throw new Error('injected log write failure');
+          };
+          return reviewOutcome({ must: 1 });
+        },
+      },
+    });
+    const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
+    assert.equal(result.escalated, false);
+    assert.equal(result.end, null, 'no escalation end, which would tell the operator to clear ## Escalation');
+    assert.match(result.error, /^the transition log could not be written at review: .*injected log write failure/);
+    assert.equal(loadRunState(config, 'F-1').status, 'failed');
+    const body = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).body;
+    assert.match(extractSection(body, 'Escalation')?.trim() ?? 'None.', /^None\.$/);
+  } finally {
+    atomicHooks.beforeRename = null;
+    cleanup();
+  }
+});
+
 test('the fake agents return outcomes their schemas accept', () => {
   for (const [name, o] of [
     ['review', reviewOutcome({ pending: true })],

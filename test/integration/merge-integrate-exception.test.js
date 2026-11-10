@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { installPartialWrites } from '../helpers/partial-write.js';
-import { integrateUnit, runLockPath } from '../../src/feature-run.js';
+import { _hooks as atomicHooks } from '../../src/atomic-write.js';
+import { integrateForMerge } from '../../src/merge-integrate.js';
+import { integrateUnit, loadRunState, runLockPath } from '../../src/feature-run.js';
 import {
   addSecond,
   escalation,
@@ -75,6 +77,36 @@ test('resolution_exception_aborts_all_repos_and_escalates_before_unlock: an ordi
     } finally {
       fx.cleanup();
     }
+  }
+});
+
+test("a log write that fails during bl merge's integration is reported as failed, not escalated", async () => {
+  const fx = fixture();
+  const errors = [];
+  const consoleError = console.error;
+  try {
+    landOnMain(fx, 'f1-feat.txt', 'main version\n', 'main edits');
+    const { config, unit } = featureCtx(fx);
+    const { runner } = scriptedRunner({ test: 'true', resolve: resolveBoth });
+    // The round over the resolution records `in_review`; that write fails.
+    atomicHooks.beforeRename = (tmp) => {
+      if (!readFileSync(tmp, 'utf8').includes('to: in_review')) return;
+      atomicHooks.beforeRename = null;
+      throw new Error('injected log write failure');
+    };
+    console.error = (...a) => errors.push(a.join(' '));
+    const landed = await integrateForMerge(config, unit, ['code'], { runner });
+    console.error = consoleError;
+    assert.equal(landed, false);
+    const text = errors.join('\n');
+    assert.match(text, /integration with main stopped — the transition log could not be written at .*injected/);
+    assert.doesNotMatch(text, /See ## Escalation/, 'the section is empty: bl merge must not point at it');
+    assert.equal(escalation(featureFile(fx)).replace(/^None\.$/, ''), '');
+    assert.equal(loadRunState(config, 'F-1').status, 'failed');
+  } finally {
+    console.error = consoleError;
+    atomicHooks.beforeRename = null;
+    fx.cleanup();
   }
 });
 

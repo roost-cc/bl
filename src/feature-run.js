@@ -1065,9 +1065,11 @@ function withContainerCleanup(ctx, label, fn) {
 
 /**
  * A run the loop stopped from inside a step, after `finish()` saved the
- * escalated state. Thrown so the step's callers skip their bookkeeping (a
+ * escalated state, or the failed one when a log write failed (`logWrite`,
+ * `recordVerdict`). Thrown so the step's callers skip their bookkeeping (a
  * nudge retry, a review round's verdict), and caught by runFeature and
- * reviewFeature, which return the escalated state.
+ * reviewFeature, which return that state; `escalated` is true only for an
+ * escalated one.
  */
 export class RunStoppedError extends Error {
   constructor(message, state) {
@@ -3771,8 +3773,9 @@ export function integrateUnit({ unit, config, prep, runner }) {
  * Whatever stops the integration by throwing (a session that could not run, a
  * failed container cleanup, a failed run-state write, a bug) leaves no
  * worktree mid-merge, still under the run lock: every merge in progress is
- * aborted and the merges are rolled back. A `RunStoppedError` has escalated
- * already; any other error escalates as a merge here (F-36 D8), with the
+ * aborted and the merges are rolled back. A `RunStoppedError` has stopped
+ * the run already, escalated or failed (a log write that failed writes no
+ * ## Escalation); any other error escalates as a merge here (F-36 D8), with the
  * conflict evidence read before the abort: what the resolution recorded
  * (`ctx.integrationEvidence`), else each repo still mid-merge.
  */
@@ -3781,7 +3784,9 @@ function integrationThrew(ctx, e) {
   const evidence = e instanceof RunStoppedError ? '' : integrationEvidence(ctx);
   const stuck = ctx.repos.filter((r) => !abortIntegration(ctx, r.worktreePath));
   const rolledBack = rollBackNote(ctx, ctx.repos);
-  if (e instanceof RunStoppedError) return { ok: false, escalated: true, reason: e.message, repos: ctx.repos };
+  if (e instanceof RunStoppedError) {
+    return { ok: false, escalated: e.state?.status === 'escalated', reason: e.message, repos: ctx.repos };
+  }
   ctx.runner.log(`  ${e.stack ?? e}`);
   const reason = `merge with main: stopped by an error: ${e.message}`;
   const details = [evidence, abortNote(stuck).trim(), rolledBack, integrationNextStep(ctx, ctx.repos)]
@@ -4450,13 +4455,15 @@ export async function reviewFeature({
       result = reviewRound(ctx, { reReview: isReReview(review), closing: owed && round >= maxRounds });
     } catch (e) {
       if (!(e instanceof RunStoppedError)) throw e;
+      // A failed log write stops the run as `failed`, with no ## Escalation.
+      const escalated = e.state?.status === 'escalated';
       return {
         status: unitStatus(ctx),
         round: reviewState(ctx).reviewed,
         verdict: false,
-        escalated: true,
+        escalated,
         error: e.message,
-        end: endOfReview(ctx, maxRounds, true),
+        end: escalated ? endOfReview(ctx, maxRounds, true) : null,
       };
     }
     state.status = result.abortError ? 'failed' : 'reviewed';
