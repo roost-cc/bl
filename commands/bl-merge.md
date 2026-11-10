@@ -36,10 +36,15 @@ story is in it, then every other repo by its first story in dependency order. A 
 feature branch in a repo no story names is refused, naming the repo, before anything merges.
 Per repo, in that order:
 
-1. Merges the branch into main (`--no-ff`)
-2. Pushes main to origin and closes the branch's open PR (forge ops `change.find` and
-   `change.close`)
-3. Removes the worktree directory and deletes the local branch (unless `--keep`)
+1. Makes the merge commit (`--no-ff`) at `origin/main` in a throwaway worktree under the worktree
+   root, runs the repo's `check` plugins on it when it has any, and pushes that commit to main.
+   Then the main checkout fast-forwards to it. A conflict, a refused push or a moved `main` stops
+   with the main checkout as it was; rerun `bl merge <id>`.
+2. Installs the main checkout's dependencies: `npm ci` for a `package-lock.json`, `pnpm install
+--frozen-lockfile` for a `pnpm-lock.yaml`, nothing for neither. If the install fails, `bl merge`
+   stops and prints the command to run by hand, then rerun `bl merge <id>`.
+3. Closes the branch's open PR (forge ops `change.find` and `change.close`)
+4. Removes the worktree directory and deletes the local branch (unless `--keep`)
 
 `bl` goes first because a later repo's pre-push gate may read backlog output the new `bl`
 generates (a link check over the documentation root `bl report` builds, say). Right after `bl` merges, `bl merge`
@@ -76,5 +81,3 @@ either way the command exits 1 before it writes the manifest or marks anything d
 `bl merge F-3` again resumes once the cause is fixed. A failed backlog commit also exits 1. A
 story merged alone gets no tag and no manifest. When anything waits on you, the last line
 is `inbox: <n> item(s) need you (bl inbox)`.
-
-If the merge has conflicts, it stops and asks you to resolve manually.

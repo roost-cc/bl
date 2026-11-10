@@ -1191,7 +1191,10 @@ refused.
 Then the branch is brought up to date with main in its worktree (main merged
 into the branch), gated by the test plugins when it took commits, and pushed.
 A conflict or a red gate rolls that back, writes ## Escalation and stops with
-no main checkout touched. A merge into main that still fails is aborted.`);
+no main checkout touched. The merge commit is made at origin/main in a
+throwaway worktree and pushed; the main checkout then fast-forwards to it and
+installs its dependencies. A conflict, a refused push or a moved main leaves
+the main checkout as it was.`);
     process.exit(0);
   }
 
