@@ -308,7 +308,7 @@ export async function requestUpdate(config, opts) {
     }
 
     let replaced = null;
-    updateSpecFile(config.backlogRoot, s.indexPath, (fm) => {
+    await updateSpecFile(config.backlogRoot, s.indexPath, (fm) => {
       replaced = storyRequest(fm);
       fm.update_request = request;
       if (request === 'drop') fm.update_request_reason = reason;

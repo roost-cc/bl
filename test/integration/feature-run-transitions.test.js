@@ -105,7 +105,7 @@ test('a merge after the run records done by merge on the feature and on each sto
   try {
     const feature = findFeature(normalizeFeatureId('F-1'), fx.config);
     const stories = readAllStories(fx.config).filter((s) => s.feature === 'F-1');
-    markFeatureMerged(fx.config, feature, stories, { decided: 'abc1234' });
+    await markFeatureMerged(fx.config, feature, stories, { decided: 'abc1234' });
     assert.deepEqual(hops(fx.feature.indexPath).at(-1), ['done', 'merge', 'merge', null]);
     const fm = fmOf(fx.feature.indexPath);
     assert.equal(statusOf('feature', fm), 'done');

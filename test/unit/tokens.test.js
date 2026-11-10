@@ -291,11 +291,11 @@ test('a usage of nothing creates no tokens_by_step entry', () => {
   assert.equal(fm.tokens_input, '5');
 });
 
-test('accumulateTokensOnFile reads a CRLF file, writes the map, and keeps the body', () => {
+test('accumulateTokensOnFile reads a CRLF file, writes the map, and keeps the body', async () => {
   const dir = mkTempDir('bl-tok-');
   const p = join(dir, 'index.md');
   writeFileSync(p, '---\r\nstory_id: S-1\r\ntitle: T\r\n---\r\n\r\n# T\r\n\r\nBody line.\r\n');
-  assert.equal(accumulateTokensOnFile(dir, p, use(3, 4), 'implement'), true);
+  assert.equal(await accumulateTokensOnFile(dir, p, use(3, 4), 'implement'), true);
   const out = readFileSync(p, 'utf8');
   assert.ok(out.endsWith('---\r\n\r\n# T\r\n\r\nBody line.\r\n'), out);
   assert.equal((out.match(/^---/gm) ?? []).length, 2, 'one frontmatter block');
@@ -305,25 +305,25 @@ test('accumulateTokensOnFile reads a CRLF file, writes the map, and keeps the bo
   assert.deepEqual(fm.tokens_by_step, { implement: { input: '3', output: '4', cache_creation: '0', cache_read: '0' } });
 });
 
-test('accumulateTokensOnFile and accumulateStepTokensOnFile leave a file with no frontmatter untouched', () => {
+test('accumulateTokensOnFile and accumulateStepTokensOnFile leave a file with no frontmatter untouched', async () => {
   const dir = mkTempDir('bl-tok-');
   const p = join(dir, 'index.md');
   const content = '# No frontmatter\n\nJust a body.\n';
   writeFileSync(p, content);
-  assert.equal(accumulateTokensOnFile(dir, p, use(1), 'implement'), false);
-  assert.equal(accumulateStepTokensOnFile(dir, p, 'implement', use(1)), false);
+  assert.equal(await accumulateTokensOnFile(dir, p, use(1), 'implement'), false);
+  assert.equal(await accumulateStepTokensOnFile(dir, p, 'implement', use(1)), false);
   assert.equal(readFileSync(p, 'utf8'), content);
 });
 
-test('accumulateStepTokensOnFile writes the map and the totals, and nothing for no usage', () => {
+test('accumulateStepTokensOnFile writes the map and the totals, and nothing for no usage', async () => {
   const dir = mkTempDir('bl-tok-');
   const p = join(dir, 'index.md');
   const content = '---\nstory_id: S-1\ntokens_input: 7\n---\n\n# T\n';
   writeFileSync(p, content);
-  assert.equal(accumulateStepTokensOnFile(dir, p, 'implement', null), false);
-  assert.equal(accumulateStepTokensOnFile(dir, p, 'implement', use(0)), false);
+  assert.equal(await accumulateStepTokensOnFile(dir, p, 'implement', null), false);
+  assert.equal(await accumulateStepTokensOnFile(dir, p, 'implement', use(0)), false);
   assert.equal(readFileSync(p, 'utf8'), content);
-  assert.equal(accumulateStepTokensOnFile(dir, p, 'fix.1', use(2, 1)), true);
+  assert.equal(await accumulateStepTokensOnFile(dir, p, 'fix.1', use(2, 1)), true);
   const { fm } = parseFrontmatter(readFileSync(p, 'utf8'));
   assert.equal(fm.tokens_input, '9', 'the totals take the same difference');
   assert.equal(fm.tokens_output, '1');
@@ -452,7 +452,7 @@ test('step-usage-rejects-nonfinite-and-fractional-counts-consistently', async ()
     // Interactive: the map and the totals on file, from a transcript difference.
     const path = join(dir, 'index.md');
     writeFileSync(path, '---\ntokens_input: 0\n---\n\nBody\n');
-    accumulateStepTokensOnFile(dir, path, 'implement', usageDelta(null, usage));
+    await accumulateStepTokensOnFile(dir, path, 'implement', usageDelta(null, usage));
     const onFile = parseFrontmatter(readFileSync(path, 'utf8')).fm;
     assert.equal(Number(onFile.tokens_input), want, `${label}: interactive totals`);
     assert.equal(entry(onFile.tokens_by_step), want, `${label}: interactive map`);
@@ -548,11 +548,11 @@ test('valid_large_counts_survive_merge_and_repeated_accumulation', async () => {
     ],
     [
       'interactive difference adds onto large stored totals and entry',
-      () => {
+      async () => {
         const path = join(mkTempDir('bl-tokens-big-'), 'index.md');
         writeFileSync(path, `---\nstory_id: S-1\ntokens_input: "${big}"\n---\n\nBody\n`);
-        accumulateStepTokensOnFile(dirname(path), path, 'implement', use(MAX));
-        accumulateStepTokensOnFile(dirname(path), path, 'implement', use(MAX));
+        await accumulateStepTokensOnFile(dirname(path), path, 'implement', use(MAX));
+        await accumulateStepTokensOnFile(dirname(path), path, 'implement', use(MAX));
         const { fm } = parseFrontmatter(readFileSync(path, 'utf8'));
         assert.equal(fm.tokens_by_step.implement.input, String(2n * BigInt(MAX)), 'map');
         return fm.tokens_input;
@@ -565,7 +565,7 @@ test('valid_large_counts_survive_merge_and_repeated_accumulation', async () => {
       String(2n ** 53n * 9n),
     ],
   ];
-  for (const [name, run, expected] of cases) assert.equal(run(), expected, name);
+  for (const [name, run, expected] of cases) assert.equal(await run(), expected, name);
   // Provider numbers past the safe range are still rejected: they may already be rounded.
   assert.equal(usageDelta(null, use(2 ** 53)), null, 'an unsafe provider number');
 });
@@ -638,7 +638,7 @@ test('token_lock_reclaim_cannot_remove_new_live_holder', async () => {
     }
     let ran = false;
     try {
-      withSpecLock(path, () => (ran = true), { waitMs: 50 });
+      await withSpecLock(path, () => (ran = true), { waitMs: 50 });
     } catch (e) {
       // A lock that never frees throws instead of running the writer.
       if (!(e instanceof SpecLockError)) throw e;
@@ -675,20 +675,20 @@ test('reconciliation_snapshot_and_commit_share_token_lock', async () => {
     const [feature] = readAllFeatures(config);
     // Every transcript-total writer: the story's and the feature's re-read.
     const writers = {
-      story: { path: join(dir, 'stories', 'S1-a', 'index.md'), record: () => recordStoryTokens('S-1', config) },
-      feature: { path: feature.indexPath, record: () => recordFeatureTokens(feature, config) },
+      story: { path: join(dir, 'stories', 'S1-a', 'index.md'), record: async () => recordStoryTokens('S-1', config) },
+      feature: { path: feature.indexPath, record: async () => recordFeatureTokens(feature, config) },
     };
     const isUnitDir = await unitDirTest(config);
     for (const [name, { path, record }] of Object.entries(writers)) {
       // A session difference committed before the re-read: the map holds 15.
-      assert.equal(accumulateStepTokensOnFile(dir, path, 'implement', use(15)), true, name);
+      assert.equal(await accumulateStepTokensOnFile(dir, path, 'implement', use(15)), true, name);
       const held = [];
       // The session started in the unit directory: its transcripts are there.
       ClaudeProvider.prototype.getTokens = (p) => {
         held.push(liveLockHolder(specLockPath(path)));
         return isUnitDir(p) ? use(15) : null;
       };
-      record();
+      await record();
       assert.ok(
         held.length > 0 && held.every((pid) => pid === process.pid),
         `${name}: transcripts read under the token lock`,
@@ -703,7 +703,7 @@ test('reconciliation_snapshot_and_commit_share_token_lock', async () => {
   }
 });
 
-test('token writers stay best-effort when the lock cannot be created', () => {
+test('token writers stay best-effort when the lock cannot be created', async () => {
   const dir = mkTempDir('bl-tokens-nolock-');
   const path = join(dir, 'index.md');
   const before = '---\nstory_id: S-1\n---\n\nBody\n';
@@ -713,8 +713,8 @@ test('token writers stay best-effort when the lock cannot be created', () => {
   const saved = process.env.TMPDIR;
   process.env.TMPDIR = join(dir, 'missing');
   try {
-    assert.equal(accumulateTokensOnFile(dir, path, use, 'implement'), false, 'headless');
-    assert.equal(accumulateStepTokensOnFile(dir, path, 'implement', use), false, 'interactive');
+    assert.equal(await accumulateTokensOnFile(dir, path, use, 'implement'), false, 'headless');
+    assert.equal(await accumulateStepTokensOnFile(dir, path, 'implement', use), false, 'interactive');
   } finally {
     if (saved === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = saved;
@@ -735,12 +735,12 @@ test('interactive_crlf_reconciliation_preserves_frontmatter', async () => {
   try {
     const config = loadConfig({ backlogRoot: dir });
     const path = join(dir, 'stories', 'S1-a', 'index.md');
-    assert.equal(accumulateStepTokensOnFile(dir, path, 'implement', use(15)), true);
+    assert.equal(await accumulateStepTokensOnFile(dir, path, 'implement', use(15)), true);
     // The same spec as a CRLF checkout (git autocrlf, a hand edit) leaves it.
     writeFileSync(path, readFileSync(path, 'utf8').replace(/\n/g, '\r\n'));
     const isUnitDir = await unitDirTest(config);
     ClaudeProvider.prototype.getTokens = (p) => (isUnitDir(p) ? use(20) : null);
-    assert.equal(recordStoryTokens('S-1', config), true);
+    assert.equal(await recordStoryTokens('S-1', config), true);
     const out = readFileSync(path, 'utf8');
     assert.equal(out.replace(/\r\n/g, '').includes('\n'), false, 'written back CRLF');
     assert.equal((out.match(/^---\r$/gm) ?? []).length, 2, 'one frontmatter block');
@@ -815,13 +815,13 @@ test('recordFeatureTokens_sums_safe_provider_counts_across_repos_past_2pow53_for
       // D3); the unit directory has none.
       const isUnitDir = await unitDirTest(config);
       ClaudeProvider.prototype.getTokens = (p) => (isUnitDir(p) ? null : u);
-      recordFeatureTokens(feature, config);
+      await recordFeatureTokens(feature, config);
       const { fm } = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));
       for (const k of kinds) assert.equal(fm[`tokens_${k}`], expected, `${name}: feature ${k}`);
       // A story's re-read: one worktree, whose count past 2^53 stays exact.
       const story = u && all(BigInt(u.input) * 2n);
       ClaudeProvider.prototype.getTokens = (p) => (isUnitDir(p) ? null : story);
-      recordStoryTokens('S-1', config);
+      await recordStoryTokens('S-1', config);
       const sfm = parseFrontmatter(readFileSync(join(dir, 'stories', 'S1-a', 'index.md'), 'utf8')).fm;
       for (const k of kinds)
         assert.equal(sfm[`tokens_${k}`], story ? String(story[k]) : undefined, `${name}: story ${k}`);
@@ -884,9 +884,9 @@ test('transcript_reconciliation_never_zeros_usage_when_provider_number_exceeds_s
         const before = [feature.indexPath, storyPath].map((path) => readFileSync(path, 'utf8'));
         let calls = 0;
         ClaudeProvider.prototype.getTokens = () => (calls++ === 0 ? a : b);
-        recordFeatureTokens(feature, config);
+        await recordFeatureTokens(feature, config);
         ClaudeProvider.prototype.getTokens = () => bad;
-        recordStoryTokens('S-1', config);
+        await recordStoryTokens('S-1', config);
         // `bl done` reconciles with collectStoryTokens: null leaves its totals alone.
         assert.equal(collectStoryTokens('S-1', config), null, `${name}: bl done's totals`);
         assert.equal(

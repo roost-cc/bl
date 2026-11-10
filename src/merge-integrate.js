@@ -79,7 +79,7 @@ export async function integrateForMerge(config, unit, repos, { runner = null } =
   const { integrateUnit, defaultRunner, hasHeadlessConfiguration } = await import('./feature-run.js');
   info(`Integrate: bringing ${prep.branchName} up to date with main...`);
   const interactive = !hasHeadlessConfiguration(prep.cfg.agents);
-  const result = integrateUnit({ unit, config, prep, runner: runner ?? defaultRunner({ interactive }) });
+  const result = await integrateUnit({ unit, config, prep, runner: runner ?? defaultRunner({ interactive }) });
   if (result.ok) return true;
   console.error(`\n${unit.id}: integration with main stopped — ${result.reason}`);
   if (result.escalated) console.error(`See ## Escalation in ${unit.featureRelPath}.`);

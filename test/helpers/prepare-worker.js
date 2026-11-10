@@ -15,7 +15,7 @@ process.env.BL_BACKLOG_DIR = backlog;
 const config = loadConfig({ backlogRoot: backlog });
 if (kind === 'story') {
   const parsed = normalizeId('S-7');
-  prepareStoryRun(parsed, findStoryDir(parsed, config), config, {});
+  await prepareStoryRun(parsed, findStoryDir(parsed, config), config, {});
 } else {
   prepareFeatureWorktree(config, findFeature(normalizeFeatureId('F-1'), config));
 }

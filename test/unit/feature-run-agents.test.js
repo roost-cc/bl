@@ -16,6 +16,7 @@ import {
   RUN_DIR,
   localTime,
   hasHeadlessConfiguration,
+  defaultRunner,
 } from '../../src/feature-run.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
@@ -95,6 +96,55 @@ test('a usage limit with a reset time is waited out and the step rerun: no nudge
   } finally {
     cleanup();
   }
+});
+
+test('the usage-limit wait awaits runner.sleep: no session starts while a sleep is pending (F-105 A2)', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    let hits = 0;
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        limit: (o) =>
+          o.promptName === 'feature-story' && o.vars.storyId === 'S-1' && hits++ === 0 ? spendLimit(runner) : null,
+      },
+    });
+    // Each slice advances the fake clock on a later turn of the event loop.
+    let pending = false;
+    const sleep = runner.sleep;
+    runner.sleep = (ms) => {
+      pending = true;
+      return new Promise((resolve) =>
+        setImmediate(() => {
+          sleep(ms);
+          pending = false;
+          resolve();
+        }),
+      );
+    };
+    let startedWhilePending = 0;
+    const session = runner.session;
+    runner.session = (o) => {
+      if (pending) startedWhilePending += 1;
+      return session(o);
+    };
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean', JSON.stringify(state.history.slice(0, 4)));
+    assert.equal(state.history.filter((h) => h.step === 'waiting').length, 1);
+    assert.ok(runner.calls.filter((c) => c.type === 'sleep').length > 0, 'the wait slept');
+    assert.equal(startedWhilePending, 0, 'no session started while a sleep was pending');
+  } finally {
+    cleanup();
+  }
+});
+
+test('defaultRunner().sleep returns a promise that resolves after the timer', async () => {
+  const start = performance.now();
+  const p = defaultRunner().sleep(30);
+  assert.ok(p instanceof Promise);
+  await p;
+  assert.ok(performance.now() - start >= 25, 'it waited for the timer');
 });
 
 test('a usage limit on a review pass under bl review reruns the pass without spending the round', async () => {

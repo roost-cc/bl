@@ -1,7 +1,8 @@
 /**
  * S-1394: `prepareWorktreeOnce` says once that it waits for another preparer,
- * however many polls the wait takes. The `sleep` child writes the line to
- * fd 2, so the wait runs in a child node process with stderr on a file.
+ * however many polls the wait takes. Since F-105 the wait is `awaitLock`'s,
+ * and the line is `waitingForLock`'s. The wait runs in a child node process
+ * with stderr on a file.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,6 +10,7 @@ import { execFileSync, spawn } from 'child_process';
 import { rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { setTimeout as delay } from 'timers/promises';
+import { waitingForLock } from '../../src/lock-wait.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { spawnToFiles, untilStderrHas } from '../helpers/spawn-files.js';
 
@@ -22,11 +24,11 @@ test('prepareWorktreeOnce announces once', async () => {
   try {
     writeFileSync(join(repo, '.git', 'bl-prepare-b.lock'), `${holder.pid}\n${new Date().toISOString()}\nprepare b\n`);
     const script = `import { prepareWorktreeOnce } from ${JSON.stringify(SESSION)};
-process.stdout.write(prepareWorktreeOnce(process.env.BL_TEST_REPO, 'b', () => 'ran'));`;
+process.stdout.write(await prepareWorktreeOnce(process.env.BL_TEST_REPO, 'b', async () => 'ran'));`;
     const run = spawnToFiles(process.execPath, ['--input-type=module', '-e', script], {
       env: { ...process.env, BL_TEST_REPO: repo },
     });
-    const line = `Waiting for pid ${holder.pid} to finish preparing b in ${repo}...`;
+    const line = waitingForLock(join(repo, '.git', 'bl-prepare-b.lock'), holder.pid);
     await untilStderrHas(run, line);
     await delay(400);
     holder.kill();
@@ -34,7 +36,7 @@ process.stdout.write(prepareWorktreeOnce(process.env.BL_TEST_REPO, 'b', () => 'r
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, 'ran');
     assert.deepEqual(
-      r.stderr.split('\n').filter((l) => l.startsWith('Waiting for pid ')),
+      r.stderr.split('\n').filter((l) => l.startsWith('Waiting for lock ')),
       [line],
     );
   } finally {

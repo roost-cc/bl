@@ -18,7 +18,7 @@ import {
   stubRunner,
 } from '../helpers/merge-integrate-fixture.js';
 
-test('integration_resolution_tracks_changes_in_current_merged_and_conflicted_repos: every repo a session commits in is reviewed, pushed or rolled back', () => {
+test('integration_resolution_tracks_changes_in_current_merged_and_conflicted_repos: every repo a session commits in is reviewed, pushed or rolled back', async () => {
   const cases = [
     {
       name: 'current repo, resolution commits there, addressed',
@@ -69,7 +69,7 @@ test('integration_resolution_tracks_changes_in_current_merged_and_conflicted_rep
         unlinkSync(flag);
         return FIXED_TESTS;
       };
-      const res = integrateUnit({ ...ctx, runner });
+      const res = await integrateUnit({ ...ctx, runner });
       const scope = calls.vars['review-correctness']?.reviewScope ?? '';
       assert.match(
         scope,
@@ -100,7 +100,7 @@ test('integration_resolution_tracks_changes_in_current_merged_and_conflicted_rep
   }
 });
 
-test('retry_failed_integration_push_for_clean_regenerated_and_agent_resolved_merges: a rerun pushes every branch a rejected push left behind', () => {
+test('retry_failed_integration_push_for_clean_regenerated_and_agent_resolved_merges: a rerun pushes every branch a rejected push left behind', async () => {
   const cases = [
     { name: 'clean merge, push rejected', main: ['other.txt', 'other\n'], reject: ['code'] },
     {
@@ -139,11 +139,11 @@ test('retry_failed_integration_push_for_clean_regenerated_and_agent_resolved_mer
         pushes.push(repo);
         return c.reject.includes(repo) ? { status: 1, output: 'rejected by a pre-push hook' } : shell(cmd, cwd, o);
       };
-      const first = integrateUnit({ ...ctx, runner });
+      const first = await integrateUnit({ ...ctx, runner });
       assert.equal(first.ok, false, c.name);
       assert.match(first.reason, /git push origin HEAD failed/, c.name);
       runner.shell = shell;
-      const retry = integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: stubRunner('true').runner });
+      const retry = await integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: stubRunner('true').runner });
       assert.equal(retry.ok, true, `${c.name}: ${retry.reason}`);
       for (const [name, wt] of Object.entries(wts)) {
         g(origins[name], 'fetch', '-q', 'origin');

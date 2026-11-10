@@ -161,7 +161,7 @@ export async function main(argv) {
     info(`${storyId} is already in ${feature.id}; nothing to do.`);
   } else {
     try {
-      updateSpecFile(config.backlogRoot, found.indexPath, (specFm) => {
+      await updateSpecFile(config.backlogRoot, found.indexPath, (specFm) => {
         // An empty `feature:` key is filled in place; a missing one goes last.
         specFm.feature = feature.id;
       });

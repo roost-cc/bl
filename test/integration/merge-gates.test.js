@@ -325,7 +325,7 @@ test('bl merge S-n refuses as never reviewed a ready_for_merge story whose branc
   }
 });
 
-test('cleanupOneRepo with noCommits refuses a branch that got a commit after the gate, and merges nothing', () => {
+test('cleanupOneRepo with noCommits refuses a branch that got a commit after the gate, and merges nothing', async () => {
   const fx = noCommitStory(NO_COMMIT_LOG, { empty: false });
   const prevDir = process.env.BL_BACKLOG_DIR;
   const prevErr = console.error;
@@ -336,7 +336,7 @@ test('cleanupOneRepo with noCommits refuses a branch that got a commit after the
       err += `${a.join(' ')}\n`;
     };
     const before = g(fx.repos.code, 'rev-parse', 'main');
-    const result = cleanupOneRepo({
+    const result = await cleanupOneRepo({
       parsed: { id: 'S-1', num: '1' },
       storyEntry: 'S1-loose',
       repoName: 'code',

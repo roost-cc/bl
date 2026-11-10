@@ -124,7 +124,7 @@ test('ClaudeProvider.spawn passes --model, which outranks ANTHROPIC_MODEL in the
   }
 });
 
-test("a headless session runs on the model it is given only; an interactive one defaults to the first implementing configuration's for its agent", () => {
+test("a headless session runs on the model it is given only; an interactive one defaults to the first implementing configuration's for its agent", async () => {
   const { dir, cleanup } = mkTempBacklog({
     config: { agent: [{ agent: 'claude', model: 'opus' }], review_agent: [{ agent: 'codex', model: 'gpt-6-sol' }] },
   });
@@ -148,7 +148,7 @@ test("a headless session runs on the model it is given only; an interactive one 
         return { status: 0, output: '' };
       }
     })();
-    const headless = (extra) =>
+    const headless = async (extra) =>
       runHeadlessSession({
         mode: 'workon',
         parsed: { id: 'F-1' },
@@ -160,7 +160,7 @@ test("a headless session runs on the model it is given only; an interactive one 
         provider,
         ...extra,
       });
-    const launch = (extra) =>
+    const launch = async (extra) =>
       launchSession({
         mode: 'workon',
         parsed: { id: 'F-1' },
@@ -180,25 +180,25 @@ test("a headless session runs on the model it is given only; an interactive one 
         ...extra,
       });
     for (const run of [headless, launch]) {
-      run({});
-      run({ model: 'sonnet' });
-      run({ model: null });
+      await run({});
+      await run({ model: 'sonnet' });
+      await run({ model: null });
       // Another agent never gets the implementing configuration's model.
-      run({ agent: 'codex' });
-      run({ agent: 'codex', model: 'gpt-6-sol' });
+      await run({ agent: 'codex' });
+      await run({ agent: 'codex', model: 'gpt-6-sol' });
     }
     // The walk always names the configuration's model (F-64 D3), so a
     // headless session has no default of its own.
     assert.deepEqual(models, [null, 'sonnet', null, null, 'gpt-6-sol', 'opus', 'sonnet', null, null, 'gpt-6-sol']);
     // An explicit model that is not a non-empty string never reaches the provider.
     for (const bad of ['', '  ', 0, 1, true, {}, ['sonnet']]) {
-      assert.throws(
-        () => headless({ model: bad }),
+      await assert.rejects(
+        async () => headless({ model: bad }),
         /^Error: model must be a non-empty string$/,
         `headless ${JSON.stringify(bad)}`,
       );
-      assert.throws(
-        () => launch({ model: bad }),
+      await assert.rejects(
+        async () => launch({ model: bad }),
         /^Error: model must be a non-empty string$/,
         `launch ${JSON.stringify(bad)}`,
       );
@@ -206,8 +206,8 @@ test("a headless session runs on the model it is given only; an interactive one 
     assert.equal(models.length, 10);
     // Both hand the effort level they are given to the provider (F-85 D4), and none by default.
     assert.ok(efforts.every((e) => e === null));
-    headless({ effort: 'low' });
-    launch({ effort: 'xhigh' });
+    await headless({ effort: 'low' });
+    await launch({ effort: 'xhigh' });
     assert.deepEqual(efforts.slice(-2), ['low', 'xhigh']);
   } finally {
     if (tmux != null) process.env.TMUX = tmux;
@@ -406,14 +406,14 @@ test('CodexProvider.spawn headless removes the last-message file when the spawn 
   assert.equal(existsSync(file), false);
 });
 
-test('base provider and gemini report no headless support; runHeadlessSession refuses cleanly', () => {
+test('base provider and gemini report no headless support; runHeadlessSession refuses cleanly', async () => {
   assert.equal(new AgentProvider().supportsHeadless(), false);
   assert.equal(new GeminiProvider().supportsHeadless(), false);
   const { dir, cleanup } = mkTempBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
     const wt = mkTempDir('bl-wt-');
-    const r = runHeadlessSession({
+    const r = await runHeadlessSession({
       mode: 'workon',
       parsed: { id: 'F-1', num: '1' },
       prompt: 'p',
@@ -430,7 +430,7 @@ test('base provider and gemini report no headless support; runHeadlessSession re
   }
 });
 
-test('addUsageToFrontmatter accumulates across steps and accumulateTokensOnFile persists it', () => {
+test('addUsageToFrontmatter accumulates across steps and accumulateTokensOnFile persists it', async () => {
   const fm = { tokens_input: '5' };
   addUsageToFrontmatter(fm, { input: 1, output: 2, cache_creation: 3, cache_read: 4 });
   addUsageToFrontmatter(fm, { input: 1, output: 2, cache_creation: 3, cache_read: 4 });
@@ -441,12 +441,12 @@ test('addUsageToFrontmatter accumulates across steps and accumulateTokensOnFile 
   const dir = mkTempDir('bl-tok-');
   const p = join(dir, 'index.md');
   writeFileSync(p, '---\nfeature_id: F-1\ntitle: T\n---\n\n# T\n');
-  assert.equal(accumulateTokensOnFile(dir, p, { input: 9, output: 1, cache_creation: 0, cache_read: 0 }), true);
+  assert.equal(await accumulateTokensOnFile(dir, p, { input: 9, output: 1, cache_creation: 0, cache_read: 0 }), true);
   assert.match(readFileSync(p, 'utf8'), /tokens_input: 9/);
-  assert.equal(accumulateTokensOnFile(dir, join(dir, 'missing.md'), { input: 1 }), false);
+  assert.equal(await accumulateTokensOnFile(dir, join(dir, 'missing.md'), { input: 1 }), false);
 });
 
-test('runHeadlessSession and launchSession start in the unit directory: cwd, write root and lock (F-60 D3)', () => {
+test('runHeadlessSession and launchSession start in the unit directory: cwd, write root and lock (F-60 D3)', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -484,9 +484,9 @@ test('runHeadlessSession and launchSession start in the unit directory: cwd, wri
       backlogRoot: dir,
       provider: fake,
     };
-    assert.equal(runHeadlessSession({ ...common, prompt: 'p', label: 'F-1: S-1' }).status, 0);
+    assert.equal((await runHeadlessSession({ ...common, prompt: 'p', label: 'F-1: S-1' })).status, 0);
     assert.equal(
-      launchSession({
+      await launchSession({
         ...common,
         title: 'T',
         sessionPrompt: 'p',
@@ -515,7 +515,7 @@ test('runHeadlessSession and launchSession start in the unit directory: cwd, wri
 
     // A live session's lock in the unit directory refuses a headless one.
     writeFileSync(join(unitDir, '.workon.lock'), `${process.ppid}\n2026-10-28T00:00:00Z\nother\n`);
-    const refused = runHeadlessSession({ ...common, prompt: 'p', label: 'F-1: S-2' });
+    const refused = await runHeadlessSession({ ...common, prompt: 'p', label: 'F-1: S-2' });
     assert.equal(refused.isError, true);
     assert.match(refused.error, new RegExp(`a live session \\(pid ${process.ppid}\\) holds .*\\.workon\\.lock`));
     assert.equal(spawns.length, 2, 'nothing spawned');
@@ -524,7 +524,7 @@ test('runHeadlessSession and launchSession start in the unit directory: cwd, wri
   }
 });
 
-test('runHeadlessSession holds the worktree lock during spawn, logs, passes headless, and accumulates usage', () => {
+test('runHeadlessSession holds the worktree lock during spawn, logs, passes headless, and accumulates usage', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -546,7 +546,7 @@ test('runHeadlessSession holds the worktree lock during spawn, logs, passes head
         };
       }
     })();
-    const r = runHeadlessSession({
+    const r = await runHeadlessSession({
       mode: 'workon',
       parsed: { id: 'F-1', num: '1' },
       prompt: 'p',
@@ -582,7 +582,7 @@ test('runHeadlessSession holds the worktree lock during spawn, logs, passes head
   }
 });
 
-test('headless session does not clobber a live worktree lock', () => {
+test('headless session does not clobber a live worktree lock', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -612,7 +612,7 @@ test('headless session does not clobber a live worktree lock', () => {
     // A live interactive session in another process.
     const live = `${process.ppid}\n2026-09-24T00:00:00Z\nF-1: interactive\n`;
     writeFileSync(lockPath, live);
-    const r = runHeadlessSession(common);
+    const r = await runHeadlessSession(common);
     assert.equal(r.isError, true);
     assert.match(r.error, /a live session \(pid \d+\) holds/);
     assert.equal(spawned, 0, 'no agent ran in a worktree someone else holds');
@@ -622,12 +622,12 @@ test('headless session does not clobber a live worktree lock', () => {
     // A lock this process holds is neither rewritten nor removed.
     const own = `${process.pid}\n2026-09-24T00:00:00Z\nF-1: run\n`;
     writeFileSync(lockPath, own);
-    assert.equal(runHeadlessSession(common).isError, false);
+    assert.equal((await runHeadlessSession(common)).isError, false);
     assert.equal(readFileSync(lockPath, 'utf8'), own);
 
     // A stale lock (dead pid) is reclaimed, and released after the session.
     writeFileSync(lockPath, `${spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid}\n`);
-    assert.equal(runHeadlessSession(common).isError, false);
+    assert.equal((await runHeadlessSession(common)).isError, false);
     assert.equal(existsSync(lockPath), false);
     assert.equal(spawned, 2);
   } finally {
@@ -635,7 +635,7 @@ test('headless session does not clobber a live worktree lock', () => {
   }
 });
 
-test('runHeadlessSession maps a spawn error and a non-zero exit to isError', () => {
+test('runHeadlessSession maps a spawn error and a non-zero exit to isError', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -658,24 +658,24 @@ test('runHeadlessSession maps a spawn error and a non-zero exit to isError', () 
       roostDir: cfg.roostDir,
       backlogRoot: dir,
     };
-    const a = runHeadlessSession({ ...common, provider: mk({ error: new Error('spawn claude ENOENT') }) });
+    const a = await runHeadlessSession({ ...common, provider: mk({ error: new Error('spawn claude ENOENT') }) });
     assert.equal(a.isError, true);
     assert.match(a.error, /ENOENT/);
-    const b = runHeadlessSession({ ...common, provider: mk({ status: 3, output: 'boom' }) });
+    const b = await runHeadlessSession({ ...common, provider: mk({ status: 3, output: 'boom' }) });
     assert.equal(b.isError, true);
     assert.equal(b.status, 3);
     assert.equal(b.output, 'boom');
     assert.equal(b.stderrTail, '', 'an adapter without stderrTail gives none');
     // S-1398: the adapter's stderr tail reaches the caller; a refused session has none.
     assert.equal(a.stderrTail, '');
-    const c = runHeadlessSession({ ...common, provider: mk({ status: 1, stderrTail: 'x\ny' }) });
+    const c = await runHeadlessSession({ ...common, provider: mk({ status: 1, stderrTail: 'x\ny' }) });
     assert.equal(c.stderrTail, 'x\ny');
   } finally {
     cleanup();
   }
 });
 
-test('runHeadlessSession counts an agent killed by a signal as a failed session, for Claude and Codex (F-70 D3)', () => {
+test('runHeadlessSession counts an agent killed by a signal as a failed session, for Claude and Codex (F-70 D3)', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -695,7 +695,7 @@ test('runHeadlessSession counts an agent killed by a signal as a failed session,
         }
       })();
     for (const Provider of [ClaudeProvider, CodexProvider]) {
-      const r = runHeadlessSession({
+      const r = await runHeadlessSession({
         mode: 'review',
         parsed: { id: 'F-1' },
         prompt: 'p',
@@ -713,7 +713,7 @@ test('runHeadlessSession counts an agent killed by a signal as a failed session,
   }
 });
 
-test('parseClaudeJsonResult surfaces permission denials, and runHeadlessSession passes them through', () => {
+test('parseClaudeJsonResult surfaces permission denials, and runHeadlessSession passes them through', async () => {
   const r = parseClaudeJsonResult(
     JSON.stringify({
       type: 'result',
@@ -758,7 +758,7 @@ test('parseClaudeJsonResult surfaces permission denials, and runHeadlessSession 
         };
       }
     })();
-    const out = runHeadlessSession({
+    const out = await runHeadlessSession({
       mode: 'workon',
       parsed: { id: 'F-1' },
       prompt: 'p',
@@ -784,16 +784,18 @@ test('parseClaudeJsonResult surfaces permission denials, and runHeadlessSession 
       }
     })();
     assert.equal(
-      runHeadlessSession({
-        mode: 'workon',
-        parsed: { id: 'F-1' },
-        prompt: 'p',
-        worktreePath,
-        config: cfg,
-        roostDir: cfg.roostDir,
-        backlogRoot: dir,
-        provider: noLimit,
-      }).refusal,
+      (
+        await runHeadlessSession({
+          mode: 'workon',
+          parsed: { id: 'F-1' },
+          prompt: 'p',
+          worktreePath,
+          config: cfg,
+          roostDir: cfg.roostDir,
+          backlogRoot: dir,
+          provider: noLimit,
+        })
+      ).refusal,
       null,
     );
   } finally {
@@ -801,7 +803,7 @@ test('parseClaudeJsonResult surfaces permission denials, and runHeadlessSession 
   }
 });
 
-test('launchSession leaves a lock this process holds, and takes and releases a free one', () => {
+test('launchSession leaves a lock this process holds, and takes and releases a free one', async () => {
   const { dir, cleanup } = mkTempBacklog();
   const tmux = process.env.TMUX;
   delete process.env.TMUX;
@@ -819,7 +821,7 @@ test('launchSession leaves a lock this process holds, and takes and releases a f
         return { status: 0 };
       }
     })();
-    const launch = () =>
+    const launch = async () =>
       launchSession({
         mode: 'review',
         parsed: { id: 'F-1' },
@@ -841,13 +843,13 @@ test('launchSession leaves a lock this process holds, and takes and releases a f
     // A review round's lock: an interactive pass inside it neither rewrites nor removes it.
     const round = `${process.pid}\n2026-09-24T00:00:00Z\nF-1 review round\n`;
     writeFileSync(lockPath, round);
-    assert.equal(launch(), 0);
+    assert.equal(await launch(), 0);
     assert.equal(during[0], round, "the round's lock held during the session");
     assert.equal(readFileSync(lockPath, 'utf8'), round, 'and still held after it');
 
     // No lock: the session takes one and releases it.
     rmSync(lockPath);
-    assert.equal(launch(), 0);
+    assert.equal(await launch(), 0);
     assert.match(during[1], /F-1: review/);
     assert.equal(existsSync(lockPath), false);
   } finally {
@@ -1195,7 +1197,7 @@ test('parseClaudeJsonResult carries the refusal the result text names', () => {
   assert.equal(parseClaudeJsonResult(F41_LIMIT).refusal.kind, 'spend', 'a bare, unparsed refusal still counts');
 });
 
-test('runHeadlessSession with usageStep adds the usage to tokens_by_step; without it, the totals only', () => {
+test('runHeadlessSession with usageStep adds the usage to tokens_by_step; without it, the totals only', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -1215,7 +1217,7 @@ test('runHeadlessSession with usageStep adds the usage to tokens_by_step; withou
         };
       }
     })();
-    const run = (extra) =>
+    const run = async (extra) =>
       runHeadlessSession({
         mode: 'workon',
         parsed: { id: 'F-1' },
@@ -1228,12 +1230,12 @@ test('runHeadlessSession with usageStep adds the usage to tokens_by_step; withou
         provider: fake,
         ...extra,
       });
-    run({});
+    await run({});
     let { fm } = parseFrontmatter(readFileSync(featurePath, 'utf8'));
     assert.equal(fm.tokens_input, '2');
     assert.equal(fm.tokens_by_step, undefined);
     // A session that ended in error still records what it used.
-    const r = run({ usageStep: 'review.1' });
+    const r = await run({ usageStep: 'review.1' });
     assert.equal(r.isError, true);
     ({ fm } = parseFrontmatter(readFileSync(featurePath, 'utf8')));
     assert.equal(fm.tokens_input, '4');

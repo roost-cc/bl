@@ -37,9 +37,10 @@ import { isInterrupt } from './signal-exit.js';
 // `git rebase --continue` from opening an editor for the message.
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' };
 
-// The first interrupt (`isInterrupt`) that ended a `git` child since
-// `commitPaths` began, which it reports as `signal`: any of its git calls,
-// the rebase of a push retry (`pullLocked`) included.
+// The first interrupt (`isInterrupt`) that ended a `git` child in the
+// synchronous stretch `noteInterrupts` runs. `commitPaths` reports it as
+// `signal`: any of its git calls, the rebase of a push retry (`pullLocked`)
+// included.
 let interruptSeen = null;
 
 function git(root, args) {
@@ -178,9 +179,9 @@ export function failedCommitRecord(owner) {
  * @param {Map<string, string> | null} before
  * @param {string} message
  * @param {{ session?: boolean, owner?: string }} [opts]
- * @returns {boolean} whether the commit failed
+ * @returns {Promise<boolean>} whether the commit failed
  */
-export function commitChangedSince(root, before, message, { session = false, owner = message } = {}) {
+export async function commitChangedSince(root, before, message, { session = false, owner = message } = {}) {
   if (!hasOwnRepo(root)) return false;
   const after = dirtySnapshot(root);
   // In a repo, a null snapshot is a `git status` that failed, not "no change".
@@ -228,7 +229,7 @@ export function commitChangedSince(root, before, message, { session = false, own
   let commitFailed = false;
   if (touched.length > 0) {
     info(`\nCommitting backlog changes (${touched.length} path${touched.length === 1 ? '' : 's'})...`);
-    const res = commitPaths(root, touched, message);
+    const res = await commitPaths(root, touched, message);
     if (!res.committed && res.error) {
       commitFailed = true;
       console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);
@@ -324,22 +325,44 @@ function addablePaths(root, paths) {
  * whose paths select `priority.md`, by name, directory or Git pathspec, is
  * refused before anything is staged: only a person ranks
  * (`headlessPriorityRefusal`).
- * @returns {{ committed: boolean, paths: string[], error?: string,
+ * @returns {Promise<{ committed: boolean, paths: string[], error?: string,
  *   pushed?: boolean, pushError?: string, pushConflicts?: string[],
- *   pushResolved?: string[], signal?: string }}
+ *   pushResolved?: string[], signal?: string }>}
  */
-export function commitPaths(root, paths, message) {
-  interruptSeen = null;
-  const res = commitPathsUnsignalled(root, paths, message);
-  return interruptSeen ? { ...res, signal: interruptSeen } : res;
+export async function commitPaths(root, paths, message) {
+  const seen = { signal: null };
+  const res = await commitPathsUnsignalled(root, paths, message, seen);
+  return seen.signal ? { ...res, signal: seen.signal } : res;
 }
 
-function commitPathsUnsignalled(root, paths, message) {
+/**
+ * Run the synchronous `fn` and keep in `seen.signal` the first interrupt
+ * that ended one of its git children. `commitPaths` wraps each synchronous
+ * stretch in it, never the lock wait: while that wait is awaited, another
+ * caller's git commands may run, and their interrupts are not this commit's.
+ * @template T
+ * @param {{ signal: string | null }} seen
+ * @param {() => T} fn
+ * @returns {T}
+ */
+function noteInterrupts(seen, fn) {
+  interruptSeen = null;
+  try {
+    return fn();
+  } finally {
+    seen.signal ??= interruptSeen;
+    interruptSeen = null;
+  }
+}
+
+async function commitPathsUnsignalled(root, paths, message, seen) {
   if (paths.length === 0) return { committed: false, paths };
-  const refused = headlessPriorityRefusal(root, paths);
+  const refused = noteInterrupts(seen, () => headlessPriorityRefusal(root, paths));
   if (refused) return { committed: false, paths, error: refused };
-  if (!hasOriginRemote(root)) return commitLocked(root, paths, message, false);
-  const res = withMainSyncLock(root, () => commitLocked(root, paths, message, true));
+  if (!noteInterrupts(seen, () => hasOriginRemote(root))) {
+    return noteInterrupts(seen, () => commitLocked(root, paths, message, false));
+  }
+  const res = await withMainSyncLock(root, () => noteInterrupts(seen, () => commitLocked(root, paths, message, true)));
   if (res.state === 'lock-timeout') {
     return { committed: false, paths, error: `timed out waiting for ${res.lockPath} (PID ${res.holder})` };
   }
@@ -525,9 +548,9 @@ export function pushBacklog(root) {
  * cannot be read is a failed push (`pushed: false`), never taken as zero.
  * @param {string} root
  * @param {{ lockTimeoutMs?: number, pollMs?: number }} [opts]
- * @returns {BacklogPush | { state: "lock-timeout", holder: number|string, lockPath: string } | null}
+ * @returns {Promise<BacklogPush | { state: "lock-timeout", holder: number|string, lockPath: string } | null>}
  */
-export function pushIfAhead(root, opts = {}) {
+export async function pushIfAhead(root, opts = {}) {
   return withMainSyncLock(
     root,
     () => {
@@ -825,9 +848,9 @@ function takeReplayedSide(root, paths) {
  *
  * @param {string} root the backlog checkout
  * @param {{ lockTimeoutMs?: number, pollMs?: number }} [opts]
- * @returns {BacklogPull}
+ * @returns {Promise<BacklogPull>}
  */
-export function pullBacklog(root, opts = {}) {
+export async function pullBacklog(root, opts = {}) {
   if (!hasOriginRemote(root)) return { state: 'no-remote' };
   const branch = git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).stdout?.trim() ?? '';
   if (branch !== 'main') return { state: 'not-main', branch: branch || '(detached HEAD)' };

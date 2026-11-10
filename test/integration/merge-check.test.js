@@ -21,7 +21,7 @@ import { spawnToFiles, untilStderrHas } from '../helpers/spawn-files.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { extractSection } from '../../src/feature.js';
 import { mainSyncLockPath } from '../../src/main-sync.js';
-import { waitingForLock } from '../../src/pid-lock.js';
+import { waitingForLock } from '../../src/lock-wait.js';
 import { statusOf } from '../../src/transition.js';
 
 const ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };

@@ -21,8 +21,8 @@
 import { spawnSync } from 'child_process';
 import { resolve } from 'path';
 import { info } from './config.js';
-import { acquirePidLock, releasePidLock, waitingForLock } from './pid-lock.js';
-import { sleepSync } from './sleep-sync.js';
+import { awaitLock, LockWaitTimeout } from './lock-wait.js';
+import { acquirePidLock, releasePidLock } from './pid-lock.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
 /**
@@ -141,9 +141,9 @@ function syncLocked(repoPath, { checkAhead, prune }) {
  *
  * @param {string} repoPath
  * @param {MainSyncOptions} [opts]
- * @returns {MainSyncResult}
+ * @returns {Promise<MainSyncResult>}
  */
-export function syncMain(repoPath, opts = {}) {
+export async function syncMain(repoPath, opts = {}) {
   const { checkAhead = false, prune = false } = opts;
   return withMainSyncLock(repoPath, () => syncLocked(repoPath, { checkAhead, prune }), opts);
 }
@@ -155,34 +155,27 @@ export function syncMain(repoPath, opts = {}) {
  * `bl`'s backlog pull (`backlog-commit.js` `pullBacklog`) takes it too, so a
  * pull never interleaves with a `syncMain` of the same checkout.
  *
- * The first poll that finds a live holder says so once on stderr, in the
- * shape `lock.js` uses for `.bl-new.lock`. Ctrl+C during the wait ends `bl`
- * at once (`sleepSync`, S-1394).
+ * The wait goes through `awaitLock` (`lock-wait.js`, F-105 W1): the first try
+ * that finds a live holder says so once on stderr, and Ctrl+C during the wait
+ * ends `bl` at once. `fn` stays synchronous (F-105 W4): every caller runs
+ * git in it.
  *
  * @template T
  * @param {string} repoPath
  * @param {() => T} fn
  * @param {{ lockTimeoutMs?: number, pollMs?: number }} [opts]
- * @returns {T | { state: "lock-timeout", holder: number|string, lockPath: string }}
+ * @returns {Promise<T | { state: "lock-timeout", holder: number|string, lockPath: string }>}
  */
-export function withMainSyncLock(repoPath, fn, opts = {}) {
+export async function withMainSyncLock(repoPath, fn, opts = {}) {
   const { lockTimeoutMs = LOCK_TIMEOUT_MS, pollMs = LOCK_POLL_MS } = opts;
   const lockPath = mainSyncLockPath(repoPath);
   const content = `${process.pid}\n${new Date().toISOString()}\nbl main sync ${repoPath}\n`;
-  const deadline = Date.now() + lockTimeoutMs;
-  let taken = acquirePidLock(lockPath, content);
-  let announced = false;
-  while (taken.holder != null) {
-    // The sleep's child says it, so a Ctrl+C after the line reaches the child.
-    const say = announced ? undefined : waitingForLock(lockPath, taken.holder);
-    announced = true;
-    const left = deadline - Date.now();
-    if (left <= 0) {
-      if (say) info(say);
-      return { state: 'lock-timeout', holder: taken.holder, lockPath };
-    }
-    sleepSync(Math.min(pollMs, left), say);
-    taken = acquirePidLock(lockPath, content);
+  const take = () => acquirePidLock(lockPath, content);
+  try {
+    await awaitLock(lockPath, take, { deadlineMs: lockTimeoutMs, pollMs, announce: info });
+  } catch (e) {
+    if (!(e instanceof LockWaitTimeout)) throw e;
+    return { state: 'lock-timeout', holder: e.holder, lockPath };
   }
   try {
     return fn();
@@ -228,8 +221,9 @@ export function reportMainSync(result, label) {
       console.error(indented(result.message));
       return false;
     case 'lock-timeout':
-      console.error(`Error: timed out waiting for the main sync lock in ${label} (held by PID ${result.holder}).`);
-      console.error(`If that process is gone, remove the lock: rm "${result.lockPath}"`);
+      console.error(
+        `Error: timed out waiting for the main sync lock ${result.lockPath} in ${label} (held by PID ${result.holder}).`,
+      );
       return false;
     default:
       console.error(`Error: unexpected main sync state '${result.state}'.`);

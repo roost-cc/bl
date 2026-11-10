@@ -37,7 +37,7 @@ if (fault === 'race') {
       import { writeFileSync } from "fs";
       const { accumulateStepTokensOnFile } = await import(${JSON.stringify(tokensUrl)});
       const use = { input: 5, output: 0, cache_creation: 0, cache_read: 0 };
-      const wrote = accumulateStepTokensOnFile(${JSON.stringify(root)}, ${JSON.stringify(target)}, "implement", use);
+      const wrote = await accumulateStepTokensOnFile(${JSON.stringify(root)}, ${JSON.stringify(target)}, "implement", use);
       writeFileSync(${JSON.stringify(out)}, JSON.stringify({ wrote }));`;
     spawn(process.execPath, ['--input-type=module', '-e', writer], {
       stdio: 'ignore',

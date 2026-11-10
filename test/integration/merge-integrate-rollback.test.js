@@ -17,7 +17,7 @@ import {
   stubRunner,
 } from '../helpers/merge-integrate-fixture.js';
 
-test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: every stop whose roll back fails says so, and the rerun gates what it left', () => {
+test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: every stop whose roll back fails says so, and the rerun gates what it left', async () => {
   const conflict = ['f1-feat.txt', 'main version\n'];
   const clean = ['other.txt', 'other\n'];
   const cases = [
@@ -85,7 +85,7 @@ test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: ever
       const shell = runner.shell;
       runner.shell = (cmd, cwd, o) =>
         cmd.startsWith('git reset -q --keep') ? { status: 1, output: 'injected reset failure' } : shell(cmd, cwd, o);
-      const first = integrateUnit({ ...ctx, runner });
+      const first = await integrateUnit({ ...ctx, runner });
       assert.equal(first.escalated, true, c.name);
       assert.notEqual(g(wt, 'rev-parse', 'HEAD'), reviewed, `${c.name}: the integration's commits are left`);
       const esc = escalation(featureFile(fx));
@@ -102,7 +102,7 @@ test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: ever
       // The unchanged red tree is gated by the rerun, not landed.
       clearEscalation(fx);
       const red = stubRunner('false');
-      const retry = integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: red.runner });
+      const retry = await integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: red.runner });
       assert.equal(retry.ok, false, `${c.name}: the red tree does not land`);
       // A session's resolution is gated with its fix step, which gates again.
       assert.equal(red.calls.gates, c.review ? 2 : 1, `${c.name}: the rerun gates the retained commits`);
@@ -116,7 +116,7 @@ test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: ever
       // Restored, the next rerun integrates afresh and lands on a green gate.
       clearEscalation(fx);
       const green = scriptedRunner({ test: 'true', resolve: resolveBoth });
-      const landed = integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: green.runner });
+      const landed = await integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: green.runner });
       assert.equal(landed.ok, true, `${c.name}: ${landed.reason}`);
       assert.equal(green.calls.gates, 1, c.name);
       assert.equal(
@@ -130,7 +130,7 @@ test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: ever
   }
 });
 
-test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: retained commits a green gate passes land and clear the record', () => {
+test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: retained commits a green gate passes land and clear the record', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'other.txt', 'other\n', 'main edits');
@@ -142,11 +142,11 @@ test('failed_rollback_requires_gate_on_retained_head_before_retry_can_land: reta
     const shell = runner.shell;
     runner.shell = (cmd, cwd, o) =>
       cmd.startsWith('git reset -q --keep') ? { status: 1, output: 'no' } : shell(cmd, cwd, o);
-    assert.equal(integrateUnit({ ...ctx, runner }).escalated, true);
+    assert.equal((await integrateUnit({ ...ctx, runner })).escalated, true);
     const retained = g(wt, 'rev-parse', 'HEAD');
     clearEscalation(fx);
     const green = stubRunner('true');
-    const res = integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: green.runner });
+    const res = await integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: green.runner });
     assert.equal(res.ok, true, res.reason);
     assert.equal(green.calls.gates, 1, 'gated before it lands');
     assert.equal(g(wt, 'rev-parse', 'HEAD'), retained, 'the retained merge is what lands');

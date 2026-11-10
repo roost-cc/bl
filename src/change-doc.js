@@ -209,9 +209,14 @@ export const REVIEW_FIELDS = ['review_round', 'review_status'];
  * @param {{ id: string, kind: "story" | "feature", indexPath: string }} unit
  * @param {{ structured: object|null, structuredError: string|null }} outcome
  * @param {{ fm: object } | null} [change]
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-export function applyFixOutcome(backlogRoot, { id, kind, indexPath }, { structured, structuredError }, change = null) {
+export async function applyFixOutcome(
+  backlogRoot,
+  { id, kind, indexPath },
+  { structured, structuredError },
+  change = null,
+) {
   const fixed = Boolean(structured?.fixed);
   if (!structured) {
     warn(`no fix outcome (${structuredError}); ${id} stays in fixing`);
@@ -221,14 +226,14 @@ export function applyFixOutcome(backlogRoot, { id, kind, indexPath }, { structur
   if (!fixed) return false;
   const opts = { by: 'fix', via: 'fix', outcome: structured.summary };
   try {
-    if (!transition(backlogRoot, { kind, indexPath, change }, 'in_review', opts)) return false;
+    if (!(await transition(backlogRoot, { kind, indexPath, change }, 'in_review', opts))) return false;
   } catch (e) {
     // The unit moved during the session (`NoEdgeError`), or its log is malformed.
     if (!(e instanceof FlowError)) throw e;
     warn(`${id}: the fix is not recorded in the transition log: ${e.message}`);
     return false;
   }
-  commitChangeDoc(backlogRoot, indexPath, `chore: ${id} review fixed`);
+  await commitChangeDoc(backlogRoot, indexPath, `chore: ${id} review fixed`);
   return true;
 }
 
@@ -237,12 +242,12 @@ export function applyFixOutcome(backlogRoot, { id, kind, indexPath }, { structur
  * the backlog, skipped when the backlog is not a git repository; a failed
  * commit is a warning. Returns the signal that ended a git command of the
  * commit or its push, or null.
- * @returns {string | null}
+ * @returns {Promise<string | null>}
  */
-function commitChangeDoc(backlogRoot, path, message) {
+async function commitChangeDoc(backlogRoot, path, message) {
   if (!existsSync(join(backlogRoot, '.git'))) return null;
   const rels = [path].flat().map((p) => relative(backlogRoot, p));
-  const c = commitPaths(backlogRoot, rels, message);
+  const c = await commitPaths(backlogRoot, rels, message);
   if (!c.committed) warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
   return c.signal ?? null;
 }
@@ -327,7 +332,7 @@ export function ensureChange(backlogRoot, unitDir, { changeOf, title = '', repos
  * backlog commit of the document when it changed (skipped when the backlog
  * is not a git repository; a failed commit is a warning).
  */
-export function openUnitChange(backlogRoot, { id, title, indexPath }, branch, repoNames) {
+export async function openUnitChange(backlogRoot, { id, title, indexPath }, branch, repoNames) {
   const names = repoNames.filter((r, i) => r && repoNames.indexOf(r) === i);
   const res = ensureChange(backlogRoot, dirname(indexPath), {
     changeOf: id,
@@ -335,7 +340,11 @@ export function openUnitChange(backlogRoot, { id, title, indexPath }, branch, re
     repos: names.map((repo) => ({ repo, branch })),
   });
   if (res.changed) {
-    commitChangeDoc(backlogRoot, res.path, `chore: ${id} change ${res.created ? 'opened' : 'updated'} on ${branch}`);
+    await commitChangeDoc(
+      backlogRoot,
+      res.path,
+      `chore: ${id} change ${res.created ? 'opened' : 'updated'} on ${branch}`,
+    );
   }
   return res;
 }
@@ -386,14 +395,14 @@ export function gateLine({ date, repo, command, verdict, detail = '', commit = '
  * @param {string | null} unitDir
  * @param {string} line
  * @param {string} message
- * @returns {{ path: string, signal: string | null } | null}
+ * @returns {Promise<{ path: string, signal: string | null } | null>}
  */
-export function addGateLine(backlogRoot, unitDir, line, message) {
+export async function addGateLine(backlogRoot, unitDir, line, message) {
   const cur = currentChange(unitDir);
   if (!cur?.doc) return null;
   cur.doc.body = appendSection(cur.doc.body, 'Gate', line);
   writeChange(backlogRoot, cur.path, cur.doc);
-  const signal = commitChangeDoc(backlogRoot, cur.path, message);
+  const signal = await commitChangeDoc(backlogRoot, cur.path, message);
   return { path: cur.path, signal };
 }
 

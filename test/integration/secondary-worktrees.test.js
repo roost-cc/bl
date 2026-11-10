@@ -94,19 +94,28 @@ function build({
   return { tmp, backlog, repoA, repoB };
 }
 
+/** Run `fn` with BL_BACKLOG_DIR set to `backlog`; an async `fn` keeps it set until it settles. */
 function withBacklog(backlog, fn) {
   const prev = process.env.BL_BACKLOG_DIR;
   process.env.BL_BACKLOG_DIR = backlog;
-  try {
-    return fn();
-  } finally {
+  const restore = () => {
     if (prev == null) delete process.env.BL_BACKLOG_DIR;
     else process.env.BL_BACKLOG_DIR = prev;
+  };
+  let value;
+  try {
+    value = fn();
+  } catch (e) {
+    restore();
+    throw e;
   }
+  if (value instanceof Promise) return value.finally(restore);
+  restore();
+  return value;
 }
 
-/** Run `fn` with process.exit and console.error captured. */
-function capture(fn) {
+/** Run `fn` with process.exit and console.error captured, until what it returns settles. */
+async function capture(fn) {
   const origExit = process.exit;
   const origErr = console.error;
   let exit = null;
@@ -120,7 +129,7 @@ function capture(fn) {
   };
   let value;
   try {
-    value = fn();
+    value = await fn();
   } catch (e) {
     if (e.message !== '__exit__') throw e;
   } finally {
@@ -131,11 +140,11 @@ function capture(fn) {
 }
 
 function prep(backlog) {
-  return withBacklog(backlog, () => {
+  return withBacklog(backlog, async () => {
     const config = loadConfig({ backlogRoot: backlog });
     const parsed = normalizeId('S-7');
     const found = findStoryDir(parsed, config);
-    return { config, prep: prepareStoryRun(parsed, found, config) };
+    return { config, prep: await prepareStoryRun(parsed, found, config) };
   });
 }
 
@@ -143,9 +152,9 @@ function prep(backlog) {
 // A story: one repo, its component's
 // ---------------------------------------------------------------------------
 
-test("prepareStoryRun makes only the story's worktree, in its component's repo, whatever repo fields the story names", () => {
+test("prepareStoryRun makes only the story's worktree, in its component's repo, whatever repo fields the story names", async () => {
   const { tmp, backlog, repoB } = build();
-  const { config, prep: p } = prep(backlog);
+  const { config, prep: p } = await prep(backlog);
   assert.equal(p.worktreePath, join(tmp, 'worktrees', 's7-two', 'repoA'));
   // The story's own unit directory, where its session starts (F-60 D3).
   assert.equal(p.unitDir, join(tmp, 'worktrees', 's7-two'));
@@ -178,18 +187,18 @@ test("prepareStoryRun makes only the story's worktree, in its component's repo, 
   assert.match(prompt, /A change in another repo is another story in a component of that repo/);
 });
 
-test('prepareStoryRun exits 1 naming the component when the component has no repo', () => {
+test('prepareStoryRun exits 1 naming the component when the component has no repo', async () => {
   const { backlog } = build();
   writeComponent(backlog, 'C00', 'core', null);
-  const { exit, err } = capture(() => prep(backlog));
+  const { exit, err } = await capture(() => prep(backlog));
   assert.equal(exit, 1);
   assert.match(err, /Story S-7 has no repo: its component C00 names no repo\. A story's repo is its component's/);
 });
 
-test('prepareStoryRun stops on a component repo the config does not know, naming the component', () => {
+test('prepareStoryRun stops on a component repo the config does not know, naming the component', async () => {
   const { backlog } = build();
   writeComponent(backlog, 'C00', 'core', 'nope');
-  const { exit, err } = capture(() => prep(backlog));
+  const { exit, err } = await capture(() => prep(backlog));
   assert.equal(exit, 1);
   assert.match(err, /Unknown repo: nope \(the repo of component C00\)/);
 });
@@ -226,18 +235,18 @@ function writeFeature(backlog, others = []) {
   writeFileSync(join(dir, 'index.md'), '---\nfeature_id: F-1\ntitle: Pair\nstatus: approved\n---\n\n# Pair\n');
 }
 
-function prepFeature(backlog, others, verb = 'run') {
+async function prepFeature(backlog, others, verb = 'run') {
   if (!existsSync(join(backlog, 'features', 'F1-pair'))) writeFeature(backlog, others);
-  return withBacklog(backlog, () => {
+  return withBacklog(backlog, async () => {
     const config = loadConfig({ backlogRoot: backlog });
     const feature = findFeature(normalizeFeatureId('F-1'), config);
-    return { feature, ...capture(() => prepareFeatureWorktree(config, feature, verb)) };
+    return { feature, ...(await capture(async () => prepareFeatureWorktree(config, feature, verb))) };
   });
 }
 
-test("bl run F-n's prep makes each other repo's worktree on the feature branch, bootstrapped and through the workon plugins", () => {
+test("bl run F-n's prep makes each other repo's worktree on the feature branch, bootstrapped and through the workon plugins", async () => {
   const { tmp, backlog, repoB } = build();
-  const { exit, err, value } = prepFeature(backlog, ['repoB']);
+  const { exit, err, value } = await prepFeature(backlog, ['repoB']);
   assert.equal(exit, null, err);
   const secondary = join(tmp, 'worktrees', value.branchName, 'repoB');
   assert.equal(findExistingWorktree(repoB, value.branchName)?.path, secondary);
@@ -247,25 +256,25 @@ test("bl run F-n's prep makes each other repo's worktree on the feature branch, 
   assert.equal(value.baseVars.otherWorktrees, `${secondary} (repoB)`);
 });
 
-test("bl run F-n's prep on a feature with one repo names no other repos", () => {
+test("bl run F-n's prep on a feature with one repo names no other repos", async () => {
   const { backlog } = build();
-  const { exit, err, value } = prepFeature(backlog, []);
+  const { exit, err, value } = await prepFeature(backlog, []);
   assert.equal(exit, null, err);
   assert.deepEqual(value.otherWorktrees, []);
   assert.equal(value.baseVars.otherWorktrees, '(none)');
 });
 
-test("bl run F-n's prep stops on a repo the config does not know, before the feature is running", () => {
+test("bl run F-n's prep stops on a repo the config does not know, before the feature is running", async () => {
   const { backlog } = build();
-  const { exit, err, feature } = prepFeature(backlog, ['repoB', 'nope']);
+  const { exit, err, feature } = await prepFeature(backlog, ['repoB', 'nope']);
   assert.equal(exit, 1);
   assert.match(err, /Unknown repo: nope \(named by story S-9, component C11\)/);
   assert.match(readFileSync(feature.indexPath, 'utf8'), /^status: approved$/m);
 });
 
-test("bl run F-n's prep stops, naming the repo, when another repo's bootstrap fails", () => {
+test("bl run F-n's prep stops, naming the repo, when another repo's bootstrap fails", async () => {
   const { backlog } = build({ bootstrap: "sh -c 'test {{repoName}} != repoB'" });
-  const { exit, err } = prepFeature(backlog, ['repoB']);
+  const { exit, err } = await prepFeature(backlog, ['repoB']);
   assert.equal(exit, 1);
   assert.match(
     err,
@@ -273,7 +282,7 @@ test("bl run F-n's prep stops, naming the repo, when another repo's bootstrap fa
   );
 });
 
-test('bl implement on an escalated feature or story whose review position is fixing starts the fix session: resolveWorkonTargets accepts it, prepareFeatureWorktree returns reviewPending, prepareStoryWorktree uses workon-review', () => {
+test('bl implement on an escalated feature or story whose review position is fixing starts the fix session: resolveWorkonTargets accepts it, prepareFeatureWorktree returns reviewPending, prepareStoryWorktree uses workon-review', async () => {
   const at = (n) => `2026-11-0${n}T00:00:00Z`;
   const started = [
     { at: at(1), to: 'draft', by: 'new' },
@@ -306,14 +315,14 @@ test('bl implement on an escalated feature or story whose review position is fix
       ['S-7'],
       `story, ${name}: ${targets.notices.join('; ')}`,
     );
-    assert.equal(prep(story.backlog).prep.reviewPending, fix, `story, ${name}: reviewPending`);
+    assert.equal((await prep(story.backlog)).prep.reviewPending, fix, `story, ${name}: reviewPending`);
 
     // A feature: `bl implement F-1`'s prep picks the fix session and records `fixing` by fix.
     const feature = build();
     writeFeature(feature.backlog, []);
     const f1 = join(feature.backlog, 'features', 'F1-pair', 'index.md');
     writeFileSync(f1, readFileSync(f1, 'utf8').replace('status: approved\n', yamlLog(log)));
-    const { exit, err, value } = prepFeature(feature.backlog, [], 'implement');
+    const { exit, err, value } = await prepFeature(feature.backlog, [], 'implement');
     assert.equal(exit, null, `feature, ${name}: ${err}`);
     assert.equal(value.reviewPending, fix, `feature, ${name}: reviewPending`);
     const last = log.at(-1);
@@ -325,13 +334,13 @@ test('bl implement on an escalated feature or story whose review position is fix
   }
 });
 
-test('a feature with no stories exits 1 naming the fix, and nothing is written to the feature', () => {
+test('a feature with no stories exits 1 naming the fix, and nothing is written to the feature', async () => {
   const { backlog } = build();
   writeFeature(backlog, []);
   // S-7 leaves it: no story names F-1 (F-77 D3).
   const s7 = join(backlog, 'stories', 'S7-two', 'index.md');
   writeFileSync(s7, readFileSync(s7, 'utf8').replace('feature: F-1\n', ''));
-  const { exit, err, feature } = prepFeature(backlog, []);
+  const { exit, err, feature } = await prepFeature(backlog, []);
   assert.equal(exit, 1);
   assert.match(
     err,
@@ -341,16 +350,16 @@ test('a feature with no stories exits 1 naming the fix, and nothing is written t
   assert.match(readFileSync(feature.indexPath, 'utf8'), /^status: approved$/m);
 });
 
-test('a feature story whose component has no repo stops the prep, naming the story and the component', () => {
+test('a feature story whose component has no repo stops the prep, naming the story and the component', async () => {
   const { backlog } = build();
   writeFeature(backlog, ['repoB']);
   writeComponent(backlog, 'C01', 'other', null);
-  const { exit, err } = prepFeature(backlog, []);
+  const { exit, err } = await prepFeature(backlog, []);
   assert.equal(exit, 1);
   assert.match(err, /Feature F-1: S-8 \(component C01\) has no repo; a story's repo is its component's/);
 });
 
-test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, and starts the session in bl's", () => {
+test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, and starts the session in bl's", async () => {
   const { tmp, backlog } = build();
   const log = join(tmp, 'order.log');
   const repos = {};
@@ -392,7 +401,7 @@ test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, a
   const fdir = join(backlog, 'features', 'F1-trio');
   mkdirSync(fdir, { recursive: true });
   writeFileSync(join(fdir, 'index.md'), '---\nfeature_id: F-1\ntitle: Trio\nstatus: approved\n---\n\n# Trio\n');
-  const { exit, err, value } = withBacklog(backlog, () => {
+  const { exit, err, value } = await withBacklog(backlog, async () => {
     const config = loadConfig({ backlogRoot: backlog });
     return capture(() => prepareFeatureWorktree(config, findFeature(normalizeFeatureId('F-1'), config)));
   });
@@ -420,9 +429,9 @@ test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, a
 
 // F-60 D3: the feature's sessions start in its unit directory, which is their
 // write root, so both repos' worktrees are writable; the lock lives there.
-test("bl run F-n's sessions start in the unit directory, with both worktrees in their write roots", () => {
+test("bl run F-n's sessions start in the unit directory, with both worktrees in their write roots", async () => {
   const { tmp, backlog } = build();
-  const { exit, err, value: p } = prepFeature(backlog, ['repoB']);
+  const { exit, err, value: p } = await prepFeature(backlog, ['repoB']);
   assert.equal(exit, null, err);
   const unitDir = join(tmp, 'worktrees', 'f1-pair');
   assert.equal(p.unitDir, unitDir);
@@ -445,7 +454,7 @@ test("bl run F-n's sessions start in the unit directory, with both worktrees in 
     return { status: 0, output: 'DONE', isError: false, usage: null };
   };
   try {
-    withBacklog(backlog, () => {
+    await withBacklog(backlog, async () => {
       const config = loadConfig({ backlogRoot: backlog });
       const runner = defaultRunner();
       for (const [mode, promptName] of [
@@ -454,7 +463,7 @@ test("bl run F-n's sessions start in the unit directory, with both worktrees in 
         ['workon', 'feature-self-review'],
         ['review', 'review-correctness'],
       ]) {
-        const r = runner.session({
+        const r = await runner.session({
           mode,
           agent: 'claude',
           promptName,
@@ -488,10 +497,10 @@ test("bl run F-n's sessions start in the unit directory, with both worktrees in 
   assert.ok(!existsSync(join(unitDir, '.workon.lock')), 'released after each session');
 });
 
-test("bl run F-n's prep gives a story added after approval its worktree with no feature edit", () => {
+test("bl run F-n's prep gives a story added after approval its worktree with no feature edit", async () => {
   const { tmp, backlog } = build();
   // First prep: S-7 is in repoA alone.
-  const first = prepFeature(backlog, []);
+  const first = await prepFeature(backlog, []);
   assert.equal(first.exit, null, first.err);
   assert.deepEqual(first.value.otherWorktrees, []);
   // A story in repoB's component joins the feature by naming it; the feature file is not touched.
@@ -502,7 +511,7 @@ test("bl run F-n's prep gives a story added after approval its worktree with no 
     '---\ncomponent: C01\nstory_id: S-8\ntitle: More\nstatus: refined\npoints: 2\nfeature: F-1\n---\n\n# More\n',
   );
   const fp = join(backlog, 'features', 'F1-pair', 'index.md');
-  const again = prepFeature(backlog, []);
+  const again = await prepFeature(backlog, []);
   assert.equal(again.exit, null, again.err);
   assert.deepEqual(again.value.otherWorktrees, [
     { repoName: 'repoB', worktreePath: join(tmp, 'worktrees', 'f1-pair', 'repoB') },
@@ -511,10 +520,10 @@ test("bl run F-n's prep gives a story added after approval its worktree with no 
   assert.doesNotMatch(readFileSync(fp, 'utf8'), /secondary_repos/);
 });
 
-function cleanSecondary(backlog, repoB) {
-  return withBacklog(backlog, () => {
+async function cleanSecondary(backlog, repoB) {
+  return withBacklog(backlog, async () => {
     const config = loadConfig({ backlogRoot: backlog });
-    return capture(() =>
+    return capture(async () =>
       cleanupOneRepo({
         parsed: { id: 'F-1', num: '1' },
         storyEntry: 'F1-pair',
@@ -528,9 +537,9 @@ function cleanSecondary(backlog, repoB) {
   });
 }
 
-test('bl merge skips a repo other than the lead with no commits: worktree and branch removed, nothing merged', () => {
+test('bl merge skips a repo other than the lead with no commits: worktree and branch removed, nothing merged', async () => {
   const { backlog, repoB } = build({ bootstrap: 'true' });
-  const { value } = prepFeature(backlog, ['repoB']);
+  const { value } = await prepFeature(backlog, ['repoB']);
   const wt = value.otherWorktrees[0].worktreePath;
   // The workon marker is the only change; a clean tree is what counts.
   unlinkSync(join(wt, '.workon'));
@@ -547,7 +556,7 @@ test('bl merge skips a repo other than the lead with no commits: worktree and br
   };
   let r;
   try {
-    r = cleanSecondary(backlog, repoB);
+    r = await cleanSecondary(backlog, repoB);
   } finally {
     console.log = origLog;
     process.stderr.write = origWrite;
@@ -561,12 +570,12 @@ test('bl merge skips a repo other than the lead with no commits: worktree and br
   assert.equal(git(repoB, 'rev-parse main').trim(), before, 'main untouched');
 });
 
-test('bl merge refuses a repo other than the lead with uncommitted changes', () => {
+test('bl merge refuses a repo other than the lead with uncommitted changes', async () => {
   const { backlog, repoB } = build({ bootstrap: 'true' });
-  const { value } = prepFeature(backlog, ['repoB']);
+  const { value } = await prepFeature(backlog, ['repoB']);
   const wt = value.otherWorktrees[0].worktreePath;
   writeFileSync(join(wt, 'wip.txt'), 'draft\n');
-  const r = cleanSecondary(backlog, repoB);
+  const r = await cleanSecondary(backlog, repoB);
   assert.deepEqual(r.value, { ok: false });
   assert.match(r.err, /repoB: worktree .* has uncommitted changes/);
   assert.ok(existsSync(join(wt, 'wip.txt')), 'work kept');
@@ -577,22 +586,27 @@ test('bl merge refuses a repo other than the lead with uncommitted changes', () 
 // starts in (F-60 D3): a branch already checked out elsewhere is refused
 // before anything runs in it, for the story's repo and the feature's lead
 // and other repos alike.
-test('prepared worktree must be under its existing session cwd/write root: one checked out elsewhere is refused', () => {
+test('prepared worktree must be under its existing session cwd/write root: one checked out elsewhere is refused', async () => {
   const cases = [
-    { label: 'story repo', repo: 'repoA', branch: 's7-two', run: (backlog) => capture(() => prep(backlog)) },
-    { label: 'feature lead', repo: 'repoA', branch: 'f1-pair', run: (backlog) => prepFeature(backlog, ['repoB']) },
+    { label: 'story repo', repo: 'repoA', branch: 's7-two', run: async (backlog) => capture(() => prep(backlog)) },
+    {
+      label: 'feature lead',
+      repo: 'repoA',
+      branch: 'f1-pair',
+      run: async (backlog) => prepFeature(backlog, ['repoB']),
+    },
     {
       label: 'feature other repo',
       repo: 'repoB',
       branch: 'f1-pair',
-      run: (backlog) => prepFeature(backlog, ['repoB']),
+      run: async (backlog) => prepFeature(backlog, ['repoB']),
     },
   ];
   for (const c of cases) {
     const built = build();
     const elsewhere = join(built.tmp, `elsewhere-${c.repo}`);
     git(built[c.repo], `worktree add -q -b ${c.branch} "${elsewhere}" main`);
-    const { exit, err } = c.run(built.backlog);
+    const { exit, err } = await c.run(built.backlog);
     assert.equal(exit, 1, c.label);
     const conventional = join(built.tmp, 'worktrees', c.branch, c.repo);
     assert.ok(err.includes(`checked out at ${elsewhere}, outside its unit directory`), `${c.label}: ${err}`);
@@ -610,16 +624,16 @@ const STAGES = [
   { stage: 'workon', what: 'a workon plugin', opts: (r) => ({ workon: failIn(r, 'true') }) },
 ];
 
-test("prepareStoryRun is strict for the story's repo", () => {
+test("prepareStoryRun is strict for the story's repo", async () => {
   for (const st of STAGES) {
     const { backlog } = build(st.opts('repoA'));
-    const { exit, err } = capture(() => prep(backlog));
+    const { exit, err } = await capture(() => prep(backlog));
     assert.equal(exit, 1, st.stage);
     assert.match(err, new RegExp(`S-7: ${st.what} failed in repoA `), st.stage);
   }
 });
 
-test('prepareFeatureWorktree is strict for the lead repo and every other repo', () => {
+test('prepareFeatureWorktree is strict for the lead repo and every other repo', async () => {
   const TARGETS = [
     { kind: 'lead', failing: 'repoA' },
     { kind: 'other repo', failing: 'repoB' },
@@ -627,7 +641,7 @@ test('prepareFeatureWorktree is strict for the lead repo and every other repo', 
   for (const t of TARGETS) {
     for (const st of STAGES) {
       const { backlog } = build(st.opts(t.failing));
-      const { exit, err, feature } = prepFeature(backlog, ['repoB']);
+      const { exit, err, feature } = await prepFeature(backlog, ['repoB']);
       const label = `${t.kind}, ${st.stage}`;
       assert.equal(exit, 1, label);
       assert.match(err, new RegExp(`F-1: ${st.what} failed in ${t.failing} `), label);
@@ -670,29 +684,29 @@ const RETRIES = [
 const workonRuns = (tmp, repo, branch) =>
   readFileSync(join(tmp, 'worktrees', branch, repo, '.workon'), 'utf8').split('\n').length - 1;
 
-test("prepareStoryRun retries a failed workon plugin or bootstrap in the story's repo before returning", () => {
+test("prepareStoryRun retries a failed workon plugin or bootstrap in the story's repo before returning", async () => {
   for (const r of RETRIES.filter((x) => x.failing === 'repoA')) {
     const { tmp, backlog } = build(r.opts(r.failing));
-    const first = capture(() => prep(backlog));
+    const first = await capture(() => prep(backlog));
     assert.equal(first.exit, 1, r.kind);
     assert.match(first.err, new RegExp(`${r.what} failed in ${r.failing} `), r.kind);
-    const second = capture(() => prep(backlog));
+    const second = await capture(() => prep(backlog));
     assert.equal(second.exit, null, `${r.kind}: ${second.err}`);
     assert.equal(workonRuns(tmp, r.failing, 's7-two'), 1, r.kind);
-    capture(() => prep(backlog));
+    await capture(() => prep(backlog));
     assert.equal(workonRuns(tmp, r.failing, 's7-two'), 1, `${r.kind}: not re-run once done`);
   }
 });
 
 // `bl implement F-n` records `in_progress` in the prep (F-69 D3); a run's is the loop's.
-test("prepareFeatureWorktree retries another repo's failed workon plugin before marking in_progress", () => {
+test("prepareFeatureWorktree retries another repo's failed workon plugin before marking in_progress", async () => {
   for (const r of RETRIES) {
     const { tmp, backlog } = build(r.opts(r.failing));
-    const first = prepFeature(backlog, ['repoB'], 'implement');
+    const first = await prepFeature(backlog, ['repoB'], 'implement');
     assert.equal(first.exit, 1, r.kind);
     assert.match(first.err, new RegExp(`${r.what} failed in ${r.failing} `), r.kind);
     assert.match(readFileSync(first.feature.indexPath, 'utf8'), /^status: approved$/m, r.kind);
-    const second = prepFeature(backlog, ['repoB'], 'implement');
+    const second = await prepFeature(backlog, ['repoB'], 'implement');
     assert.equal(second.exit, null, `${r.kind}: ${second.err}`);
     assert.equal(workonRuns(tmp, r.failing, 'f1-pair'), 1, r.kind);
     const fm = parseFrontmatter(readFileSync(second.feature.indexPath, 'utf8')).fm;

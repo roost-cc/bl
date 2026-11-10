@@ -21,7 +21,7 @@ import {
   stubRunner,
 } from '../helpers/merge-integrate-fixture.js';
 
-test('retained_agent_resolution_requires_addressed_review_before_retry_can_land: a resolution a failed roll back kept is checked, gated and reviewed before it lands', () => {
+test('retained_agent_resolution_requires_addressed_review_before_retry_can_land: a resolution a failed roll back kept is checked, gated and reviewed before it lands', async () => {
   const failingReview = (s) => {
     const session = s.runner.session;
     s.runner.session = (o) => {
@@ -78,7 +78,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
     },
   ];
   /** The first integration, its roll back failing everywhere; the operator then clears the escalation. */
-  const stopRetained = (c) => {
+  const stopRetained = async (c) => {
     const fx = fixture();
     landOnMain(fx, 'f1-feat.txt', 'main version\n', 'main edits');
     const ctx = featureCtx(fx);
@@ -88,7 +88,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
     const shell = runner.shell;
     runner.shell = (cmd, cwd, o) =>
       cmd.startsWith('git reset -q --keep') ? { status: 1, output: 'injected reset failure' } : shell(cmd, cwd, o);
-    assert.equal(integrateUnit({ ...ctx, runner }).escalated, true, c.name);
+    assert.equal((await integrateUnit({ ...ctx, runner })).escalated, true, c.name);
     const state = JSON.parse(readFileSync(join(fx.dir, '.bl', 'run', 'F-1.json'), 'utf8'));
     assert.equal(state.integrationRetained.code.review, true, `${c.name}: the review obligation is recorded`);
     if (second) assert.equal(state.integrationRetained.second.review, true, `${c.name}: in the current repo too`);
@@ -97,10 +97,10 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
   };
   for (const c of cases) {
     // A green gate alone, with no review session that can run, does not land it.
-    const a = stopRetained(c);
+    const a = await stopRetained(c);
     try {
       const green = stubRunner('true');
-      const retry = integrateUnit({ ...featureCtx(a.fx), prep: a.ctx.prep, runner: green.runner });
+      const retry = await integrateUnit({ ...featureCtx(a.fx), prep: a.ctx.prep, runner: green.runner });
       assert.equal(retry.ok, false, `${c.name}: not landed on a green gate alone`);
       assert.ok(green.calls.sessions > 0 || !c.lands, `${c.name}: a review was attempted`);
       g(a.fx.repo, 'fetch', '-q', 'origin');
@@ -111,7 +111,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
 
     // An addressed review, with no new resolution session, lands it; a
     // resolution that fails the checks never reaches the review.
-    const b = stopRetained(c);
+    const b = await stopRetained(c);
     try {
       const s = scriptedRunner({
         test: 'true',
@@ -119,7 +119,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
           throw new Error('no new resolution session');
         },
       });
-      const retry = integrateUnit({ ...featureCtx(b.fx), prep: b.ctx.prep, runner: s.runner });
+      const retry = await integrateUnit({ ...featureCtx(b.fx), prep: b.ctx.prep, runner: s.runner });
       assert.equal(s.calls.sessions.includes('merge-resolve'), false, `${c.name}: no new resolution session`);
       g(b.fx.repo, 'fetch', '-q', 'origin');
       if (c.lands) {
@@ -161,7 +161,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
   }
 });
 
-test('retained_agent_resolution_requires_addressed_review_before_retry_can_land: a fresh conflict on top of a retained resolution is checked in its own merge', () => {
+test('retained_agent_resolution_requires_addressed_review_before_retry_can_land: a fresh conflict on top of a retained resolution is checked in its own merge', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'f1-feat.txt', 'main version\n', 'main edits');
@@ -177,7 +177,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
     const shell = runner.shell;
     runner.shell = (cmd, cwd, o) =>
       cmd.startsWith('git reset -q --keep') ? { status: 1, output: 'injected reset failure' } : shell(cmd, cwd, o);
-    assert.equal(integrateUnit({ ...ctx, runner }).escalated, true);
+    assert.equal((await integrateUnit({ ...ctx, runner })).escalated, true);
     clearEscalation(fx);
 
     // Main moves again; the new resolution leaves markers in the new merge.
@@ -194,7 +194,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
         return RESOLVED;
       },
     });
-    const retry = integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: s.runner });
+    const retry = await integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: s.runner });
     assert.equal(retry.ok, false);
     assert.match(retry.reason, /the resolution agent did not resolve it$/);
     assert.match(escalation(featureFile(fx)), /conflict markers left in the merge commit/);
@@ -206,7 +206,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
   }
 });
 
-test('retained_agent_resolution_requires_addressed_review_before_retry_can_land: a fix session in a repo the retained resolution never touched is owed a review when its roll back fails', () => {
+test('retained_agent_resolution_requires_addressed_review_before_retry_can_land: a fix session in a repo the retained resolution never touched is owed a review when its roll back fails', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'f1-feat.txt', 'main version\n', 'main edits');
@@ -224,7 +224,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
       return session(o);
     };
     failReset(runner);
-    assert.equal(integrateUnit({ ...ctx, runner }).escalated, true);
+    assert.equal((await integrateUnit({ ...ctx, runner })).escalated, true);
     const first = JSON.parse(readFileSync(join(fx.dir, '.bl', 'run', 'F-1.json'), 'utf8')).integrationRetained;
     assert.equal(first.code.review, true);
     assert.equal(first.second, undefined, 'second never moved: nothing retained there');
@@ -243,7 +243,7 @@ test('retained_agent_resolution_requires_addressed_review_before_retry_can_land:
       return FIXED_TESTS;
     };
     failReset(s.runner);
-    assert.equal(integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: s.runner }).escalated, true);
+    assert.equal((await integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: s.runner })).escalated, true);
     assert.equal(s.calls.sessions.includes('merge-resolve'), false, 'no resolution session');
     const state = JSON.parse(readFileSync(join(fx.dir, '.bl', 'run', 'F-1.json'), 'utf8')).integrationRetained;
     assert.equal(state.second?.review, true, "the fix session's commits keep their review obligation");

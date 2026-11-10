@@ -27,17 +27,17 @@ test('a batch refine outcome file name stays under 255 bytes for every batch siz
   }
 });
 
-test('a status write that fails names its story', () => {
+test('a status write that fails names its story', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const unit = { id: 'S-9', kind: 'story', indexPath: `${dir}/stories/S9-gone/index.md` };
-    assert.throws(() => applyRefineStatus(dir, unit, 'success'), /^Error: S-9: /);
+    await assert.rejects(async () => applyRefineStatus(dir, unit, 'success'), /^Error: S-9: /);
   } finally {
     cleanup();
   }
 });
 
-test('a batch refine applies every story it can and names each one it could not', () => {
+test('a batch refine applies every story it can and names each one it could not', async () => {
   const stories = ['S-1', 'S-3', 'S-4'].map((id) => ({
     id,
     component: 'C01',
@@ -56,8 +56,8 @@ test('a batch refine applies every story it can and names each one it could not'
       'S-4': { refined: true },
       'S-5': { refined: true },
     };
-    assert.throws(
-      () => applyBatchStatuses(dir, targets, outcome),
+    await assert.rejects(
+      async () => applyBatchStatuses(dir, targets, outcome),
       (e) => {
         assert.match(e.message, /^status set for: S-1, S-4; not set for:\n/);
         assert.match(e.message, /\n {2}S-2: /);

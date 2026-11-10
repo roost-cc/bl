@@ -50,6 +50,7 @@ import {
 import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
 import { spawnSync } from 'child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   parseFrontmatter,
   parseFrontmatterOf,
@@ -116,7 +117,6 @@ import {
   writeChange,
 } from './change-doc.js';
 import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
-import { sleepSync } from './sleep-sync.js';
 import { RUN_DIR, runLockPath, ensureRunDir } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
@@ -303,7 +303,7 @@ const isTokenKey = (key) => key.startsWith('tokens_');
  * lands meanwhile waits for it, and through `atomicWriteFile`, so a failed
  * write leaves the current file whole.
  */
-export function restoreKeepingTokens(backlogRoot, indexPath, before) {
+export async function restoreKeepingTokens(backlogRoot, indexPath, before) {
   const { content, crlf: snapCrlf } = readSpecText(before, indexPath);
   const { fm: snap, body } = parseFrontmatterOf(content, indexPath);
   return withSpecLock(indexPath, () => {
@@ -436,7 +436,7 @@ function setupChange(ctx) {
  * and its verdict. Committed at once; a gate whose lines cannot be written
  * still stands.
  */
-function recordGateLine(ctx, gate) {
+async function recordGateLine(ctx, gate) {
   const path = changeFile(ctx);
   if (!existsSync(path)) return;
   const date = runnerNow(ctx.runner).toISOString().slice(0, 10);
@@ -461,7 +461,7 @@ function recordGateLine(ctx, gate) {
     });
     return;
   }
-  commitChangeFile(ctx, 'test', `chore: ${ctx.feature.id} gate ${verdict}${attempt ? ` (${attempt})` : ''}`);
+  await commitChangeFile(ctx, 'test', `chore: ${ctx.feature.id} gate ${verdict}${attempt ? ` (${attempt})` : ''}`);
 }
 
 /**
@@ -489,12 +489,12 @@ function storyComplete(story, backlogRoot) {
  * (`_blocked-by-bug.md`). The agent no longer sets a status. A story run on
  * its own is started by its run already.
  */
-function startStory(ctx, s) {
+async function startStory(ctx, s) {
   const root = ctx.config.backlogRoot;
   const path = join(root, s.storyRelPath);
   if (!loadFlow(root).isUnstarted('story', statusOf('story', readFm(path)))) return;
-  if (logWrite(ctx, 'implement', () => enterVerb(root, { kind: 'story', indexPath: path }, 'implement'))) {
-    commitUnitPaths(ctx, 'implement', [s.storyRelPath], `chore: ${s.id} in_progress (implement)`);
+  if (await logWrite(ctx, 'implement', async () => enterVerb(root, { kind: 'story', indexPath: path }, 'implement'))) {
+    await commitUnitPaths(ctx, 'implement', [s.storyRelPath], `chore: ${s.id} in_progress (implement)`);
   }
 }
 
@@ -560,7 +560,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     capacity(agent, model, topLevel) {
       return getProvider(agent).capacity({ model, topLevel });
     },
-    session({
+    async session({
       mode,
       agent,
       promptName,
@@ -587,7 +587,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       const resume = !interactive && retry?.sessionId ? retry.sessionId : null;
       if (retry) prompt = resume ? retry.note : `${prompt}\n\n${retry.note}\n`;
       if (interactive) {
-        const ret = launchSession({
+        const ret = await launchSession({
           mode,
           parsed,
           title: label,
@@ -623,7 +623,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
           structuredError,
         };
       }
-      const r = runHeadlessSession({
+      const r = await runHeadlessSession({
         mode,
         parsed,
         prompt,
@@ -740,12 +740,11 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       return new Date();
     },
     /**
-     * Block for `ms`. The loop is synchronous, so the usage-limit wait cannot
-     * yield to a timer; it calls this in slices of at most a second.
-     * `sleepSync` lets Ctrl+C end the wait (S-1394).
+     * Wait `ms` on a timer. The usage-limit wait awaits this in slices of at
+     * most a second; Ctrl+C ends it at once (F-105 A2).
      */
-    sleep(ms) {
-      sleepSync(ms);
+    async sleep(ms) {
+      await delay(ms);
     },
     log: info,
   };
@@ -778,7 +777,7 @@ function setStep(ctx, step, extra = {}) {
  * is rebased and retried (`pushBacklog`). A failed push is a log line: the
  * next bl command that pulls pushes the commit.
  */
-function commitBacklog(ctx, paths, message) {
+async function commitBacklog(ctx, paths, message) {
   const root = ctx.config.backlogRoot;
   const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
   const commit = () => {
@@ -788,7 +787,7 @@ function commitBacklog(ctx, paths, message) {
     return c.status === 0;
   };
   if (!hasOriginRemote(root)) return commit();
-  const done = withMainSyncLock(root, () => {
+  const done = await withMainSyncLock(root, () => {
     if (!commit()) return false;
     const p = pushBacklog(root);
     if (!p.pushed) ctx.runner.log(`  (${pushWarning(root, p)})`);
@@ -798,19 +797,19 @@ function commitBacklog(ctx, paths, message) {
 }
 
 /** A backlog commit that did not land is a failed event, not a silent one. */
-function commitUnitPaths(ctx, step, paths, message) {
-  if (commitBacklog(ctx, paths, message)) return true;
+async function commitUnitPaths(ctx, step, paths, message) {
+  if (await commitBacklog(ctx, paths, message)) return true;
   const note = `backlog commit failed: "${message}" — ${paths.join(', ')} ${paths.length === 1 ? 'is' : 'are'} written but uncommitted`;
   record(ctx, { step, ok: false, note });
   ctx.runner.log(`  (${note})`);
   return false;
 }
 
-function commitFeatureFile(ctx, step, message) {
+async function commitFeatureFile(ctx, step, message) {
   return commitUnitPaths(ctx, step, [ctx.feature.featureRelPath], message);
 }
 
-function commitChangeFile(ctx, step, message) {
+async function commitChangeFile(ctx, step, message) {
   return commitUnitPaths(ctx, step, [changeRelPath(ctx)], message);
 }
 
@@ -833,19 +832,19 @@ function unitStatus(ctx) {
  * Record a hop of the loop in the unit's log (F-69 D3) and commit the unit
  * file, through `logWrite`.
  */
-function hop(ctx, step, to, opts) {
-  writeHop(ctx, step, () => transition(ctx.config.backlogRoot, unitRef(ctx), to, opts));
+async function hop(ctx, step, to, opts) {
+  await writeHop(ctx, step, async () => transition(ctx.config.backlogRoot, unitRef(ctx), to, opts));
 }
 
 /** `hop` for a verb's start (`enterVerb`). */
-function enterHop(ctx, step, verb) {
-  writeHop(ctx, step, () => enterVerb(ctx.config.backlogRoot, unitRef(ctx), verb));
+async function enterHop(ctx, step, verb) {
+  await writeHop(ctx, step, async () => enterVerb(ctx.config.backlogRoot, unitRef(ctx), verb));
 }
 
 /** Run `write` through `logWrite`, and commit the unit file when it recorded an entry. */
-function writeHop(ctx, step, write) {
-  const entry = logWrite(ctx, step, write);
-  if (entry) commitFeatureFile(ctx, step, `chore: ${ctx.feature.id} ${entry.to} (${entry.by})`);
+async function writeHop(ctx, step, write) {
+  const entry = await logWrite(ctx, step, write);
+  if (entry) await commitFeatureFile(ctx, step, `chore: ${ctx.feature.id} ${entry.to} (${entry.by})`);
 }
 
 /**
@@ -855,13 +854,13 @@ function writeHop(ctx, step, write) {
  * the run's history says so. Any other error (a spec lock timeout, a disk
  * error) stops the run: the next step depends on the entry.
  */
-function logWrite(ctx, step, write) {
+async function logWrite(ctx, step, write) {
   try {
-    return write();
+    return await write();
   } catch (e) {
     if (!(e instanceof NoEdgeError)) {
       const reason = `the transition log could not be written at ${step}: ${e.message}`;
-      throw new RunStoppedError(reason, finish(ctx, 'failed', reason));
+      throw new RunStoppedError(reason, await finish(ctx, 'failed', reason));
     }
     record(ctx, { step, ok: true, warning: true, note: `not recorded in the transition log: ${e.message}` });
     ctx.runner.log(`  warning: not recorded in the transition log: ${e.message}`);
@@ -893,14 +892,14 @@ export function escalatingVerb(flow, kind, status, integration) {
  * `bl merge`'s integration, content an agent wrote during the merge is kept
  * below bl's own reason and details instead of standing alone (F-36 D8).
  */
-function writeEscalation(ctx, reason, details = '', { fold = false } = {}) {
+async function writeEscalation(ctx, reason, details = '', { fold = false } = {}) {
   const { feature } = ctx;
   const text = `${reason}${details ? `\n\n${details}` : ''}`.trim();
   const flow = loadFlow(ctx.config.backlogRoot);
   const kind = unitKind(ctx);
   // Under the spec lock, inside the backlog lock when `bl merge` holds it
   // (F-67 D4): a token step entry a session writes meanwhile is kept.
-  updateSpecFile(ctx.config.backlogRoot, feature.indexPath, (fm, body) => {
+  await updateSpecFile(ctx.config.backlogRoot, feature.indexPath, (fm, body) => {
     const by = escalatingVerb(flow, kind, statusOf(kind, fm), Boolean(ctx.integration));
     const note = String(reason).split('\n')[0];
     if (by) applyTransition(flow, kind, fm, 'escalated', { by, note });
@@ -913,7 +912,7 @@ function writeEscalation(ctx, reason, details = '', { fold = false } = {}) {
     if (fold) return replaceSection(body, 'Escalation', `${text}\n\nWritten during the merge:\n\n${existing.trim()}`);
     return body;
   });
-  commitFeatureFile(ctx, 'escalate', `chore: ${feature.id} escalated — ${reason}`);
+  await commitFeatureFile(ctx, 'escalate', `chore: ${feature.id} escalated — ${reason}`);
 }
 
 /**
@@ -934,14 +933,14 @@ function finalTitle(ctx, status) {
   ctx.runner.title?.({ feature: ctx.feature.id, story: '', status: shown, next }, { final: true });
 }
 
-function finish(ctx, status, reason = null, details = '') {
+async function finish(ctx, status, reason = null, details = '') {
   // Inside `bl merge`'s integration a stop is a merge escalation (F-36 D8):
   // its reason says so, and it names the repos, files and next step.
   if (status === 'escalated' && ctx.integration) {
     reason = `merge with main: ${reason}`;
     details = [details, ctx.integration.details()].filter(Boolean).join('\n\n');
   }
-  if (status === 'escalated') writeEscalation(ctx, reason, details, { fold: Boolean(ctx.integration) });
+  if (status === 'escalated') await writeEscalation(ctx, reason, details, { fold: Boolean(ctx.integration) });
   ctx.state.status = status;
   ctx.state.lastError = reason;
   // `step` keeps the step the run stopped in — that is what `bl status`
@@ -1063,7 +1062,7 @@ function safeLog(runner, message) {
   }
 }
 
-function withContainerCleanup(ctx, label, fn) {
+async function withContainerCleanup(ctx, label, fn) {
   const { runner } = ctx;
   let before = null;
   try {
@@ -1074,16 +1073,16 @@ function withContainerCleanup(ctx, label, fn) {
   // An unusable initial snapshot means we cannot tell what already existed,
   // so nothing may be classified as fresh: skip the cleanup entirely.
   before = normalizeSnapshot(before);
-  if (!before) return fn();
+  if (!before) return await fn();
   let result;
   let thrown = null;
   try {
-    result = fn();
+    result = await fn();
   } catch (e) {
     thrown = { e };
   }
   const failure = removeFreshContainers(ctx, label, before);
-  if (failure) finish(ctx, 'escalated', `container cleanup after ${label} failed`, failure);
+  if (failure) await finish(ctx, 'escalated', `container cleanup after ${label} failed`, failure);
   if (thrown) throw thrown.e;
   if (failure) throw new ContainerCleanupError(failure, ctx.state);
   return result;
@@ -1220,21 +1219,21 @@ function newScope(ctx) {
  * own error, when it threw, is rethrown; otherwise a ProcessCleanupError
  * unwinds to runFeature / reviewFeature / integrateUnit.
  */
-function withProcessCleanup(ctx, label, fn) {
-  if (!processHygiene(ctx)) return fn();
+async function withProcessCleanup(ctx, label, fn) {
+  if (!processHygiene(ctx)) return await fn();
   const outer = ctx.scopes;
   ctx.scopes = [];
   let result;
   let thrown = null;
   try {
-    result = fn();
+    result = await fn();
   } catch (e) {
     thrown = { e };
   }
   const scopes = ctx.scopes;
   ctx.scopes = outer;
   const failure = removeLeftoverProcesses(ctx, label, scopes);
-  if (failure) finish(ctx, 'escalated', `process cleanup after ${label} failed`, failure);
+  if (failure) await finish(ctx, 'escalated', `process cleanup after ${label} failed`, failure);
   if (thrown) throw thrown.e;
   if (failure) throw new ProcessCleanupError(failure, ctx.state);
   return result;
@@ -1294,7 +1293,7 @@ function removeLeftoverProcesses(ctx, label, scopes) {
  * ProcessCleanupError after escalating when a stop fails, or when the scopes
  * cannot be listed: they may be running and would collide with the next step.
  */
-function reapStaleScopes(ctx) {
+async function reapStaleScopes(ctx) {
   if (!processHygiene(ctx)) return;
   const label = 'an earlier bl that is no longer running';
   let stale;
@@ -1317,7 +1316,7 @@ function reapStaleScopes(ctx) {
     failure = removeLeftoverProcesses(ctx, label, stale);
   }
   if (!failure) return;
-  finish(ctx, 'escalated', `process cleanup after ${label} failed`, failure);
+  await finish(ctx, 'escalated', `process cleanup after ${label} failed`, failure);
   throw new ProcessCleanupError(failure, ctx.state);
 }
 
@@ -1659,7 +1658,7 @@ function readCapacity(runner, c, asked, topLevel) {
  * note after its prompt). A second failure escalates with the text's last 20
  * lines and throws an OutcomeError. Nothing reads an outcome from the text.
  */
-export function runSession(
+export async function runSession(
   ctx,
   { step, mode, role = 'implement', story = null, promptName, vars, label, schema = null },
 ) {
@@ -1678,9 +1677,9 @@ export function runSession(
   // One spawn of configuration `c`, recorded in the history; null when it was
   // a refusal, which puts `c` on the out-list instead. `retry` is the outcome
   // retry's `{ sessionId, note }` (F-68 D5).
-  const spawnRecorded = (c, retry) => {
+  const spawnRecorded = async (c, retry) => {
     const started = new Date().toISOString();
-    const r = runner.session({
+    const r = await runner.session({
       mode,
       agent: c.agent,
       promptName,
@@ -1755,9 +1754,9 @@ export function runSession(
   // cleanup cannot hide what the session did. A headless session runs in a
   // user systemd scope stopped afterwards (F-70 D4); an interactive one is
   // the operator's.
-  const scoped = (fn) => (runner.interactive ? fn() : withProcessCleanup(ctx, step, fn));
-  return withContainerCleanup(ctx, step, () =>
-    scoped(() => {
+  const scoped = async (fn) => (runner.interactive ? fn() : withProcessCleanup(ctx, step, fn));
+  return withContainerCleanup(ctx, step, async () =>
+    scoped(async () => {
       const list = roleConfigurations(ctx, role);
       const excluded = role === 'review' ? implementers(ctx) : [];
       let waitedUntil = null;
@@ -1799,18 +1798,18 @@ export function runSession(
               continue;
             }
           }
-          let r = spawnRecorded(c, null);
+          let r = await spawnRecorded(c, null);
           if (!r) continue;
           // No valid outcome: the same session once more with the note (F-68 D5).
           if (schema && r.structured == null) {
             runner.log(`  ${step}: no valid outcome (${outcomeFault(r)}); resuming the session once`);
-            r = spawnRecorded(c, { sessionId: r.sessionId ?? null, note: OUTCOME_RETRY_NOTE });
+            r = await spawnRecorded(c, { sessionId: r.sessionId ?? null, note: OUTCOME_RETRY_NOTE });
             if (!r) continue;
-            if (r.structured == null) escalateNoOutcome(ctx, step, r);
+            if (r.structured == null) await escalateNoOutcome(ctx, step, r);
           }
           return r;
         }
-        waitedUntil = waitOrEscalate(ctx, { step, role, list, excluded, waitedUntil });
+        waitedUntil = await waitOrEscalate(ctx, { step, role, list, excluded, waitedUntil });
       }
     }),
   );
@@ -1832,7 +1831,7 @@ function outcomeFault(r) {
  * and throw an OutcomeError. The text is evidence for the operator, never a
  * verdict.
  */
-function escalateNoOutcome(ctx, step, r) {
+async function escalateNoOutcome(ctx, step, r) {
   const reason = `${step}: no valid outcome after one retry (${outcomeFault(r)})`;
   const tail = String(r.output ?? '')
     .trimEnd()
@@ -1852,7 +1851,7 @@ function escalateNoOutcome(ctx, step, r) {
     '',
     `Find why the agent did not return the outcome, then run \`${resume}\`.`,
   ].join('\n');
-  finish(ctx, 'escalated', reason, details);
+  await finish(ctx, 'escalated', reason, details);
   throw new OutcomeError(reason, ctx.state);
 }
 
@@ -1890,7 +1889,7 @@ function runnerNow(runner) {
  * reason, its scope and its reset time in local time, and each one `excluded`
  * (F-64 D4: it implemented this run) with the steps it ran.
  */
-function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUntil }) {
+async function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUntil }) {
   const { runner, prep, config, feature } = ctx;
   const cfg = prep.cfg ?? config;
   const capHours = cfg.limitWaitMaxHours ?? 8;
@@ -1947,7 +1946,7 @@ function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUntil }) {
         ? `Add a "review_agent" configuration that did not implement this run, or raise the limit${next != null ? ' (or wait for the reset)' : ''}, then run \`${resume}\`.`
         : `Raise the limit${next != null ? ' (or wait for the reset)' : ''}, then run \`${resume}\`.`,
     ].join('\n');
-    finish(ctx, 'escalated', reason, details);
+    await finish(ctx, 'escalated', reason, details);
     throw new AgentUnavailableError(reason, ctx.state);
   }
   const until = untilMs(next.out);
@@ -1968,12 +1967,12 @@ function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUntil }) {
   runner.log(`  (${note})`);
   // Slices of at most a second, re-reading the clock each time: a machine
   // suspended through the deadline sees that it has passed instead of
-  // sleeping the whole stretch again. `sleepSync` lets Ctrl-C end the wait.
-  const sleep = typeof runner.sleep === 'function' ? (ms) => runner.sleep(ms) : sleepSync;
+  // sleeping the whole stretch again. The wait awaits a timer, so Ctrl-C ends it.
+  const sleep = typeof runner.sleep === 'function' ? async (ms) => runner.sleep(ms) : delay;
   for (;;) {
     const t = runnerNow(runner).getTime();
     if (t >= until) break;
-    sleep(Math.min(1000, until - t));
+    await sleep(Math.min(1000, until - t));
   }
   return until;
 }
@@ -2310,12 +2309,12 @@ function notRestored(ctx, wt, snap) {
   return left.length ? `not restored: ${left.slice(0, 5).join(', ')}${left.length > 5 ? ', …' : ''}` : null;
 }
 
-function runTestGate(ctx) {
+async function runTestGate(ctx) {
   // The gate's test commands run in user systemd scopes too (decision D4-b).
-  const gate = withContainerCleanup(ctx, 'test gate', () =>
+  const gate = await withContainerCleanup(ctx, 'test gate', async () =>
     withProcessCleanup(ctx, 'test gate', () => runTestGateInner(ctx)),
   );
-  recordGateLine(ctx, gate);
+  await recordGateLine(ctx, gate);
   return gate;
 }
 
@@ -2502,7 +2501,7 @@ function withCurrentEffort(backlogRoot, s) {
  * escalates, naming the story and the repo. A story run has one repo and
  * skips this. Returns the final state when the run stopped, else null.
  */
-function refreshRepos(ctx) {
+async function refreshRepos(ctx) {
   const { feature, config, prep } = ctx;
   if (isStory(feature)) return null;
   const scope = refreshedStories(ctx);
@@ -2556,7 +2555,11 @@ function refreshRepos(ctx) {
       });
       ctx.changePath = res.path;
       if (res.changed)
-        commitChangeFile(ctx, 'repos', `chore: ${feature.id} run adds ${repos.map((r) => r.repoName).join(', ')}`);
+        await commitChangeFile(
+          ctx,
+          'repos',
+          `chore: ${feature.id} run adds ${repos.map((r) => r.repoName).join(', ')}`,
+        );
     } catch (e) {
       // `bl merge` merges and records the repos the change document names.
       return finish(
@@ -2585,7 +2588,7 @@ function refreshRepos(ctx) {
  * session adds stories. Returns the final state when the run stopped, else
  * null.
  */
-function implementStories(ctx) {
+async function implementStories(ctx) {
   const { feature, config, prep, state, implementPrompt } = ctx;
   const cfg = prep.cfg ?? config;
   for (let i = 0; i < prep.ordered.length; i++) {
@@ -2593,7 +2596,7 @@ function implementStories(ctx) {
     if (ctx.implemented.has(s.id)) continue;
     ctx.implemented.add(s.id);
     if (storyComplete(s, config.backlogRoot)) {
-      startStory(ctx, s);
+      await startStory(ctx, s);
       record(ctx, { step: 'implement', story: s.id, ok: true, note: 'already complete — skipped' });
       continue;
     }
@@ -2601,13 +2604,13 @@ function implementStories(ctx) {
     setStep(ctx, 'implement', { story: s.id, storyIndex: i });
     const storyAbsPath = join(config.backlogRoot, s.storyRelPath);
     if (isScripted(readFm(storyAbsPath))) {
-      const stopped = implementScripted(ctx, s, storyAbsPath);
+      const stopped = await implementScripted(ctx, s, storyAbsPath);
       if (stopped) return stopped;
       state.storyIndex = i + 1;
       saveRunState(config, state);
       continue;
     }
-    startStory(ctx, s);
+    await startStory(ctx, s);
     const storyVars = {
       storyId: s.id,
       storyTitle: s.title,
@@ -2618,7 +2621,7 @@ function implementStories(ctx) {
       // One slot per story: its retry picks up what the first session left.
       scratchDir: scratchFor(ctx, s.id),
     };
-    runSession(ctx, {
+    await runSession(ctx, {
       step: 'implement',
       story: s.id,
       mode: 'workon',
@@ -2630,11 +2633,11 @@ function implementStories(ctx) {
     if (escalationOpen(feature.indexPath)) {
       return finish(ctx, 'escalated', `agent escalated while implementing ${s.id}`);
     }
-    let stopped = refreshRepos(ctx);
+    let stopped = await refreshRepos(ctx);
     if (stopped) return stopped;
     let open = unmetCriteria(storyAbsPath);
     if (open.length > 0) {
-      const retry = runSession(ctx, {
+      const retry = await runSession(ctx, {
         step: 'implement',
         story: s.id,
         mode: 'workon',
@@ -2649,7 +2652,7 @@ function implementStories(ctx) {
       if (escalationOpen(feature.indexPath)) {
         return finish(ctx, 'escalated', `agent escalated while implementing ${s.id}`);
       }
-      stopped = refreshRepos(ctx);
+      stopped = await refreshRepos(ctx);
       if (stopped) return stopped;
       open = unmetCriteria(storyAbsPath);
       if (open.length > 0) {
@@ -2673,7 +2676,7 @@ function implementStories(ctx) {
  * repo's worktree, in place of a session. Returns the final state when the
  * run stopped, else null.
  */
-function implementScripted(ctx, s, storyAbsPath) {
+async function implementScripted(ctx, s, storyAbsPath) {
   const { config, prep, feature } = ctx;
   const fm = readFm(storyAbsPath);
   const target = gateTargets(ctx).find((t) => t.repo === s.unitRepo);
@@ -2699,7 +2702,7 @@ function implementScripted(ctx, s, storyAbsPath) {
     worktreePath: target.worktreePath,
     runner: ctx.runner,
   });
-  recordScriptedRun({
+  await recordScriptedRun({
     backlogRoot: config.backlogRoot,
     indexPath: storyAbsPath,
     changePath: existsSync(changeFile(ctx)) ? changeFile(ctx) : null,
@@ -2722,7 +2725,7 @@ function implementScripted(ctx, s, storyAbsPath) {
     note,
   });
   ctx.runner.log(`  ${note}`);
-  commitUnitPaths(
+  await commitUnitPaths(
     ctx,
     'implement',
     [s.storyRelPath, changeRelPath(ctx)],
@@ -2760,12 +2763,12 @@ function runScope(ctx) {
  * Returns `{ stop }` (the final state) when the run stopped, else
  * `{ changed, added }`.
  */
-function rescope(ctx) {
+async function rescope(ctx) {
   // `bl merge`'s integration merges the repos it prepared; a story added by
   // its sessions is for the next `bl run`, not this merge.
   if (ctx.integration) return { changed: false, added: { stories: [], repos: [] } };
   const before = runScope(ctx);
-  const stopped = refreshRepos(ctx);
+  const stopped = await refreshRepos(ctx);
   if (stopped) return { stop: stopped };
   const after = runScope(ctx);
   const added = {
@@ -2774,7 +2777,7 @@ function rescope(ctx) {
   };
   const changed = added.stories.length > 0 || added.repos.length > 0;
   if (changed) {
-    const s = implementStories(ctx);
+    const s = await implementStories(ctx);
     if (s) return { stop: s };
   }
   return { changed, added };
@@ -3125,12 +3128,12 @@ function changedFilesSince(ctx, sha) {
  *   instead of escalating.
  * So a call runs at most three fix-tests sessions and three gates.
  */
-function testGateWithFix(ctx) {
+async function testGateWithFix(ctx) {
   repoGuard(ctx);
-  let gate = runTestGate(ctx);
+  let gate = await runTestGate(ctx);
   if (gate.ok) return true;
   if (gate.config) {
-    finish(ctx, 'escalated', 'test gate misconfigured', gate.reason);
+    await finish(ctx, 'escalated', 'test gate misconfigured', gate.reason);
     return false;
   }
   let pushedBack = false;
@@ -3144,7 +3147,7 @@ function testGateWithFix(ctx) {
     // session's file is cleared first.
     const explanationPath = join(scratchDir, ESCALATION_FILE);
     rmSync(explanationPath, { force: true });
-    const fix = runSession(ctx, {
+    const fix = await runSession(ctx, {
       step: 'fix-tests',
       mode: 'workon',
       promptName: 'feature-fix-tests',
@@ -3180,7 +3183,7 @@ function testGateWithFix(ctx) {
         });
         continue;
       }
-      finish(
+      await finish(
         ctx,
         'escalated',
         'test gate failure is environmental (fix-tests: unrelated)',
@@ -3188,17 +3191,17 @@ function testGateWithFix(ctx) {
       );
       return false;
     }
-    if (rescope(ctx).stop) return false;
+    if ((await rescope(ctx)).stop) return false;
     const rerun = !rerunUsed && outcome === 'rerun' ? reason : null;
     setStep(ctx, 'test');
-    gate = runTestGate(ctx);
+    gate = await runTestGate(ctx);
     if (gate.ok) return true;
     if (rerun && !gate.config) {
       rerunUsed = true;
       fixNote = rerunFailedNote(rerun);
       continue;
     }
-    finish(ctx, 'escalated', 'test gate failed twice', gateDetails(gate));
+    await finish(ctx, 'escalated', 'test gate failed twice', gateDetails(gate));
     return false;
   }
 }
@@ -3255,12 +3258,12 @@ function branchEmpty(ctx, t) {
  * (`refreshRepos`) gets its PR before the next review. Returns `{ error }`
  * naming the repo, or `{}`.
  */
-function openOtherPullRequests(ctx) {
+async function openOtherPullRequests(ctx) {
   const { prep } = ctx;
   prep.otherRepos ??= [];
   for (const t of publishTargets(ctx).slice(1)) {
     if (prep.otherRepos.some((r) => r.repoName === t.repo)) continue;
-    const opened = openPullRequest(ctx, t);
+    const opened = await openPullRequest(ctx, t);
     if (opened.error) return { error: `${t.repo}: ${opened.error}` };
     if (opened.pr) prep.otherRepos.push({ repoName: t.repo, worktreePath: t.worktreePath, pr: opened.pr });
   }
@@ -3336,7 +3339,7 @@ function prLabel(ctx, repo, number) {
  * forge is configured (the one explicit way to run without a PR), or
  * `{ error }`.
  */
-function openPullRequest(ctx, t = gateTargets(ctx)[0]) {
+async function openPullRequest(ctx, t = gateTargets(ctx)[0]) {
   const { runner, prep, feature, config } = ctx;
   const cfg = t.cfg;
   const lead = t.repo === prepRepo(ctx);
@@ -3398,7 +3401,7 @@ function openPullRequest(ctx, t = gateTargets(ctx)[0]) {
     updateChange(config.backlogRoot, changeFile(ctx), (doc) =>
       setRepo(doc, t.repo, { branch: prep.branchName, pr: number, url }),
     );
-    commitChangeFile(ctx, 'pr', `chore: ${feature.id} PR opened (${lead ? '' : t.repo}#${number})`);
+    await commitChangeFile(ctx, 'pr', `chore: ${feature.id} PR opened (${lead ? '' : t.repo}#${number})`);
   } catch (e) {
     record(ctx, {
       step: 'pr',
@@ -3411,10 +3414,10 @@ function openPullRequest(ctx, t = gateTargets(ctx)[0]) {
 }
 
 /** `clean` only with the branch published and a PR (or the no-forge opt-out). */
-function finishClean(ctx) {
+async function finishClean(ctx) {
   const pushErr = pushBranch(ctx, 'stop');
   if (pushErr) return finish(ctx, 'escalated', 'the reviewed branch could not be published', pushErr);
-  const others = openOtherPullRequests(ctx);
+  const others = await openOtherPullRequests(ctx);
   if (others.error) return finish(ctx, 'escalated', 'no pull request could be opened', others.error);
   if (!ctx.state.pr?.number && !ctx.state.prOptOut) {
     return finish(ctx, 'escalated', 'no pull request is recorded for the reviewed branch');
@@ -3485,13 +3488,13 @@ function branchFiles(ctx) {
  * aborts (`abortError`) without a verdict when a lock cannot be taken, a
  * worktree cannot be restored, or any session fails.
  */
-function reviewRound(ctx, { reReview, closing = false, scope = null }) {
+async function reviewRound(ctx, { reReview, closing = false, scope = null }) {
   // The rounds with a verdict (F-69 D5): this round is the next one.
   const { reviewed: round, position } = reviewState(ctx);
   const locks = holdReviewLocks(ctx);
   if (locks.error) return roundAborted(ctx, round, locks.error);
   try {
-    return reviewRoundLocked(ctx, { reReview, round, position, closing, scope });
+    return await reviewRoundLocked(ctx, { reReview, round, position, closing, scope });
   } finally {
     locks.release();
   }
@@ -3502,17 +3505,17 @@ function reviewRound(ctx, { reReview, closing = false, scope = null }) {
  * `bl merge`'s round over a merge resolution (F-36 D7). Every other caller
  * passes none.
  */
-function reviewRoundLocked(ctx, { reReview, round, position, closing = false, scope = null }) {
+async function reviewRoundLocked(ctx, { reReview, round, position, closing = false, scope = null }) {
   const { prep, feature, config } = ctx;
   setStep(ctx, closing ? 'closing-review' : reReview ? 're-review' : 'review', { round: round + 1 });
   // The review starts (F-69 D3): a unit with no log gets one, and a unit in
   // progress (`bl review` after `bl implement`) or ready for merge (`bl
   // merge`'s round over a merge resolution) goes to `in_review`, the
   // `review` verb's `during`. Its verdict is recorded below (D5).
-  ensureLog(config.backlogRoot, { ...unitRef(ctx), change: readChange(changeFile(ctx)) });
+  await ensureLog(config.backlogRoot, { ...unitRef(ctx), change: readChange(changeFile(ctx)) });
   const flow = loadFlow(config.backlogRoot);
   if (flow.fromOf(unitKind(ctx), flow.verbOf(unitKind(ctx), 'review')).includes(unitStatus(ctx))) {
-    enterHop(ctx, 'review', 'review');
+    await enterHop(ctx, 'review', 'review');
   }
 
   // A re-review narrows to the files the fixes touched only when there is a
@@ -3548,7 +3551,7 @@ function reviewRoundLocked(ctx, { reReview, round, position, closing = false, sc
     mkdirSync(scratchDir, { recursive: true });
     const before = snapshotWorktrees(ctx);
     if (before.error) return roundAborted(ctx, round, before.error);
-    const r = quarantineOnCleanupError(ctx, `r${round + 1}-${dim}`, before.snaps, () =>
+    const r = await quarantineOnCleanupError(ctx, `r${round + 1}-${dim}`, before.snaps, async () =>
       runSession(ctx, {
         step: `review:${dim}`,
         mode: 'review',
@@ -3590,7 +3593,7 @@ function reviewRoundLocked(ctx, { reReview, round, position, closing = false, sc
   // round as `nextRound`.
   let rv;
   try {
-    rv = quarantineOnCleanupError(ctx, `r${round + 1}-verify`, beforeVerify.snaps, () =>
+    rv = await quarantineOnCleanupError(ctx, `r${round + 1}-verify`, beforeVerify.snaps, async () =>
       runSession(ctx, {
         step: 'review:verify',
         mode: 'review',
@@ -3620,11 +3623,11 @@ function reviewRoundLocked(ctx, { reReview, round, position, closing = false, sc
   const restoreErrors = [];
   if (!rv.ok) {
     for (const restore of [
-      () => restoreKeepingTokens(ctx.config.backlogRoot, feature.indexPath, featureBefore),
+      async () => restoreKeepingTokens(ctx.config.backlogRoot, feature.indexPath, featureBefore),
       restoreChange,
     ]) {
       try {
-        restore();
+        await restore();
       } catch (e) {
         restoreErrors.push(`could not restore the verifier's edits: ${e.message}`);
       }
@@ -3657,11 +3660,11 @@ function reviewRoundLocked(ctx, { reReview, round, position, closing = false, sc
   // fix item open. bl records it in the unit's log (F-69 D5).
   const outcome = rv.structured;
   const clean = outcome.must + outcome.should === 0;
-  const to = recordVerdict(ctx, { clean, round: round + 1, summary: outcome.summary });
+  const to = await recordVerdict(ctx, { clean, round: round + 1, summary: outcome.summary });
   // An escalation the outcome claims is one the operator reads: when the
   // verifier wrote none, bl writes it.
   if (outcome.escalated && !escalationOpen(feature.indexPath)) {
-    writeEscalation(
+    await writeEscalation(
       ctx,
       `review round ${round + 1}: the verifier escalated`,
       `The verifier's outcome: ${outcome.summary}\n\nIt wrote no ## Escalation; the session block in ${changeRelPath(ctx)} has its findings.`,
@@ -3675,9 +3678,9 @@ function reviewRoundLocked(ctx, { reReview, round, position, closing = false, sc
  * caller's quarantine; move the reviewer's changes aside anyway so the
  * escalated run does not inherit them.
  */
-function quarantineOnCleanupError(ctx, label, snaps, fn) {
+async function quarantineOnCleanupError(ctx, label, snaps, fn) {
   try {
-    return fn();
+    return await fn();
   } catch (e) {
     if (e instanceof RunStoppedError) quarantineReviewerChanges(ctx, label, snaps);
     throw e;
@@ -3778,7 +3781,7 @@ function wrapItem(claim, width = 100) {
  *   state: "current"|"merged"|"conflicted", conflicted: string[],
  *   resolved?: string[] }> }} — `resolved`: the files the agent resolved
  */
-export function integrateUnit({ unit, config, prep, runner }) {
+export async function integrateUnit({ unit, config, prep, runner }) {
   const lock = acquireRunLock(config, unit.id);
   if (lock.holder != null) {
     return { ok: false, refused: true, reason: `a bl run (pid ${lock.holder}) is running ${unit.id}`, repos: [] };
@@ -3798,10 +3801,10 @@ export function integrateUnit({ unit, config, prep, runner }) {
     const ctx = { feature: unit, config, prep, runner, state, resumeHint: `bl merge ${unit.id}`, repos: [] };
     clearUntimedOut(ctx);
     try {
-      reapStaleScopes(ctx);
-      return integrateLocked(ctx);
+      await reapStaleScopes(ctx);
+      return await integrateLocked(ctx);
     } catch (e) {
-      return integrationThrew(ctx, e);
+      return await integrationThrew(ctx, e);
     }
   } finally {
     releaseRunLock(config, unit.id, lock.content);
@@ -3818,7 +3821,7 @@ export function integrateUnit({ unit, config, prep, runner }) {
  * conflict evidence read before the abort: what the resolution recorded
  * (`ctx.integrationEvidence`), else each repo still mid-merge.
  */
-function integrationThrew(ctx, e) {
+async function integrationThrew(ctx, e) {
   ctx.integration = null;
   const evidence = e instanceof RunStoppedError ? '' : integrationEvidence(ctx);
   const stuck = ctx.repos.filter((r) => !abortIntegration(ctx, r.worktreePath));
@@ -3832,7 +3835,7 @@ function integrationThrew(ctx, e) {
     .filter(Boolean)
     .join('\n\n');
   try {
-    escalateIntegration(ctx, reason, details, { save: true });
+    await escalateIntegration(ctx, reason, details, { save: true });
   } catch (w) {
     ctx.runner.log(`  warning: the escalation could not be written: ${w.message}\n\n${details}`);
   }
@@ -3854,7 +3857,7 @@ function integrationEvidence(ctx) {
     .join('\n\n');
 }
 
-function integrateLocked(ctx) {
+async function integrateLocked(ctx) {
   const { runner } = ctx;
   const targets = gateTargets(ctx);
   for (const t of targets) {
@@ -3880,7 +3883,7 @@ function integrateLocked(ctx) {
 
   const repos = ctx.repos;
   for (const t of targets) {
-    const ref = integrationRef(ctx, t);
+    const ref = await integrationRef(ctx, t);
     const entry = { repoName: t.repo, worktreePath: t.worktreePath, ref, state: 'current', conflicted: [] };
     repos.push(entry);
     // Every repo's start, current ones too: a resolution or fix session may
@@ -3956,26 +3959,26 @@ function integrateLocked(ctx) {
   // A stop inside the gate (a failed container cleanup) escalates as a merge
   // and rolls the merges back (`integrationThrew`), so the rerun gates again.
   ctx.integration = { details: () => `${rollBackNote(ctx, repos)}\n\n${integrationNextStep(ctx, merged)}` };
-  const gate = runTestGate(ctx);
+  const gate = await runTestGate(ctx);
   ctx.integration = null;
   if (gate.ok) return pushIntegrated(ctx, repos);
   if (gate.config) {
     const rolledBack = rollBackNote(ctx, repos);
     const reason = `merge with main: the test gate is misconfigured`;
-    escalateIntegration(ctx, reason, `${gate.reason}\n\n${rolledBack}\n\n${integrationNextStep(ctx, merged)}`);
+    await escalateIntegration(ctx, reason, `${gate.reason}\n\n${rolledBack}\n\n${integrationNextStep(ctx, merged)}`);
     return { ok: false, escalated: true, reason, repos };
   }
   return resolveIntegration(ctx, repos, { conflicts: [], gate });
 }
 
 /** Abort every conflicted merge, roll back the rest and escalate (F-36 D8). */
-function stopOnConflicts(ctx, repos, conflicts) {
+async function stopOnConflicts(ctx, repos, conflicts) {
   const blocks = conflicts.map((r) => conflictBlock(ctx, r));
   ctx.integrationEvidence = blocks.join('\n\n');
   const stuck = conflicts.filter((r) => !abortIntegration(ctx, r.worktreePath));
   const rolledBack = rollBackNote(ctx, repos);
   const reason = `merge with main: ${conflicts.map((r) => r.repoName).join(', ')} conflict${conflicts.length === 1 ? 's' : ''} with main`;
-  escalateIntegration(
+  await escalateIntegration(
     ctx,
     reason,
     `${blocks.join('\n\n')}${abortNote(stuck)}\n\n${rolledBack}\n\n${integrationNextStep(ctx, conflicts)}`,
@@ -4004,7 +4007,7 @@ function abortNote(stuck) {
  * repos, from the run state) goes through the same checks, gate and review:
  * with no conflict and no red gate, without a session.
  */
-function resolveIntegration(ctx, repos, { conflicts, gate }) {
+async function resolveIntegration(ctx, repos, { conflicts, gate }) {
   const { runner, feature: unit } = ctx;
   const cfg = ctx.prep.cfg ?? ctx.config;
   const owed = repos.filter((r) => r.review);
@@ -4040,7 +4043,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
     setStep(ctx, 'merge-resolve');
     const r = !session
       ? { ok: true, structured: null }
-      : runSession(ctx, {
+      : await runSession(ctx, {
           step: 'merge-resolve',
           mode: 'workon',
           promptName: 'merge-resolve',
@@ -4070,7 +4073,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
         `${abortNote(stuck).trim()}${left}`.trim(),
         restored,
       ].filter(Boolean);
-      escalateIntegration(ctx, reason, details.join('\n\n'), { save: true });
+      await escalateIntegration(ctx, reason, details.join('\n\n'), { save: true });
       return { ok: false, escalated: true, reason, repos };
     }
     for (const e of work) {
@@ -4082,7 +4085,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
     // owed a review, also when no resolution session ran.
     for (const e of repos) e.review = true;
     setStep(ctx, 'test');
-    if (!testGateWithFix(ctx)) {
+    if (!(await testGateWithFix(ctx))) {
       rollBackMerges(ctx, repos);
       return { ok: false, escalated: true, reason: ctx.state.lastError, repos };
     }
@@ -4103,7 +4106,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
       );
     });
     runner.log('  review of the resolution...');
-    const result = reviewRound(ctx, { reReview: false, scope: { text: resolutionScope(scope), files } });
+    const result = await reviewRound(ctx, { reReview: false, scope: { text: resolutionScope(scope), files } });
     const verdict = result.abortError ? null : result.clean;
     if (verdict === true && !escalationOpen(unit.indexPath)) {
       ctx.integration = null;
@@ -4116,7 +4119,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
       setRetained(ctx, {});
       const reason = 'merge with main: the review of the resolution left open items';
       const next = `Next: the resolution stays on the branch, and ${unit.id} is in fixing. Clear this section to "None.", run \`bl run ${unit.id} --resume\` (it fixes the open items through the ordinary loop), then \`bl merge ${unit.id}\`, which integrates again.`;
-      escalateIntegration(
+      await escalateIntegration(
         ctx,
         reason,
         [blocks.join('\n\n'), openItemsSummary(ctx), next].filter(Boolean).join('\n\n'),
@@ -4129,7 +4132,7 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
       ? `was aborted before a verdict: ${result.abortError}`
       : 'ended addressed, but an escalation was written during it';
     const reason = `merge with main: the review of the resolution ${why}`;
-    escalateIntegration(ctx, reason, `${blocks.join('\n\n')}\n\n${restored}`, { save: true });
+    await escalateIntegration(ctx, reason, `${blocks.join('\n\n')}\n\n${restored}`, { save: true });
     return { ok: false, escalated: true, reason, repos };
   } finally {
     ctx.integration = null;
@@ -4287,10 +4290,10 @@ function regenerateRepo(ctx, t, entry) {
  * when there is no origin. A failed fetch is a warning and the last fetched
  * `origin/main` is used, as `syncBranchWithMain` falls back.
  */
-function integrationRef(ctx, t) {
+async function integrationRef(ctx, t) {
   const { runner } = ctx;
   if (runner.shell('git remote get-url origin', t.worktreePath).status !== 0) return 'main';
-  const fetch = withMainSyncLock(t.worktreePath, () =>
+  const fetch = await withMainSyncLock(t.worktreePath, () =>
     runner.shell(`git fetch origin ${MAIN_REFSPEC}`, t.worktreePath),
   );
   if (fetch?.state === 'lock-timeout') {
@@ -4420,8 +4423,8 @@ function integrationNextStep(ctx, repos) {
  * `save` records the stop in the run state, as `finish` does, for an
  * integration whose sessions have written to it.
  */
-function escalateIntegration(ctx, reason, details, { save = false } = {}) {
-  writeEscalation(ctx, reason, details, { fold: true });
+async function escalateIntegration(ctx, reason, details, { save = false } = {}) {
+  await writeEscalation(ctx, reason, details, { fold: true });
   if (save) {
     ctx.state.status = 'escalated';
     ctx.state.lastError = reason;
@@ -4491,8 +4494,8 @@ export async function reviewFeature({
     }
     let result;
     try {
-      reapStaleScopes(ctx);
-      result = reviewRound(ctx, { reReview: isReReview(review), closing: owed && round >= maxRounds });
+      await reapStaleScopes(ctx);
+      result = await reviewRound(ctx, { reReview: isReReview(review), closing: owed && round >= maxRounds });
     } catch (e) {
       if (!(e instanceof RunStoppedError)) throw e;
       // A failed log write stops the run as `failed`, with no ## Escalation.
@@ -4536,7 +4539,7 @@ export async function reviewFeature({
  * its log, which is the branch's unless the hop was not recorded. No branch
  * that holds stops the run.
  */
-function recordVerdict(ctx, { clean, round, summary }) {
+async function recordVerdict(ctx, { clean, round, summary }) {
   const guardCtx = {
     config: ctx.config,
     id: ctx.feature.id,
@@ -4550,9 +4553,9 @@ function recordVerdict(ctx, { clean, round, summary }) {
     branch = requireBranch(loadFlow(ctx.config.backlogRoot), unitKind(ctx), 'review', outcome, guardCtx);
   } catch (e) {
     const reason = `the round's verdict could not be recorded: ${e.message}`;
-    throw new RunStoppedError(reason, finish(ctx, 'failed', reason));
+    throw new RunStoppedError(reason, await finish(ctx, 'failed', reason));
   }
-  hop(ctx, 'review', branch.to, { by: 'review', via: 'review', outcome: summary });
+  await hop(ctx, 'review', branch.to, { by: 'review', via: 'review', outcome: summary });
   return unitStatus(ctx);
 }
 
@@ -4613,7 +4616,7 @@ export async function runFeature({ feature, config, prep, runner, opts = {} }) {
  * `review_rounds_max` (kept when already set). The branch and PR go to the
  * change document, the review round to the story's log. Returns whether the file changed.
  */
-function recordStoryRunFields(ctx, maxRounds) {
+async function recordStoryRunFields(ctx, maxRounds) {
   const { feature } = ctx;
   return updateSpecFile(ctx.config.backlogRoot, feature.indexPath, (fm) => {
     if (fm.review_rounds_max != null) return false;
@@ -4750,12 +4753,12 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   // A unit with no log gets the one its status and change document give
   // (F-69 D4) before the run records a hop: the document as it is now, since
   // its review fields place the unit (D5).
-  const logged = ensureLog(config.backlogRoot, { ...unitRef(ctx), change: readChange(changeFile(ctx)) });
-  const runFields = isStory(feature) && recordStoryRunFields(ctx, maxRounds);
+  const logged = await ensureLog(config.backlogRoot, { ...unitRef(ctx), change: readChange(changeFile(ctx)) });
+  const runFields = isStory(feature) && (await recordStoryRunFields(ctx, maxRounds));
   if (logged || runFields) started.push(feature.featureRelPath);
   if (setupChange(ctx)) started.push(changeRelPath(ctx));
   if (started.length > 0)
-    commitUnitPaths(ctx, 'setup', started, `chore: ${feature.id} run started on ${prep.branchName}`);
+    await commitUnitPaths(ctx, 'setup', started, `chore: ${feature.id} run started on ${prep.branchName}`);
   // A resumed run that already got as far as the PR has been self-reviewed;
   // it goes back through the gate and the push, then on to the review loop.
   // A `pr` entry that a no-commit finish skipped (S-1437) opened no PR.
@@ -4767,7 +4770,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     note: `${prep.branchName} @ ${prep.worktreePath}${resumeNote || (opts.resume ? ' (resumed)' : '')}`,
   });
   // What a crashed or killed bl left running for this unit (F-70 D4).
-  reapStaleScopes(ctx);
+  await reapStaleScopes(ctx);
 
   // An escalation left open by a previous run (or an operator) blocks a
   // restart until it is cleared — that is the point of the section.
@@ -4778,23 +4781,23 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   // starts from. A unit in review or fixing resumes where it is.
   const flow = loadFlow(config.backlogRoot);
   if (flow.fromOf(unitKind(ctx), flow.verbOf(unitKind(ctx), 'run')).includes(unitStatus(ctx))) {
-    enterHop(ctx, 'setup', 'run');
+    await enterHop(ctx, 'setup', 'run');
   }
 
   // 1. Implement stories in dependency order. A story unit's one story uses
   // story-run.md: no feature file, and its follow-ups go to its own Deferred.
-  const implementStopped = implementStories(ctx);
+  const implementStopped = await implementStories(ctx);
   if (implementStopped) return implementStopped;
 
   // 2. Test gate.
   setStep(ctx, 'test');
-  if (!testGateWithFix(ctx)) return state;
+  if (!(await testGateWithFix(ctx))) return state;
 
   // 3. Self-review, then the gate again if the tree changed.
   if (!reachedReview && !skipsReview(ctx)) {
     setStep(ctx, 'self-review');
     const beforeSelf = targetHeads(ctx);
-    const self = runSession(ctx, {
+    const self = await runSession(ctx, {
       step: 'self-review',
       mode: 'workon',
       promptName: 'feature-self-review',
@@ -4810,7 +4813,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         `the self-review found the branch not ready for review: ${self.structured.summary}`,
       );
     }
-    const scope = rescope(ctx);
+    const scope = await rescope(ctx);
     if (scope.stop) return scope.stop;
     // Gate again when the self-review says it changed something, committed
     // something in any repo, also when it left edits uncommitted (those would
@@ -4818,7 +4821,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     // tree), and when it added stories or repos.
     if (scope.changed || self.structured.changed || targetsMoved(ctx, beforeSelf)) {
       setStep(ctx, 'test');
-      if (!testGateWithFix(ctx)) return state;
+      if (!(await testGateWithFix(ctx))) return state;
     }
   }
 
@@ -4840,8 +4843,8 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   if (noCommits && flow.fromOf(unitKind(ctx), flow.verbOf(unitKind(ctx), 'review')).includes(noCommitStatus)) {
     setStep(ctx, 'pr');
     // The `review` verb's edges pass through its `during` status (flow.json).
-    enterHop(ctx, 'review', 'review');
-    hop(ctx, 'review', REVIEW.clean, { by: 'review', note: 'no commits: nothing to review' });
+    await enterHop(ctx, 'review', 'review');
+    await hop(ctx, 'review', REVIEW.clean, { by: 'review', note: 'no commits: nothing to review' });
     if (unitStatus(ctx) !== REVIEW.clean) {
       return finish(
         ctx,
@@ -4859,12 +4862,12 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   setStep(ctx, 'pr');
   const pushErr = pushBranch(ctx, 'pr');
   if (pushErr) return finish(ctx, 'escalated', 'push failed', pushErr);
-  const opened = openPullRequest(ctx);
+  const opened = await openPullRequest(ctx);
   if (opened.error) return finish(ctx, 'escalated', 'no pull request could be opened', opened.error);
   state.pr = opened.pr ?? null;
   state.prOptOut = opened.optOut ?? null;
   saveRunState(config, state);
-  const others = openOtherPullRequests(ctx);
+  const others = await openOtherPullRequests(ctx);
   if (others.error) return finish(ctx, 'escalated', 'no pull request could be opened', others.error);
 
   if (skipsReview(ctx)) {
@@ -4874,7 +4877,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   // The run's success: the unit goes to review (F-69 D3). A resumed unit in
   // review or fixing stays where it is.
   if (unitStatus(ctx) === 'in_progress') {
-    hop(ctx, 'pr', 'in_review', { by: 'run', via: 'open_pr', outcome: state.pr?.url || undefined });
+    await hop(ctx, 'pr', 'in_review', { by: 'run', via: 'open_pr', outcome: state.pr?.url || undefined });
   }
 
   // 5. Review loop. The unit's status places it (F-69 D3): a unit in
@@ -4885,7 +4888,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   // `in_review` opened no round (`reviewOf`, F-69 D5).
   const entry = reviewState(ctx);
   if (unitStatus(ctx) === REVIEW.open && entry.position === REVIEW.items) {
-    hop(ctx, 'review', 'fixing', { by: 'review', note: `round ${entry.round} items still open` });
+    await hop(ctx, 'review', 'fixing', { by: 'review', note: `round ${entry.round} items still open` });
   }
   const position = unitStatus(ctx);
   // Ready for merge is a verdict on the scope that was reviewed: work this
@@ -4920,16 +4923,16 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
       const closing = review.reviewed >= maxRounds;
       const pushErr = pushBranch(ctx, reReview ? 're-review' : 'review');
       if (pushErr) return finish(ctx, 'escalated', 'push before review failed', pushErr);
-      const others = openOtherPullRequests(ctx);
+      const others = await openOtherPullRequests(ctx);
       if (others.error) return finish(ctx, 'escalated', 'no pull request could be opened', others.error);
-      const result = reviewRound(ctx, { reReview, closing });
+      const result = await reviewRound(ctx, { reReview, closing });
       if (result.abortError) {
         return finish(ctx, 'escalated', `review round ${result.expected} aborted before a verdict`, result.abortError);
       }
       if (escalationOpen(feature.indexPath)) {
         return finish(ctx, 'escalated', `reviewer escalated in round ${result.round}`);
       }
-      const scope = rescope(ctx);
+      const scope = await rescope(ctx);
       if (scope.stop) return scope.stop;
       // Stories or repos added during the round are not in its verdict: they
       // are gated and get a round of their own, from `ready_for_merge`.
@@ -4943,7 +4946,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
           );
         }
         setStep(ctx, 'test');
-        if (!testGateWithFix(ctx)) return state;
+        if (!(await testGateWithFix(ctx))) return state;
         continue;
       }
       // Open items went to `fixing` while the round was within the cap; the
@@ -4963,7 +4966,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     const preFixSha = headSha(ctx);
     // The unit stays in `fixing` on every exit before the fix self-review
     // passes: only `in_review` by `fix` says the items are fixed (F-69 D5).
-    const fix = runSession(ctx, {
+    const fix = await runSession(ctx, {
       step: 'fix',
       mode: 'workon',
       promptName: 'feature-workon-review',
@@ -4974,7 +4977,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     if (escalationOpen(feature.indexPath)) {
       return finish(ctx, 'escalated', 'agent escalated while addressing review feedback');
     }
-    const afterFix = rescope(ctx);
+    const afterFix = await rescope(ctx);
     if (afterFix.stop) return afterFix.stop;
     if (!fix.structured.fixed) {
       return finish(
@@ -4992,7 +4995,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     // branch, whose feature code no review item "asked for".
     const fixBaseSha = ctx.state.reviewBaseSha ?? preFixSha;
     setStep(ctx, 'fix-self-review', { round: fixRound });
-    const selfReview = runSession(ctx, {
+    const selfReview = await runSession(ctx, {
       step: 'fix-self-review',
       mode: 'workon',
       promptName: 'feature-fix-self-review',
@@ -5006,7 +5009,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     if (escalationOpen(feature.indexPath)) {
       return finish(ctx, 'escalated', 'agent escalated during the fix self-review');
     }
-    const afterSelfReview = rescope(ctx);
+    const afterSelfReview = await rescope(ctx);
     if (afterSelfReview.stop) return afterSelfReview.stop;
     // A fix diff nobody re-read is what this step exists to prevent.
     // A denied command is a warning, not a failure: the agent sees a tool
@@ -5024,12 +5027,12 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         openItemsSummary(ctx),
       );
     }
-    hop(ctx, 'fix-self-review', 'in_review', {
+    await hop(ctx, 'fix-self-review', 'in_review', {
       by: 'fix',
       via: 'fix_self_review',
       outcome: selfReview.structured.summary,
     });
     setStep(ctx, 'test');
-    if (!testGateWithFix(ctx)) return state;
+    if (!(await testGateWithFix(ctx))) return state;
   }
 }

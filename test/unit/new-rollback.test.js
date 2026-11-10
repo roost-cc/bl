@@ -19,7 +19,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync
 import { join } from 'node:path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { _hooks } from '../../src/atomic-write.js';
-import { updateSpecFile } from '../../src/spec-file.js';
+import { updateSpecInChild } from '../helpers/spec-writer.js';
 import { listValue, parseFrontmatter } from '../../src/config.js';
 import { main } from '../../src/new.js';
 
@@ -94,7 +94,7 @@ for (const [how, argv] of [
           if (mode === 'missing') unlinkSync(second);
         } else if (phase === 'second-edge' && is('Two')) {
           phase = 'undo';
-          if (mode === 'concurrent') updateSpecFile(dir, first, (_fm, body) => body + '\n## Concurrent edit\n');
+          if (mode === 'concurrent') updateSpecInChild(dir, first, (_fm, body) => body + '\n## Concurrent edit\n');
           if (mode === 'remove') chmodSync(join(dir, 'stories', newDir()), 0o555);
           throw new Error('injected second dependency write failure');
         } else if (phase === 'undo' && is('One') && mode === 'rollback') {

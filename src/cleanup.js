@@ -165,7 +165,7 @@ export async function persistLandedCommits(
   await acquireLock(backlogRoot);
   try {
     // Spec lock inside the backlog lock (F-67 D4).
-    return withSpecLock(indexPath, () => {
+    return await withSpecLock(indexPath, () => {
       const { content, crlf } = readSpecText(read(indexPath, 'utf8'), indexPath);
       const { fm, body } = parseFrontmatterOf(content, indexPath);
       const commitMap = unionLandedCommits(fm.commit, landed, tips);
@@ -565,7 +565,7 @@ export function preflightMainCheckouts({
 // Per-repo cleanup (merge, push, close PR, remove worktree, delete branch)
 // ---------------------------------------------------------------------------
 
-export function cleanupOneRepo({
+export async function cleanupOneRepo({
   parsed,
   storyEntry,
   repoName,
@@ -614,7 +614,7 @@ export function cleanupOneRepo({
   // Under the per-repo lock (S-865). A failed fetch is a warning and the
   // merge goes on from local main; a failed fast-forward or a lock timeout
   // stops this repo.
-  if (!reportMainSync(syncMain(repoPath, { prune: true }), repoName)) {
+  if (!reportMainSync(await syncMain(repoPath, { prune: true }), repoName)) {
     return { ok: false };
   }
 
@@ -667,7 +667,7 @@ export function cleanupOneRepo({
     });
     if (parseInt(unmergedCommits, 10) > 0 && checkPlugins.length > 0) {
       info(`Branch '${branchName}' has ${unmergedCommits} unmerged commit(s). Merging and checking...`);
-      if (!checkedMerge({ parsed, repoName, repoPath, branchName, plugins: checkPlugins, config, changeDir })) {
+      if (!(await checkedMerge({ parsed, repoName, repoPath, branchName, plugins: checkPlugins, config, changeDir }))) {
         return { ok: false };
       }
       pushed = true;
@@ -785,9 +785,10 @@ const CHECK_RUNS = 2;
  * signal says. A child ended by any other signal has failed.
  *
  * The throwaway worktree is removed whatever happens. Prints why it stopped;
- * returns whether the commit is pushed and the main checkout is on it.
+ * returns (as a promise) whether the commit is pushed and the main checkout
+ * is on it.
  */
-export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, config, changeDir }) {
+export async function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, config, changeDir }) {
   // The first signal that ended a child; checked before every step that acts on a result.
   let signal = null;
   const git = (args, cwd) => {
@@ -803,7 +804,8 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
   const wt = join(tmp, basename(repoPath));
   // Removes the throwaway worktree, once. It also runs on `exit`, because a
   // listener can end bl inside a call: a Ctrl+C during the lock wait of the
-  // gate line's backlog commit (`sleepSync` raises it, `lock.js` exits 130).
+  // gate line's backlog commit (`awaitLock` waits, and the SIGINT handler in
+  // `signal-exit.js` exits 130).
   let removed = false;
   const removeThrowaway = () => {
     if (removed) return;
@@ -900,7 +902,7 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
         commit,
       });
       try {
-        const written = addGateLine(
+        const written = await addGateLine(
           config.backlogRoot,
           changeDir,
           line,
@@ -1279,7 +1281,7 @@ no main checkout touched. A merge into main that still fails is aborted.`);
   const emptyRepos = [];
   for (const repoName of targetRepoNames) {
     const repoPath = config.reposByName[repoName];
-    const result = cleanupOneRepo({
+    const result = await cleanupOneRepo({
       parsed,
       storyEntry,
       repoName,
@@ -1457,7 +1459,8 @@ no main checkout touched. A merge into main that still fails is aborted.`);
       info('  (triage session ended — you may need to create stories manually)');
     }
     const triageMessage = `chore: triage ${parsed.id} Deferred into new stories`;
-    if (commitChangedSince(config.backlogRoot, backlogBefore, triageMessage, { session: true })) process.exitCode = 1;
+    if (await commitChangedSince(config.backlogRoot, backlogBefore, triageMessage, { session: true }))
+      process.exitCode = 1;
     info('');
   }
 

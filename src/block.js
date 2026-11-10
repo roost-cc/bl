@@ -74,7 +74,7 @@ function prepareCommit(root) {
 }
 
 /** Commit `paths` (`prepareCommit`'s), or say the backlog is not a repo. */
-function commitBlockers(root, paths, message) {
+async function commitBlockers(root, paths, message) {
   if (!paths) return { committed: false, paths: [BLOCKERS_FILE], notRepo: true };
   return commitPaths(root, paths, message);
 }
@@ -84,7 +84,7 @@ async function underLock(config, fn) {
   const root = config.backlogRoot;
   await acquireLock(root);
   try {
-    return fn(readBlockers(root));
+    return await fn(readBlockers(root));
   } finally {
     releaseLock(root);
   }
@@ -126,11 +126,11 @@ export function writeEdge(config, edge) {
  * @returns {Promise<{ refused?: string[], edge?: object, commit?: object }>}
  */
 export async function addEdge(config, edge) {
-  return withLock(config.backlogRoot, () => {
+  return withLock(config.backlogRoot, async () => {
     const res = writeEdge(config, edge);
     if (res.refused) return res;
     const message = `chore: block ${edge.unit} at ${edge.gate} on ${edge.blocker}`;
-    return { edge, commit: commitBlockers(config.backlogRoot, res.paths, message) };
+    return { edge, commit: await commitBlockers(config.backlogRoot, res.paths, message) };
   });
 }
 
@@ -140,7 +140,7 @@ export async function addEdge(config, edge) {
  * @returns {Promise<{ refused?: string[], edge?: object, commit?: object }>}
  */
 export async function removeEdge(config, key) {
-  return underLock(config, ({ edges }) => {
+  return underLock(config, async ({ edges }) => {
     const found = edges.find((e) => edgeKey(e) === edgeKey(key));
     if (!found) return { refused: [`no edge ${edgeLabel(key)} (see bl block list ${key.unit})`] };
     const paths = prepareCommit(config.backlogRoot);
@@ -149,7 +149,7 @@ export async function removeEdge(config, key) {
       edges.filter((e) => e !== found),
     );
     const message = `chore: unblock ${key.unit} at ${key.gate} on ${key.blocker}`;
-    const commit = commitBlockers(config.backlogRoot, paths, message);
+    const commit = await commitBlockers(config.backlogRoot, paths, message);
     return { edge: found, commit };
   });
 }
@@ -160,11 +160,11 @@ export async function removeEdge(config, key) {
  * @returns {Promise<{ fixed: boolean, commit?: object }>}
  */
 export async function fixOrder(config) {
-  return underLock(config, ({ edges, text }) => {
+  return underLock(config, async ({ edges, text }) => {
     if (text == null || text === formatBlockers(edges)) return { fixed: false };
     const paths = prepareCommit(config.backlogRoot);
     writeBlockers(config.backlogRoot, edges);
-    return { fixed: true, commit: commitBlockers(config.backlogRoot, paths, `chore: sort ${BLOCKERS_FILE}`) };
+    return { fixed: true, commit: await commitBlockers(config.backlogRoot, paths, `chore: sort ${BLOCKERS_FILE}`) };
   });
 }
 

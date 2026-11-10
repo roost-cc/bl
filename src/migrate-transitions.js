@@ -198,9 +198,9 @@ function planUnit(root, rel, kind, fm, change) {
  * removed (`updateChange`, under its lock) unless `dryRun`. `onPath` gets
  * each one's path as it is written, so a later throw does not lose it.
  */
-function stripChanges(root, unitDir, dryRun, onPath) {
+async function stripChanges(root, unitDir, dryRun, onPath) {
   for (const { path } of listChanges(unitDir)) {
-    withSpecLock(path, () => {
+    await withSpecLock(path, () => {
       const doc = readChange(path);
       if (!doc || !REVIEW_FIELDS.some((k) => Object.hasOwn(doc.fm, k))) return;
       if (!dryRun) {
@@ -316,14 +316,14 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
     log(`left out, edited since an earlier run wrote them; commit them yourself: ${prior.edited.join(' ')}`);
   }
   try {
-    convertAll();
+    await convertAll();
   } catch (e) {
     if (!dryRun) recordPaths(root, [...new Set([...carried, ...paths])]);
     throw e;
   }
 
   /** Every unit, its change documents and `flow.json`, each path written pushed to `paths`. */
-  function convertAll() {
+  async function convertAll() {
     for (const kind of FLOW_TYPES) {
       for (const unit of graph.list(kind)) {
         if (kind === 'story' && isUpdateStory(unit.fm)) {
@@ -343,7 +343,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
         const rel = relative(root, unit.file);
         let planned = null;
         try {
-          updateSpecFile(root, unit.file, (fm) => {
+          await updateSpecFile(root, unit.file, (fm) => {
             const change = kind === 'task' ? null : (currentChange(unit.dir)?.doc ?? null);
             planned = planUnit(root, rel, kind, fm, change);
             if (!planned || planned.skip || dryRun) return false;
@@ -367,7 +367,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
           paths.push(rel);
         }
         if (kind === 'task') continue;
-        stripChanges(root, unit.dir, dryRun, (path) => {
+        await stripChanges(root, unit.dir, dryRun, (path) => {
           counts.changes++;
           paths.push(relative(root, path));
         });
@@ -393,7 +393,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   log(`${dryRun ? 'would convert' : 'converted'}: ${countsText(counts)}`);
   if (earlier.length > 0) log(`an earlier run wrote and did not commit: ${earlier.join(' ')}`);
   if (dryRun) return { counts, skipped, kept, commit: null };
-  const commit = commitPaths(root, all, commitMessage(counts, earlier.length));
+  const commit = await commitPaths(root, all, commitMessage(counts, earlier.length));
   recordPaths(root, commit.error ? all : []);
   return { counts, skipped, kept, commit };
 }

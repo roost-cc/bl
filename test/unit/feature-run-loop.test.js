@@ -1713,7 +1713,7 @@ test("bl review takes the loop's review path: split passes, verifier, shared run
 
     // After a fix (`in_review` by `fix` in the log, F-69 D5), the re-review
     // narrows to the files the fix changed.
-    transition(dir, { kind: 'feature', indexPath: feature.indexPath }, 'in_review', { by: 'fix' });
+    await transition(dir, { kind: 'feature', indexPath: feature.indexPath }, 'in_review', { by: 'fix' });
     const second = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
     assert.equal(second.round, 2);
     const reverify = runner.calls.filter((c) => c.prompt === 'review-verify')[1];

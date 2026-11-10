@@ -419,9 +419,9 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
  * fields meanwhile. Returns whether it wrote.
  * @param {string} backlogRoot
  * @param {{ kind: "story" | "feature", indexPath: string, change?: { fm: object } | null }} unit
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-export function ensureLog(backlogRoot, unit) {
+export async function ensureLog(backlogRoot, unit) {
   return updateSpecFile(backlogRoot, unit.indexPath, (fm) => {
     if (storedLog(fm)) return false;
     const log = writableLog(loadFlow(backlogRoot).path, unit.kind, fm, unit.change ?? null, nowAt());
@@ -474,18 +474,18 @@ export function applyMerged(flow, kind, fm, { at = nowAt(), change = null, note 
  *   change?: any }} unit
  * @param {string} to
  * @param {{ by: string, via?: string, outcome?: string, note?: string, at?: string }} opts
- * @returns {object | null}
+ * @returns {Promise<object | null>}
  */
-export function transition(backlogRoot, unit, to, opts) {
+export async function transition(backlogRoot, unit, to, opts) {
   return writeEntry(backlogRoot, unit, to, opts, false);
 }
 
 /** `transition`; with `skipAt`, nothing is written when the unit is at `to` already. */
-function writeEntry(backlogRoot, unit, to, opts, skipAt) {
+async function writeEntry(backlogRoot, unit, to, opts, skipAt) {
   const flow = loadFlow(backlogRoot);
   const change = typeof unit.change === 'function' ? (unit.change()?.change ?? null) : (unit.change ?? null);
   let entry = null;
-  updateSpecFile(backlogRoot, unit.file ?? unit.indexPath, (fm) => {
+  await updateSpecFile(backlogRoot, unit.file ?? unit.indexPath, (fm) => {
     if (skipAt && statusOf(unit.kind, fm, change) === to) return false;
     entry = applyTransition(flow, unit.kind, fm, to, { change, ...opts });
     return entry ? undefined : false;
@@ -504,9 +504,9 @@ function writeEntry(backlogRoot, unit, to, opts, skipAt) {
  * @param {{ kind: "story" | "feature", file?: string, indexPath?: string, change?: any }} unit
  * @param {string} verb
  * @param {{ via?: string, outcome?: string, note?: string }} [opts]
- * @returns {object | null}
+ * @returns {Promise<object | null>}
  */
-export function enterVerb(backlogRoot, unit, verb, opts = {}) {
+export async function enterVerb(backlogRoot, unit, verb, opts = {}) {
   const row = loadFlow(backlogRoot).verbOf(unit.kind, verb);
   const to = row?.during ?? (row && row.via.length === 0 ? (row.success[0]?.to ?? null) : null);
   return to ? writeEntry(backlogRoot, unit, to, { ...opts, by: verb }, true) : null;

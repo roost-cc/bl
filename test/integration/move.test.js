@@ -17,7 +17,7 @@ import { rendered } from '../helpers/rendered.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { main as moveMain } from '../../src/move.js';
 import { _hooks } from '../../src/atomic-write.js';
-import { updateSpecFile } from '../../src/spec-file.js';
+import { updateSpecInChild } from '../helpers/spec-writer.js';
 
 /** demo-repo's C00 and C01, other-repo's C02, and C03 with no repo. */
 const COMPONENTS = [
@@ -305,7 +305,7 @@ test('move_rollback_preserves_concurrent_spec_updates', async () => {
     if (++renames !== 3) return;
     _hooks.beforeRename = null;
     for (const n of [2, 3]) {
-      updateSpecFile(dir, join(dir, story(n)), (f, body) => {
+      updateSpecInChild(dir, join(dir, story(n)), (f, body) => {
         f.tokens_input = 999;
         return `${body}\nA note from another writer.\n`;
       });

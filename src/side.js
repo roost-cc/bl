@@ -251,9 +251,9 @@ function newStory({ feature, component, title, points, type, body }) {
  * feature), written through `updateSpecFile` (F-67), inside the backlog lock
  * (the outer lock, D4).
  */
-function markSideStory(backlogRoot, indexPath, fromId) {
+async function markSideStory(backlogRoot, indexPath, fromId) {
   const flow = loadFlow(backlogRoot);
-  updateSpecFile(backlogRoot, indexPath, (fm) => {
+  await updateSpecFile(backlogRoot, indexPath, (fm) => {
     applyTransition(flow, 'story', fm, 'in_progress', { by: 'side' });
     const out = insertAfter(fm, 'feature' in fm ? 'feature' : 'added', { found_by: fromId });
     // `updateSpecFile` serializes the object it passed in: refill it in `out`'s order.
@@ -435,7 +435,7 @@ export async function main(argv) {
 
   // A new worktree's guards (uncommitted changes, local main ahead) run
   // before anything is written. A standalone story's branch is always new.
-  if (!feature || !findExistingWorktree(repoPath, featureBranch)) newWorktreeGuards(repoPath);
+  if (!feature || !findExistingWorktree(repoPath, featureBranch)) await newWorktreeGuards(repoPath);
 
   const undo = undoOnFailure();
   let worktree = null;
@@ -448,7 +448,7 @@ export async function main(argv) {
         featureHasRepo(feature, repo, config),
       ),
     );
-    worktree = prepareFeatureRepo(config, feature, repo, { strict: true }).worktreePath;
+    worktree = (await prepareFeatureRepo(config, feature, repo, { strict: true })).worktreePath;
   } else {
     info(`Standalone side story in ${repo} (${component.id}), found by ${fromId}`);
   }
@@ -456,7 +456,7 @@ export async function main(argv) {
   let created;
   let storyId;
   let found;
-  await withLock(cfg.backlogRoot, () =>
+  await withLock(cfg.backlogRoot, async () =>
     exitOnThrow(async () => {
       // The worktree prepared before the lock may be gone: another bl side that
       // failed in the meantime removes one it made and nobody had committed to.
@@ -478,7 +478,7 @@ export async function main(argv) {
       found = findStoryDir(normalizeId(storyId), cfg);
       if (!found) fail(`bl side: bl new reported ${storyId} at ${created.path}, but it is not there.`);
       const branch = feature ? featureBranch : found.storyEntry.toLowerCase();
-      markSideStory(cfg.backlogRoot, indexPath, fromId);
+      await markSideStory(cfg.backlogRoot, indexPath, fromId);
       let changePath;
       if (feature) {
         // The feature's repos are its stories' (F-52 D3), the side story now
@@ -521,7 +521,7 @@ export async function main(argv) {
     undo.hint(
       `bl side: ${storyId} is committed, but its worktree could not be prepared (above). Fix that, then \`bl implement ${storyId}\` prepares it. Running bl side again would add another story.`,
     );
-    worktree = prepareStoryRepo(normalizeId(storyId), found, cfg, repo, { strict: true }).worktreePath;
+    worktree = (await prepareStoryRepo(normalizeId(storyId), found, cfg, repo, { strict: true })).worktreePath;
   }
   undo.hint(null);
 

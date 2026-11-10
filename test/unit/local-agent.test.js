@@ -163,7 +163,7 @@ test('local_spawn_uses_validated_configuration_snapshot: spawn() and capacity() 
 /** A local server at `port`, with a token of its own. */
 const serverAt = (port) => ({ url: `http://127.0.0.1:${port}`, token: `t${port}` });
 
-test('local_server_binding_survives_other_and_failed_loads: a loaded config keeps the server its load checked', () => {
+test('local_server_binding_survives_other_and_failed_loads: a loaded config keeps the server its load checked', async () => {
   const t = mkTempBacklog({
     repos: ['../demo-repo'],
     config: { local: serverAt(18090), agent: [{ agent: 'local', model: MODEL }], review_agent: [{ agent: 'claude' }] },
@@ -274,8 +274,8 @@ test('local_server_binding_survives_other_and_failed_loads: a loaded config keep
       backlogRoot: t.dir,
       provider,
     };
-    assert.equal(runHeadlessSession({ ...common, prompt: 'p', label: 'F-1' }).status, 0);
-    launchSession({
+    assert.equal((await runHeadlessSession({ ...common, prompt: 'p', label: 'F-1' })).status, 0);
+    await launchSession({
       ...common,
       title: 'T',
       sessionPrompt: 'p',

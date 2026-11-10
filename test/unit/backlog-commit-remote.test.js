@@ -23,11 +23,11 @@ import { g, twoClones, bobPushes, captureStderr, STORY, GENERATED } from '../hel
 
 const COMPONENT_INDEX = 'components/C01-work/index.md';
 
-test('commitPaths pushes the commit to origin main', () => {
+test('commitPaths pushes the commit to origin main', async () => {
   const { tmp, remote, alice } = twoClones({ [STORY]: 'a\n' });
   try {
     writeFileSync(join(alice, STORY), 'a, edited\n');
-    const res = commitPaths(alice, [STORY], 'chore: edit');
+    const res = await commitPaths(alice, [STORY], 'chore: edit');
     assert.equal(res.committed, true, res.error);
     assert.equal(res.pushed, true, res.pushError);
     assert.equal(g(remote, 'rev-parse', 'main'), g(alice, 'rev-parse', 'HEAD'));
@@ -38,7 +38,7 @@ test('commitPaths pushes the commit to origin main', () => {
 
 // F-74 D1: a rejection that is not "origin moved" (a hook, auth, network)
 // gets no rebase, only today's warning.
-test('a push rejected for another reason is one warning naming the retry, with no rebase', () => {
+test('a push rejected for another reason is one warning naming the retry, with no rebase', async () => {
   const cases = [
     {
       name: 'a pre-receive hook declines',
@@ -65,7 +65,7 @@ test('a push rejected for another reason is one warning naming the retry, with n
       const base = g(alice, 'rev-parse', 'HEAD');
       c.setup(ctx);
       writeFileSync(join(alice, STORY), 'alice\n');
-      const [res, err] = captureStderr(() => commitPaths(alice, [STORY], 'chore: alice'));
+      const [res, err] = await captureStderr(() => commitPaths(alice, [STORY], 'chore: alice'));
       assert.equal(res.committed, true, res.error);
       assert.equal(res.pushed, false, c.name);
       assert.ok(res.pushError, c.name);
@@ -81,7 +81,7 @@ test('a push rejected for another reason is one warning naming the retry, with n
   }
 });
 
-test('commitPaths waits while a pull holds the main sync lock, then commits and pushes', () => {
+test('commitPaths waits while a pull holds the main sync lock, then commits and pushes', async () => {
   const { tmp, remote, alice } = twoClones({ [STORY]: 'a\n' });
   try {
     // A holder outside this process that lives about a second: the shell
@@ -94,7 +94,7 @@ test('commitPaths waits while a pull holds the main sync lock, then commits and 
     writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\nbl main sync ${alice}\n`);
     writeFileSync(join(alice, STORY), 'a, edited\n');
     const start = Date.now();
-    const res = commitPaths(alice, [STORY], 'chore: edit');
+    const res = await commitPaths(alice, [STORY], 'chore: edit');
     assert.ok(Date.now() - start >= 500, 'the commit waited for the lock');
     assert.equal(res.committed, true, res.error);
     assert.equal(res.pushed, true, res.pushError);
@@ -105,7 +105,7 @@ test('commitPaths waits while a pull holds the main sync lock, then commits and 
   }
 });
 
-test('no origin remote: commitPaths commits and does not push', () => {
+test('no origin remote: commitPaths commits and does not push', async () => {
   const dir = mkTempDir('bl-bc-');
   try {
     g(dir, 'init', '-q', '-b', 'main');
@@ -113,20 +113,20 @@ test('no origin remote: commitPaths commits and does not push', () => {
     g(dir, 'add', '.');
     g(dir, 'commit', '-q', '-m', 'base');
     writeFileSync(join(dir, 'x.md'), 'y\n');
-    assert.deepEqual(commitPaths(dir, ['x.md'], 'chore: y'), { committed: true, paths: ['x.md'] });
-    assert.deepEqual(pullBacklog(dir), { state: 'no-remote' });
+    assert.deepEqual(await commitPaths(dir, ['x.md'], 'chore: y'), { committed: true, paths: ['x.md'] });
+    assert.deepEqual(await pullBacklog(dir), { state: 'no-remote' });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("a pull brings the other clone's story and replays local commits on top", () => {
+test("a pull brings the other clone's story and replays local commits on top", async () => {
   const { tmp, alice, bob } = twoClones({ [STORY]: 'a\n' });
   try {
-    assert.equal(pullBacklog(alice).state, 'current');
+    assert.equal((await pullBacklog(alice)).state, 'current');
     g(alice, 'commit', '-q', '--allow-empty', '-m', 'alice local');
     bobPushes(bob, { 'stories/S2-b/index.md': "bob's story\n" });
-    const res = pullBacklog(alice);
+    const res = await pullBacklog(alice);
     assert.equal(res.state, 'pulled');
     assert.deepEqual(res.resolved, []);
     assert.equal(readFileSync(join(alice, 'stories/S2-b/index.md'), 'utf8'), "bob's story\n");
@@ -137,13 +137,13 @@ test("a pull brings the other clone's story and replays local commits on top", (
   }
 });
 
-test('a dirty tree is autostashed and restored around the pull', () => {
+test('a dirty tree is autostashed and restored around the pull', async () => {
   const { tmp, alice, bob } = twoClones({ [STORY]: 'a\n', 'other.md': 'o\n' });
   try {
     writeFileSync(join(alice, STORY), 'alice, uncommitted\n');
     writeFileSync(join(alice, 'scratch.md'), 'untracked\n');
     bobPushes(bob, { 'other.md': 'bob\n' });
-    const res = pullBacklog(alice);
+    const res = await pullBacklog(alice);
     assert.equal(res.state, 'pulled', res.message);
     assert.equal(res.message, undefined);
     assert.equal(readFileSync(join(alice, 'other.md'), 'utf8'), 'bob\n');
@@ -161,7 +161,7 @@ test('a dirty tree is autostashed and restored around the pull', () => {
   }
 });
 
-test('a conflicting story aborts the rebase with a warning; work tree and edits as they were', () => {
+test('a conflicting story aborts the rebase with a warning; work tree and edits as they were', async () => {
   const { tmp, alice, bob } = twoClones({ [STORY]: 'a\n', 'other.md': 'o\n' });
   try {
     writeFileSync(join(alice, STORY), 'alice\n');
@@ -169,7 +169,7 @@ test('a conflicting story aborts the rebase with a warning; work tree and edits 
     writeFileSync(join(alice, 'other.md'), 'alice, uncommitted\n');
     const head = g(alice, 'rev-parse', 'HEAD');
     bobPushes(bob, { [STORY]: 'bob\n' });
-    const res = pullBacklog(alice);
+    const res = await pullBacklog(alice);
     assert.equal(res.state, 'conflict');
     assert.deepEqual(res.paths, [STORY]);
     assert.equal(g(alice, 'rev-parse', 'HEAD'), head);
@@ -177,7 +177,7 @@ test('a conflicting story aborts the rebase with a warning; work tree and edits 
     assert.equal(readFileSync(join(alice, 'other.md'), 'utf8'), 'alice, uncommitted\n');
     assert.equal(g(alice, 'stash', 'list'), '');
     assert.equal(existsSync(join(alice, '.git', 'rebase-merge')), false);
-    const [, err] = captureStderr(() => reportBacklogPull(res, alice));
+    const [, err] = await captureStderr(() => reportBacklogPull(res, alice));
     assert.match(err, /^warning: backlog pull conflicts with origin\/main in stories\/S1-a\/index\.md; rebase aborted/);
     assert.match(err, /continuing from the local backlog/);
   } finally {
@@ -185,14 +185,14 @@ test('a conflicting story aborts the rebase with a warning; work tree and edits 
   }
 });
 
-test('a conflict confined to generated files is settled by taking a side', () => {
+test('a conflict confined to generated files is settled by taking a side', async () => {
   const { tmp, remote, alice, bob } = twoClones({ 'allowed-tools.json': '{}\n', [STORY]: 'a\n' });
   try {
     writeFileSync(join(alice, 'allowed-tools.json'), '{"a":1}\n');
     writeFileSync(join(alice, STORY), 'alice\n');
     g(alice, 'commit', '-q', '-am', 'alice');
     bobPushes(bob, { 'allowed-tools.json': '{"b":1}\n' });
-    const res = pullBacklog(alice);
+    const res = await pullBacklog(alice);
     assert.equal(res.state, 'pulled', res.message);
     assert.deepEqual(res.resolved, ['allowed-tools.json']);
     assert.equal(g(alice, 'rev-parse', 'HEAD~1'), g(remote, 'rev-parse', 'main'));
@@ -204,7 +204,7 @@ test('a conflict confined to generated files is settled by taking a side', () =>
   }
 });
 
-test('a conflict in the root or a component index.md is a real conflict: rebase aborted, all as before', () => {
+test('a conflict in the root or a component index.md is a real conflict: rebase aborted, all as before', async () => {
   for (const rel of ['index.md', COMPONENT_INDEX]) {
     const { tmp, remote, alice, bob } = twoClones({ [rel]: 'page\n', [STORY]: 'a\n' });
     try {
@@ -212,7 +212,7 @@ test('a conflict in the root or a component index.md is a real conflict: rebase 
       g(alice, 'commit', '-q', '-am', 'alice');
       const head = g(alice, 'rev-parse', 'HEAD');
       bobPushes(bob, { [rel]: 'page, bob\n' });
-      const res = pullBacklog(alice);
+      const res = await pullBacklog(alice);
       assert.equal(res.state, 'conflict', `${rel}: ${res.message}`);
       assert.deepEqual(res.paths, [rel]);
       assert.equal(g(alice, 'rev-parse', 'HEAD'), head, rel);

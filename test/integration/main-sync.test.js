@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync, spawn } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { syncMain, mainSyncLockPath, reportMainSync, MAIN_SYNC_LOCK } from '../../src/main-sync.js';
-import { waitingForLock } from '../../src/pid-lock.js';
+import { waitingForLock } from '../../src/lock-wait.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { spawnToFiles, untilStderrHas } from '../helpers/spawn-files.js';
 
@@ -64,7 +64,7 @@ function advanceOrigin(root, origin, name = 'upstream') {
 /** `syncMain(repo)` in a child node process; resolves to its result. */
 function syncInChild(repo) {
   const script = `import { syncMain } from ${JSON.stringify(pathToFileURL(SRC).href)};
-process.stdout.write(JSON.stringify(syncMain(process.env.BL_TEST_REPO)));`;
+process.stdout.write(JSON.stringify(await syncMain(process.env.BL_TEST_REPO)));`;
   return spawnToFiles(process.execPath, ['--input-type=module', '-e', script], {
     env: { ...process.env, BL_TEST_REPO: repo },
   }).closed.then(({ stdout, stderr, status }) => {
@@ -98,40 +98,40 @@ test('two processes syncing one clone at once both succeed', async () => {
   }
 });
 
-test('updated: main fast-forwards to origin/main and reports its short SHA', () => {
+test('updated: main fast-forwards to origin/main and reports its short SHA', async () => {
   const { root, origin, repo } = makeClone();
   try {
     const upstream = advanceOrigin(root, origin);
-    const r = syncMain(repo, { checkAhead: true });
+    const r = await syncMain(repo, { checkAhead: true });
     assert.equal(r.state, 'updated');
     assert.equal(git(repo, 'rev-parse', 'main'), upstream);
     assert.ok(upstream.startsWith(r.head), `${r.head} is a prefix of ${upstream}`);
     // Nothing new: still `updated`, never a complaint.
-    assert.equal(syncMain(repo).state, 'updated');
+    assert.equal((await syncMain(repo)).state, 'updated');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('no origin remote → no-remote', () => {
+test('no origin remote → no-remote', async () => {
   const root = mkTempDir('bl main-sync-');
   try {
     const repo = join(root, 'repo');
     git(root, 'init', '-q', '-b', 'main', repo);
     identity(repo);
     commitFile(repo, 'a.md', 'one\n', 'init');
-    assert.deepEqual(syncMain(repo), { state: 'no-remote' });
+    assert.deepEqual(await syncMain(repo), { state: 'no-remote' });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("origin at a missing path → fetch-failed with git's message and local main", () => {
+test("origin at a missing path → fetch-failed with git's message and local main", async () => {
   const { root, repo } = makeClone();
   try {
     git(repo, 'remote', 'set-url', 'origin', join(root, 'gone.git'));
     const before = git(repo, 'rev-parse', '--short', 'main');
-    const r = syncMain(repo, { checkAhead: true });
+    const r = await syncMain(repo, { checkAhead: true });
     assert.equal(r.state, 'fetch-failed');
     assert.match(r.message, /does not appear to be a git repository|not a git repository/);
     assert.equal(r.head, before);
@@ -140,13 +140,13 @@ test("origin at a missing path → fetch-failed with git's message and local mai
   }
 });
 
-test("diverged main → ff-failed carrying git's stderr", () => {
+test("diverged main → ff-failed carrying git's stderr", async () => {
   const { root, origin, repo } = makeClone();
   try {
     commitFile(repo, 'local.md', 'local\n', 'local');
     advanceOrigin(root, origin);
     const local = git(repo, 'rev-parse', 'main');
-    const r = syncMain(repo, { checkAhead: false });
+    const r = await syncMain(repo, { checkAhead: false });
     assert.equal(r.state, 'ff-failed');
     assert.match(r.message, /Not possible to fast-forward/);
     assert.equal(git(repo, 'rev-parse', 'main'), local, 'main untouched');
@@ -156,20 +156,20 @@ test("diverged main → ff-failed carrying git's stderr", () => {
   }
 });
 
-test('unpushed local main with checkAhead → ahead, and the fast-forward is not tried', () => {
+test('unpushed local main with checkAhead → ahead, and the fast-forward is not tried', async () => {
   const { root, repo } = makeClone();
   try {
     commitFile(repo, 'local.md', 'local\n', 'local');
     const local = git(repo, 'rev-parse', 'main');
-    assert.equal(syncMain(repo, { checkAhead: true }).state, 'ahead');
-    assert.equal(syncMain(repo, { checkAhead: true }).ahead, 1);
+    assert.equal((await syncMain(repo, { checkAhead: true })).state, 'ahead');
+    assert.equal((await syncMain(repo, { checkAhead: true })).ahead, 1);
     assert.equal(git(repo, 'rev-parse', 'main'), local);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('a lock held by a live process → lock-timeout, nothing synced', () => {
+test('a lock held by a live process → lock-timeout, nothing synced', async () => {
   const { root, origin, repo } = makeClone();
   const lockPath = mainSyncLockPath(repo);
   try {
@@ -177,7 +177,7 @@ test('a lock held by a live process → lock-timeout, nothing synced', () => {
     const before = git(repo, 'rev-parse', 'main');
     writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\ntest\n`);
     const started = Date.now();
-    const r = syncMain(repo, { lockTimeoutMs: 300, pollMs: 50 });
+    const r = await syncMain(repo, { lockTimeoutMs: 300, pollMs: 50 });
     assert.equal(r.state, 'lock-timeout');
     assert.equal(r.holder, process.pid);
     assert.equal(r.lockPath, lockPath);
@@ -191,13 +191,12 @@ test('a lock held by a live process → lock-timeout, nothing synced', () => {
 
 /**
  * `withMainSyncLock(repo, () => 'ran', opts)` in a child node process, with
- * stderr on a file: the `sleep` child writes the announcement to fd 2, which
- * no `process.stderr.write` stub here can see (S-1394). Returns the
- * `spawnToFiles` run.
+ * stderr on a file, so the test sees the announcement as a person would.
+ * Returns the `spawnToFiles` run.
  */
 function lockInChild(repo, opts) {
   const script = `import { withMainSyncLock } from ${JSON.stringify(pathToFileURL(SRC).href)};
-process.stdout.write(JSON.stringify(withMainSyncLock(process.env.BL_TEST_REPO, () => 'ran', ${JSON.stringify(opts)})));`;
+process.stdout.write(JSON.stringify(await withMainSyncLock(process.env.BL_TEST_REPO, () => 'ran', ${JSON.stringify(opts)})));`;
   return spawnToFiles(process.execPath, ['--input-type=module', '-e', script], {
     env: { ...process.env, BL_TEST_REPO: repo },
   });
@@ -290,13 +289,14 @@ test('reportMainSync: fast-forward failure and lock timeout are errors that stop
   assert.equal(lock.value, false);
   assert.match(lock.err, /4242/);
   assert.match(lock.err, /\/r\/\.git\/l/);
+  assert.doesNotMatch(lock.err, /\brm\b|remove/, 'a lock timeout never tells anyone to remove the lock');
   const ahead = captureErr(() => reportMainSync({ state: 'ahead', ahead: 2, head: 'abc' }, '/repo'));
   assert.equal(ahead.value, false);
   assert.match(ahead.err, /2 commit\(s\) ahead of origin\/main in \/repo/);
   assert.match(ahead.err, /git push origin main/);
 });
 
-test('prune: fetches every branch, drops a deleted remote branch, and fast-forwards main', () => {
+test('prune: fetches every branch, drops a deleted remote branch, and fast-forwards main', async () => {
   const { root, origin, repo } = makeClone();
   try {
     git(repo, 'branch', 'side', 'main');
@@ -309,7 +309,7 @@ test('prune: fetches every branch, drops a deleted remote branch, and fast-forwa
     commitFile(other, 'upstream.md', 'upstream\n', 'upstream');
     git(other, 'push', '-q', 'origin', 'main');
     const upstream = git(other, 'rev-parse', 'main');
-    const r = syncMain(repo, { prune: true });
+    const r = await syncMain(repo, { prune: true });
     assert.equal(r.state, 'updated', JSON.stringify(r));
     assert.equal(git(repo, 'rev-parse', 'main'), upstream);
     assert.throws(() => git(repo, 'rev-parse', '--verify', 'origin/side'));
@@ -331,7 +331,7 @@ test('prune with a narrowed fetch refspec still fetches and fast-forwards origin
   ];
   // One subtest per option set, so a failing case does not hide the others.
   for (const { name, opts, pruned } of cases) {
-    await t.test(name, () => {
+    await t.test(name, async () => {
       const { root, origin, repo } = makeClone();
       try {
         git(repo, 'branch', 'feat/side', 'main');
@@ -345,7 +345,7 @@ test('prune with a narrowed fetch refspec still fetches and fast-forwards origin
         commitFile(other, 'upstream.md', 'upstream\n', 'upstream');
         git(other, 'push', '-q', 'origin', 'main');
         const upstream = git(other, 'rev-parse', 'main');
-        const r = syncMain(repo, opts);
+        const r = await syncMain(repo, opts);
         assert.equal(r.state, 'updated', JSON.stringify(r));
         assert.equal(git(repo, 'rev-parse', 'main'), upstream, 'main');
         assert.equal(git(repo, 'rev-parse', 'origin/main'), upstream, 'origin/main');

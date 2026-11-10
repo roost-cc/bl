@@ -22,7 +22,7 @@ const SCHEMA = {
  * the agent; returns what launchSession returned and the prompt it sent.
  * `before(file)` runs before the launch.
  */
-function launch(spawn, extra = {}, before = null) {
+async function launch(spawn, extra = {}, before = null) {
   const { dir, cleanup } = mkTempBacklog();
   const tmux = process.env.TMUX;
   delete process.env.TMUX;
@@ -40,7 +40,7 @@ function launch(spawn, extra = {}, before = null) {
         return spawn(opts, file);
       }
     })();
-    const ret = launchSession({
+    const ret = await launchSession({
       mode: 'refine',
       parsed: { id: 'F-3' },
       title: 'T',
@@ -64,8 +64,8 @@ function launch(spawn, extra = {}, before = null) {
   }
 }
 
-test('launchSession names the outcome file in the prompt, then reads, validates and deletes it', () => {
-  const { ret, prompt, file, left } = launch(
+test('launchSession names the outcome file in the prompt, then reads, validates and deletes it', async () => {
+  const { ret, prompt, file, left } = await launch(
     (_opts, f) => {
       writeFileSync(f, JSON.stringify({ summary: 'refined F-3', refined: true }));
       return { status: 0 };
@@ -78,9 +78,9 @@ test('launchSession names the outcome file in the prompt, then reads, validates 
   assert.equal(left, false, 'the file is deleted');
 });
 
-test('launchSession removes a stale outcome file before the session starts', () => {
+test('launchSession removes a stale outcome file before the session starts', async () => {
   let stale = null;
-  const { ret } = launch(
+  const { ret } = await launch(
     (_opts, f) => {
       stale = existsSync(f);
       return { status: 0 };
@@ -97,13 +97,13 @@ test('launchSession removes a stale outcome file before the session starts', () 
   assert.match(ret.structuredError, /^no outcome file at /);
 });
 
-test('launchSession: no file, an invalid file, or a failed launch is a fault, never an outcome', () => {
-  const none = launch(() => ({ status: 0 }), { schema: SCHEMA });
+test('launchSession: no file, an invalid file, or a failed launch is a fault, never an outcome', async () => {
+  const none = await launch(() => ({ status: 0 }), { schema: SCHEMA });
   assert.equal(none.ret.status, 0);
   assert.equal(none.ret.structured, null);
   assert.equal(none.ret.structuredError, `no outcome file at ${none.file}`);
 
-  const bad = launch(
+  const bad = await launch(
     (_opts, f) => {
       writeFileSync(f, JSON.stringify({ summary: 's', refined: true, status: 'refined' }));
       return { status: 0 };
@@ -113,22 +113,22 @@ test('launchSession: no file, an invalid file, or a failed launch is a fault, ne
   assert.equal(bad.ret.structuredError, 'schema violation at $/status: must NOT have additional properties');
   assert.equal(bad.left, true, 'the invalid file is kept for the operator');
 
-  const failed = launch(() => ({ error: new Error('ENOENT'), status: null }), { schema: SCHEMA });
+  const failed = await launch(() => ({ error: new Error('ENOENT'), status: null }), { schema: SCHEMA });
   assert.equal(failed.ret.status, 1);
   assert.equal(failed.ret.structured, null);
   assert.match(failed.ret.structuredError, /^no outcome file at /);
 });
 
-test('launchSession without a schema returns the bare status and leaves {{outcomePath}} alone', () => {
-  const { ret, prompt } = launch(() => ({ status: 3 }));
+test('launchSession without a schema returns the bare status and leaves {{outcomePath}} alone', async () => {
+  const { ret, prompt } = await launch(() => ({ status: 3 }));
   assert.equal(ret, 3);
   assert.match(prompt, /\{\{outcomePath\}\}/);
 });
 
-test('launchSession refuses a schema without returnOnExit, before any session starts', () => {
+test('launchSession refuses a schema without returnOnExit, before any session starts', async () => {
   let spawned = false;
-  assert.throws(
-    () =>
+  await assert.rejects(
+    async () =>
       launch(
         () => {
           spawned = true;
@@ -142,7 +142,7 @@ test('launchSession refuses a schema without returnOnExit, before any session st
 });
 
 /** runHeadlessSession with a headless provider stub; `spawn(opts)` is the adapter. */
-function headless(spawn, extra = {}) {
+async function headless(spawn, extra = {}) {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -156,7 +156,7 @@ function headless(spawn, extra = {}) {
         return spawn(opts);
       }
     })();
-    const r = runHeadlessSession({
+    const r = await runHeadlessSession({
       mode: 'workon',
       parsed: { id: 'F-3' },
       prompt: 'p',
@@ -173,23 +173,27 @@ function headless(spawn, extra = {}) {
   }
 }
 
-test('runHeadlessSession passes the schema and returns the outcome; a resume sends the note as it is', () => {
+test('runHeadlessSession passes the schema and returns the outcome; a resume sends the note as it is', async () => {
   const outcome = { structured: { summary: 's', refined: true }, structuredError: null };
-  const { r, seen } = headless(() => ({ status: 0, output: '', ...outcome }), { schema: SCHEMA });
+  const { r, seen } = await headless(() => ({ status: 0, output: '', ...outcome }), { schema: SCHEMA });
   assert.equal(seen[0].schema, SCHEMA);
   assert.equal(seen[0].sessionId, null);
   assert.match(seen[0].prompt, /## This session is headless/);
   assert.deepEqual({ structured: r.structured, structuredError: r.structuredError }, outcome);
 
-  const resumed = headless(() => ({ status: 0, output: '' }), { schema: SCHEMA, sessionId: 'abc', prompt: 'note' });
+  const resumed = await headless(() => ({ status: 0, output: '' }), {
+    schema: SCHEMA,
+    sessionId: 'abc',
+    prompt: 'note',
+  });
   assert.equal(resumed.seen[0].sessionId, 'abc');
   assert.equal(resumed.seen[0].prompt, 'note', 'the resumed session already has the headless rules');
 });
 
-test('runHeadlessSession: a session that did not run carries its reason as the fault', () => {
-  const { r } = headless(() => ({ error: new Error('spawn claude ENOENT') }), { schema: SCHEMA });
+test('runHeadlessSession: a session that did not run carries its reason as the fault', async () => {
+  const { r } = await headless(() => ({ error: new Error('spawn claude ENOENT') }), { schema: SCHEMA });
   assert.equal(r.structured, null);
   assert.equal(r.structuredError, 'spawn claude ENOENT');
-  const plain = headless(() => ({ error: new Error('spawn claude ENOENT') }));
+  const plain = await headless(() => ({ error: new Error('spawn claude ENOENT') }));
   assert.equal(plain.r.structuredError, null, 'no schema, no fault');
 });

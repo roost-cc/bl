@@ -185,7 +185,7 @@ test('interactive-run-refreshes-totals-for-story-and-feature-after-each-session'
         [1, 'self-review'],
         [2, 'review.1'],
       ]) {
-        defaultRunner({ interactive: true }).session({
+        await defaultRunner({ interactive: true }).session({
           mode: 'workon',
           agent: 'claude',
           promptName: 'feature-self-review',
@@ -276,7 +276,7 @@ test('a failed escalation write leaves the previous feature file and no staging 
   }
 });
 
-test("restoreKeepingTokens writes the snapshot back with the current file's token keys", () => {
+test("restoreKeepingTokens writes the snapshot back with the current file's token keys", async () => {
   const { dir, cleanup, feature } = setup();
   try {
     const snapshot = readFileSync(feature.indexPath, 'utf8');
@@ -290,7 +290,7 @@ test("restoreKeepingTokens writes the snapshot back with the current file's toke
       return `${body}\nverifier text\n`;
     });
     const current = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm;
-    assert.equal(restoreKeepingTokens(dir, feature.indexPath, snapshot), true);
+    assert.equal(await restoreKeepingTokens(dir, feature.indexPath, snapshot), true);
     const after = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));
     const tokens = (fm) => Object.fromEntries(Object.entries(fm).filter(([k]) => k.startsWith('tokens_')));
     const rest = (fm) => Object.fromEntries(Object.entries(fm).filter(([k]) => !k.startsWith('tokens_')));
@@ -376,12 +376,12 @@ test('failed_verify_restores_missing_or_malformed_spec_and_change_document', asy
     for (const [name, [current, expected]] of Object.entries(live)) {
       if (current === null) rmSync(path, { force: true });
       else writeFileSync(path, current);
-      assert.equal(restoreKeepingTokens(dir, path, snapshot), true, name);
+      assert.equal(await restoreKeepingTokens(dir, path, snapshot), true, name);
       assert.equal(readFileSync(path, 'utf8'), expected, name);
     }
     // A CRLF snapshot over a missing file goes back as it was.
     rmSync(path);
-    restoreKeepingTokens(dir, path, crlf(snapshot));
+    await restoreKeepingTokens(dir, path, crlf(snapshot));
     assert.equal(readFileSync(path, 'utf8'), crlf(snapshot), 'CRLF snapshot');
     // A snapshot that is not a spec is refused and the live file left alone.
     for (const [name, bad] of Object.entries({
@@ -390,7 +390,7 @@ test('failed_verify_restores_missing_or_malformed_spec_and_change_document', asy
       malformed: '---\nfeature_id: [\n---\nBad\n',
     })) {
       writeFileSync(path, live.valid[0]);
-      assert.throws(() => restoreKeepingTokens(dir, path, bad), FrontmatterError, `snapshot ${name}`);
+      await assert.rejects(restoreKeepingTokens(dir, path, bad), FrontmatterError, `snapshot ${name}`);
       assert.equal(readFileSync(path, 'utf8'), live.valid[0], `snapshot ${name}: live file untouched`);
     }
     // A failed rename leaves the live file whole; the retry restores it.
@@ -400,12 +400,12 @@ test('failed_verify_restores_missing_or_malformed_spec_and_change_document', asy
         throw new Error('injected rename failure');
       };
       try {
-        assert.throws(() => restoreKeepingTokens(dir, path, snapshot), /injected rename failure/);
+        await assert.rejects(restoreKeepingTokens(dir, path, snapshot), /injected rename failure/);
       } finally {
         atomicHooks.beforeRename = null;
       }
       assert.equal(readFileSync(path, 'utf8'), current, 'the failed restore left the file whole');
-      assert.equal(restoreKeepingTokens(dir, path, snapshot), true, 'retry');
+      assert.equal(await restoreKeepingTokens(dir, path, snapshot), true, 'retry');
       assert.match(readFileSync(path, 'utf8'), /Original/);
     }
   } finally {

@@ -200,14 +200,14 @@ test('the first write on a unit with no log writes the synthesized log, then the
 // transition
 // ---------------------------------------------------------------------------
 
-test('transition() writes the entry under the spec lock and returns it; a no-op writes nothing', () => {
+test('transition() writes the entry under the spec lock and returns it; a no-op writes nothing', async () => {
   const root = mkTempDir('bl-transition-');
   const file = join(root, 'stories', 'S5-x', 'index.md');
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, '---\nstory_id: S-5\ntitle: x\nstatus: refined\nadded: 2026-11-01\n---\n\n# x\n');
   writeFileSync(join(root, 'flow.json'), readFileSync(join(TEMPLATES, 'flow.json')));
 
-  const entry = transition(root, { kind: 'story', file }, 'in_progress', { by: 'run', at: AT });
+  const entry = await transition(root, { kind: 'story', file }, 'in_progress', { by: 'run', at: AT });
   assert.deepEqual(entry, { at: AT, to: 'in_progress', by: 'run' });
   const { fm, body } = parseFrontmatter(readFileSync(file, 'utf8'));
   assert.equal(body, '\n# x\n');
@@ -218,7 +218,7 @@ test('transition() writes the entry under the spec lock and returns it; a no-op 
   );
 
   const text = readFileSync(file, 'utf8');
-  assert.equal(transition(root, { kind: 'story', indexPath: file }, 'in_progress', { by: 'run', at: AT }), null);
+  assert.equal(await transition(root, { kind: 'story', indexPath: file }, 'in_progress', { by: 'run', at: AT }), null);
   assert.equal(readFileSync(file, 'utf8'), text);
 });
 
@@ -488,13 +488,13 @@ test('applyNew writes the first entry, draft by new, and added', () => {
   assert.equal(fm.status, undefined);
 });
 
-test('enterVerb records a during, or a hand verb success, once', () => {
+test('enterVerb records a during, or a hand verb success, once', async () => {
   const { root, file } = unitFile('---\nfeature_id: F-5\nstatus: approved\nadded: 2026-11-01\n---\n');
   const unit = { kind: 'feature', file };
-  assert.equal(enterVerb(root, unit, 'run').to, 'in_progress', 'the run row records its during');
-  assert.equal(enterVerb(root, unit, 'run'), null, 'at its during already: nothing');
-  assert.equal(enterVerb(root, unit, 'implement'), null, 'a hand verb at its success already: nothing');
-  assert.equal(enterVerb(root, unit, 'merge'), null, 'a verb with a via and no during records nothing at start');
+  assert.equal((await enterVerb(root, unit, 'run')).to, 'in_progress', 'the run row records its during');
+  assert.equal(await enterVerb(root, unit, 'run'), null, 'at its during already: nothing');
+  assert.equal(await enterVerb(root, unit, 'implement'), null, 'a hand verb at its success already: nothing');
+  assert.equal(await enterVerb(root, unit, 'merge'), null, 'a verb with a via and no during records nothing at start');
   assert.deepEqual(logTo(file).slice(-1), [['in_progress', 'run']]);
 });
 
@@ -524,7 +524,7 @@ test('branchOf takes the first branch whose guards hold', () => {
   assert.equal(branchOf(flow, 'story', 'refine', 'failure', {}).to, 'draft');
 });
 
-test('applyTransition refuses a unit whose transitions: is malformed, even when status: is set', () => {
+test('applyTransition refuses a unit whose transitions: is malformed, even when status: is set', async () => {
   const malformed = [
     [entry(T0, 'draft', 'new'), { at: AT, by: 'run', via: 'open_pr' }],
     'in_progress',
@@ -544,7 +544,11 @@ test('applyTransition refuses a unit whose transitions: is malformed, even when 
     // ensureLog, the other writer, refuses it too and writes nothing.
     const { root, file } = unitFile(`${serializeFrontmatter(fm)}\n# F-5\n`);
     const text = readFileSync(file, 'utf8');
-    assert.throws(() => ensureLog(root, { kind: 'feature', indexPath: file, change: null }), FlowError, name);
+    await assert.rejects(
+      async () => ensureLog(root, { kind: 'feature', indexPath: file, change: null }),
+      FlowError,
+      name,
+    );
     assert.equal(readFileSync(file, 'utf8'), text, `${name}: the file unchanged`);
   }
 });
@@ -582,16 +586,16 @@ test('applyMerged records done by merge, by done for a story never started, and 
   assert.equal(applyMerged(flow, 'story', unstarted, { at: AT, note: 'again' }), null);
 });
 
-test('ensureLog writes the synthesized log of a unit with none, once, from its change document', () => {
+test('ensureLog writes the synthesized log of a unit with none, once, from its change document', async () => {
   const { root, file } = unitFile('---\nfeature_id: F-5\nstatus: running\nadded: 2026-11-01\n---\n');
   const change = { fm: { review_round: '1', review_status: 'pending' } };
-  assert.equal(ensureLog(root, { kind: 'feature', indexPath: file, change }), true);
+  assert.equal(await ensureLog(root, { kind: 'feature', indexPath: file, change }), true);
   assert.deepEqual(
     logTo(file).map(([to]) => to),
     ['draft', 'in_progress', 'in_review', 'fixing'],
   );
   const text = readFileSync(file, 'utf8');
-  assert.equal(ensureLog(root, { kind: 'feature', indexPath: file, change: null }), false);
+  assert.equal(await ensureLog(root, { kind: 'feature', indexPath: file, change: null }), false);
   assert.equal(readFileSync(file, 'utf8'), text);
 });
 
