@@ -831,10 +831,12 @@ function writeHop(ctx, step, write) {
 /**
  * The verb whose failure branch takes a unit at `status` to `escalated`:
  * `merge` inside `bl merge`'s integration, else the one running at that
- * status (`run`, `review`, `fix`); null when no verb does (it is escalated
- * already).
+ * status (`run`, `review`, `fix`); null when no verb does or it is escalated
+ * already (`merge` starts from `escalated`, so its failure branch is an edge
+ * from `escalated` to itself).
  */
-function escalatingVerb(flow, kind, status, integration) {
+export function escalatingVerb(flow, kind, status, integration) {
+  if (status === 'escalated') return null;
   const bys = flow
     .edges(kind)
     .filter((e) => e.from === status && e.to === 'escalated')

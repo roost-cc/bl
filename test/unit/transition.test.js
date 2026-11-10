@@ -29,6 +29,7 @@ import {
   storedLog,
   transition,
 } from '../../src/transition.js';
+import { escalatingVerb } from '../../src/feature-run.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 const TEMPLATES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates');
@@ -397,6 +398,23 @@ test('every resume command an escalation prints starts from escalated, for a sto
   for (const kind of ['story', 'feature']) {
     for (const verb of [...resume, 'implement']) {
       assert.equal(assertFrom(flow, { id: 'X-1', kind, status: 'escalated' }, verb, null), null, `${kind} ${verb}`);
+    }
+  }
+});
+
+test('the loop records no second escalated entry for a unit escalated already', () => {
+  // [status, integration, the verb that escalates it]
+  const cases = [
+    ['in_progress', false, 'run'],
+    ['in_review', false, 'review'],
+    ['fixing', false, 'fix'],
+    ['ready_for_merge', true, 'merge'],
+    ['escalated', false, null],
+    ['escalated', true, null],
+  ];
+  for (const kind of ['story', 'feature']) {
+    for (const [status, integration, verb] of cases) {
+      assert.equal(escalatingVerb(flow, kind, status, integration), verb, `${kind} ${status} ${integration}`);
     }
   }
 });
