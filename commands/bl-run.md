@@ -38,12 +38,15 @@ backlog/
 
 ## Gates
 
-- `approve` needs `status: refined` and at least one story whose `feature:`
+- `approve` needs a `refined` feature and at least one story whose `feature:`
   names it (membership is derived from each story's `feature:`, never stored
   on the feature), and warns on open dependencies outside the feature
   (`implement` refuses on those).
-- `implement` and `run` need a feature `approved`, `running`, or `escalated`; a story
-  `refined` or `in_progress`.
+- Each verb starts from the statuses its `flow.json` row names. `run` needs a feature
+  `approved`, `in_progress` or `escalated`, or a story `refined`, `in_progress` or `escalated`;
+  it also resumes a unit in `in_review`, `fixing` or `ready_for_merge` through its `then`
+  chain. `implement` also starts a story that is `draft`, and starts `fix` on a unit in
+  `fixing`.
 - `merge` refuses while the unit is in `fixing` or `in_review`, while the latest
   review session has unchecked Must/Should items (open nits do not block), or
   while `## Escalation` holds anything but `None.`. See `bl-merge.md`.

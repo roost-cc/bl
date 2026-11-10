@@ -23,8 +23,9 @@ bl implement <id...>                # several targets: one tmux window each
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<id...>` | One or more story (S34, S-34, s34) or feature (F-3) IDs. A component is refused: make its stories a feature. A story that belongs to a feature is refused: use the feature. |
 
-A story is started when its status is `refined` or `in_progress`. A feature needs `approved`,
-`running`, or `escalated`, and refuses on open dependencies outside it.
+`flow.json`'s `implement` row names the statuses it starts from: a story `draft`, `refined` or
+`in_progress`; a feature `approved`, `in_progress` or `escalated`. A unit in `fixing` starts the
+`fix` row instead. A feature refuses on open dependencies outside it.
 
 ## One or several
 
