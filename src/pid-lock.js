@@ -23,19 +23,28 @@ export function liveLockHolder(lockPath) {
   return content == null ? null : liveHolderOf(content);
 }
 
-/** PID on lock content's first line when that process is alive, else null. */
-function liveHolderOf(content) {
-  const pid = parseInt(content.split('\n', 1)[0], 10);
-  if (!Number.isInteger(pid) || pid <= 0) return null;
+/** Whether `pid` names a live process. */
+export function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
-    return pid;
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
-/** Create `path` holding `content`, atomically and only if it does not exist. */
+/** PID on lock content's first line when that process is alive, else null. */
+function liveHolderOf(content) {
+  const pid = parseInt(content.split('\n', 1)[0], 10);
+  return isPidAlive(pid) ? pid : null;
+}
+
+/**
+ * Create `path` holding `content`, atomically and only if it does not exist.
+ * False when `path` exists, or when the temp file was gone before the link
+ * (a `git clean` in the directory removed it): the caller tries again.
+ */
 function createExclusive(path, content) {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   writeFileSync(tmp, content, { flag: 'wx' });
@@ -43,7 +52,7 @@ function createExclusive(path, content) {
     linkSync(tmp, path);
     return true;
   } catch (e) {
-    if (e.code === 'EEXIST') return false;
+    if (e.code === 'EEXIST' || e.code === 'ENOENT') return false;
     throw e;
   } finally {
     try {
@@ -109,6 +118,10 @@ function readMaybe(path) {
  */
 export function acquirePidLock(lockPath, content, hooks = {}) {
   for (let attempt = 0; attempt < 100; attempt++) {
+    // A live holder is seen without a write, so a process that waits for it
+    // leaves no temp file beside the lock while the holder works (S-1397).
+    const live = liveLockHolder(lockPath);
+    if (live != null) return { holder: live };
     if (createExclusive(lockPath, content)) return { content };
     const holder = liveLockHolder(lockPath);
     if (holder != null) return { holder };

@@ -587,9 +587,10 @@ test('token_lock_reclaim_cannot_remove_new_live_holder', async () => {
     free: { before: null, runs: true, after: null },
     'live-held': { before: live, runs: false, after: live },
     'dead-held': { before: `${deadPid}\nstale\n`, runs: true, after: null },
-    // The old holder releases between the writer's create and its look at
-    // the lock, and a new holder takes it while the writer finds it missing.
-    'release/reacquire': { before: `${process.pid}\nold holder\n`, runs: false, after: live, race: true },
+    // Another reclaimer removes the dead holder's lock between the writer's
+    // create and its look at the lock, and a new holder takes it while the
+    // writer finds it missing. (A live old holder is seen before any create.)
+    'release/reacquire': { before: `${deadPid}\nold holder\n`, runs: false, after: live, race: true },
     // A dead reclaimer's mutex is cleared, and a new reclaimer's is not.
     'dead-held, live reclaim mutex': {
       before: `${deadPid}\nstale\n`,

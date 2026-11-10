@@ -3138,7 +3138,9 @@ value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 `src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
 turns. A command that finds the lock held by a live process says so once on stderr
 (`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
-30 s pass. The lock is re-entrant within a process.
+30 s pass. The lock is re-entrant within a process. As the spec lock is, it is created whole
+and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock name never
+exists without its holder's pid and two processes cannot both hold it.
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each
