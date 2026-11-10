@@ -245,7 +245,7 @@ function commitChangeDoc(backlogRoot, path, message) {
 }
 
 /**
- * A new document from `templates/change.md`: `status: open`, round 0, one
+ * A new document from `templates/change.md`: `status: open`, one
  * `repos:` entry per `{ repo, branch }`. `change_of:` is set on the parsed
  * frontmatter (F-62 D3); `{{changeOf}}` and `{{title}}` are filled in the body.
  */
