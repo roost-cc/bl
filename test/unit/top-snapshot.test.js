@@ -349,6 +349,13 @@ test('runs, activity, tokens: a run state with round "2" (and every other mistyp
   assert.ok(GO_TYPES.usage(today), JSON.stringify(today));
 });
 
+test('activity: a note is cut by code point, so an emoji is never split', () => {
+  const note = `${'x'.repeat(NOTE_CHARS - 2)}🚀🚀🚀`;
+  const { events } = readActivity([{ feature: 'F-1', history: [{ step: 'test', at: at(NOW), note }] }]);
+  assert.equal(events[0].note, `${'x'.repeat(NOTE_CHARS - 2)}🚀…`);
+  assert.ok(!events[0].note.includes('�') && events[0].note.isWellFormed());
+});
+
 test('readSection: a read that throws keeps the last good value and carries error; the next good read clears it', () => {
   let s = readSection(undefined, () => ({ rows: [1] }), NOW);
   assert.deepEqual(s, { read_at: '2026-11-07T12:00:00.000Z', rows: [1] });

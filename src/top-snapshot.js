@@ -207,7 +207,8 @@ export function readActivity(states) {
   events.sort((a, b) => b.at - a.at);
   return {
     events: events.slice(0, ACTIVITY_SHOWN).map(({ unit, h, at }) => {
-      const note = String(h.note ?? '');
+      // By code point, so an emoji is never cut in half.
+      const note = [...String(h.note ?? '')];
       const duration = at - ms(h.startedAt);
       return {
         at: iso(at),
@@ -220,7 +221,7 @@ export function readActivity(states) {
         agent: str(h.agent),
         model: str(h.model),
         effort: str(h.effort),
-        note: note.length > NOTE_CHARS ? `${note.slice(0, NOTE_CHARS - 1)}…` : note,
+        note: note.length > NOTE_CHARS ? `${note.slice(0, NOTE_CHARS - 1).join('')}…` : note.join(''),
       };
     }),
   };
