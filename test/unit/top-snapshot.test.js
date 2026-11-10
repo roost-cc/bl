@@ -216,6 +216,7 @@ test('history: the last day is the UTC date of now, in any zone (box ¹ and ⁵ 
   const { dir } = mkTempBacklog();
   const git = (...args) =>
     spawnSync('git', ['-C', dir, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
         GIT_CONFIG_GLOBAL: '/dev/null',
