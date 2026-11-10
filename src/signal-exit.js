@@ -8,6 +8,10 @@
  * remove its lock files), and `tab-title.js` on the first title (to end the
  * title as `interrupted`, S-1393). Any other `bl` command keeps Node's
  * default action. The handlers are registered once per process.
+ *
+ * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
+ * `raiseSignal` raises one of them again after a synchronous child ended on
+ * it (`sleep-sync.js`, and `checkedMerge` in `cleanup.js`).
  */
 
 let registered = false;
