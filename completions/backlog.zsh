@@ -185,10 +185,12 @@ _roost_bl() {
       ;;
     top)
       _arguments -s \
-        '(--stream --interval --version)--json[Print one snapshot (bl-top-json/v1)]' \
-        '(--json --version)--stream[Print one snapshot per line until stdin closes]' \
+        '(--stream --interval --version --no-bell --no-desktop)--json[Print one snapshot (bl-top-json/v1)]' \
+        '(--json --version --no-bell --no-desktop)--stream[Print one snapshot per line until stdin closes]' \
         '(--json)--interval[The refresh interval in ms]:ms:' \
-        '(--json --stream)--version[Build the view if it needs a build; print its version]'
+        '(--json --stream)--version[Build the view if it needs a build; print its version]' \
+        '(--json --stream)--no-bell[Ring no bell for a notification]' \
+        '(--json --stream)--no-desktop[Run no notify-send for a notification]'
       ;;
     inbox)
       if [[ "${words[2]}" == done ]]; then
