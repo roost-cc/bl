@@ -113,7 +113,9 @@ func TestStreamSendsEachLineThenItsLastStderrLine(t *testing.T) {
 }
 
 func TestStreamEndsOnALineThatIsNotASnapshot(t *testing.T) {
-	s, err := Start([]string{"sh", "-c", `echo oops; sleep 30`}, 1)
+	// The `sleep` is a child of the stream's process that holds its stderr open, as a git or a
+	// capacity probe of `bl top --stream` can: the stream must end it too.
+	s, err := Start([]string{"sh", "-c", `sleep 30 & echo oops; wait`}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

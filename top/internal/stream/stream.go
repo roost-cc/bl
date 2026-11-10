@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 // Stream is one running `bl top --stream`. Gen tells its messages from those of a stream that
@@ -43,9 +44,11 @@ func Command(blArgv []string, interval int) []string {
 	return append(append([]string{}, blArgv...), "top", "--stream", "--interval", strconv.Itoa(interval))
 }
 
-// Start runs argv as stream gen. Next returns its messages.
+// Start runs argv as stream gen. Next returns its messages. The stream runs in a process group of
+// its own, so that a kill ends the processes it started too.
 func Start(argv []string, gen int) (*Stream, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -111,7 +114,8 @@ func (s *Stream) read(stdout, stderr io.Reader) {
 			snap, derr := Decode(line)
 			if derr != nil {
 				reason = derr.Error()
-				s.cmd.Process.Kill()
+				// The whole group: a child that holds stderr open would keep the end waiting.
+				syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)
 			} else {
 				s.send(SnapshotMsg{Gen: s.Gen, Snapshot: snap})
 			}
