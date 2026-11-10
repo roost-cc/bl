@@ -24,10 +24,12 @@
  * that match the filter (position, id, title, why), the unranked tail's first
  * few, and why the pick was made. The order is a preference; this never reads
  * the roadmap. The story picker inside a feature or filter is `bl what-next`.
+ *
+ * The walk is `nextPlan()`, which `bl top`'s snapshot reads too (F-87 D1).
  */
 
 import { loadConfig, parseArgs, info } from './config.js';
-import { filterFromArgs, filterLabel, featureEpicId, featureMatches, storyMatches } from './filter.js';
+import { filterContext, filterFromArgs, filterLabel, featureEpicId, featureMatches, storyMatches } from './filter.js';
 import { outsideBlockers } from './feature.js';
 import { heldBy, readUnits } from './blockers.js';
 import { readAllStories } from './story.js';
@@ -162,9 +164,72 @@ function describe(u) {
 }
 
 /** `F-3 (ranked 1)` or `S-9 (unranked)`. */
-function placeOf(u, rankedEntry) {
-  const e = rankedEntry.get(u);
-  return `${u.id} (${e ? `ranked ${e.position}` : 'unranked'})`;
+function placeOf(entry) {
+  return `${entry.id} (${entry.position != null ? `ranked ${entry.position}` : 'unranked'})`;
+}
+
+/**
+ * @typedef {{ unit: any, id: string, title: string, status: string, points: number,
+ *   position: number | null, why: string | null }} PlanEntry
+ *   `position`: its entry's place in `ranked:` from 1, null when unranked; `why` its reason
+ */
+
+/**
+ * The walk `bl next` prints (F-87 D1): the open units that match `filter`
+ * in priority order, split into the ranked ones (each with `holds`, the
+ * words of everything that holds it from `bl run`) and the unranked tail,
+ * and the pick. `pick.from` is the unit the walk started at, which the pick
+ * unblocks when it is another; `pick.path` the hold words that led to it.
+ * `waits` is each unit found held with no free blocker, and what holds it.
+ * Throws when `priority.md` is not YAML.
+ *
+ * @param {object} config  `loadConfig()`
+ * @param {{ theme: string|null, epic: string|null }} filter  `parseFilter`'s, or all null
+ * @param {{ ctx?: object, flow?: object }} [opts]  the filter context and flow, when the caller has read them
+ * @returns {{ problems: object[], ranked: Array<PlanEntry & { holds: string[] }>, unranked: PlanEntry[],
+ *   pick: { unit: any, from: PlanEntry, path: string[] } | null,
+ *   waits: Array<{ entry: PlanEntry, why: string[] }> }}
+ */
+export function nextPlan(config, filter, { ctx = filterContext(config), flow = loadFlow(config.backlogRoot) } = {}) {
+  // A priority.md that is not YAML stops the strict graph load, naming the file.
+  const state = readState(config, flow, ctx);
+  const { graph } = state;
+  const rankedEntry = new Map(graph.ranked.map((e) => [e.unit, e]));
+  /** @returns {PlanEntry} */
+  const entry = (u) => {
+    const e = rankedEntry.get(u);
+    return {
+      unit: u,
+      id: u.id,
+      title: u.title,
+      status: u.status,
+      points: u.points,
+      position: e?.position ?? null,
+      why: e?.why ?? null,
+    };
+  };
+  const order = graph.priority.filter((u) => matches(state, u, filter));
+  const ranked = order
+    .filter((u) => rankedEntry.has(u))
+    .map((u) => {
+      const { runnable, waits } = holdsOf(state, u);
+      return { ...entry(u), holds: [...runnable.map((r) => r.why), ...waits] };
+    });
+  const unranked = order.filter((u) => !rankedEntry.has(u)).map(entry);
+
+  let pick = null;
+  for (const u of order) {
+    if (state.waits.has(u)) continue;
+    const found = free(state, u, new Set());
+    if (found) {
+      pick = { unit: found.unit, from: entry(u), path: found.path };
+      break;
+    }
+  }
+  const waits = [...state.waits]
+    .filter(([held]) => held !== pick?.from.unit)
+    .map(([held, why]) => ({ entry: entry(held), why }));
+  return { problems: graph.problems, ranked, unranked, pick, waits };
 }
 
 export async function main(argv) {
@@ -187,50 +252,38 @@ export async function main(argv) {
   const config = loadConfig();
   const flow = loadFlow(config.backlogRoot);
   const { filter, ctx } = filterFromArgs(args, config, 'bl next');
-  // A priority.md that is not YAML stops the strict graph load, naming the file.
-  const state = readState(config, flow, ctx);
-  const { graph } = state;
-  for (const p of graph.problems) {
+  const { problems, ranked, unranked, pick, waits } = nextPlan(config, filter, { ctx, flow });
+  for (const p of problems) {
     if (p.code === 'priority-file') info(`bl next: ${p.message}; every unit is unranked (run bl validate)`);
   }
 
   const scope = filterLabel(filter);
-  const rankedEntry = new Map(graph.ranked.map((e) => [e.unit, e]));
-  const order = graph.priority.filter((u) => matches(state, u, filter));
-  if (order.length === 0) {
+  if (ranked.length === 0 && unranked.length === 0) {
     info(`No open unit${scope ? ` matches ${scope}` : ''}.`);
     return;
   }
 
-  const ranked = order.filter((u) => rankedEntry.has(u));
-  const tail = order.filter((u) => !rankedEntry.has(u));
   if (ranked.length > 0) {
     info(`Ranked${scope ? ` (${scope})` : ''}:`);
-    for (const u of ranked) info(`  ${rankedEntry.get(u).position}. ${describe(u)} — ${rankedEntry.get(u).why}`);
+    for (const e of ranked) info(`  ${e.position}. ${describe(e.unit)} — ${e.why}`);
   }
-  if (tail.length > 0) {
-    const more = tail.length > TAIL_SHOWN ? ` (first ${TAIL_SHOWN} of ${tail.length})` : '';
+  if (unranked.length > 0) {
+    const more = unranked.length > TAIL_SHOWN ? ` (first ${TAIL_SHOWN} of ${unranked.length})` : '';
     info(`Not yet ranked, oldest first${scope ? ` (${scope})` : ''}${more}:`);
-    for (const u of tail.slice(0, TAIL_SHOWN)) info(`  ${describe(u)}`);
+    for (const e of unranked.slice(0, TAIL_SHOWN)) info(`  ${describe(e.unit)}`);
   }
 
-  for (const u of order) {
-    if (state.waits.has(u)) continue;
-    const found = free(state, u, new Set());
-    if (!found) continue;
-    for (const [held, why] of state.waits) {
-      if (held !== u) info(`Passed over ${placeOf(held, rankedEntry)}: ${why.join('; ')}.`);
-    }
-    if (found.unit !== u) {
-      info(
-        `${placeOf(u, rankedEntry)} is held: ${found.path.join(', then ')}. ` +
-          `${found.unit.id} comes first; it unblocks ${u.id}.`,
-      );
-    }
-    info(`Next: ${describe(found.unit)}`);
-    process.stdout.write(`${found.unit.id}\n`);
+  for (const { entry, why } of waits) info(`Passed over ${placeOf(entry)}: ${why.join('; ')}.`);
+  if (!pick) {
+    info(`No unit${scope ? ` matching ${scope}` : ''} can run: each is held by a task or by work bl cannot run.`);
     return;
   }
-  for (const [held, why] of state.waits) info(`Passed over ${placeOf(held, rankedEntry)}: ${why.join('; ')}.`);
-  info(`No unit${scope ? ` matching ${scope}` : ''} can run: each is held by a task or by work bl cannot run.`);
+  if (pick.unit !== pick.from.unit) {
+    info(
+      `${placeOf(pick.from)} is held: ${pick.path.join(', then ')}. ` +
+        `${pick.unit.id} comes first; it unblocks ${pick.from.id}.`,
+    );
+  }
+  info(`Next: ${describe(pick.unit)}`);
+  process.stdout.write(`${pick.unit.id}\n`);
 }
