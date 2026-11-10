@@ -83,6 +83,8 @@ Deferred section :
 
 {{validateBeforeSync}}
 
+{{simplicityGuide}}
+
 {{writingGuide}}
 
 {{toolGuide}}

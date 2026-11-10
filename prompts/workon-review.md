@@ -72,6 +72,8 @@ Backlog repo : {{backlogDir}}
 
 {{validateBeforeSync}}
 
+{{simplicityGuide}}
+
 {{writingGuide}}
 
 {{toolGuide}}

@@ -59,7 +59,10 @@ absolute path, for example `{{worktreePath}}/src/<module>.js`. Quote the command
 3. **Check every candidate.** Reproduce it as its `Repro:` says. Drop it, with a one-line reason,
    when it does not reproduce, is out of scope or is a duplicate. Merge duplicates across the two
    passes. Also merge findings of the **same class** into one item that names the class and lists
-   every instance either pass found: one class, one item, one sweep for the fixer. Every Must and
+   every instance either pass found: one class, one item, one sweep for the fixer. If the same
+   check or fix repeats across several call sites, the item is a DRY finding: "no shared
+   abstraction for <behaviour>", with the call sites as its instances. Never write one item, or
+   one **## Deferred** bullet, per call site. Every Must and
    Should item keeps its `Class: … — instances: …; also check: …` field; write it yourself when a
    pass left it out. Keep the strongest severity. Reject a candidate that has no repro and no
    named test, unless you can write them yourself.
@@ -70,7 +73,9 @@ absolute path, for example `{{worktreePath}}/src/<module>.js`. Quote the command
    goes to **## Deferred** in the {{unitKind}} file as
    `- [points: N] (pre-existing, review round {{nextRound}}) <finding>`. It never blocks this
    {{unitKind}}, never counts toward the round cap, and never goes to the fix round. Drop a
-   pre-existing nit with a reason; never defer it.
+   pre-existing nit with a reason; never defer it. Pre-existing instances of one class are one
+   Deferred bullet that names the missing shared abstraction and lists the call sites, never
+   one bullet per call site.
 
 5. **Check {{premise}}** against what was built. If the implementation shows that the premise does
    not hold, that is a Must-fix and grounds for escalation.
@@ -138,6 +143,8 @@ else `ready_for_merge`. Do not edit the {{unitKind}}'s `transitions:`, and do no
 fields to the change document.
 
 {{escalationGuide}}
+
+{{simplicityGuide}}
 
 {{writingGuide}}
 

@@ -62,6 +62,8 @@ and a raw commit takes along what other sessions have staged.
 
 {{escalationGuide}}
 
+{{simplicityGuide}}
+
 {{writingGuide}}
 
 {{toolGuide}}

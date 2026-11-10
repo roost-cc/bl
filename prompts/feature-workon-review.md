@@ -95,6 +95,8 @@ headless session cannot remove files.
 
 {{escalationGuide}}
 
+{{simplicityGuide}}
+
 {{writingGuide}}
 
 {{toolGuide}}

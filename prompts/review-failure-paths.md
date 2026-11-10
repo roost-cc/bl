@@ -87,6 +87,8 @@ absolute path, for example `{{worktreePath}}/src/<module>.js`. Quote the command
    Write `None.` under a heading with no items. Do not edit the {{unitKind}} file, the story
    files or any code: the verifier owns the Review Log.
 
+{{simplicityGuide}}
+
 {{writingGuide}}
 
 {{toolGuide}}
