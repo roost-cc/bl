@@ -169,11 +169,13 @@ chmod +x "$BL_ROOT/top/bin/bl-top"
 set +e
 OUT=$("$BL" top 2>"$ERR")
 NO_PUSH=$("$BL" top --no-push 2>"$ERR")
+INTERVAL=$("$BL" top --interval 1e3 --version 2>"$ERR")
 set -e
 # The real view goes back first, so a failed assert leaves no fake behind.
 mv "$BL_ROOT/top/bin/bl-top.real" "$BL_ROOT/top/bin/bl-top"
 assert_contains "bl top passes the push argv to the view" "$(printf -- '--push-argv\n["phone-push","--topic","bl top"]')" "$OUT"
 assert_contains "bl top --no-push passes --no-push to the view" "--no-push" "$NO_PUSH"
+assert_contains "bl top --interval 1e3 passes the checked number to the view" "$(printf -- '--interval\n1000\n')" "$INTERVAL"
 mv "$TMPDIR_ROOT/backlog.json.good" "$CFG"
 
 # With no backlog, bl top exits 1 before it starts the view, and says how to name one.

@@ -178,12 +178,31 @@ function buildTui() {
 }
 
 /**
+ * The view's arguments: `interval` is the number that `main` checked, never
+ * the flag's text (`1e3`, `0600`), which Go's flag package reads otherwise.
+ * @param {Record<string, string | boolean | undefined>} opts
+ * @param {number} interval
+ * @param {string[] | null} push
+ * @returns {string[]}
+ */
+export function tuiArgs(opts, interval, push) {
+  const args = ['--bl-argv', JSON.stringify([process.execPath, BL_PATH])];
+  if (opts.interval !== undefined) args.push('--interval', String(interval));
+  if (opts.version) args.push('--version');
+  if (opts['no-bell']) args.push('--no-bell');
+  if (opts['no-desktop']) args.push('--no-desktop');
+  if (opts['no-push']) args.push('--no-push');
+  if (push) args.push('--push-argv', JSON.stringify(push));
+  return args;
+}
+
+/**
  * Run the TUI with the terminal's stdio and exit with its code; build it
  * first when it needs a build. The phone push command comes from
  * backlog.json's `top` block (D8a), read before the build: a bad block exits
  * 1. `--no-push` passes no command.
  */
-function runTui(opts) {
+function runTui(opts, interval) {
   let push;
   try {
     push = topSettings(loadConfig());
@@ -192,14 +211,7 @@ function runTui(opts) {
     process.exit(1);
   }
   if (tuiNeedsBuild()) buildTui();
-  const args = ['--bl-argv', JSON.stringify([process.execPath, BL_PATH])];
-  if (opts.interval !== undefined) args.push('--interval', opts.interval);
-  if (opts.version) args.push('--version');
-  if (opts['no-bell']) args.push('--no-bell');
-  if (opts['no-desktop']) args.push('--no-desktop');
-  if (opts['no-push']) args.push('--no-push');
-  if (push) args.push('--push-argv', JSON.stringify(push));
-  const r = spawnSync(TOP_BIN, args, { stdio: 'inherit' });
+  const r = spawnSync(TOP_BIN, tuiArgs(opts, interval, push), { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
 
@@ -230,7 +242,7 @@ export async function main(argv) {
     console.error('bl top: --interval goes with --stream or the view, not --json');
     process.exit(1);
   }
-  if (!opts.json && !opts.stream) runTui(opts);
+  if (!opts.json && !opts.stream) runTui(opts, interval);
   const config = loadConfig();
   if (opts.json) {
     const snapshot = topSnapshot(config);
