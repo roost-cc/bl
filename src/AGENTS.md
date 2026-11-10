@@ -4196,8 +4196,11 @@ with the command to run by hand, and the rerun installs again. An install, the
 `git push origin main` of a branch that was merged before this run, a git
 command of `landedMergeCommit`, a git command of the worktree and branch
 removal (`removeWorktreeAndBranch`, which stops before any fallback), or a git
-command of the main sync (`syncMain`), ended by SIGINT or SIGTERM raises that
-signal again (`raiseSignal`), so `bl` exits 130 or 143. A backlog commit that
+command of the main sync (`syncMain`, and every other `withMainSyncLock`
+caller: `commitPaths`, `pullBacklog`, `feature-run.js`), ended by SIGINT or
+SIGTERM raises that signal again (`raiseSignal`), so `bl` exits 130 or 143.
+A child that Node itself killed (`r.error` set, such as `ENOBUFS`) is a
+failed command, not an interrupt (`interruptOf`). A backlog commit that
 `bl merge` reports (`reportBacklogCommit`) raises the signal that ended one of
 its git commands after the report.
 
