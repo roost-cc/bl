@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
-import { readFileSync, realpathSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import { constants } from 'os';
 import { join } from 'path';
 import { extractSection } from '../../src/feature.js';
@@ -16,7 +16,7 @@ import { BL_BIN, personEnv, runBl } from '../helpers/run-bl.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
 import { spawnToFiles, untilStderrHas } from '../helpers/spawn-files.js';
 import { loadConfig, parseFrontmatter, worktreeRoot } from '../../src/config.js';
-import { ENV, fixture, g, landOnMain } from '../helpers/merge-integrate-fixture.js';
+import { ENV, fixture, g, landOnMain, ok } from '../helpers/merge-integrate-fixture.js';
 
 /**
  * A shell snippet that prints `line` to stderr, then waits up to 10 s for the
@@ -205,16 +205,29 @@ test('a failed install stops bl merge after the push, names the command, and the
   }
 });
 
-// Each child that `cleanupOneRepo` starts after the push, ended by SIGINT or
-// SIGTERM, ends `bl merge` on that signal, as the push in `checkedMerge`
-// does. `fail` makes the first run's install fail, so the second run takes
-// the "already merged" path: it looks up the merge commit
-// (`landedMergeCommit`) and pushes main.
+// Each child of `bl merge` in the table, ended by SIGINT or SIGTERM, ends
+// `bl merge` on that signal. `fail` makes the first run's install fail, so the
+// second run takes the "already merged" path: it looks up the merge commit
+// (`landedMergeCommit`) and pushes main. `setup(fx)` runs before the lockfile
+// lands on main, and `after(fx)` checks that `bl merge` stopped at the child.
 const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], {
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'pipe'],
 }).trim();
-for (const { child, signal, fail, npm, git, message } of [
+/** A fake `git` that ends itself on `signal` when its arguments match the `case` pattern `pattern`. */
+const killingGit = (pattern, signal) =>
+  `case "$*" in ${pattern}) kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"`;
+/** Give the fixture's backlog an origin, so its commits are pushed (`pushBacklog`). */
+function backlogOrigin(fx) {
+  const origin = join(mkTempDir('bl-backlog-origin-'), 'backlog.git');
+  g(fx.dir, 'init', '-q', '--bare', '-b', 'main', origin);
+  g(fx.dir, 'remote', 'add', 'origin', origin);
+  g(fx.dir, 'push', '-q', 'origin', 'main');
+}
+const SIGNALS = ['SIGINT', 'SIGTERM'];
+/** A message RegExp: `code: <text> was ended by <signal>; rerun `bl merge S-1`.` */
+const endedBy = (text, signal) => new RegExp(`code: ${text} was ended by ${signal}; rerun \`bl merge S-1\`\\.`);
+for (const { child, signal, fail, npm, git, message, setup, after } of [
   {
     child: 'the install',
     signal: 'SIGTERM',
@@ -236,8 +249,61 @@ for (const { child, signal, fail, npm, git, message } of [
     signal,
     fail: true,
     npm: 'exit 0',
-    git: `case "$*" in 'push origin main') kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"`,
-    message: new RegExp(`code: the push of main to origin was ended by ${signal}; rerun \`bl merge S-1\`\\.`),
+    git: killingGit(`'push origin main'`, signal),
+    message: endedBy('the push of main to origin', signal),
+  })),
+  ...SIGNALS.map((signal) => ({
+    child: 'the fetch of main',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: killingGit(`'fetch --prune origin'`, signal),
+    message: /Pulling latest main\.\.\./,
+    after: (fx) => assert.doesNotMatch(g(fx.repo, 'log', '--format=%s', 'origin/main'), /\(S-1\)/),
+  })),
+  // The pattern starts with `/`, so it does not match `checkedMerge`'s
+  // `git worktree remove --force <throwaway>`.
+  ...SIGNALS.map((signal) => ({
+    child: 'the worktree removal',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: killingGit(`'worktree remove /'*`, signal),
+    message: endedBy('`git worktree remove [^`]+`', signal),
+    // No `--force` remove.
+    after: (fx) => assert.ok(existsSync(fx.wts['s1-loose'])),
+  })),
+  ...SIGNALS.map((signal) => ({
+    child: 'the remote branch deletion',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: killingGit(`'push origin --delete '*`, signal),
+    message: endedBy('`git push origin --delete s1-loose`', signal),
+    // No `branch -d`.
+    after: (fx) => assert.ok(ok(fx.repo, 'rev-parse', '--verify', 's1-loose')),
+  })),
+  ...SIGNALS.map((signal) => ({
+    child: 'the branch deletion',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: killingGit(`'branch -d '*`, signal),
+    message: endedBy('`git branch -d s1-loose`', signal),
+    // No `branch -D`.
+    after: (fx) => assert.ok(ok(fx.repo, 'rev-parse', '--verify', 's1-loose')),
+  })),
+  // Only the push of the commit that marks S-1 done: the integrate step
+  // pushes the backlog earlier, and S-1467 covers that push.
+  ...SIGNALS.map((signal) => ({
+    child: 'the push of the backlog',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: `case "$*" in 'push -q origin main') '${REAL_GIT}' log -1 --format=%s | grep -q 'mark S-1 done' && kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"`,
+    message: /Committed \d+ backlog path\(s\)\./,
+    setup: backlogOrigin,
+    after: (fx) => assert.equal(g(fx.dir, 'log', '-1', '--format=%s'), 'chore: mark S-1 done, sync backlog'),
   })),
 ]) {
   test(`${child} ended by ${signal} ends bl merge as ${signal}`, () => {
@@ -247,6 +313,7 @@ for (const { child, signal, fail, npm, git, message } of [
     writeFileSync(join(dir, 'npm'), `#!/bin/sh\n${npm}\nsleep 5\n`, { mode: 0o755 });
     if (git) writeFileSync(join(dir, 'git'), `#!/bin/sh\n${git}\n`, { mode: 0o755 });
     try {
+      setup?.(fx);
       landOnMain(fx, 'package-lock.json', '{}\n', 'add a lockfile');
       if (fail) {
         writeFileSync(npmFake.exitFile, '1');
@@ -260,6 +327,7 @@ for (const { child, signal, fail, npm, git, message } of [
       );
       // The kill stopped bl merge, so it does not go on to "Resume with".
       assert.doesNotMatch(r.stderr, /Cleanup of code failed/);
+      after?.(fx);
     } finally {
       fx.cleanup();
     }
