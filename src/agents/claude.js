@@ -366,8 +366,10 @@ function claudeWindowName({ kind, scope }) {
 /**
  * The capacity (provider.js `capacity()`) of the configuration with `model`
  * that a usage-endpoint `body` means (S-1143). The limits are `body.limits`,
- * else `five_hour` and `seven_day` (`utilization`) as the `session` and
- * `weekly_all` limits. A limit with `scope: null` applies to every model; a
+ * else (when `limits` is `null` or absent) `five_hour` and `seven_day`
+ * (`utilization`) as the `session` and `weekly_all` limits. A `limits` that is
+ * not a list, or a `five_hour` / `seven_day` that is not an object, `null` or
+ * absent, is `unknown`. A limit with `scope: null` applies to every model; a
  * model-scoped one only when `scopedModelMatches`; any other scope is left
  * out. Each kept limit is a window (`remainingPercent` = 100 - `percent`, from 0
  * to 100). A window at 0% makes the configuration `unavailable` until the
@@ -384,23 +386,29 @@ function claudeWindowName({ kind, scope }) {
  */
 export function claudeCapacity(body, model) {
   const unknown = (scope, message) => ({ state: 'unknown', scope, until: null, windows: [], message });
-  if (!isPlainObject(body)) return unknown('model', 'the Claude usage endpoint returned no usage');
-  const limits = Array.isArray(body.limits)
-    ? body.limits
-    : [
-        ['session', body.five_hour],
-        ['weekly_all', body.seven_day],
-      ]
-        .filter(([, w]) => isPlainObject(w))
-        .map(([kind, w]) => ({ kind, percent: w.utilization, resets_at: w.resets_at, scope: null }));
-  const scope = limits.some((l) => isPlainObject(l) && isPlainObject(l.scope) && isPlainObject(l.scope.model))
-    ? 'model'
-    : 'account';
-  const unreadable = (what, name, value) =>
+  const unreadableIn = (scope, what, name, value) =>
     unknown(
       scope,
       `the Claude usage endpoint reported ${what} (${name}: ${typeof value === 'string' ? value : JSON.stringify(value)})`,
     );
+  if (!isPlainObject(body)) return unknown('model', 'the Claude usage endpoint returned no usage');
+  let limits = body.limits;
+  if (limits != null && !Array.isArray(limits))
+    return unreadableIn('model', 'limits that are not a list', 'limits', limits);
+  if (limits == null) {
+    const fallback = [
+      ['session', body.five_hour],
+      ['weekly_all', body.seven_day],
+    ].filter(([, w]) => w != null);
+    const bad = fallback.find(([, w]) => !isPlainObject(w));
+    if (bad)
+      return unreadableIn('account', 'a window that is not an object', claudeWindowName({ kind: bad[0] }), bad[1]);
+    limits = fallback.map(([kind, w]) => ({ kind, percent: w.utilization, resets_at: w.resets_at, scope: null }));
+  }
+  const scope = limits.some((l) => isPlainObject(l) && isPlainObject(l.scope) && isPlainObject(l.scope.model))
+    ? 'model'
+    : 'account';
+  const unreadable = (what, name, value) => unreadableIn(scope, what, name, value);
   const windows = [];
   for (const limit of limits) {
     if (!isPlainObject(limit)) continue;

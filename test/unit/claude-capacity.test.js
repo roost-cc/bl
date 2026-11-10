@@ -249,6 +249,58 @@ test('claudeCapacity: a limit whose percent is not a number is unknown', () => {
   assert.equal(claudeCapacity(probe2, 'opus').state, 'available');
 });
 
+test('claudeCapacity: a five_hour or seven_day that is not an object or null is unknown', () => {
+  const ok = { utilization: 10, resets_at: '2030-01-01T00:00:00Z' };
+  for (const [field, name] of [
+    ['five_hour', 'claude 5h'],
+    ['seven_day', 'claude 7d'],
+  ]) {
+    const other = field === 'five_hour' ? 'seven_day' : 'five_hour';
+    for (const [value, shown] of [
+      [100, '100'],
+      [0, '0'],
+      ['x', 'x'],
+      [true, 'true'],
+      [false, 'false'],
+      [[], '[]'],
+    ]) {
+      const r = claudeCapacity({ [field]: value, [other]: ok }, 'opus');
+      const label = `${field}: ${JSON.stringify(value)}`;
+      assert.equal(r.state, 'unknown', label);
+      assert.equal(r.scope, 'account', label);
+      assert.deepEqual(r.windows, [], label);
+      assert.equal(
+        r.message,
+        `the Claude usage endpoint reported a window that is not an object (${name}: ${shown})`,
+        label,
+      );
+    }
+    // null or absent is no window: the other window is read.
+    for (const body of [{ [field]: null, [other]: ok }, { [other]: ok }]) {
+      const r = claudeCapacity(body, 'opus');
+      assert.equal(r.state, 'available', JSON.stringify(body));
+      assert.deepEqual(
+        r.windows.map((w) => w.name),
+        [field === 'five_hour' ? 'claude 7d' : 'claude 5h'],
+        JSON.stringify(body),
+      );
+    }
+  }
+  // A limits that is present but not a list is unknown; limits: null falls back.
+  for (const [value, shown] of [
+    [{}, '{}'],
+    ['x', 'x'],
+    [5, '5'],
+    [true, 'true'],
+  ]) {
+    const r = claudeCapacity({ limits: value, five_hour: ok, seven_day: ok }, 'opus');
+    assert.equal(r.state, 'unknown', JSON.stringify(value));
+    assert.equal(r.scope, 'model', JSON.stringify(value));
+    assert.equal(r.message, `the Claude usage endpoint reported limits that are not a list (limits: ${shown})`);
+  }
+  assert.equal(claudeCapacity({ limits: null, five_hour: ok, seven_day: ok }, 'opus').windows.length, 2);
+});
+
 test('readClaudeToken reads claudeAiOauth.accessToken and refuses a missing or expired one', () => {
   const path = '/c/.credentials.json';
   const now = Date.parse('2026-11-10T00:00:00Z');
