@@ -12,7 +12,7 @@ import { checkEffort } from '../effort.js';
 import { runCapacityHelper } from './capacity-helper.js';
 import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
 import { clockTime, matchLimit } from './limit.js';
-import { AgentProvider, agentEnv } from './provider.js';
+import { AgentProvider, agentEnv, windowsCapacity } from './provider.js';
 import { outcomeFor, withExitFault } from '../outcome.js';
 
 // The script that holds the `codex app-server` conversation (see its JSDoc).
@@ -618,7 +618,6 @@ export function codexCapacity(result) {
   if (!byId) return unknown('codex app-server reported no rate limits for this account');
   const windows = [];
   const spent = [];
-  const usedUp = [];
   for (const [id, bucket] of Object.entries(byId)) {
     if (!isObject(bucket)) continue;
     const name = bucket.limitName || id;
@@ -632,13 +631,11 @@ export function codexCapacity(result) {
       if (resetsAt && !Number.isFinite(resetsAt.getTime())) {
         return unknown(`codex app-server reported a reset that is not a time (${name} ${key}: ${w.resetsAt})`);
       }
-      const window = {
+      windows.push({
         name: `${name} ${windowLabel(w.windowDurationMins, key)}`,
         remainingPercent: Math.max(0, 100 - w.usedPercent),
         resetsAt,
-      };
-      windows.push(window);
-      if (window.remainingPercent <= 0) usedUp.push(window);
+      });
     }
   }
   if (windows.length === 0 && spent.length === 0) return unknown('codex app-server reported no quota windows');
@@ -651,19 +648,7 @@ export function codexCapacity(result) {
       message: `spend cap reached (${spent.join(', ')})`,
     };
   }
-  if (usedUp.length > 0) {
-    const until = usedUp.some((w) => w.resetsAt == null)
-      ? null
-      : new Date(Math.max(...usedUp.map((w) => w.resetsAt.getTime())));
-    return {
-      state: 'unavailable',
-      scope: 'account',
-      until,
-      windows,
-      message: `no quota left in ${usedUp.map((w) => w.name).join(', ')}`,
-    };
-  }
-  return { state: 'available', scope: 'account', until: null, windows, message: '' };
+  return windowsCapacity(windows, 'account');
 }
 
 export function appendPermissionGuidance(prompt, permissions = [], denied = []) {

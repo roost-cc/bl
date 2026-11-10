@@ -12,7 +12,7 @@
  * Usage: node local-capacity.js --url <url> [--timeout <ms>]
  */
 
-import { isMainModule } from './capacity-helper.js';
+import { helperArg, isMainModule } from './capacity-helper.js';
 
 /** How long the health request may take before it is abandoned. */
 export const LOCAL_CAPACITY_TIMEOUT_MS = 2_000;
@@ -43,13 +43,9 @@ export async function probeLocalServer({ url, timeoutMs = LOCAL_CAPACITY_TIMEOUT
 }
 
 if (isMainModule(import.meta.url)) {
-  const arg = (name) => {
-    const i = process.argv.indexOf(name);
-    return i >= 0 ? process.argv[i + 1] : undefined;
-  };
-  const timeoutMs = Number(arg('--timeout'));
+  const timeoutMs = Number(helperArg('--timeout'));
   const out = await probeLocalServer({
-    url: arg('--url'),
+    url: helperArg('--url'),
     timeoutMs: timeoutMs > 0 ? timeoutMs : LOCAL_CAPACITY_TIMEOUT_MS,
   });
   process.stdout.write(`${JSON.stringify(out)}\n`);

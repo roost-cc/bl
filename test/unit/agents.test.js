@@ -69,13 +69,13 @@ test("base AgentProvider.capacity answers unknown, scoped to the model, in the a
   // Every registered adapter has a name the registry knows it by.
   for (const name of PROVIDER_NAMES) assert.equal(getProvider(name).name, name);
   assert.deepEqual([...PROVIDER_NAMES], ['claude', 'codex', 'gemini', 'local']);
-  // Claude and Gemini keep the base answer; Codex reads app-server
+  // Gemini keeps the base answer; Claude reads its OAuth usage endpoint
+  // (test/unit/claude-capacity.test.js), Codex reads app-server
   // (test/unit/codex-capacity.test.js, against a fake one) and local its
   // server's /health (test/unit/local-agent.test.js).
-  for (const name of ['claude', 'gemini']) {
-    assert.equal(getProvider(name).capacity().state, 'unknown', name);
-    assert.equal(getProvider(name).capacity().message, `${name} cannot report capacity`);
-  }
+  assert.equal(getProvider('gemini').capacity().state, 'unknown');
+  assert.equal(getProvider('gemini').capacity().message, 'gemini cannot report capacity');
+  assert.notEqual(getProvider('claude').capacity, AgentProvider.prototype.capacity);
 });
 
 test('the adapters say whether they select a model and deny per session (F-64 D5)', () => {
