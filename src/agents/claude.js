@@ -351,16 +351,22 @@ function scopedModelMatches(scopeModel, model) {
   return name === m || m.split('-').includes(name);
 }
 
-/** A limit's window as `bl capacity` names it: `claude 5h`, `claude 7d`, `claude 7d Fable`. */
+/** Whether `v` is a string with text other than blanks. */
+const isText = (v) => typeof v === 'string' && v.trim() !== '';
+
+/**
+ * A limit's window as `bl capacity` names it: `claude 5h`, `claude 7d`, `claude 7d Fable`.
+ * A `display_name`, `id` or `kind` that is not a string, or is blank, does not name it.
+ */
 function claudeWindowName({ kind, scope }) {
   if (kind === 'session') return 'claude 5h';
   if (kind === 'weekly_all') return 'claude 7d';
   if (kind === 'weekly_scoped') {
     const m = scope?.model;
-    const label = [m?.display_name, m?.id].find((v) => typeof v === 'string' && v !== '') ?? '';
+    const label = [m?.display_name, m?.id].find(isText)?.trim() ?? '';
     return `claude 7d ${label}`.trim();
   }
-  return typeof kind === 'string' ? `claude ${kind}` : 'claude';
+  return isText(kind) ? `claude ${kind.trim()}` : 'claude';
 }
 
 /**

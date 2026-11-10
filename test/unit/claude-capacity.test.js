@@ -83,8 +83,8 @@ test('an exhausted model-scoped window takes out only the model it names', () =>
   assert.equal(claudeCapacity(byId, 'opus').state, 'unavailable');
   assert.equal(claudeCapacity(byId, 'opus').windows[2].name, 'claude 7d opus');
   assert.equal(claudeCapacity(byId, 'sonnet').state, 'available');
-  // A display_name that is not a string, or is empty, does not name the window.
-  for (const display_name of [{}, [], 5, true, '']) {
+  // A display_name that is not a string, or is empty or blank, does not name the window.
+  for (const display_name of [{}, [], 5, true, '', '  ']) {
     byId.limits[2].scope.model.display_name = display_name;
     assert.equal(claudeCapacity(byId, 'opus').windows[2].name, 'claude 7d opus', JSON.stringify(display_name));
   }
@@ -164,6 +164,11 @@ test('a reset that is not a time, or a body with no windows, is unknown; a perce
       message: 'no quota left in claude',
     },
   );
+  // An empty or blank kind names the window as no kind does.
+  for (const kind of ['', '  ']) {
+    const r = claudeCapacity({ limits: [{ kind, percent: 40, resets_at: null, scope: null }] }, 'opus');
+    assert.equal(r.windows[0].name, 'claude', JSON.stringify(kind));
+  }
   const over = PROBE1();
   over.limits[0].percent = 130;
   assert.equal(claudeCapacity(over, 'opus').windows[0].remainingPercent, 0);
