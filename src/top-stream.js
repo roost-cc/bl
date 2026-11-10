@@ -83,7 +83,13 @@ export function createStream({ readers, now = Date.now, stamp }) {
       read('runs', t);
       read('activity', t);
       read('tokens', t);
-      const s = stamp();
+      let s;
+      try {
+        s = stamp();
+      } catch {
+        // No stamp: take the backlog as changed (a new symbol equals no stamp before it).
+        s = Symbol('unknown');
+      }
       if (s !== lastStamp || due('attention', t, ATTENTION_MAX_AGE_MS) || due('next', t, ATTENTION_MAX_AGE_MS)) {
         read('attention', t);
         read('next', t);
@@ -121,7 +127,12 @@ export function runStream(
   let shown = new Set();
   const emit = () => {
     const snapshot = stream.tick();
-    const lines = problemLines(snapshot);
+    let lines;
+    try {
+      lines = problemLines(snapshot);
+    } catch (e) {
+      lines = [`bl top: problems not read: ${e?.message ?? e}`];
+    }
     for (const line of lines) if (!shown.has(line)) stderr.write(`${line}\n`);
     shown = new Set(lines);
     stdout.write(`${JSON.stringify(snapshot)}\n`);

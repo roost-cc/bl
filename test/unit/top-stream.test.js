@@ -114,6 +114,24 @@ test('a failed read of a due section is read again at the next tick', () => {
   }
 });
 
+test('a stamp that throws ends no tick: the backlog counts as changed, so attention and next are read', () => {
+  const readers = Object.fromEntries(SECTIONS.map((name) => [name, () => ({ ok: true })]));
+  const counts = { attention: 0, next: 0 };
+  for (const name of Object.keys(counts)) {
+    readers[name] = () => ({ n: ++counts[name] });
+  }
+  let t = 0;
+  const stream = createStream({
+    readers,
+    now: () => t,
+    stamp: () => {
+      throw new Error('git is gone');
+    },
+  });
+  for (let i = 0; i < 3; i++, t += INTERVAL) assert.equal(stream.tick().attention.error, undefined);
+  assert.deepEqual(counts, { attention: 3, next: 3 });
+});
+
 test('backlogStamp changes when a unit file, a change document or a new task changes the backlog', () => {
   const dir = mkTempDir('bl-top-stamp-');
   const config = { backlogRoot: dir };
