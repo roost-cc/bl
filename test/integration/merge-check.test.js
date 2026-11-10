@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'fs';
 import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -493,6 +493,64 @@ test('a throwaway worktree that cannot be removed is a warning: the merge still 
     fx.cleanup();
   }
 });
+
+/**
+ * A `git` first on PATH that ends on SIGTERM when its arguments match the
+ * glob `KILL_GIT` and its directory matches `KILL_IN`, and runs the real git
+ * otherwise. `KILL_IN` tells the throwaway worktree (`bl-merge-*`) from the
+ * main checkout.
+ */
+function killingGit(dir) {
+  const real = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+  const bin = join(dir, '.bl', 'fake-git');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, 'git'),
+    `#!/bin/sh\ncase "$PWD" in $KILL_IN) case "$*" in $KILL_GIT) kill -TERM $$ ;; esac ;; esac\nexec '${real}' "$@"\n`,
+  );
+  chmodSync(join(bin, 'git'), 0o755);
+  return `${bin}:${process.env.PATH}`;
+}
+
+/**
+ * Each git step of `checkedMerge` that a signal can end: `step` is how the
+ * message names it, `checks` how many times the check ran first, and
+ * `pushed` whether origin's main is the merge commit when it stops.
+ */
+const GIT_KILL_CASES = [
+  { args: 'merge --no-ff *', at: '*/bl-merge-*', step: 'git merge', checks: 0, pushed: false },
+  { args: 'rev-parse HEAD', at: '*/bl-merge-*', step: 'git rev-parse', checks: 0, pushed: false },
+  { args: 'read-tree *', at: '*', step: 'the fast-forward dry run', checks: 1, pushed: false },
+  { args: 'push origin *:refs/heads/main', at: '*', step: 'the push of [0-9a-f]{40}', checks: 1, pushed: false },
+  {
+    args: 'merge --ff-only [0-9a-f]*',
+    at: '*',
+    step: 'the fast-forward of the main checkout',
+    checks: 1,
+    pushed: true,
+  },
+];
+
+for (const c of GIT_KILL_CASES) {
+  test(`a SIGTERM that ends \`git ${c.args}\` stops bl merge with 143 and leaves no worktree`, () => {
+    const fx = fixture({ verdicts: ['pass'] });
+    const u = UNITS[0];
+    try {
+      const before = g(fx.origin, 'rev-parse', 'main');
+      const env = { ...ENV, PATH: killingGit(fx.dir), KILL_GIT: c.args, KILL_IN: c.at };
+      const r = runBl(['merge', u.id], { cwd: fx.dir, env });
+      assert.equal(r.status, 143, `${r.stdout}\n${r.stderr}`);
+      assert.match(r.stderr, new RegExp(`^code: ${c.step} was ended by SIGTERM; rerun \`bl merge S-1\`\\.$`, 'm'));
+      const runs = calls(fx);
+      assert.equal(runs.length, c.checks, 'check runs');
+      assert.equal(g(fx.origin, 'rev-parse', 'main'), c.pushed ? runs[0][0] : before, "origin's main");
+      if (!c.pushed) assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
+      assertNoThrowaway(fx);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
 
 test('a check killed by SIGABRT counts as a failed attempt', () => {
   // Only SIGINT and SIGTERM interrupt bl; SIGABRT (or the out-of-memory
