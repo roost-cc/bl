@@ -2387,9 +2387,9 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   driver's line) in one commit: `chore: task T-<n> (<unit>)`. The unit's file is not
   written: its `## Tasks` table is rendered when the page is read. stdout is `T-<n>`; `--json` prints
   `{ schema: "bl-task-json/v1", id, path, unit, edges }`. An unknown unit, a missing `--title`,
-  a missing `--gate` or one outside the three, an unreadable body file or one with frontmatter
-  is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A failure before
-  the commit puts the files back.
+  a missing `--gate` or one outside the three, a `Decide:` title with a gate other than `merge`,
+  an unreadable body file or one with frontmatter is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A
+  failure before the commit puts the files back.
 - **`--gate`** is a shorthand for the task's edge (F-65 D2), the one `bl block add` would file
   and checked the same way (`writeEdge` in `src/block.js`, which `bl block add` shares:
   `edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied first). The holds are
@@ -2408,6 +2408,10 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   with the task file removed and nothing committed. Any other hold (on another unit, at another
   gate) is `bl block add T-<n> …`. There is no override flag: `bl task done` with a note saying
   what was done, or why the hold is moot, is the record.
+
+- **A decision task** has a title that starts with `Decide:` (`DECISION_PREFIX` in
+  `src/task.js`, case as written) and takes `--gate merge` only, so no unit merges past an open
+  decision (S-1403); `bl task` refuses `none` and `next` for it.
 
 - **`bl task done <T-n> [note]`** sets `status: done`, `done: <today>` and `note:`, syncs and
   commits `chore: task T-<n> done[: <note>]`; a task already done refuses. Its edges stay in
