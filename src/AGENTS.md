@@ -4161,6 +4161,13 @@ npm run test:all    # everything
 
 Adding a test:
 
+- **suite temp directory** — every `npm run test:*` script runs through
+  `test/helpers/without-repo-env.sh`, which gives the suite a `TMPDIR` of
+  its own and removes it when the suite ends (S-1392). A temp file that a
+  test leaves behind does not leak into `/tmp`. The rules below
+  (`mkTempDir`, own `mktemp` paths) still apply, because a script or a file
+  can run alone. The wrapper needs GNU `env` (coreutils 8.31 or later) for
+  `--default-signal`: BSD and macOS `env` lack it.
 - **unit** — write `test/unit/<module>.test.js` using `node:test` and
   `node:assert/strict`. Import the module under test from `../../src/...`.
   No fs writes outside `os.tmpdir()`. No spawning, with one exception: a
