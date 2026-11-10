@@ -10,8 +10,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync, chmodSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { parseFrontmatter } from '../../src/config.js';
@@ -57,11 +58,19 @@ console.error('verdict ' + first + ' for ' + commit);
 process.exit(first === 'pass' ? 0 : 1);
 `;
 
+/** ci-cd's `ci`, from the ci-cd checkout beside bl's (the same in the main checkouts and a unit's worktrees). */
+const CI = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'ci-cd', 'bin', 'ci');
+
 /** The default check plugin command: CHECK_SCRIPT. */
 const CHECK_COMMAND = `node ${join('{{backlogDir}}', 'check.mjs')} {{backlogDir}} {{commit}} {{repoPath}}`;
 
-/** The backlog, the `code` repo with its origin, the check plugin `check` and the hook. */
-function fixture({ verdicts, check = CHECK_COMMAND }) {
+/**
+ * The backlog, the `code` repo with its origin, the check plugin `check` and
+ * the hook. With `ciConfig`, the base commit holds it as `.ci-cd.json`, and
+ * the hook also runs the real `ci gate` the way pre-commit does: with
+ * PRE_COMMIT_REMOTE_BRANCH and PRE_COMMIT_TO_REF from the push's first ref.
+ */
+function fixture({ verdicts, check = CHECK_COMMAND, ciConfig = null }) {
   const review = { review_status: 'addressed', reviewLog: SESSION };
   const { dir, cleanup } = mkTempBacklog({
     repos: { code: { path: './code', deployable: true, 'plugins-check': ['ci-check'] } },
@@ -109,6 +118,7 @@ function fixture({ verdicts, check = CHECK_COMMAND }) {
   g(dir, 'init', '-q', '-b', 'main', code);
   g(code, 'remote', 'add', 'origin', origin);
   writeFileSync(join(code, 'base.txt'), 'base\n');
+  if (ciConfig) writeFileSync(join(code, '.ci-cd.json'), `${JSON.stringify(ciConfig, null, 2)}\n`);
   g(code, 'add', '.');
   g(code, 'commit', '-q', '-m', 'base');
   g(code, 'push', '-q', 'origin', 'main');
@@ -120,7 +130,12 @@ function fixture({ verdicts, check = CHECK_COMMAND }) {
     g(code, 'checkout', '-q', 'main');
   }
   const hook = join(code, '.git', 'hooks', 'pre-push');
-  writeFileSync(hook, `#!/bin/sh\ncat >> '${join(dir, 'pushes')}'\n`);
+  const record = `cat >> '${join(dir, 'pushes')}'`;
+  const ciGate = `tee -a '${join(dir, 'pushes')}' | {
+  read -r local_ref local_sha remote_ref remote_sha
+  PRE_COMMIT_REMOTE_BRANCH="$remote_ref" PRE_COMMIT_TO_REF="$local_sha" exec '${CI}' gate --working-directory "$PWD" >&2
+}`;
+  writeFileSync(hook, `#!/bin/sh\n${ciConfig ? ciGate : record}\n`);
   chmodSync(hook, 0o755);
 
   writeFileSync(join(dir, 'check.mjs'), CHECK_SCRIPT);
@@ -423,3 +438,72 @@ test('a merge conflict at origin/main runs no check, pushes nothing, and says to
     fx.cleanup();
   }
 });
+
+// The whole chain with the real ci-cd: the plugin runs `ci check`, and the
+// clone's pre-push hook runs `ci gate` in a `check-record` repo (F-96
+// acceptance: "the hook finds the check record and passes in seconds").
+const CI_CONFIG = {
+  version: 1,
+  project: { name: 'code' },
+  promotion: 'check-record',
+  actions: { test: { commands: ['test -e base.txt'] } },
+};
+const ciSkip = existsSync(CI) ? false : `needs ci-cd's ci at ${CI}`;
+
+test('the hook runs ci gate, finds the record that ci check wrote, and accepts the push', { skip: ciSkip }, () => {
+  const fx = fixture({
+    verdicts: [],
+    check: `${CI} check {{commit}} --working-directory {{repoPath}}`,
+    ciConfig: CI_CONFIG,
+  });
+  const u = UNITS[0];
+  try {
+    const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 0, r.stderr);
+    const commit = g(fx.origin, 'rev-parse', 'main');
+    assert.equal(g(fx.code, 'log', '-1', '--format=%s', commit), `Merge branch '${u.branch}' into main (${u.id})`);
+    assert.equal(g(fx.code, 'rev-parse', 'main'), commit);
+    const record = JSON.parse(readFileSync(join(fx.code, '.git', 'ci-cd', 'checks', `${commit}.json`), 'utf8'));
+    assert.equal(record.commit, commit);
+    assert.equal(record.verdict, 'pass');
+    assert.match(r.stderr, new RegExp(`^ci-cd: check record for ${commit}: pass$`, 'm'), 'the hook read the record');
+    assert.doesNotMatch(r.stderr, /gate actions:/, 'no check ran in the hook');
+    assert.equal(
+      gateOf(fx, u),
+      `- ${TODAY} · code · \`${CI} check ${commit} --working-directory ${fx.code}\` · pass (attempt 1) · commit ${commit}`,
+    );
+    assertNoThrowaway(fx);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test(
+  'push refused by a hook that is not main-moved: nothing is pushed, and bl merge says the push was refused',
+  {
+    skip: ciSkip,
+  },
+  () => {
+    // The plugin passes but writes no check record, so ci gate in the hook refuses the push.
+    const fx = fixture({ verdicts: ['pass'], ciConfig: CI_CONFIG });
+    const u = UNITS[0];
+    try {
+      const before = g(fx.origin, 'rev-parse', 'main');
+      const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
+      assert.equal(r.status, 1, r.stdout);
+      const [[commit]] = calls(fx);
+      assert.match(r.stderr, new RegExp(`^ci-cd: push to main refused: no readable check record for ${commit}`, 'm'));
+      assert.match(r.stderr, new RegExp(`^ci-cd: run \`ci check ${commit}\`, then push again$`, 'm'));
+      assert.match(
+        r.stderr,
+        new RegExp(`^code: the push of ${commit} to main was refused; nothing is pushed\\.$`, 'm'),
+      );
+      assert.doesNotMatch(r.stderr, /main moved/);
+      assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
+      assert.equal(g(fx.code, 'rev-parse', 'main'), before, 'the main checkout is unchanged');
+      assertNoThrowaway(fx);
+    } finally {
+      fx.cleanup();
+    }
+  },
+);
