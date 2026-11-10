@@ -7,6 +7,7 @@ import { markFeatureMerged, updateFeature } from '../../src/feature-cmd.js';
 import { accumulateStepTokensOnFile } from '../../src/tokens.js';
 import { withPartialWrites } from '../helpers/partial-write.js';
 import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
+import { statusOf } from '../../src/transition.js';
 
 // F-67 S-1097: `bl merge`'s fold and `updateFeature` write through
 // `updateSpecFile`, and the fold sums `tokens_*` as BigInt counts.
@@ -41,7 +42,7 @@ function backlog({
 
 const fm = (path) => parseFrontmatter(readFileSync(path, 'utf8')).fm;
 const staging = (dir) => (existsSync(join(dir, '.bl', 'tmp')) ? readdirSync(join(dir, '.bl', 'tmp')) : []);
-const MERGE = { decided: 'abc1234', stamp: '2026-10-27' };
+const MERGE = { decided: 'abc1234', at: '2026-10-27T10:00:00Z' };
 
 test('the merge fold writes the exact decimal sum of totals past 2^53 and past 1e21', () => {
   const { config, feature, stories } = backlog();
@@ -50,10 +51,12 @@ test('the merge fold writes the exact decimal sum of totals past 2^53 and past 1
   // 9007199254740993 + 1e21 + 7, a sum a Number would round.
   assert.equal(f.tokens_input, '1000009007199254741000');
   assert.equal(f.tokens_output, '0');
-  assert.equal(f.status, 'done');
+  assert.equal(statusOf('feature', f), 'done');
+  // Recorded by the merge in the log (F-69 D3), with no status: left.
+  assert.deepEqual([f.transitions.at(-1).by, f.transitions.at(-1).via, f.status], ['merge', 'merge', undefined]);
   assert.equal(f.commit, 'abc1234');
   const s1 = fm(stories[0].indexPath);
-  assert.deepEqual([s1.status, s1.commit, s1.completed], ['done', 'abc1234', '2026-10-27']);
+  assert.deepEqual([statusOf('story', s1), s1.commit, s1.completed], ['done', 'abc1234', '2026-10-27']);
   assert.equal(s1.tokens_input, '9007199254740993', "the story's own total is left as it was");
   assert.equal(fm(stories[1].indexPath).commit, undefined, 'a closed story is folded, not rewritten');
 });
@@ -85,7 +88,7 @@ test('a failed story write in the fold leaves the previous story and feature, an
   assert.equal(readFileSync(feature.indexPath, 'utf8'), feature0, 'the feature is not marked done past a failed story');
   assert.deepEqual(staging(dir), []);
   markFeatureMerged(config, feature, stories, MERGE);
-  assert.equal(fm(stories[0].indexPath).status, 'done');
+  assert.equal(statusOf('story', fm(stories[0].indexPath)), 'done');
   assert.equal(fm(feature.indexPath).tokens_input, '1000009007199254741000');
 });
 

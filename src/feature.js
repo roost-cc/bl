@@ -30,6 +30,7 @@ import {
   warn,
 } from './config.js';
 import { statusWords } from './flow.js';
+import { statusOf } from './transition.js';
 import { entryMatches, ownFm, parseIdList, readAllStories } from './story.js';
 import { graphOf } from './backlog-graph.js';
 
@@ -204,8 +205,9 @@ export function storyMoveRefusal(id, fm, featureId, flow) {
     if (featureId != null && (normalizeFeatureId(named)?.id ?? named) === featureId) return null;
     return `${id} is already in ${named}.`;
   }
-  if (!flow.isUnstarted('story', fm.status)) {
-    return `${id} is ${fm.status}; only a ${statusWords(flow.unstartedStatusesOf('story'))} story moves into a feature.`;
+  const status = statusOf('story', fm);
+  if (!flow.isUnstarted('story', status)) {
+    return `${id} is ${status}; only a ${statusWords(flow.unstartedStatusesOf('story'))} story moves into a feature.`;
   }
   return null;
 }

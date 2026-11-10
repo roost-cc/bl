@@ -13,6 +13,7 @@ import { installPartialWrites } from '../helpers/partial-write.js';
 import { startTokenWriter } from '../helpers/token-writer.js';
 import { setup, CH, editFile, verifySession, fakeRunner, spendLimit } from '../helpers/feature-run-fixture.js';
 import { reviewOutcome } from '../helpers/outcomes.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
 // Tokens per step (S-904)
@@ -233,7 +234,7 @@ test('an escalation write overlapping a token write in another process keeps bot
     assert.ok(writer, 'the gate ran twice');
     assert.equal(await writer.done, 0);
     const { fm, body } = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));
-    assert.equal(fm.status, 'escalated');
+    assert.equal(logStatusOf('feature', fm), 'escalated');
     assert.match(extractSection(body, 'Escalation'), /test gate failed twice/);
     assert.equal(fm.tokens_by_step?.overlap?.input, '7', "the token writer's step entry is kept");
   } finally {

@@ -29,10 +29,6 @@ const STATUSES = new Set(loadFlow(join(ROOT, 'templates')).statusesOf('story'));
 const ALLOWED = {
   // A ternary choosing which closing status a write sets, not a set of statuses.
   'src/done.js': 1,
-  // Feature start-state checks and the refine write (`cmdRefine`, `cmdApprove`,
-  // `prepareFeatureWorktree`): since F-69 a feature's `draft` and `refined` are
-  // story words too. F-69 S-1130 replaces them with the table's `assertFrom`.
-  'src/feature-cmd.js': 3,
   // `ROADMAP_STATUSES` is `roadmap.md`'s own vocabulary; it shares two words with story statuses.
   'src/roadmap.js': 1,
   // A ternary choosing which closing status a write sets, not a set of statuses.

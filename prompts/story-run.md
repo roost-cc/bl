@@ -13,8 +13,8 @@ Backlog repo : {{backlogDir}}
 
 ## Two-repo model
 
-- The **story file** lives in the backlog repo. You write status updates, acceptance-criteria
-  checkoffs and **## Deferred** additions there. Commit them on the backlog's main branch with
+- The **story file** lives in the backlog repo. You write acceptance-criteria checkoffs and
+  **## Deferred** additions there. Commit them on the backlog's main branch with
   `git -C {{backlogDir}} …`. They never go on your code branch.
 - **Code changes** go in this worktree. Commit them to `{{branchName}}`. Do not open a pull
   request: `bl run` opens it after the test gate and the self-review.
@@ -36,7 +36,8 @@ instead and name the repo (see **Writing an escalation**).
 1. {{readTool}} the story file: its Summary, Acceptance Criteria and Implementation Plan. The
    plan says what to build; the criteria say when it is done.
 
-2. Set `status: in_progress` in the story frontmatter.
+2. Do not set the story's status. bl records `in_progress` on it before your session starts, and the later statuses from
+   the outcome you end with.
 
 3. Implement the plan. When the story fixes a bug, first write a test that fails because of
    the bug, then make it pass. Commit as you go with Conventional Commits. End the subject in

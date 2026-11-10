@@ -50,6 +50,7 @@ import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { applyFixOutcome, openUnitChange, reviewFieldsAt, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
 import { loadFlow } from './flow.js';
+import { IMPLEMENT_VERBS, enterVerb, nowAt, startOf, statusOf } from './transition.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { syncAndCommit } from './sync.js';
 import { sessionEffort, storyEffort } from './effort.js';
@@ -70,11 +71,12 @@ export function idNum(id) {
  * Resolve workon targets from positional args, then split them by dependency
  * readiness.
  *
- * Component IDs expand to their `status: refined` stories (backlog stories must be
+ * Component IDs expand to their refined stories (draft stories must be
  * refined first; closed ones are complete). An explicitly-named story is
- * included when `Flow.isRunnable` accepts its status; any other is reported as
- * a notice. Named targets outrank component-expanded ones
- * on dedup.
+ * included when `flow.json`'s `implement` row starts from its status, or its
+ * `fix` row (a review is pending) does (`IMPLEMENT_VERBS`, `startOf`); any
+ * other is reported as a notice with the table's refusal. Named targets
+ * outrank component-expanded ones on dedup.
  *
  * Each resolved target is then classified:
  *   - `startable` — every `depends_on` is already closed.
@@ -128,14 +130,9 @@ export function resolveWorkonTargets(positionals, config) {
       errors.push(`Story ${parsed.id} not found in backlog`);
       continue;
     }
-    if (closed(story.status)) {
-      notices.push(`Story ${parsed.id} has status '${story.status}' — skipping (already complete).`);
-      continue;
-    }
-    if (!flow.isRunnable('story', story.status)) {
-      notices.push(
-        `Story ${parsed.id} has status '${story.status}' — must be refined first (run: bl refine ${parsed.id}).`,
-      );
+    const { refusal } = startOf(config, 'story', storyUnit(story, config), IMPLEMENT_VERBS);
+    if (refusal) {
+      notices.push(`${refusal} — skipping.`);
       continue;
     }
     addStory(story, 'named');
@@ -309,7 +306,8 @@ function prepareStoryWorktree(parsed, found, config, { strict = false } = {}) {
   };
 
   const unitState = unitChange(dirname(indexPath), repoName);
-  const reviewPending = unitState.reviewStatus === 'pending';
+  // A unit in `fixing` gets the fix session (F-69 D3).
+  const reviewPending = statusOf('story', fm, unitState.change) === 'fixing';
   const reviewRound = parseInt(unitState.reviewRoundRaw, 10) || 0;
   const legacyPrReview = existsSync(join(effectiveWorktreePath, '.pr-review.md'));
   const promptName = reviewPending ? 'workon-review' : 'workon';
@@ -417,7 +415,7 @@ export async function implementScripted(parsed, found, config, prep, runner) {
       changePath: prep.promptVars.changeAbsPath,
       id: parsed.id,
       repo,
-      date: new Date().toISOString().slice(0, 10),
+      at: nowAt(),
       result,
     });
     if (result.kind === 'failed') {
@@ -466,6 +464,9 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     process.exit(await implementScripted(parsed, found, config, prep, defaultRunner()));
   }
 
+  // bl, not the agent, records that the story started (F-69 D3).
+  if (!prep.reviewPending) enterVerb(config.backlogRoot, { kind: 'story', indexPath: prep.indexPath }, 'implement');
+
   // A fix session returns its outcome in the outcome file (F-68 D1, D3).
   const vars = prep.reviewPending ? { ...prep.promptVars, outcomeCarrier: 'file' } : prep.promptVars;
   const sessionPrompt = loadPrompt(prep.promptName, vars, {
@@ -505,7 +506,8 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   });
   const status = prep.reviewPending ? ret.status : ret;
   if (prep.reviewPending) {
-    applyFixOutcome(config.backlogRoot, { id: parsed.id, changePath: prep.promptVars.changeAbsPath }, ret, fixBefore);
+    const unit = { id: parsed.id, kind: 'story', indexPath: prep.indexPath, changePath: prep.promptVars.changeAbsPath };
+    applyFixOutcome(config.backlogRoot, unit, ret, fixBefore);
   }
   if (!status) info(implementNextSteps(parsed.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.

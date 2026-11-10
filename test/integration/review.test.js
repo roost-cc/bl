@@ -24,6 +24,7 @@ import { appendSection, parseChange, serializeChange } from '../../src/change-do
 import { cmdReview, cmdReviewStory } from '../../src/feature-cmd.js';
 import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 import { reviewOutcome } from '../helpers/outcomes.js';
+import { transition } from '../../src/transition.js';
 
 function writeJsonShim(dir) {
   const path = join(dir, 'shim.mjs');
@@ -329,9 +330,11 @@ test('bl review S-n: two dimension passes and the verifier on the review agent, 
 test('bl review S-n: a second round re-reviews and advances the round again', async () => {
   const { backlog, branch, storyPath } = buildBacklog({ repoNames: ['repoA'], plugins: STD_PLUGIN });
   await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner: reviewRunner(storyPath) });
+  // A fix by hand, recorded as `bl implement` records one (F-69 D3).
   editChange(storyPath, (doc) => {
     doc.fm.review_status = 'fixed';
   });
+  transition(backlog, { kind: 'story', indexPath: storyPath }, 'in_review', { by: 'fix', via: 'fix' });
   const runner = reviewRunner(storyPath, { status: 'addressed' });
   const { exit, stderr } = await review(backlog, { env: { RECORDER_STDOUT: ONE_PR(branch) }, runner });
   assert.equal(exit, 0);
@@ -373,8 +376,8 @@ for (const c of [
     error: /bl review: .*provider crashed|bl review: the verifier/,
   },
   {
-    name: 'a verifier that fails on a stale pending round',
-    stale: { review_round: '1', review_status: 'pending' },
+    name: 'a verifier that fails on a stale fixed round',
+    stale: { review_round: '1', review_status: 'fixed' },
     error: /bl review: /,
   },
 ]) {
@@ -626,7 +629,7 @@ test('bl review S-n: a closed story is refused', async () => {
     runner: reviewRunner(storyPath),
   });
   assert.equal(exit, 1);
-  assert.match(stderr, /Story S-99 is done; nothing to review\./);
+  assert.match(stderr, /S-99 is done; review starts from in_progress, in_review or ready_for_merge\n/);
 });
 
 // ---------------------------------------------------------------------------

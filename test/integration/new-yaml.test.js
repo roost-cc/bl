@@ -6,6 +6,7 @@ import { runBl } from '../helpers/run-bl.js';
 import { parse as parseYaml } from 'yaml';
 import { parseFrontmatter } from '../../src/config.js';
 import { componentBacklog, fmOf } from '../helpers/new-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
 // F-62 D3: every block bl new writes goes through serializeFrontmatter
@@ -131,7 +132,7 @@ test("bl new --feature, --component, --epic and --theme with a ': ' and ' #' tit
     assert.equal(r.status, 0, r.stderr);
     let fm = assertTemplateBlock(dir, r.stdout.trim().split('\n').pop(), 'feature');
     assert.deepEqual(
-      [fm.theme, fm.epic, fm.status, fm.stories, fm.points],
+      [fm.theme, fm.epic, logStatusOf('feature', fm), fm.stories, fm.points],
       ['demo', undefined, 'draft', undefined, undefined],
     );
 

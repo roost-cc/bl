@@ -31,6 +31,7 @@ import { parseFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
 import { extractSection } from '../../src/feature.js';
 import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const GIT_ENV = '-c user.email=t@t -c user.name=t';
 
@@ -261,7 +262,7 @@ test('single-repo cleanup writes commit as a bare string', async () => {
   // The story is marked done where it is (F-49 D3).
   const fileToRead = storyIndexPath;
   const { fm } = parseFrontmatter(readFileSync(fileToRead, 'utf8'));
-  assert.equal(fm.status, 'done');
+  assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(typeof fm.commit, 'string', 'expected a bare string commit');
   assert.match(fm.commit, /^[0-9a-f]{7,}$/);
 });
@@ -316,7 +317,7 @@ test("a leftover primary_repo naming another repo still merges the component's r
   }
   assert.equal(out.result.exit, null, out.stderr);
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'done');
+  assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(fm.commit, upstreamMain(tmp, 'bl'));
 });
 
@@ -340,7 +341,7 @@ test("a worktree on the story's branch in another repo is refused, naming the re
   );
   assert.deepEqual({ alpha: upstreamMain(tmp, 'alpha'), beta: upstreamMain(tmp, 'beta') }, before, 'nothing merged');
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'in_progress');
+  assert.equal(logStatusOf('story', fm), 'in_progress');
   assert.equal(fm.commit, undefined);
 });
 
@@ -357,7 +358,7 @@ test('bl merge S-n --repo is refused as an unknown option and merges nothing', a
   assert.equal(out.result.exit, 1);
   assert.match(out.stderr, /bl merge: unknown option "--repo" for a story: a story's repo is its component's\./);
   assert.equal(upstreamMain(tmp, 'bl'), before);
-  assert.equal(parseFrontmatter(readFileSync(storyIndexPath, 'utf8')).fm.status, 'in_progress');
+  assert.equal(logStatusOf('story', parseFrontmatter(readFileSync(storyIndexPath, 'utf8')).fm), 'in_progress');
 });
 
 test('a story whose component names no repo exits 1 naming the component', async () => {
@@ -441,7 +442,7 @@ test('cleanup refuses when review_status is pending', async () => {
   assert.equal(mainCount, '1', 'story branch must not be merged into main');
   // Story untouched at its original location.
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'in_progress');
+  assert.equal(logStatusOf('story', fm), 'in_progress');
 });
 
 test('cleanup refuses when review_status is addressed but items are unchecked', async () => {
@@ -466,7 +467,7 @@ test('cleanup refuses when review_status is addressed but items are unchecked', 
   }).trim();
   assert.equal(mainCount, '1', 'story branch must not be merged into main');
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'in_progress');
+  assert.equal(logStatusOf('story', fm), 'in_progress');
 });
 
 test('cleanup refuses when review_status is fixed (awaiting re-review)', async () => {
@@ -491,7 +492,7 @@ test('cleanup refuses when review_status is fixed (awaiting re-review)', async (
   }).trim();
   assert.equal(mainCount, '1', 'story branch must not be merged into main');
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'in_progress');
+  assert.equal(logStatusOf('story', fm), 'in_progress');
 });
 
 test('cleanup proceeds when the latest review session is fully addressed', async () => {
@@ -508,7 +509,7 @@ test('cleanup proceeds when the latest review session is fully addressed', async
     delete process.env.BL_BACKLOG_DIR;
   }
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'done');
+  assert.equal(logStatusOf('story', fm), 'done');
   // The change document moved with the story and records the merge.
   const change = parseChange(readFileSync(storyIndexPath.replace(/index\.md$/, 'change.md'), 'utf8'));
   assert.equal(change.fm.status, 'merged');
@@ -572,7 +573,7 @@ test("bl merge closes the branch's open PR through change.find and change.close"
     delete process.env.BL_BACKLOG_DIR;
   }
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'done');
+  assert.equal(logStatusOf('story', fm), 'done');
   const calls = readFileSync(log, 'utf8').trim().split('\n');
   assert.ok(calls.includes('find s99-test-cleanup'), calls.join('\n'));
   assert.ok(calls.includes('close 7 | Merged via bl merge.'), calls.join('\n'));
@@ -593,7 +594,7 @@ test('bl merge closes nothing when change.find lists only a merged PR', async ()
   } finally {
     delete process.env.BL_BACKLOG_DIR;
   }
-  assert.equal(parseFrontmatter(readFileSync(storyIndexPath, 'utf8')).fm.status, 'done');
+  assert.equal(logStatusOf('story', parseFrontmatter(readFileSync(storyIndexPath, 'utf8')).fm), 'done');
   assert.ok(!readFileSync(log, 'utf8').includes('close '), 'a merged PR is not closed');
 });
 
@@ -613,7 +614,11 @@ test('push failure during cleanup exits non-zero and leaves the story not-done',
   assert.notEqual(exitCode, 0, 'cleanup must exit non-zero when push fails');
   // Story file is still at its original (in_progress) location, untouched.
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.notEqual(fm.status, 'done', 'story must not be marked done when the push that landed the merge SHA failed');
+  assert.notEqual(
+    logStatusOf('story', fm),
+    'done',
+    'story must not be marked done when the push that landed the merge SHA failed',
+  );
   assert.equal(fm.commit, undefined, 'commit must not be recorded when the SHA never reached origin');
 });
 
@@ -824,7 +829,7 @@ test('a bl story runs the mark-done sync as a child of its merged checkout', asy
   assert.equal(existsSync(join(backlog, '.bl-new.lock')), false);
 
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'done');
+  assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(fm.commit, upstreamMain(root, 'bl'));
 });
 
@@ -875,7 +880,7 @@ test('a single-repo story merged on the forge with no local branch gets a bare-s
   assert.equal(exitCode, null, stderr);
 
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'done');
+  assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(fm.commit, forgeSha);
   assert.equal(fm.commit, upstreamMain(tmp, 'bl'));
 });
@@ -903,7 +908,7 @@ test('a repo with no local branch whose push fails records nothing', async () =>
   assert.match(stderr, /push of main to origin failed/);
 
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.notEqual(fm.status, 'done');
+  assert.notEqual(logStatusOf('story', fm), 'done');
   assert.equal(fm.commit, undefined, 'a tip that never reached origin must not be recorded');
 });
 
@@ -950,7 +955,7 @@ for (const [name, absent] of [
     assert.match(out.stderr, absent ? /assuming PR was merged on the forge\./ : /has 1 unmerged commit\(s\)\. Merging/);
 
     const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-    assert.equal(fm.status, 'done');
+    assert.equal(logStatusOf('story', fm), 'done');
     assert.equal(fm.commit, undefined, 'no SHA was read, so none is recorded');
   });
 }
@@ -999,6 +1004,6 @@ test('concurrent no-branch cleanup keeps the SHA written after its initial story
   assert.match(out.stderr, new RegExp(`Keeping bl's recorded merge SHA exact111; main is at ${tip}\\.`));
 
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
-  assert.equal(fm.status, 'done');
+  assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(fm.commit, 'exact111', 'the SHA recorded after the first read must survive the no-branch tip');
 });

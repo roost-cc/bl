@@ -10,12 +10,18 @@ import { fileURLToPath } from 'url';
 import { parseFrontmatter } from '../../src/config.js';
 import { FlowError, loadFlow } from '../../src/flow.js';
 import {
+  applyMerged,
+  applyNew,
   applyTransition,
   assertFrom,
+  branchOf,
+  enterVerb,
+  ensureLog,
   findTransitionFindings,
   legacyLog,
   logOf,
   roundOf,
+  startOf,
   statusOf,
   transition,
 } from '../../src/transition.js';
@@ -278,6 +284,102 @@ test('assertFrom checks the when guards after the from', () => {
   assert.equal(assertFrom(flow, unit, 'run', ctx), null);
   writeFileSync(indexPath, '---\nstory_id: S-5\n---\n\n## Escalation\n\nWhich way?\n');
   assert.equal(assertFrom(flow, unit, 'run', ctx), 'S-5: run needs escalation_cleared, and it does not hold');
+});
+
+test('assertFrom names bl implement for the fix verb, which is no command of its own', () => {
+  assert.equal(
+    assertFrom(flow, { id: 'F-5', kind: 'feature', status: 'fixing' }, 'merge', null),
+    'F-5 is fixing; merge starts from in_progress, in_review or ready_for_merge (bl implement F-5 reaches in_review)',
+  );
+});
+
+// ---------------------------------------------------------------------------
+// The writers' helpers (F-69 D3)
+// ---------------------------------------------------------------------------
+
+/** A backlog with the template flow and one unit file; returns its root and path. */
+function unitFile(text, rel = 'features/F5-x/index.md') {
+  const root = mkTempDir('bl-transition-');
+  const file = join(root, rel);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, text);
+  writeFileSync(join(root, 'flow.json'), readFileSync(join(TEMPLATES, 'flow.json')));
+  return { root, file };
+}
+const logTo = (file) => parseFrontmatter(readFileSync(file, 'utf8')).fm.transitions.map((e) => [e.to, e.by]);
+
+test('applyNew writes the first entry, draft by new, and added', () => {
+  const fm = { story_id: 'S-5', title: 'x' };
+  assert.deepEqual(applyNew(flow, 'story', fm, AT), { at: AT, to: 'draft', by: 'new' });
+  assert.equal(fm.added, '2026-11-09');
+  assert.equal(fm.status, undefined);
+});
+
+test('enterVerb records a during, or a hand verb success, once', () => {
+  const { root, file } = unitFile('---\nfeature_id: F-5\nstatus: approved\nadded: 2026-11-01\n---\n');
+  const unit = { kind: 'feature', file };
+  assert.equal(enterVerb(root, unit, 'run').to, 'in_progress', 'the run row records its during');
+  assert.equal(enterVerb(root, unit, 'run'), null, 'at its during already: nothing');
+  assert.equal(enterVerb(root, unit, 'implement'), null, 'a hand verb at its success already: nothing');
+  assert.equal(enterVerb(root, unit, 'merge'), null, 'a verb with a via and no during records nothing at start');
+  assert.deepEqual(logTo(file).slice(-1), [['in_progress', 'run']]);
+});
+
+test('startOf picks the first verb whose from holds the status, and refuses with the first verb', () => {
+  const { root, file } = unitFile('---\nfeature_id: F-5\nstatus: running\nadded: 2026-11-01\n---\n');
+  const config = { backlogRoot: root };
+  const fm = parseFrontmatter(readFileSync(file, 'utf8')).fm;
+  const unit = (change) => ({ id: 'F-5', indexPath: file, fm, change });
+  const chain = flow.chainOf('feature', 'run');
+  assert.deepEqual(startOf(config, 'feature', unit(null), chain, { guards: false }), {
+    verb: 'run',
+    status: 'in_progress',
+    refusal: null,
+  });
+  const pending = { fm: { review_round: '1', review_status: 'pending' } };
+  assert.equal(startOf(config, 'feature', unit(pending), chain, { guards: false }).verb, 'fix', 'run resumes a fix');
+  const merge = startOf(config, 'feature', unit(pending), 'merge', { guards: false });
+  assert.equal(merge.verb, null);
+  assert.match(merge.refusal, /^F-5 is fixing; merge starts from /);
+});
+
+test('branchOf takes the first branch whose guards hold', () => {
+  const ctx = (round) => ({ round, maxRounds: 2 });
+  assert.equal(branchOf(flow, 'feature', 'review', 'success', ctx(1)).to, 'ready_for_merge');
+  assert.equal(branchOf(flow, 'feature', 'review', 'failure', ctx(2)).to, 'fixing', 'within the cap');
+  assert.equal(branchOf(flow, 'feature', 'review', 'failure', ctx(3)).to, 'escalated', 'past it');
+  assert.equal(branchOf(flow, 'story', 'refine', 'failure', {}).to, 'draft');
+});
+
+test('applyMerged records done by merge, by done for a story never started, and nothing on a closed unit', () => {
+  const merged = { story_id: 'S-5', ...at('story', 'in_progress') };
+  assert.deepEqual(applyMerged(flow, 'story', merged, { at: AT, note: 'merged with F-5' }), {
+    at: AT,
+    to: 'done',
+    by: 'merge',
+    via: 'merge',
+  });
+  const unstarted = { story_id: 'S-6', ...at('story', 'draft') };
+  assert.deepEqual(applyMerged(flow, 'story', unstarted, { at: AT, note: 'merged with F-5' }), {
+    at: AT,
+    to: 'done',
+    by: 'done',
+    note: 'merged with F-5',
+  });
+  assert.equal(applyMerged(flow, 'story', unstarted, { at: AT, note: 'again' }), null);
+});
+
+test('ensureLog writes the synthesized log of a unit with none, once, from its change document', () => {
+  const { root, file } = unitFile('---\nfeature_id: F-5\nstatus: running\nadded: 2026-11-01\n---\n');
+  const change = { fm: { review_round: '1', review_status: 'pending' } };
+  assert.equal(ensureLog(root, { kind: 'feature', indexPath: file, change }), true);
+  assert.deepEqual(
+    logTo(file).map(([to]) => to),
+    ['draft', 'in_progress', 'in_review', 'fixing'],
+  );
+  const text = readFileSync(file, 'utf8');
+  assert.equal(ensureLog(root, { kind: 'feature', indexPath: file, change: null }), false);
+  assert.equal(readFileSync(file, 'utf8'), text);
 });
 
 // ---------------------------------------------------------------------------

@@ -14,7 +14,8 @@ import assert from 'node:assert/strict';
 import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
-import { loadConfig, normalizeId } from '../../src/config.js';
+import { loadConfig, normalizeId, parseFrontmatter } from '../../src/config.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 import { findStoryDir, findExistingWorktree } from '../../src/story.js';
 import { prepareStoryRun } from '../../src/workon.js';
 import { prepareFeatureWorktree } from '../../src/feature-cmd.js';
@@ -225,12 +226,12 @@ function writeFeature(backlog, others = []) {
   writeFileSync(join(dir, 'index.md'), '---\nfeature_id: F-1\ntitle: Pair\nstatus: approved\n---\n\n# Pair\n');
 }
 
-function prepFeature(backlog, others) {
+function prepFeature(backlog, others, verb = 'run') {
   if (!existsSync(join(backlog, 'features', 'F1-pair'))) writeFeature(backlog, others);
   return withBacklog(backlog, () => {
     const config = loadConfig({ backlogRoot: backlog });
     const feature = findFeature(normalizeFeatureId('F-1'), config);
-    return { feature, ...capture(() => prepareFeatureWorktree(config, feature)) };
+    return { feature, ...capture(() => prepareFeatureWorktree(config, feature, verb)) };
   });
 }
 
@@ -631,17 +632,20 @@ test("prepareStoryRun retries a failed workon plugin or bootstrap in the story's
   }
 });
 
+// `bl implement F-n` records `in_progress` in the prep (F-69 D3); a run's is the loop's.
 test("prepareFeatureWorktree retries another repo's failed workon plugin before marking in_progress", () => {
   for (const r of RETRIES) {
     const { tmp, backlog } = build(r.opts(r.failing));
-    const first = prepFeature(backlog, ['repoB']);
+    const first = prepFeature(backlog, ['repoB'], 'implement');
     assert.equal(first.exit, 1, r.kind);
     assert.match(first.err, new RegExp(`${r.what} failed in ${r.failing} `), r.kind);
     assert.match(readFileSync(first.feature.indexPath, 'utf8'), /^status: approved$/m, r.kind);
-    const second = prepFeature(backlog, ['repoB']);
+    const second = prepFeature(backlog, ['repoB'], 'implement');
     assert.equal(second.exit, null, `${r.kind}: ${second.err}`);
     assert.equal(workonRuns(tmp, r.failing, 'f1-pair'), 1, r.kind);
-    assert.match(readFileSync(second.feature.indexPath, 'utf8'), /^status: in_progress$/m, r.kind);
+    const fm = parseFrontmatter(readFileSync(second.feature.indexPath, 'utf8')).fm;
+    assert.equal(logStatusOf('feature', fm), 'in_progress', r.kind);
+    assert.equal(fm.transitions.at(-1).by, 'implement', r.kind);
   }
 });
 

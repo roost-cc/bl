@@ -19,6 +19,7 @@ import { parseFrontmatter } from '../../src/config.js';
 import { extractSection } from '../../src/feature.js';
 import { mergeGates, unitBranch } from '../../src/merge-gates.js';
 import { writeBlockers } from '../../src/blockers.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 
@@ -131,7 +132,7 @@ function refusedAlike(fx, extraArgs = []) {
   assert.equal(generic(s.stderr, 'S-1', 's1-loose'), generic(f.stderr, 'F-1', 'f1-feat'));
   assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'nothing merged');
   const story = parseFrontmatter(readFileSync(join(fx.dir, 'stories', 'S1-loose', 'index.md'), 'utf8')).fm;
-  assert.equal(story.status, 'in_progress');
+  assert.equal(logStatusOf('story', story), 'in_progress');
   return generic(s.stderr, 'S-1', 's1-loose');
 }
 
@@ -139,7 +140,8 @@ const CASES = [
   {
     name: 'a pending review',
     review: { review_status: 'pending', reviewLog: SESSION({ must: '- [ ] broken' }) },
-    want: /^<id> has unresolved review state \(review_status: pending, latest session 2026-10-20, 1 unchecked Must\/Should\)\.\nAddress the review feedback \(bl implement <id>\)/,
+    // A pending review is `fixing`: the table refuses the merge (F-69 D3).
+    want: /^<id> is fixing; merge starts from in_progress, in_review or ready_for_merge \(bl implement <id> reaches in_review\)$/m,
   },
   {
     name: 'a fixed review',
@@ -214,9 +216,9 @@ test('an open nit alone merges a story and a feature', () => {
       assert.equal(r.status, 0, `${id}: ${r.stderr}`);
     }
     const story = parseFrontmatter(readFileSync(join(fx.dir, 'stories', 'S1-loose', 'index.md'), 'utf8')).fm;
-    assert.equal(story.status, 'done');
+    assert.equal(logStatusOf('story', story), 'done');
     const feature = parseFrontmatter(readFileSync(join(fx.dir, 'features', 'F1-feat', 'index.md'), 'utf8')).fm;
-    assert.equal(feature.status, 'done');
+    assert.equal(logStatusOf('feature', feature), 'done');
   } finally {
     fx.cleanup();
   }

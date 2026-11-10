@@ -35,6 +35,7 @@ import {
 import { FIX_OUTCOME, reviewOutcome, SELF_REVIEW_OUTCOME } from '../helpers/outcomes.js';
 import { validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
 // Quarantine against a real git worktree
@@ -787,7 +788,10 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
       assert.equal(x.r.status, '', `${name}: no verdict`);
       assert.equal(x.r.round, 0, `${name}: the round is not spent`);
       assert.equal(parseFrontmatter(x.after).fm.review_status, undefined, name);
-      assert.equal(x.after, x.before, `${name}: the feature file is as it was`);
+      // The review started (F-69 D3): the log holds `in_review`, so the next
+      // round resumes it without another entry; nothing else changed.
+      assert.equal(logStatusOf('feature', parseFrontmatter(x.after).fm), 'in_review', name);
+      assert.equal(parseFrontmatter(x.after).body, parseFrontmatter(x.before).body, `${name}: the body is as it was`);
       assert.deepEqual(x.locksAfter, [null, null, null], `${name}: locks released`);
       assert.equal(x.state.status, 'failed', name);
       assert.ok(

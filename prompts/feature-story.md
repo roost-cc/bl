@@ -31,8 +31,8 @@ The feature's stories, in dependency order (yours is one of them):
 
 ## Two-repo model
 
-- The **story file** and the **feature file** live in the backlog repo. You write status
-  updates, acceptance-criteria checkoffs, and **## Deferred** and **## Notes** additions there.
+- The **story file** and the **feature file** live in the backlog repo. You write
+  acceptance-criteria checkoffs, and **## Deferred** and **## Notes** additions there.
   Commit them on the backlog's main branch with `git -C {{backlogDir}} …`. They never go on your
   code branch.
 - **Code changes** go in each repo's worktree, `{{unitDir}}/<repo>`. Commit them to
@@ -67,7 +67,8 @@ checkout.
 1. {{readTool}} the feature file (Premise, Design, Acceptance, Deferred) and then the story file.
    The Design section is the contract this story implements; the story's plan says which part.
 
-2. Set `status: in_progress` in the story frontmatter.
+2. Do not set the story's status. bl records `in_progress` on it before your session starts, and the later statuses from
+   the outcome you end with.
 
 3. Implement the plan. When the story fixes a bug, first write a test that fails because of the
    bug, then make it pass. Commit as you go with Conventional Commits. End the subject in ` ({{featureId}} {{storyId}})`

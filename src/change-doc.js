@@ -39,6 +39,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { commitPaths } from './backlog-commit.js';
 import { withSpecLock } from './spec-file.js';
 import { substituteVars, templatePath } from './template.js';
+import { transition } from './transition.js';
 
 export const CHANGE_FILE = 'change.md';
 
@@ -226,17 +227,23 @@ export function reviewFieldsAt(path) {
 /**
  * Apply the outcome of an interactive fix session (`bl implement` while a
  * review is pending, F-68 D3): with `fixed: true`, set `review_status: fixed`
- * in the change document at `changePath`; otherwise put back the review
- * fields `before` (what they held when the session started) and print why.
- * bl commits the document when it wrote it. Returns whether the status is now
+ * in the change document at `changePath` and record `in_review` by `fix` in
+ * the unit's log (F-69 D3), the summary as its outcome; otherwise put back
+ * the review fields `before` (what they held when the session started) and
+ * print why. bl commits what it wrote. Returns whether the status is now
  * `fixed`.
  * @param {string} backlogRoot
- * @param {{ id: string, changePath: string }} unit
+ * @param {{ id: string, kind: "story" | "feature", indexPath: string, changePath: string }} unit
  * @param {{ structured: object|null, structuredError: string|null }} outcome
  * @param {{ review_round?: string, review_status?: string }} [before]
  * @returns {boolean}
  */
-export function applyFixOutcome(backlogRoot, { id, changePath }, { structured, structuredError }, before = {}) {
+export function applyFixOutcome(
+  backlogRoot,
+  { id, kind, indexPath, changePath },
+  { structured, structuredError },
+  before = {},
+) {
   const fixed = Boolean(structured?.fixed);
   if (!structured) {
     warn(`no fix outcome (${structuredError}); ${id}'s review status is unchanged`);
@@ -249,21 +256,28 @@ export function applyFixOutcome(backlogRoot, { id, changePath }, { structured, s
   }
   const next = fixed ? { ...before, review_status: 'fixed' } : before;
   const found = setReviewFields(backlogRoot, changePath, next);
-  if (Object.entries(next).some(([k, v]) => found[k] !== v)) {
-    commitChangeDoc(backlogRoot, changePath, fixed ? `chore: ${id} review fixed` : `chore: ${id} review not fixed`);
+  const paths = Object.entries(next).some(([k, v]) => found[k] !== v) ? [changePath] : [];
+  // The unit with no log reads its position from the fields the session started with.
+  const opts = { by: 'fix', via: 'fix', outcome: structured?.summary };
+  if (fixed && transition(backlogRoot, { kind, indexPath, change: { fm: before } }, 'in_review', opts)) {
+    paths.push(indexPath);
+  }
+  if (paths.length > 0) {
+    commitChangeDoc(backlogRoot, paths, fixed ? `chore: ${id} review fixed` : `chore: ${id} review not fixed`);
   }
   return fixed;
 }
 
 /**
- * Commit the change document at `path` in the backlog, skipped when the
- * backlog is not a git repository; a failed commit is a warning.
+ * Commit the change document at `path` (or the files at `path`, a list) in
+ * the backlog, skipped when the backlog is not a git repository; a failed
+ * commit is a warning.
  */
 function commitChangeDoc(backlogRoot, path, message) {
   if (!existsSync(join(backlogRoot, '.git'))) return;
-  const rel = relative(backlogRoot, path);
-  const c = commitPaths(backlogRoot, [rel], message);
-  if (!c.committed) warn(`${rel} is written but not committed (${c.error ?? 'nothing to commit'})`);
+  const rels = [path].flat().map((p) => relative(backlogRoot, p));
+  const c = commitPaths(backlogRoot, rels, message);
+  if (!c.committed) warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
 }
 
 /**

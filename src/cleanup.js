@@ -62,6 +62,8 @@ import { readSpecText, specText, withSpecLock } from './spec-file.js';
 import { syncMain, reportMainSync, MAIN_REFSPEC } from './main-sync.js';
 import { syncAndCommit, reportBacklogCommit, exitOnSyncError } from './sync.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
+import { loadFlow } from './flow.js';
+import { applyMerged, startOf, statusOf } from './transition.js';
 
 /**
  * A story's `## Deferred` body, for the merge's triage agent: since F-65 D4
@@ -163,7 +165,7 @@ export async function persistLandedCommits(
       const { content, crlf } = readSpecText(read(indexPath, 'utf8'), indexPath);
       const { fm, body } = parseFrontmatterOf(content, indexPath);
       const commitMap = unionLandedCommits(fm.commit, landed, tips);
-      if (fm.status === 'done') return { fm, body, commitMap, written: false };
+      if (statusOf('story', fm) === 'done') return { fm, body, commitMap, written: false };
       if (Object.keys(commitMap).length > 0) fm.commit = { ...commitMap };
       mutate?.(fm, commitMap);
       write(indexPath, specText(serializeFrontmatter(fm) + body, crlf));
@@ -952,6 +954,13 @@ no main checkout touched. A merge into main that still fails is aborted.`);
   // an unmet blockers.json edge (F-66 D3), review state, never reviewed,
   // escalation, stray worktrees and every main checkout on main.
   const unit = storyUnit(found, config);
+  // An open story's status from the table (F-69 D3), as `bl merge F-n`
+  // checks it; a story already done is a merge that resumes.
+  const start = startOf(config, 'story', unit, 'merge', { guards: false });
+  if (start.refusal && !loadFlow(config.backlogRoot).meets('story', start.status, 'done')) {
+    console.error(start.refusal);
+    process.exit(1);
+  }
   const gates = mergeGates(unit, {
     config,
     args,
@@ -1050,10 +1059,9 @@ no main checkout touched. A merge into main that still fails is aborted.`);
         doneWrite = await persistLandedCommits(config.backlogRoot, indexPath, landed, {
           tips,
           mutate: (fm, commitMap) => {
-            fm.status = 'done';
+            applyMerged(loadFlow(config.backlogRoot), 'story', fm, { change: unit.change, note: 'merged' });
             const shape = commitFmShape(commitMap);
             if (shape !== null) fm.commit = shape;
-            fm.completed = today;
           },
         });
         // The change document records each repo's merge commit; a story

@@ -6,7 +6,7 @@
  *           [--type chore|bug|feature] [--body-file <p>] [--json]
  *
  * The story is written by `bl new` itself, run as a child, so story creation
- * keeps one implementation; `bl side` then sets `status: in_progress` and
+ * keeps one implementation; `bl side` then records `in_progress` and
  * `found_by: <from>` (D2), prepares the story's worktree and change document
  * entry, and commits the story, the feature file and the change document by
  * path under the backlog lock.
@@ -62,6 +62,7 @@ import {
   resolveFeatureStories,
 } from './feature.js';
 import { loadFlow } from './flow.js';
+import { applyTransition } from './transition.js';
 import { prepareFeatureRepo } from './feature-cmd.js';
 import { prepareStoryRepo } from './workon.js';
 import { newWorktreeGuards } from './session.js';
@@ -84,7 +85,7 @@ const TYPES = ['chore', 'bug', 'feature'];
 const HELP = `Usage: bl side <repo|C-id> --from <F-n|S-n> --title <t> --points <n> [options]
 
 A change to another repo, as a story with its worktree (F-48 D1). Creates the
-story with bl new, sets status: in_progress and found_by: <from>, prepares its
+story with bl new, records in_progress (by side) and found_by: <from>, prepares its
 worktree and change document entry, and commits the backlog paths it wrote.
 
 Arguments:
@@ -245,13 +246,15 @@ function newStory({ feature, component, title, points, type, body }) {
 }
 
 /**
- * The new story's frontmatter: `status: in_progress` and `found_by` after
- * `feature:` (after `added:` on a story with no feature), written through
- * `updateSpecFile` (F-67), inside the backlog lock (the outer lock, D4).
+ * The new story's frontmatter: `in_progress` by `side` in its log (F-69 D3)
+ * and `found_by` after `feature:` (after `added:` on a story with no
+ * feature), written through `updateSpecFile` (F-67), inside the backlog lock
+ * (the outer lock, D4).
  */
 function markSideStory(backlogRoot, indexPath, fromId) {
+  const flow = loadFlow(backlogRoot);
   updateSpecFile(backlogRoot, indexPath, (fm) => {
-    fm.status = 'in_progress';
+    applyTransition(flow, 'story', fm, 'in_progress', { by: 'side' });
     const out = insertAfter(fm, 'feature' in fm ? 'feature' : 'added', { found_by: fromId });
     // `updateSpecFile` serializes the object it passed in: refill it in `out`'s order.
     for (const key of Object.keys(fm)) delete fm[key];

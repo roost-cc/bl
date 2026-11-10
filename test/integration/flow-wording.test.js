@@ -86,20 +86,17 @@ test('flow_derived_diagnostics_match_decisions', () => {
   }
 });
 
-test('bl_run_refusal_names_custom_status_keys_exactly', () => {
-  const withPlainKey = () => {
+test('bl_run_refusal_names_the_run_rows_from_exactly', () => {
+  // The start state is the table's (F-69 D3): the refusal names the `run`
+  // row's `from` as flow.json has it, a status the backlog added included.
+  const withTestFrom = () => {
     const raw = customFlow();
-    addStatus(raw, 'story', 'qa', 'in_test');
+    raw.types.story.verbs.run.from.push('in_test');
     return raw;
   };
   const cases = [
-    ['shipped', () => undefined, 'refined, in-progress, in_review, fixing, ready_for_merge or escalated'],
-    ['underscore key', customFlow, 'refined, in-progress, in_test, in_review, fixing, ready_for_merge or escalated'],
-    [
-      'plain key too',
-      withPlainKey,
-      'refined, in-progress, in_test, qa, in_review, fixing, ready_for_merge or escalated',
-    ],
+    ['shipped', () => undefined, 'refined, in_progress or escalated'],
+    ['a custom status in from', withTestFrom, 'refined, in_progress, escalated or in_test'],
   ];
   for (const [name, raw, wanted] of cases) {
     const dir = committedBacklog([['S-1', 'done']], raw());
@@ -107,7 +104,7 @@ test('bl_run_refusal_names_custom_status_keys_exactly', () => {
     commitAt(dir, '2026-04-22T09:00:00', 'no feature');
     const r = runBl(['run', 'S-1'], { cwd: dir });
     assert.notEqual(r.status, 0, name);
-    assert.ok(r.stderr.includes(`Story S-1 is done — only a ${wanted} story runs.\n`), `${name}: ${r.stderr}`);
+    assert.ok(r.stderr.includes(`S-1 is done; run starts from ${wanted}\n`), `${name}: ${r.stderr}`);
   }
 });
 

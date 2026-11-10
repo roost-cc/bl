@@ -27,6 +27,7 @@ import { runBl } from '../helpers/run-bl.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { defaultOutcome, reviewOutcome } from '../helpers/outcomes.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const DONE = '## Acceptance Criteria\n\n- [x] done\n';
 const fmOf = (path) => parseFrontmatter(readFileSync(path, 'utf8')).fm;
@@ -211,9 +212,9 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
     assert.match(e.merged, /^[0-9a-f]{7,}$/, e.repo);
     assert.ok(git(repos[e.repo], 'rev-parse', 'main').startsWith(e.merged), e.repo);
   }
-  assert.equal(fmOf(join(dir, side.path)).status, 'done');
-  assert.equal(fmOf(join(dir, 'stories', 'S1-one', 'index.md')).status, 'done');
-  assert.equal(fmOf(feature.indexPath).status, 'done');
+  assert.equal(logStatusOf('story', fmOf(join(dir, side.path))), 'done');
+  assert.equal(logStatusOf('story', fmOf(join(dir, 'stories', 'S1-one', 'index.md'))), 'done');
+  assert.equal(logStatusOf('feature', fmOf(feature.indexPath)), 'done');
   assert.deepEqual(mainBranches(), { repoA: 'main', repoB: 'main' });
 });
 
@@ -256,7 +257,7 @@ test('standalone_side_batch_merge_clears_inbox: three standalone side stories ar
   assert.deepEqual(listed(), []);
   for (const s of made) {
     assert.equal(git(join(tmp, 'repoB.git'), 'show', `main:${s.story}.txt`), s.story);
-    assert.equal(fmOf(join(dir, s.path)).status, 'done');
+    assert.equal(logStatusOf('story', fmOf(join(dir, s.path))), 'done');
     const change = parseChange(readFileSync(join(dir, s.path.replace(/index\.md$/, 'change.md')), 'utf8'));
     assert.equal(change.fm.status, 'merged', s.story);
     assert.match(change.repos[0].merged, /^[0-9a-f]{7,}$/, s.story);

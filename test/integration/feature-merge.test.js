@@ -8,6 +8,7 @@ import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
 import { extractSection } from '../../src/feature.js';
 import { fm, initFeatureRepo } from '../helpers/feature-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 test('bl merge lands the branch, marks work done, and commits only what it changed in the backlog', async () => {
   const { spawnSync } = await import('child_process');
@@ -104,13 +105,13 @@ test('bl merge lands the branch, marks work done, and commits only what it chang
     // The story is marked done where it is: nothing moves (F-49 D3).
     assert.ok(files.includes('stories/S1-a/index.md'), files.join('\n'));
     assert.ok(!files.some((f) => f.includes('.completed/')), files.join('\n'));
-    assert.equal(fm(join(dir, 'stories', 'S1-a', 'index.md')).status, 'done');
+    assert.equal(logStatusOf('story', fm(join(dir, 'stories', 'S1-a', 'index.md'))), 'done');
     assert.ok(!files.some((f) => f.includes('S2-b')), `operator's story must not be committed:\n${files.join('\n')}`);
     assert.match(g(dir, 'status', '--porcelain'), /S2-b\/index\.md/);
     assert.match(readFileSync(opStory, 'utf8'), /Operator notes in progress/);
     assert.match(r.stderr, /Left your uncommitted backlog edits alone: .*S2-b/);
     const featureFm = fm(join(dir, 'features', 'F1-feat', 'index.md'));
-    assert.equal(featureFm.status, 'done');
+    assert.equal(logStatusOf('feature', featureFm), 'done');
     assert.match(featureFm.commit, /^[0-9a-f]{7,}$/);
     assert.equal(featureFm.tokens_input, '2', "the story's totals folded in");
     assert.deepEqual(featureFm.tokens_by_step, {
@@ -230,8 +231,16 @@ test('feature merge tag push failure writes no manifest or merged completion sta
       'no local tag',
     );
     assert.ok(!existsSync(join(dir, 'releases', 'F-1.json')), 'no manifest');
-    assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'running', 'the feature is not done');
-    assert.equal(fm(join(dir, 'stories', 'S1-a', 'index.md')).status, 'in_progress', 'the story is not done');
+    assert.equal(
+      logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))),
+      'in_progress',
+      'the feature is not done',
+    );
+    assert.equal(
+      logStatusOf('story', fm(join(dir, 'stories', 'S1-a', 'index.md'))),
+      'in_progress',
+      'the story is not done',
+    );
     assert.equal(g(dir, 'log', '--format=%s', '-1'), 'backlog', 'nothing committed');
 
     // Once the origin takes tags, the retry tags the set and completes.
@@ -242,7 +251,7 @@ test('feature merge tag push failure writes no manifest or merged completion sta
     assert.deepEqual(JSON.parse(readFileSync(join(dir, 'releases', 'F-1.json'), 'utf8')).repos, {
       code: g(origin, 'rev-parse', 'main'),
     });
-    assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'done');
+    assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'done');
   } finally {
     cleanup();
   }
@@ -321,8 +330,16 @@ test('feature merge main lookup failure writes no manifest or merged completion 
       'no local tag',
     );
     assert.ok(!existsSync(join(dir, 'releases', 'F-1.json')), 'no manifest');
-    assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'running', 'the feature is not done');
-    assert.equal(fm(join(dir, 'stories', 'S1-a', 'index.md')).status, 'in_progress', 'the story is not done');
+    assert.equal(
+      logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))),
+      'in_progress',
+      'the feature is not done',
+    );
+    assert.equal(
+      logStatusOf('story', fm(join(dir, 'stories', 'S1-a', 'index.md'))),
+      'in_progress',
+      'the story is not done',
+    );
     assert.equal(g(dir, 'log', '--format=%s', '-1'), 'backlog', 'nothing committed');
 
     // Once the origin is reachable, the retry records both remote mains; a
@@ -399,7 +416,7 @@ test('bl merge F-n refuses before merging anything when a repos entry has no val
       assert.equal(r.status, 1, JSON.stringify(value));
       assert.match(r.stderr, why);
       assert.equal(g(repo, 'rev-parse', 'main'), before, 'nothing merged');
-      assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'running');
+      assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'in_progress');
     }
   } finally {
     cleanup();

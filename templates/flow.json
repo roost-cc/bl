@@ -31,7 +31,7 @@
           "failure": [{ "to": "escalated" }]
         },
         "review": {
-          "from": ["in_review"],
+          "from": ["in_progress", "in_review", "ready_for_merge"],
           "during": "in_review",
           "via": ["review"],
           "success": [{ "to": "ready_for_merge" }],
@@ -45,7 +45,7 @@
           "failure": [{ "to": "escalated" }]
         },
         "merge": {
-          "from": ["in_progress", "ready_for_merge"],
+          "from": ["in_progress", "in_review", "ready_for_merge"],
           "when": ["gate_free:merge"],
           "via": ["merge"],
           "success": [{ "to": "done" }],
@@ -98,7 +98,7 @@
           "success": [{ "to": "in_progress" }]
         },
         "review": {
-          "from": ["in_review"],
+          "from": ["in_progress", "in_review", "ready_for_merge"],
           "during": "in_review",
           "via": ["review"],
           "success": [{ "to": "ready_for_merge" }],
@@ -112,7 +112,7 @@
           "failure": [{ "to": "escalated" }]
         },
         "merge": {
-          "from": ["ready_for_merge"],
+          "from": ["in_progress", "in_review", "ready_for_merge"],
           "when": ["gate_free:merge"],
           "via": ["merge"],
           "success": [{ "to": "done" }],

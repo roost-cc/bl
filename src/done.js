@@ -1,8 +1,9 @@
 /**
  * done.js — mark a backlog story done or superseded.
  *
- * Status is frontmatter, never location (F-49 D3): `bl done` writes the
- * story's `status:`, `commit:` and `completed:` and moves nothing. It commits
+ * Status is frontmatter, never location (F-49 D3): `bl done` records `done`
+ * by `done` (or `superseded` by `supersede`) in the story's transition log
+ * (F-69 D3), which sets `completed:`, writes `commit:`, and moves nothing. It commits
  * the backlog change (the story file and every index the sync rewrote) under
  * the backlog lock, via `syncAndCommit`. A component has no status, so it is
  * never marked done.
@@ -32,6 +33,7 @@ import { acquireLock, releaseLock } from './lock.js';
 import { commitAndRecord, reportBacklogCommit, exitOnSyncError } from './sync.js';
 import { dirtySnapshot, failedCommitPending, failedCommitRecord, hasOwnRepo } from './backlog-commit.js';
 import { loadFlow } from './flow.js';
+import { applyTransition, statusOf } from './transition.js';
 
 function resolveCommitHash(config, primaryRepoName, rawCommit) {
   if (rawCommit) return rawCommit;
@@ -188,8 +190,9 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
 
   const content = readFileSync(indexPath, 'utf8');
   const { fm } = parseFrontmatter(content);
+  const current = statusOf('story', fm);
 
-  if (flow.meets('story', fm.status, 'done')) return alreadyClosed(parsed, fm.status, config, found);
+  if (flow.meets('story', current, 'done')) return alreadyClosed(parsed, current, config, found);
 
   // Only the reviewer may sign a story off: `pending` means items are open,
   // `fixed` means the implementing agent claims they're resolved but no
@@ -235,6 +238,7 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  const by = status === 'done' ? 'done' : 'supersede';
   // One read-modify-write under the story's spec lock (F-67 D1), inside the
   // backlog lock `doneStory` holds (D4): a session difference written while
   // the transcripts are read is either in the file this write starts from or
@@ -244,13 +248,13 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   try {
     updateSpecFile(config.backlogRoot, indexPath, (fm) => {
       // Re-checked on the file read in the hold.
-      if (flow.meets('story', fm.status, 'done')) {
-        closedAs = fm.status;
+      const now = statusOf('story', fm, change.change);
+      if (flow.meets('story', now, 'done')) {
+        closedAs = now;
         return false;
       }
       fm.commit = commit;
-      fm.status = status;
-      fm.completed = today;
+      applyTransition(flow, 'story', fm, status, { by, change: change.change });
       // Final reconciliation pass — picks up token totals for any session that
       // exited without launchSession's post-spawn hook running (e.g. hard kill).
       // Worktrees may already be cleaned up; that's fine — provider transcripts

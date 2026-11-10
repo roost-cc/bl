@@ -14,6 +14,7 @@ import { unitVars } from '../../src/unit.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
 import { CH, creates, editFile, fakeRunner, storySetup, captureLog } from '../helpers/feature-run-fixture.js';
 import { reviewOutcome } from '../helpers/outcomes.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
 // A single story through the loop: `bl run S-n` (F-35 Design §3)
@@ -82,7 +83,7 @@ test('a story run: implement, gate, self-review, one PR titled S-n: <title>, rev
     assert.ok(!runner.calls.some((c) => c.type === 'forge' && /merge/.test(c.op)), 'stops before merge');
     const { fm } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
     assert.equal(fm.review_rounds_max, '2');
-    assert.equal(fm.status, 'in_progress', 'a story keeps its own status');
+    assert.equal(logStatusOf('story', fm), 'ready_for_merge', 'a story run records its hops (F-69 D3)');
     for (const k of ['branch', 'pr', 'review_round', 'review_status'])
       assert.equal(fm[k], undefined, `no ${k}: in index.md`);
     const change = parseChange(readFileSync(CH(unit), 'utf8'));
@@ -180,14 +181,14 @@ test("a story's first run writes review_rounds_max from --max-rounds and keeps f
   }
 });
 
-test("a story escalation lands in the story's ## Escalation, keeps its status, blocks a rerun, and bl status S-n shows it", async () => {
+test("a story escalation lands in the story's ## Escalation, records escalated, blocks a rerun, and bl status S-n shows it", async () => {
   const { cleanup, config, unit, prep } = storySetup();
   try {
     const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, testResults: [1, 1] });
     const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'escalated');
     const { fm, body } = parseFrontmatter(readFileSync(unit.indexPath, 'utf8'));
-    assert.equal(fm.status, 'in_progress', 'stories have no escalated status');
+    assert.equal(logStatusOf('story', fm), 'escalated', 'a story is escalated as a feature is (F-69 D1)');
     assert.match(extractSection(body, 'Escalation'), /^\ntest gate failed twice/);
     // The open section blocks the next run.
     const again = await runFeature({
@@ -208,7 +209,7 @@ test("a story escalation lands in the story's ## Escalation, keeps its status, b
     );
     assert.match(
       out,
-      /^S-5 · Loose\nstatus: in_progress   repo: demo-repo   branch: s5-loose   pr: -   points: 3\nreview: none \(round 0\/2\)/,
+      /^S-5 · Loose\nstatus: escalated   repo: demo-repo   branch: s5-loose   pr: -   points: 3\nreview: none \(round 0\/2\)/,
     );
     assert.match(out, /\nescalation:\ntest gate failed twice/);
     assert.match(out, /\nrun: failed at step setup — ## Escalation is not empty/);

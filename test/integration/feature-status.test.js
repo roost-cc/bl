@@ -114,14 +114,19 @@ test('bl merge refuses on pending review and on an open escalation', () => {
   try {
     let r = runBl(['merge', 'F-1'], { cwd: dir });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /unresolved review state/);
-    assert.match(r.stderr, /1 unchecked/);
+    assert.match(r.stderr, /F-1 is fixing; merge starts from in_progress, in_review or ready_for_merge/);
     r = runBl(['merge', 'F-2'], { cwd: dir });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /open Escalation section/);
+    assert.match(
+      r.stderr,
+      /F-2 is escalated; merge starts from in_progress, in_review or ready_for_merge \(bl run F-2 reaches in_progress\)/,
+    );
     r = runBl(['merge', 'F-3'], { cwd: dir });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /nothing has been implemented/);
+    assert.match(
+      r.stderr,
+      /F-3 is approved; merge starts from in_progress, in_review or ready_for_merge \(bl run F-3 reaches in_progress\)/,
+    );
   } finally {
     cleanup();
   }

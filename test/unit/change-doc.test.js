@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -27,7 +27,9 @@ import {
 } from '../../src/change-doc.js';
 import { extractSection, featureRepoOrder } from '../../src/feature.js';
 import { deployableRepos, mainCommits, tagRepos } from '../../src/release.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
+import { statusOf } from '../../src/transition.js';
+import { parseFrontmatter } from '../../src/config.js';
 import { runBl } from '../helpers/run-bl.js';
 import { git as gitIn } from '../helpers/git-backlog.js';
 
@@ -728,17 +730,26 @@ test('setReviewFields writes only a field that differs and returns what the docu
   );
 });
 
+/** A feature unit in `dir`, in the v1 shape (`status: in_progress`), in a backlog with a flow.json. */
+function fixUnit(root, dir, changePath) {
+  copyFileSync(FLOW_TEMPLATE, join(root, 'flow.json'));
+  const indexPath = join(dir, 'index.md');
+  writeFileSync(indexPath, '---\nfeature_id: F-42\nstatus: in_progress\nadded: 2026-11-01\n---\n\n# F-42\n');
+  return { id: 'F-42', kind: 'feature', indexPath, changePath };
+}
+
 test('applyFixOutcome: fixed writes and commits review_status fixed; anything else leaves the status', () => {
   const { root, dir } = unitDir();
   const path = changePath(dir);
   const doc = newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
   doc.fm.review_status = 'pending';
   writeChange(root, path, doc);
+  const unit = fixUnit(root, dir, path);
   const git = (...args) => gitIn(root, ...args);
   git('init', '-q', '-b', 'main');
   git('add', '.');
   git('commit', '-q', '-m', 'base');
-  const unit = { id: 'F-42', changePath: path };
+  const before = reviewFieldsAt(path);
   const outcome = (structured, structuredError = null) => ({ structured, structuredError });
   const cases = [
     { name: 'no outcome', outcome: outcome(null, 'no outcome file at x'), fixed: false },
@@ -746,11 +757,16 @@ test('applyFixOutcome: fixed writes and commits review_status fixed; anything el
     { name: 'fixed', outcome: outcome({ summary: 's', fixed: true, open: 0 }), fixed: true },
   ];
   for (const c of cases) {
-    assert.equal(applyFixOutcome(root, unit, c.outcome), c.fixed, c.name);
+    assert.equal(applyFixOutcome(root, unit, c.outcome, before), c.fixed, c.name);
     assert.equal(readChange(path).fm.review_status, c.fixed ? 'fixed' : 'pending', c.name);
+    // The unit's log: back in review by `fix` only when fixed (F-69 D3).
+    const fm = parseFrontmatter(readFileSync(unit.indexPath, 'utf8')).fm;
+    assert.equal(statusOf('feature', fm, { fm: before }), c.fixed ? 'in_review' : 'fixing', c.name);
   }
+  const last = parseFrontmatter(readFileSync(unit.indexPath, 'utf8')).fm.transitions.at(-1);
+  assert.deepEqual([last.to, last.by, last.via, last.outcome], ['in_review', 'fix', 'fix', 's']);
   assert.equal(git('log', '-1', '--format=%s'), 'chore: F-42 review fixed');
-  assert.equal(git('status', '--porcelain'), '', 'the write is committed');
+  assert.equal(git('status', '--porcelain'), '', 'the change document and the unit file are committed');
   // A change document the session deleted is a warning, as the other branches are.
   const gone = { id: 'F-42', changePath: join(dir, 'missing', 'change.md') };
   assert.equal(applyFixOutcome(root, gone, outcome({ summary: 's', fixed: true, open: 0 })), false);
@@ -773,6 +789,7 @@ test('applyFixOutcome: a session that wrote the review fields gets them put back
     const doc = newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
     Object.assign(doc.fm, { review_round: '1', review_status: 'pending' });
     writeChange(root, path, doc);
+    const unit = fixUnit(root, dir, path);
     const git = (...args) => gitIn(root, ...args);
     git('init', '-q', '-b', 'main');
     git('add', '.');
@@ -782,7 +799,7 @@ test('applyFixOutcome: a session that wrote the review fields gets them put back
     // The session writes both fields, and commits them.
     setReviewFields(root, path, { review_round: '5', review_status: 'addressed' });
     git('commit', '-q', '-am', 'session');
-    applyFixOutcome(root, { id: 'F-42', changePath: path }, c.outcome, before);
+    applyFixOutcome(root, unit, c.outcome, before);
     const { fm } = readChange(path);
     assert.equal(`${fm.review_round}/${fm.review_status}`, c.want, c.name);
     assert.equal(git('status', '--porcelain'), '', `${c.name}: the write is committed`);

@@ -5,7 +5,7 @@ title:
 type:
 points:
 effort:
-status: draft
+transitions:
 added:
 feature:
 found_by:

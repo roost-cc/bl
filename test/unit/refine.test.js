@@ -7,6 +7,7 @@ import { resolveRefineTargets, refineBatchId, applyRefineStatus, applyBatchStatu
 import { loadPrompt } from '../../src/session.js';
 import { outcomePath } from '../../src/outcome.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
+import { statusOf } from '../../src/transition.js';
 
 test('two batch refines with different stories use different outcome files', () => {
   const a = outcomePath('/b', refineBatchId(['S-1', 'S-2']));
@@ -29,8 +30,8 @@ test('a batch refine outcome file name stays under 255 bytes for every batch siz
 test('a status write that fails names its story', () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
-    const unit = { id: 'S-9', indexPath: `${dir}/stories/S9-gone/index.md` };
-    assert.throws(() => applyRefineStatus(dir, unit, 'refined'), /^Error: S-9: /);
+    const unit = { id: 'S-9', kind: 'story', indexPath: `${dir}/stories/S9-gone/index.md` };
+    assert.throws(() => applyRefineStatus(dir, unit, 'success'), /^Error: S-9: /);
   } finally {
     cleanup();
   }
@@ -64,9 +65,12 @@ test('a batch refine applies every story it can and names each one it could not'
         return true;
       },
     );
-    assert.equal(parseFrontmatter(readFileSync(path('S-1'), 'utf8')).fm.status, 'refined');
-    assert.equal(parseFrontmatter(readFileSync(path('S-3'), 'utf8')).fm.status, 'backlog');
-    assert.equal(parseFrontmatter(readFileSync(path('S-4'), 'utf8')).fm.status, 'refined');
+    const status = (id) => statusOf('story', parseFrontmatter(readFileSync(path(id), 'utf8')).fm);
+    assert.equal(status('S-1'), 'refined');
+    assert.equal(status('S-3'), 'draft', 'not refined: unchanged, a v1 backlog read as draft');
+    assert.equal(status('S-4'), 'refined');
+    const entry = parseFrontmatter(readFileSync(path('S-1'), 'utf8')).fm.transitions.at(-1);
+    assert.deepEqual([entry.to, entry.by, entry.via], ['refined', 'refine', 'refine']);
   } finally {
     cleanup();
   }

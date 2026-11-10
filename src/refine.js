@@ -27,15 +27,16 @@ import {
 import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { updateTabTitle } from './tab-title.js';
 import { launchSession, loadPrompt, loadSchema, spillSubagentPrompts } from './session.js';
-import { updateSpecFile } from './spec-file.js';
 import { flowForHelp, loadFlow } from './flow.js';
+import { assertFrom, branchOf, statusOf, transition } from './transition.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
- * `status: draft` stories; explicitly-named story IDs are always included
- * (only closed ones are rejected). Results are deduped by story ID —
+ * draft stories; explicitly-named story IDs are included when `flow.json`'s
+ * `refine` row starts from their status (`assertFrom`), else skipped with
+ * the table's message. Results are deduped by story ID —
  * an explicitly-named story wins over the same story pulled in via a component, so
  * an already-refined story named on the command line is still re-refined.
  *
@@ -94,8 +95,10 @@ export function resolveRefineTargets(positionals, config) {
       continue;
     }
     const { fm } = parseFrontmatter(readFileSync(found.indexPath, 'utf8'));
-    if (loadFlow(config.backlogRoot).meets('story', fm.status, 'done')) {
-      notices.push(`Story ${parsed.id} has status '${fm.status}' — skipping (cannot refine).`);
+    const unit = { id: parsed.id, kind: 'story', status: statusOf('story', fm) };
+    const refused = assertFrom(loadFlow(config.backlogRoot), unit, 'refine', { config, ...unit });
+    if (refused) {
+      notices.push(`${refused} — skipping.`);
       continue;
     }
     addStory(found, fm, 'named');
@@ -123,7 +126,7 @@ function storyRefineContext(found, fm, config) {
   const primaryRepoName = unitRepo ?? '';
   const primaryRepoPath = primaryRepoName ? (config.reposByName[primaryRepoName] ?? '') : '';
 
-  const promptName = fm.status === 'refined' ? 're-refine' : 'refine';
+  const promptName = statusOf('story', fm) === 'refined' ? 're-refine' : 'refine';
   const vars = {
     storyId: parsed.id,
     title,
@@ -139,26 +142,28 @@ function storyRefineContext(found, fm, config) {
 }
 
 /**
- * Apply one unit's refine outcome (F-68 D3): write `status` to the spec at
- * `indexPath` under its spec lock (`updateSpecFile`), or, when `status` is
- * null, leave it and print `reason`.
+ * Apply one unit's refine outcome (F-68 D3): record the `refine` verb's
+ * `success` branch (`refined`) or `failure` branch (`draft`, the premise
+ * does not hold) in the unit's log, `by: refine, via: refine`, with `reason`
+ * as the entry's `outcome` (`transition`, F-69 D3); or, when `result` is
+ * null, leave the status and print `reason`.
  * @param {string} backlogRoot
- * @param {{ id: string, indexPath: string }} unit
- * @param {string|null} status
+ * @param {{ id: string, kind: "story" | "feature", indexPath: string }} unit
+ * @param {"success" | "failure" | null} result
  * @param {string} [reason]
  */
-export function applyRefineStatus(backlogRoot, { id, indexPath }, status, reason) {
-  if (status) {
+export function applyRefineStatus(backlogRoot, { id, kind, indexPath }, result, reason) {
+  if (result) {
+    let status;
     // The error names the unit: in a batch, the units before it are set.
     try {
-      updateSpecFile(backlogRoot, indexPath, (fm) => {
-        fm.status = status;
-      });
+      status = branchOf(loadFlow(backlogRoot), kind, 'refine', result, {}).to;
+      transition(backlogRoot, { kind, indexPath }, status, { by: 'refine', via: 'refine', outcome: reason });
     } catch (e) {
       throw new Error(`${id}: ${e.message}`);
     }
     // A draft (the premise does not hold) says why.
-    info(status === 'draft' && reason ? `${id}: status ${status}: ${reason}` : `${id}: status ${status}.`);
+    info(result === 'failure' && reason ? `${id}: status ${status}: ${reason}` : `${id}: status ${status}.`);
   } else {
     info(`${id} is not refined; its status is unchanged: ${reason}`);
   }
@@ -213,7 +218,7 @@ function refineOne(target, config, { additionalPrompt } = {}) {
   const { backlogRoot, roostDir } = config;
   const { parsed, title, storyRelPath, promptName, vars } = storyRefineContext(target.found, target.fm, config);
 
-  if (target.fm.status === 'refined') {
+  if (statusOf('story', target.fm) === 'refined') {
     info(`Story ${parsed.id} is already refined. Re-refining.\n`);
   }
 
@@ -251,8 +256,8 @@ function refineOne(target, config, { additionalPrompt } = {}) {
     ({ refined, reason }) =>
       applyRefineStatus(
         backlogRoot,
-        { id: parsed.id, indexPath: target.found.indexPath },
-        refined ? 'refined' : null,
+        { id: parsed.id, kind: 'story', indexPath: target.found.indexPath },
+        refined ? 'success' : null,
         reason,
       ),
   );
@@ -352,9 +357,9 @@ export function applyBatchStatuses(backlogRoot, targets, stories) {
   const failed = [];
   for (const t of targets) {
     const entry = stories[t.id] ?? { refined: false, reason: 'the outcome has no entry for it' };
-    const unit = { id: t.id, indexPath: t.found.indexPath };
+    const unit = { id: t.id, kind: 'story', indexPath: t.found.indexPath };
     try {
-      applyRefineStatus(backlogRoot, unit, entry.refined ? 'refined' : null, entry.reason);
+      applyRefineStatus(backlogRoot, unit, entry.refined ? 'success' : null, entry.reason);
       if (entry.refined) set.push(t.id);
     } catch (e) {
       failed.push(e.message);

@@ -67,6 +67,7 @@ import { failPoint, settle, writeRecord } from './feature-links.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile, withSpecLock } from './spec-file.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
+import { applyNew } from './transition.js';
 
 const FIBONACCI = new Set([1, 2, 3, 5, 8, 13]);
 
@@ -163,8 +164,9 @@ function readBodyFile(args, required = ['title', 'points']) {
 /**
  * The keys of `--frontmatter <json>`: a JSON object of frontmatter keys a client finds its
  * stories by again, such as the update job's `update_advisory` (F-80 B4). Each key is one
- * `bl validate` accepts, and none is a key bl new writes itself (its templates' and `plugins`).
- * Exits 1 otherwise.
+ * `bl validate` accepts, and none is a key bl new writes itself (its templates' and `plugins`)
+ * or `status`, which a work unit's transition log replaced (F-69 D2): only `transition.js`
+ * records a status. Exits 1 otherwise.
  * @returns {Record<string, unknown>}
  */
 function extraFrontmatter(args) {
@@ -180,7 +182,7 @@ function extraFrontmatter(args) {
     refuse(`not a JSON object (${err.message})`);
   }
   if (extra === null || typeof extra !== 'object' || Array.isArray(extra)) refuse('not a JSON object');
-  const own = new Set(['plugins']);
+  const own = new Set(['plugins', 'status']);
   for (const t of ['story', 'story-feature']) {
     for (const k of Object.keys(parseFrontmatter(readFileSync(templatePath(t), 'utf8')).fm)) own.add(k);
   }
@@ -813,10 +815,11 @@ async function newEpic(args, jsonMode) {
  * A story template's frontmatter values (F-62 D3): `vars` under their keys,
  * `feature:` only when the story has one, never `found_by:` (`bl side` sets
  * it, F-48 D2), and a dependency list and an effort level only when set (the
- * template's empty key stays otherwise).
+ * template's empty key stays otherwise), and the log's first entry
+ * (`applyNew`, F-69 D3).
  */
-function storyValues(vars, { feature = null, dependsOn = [], effort = null } = {}) {
-  return {
+function storyValues(cfg, vars, { feature = null, dependsOn = [], effort = null } = {}) {
+  const values = {
     component: vars.componentId,
     story_id: vars.storyId,
     title: vars.title,
@@ -828,6 +831,8 @@ function storyValues(vars, { feature = null, dependsOn = [], effort = null } = {
     found_by: undefined,
     ...(dependsOn.length > 0 ? { depends_on: dependsOn } : {}),
   };
+  applyNew(loadFlow(cfg.backlogRoot), 'story', values);
+  return values;
 }
 
 /**
@@ -1434,7 +1439,7 @@ Example:
     cfg.backlogRoot,
     storyIndex,
     renderTemplate(feature ? 'story-feature' : 'story', {
-      values: storyValues(storyVars, { feature, dependsOn }),
+      values: storyValues(cfg, storyVars, { feature, dependsOn }),
       vars: storyVars,
       body: customBody,
       after: ['feature', { ...plugins, ...extra }],
@@ -1668,7 +1673,7 @@ async function runBatchMode(args, jsonMode) {
       process.exit(1);
     }
     const finalContent = renderTemplate(feature ? 'story-feature' : 'story', {
-      values: storyValues(storyVars, { feature, dependsOn, effort: s.effort }),
+      values: storyValues(cfg, storyVars, { feature, dependsOn, effort: s.effort }),
       vars: storyVars,
       body,
     });

@@ -9,6 +9,7 @@ import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { extractSection } from '../../src/feature.js';
 import { loadConfig } from '../../src/config.js';
 import { HOME, REPOS, fm, initFeatureRepo } from '../helpers/feature-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 /** Land an unrelated commit on origin's main and leave the clone behind it. */
 function advanceOriginMain(g, repo) {
@@ -129,7 +130,7 @@ for (const [name, repos, recorded, commitFm, expected] of [
       for (const n of repoNames) tips[n] = g(built[n].origin, 'rev-parse', '--short', 'main');
       const want = expected(tips);
       const featureFm = fm(join(dir, 'features', 'F1-feat', 'index.md'));
-      assert.equal(featureFm.status, 'done');
+      assert.equal(logStatusOf('feature', featureFm), 'done');
       assert.deepEqual(featureFm.commit, want);
       assert.deepEqual(fm(join(dir, 'stories', 'S1-a', 'index.md')).commit, want);
       for (const n of Object.keys(recorded)) {
@@ -216,7 +217,7 @@ test('bl merge F-n merges bl first, syncs the backlog, then the other repos in d
     const containers = at('=== containers ===');
     const app = at('=== app ===');
     assert.ok(bl < sync && sync < containers && containers < app, 'bl, the sync, containers, app');
-    assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'done');
+    assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'done');
   } finally {
     cleanup();
   }
@@ -234,7 +235,7 @@ test('bl merge F-n refuses a worktree on the branch in a repo no story names, an
       /F-1 has a worktree on f1-feat in stray, but its repo is code\. Work in another repo is another story/,
     );
     assert.equal(g(built.code.repo, 'rev-parse', 'main'), before, 'code not merged');
-    assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'running');
+    assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'in_progress');
   } finally {
     cleanup();
   }
@@ -254,7 +255,7 @@ test('bl implement and bl run F-n refuse --repo as an unknown option', () => {
       const r = runBl([verb, 'F-1', '--repo', 'demo-repo'], { cwd: dir });
       assert.equal(r.status, 1, verb);
       assert.match(r.stderr, new RegExp(`bl ${verb}: unknown option "--repo" for a feature`), verb);
-      assert.match(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, /^approved$/, verb);
+      assert.match(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), /^approved$/, verb);
     }
   } finally {
     cleanup();
@@ -440,9 +441,9 @@ test('feature_merge_refuses_any_story_without_component_repo_before_mutation', a
       assert.equal(r.status, 1, `${name}: ${r.stdout}${r.stderr}`);
       assert.match(r.stderr, why, name);
       assert.equal(g(repo, 'rev-parse', 'main'), before, `${name}: nothing merged`);
-      assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'running', name);
+      assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'in_progress', name);
       for (const s of ['S1-a', 'S2-b'])
-        assert.equal(fm(join(dir, 'stories', s, 'index.md')).status, 'in_progress', `${name}: ${s}`);
+        assert.equal(logStatusOf('story', fm(join(dir, 'stories', s, 'index.md'))), 'in_progress', `${name}: ${s}`);
       // A feature review refuses the same way, rather than reviewing only some repos.
       const rv = runBl(['review', 'F-1'], { cwd: dir, env });
       assert.equal(rv.status, 1, name);
@@ -525,7 +526,7 @@ Prose bl never writes.
 
     const r = runBl(['merge', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(fm(join(dir, 'features', 'F1-feat', 'index.md')).status, 'done');
+    assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'done');
     assert.equal(g(dir, 'status', '--porcelain'), '', 'the merge commits everything it wrote');
     const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n');
     assert.ok(files.includes('features/F1-feat/index.md'), 'one commit with the feature marked done');
@@ -627,7 +628,7 @@ test('concurrent_feature_merges_fold_each_story_once', async () => {
     await cmdMerge({}, config, first);
     await cmdMerge({}, config, second);
     const f = fm(fpath);
-    assert.equal(f.status, 'done');
+    assert.equal(logStatusOf('feature', f), 'done');
     assert.deepEqual(f.tokens_by_step, { implement: kinds(10), 'review.1': kinds(5) }, "the story's map folded once");
     assert.equal(f.tokens_input, '15', "the story's totals folded once");
   } finally {
@@ -738,7 +739,7 @@ test('concurrent_feature_merges_with_transcripts_preserve_folded_totals', async 
         if (second === 'stale after done') await cmdMerge({}, config, first);
         await cmdMerge({}, config, stale);
         const f = fm(fpath);
-        assert.equal(f.status, 'done', name);
+        assert.equal(logStatusOf('feature', f), 'done', name);
         assert.deepEqual(
           f.tokens_by_step,
           { implement: kinds(10), 'review.1': kinds(5) },

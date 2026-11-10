@@ -41,6 +41,15 @@ const MIGRATED_BY = 'migrated';
 /** The `by` of an entry the operator wrote by hand: any verb's edge allows it. */
 export const OPERATOR = 'operator';
 
+/**
+ * The verbs `bl implement` starts: `implement`, or `fix` on a unit in
+ * `fixing`. The table's other verbs are commands of their own name.
+ */
+export const IMPLEMENT_VERBS = ['implement', 'fix'];
+
+/** The command that runs table verb `verb`, for a hint: `bl implement` runs `fix`. */
+const commandOf = (verb) => (IMPLEMENT_VERBS.includes(verb) ? IMPLEMENT_VERBS[0] : verb);
+
 /** The field that holds the date a unit reached a terminal status, per type. */
 export const COMPLETED_KEY = { story: 'completed', feature: 'completed', task: 'done' };
 
@@ -199,6 +208,11 @@ function hasEdge(flow, kind, from, to, by) {
   return flow.edges(kind).some((e) => e.from === from && e.to === to && (by === OPERATOR || e.by === by));
 }
 
+/** The unit's log to append to: the stored one, or `legacyLog`'s with each entry missing an `at` given `at`. */
+function writableLog(kind, fm, change, at) {
+  return storedLog(fm) ?? legacyLog(kind, fm, change).map((e) => ({ at, ...e }));
+}
+
 /**
  * Store `log` as `fm`'s `transitions:` and remove `status:`, in place:
  * `transitions:` takes `status:`'s place, and a unit with neither gets it
@@ -241,8 +255,7 @@ export function setLog(fm, log) {
  * @returns {object | null}  the entry, or null when nothing was recorded
  */
 export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at = nowAt(), change = null }) {
-  const stored = storedLog(fm);
-  const log = stored ?? legacyLog(kind, fm, change).map((e) => ({ at, ...e }));
+  const log = writableLog(kind, fm, change, at);
   const current = log.at(-1)?.to ?? null;
   const row = flow.verbOf(kind, by);
   if (row?.during != null && row.during === to && current === to) return null;
@@ -260,6 +273,60 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
 }
 
 /**
+ * Write the log `legacyLog` reads for a unit with none (D4), each entry
+ * missing an `at` at now, under the unit's spec lock: what its first
+ * `applyTransition` would write before its entry. `bl run`, `bl review` and
+ * `bl merge`'s integration call it as they start, so each hop they record
+ * reads the stored log, whatever they write to the change document's review
+ * fields meanwhile. Returns whether it wrote.
+ * @param {string} backlogRoot
+ * @param {{ kind: "story" | "feature", indexPath: string, change?: { fm: object } | null }} unit
+ * @returns {boolean}
+ */
+export function ensureLog(backlogRoot, unit) {
+  return updateSpecFile(backlogRoot, unit.indexPath, (fm) => {
+    if (storedLog(fm)) return false;
+    const log = writableLog(unit.kind, fm, unit.change ?? null, nowAt());
+    if (log.length === 0) return false;
+    setLog(fm, log);
+  });
+}
+
+/**
+ * A new unit's first entry (`bl new`, a new task, F-69 D3): the type's
+ * initial status, `by: new`, on the frontmatter `fm` that is about to be
+ * written. It also sets `added`.
+ * @param {import("./flow.js").Flow} flow
+ * @param {"story" | "feature" | "task"} kind
+ * @param {object} fm
+ * @param {string} [at]
+ * @returns {object}  the entry
+ */
+export function applyNew(flow, kind, fm, at = nowAt()) {
+  return applyTransition(flow, kind, fm, flow.initial(kind), { by: 'new', at });
+}
+
+/**
+ * Record a merge on `fm` (F-69 D3): `done` by `merge`, `via: merge`, when
+ * the type's `merge` row starts from the unit's status; else by the `done`
+ * verb with `note` (a story of a merged feature that was never started).
+ * Nothing when the unit is closed already. Returns the entry, or null.
+ * @param {import("./flow.js").Flow} flow
+ * @param {"story" | "feature"} kind
+ * @param {object} fm
+ * @param {{ at?: string, change?: { fm: object } | null, note: string }} opts
+ * @returns {object | null}
+ */
+export function applyMerged(flow, kind, fm, { at = nowAt(), change = null, note }) {
+  const status = statusOf(kind, fm, change);
+  if (flow.meets(kind, status, 'done')) return null;
+  const merge = flow.verbOf(kind, 'merge');
+  const byMerge = merge != null && flow.fromOf(kind, merge).includes(status);
+  const opts = byMerge || !flow.verbOf(kind, 'done') ? { by: 'merge', via: 'merge' } : { by: 'done', note };
+  return applyTransition(flow, kind, fm, 'done', { ...opts, at, change });
+}
+
+/**
  * `applyTransition` on the unit's file, under its spec lock
  * (`updateSpecFile`). `unit` is a graph unit or a record with `kind` and
  * `file` or `indexPath`; its change document is read for a unit with no log.
@@ -272,14 +339,39 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
  * @returns {object | null}
  */
 export function transition(backlogRoot, unit, to, opts) {
+  return writeEntry(backlogRoot, unit, to, opts, false);
+}
+
+/** `transition`; with `skipAt`, nothing is written when the unit is at `to` already. */
+function writeEntry(backlogRoot, unit, to, opts, skipAt) {
   const flow = loadFlow(backlogRoot);
   const change = typeof unit.change === 'function' ? (unit.change()?.change ?? null) : (unit.change ?? null);
   let entry = null;
   updateSpecFile(backlogRoot, unit.file ?? unit.indexPath, (fm) => {
+    if (skipAt && statusOf(unit.kind, fm, change) === to) return false;
     entry = applyTransition(flow, unit.kind, fm, to, { change, ...opts });
     return entry ? undefined : false;
   });
   return entry;
+}
+
+/**
+ * Record that `verb` starts on `unit` (F-69 D3): the verb's `during`, or,
+ * for a hand transition (a verb with no `via`, such as `implement`), its
+ * first `success` branch. Nothing when the verb has neither, or the unit is
+ * at that status already. `bl run` records `in_progress` by `run`; the
+ * implement step and `bl implement` record `in_progress` by `implement`
+ * before the session starts. Returns the entry, or null.
+ * @param {string} backlogRoot
+ * @param {{ kind: "story" | "feature", file?: string, indexPath?: string, change?: any }} unit
+ * @param {string} verb
+ * @param {{ via?: string, outcome?: string, note?: string }} [opts]
+ * @returns {object | null}
+ */
+export function enterVerb(backlogRoot, unit, verb, opts = {}) {
+  const row = loadFlow(backlogRoot).verbOf(unit.kind, verb);
+  const to = row?.during ?? (row && row.via.length === 0 ? (row.success[0]?.to ?? null) : null);
+  return to ? writeEntry(backlogRoot, unit, to, { ...opts, by: verb }, true) : null;
 }
 
 /**
@@ -291,7 +383,8 @@ export function transition(backlogRoot, unit, to, opts) {
  * @param {import("./flow.js").Flow} flow
  * @param {{ id: string, kind: "story" | "feature" | "task", status: string }} unit
  * @param {string} verb
- * @param {import("./guards.js").GuardContext} ctx
+ * @param {import("./guards.js").GuardContext | null} ctx  null: the caller
+ *   checks the `when` guards itself (`bl merge`'s `mergeGates`)
  * @returns {string | null}
  */
 export function assertFrom(flow, unit, verb, ctx) {
@@ -302,14 +395,76 @@ export function assertFrom(flow, unit, verb, ctx) {
   if (!from.includes(status)) {
     const edges = flow.edges(kind).filter((e) => e.from === status && e.to !== status);
     const reach = from.map((s) => edges.find((e) => e.to === s)).find(Boolean);
-    const hint = reach ? ` (bl ${reach.by} ${id} reaches ${reach.to})` : '';
+    const hint = reach ? ` (bl ${commandOf(reach.by)} ${id} reaches ${reach.to})` : '';
     return `${id} is ${status || '(no status)'}; ${verb} starts from ${statusWords(from)}${hint}`;
   }
-  for (const when of row.when) {
-    const [name, arg] = when.split(':');
-    if (!GUARDS.get(name)(ctx, arg)) return `${id}: ${verb} needs ${when}, and it does not hold`;
+  for (const when of ctx ? row.when : []) {
+    if (!guardsHold([when], ctx)) return `${id}: ${verb} needs ${when}, and it does not hold`;
   }
   return null;
+}
+
+/**
+ * The status of a unit record (a feature record, a story unit) with its
+ * review position: `statusOf` over its frontmatter and its current change
+ * document, which matters for a unit with no log (D4).
+ * @param {"story" | "feature"} kind
+ * @param {{ fm: object, change?: { fm: object } | null }} unit
+ * @returns {string}
+ */
+export function positionOf(kind, unit) {
+  return statusOf(kind, unit.fm, unit.change ?? null);
+}
+
+/**
+ * Which of `verbs` a command starts on a unit record at `positionOf`, by
+ * `flow.json`'s table (F-69 D3): the first verb whose `from` holds the
+ * status, checked with `assertFrom` (its `when` guards too). When none
+ * does, `refusal` is the first verb's. Every hand-written start-state check
+ * of a verb handler became this. `bl run` passes its `then` chain
+ * (`Flow.chainOf`), so it resumes a unit in review or fixing.
+ * @param {{ backlogRoot: string }} config
+ * @param {"story" | "feature"} kind
+ * @param {{ id: string, indexPath: string, fm: object, change?: { fm: object } | null }} unit
+ * @param {string | string[]} verbs
+ * @param {{ guards?: boolean }} [opts]  `guards: false`: the caller checks the
+ *   `when` guards itself, with its own messages (`bl merge`'s `mergeGates`)
+ * @returns {{ verb: string | null, status: string, refusal: string | null }}
+ */
+export function startOf(config, kind, unit, verbs, { guards = true } = {}) {
+  const flow = loadFlow(config.backlogRoot);
+  const list = [verbs].flat();
+  const status = positionOf(kind, unit);
+  const fits = (v) => {
+    const row = flow.verbOf(kind, v);
+    return row != null && flow.fromOf(kind, row).includes(status);
+  };
+  const verb = list.find(fits) ?? null;
+  const ctx = guards ? { config, id: unit.id, indexPath: unit.indexPath } : null;
+  const refusal = assertFrom(flow, { id: unit.id, kind, status }, verb ?? list[0], ctx);
+  return { verb: refusal ? null : verb, status, refusal };
+}
+
+/** Whether every guard of a `when` list holds (`name` or `name:argument`, `guards.js`). */
+function guardsHold(when, ctx) {
+  return when.every((w) => {
+    const [name, arg] = w.split(':');
+    return GUARDS.get(name)(ctx, arg);
+  });
+}
+
+/**
+ * The branch a verb's `outcome` takes (F-69 D1): the first of the row's
+ * `success` or `failure` branches whose guards hold, or null.
+ * @param {import("./flow.js").Flow} flow
+ * @param {"story" | "feature" | "task"} kind
+ * @param {string} verb
+ * @param {"success" | "failure"} outcome
+ * @param {import("./guards.js").GuardContext} ctx
+ * @returns {import("./flow.js").Branch | null}
+ */
+export function branchOf(flow, kind, verb, outcome, ctx) {
+  return flow.verbOf(kind, verb)?.[outcome].find((b) => guardsHold(b.when, ctx)) ?? null;
 }
 
 /**

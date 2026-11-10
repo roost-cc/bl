@@ -10,8 +10,8 @@ Backlog repo : {{backlogDir}}
 
 ## Two-repo model (read this first)
 
-- The **feature file** and the **story files** live in the backlog repo. You write status
-  updates, acceptance-criteria checkoffs and **## Deferred** additions there. Commit them on the
+- The **feature file** and the **story files** live in the backlog repo. You write
+  acceptance-criteria checkoffs and **## Deferred** additions there. Commit them on the
   backlog's main branch with `bl sync --commit`. Never use a raw `git add` / `git commit` in the
   backlog repo, because other sessions share its index. These edits never go on your code branch.
 - **Code changes** go in each repo's worktree, `{{unitDir}}/<repo>`. Commit them there to
@@ -42,7 +42,8 @@ Backlog repo : {{backlogDir}}
    the contract every story implements. Then read each story file listed above.
 
 2. Work the stories in the order given. For each story:
-   a. Set `status: in_progress` in its frontmatter.
+   a. Do not set its status: `bl implement` recorded `in_progress` on it before this session
+      started.
    b. Implement its plan. When the story fixes a bug, first write a test that fails because of the
       bug, then make it pass. Commit as you go with Conventional Commits. End the subject in
       ` ({{featureId}} S-<n>)` and wrap the body at 100 columns.

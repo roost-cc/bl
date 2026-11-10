@@ -3,7 +3,7 @@ feature_id:
 title:
 theme:
 epic:
-status: draft
+transitions:
 review_rounds_max:
 added:
 ---

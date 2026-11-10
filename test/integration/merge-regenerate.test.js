@@ -26,6 +26,7 @@ import { featureUnit } from '../../src/unit.js';
 import { mergePrep } from '../../src/merge-integrate.js';
 import { integrateUnit, defaultRunner } from '../../src/feature-run.js';
 import { regenerateConflicts } from '../../src/regenerate.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const ENV = {
   GIT_AUTHOR_NAME: 't',
@@ -318,7 +319,7 @@ test('bl merge F-n lands a lock-only conflict regenerated in the worktree', () =
     assert.match(r.stderr + r.stdout, /code: regenerated \.locks\/app\.lock and committed the merge with origin\/main/);
     assert.equal(readFileSync(join(fx.repo, LOCK), 'utf8'), 'b\nbase\nm\n');
     assert.equal(g(fx.repo, 'status', '--porcelain'), '');
-    assert.equal(featureFm(fx).status, 'done');
+    assert.equal(logStatusOf('feature', featureFm(fx)), 'done');
   } finally {
     fx.cleanup();
   }

@@ -33,6 +33,7 @@ import { updateSpecFile } from './spec-file.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
+import { statusOf } from './transition.js';
 
 export const MOVE_JSON_SCHEMA = 'bl-move-json/v1';
 
@@ -111,8 +112,9 @@ export function parseMoveIds(positional) {
  */
 export function moveRefusal({ id, fm, fromRepo, to, toRepo, features, flow }) {
   // An unstarted story has no branch yet, so it can move.
-  if (!flow.isUnstarted('story', fm.status)) {
-    return `${id} is ${fm.status ?? '(no status)'}; only a ${statusWords(flow.unstartedStatusesOf('story'))} story moves to another component.`;
+  const status = statusOf('story', fm);
+  if (!flow.isUnstarted('story', status)) {
+    return `${id} is ${status || '(no status)'}; only a ${statusWords(flow.unstartedStatusesOf('story'))} story moves to another component.`;
   }
   const feature = features.find((f) => isFeatureBranched(flow, f.status));
   if (feature && fromRepo !== toRepo) {

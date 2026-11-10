@@ -491,6 +491,25 @@ export class Flow {
   }
 
   /**
+   * `verb` and the verbs its branches' `then` reach, transitively, each once,
+   * in the order they are first reached: `run`'s chain is `run`, `review`,
+   * `fix`.
+   * @param {string} type
+   * @param {string} verb
+   * @returns {string[]}
+   */
+  chainOf(type, verb) {
+    const out = [verb];
+    for (let i = 0; i < out.length; i++) {
+      const row = this.verbOf(type, out[i]);
+      for (const b of row ? [...row.success, ...row.failure] : []) {
+        if (b.then && !out.includes(b.then)) out.push(b.then);
+      }
+    }
+    return out;
+  }
+
+  /**
    * Every transition the type's table defines, once each: from each `from`
    * to the verb's `during` (none when they are equal: that records nothing),
    * and to each branch's `to`, from the `during` status when the verb has one

@@ -22,6 +22,7 @@ import {
   scriptedRunner,
   stubRunner,
 } from '../helpers/merge-integrate-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 test('a branch already current with main is left alone and not gated', () => {
   const fx = fixture();
@@ -128,7 +129,7 @@ test('a red gate after a clean merge reaches the resolution agent; its failure e
     assert.match(esc, /- the agent did not resolve it: no agent in this test/);
     assert.match(esc, /The agent's outcome: could not resolve/);
     assert.match(esc, /rerun `bl merge F-1`/);
-    assert.equal(parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm.status, 'escalated');
+    assert.equal(logStatusOf('feature', parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm), 'escalated');
   } finally {
     fx.cleanup();
   }

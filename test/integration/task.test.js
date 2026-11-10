@@ -17,6 +17,7 @@ import { rendered } from '../helpers/rendered.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { writeBlockers } from '../../src/blockers.js';
 import { createTask, markTaskDone } from '../../src/task.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const bl = (args, cwd, opts = {}) => runBl(args, { cwd, env: GIT_ENV, ...opts });
 
@@ -53,14 +54,17 @@ test('bl task files a task on a feature and commits the task file alone; the ren
   assert.deepEqual(tasksIn(dir), ['T1-run-the-migration.md']);
   const { fm, body } = parseFrontmatter(read(dir, 'tasks/T1-run-the-migration.md'));
   const added = new Date().toISOString().slice(0, 10);
+  // The log's first entry, `draft` by `new`, and no status: (F-69 D3).
+  const [entry] = fm.transitions;
   assert.deepEqual(fm, {
     task_id: 'T-1',
     title: 'Run the migration',
     unit: 'F-1',
     owner: 'operator',
-    status: 'draft',
+    transitions: [{ at: entry.at, to: 'draft', by: 'new' }],
     added,
   });
+  assert.equal(entry.at.slice(0, 10), added);
   assert.equal(body, '\n# T-1 · Run the migration\n\nRun the migration:\n\n```bash\nnode scripts/migrate.js\n```\n');
 
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: task T-1 (F-1)');
@@ -80,7 +84,8 @@ test('bl task files a task on a feature and commits the task file alone; the ren
   assert.equal(done.status, 0, done.stderr);
   assert.equal(done.stdout, 'done: T-1\n');
   const closed = parseFrontmatter(read(dir, 'tasks/T1-run-the-migration.md')).fm;
-  assert.equal(closed.status, 'done');
+  assert.equal(logStatusOf('task', closed), 'done');
+  assert.deepEqual([closed.transitions.at(-1).to, closed.transitions.at(-1).by], ['done', 'done']);
   assert.equal(closed.done, added);
   assert.equal(closed.note, 'ran it');
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: task T-1 done: ran it');
@@ -487,7 +492,8 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
       err.unrecovered.map((u) => u.path),
       [taskPath],
     );
-    assert.match(err.unrecovered[0].text, /status: draft/, "the open task's text is kept for recovery");
+    assert.match(err.unrecovered[0].text, /to: draft/, "the open task's text is kept for recovery");
+    assert.doesNotMatch(err.unrecovered[0].text, /to: done/, "the open task's text is kept for recovery");
     assert.equal(read(dir, featureFile), before, 'the unit is untouched');
   }
 });

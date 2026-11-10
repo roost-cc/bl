@@ -14,6 +14,7 @@ import {
   dirtyBystanders,
   statusLines,
 } from '../helpers/git-backlog.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const FOUNDATION = { id: 'C00', title: 'Foundation', dirSuffix: 'foundation' };
 
@@ -46,7 +47,7 @@ test('bl done <story-id> sets status, commit and completed, and moves nothing', 
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     const fm = storyFm(dir, rel);
-    assert.equal(fm.status, 'done');
+    assert.equal(logStatusOf('story', fm), 'done');
     assert.equal(fm.commit, 'deadbeef');
     assert.match(fm.completed, /^\d{4}-\d{2}-\d{2}$/);
     assertNothingArchived(dir);
@@ -61,7 +62,7 @@ test('bl done --superseded marks story as superseded rather than done', () => {
   try {
     const r = runBl(['done', '--superseded', 'S-1', 'abcdef0'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(storyFm(dir, rel).status, 'superseded');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'superseded');
     assertNothingArchived(dir);
   } finally {
     cleanup();
@@ -120,7 +121,7 @@ test('bl done refuses while review_status: pending', () => {
     assert.match(r.stderr, /review_status: pending/);
     assert.match(r.stderr, /1 unchecked Must\/Should/);
     assert.match(r.stderr, /2026-05-11/);
-    assert.equal(storyFm(dir, rel).status, 'draft', 'the story is left as it was');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'draft', 'the story is left as it was');
   } finally {
     cleanup();
   }
@@ -157,7 +158,7 @@ test('bl done proceeds when addressed with only an open nit, as bl merge does', 
     writeReview(dir, rel, 'addressed', '2026-11-07', '- [x] fixed in abc1234', '- [ ] [safe] optional tidy-up');
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(storyFm(dir, rel).status, 'done');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'done');
   } finally {
     cleanup();
   }
@@ -169,7 +170,7 @@ test('bl done proceeds when review_status: addressed', () => {
     writeReview(dir, rel, 'addressed', '', null);
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(storyFm(dir, rel).status, 'done');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'done');
   } finally {
     cleanup();
   }
@@ -185,7 +186,7 @@ test('bl done --commit <repo>=<sha> records a map in frontmatter', () => {
     assert.equal(r.status, 0, r.stderr);
     const fm = storyFm(dir, rel);
     assert.deepEqual(fm.commit, { bl: 'abc1234', containers: 'def5678' });
-    assert.equal(fm.status, 'done');
+    assert.equal(logStatusOf('story', fm), 'done');
   } finally {
     cleanup();
   }
@@ -332,7 +333,7 @@ test("bl done commits the story's status change in place, nothing else", () => {
     assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: mark S-1 done');
     assert.deepEqual(headFiles(dir), [`M\t${S1}/index.md`]);
     const { fm } = parseFrontmatter(git(dir, 'show', `HEAD:${S1}/index.md`));
-    assert.equal(fm.status, 'done');
+    assert.equal(logStatusOf('story', fm), 'done');
     assert.equal(fm.commit, 'deadbeef');
     assertOnlyBystandersDirty(dir);
   } finally {
@@ -399,7 +400,7 @@ test('bl done exits 1 and names the paths when the commit fails, leaving the edi
     assert.match(r.stderr, /Commit these backlog paths by hand:/);
     assert.match(r.stderr, new RegExp(`${S1}/index\\.md`));
     assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
-    assert.equal(parseFrontmatter(readFileSync(join(dir, S1, 'index.md'), 'utf8')).fm.status, 'done');
+    assert.equal(logStatusOf('story', parseFrontmatter(readFileSync(join(dir, S1, 'index.md'), 'utf8')).fm), 'done');
     assert.ok(existsSync(join(dir, '.bl', 'run', 'commit-failed', 'done_S-1.json')), 'the failed commit is recorded');
   } finally {
     cleanup();
@@ -623,7 +624,7 @@ test('bl done: a failed write of the story leaves the previous spec and no stagi
 
     const again = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(again.status, 0, again.stderr);
-    assert.equal(storyFm(dir, rel).status, 'done');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'done');
   } finally {
     cleanup();
   }
@@ -645,7 +646,7 @@ test('bl done: a token write racing the reconciliation keeps the session differe
     for (let i = 0; i < 200 && !existsSync(out); i++) await new Promise((res) => setTimeout(res, 25));
     assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), { wrote: true });
     const fm = parseFrontmatter(readFileSync(path, 'utf8')).fm;
-    assert.equal(fm.status, 'done');
+    assert.equal(logStatusOf('story', fm), 'done');
     assert.equal(fm.commit, 'deadbeef');
     assert.equal(fm.tokens_by_step?.implement?.input, '5', 'the session difference is kept');
     assert.equal(fm.tokens_input, '20', 'the reconciled 15 plus the difference written after it');
@@ -665,7 +666,7 @@ test('bl done: a CRLF story keeps one frontmatter block and its line end', () =>
     const text = readFileSync(path, 'utf8');
     assert.equal(text.match(/^---\r$/gm).length, 2, 'one block');
     assert.doesNotMatch(text.replace(/\r\n/g, ''), /\n/, 'every line ends CRLF');
-    assert.equal(parseFrontmatter(text.replace(/\r\n/g, '\n')).fm.status, 'done');
+    assert.equal(logStatusOf('story', parseFrontmatter(text.replace(/\r\n/g, '\n')).fm), 'done');
   } finally {
     cleanup();
   }

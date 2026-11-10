@@ -34,6 +34,7 @@ import {
   F41_LIMIT,
   spendLimit,
 } from '../helpers/feature-run-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
 // An agent usage limit: wait it out and rerun the step (S-835)
@@ -219,7 +220,7 @@ test('a usage limit with no reset time escalates at once as agent unavailable', 
     assert.ok(!state.history.some((h) => h.step === 'waiting'));
     assert.ok(!state.history.some((h) => h.step === 'implement'), 'the refused spawn is not an implement attempt');
     const { fm, body } = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));
-    assert.equal(fm.status, 'escalated');
+    assert.equal(logStatusOf('feature', fm), 'escalated');
     const esc = extractSection(body, 'Escalation');
     assert.match(esc, /^\nagent unavailable: You've hit your monthly spend limit/);
     assert.match(

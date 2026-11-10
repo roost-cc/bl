@@ -40,6 +40,7 @@ import {
 import { fixTestsOutcome, reviewOutcome } from '../helpers/outcomes.js';
 import { validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 // --- how `bl review` ends (S-1348) ---
 
@@ -291,7 +292,23 @@ test('happy path: stories, gate, self-review, PR, review → fix → re-review �
     const stories = runner.calls.filter((c) => c.prompt === 'feature-story').map((c) => c.story);
     assert.deepEqual(stories, ['S-1', 'S-2'], 'dependency order');
     const fm = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm;
-    assert.equal(fm.status, 'running');
+    // The log the run recorded (F-69 D3): the fixture's `status: running` as
+    // a log, then each hop with its verb, capability and outcome.
+    assert.equal(fm.status, undefined, 'the log replaces status:');
+    assert.deepEqual(
+      fm.transitions.slice(2).map((e) => [e.to, e.by, e.via ?? null]),
+      [
+        ['in_review', 'run', 'open_pr'],
+        ['fixing', 'review', 'review'],
+        ['in_review', 'fix', 'fix_self_review'],
+        ['ready_for_merge', 'review', 'review'],
+      ],
+    );
+    assert.ok(
+      fm.transitions.slice(3).every((e) => e.outcome),
+      'each session hop carries its outcome',
+    );
+    assert.equal(logStatusOf('feature', fm), 'ready_for_merge');
     for (const k of ['branch', 'pr', 'review_round', 'review_status'])
       assert.equal(fm[k], undefined, `no ${k}: in index.md`);
     // The change document holds the PR, the review state and a line per gate run.
@@ -378,7 +395,7 @@ test('a test gate that fails twice escalates with the log and never opens a PR',
     assert.equal(runner.calls.filter((c) => c.prompt === 'feature-fix-tests').length, 1);
     assert.ok(!runner.calls.some((c) => c.type === 'forge'));
     const { fm, body } = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));
-    assert.equal(fm.status, 'escalated');
+    assert.equal(logStatusOf('feature', fm), 'escalated');
     assert.match(body, /## Escalation\n\ntest gate failed twice/);
     assert.match(body, /AssertionError: boom/);
     // Each attempt keeps its own log; the escalation names the second.
@@ -1408,7 +1425,7 @@ test('writeEscalation fills an Escalation heading with trailing whitespace', asy
       if (name.startsWith('CRLF')) assert.ok(!/[^\r]\n/.test(raw), `${name}: line ends stay CRLF`);
       const text = raw.replace(/\r\n/g, '\n');
       const { fm, body } = parseFrontmatter(text);
-      assert.equal(fm.status, 'escalated', name);
+      assert.equal(logStatusOf('feature', fm), 'escalated', name);
       assert.match(extractSection(body, 'Escalation'), /test gate failed twice/, `${name}: diagnosis written`);
       assert.equal((body.match(/^## Escalation/gm) || []).length, 1, `${name}: one Escalation section`);
       if (name === 'section followed by another') assert.match(body, /## Notes\n\nkeep me/);
@@ -1436,12 +1453,18 @@ test('a backlog commit that fails is recorded at the escalation and the pr: writ
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'escalated');
     const failed = state.history.filter((h) => h.ok === false && /backlog commit failed/.test(h.note ?? ''));
-    // The run's start, each gate line, the PR record, the review fields bl
-    // writes after the verifier and the fix, and the escalation.
+    // The run's start, each story's start, each gate line, the PR record and
+    // the hop to in_review, the review fields bl writes after the verifier and
+    // the fix, the hops to fixing and back to in_review, and the escalation.
     assert.deepEqual(failed.map((h) => h.step).sort(), [
       'escalate',
       'fix',
+      'fix-self-review',
+      'implement',
+      'implement',
       'pr',
+      'pr',
+      'review',
       'review:verify',
       'setup',
       'test',
@@ -1695,7 +1718,7 @@ test('an agent that writes ## Escalation while implementing stops the run before
     assert.equal(state.status, 'escalated');
     assert.match(state.lastError, /escalated while implementing S-2/);
     assert.ok(!runner.calls.some((c) => c.prompt === 'feature-self-review'));
-    assert.equal(parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm.status, 'escalated');
+    assert.equal(logStatusOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm), 'escalated');
   } finally {
     cleanup();
   }

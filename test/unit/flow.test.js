@@ -89,11 +89,18 @@ test('the template is bl-flow/v2: the ten words in lifecycle order, terminal las
   ]);
 });
 
+test('Flow.chainOf follows then: run chains review, and review chains fix', () => {
+  const flow = loadFlow(TEMPLATE_DIR);
+  assert.deepEqual(flow.chainOf('feature', 'run'), ['run', 'review', 'fix']);
+  assert.deepEqual(flow.chainOf('story', 'fix'), ['fix', 'review']);
+  assert.deepEqual(flow.chainOf('feature', 'approve'), ['approve']);
+});
+
 test('loadFlow reads a v2 verb row with its optional keys filled', () => {
   const flow = loadFlow(TEMPLATE_DIR);
   assert.equal(flow.legacy, false);
   assert.deepEqual(flow.verbOf('feature', 'review'), {
-    from: ['in_review'],
+    from: ['in_progress', 'in_review', 'ready_for_merge'],
     when: [],
     during: 'in_review',
     via: ['review'],
@@ -481,11 +488,11 @@ test('flow-json: a then that is not a verb of the type, or one that does not sta
     findingsAfter((raw) => {
       const { run, fix } = raw.types.feature.verbs;
       run.success[0].then = 'publish';
-      fix.success[0].then = 'merge';
+      fix.success[0].then = 'approve';
     }),
     [
       'error: feature verb "run" chains on success to "publish", which is not a feature verb',
-      'error: feature verb "fix" chains on success to "merge", which does not start from "in_review"',
+      'error: feature verb "fix" chains on success to "approve", which does not start from "in_review"',
     ],
   );
 });

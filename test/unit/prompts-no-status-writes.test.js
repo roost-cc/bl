@@ -1,8 +1,10 @@
 /**
  * No prompt asks an agent to write a field that bl decides on (F-68 D3): the
  * refine outcome sets `status: refined` and `status: draft`, and the review
- * loop's outcomes set `review_status` and `review_round`. A prompt that names
- * one of them as `field: value` or `field:` is an instruction to write it.
+ * loop's outcomes set `review_status` and `review_round`. Since F-69 D3 bl,
+ * not the agent, records `in_progress` before an implement session too. A
+ * prompt that names one of them as `field: value` or `field:` is an
+ * instruction to write it.
  *
  * Nor does a prompt ask for a verdict line (F-68 D4): the implement,
  * fix-tests and merge-resolve sessions return outcome objects, so `DONE S-n`,
@@ -20,6 +22,7 @@ const PROMPTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'promp
 const FORBIDDEN = [
   /status: refined/,
   /status: draft/,
+  /status: in_progress/,
   /review_status:/,
   /review_round:/,
   /\bUNRELATED\b/,
@@ -46,7 +49,8 @@ test('no prompt instructs an agent to write a field bl writes or to end with a v
 
 test('the guard catches a refine status instruction', () => {
   assert.ok(FORBIDDEN.some((re) => re.test('9. When you are finished, set `status: refined` in the frontmatter.')));
-  assert.ok(!FORBIDDEN.some((re) => re.test('2. Set `status: in_progress` in the story frontmatter.')));
+  assert.ok(FORBIDDEN.some((re) => re.test('2. Set `status: in_progress` in the story frontmatter.')));
+  assert.ok(!FORBIDDEN.some((re) => re.test("2. Do not set the story's status.")));
 });
 
 test('the guard catches a review field instruction', () => {

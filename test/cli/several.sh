@@ -14,7 +14,7 @@ BL="$REPO_ROOT/bin/bl"
 source "$REPO_ROOT/test/helpers/tempdir.sh"
 
 # S-1 and S-3 plan the same file; S-2 depends on S-1; S-4 is independent;
-# S-6 waits on S-9 (backlog); S-8 depends on S-10, whose review is pending;
+# S-6 waits on S-9 (backlog); S-8 depends on S-10, in progress with a review pending;
 # S-11 is in feature F-1; S-12 and S-13 are for bl done. S-8 and S-10 are in
 # C01, whose repo is registered, so bl merge reaches its gates.
 DIR=$(node --input-type=module -e "
@@ -31,11 +31,11 @@ const { dir } = mkTempBacklog({
     story('S-1', { body: plan('src/a.js') }),
     story('S-2', { depends_on: 'S-1', body: plan('src/b.js') }),
     story('S-3', { body: plan('src/a.js') }),
-    story('S-4', { body: plan('src/d.js') }),
+    story('S-4', { status: 'in_progress', body: plan('src/d.js') }),
     story('S-6', { depends_on: 'S-9' }),
     story('S-8', { depends_on: 'S-10', component: 'C01' }),
     story('S-9', { status: 'backlog' }),
-    story('S-10', { component: 'C01' }),
+    story('S-10', { status: 'in_progress', component: 'C01' }),
     story('S-11', { feature: 'F-1' }),
     story('S-12', { status: 'in_progress' }),
     story('S-13', { status: 'in_progress' }),
@@ -128,7 +128,7 @@ assert_contains "refine with a feature needs tmux" "several targets with a featu
 blrun merge S-8 S-10
 assert_exit "merge S-8 S-10" 1 "$RC"
 assert_contains "merge goes in dependency order" "Merging in dependency order: S-10, S-8" "$ERR"
-assert_contains "S-10 is gated" "S-10 has unresolved review state" "$ERR"
+assert_contains "S-10 is gated" "S-10 is fixing; merge starts from in_progress, in_review or ready_for_merge" "$ERR"
 assert_contains "merge stops at the first failure" "bl merge: S-10 failed; stopped. Not merged: S-8." "$ERR"
 if [[ "$ERR" == *"== bl merge S-8 =="* ]]; then fail "S-8 is not attempted"; else pass; fi
 
@@ -146,7 +146,7 @@ git -C "$DIR" add -A
 git -C "$DIR" commit -q -m init
 blrun done --superseded S-12 S-13
 assert_exit "done --superseded S-12 S-13" 0 "$RC"
-assert_contains "S-12 superseded" "status: superseded" "$(<"$DIR"/stories/S12-s-12/index.md)"
-assert_contains "S-13 superseded" "status: superseded" "$(<"$DIR"/stories/S13-s-13/index.md)"
+assert_contains "S-12 superseded" "to: superseded" "$(<"$DIR"/stories/S12-s-12/index.md)"
+assert_contains "S-13 superseded" "to: superseded" "$(<"$DIR"/stories/S13-s-13/index.md)"
 
 summary_and_exit

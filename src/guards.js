@@ -8,8 +8,8 @@
  *
  *   ctx = { config, id, indexPath, round, maxRounds }
  *
- * `round` and `maxRounds` matter only to `round_within_cap`. In F-69 nothing
- * calls a guard through the table yet; feature 3's executor will.
+ * `round` and `maxRounds` matter only to `round_within_cap`. `assertFrom`
+ * checks a verb's `when`, and `branchOf` a branch's (`transition.js`).
  */
 
 import { heldAt } from './blockers.js';

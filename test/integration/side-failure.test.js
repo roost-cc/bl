@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { findExistingWorktree } from '../../src/story.js';
 import { git, statusLines } from '../helpers/git-backlog.js';
 import { build, fmOf, sideWithFaults, storyDirs } from '../helpers/side-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const BL_JS = fileURLToPath(new URL('../../src/bl.js', import.meta.url));
 
@@ -58,7 +59,7 @@ test('side_failure_and_concurrent_sync_preserve_unit_consistency: a failure at a
       if (kept) {
         assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: add S-4 (bl side, found by S-3)', label);
         const fm = fmOf(join(dir, 'stories', s4, 'index.md'));
-        assert.deepEqual([fm.status, fm.found_by], ['in_progress', 'S-3'], label);
+        assert.deepEqual([logStatusOf('story', fm), fm.found_by], ['in_progress', 'S-3'], label);
         const change = fmOf(join(dir, 'stories', s4, 'change.md'));
         assert.deepEqual(
           change.repos.map((e) => [e.repo, e.branch]),
