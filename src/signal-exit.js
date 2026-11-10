@@ -11,7 +11,7 @@
  *
  * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
  * `raiseSignal` raises one of them again after a synchronous child ended on
- * it (`sleep-sync.js`, and `checkedMerge` in `cleanup.js`).
+ * it (`checkedMerge` in `cleanup.js`).
  */
 
 let registered = false;

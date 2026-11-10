@@ -820,12 +820,12 @@ test('gateLine writes the one ## Gate shape, with the detail and the commit only
   );
 });
 
-test('addGateLine returns null, and writes nothing, for a unit with no change document', () => {
+test('addGateLine returns null, and writes nothing, for a unit with no change document', async () => {
   const root = mkTempDir('bl-gate-lines-');
   const empty = join(root, 'S1-empty');
   mkdirSync(empty);
   for (const unitDir of [empty, join(root, 'missing'), null]) {
-    assert.equal(addGateLine(root, unitDir, '- line', 'chore: x'), null, String(unitDir));
+    assert.equal(await addGateLine(root, unitDir, '- line', 'chore: x'), null, String(unitDir));
   }
   assert.deepEqual(listChanges(empty), []);
 });

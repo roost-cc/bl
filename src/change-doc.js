@@ -395,14 +395,14 @@ export function gateLine({ date, repo, command, verdict, detail = '', commit = '
  * @param {string | null} unitDir
  * @param {string} line
  * @param {string} message
- * @returns {{ path: string, signal: string | null } | null}
+ * @returns {Promise<{ path: string, signal: string | null } | null>}
  */
-export function addGateLine(backlogRoot, unitDir, line, message) {
+export async function addGateLine(backlogRoot, unitDir, line, message) {
   const cur = currentChange(unitDir);
   if (!cur?.doc) return null;
   cur.doc.body = appendSection(cur.doc.body, 'Gate', line);
   writeChange(backlogRoot, cur.path, cur.doc);
-  const signal = commitChangeDoc(backlogRoot, cur.path, message);
+  const signal = await commitChangeDoc(backlogRoot, cur.path, message);
   return { path: cur.path, signal };
 }
 

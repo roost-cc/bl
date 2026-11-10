@@ -667,7 +667,7 @@ export async function cleanupOneRepo({
     });
     if (parseInt(unmergedCommits, 10) > 0 && checkPlugins.length > 0) {
       info(`Branch '${branchName}' has ${unmergedCommits} unmerged commit(s). Merging and checking...`);
-      if (!checkedMerge({ parsed, repoName, repoPath, branchName, plugins: checkPlugins, config, changeDir })) {
+      if (!(await checkedMerge({ parsed, repoName, repoPath, branchName, plugins: checkPlugins, config, changeDir }))) {
         return { ok: false };
       }
       pushed = true;
@@ -785,9 +785,10 @@ const CHECK_RUNS = 2;
  * signal says. A child ended by any other signal has failed.
  *
  * The throwaway worktree is removed whatever happens. Prints why it stopped;
- * returns whether the commit is pushed and the main checkout is on it.
+ * returns (as a promise) whether the commit is pushed and the main checkout
+ * is on it.
  */
-export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, config, changeDir }) {
+export async function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, config, changeDir }) {
   // The first signal that ended a child; checked before every step that acts on a result.
   let signal = null;
   const git = (args, cwd) => {
@@ -803,7 +804,8 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
   const wt = join(tmp, basename(repoPath));
   // Removes the throwaway worktree, once. It also runs on `exit`, because a
   // listener can end bl inside a call: a Ctrl+C during the lock wait of the
-  // gate line's backlog commit (`sleepSync` raises it, `lock.js` exits 130).
+  // gate line's backlog commit (`awaitLock` waits, and the SIGINT handler in
+  // `signal-exit.js` exits 130).
   let removed = false;
   const removeThrowaway = () => {
     if (removed) return;
@@ -900,7 +902,7 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
         commit,
       });
       try {
-        const written = addGateLine(
+        const written = await addGateLine(
           config.backlogRoot,
           changeDir,
           line,
