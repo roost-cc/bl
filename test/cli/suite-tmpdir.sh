@@ -73,4 +73,36 @@ for sig in TERM INT HUP; do
   assert_eq "SIG$sig to the pid: temp directory removed" "" "$(ls -A "$CASE")"
 done
 
+# A signal to the wrapper's pid while it starts the child: before it records
+# the child's pid, or before the child has run exec. The case waits until
+# CLAUDE_CONFIG_DIR exists (the wrapper's last step before the child), then
+# sends SIGTERM after a delay that grows each round. The wrapper must stop
+# the child at once: it ends within 5 s, and no child of a case survives.
+marker="suite-tmpdir-early-$$"
+orphans=0
+slow=0
+for i in $(seq 100); do
+  CASE="$DIR/early-$i"
+  mkdir -p "$CASE"
+  # exec -a names the sleep "$marker-$i", so its command line is "$marker-$i 30".
+  env TMPDIR="$CASE" bash "$WRAPPER" bash -c 'exec -a "$1" sleep 30' _ "$marker-$i" 2>/dev/null &
+  pid=$!
+  until compgen -G "$CASE/bl-test-*/*" >/dev/null || ! kill -0 "$pid" 2>/dev/null; do :; done
+  for ((j = 0; j < (i % 20) * 20; j++)); do :; done
+  kill -s TERM "$pid" 2>/dev/null || true
+  start=$SECONDS
+  while kill -0 "$pid" 2>/dev/null && ((SECONDS - start < 5)); do sleep 0.01; done
+  if kill -0 "$pid" 2>/dev/null; then
+    slow=$((slow + 1))
+    pkill -f "$marker-$i 30" || true
+  fi
+  wait "$pid" 2>/dev/null || true
+  if pgrep -f "$marker-$i 30" >/dev/null; then
+    orphans=$((orphans + 1))
+    pkill -f "$marker-$i 30" || true
+  fi
+done
+assert_eq "early SIGTERM: the wrapper ends within 5 s" "0" "$slow"
+assert_eq "early SIGTERM: no child survives the wrapper" "0" "$orphans"
+
 summary_and_exit

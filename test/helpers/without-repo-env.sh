@@ -29,13 +29,26 @@ unset TMUX TMUX_PANE BL_TMUX_WINDOW_ID BL_TAB_TITLE
 TMPDIR=$(mktemp -d -t bl-test-XXXXXX) || exit 1
 export TMPDIR
 child=
+pending=()
 trap 'rm -rf -- "$TMPDIR"' EXIT
 # stop SIG STATUS: send SIG to the child, wait for it, and exit with STATUS.
+# Before `child` is set, only record the signal: the child may already run,
+# and the line after `child=$!` stops it.
 stop() {
-  if [[ -n "$child" ]]; then
-    kill -s "$1" "$child" 2>/dev/null
-    wait "$child"
+  if [[ -z "$child" ]]; then
+    pending=("$1" "$2")
+    return
   fi
+  # Until the child runs exec, it is a copy of this shell: it still has these
+  # traps (or ignores SIGINT), and it can lose the signal. While its command
+  # line is still the wrapper's own (Linux /proc), wait for the exec, and give
+  # env time to restore SIGINT, before the signal goes out.
+  if cmp -s "/proc/$$/cmdline" "/proc/$child/cmdline"; then
+    while cmp -s "/proc/$$/cmdline" "/proc/$child/cmdline"; do sleep 0.01; done
+    sleep 0.01
+  fi
+  kill -s "$1" "$child" 2>/dev/null
+  wait "$child"
   exit "$2"
 }
 trap 'stop INT 130' INT
@@ -45,4 +58,5 @@ CLAUDE_CONFIG_DIR=$(mktemp -d) || exit 1
 export CLAUDE_CONFIG_DIR
 env --default-signal=INT "$@" <&0 &
 child=$!
+if ((${#pending[@]})); then stop "${pending[@]}"; fi
 wait "$child"
