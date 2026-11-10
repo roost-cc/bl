@@ -79,7 +79,7 @@ import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
   codeSpan,
-  fenced as fencedText,
+  fenced,
   isScripted,
   recordScriptedRun,
   reviewSkipped,
@@ -1684,8 +1684,8 @@ function escalateNoOutcome(ctx, step, r) {
     `Fault: ${outcomeFault(r)}`,
     '',
     tail ? 'The last 20 lines of the session text:' : 'The session left no text.',
-    ...(tail ? ['', fencedText(tail)] : []),
-    ...(r.stderrTail ? ['', "The last 20 non-empty lines of the CLI's stderr:", '', fencedText(r.stderrTail)] : []),
+    ...(tail ? ['', fenced(tail)] : []),
+    ...(r.stderrTail ? ['', "The last 20 non-empty lines of the CLI's stderr:", '', fenced(r.stderrTail)] : []),
     '',
     `Find why the agent did not return the outcome, then run \`${resume}\`.`,
   ].join('\n');
@@ -2209,14 +2209,6 @@ function gateFailure(ctx, { command, logPath, log, output, excerpt, repo, worktr
     worktreePath,
     perRepo,
   };
-}
-
-/** A fence longer than any backtick run in `text`, so the text cannot close it. */
-function fenced(text) {
-  const s = String(text ?? '');
-  const longest = Math.max(2, ...(s.match(/`+/g) ?? []).map((m) => m.length));
-  const f = '`'.repeat(longest + 1);
-  return `${f}\n${s}\n${f}`;
 }
 
 /**
