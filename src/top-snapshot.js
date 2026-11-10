@@ -52,6 +52,23 @@ const RUN_STATE_RE = /^([FS]-\d+)\.json$/;
 
 const iso = (ms) => new Date(ms).toISOString();
 
+// The view decodes each field as one Go type (`top/internal/stream/snapshot.go`), and one field
+// of another type ends its stream. A run state can be edited by hand, so each of its fields that
+// the snapshot copies passes through one of these: the value when it has the type, else null.
+const str = (v) => (typeof v === 'string' ? v : null);
+const int = (v) => (Number.isSafeInteger(v) ? v : null);
+const bool = (v) => (typeof v === 'boolean' ? v : null);
+/** The ms of an ISO time string, else NaN. */
+const ms = (v) => (typeof v === 'string' ? Date.parse(v) : NaN);
+/** Token counts by kind, each a whole number (0 when it is not a number), or null. */
+const usageOf = (u) =>
+  u && typeof u === 'object'
+    ? Object.fromEntries(TOKEN_KEYS.map((k) => [k, int(Math.round(Number(u[k]))) ?? 0]))
+    : null;
+/** A pull request `{ number, url }` with string fields, or null. */
+const prOf = (pr) =>
+  pr && typeof pr === 'object' ? { number: pr.number == null ? null : String(pr.number), url: str(pr.url) } : null;
+
 /**
  * One read of a section at `now`: the reader's value with `read_at`, or,
  * when it throws, the last good value `prev` (none: `read_at: null`) with
@@ -83,21 +100,21 @@ function runRow(config, state, now) {
   const session = state.history.findLast((h) => h.agent) ?? {};
   return {
     id: state.feature,
-    status: state.status === 'running' && pid == null ? 'stale' : state.status,
-    pid,
-    step: state.step ?? null,
-    round: state.round ?? null,
-    maxRounds: state.maxRounds ?? null,
-    story: state.story ?? null,
-    startedAt: state.startedAt ?? null,
-    updatedAt: state.updatedAt ?? null,
-    pr: state.pr ?? null,
-    usage: state.usage ?? null,
-    branch: state.branch ?? null,
-    worktreePath: state.worktreePath ?? null,
-    agent: session.agent ?? null,
-    model: session.model ?? null,
-    effort: session.effort ?? null,
+    status: state.status === 'running' && pid == null ? 'stale' : str(state.status),
+    pid: int(pid),
+    step: str(state.step),
+    round: int(state.round),
+    maxRounds: int(state.maxRounds),
+    story: str(state.story),
+    startedAt: str(state.startedAt),
+    updatedAt: str(state.updatedAt),
+    pr: prOf(state.pr),
+    usage: usageOf(state.usage),
+    branch: str(state.branch),
+    worktreePath: str(state.worktreePath),
+    agent: str(session.agent),
+    model: str(session.model),
+    effort: str(session.effort),
     history: state.history,
   };
 }
@@ -183,7 +200,7 @@ export function readActivity(states) {
   for (const state of states) {
     for (const h of state.history) {
       // An entry with no time it can be sorted by is left out.
-      const at = typeof h.at === 'string' ? Date.parse(h.at) : NaN;
+      const at = ms(h.at);
       if (Number.isFinite(at)) events.push({ unit: state.feature, h, at });
     }
   }
@@ -191,18 +208,18 @@ export function readActivity(states) {
   return {
     events: events.slice(0, ACTIVITY_SHOWN).map(({ unit, h, at }) => {
       const note = String(h.note ?? '');
-      const duration = at - Date.parse(h.startedAt ?? '');
+      const duration = at - ms(h.startedAt);
       return {
         at: iso(at),
         unit,
-        step: h.step ?? null,
-        story: h.story ?? null,
-        round: h.round ?? null,
-        ok: h.ok ?? null,
+        step: str(h.step),
+        story: str(h.story),
+        round: int(h.round),
+        ok: bool(h.ok),
         durationMs: Number.isFinite(duration) ? duration : null,
-        agent: h.agent ?? null,
-        model: h.model ?? null,
-        effort: h.effort ?? null,
+        agent: str(h.agent),
+        model: str(h.model),
+        effort: str(h.effort),
         note: note.length > NOTE_CHARS ? `${note.slice(0, NOTE_CHARS - 1)}…` : note,
       };
     }),
@@ -226,13 +243,14 @@ export function readTokens(states, now) {
   const date = new Date(now).toDateString();
   for (const state of states) {
     for (const h of state.history) {
-      if (!h.usage) continue;
-      const at = Date.parse(h.at);
-      if (new Date(at).toDateString() === date) for (const k of TOKEN_KEYS) today[k] += Number(h.usage[k]) || 0;
-      const output = Number(h.usage.output) || 0;
+      const usage = usageOf(h.usage);
+      if (!usage) continue;
+      const at = ms(h.at);
+      if (new Date(at).toDateString() === date) for (const k of TOKEN_KEYS) today[k] += usage[k];
+      const output = usage.output;
       // An entry that ended before the window has nothing in it.
       if (!output || !(at >= from)) continue;
-      const start = Math.min(Date.parse(h.startedAt ?? '') || at, at);
+      const start = Math.min(ms(h.startedAt) || at, at);
       if (start === at) {
         const i = Math.floor((at - from) / MINUTE_MS);
         if (i < TOKEN_MINUTES) minutes[i] += output;

@@ -8,6 +8,7 @@ import { mkdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSy
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { loadConfig } from '../../src/config.js';
+import { TOKEN_KEYS } from '../../src/tokens.js';
 import {
   readActivity,
   readSection,
@@ -245,6 +246,107 @@ test('history: the last day is the UTC date of now, in any zone (box ¹ and ⁵ 
     if (tz === undefined) delete process.env.TZ;
     else process.env.TZ = tz;
   }
+});
+
+// The Go type of each field that the view decodes (`top/internal/stream/snapshot.go`): `Run`,
+// `Event`, `Tokens.Today`. JSON null decodes as Go's zero value for every one of them.
+const RFC3339 = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/;
+const GO_TYPES = {
+  string: (v) => typeof v === 'string',
+  int: (v) => Number.isSafeInteger(v),
+  bool: (v) => typeof v === 'boolean',
+  time: (v) => typeof v === 'string' && RFC3339.test(v),
+  pr: (v) => typeof v === 'object' && [v.number, v.url].every((f) => f === null || typeof f === 'string'),
+  usage: (v) => typeof v === 'object' && TOKEN_KEYS.every((k) => Number.isSafeInteger(v[k])),
+};
+const S = 'string';
+const GO_RUN = {
+  id: S,
+  status: S,
+  pid: 'int',
+  step: S,
+  round: 'int',
+  maxRounds: 'int',
+  story: S,
+  startedAt: S,
+  updatedAt: S,
+  pr: 'pr',
+  usage: 'usage',
+  branch: S,
+  worktreePath: S,
+  agent: S,
+  model: S,
+  effort: S,
+};
+const GO_EVENT = {
+  at: 'time',
+  unit: S,
+  step: S,
+  story: S,
+  round: 'int',
+  ok: 'bool',
+  durationMs: 'int',
+  agent: S,
+  model: S,
+  effort: S,
+  note: S,
+};
+/** The fields of `value` that the view could not decode as `types` says. */
+const undecodable = (value, types) =>
+  Object.entries(types)
+    .filter(([k, type]) => value[k] !== null && !GO_TYPES[type](value[k]))
+    .map(([k]) => `${k}=${JSON.stringify(value[k])}`);
+
+test('runs, activity, tokens: a run state with round "2" (and every other mistyped field) gives a snapshot that the view decodes', () => {
+  const { run, config } = runsBacklog();
+  const recent = at(NOW - HOUR);
+  const mistyped = {
+    ...runState('F-1', { status: 'running', updatedAt: recent }),
+    round: '2',
+    maxRounds: 2.5,
+    step: 5,
+    story: { id: 'S-7' },
+    startedAt: 12345,
+    branch: ['b'],
+    worktreePath: false,
+    pr: { number: 15, url: 7 },
+    usage: { input: '3', output: 1.5, cache_creation: 1e30, cache_read: null },
+    history: [
+      {
+        step: 7,
+        story: 1,
+        round: '1',
+        ok: 'yes',
+        agent: 9,
+        model: [],
+        effort: {},
+        note: 42,
+        startedAt: 5,
+        at: recent,
+        usage: { output: 2.5, input: 'x' },
+      },
+      // A date with no time: Go's time.Time refuses it, so the snapshot gives a full ISO time.
+      { step: 'test', ok: true, at: '2026-11-07' },
+    ],
+  };
+  writeFileSync(join(run, 'F-1.json'), JSON.stringify(mistyped));
+  writeFileSync(join(run, 'S-9.json'), JSON.stringify({ ...mistyped, feature: 'S-9', pr: 'bl#15', usage: 'many' }));
+  const readers = sectionReaders(config);
+  const { rows } = readers.runs(NOW);
+  for (const row of rows) assert.deepEqual(undecodable(row, GO_RUN), [], row.id);
+  const f1 = rows.find((r) => r.id === 'F-1');
+  assert.deepEqual(
+    [f1.round, f1.maxRounds, f1.step, f1.pr, f1.usage],
+    [null, null, null, { number: '15', url: null }, { input: 3, output: 2, cache_creation: 0, cache_read: 0 }],
+  );
+  const s9 = rows.find((r) => r.id === 'S-9');
+  assert.deepEqual([s9.pr, s9.usage], [null, null]);
+  const { events } = readers.activity(NOW);
+  assert.ok(events.length >= 4);
+  for (const e of events) assert.deepEqual(undecodable(e, GO_EVENT), [], `${e.unit} ${e.at}`);
+  assert.ok(events.some((e) => e.at === '2026-11-07T00:00:00.000Z'));
+  const { today } = readers.tokens(NOW);
+  assert.ok(GO_TYPES.usage(today), JSON.stringify(today));
 });
 
 test('readSection: a read that throws keeps the last good value and carries error; the next good read clears it', () => {

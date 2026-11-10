@@ -2975,6 +2975,10 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   gone since the listing) is left out, and `runs`, `activity` and `tokens` still read the
   others: each carries `error: "skipped: <why>"` with its new `read_at`. A history entry that
   is not an object is left out, and so is an `activity` entry with no time.
+- The view decodes each field as one Go type, and a field of another type would end its
+  stream. So each run-state field that `runs`, `activity` and `tokens` copy is null when it does
+  not have its type (a hand-edited `round: "2"`), token counts are whole numbers, and an
+  `activity` `at` is a full ISO time.
 - A `runs` row whose run state says `running` while its run lock (`.bl/run/<id>.lock`) has no
   live holder has `status: "stale"`: its bl was killed. The stream parses a run state again
   only when the file's mtime changes.
