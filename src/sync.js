@@ -54,6 +54,7 @@ import {
 import { ensureAllowedTools } from './allowed-tools.js';
 import { findStoryDir } from './story.js';
 import { FEATURES_DIR } from './feature.js';
+import { raiseSignal } from './signal-exit.js';
 
 /**
  * Run the configured `format` plugin over the Markdown files in
@@ -349,10 +350,12 @@ export async function commitAndRecord(config, owner, rel, opts) {
  * Report a `syncAndCommit` result for a command that commits its own backlog
  * changes (`bl done`, `bl new`, `bl merge`). Everything goes to stderr, so
  * a command's stdout contract is untouched. A failed commit exits 1 and names
- * the paths to commit by hand; the on-disk changes stay in place.
+ * the paths to commit by hand; the on-disk changes stay in place. When SIGINT
+ * or SIGTERM ended one of the commit's git commands (`signal`, from
+ * `commitPaths`), that signal is raised again (`raiseSignal`) after the report.
  *
  * @param {{ committed: boolean, paths: string[], error?: string,
- *   notRepo?: boolean }} res
+ *   notRepo?: boolean, signal?: string }} res
  * @param {string} command  e.g. "bl done", for the error prefix
  * @param {{ nothing?: string }} [opts]  line to print when nothing changed
  */
@@ -365,9 +368,11 @@ export function reportBacklogCommit(res, command, { nothing = 'Nothing to commit
     console.error(`${command}: backlog commit failed: ${res.error}`);
     console.error('Commit these backlog paths by hand:');
     for (const p of res.paths) console.error(`  ${p}`);
+    raiseSignal(res.signal);
     process.exit(1);
   }
   info(res.committed ? `Committed ${res.paths.length} backlog path(s).` : nothing);
+  raiseSignal(res.signal);
 }
 
 /** Print a `syncAndCommit` error the way `bl sync` does, then exit 1. */

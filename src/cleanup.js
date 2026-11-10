@@ -637,7 +637,9 @@ export async function cleanupOneRepo({
   const ahead = mayBeEmpty && branchExists ? commitsAhead(repoPath, branchName) : null;
   if (ahead === 0) {
     info(`Skipping the merge: no changes in ${repoName}.`);
-    removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists, keepBranch, config });
+    if (!removeWorktreeAndBranch({ parsed, repoPath, repoName, branchName, branchExists, keepBranch, config })) {
+      return { ok: false };
+    }
     return { ok: true, mergeCommitHash: null, branchExists, noChanges: true };
   }
   // The merge gate passed the story with no commits on its branch; a commit
@@ -766,7 +768,9 @@ export async function cleanupOneRepo({
     // no PR or gh unavailable — not fatal
   }
 
-  removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists, keepBranch, config });
+  if (!removeWorktreeAndBranch({ parsed, repoPath, repoName, branchName, branchExists, keepBranch, config })) {
+    return { ok: false };
+  }
 
   return { ok: true, mergeCommitHash, branchExists };
 }
@@ -1095,70 +1099,60 @@ function worktreeChanges(worktreePath) {
 
 /**
  * The end of every repo's cleanup: its worktree, then its unit directory
- * once no other repo's worktree is in it, then its branches.
+ * once no other repo's worktree is in it, then its branches. A git command
+ * ended by SIGINT or SIGTERM (`INTERRUPT_SIGNALS`) stops it before the next
+ * command or fallback, and that signal is raised again (`raiseSignal`).
+ * Returns false when a signal stopped it.
  */
-function removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists, keepBranch, config }) {
-  try {
-    execSync('git worktree prune', { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch {
-    // non-fatal
-  }
+function removeWorktreeAndBranch({ parsed, repoPath, repoName, branchName, branchExists, keepBranch, config }) {
+  // No shell: a shell would turn git's signal into an exit code. True when
+  // git succeeded, false when it failed, null when a signal ended it.
+  const git = (args, stdio = ['ignore', 'pipe', 'pipe']) => {
+    const r = spawnSync('git', args, { cwd: repoPath, stdio });
+    if (!isInterrupt(r.signal)) return r.status === 0;
+    console.error(`${repoName}: \`git ${args.join(' ')}\` was ended by ${r.signal}; rerun \`bl merge ${parsed.id}\`.`);
+    raiseSignal(r.signal);
+    return null;
+  };
+
+  // A failed prune is not fatal.
+  if (git(['worktree', 'prune']) === null) return false;
 
   const wtNow = findExistingWorktree(repoPath, branchName);
   if (wtNow) {
     info(`Removing worktree: ${wtNow.path}`);
-    try {
-      execSync(`git worktree remove "${wtNow.path}"`, {
-        cwd: repoPath,
-        stdio: ['inherit', process.stderr, process.stderr],
-      });
-    } catch {
+    const shown = ['inherit', process.stderr, process.stderr];
+    let removed = git(['worktree', 'remove', wtNow.path], shown);
+    if (removed === false) {
       info('  Normal remove failed, trying --force...');
-      try {
-        execSync(`git worktree remove --force "${wtNow.path}"`, {
-          cwd: repoPath,
-          stdio: ['inherit', process.stderr, process.stderr],
-        });
-      } catch {
+      removed = git(['worktree', 'remove', '--force', wtNow.path], shown);
+      if (removed === false) {
         info(`  Could not remove worktree. Remove manually:\n    rm -rf "${wtNow.path}" && git worktree prune`);
       }
     }
+    if (removed === null) return false;
   }
   const unitDir = unitDirFor(config, branchName);
   if (removeUnitDirIfEmpty(unitDir)) info(`Removed unit directory: ${unitDir}`);
 
   if (keepBranch) {
     info(`--keep: keeping branch '${branchName}' in ${repoName}.`);
-  } else {
-    try {
-      execSync(`git push origin --delete "${branchName}"`, {
-        cwd: repoPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      info(`Deleted remote branch: origin/${branchName}`);
-    } catch {
-      // already deleted — fine
-    }
-    if (branchExists) {
-      try {
-        execSync(`git branch -d "${branchName}"`, {
-          cwd: repoPath,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        info(`Deleted branch: ${branchName}`);
-      } catch {
-        try {
-          execSync(`git branch -D "${branchName}"`, {
-            cwd: repoPath,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-          info(`Deleted branch: ${branchName} (force — squash merge)`);
-        } catch {
-          info(`Could not delete branch ${branchName}.`);
-        }
-      }
-    }
+    return true;
   }
+  // A failed delete is a branch already deleted on origin.
+  const remote = git(['push', 'origin', '--delete', branchName]);
+  if (remote === null) return false;
+  if (remote) info(`Deleted remote branch: origin/${branchName}`);
+  if (!branchExists) return true;
+  let local = git(['branch', '-d', branchName]);
+  if (local) {
+    info(`Deleted branch: ${branchName}`);
+  } else if (local === false) {
+    local = git(['branch', '-D', branchName]);
+    if (local) info(`Deleted branch: ${branchName} (force — squash merge)`);
+    else if (local === false) info(`Could not delete branch ${branchName}.`);
+  }
+  return local !== null;
 }
 
 // ---------------------------------------------------------------------------

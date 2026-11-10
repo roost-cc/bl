@@ -12,7 +12,8 @@
  * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
  * `raiseSignal` raises one of them again after a synchronous child ended on
  * it (`checkedMerge`, the push of main and the install in `cleanupOneRepo`,
- * and `landedMergeCommit` in `cleanup.js`).
+ * `landedMergeCommit` and `removeWorktreeAndBranch` in `cleanup.js`,
+ * `main-sync.js`'s git commands, and `reportBacklogCommit` in `sync.js`).
  */
 
 let registered = false;

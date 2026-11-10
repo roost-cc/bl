@@ -23,6 +23,7 @@ import { resolve } from 'path';
 import { info } from './config.js';
 import { awaitLock, LockWaitTimeout } from './lock-wait.js';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { raiseSignal } from './signal-exit.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
 /**
@@ -66,13 +67,18 @@ const LOCK_POLL_MS = 200;
  * @property {number} [pollMs=200] how often to retry the lock while held.
  */
 
-/** Run git with an argument vector, capturing both streams. */
+/**
+ * Run git with an argument vector, capturing both streams. A git ended by
+ * SIGINT or SIGTERM (`INTERRUPT_SIGNALS`) raises that signal again
+ * (`raiseSignal`): it is not a failed fetch to go on from.
+ */
 function git(cwd, args) {
   const r = spawnSync('git', args, {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  raiseSignal(r.signal);
   return {
     ok: r.status === 0,
     status: r.status,
