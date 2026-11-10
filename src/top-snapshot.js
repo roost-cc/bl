@@ -66,10 +66,10 @@ const ms = (v) => {
   const t = typeof v === 'string' ? Date.parse(v) : NaN;
   return t >= MS_MIN && t <= MS_MAX ? t : NaN;
 };
-/** Token counts by kind, each a whole number (0 when it is not a number), or null. */
+/** Token counts by kind, each a whole non-negative number (0 when it is not one), or null. */
 const usageOf = (u) =>
   u && typeof u === 'object'
-    ? Object.fromEntries(TOKEN_KEYS.map((k) => [k, int(Math.round(Number(u[k]))) ?? 0]))
+    ? Object.fromEntries(TOKEN_KEYS.map((k) => [k, Number.isSafeInteger(u[k]) && u[k] >= 0 ? u[k] : 0]))
     : null;
 /** A pull request `{ number, url }` with string fields, or null. */
 const prOf = (pr) =>

@@ -376,7 +376,8 @@ test('runs, activity, tokens: a run state with round "2" (and every other mistyp
   const f1 = rows.find((r) => r.id === 'F-1');
   assert.deepEqual(
     [f1.round, f1.maxRounds, f1.step, f1.pr, f1.usage],
-    [null, null, null, { number: '15', url: null }, { input: 3, output: 2, cache_creation: 0, cache_read: 0 }],
+    // A count that is not a whole non-negative number (a string, a fraction, too large, null) is 0.
+    [null, null, null, { number: '15', url: null }, { input: 0, output: 0, cache_creation: 0, cache_read: 0 }],
   );
   const s9 = rows.find((r) => r.id === 'S-9');
   assert.deepEqual([s9.pr, s9.usage], [null, null]);
@@ -389,6 +390,12 @@ test('runs, activity, tokens: a run state with round "2" (and every other mistyp
   assert.ok(events.some((e) => e.at === '2026-11-07T00:00:00.000Z'));
   const { today } = readers.tokens(NOW);
   assert.ok(GO_TYPES.usage(today), JSON.stringify(today));
+});
+
+test('tokens: a usage count counts only when it is a whole non-negative number', () => {
+  const entry = (output) => ({ step: 'test', at: at(NOW), usage: { ...usage(0), output } });
+  const history = [true, '12', null, -50, 2.5, 1e30, 7].map(entry);
+  assert.equal(readTokens([{ feature: 'F-1', history }], NOW).today.output, 7);
 });
 
 test('activity: a note is cut by code point, so an emoji is never split', () => {

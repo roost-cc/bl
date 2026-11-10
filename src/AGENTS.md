@@ -2983,7 +2983,8 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   is not an object is left out, and so is an `activity` entry with no time.
 - The view decodes each field as one Go type, and a field of another type would end its
   stream. So each run-state field that `runs`, `activity` and `tokens` copy is null when it does
-  not have its type (a hand-edited `round: "2"`), token counts are whole numbers, and an
+  not have its type (a hand-edited `round: "2"`), a token count that is not a whole
+  non-negative number counts 0, and an
   `activity` `at` is a full ISO time in the years 0000 to 9999 (Go reads four-digit years only):
   an entry with another `at` is left out, and a `startedAt` outside them gives no duration.
 - A `runs` row whose run state says `running` while its run lock (`.bl/run/<id>.lock`) has no
