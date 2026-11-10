@@ -108,12 +108,14 @@ async function agentsOutput(cwd) {
   return chunks.join('');
 }
 
-test('bl agents outside a backlog prints the reference and then the plain-writing rule', async () => {
+test('bl agents outside a backlog prints the reference, the plain-writing rule, then the collaboration rules', async () => {
   const dir = mkTempDir('bl-agents-');
   try {
     const out = await agentsOutput(dir);
     assert.ok(out.includes('Stream policy'), 'the AGENTS.md reference');
-    assert.ok(out.trimEnd().endsWith(GUIDE.trimEnd()), 'the rule closes the output');
+    const collaboration = readFileSync(new URL('_collaboration.md', PROMPTS_DIR), 'utf8').trimEnd();
+    assert.ok(out.includes(`${GUIDE.trimEnd()}\n\n${collaboration}`), 'the rule, then the collaboration rules');
+    assert.ok(out.trimEnd().endsWith(collaboration), 'the collaboration rules close the output');
     assert.equal(count(out, MARKER), 1);
     assert.doesNotMatch(out.slice(out.indexOf(MARKER)), /## Dictionary:|Take the names from/);
   } finally {

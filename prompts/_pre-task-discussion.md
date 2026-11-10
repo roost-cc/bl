@@ -10,6 +10,8 @@ say how you read the situation, and agree with the operator on the way
 forward. Do **not** edit files, run commands, modify story frontmatter,
 or otherwise do the task during this phase.
 
+{{collaborationGuide}}
+
 When the discussion comes to an end, ask the operator exactly this:
 
 > Shall I proceed with the original `bl {{mode}}` task for

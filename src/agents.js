@@ -1,6 +1,7 @@
 /**
- * agents.js — print the backlog AGENTS.md reference, the plain-writing guide
- * and, inside a backlog, each dictionary its backlog.json lists (F-82 D8).
+ * agents.js — print the backlog AGENTS.md reference, the plain-writing guide,
+ * the collaboration rules (F-97 D3) and, inside a backlog, each dictionary its
+ * backlog.json lists (F-82 D8).
  */
 
 import { readFileSync } from 'fs';
@@ -28,16 +29,18 @@ export async function main(argv) {
     console.log(`Usage: bl agents
 
 Prints the backlog system reference (AGENTS.md) for agents and humans, followed by the
-plain-writing guide (prompts/_plain-writing.md) that every bl prompt carries. Inside a backlog,
-the guide's {{dictionaryGuide}} slot names the dictionaries backlog.json "dictionaries" lists,
-and the contents of each one follow, under "## Dictionary: <path>".`);
+plain-writing guide (prompts/_plain-writing.md) that every bl prompt carries, and then the
+collaboration rules (prompts/_collaboration.md) that every discussion with the operator follows.
+Inside a backlog, the guide's {{dictionaryGuide}} slot names the dictionaries backlog.json
+"dictionaries" lists, and the contents of each one follow, under "## Dictionary: <path>".`);
     process.exit(0);
   }
 
   const config = backlogConfig();
   const reference = readFileSync(join(__dirname, 'AGENTS.md'), 'utf8');
   const writing = renderFragment('_plain-writing', { dictionaryGuide: renderDictionaryGuide(config) });
-  const parts = [reference.trimEnd(), writing];
+  const collaboration = renderFragment('_collaboration', {});
+  const parts = [reference.trimEnd(), writing.trimEnd(), collaboration.trimEnd()];
   for (const path of dictionariesOf(config)) {
     // A listed file that cannot be read is `bl validate`'s `dictionary-file`
     // error; the reference and the other dictionaries still print.

@@ -12,8 +12,9 @@ The `backlog` key is the relative path to the backlog directory. Stories, compon
 Markdown files with YAML frontmatter. No committed file holds a derived list: `bl report` and
 `bl view` render the index tables from the frontmatter when a page is read.
 
-Run `bl agents` from any repo to print this file, the plain-writing guide and, inside a backlog,
-each dictionary its `backlog.json` `"dictionaries"` lists.
+Run `bl agents` from any repo to print this file, the plain-writing guide, the collaboration rules
+(how a session works with the operator) and, inside a backlog, each dictionary its `backlog.json`
+`"dictionaries"` lists.
 
 ### Stream policy
 
@@ -53,7 +54,7 @@ Per-command stdout contracts:
 | `bl rank`            | no args: the order; an edit: nothing (progress → stderr)  |
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
-| `bl agents`          | AGENTS.md, the writing guide, each listed dictionary      |
+| `bl agents`          | AGENTS.md, writing and collaboration rules, dictionaries  |
 | `bl view`            | the rendered page when redirected; else nothing (editor)  |
 | `bl edit`            | nothing (opens editor)                                    |
 | `bl init`            | nothing (status → stderr)                                 |
@@ -4775,6 +4776,7 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_simplicity.md`                 | `{{simplicityGuide}}`: build what the criteria ask, abstractions follow shared behaviour, every changed line traces to the story or a named finding. Wherever `{{selfConsistencyGuide}}` is.         |
 | `_effort.md`                     | `{{effortGuide}}`: the effort-level rubric (F-85 D6); the refiner picks the lowest level that fits and writes the `**Effort:**` line. `refine`, `re-refine` and `feature-refine`.                    |
 | `_plain-writing.md`              | `{{writingGuide}}`: about 80% of ASD-STE100, so the operator or the next agent reads the text right once. Every top-level prompt; `bl agents` prints it after this reference.                        |
+| `_collaboration.md`              | `{{collaborationGuide}}`: the nine rules for a discussion with the operator (F-97). `agent`, the refines and `_pre-task-discussion`; `bl agents` prints it after the writing guide.                  |
 | `_dictionaries.md`               | `{{dictionaryGuide}}` in `_plain-writing.md`, under "Give each thing one name": names each listed dictionary (`renderDictionaryGuide`); "" when none are listed or there is no config.               |
 | `_refine-outcome.md`             | `{{refineOutcome}}`: the story refine's closing **Outcome** section, the object to write to `{{outcomePath}}` as the session's last act (F-68 D1). `refine` and `re-refine`.                         |
 | `_refine-outcome-subagent.md`    | `{{refineOutcome}}` in a batch refine's per-story files: the sub-agent replies with the object, and the orchestrator writes the batch's outcome file.                                                |
@@ -4921,10 +4923,11 @@ project's business domain may have its own, which the project writes; bl ships n
   when a refine introduces a concept or an operator decision renames a term. With none listed,
   or with no config, the slot is empty. So every top-level prompt carries it through
   `{{writingGuide}}`, and `test/unit/plain-writing.test.js` holds both cases in place.
-- **`bl agents`** prints this reference, the writing guide with the slot filled, and then the
-  contents of each listed dictionary under `## Dictionary: <path>` (the absolute path). It skips
-  a listed file it cannot read, with a warning on stderr. Outside a backlog (`findBacklogRoot`
-  finds none) it prints the reference and the guide only.
+- **`bl agents`** prints this reference, the writing guide with the slot filled, the
+  collaboration rules (`_collaboration.md`), and then the contents of each listed dictionary
+  under `## Dictionary: <path>` (the absolute path). It skips a listed file it cannot read, with
+  a warning on stderr. Outside a backlog (`findBacklogRoot` finds none) it prints the reference,
+  the guide and the collaboration rules only.
 
 ### Per-agent variants
 
