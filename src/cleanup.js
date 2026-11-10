@@ -48,7 +48,7 @@ import {
   LOCK_FILE,
 } from './story.js';
 import { getAllowedTools, loadPrompt } from './session.js';
-import { gateLine, recordGateLines, recordMerge } from './change-doc.js';
+import { addGateLine, gateLine, recordMerge } from './change-doc.js';
 import { shellMerged } from './feature-run.js';
 import { raiseSignal } from './signal-exit.js';
 import { GATE_TAIL_LINES, codeSpan, interpolateCommand, tail } from './scripted.js';
@@ -867,10 +867,10 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
         commit,
       });
       try {
-        const written = recordGateLines(
+        const written = addGateLine(
           config.backlogRoot,
           changeDir,
-          [line],
+          line,
           `chore: ${parsed.id} check ${verdict} (attempt ${run})`,
         );
         if (written == null) {

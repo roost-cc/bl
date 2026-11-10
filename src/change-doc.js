@@ -374,19 +374,19 @@ export function gateLine({ date, repo, command, verdict, detail = '', commit = '
 }
 
 /**
- * Add `lines` to `## Gate` in the unit's current change document and commit
+ * Add `line` to `## Gate` in the unit's current change document and commit
  * it, as `message`. Returns the path written, or null when the unit has no
  * change document. A failed commit is a warning.
  * @param {string} backlogRoot
- * @param {string} unitDir
- * @param {string[]} lines
+ * @param {string | null} unitDir
+ * @param {string} line
  * @param {string} message
  * @returns {string | null}
  */
-export function recordGateLines(backlogRoot, unitDir, lines, message) {
+export function addGateLine(backlogRoot, unitDir, line, message) {
   const cur = currentChange(unitDir);
   if (!cur?.doc) return null;
-  for (const line of lines) cur.doc.body = appendSection(cur.doc.body, 'Gate', line);
+  cur.doc.body = appendSection(cur.doc.body, 'Gate', line);
   writeChange(backlogRoot, cur.path, cur.doc);
   commitChangeDoc(backlogRoot, cur.path, message);
   return cur.path;
