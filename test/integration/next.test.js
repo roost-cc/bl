@@ -5,6 +5,8 @@ import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { writeBlockers } from '../../src/blockers.js';
+import { loadConfig } from '../../src/config.js';
+import { nextPlan } from '../../src/next.js';
 
 // F-78 D2: `bl next` walks `backlog.priority` (priority.md's ranked units,
 // then the unranked ones by `added:`) and prints the first unit nothing
@@ -204,6 +206,49 @@ test('a unit held only by a task is passed over and the task named; a story bloc
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /No unit can run: each is held by a task or by work bl cannot run\./);
+});
+
+test("nextPlan() returns bl next's pick, the ranked units with their holds and holders, and the unranked tail (F-87 D1)", () => {
+  const { dir } = unitBacklog({ deps: { 'S-3': 'S-5' } });
+  const all = { theme: null, epic: null, feature: null, component: null };
+  const plan = nextPlan(loadConfig({ backlogRoot: dir }), all);
+  assert.equal(plan.pick.unit.id, next(dir).stdout.trim());
+  assert.equal(plan.pick.unit.id, 'F-5');
+  assert.equal(plan.pick.from.id, 'F-3');
+  assert.deepEqual(plan.pick.path, ['S-3 depends on S-5 (backlog)']);
+  assert.deepEqual(
+    plan.ranked.map(({ position, id, title, status, points, holds, heldBy }) => ({
+      position,
+      id,
+      title,
+      status,
+      points,
+      holds,
+      heldBy,
+    })),
+    [
+      {
+        position: 1,
+        id: 'F-3',
+        title: 'Unit order',
+        status: 'draft',
+        points: 1,
+        holds: ['S-3 depends on S-5 (backlog)'],
+        heldBy: ['F-5'],
+      },
+      { position: 2, id: 'S-10', title: 'Loose tool', status: 'backlog', points: 1, holds: [], heldBy: [] },
+      { position: 3, id: 'F-1', title: 'Sign in', status: 'draft', points: 1, holds: [], heldBy: [] },
+    ],
+  );
+  assert.deepEqual(
+    plan.unranked.map((e) => [e.id, e.position]),
+    [
+      ['S-11', null],
+      ['F-4', null],
+      ['F-5', null],
+    ],
+  );
+  assert.deepEqual(plan.waits, []);
 });
 
 test('bl next --theme and --epic filter units; a loose story is in its component repo themes and no epic', () => {

@@ -99,7 +99,8 @@ export function applyTokensToFrontmatter(fm, totals) {
   fm.tokens_updated = new Date().toISOString().slice(0, 10);
 }
 
-const TOKEN_KEYS = ['input', 'output', 'cache_creation', 'cache_read'];
+/** The four token kinds, as every usage object and the `tokens_*` keys name them. */
+export const TOKEN_KEYS = ['input', 'output', 'cache_creation', 'cache_read'];
 
 /**
  * The `tokens_by_step` key a session of run step `step` records under: every

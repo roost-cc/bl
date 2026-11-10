@@ -118,6 +118,7 @@ _bl() {
     'log:Show bl activity log'
     'allow:Add permission patterns from agent logs'
     'capacity:Whether each agent configuration can take work now'
+    'top:A live view of the runs, the inbox, bl next, capacity and history'
     'help:Show help'
   )
 
@@ -177,6 +178,16 @@ _bl() {
       ;;
     capacity)
       _arguments -s '--json[Print the configurations as JSON (bl-capacity-json/v1)]'
+      ;;
+    top)
+      _arguments -s \
+        '(--stream --interval --version --no-bell --no-desktop --no-push)--json[Print one snapshot (bl-top-json/v1)]' \
+        '(--json --version --no-bell --no-desktop --no-push)--stream[Print one snapshot per line until stdin closes]' \
+        '(--json)--interval[The refresh interval in ms]:ms:' \
+        '(--json --stream)--version[Build the view if it needs a build; print its version]' \
+        '(--json --stream)--no-bell[Ring no bell for a notification]' \
+        '(--json --stream)--no-desktop[Run no notify-send for a notification]' \
+        '(--json --stream)--no-push[Run no phone push command]'
       ;;
     inbox)
       if [[ "${words[2]}" == done ]]; then
