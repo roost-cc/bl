@@ -10,9 +10,10 @@ import {
   captureTmuxWindowId,
   clearTabTitle,
   currentTabTitle,
+  endTabTitle,
+  finalTabTitle,
   reassertTabTitle,
   renderTabTitle,
-  restoreTabTitle,
   tabTitleFields,
   unitTitleFields,
   updateTabTitle,
@@ -48,12 +49,12 @@ function underFakeTmux(fn) {
   );
 }
 
-// The module keeps its fields, and the restore it owes, for the process; every test starts with neither.
+// The module keeps its fields, the end state it owes and the final mark for the process; every test starts with none.
 test.beforeEach(() => {
+  underFakeTmux(() => endTabTitle(0));
   withEnv({ BL_TAB_TITLE: '' }, () => clearTabTitle());
-  underFakeTmux(() => restoreTabTitle());
 });
-// Titles off when the test process exits, so the exit restore never reaches the real tmux.
+// Titles off when the test process exits, so the exit hook never reaches the real tmux.
 test.after(() => {
   process.env.BL_TAB_TITLE = '';
 });
@@ -62,12 +63,22 @@ test.after(() => {
 // rendering
 // ---------------------------------------------------------------------------
 
-test('the default format is feature : story : status', () => {
-  assert.equal(DEFAULT_TAB_TITLE_FORMAT, '{{feature}} : {{story}} : {{status}}');
+test('the default format is feature : story : status next', () => {
+  assert.equal(DEFAULT_TAB_TITLE_FORMAT, '{{feature}} : {{story}} : {{status}} {{next}}');
   assert.equal(
     renderTabTitle({ feature: 'F-56', story: 'S-210', status: 'testing' }, DEFAULT_TAB_TITLE_FORMAT),
     'F-56 : S-210 : testing',
   );
+  assert.equal(
+    renderTabTitle({ feature: 'F-56', status: 'clean', next: '→ bl merge' }, DEFAULT_TAB_TITLE_FORMAT),
+    'F-56 :  : clean → bl merge',
+  );
+});
+
+test('BL_TAB_TITLE can move the next field or leave it out', () => {
+  const values = { story: 'S-1', status: 'clean', next: '→ bl merge' };
+  withEnv({ BL_TAB_TITLE: '{{next}} | {{story}}' }, () => assert.equal(renderTabTitle(values), '→ bl merge | S-1'));
+  withEnv({ BL_TAB_TITLE: '{{story}} {{status}}' }, () => assert.equal(renderTabTitle(values), 'S-1 clean'));
 });
 
 test('a missing field renders as nothing and the title is trimmed', () => {
@@ -227,7 +238,8 @@ test('a shorter title is padded to the widest title shown; a longer one raises t
   });
 });
 
-test('OSC 2 path pads a shorter title', () => {
+/** Run `fn` outside tmux with stderr as a fake terminal; returns what was written to it. */
+function underFakeTerminal(fn) {
   const tty = Object.getOwnPropertyDescriptor(process.stderr, 'isTTY');
   const write = process.stderr.write;
   const out = [];
@@ -235,16 +247,28 @@ test('OSC 2 path pads a shorter title', () => {
     process.stderr.isTTY = true;
     process.stderr.write = (s) => (out.push(s), true);
     try {
-      updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
-      updateTabTitle('status', 'test');
+      fn();
     } finally {
       process.stderr.write = write;
       if (tty) Object.defineProperty(process.stderr, 'isTTY', tty);
       else delete process.stderr.isTTY;
     }
   });
-  assert.equal(out[0], '\x1b[22;2t\x1b]2;F-56 : S-210 : implement\x07');
-  assert.equal(out[1], `\x1b]2;${'F-56 : S-210 : test'.padEnd(24)}\x07`);
+  return out;
+}
+
+test('OSC 2 path pads a shorter title and never uses the title stack', () => {
+  const out = underFakeTerminal(() => {
+    updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
+    updateTabTitle('status', 'test');
+    endTabTitle(0);
+  });
+  assert.deepEqual(out, [
+    '\x1b]2;F-56 : S-210 : implement\x07',
+    `\x1b]2;${'F-56 : S-210 : test'.padEnd(24)}\x07`,
+    '\x1b]2;F-56 : S-210 : ended\x07',
+  ]);
+  assert.ok(!out.some((s) => s.includes('\x1b[22;2t') || s.includes('\x1b[23;2t')), 'no XTWINOPS 22/23');
 });
 
 test('a title set while titles are off does not change the width', () => {
@@ -276,41 +300,78 @@ test('clearTabTitle keeps the width', () => {
 });
 
 // ---------------------------------------------------------------------------
-// restore on exit
+// final title and exit
 // ---------------------------------------------------------------------------
 
-test('restoreTabTitle turns automatic-rename on for the captured window, once, after a title was set', () => {
+test('a final title is sent unpadded', () => {
   underFakeTmux((fake) => {
-    restoreTabTitle();
-    assert.deepEqual(fake.calls(), [], 'nothing to restore before a title');
-    updateTabTitle({ story: 'S-1', status: 'implement' });
-    restoreTabTitle();
-    restoreTabTitle();
-    assert.deepEqual(fake.calls(), [
-      'rename-window\n-t\n@7\n--\n: S-1 : implement\n',
-      'set-option\n-w\n-t\n@7\nautomatic-rename\non\n',
+    updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implementing' });
+    finalTabTitle({ story: '', status: 'clean', next: '→ bl merge' });
+    reassertTabTitle();
+    assert.deepEqual(fake.calls().slice(1), [
+      'rename-window\n-t\n@7\n--\nF-56 :  : clean → bl merge\n',
+      'rename-window\n-t\n@7\n--\nF-56 :  : clean → bl merge\n',
     ]);
-    // The next title owes a new restore.
-    updateTabTitle('status', 'review');
-    restoreTabTitle();
-    assert.equal(fake.calls().length, 4);
   });
 });
 
-test('restoreTabTitle does nothing with titles off', () => {
+test('exit after a final title sends nothing, and never turns automatic-rename on', () => {
   underFakeTmux((fake) => {
-    updateTabTitle('status', 'x');
-    withEnv({ BL_TAB_TITLE: '' }, () => restoreTabTitle());
-    assert.deepEqual(fake.calls(), ['rename-window\n-t\n@7\n--\n:  : x\n']);
-    restoreTabTitle(); // titles on again: the restore owed is paid
-    assert.equal(fake.calls().length, 2);
+    updateTabTitle({ feature: 'F-56', status: 'review' });
+    finalTabTitle({ status: 'escalated', next: '→ fix, --resume' });
+    endTabTitle(0);
+    endTabTitle(0);
+    assert.deepEqual(fake.calls(), [
+      'rename-window\n-t\n@7\n--\nF-56 :  : review\n',
+      'rename-window\n-t\n@7\n--\nF-56 :  : escalated → fix, --resume\n',
+    ]);
   });
 });
 
-test('after restoreTabTitle the next title is not padded', () => {
+test('exit without a final title shows ended / interrupted / failed (exit N), unpadded, and drops next', () => {
+  for (const [code, status] of [
+    [0, 'ended'],
+    [130, 'interrupted'],
+    [143, 'interrupted'],
+    [2, 'failed (exit 2)'],
+  ]) {
+    underFakeTmux((fake) => {
+      updateTabTitle({ story: 'S-1', status: 'implementing', next: '→ x' });
+      endTabTitle(code);
+      const calls = fake.calls();
+      assert.equal(calls.length, 2, `code ${code}`);
+      assert.equal(calls[1], `rename-window\n-t\n@7\n--\n: S-1 : ${status}\n`, `code ${code}`);
+      assert.ok(!calls.some((c) => c.includes('automatic-rename')));
+    });
+  }
+});
+
+test('a later update clears the final mark, so the exit shows ended', () => {
+  underFakeTmux((fake) => {
+    finalTabTitle({ story: 'S-1', status: 'done' });
+    updateTabTitle('status', 'review');
+    endTabTitle(0);
+    assert.equal(fake.calls().at(-1), 'rename-window\n-t\n@7\n--\n: S-1 : ended\n');
+  });
+});
+
+test('the exit hook does nothing before a title or with titles off', () => {
+  underFakeTmux((fake) => {
+    endTabTitle(1);
+    assert.deepEqual(fake.calls(), [], 'nothing before a title');
+    updateTabTitle('status', 'x');
+    withEnv({ BL_TAB_TITLE: '' }, () => {
+      finalTabTitle({ status: 'clean' });
+      endTabTitle(1);
+    });
+    assert.deepEqual(fake.calls(), ['rename-window\n-t\n@7\n--\n:  : x\n']);
+  });
+});
+
+test('after the exit hook the next title is not padded', () => {
   underFakeTmux((fake) => {
     updateTabTitle({ feature: 'F-56', story: 'S-210', status: 'implement' });
-    restoreTabTitle();
+    endTabTitle(0);
     updateTabTitle({ feature: null, story: null, status: 'x' });
     assert.equal(fake.calls()[2], 'rename-window\n-t\n@7\n--\n:  : x\n');
   });

@@ -74,7 +74,7 @@ import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE, readComponents, readAllStories } from './story.js';
-import { updateTabTitle } from './tab-title.js';
+import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
@@ -684,9 +684,13 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     notify() {
       process.stderr.write('\x07');
     },
-    /** Set tab-title fields (`tab-title.js`): the feature, the story in hand, the step or end state. */
-    title(fields) {
-      updateTabTitle(fields);
+    /**
+     * Set tab-title fields (`tab-title.js`): the feature, the story in hand, the step or end state.
+     * With `final`, the title is an end state that stays after bl exits.
+     */
+    title(fields, { final = false } = {}) {
+      if (final) finalTabTitle(fields);
+      else updateTabTitle(fields);
     },
     now() {
       return new Date();
@@ -790,6 +794,24 @@ function writeEscalation(ctx, reason, details = '', { fold = false } = {}) {
   commitFeatureFile(ctx, 'escalate', `chore: ${feature.id} escalated — ${reason}`);
 }
 
+/**
+ * Set the tab title's end state for a run status (S-1393) as a final title,
+ * which stays after bl exits: the status shown and the step the operator
+ * does next, short enough for the tmux status bar. The next step after an
+ * escalation is the loop's resume command (`ctx.resumeHint`) without the
+ * unit id.
+ */
+function finalTitle(ctx, status) {
+  let next = '';
+  if (status === 'clean') next = '→ bl merge';
+  else if (status === 'escalated') {
+    const hint = ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`;
+    next = `→ fix, ${hint.endsWith(' --resume') ? '--resume' : hint.replace(` ${ctx.feature.id}`, '')}`;
+  }
+  const shown = status === 'no-change' ? 'done' : status;
+  ctx.runner.title?.({ feature: ctx.feature.id, story: '', status: shown, next }, { final: true });
+}
+
 function finish(ctx, status, reason = null, details = '') {
   // Inside `bl merge`'s integration a stop is a merge escalation (F-36 D8):
   // its reason says so, and it names the repos, files and next step.
@@ -803,7 +825,7 @@ function finish(ctx, status, reason = null, details = '') {
   // `step` keeps the step the run stopped in — that is what `bl status`
   // shows and where `--resume` picks up.
   saveRunState(ctx.config, ctx.state);
-  ctx.runner.title?.({ feature: ctx.feature.id, story: '', status });
+  finalTitle(ctx, status);
   ctx.runner.notify(`${ctx.feature.id} ${status}`);
   const log = ctx.runner.log;
   log('');
@@ -4310,6 +4332,7 @@ function escalateIntegration(ctx, reason, details, { save = false } = {}) {
     ctx.state.lastError = reason;
     saveRunState(ctx.config, ctx.state);
   }
+  finalTitle(ctx, 'escalated');
   ctx.runner.log(`\n${ctx.feature.id} escalated — ${reason}`);
   ctx.runner.log(`See ## Escalation in ${ctx.feature.featureRelPath}.`);
 }

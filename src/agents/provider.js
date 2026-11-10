@@ -45,7 +45,7 @@
  * S-1388): titles are off in the agent session. The tab belongs to the `bl`
  * that started the session, which sets the title before and after it
  * (`reassertTabTitle`). So no `bl` an agent runs, and no test it starts, can
- * rename the operator's tmux window or turn its `automatic-rename` back on.
+ * rename the operator's tmux window.
  */
 
 import { TAB_TITLE_ENV } from '../tab-title.js';

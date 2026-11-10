@@ -279,6 +279,9 @@ export function fakeRunner(opts = {}) {
     notify(label) {
       calls.push({ type: 'notify', label });
     },
+    title(fields, opts) {
+      calls.push({ type: 'title', fields, final: opts?.final ?? false });
+    },
     log() {},
   };
   return runner;

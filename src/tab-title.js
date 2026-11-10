@@ -28,27 +28,32 @@
  * The title's width only grows while the process runs (S-1389): a shorter
  * title is sent with trailing spaces up to the widest title shown so far, so
  * the tmux status bar does not move when a field gets shorter.
- * `currentTabTitle` and `renderTabTitle` stay unpadded. `restoreTabTitle`
- * resets the width to 0 at exit.
+ * `currentTabTitle` and `renderTabTitle` stay unpadded. A final title (below)
+ * is sent without padding, because nothing changes after it.
  *
  * An external tool `bl` runs with the terminal (an agent, an editor) may set
  * its own title. The code that ran it calls `reassertTabTitle` afterwards,
  * which sends bl's current title again. What the tool set is not captured:
  * the tool writes straight to the terminal, so bl never sees it.
  *
- * When `bl` exits after setting a title, it gives the title back to the
- * terminal (`restoreTabTitle`, operator decision 2026-11-09): under tmux it
- * turns the window's `automatic-rename` back on, which `rename-window` had
- * turned off; elsewhere it pops the title the terminal saved on its title
- * stack when bl's first title was set (XTWINOPS 22/23, honoured by xterm and
- * kitty; a terminal without a title stack ignores both). So a tab never
- * keeps a title for work that is over; the bell at a run's end is the signal
- * to look at it.
+ * When `bl` exits, the last title stays on the tab (S-1393, operator decision
+ * 2026-11-09). The tab shows how the work ended until the next `bl` in that
+ * window or the operator replaces it. A code path that reaches an end state
+ * sets it with `finalTabTitle`, for example `F-56 :  : clean → bl merge`: the
+ * `next` field holds the step that the operator does next. When no final
+ * title is in force at exit, `endTabTitle` sets the status from the exit code
+ * (`ended` for 0, `interrupted` for 130 or 143, `failed (exit N)` otherwise)
+ * and unsets `next`, so a tab never keeps a working status after `bl` stops.
+ * Under tmux, `rename-window` turns the window's `automatic-rename` off and
+ * bl leaves it off: `tmux set -w automatic-rename on` gives tmux's own name
+ * back.
  */
 
 import { spawnSync } from 'child_process';
+// Its SIGINT and SIGTERM handlers end the process with process.exit(130|143), so endTabTitle sees an interrupt.
+import './lock.js';
 
-export const DEFAULT_TAB_TITLE_FORMAT = '{{feature}} : {{story}} : {{status}}';
+export const DEFAULT_TAB_TITLE_FORMAT = '{{feature}} : {{story}} : {{status}} {{next}}';
 
 /** The variable that holds the title format; empty turns titles off. */
 export const TAB_TITLE_ENV = 'BL_TAB_TITLE';
@@ -56,8 +61,11 @@ export const TAB_TITLE_ENV = 'BL_TAB_TITLE';
 /** The fields set so far in this process. ESM modules load once per process, so this is the one copy. */
 const fields = new Map();
 
-/** Whether this process has set a title, and so owes the terminal a restore on exit. */
+/** Whether this process has shown a title, and so owes the tab an end state at exit. */
 let shown = false;
+
+/** Whether the title in force is a final title (`finalTabTitle`), which the exit keeps as it is. */
+let final = false;
 
 /** The widest title this process has shown; shorter titles are padded to it. */
 let width = 0;
@@ -110,24 +118,44 @@ export function currentTabTitle() {
 /**
  * Set one field (`updateTabTitle('story', 'S-34')`) or several
  * (`updateTabTitle({ feature: 'F-56', status: 'testing' })`), then show the
- * title. A null, undefined or empty value unsets the field.
+ * title. A null, undefined or empty value unsets the field. Clears the final
+ * mark that `finalTabTitle` set.
  *
  * @param {string | Record<string, unknown>} keyOrFields
  * @param {unknown} [value]
  */
 export function updateTabTitle(keyOrFields, value) {
-  const entries = typeof keyOrFields === 'string' ? [[keyOrFields, value]] : Object.entries(keyOrFields ?? {});
-  for (const [key, v] of entries) {
-    if (v == null || v === '') fields.delete(key);
-    else fields.set(key, String(v));
-  }
+  setFields(typeof keyOrFields === 'string' ? [[keyOrFields, value]] : Object.entries(keyOrFields ?? {}));
+  final = false;
+  showTabTitle();
+}
+
+/**
+ * Set the fields of an end state, as `updateTabTitle` does, mark the title
+ * final and show it without padding. The exit keeps a final title as it is.
+ * A later `updateTabTitle` or `clearTabTitle` clears the mark.
+ *
+ * @param {Record<string, unknown>} values  e.g. `{ status: 'clean', next: '→ bl merge' }`
+ */
+export function finalTabTitle(values) {
+  setFields(Object.entries(values ?? {}));
+  final = true;
   showTabTitle();
 }
 
 /** Unset every field and show the (empty) title. */
 export function clearTabTitle() {
   fields.clear();
+  final = false;
   showTabTitle();
+}
+
+/** Set each `[key, value]`; a null, undefined or empty value unsets the field. */
+function setFields(entries) {
+  for (const [key, v] of entries) {
+    if (v == null || v === '') fields.delete(key);
+    else fields.set(key, String(v));
+  }
 }
 
 /**
@@ -162,26 +190,32 @@ export function captureTmuxWindowId() {
 }
 
 /**
- * Show the rendered title. Under tmux this renames the window `bl` started
- * in (see `captureTmuxWindowId`). Elsewhere, when stderr is a terminal, it
- * writes the OSC 2 "set window title" sequence, which kitty, xterm, VTE and
- * most other terminals honour. With neither, or with titles off, nothing
- * happens. Never throws: a title is never worth a failed command.
+ * Show the rendered title, padded to the widest title so far unless it is
+ * final. The first title registers the exit hook `endTabTitle`. With titles
+ * off, nothing happens.
  */
 function showTabTitle() {
   if (tabTitleOff()) return;
   const rendered = renderTabTitle(tabTitleFields());
   width = Math.max(width, rendered.length);
-  const title = rendered.padEnd(width);
-  const first = !shown;
+  if (!shown) process.once('exit', endTabTitle);
   shown = true;
-  if (first) process.once('exit', restoreTabTitle);
+  sendTabTitle(final ? rendered : rendered.padEnd(width));
+}
+
+/**
+ * Send `title`. Under tmux this renames the window `bl` started in (see
+ * `captureTmuxWindowId`). Elsewhere, when stderr is a terminal, it writes the
+ * OSC 2 "set window title" sequence, which kitty, xterm, VTE and most other
+ * terminals honour. With neither, nothing happens. Never throws: a title is
+ * never worth a failed command.
+ */
+function sendTabTitle(title) {
   try {
     if (process.env.TMUX) {
       tmux('rename-window', ...windowTarget(), '--', title);
     } else if (process.stderr.isTTY) {
-      // Save the terminal's own title first, so the exit can bring it back.
-      process.stderr.write(`${first ? '\x1b[22;2t' : ''}\x1b]2;${title}\x07`);
+      process.stderr.write(`\x1b]2;${title}\x07`);
     }
   } catch {
     // not fatal
@@ -189,24 +223,31 @@ function showTabTitle() {
 }
 
 /**
- * Give the title back to the terminal: under tmux, turn the window's
- * `automatic-rename` on again; elsewhere, pop the title saved when bl's first
- * title was set. Runs once at exit after a title was set; a no-op before
- * that, or with titles off. Never throws.
+ * The exit hook, registered on the first title shown. When no final title is
+ * in force, it sets the status from the exit `code` (`ended` for 0,
+ * `interrupted` for 130 or 143, `failed (exit N)` otherwise), unsets `next`
+ * and sends the title unpadded. A final title stays as it is, so nothing is
+ * sent. A no-op before the first title, or with titles off. Never throws.
+ *
+ * @param {number} code  the process exit code, which Node passes to `exit` listeners
  */
-export function restoreTabTitle() {
+export function endTabTitle(code) {
   if (!shown || tabTitleOff()) return;
+  if (!final) {
+    fields.set('status', exitStatus(code));
+    fields.delete('next');
+    sendTabTitle(renderTabTitle(tabTitleFields()));
+  }
   shown = false;
   width = 0;
-  try {
-    if (process.env.TMUX) {
-      tmux('set-option', '-w', ...windowTarget(), 'automatic-rename', 'on');
-    } else if (process.stderr.isTTY) {
-      process.stderr.write('\x1b[23;2t');
-    }
-  } catch {
-    // not fatal
-  }
+  final = false;
+}
+
+/** The title status for an exit code. */
+function exitStatus(code) {
+  if (code === 0) return 'ended';
+  if (code === 130 || code === 143) return 'interrupted';
+  return `failed (exit ${code})`;
 }
 
 /** `-t <id>` for the window bl started in, or nothing when none was captured. */

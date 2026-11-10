@@ -78,6 +78,12 @@ function stories(t) {
   return out;
 }
 
+/** The last tab title the run set: its fields and whether it was final. */
+function lastTitle(runner) {
+  const { fields, final } = runner.calls.findLast((c) => c.type === 'title');
+  return { fields, final };
+}
+
 function editStory(path, fn) {
   const { fm, body } = parseFrontmatter(readFileSync(path, 'utf8'));
   const out = fn(fm, body) ?? body;
@@ -645,6 +651,10 @@ test('green non-majors merge: rebase, gate, push the branch, merge --no-ff, push
       runner.calls.filter((c) => c.type === 'notify').map((c) => c.label),
       ['updates run: 2 merged'],
     );
+    assert.deepEqual(lastTitle(runner), {
+      fields: { feature: 'updates', story: '', status: '2 merged', next: '' },
+      final: true,
+    });
     assert.ok(!existsSync(runLockPath(t.config(), RUN_LOCK_ID)), 'lock released');
   } finally {
     t.cleanup();
@@ -1062,6 +1072,10 @@ test('a held security update gets a Decision needed in the S-646 shape and is li
       res.outcomes.map((o) => [o.id, o.kind]),
       [['S-1', 'decision']],
     );
+    assert.deepEqual(lastTitle(runner), {
+      fields: { feature: 'updates', story: '', status: '1 decision', next: '→ approve/drop' },
+      final: true,
+    });
     assert.match(lines[0], /^decision {2}S-1 /);
     const s1 = stories(t).get('S-1');
     assert.equal(s1.fm.status, 'in_progress');
@@ -2534,6 +2548,11 @@ test('a run killed after two stories leaves both committed and pushed, the repor
       runner.calls.filter((x) => x.type === 'notify').map((x) => x.label),
       ['updates run: 1 merged, 1 dropped'],
     );
+    // Not final: the exit shows `failed (exit 1)`.
+    assert.deepEqual(lastTitle(runner), {
+      fields: { feature: 'updates', story: '', status: '1 merged, 1 dropped', next: '' },
+      final: false,
+    });
     assert.ok(!existsSync(runLockPath(t.config(), RUN_LOCK_ID)), 'lock released');
   } finally {
     c.cleanup();

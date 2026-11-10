@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, rmSync, statSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { once } from 'events';
+import { constants as osConstants } from 'os';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
@@ -88,8 +89,13 @@ for (const [name, end, signal] of endings) {
     while (!(line = run.read().stdout).endsWith('\n')) await new Promise((r) => setTimeout(r, 10));
     const dirs = JSON.parse(line);
     if (signal) child.kill(signal);
-    const [, gotSignal] = await exited;
-    if (signal) assert.equal(gotSignal, signal, 'the signal still ends the process');
+    const [code, gotSignal] = await exited;
+    // The helper loads config.js, which loads lock.js through tab-title.js (S-1393): its
+    // SIGINT and SIGTERM handlers end the process with 128 + the signal number instead.
+    if (signal) {
+      const ended = gotSignal === signal || code === 128 + osConstants.signals[signal];
+      assert.ok(ended, `the signal still ends the process (code ${code}, signal ${gotSignal})`);
+    }
     for (const dir of dirs) assert.equal(existsSync(dir), false, `${dir} left behind`);
   });
 }

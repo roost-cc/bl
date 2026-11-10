@@ -27,6 +27,7 @@ import {
   editFile,
   checkAll,
   fakeRunner,
+  lastTitle,
   statusOf,
   STORY_BODY,
   storySetup,
@@ -197,6 +198,13 @@ test('a Codex usage limit with no reset time on the verifier under bl review esc
     );
     assert.ok(esc.includes(`- codex: other — ${S865_LIMIT} (every codex configuration; no reset time)`), esc);
     assert.match(esc, /then run `bl review F-1`\./);
+    assert.deepEqual(lastTitle(runner), {
+      feature: 'F-1',
+      story: '',
+      status: 'escalated',
+      next: '→ fix, bl review',
+      final: true,
+    });
   } finally {
     cleanup();
   }

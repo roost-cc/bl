@@ -72,18 +72,25 @@ The backlog's configuration. A minimal one:
 
 While `bl` runs a session or a loop, it names the terminal tab after the work: the tmux window
 under tmux, the terminal's window title elsewhere. The title is rendered from the fields each
-code path sets (`feature`, `story`, `status`), with the format in `BL_TAB_TITLE`:
+code path sets (`feature`, `story`, `status`, and `next`, the step that the operator does
+next), with the format in `BL_TAB_TITLE`:
 
 ```sh
-export BL_TAB_TITLE='{{feature}} : {{story}} : {{status}}'   # the default
-export BL_TAB_TITLE='{{story}} {{status}}'                   # shorter
-export BL_TAB_TITLE=''                                       # titles off
+export BL_TAB_TITLE='{{feature}} : {{story}} : {{status}} {{next}}'   # the default
+export BL_TAB_TITLE='{{story}} {{status}}'                            # shorter, no next step
+export BL_TAB_TITLE=''                                                # titles off
 ```
 
-A field that is not set renders as nothing: `: S-210 : implement` for a story with no
-feature, `F-123 :  : refine` for a feature. When `bl` exits it gives the title back to the
-terminal (tmux's automatic rename, or the title the terminal had before), so no tab keeps a
-title for work that is over; a run's end rings the bell.
+A field that is not set renders as nothing, and the title is trimmed: `: S-210 : implement`
+for a story with no feature, `F-123 :  : refine` for a feature.
+
+When `bl` exits, the last title stays on the tab until the next `bl` in that window or you
+replace it. A command that reaches an end state shows it with the next step, for example
+`F-56 :  : clean → bl merge`, `F-56 :  : escalated → fix, --resume` or
+`updates :  : 1 decision → approve/drop`. Any other exit sets the status from the exit code:
+`ended` for 0, `interrupted` for Ctrl-C or SIGTERM, `failed (exit N)` otherwise. Under tmux,
+`bl` leaves the window's automatic rename off; `tmux set -w automatic-rename on` gives tmux's
+own name back.
 
 `bl` sets `BL_TAB_TITLE=''` for every agent session and for the child processes that `bl run`
 and `bl review` start in parallel for several targets.
