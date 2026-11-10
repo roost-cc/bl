@@ -78,6 +78,8 @@ function git(cwd, args) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  // A raise inside `withMainSyncLock` leaves the lock file with a dead PID;
+  // the next `acquirePidLock` reclaims it.
   raiseSignal(interruptOf(r));
   return {
     ok: r.status === 0,
@@ -142,7 +144,9 @@ function syncLocked(repoPath, { checkAhead, prune }) {
 /**
  * Fetch `origin/main` and fast-forward the checked-out `main` of `repoPath` to
  * it, under the per-repo lock. The checkout must be on `main`; callers guard
- * that. Never throws for git failures: they come back as states. Throws when
+ * that. Never throws for git failures: they come back as states. A git
+ * command ended by SIGINT or SIGTERM is not a state: that signal is raised
+ * again (`raiseSignal`). Throws when
  * `repoPath` is not a git repository or the lock file cannot be written.
  *
  * @param {string} repoPath
@@ -194,7 +198,9 @@ export async function withMainSyncLock(repoPath, fn, opts = {}) {
  * Print a `syncMain` result for `label` (a repo path or name) and say whether
  * the caller may go on. `updated` and `no-remote` are notes; `fetch-failed` is
  * a warning that names the local `main` commit used instead; `ahead`,
- * `ff-failed` and `lock-timeout` are errors and return false.
+ * `ff-failed` and `lock-timeout` are errors and return false. A git command
+ * ended by SIGINT or SIGTERM gives no result to report: `syncMain` raises that
+ * signal again.
  *
  * @param {MainSyncResult} result
  * @param {string} label
