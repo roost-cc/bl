@@ -53,8 +53,11 @@ export const isMigrated = (entry) => typeof entry?.note === 'string' && /^migrat
 /** `at`'s date, `YYYY-MM-DD`. */
 const dayOf = (at) => String(at).slice(0, 10);
 
-/** Now, as an entry's `at`: UTC, whole seconds. */
-export const nowAt = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+/** A time (a `Date`, a time value or a date string) as an entry's `at`: UTC, whole seconds. */
+export const isoAt = (time) => new Date(time).toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+/** Now, as an entry's `at`. */
+export const nowAt = () => isoAt(Date.now());
 
 const str = (v) => (typeof v === 'string' ? v : '');
 
@@ -197,6 +200,26 @@ function hasEdge(flow, kind, from, to, by) {
 }
 
 /**
+ * Store `log` as `fm`'s `transitions:` and remove `status:`, in place:
+ * `transitions:` takes `status:`'s place, and a unit with neither gets it
+ * last. `applyTransition` and the migration (`migrate-transitions.js`) write
+ * the log through it.
+ * @param {object} fm
+ * @param {object[]} log
+ */
+export function setLog(fm, log) {
+  const keys = Object.keys(fm);
+  if (!Object.hasOwn(fm, 'transitions') && Object.hasOwn(fm, 'status')) {
+    const entries = keys.map((k) => (k === 'status' ? ['transitions', log] : [k, fm[k]]));
+    for (const k of keys) delete fm[k];
+    Object.assign(fm, Object.fromEntries(entries));
+  } else {
+    fm.transitions = log;
+    delete fm.status;
+  }
+}
+
+/**
  * Record `to` in `fm`'s log (F-69 D2): pure, so a caller that changes other
  * fields in one locked write calls it inside its `updateSpecFile` mutate.
  * The type's table must have an edge from the current status to `to` under
@@ -230,16 +253,7 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
   const fields = { at, to, by, via, outcome, note };
   const entry = Object.fromEntries(ENTRY_FIELDS.filter((k) => str(fields[k])).map((k) => [k, fields[k]]));
   const next = [...log, entry];
-  // `transitions:` takes `status:`'s place; a unit with neither gets it last.
-  const keys = Object.keys(fm);
-  if (!Object.hasOwn(fm, 'transitions') && Object.hasOwn(fm, 'status')) {
-    const entries = keys.map((k) => (k === 'status' ? ['transitions', next] : [k, fm[k]]));
-    for (const k of keys) delete fm[k];
-    Object.assign(fm, Object.fromEntries(entries));
-  } else {
-    fm.transitions = next;
-    delete fm.status;
-  }
+  setLog(fm, next);
   if (next.length === 1 || !DATE_RE.test(str(fm.added))) fm.added = dayOf(next[0].at);
   if (flow.typeOf(kind).terminal.includes(to)) fm[COMPLETED_KEY[kind]] = dayOf(at);
   return entry;
