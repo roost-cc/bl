@@ -1572,7 +1572,7 @@ With the list exhausted and the earliest `until` inside
 `run.limit_wait_max_hours` (`backlog.json`, hours, default 8), the loop records
 a `waiting` event in the run history (`{ step: "waiting", until, note }`, saved
 before the first sleep so a Ctrl-C leaves the run resumable at that step),
-sleeps in slices of at most a second until it, and walks the list again from
+awaits a timer in slices of at most a second until it (Ctrl+C ends the wait at once), and walks the list again from
 the top, asking capacity afresh — so a refusal never spends a nudge retry, a
 fix-tests rerun or a review round, and a refused spawn gets no step record of
 its own. A step waits at most once: exhausted again, with no reset time on any
@@ -3614,9 +3614,9 @@ Ctrl+C during either wait exits 130 and removes the locks the process holds. The
 is synchronous, so it sleeps in a child `sleep` process (`sleep-sync.js` `sleepSync`, S-1394)
 that the terminal's Ctrl+C ends too. That child writes the announcement, so a Ctrl+C after it
 reaches the child within the first poll. A SIGINT that lands between two sleeps is lost (2 in
-150 at random times in a probe), and a second Ctrl+C ends `bl`. Two other synchronous waits sleep in
-`sleepSync` the same way: the prepare-lock wait (`session.js` `prepareWorktreeOnce`) and the
-usage-limit wait (`feature-run.js` `waitOrEscalate`).
+150 at random times in a probe), and a second Ctrl+C ends `bl`. The prepare-lock wait (`session.js`
+`prepareWorktreeOnce`) sleeps in `sleepSync` the same way. The run loop's usage-limit wait
+(`waitOrEscalate`) awaits a timer, so Ctrl+C ends it at once (F-105 A2).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each
@@ -4711,6 +4711,12 @@ them.
   protocol with a Node child (the fake `codex app-server`) uses `fs.readSync(0)` and
   `fs.writeSync(1)` in the child. `test/unit/child-stdio-guard.test.js` parses `src/` and
   `test/` with `acorn` and fails on each of these shapes at a `child_process` call.
+- A call in `src/` to an async function of `src/` is awaited: it is the operand of `await`, or
+  the value an async function returns outside a `try`. A missing `await` is silent, so
+  `test/unit/awaited-calls.test.js` parses `src/` with `acorn` and checks this by name (F-105
+  W2). When a synchronous function shares a name with an async one, list the file and name in
+  its `EXCEPTIONS` with a reason. The test cannot see a call to a callback parameter, so a
+  helper that runs a callback awaits it inside its own `try` (`return await fn()`).
 - Frontmatter is YAML (failsafe schema), read and written only by `parseFrontmatter` and
   `serializeFrontmatter` (see **Frontmatter is YAML**). Never read a frontmatter line with a
   regex or write one as text.
