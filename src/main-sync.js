@@ -21,7 +21,7 @@
 import { spawnSync } from 'child_process';
 import { resolve } from 'path';
 import { info } from './config.js';
-import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { acquirePidLock, releasePidLock, waitingForLock } from './pid-lock.js';
 import { sleepSync } from './sleep-sync.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
@@ -175,7 +175,7 @@ export function withMainSyncLock(repoPath, fn, opts = {}) {
   while (taken.holder != null) {
     if (!announced) {
       announced = true;
-      info(`Waiting for lock (${lockPath}) held by pid ${taken.holder}…`);
+      info(waitingForLock(lockPath, taken.holder));
     }
     const left = deadline - Date.now();
     if (left <= 0) {

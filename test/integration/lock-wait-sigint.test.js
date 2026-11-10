@@ -17,6 +17,7 @@ import { lockOwnerVisible, startBlBehindLock } from '../helpers/run-bl.js';
 import { GIT_ENV, addOrigin, initGitBacklog } from '../helpers/git-backlog.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { mainSyncLockPath } from '../../src/main-sync.js';
+import { waitingForLock } from '../../src/pid-lock.js';
 
 /** A git backlog with an `origin`, so `bl refine` pulls first, and the story S-1. */
 function refineBacklog() {
@@ -74,7 +75,7 @@ test('Ctrl+C while bl waits for the main sync lock exits 130 and removes only it
     const r = await interruptRefine(dir, lockPath);
     assert.equal(r.status, 130, `signal ${r.signal}: ${r.stderr}`);
     assert.ok(r.ms < 2000, `bl took ${r.ms} ms to exit`);
-    const waiting = `Waiting for lock (${lockPath}) held by pid ${process.pid}…`;
+    const waiting = waitingForLock(lockPath, process.pid);
     assert.equal(r.stderr.split(waiting).length - 1, 1, `said once: ${r.stderr}`);
     assert.doesNotMatch(r.stderr, /^Story/m, 'no refine session started');
     assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'bl removed the backlog lock it took');

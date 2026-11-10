@@ -23,6 +23,7 @@
 
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { waitingForLock } from './pid-lock.js';
 
 export const LOCK_FILE = '.bl-new.lock';
 const LOCK_TIMEOUT_MS = 30_000;
@@ -120,10 +121,8 @@ export async function acquireLock(backlogRoot, options = {}) {
               // try again
             }
           } else if (!announced) {
-            // Said once, so a caller (or a test) can tell a process blocked
-            // on a live holder from one still doing its pre-lock work.
             announced = true;
-            error(`Waiting for lock (${LOCK_FILE}) held by pid ${pid}…`);
+            error(waitingForLock(LOCK_FILE, pid));
           }
         } catch {
           // try again

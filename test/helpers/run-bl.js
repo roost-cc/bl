@@ -14,6 +14,7 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { LOCK_FILE } from '../../src/lock.js';
+import { waitingForLock } from '../../src/pid-lock.js';
 import { HEADLESS_ENV } from '../../src/agents/provider.js';
 import { withNoAgent } from './fake-agent.js';
 import { spawnToFiles } from './spawn-files.js';
@@ -148,8 +149,7 @@ export function startBlBehindLock(args, opts = {}) {
     failure = error;
     return { stdout, stderr, status, signal };
   });
-  const named = RegExp.escape(opts.lockPath ?? LOCK_FILE);
-  const waiting = new RegExp(`^Waiting for lock \\(${named}\\) held by pid ${process.pid}…$`, 'm');
+  const waiting = new RegExp(`^${RegExp.escape(waitingForLock(opts.lockPath ?? LOCK_FILE, process.pid))}$`, 'm');
   let announced = false;
   const blocked = new Promise((resolve, reject) => {
     let why = 'bl exited before waiting for the lock';
