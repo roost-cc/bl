@@ -867,7 +867,15 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
         commit,
       });
       try {
-        recordGateLines(config.backlogRoot, changeDir, [line], `chore: ${parsed.id} check ${verdict} (attempt ${run})`);
+        const written = recordGateLines(
+          config.backlogRoot,
+          changeDir,
+          [line],
+          `chore: ${parsed.id} check ${verdict} (attempt ${run})`,
+        );
+        if (written == null) {
+          console.error(`${repoName}: could not write the gate line (the unit has no change document): ${line}`);
+        }
       } catch (err) {
         console.error(`${repoName}: could not write the gate line (${err.message}): ${line}`);
       }

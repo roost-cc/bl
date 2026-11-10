@@ -17,6 +17,7 @@ import {
   newChange,
   parseChange,
   readChange,
+  recordGateLines,
   recordMerge,
   serializeChange,
   setRepo,
@@ -817,4 +818,14 @@ test('gateLine writes the one ## Gate shape, with the detail and the commit only
     gateLine({ ...base, verdict: 'fail', detail: 'attempt 1', commit: sha }),
     `- 2026-11-10 · code · \`npm test\` · fail (attempt 1) · commit ${sha}`,
   );
+});
+
+test('recordGateLines returns null, and writes nothing, for a unit with no change document', () => {
+  const root = mkTempDir('bl-gate-lines-');
+  const empty = join(root, 'S1-empty');
+  mkdirSync(empty);
+  for (const unitDir of [empty, join(root, 'missing'), null]) {
+    assert.equal(recordGateLines(root, unitDir, ['- line'], 'chore: x'), null, String(unitDir));
+  }
+  assert.deepEqual(listChanges(empty), []);
 });

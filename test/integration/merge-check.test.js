@@ -377,6 +377,29 @@ test('a check killed by a signal writes no ## Gate line, is not retried and push
   }
 });
 
+test('no-change-doc: a unit with no change document still merges, and bl merge prints the gate line it could not write', () => {
+  const fx = fixture({ verdicts: ['pass'] });
+  const u = UNITS[0];
+  try {
+    g(fx.dir, 'rm', '-q', join(...u.unitDir, 'change.md'));
+    g(fx.dir, 'commit', '-q', '-m', 'no change document');
+    // The review state lives in the change document too.
+    const r = runBl(['merge', u.id, '--no-review'], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 0, r.stderr);
+    const [[commit]] = calls(fx);
+    assert.match(
+      r.stderr,
+      new RegExp(
+        `^code: could not write the gate line \\(the unit has no change document\\): - ${TODAY} · code · .* · pass \\(attempt 1\\) · commit ${commit}$`,
+        'm',
+      ),
+    );
+    assert.equal(g(fx.origin, 'rev-parse', 'main'), commit);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('a merge conflict at origin/main runs no check, pushes nothing, and says to rerun', () => {
   const fx = fixture({ verdicts: ['pass'] });
   const u = UNITS[0];
