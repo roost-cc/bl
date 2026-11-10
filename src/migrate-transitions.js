@@ -28,6 +28,11 @@
  * process and its parents is skipped and listed, and so are the stories of
  * such a feature: the run reads and writes their old shape. A rerun converts
  * what is left, and reports nothing to do when nothing is.
+ *
+ * The migration leaves an update story (`update_repo:`, `isUpdateStory`) and
+ * its change documents in the old shape, and counts it as kept: the updates
+ * flow still reads and writes its `status:` (F-69 Out of Scope), and the
+ * tolerant reader (`legacyLog`) reads it.
  */
 
 import { spawnSync } from 'child_process';
@@ -47,6 +52,7 @@ import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChange } f
 import { FLOW_FILE, FLOW_TYPES, LEGACY_LOG, flowPath, fromLegacy, migratedFlowText } from './flow.js';
 import { liveSessionLocks } from './migration-txn.js';
 import { liveLockHolder } from './pid-lock.js';
+import { isUpdateStory } from './priority.js';
 import { extractReviewLog, sessionDates } from './review-log.js';
 import { RUN_DIR } from './run-lock.js';
 import { SpecLockError, updateSpecFile, withSpecLock } from './spec-file.js';
@@ -285,11 +291,12 @@ export function commitMessage(c, carried = 0) {
  * nothing; otherwise write it unit by unit and commit the changed paths once,
  * with the paths an earlier failed run wrote (`carriedPaths`). A step that
  * throws, or a commit that fails, records every path written for the rerun.
- * `log` gets one line per skipped unit, then the counts, or "nothing to do".
+ * `log` gets one line per skipped unit, the number of update stories kept in
+ * the old shape when there are any, then the counts, or "nothing to do".
  *
  * @param {object} config  the loaded backlog config
  * @param {{ dryRun?: boolean, log?: (line: string) => void }} [opts]
- * @returns {Promise<{ counts: object, skipped: string[], commit: object | null }>}
+ * @returns {Promise<{ counts: object, skipped: string[], kept: number, commit: object | null }>}
  */
 export async function migrate(config, { dryRun = false, log = console.log } = {}) {
   const root = config.backlogRoot;
@@ -299,6 +306,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   for (const kind of FLOW_TYPES) counts[kind] = { units: 0, entries: 0, placed: 0 };
   const paths = [];
   const skipped = [];
+  let kept = 0;
   const prior = carriedPaths(root);
   const carried = prior.carry;
   if (prior.committed.length > 0) {
@@ -318,6 +326,10 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   function convertAll() {
     for (const kind of FLOW_TYPES) {
       for (const unit of graph.list(kind)) {
+        if (kind === 'story' && isUpdateStory(unit.fm)) {
+          kept++;
+          continue;
+        }
         const feature = unit.feature?.id;
         const why = held.has(unit.id)
           ? held.get(unit.id)
@@ -370,17 +382,18 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   }
 
   for (const s of skipped) log(`skipped ${s}`);
+  if (kept > 0) log(`kept in the old shape (update stories, F-69 Out of Scope): ${kept}`);
   const earlier = carried.filter((p) => !paths.includes(p));
   const all = [...paths, ...earlier];
   if (all.length === 0) {
     if (!dryRun && prior.recorded) recordPaths(root, []);
     log('nothing to do');
-    return { counts, skipped, commit: null };
+    return { counts, skipped, kept, commit: null };
   }
   log(`${dryRun ? 'would convert' : 'converted'}: ${countsText(counts)}`);
   if (earlier.length > 0) log(`an earlier run wrote and did not commit: ${earlier.join(' ')}`);
-  if (dryRun) return { counts, skipped, commit: null };
+  if (dryRun) return { counts, skipped, kept, commit: null };
   const commit = commitPaths(root, all, commitMessage(counts, earlier.length));
   recordPaths(root, commit.error ? all : []);
-  return { counts, skipped, commit };
+  return { counts, skipped, kept, commit };
 }

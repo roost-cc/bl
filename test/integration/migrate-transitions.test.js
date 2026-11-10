@@ -470,6 +470,53 @@ test('the migration sets added and completed from the log for a unit that has ne
   assert.deepEqual(errors(dir), []);
 });
 
+test('the migration leaves an update story in the old shape, and a rerun prints the kept line and nothing to do', () => {
+  const { dir } = mkTempBacklog({
+    flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
+    repos: ['core'],
+    components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
+    stories: [
+      { id: 'S-1', title: 'One', component: 'C01', status: 'refined' },
+      { id: 'S-2', title: 'Two', component: 'C01', status: 'done', added: '2026-10-01', completed: '2026-10-05' },
+      { id: 'S-3', title: 'Three', component: 'C01', status: 'in_progress' },
+    ],
+  });
+  // The `update_*` keys `bl updates` writes, which the fixture helper does not.
+  for (const [p, status, n] of [
+    [rel.s2, 'done', 2],
+    [rel.s3, 'in_progress', 3],
+  ]) {
+    const update = `update_repo: acme/core\nupdate_branch: renovate/dep-${n}\nupdate_pr: '${n}'\n`;
+    writeFileSync(join(dir, p), read(dir, p).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\n${update}`));
+  }
+  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  git(dir, 'init', '-q', '-b', 'main');
+  commitAt(dir, '2026-11-01T10:00:00Z', 'base');
+  const before = { [rel.s2]: read(dir, rel.s2), [rel.s3]: read(dir, rel.s3) };
+  const kept = 'kept in the old shape (update stories, F-69 Out of Scope): 2';
+  const r = script(dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`^${kept.replace(/[().]/g, '\\$&')}$`, 'm'));
+  assert.match(r.stdout, /^converted: stories: 1 \(/m);
+  for (const [p, status] of [
+    [rel.s2, 'done'],
+    [rel.s3, 'in_progress'],
+  ]) {
+    assert.equal(read(dir, p), before[p], p);
+    assert.equal(fm(dir, p).status, status, p);
+    assert.equal(Object.hasOwn(fm(dir, p), 'transitions'), false, p);
+  }
+  assert.equal(Object.hasOwn(fm(dir, rel.s1), 'status'), false);
+  assert.equal(Array.isArray(fm(dir, rel.s1).transitions), true);
+  assert.deepEqual(errors(dir), []);
+  assert.deepEqual(legacyWarnings(dir), [rel.s2, rel.s3]);
+  const after = head(dir);
+  const rerun = script(dir);
+  assert.equal(rerun.status, 0, rerun.stderr);
+  assert.equal(rerun.stdout, `${kept}\nnothing to do\n`);
+  assert.equal(head(dir), after);
+});
+
 test('migration leaves added and completed equal to the log’s first and terminal entries, also when the clamp moved an entry', () => {
   const { dir } = mkTempBacklog({
     flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
