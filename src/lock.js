@@ -30,15 +30,17 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { exitOnSignal } from './signal-exit.js';
 
 export const LOCK_FILE = '.bl-new.lock';
 const LOCK_TIMEOUT_MS = 30_000;
 const LOCK_POLL_MS = 500;
 
 // Locks held by this process, mapped to their re-entrancy depth and the
-// content this process wrote. Cleanup handlers are registered once at module
-// init (below) and walk this map on exit/SIGINT/SIGTERM; they remove the lock
-// files only, not a temp file that a killed process leaves.
+// content this process wrote. The `exit` listener registered at module init
+// (below) walks this map. On SIGINT or SIGTERM, the handler in signal-exit.js
+// calls process.exit, so it runs too. The listener removes the lock files
+// only, not a temp file that a killed process leaves.
 /** @type {Map<string, { depth: number, content: string }>} */
 const heldLocks = new Map();
 
@@ -60,14 +62,8 @@ export function releaseLock(backlogRoot) {
 }
 
 process.on('exit', cleanupAll);
-process.on('SIGINT', () => {
-  cleanupAll();
-  process.exit(130);
-});
-process.on('SIGTERM', () => {
-  cleanupAll();
-  process.exit(143);
-});
+// SIGINT and SIGTERM end the process with process.exit(130|143), so the exit listener above runs.
+exitOnSignal();
 
 export async function acquireLock(backlogRoot, options = {}) {
   const {
