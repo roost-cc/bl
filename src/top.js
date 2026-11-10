@@ -57,8 +57,8 @@ enter opens or closes the grouped update row, c reads capacity now, + and -
 change the refresh interval, h shows the help, q quits.
 
 The view notifies for a new escalation, a new task, and a run that ends
-(done, escalated, failed or stopped); the first snapshot only sets what is
-not new. A notification rings the terminal bell, which tmux shows as a flag
+(clean, no-change, reviewed, escalated, failed or stopped: every status but
+running and stale); the first snapshot only sets what is not new. A notification rings the terminal bell, which tmux shows as a flag
 on the window, and runs notify-send -a "bl top" "<id> <kind>" "<line>" when
 notify-send is on PATH. If notify-send fails or runs longer than 10 s, the
 bottom border shows a red warning until it next succeeds.

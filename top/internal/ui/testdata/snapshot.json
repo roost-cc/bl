@@ -38,7 +38,7 @@
       },
       {
         "id": "F-85",
-        "status": "done",
+        "status": "clean",
         "pid": null,
         "step": "merged",
         "round": 2,

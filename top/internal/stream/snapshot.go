@@ -56,6 +56,13 @@ type Run struct {
 	Effort       string `json:"effort"`
 }
 
+// Ended says whether a run status is the end of a run: every status but `running` and `stale`. A
+// run ends as `clean`, `no-change`, `reviewed`, `escalated`, `failed` or `stopped`
+// (src/feature-run.js); the view and the notifications both take this one definition.
+func Ended(status string) bool {
+	return status != "running" && status != "stale"
+}
+
 // PR is a run's pull request.
 type PR struct {
 	Number string `json:"number"`

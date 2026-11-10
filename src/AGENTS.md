@@ -2909,7 +2909,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   help, and any key closes it; `q` or `ctrl+c` quits.
 - **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
   before. A new `escalation` or `task` item (by item id) and a run that gets an end status
-  (`done`, `escalated`, `failed`, `stopped`; by run id and status) each make a note
+  (every status but `running` and `stale`: `clean`, `no-change`, `reviewed`, `escalated`,
+  `failed`, `stopped`; `stream.Ended`; by run id and status) each make a note
   `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)`. The first read of a
   section only sets its baseline, so an item notifies once, and again only after it left the
   inbox and came back. For the notes of a snapshot the view rings the terminal bell (`\a`) once,

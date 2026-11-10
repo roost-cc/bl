@@ -110,8 +110,9 @@ func TestRunStatesHaveD5Glyphs(t *testing.T) {
 		{"stopped", "■ stop", sgr(colorPeach), false},
 		{"escalated", "✗ esc", sgr(colorRed), false},
 		{"failed", "✗ fail", sgr(colorRed), false},
-		{"done", "✓ done", sgr(colorGreen), true},
 		{"clean", "✓ done", sgr(colorGreen), true},
+		{"no-change", "✓ done", sgr(colorGreen), true},
+		{"reviewed", "✓ done", sgr(colorGreen), true},
 	} {
 		glyph, style, dim := runState(c.status)
 		if glyph != c.glyph || dim != c.dim || !strings.Contains(style.Render("x"), c.color) {

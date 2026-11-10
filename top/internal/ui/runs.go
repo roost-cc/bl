@@ -16,7 +16,8 @@ const agentColumnFrom = 103
 
 // runState is how box ¹ shows a run status (D4, D5): its glyph and word, their style, and whether
 // the row is dim. Every status that is not running, stale, stopped, escalated or failed is a run
-// that ended well (`done`, `clean`, `no-change`).
+// that ended well (`clean`, `no-change`, `reviewed`); stream.Ended names the statuses that end a
+// run.
 func runState(status string) (string, lipgloss.Style, bool) {
 	switch status {
 	case "running":
@@ -94,7 +95,7 @@ func elapsed(r stream.Run, now time.Time) string {
 		return "-"
 	}
 	end := now
-	if r.Status != "running" && r.Status != "stale" {
+	if stream.Ended(r.Status) {
 		if end, err = time.Parse(time.RFC3339, r.UpdatedAt); err != nil {
 			return "-"
 		}

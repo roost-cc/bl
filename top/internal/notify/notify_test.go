@@ -48,14 +48,14 @@ func TestDiff(t *testing.T) {
 	}{
 		{"the first snapshot sets the baseline", snap(
 			[]string{"escalation:F-83:esc", "task:T-2", "change:F-81:change"},
-			[]string{"F-81:running", "F-85:done", "S-1:running"}), nil},
+			[]string{"F-81:running", "F-85:clean", "S-1:running"}), nil},
 		{"nothing changed", snap(
 			[]string{"escalation:F-83:esc", "task:T-2", "change:F-81:change"},
-			[]string{"F-81:running", "F-85:done", "S-1:running"}), nil},
+			[]string{"F-81:running", "F-85:clean", "S-1:running"}), nil},
 		{"a new escalation, task and change; two runs end; one goes stale", snap(
 			[]string{"runner:updates:run", "escalation:F-83:esc", "escalation:F-81:esc", "task:T-2", "task:T-52", "change:S-9:change", "change:F-81:change"},
-			[]string{"F-81:escalated", "F-85:done", "S-1:stale", "S-2:done"}),
-			[]string{"F-81:esc escalation", "T-52 task", "F-81 escalated", "S-2 done"}},
+			[]string{"F-81:escalated", "F-85:clean", "S-1:stale", "S-2:no-change"}),
+			[]string{"F-81:esc escalation", "T-52 task", "F-81 escalated", "S-2 no-change"}},
 		{"an item notifies once", snap(
 			[]string{"escalation:F-83:esc", "escalation:F-81:esc", "task:T-2", "task:T-52"},
 			[]string{"F-81:escalated", "S-1:stale"}), nil},
@@ -73,6 +73,24 @@ func TestDiff(t *testing.T) {
 	}
 }
 
+// runStatuses are the statuses a runs row can have: those src/feature-run.js writes (running,
+// clean, no-change, reviewed, escalated, failed; stopped from F-88), and stale from the snapshot.
+var runStatuses = []string{"running", "stale", "clean", "no-change", "reviewed", "escalated", "failed", "stopped"}
+
+func TestRunThatEndsCleanNotifies(t *testing.T) {
+	for _, status := range runStatuses {
+		var d Differ
+		d.Diff(snap(nil, []string{"F-81:running"}))
+		want := 1
+		if status == "running" || status == "stale" {
+			want = 0
+		}
+		if notes := d.Diff(snap(nil, []string{"F-81:" + status})); len(notes) != want {
+			t.Errorf("running → %s: %d notes, want %d", status, len(notes), want)
+		}
+	}
+}
+
 func TestDiffWaitsForASectionsFirstRead(t *testing.T) {
 	var d Differ
 	unread := snap(nil, []string{"F-81:running"})
@@ -81,7 +99,7 @@ func TestDiffWaitsForASectionsFirstRead(t *testing.T) {
 		t.Fatalf("first snapshot: %v", notes)
 	}
 	// The attention section's first read is its baseline; the runs section has one already.
-	if got := titles(d.Diff(snap([]string{"task:T-2"}, []string{"F-81:done"}))); !slices.Equal(got, []string{"F-81 done"}) {
+	if got := titles(d.Diff(snap([]string{"task:T-2"}, []string{"F-81:reviewed"}))); !slices.Equal(got, []string{"F-81 reviewed"}) {
 		t.Errorf("the first read of attention: %q, want only the run", got)
 	}
 }
@@ -89,10 +107,10 @@ func TestDiffWaitsForASectionsFirstRead(t *testing.T) {
 func TestRunLine(t *testing.T) {
 	notes := (&Differ{runs: map[string]string{}}).Diff(&stream.Snapshot{Runs: stream.Runs{
 		Section: stream.Section{ReadAt: readAt},
-		Rows:    []stream.Run{{ID: "F-81", Status: "done", Step: "merged"}, {ID: "F-87", Status: "stopped", Step: "implement", Story: "S-1337"}},
+		Rows:    []stream.Run{{ID: "F-81", Status: "clean", Step: "closing-review"}, {ID: "F-87", Status: "stopped", Step: "implement", Story: "S-1337"}},
 	}})
 	got := []string{notes[0].Line, notes[1].Line}
-	if want := []string{"ended at merged", "ended at implement (S-1337)"}; !slices.Equal(got, want) {
+	if want := []string{"ended at closing-review", "ended at implement (S-1337)"}; !slices.Equal(got, want) {
 		t.Errorf("lines %q, want %q", got, want)
 	}
 }
@@ -160,8 +178,8 @@ func TestPushGetsNewEscalationsAndTasksOnly(t *testing.T) {
 	d.Diff(snap([]string{"task:T-2"}, []string{"F-81:running"}))
 	notes := d.Diff(snap(
 		[]string{"task:T-2", "escalation:F-83:esc", "task:T-52", "change:S-9:change"},
-		[]string{"F-81:done", "S-2:escalated"}))
-	if got, want := titles(notes), []string{"F-83:esc escalation", "T-52 task", "F-81 done", "S-2 escalated"}; !slices.Equal(got, want) {
+		[]string{"F-81:reviewed", "S-2:escalated"}))
+	if got, want := titles(notes), []string{"F-83:esc escalation", "T-52 task", "F-81 reviewed", "S-2 escalated"}; !slices.Equal(got, want) {
 		t.Fatalf("notes %q, want %q", got, want)
 	}
 	for _, n := range notes {

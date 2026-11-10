@@ -25,9 +25,6 @@ type Note struct {
 // operator acts.
 var notifyKinds = map[string]bool{"escalation": true, "task": true}
 
-// endStatuses are the run statuses that end a run.
-var endStatuses = map[string]bool{"done": true, "escalated": true, "failed": true, "stopped": true}
-
 // Differ compares each snapshot with the one before. Its zero value has no baseline: the first
 // snapshot that read a section only sets that section's baseline.
 type Differ struct {
@@ -37,8 +34,8 @@ type Differ struct {
 
 // Diff returns the notes of s against the snapshot before, and keeps s as the new baseline. An
 // inbox item notifies when its id was not in the snapshot before, so it notifies once, and again
-// only after it left the inbox and came back. A run notifies when it has an end status that it did
-// not have before. A section that was never read (no read_at) changes nothing.
+// only after it left the inbox and came back. A run notifies when it has an end status (stream.Ended) that it
+// did not have before. A section that was never read (no read_at) changes nothing.
 func (d *Differ) Diff(s *stream.Snapshot) []Note {
 	var notes []Note
 	if !s.Attention.ReadAt.IsZero() {
@@ -55,7 +52,7 @@ func (d *Differ) Diff(s *stream.Snapshot) []Note {
 		runs := map[string]string{}
 		for _, r := range s.Runs.Rows {
 			runs[r.ID] = r.Status
-			if d.runs != nil && d.runs[r.ID] != r.Status && endStatuses[r.Status] {
+			if d.runs != nil && d.runs[r.ID] != r.Status && stream.Ended(r.Status) {
 				notes = append(notes, Note{ID: r.ID, Kind: r.Status, Line: runLine(r)})
 			}
 		}

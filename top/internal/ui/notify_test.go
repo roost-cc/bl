@@ -147,3 +147,25 @@ func TestALongWarningFitsTheBottomBorder(t *testing.T) {
 		t.Errorf("keyBar(171) with a short warning = %q", short)
 	}
 }
+
+// TestBoxOneAndTheNotesAgreeOnTheEndOfARun: for every status a runs row can have (those
+// src/feature-run.js writes, and stale), box ¹ shows a run that goes on (● run, ◌ stale) exactly
+// when a change to that status makes no note, and stream.Ended says the same.
+func TestBoxOneAndTheNotesAgreeOnTheEndOfARun(t *testing.T) {
+	read := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	runs := func(status string) *stream.Snapshot {
+		s := &stream.Snapshot{}
+		s.Runs.ReadAt = read
+		s.Runs.Rows = []stream.Run{{ID: "F-81", Status: status}}
+		return s
+	}
+	for _, status := range []string{"running", "stale", "clean", "no-change", "reviewed", "escalated", "failed", "stopped"} {
+		glyph, _, _ := runState(status)
+		goesOn := glyph == "● run" || glyph == "◌ stale"
+		var d notify.Differ
+		d.Diff(runs("running"))
+		if notes := d.Diff(runs(status)); goesOn != (len(notes) == 0) || goesOn == stream.Ended(status) {
+			t.Errorf("%s: box ¹ shows %q, %d notes, Ended %v", status, glyph, len(notes), stream.Ended(status))
+		}
+	}
+}
