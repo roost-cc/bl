@@ -294,7 +294,8 @@ export function setLog(fm, log) {
  * The type's table must have an edge from the current status to `to` under
  * `by`: the verb's `during`, or one of its `success` or `failure` branches.
  * Else it throws `FlowError` and leaves `fm` unchanged. A `during` equal to
- * the current status records nothing and returns null.
+ * the current status records nothing and returns null. An `at` before the
+ * last entry's (a clock behind the last writer's) is recorded at that entry's.
  *
  * A unit with no log first gets the log `legacyLog` synthesizes (each entry
  * with no `at` takes this entry's), and loses `status:`; `transitions:`
@@ -318,12 +319,15 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
     const from = current ?? '(no status)';
     throw new FlowError(flow.path, `${idOf(kind, fm)} is ${from}; the ${kind} verb "${by}" has no transition to ${to}`);
   }
-  const fields = { at, to, by, via, outcome, note };
+  // Never before the entry it follows: a clock behind the last writer's.
+  const prev = log.at(-1)?.at;
+  const when = prev && Date.parse(at) < Date.parse(prev) ? prev : at;
+  const fields = { at: when, to, by, via, outcome, note };
   const entry = Object.fromEntries(ENTRY_FIELDS.filter((k) => str(fields[k])).map((k) => [k, fields[k]]));
   const next = [...log, entry];
   setLog(fm, next);
   if (next.length === 1 || !DATE_RE.test(str(fm.added))) fm.added = dayOf(next[0].at);
-  if (flow.typeOf(kind).terminal.includes(to)) fm[COMPLETED_KEY[kind]] = dayOf(at);
+  if (flow.typeOf(kind).terminal.includes(to)) fm[COMPLETED_KEY[kind]] = dayOf(when);
   return entry;
 }
 

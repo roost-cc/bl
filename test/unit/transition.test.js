@@ -89,6 +89,17 @@ test('an edge the table lacks throws FlowError and leaves fm unchanged', () => {
   assert.throws(() => applyTransition(flow, 'story', { title: 'x' }, 'refined', { by: 'refine', at: AT }), FlowError);
 });
 
+test('an at before the last entry’s is recorded at that entry’s, so the log stays in order', () => {
+  const fm = at('story', 'draft');
+  const entry = applyTransition(flow, 'story', fm, 'done', { by: 'done', at: '2026-10-31T23:59:00Z' });
+  assert.equal(entry.at, T0);
+  assert.equal(fm.completed, '2026-11-01');
+  assert.deepEqual(
+    findTransitionFindings(flow, 'story', fm, 'x').filter((f) => f.severity === 'error'),
+    [],
+  );
+});
+
 test('a during equal to the current status records nothing', () => {
   const fm = at('feature', 'in_review');
   const before = structuredClone(fm);
