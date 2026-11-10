@@ -1224,6 +1224,39 @@ test('re-review with no recorded base sha reviews the full branch diff', async (
   }
 });
 
+test('a refined story with no acceptance checkboxes is implemented, not skipped', async () => {
+  const prose = (b) => b.replace(/## Acceptance Criteria[\s\S]*$/, '## Acceptance Criteria\n\nIt works.\n');
+  const plain = (b) => b.replaceAll('- [ ] ', '- ');
+  const checked = (b) => b.replaceAll('- [ ]', '- [x]');
+  // [status, the criteria, skipped as complete]
+  const cases = [
+    ['refined', prose, false],
+    ['draft', plain, false],
+    ['refined', checked, true],
+    ['in_progress', prose, true],
+  ];
+  for (const [status, reshape, skipped] of cases) {
+    const name = `${status}, ${reshape.name} criteria`;
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      for (const s of prep.ordered) {
+        editFile(join(dir, s.storyRelPath), (fm, body) => {
+          fm.status = status;
+          return reshape(body);
+        });
+      }
+      const runner = fakeRunner({ dir, feature });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      const sessions = runner.calls.filter((c) => c.prompt === 'feature-story');
+      assert.equal(sessions.length === 0, skipped, `${name}: ${sessions.length} session(s)`);
+      const skips = state.history.filter((h) => /already complete/.test(h.note ?? ''));
+      assert.equal(skips.length > 0, skipped, name);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
 test('story without an Acceptance Criteria section is implemented, not skipped', async () => {
   // Stories that look finished (in_progress, every visible box checked) but
   // whose criteria are not under `## Acceptance Criteria`, or use a marker

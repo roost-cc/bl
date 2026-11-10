@@ -256,6 +256,17 @@ export function uncheckedCriteria(storyIndexPath) {
   return openCheckboxItems(section).map((i) => [i.text, ...i.lines].join(' '));
 }
 
+/** A checked checkbox item, whatever the list marker. */
+const CHECKED_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[[xX]\]/;
+
+/** How many checked items a story's `## Acceptance Criteria` has: 0 when the file or the section is missing. */
+function checkedCriteriaCount(storyIndexPath) {
+  if (!existsSync(storyIndexPath)) return 0;
+  const { body } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
+  const section = extractSection(body, 'Acceptance Criteria') ?? '';
+  return section.split('\n').filter((line) => CHECKED_RE.test(line)).length;
+}
+
 /** Open criteria as the loop reports them; a missing section is one of them. */
 function unmetCriteria(storyIndexPath) {
   return (
@@ -451,14 +462,22 @@ function recordGateLine(ctx, gate) {
   commitChangeFile(ctx, 'test', `chore: ${ctx.feature.id} gate ${verdict}${attempt}`);
 }
 
-/** Whether the implement step skips `story`: it is closed, or every acceptance criterion is checked. */
+/**
+ * Whether the implement step skips `story`: it is closed, or no acceptance
+ * criterion is unchecked. A story that is not started (`draft`, `refined`)
+ * also needs at least one checked box: criteria with no checkbox (prose, a
+ * plain list) say nothing about work done. An agent files an ad-hoc story
+ * with its criteria checked.
+ */
 function storyComplete(story, backlogRoot) {
   const flow = loadFlow(backlogRoot);
   if (flow.meets('story', story.status, 'done')) return true;
   const path = join(backlogRoot, story.storyRelPath);
-  if (flow.meets('story', statusOf('story', readFm(path)), 'done')) return true;
+  const status = statusOf('story', readFm(path));
+  if (flow.meets('story', status, 'done')) return true;
   const open = uncheckedCriteria(path);
-  return open !== null && open.length === 0;
+  if (open === null || open.length > 0) return false;
+  return flow.meets('story', status, 'in_progress') || checkedCriteriaCount(path) > 0;
 }
 
 /**
