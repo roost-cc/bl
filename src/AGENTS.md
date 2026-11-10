@@ -3019,7 +3019,8 @@ asked once per model. A window at 0% makes the configuration `unavailable`
 until the latest such reset. `extra_usage` and `spend` are not read: bl never
 spends paid credits on its own. Missing credentials, an expired token, a
 non-200 answer, the deadline, a body that is not JSON, an answer with no
-windows or a reset that is not a time is `unknown`, with the reason.
+windows, a percent that is not a number or a reset that is not a time is
+`unknown`, with the reason.
 
 The `local` row comes from the server's `/health` (see **The local
 provider**): `available` on a 200, `unavailable` when the connection is

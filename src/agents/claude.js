@@ -370,8 +370,9 @@ function claudeWindowName({ kind, scope }) {
  * latest such window's reset (null when one has none). `extra_usage` and
  * `spend` are not read: bl never spends paid credits on its own. `scope` is
  * `model` when any limit names a model, else `account`; a body that is not
- * an object is `model`. No window, or a reset that is not a time, is
- * `unknown`.
+ * an object is `model`. No window, or a limit that applies with a `percent`
+ * (`utilization`) that is not a number or a `resets_at` that is not a time
+ * string, `null` or absent, is `unknown`.
  *
  * @param {unknown} body
  * @param {string|null} model
@@ -386,27 +387,30 @@ export function claudeCapacity(body, model) {
         ['session', body.five_hour],
         ['weekly_all', body.seven_day],
       ]
-        .filter(([, w]) => isPlainObject(w) && Number.isFinite(w.utilization))
+        .filter(([, w]) => isPlainObject(w))
         .map(([kind, w]) => ({ kind, percent: w.utilization, resets_at: w.resets_at, scope: null }));
   const scope = limits.some((l) => isPlainObject(l) && isPlainObject(l.scope) && isPlainObject(l.scope.model))
     ? 'model'
     : 'account';
+  const unreadable = (what, name, value) =>
+    unknown(
+      scope,
+      `the Claude usage endpoint reported ${what} (${name}: ${typeof value === 'string' ? value : JSON.stringify(value)})`,
+    );
   const windows = [];
   for (const limit of limits) {
-    if (!isPlainObject(limit) || !Number.isFinite(limit.percent)) continue;
+    if (!isPlainObject(limit)) continue;
     const s = limit.scope;
     const applies =
       s == null ||
       (isPlainObject(s) && isPlainObject(s.model) && s.surface == null && scopedModelMatches(s.model, model));
     if (!applies) continue;
     const name = claudeWindowName(limit);
-    const resetsAt = limit.resets_at == null ? null : new Date(limit.resets_at);
-    if (resetsAt && !Number.isFinite(resetsAt.getTime())) {
-      return unknown(
-        scope,
-        `the Claude usage endpoint reported a reset that is not a time (${name}: ${limit.resets_at})`,
-      );
-    }
+    if (!Number.isFinite(limit.percent)) return unreadable('a percent that is not a number', name, limit.percent);
+    const r = limit.resets_at;
+    if (r != null && typeof r !== 'string') return unreadable('a reset that is not a time', name, r);
+    const resetsAt = r == null ? null : new Date(r);
+    if (resetsAt && !Number.isFinite(resetsAt.getTime())) return unreadable('a reset that is not a time', name, r);
     windows.push({ name, remainingPercent: Math.max(0, 100 - limit.percent), resetsAt });
   }
   if (windows.length === 0) return unknown(scope, 'the Claude usage endpoint reported no quota windows');

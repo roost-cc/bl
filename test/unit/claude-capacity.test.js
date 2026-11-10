@@ -156,6 +156,91 @@ test('a reset that is not a time, or a body with no windows, is unknown; a perce
   assert.equal(claudeCapacity(over, 'opus').state, 'unavailable');
 });
 
+// The two shapes a limit comes in: an entry of `limits`, and the
+// `five_hour` / `seven_day` fallback. `set(field, value)` builds a body whose
+// one used-up `claude 5h` limit has `field` = `value`, beside a `claude 7d` at 10%.
+const LIMIT_SHAPES = [
+  {
+    shape: 'limits',
+    field: { percent: 'percent', resets_at: 'resets_at' },
+    set: (field, value) => ({
+      limits: [
+        { kind: 'session', percent: 100, resets_at: '2030-01-01T00:00:00Z', scope: null, [field]: value },
+        { kind: 'weekly_all', percent: 10, resets_at: '2030-01-01T00:00:00Z', scope: null },
+      ],
+    }),
+  },
+  {
+    shape: 'five_hour / seven_day',
+    field: { percent: 'utilization', resets_at: 'resets_at' },
+    set: (field, value) => ({
+      five_hour: { utilization: 100, resets_at: '2030-01-01T00:00:00Z', [field]: value },
+      seven_day: { utilization: 10, resets_at: '2030-01-01T00:00:00Z' },
+    }),
+  },
+];
+
+test('claudeCapacity: a resets_at that is not a string, null or absent is unknown', () => {
+  for (const { shape, field, set } of LIMIT_SHAPES) {
+    for (const [value, shown] of [
+      [false, 'false'],
+      [0, '0'],
+      [true, 'true'],
+      [1794303620, '1794303620'],
+      [[], '[]'],
+      [{}, '{}'],
+    ]) {
+      const r = claudeCapacity(set(field.resets_at, value), 'opus');
+      const label = `${shape}: ${JSON.stringify(value)}`;
+      assert.equal(r.state, 'unknown', label);
+      assert.equal(r.until, null, label);
+      assert.deepEqual(r.windows, [], label);
+      assert.equal(
+        r.message,
+        `the Claude usage endpoint reported a reset that is not a time (claude 5h: ${shown})`,
+        label,
+      );
+    }
+    // A string, null or absent resets_at is read.
+    assert.equal(claudeCapacity(set(field.resets_at, '2030-01-01T00:00:00Z'), 'opus').state, 'unavailable', shape);
+    assert.equal(claudeCapacity(set(field.resets_at, null), 'opus').until, null, shape);
+    assert.equal(claudeCapacity(set(field.resets_at, undefined), 'opus').state, 'unavailable', shape);
+  }
+});
+
+test('claudeCapacity: a limit whose percent is not a number is unknown', () => {
+  for (const { shape, field, set } of LIMIT_SHAPES) {
+    for (const [value, shown] of [
+      ['100', '100'],
+      [null, 'null'],
+      [undefined, 'undefined'],
+      [true, 'true'],
+      [Number.NaN, 'null'],
+      [Number.POSITIVE_INFINITY, 'null'],
+      [[], '[]'],
+      [{}, '{}'],
+    ]) {
+      const r = claudeCapacity(set(field.percent, value), 'opus');
+      const label = `${shape}: ${String(value)}`;
+      assert.equal(r.state, 'unknown', label);
+      assert.deepEqual(r.windows, [], label);
+      assert.equal(
+        r.message,
+        `the Claude usage endpoint reported a percent that is not a number (claude 5h: ${shown})`,
+        label,
+      );
+    }
+  }
+  // A limit that does not apply to the configuration is left out before its percent is read.
+  const other = PROBE1();
+  other.limits[2].percent = '100';
+  assert.equal(claudeCapacity(other, 'opus').state, 'available');
+  assert.equal(claudeCapacity(other, 'fable').state, 'unknown');
+  // A five_hour that is null, as in probe 2, is no window, not an unreadable one.
+  const { limits: _limits, ...probe2 } = PROBE2();
+  assert.equal(claudeCapacity(probe2, 'opus').state, 'available');
+});
+
 test('readClaudeToken reads claudeAiOauth.accessToken and refuses a missing or expired one', () => {
   const path = '/c/.credentials.json';
   const now = Date.parse('2026-11-10T00:00:00Z');
