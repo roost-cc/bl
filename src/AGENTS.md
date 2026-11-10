@@ -2727,9 +2727,9 @@ bl's prompts and plugin commands use, not a new format.
   gives tmux's name back); outside tmux bl never pushes or pops the terminal's title.
   `endTabTitle`, the `exit` hook registered on the first title, sends nothing after a final
   title, whatever the exit code (an `OutcomeError` after an escalation exits non-zero and
-  keeps the escalated title). Otherwise it sets the status from the exit code (`ended` for 0, `interrupted` for 130
-  or 143, `failed (exit N)` otherwise), unsets `next` and sends the title unpadded, so no tab
-  keeps a working status after bl stops. The first title also calls `exitOnSignal`
+  keeps the escalated title). Otherwise it sets the status from the exit code (`ended` for 0,
+  `interrupted` for 130 or 143, `failed (exit N)` otherwise), unsets `next` and sends the
+  title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
   (`signal-exit.js`), the SIGINT and SIGTERM handlers that `lock.js` registers when it loads:
   they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
   registered once per process. A command that sets no title and loads no `lock.js` keeps
