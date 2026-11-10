@@ -21,8 +21,9 @@
 # it, so a signal to the wrapper's pid alone runs its trap at once. The trap
 # sends the signal on to the child and waits for it before the EXIT trap
 # removes the directory. bash makes a background child ignore SIGINT and
-# SIGQUIT, and `env --default-signal=INT,QUIT` gives them back; `<&0` keeps its stdin, which bash
-# would set to /dev/null. Guarded by test/cli/suite-tmpdir.sh.
+# SIGQUIT, and `env --default-signal=INT,QUIT` gives them back; `<&0` keeps
+# its stdin, which bash would set to /dev/null. Guarded by
+# test/cli/suite-tmpdir.sh.
 #
 # Requires GNU env (coreutils 8.31 or later) for --default-signal. BSD and
 # macOS env lack it, so there every suite fails at once; install coreutils
