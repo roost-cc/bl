@@ -155,7 +155,7 @@ test("an escalation after a CLI failure names the exit and shows the CLI's stder
     assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
     const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
     assert.match(escalation, /implement: no valid outcome after one retry \(claude exited 1: Error: bad flag\)/);
-    assert.match(escalation, /The last 20 lines of the CLI's stderr:\n\n```text\nwarn\nError: bad flag\n```/);
+    assert.match(escalation, /The last 20 non-empty lines of the CLI's stderr:\n\n```text\nwarn\nError: bad flag\n```/);
   } finally {
     cleanup();
   }
@@ -205,7 +205,7 @@ test('escalateNoOutcome keeps a backtick-fenced stderr tail inside its block', (
       name: 'stderr tail',
       stderrTail: '````\nfoo\n````',
       output: '',
-      heading: "The last 20 lines of the CLI's stderr:",
+      heading: "The last 20 non-empty lines of the CLI's stderr:",
     },
     {
       name: 'session text',

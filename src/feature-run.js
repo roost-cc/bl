@@ -1685,7 +1685,7 @@ function escalateNoOutcome(ctx, step, r) {
     '',
     tail ? 'The last 20 lines of the session text:' : 'The session left no text.',
     ...(tail ? ['', fencedText(tail)] : []),
-    ...(r.stderrTail ? ['', "The last 20 lines of the CLI's stderr:", '', fencedText(r.stderrTail)] : []),
+    ...(r.stderrTail ? ['', "The last 20 non-empty lines of the CLI's stderr:", '', fencedText(r.stderrTail)] : []),
     '',
     `Find why the agent did not return the outcome, then run \`${resume}\`.`,
   ].join('\n');
