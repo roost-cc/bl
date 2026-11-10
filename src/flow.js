@@ -555,7 +555,7 @@ export class Flow {
 /**
  * @typedef {object} FlowWiring  what bl defines that `flow.json` names
  * @property {Map<string, Function>} guards        `guards.js`'s `GUARDS`
- * @property {Map<string, Function>} capabilities  `capabilities.js`'s `CAPABILITIES`
+ * @property {Map<string, Function>} capabilities  `capabilities.js`'s `VIA_CAPABILITIES`
  * @property {Record<string, Record<string, string | null>>} dispatch  `verbs.js`'s `DISPATCH`
  */
 

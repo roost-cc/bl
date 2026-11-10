@@ -2,7 +2,7 @@
  * capabilities.js — the capabilities `flow.json` names in a verb's `via`, and
  * the verb handlers `DISPATCH` (`verbs.js`) names (F-69 D1). The file wires
  * them; this registry defines them. `bl validate`'s `flow-json` reports a
- * `via` name that is not here.
+ * `via` name that is not a step (`VIA_CAPABILITIES`).
  *
  * Two kinds, until feature 3's executor calls capabilities through the table:
  *
@@ -39,8 +39,12 @@ const cells = new Set(
     .filter((cell) => cell != null),
 );
 
+/**
+ * The capabilities a verb's `via` may name: the table's steps only, so a
+ * `DISPATCH` handler name (`cmdRun`) in `via` is a `flow-json` finding.
+ * @type {Map<string, Function>}
+ */
+export const VIA_CAPABILITIES = new Map(IN_CODE.map((name) => [name, inCode(name)]));
+
 /** @type {Map<string, Function>} */
-export const CAPABILITIES = new Map([
-  ...[...cells].map((cell) => [cell, dispatchHandler(cell)]),
-  ...IN_CODE.map((name) => [name, inCode(name)]),
-]);
+export const CAPABILITIES = new Map([...[...cells].map((cell) => [cell, dispatchHandler(cell)]), ...VIA_CAPABILITIES]);

@@ -33,7 +33,7 @@ import {
 } from './change-doc.js';
 import { findFlowFindings, loadFlow, statusWordProblem } from './flow.js';
 import { GUARDS } from './guards.js';
-import { CAPABILITIES } from './capabilities.js';
+import { VIA_CAPABILITIES } from './capabilities.js';
 import { DISPATCH } from './verbs.js';
 import { findBlockersFindings, unitIndex } from './blockers.js';
 import { findTaskFindings, readAllTasks } from './task.js';
@@ -1511,7 +1511,7 @@ export function runAll(config, opts = {}) {
 
   const findings = [
     ...frontmatter.findings,
-    ...findFlowFindings(flow, { guards: GUARDS, capabilities: CAPABILITIES, dispatch: DISPATCH }),
+    ...findFlowFindings(flow, { guards: GUARDS, capabilities: VIA_CAPABILITIES, dispatch: DISPATCH }),
   ];
 
   const knownRepos = new Set(Object.keys(config.reposByName ?? {}));

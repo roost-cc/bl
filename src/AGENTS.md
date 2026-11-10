@@ -776,8 +776,9 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
 - **Guards and capabilities** are names of functions in two registries, `src/guards.js`
   (`GUARDS`: `gate_free:<gate>`, `escalation_cleared`, `round_within_cap`) and
   `src/capabilities.js` (`CAPABILITIES`: every `DISPATCH` cell of `src/verbs.js`, which
-  `bl <verb> <id>` calls through it, and the steps the loop still runs in code). The file wires
-  them; the registries define them. A guard name may carry one argument after a colon.
+  `bl <verb> <id>` calls through it, and the steps the loop still runs in code). A `via` may
+  name only a step (`VIA_CAPABILITIES`), not a `DISPATCH` handler. The file wires them; the
+  registries define them. A guard name may carry one argument after a colon.
 - **Gates** name what a unit of the type can be held at and the verbs that check each. bl
   checks gates only at `run`, `implement` and `merge`.
 - **`src/flow.js`.** `loadFlow(backlogRoot)` returns the parsed flow (cached while the file's

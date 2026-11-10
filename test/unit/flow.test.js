@@ -13,7 +13,7 @@ import {
   migratedFlowText,
 } from '../../src/flow.js';
 import { GUARDS } from '../../src/guards.js';
-import { CAPABILITIES } from '../../src/capabilities.js';
+import { CAPABILITIES, VIA_CAPABILITIES } from '../../src/capabilities.js';
 import { DISPATCH } from '../../src/verbs.js';
 import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 
@@ -22,7 +22,7 @@ const V1_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', '
 const TEMPLATE_DIR = dirname(FLOW_TEMPLATE);
 const template = () => JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
 const v1 = () => JSON.parse(readFileSync(join(V1_DIR, FLOW_FILE), 'utf8'));
-const WIRING = { guards: GUARDS, capabilities: CAPABILITIES, dispatch: DISPATCH };
+const WIRING = { guards: GUARDS, capabilities: VIA_CAPABILITIES, dispatch: DISPATCH };
 
 /** A backlog dir holding `content` (an object, or raw text) as its flow.json. */
 function backlogWith(content) {
@@ -472,12 +472,13 @@ test('flow-json: a when or via name bl does not register', () => {
     findingsAfter((raw) => {
       const { run, review } = raw.types.feature.verbs;
       run.when = ['gate_free:run', 'members_in:refined'];
-      run.via = ['implement', 'deploy'];
+      run.via = ['implement', 'deploy', 'cmdRun'];
       review.failure[0].when = ['round_below_cap'];
     }),
     [
       'error: feature verb "run" checks guard "members_in:refined", which bl does not register (bl/src/guards.js)',
       'error: feature verb "run" runs capability "deploy", which bl does not register (bl/src/capabilities.js)',
+      'error: feature verb "run" runs capability "cmdRun", which bl does not register (bl/src/capabilities.js)',
       'error: feature verb "review" checks guard "round_below_cap" on failure, which bl does not register (bl/src/guards.js)',
     ],
   );
