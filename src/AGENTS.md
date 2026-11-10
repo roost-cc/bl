@@ -1098,13 +1098,15 @@ fault named. `validateOutcome(schema, value)` in `src/outcome.js` does the
 validation, with `ajv` (draft 2020-12). It takes the object or the text that
 holds it, and its faults are `no output`, `not JSON: <parser message>` and
 `schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). The parser
-message in `not JSON` has its ANSI codes and control characters (except tab)
-removed and is cut to 500 characters, as a stderr line is (`cleanStderrLine`,
-S-1404). A headless
-result replaces `no output`, and only that fault, with
-`<cli> exited <status>[: <last stderr line>]` when the agent CLI exited non-zero
-or wrote stderr (`withExitFault`, S-1398). Nothing in bl reads an outcome out of
-prose. Two carriers deliver the value:
+message in `not JSON` and the JSON path in `schema violation` have their ANSI
+codes and control characters (except tab) removed and are cut to 500
+characters, as a stderr line is (`cleanStderrLine`, S-1404, S-1405). Every agent
+text field in `schemas/` refuses control characters: a one-line field keeps only
+tab, and a multi-line `reason` keeps tab, LF and CR. So a valid outcome carries
+none into a commit message (S-1405). A headless result replaces `no output`,
+and only that fault, with `<cli> exited <status>[: <last stderr line>]` when
+the agent CLI exited non-zero or wrote stderr (`withExitFault`, S-1398).
+Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
 
 | Session     | Carrier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Read by                                 |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |

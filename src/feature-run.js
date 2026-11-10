@@ -69,6 +69,7 @@ import {
   outsideBlockers,
 } from './feature.js';
 import { runHeadlessSession, launchSession, loadPrompt, loadSchema } from './session.js';
+import { cleanStderrLine } from './outcome.js';
 import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
@@ -1700,6 +1701,7 @@ function escalateNoOutcome(ctx, step, r) {
     .trimEnd()
     .split('\n')
     .slice(-20)
+    .map(cleanStderrLine)
     .join('\n');
   const resume = ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`;
   const details = [
@@ -3601,13 +3603,15 @@ function roundAborted(ctx, round, error) {
   };
 }
 
-function sessionError(r) {
+export function sessionError(r) {
   return (
     r.error ||
-    String(r.output ?? '')
-      .trim()
-      .split('\n')
-      .pop() ||
+    cleanStderrLine(
+      String(r.output ?? '')
+        .trim()
+        .split('\n')
+        .pop(),
+    ) ||
     'agent reported an error'
   );
 }
