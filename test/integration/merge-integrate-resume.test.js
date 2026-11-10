@@ -50,7 +50,7 @@ test('resume_pending_integration_review_below_at_and_above_cap: bl run --resume 
         verdict: 'pending',
         must: '- [ ] keep main',
       });
-      const first = integrateUnit({ ...ctx, runner: pending.runner });
+      const first = await integrateUnit({ ...ctx, runner: pending.runner });
       assert.match(first.reason ?? '', /left open items/, c.name);
       // The integration round's verdict is in the log: its items in fixing (F-69 D5).
       const after = reviewOf('feature', parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm);
@@ -94,7 +94,7 @@ test('resume_pending_integration_review_below_at_and_above_cap: an ordinary pend
     landOnMain(fx, 'f1-feat.txt', 'main version\n', 'main edits');
     const ctx = featureCtx(fx);
     const pending = scriptedRunner({ test: 'true', resolve: resolveBoth, verdict: 'pending', must: '- [ ] keep main' });
-    integrateUnit({ ...ctx, runner: pending.runner });
+    await integrateUnit({ ...ctx, runner: pending.runner });
     const state = readyToResume(fx);
     delete state.integrationReview;
     writeFileSync(join(fx.dir, '.bl', 'run', 'F-1.json'), JSON.stringify(state));

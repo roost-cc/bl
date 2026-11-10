@@ -169,11 +169,11 @@ function stubRunner(testCmd = 'true') {
   return { runner, calls };
 }
 
-function integrate(fx, testCmd) {
+async function integrate(fx, testCmd) {
   const config = loadConfig({ backlogRoot: fx.dir });
   const unit = featureUnit(findFeature(normalizeFeatureId('F-1'), config));
   const { runner, calls } = stubRunner(testCmd);
-  const res = integrateUnit({ unit, config, prep: mergePrep(config, unit, ['code']), runner });
+  const res = await integrateUnit({ unit, config, prep: mergePrep(config, unit, ['code']), runner });
   return { res, calls };
 }
 
@@ -182,11 +182,11 @@ const featureFm = (fx) => parseFrontmatter(readFileSync(featureFile(fx), 'utf8')
 const escalation = (fx) =>
   extractSection(parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).body, 'Escalation')?.trim() ?? '';
 
-test('a lock-only conflict is regenerated from the branch side, committed, gated and pushed with no review', () => {
+test('a lock-only conflict is regenerated from the branch side, committed, gated and pushed with no review', async () => {
   const fx = fixture();
   try {
     landOnMain(fx);
-    const { res, calls } = integrate(fx, `test "$(cat ${LOCK})" = "$(printf 'b\\nbase\\nm')"`);
+    const { res, calls } = await integrate(fx, `test "$(cat ${LOCK})" = "$(printf 'b\\nbase\\nm')"`);
     assert.equal(res.ok, true, res.reason);
     assert.deepEqual(
       res.repos.map((r) => [r.state, r.conflicted, r.regenerated]),
@@ -214,14 +214,14 @@ test('a lock-only conflict is regenerated from the branch side, committed, gated
   }
 });
 
-test('a mixed conflict is left with only the hand-merge file, and the escalation names the regenerated one', () => {
+test('a mixed conflict is left with only the hand-merge file, and the escalation names the regenerated one', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, { featTxt: "main's version\n" });
     writeFileSync(join(fx.wt, 'f1-feat.txt'), "branch's version\n");
     g(fx.wt, 'commit', '-q', '-am', 'branch edits f1-feat.txt');
     const head = g(fx.wt, 'rev-parse', 'HEAD');
-    const { res, calls } = integrate(fx);
+    const { res, calls } = await integrate(fx);
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     assert.deepEqual(
@@ -243,12 +243,12 @@ test('a mixed conflict is left with only the hand-merge file, and the escalation
   }
 });
 
-test('a failing regenerate command leaves the lock conflicted and the repo conflicted', () => {
+test('a failing regenerate command leaves the lock conflicted and the repo conflicted', async () => {
   const fx = fixture({ regenerate: 'echo lockfile broken; false' });
   try {
     landOnMain(fx);
     const head = g(fx.wt, 'rev-parse', 'HEAD');
-    const { res, calls } = integrate(fx);
+    const { res, calls } = await integrate(fx);
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     const [r] = res.repos;
@@ -274,7 +274,7 @@ test('a failing regenerate command leaves the lock conflicted and the repo confl
   }
 });
 
-test('the failing command puts the conflict back, markers and all, before the abort', () => {
+test('the failing command puts the conflict back, markers and all, before the abort', async () => {
   // Observed mid-merge: the command records the lock's stages as git leaves them.
   const scratch = mkTempDir('bl-regenerate-probe-');
   const probe = join(scratch, 'stages.txt');
@@ -300,7 +300,7 @@ test('the failing command puts the conflict back, markers and all, before the ab
       }
       return shell(cmd, cwd, o);
     };
-    const res = integrateUnit({ unit, config, prep: mergePrep(config, unit, ['code']), runner });
+    const res = await integrateUnit({ unit, config, prep: mergePrep(config, unit, ['code']), runner });
     assert.equal(res.escalated, true);
     assert.match(readFileSync(probe, 'utf8'), /\.locks\/app\.lock/, 'unmerged while the command ran');
     assert.match(afterRegen.unmerged, /\.locks\/app\.lock/, 'still unmerged after the stage');
@@ -587,7 +587,7 @@ test('regenerate_conflict_and_output_state_matrix: a later plugin does not stage
   assert.equal(g(dir, 'show', ':gen.lock'), 'R');
 });
 
-test('retry_failed_integration_push_for_clean_regenerated_and_agent_resolved_merges: a regenerated merge whose push was rejected is pushed by the rerun', () => {
+test('retry_failed_integration_push_for_clean_regenerated_and_agent_resolved_merges: a regenerated merge whose push was rejected is pushed by the rerun', async () => {
   const fx = fixture();
   try {
     landOnMain(fx);
@@ -598,13 +598,13 @@ test('retry_failed_integration_push_for_clean_regenerated_and_agent_resolved_mer
     const shell = runner.shell;
     runner.shell = (cmd, cwd, o) =>
       cmd === 'git push origin HEAD' ? { status: 1, output: 'rejected' } : shell(cmd, cwd, o);
-    const first = integrateUnit({ unit, config, prep, runner });
+    const first = await integrateUnit({ unit, config, prep, runner });
     assert.equal(first.ok, false);
     assert.deepEqual(
       first.repos.map((r) => r.regenerated),
       [[LOCK]],
     );
-    const retry = integrateUnit({ unit, config, prep, runner: stubRunner().runner });
+    const retry = await integrateUnit({ unit, config, prep, runner: stubRunner().runner });
     assert.equal(retry.ok, true, retry.reason);
     g(fx.repo, 'fetch', '-q', 'origin');
     assert.equal(g(fx.repo, 'rev-parse', 'origin/f1-feat'), g(fx.wt, 'rev-parse', 'HEAD'));

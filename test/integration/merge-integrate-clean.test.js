@@ -24,13 +24,13 @@ import {
 } from '../helpers/merge-integrate-fixture.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
 
-test('a branch already current with main is left alone and not gated', () => {
+test('a branch already current with main is left alone and not gated', async () => {
   const fx = fixture();
   try {
     const { config, unit, prep } = featureCtx(fx);
     const head = g(fx.wts['f1-feat'], 'rev-parse', 'HEAD');
     const { runner, calls } = stubRunner('true');
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, true, res.reason);
     assert.deepEqual(
       res.repos.map((r) => [r.repoName, r.state, r.ref]),
@@ -43,13 +43,13 @@ test('a branch already current with main is left alone and not gated', () => {
   }
 });
 
-test('a branch behind main is merged in its worktree, gated and pushed', () => {
+test('a branch behind main is merged in its worktree, gated and pushed', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'other.txt', 'other\n', 'other work on main');
     const { config, unit, prep } = featureCtx(fx);
     const { runner, calls } = stubRunner('test -f other.txt');
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, true, res.reason);
     assert.equal(res.repos[0].state, 'merged');
     assert.equal(calls.gates, 1);
@@ -73,7 +73,7 @@ test('a branch behind main is merged in its worktree, gated and pushed', () => {
   }
 });
 
-test('a container cleanup that fails after the gate on a clean merge rolls it back and escalates as a merge', () => {
+test('a container cleanup that fails after the gate on a clean merge rolls it back and escalates as a merge', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'other.txt', 'main\n', 'main adds other.txt');
@@ -84,7 +84,7 @@ test('a container cleanup that fails after the gate on a clean merge rolls it ba
     let lists = 0;
     runner.listContainers = () => (lists++ === 0 ? [] : [{ id: 'c1', name: 'left-behind', compose: false }]);
     runner.removeContainers = () => ({ status: 1, output: 'cannot remove c1' });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     assert.equal(calls.gates, 1);
@@ -98,7 +98,7 @@ test('a container cleanup that fails after the gate on a clean merge rolls it ba
   }
 });
 
-test('a red gate after a clean merge reaches the resolution agent; its failure escalates and rolls the merge back', () => {
+test('a red gate after a clean merge reaches the resolution agent; its failure escalates and rolls the merge back', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'other.txt', 'other\n', 'other work on main');
@@ -106,7 +106,7 @@ test('a red gate after a clean merge reaches the resolution agent; its failure e
     const head = g(fx.wts['f1-feat'], 'rev-parse', 'HEAD');
     const pushed = g(fx.repo, 'rev-parse', 'origin/f1-feat');
     const { runner, calls } = scriptedRunner({ test: 'echo boom; false', resolve: () => UNRESOLVED });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     assert.equal(calls.gates, 1);
@@ -135,7 +135,7 @@ test('a red gate after a clean merge reaches the resolution agent; its failure e
   }
 });
 
-test('a red gate after a clean merge that the agent fixes is gated, re-reviewed and pushed', () => {
+test('a red gate after a clean merge that the agent fixes is gated, re-reviewed and pushed', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'other.txt', 'other\n', 'other work on main');
@@ -150,7 +150,7 @@ test('a red gate after a clean merge that the agent fixes is gated, re-reviewed 
         return RESOLVED;
       },
     });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, true, res.reason);
     assert.equal(calls.gates, 2);
     assert.deepEqual(calls.sessions, ['merge-resolve', ...REVIEW_SESSIONS]);
@@ -164,7 +164,7 @@ test('a red gate after a clean merge that the agent fixes is gated, re-reviewed 
   }
 });
 
-test('a branch with no commits of its own behind main is not fast-forwarded or gated', () => {
+test('a branch with no commits of its own behind main is not fast-forwarded or gated', async () => {
   const fx = fixture();
   try {
     const wt = fx.wts['f1-feat'];
@@ -173,7 +173,7 @@ test('a branch with no commits of its own behind main is not fast-forwarded or g
     const { config, unit, prep } = featureCtx(fx);
     const head = g(wt, 'rev-parse', 'HEAD');
     const { runner, calls } = stubRunner('true');
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, true, res.reason);
     assert.equal(res.repos[0].state, 'current');
     assert.equal(calls.gates, 0);
@@ -183,7 +183,7 @@ test('a branch with no commits of its own behind main is not fast-forwarded or g
   }
 });
 
-test('a worktree with uncommitted changes is refused before anything merges', () => {
+test('a worktree with uncommitted changes is refused before anything merges', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'other.txt', 'other\n', 'other work on main');
@@ -192,7 +192,7 @@ test('a worktree with uncommitted changes is refused before anything merges', ()
     const head = g(wt, 'rev-parse', 'HEAD');
     writeFileSync(join(wt, 'wip.txt'), 'draft\n');
     const { runner, calls } = stubRunner('true');
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.refused, true);
     assert.match(
@@ -207,14 +207,14 @@ test('a worktree with uncommitted changes is refused before anything merges', ()
   }
 });
 
-test("integration is refused while a bl run holds the unit's run lock", () => {
+test("integration is refused while a bl run holds the unit's run lock", async () => {
   const fx = fixture();
   try {
     const { config, unit, prep } = featureCtx(fx);
     const lock = acquireRunLock(config, 'F-1');
     assert.equal(lock.holder, undefined);
     const { runner } = stubRunner('true');
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.refused, true);
     assert.match(res.reason, new RegExp(`^a bl run \\(pid ${process.pid}\\) is running F-1$`));

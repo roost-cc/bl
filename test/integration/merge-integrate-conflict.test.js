@@ -23,7 +23,7 @@ import {
   stubRunner,
 } from '../helpers/merge-integrate-fixture.js';
 
-test('a conflict the agent resolves is gated, re-reviewed outside the round cap, pushed and lands on main', () => {
+test('a conflict the agent resolves is gated, re-reviewed outside the round cap, pushed and lands on main', async () => {
   // Two rounds reviewed, the cap (2): the integration round is not counted against it.
   const fx = fixture({ reviewRound: 2 });
   try {
@@ -32,7 +32,7 @@ test('a conflict the agent resolves is gated, re-reviewed outside the round cap,
     const wt = fx.wts['f1-feat'];
     const branchSha = g(wt, 'rev-parse', '--short', 'HEAD');
     const { runner, calls } = scriptedRunner({ test: 'true', resolve: resolveBoth });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, true, res.reason);
     assert.deepEqual(
       res.repos.map((r) => [r.state, r.resolved]),
@@ -82,7 +82,7 @@ test('a conflict the agent resolves is gated, re-reviewed outside the round cap,
   }
 });
 
-test('the integration round on a feature with no log records its verdict in the log, never in the change document', () => {
+test('the integration round on a feature with no log records its verdict in the log, never in the change document', async () => {
   // The old shape (F-69 D4): the change document's review fields place the
   // feature, an unreadable round as none. bl writes the log, not the fields (D5).
   const fx = fixture({ reviewRound: 'two' });
@@ -90,7 +90,7 @@ test('the integration round on a feature with no log records its verdict in the 
     landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
     const { config, unit, prep } = featureCtx(fx);
     const { runner, calls } = scriptedRunner({ test: 'true', resolve: resolveBoth });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, true, res.reason);
     assert.deepEqual(calls.sessions, ['merge-resolve', ...REVIEW_SESSIONS]);
     const unitFm = parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm;
@@ -104,7 +104,7 @@ test('the integration round on a feature with no log records its verdict in the 
   }
 });
 
-test('an agent that leaves the merge unfinished is aborted and escalated, and main is untouched', () => {
+test('an agent that leaves the merge unfinished is aborted and escalated, and main is untouched', async () => {
   const fx = fixture();
   try {
     const mainSha = landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
@@ -113,7 +113,7 @@ test('an agent that leaves the merge unfinished is aborted and escalated, and ma
     const head = g(wt, 'rev-parse', 'HEAD');
     const mainBefore = g(fx.repo, 'rev-parse', 'main');
     const { runner, calls } = scriptedRunner({ test: 'true', resolve: () => RESOLVED });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     assert.deepEqual(calls.sessions, ['merge-resolve'], 'no gate fix or review after a failed resolution');
@@ -136,7 +136,7 @@ test('an agent that leaves the merge unfinished is aborted and escalated, and ma
   }
 });
 
-test('a resolution session that ends with RESOLVED text and no outcome is resumed once, then rolled back and escalated', () => {
+test('a resolution session that ends with RESOLVED text and no outcome is resumed once, then rolled back and escalated', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
@@ -147,7 +147,7 @@ test('a resolution session that ends with RESOLVED text and no outcome is resume
       test: 'true',
       resolve: () => ({ ok: true, output: 'All merged.\nRESOLVED\n', isError: false }),
     });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     assert.deepEqual(calls.sessions, ['merge-resolve', 'merge-resolve'], 'resumed once, no gate or review');
@@ -165,7 +165,7 @@ test('a resolution session that ends with RESOLVED text and no outcome is resume
   }
 });
 
-test('an agent that commits conflict markers is rolled back, and the escalation says where its commit is', () => {
+test('an agent that commits conflict markers is rolled back, and the escalation says where its commit is', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
@@ -182,7 +182,7 @@ test('an agent that commits conflict markers is rolled back, and the escalation 
         return RESOLVED;
       },
     });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.escalated, true);
     assert.equal(g(wt, 'rev-parse', 'HEAD'), head, 'rolled back');
     const esc = escalation(featureFile(fx));
@@ -193,7 +193,7 @@ test('an agent that commits conflict markers is rolled back, and the escalation 
   }
 });
 
-test('a resolution the test gate and its fix step leave red is rolled back and escalated as a merge', () => {
+test('a resolution the test gate and its fix step leave red is rolled back and escalated as a merge', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
@@ -201,7 +201,7 @@ test('a resolution the test gate and its fix step leave red is rolled back and e
     const wt = fx.wts['f1-feat'];
     const head = g(wt, 'rev-parse', 'HEAD');
     const { runner, calls } = scriptedRunner({ test: 'echo red; false', resolve: resolveBoth });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     assert.deepEqual(calls.sessions, ['merge-resolve', 'feature-fix-tests'], 'no review of a red tree');
@@ -216,7 +216,7 @@ test('a resolution the test gate and its fix step leave red is rolled back and e
   }
 });
 
-test('a re-review that leaves open items escalates and keeps the resolution on the branch, in fixing', () => {
+test('a re-review that leaves open items escalates and keeps the resolution on the branch, in fixing', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
@@ -229,7 +229,7 @@ test('a re-review that leaves open items escalates and keeps the resolution on t
       verdict: 'pending',
       must: "- [ ] main's wording is lost in f1-feat.txt",
     });
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     assert.deepEqual(calls.sessions, ['merge-resolve', ...REVIEW_SESSIONS]);
@@ -254,7 +254,7 @@ test('a re-review that leaves open items escalates and keeps the resolution on t
   }
 });
 
-test('a re-review that ends addressed but writes an escalation rolls back and says so', () => {
+test('a re-review that ends addressed but writes an escalation rolls back and says so', async () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
@@ -274,7 +274,7 @@ test('a re-review that ends addressed but writes an escalation rolls back and sa
       }
       return r;
     };
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     assert.equal(g(wt, 'rev-parse', 'HEAD'), before, 'the resolution is rolled back');
@@ -289,7 +289,7 @@ test('a re-review that ends addressed but writes an escalation rolls back and sa
   }
 });
 
-test("a conflict is aborted and escalated naming the file and both sides' commits", () => {
+test("a conflict is aborted and escalated naming the file and both sides' commits", async () => {
   const fx = fixture();
   try {
     const mainSha = landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
@@ -298,7 +298,7 @@ test("a conflict is aborted and escalated naming the file and both sides' commit
     const head = g(wt, 'rev-parse', 'HEAD');
     const branchSha = g(wt, 'rev-parse', '--short', 'HEAD');
     const { runner, calls } = stubRunner('true');
-    const res = integrateUnit({ unit, config, prep, runner });
+    const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, false);
     assert.equal(res.escalated, true);
     assert.deepEqual(calls.titles.at(-1), {

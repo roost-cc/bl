@@ -85,10 +85,10 @@ function setup(results) {
   return { ctx, calls, titles, step, cleanup, feature };
 }
 
-test('a valid outcome is returned and recorded as outcome: <summary>', () => {
+test('a valid outcome is returned and recorded as outcome: <summary>', async () => {
   const { ctx, calls, step, cleanup } = setup([VALID]);
   try {
-    const r = step({ schema: SCHEMA });
+    const r = await step({ schema: SCHEMA });
     assert.deepEqual(r.structured, VALID.structured);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].schema, SCHEMA);
@@ -101,10 +101,10 @@ test('a valid outcome is returned and recorded as outcome: <summary>', () => {
   }
 });
 
-test('no valid outcome: a failed event with the fault, then the same session resumed once with the note', () => {
+test('no valid outcome: a failed event with the fault, then the same session resumed once with the note', async () => {
   const { ctx, calls, step, cleanup } = setup([{ ...INVALID, output: '{"summary": DONE' }, VALID]);
   try {
-    const r = step({ schema: SCHEMA });
+    const r = await step({ schema: SCHEMA });
     assert.deepEqual(r.structured, VALID.structured);
     assert.equal(calls.length, 2);
     assert.deepEqual(calls[1].retry, { sessionId: 'sess-1', note: OUTCOME_RETRY_NOTE });
@@ -122,10 +122,10 @@ test('no valid outcome: a failed event with the fault, then the same session res
   }
 });
 
-test('a session that ran but returned no outcome at all is a fault too, whatever its text says', () => {
+test('a session that ran but returned no outcome at all is a fault too, whatever its text says', async () => {
   const { ctx, calls, step, cleanup } = setup([{ structured: null, structuredError: null, output: 'DONE S-1' }, VALID]);
   try {
-    step({ schema: SCHEMA });
+    await step({ schema: SCHEMA });
     assert.equal(calls.length, 2);
     assert.equal(ctx.state.history[0].note, 'outcome error: no output');
   } finally {
@@ -133,11 +133,11 @@ test('a session that ran but returned no outcome at all is a fault too, whatever
   }
 });
 
-test('a second failure escalates with the fault and the last 20 lines of text', () => {
+test('a second failure escalates with the fault and the last 20 lines of text', async () => {
   const text = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n');
   const { ctx, calls, titles, step, cleanup, feature } = setup([INVALID, { ...INVALID, output: `${text}\n` }]);
   try {
-    assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
+    await assert.rejects(step({ schema: SCHEMA }), OutcomeError);
     assert.equal(calls.length, 2, 'retried once, not twice');
     assert.equal(ctx.state.status, 'escalated');
     assert.deepEqual(
@@ -163,7 +163,7 @@ test('a second failure escalates with the fault and the last 20 lines of text', 
   }
 });
 
-test("an escalation after a CLI failure names the exit and shows the CLI's stderr (S-1398)", () => {
+test("an escalation after a CLI failure names the exit and shows the CLI's stderr (S-1398)", async () => {
   const failed = {
     structured: null,
     structuredError: 'claude exited 1: Error: bad flag',
@@ -172,7 +172,7 @@ test("an escalation after a CLI failure names the exit and shows the CLI's stder
   };
   const { step, cleanup, feature } = setup([failed, failed]);
   try {
-    assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
+    await assert.rejects(step({ schema: SCHEMA }), OutcomeError);
     const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
     assert.match(escalation, /implement: no valid outcome after one retry \(claude exited 1: Error: bad flag\)/);
     assert.match(escalation, /The last 20 non-empty lines of the CLI's stderr:\n\n```text\nwarn\nError: bad flag\n```/);
@@ -188,7 +188,7 @@ test('defaultRunner().shell takes a commit message built from a fault of NUL std
   assert.equal(defaultRunner().shell(`echo 'chore: S-1 escalated — ${fault}'`, dir).status, 0);
 });
 
-test('defaultRunner().session returns the headless stderrTail', () => {
+test('defaultRunner().session returns the headless stderrTail', async () => {
   const { spawn } = ClaudeProvider.prototype;
   const { dir, cleanup } = mkTempBacklog();
   const failed = {
@@ -215,18 +215,18 @@ test('defaultRunner().session returns the headless stderrTail', () => {
         schema: SCHEMA,
       });
     };
-    const r = session(failed);
+    const r = await session(failed);
     assert.equal(r.stderrTail, 'warn\nError: bad flag');
     assert.equal(r.structuredError, 'claude exited 1: Error: bad flag');
     const { stderrTail, ...without } = failed;
-    assert.equal(session(without).stderrTail, '', 'an adapter result without stderrTail gives none');
+    assert.equal((await session(without)).stderrTail, '', 'an adapter result without stderrTail gives none');
   } finally {
     ClaudeProvider.prototype.spawn = spawn;
     cleanup();
   }
 });
 
-test('escalateNoOutcome keeps a backtick-fenced stderr tail inside its block', () => {
+test('escalateNoOutcome keeps a backtick-fenced stderr tail inside its block', async () => {
   const cases = [
     {
       name: 'stderr tail',
@@ -245,7 +245,7 @@ test('escalateNoOutcome keeps a backtick-fenced stderr tail inside its block', (
     const failed = { structured: null, structuredError: 'claude exited 1', stderrTail: c.stderrTail, output: c.output };
     const { step, cleanup, feature } = setup([failed, failed]);
     try {
-      assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
+      await assert.rejects(step({ schema: SCHEMA }), OutcomeError);
       const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
       const block = escalation.slice(escalation.indexOf(c.heading));
       assert.match(block, /\n\n`````text\n````\nfoo\n````\n`````\n/, c.name);
@@ -255,7 +255,7 @@ test('escalateNoOutcome keeps a backtick-fenced stderr tail inside its block', (
   }
 });
 
-test('escalateNoOutcome removes control characters from the session text (S-1405)', () => {
+test('escalateNoOutcome removes control characters from the session text (S-1405)', async () => {
   const failed = {
     structured: null,
     structuredError: 'claude exited 1',
@@ -263,7 +263,7 @@ test('escalateNoOutcome removes control characters from the session text (S-1405
   };
   const { step, cleanup, feature } = setup([failed, failed]);
   try {
-    assert.throws(() => step({ schema: SCHEMA }), OutcomeError);
+    await assert.rejects(step({ schema: SCHEMA }), OutcomeError);
     const escalation = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
     assert.match(escalation, /\nfirst\nred words\n/);
     // LF stays: the section has many lines.
@@ -280,12 +280,12 @@ test("sessionError cleans the session text's last line, and keeps bl's own error
   assert.equal(sessionError({ error: 'spawn claude ENOENT', output: 'x' }), 'spawn claude ENOENT');
 });
 
-test('a step without a schema reads no outcome, records none of its text, and is never retried', () => {
+test('a step without a schema reads no outcome, records none of its text, and is never retried', async () => {
   const { ctx, calls, step, cleanup } = setup([
     { structured: null, structuredError: null, output: 'all done\nDONE S-1\n' },
   ]);
   try {
-    const r = step();
+    const r = await step();
     assert.equal(r.ok, true);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].schema, undefined);
@@ -297,12 +297,12 @@ test('a step without a schema reads no outcome, records none of its text, and is
   }
 });
 
-test("a session's history entry carries its usage when the result has one, and no usage key when not (F-87 D3b)", () => {
+test("a session's history entry carries its usage when the result has one, and no usage key when not (F-87 D3b)", async () => {
   const usage = { input: 10, output: 20, cache_creation: 30, cache_read: 40 };
   const { ctx, step, cleanup } = setup([{ usage }, {}]);
   try {
-    step();
-    step();
+    await step();
+    await step();
     const [withUsage, without] = ctx.state.history;
     assert.deepEqual(withUsage.usage, usage);
     assert.ok(!('usage' in without), 'a session without usage writes no usage key');
@@ -312,10 +312,10 @@ test("a session's history entry carries its usage when the result has one, and n
   }
 });
 
-test('a story step records its story and its outcome summary beside the note', () => {
+test('a story step records its story and its outcome summary beside the note', async () => {
   const { ctx, step, cleanup } = setup([VALID]);
   try {
-    step({ schema: SCHEMA, story: 'S-1' });
+    await step({ schema: SCHEMA, story: 'S-1' });
     const [h] = ctx.state.history;
     assert.equal(h.story, 'S-1');
     assert.equal(h.outcome, 'implemented S-1');

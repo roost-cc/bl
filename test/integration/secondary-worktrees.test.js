@@ -94,15 +94,24 @@ function build({
   return { tmp, backlog, repoA, repoB };
 }
 
+/** Run `fn` with BL_BACKLOG_DIR set to `backlog`; an async `fn` keeps it set until it settles. */
 function withBacklog(backlog, fn) {
   const prev = process.env.BL_BACKLOG_DIR;
   process.env.BL_BACKLOG_DIR = backlog;
-  try {
-    return fn();
-  } finally {
+  const restore = () => {
     if (prev == null) delete process.env.BL_BACKLOG_DIR;
     else process.env.BL_BACKLOG_DIR = prev;
+  };
+  let value;
+  try {
+    value = fn();
+  } catch (e) {
+    restore();
+    throw e;
   }
+  if (value instanceof Promise) return value.finally(restore);
+  restore();
+  return value;
 }
 
 /** Run `fn` with process.exit and console.error captured. */
@@ -420,7 +429,7 @@ test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, a
 
 // F-60 D3: the feature's sessions start in its unit directory, which is their
 // write root, so both repos' worktrees are writable; the lock lives there.
-test("bl run F-n's sessions start in the unit directory, with both worktrees in their write roots", () => {
+test("bl run F-n's sessions start in the unit directory, with both worktrees in their write roots", async () => {
   const { tmp, backlog } = build();
   const { exit, err, value: p } = prepFeature(backlog, ['repoB']);
   assert.equal(exit, null, err);
@@ -445,7 +454,7 @@ test("bl run F-n's sessions start in the unit directory, with both worktrees in 
     return { status: 0, output: 'DONE', isError: false, usage: null };
   };
   try {
-    withBacklog(backlog, () => {
+    await withBacklog(backlog, async () => {
       const config = loadConfig({ backlogRoot: backlog });
       const runner = defaultRunner();
       for (const [mode, promptName] of [
@@ -454,7 +463,7 @@ test("bl run F-n's sessions start in the unit directory, with both worktrees in 
         ['workon', 'feature-self-review'],
         ['review', 'review-correctness'],
       ]) {
-        const r = runner.session({
+        const r = await runner.session({
           mode,
           agent: 'claude',
           promptName,

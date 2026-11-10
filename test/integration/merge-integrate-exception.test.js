@@ -19,7 +19,7 @@ import {
   stubRunner,
 } from '../helpers/merge-integrate-fixture.js';
 
-test('resolution_exception_aborts_all_repos_and_escalates_before_unlock: an ordinary error in any phase leaves no merge behind', () => {
+test('resolution_exception_aborts_all_repos_and_escalates_before_unlock: an ordinary error in any phase leaves no merge behind', async () => {
   const boom = () => {
     throw new Error('injected failure');
   };
@@ -65,7 +65,7 @@ test('resolution_exception_aborts_all_repos_and_escalates_before_unlock: an ordi
       };
       const titles = [];
       runner.title = (fields, opts) => titles.push({ ...fields, final: opts?.final ?? false });
-      const res = integrateUnit({ unit, config, prep, runner });
+      const res = await integrateUnit({ unit, config, prep, runner });
       assert.equal(res.ok, false, c.name);
       assert.equal(res.escalated, true, c.name);
       assert.match(res.reason, /^merge with main: stopped by an error: injected failure$/, c.name);
@@ -117,7 +117,7 @@ test("a log write that fails during bl merge's integration is reported as failed
   }
 });
 
-test('integration_exception_preserves_conflict_evidence_before_and_after_resolution_commit: every error after a conflict escalates with its files and both sides', () => {
+test('integration_exception_preserves_conflict_evidence_before_and_after_resolution_commit: every error after a conflict escalates with its files and both sides', async () => {
   const boom = () => {
     throw new Error('injected failure');
   };
@@ -171,7 +171,7 @@ test('integration_exception_preserves_conflict_evidence_before_and_after_resolut
       const restore = c.readOnly ? installPartialWrites(featureFile(fx)) : null;
       let res;
       try {
-        res = integrateUnit({ ...ctx, runner });
+        res = await integrateUnit({ ...ctx, runner });
       } finally {
         restore?.();
       }

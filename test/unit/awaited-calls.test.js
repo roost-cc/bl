@@ -26,13 +26,13 @@ const EXCEPTIONS = new Map([
   ['blockers-merge.js main', 'the script entry: `main(…).then(…)` handles the result'],
   ['credential-helper.js run', "a local synchronous `run`, not bl.js's"],
   ['release.js run', "a local synchronous `run`, not bl.js's"],
+  ['report.js scoped', "a local synchronous `scoped`, not feature-run.js's"],
   ['review.js run', "a local synchronous `run`, not bl.js's"],
   ['agents/capacity-helper.js run', "a local synchronous `run`, not bl.js's"],
   ['agents/claude.js run', "a local synchronous `run`, not bl.js's"],
   ['agents/codex.js run', "a local synchronous `run`, not bl.js's"],
   ['agents/gemini.js run', "a local synchronous `run`, not bl.js's"],
   ['tree.js addEdge', "a local synchronous `addEdge`, not block.js's"],
-  ['feature-run.js implementScripted', "feature-run.js's own synchronous `implementScripted`, not workon.js's"],
   ['what-next.js addEdge', "a local synchronous `addEdge`, not block.js's"],
 ]);
 
