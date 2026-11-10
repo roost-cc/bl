@@ -16,8 +16,11 @@
  *   history    every HISTORY_EVERY_MS
  *
  * The first tick reads every section. A read that throws keeps the last good
- * value (`readSection`), the section is read again at the next tick, and the
- * stream goes on.
+ * value (`readSection`), and the stream goes on. A section read on a timer
+ * (`attention`, `next`, `capacity`, `history`) whose read throws is read again
+ * after RETRY_FIRST_MS, then after twice as long at each further failure, never
+ * later than its period; a backlog change does not read it sooner. A good read
+ * goes back to the usual schedule.
  */
 
 import { spawnSync } from 'child_process';
@@ -28,6 +31,18 @@ import { problemLines, readSection, sectionReaders, snapshotOf } from './top-sna
 export const ATTENTION_MAX_AGE_MS = 30 * 1000;
 export const CAPACITY_EVERY_MS = 5 * 60 * 1000;
 export const HISTORY_EVERY_MS = 5 * 60 * 1000;
+export const RETRY_FIRST_MS = 10 * 1000;
+
+/** The period of each section read on a timer. */
+const PERIOD = {
+  attention: ATTENTION_MAX_AGE_MS,
+  next: ATTENTION_MAX_AGE_MS,
+  capacity: CAPACITY_EVERY_MS,
+  history: HISTORY_EVERY_MS,
+};
+
+/** The stamp of a tick whose `stamp()` threw: one value, so a stamp that keeps throwing is no change. */
+const NO_STAMP = Symbol('no stamp');
 
 /**
  * What says the backlog changed (D3a): git's `HEAD`, and the stat signature
@@ -56,9 +71,11 @@ export function backlogStamp(config) {
 export function createStream({ readers, now = Date.now, stamp }) {
   const sections = {};
   const readAt = {};
+  // A section on a timer whose read threw: when it is due again, and how many reads in a row threw.
+  const retryAt = {};
+  const failures = {};
   let lastStamp;
   let capacityAsked = false;
-  // A read that throws is not a read for the schedule: the section is due again at the next tick.
   const read = (name, t) => {
     let ok = false;
     sections[name] = readSection(
@@ -70,10 +87,17 @@ export function createStream({ readers, now = Date.now, stamp }) {
       },
       t,
     );
-    if (ok) readAt[name] = t;
-    else delete readAt[name];
+    if (ok) {
+      readAt[name] = t;
+      delete retryAt[name];
+      delete failures[name];
+    } else if (name in PERIOD) {
+      failures[name] = (failures[name] ?? 0) + 1;
+      retryAt[name] = t + Math.min(PERIOD[name], RETRY_FIRST_MS * 2 ** (failures[name] - 1));
+    }
   };
-  const due = (name, t, every) => readAt[name] === undefined || t - readAt[name] >= every;
+  const due = (name, t) =>
+    name in retryAt ? t >= retryAt[name] : readAt[name] === undefined || t - readAt[name] >= PERIOD[name];
   return {
     requestCapacity() {
       capacityAsked = true;
@@ -87,19 +111,20 @@ export function createStream({ readers, now = Date.now, stamp }) {
       try {
         s = stamp();
       } catch {
-        // No stamp: take the backlog as changed (a new symbol equals no stamp before it).
-        s = Symbol('unknown');
+        // No stamp: the first one after a stamp is a change, and the next ones are not.
+        s = NO_STAMP;
       }
-      if (s !== lastStamp || due('attention', t, ATTENTION_MAX_AGE_MS) || due('next', t, ATTENTION_MAX_AGE_MS)) {
-        read('attention', t);
-        read('next', t);
-      }
+      const changed = s !== lastStamp;
       lastStamp = s;
-      if (capacityAsked || due('capacity', t, CAPACITY_EVERY_MS)) {
+      // Two schedules: a section that waits for a retry is not read for a change.
+      for (const name of ['attention', 'next']) {
+        if ((changed && !(name in retryAt)) || due(name, t)) read(name, t);
+      }
+      if (capacityAsked || due('capacity', t)) {
         capacityAsked = false;
         read('capacity', t);
       }
-      if (due('history', t, HISTORY_EVERY_MS)) read('history', t);
+      if (due('history', t)) read('history', t);
       return snapshotOf(sections, t);
     },
   };

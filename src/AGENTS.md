@@ -2990,9 +2990,13 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 - "The backlog changes" means git `HEAD` moves, or a unit file, change document or
   `priority.md` changes: `backlogStamp()` (`src/top-stream.js`) compares `HEAD` and
   `backlogSignature()`, the stat signature `loadBacklog()` compares (`src/backlog-graph.js`).
-- The first `--stream` snapshot reads every section. A section whose read threw is read again
-  at the next snapshot, whatever its period. A line `capacity` on stdin makes the next
-  snapshot read capacity. When stdin closes, the stream exits 0.
+- The first `--stream` snapshot reads every section. `attention` and `next` have a schedule
+  each. When the read of `attention`, `next`, `capacity` or `history` throws, the section is
+  read again after 10 s, then after twice as long at each further failure, never later than its
+  period, and a backlog change does not read it sooner (`RETRY_FIRST_MS`). A good read goes
+  back to the usual schedule. A `stamp()` that throws counts as a change once, not at every
+  snapshot. A line `capacity` on stdin makes the next snapshot read capacity. When stdin
+  closes, the stream exits 0.
 - stdout carries only the JSON. A section that could not be read
   (`bl top: <section> not read: <message>`) and each inbox warning (`warning: …`) go to stderr,
   in `--stream` once when they first appear.

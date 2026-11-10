@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
-import { backlogStamp, createStream } from '../../src/top-stream.js';
+import { RETRY_FIRST_MS, backlogStamp, createStream } from '../../src/top-stream.js';
 import { SECTIONS } from '../../src/top-snapshot.js';
 
 const INTERVAL = 2000;
@@ -94,7 +94,7 @@ test('a reader that throws keeps its last good value with error, and the stream 
   assert.equal(snapshots.at(-1).attention.error, undefined);
 });
 
-test('a failed read of a due section is read again at the next tick', () => {
+test('a failed read of a due section is read again RETRY_FIRST_MS later, not after its period', () => {
   // name, the clock of its second read (which fails), its read count with no failure.
   for (const [name, second, reads] of [
     ['attention', 30000, 20],
@@ -104,32 +104,59 @@ test('a failed read of a due section is read again at the next tick', () => {
   ]) {
     const { counts, times, snapshots } = simulate({ failOnce: name });
     assert.equal(times[name][1], second, name);
-    assert.equal(times[name][2], second + INTERVAL, `${name}: read again at the next tick`);
+    assert.equal(times[name][2], second + RETRY_FIRST_MS, `${name}: read again after the retry`);
     const failed = snapshots[second / INTERVAL][name];
     assert.equal(failed.error, `${name} broke once`, name);
-    assert.equal(snapshots[second / INTERVAL + 1][name].error, undefined, `${name}: the good read drops the error`);
+    const retried = (second + RETRY_FIRST_MS) / INTERVAL;
+    assert.equal(snapshots[retried - 1][name].error, `${name} broke once`, `${name}: no read before the retry`);
+    assert.equal(snapshots[retried][name].error, undefined, `${name}: the good read drops the error`);
     // From the good read on, the usual period (capacity and history have no fourth read in 10 min).
     if (name === 'attention' || name === 'next') assert.equal(times[name][3] - times[name][2], 30000, name);
     assert.equal(counts[name], reads + 1, name);
   }
 });
 
-test('a stamp that throws ends no tick: the backlog counts as changed, so attention and next are read', () => {
+test('a stamp that throws ends no tick: its first throw counts as a change, and the next throws do not', () => {
   const readers = Object.fromEntries(SECTIONS.map((name) => [name, () => ({ ok: true })]));
-  const counts = { attention: 0, next: 0 };
-  for (const name of Object.keys(counts)) {
-    readers[name] = () => ({ n: ++counts[name] });
+  const times = { attention: [], next: [] };
+  for (const name of Object.keys(times)) {
+    readers[name] = (now) => (times[name].push(now), { n: times[name].length });
   }
   let t = 0;
   const stream = createStream({
     readers,
     now: () => t,
     stamp: () => {
+      if (t === 0) return 'a';
       throw new Error('git is gone');
     },
   });
-  for (let i = 0; i < 3; i++, t += INTERVAL) assert.equal(stream.tick().attention.error, undefined);
-  assert.deepEqual(counts, { attention: 3, next: 3 });
+  for (let i = 0; i < 30; i++, t += INTERVAL) assert.equal(stream.tick().attention.error, undefined);
+  // t=0 (the first tick), t=2 s (the stamp went: a change), then every 30 s from it.
+  for (const name of Object.keys(times)) assert.deepEqual(times[name], [0, 2000, 32000], name);
+});
+
+test('a section that keeps failing is not read at every tick', () => {
+  const period = { attention: 30000, next: 30000, capacity: 300000, history: 300000 };
+  // The usual read count of each section over the 10 minutes, with no failure.
+  const usual = { attention: 20, next: 20, capacity: 2, history: 2 };
+  for (const name of Object.keys(period)) {
+    // A backlog that changes at every tick reads attention and next at every tick, unless they fail.
+    for (const changing of [false, true]) {
+      const what = `${name}${changing ? ', the backlog changing at every tick' : ''}`;
+      const { counts, times } = simulate({ throwing: name, before: (i, { change }) => changing && change() });
+      // After the first failure, each retry waits twice as long as the one before, up to the period.
+      for (let i = 2; i < times[name].length; i++) {
+        const want = Math.min(period[name], RETRY_FIRST_MS * 2 ** (i - 2));
+        assert.equal(times[name][i] - times[name][i - 1], want, `${what}: read ${i}`);
+      }
+      // The other sections keep their own schedule.
+      for (const other of Object.keys(period).filter((o) => o !== name)) {
+        const want = changing && (other === 'attention' || other === 'next') ? TICKS : usual[other];
+        assert.equal(counts[other], want, `${what}: ${other}`);
+      }
+    }
+  }
 });
 
 test('backlogStamp changes when a unit file, a change document or a new task changes the backlog', () => {
