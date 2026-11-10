@@ -63,6 +63,15 @@ export function runCapacityHelper(script, args, { run = spawnSyncFiles, env = pr
 }
 
 /**
+ * The value after the flag `name` on this helper's command line, or undefined.
+ * @param {string} name
+ */
+export function helperArg(name) {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+/**
  * Whether the module at `url` (its `import.meta.url`) is the script Node
  * runs, so a helper prints its answer only when run, not when imported.
  * @param {string} url

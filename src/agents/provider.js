@@ -80,6 +80,32 @@ export function agentEnv({ headless = false, backlogRoot = null, base = process.
   };
 }
 
+/**
+ * The capacity reading (`AgentProvider.capacity()`) that a non-empty list of
+ * quota `windows` means: `unavailable` when a window has nothing left, until
+ * the latest reset of those windows (null when one has none), with the
+ * message `no quota left in <names>`; else `available`. Codex and Claude map
+ * their answers to windows and share this.
+ *
+ * @param {{ name: string, remainingPercent: number, resetsAt: Date|null }[]} windows
+ * @param {"account"|"model"} scope
+ * @returns {ReturnType<AgentProvider["capacity"]>}
+ */
+export function windowsCapacity(windows, scope) {
+  const usedUp = windows.filter((w) => w.remainingPercent <= 0);
+  if (usedUp.length === 0) return { state: 'available', scope, until: null, windows, message: '' };
+  const until = usedUp.some((w) => w.resetsAt == null)
+    ? null
+    : new Date(Math.max(...usedUp.map((w) => w.resetsAt.getTime())));
+  return {
+    state: 'unavailable',
+    scope,
+    until,
+    windows,
+    message: `no quota left in ${usedUp.map((w) => w.name).join(', ')}`,
+  };
+}
+
 export class AgentProvider {
   /** The registry key (`index.js`) the adapter answers to. */
   get name() {
