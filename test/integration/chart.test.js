@@ -105,7 +105,7 @@ test("the spec's layers: stacking, the dash, bars by week, the fixed colours", (
   assert.equal(flow.layer[0].encoding.y.stack, 'zero');
   assert.deepEqual(flow.layer[0].encoding.color.scale, {
     domain: ['done', 'escalated', 'ready for merge', 'fixing', 'in review', 'in progress', 'refined', 'draft'],
-    range: [...COLOURS, ...COLOURS],
+    range: COLOURS,
   });
   const burnup = spec('burnup-backlog');
   assert.deepEqual(
