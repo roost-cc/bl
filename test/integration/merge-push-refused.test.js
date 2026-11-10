@@ -209,7 +209,7 @@ test('a failed install stops bl merge after the push, names the command, and the
 // `bl merge` on that signal. `fail` makes the first run's install fail, so the
 // second run takes the "already merged" path: it looks up the merge commit
 // (`landedMergeCommit`) and pushes main. `setup(fx)` runs before the lockfile
-// lands on main, and `after(fx)` checks that `bl merge` stopped at the child.
+// lands on main, and `after(fx, r)` checks that `bl merge` stopped at the child.
 const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], {
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -293,6 +293,39 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     // No `branch -D`.
     after: (fx) => assert.ok(ok(fx.repo, 'rev-parse', '--verify', 's1-loose')),
   })),
+  // `checkedMerge`'s throwaway removal also prunes; only `removeWorktreeAndBranch` prints the message.
+  ...SIGNALS.map((signal) => ({
+    child: 'the worktree prune',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: killingGit(`'worktree prune'`, signal),
+    message: endedBy('`git worktree prune`', signal),
+    after: (fx) => {
+      assert.ok(existsSync(fx.wts['s1-loose']));
+      assert.ok(ok(fx.repo, 'rev-parse', '--verify', 's1-loose'));
+    },
+  })),
+  // The normal remove of the unit's worktree fails, and its `--force` remove ends.
+  ...SIGNALS.map((signal) => ({
+    child: 'the forced worktree removal',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: `case "$*" in 'worktree remove --force '*/wt/s1-loose) kill -${signal.slice(3)} $$;; 'worktree remove '*/wt/s1-loose) exit 1;; esac\nexec '${REAL_GIT}' "$@"`,
+    message: endedBy('`git worktree remove --force [^`]+`', signal),
+    // No remote branch deletion.
+    after: (fx) => assert.ok(ok(fx.origin, 'rev-parse', '--verify', 's1-loose')),
+  })),
+  ...SIGNALS.map((signal) => ({
+    child: 'the forced branch deletion',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: `case "$*" in 'branch -d '*) exit 1;; 'branch -D '*) kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"`,
+    message: endedBy('`git branch -D s1-loose`', signal),
+    after: (fx, r) => assert.doesNotMatch(r.stderr, /Could not delete branch/),
+  })),
   // Only the push of the commit that marks S-1 done: the integrate step
   // pushes the backlog earlier, and S-1467 covers that push.
   ...SIGNALS.map((signal) => ({
@@ -327,7 +360,7 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
       );
       // The kill stopped bl merge, so it does not go on to "Resume with".
       assert.doesNotMatch(r.stderr, /Cleanup of code failed/);
-      after?.(fx);
+      after?.(fx, r);
     } finally {
       fx.cleanup();
     }
