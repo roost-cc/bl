@@ -3966,14 +3966,23 @@ merges once <blocker> meets "<until>" (bl status <blocker>).` No flag
   manifest.
 - **Never reviewed** (D3, S-755 folded in) — a unit whose change document has
   no Review Log session (or no change document) is refused:
-  `<id> has never been reviewed — run \`bl review <id>\` (or \`bl run <id>\`), or pass --no-review to merge without one.`Each repo's branch is looked up with`change.find`; a PR in state `MERGED`adds`<repo>: PR #<n> (<url>) merged on the forge at <headRefOid> before any review`.
-A forge without `change.find`, or a failing op, skips the lookup, not the
-check. `--no-review`merges anyway and appends`- Merged without review (operator, <date>)`to the change document's`## Merge`, plus `- <repo>: PR #<n> merged on the forge at <sha> before any review`for each forge-merged PR. There is no retrospective review (S-789).
-A story at`ready_for_merge`whose branch has no commits ahead of`origin/main`(local`main`when there is no origin) in every repo is not refused (S-1437):`bl run`finished
-it without a pull request (see "A branch with no commits" under`bl run`for a story).`mergeGates`returns`noCommits: true`; `bl merge`merges nothing, writes no`commit:`,
-removes the worktree and the branch, and appends
-`- <date> · <repo> · no commits on the branch: nothing merged`to`## Merge`. A branch
-with commits, or a story at another status (for example `in_progress`), is still refused.
+  ``<id> has never been reviewed — run `bl review <id>` (or `bl run <id>`), or pass --no-review to merge without one.``
+  Each repo's branch is looked up with `change.find`; a PR in state `MERGED`
+  adds `<repo>: PR #<n> (<url>) merged on the forge at <headRefOid> before any review`.
+  A forge without `change.find`, or a failing op, skips the lookup, not the
+  check. `--no-review` merges anyway and appends
+  `- Merged without review (operator, <date>)` to the change document's
+  `## Merge`, plus `- <repo>: PR #<n> merged on the forge at <sha> before any review`
+  for each forge-merged PR. There is no retrospective review (S-789).
+  A story at `ready_for_merge` whose branch has no commits ahead of
+  `origin/main` (local `main` when there is no origin) in every repo is not
+  refused (S-1437): `bl run` finished it without a pull request (see "A branch
+  with no commits" under `bl run` for a story). `mergeGates` returns
+  `noCommits: true`; `bl merge` merges nothing, writes no `commit:`, removes
+  the worktree and the branch, and appends
+  `- <date> · <repo> · no commits on the branch: nothing merged` to `## Merge`.
+  A branch with commits, or a story at another status (for example
+  `in_progress`), is still refused.
 - **Escalation gate** — an open `## Escalation` in the story or feature file.
 - **Stray worktree** — a worktree on the unit's branch in a registered repo
   the unit does not own (a story's one repo, a feature's stories' repos) is
