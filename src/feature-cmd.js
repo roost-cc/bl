@@ -1040,10 +1040,10 @@ function runFeatureStagePlugins(stage, config, feature, vars, cwd) {
  * which exits naming the repo (every repo of a feature, S-862). `bl side` prepares a side story's repo through
  * this too (F-48 D1).
  *
- * @returns {{ repoName: string, repoPath: string, worktreePath: string,
- *             isNewWorktree: boolean }}
+ * @returns {Promise<{ repoName: string, repoPath: string, worktreePath: string,
+ *             isNewWorktree: boolean }>}
  */
-export function prepareFeatureRepo(config, feature, repoName, { strict = false } = {}) {
+export async function prepareFeatureRepo(config, feature, repoName, { strict = false } = {}) {
   const repoPath = config.reposByName[repoName];
   if (!repoPath) {
     console.error(`Unknown repo: ${repoName}. Known: ${Object.keys(config.reposByName).join(', ')}`);
@@ -1052,8 +1052,8 @@ export function prepareFeatureRepo(config, feature, repoName, { strict = false }
   const cfg = configForRepo(config, repoName);
   const branchName = featureBranchName(feature.featureEntry);
   const worktreePath = worktreePathFor(cfg, repoName, branchName);
-  return prepareWorktreeOnce(repoPath, branchName, () => {
-    const { effectiveWorktreePath, isNewWorktree } = ensureWorktree(repoPath, branchName, worktreePath);
+  return prepareWorktreeOnce(repoPath, branchName, async () => {
+    const { effectiveWorktreePath, isNewWorktree } = await ensureWorktree(repoPath, branchName, worktreePath);
     // Owed before bootstrap, so a run stopped there still owes them (S-862).
     const workonPending = workonDue(effectiveWorktreePath, isNewWorktree);
     const stop = (what) => {
@@ -1167,16 +1167,21 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
   info(`Stories  : ${ordered.map((s) => s.id).join(', ') || '(none)'}`);
   info('');
 
-  const { worktreePath: effectiveWorktreePath, isNewWorktree } = prepareFeatureRepo(config, feature, targetRepoName, {
-    strict: true,
-  });
+  const { worktreePath: effectiveWorktreePath, isNewWorktree } = await prepareFeatureRepo(
+    config,
+    feature,
+    targetRepoName,
+    {
+      strict: true,
+    },
+  );
   // The other repos, in order: a repo that cannot be prepared stops the run
   // before the agent starts (S-862).
   const otherWorktrees = [];
   for (const name of names.slice(1)) {
     info(`Repo     : ${name}`);
     info('');
-    const w = prepareFeatureRepo(config, feature, name, { strict: true });
+    const w = await prepareFeatureRepo(config, feature, name, { strict: true });
     otherWorktrees.push({ repoName: w.repoName, worktreePath: w.worktreePath });
   }
   const sessionVars = featureSessionVars(feature);
@@ -1185,7 +1190,7 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
   if (IMPLEMENT_VERBS.includes(start.verb))
     await enterVerb(config.backlogRoot, { ...feature, kind: 'feature' }, start.verb);
   // The branch is recorded in the change document, with every repo prepared.
-  const change = openUnitChange(cfg.backlogRoot, feature, branchName, names);
+  const change = await openUnitChange(cfg.backlogRoot, feature, branchName, names);
   const reviewPending = start.verb === 'fix';
 
   const baseVars = {
@@ -1647,7 +1652,7 @@ export async function cmdRunStory(args, baseConfig, story) {
   }
   return runUnit(args, config, unit, {
     ordered: () => ordered,
-    prepare: () => {
+    prepare: async () => {
       start(true);
       return prepareStoryRun(parsed, found, config, { unit });
     },
@@ -1799,7 +1804,7 @@ export async function cmdMerge(args, config, feature) {
   // only when the feature does not already name that repo's exact merge SHA.
   const tips = {};
   for (const t of targets) {
-    const result = cleanupOneRepo({
+    const result = await cleanupOneRepo({
       parsed,
       storyEntry: feature.featureEntry,
       repoName: t.repoName,
@@ -1922,7 +1927,7 @@ export async function cmdMerge(args, config, feature) {
     }, completed=${stamp}`,
   );
 
-  const commitFailed = commitChangedSince(
+  const commitFailed = await commitChangedSince(
     config.backlogRoot,
     backlogBefore,
     `chore: merge ${feature.id}, mark stories done`,

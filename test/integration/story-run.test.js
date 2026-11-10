@@ -84,7 +84,7 @@ async function run(backlog, args) {
   return { exit, err, out };
 }
 
-test("prepareStoryRun: the story's own branch and worktree, in prepareFeatureWorktree's shape", () => {
+test("prepareStoryRun: the story's own branch and worktree, in prepareFeatureWorktree's shape", async () => {
   const { tmp, backlog, repo } = build();
   const prevBacklog = process.env.BL_BACKLOG_DIR;
   process.env.BL_BACKLOG_DIR = backlog;
@@ -92,7 +92,7 @@ test("prepareStoryRun: the story's own branch and worktree, in prepareFeatureWor
     const config = loadConfig({ backlogRoot: backlog, projectId: 'demo' });
     const parsed = normalizeId('S-7');
     const found = findStoryDir(parsed, config);
-    const prep = prepareStoryRun(parsed, found, config);
+    const prep = await prepareStoryRun(parsed, found, config);
     assert.equal(prep.branchName, 's7-loose');
     assert.equal(prep.worktreePath, join(tmp, 'worktrees', 's7-loose', 'repoA'));
     assert.ok(existsSync(prep.worktreePath));

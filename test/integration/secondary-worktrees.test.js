@@ -140,11 +140,11 @@ async function capture(fn) {
 }
 
 function prep(backlog) {
-  return withBacklog(backlog, () => {
+  return withBacklog(backlog, async () => {
     const config = loadConfig({ backlogRoot: backlog });
     const parsed = normalizeId('S-7');
     const found = findStoryDir(parsed, config);
-    return { config, prep: prepareStoryRun(parsed, found, config) };
+    return { config, prep: await prepareStoryRun(parsed, found, config) };
   });
 }
 
@@ -152,9 +152,9 @@ function prep(backlog) {
 // A story: one repo, its component's
 // ---------------------------------------------------------------------------
 
-test("prepareStoryRun makes only the story's worktree, in its component's repo, whatever repo fields the story names", () => {
+test("prepareStoryRun makes only the story's worktree, in its component's repo, whatever repo fields the story names", async () => {
   const { tmp, backlog, repoB } = build();
-  const { config, prep: p } = prep(backlog);
+  const { config, prep: p } = await prep(backlog);
   assert.equal(p.worktreePath, join(tmp, 'worktrees', 's7-two', 'repoA'));
   // The story's own unit directory, where its session starts (F-60 D3).
   assert.equal(p.unitDir, join(tmp, 'worktrees', 's7-two'));
@@ -315,7 +315,7 @@ test('bl implement on an escalated feature or story whose review position is fix
       ['S-7'],
       `story, ${name}: ${targets.notices.join('; ')}`,
     );
-    assert.equal(prep(story.backlog).prep.reviewPending, fix, `story, ${name}: reviewPending`);
+    assert.equal((await prep(story.backlog)).prep.reviewPending, fix, `story, ${name}: reviewPending`);
 
     // A feature: `bl implement F-1`'s prep picks the fix session and records `fixing` by fix.
     const feature = build();
@@ -403,7 +403,7 @@ test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, a
   writeFileSync(join(fdir, 'index.md'), '---\nfeature_id: F-1\ntitle: Trio\nstatus: approved\n---\n\n# Trio\n');
   const { exit, err, value } = await withBacklog(backlog, async () => {
     const config = loadConfig({ backlogRoot: backlog });
-    return capture(async () => prepareFeatureWorktree(config, findFeature(normalizeFeatureId('F-1'), config)));
+    return capture(() => prepareFeatureWorktree(config, findFeature(normalizeFeatureId('F-1'), config)));
   });
   assert.equal(exit, null, err);
   assert.deepEqual(
@@ -523,7 +523,7 @@ test("bl run F-n's prep gives a story added after approval its worktree with no 
 async function cleanSecondary(backlog, repoB) {
   return withBacklog(backlog, async () => {
     const config = loadConfig({ backlogRoot: backlog });
-    return capture(() =>
+    return capture(async () =>
       cleanupOneRepo({
         parsed: { id: 'F-1', num: '1' },
         storyEntry: 'F1-pair',

@@ -62,7 +62,7 @@ export function bobPushes(bob, files, message = 'bob') {
 }
 
 /** Run `fn` with stderr captured; returns [result, stderr text]. */
-export function captureStderr(fn) {
+export async function captureStderr(fn) {
   const orig = process.stderr.write;
   let err = '';
   process.stderr.write = (chunk) => {
@@ -70,7 +70,7 @@ export function captureStderr(fn) {
     return true;
   };
   try {
-    return [fn(), err];
+    return [await fn(), err];
   } finally {
     process.stderr.write = orig;
   }
@@ -111,7 +111,7 @@ export function pullWithFailingGit(root, failing) {
     [
       '--input-type=module',
       '-e',
-      `const m = await import(${JSON.stringify(BACKLOG_COMMIT)}); console.log(JSON.stringify(m.pullBacklog(${JSON.stringify(root)})));`,
+      `const m = await import(${JSON.stringify(BACKLOG_COMMIT)}); console.log(JSON.stringify(await m.pullBacklog(${JSON.stringify(root)})));`,
     ],
     { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
   );

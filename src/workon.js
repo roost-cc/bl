@@ -171,10 +171,10 @@ export function resolveWorkonTargets(positionals, config) {
  *
  * @param {string} repoName
  * @param {{ role?: string, strict?: boolean }} [opts]
- * @returns {{ repoName: string, repoPath: string, branchName: string,
- *             worktreePath: string, isNewWorktree: boolean }}
+ * @returns {Promise<{ repoName: string, repoPath: string, branchName: string,
+ *             worktreePath: string, isNewWorktree: boolean }>}
  */
-export function prepareStoryRepo(parsed, found, config, repoName, { role = 'primary', strict = false } = {}) {
+export async function prepareStoryRepo(parsed, found, config, repoName, { role = 'primary', strict = false } = {}) {
   const { componentEntry, storyEntry, indexPath } = found;
   const repoPath = config.reposByName[repoName];
   if (!repoPath) {
@@ -191,8 +191,8 @@ export function prepareStoryRepo(parsed, found, config, repoName, { role = 'prim
   info(`Worktree : ${worktreePath}`);
   info('');
 
-  return prepareWorktreeOnce(repoPath, branchName, () => {
-    const { effectiveWorktreePath, isNewWorktree } = ensureWorktree(repoPath, branchName, worktreePath);
+  return prepareWorktreeOnce(repoPath, branchName, async () => {
+    const { effectiveWorktreePath, isNewWorktree } = await ensureWorktree(repoPath, branchName, worktreePath);
     // Owed before bootstrap, so a run stopped there still owes them (S-862).
     const workonPending = workonDue(effectiveWorktreePath, isNewWorktree);
 
@@ -260,7 +260,7 @@ export function otherWorktreesLine(list) {
  * uncommitted changes, local main ahead) — same guards as a single workon.
  * `strict` makes the preparation strict (`bl run`).
  */
-function prepareStoryWorktree(parsed, found, config, { strict = false } = {}) {
+async function prepareStoryWorktree(parsed, found, config, { strict = false } = {}) {
   const { componentEntry, storyEntry, indexPath } = found;
 
   const content = readFileSync(indexPath, 'utf8');
@@ -282,12 +282,12 @@ function prepareStoryWorktree(parsed, found, config, { strict = false } = {}) {
     branchName,
     worktreePath: effectiveWorktreePath,
     isNewWorktree,
-  } = prepareStoryRepo(parsed, found, config, repoName, { strict });
+  } = await prepareStoryRepo(parsed, found, config, repoName, { strict });
   // The story's own unit directory, where its session starts (F-60 D3).
   const unitDir = unitDirFor(config, branchName);
 
   // Creating the branch opens the change: one `repos:` entry, the story's repo.
-  const change = openUnitChange(config.backlogRoot, { id: parsed.id, title, indexPath }, branchName, [repoName]);
+  const change = await openUnitChange(config.backlogRoot, { id: parsed.id, title, indexPath }, branchName, [repoName]);
 
   const promptVars = {
     storyId: parsed.id,
@@ -342,14 +342,14 @@ function prepareStoryWorktree(parsed, found, config, { strict = false } = {}) {
  * (S-862): a repo that cannot be prepared stops the run. `otherWorktrees`
  * is always empty; it keeps the shape `prepareFeatureWorktree` returns.
  *
- * @returns {{ cfg, parsed, worktreePath, unitDir, branchName, isNewWorktree,
+ * @returns {Promise<{ cfg, parsed, worktreePath, unitDir, branchName, isNewWorktree,
  *             ordered, baseVars, reviewPending, targetRepoName,
- *             otherWorktrees }}
+ *             otherWorktrees }>}
  */
-export function prepareStoryRun(parsed, found, config, { unit = storyUnit(found, config) } = {}) {
+export async function prepareStoryRun(parsed, found, config, { unit = storyUnit(found, config) } = {}) {
   // The story's repo's overrides and plugin layer, whatever config the caller loaded.
   config = configForRepo(config, found.unitRepo);
-  const prep = prepareStoryWorktree(parsed, found, config, { strict: true });
+  const prep = await prepareStoryWorktree(parsed, found, config, { strict: true });
   const v = prep.promptVars;
   const story = storyAsOrdered(unit);
   const baseVars = {
@@ -448,7 +448,7 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   // The story's repo's overrides and plugin layer apply (F-51 D4).
   const config = configForRepo(baseConfig, found.unitRepo);
 
-  const prep = prepareStoryWorktree(parsed, found, config);
+  const prep = await prepareStoryWorktree(parsed, found, config);
 
   if (prep.legacyPrReview && !prep.reviewPending) {
     console.error(

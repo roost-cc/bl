@@ -393,7 +393,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   log(`${dryRun ? 'would convert' : 'converted'}: ${countsText(counts)}`);
   if (earlier.length > 0) log(`an earlier run wrote and did not commit: ${earlier.join(' ')}`);
   if (dryRun) return { counts, skipped, kept, commit: null };
-  const commit = commitPaths(root, all, commitMessage(counts, earlier.length));
+  const commit = await commitPaths(root, all, commitMessage(counts, earlier.length));
   recordPaths(root, commit.error ? all : []);
   return { counts, skipped, kept, commit };
 }

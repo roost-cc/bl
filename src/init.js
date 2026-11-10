@@ -105,7 +105,7 @@ init"); edits you made before it stay uncommitted.`);
     ensureFlowFile(config.backlogRoot);
     ensureBacklogDocs(config.backlogRoot);
     ensureRootIndex(config);
-    commitFailed = commitChangedSince(config.backlogRoot, before, INIT_COMMIT_MESSAGE);
+    commitFailed = await commitChangedSince(config.backlogRoot, before, INIT_COMMIT_MESSAGE);
   } catch (e) {
     // A step failed after others wrote: the next `bl init` commits what this
     // one wrote with its own writes (S-1330).

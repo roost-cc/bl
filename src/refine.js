@@ -205,7 +205,7 @@ export async function refineAndCommit(opts, message, ids, apply) {
         `  Run \`bl refine ${ids.join(' ')}\` again to set it.`,
     );
   }
-  const failed = commitChangedSince(opts.backlogRoot, before, message, {
+  const failed = await commitChangedSince(opts.backlogRoot, before, message, {
     session: true,
     owner: `refine ${ids.join(', ')}`,
   });

@@ -37,14 +37,14 @@ test('pullBacklog_recovery_restores_the_exact_checkout_in_every_conflict_phase',
   }
 });
 
-test('pullBacklog_abort_failure_is_fatal_and_no_command_runs', () => {
+test('pullBacklog_abort_failure_is_fatal_and_no_command_runs', async () => {
   for (const c of PULL_RECOVERY_CASES) {
     const { tmp, alice } = setUpPull(c);
     try {
       const res = pullWithFailingGit(alice, [...(c.fail ?? []), ...(c.unsafeWhen ?? ['rebase --abort'])]);
       assert.equal(res.state, 'unsafe', `${c.name}: ${JSON.stringify(res)}`);
       assert.ok(res.message, c.name);
-      const [, err] = captureStderr(() => reportBacklogPull(res, alice));
+      const [, err] = await captureStderr(() => reportBacklogPull(res, alice));
       assert.match(err, /^error: backlog pull could not put the checkout back .*; not running the command/, c.name);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -234,13 +234,13 @@ test('a pull that goes through settles an interrupted feature-link record before
   }
 });
 
-test('pullBacklog restores the exact dirty tree when autostash application conflicts', () => {
+test('pullBacklog restores the exact dirty tree when autostash application conflicts', async () => {
   const { tmp, alice, bob } = twoClones({ [STORY]: 'a\n' });
   try {
     writeFileSync(join(alice, STORY), 'alice, uncommitted\n');
     const start = checkoutState(alice);
     bobPushes(bob, { [STORY]: 'bob\n' });
-    const res = pullBacklog(alice);
+    const res = await pullBacklog(alice);
     assert.equal(res.state, 'conflict', res.message);
     assert.deepEqual(res.paths, [STORY]);
     assert.deepEqual(checkoutState(alice), start);

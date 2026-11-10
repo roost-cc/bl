@@ -170,9 +170,9 @@ export function failedCommitRecord(owner) {
  * @param {Map<string, string> | null} before
  * @param {string} message
  * @param {{ session?: boolean, owner?: string }} [opts]
- * @returns {boolean} whether the commit failed
+ * @returns {Promise<boolean>} whether the commit failed
  */
-export function commitChangedSince(root, before, message, { session = false, owner = message } = {}) {
+export async function commitChangedSince(root, before, message, { session = false, owner = message } = {}) {
   if (!hasOwnRepo(root)) return false;
   const after = dirtySnapshot(root);
   // In a repo, a null snapshot is a `git status` that failed, not "no change".
@@ -220,7 +220,7 @@ export function commitChangedSince(root, before, message, { session = false, own
   let commitFailed = false;
   if (touched.length > 0) {
     info(`\nCommitting backlog changes (${touched.length} path${touched.length === 1 ? '' : 's'})...`);
-    const res = commitPaths(root, touched, message);
+    const res = await commitPaths(root, touched, message);
     if (!res.committed && res.error) {
       commitFailed = true;
       console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);
@@ -313,16 +313,16 @@ function addablePaths(root, paths) {
  * whose paths select `priority.md`, by name, directory or Git pathspec, is
  * refused before anything is staged: only a person ranks
  * (`headlessPriorityRefusal`).
- * @returns {{ committed: boolean, paths: string[], error?: string,
+ * @returns {Promise<{ committed: boolean, paths: string[], error?: string,
  *   pushed?: boolean, pushError?: string, pushConflicts?: string[],
- *   pushResolved?: string[] }}
+ *   pushResolved?: string[] }>}
  */
-export function commitPaths(root, paths, message) {
+export async function commitPaths(root, paths, message) {
   if (paths.length === 0) return { committed: false, paths };
   const refused = headlessPriorityRefusal(root, paths);
   if (refused) return { committed: false, paths, error: refused };
   if (!hasOriginRemote(root)) return commitLocked(root, paths, message, false);
-  const res = withMainSyncLock(root, () => commitLocked(root, paths, message, true));
+  const res = await withMainSyncLock(root, () => commitLocked(root, paths, message, true));
   if (res.state === 'lock-timeout') {
     return { committed: false, paths, error: `timed out waiting for ${res.lockPath} (PID ${res.holder})` };
   }
@@ -498,9 +498,9 @@ export function pushBacklog(root) {
  * cannot be read is a failed push (`pushed: false`), never taken as zero.
  * @param {string} root
  * @param {{ lockTimeoutMs?: number, pollMs?: number }} [opts]
- * @returns {BacklogPush | { state: "lock-timeout", holder: number|string, lockPath: string } | null}
+ * @returns {Promise<BacklogPush | { state: "lock-timeout", holder: number|string, lockPath: string } | null>}
  */
-export function pushIfAhead(root, opts = {}) {
+export async function pushIfAhead(root, opts = {}) {
   return withMainSyncLock(
     root,
     () => {
@@ -798,9 +798,9 @@ function takeReplayedSide(root, paths) {
  *
  * @param {string} root the backlog checkout
  * @param {{ lockTimeoutMs?: number, pollMs?: number }} [opts]
- * @returns {BacklogPull}
+ * @returns {Promise<BacklogPull>}
  */
-export function pullBacklog(root, opts = {}) {
+export async function pullBacklog(root, opts = {}) {
   if (!hasOriginRemote(root)) return { state: 'no-remote' };
   const branch = git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).stdout?.trim() ?? '';
   if (branch !== 'main') return { state: 'not-main', branch: branch || '(detached HEAD)' };

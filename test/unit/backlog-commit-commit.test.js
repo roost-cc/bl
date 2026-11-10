@@ -46,7 +46,7 @@ test('parsePorcelainZ returns both sides of a rename and plain paths with spaces
   assert.deepEqual(parsePorcelainZ(''), []);
 });
 
-test('commits only what changed after the snapshot; pre-existing edits and staged work stay out', () => {
+test('commits only what changed after the snapshot; pre-existing edits and staged work stay out', async () => {
   const dir = mkTempDir('bl-bc-');
   try {
     g(dir, 'init', '-q', '-b', 'main');
@@ -71,7 +71,7 @@ test('commits only what changed after the snapshot; pre-existing edits and stage
     const touched = pathsChangedSince(before, dirtySnapshot(dir));
     assert.deepEqual(touched, ['feature.md', 'index.md', 'stories/.completed/a.md', 'stories/a.md']);
 
-    const res = commitPaths(dir, touched, 'chore: test');
+    const res = await commitPaths(dir, touched, 'chore: test');
     assert.equal(res.committed, true, res.error);
     const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort();
     assert.deepEqual(files, ['feature.md', 'index.md', 'stories/.completed/a.md', 'stories/a.md']);
@@ -91,7 +91,7 @@ test('commits only what changed after the snapshot; pre-existing edits and stage
   }
 });
 
-test('a file the operator had dirty is included only when the command changed it again', () => {
+test('a file the operator had dirty is included only when the command changed it again', async () => {
   const dir = mkTempDir('bl-bc-');
   try {
     g(dir, 'init', '-q', '-b', 'main');
@@ -104,7 +104,7 @@ test('a file the operator had dirty is included only when the command changed it
     writeFileSync(join(dir, 'x.md'), 'operator + command\n');
     assert.deepEqual(pathsChangedSince(before, dirtySnapshot(dir)), ['x.md']);
     assert.equal(dirtySnapshot(join(dir, 'nope')), null);
-    assert.deepEqual(commitPaths(dir, [], 'noop'), { committed: false, paths: [] });
+    assert.deepEqual(await commitPaths(dir, [], 'noop'), { committed: false, paths: [] });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -113,7 +113,7 @@ test('a file the operator had dirty is included only when the command changed it
 // S-837: a `git mv` source is gone from the work tree and the index, so it is
 // not addable; the commit must still record the deletion, and when no path is
 // addable the operator's dirty files must not be swept into the index.
-test("commitPaths commits a git rm'd path without staging the rest of the tree", () => {
+test("commitPaths commits a git rm'd path without staging the rest of the tree", async () => {
   const dir = mkTempDir('bl-bc-');
   try {
     g(dir, 'init', '-q', '-b', 'main');
@@ -126,7 +126,7 @@ test("commitPaths commits a git rm'd path without staging the rest of the tree",
     writeFileSync(join(dir, 'bystander.md'), 'operator edit\n');
     g(dir, 'rm', '-q', 'stories/a.md');
 
-    const res = commitPaths(dir, ['stories/a.md'], 'chore: drop a');
+    const res = await commitPaths(dir, ['stories/a.md'], 'chore: drop a');
     assert.equal(res.committed, true, res.error);
     const files = g(dir, 'show', '--name-status', '--format=', 'HEAD').split('\n');
     assert.deepEqual(files, ['D\tstories/a.md']);
@@ -142,14 +142,14 @@ test("commitPaths commits a git rm'd path without staging the rest of the tree",
   }
 });
 
-test('commitPaths reports a commit that fails without output as an error', () => {
+test('commitPaths reports a commit that fails without output as an error', async () => {
   const dir = mkTempDir('bl-bc-');
   try {
     g(dir, 'init', '-q', '-b', 'main');
     writeFileSync(join(dir, 'a.md'), 'a\n');
     const hook = join(dir, '.git', 'hooks', 'pre-commit');
     writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-    const res = commitPaths(dir, ['a.md'], 'chore: a');
+    const res = await commitPaths(dir, ['a.md'], 'chore: a');
     assert.equal(res.committed, false);
     assert.match(res.error, /git commit exited 1/);
   } finally {
@@ -173,11 +173,11 @@ function changedSinceRepo() {
   return dir;
 }
 
-test('commitChangedSince: nothing changed makes no commit and prints nothing, a non-repo too', () => {
+test('commitChangedSince: nothing changed makes no commit and prints nothing, a non-repo too', async () => {
   const dir = changedSinceRepo();
   const head = g(dir, 'rev-parse', 'HEAD');
   const before = dirtySnapshot(dir);
-  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: nothing'));
+  const [failed, err] = await captureStderr(() => commitChangedSince(dir, before, 'chore: nothing'));
   assert.equal(failed, false);
   assert.equal(err, '');
   assert.equal(g(dir, 'rev-parse', 'HEAD'), head);
@@ -186,31 +186,24 @@ test('commitChangedSince: nothing changed makes no commit and prints nothing, a 
   const snap = dirtySnapshot(plain);
   assert.equal(snap, null);
   writeFileSync(join(plain, 'a.md'), 'a\n');
-  assert.deepEqual(
-    captureStderr(() => commitChangedSince(plain, snap, 'chore: nothing')),
-    [false, ''],
-  );
+  assert.deepEqual(await captureStderr(() => commitChangedSince(plain, snap, 'chore: nothing')), [false, '']);
 });
 
-test('commit_changed_since_skips_a_backlog_with_no_repo_of_its_own: a plain directory, and one inside a parent checkout', () => {
+test('commit_changed_since_skips_a_backlog_with_no_repo_of_its_own: a plain directory, and one inside a parent checkout', async () => {
   const parent = changedSinceRepo();
   mkdirSync(join(parent, 'backlog'));
   for (const root of [mkTempDir('bl-bc-plain-'), join(parent, 'backlog')]) {
     const before = dirtySnapshot(root);
     writeFileSync(join(root, 'a.md'), 'written by the command\n');
     const head = g(parent, 'rev-parse', 'HEAD');
-    assert.deepEqual(
-      captureStderr(() => commitChangedSince(root, before, 'chore: nothing')),
-      [false, ''],
-      root,
-    );
+    assert.deepEqual(await captureStderr(() => commitChangedSince(root, before, 'chore: nothing')), [false, ''], root);
     assert.equal(g(parent, 'rev-parse', 'HEAD'), head, `${root}: no commit in the parent`);
   }
 });
 
 // `git status` fails on a corrupt index; the real one is put back after.
 for (const when of ['before', 'after']) {
-  test(`commit_changed_since_rejects_failed_snapshot: git status fails ${when} the write`, () => {
+  test(`commit_changed_since_rejects_failed_snapshot: git status fails ${when} the write`, async () => {
     const dir = changedSinceRepo();
     const index = join(dir, '.git', 'index');
     const good = readFileSync(index);
@@ -224,7 +217,7 @@ for (const when of ['before', 'after']) {
     writeFileSync(join(dir, 'x.md'), 'written by the command\n');
     if (when === 'after') writeFileSync(index, 'corrupt');
     const head = g(dir, 'rev-parse', 'HEAD');
-    const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: since'));
+    const [failed, err] = await captureStderr(() => commitChangedSince(dir, before, 'chore: since'));
     writeFileSync(index, good);
     assert.equal(failed, true, err);
     assert.match(err, new RegExp(`backlog commit failed: git status failed ${when} the command wrote`));
@@ -232,14 +225,14 @@ for (const when of ['before', 'after']) {
   });
 }
 
-test('commitChangedSince: a path dirty before stays out and is named unless the command changed it again', () => {
+test('commitChangedSince: a path dirty before stays out and is named unless the command changed it again', async () => {
   const dir = changedSinceRepo();
   writeFileSync(join(dir, 'x.md'), 'operator\n');
   writeFileSync(join(dir, 'y.md'), 'operator\n');
   const before = dirtySnapshot(dir);
   writeFileSync(join(dir, 'y.md'), 'operator + command\n');
   writeFileSync(join(dir, 'new.md'), 'command\n');
-  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: since'));
+  const [failed, err] = await captureStderr(() => commitChangedSince(dir, before, 'chore: since'));
   assert.equal(failed, false, err);
   assert.equal(g(dir, 'log', '-1', '--format=%s'), 'chore: since');
   assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), ['new.md', 'y.md']);
@@ -248,7 +241,7 @@ test('commitChangedSince: a path dirty before stays out and is named unless the 
   assert.equal(g(dir, 'status', '--porcelain'), 'M x.md');
 });
 
-test('commitChangedSince: priority.md is held for an agent session, with one line, and committed otherwise', () => {
+test('commitChangedSince: priority.md is held for an agent session, with one line, and committed otherwise', async () => {
   for (const session of [true, false]) {
     const dir = changedSinceRepo();
     const before = dirtySnapshot(dir);
@@ -260,7 +253,7 @@ test('commitChangedSince: priority.md is held for an agent session, with one lin
     delete process.env[HEADLESS_ENV];
     let failed, err;
     try {
-      [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: s', { session }));
+      [failed, err] = await captureStderr(() => commitChangedSince(dir, before, 'chore: s', { session }));
     } finally {
       if (marker !== undefined) process.env[HEADLESS_ENV] = marker;
     }
@@ -278,35 +271,35 @@ test('commitChangedSince: priority.md is held for an agent session, with one lin
   }
 });
 
-test('commitChangedSince: a path dirty before that the session committed itself is not named', () => {
+test('commitChangedSince: a path dirty before that the session committed itself is not named', async () => {
   const dir = changedSinceRepo();
   writeFileSync(join(dir, 'x.md'), 'operator\n');
   const before = dirtySnapshot(dir);
   g(dir, 'commit', '-q', '-am', 'the session commits it');
-  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: since', { session: true }));
+  const [failed, err] = await captureStderr(() => commitChangedSince(dir, before, 'chore: since', { session: true }));
   assert.equal(failed, false, err);
   assert.equal(err, '');
   assert.equal(g(dir, 'log', '-1', '--format=%s'), 'the session commits it');
 });
 
-test('commitChangedSince: priority.md dirty before and changed by the session gets only the hold line', () => {
+test('commitChangedSince: priority.md dirty before and changed by the session gets only the hold line', async () => {
   const dir = changedSinceRepo();
   writeFileSync(join(dir, PRIORITY_FILE), 'operator\n');
   const before = dirtySnapshot(dir);
   writeFileSync(join(dir, PRIORITY_FILE), 'operator + session\n');
-  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: s', { session: true }));
+  const [failed, err] = await captureStderr(() => commitChangedSince(dir, before, 'chore: s', { session: true }));
   assert.equal(failed, false, err);
   assert.match(err, new RegExp(`Left ${PRIORITY_FILE} uncommitted: .*only a person ranks`));
   assert.doesNotMatch(err, /Left your uncommitted backlog edits alone/);
   assert.equal(g(dir, 'status', '--porcelain'), `M ${PRIORITY_FILE}`);
 });
 
-test('commitChangedSince: a failed commit returns true and names the paths', () => {
+test('commitChangedSince: a failed commit returns true and names the paths', async () => {
   const dir = changedSinceRepo();
   const before = dirtySnapshot(dir);
   writeFileSync(join(dir, 'x.md'), 'changed\n');
   writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  const [failed, err] = captureStderr(() => commitChangedSince(dir, before, 'chore: fails'));
+  const [failed, err] = await captureStderr(() => commitChangedSince(dir, before, 'chore: fails'));
   assert.equal(failed, true);
   assert.match(err, /backlog commit failed: git commit exited 1\n {2}Commit these paths yourself: x\.md/);
 });
@@ -329,18 +322,18 @@ for (const [label, after, committed, dirty] of [
     '',
   ],
 ]) {
-  test(`commit_changed_since_retry_keeps_failed_paths: ${label}`, () => {
+  test(`commit_changed_since_retry_keeps_failed_paths: ${label}`, async () => {
     const dir = changedSinceRepo();
     const hook = join(dir, '.git', 'hooks', 'pre-commit');
     writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     const first = dirtySnapshot(dir);
     writeFileSync(join(dir, 'x.md'), 'the command\n');
     writeFileSync(join(dir, 'z.md'), 'the command\n');
-    assert.equal(captureStderr(() => commitChangedSince(dir, first, 'chore: retry'))[0], true);
+    assert.equal((await captureStderr(() => commitChangedSince(dir, first, 'chore: retry')))[0], true);
     rmSync(hook);
     after(dir);
 
-    const [failed, err] = captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), 'chore: retry'));
+    const [failed, err] = await captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), 'chore: retry'));
     assert.equal(failed, false, err);
     assert.equal(g(dir, 'log', '-1', '--format=%s'), 'chore: retry');
     assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), committed);
@@ -377,17 +370,17 @@ for (const [first, next, carries] of [
     true,
   ],
 ]) {
-  test(`commit_changed_since_failed_refine_then_noop_init_keeps_refine_path_uncommitted: ${first.message} fails, then ${next.message}`, () => {
+  test(`commit_changed_since_failed_refine_then_noop_init_keeps_refine_path_uncommitted: ${first.message} fails, then ${next.message}`, async () => {
     const dir = changedSinceRepo();
     const head = g(dir, 'rev-parse', 'HEAD');
     const hook = join(dir, '.git', 'hooks', 'pre-commit');
     writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     const before = dirtySnapshot(dir);
     writeFileSync(join(dir, 'x.md'), 'the first command\n');
-    assert.equal(captureStderr(() => commitChangedSince(dir, before, first.message, first))[0], true);
+    assert.equal((await captureStderr(() => commitChangedSince(dir, before, first.message, first)))[0], true);
     rmSync(hook);
 
-    const [failed, err] = captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), next.message, next));
+    const [failed, err] = await captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), next.message, next));
     assert.equal(failed, false, err);
     if (carries) {
       assert.equal(g(dir, 'log', '-1', '--format=%s'), next.message);
@@ -397,7 +390,7 @@ for (const [first, next, carries] of [
     assert.equal(g(dir, 'rev-parse', 'HEAD'), head, 'the other command commits nothing');
     assert.equal(g(dir, 'status', '--porcelain'), 'M  x.md');
     // The first command's retry still commits it.
-    const retry = captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), first.message, first));
+    const retry = await captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), first.message, first));
     assert.equal(retry[0], false, retry[1]);
     assert.equal(g(dir, 'log', '-1', '--format=%s'), first.message);
     assert.equal(g(dir, 'status', '--porcelain'), '');
@@ -410,11 +403,11 @@ for (const [first, next, carries] of [
 // headless marker refuses `priority.md` on its own, F-78 D3).
 {
   const MESSAGE = 'chore: o';
-  const call = (dir, before, opts = {}) => {
+  const call = async (dir, before, opts = {}) => {
     const marker = process.env[HEADLESS_ENV];
     delete process.env[HEADLESS_ENV];
     try {
-      return captureStderr(() => commitChangedSince(dir, before, MESSAGE, opts));
+      return await captureStderr(() => commitChangedSince(dir, before, MESSAGE, opts));
     } finally {
       if (marker !== undefined) process.env[HEADLESS_ENV] = marker;
     }
@@ -423,20 +416,20 @@ for (const [first, next, carries] of [
   const refuse = (dir) => writeFileSync(hook(dir), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const record = (dir) => join(dir, failedCommitRecord(MESSAGE));
   /** The first call: `x.md` (or `file`) written, and a commit the hook refuses. */
-  const failFirst = (dir, file = 'x.md') => {
+  const failFirst = async (dir, file = 'x.md') => {
     refuse(dir);
     const before = dirtySnapshot(dir);
     writeFileSync(join(dir, file), 'the command\n');
-    assert.equal(call(dir, before)[0], true);
+    assert.equal((await call(dir, before))[0], true);
     rmSync(hook(dir));
   };
   /** `git status` with a corrupt index, the real one put back after. */
-  const corrupt = (dir, fn) => {
+  const corrupt = async (dir, fn) => {
     const index = join(dir, '.git', 'index');
     const good = readFileSync(index);
     writeFileSync(index, 'corrupt');
     try {
-      return fn();
+      return await fn();
     } finally {
       writeFileSync(index, good);
     }
@@ -445,14 +438,14 @@ for (const [first, next, carries] of [
   for (const [label, run] of [
     [
       'a carried priority.md that a session holds stays recorded, and the next call commits it',
-      (dir) => {
-        failFirst(dir, PRIORITY_FILE);
-        const [held, err] = call(dir, dirtySnapshot(dir), { session: true });
+      async (dir) => {
+        await failFirst(dir, PRIORITY_FILE);
+        const [held, err] = await call(dir, dirtySnapshot(dir), { session: true });
         assert.equal(held, false, err);
         assert.match(err, /Left priority\.md uncommitted/);
         assert.equal(subject(dir), 'base');
         assert.ok(existsSync(record(dir)), 'still recorded');
-        const [failed, err2] = call(dir, dirtySnapshot(dir));
+        const [failed, err2] = await call(dir, dirtySnapshot(dir));
         assert.equal(failed, false, err2);
         assert.equal(subject(dir), MESSAGE);
         assert.equal(g(dir, 'status', '--porcelain'), '');
@@ -460,10 +453,10 @@ for (const [first, next, carries] of [
     ],
     [
       'a malformed record fails the next call, which names it',
-      (dir) => {
-        failFirst(dir);
+      async (dir) => {
+        await failFirst(dir);
         writeFileSync(record(dir), '{bad');
-        const [failed, err] = call(dir, dirtySnapshot(dir));
+        const [failed, err] = await call(dir, dirtySnapshot(dir));
         assert.equal(failed, true);
         assert.match(err, /backlog commit failed: cannot read .*the record of an earlier failed commit/);
         assert.equal(subject(dir), 'base');
@@ -471,38 +464,41 @@ for (const [first, next, carries] of [
     ],
     [
       'a record that cannot be written fails the call, which names its paths',
-      (dir) => {
+      async (dir) => {
         mkdirSync(record(dir), { recursive: true });
         refuse(dir);
         const before = dirtySnapshot(dir);
         writeFileSync(join(dir, 'x.md'), 'the command\n');
-        const [failed, err] = call(dir, before);
+        const [failed, err] = await call(dir, before);
         assert.equal(failed, true);
         assert.match(err, /cannot write .*so no later bl run commits these paths: x\.md/);
       },
     ],
     [
       'a failed snapshot before records the dirty paths, and the next call names them as a failure',
-      (dir) => {
-        const before = corrupt(dir, () => dirtySnapshot(dir));
+      async (dir) => {
+        const before = await corrupt(dir, () => dirtySnapshot(dir));
         assert.equal(before, null);
         writeFileSync(join(dir, 'x.md'), 'the command\n');
-        assert.equal(call(dir, before)[0], true);
-        const [failed, err] = call(dir, dirtySnapshot(dir));
+        assert.equal((await call(dir, before))[0], true);
+        const [failed, err] = await call(dir, dirtySnapshot(dir));
         assert.equal(failed, true);
         assert.match(err, /no record of what it changed .*these paths may hold its changes: x\.md/);
         assert.equal(subject(dir), 'base', 'bl cannot tell whose they are, so it commits none');
         // Named once: the call after that leaves it to the operator.
-        assert.deepEqual(call(dir, dirtySnapshot(dir)), [false, 'Left your uncommitted backlog edits alone: x.md\n']);
+        assert.deepEqual(await call(dir, dirtySnapshot(dir)), [
+          false,
+          'Left your uncommitted backlog edits alone: x.md\n',
+        ]);
       },
     ],
     [
       'a failed snapshot after leaves the record, and the next call commits the path',
-      (dir) => {
-        failFirst(dir);
+      async (dir) => {
+        await failFirst(dir);
         const before = dirtySnapshot(dir);
-        assert.equal(corrupt(dir, () => call(dir, before))[0], true);
-        const [failed, err] = call(dir, dirtySnapshot(dir));
+        assert.equal((await corrupt(dir, () => call(dir, before)))[0], true);
+        const [failed, err] = await call(dir, dirtySnapshot(dir));
         assert.equal(failed, false, err);
         assert.equal(subject(dir), MESSAGE);
         assert.equal(g(dir, 'status', '--porcelain'), '');
@@ -510,14 +506,14 @@ for (const [first, next, carries] of [
     ],
     [
       'a record that cannot be removed after a commit is a warning, and carries nothing',
-      (dir) => {
+      async (dir) => {
         if (process.getuid?.() === 0) return; // root removes it all the same
-        failFirst(dir);
+        await failFirst(dir);
         const recordDir = join(dir, failedCommitRecord(MESSAGE), '..');
         chmodSync(recordDir, 0o555);
         let res;
         try {
-          res = call(dir, dirtySnapshot(dir));
+          res = await call(dir, dirtySnapshot(dir));
         } finally {
           chmodSync(recordDir, 0o755);
         }
@@ -525,13 +521,13 @@ for (const [first, next, carries] of [
         assert.match(res[1], /cannot remove /);
         assert.equal(subject(dir), MESSAGE);
         const head = g(dir, 'rev-parse', 'HEAD');
-        assert.equal(call(dir, dirtySnapshot(dir))[0], false);
+        assert.equal((await call(dir, dirtySnapshot(dir)))[0], false);
         assert.equal(g(dir, 'rev-parse', 'HEAD'), head);
       },
     ],
   ]) {
-    test(`commit_changed_since_preserves_failed_paths_across_hold_and_record_errors: ${label}`, () => {
-      run(changedSinceRepo());
+    test(`commit_changed_since_preserves_failed_paths_across_hold_and_record_errors: ${label}`, async () => {
+      await run(changedSinceRepo());
     });
   }
 }

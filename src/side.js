@@ -435,7 +435,7 @@ export async function main(argv) {
 
   // A new worktree's guards (uncommitted changes, local main ahead) run
   // before anything is written. A standalone story's branch is always new.
-  if (!feature || !findExistingWorktree(repoPath, featureBranch)) newWorktreeGuards(repoPath);
+  if (!feature || !findExistingWorktree(repoPath, featureBranch)) await newWorktreeGuards(repoPath);
 
   const undo = undoOnFailure();
   let worktree = null;
@@ -448,7 +448,7 @@ export async function main(argv) {
         featureHasRepo(feature, repo, config),
       ),
     );
-    worktree = prepareFeatureRepo(config, feature, repo, { strict: true }).worktreePath;
+    worktree = (await prepareFeatureRepo(config, feature, repo, { strict: true })).worktreePath;
   } else {
     info(`Standalone side story in ${repo} (${component.id}), found by ${fromId}`);
   }
@@ -521,7 +521,7 @@ export async function main(argv) {
     undo.hint(
       `bl side: ${storyId} is committed, but its worktree could not be prepared (above). Fix that, then \`bl implement ${storyId}\` prepares it. Running bl side again would add another story.`,
     );
-    worktree = prepareStoryRepo(normalizeId(storyId), found, cfg, repo, { strict: true }).worktreePath;
+    worktree = (await prepareStoryRepo(normalizeId(storyId), found, cfg, repo, { strict: true })).worktreePath;
   }
   undo.hint(null);
 

@@ -233,7 +233,7 @@ export async function applyFixOutcome(
     warn(`${id}: the fix is not recorded in the transition log: ${e.message}`);
     return false;
   }
-  commitChangeDoc(backlogRoot, indexPath, `chore: ${id} review fixed`);
+  await commitChangeDoc(backlogRoot, indexPath, `chore: ${id} review fixed`);
   return true;
 }
 
@@ -242,10 +242,10 @@ export async function applyFixOutcome(
  * the backlog, skipped when the backlog is not a git repository; a failed
  * commit is a warning.
  */
-function commitChangeDoc(backlogRoot, path, message) {
+async function commitChangeDoc(backlogRoot, path, message) {
   if (!existsSync(join(backlogRoot, '.git'))) return;
   const rels = [path].flat().map((p) => relative(backlogRoot, p));
-  const c = commitPaths(backlogRoot, rels, message);
+  const c = await commitPaths(backlogRoot, rels, message);
   if (!c.committed) warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
 }
 
@@ -329,7 +329,7 @@ export function ensureChange(backlogRoot, unitDir, { changeOf, title = '', repos
  * backlog commit of the document when it changed (skipped when the backlog
  * is not a git repository; a failed commit is a warning).
  */
-export function openUnitChange(backlogRoot, { id, title, indexPath }, branch, repoNames) {
+export async function openUnitChange(backlogRoot, { id, title, indexPath }, branch, repoNames) {
   const names = repoNames.filter((r, i) => r && repoNames.indexOf(r) === i);
   const res = ensureChange(backlogRoot, dirname(indexPath), {
     changeOf: id,
@@ -337,7 +337,11 @@ export function openUnitChange(backlogRoot, { id, title, indexPath }, branch, re
     repos: names.map((repo) => ({ repo, branch })),
   });
   if (res.changed) {
-    commitChangeDoc(backlogRoot, res.path, `chore: ${id} change ${res.created ? 'opened' : 'updated'} on ${branch}`);
+    await commitChangeDoc(
+      backlogRoot,
+      res.path,
+      `chore: ${id} change ${res.created ? 'opened' : 'updated'} on ${branch}`,
+    );
   }
   return res;
 }

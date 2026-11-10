@@ -561,7 +561,7 @@ export function preflightMainCheckouts({
 // Per-repo cleanup (merge, push, close PR, remove worktree, delete branch)
 // ---------------------------------------------------------------------------
 
-export function cleanupOneRepo({
+export async function cleanupOneRepo({
   parsed,
   storyEntry,
   repoName,
@@ -609,7 +609,7 @@ export function cleanupOneRepo({
   // Under the per-repo lock (S-865). A failed fetch is a warning and the
   // merge goes on from local main; a failed fast-forward or a lock timeout
   // stops this repo.
-  if (!reportMainSync(syncMain(repoPath, { prune: true }), repoName)) {
+  if (!reportMainSync(await syncMain(repoPath, { prune: true }), repoName)) {
     return { ok: false };
   }
 
@@ -1016,7 +1016,7 @@ no main checkout touched. A merge into main that still fails is aborted.`);
   const emptyRepos = [];
   for (const repoName of targetRepoNames) {
     const repoPath = config.reposByName[repoName];
-    const result = cleanupOneRepo({
+    const result = await cleanupOneRepo({
       parsed,
       storyEntry,
       repoName,
@@ -1193,7 +1193,8 @@ no main checkout touched. A merge into main that still fails is aborted.`);
       info('  (triage session ended — you may need to create stories manually)');
     }
     const triageMessage = `chore: triage ${parsed.id} Deferred into new stories`;
-    if (commitChangedSince(config.backlogRoot, backlogBefore, triageMessage, { session: true })) process.exitCode = 1;
+    if (await commitChangedSince(config.backlogRoot, backlogBefore, triageMessage, { session: true }))
+      process.exitCode = 1;
     info('');
   }
 

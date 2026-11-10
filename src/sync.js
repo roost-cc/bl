@@ -183,7 +183,7 @@ export async function pullBeforeCommand(config, { regenerate = true } = {}) {
   if (!hasOwnRepo(root) || !hasOriginRemote(root)) return { state: 'no-remote' };
   await acquireLock(root);
   try {
-    const res = pullBacklog(root);
+    const res = await pullBacklog(root);
     reportBacklogPull(res, root);
     const pendingPath = join(root, PULL_REGEN_PENDING);
     const pending = existsSync(pendingPath);
@@ -205,7 +205,7 @@ export async function pullBeforeCommand(config, { regenerate = true } = {}) {
       committed = regen.committed;
     }
     if ((res.state === 'pulled' || res.state === 'current') && !committed) {
-      const p = pushIfAhead(root);
+      const p = await pushIfAhead(root);
       if (p?.state === 'lock-timeout') {
         warn(
           `backlog push timed out waiting for ${p.lockPath} (PID ${p.holder}); the next bl command that pulls pushes it`,
@@ -258,7 +258,7 @@ async function regenerateAfterPull(root, config, pendingPath) {
     rmSync(pendingPath, { force: true });
     return { committed: false };
   }
-  const c = commitPaths(root, touched, 'chore: regenerate allowed-tools.json after pull');
+  const c = await commitPaths(root, touched, 'chore: regenerate allowed-tools.json after pull');
   if (!c.committed) return { problem: `commit failed: ${c.error ?? 'nothing to commit'}` };
   if (!c.pushResolved) rmSync(pendingPath, { force: true });
   return { committed: true };
@@ -321,7 +321,7 @@ export async function syncAndCommit(config, { message, storyIds = [], extraPaths
     // A deleted file is not on disk, so the format pass skips it.
     const changed = parsePorcelainZ(status.stdout).filter((p) => p.endsWith('.md'));
     formatBacklogMarkdown(config, new Set(changed.map((p) => join(root, p))));
-    return commitPaths(root, paths, message);
+    return await commitPaths(root, paths, message);
   } finally {
     releaseLock(root);
   }

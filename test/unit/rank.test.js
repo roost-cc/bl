@@ -47,12 +47,12 @@ const HEAD = '---\n# Hand-written comment at the top.\nranked:\n  # The deploy b
 const TAIL = '---\n\n# Priority\n\nHand-written body, never touched.\n';
 
 /** Run `fn` with `process.env.BL_HEADLESS` set to `value` (undefined: unset), then put it back. */
-function withMarker(value, fn) {
+async function withMarker(value, fn) {
   const saved = process.env[HEADLESS_ENV];
   if (value === undefined) delete process.env[HEADLESS_ENV];
   else process.env[HEADLESS_ENV] = value;
   try {
-    return fn();
+    return await fn();
   } finally {
     if (saved === undefined) delete process.env[HEADLESS_ENV];
     else process.env[HEADLESS_ENV] = saved;
@@ -294,8 +294,8 @@ test('agentEnv turns titles off for every spawn and marks a headless one with BL
   assert.equal(isHeadless({}), false);
 });
 
-test('every adapter gives a headless spawn BL_HEADLESS=1 and an interactive spawn none', () => {
-  withMarker(undefined, () => {
+test('every adapter gives a headless spawn BL_HEADLESS=1 and an interactive spawn none', async () => {
+  await withMarker(undefined, () => {
     const launch = (provider, headless, extra = {}) => {
       let opts;
       provider.spawn({
@@ -344,26 +344,26 @@ test('an interactive bl rank pulls the backlog first, listing or edit; help and 
   assert.equal(commandPullsBacklog('rank', [], { BL_HEADLESS: '1' }), false);
 });
 
-test('commitPaths refuses priority.md under BL_HEADLESS, commits it without', () => {
+test('commitPaths refuses priority.md under BL_HEADLESS, commits it without', async () => {
   const { dir } = mkTempBacklog({ priority: [{ unit: 'F-1', why: 'x' }] });
   initGitBacklog(dir);
   const path = join(dir, 'priority.md');
   writeFileSync(path, readFileSync(path, 'utf8').replace('why: x', 'why: y'));
   const head = git(dir, 'rev-parse', 'HEAD');
-  const refused = withMarker('1', () => commitPaths(dir, ['priority.md'], 'chore: rank'));
+  const refused = await withMarker('1', () => commitPaths(dir, ['priority.md'], 'chore: rank'));
   assert.equal(refused.committed, false);
   assert.match(refused.error, /refusing to commit priority\.md .*BL_HEADLESS is set/);
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'nothing committed');
   assert.equal(git(dir, 'diff', '--cached', '--name-only'), '', 'nothing staged');
   // Another path commits as before under the marker.
   writeFileSync(join(dir, 'note.txt'), 'n\n');
-  assert.equal(withMarker('1', () => commitPaths(dir, ['note.txt'], 'chore: note')).committed, true);
-  const ok = withMarker(undefined, () => commitPaths(dir, ['priority.md'], 'chore: rank'));
+  assert.equal((await withMarker('1', () => commitPaths(dir, ['note.txt'], 'chore: note'))).committed, true);
+  const ok = await withMarker(undefined, () => commitPaths(dir, ['priority.md'], 'chore: rank'));
   assert.equal(ok.committed, true, ok.error);
   assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'priority.md');
 });
 
-test('commitPaths_headless_refuses_every_pathspec_selecting_priority_md', () => {
+test('commitPaths_headless_refuses_every_pathspec_selecting_priority_md', async () => {
   const { dir } = mkTempBacklog({ priority: [{ unit: 'F-1', why: 'x' }] });
   initGitBacklog(dir);
   const path = join(dir, 'priority.md');
@@ -388,7 +388,7 @@ test('commitPaths_headless_refuses_every_pathspec_selecting_priority_md', () => 
   for (const [state, make] of Object.entries(states)) {
     make();
     for (const spec of specs) {
-      const r = withMarker('1', () => commitPaths(dir, [spec], 'chore: rank'));
+      const r = await withMarker('1', () => commitPaths(dir, [spec], 'chore: rank'));
       assert.equal(r.committed, false, `${state} ${spec}`);
       assert.match(r.error ?? '', /refusing to commit priority\.md/, `${state} ${spec}`);
       assert.equal(git(dir, 'rev-parse', 'HEAD'), head, `${state} ${spec}: nothing committed`);
@@ -403,7 +403,7 @@ test('commitPaths_headless_refuses_every_pathspec_selecting_priority_md', () => 
   }
 });
 
-test('commitPaths_headless_honors_excluded_priority_pathspec', () => {
+test('commitPaths_headless_honors_excluded_priority_pathspec', async () => {
   const { dir } = mkTempBacklog({ priority: [{ unit: 'F-1', why: 'x' }] });
   initGitBacklog(dir);
   const path = join(dir, 'priority.md');
@@ -429,7 +429,7 @@ test('commitPaths_headless_honors_excluded_priority_pathspec', () => {
     assert.equal(headlessPriorityRefusal(dir, specs, { BL_HEADLESS: '1' }), null, specs.join());
   }
   // And through commitPaths: the note commits, priority.md stays modified.
-  const r = withMarker('1', () => commitPaths(dir, ['*.md', ':!priority.md'], 'chore: note'));
+  const r = await withMarker('1', () => commitPaths(dir, ['*.md', ':!priority.md'], 'chore: note'));
   assert.equal(r.committed, true, r.error);
   assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'note.md');
   assert.equal(git(dir, 'status', '--porcelain'), 'M priority.md');

@@ -456,9 +456,9 @@ function closedIn(graph, text) {
  * it is; a file that holds exactly an earlier cleanup's write whose commit
  * failed is redone on HEAD with today's closed units and committed
  * (`pendingIsOurs`); `reopened` names the units it put back.
- * @returns {{ removed: string[], reopened?: string[], commit?: object } | { skipped: string, fileError?: boolean }}
+ * @returns {Promise<{ removed: string[], reopened?: string[], commit?: object } | { skipped: string, fileError?: boolean }>}
  */
-function cleanup(root, path, graph) {
+async function cleanup(root, path, graph) {
   const { content, crlf } = readPriority(path);
   let ids;
   try {
@@ -488,7 +488,7 @@ function cleanup(root, path, graph) {
       const reopened = gone(head).filter((id) => !removed.includes(id));
       const next = removeClosed(head, removed);
       if (next !== content) writePriority(root, path, next, crlf);
-      return { removed, reopened, commit: commitPaths(root, [PRIORITY_FILE], message(removed)) };
+      return { removed, reopened, commit: await commitPaths(root, [PRIORITY_FILE], message(removed)) };
     }
     if (ids.length === 0) return { removed: [] };
     return { skipped: `${PRIORITY_FILE} has uncommitted edits; left ${ids.join(', ')} in ranked:` };
@@ -496,7 +496,7 @@ function cleanup(root, path, graph) {
   if (ids.length === 0) return { removed: [] };
   writePriority(root, path, removeClosed(content, ids), crlf);
   if (!inRepo(root)) return { removed: ids, commit: { committed: false, paths: [PRIORITY_FILE], notRepo: true } };
-  return { removed: ids, commit: commitPaths(root, [PRIORITY_FILE], message(ids)) };
+  return { removed: ids, commit: await commitPaths(root, [PRIORITY_FILE], message(ids)) };
 }
 
 export async function main(argv, env = process.env) {
@@ -542,7 +542,7 @@ export async function main(argv, env = process.env) {
   // An interactive run first takes closed units out, in a commit of its own.
   let fileReported = false;
   if (!isHeadless(env) && existsSync(path)) {
-    const res = await withLock(root, () => cleanup(root, path, graph));
+    const res = await withLock(root, async () => cleanup(root, path, graph));
     if (res.skipped) {
       // A file bl rank cannot edit: an edit refuses with this one line, and
       // the listing does not name the file's problem again.
@@ -604,7 +604,7 @@ function editOp(graph, path, values, positionals) {
 /** Apply `op` to `priority.md` under the lock, commit it alone and report. */
 async function applyEdit(root, path, op) {
   const { id } = op;
-  const res = await withLock(root, () => {
+  const res = await withLock(root, async () => {
     const { content, crlf } = readPriority(path);
     let ids;
     try {
@@ -629,7 +629,7 @@ async function applyEdit(root, path, op) {
       if (err instanceof RankFileError) return { refused: err.message };
       throw err;
     }
-    const commit = () => commitPaths(root, [PRIORITY_FILE], `chore: ${id} ${opWords(op)} in ${PRIORITY_FILE}`);
+    const commit = async () => commitPaths(root, [PRIORITY_FILE], `chore: ${id} ${opWords(op)} in ${PRIORITY_FILE}`);
     // Uncommitted edits to priority.md are committed only when they are this
     // command's own earlier write whose commit failed (a hook, git add, the
     // sync lock); anyone else's edits are never swept into a rank commit.
@@ -637,7 +637,7 @@ async function applyEdit(root, path, op) {
     if (next === content) {
       if (!dirty) return { unchanged: true };
       if (!pendingIsOurs(root, content, (head) => applyRank(head, op))) return { unchanged: true, leftAlone: true };
-      return { pending: true, commit: commit() };
+      return { pending: true, commit: await commit() };
     }
     if (dirty) {
       return {
@@ -646,7 +646,7 @@ async function applyEdit(root, path, op) {
     }
     writePriority(root, path, next, crlf);
     if (!inRepo(root)) return { commit: { committed: false, paths: [PRIORITY_FILE], notRepo: true } };
-    return { commit: commit() };
+    return { commit: await commit() };
   });
   if (res.refused) refuse(res.refused);
   if (res.unchanged) {
