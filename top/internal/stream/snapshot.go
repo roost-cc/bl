@@ -30,10 +30,12 @@ type Section struct {
 	Error  string    `json:"error"`
 }
 
-// Runs is the `runs` section: the run states, newest first.
+// Runs is the `runs` section: the run states, newest first. Skipped are the ids of the run states
+// that this read could not read: each has its last good row in Rows, or no row when it has none.
 type Runs struct {
 	Section
-	Rows []Run `json:"rows"`
+	Rows    []Run    `json:"rows"`
+	Skipped []string `json:"skipped"`
 }
 
 // Run is one run state. Its times are ISO strings, as the run state holds them.

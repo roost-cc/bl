@@ -32,11 +32,16 @@ type Differ struct {
 	runs  map[string]string // the status of each run id; nil until the section was read
 }
 
+// unknownStatus is the status of a run that a read skipped before the view saw it: no run status
+// starts with a NUL, so it never equals one.
+const unknownStatus = "\x00unknown"
+
 // Diff returns the notes of s against the snapshot before, and keeps s as the new baseline. An
 // inbox item notifies when its id was not in the snapshot before, so it notifies once, and again
 // only after it left the inbox and came back. A run notifies when it has an end status
 // (stream.Ended) that it did not have before. A section that was never read (no read_at) changes
-// nothing.
+// nothing. A run that the read skipped (Runs.Skipped) and that has no row keeps the status it had;
+// with none, its status is unknown, and the read that sees it again only sets its baseline.
 func (d *Differ) Diff(s *stream.Snapshot) []Note {
 	var notes []Note
 	if !s.Attention.ReadAt.IsZero() {
@@ -53,8 +58,18 @@ func (d *Differ) Diff(s *stream.Snapshot) []Note {
 		runs := map[string]string{}
 		for _, r := range s.Runs.Rows {
 			runs[r.ID] = r.Status
-			if d.runs != nil && d.runs[r.ID] != r.Status && stream.Ended(r.Status) {
+			if old := d.runs[r.ID]; d.runs != nil && old != unknownStatus && old != r.Status && stream.Ended(r.Status) {
 				notes = append(notes, Note{ID: r.ID, Kind: r.Status, Line: runLine(r)})
+			}
+		}
+		for _, id := range s.Runs.Skipped {
+			if _, listed := runs[id]; listed {
+				continue
+			}
+			if old, ok := d.runs[id]; ok {
+				runs[id] = old
+			} else {
+				runs[id] = unknownStatus
 			}
 		}
 		d.runs = runs

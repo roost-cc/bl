@@ -185,6 +185,8 @@ test("runs, activity, tokens: a run state that cannot be read is skipped and nam
     ]) {
       assert.equal(section.read_at, at(NOW), `${what}: ${name} was read`);
       assert.match(section.error ?? '', /^skipped: .*F-8\.json/, `${what}: ${name} names the file`);
+      // Skipped at the first read: no row, and `skipped` names it, so the view has a baseline for it.
+      assert.deepEqual(section.skipped, ['F-8'], `${what}: ${name} names the skipped id`);
     }
     assert.deepEqual(
       runs.rows.map((r) => r.id),
@@ -208,8 +210,44 @@ test("runs, activity, tokens: a run state that cannot be read is skipped and nam
   }
   // With nothing to skip, no error.
   const { config } = runsBacklog();
-  for (const name of ['runs', 'activity', 'tokens'])
-    assert.equal(sectionReaders(config)[name](NOW).error, undefined, name);
+  for (const name of ['runs', 'activity', 'tokens']) {
+    const value = sectionReaders(config)[name](NOW);
+    assert.deepEqual([value.error, value.skipped], [undefined, undefined], name);
+  }
+});
+
+test('a run state that fails to read keeps its last good row, and the section error names it', () => {
+  const cases = [
+    // A read that races `saveRunState`, which truncates the file before it writes.
+    ['truncated mid-write', (path) => writeFileSync(path, '')],
+    ['half written', (path) => writeFileSync(path, '{"feature":"F-1","hist')],
+    ['not a run state', (path) => writeFileSync(path, '{"x":1}')],
+  ];
+  for (const [what, breakIt] of cases) {
+    const { run, config } = runsBacklog();
+    const path = join(run, 'F-1.json');
+    const f1 = JSON.parse(readFileSync(path, 'utf8'));
+    f1.history[0].usage = usage(600);
+    writeFileSync(path, JSON.stringify(f1));
+    const readers = sectionReaders(config);
+    const good = Object.fromEntries(['runs', 'activity', 'tokens'].map((n) => [n, readers[n](NOW)]));
+    breakIt(path);
+    // A new mtime, so the file is parsed again.
+    utimesSync(path, new Date(NOW), new Date(NOW));
+    for (const name of ['runs', 'activity', 'tokens']) {
+      const { error, skipped, ...value } = readers[name](NOW);
+      const { error: _e, skipped: _s, ...before } = good[name];
+      assert.deepEqual(value, before, `${what}: ${name} keeps F-1's last good data`);
+      assert.match(error ?? '', /^skipped: .*F-1\.json/, `${what}: ${name} names the file`);
+      assert.deepEqual(skipped, ['F-1'], `${what}: ${name} names the id`);
+    }
+    // Readable again: no error, and its new data.
+    writeFileSync(path, JSON.stringify({ ...f1, step: 'test' }));
+    utimesSync(path, new Date(NOW + 1000), new Date(NOW + 1000));
+    const runs = readers.runs(NOW);
+    assert.deepEqual([runs.error, runs.skipped], [undefined, undefined], what);
+    assert.equal(runs.rows.find((r) => r.id === 'F-1').step, 'test', what);
+  }
 });
 
 test('history: the last day is the UTC date of now, in any zone (box ¹ and ⁵ label it UTC)', () => {

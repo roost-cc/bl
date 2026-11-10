@@ -91,6 +91,51 @@ func TestRunThatEndsCleanNotifies(t *testing.T) {
 	}
 }
 
+// skip is snap with ids in Runs.Skipped and the section's error set, as a read that could not read
+// those run states gives it.
+func skip(runs []string, ids ...string) *stream.Snapshot {
+	s := snap(nil, runs)
+	s.Runs.Skipped, s.Runs.Error = ids, "skipped: …"
+	return s
+}
+
+func TestDiffKeepsARunThatWasSkipped(t *testing.T) {
+	cases := []struct {
+		what  string
+		snaps []*stream.Snapshot
+		want  []int // notes per snapshot
+	}{
+		{"end, skip with its last good row, back: no second note",
+			[]*stream.Snapshot{snap(nil, []string{"F-1:running"}), snap(nil, []string{"F-1:reviewed"}),
+				skip([]string{"F-1:reviewed"}, "F-1"), snap(nil, []string{"F-1:reviewed"})},
+			[]int{0, 1, 0, 0}},
+		{"end, skip with no row, back: no second note",
+			[]*stream.Snapshot{snap(nil, []string{"F-1:running"}), snap(nil, []string{"F-1:reviewed"}),
+				skip(nil, "F-1"), snap(nil, []string{"F-1:reviewed"})},
+			[]int{0, 1, 0, 0}},
+		{"skipped at the first read, then read as ended long ago: no note",
+			[]*stream.Snapshot{skip([]string{"F-2:running"}, "F-9"), snap(nil, []string{"F-2:running", "F-9:reviewed"})},
+			[]int{0, 0}},
+		{"skipped at the first read, then running, then clean: one note",
+			[]*stream.Snapshot{skip(nil, "F-9"), snap(nil, []string{"F-9:running"}), snap(nil, []string{"F-9:clean"})},
+			[]int{0, 0, 1}},
+		{"skipped while running with no row, then clean: one note",
+			[]*stream.Snapshot{snap(nil, []string{"F-1:running"}), skip(nil, "F-1"), skip(nil, "F-1"), snap(nil, []string{"F-1:clean"})},
+			[]int{0, 0, 0, 1}},
+		{"a run that leaves the rows unskipped and comes back ended notifies",
+			[]*stream.Snapshot{snap(nil, []string{"F-1:running"}), snap(nil, nil), snap(nil, []string{"F-1:clean"})},
+			[]int{0, 0, 1}},
+	}
+	for _, c := range cases {
+		var d Differ
+		for i, s := range c.snaps {
+			if got := d.Diff(s); len(got) != c.want[i] {
+				t.Errorf("%s: snapshot %d: notes %q, want %d", c.what, i, titles(got), c.want[i])
+			}
+		}
+	}
+}
+
 func TestDiffWaitsForASectionsFirstRead(t *testing.T) {
 	var d Differ
 	unread := snap(nil, []string{"F-81:running"})

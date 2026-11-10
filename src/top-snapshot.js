@@ -126,9 +126,11 @@ function runRow(config, state, now) {
  *
  * Each file is read on its own: a file that cannot be read (not JSON, not a
  * run state, or gone since the listing; a killed `bl` can leave a truncated
- * one) is left out and named in `skipped`, and the other run states stay. A
- * history entry that is not an object is left out.
- * @returns {() => { states: object[], skipped: string[] }}
+ * one, and a read can race `saveRunState`, which truncates the file first) is
+ * named in `skipped`, and the other run states stay. Its last good parse
+ * stays in `states`, so its row does not go for a tick; with none, it is left
+ * out. A history entry that is not an object is left out.
+ * @returns {() => { states: object[], skipped: { id: string, message: string }[] }}
  */
 export function runStatesReader(config) {
   const cache = new Map();
@@ -152,8 +154,9 @@ export function runStatesReader(config) {
         }
         states.push(hit.state);
       } catch (e) {
-        cache.delete(id);
-        skipped.push(e.message);
+        const last = cache.get(id);
+        if (last) states.push(last.state);
+        skipped.push({ id, message: e.message });
       }
     }
     for (const id of cache.keys()) if (!seen.has(id)) cache.delete(id);
@@ -163,9 +166,10 @@ export function runStatesReader(config) {
 
 /**
  * A section reader over the run states: `read(states, now)`, with `error`
- * naming each run state that `states` skipped. The section is still read, so
- * `read_at` moves on.
- * @param {() => { states: object[], skipped: string[] }} states
+ * naming each run state that `states` skipped and why, and `skipped` their
+ * ids, so the view knows which runs it did not see. The section is still
+ * read, so `read_at` moves on.
+ * @param {() => { states: object[], skipped: { id: string, message: string }[] }} states
  * @param {(states: object[], now: number) => object} read
  * @returns {(now: number) => object}
  */
@@ -173,7 +177,12 @@ function overRunStates(states, read) {
   return (now) => {
     const { states: list, skipped } = states();
     const value = read(list, now);
-    return skipped.length ? { ...value, error: `skipped: ${skipped.join('; ')}` } : value;
+    if (!skipped.length) return value;
+    return {
+      ...value,
+      skipped: skipped.map((s) => s.id),
+      error: `skipped: ${skipped.map((s) => s.message).join('; ')}`,
+    };
   };
 }
 
