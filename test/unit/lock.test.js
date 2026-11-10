@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
-import fs, { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import fs, { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
 import { join } from 'path';
 import { acquireLock, LOCK_FILE, releaseLock, withLock } from '../../src/lock.js';
@@ -290,5 +290,86 @@ test('a poll whose temp file vanished retries and does not throw', async () => {
     syncBuiltinESMExports();
     releaseLock(dir);
     cleanup();
+  }
+});
+
+test('acquireLock names an unknown holder and keeps polling', async () => {
+  const { dir, lockPath, cleanup } = mkBacklogRoot();
+  try {
+    const deadPid = spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
+    writeFileSync(lockPath, `${deadPid}\n2026-01-01T00:00:00.000Z\n`);
+    // A live reclaimer (this process) holds the reclaim mutex, so no attempt
+    // reclaims the stale lock and acquirePidLock gives up with no live holder.
+    writeFileSync(`${lockPath}.reclaim`, `${process.pid}\n`);
+    const errors = [];
+    let polls = 0;
+
+    await acquireLock(dir, {
+      now: () => new Date('2026-01-09T00:00:00.000Z'),
+      pollMs: 1,
+      error: (message) => errors.push(message),
+      sleep: async () => {
+        polls += 1;
+        rmSync(`${lockPath}.reclaim`);
+      },
+    });
+
+    assert.deepEqual(errors, ['Waiting for lock (.bl-new.lock) held by pid unknown…']);
+    assert.equal(polls, 1);
+    assert.equal(readFileSync(lockPath, 'utf8'), `${process.pid}\n2026-01-09T00:00:00.000Z\n`);
+  } finally {
+    releaseLock(dir);
+    cleanup();
+  }
+});
+
+test('acquireLock throws the create error and holds no lock', async () => {
+  const link = fs.linkSync;
+  const cases = [
+    {
+      name: 'missing backlog root',
+      error: /ENOENT/,
+      fault: (dir) => rmSync(dir, { recursive: true }),
+      undo: (dir) => mkdirSync(dir),
+    },
+    {
+      name: 'EPERM from linkSync',
+      error: /EPERM/,
+      fault: () => {
+        fs.linkSync = () => {
+          throw Object.assign(new Error('EPERM: operation not permitted, link'), { code: 'EPERM' });
+        };
+        syncBuiltinESMExports();
+      },
+      undo: () => {
+        fs.linkSync = link;
+        syncBuiltinESMExports();
+      },
+    },
+  ];
+  for (const { name, error, fault, undo } of cases) {
+    const { dir, lockPath, cleanup } = mkBacklogRoot();
+    const noWait = {
+      sleep: async () => {
+        throw new Error(`${name}: the create error must throw, not poll`);
+      },
+    };
+    try {
+      fault(dir);
+      try {
+        await assert.rejects(acquireLock(dir, noWait), error, name);
+      } finally {
+        undo(dir);
+      }
+
+      assert.deepEqual(readdirSync(dir), [], `${name}: no lock and no temp file left`);
+      releaseLock(dir);
+      // A held entry would make this acquire a re-entrant one that creates no file.
+      await acquireLock(dir, noWait);
+      assert.equal(existsSync(lockPath), true, `${name}: the next acquire creates the lock`);
+    } finally {
+      releaseLock(dir);
+      cleanup();
+    }
   }
 });
