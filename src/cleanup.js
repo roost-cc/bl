@@ -839,6 +839,12 @@ export function checkedMerge({ parsed, repoName, repoPath, branchName, plugins, 
       interrupted('git rev-parse');
       return false;
     }
+    if (!/^[0-9a-f]{40}$/.test(commit)) {
+      console.error(
+        `${repoName}: git rev-parse HEAD gave no commit ID for the merge ('${commit}'); nothing is pushed.`,
+      );
+      return false;
+    }
 
     const vars = {
       commit,

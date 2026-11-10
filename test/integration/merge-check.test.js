@@ -531,6 +531,31 @@ const GIT_KILL_CASES = [
   },
 ];
 
+test('a git rev-parse that gives no commit ID runs no check and pushes nothing', () => {
+  const fx = fixture({ verdicts: ['pass'] });
+  try {
+    const before = g(fx.origin, 'rev-parse', 'main');
+    // The fake git fails `rev-parse HEAD` in the throwaway worktree.
+    const bin = join(fx.dir, '.bl', 'failing-git');
+    mkdirSync(bin, { recursive: true });
+    const real = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\ncase "$PWD" in */bl-merge-*) test "$*" = "rev-parse HEAD" && exit 128 ;; esac\nexec '${real}' "$@"\n`,
+    );
+    chmodSync(join(bin, 'git'), 0o755);
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: { ...ENV, PATH: `${bin}:${process.env.PATH}` } });
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /^code: git rev-parse HEAD gave no commit ID for the merge \(''\); nothing is pushed\.$/m);
+    assert.deepEqual(calls(fx), [], 'no check ran');
+    assert.equal(gateOf(fx, UNITS[0]), '', 'no ## Gate line');
+    assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
+    assertNoThrowaway(fx);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 for (const c of GIT_KILL_CASES) {
   test(`a SIGTERM that ends \`git ${c.args}\` stops bl merge with 143 and leaves no worktree`, () => {
     const fx = fixture({ verdicts: ['pass'] });
