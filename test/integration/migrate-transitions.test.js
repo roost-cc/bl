@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { once } from 'events';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
@@ -323,6 +323,60 @@ test('a run writes each log with git dates in one commit, skips the live run, an
   assert.equal(again.stdout, 'nothing to do\n');
   assert.equal(head(dir), done);
   assert.deepEqual(statusLines(dir), []);
+});
+
+test('a rerun after a failed commit, or after a unit that failed to convert, commits the paths of the first run', (t) => {
+  /** A v1 backlog of three draft stories, in git; returns its root. */
+  const small = () => {
+    const { dir } = mkTempBacklog({
+      flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
+      repos: ['core'],
+      components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
+      stories: [1, 2, 3].map((n) => ({
+        id: `S-${n}`,
+        title: `S${n}`,
+        component: 'C01',
+        status: 'backlog',
+        added: '2026-11-01',
+      })),
+    });
+    writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+    git(dir, 'init', '-q', '-b', 'main');
+    commitAt(dir, '2026-11-01T10:00:00Z', 'base');
+    return dir;
+  };
+  const story = (n) => `stories/S${n}/index.md`;
+  // [failure, how to make the first run fail, how to undo it]
+  const failures = [
+    [
+      'a failed commit',
+      (dir) => writeFileSync(join(dir, '.git/hooks/pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 }),
+      (dir) => writeFileSync(join(dir, '.git/hooks/pre-commit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 }),
+    ],
+    [
+      'a unit that failed to convert',
+      (dir) => chmodSync(join(dir, 'stories/S2'), 0o555),
+      (dir) => chmodSync(join(dir, 'stories/S2'), 0o755),
+    ],
+  ];
+  for (const [name, fail, undo] of failures) {
+    if (name.startsWith('a unit') && process.getuid?.() === 0) {
+      t.diagnostic('root writes a read-only directory: the unit case is skipped');
+      continue;
+    }
+    const dir = small();
+    fail(dir);
+    const first = script(dir);
+    assert.equal(first.status, 1, `${name}: ${first.stdout}`);
+    assert.notDeepEqual(statusLines(dir), [], `${name}: the first run wrote`);
+    undo(dir);
+    const rerun = script(dir);
+    assert.equal(rerun.status, 0, `${name}: ${rerun.stderr}`);
+    assert.deepEqual(statusLines(dir), [], `${name}: every path of both runs is committed`);
+    for (const n of [1, 2, 3]) assert.equal(fm(dir, story(n)).transitions[0].to, 'draft', `${name}: S-${n}`);
+    const again = script(dir);
+    assert.equal(again.stdout, 'nothing to do\n', name);
+  }
 });
 
 test('migration writes the synthesized log for a unit whose transitions: is empty or blank, and never removes status: without a log', () => {

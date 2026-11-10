@@ -19,7 +19,8 @@
  *
  * Exit codes: 0 done (or nothing to do), 1 a step or the commit failed (run
  * it again once the cause is fixed: each unit reads correctly in either
- * shape), 2 bad arguments.
+ * shape, and the rerun commits what the failed run wrote, from its record in
+ * `.bl/run/commit-failed/`), 2 bad arguments.
  */
 
 import { migrate } from '../src/migrate-transitions.js';

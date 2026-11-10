@@ -18,7 +18,10 @@
  * It does not use `applyMigration` (`migration-txn.js`), which refuses to
  * start while any bl run or session is live. Each step is a locked write that
  * is safe beside a live run, and each unit reads correctly in either shape,
- * so an interrupted run leaves a working backlog. A unit whose run lock
+ * so an interrupted run leaves a working backlog. A run that fails after it
+ * wrote (a step throws, or the commit fails) records the paths it wrote in
+ * its failed-commit record (`backlog-commit.js`), and the rerun commits each
+ * one whose content is still the same with its own. A unit whose run lock
  * (`.bl/run/<id>.lock`) or session lock has a live holder other than this
  * process and its parents is skipped and listed, and so are the stories of
  * such a feature: the run reads and writes their old shape. A rerun converts
@@ -29,7 +32,7 @@ import { spawnSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
-import { commitPaths } from './backlog-commit.js';
+import { commitPaths, failedCommitRecord, hashPath, readFailedCommit, saveFailedCommit } from './backlog-commit.js';
 import { loadBacklog } from './backlog-graph.js';
 import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChange } from './change-doc.js';
 import { FLOW_FILE, FLOW_TYPES, LEGACY_LOG, flowPath, fromLegacy, migratedFlowText } from './flow.js';
@@ -177,11 +180,10 @@ function planUnit(root, rel, kind, fm, change) {
 
 /**
  * The unit's change documents that hold a review field, each with them
- * removed (`updateChange`, under its lock) unless `dryRun`.
- * @returns {string[]}  their paths
+ * removed (`updateChange`, under its lock) unless `dryRun`. `onPath` gets
+ * each one's path as it is written, so a later throw does not lose it.
  */
-function stripChanges(root, unitDir, dryRun) {
-  const out = [];
+function stripChanges(root, unitDir, dryRun, onPath) {
   for (const { path } of listChanges(unitDir)) {
     withSpecLock(path, () => {
       const doc = readChange(path);
@@ -191,10 +193,37 @@ function stripChanges(root, unitDir, dryRun) {
           for (const k of REVIEW_FIELDS) delete d.fm[k];
         });
       }
-      out.push(path);
+      onPath(path);
     });
   }
-  return out;
+}
+
+/** The owner of the migration's failed-commit record (`failedCommitRecord`). */
+const OWNER = 'migrate-transitions';
+
+/**
+ * The paths an earlier run wrote and did not commit: those of its record
+ * whose content is still what it wrote. An edit since is not the migration's,
+ * and stays out. A record that cannot be read throws.
+ * @param {string} root
+ * @returns {string[]}
+ */
+function carriedPaths(root) {
+  try {
+    return readFailedCommit(root, OWNER)
+      .commit.filter(([p, h]) => hashPath(root, p) === h)
+      .map(([p]) => p);
+  } catch (e) {
+    throw new Error(
+      `${failedCommitRecord(OWNER)}: ${e.message}; commit an earlier run's changes yourself (git status), then remove it`,
+      { cause: e },
+    );
+  }
+}
+
+/** Record `paths` with their content for the next run to commit; no paths removes the record. */
+function recordPaths(root, paths) {
+  saveFailedCommit(root, OWNER, { commit: paths.map((p) => [p, hashPath(root, p)]), unsure: [] });
 }
 
 const PLURAL = { story: 'stories', feature: 'features', task: 'tasks' };
@@ -217,7 +246,9 @@ export function commitMessage(c) {
 
 /**
  * Run the migration. With `dryRun`, count what would be written and write
- * nothing; otherwise write it unit by unit and commit the changed paths once.
+ * nothing; otherwise write it unit by unit and commit the changed paths once,
+ * with the paths an earlier failed run wrote (`carriedPaths`). A step that
+ * throws, or a commit that fails, records every path written for the rerun.
  * `log` gets one line per skipped unit, then the counts, or "nothing to do".
  *
  * @param {object} config  the loaded backlog config
@@ -232,62 +263,78 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   for (const kind of FLOW_TYPES) counts[kind] = { units: 0, entries: 0, placed: 0 };
   const paths = [];
   const skipped = [];
-  for (const kind of FLOW_TYPES) {
-    for (const unit of graph.list(kind)) {
-      const feature = unit.feature?.id;
-      const why = held.has(unit.id)
-        ? held.get(unit.id)
-        : feature && held.has(feature)
-          ? `its feature ${feature}: ${held.get(feature)}`
-          : null;
-      if (why) {
-        skipped.push(`${unit.id}: ${why}`);
-        continue;
-      }
-      const rel = relative(root, unit.file);
-      let planned = null;
-      try {
-        updateSpecFile(root, unit.file, (fm) => {
-          const change = kind === 'task' ? null : (currentChange(unit.dir)?.doc ?? null);
-          planned = planUnit(root, rel, kind, fm, change);
-          if (!planned || planned.skip || dryRun) return false;
-          setLog(fm, planned.log);
+  const carried = dryRun ? [] : carriedPaths(root);
+  try {
+    convertAll();
+  } catch (e) {
+    if (!dryRun) recordPaths(root, [...new Set([...carried, ...paths])]);
+    throw e;
+  }
+
+  /** Every unit, its change documents and `flow.json`, each path written pushed to `paths`. */
+  function convertAll() {
+    for (const kind of FLOW_TYPES) {
+      for (const unit of graph.list(kind)) {
+        const feature = unit.feature?.id;
+        const why = held.has(unit.id)
+          ? held.get(unit.id)
+          : feature && held.has(feature)
+            ? `its feature ${feature}: ${held.get(feature)}`
+            : null;
+        if (why) {
+          skipped.push(`${unit.id}: ${why}`);
+          continue;
+        }
+        const rel = relative(root, unit.file);
+        let planned = null;
+        try {
+          updateSpecFile(root, unit.file, (fm) => {
+            const change = kind === 'task' ? null : (currentChange(unit.dir)?.doc ?? null);
+            planned = planUnit(root, rel, kind, fm, change);
+            if (!planned || planned.skip || dryRun) return false;
+            setLog(fm, planned.log);
+          });
+        } catch (e) {
+          if (!(e instanceof SpecLockError)) throw new Error(`${rel}: ${e.message}`, { cause: e });
+          skipped.push(`${unit.id}: ${e.message}`);
+          continue;
+        }
+        if (planned?.skip) {
+          skipped.push(`${unit.id}: ${planned.skip}`);
+          continue;
+        }
+        if (planned) {
+          counts[kind].units++;
+          counts[kind].entries += planned.entries;
+          if (planned.placed) counts[kind].placed++;
+          paths.push(rel);
+        }
+        if (kind === 'task') continue;
+        stripChanges(root, unit.dir, dryRun, (path) => {
+          counts.changes++;
+          paths.push(relative(root, path));
         });
-      } catch (e) {
-        if (!(e instanceof SpecLockError)) throw new Error(`${rel}: ${e.message}`, { cause: e });
-        skipped.push(`${unit.id}: ${e.message}`);
-        continue;
-      }
-      if (planned?.skip) {
-        skipped.push(`${unit.id}: ${planned.skip}`);
-        continue;
-      }
-      if (planned) {
-        counts[kind].units++;
-        counts[kind].entries += planned.entries;
-        if (planned.placed) counts[kind].placed++;
-        paths.push(rel);
-      }
-      if (kind === 'task') continue;
-      for (const path of stripChanges(root, unit.dir, dryRun)) {
-        counts.changes++;
-        paths.push(relative(root, path));
       }
     }
-  }
-  const flowText = migratedFlowText(root);
-  if (flowText != null) {
-    if (!dryRun) atomicWriteFile(root, flowPath(root), flowText);
-    counts.flow = true;
-    paths.push(FLOW_FILE);
+    const flowText = migratedFlowText(root);
+    if (flowText != null) {
+      if (!dryRun) atomicWriteFile(root, flowPath(root), flowText);
+      counts.flow = true;
+      paths.push(FLOW_FILE);
+    }
   }
 
   for (const s of skipped) log(`skipped ${s}; a rerun converts it`);
-  if (paths.length === 0) {
+  const earlier = carried.filter((p) => !paths.includes(p));
+  const all = [...paths, ...earlier];
+  if (all.length === 0) {
     log('nothing to do');
     return { counts, skipped, commit: null };
   }
   log(`${dryRun ? 'would convert' : 'converted'}: ${countsText(counts)}`);
+  if (earlier.length > 0) log(`an earlier run wrote and did not commit: ${earlier.join(' ')}`);
   if (dryRun) return { counts, skipped, commit: null };
-  return { counts, skipped, commit: commitPaths(root, paths, commitMessage(counts)) };
+  const commit = commitPaths(root, all, commitMessage(counts));
+  recordPaths(root, commit.error ? all : []);
+  return { counts, skipped, commit };
 }

@@ -903,9 +903,12 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   backlog's gates), and commits the changed paths once (`commitPaths`) with the counts. It does
   not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
   (`liveSessionLocks`, by the worktree's branch) has a live holder other than the script and its
-  parent processes is skipped and listed, with the stories of such a feature; a rerun converts it
-  and, with nothing left, prints `nothing to do`. `--dry-run` prints the same counts and writes
-  nothing.
+  parent processes is skipped and listed, with the stories of such a feature, and so is a unit
+  whose `transitions:` is malformed (`logShape`); a rerun converts it and, with nothing left,
+  prints `nothing to do`. A run that fails after it wrote (a step throws, or the commit fails)
+  records the paths it wrote in `.bl/run/commit-failed/migrate-transitions.json`, and the rerun
+  commits each one whose content is unchanged with its own paths. `--dry-run` prints the same
+  counts and writes nothing.
 - **The review state (D5).** `reviewOf(kind, fm, change)` reads it from the log: `round`, the
   rounds the log opened; `reviewed`, the rounds with a verdict (`round`, less the open one);
   `position`, the last of `in_review` (a round open), `fixing` (its items open) and
