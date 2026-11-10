@@ -501,7 +501,7 @@ test('a throwaway worktree that cannot be removed is a warning: the merge still 
  * throwaway worktree (`bl-merge-*`) from the main checkout.
  */
 function killingGit(dir) {
-  const real = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
+  const real = spawnSync('which', ['git'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).stdout.trim();
   const bin = join(dir, '.bl', 'fake-git');
   mkdirSync(bin, { recursive: true });
   writeFileSync(
