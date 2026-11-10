@@ -704,19 +704,23 @@ export async function cleanupOneRepo({
 
   if (!pushed) {
     info(`Pushing main in ${repoName}...`);
-    try {
-      execSync('git push origin main', {
-        cwd: repoPath,
-        stdio: ['inherit', process.stderr, process.stderr],
-      });
-    } catch (err) {
+    // No shell, as for the install below: `raiseSignal` needs the push's signal.
+    const push = spawnSync('git', ['push', 'origin', 'main'], {
+      cwd: repoPath,
+      stdio: ['inherit', process.stderr, process.stderr],
+    });
+    if (isInterrupt(push.signal)) {
+      console.error(
+        `${repoName}: the push of main to origin was ended by ${push.signal}; rerun \`bl merge ${parsed.id}\`.`,
+      );
+      raiseSignal(push.signal);
+      return { ok: false };
+    }
+    if (push.status !== 0) {
       console.error(
         `${repoName}: push of main to origin failed — the recorded commit must always be one that landed on origin, not just locally.`,
       );
-      return {
-        ok: false,
-        error: err?.message ?? 'git push origin main failed',
-      };
+      return { ok: false };
     }
   }
 

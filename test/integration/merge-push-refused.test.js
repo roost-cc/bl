@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
 import { readFileSync, realpathSync, writeFileSync } from 'fs';
+import { constants } from 'os';
 import { join } from 'path';
 import { extractSection } from '../../src/feature.js';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -204,17 +205,19 @@ test('a failed install stops bl merge after the push, names the command, and the
   }
 });
 
-// Each child that `cleanupOneRepo` starts after the push, ended by SIGTERM,
-// ends `bl merge` as SIGTERM, as the push in `checkedMerge` does. `fail`
-// makes the first run's install fail, so the second run takes the "already
-// merged" path that looks up the merge commit (`landedMergeCommit`).
+// Each child that `cleanupOneRepo` starts after the push, ended by SIGINT or
+// SIGTERM, ends `bl merge` on that signal, as the push in `checkedMerge`
+// does. `fail` makes the first run's install fail, so the second run takes
+// the "already merged" path: it looks up the merge commit
+// (`landedMergeCommit`) and pushes main.
 const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], {
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'pipe'],
 }).trim();
-for (const { child, fail, npm, git, message } of [
+for (const { child, signal, fail, npm, git, message } of [
   {
     child: 'the install',
+    signal: 'SIGTERM',
     fail: false,
     npm: 'kill -TERM $$',
     git: null,
@@ -222,13 +225,22 @@ for (const { child, fail, npm, git, message } of [
   },
   {
     child: 'the merge-commit lookup',
+    signal: 'SIGTERM',
     fail: true,
     npm: 'exit 0',
     git: `case "$*" in *--ancestry-path*) kill -TERM $$;; esac\nexec '${REAL_GIT}' "$@"`,
     message: /Branch 's1-loose' is already merged into main\./,
   },
+  ...['SIGINT', 'SIGTERM'].map((signal) => ({
+    child: 'the push of main',
+    signal,
+    fail: true,
+    npm: 'exit 0',
+    git: `case "$*" in 'push origin main') kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"`,
+    message: new RegExp(`code: the push of main to origin was ended by ${signal}; rerun \`bl merge S-1\`\\.`),
+  })),
 ]) {
-  test(`${child} ended by SIGTERM ends bl merge as SIGTERM`, () => {
+  test(`${child} ended by ${signal} ends bl merge as ${signal}`, () => {
     const fx = fixture();
     const npmFake = fakeNpm();
     const dir = mkTempDir('bl-sigterm-');
@@ -242,7 +254,10 @@ for (const { child, fail, npm, git, message } of [
       }
       const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: { ...ENV, PATH: `${dir}:${process.env.PATH}` } });
       assert.match(r.stderr, message);
-      assert.ok(r.status === 143 || r.signal === 'SIGTERM', `status ${r.status}, signal ${r.signal}\n${r.stderr}`);
+      assert.ok(
+        r.status === 128 + constants.signals[signal] || r.signal === signal,
+        `status ${r.status}, signal ${r.signal}\n${r.stderr}`,
+      );
       // The kill stopped bl merge, so it does not go on to "Resume with".
       assert.doesNotMatch(r.stderr, /Cleanup of code failed/);
     } finally {
