@@ -2384,9 +2384,8 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   driver's line) in one commit: `chore: task T-<n> (<unit>)`. The unit's file is not
   written: its `## Tasks` table is rendered when the page is read. stdout is `T-<n>`; `--json` prints
   `{ schema: "bl-task-json/v1", id, path, unit, edges }`. An unknown unit, a missing `--title`,
-  a missing `--gate` or one outside the three,
-  a `Decide:` title with a gate other than `merge`, an unreadable body file or one with
-  frontmatter is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A
+  a missing `--gate` or one outside the three, a `Decide:` title with a gate other than `merge`,
+  an unreadable body file or one with frontmatter is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A
   failure before the commit puts the files back.
 - **`--gate`** is a shorthand for the task's edge (F-65 D2), the one `bl block add` would file
   and checked the same way (`writeEdge` in `src/block.js`, which `bl block add` shares:
