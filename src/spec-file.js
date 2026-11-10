@@ -83,9 +83,13 @@ export async function withSpecLock(indexPath, fn, { waitMs = 60_000 } = {}) {
   const lockPath = specLockPath(indexPath);
   if (held.has(lockPath)) return runSync(fn, indexPath);
   const content = `${process.pid}\n${new Date().toISOString()}\nspec ${indexPath}\n`;
+  // The take records the lock in the same step, so another task of this
+  // process that asks before `awaitLock` resolves runs `fn` directly, not waits.
   const take = () => {
     try {
-      return acquirePidLock(lockPath, content);
+      const got = acquirePidLock(lockPath, content);
+      if ('content' in got) held.set(lockPath, content);
+      return got;
     } catch (e) {
       throw new SpecLockError(`${indexPath}: cannot take the spec lock ${lockPath}: ${e.message}`, {
         indexPath,
@@ -106,7 +110,6 @@ export async function withSpecLock(indexPath, fn, { waitMs = 60_000 } = {}) {
       },
     );
   }
-  held.set(lockPath, content);
   try {
     return runSync(fn, indexPath);
   } finally {

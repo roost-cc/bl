@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { awaitLock, LockWaitTimeout, waitingForLock } from '../../src/lock-wait.js';
 import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
-import { acquireLock, LOCK_FILE } from '../../src/lock.js';
+import { acquireLock, LOCK_FILE, withLock } from '../../src/lock.js';
 import { mainSyncLockPath, withMainSyncLock } from '../../src/main-sync.js';
 import { SpecLockError, specLockPath, withSpecLock } from '../../src/spec-file.js';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -97,6 +97,64 @@ test("awaitLock takes acquirePidLock as it is: it resolves the lock's content, a
   assert.ok(err instanceof LockWaitTimeout, String(err));
   assert.equal(err.holder, process.pid);
   releasePidLock(lockPath, mine);
+});
+
+test('two concurrent takes of one re-entrant lock in one process: the second re-enters, it never waits for itself', async () => {
+  const dir = mkTempDir('bl-lock-wait-');
+  const spec = join(dir, 'index.md');
+  writeFileSync(spec, '---\na: 1\n---\nbody\n');
+  const cases = [
+    {
+      name: 'backlog lock (withLock)',
+      lockPath: join(dir, LOCK_FILE),
+      run: (said, order, tag) =>
+        withLock(
+          dir,
+          async () => {
+            order.push(`${tag} start`);
+            await delay(50);
+            order.push(`${tag} end`);
+          },
+          { timeoutMs: 3000, pollMs: 200, error: (l) => said.push(l), exit: (c) => said.push(`exit ${c}`) },
+        ),
+      // B re-enters while A holds the lock, as one task re-entering does:
+      // each task starts before the other ends.
+      ok: (order) =>
+        order.length === 4 &&
+        order.indexOf('A start') < order.indexOf('B end') &&
+        order.indexOf('B start') < order.indexOf('A end'),
+    },
+    {
+      name: 'spec lock (withSpecLock)',
+      lockPath: specLockPath(spec),
+      run: (said, order, tag) => withSpecLock(spec, () => order.push(tag), { waitMs: 3000 }),
+      // fn is synchronous, so the two never overlap; both run.
+      ok: (order) => [...order].sort().join() === 'A,B',
+    },
+  ];
+  for (const c of cases) {
+    const said = [];
+    const order = [];
+    const write = process.stderr.write;
+    process.stderr.write = (chunk, ...rest) => {
+      said.push(String(chunk));
+      return write.call(process.stderr, chunk, ...rest);
+    };
+    const start = Date.now();
+    try {
+      await Promise.all([c.run(said, order, 'A'), c.run(said, order, 'B')]);
+    } finally {
+      process.stderr.write = write;
+    }
+    assert.ok(c.ok(order), `${c.name}: order ${order.join(', ')}`);
+    assert.deepEqual(
+      said.filter((l) => /Waiting for lock|exit/.test(l)),
+      [],
+      `${c.name}: no task waited for its own process`,
+    );
+    assert.ok(Date.now() - start < 1000, `${c.name}: took ${Date.now() - start} ms`);
+    assert.equal(existsSync(c.lockPath), false, `${c.name}: the lock is released`);
+  }
 });
 
 test('awaitLock sleeps at most the time left to the deadline', async () => {

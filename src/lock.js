@@ -88,17 +88,20 @@ export async function acquireLock(backlogRoot, options = {}) {
     return;
   }
   if (heldByParent(lockPath)) return;
-  const take = () => acquirePidLock(lockPath, `${process.pid}\n${now().toISOString()}\n`);
-  let content;
+  // The take records the lock in the same step, so another task of this
+  // process that asks before `awaitLock` resolves re-enters, not waits.
+  const take = () => {
+    const got = acquirePidLock(lockPath, `${process.pid}\n${now().toISOString()}\n`);
+    if ('content' in got) heldLocks.set(lockPath, { depth: 1, content: got.content });
+    return got;
+  };
   try {
-    content = await awaitLock(LOCK_FILE, take, { deadlineMs: timeoutMs, pollMs, announce: error, sleep });
+    await awaitLock(LOCK_FILE, take, { deadlineMs: timeoutMs, pollMs, announce: error, sleep });
   } catch (e) {
     if (!(e instanceof LockWaitTimeout)) throw e;
     error(e.message);
     exit(1);
-    return;
   }
-  heldLocks.set(lockPath, { depth: 1, content });
 }
 
 /** Whether the lock file names this process's parent, which passed it down in `BL_LOCK_HOLDER`. */
