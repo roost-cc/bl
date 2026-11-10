@@ -7,8 +7,14 @@
  * and the commit; `pullBeforeCommand` across the pull; `bl fix` (without
  * `--dry-run`) holds it from its story scan through its last frontmatter
  * write, so two fixes that land on the same story file serialise. The file
- * keeps its historical name `<backlogRoot>/.bl-new.lock`. Stale locks (whose
- * owning PID is no longer alive) are reclaimed automatically.
+ * keeps its historical name `<backlogRoot>/.bl-new.lock`. `pid-lock.js` takes
+ * and releases it: the file is created whole (its name never exists without
+ * the holder's PID in it), a lock whose holder is dead is reclaimed only under
+ * its `.reclaim` mutex, and a release removes the file only while it still
+ * holds this process's content (S-1397). The exit and signal handlers remove
+ * only the lock itself: a temp file (`.bl-new.lock.<pid>.<random>.tmp`) or a
+ * `.bl-new.lock.reclaim` mutex that a killed process leaves stays in the
+ * backlog root.
  *
  * The lock is re-entrant within a process: `bl new` acquires it and then calls
  * `syncAndCommit`, which acquires it again. Each acquire bumps a depth count; only
@@ -21,53 +27,37 @@
  * the file.
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
+import { acquirePidLock, releasePidLock } from './pid-lock.js';
 import { exitOnSignal } from './signal-exit.js';
 
 export const LOCK_FILE = '.bl-new.lock';
 const LOCK_TIMEOUT_MS = 30_000;
 const LOCK_POLL_MS = 500;
 
-// Locks held by this process, mapped to their re-entrancy depth. The `exit`
-// listener registered at module init (below) walks this map. On SIGINT or
-// SIGTERM, the handler in signal-exit.js calls process.exit, so it runs too.
+// Locks held by this process, mapped to their re-entrancy depth and the
+// content this process wrote. The `exit` listener registered at module init
+// (below) walks this map. On SIGINT or SIGTERM, the handler in signal-exit.js
+// calls process.exit, so it runs too. The listener removes the lock files
+// only, not a temp file that a killed process leaves.
+/** @type {Map<string, { depth: number, content: string }>} */
 const heldLocks = new Map();
 
 function cleanupAll() {
-  for (const path of heldLocks.keys()) {
-    try {
-      unlinkSync(path);
-    } catch {
-      // already gone
-    }
-  }
+  for (const [path, { content }] of heldLocks) releasePidLock(path, content);
   heldLocks.clear();
-}
-
-export function isPidAlive(pid, kill = process.kill) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function releaseLock(backlogRoot) {
   const lockPath = join(backlogRoot, LOCK_FILE);
-  const depth = heldLocks.get(lockPath);
-  if (depth == null) return;
-  if (depth > 1) {
-    heldLocks.set(lockPath, depth - 1);
+  const held = heldLocks.get(lockPath);
+  if (held == null) return;
+  if (held.depth > 1) {
+    held.depth -= 1;
     return;
   }
-  try {
-    unlinkSync(lockPath);
-  } catch {
-    // already gone
-  }
+  releasePidLock(lockPath, held.content);
   heldLocks.delete(lockPath);
 }
 
@@ -77,7 +67,6 @@ exitOnSignal();
 
 export async function acquireLock(backlogRoot, options = {}) {
   const {
-    kill = process.kill,
     now = () => new Date(),
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     timeoutMs = LOCK_TIMEOUT_MS,
@@ -86,9 +75,9 @@ export async function acquireLock(backlogRoot, options = {}) {
     error = console.error,
   } = options;
   const lockPath = join(backlogRoot, LOCK_FILE);
-  const depth = heldLocks.get(lockPath);
-  if (depth != null) {
-    heldLocks.set(lockPath, depth + 1);
+  const held = heldLocks.get(lockPath);
+  if (held != null) {
+    held.depth += 1;
     return;
   }
   if (heldByParent(lockPath)) return;
@@ -96,42 +85,24 @@ export async function acquireLock(backlogRoot, options = {}) {
   let announced = false;
 
   while (true) {
-    try {
-      writeFileSync(lockPath, `${process.pid}\n${now().toISOString()}\n`, {
-        flag: 'wx',
-      });
-      heldLocks.set(lockPath, 1);
+    const taken = acquirePidLock(lockPath, `${process.pid}\n${now().toISOString()}\n`);
+    if ('content' in taken) {
+      heldLocks.set(lockPath, { depth: 1, content: taken.content });
       return;
-    } catch {
-      if (existsSync(lockPath)) {
-        try {
-          const content = readFileSync(lockPath, 'utf8');
-          const pid = parseInt(content.split('\n')[0], 10);
-          if (!isPidAlive(pid, kill)) {
-            try {
-              unlinkSync(lockPath);
-              continue;
-            } catch {
-              // try again
-            }
-          } else if (!announced) {
-            // Said once, so a caller (or a test) can tell a process blocked
-            // on a live holder from one still doing its pre-lock work.
-            announced = true;
-            error(`Waiting for lock (${LOCK_FILE}) held by pid ${pid}…`);
-          }
-        } catch {
-          // try again
-        }
-      }
-      if (now().getTime() - start > timeoutMs) {
-        error(`Timed out waiting for lock (${LOCK_FILE}). Another bl process may be stuck.`);
-        error(`Remove manually: rm "${lockPath}"`);
-        exit(1);
-        return;
-      }
-      await sleep(pollMs);
     }
+    if (!announced) {
+      // Said once, so a caller (or a test) can tell a process blocked on a
+      // live holder from one still doing its pre-lock work.
+      announced = true;
+      error(`Waiting for lock (${LOCK_FILE}) held by pid ${taken.holder}…`);
+    }
+    if (now().getTime() - start > timeoutMs) {
+      error(`Timed out waiting for lock (${LOCK_FILE}). Another bl process may be stuck.`);
+      error(`Remove manually: rm "${lockPath}"`);
+      exit(1);
+      return;
+    }
+    await sleep(pollMs);
   }
 }
 

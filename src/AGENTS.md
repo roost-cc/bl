@@ -1097,13 +1097,16 @@ agent returned, validated against the step's JSON Schema, or `null` with the
 fault named. `validateOutcome(schema, value)` in `src/outcome.js` does the
 validation, with `ajv` (draft 2020-12). It takes the object or the text that
 holds it, and its faults are `no output`, `not JSON: <parser message>` and
-`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). Nothing in
-bl reads an outcome out of prose. Two carriers deliver the value:
+`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). A headless
+result replaces `no output`, and only that fault, with
+`<cli> exited <status>[: <last stderr line>]` when the agent CLI exited non-zero
+or wrote stderr (`withExitFault`, S-1398). Nothing in bl reads an outcome out of
+prose. Two carriers deliver the value:
 
-| Session     | Carrier                                                                                                                                                                                                                                                                                                                                     | Read by                                 |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the run), and the last message parsed as JSON. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
-| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                | `launchSession`, after the agent exits  |
+| Session     | Carrier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Read by                                 |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the run), and the last message parsed as JSON. Both capture the CLI's stderr, copy it to bl's stderr when the CLI exits, and return its last 20 non-empty lines as `stderrTail`, which the no-outcome escalation shows. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
+| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                                                                                                                                                                                         | `launchSession`, after the agent exits  |
 
 - **The outcome file.** It lives under the git-ignored `.bl/`, so nothing
   commits it. `launchSession` removes a stale one before the spawn, and after
@@ -3156,7 +3159,9 @@ value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 `src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
 turns. A command that finds the lock held by a live process says so once on stderr
 (`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
-30 s pass. The lock is re-entrant within a process.
+30 s pass. The lock is re-entrant within a process. As the spec lock is, it is created whole
+and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock name never
+exists without its holder's pid and two processes cannot both hold it.
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
 the Markdown files among its paths that git reports changed. Then it stages exactly each

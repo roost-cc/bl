@@ -13,7 +13,7 @@ import { runCapacityHelper } from './capacity-helper.js';
 import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv } from './provider.js';
-import { outcomeFor } from '../outcome.js';
+import { outcomeFor, withExitFault } from '../outcome.js';
 
 // The script that holds the `codex app-server` conversation (see its JSDoc).
 const CAPACITY_HELPER = fileURLToPath(new URL('./codex-capacity.js', import.meta.url));
@@ -876,9 +876,12 @@ export class CodexProvider extends AgentProvider {
           // Marked headless (F-78 D3), so the bl it runs refuses `bl rank`.
           env: agentEnv({ headless: true }),
           encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'inherit'],
+          // stderr is captured, copied to bl's stderr when codex exits, and
+          // names the exit in a missing outcome's fault (S-1398).
+          stdio: ['ignore', 'pipe', 'pipe'],
           maxBuffer: 256 * 1024 * 1024,
         });
+        if (r.stderr) process.stderr.write(r.stderr);
         try {
           if (!r.error && existsSync(outputFile)) output = readFileSync(outputFile, 'utf8');
         } catch {
@@ -908,7 +911,7 @@ export class CodexProvider extends AgentProvider {
         sessionId: events.sessionId,
         parsed: true,
         // Only the last-message file: the event stream is not the outcome.
-        ...outcomeFor(schema, output),
+        ...withExitFault(outcomeFor(schema, output), 'codex', status, r.stderr),
       };
     }
 
