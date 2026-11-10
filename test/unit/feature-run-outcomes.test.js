@@ -8,6 +8,7 @@ import { loadConfig } from '../../src/config.js';
 import { findFeature, normalizeFeatureId, extractSection } from '../../src/feature.js';
 import { defaultRunner, runSession, newRunState, OutcomeError, OUTCOME_RETRY_NOTE } from '../../src/feature-run.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
+import { withExitFault } from '../../src/outcome.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 
 const SCHEMA = {
@@ -159,6 +160,13 @@ test("an escalation after a CLI failure names the exit and shows the CLI's stder
   } finally {
     cleanup();
   }
+});
+
+test('defaultRunner().shell takes a commit message built from a fault of NUL stderr (S-1398)', () => {
+  const none = { structured: null, structuredError: 'no output' };
+  const fault = withExitFault(none, 'claude', 1, 'Error: bad\0flag\n').structuredError;
+  const dir = mkTempDir('bl-shell-');
+  assert.equal(defaultRunner().shell(`echo 'chore: S-1 escalated — ${fault}'`, dir).status, 0);
 });
 
 test('defaultRunner().session returns the headless stderrTail', () => {

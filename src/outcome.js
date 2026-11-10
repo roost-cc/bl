@@ -49,14 +49,18 @@ const STDERR_TAIL_LINES = 20;
 /** The longest stderr line a fault or `stderrTail` keeps, in characters. */
 const STDERR_LINE_MAX = 500;
 
+/** Control characters other than tab: C0, DEL and C1 (this covers `\r`, NUL and a lone ESC). */
+const CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g;
+
 /**
- * One stderr line, fit for an operator-facing record: ANSI codes and bare
- * `\r` removed, cut to `STDERR_LINE_MAX` characters.
+ * One stderr line, fit for an operator-facing record, a commit message and a
+ * spawn argument: ANSI codes and every control character except tab removed,
+ * cut to `STDERR_LINE_MAX` characters.
  *
  * @param {string} line
  */
 function cleanStderrLine(line) {
-  const clean = stripVTControlCharacters(line).replaceAll('\r', '');
+  const clean = stripVTControlCharacters(line).replace(CONTROL_CHARS, '');
   return clean.length > STDERR_LINE_MAX ? `${clean.slice(0, STDERR_LINE_MAX)}…` : clean;
 }
 
@@ -106,7 +110,8 @@ export function outcomeFor(schema, value) {
  * the fault becomes `<cli> exited <status>: <last non-empty stderr line>`, or
  * `<cli> exited <status>` with no stderr. Every other outcome stays as it is.
  * `stderrTail` is the last 20 non-empty stderr lines, joined by `\n`, or `''`.
- * Each kept line has its ANSI codes and `\r` removed and is cut to 500
+ * Each kept line has its ANSI codes and control characters (except tab)
+ * removed and is cut to 500
  * characters (`cleanStderrLine`).
  *
  * @param {{ structured: object|null, structuredError: string|null }} outcome

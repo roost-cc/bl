@@ -140,6 +140,26 @@ test('withExitFault bounds and cleans the stderr line (S-1398)', () => {
   }
 });
 
+test('withExitFault removes control characters from the stderr line (S-1398)', () => {
+  const none = { structured: null, structuredError: NO_OUTPUT };
+  const fault = (stderr) => withExitFault(none, 'claude', 1, stderr);
+  const cases = [
+    { name: 'NUL, BEL and BS', stderr: 'Error: bad\0flag\x07\x08\n', clean: 'Error: badflag' },
+    { name: 'a lone ESC', stderr: 'a\x1bb\n', clean: 'ab' },
+    { name: 'DEL', stderr: 'a\x7fb\n', clean: 'ab' },
+    { name: 'C1 controls', stderr: 'a\x80\x9bb\x9f\n', clean: 'ab' },
+    { name: 'vertical tab and form feed', stderr: 'a\x0bb\x0c\n', clean: 'ab' },
+    { name: 'tab stays', stderr: 'a\tb\n', clean: 'a\tb' },
+    { name: 'a line of only control characters is blank', stderr: 'x\n\0\x07\n', clean: 'x' },
+  ];
+  for (const c of cases) {
+    const r = fault(c.stderr);
+    assert.equal(r.structuredError, `claude exited 1: ${c.clean}`, c.name);
+    assert.equal(r.stderrTail, c.clean, c.name);
+    assert.doesNotMatch(r.structuredError, /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/, c.name);
+  }
+});
+
 test('outcomePath is <backlogRoot>/.bl/outcome/<unit id>.json', () => {
   assert.equal(outcomePath('/b', 'S-7'), '/b/.bl/outcome/S-7.json');
 });
