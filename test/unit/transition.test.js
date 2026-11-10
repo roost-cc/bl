@@ -351,6 +351,19 @@ test('assertFrom checks the when guards after the from', () => {
   assert.equal(assertFrom(flow, unit, 'run', ctx), 'S-5: run needs escalation_cleared, and it does not hold');
 });
 
+test('a when guard guards.js does not register is a FlowError naming it, not a crash', () => {
+  const root = mkTempDir('bl-assert-from-guard-');
+  const raw = JSON.parse(readFileSync(join(TEMPLATES, 'flow.json'), 'utf8'));
+  raw.types.story.verbs.run.when = ['gate_fre:run'];
+  writeFileSync(join(root, 'flow.json'), JSON.stringify(raw));
+  const typo = loadFlow(root);
+  const ctx = { config: { backlogRoot: root }, id: 'S-5', indexPath: join(root, 'index.md') };
+  assert.throws(
+    () => assertFrom(typo, { id: 'S-5', kind: 'story', status: 'refined' }, 'run', ctx),
+    (e) => e instanceof FlowError && /guard "gate_fre" is not registered/.test(e.message),
+  );
+});
+
 test('assertFrom names bl implement for the fix verb, which is no command of its own', () => {
   assert.equal(
     assertFrom(flow, { id: 'F-5', kind: 'feature', status: 'fixing' }, 'merge', null),

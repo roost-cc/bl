@@ -454,7 +454,7 @@ export function assertFrom(flow, unit, verb, ctx) {
     return `${id} is ${status || '(no status)'}; ${verb} starts from ${statusWords(from)}${hint}`;
   }
   for (const when of ctx ? row.when : []) {
-    if (!guardsHold([when], ctx)) return `${id}: ${verb} needs ${when}, and it does not hold`;
+    if (!guardsHold(flow, [when], ctx)) return `${id}: ${verb} needs ${when}, and it does not hold`;
   }
   return null;
 }
@@ -500,11 +500,17 @@ export function startOf(config, kind, unit, verbs, { guards = true } = {}) {
   return { verb: refusal ? null : verb, status, refusal };
 }
 
-/** Whether every guard of a `when` list holds (`name` or `name:argument`, `guards.js`). */
-function guardsHold(when, ctx) {
+/**
+ * Whether every guard of a `when` list holds (`name` or `name:argument`,
+ * `guards.js`). A name `guards.js` does not register throws `FlowError`:
+ * `flow.json` is the backlog's file, and `bl validate` names the fault.
+ */
+function guardsHold(flow, when, ctx) {
   return when.every((w) => {
     const [name, arg] = w.split(':');
-    return GUARDS.get(name)(ctx, arg);
+    const guard = GUARDS.get(name);
+    if (!guard) throw new FlowError(flow.path, `guard "${name}" is not registered in bl/src/guards.js`);
+    return guard(ctx, arg);
   });
 }
 
@@ -519,7 +525,7 @@ function guardsHold(when, ctx) {
  * @returns {import("./flow.js").Branch | null}
  */
 export function branchOf(flow, kind, verb, outcome, ctx) {
-  return flow.verbOf(kind, verb)?.[outcome].find((b) => guardsHold(b.when, ctx)) ?? null;
+  return flow.verbOf(kind, verb)?.[outcome].find((b) => guardsHold(flow, b.when, ctx)) ?? null;
 }
 
 /**
