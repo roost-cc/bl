@@ -106,6 +106,15 @@ test('an at before the last entry’s is recorded at that entry’s, so the log 
   );
 });
 
+test('an at that is not a time throws and writes nothing', () => {
+  for (const bad of ['not a time', '', null]) {
+    const fm = at('story', 'draft');
+    const before = structuredClone(fm);
+    assert.throws(() => applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: bad }), /is not a time/);
+    assert.deepEqual(fm, before, String(bad));
+  }
+});
+
 test('a during equal to the current status records nothing', () => {
   const fm = at('feature', 'in_review');
   const before = structuredClone(fm);

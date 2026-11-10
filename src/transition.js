@@ -346,7 +346,8 @@ export function setLog(fm, log) {
  * Else it throws `NoEdgeError` and leaves `fm` unchanged; a malformed
  * `transitions:` throws a `FlowError` and is never replaced. A `during` equal to
  * the current status records nothing and returns null. An `at` before the
- * last entry's (a clock behind the last writer's) is recorded at that entry's.
+ * last entry's (a clock behind the last writer's) is recorded at that entry's;
+ * an `at` that is not a time throws and writes nothing.
  *
  * A unit with no log first gets the log `legacyLog` synthesizes (each entry
  * with no `at` takes this entry's), and loses `status:`; `transitions:`
@@ -362,6 +363,7 @@ export function setLog(fm, log) {
  * @returns {object | null}  the entry, or null when nothing was recorded
  */
 export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at = nowAt(), change = null }) {
+  if (Number.isNaN(Date.parse(at))) throw new Error(`${idOf(kind, fm)}: at "${at}" is not a time; no entry written`);
   const log = writableLog(flow.path, kind, fm, change, at);
   const current = log.at(-1)?.to ?? null;
   const row = flow.verbOf(kind, by);
