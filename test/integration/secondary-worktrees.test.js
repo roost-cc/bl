@@ -17,7 +17,7 @@ import { join } from 'path';
 import { loadConfig, normalizeId, parseFrontmatter } from '../../src/config.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
 import { findStoryDir, findExistingWorktree } from '../../src/story.js';
-import { prepareStoryRun } from '../../src/workon.js';
+import { prepareStoryRun, resolveWorkonTargets } from '../../src/workon.js';
 import { prepareFeatureWorktree } from '../../src/feature-cmd.js';
 import { findFeature, normalizeFeatureId } from '../../src/feature.js';
 import { cleanupOneRepo } from '../../src/cleanup.js';
@@ -271,6 +271,58 @@ test("bl run F-n's prep stops, naming the repo, when another repo's bootstrap fa
     err,
     /F-1: bootstrap failed in repoB \(.*\/worktrees\/f1-pair\/repoB\) — stopping before the agent starts\./,
   );
+});
+
+test('bl implement on an escalated feature or story whose review position is fixing starts the fix session: resolveWorkonTargets accepts it, prepareFeatureWorktree returns reviewPending, prepareStoryWorktree uses workon-review', () => {
+  const at = (n) => `2026-11-0${n}T00:00:00Z`;
+  const started = [
+    { at: at(1), to: 'draft', by: 'new' },
+    { at: at(2), to: 'in_progress', by: 'operator' },
+  ];
+  const fixing = [...started, { at: at(3), to: 'in_review', by: 'run' }, { at: at(4), to: 'fixing', by: 'review' }];
+  // [name, log, whether the review position is fixing]: the old `status === 'fixing'` test is wrong for the first two.
+  const cases = [
+    ['a fix that escalated', [...fixing, { at: at(5), to: 'escalated', by: 'fix' }], true],
+    ["the loop's escalation", [...fixing, { at: at(5), to: 'escalated', by: 'run' }], true],
+    ['a unit in fixing', fixing, true],
+    ['escalated with no open items', [...started, { at: at(3), to: 'escalated', by: 'run' }], false],
+  ];
+  const yamlLog = (log) =>
+    `transitions:\n${log.map((e) => `  - { at: '${e.at}', to: ${e.to}, by: ${e.by} }`).join('\n')}\n`;
+  const lastEntry = (path) => {
+    const e = parseFrontmatter(readFileSync(path, 'utf8')).fm.transitions.at(-1);
+    return `${e.to} by ${e.by}`;
+  };
+  for (const [name, log, fix] of cases) {
+    // A story: `bl implement S-7` accepts it, and its prep picks the fix session.
+    const story = build();
+    const s7 = join(story.backlog, 'stories', 'S7-two', 'index.md');
+    writeFileSync(s7, readFileSync(s7, 'utf8').replace('status: refined\n', yamlLog(log)));
+    const targets = withBacklog(story.backlog, () =>
+      resolveWorkonTargets(['S-7'], loadConfig({ backlogRoot: story.backlog })),
+    );
+    assert.deepEqual(
+      targets.startable.map((t) => t.id),
+      ['S-7'],
+      `story, ${name}: ${targets.notices.join('; ')}`,
+    );
+    assert.equal(prep(story.backlog).prep.reviewPending, fix, `story, ${name}: reviewPending`);
+
+    // A feature: `bl implement F-1`'s prep picks the fix session and records `fixing` by fix.
+    const feature = build();
+    writeFeature(feature.backlog, []);
+    const f1 = join(feature.backlog, 'features', 'F1-pair', 'index.md');
+    writeFileSync(f1, readFileSync(f1, 'utf8').replace('status: approved\n', yamlLog(log)));
+    const { exit, err, value } = prepFeature(feature.backlog, [], 'implement');
+    assert.equal(exit, null, `feature, ${name}: ${err}`);
+    assert.equal(value.reviewPending, fix, `feature, ${name}: reviewPending`);
+    const last = log.at(-1);
+    assert.equal(
+      lastEntry(f1),
+      fix ? 'fixing by ' + (last.to === 'fixing' ? last.by : 'fix') : 'in_progress by implement',
+      `feature, ${name}: the start bl records`,
+    );
+  }
 });
 
 test('a feature with no stories exits 1 naming the fix, and nothing is written to the feature', () => {
