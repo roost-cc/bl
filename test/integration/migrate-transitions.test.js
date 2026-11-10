@@ -481,12 +481,12 @@ test('the migration leaves an update story in the old shape, and a rerun prints 
       { id: 'S-3', title: 'Three', component: 'C01', status: 'in_progress' },
     ],
   });
-  // The `update_*` keys `bl updates` writes, which the fixture helper does not.
-  for (const [p, status, n] of [
-    [rel.s2, 'done', 2],
-    [rel.s3, 'in_progress', 3],
+  // The `update_*` keys `bl updates` writes, which the fixture helper does not:
+  // S-2 is a Renovate update story, S-3 a vulns story (no `update_branch`).
+  for (const [p, status, update] of [
+    [rel.s2, 'done', `update_repo: acme/core\nupdate_branch: renovate/dep-2\nupdate_pr: '2'\n`],
+    [rel.s3, 'in_progress', 'update_repo: acme/core\nupdate_lockfile: pnpm-lock.yaml\n'],
   ]) {
-    const update = `update_repo: acme/core\nupdate_branch: renovate/dep-${n}\nupdate_pr: '${n}'\n`;
     writeFileSync(join(dir, p), read(dir, p).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\n${update}`));
   }
   writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
@@ -494,9 +494,14 @@ test('the migration leaves an update story in the old shape, and a rerun prints 
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const before = { [rel.s2]: read(dir, rel.s2), [rel.s3]: read(dir, rel.s3) };
   const kept = 'kept in the old shape (update stories, F-69 Out of Scope): 2';
+  const keptRe = new RegExp(`^${kept.replace(/[().]/g, '\\$&')}$`, 'm');
+  const dry = script(dir, '--dry-run');
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.match(dry.stdout, keptRe);
+  assert.match(dry.stdout, /^would convert: stories: 1 \(/m);
   const r = script(dir);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, new RegExp(`^${kept.replace(/[().]/g, '\\$&')}$`, 'm'));
+  assert.match(r.stdout, keptRe);
   assert.match(r.stdout, /^converted: stories: 1 \(/m);
   for (const [p, status] of [
     [rel.s2, 'done'],
