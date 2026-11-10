@@ -15,7 +15,8 @@ import { spawnSync } from 'child_process';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { rendered } from '../helpers/rendered.js';
-import { parseFrontmatter } from '../../src/config.js';
+import { loadConfig, parseFrontmatter } from '../../src/config.js';
+import { cleanupOneRepo } from '../../src/cleanup.js';
 import { extractSection } from '../../src/feature.js';
 import { mergeGates, unitBranch } from '../../src/merge-gates.js';
 import { writeBlockers } from '../../src/blockers.js';
@@ -320,6 +321,39 @@ test('bl merge S-n refuses as never reviewed a ready_for_merge story whose branc
     assert.equal(r.status, 1, r.stdout);
     assert.match(r.stderr, /^S-1 has never been reviewed/m);
   } finally {
+    fx.cleanup();
+  }
+});
+
+test('cleanupOneRepo with noCommits refuses a branch that got a commit after the gate, and merges nothing', () => {
+  const fx = noCommitStory(NO_COMMIT_LOG, { empty: false });
+  const prevDir = process.env.BL_BACKLOG_DIR;
+  const prevErr = console.error;
+  let err = '';
+  try {
+    process.env.BL_BACKLOG_DIR = fx.dir;
+    console.error = (...a) => {
+      err += `${a.join(' ')}\n`;
+    };
+    const before = g(fx.repos.code, 'rev-parse', 'main');
+    const result = cleanupOneRepo({
+      parsed: { id: 'S-1', num: '1' },
+      storyEntry: 'S1-loose',
+      repoName: 'code',
+      repoPath: fx.repos.code,
+      keepBranch: false,
+      config: loadConfig({ backlogRoot: fx.dir }),
+      noCommits: true,
+    });
+    assert.deepEqual(result, { ok: false });
+    assert.match(err, /^code: s1-loose has 1 commit\(s\) ahead of main, but the merge gate passed it with none/m);
+    assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'nothing merged');
+    assert.ok(existsSync(fx.wt), 'worktree kept');
+    assert.notEqual(g(fx.repos.code, 'branch', '--list', 's1-loose'), '', 'branch kept');
+  } finally {
+    console.error = prevErr;
+    if (prevDir == null) delete process.env.BL_BACKLOG_DIR;
+    else process.env.BL_BACKLOG_DIR = prevDir;
     fx.cleanup();
   }
 });

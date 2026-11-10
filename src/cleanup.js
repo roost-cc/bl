@@ -628,10 +628,19 @@ export function cleanupOneRepo({
   // A secondary `bl run` prepared up front that the story never changed
   // (S-862), or a story whose branch has no commits (S-1437): nothing to
   // merge, push or record, so only its worktree and branch go.
-  if (mayBeEmpty && branchExists && commitsAhead(repoPath, branchName) === 0) {
+  const ahead = mayBeEmpty && branchExists ? commitsAhead(repoPath, branchName) : null;
+  if (ahead === 0) {
     info(`Skipping the merge: no changes in ${repoName}.`);
     removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists, keepBranch, config });
     return { ok: true, mergeCommitHash: null, branchExists, noChanges: true };
+  }
+  // The merge gate passed the story with no commits on its branch; a commit
+  // that landed since has had no review, so it is not merged.
+  if (noCommits && branchExists) {
+    console.error(
+      `${repoName}: ${branchName} has ${ahead ?? 'unknown'} commit(s) ahead of main, but the merge gate passed it with none — review it (bl review ${parsed.id}) before merging.`,
+    );
+    return { ok: false };
   }
 
   let mergeCommitHash = null;
@@ -1003,6 +1012,7 @@ no main checkout touched. A merge into main that still fails is aborted.`);
   // the map re-read under the lock on every write.
   const tips = {};
   const cleanedRepos = [];
+  const emptyRepos = [];
   for (const repoName of targetRepoNames) {
     const repoPath = config.reposByName[repoName];
     const result = cleanupOneRepo({
@@ -1019,6 +1029,8 @@ no main checkout touched. A merge into main that still fails is aborted.`);
       process.exit(1);
     }
     cleanedRepos.push(repoName);
+    // What the cleanup did, not what the gate read before it (S-1437).
+    if (result.noChanges) emptyRepos.push(repoName);
     if (result.mergeCommitHash) {
       (result.branchExists ? landed : tips)[repoName] = result.mergeCommitHash;
       try {
@@ -1085,9 +1097,7 @@ no main checkout touched. A merge into main that still fails is aborted.`);
             date: today,
             extra: [
               ...noReviewLines(gates.unreviewed, today),
-              ...(gates.noCommits
-                ? targetRepoNames.map((r) => `- ${today} · ${r} · no commits on the branch: nothing merged`)
-                : []),
+              ...emptyRepos.map((r) => `- ${today} · ${r} · no commits on the branch: nothing merged`),
             ],
           });
         }
