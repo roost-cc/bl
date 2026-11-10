@@ -7,10 +7,11 @@
     "bl": "./bin/bl"
   },
   "scripts": {
-    "test": "bash test/helpers/run-parallel.sh test 'npm run' test:unit test:integration test:cli",
+    "test": "bash test/helpers/run-parallel.sh test 'npm run' test:unit test:integration test:cli test:top",
     "test:unit": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config-unit\" bash test/helpers/without-repo-env.sh node --test --test-concurrency=${BL_TEST_CONCURRENCY:-8} 'test/unit/*.test.js'",
     "test:integration": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config-integration\" bash test/helpers/without-repo-env.sh node --test --test-concurrency=${BL_TEST_CONCURRENCY:-8} 'test/integration/*.test.js'",
     "test:cli": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config-cli\" bash test/helpers/without-repo-env.sh bash test/cli/run-all.sh",
+    "test:top": "cd top && go test ./...",
     "test:e2e": "CLAUDE_CONFIG_DIR=\"${TMPDIR:-/tmp}/bl-test-claude-config-e2e\" bash test/helpers/without-repo-env.sh bash test/e2e/run-all.sh",
     "test:all": "npm test && npm run test:e2e"
   },

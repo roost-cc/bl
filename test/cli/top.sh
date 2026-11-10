@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stream contract for `bl top` (F-87 D1, D3): --json prints one snapshot,
-# --stream one per line until stdin closes; only JSON on stdout; with no flag
-# it exits 1 until the Go TUI comes (S-1332).
+# --stream one per line until stdin closes; only JSON on stdout. With neither,
+# bl top builds the Go TUI when it needs a build (D2) and runs it.
 #
 # Run from the bl repo root:
 #   bash test/cli/top.sh
@@ -97,8 +97,8 @@ assert_eq "--stream: every line a snapshot; capacity read again after the capaci
 ' "$TMPDIR_ROOT/out")"
 assert_empty "bl top --stream stderr" "$(cat "$ERR")"
 
-# No flag (until S-1332), or a bad flag: exit 1, nothing on stdout.
-for args in "" "--json --stream" "--stream --interval 50" "--json --interval 1000" "--nope"; do
+# A bad flag: exit 1, nothing on stdout.
+for args in "--json --stream" "--stream --interval 50" "--interval 50" "--json --interval 1000" "--json --version" "--nope"; do
   set +e
   # shellcheck disable=SC2086
   OUT=$("$BL" top $args 2>"$ERR"); CODE=$?
@@ -107,9 +107,47 @@ for args in "" "--json --stream" "--stream --interval 50" "--json --interval 100
   assert_empty "bl top $args stdout" "$OUT"
   assert_contains "bl top $args stderr" "bl top: " "$(cat "$ERR")"
 done
+
+# The view's build (D2). With no top/bin/, a bl top with no go on PATH exits 1 and names the Go
+# version that top/go.mod needs; with go on PATH, bl top --version builds top/bin/bl-top and runs
+# it. bin/bl needs more than node on PATH, so this runs src/bl.js.
+BL_ROOT="$(cd "$(dirname "$BL")/.." && pwd)"
+GO_VERSION=$(sed -n 's/^go //p' "$BL_ROOT/top/go.mod")
+NOGO="$TMPDIR_ROOT/nogo"
+mkdir -p "$NOGO"
+ln -s "$(command -v node)" "$NOGO/node"
+rm -rf "$BL_ROOT/top/bin"
 set +e
-"$BL" top 2>"$ERR"
+OUT=$(env PATH="$NOGO" node "$BL_ROOT/src/bl.js" top --version 2>"$ERR"); CODE=$?
 set -e
-assert_eq "bl top with no flag" "bl top: the TUI is not built yet; use --json or --stream" "$(cat "$ERR")"
+assert_exit "bl top with no go on PATH" 1 "$CODE"
+assert_empty "bl top with no go on PATH: stdout" "$OUT"
+assert_contains "bl top with no go on PATH names the Go version" "go is not on PATH; install Go $GO_VERSION (top/go.mod)" "$(cat "$ERR")"
+set +e
+OUT=$("$BL" top --version 2>"$ERR"); CODE=$?
+set -e
+assert_exit "bl top --version builds the view" 0 "$CODE"
+assert_contains "bl top --version prints the view's version" "bl-top go" "$OUT"
+assert_eq "bl top --version leaves the binary built" "yes" "$([[ -x "$BL_ROOT/top/bin/bl-top" ]] && echo yes || echo no)"
+set +e
+"$BL" top --version >/dev/null 2>"$ERR"
+set -e
+assert_empty "a second bl top --version does not build again" "$(cat "$ERR")"
+
+# The view runs bl top --stream; when the stream ends, the view prints its last stderr line and
+# exits 1. Here the stream finds no backlog. The view needs a terminal: util-linux's script gives
+# it one, with sh as its shell, so that no shell profile sets BL_BACKLOG_DIR again.
+if script --version >/dev/null 2>&1; then
+  NOWHERE=$(mktemp -d)
+  set +e
+  (cd "$NOWHERE" && env -u BL_BACKLOG_DIR SHELL=/bin/sh timeout 60 script -qec "'$BL' top 2>'$ERR'" /dev/null </dev/null >/dev/null)
+  CODE=$?
+  set -e
+  rm -rf "$NOWHERE"
+  assert_exit "bl top with no backlog" 1 "$CODE"
+  assert_contains "bl top with no backlog prints its stream's last stderr line" "bl top: the snapshot stream ended: Set BL_BACKLOG_DIR" "$(cat "$ERR")"
+else
+  echo "SKIP: bl top with no backlog needs util-linux's script"
+fi
 
 summary_and_exit

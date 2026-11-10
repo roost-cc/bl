@@ -81,6 +81,7 @@ Per-command stdout contracts:
 | `bl inbox done`      | nothing: refuses, naming the verb (stderr)                |
 | `bl top --json`      | one JSON object (schema `bl-top-json/v1`)                 |
 | `bl top --stream`    | one JSON object per line until stdin closes               |
+| `bl top`             | the view (a terminal UI); `--version`: one line           |
 | `bl help`            | help text                                                 |
 | `bl <cmd> --help`    | help text                                                 |
 
@@ -2813,15 +2814,57 @@ refused, `unknown` otherwise; the message names the URL.
 ### `bl top`
 
 `bl top` is a live view of bl (F-87): the runs, what waits on the operator, what `bl next`
-picks, agent capacity, and the stories done per day. This section covers its JSON half,
-`--json` and `--stream` (`src/top.js`). With neither flag, `bl top` exits 1 with
-`bl top: the TUI is not built yet; use --json or --stream`.
+picks, agent capacity, and the stories done per day. It has two halves. The JSON half,
+`--json` and `--stream` (`src/top.js`), reads the backlog. The view, a terminal UI in Go
+(`top/`), draws the stream's snapshots and never reads a backlog file.
 
 ```bash
+bl top                             # the view, refreshed every 2000 ms
+bl top --interval 1000             # the view's interval in ms, 500 to 10000
+bl top --version                   # build the view if it needs a build; print its version
 bl top --json                      # one snapshot, then exit 0
 bl top --stream                    # one snapshot per line every 2000 ms until stdin closes
 bl top --stream --interval 1000    # the interval in ms, 500 to 10000
 ```
+
+#### The view
+
+- **Build.** `top/` is a Go module of its own (`top/go.mod`): its `go` line and its Charm v2
+  versions (Bubble Tea, Lipgloss, Bubbles) are logr's. With no `--json` or `--stream`,
+  `src/top.js` runs `go build -o top/bin/bl-top` in `top/` when `top/bin/bl-top` is missing or
+  older than a file under `top/` outside `top/bin/`. The build's output goes to stderr. If the
+  build is needed and `go` is not on `PATH`, `bl top` exits 1 and names the Go version of
+  `top/go.mod`. Then it runs `top/bin/bl-top` with the terminal's stdio, passes `--interval`
+  and `--version` on, and exits with its code. `top/bin/` is in `.gitignore`. `bin/bl` does
+  not change, so no other command checks the build.
+- **Stream.** The view starts `bl top --stream --interval <ms>` once, through
+  `--bl-argv '<JSON array>'` (`[node, src/bl.js]`, from `src/top.js`), and redraws on each line
+  (`top/internal/stream`). Bubble Tea redraws only the cells that change, so the screen does not
+  flicker. A line that is not a `bl-top-json/v1` snapshot ends the stream. When the stream ends,
+  the view exits 1 with `bl top: the snapshot stream ended: <its last stderr line>`.
+- **Boxes and layout** (D4, `top/internal/ui/layout.go`). Box ¹ runs, ² attention, ³ next,
+  ⁴ tokens (section `capacity`) and ⁵ activity (section `history`). Box ⁶ comes with F-88. At
+  171×50 or larger the view draws the two columns of Mockup A; from 80×24 up to that it stacks
+  the boxes as in Mockup B; below 80×24 it prints `bl top needs at least 80x24`. Each node of a
+  layout takes its weight's share of its parent; a hidden box's share goes to the boxes left in
+  its split.
+- **Look** (D5, `top/internal/ui/box.go`, `styles.go`). btop's rounded box, with the
+  superscript number and the name in the top border and the options at its right; the key bar
+  is the screen's bottom border. Colors are Catppuccin Mocha with logr's names: border surface2,
+  number and name mauve, key letters peach, the screen's background base. The box with the
+  focus has a mauve border. Box ¹'s options are the time of the last snapshot and the interval
+  (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data, and its
+  box's top border shows a red `! <error>`.
+- **Keys** (D6, `top/internal/ui/model.go`): `1`–`5` hide or show a box; `tab` and `⇧tab` move
+  the focus to the next or previous shown box; `+` and `-` change the interval by 500 ms within
+  500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
+  help, and any key closes it; `q` or `ctrl+c` quits.
+- **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
+  `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, and one
+  set of boxes, without colors; `go test ./internal/ui -update` writes them again.
+  `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`.
+
+#### The snapshot
 
 The snapshot is one object, schema `bl-top-json/v1`:
 `{ schema, at, runs, attention, next, capacity, history }`. `at` and every time in it are ISO

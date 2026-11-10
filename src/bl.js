@@ -175,7 +175,9 @@ Commands:
                work now: state, quota windows, local reset times
                --json         Print {schema: "bl-capacity-json/v1", configurations}
   top        A live view of the runs, the inbox, bl next, capacity and the
-               stories done per day
+               stories done per day: a terminal UI, built with Go on first use
+               (--interval <ms>, default 2000)
+               --version      Build the view if it needs a build; print its version
                --json         Print one snapshot (schema bl-top-json/v1)
                --stream       One snapshot per line until stdin closes
                               (--interval <ms>, default 2000)

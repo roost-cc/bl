@@ -185,9 +185,10 @@ _roost_bl() {
       ;;
     top)
       _arguments -s \
-        '(--stream --interval)--json[Print one snapshot (bl-top-json/v1)]' \
-        '(--json)--stream[Print one snapshot per line until stdin closes]' \
-        '(--json)--interval[The stream interval in ms]:ms:'
+        '(--stream --interval --version)--json[Print one snapshot (bl-top-json/v1)]' \
+        '(--json --version)--stream[Print one snapshot per line until stdin closes]' \
+        '(--json)--interval[The refresh interval in ms]:ms:' \
+        '(--json --stream)--version[Build the view if it needs a build; print its version]'
       ;;
     inbox)
       if [[ "${words[2]}" == done ]]; then
