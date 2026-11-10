@@ -7,12 +7,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { chmodSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { setTimeout as delay } from 'timers/promises';
 import { fileURLToPath } from 'url';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { spawnToFiles } from '../helpers/spawn-files.js';
 import { sleepSync } from '../../src/sleep-sync.js';
 
 /** Run `fn` with `PATH` set to `path`, and give `PATH` back afterwards. */
@@ -69,16 +70,12 @@ async function signalTheSleep(signal, listener) {
     `process.stderr.write('ready\\n');`,
     'for (;;) sleepSync(5000);',
   ].join('\n');
-  const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
-    stdio: ['ignore', 'ignore', 'pipe'],
-  });
-  let stderr = '';
-  child.stderr.on('data', (d) => (stderr += d));
-  const closed = new Promise((resolve) => child.on('close', (status, sig) => resolve({ status, signal: sig })));
-  while (!stderr.includes('ready')) await delay(10);
+  const { child, read, closed } = spawnToFiles(process.execPath, ['--input-type=module', '-e', script]);
+  while (!read().stderr.includes('ready')) await delay(10);
   // The `sleep` child starts just after `ready`; retry until pkill finds it.
   const end = Date.now() + 5000;
-  while (spawnSync('pkill', [`-${signal.slice(3)}`, '-P', String(child.pid), '-x', 'sleep']).status !== 0) {
+  const pkill = ['-' + signal.slice(3), '-P', String(child.pid), '-x', 'sleep'];
+  while (spawnSync('pkill', pkill, { stdio: 'ignore' }).status !== 0) {
     if (Date.now() > end) {
       child.kill('SIGKILL');
       throw new Error(`no sleep child of ${child.pid} to signal`);
@@ -89,7 +86,7 @@ async function signalTheSleep(signal, listener) {
   const kill = setTimeout(() => child.kill('SIGKILL'), 5000);
   const r = await closed;
   clearTimeout(kill);
-  return { ...r, stderr };
+  return r;
 }
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
