@@ -55,7 +55,7 @@ const task = (id, extra = {}) => {
     title: `Task ${num}`,
     unit: 'F-1',
     owner: 'operator',
-    status: 'open',
+    status: 'draft',
     added: '2026-10-27',
     ...extra,
   };
@@ -114,7 +114,7 @@ test('task_ids_preserve_integer_identity_at_numeric_boundaries', () => {
   // Files: an unsafe number is no task number (bl validate reports it) and
   // does not move allocation.
   const fm = (id) =>
-    `---\ntask_id: ${id}\ntitle: x\nunit: F-1\nowner: operator\nstatus: open\nadded: 2026-10-27\n---\n`;
+    `---\ntask_id: ${id}\ntitle: x\nunit: F-1\nowner: operator\nstatus: draft\nadded: 2026-10-27\n---\n`;
   const dir = backlogWithTasks({
     'T3-three.md': fm('T-3'),
     'T9007199254740992-a.md': fm('T-9007199254740992'),
@@ -157,7 +157,7 @@ test('task_ids_preserve_integer_identity_at_numeric_boundaries', () => {
 
 test('readAllTasks reads tasks/T<n>-<slug>.md in number order, skipping other files; tasksOf filters by unit', () => {
   const fm = (id, unit) =>
-    `---\ntask_id: ${id}\ntitle: Do ${id}\nunit: ${unit}\nowner: operator\nstatus: open\nadded: 2026-10-27\n---\n\nbody\n`;
+    `---\ntask_id: ${id}\ntitle: Do ${id}\nunit: ${unit}\nowner: operator\nstatus: draft\nadded: 2026-10-27\n---\n\nbody\n`;
   const dir = backlogWithTasks({
     'T10-ten.md': fm('T-10', 'S-1'),
     'T2-two.md': fm('T-2', 'F-1'),
@@ -233,16 +233,16 @@ test("taskTableRows: ID linked, Title, Holds from the task's edges, Status, Done
   const { headers, rows } = taskTableRows(tasks, edges, flow, (p) => `../../${p}`);
   assert.deepEqual(headers, ['ID', 'Title', 'Holds', 'Status', 'Done']);
   assert.deepEqual(rows, [
-    ['[T-1](../../tasks/T1-x.md)', 'Task 1', 'bl merge F-1; bl run, bl implement S-2', 'open', ''],
+    ['[T-1](../../tasks/T1-x.md)', 'Task 1', 'bl merge F-1; bl run, bl implement S-2', 'draft', ''],
     ['[T-2](../../tasks/T2-x.md)', 'a \\| b', 'none', 'done', '2026-10-28'],
   ]);
 });
 
 test('findTaskFindings: task-unit for a unit that is not a feature or story; task-field per field', () => {
   const units = unitIndex(
-    [{ id: 'S-1', status: 'backlog', depends_on: [] }],
+    [{ id: 'S-1', status: 'draft', depends_on: [] }],
     [{ id: 'F-1', status: 'approved', stories: [] }],
-    [{ id: 'T-1', status: 'open' }],
+    [{ id: 'T-1', status: 'draft' }],
   );
   const find = (...tasks) => findTaskFindings(tasks, units, flow).map((f) => `${f.severity} ${f.code}: ${f.message}`);
   assert.deepEqual(find(task('T-1'), task('T-2', { unit: 'S-1' })), []);
@@ -255,7 +255,11 @@ test('findTaskFindings: task-unit for a unit that is not a feature or story; tas
   ]);
   assert.deepEqual(find(task('T-1', { owner: 'agent' })), ['error task-field: owner "agent" is not one of operator']);
   assert.deepEqual(find(task('T-1', { status: 'blocked' })), [
-    'error task-field: status "blocked" not in known set (flow.json task statuses: open, done)',
+    'error task-field: status "blocked" not in known set (flow.json task statuses: draft, done)',
+  ]);
+  // A v1 word is a warning until the migration rewrites it (F-69 D6).
+  assert.deepEqual(find(task('T-1', { status: 'open' })), [
+    'warning task-field: status "open" is the old word for "draft"; node bl/scripts/migrate-transitions.js rewrites it',
   ]);
   assert.deepEqual(find(task('T-1', { status: 'done' })), ['error task-field: a done task needs its done: date']);
   assert.deepEqual(find(task('T-1', { owner: '' })), ['error task-field: task missing required key "owner"']);
@@ -267,18 +271,22 @@ test('findTaskFindings: task-unit for a unit that is not a feature or story; tas
     'error task-field: task_id T-1 is also tasks/T1-x.md',
   ]);
   assert.deepEqual(find(task('T-1', { gate: 'merge' })), ['warning task-field: unknown frontmatter key "gate"']);
+  // A task with a transition log needs no status: (F-69 D2).
+  const transitions = [{ at: '2026-10-27T00:00:00Z', to: 'draft', by: 'new' }];
+  assert.deepEqual(find(task('T-1', { status: undefined, transitions })), []);
+  assert.deepEqual(find(task('T-1', { status: undefined })), ['error task-field: task missing required key "status"']);
 });
 
 test('tasks are units in the graph: a blocker, never held, and a wildcard from a task is no cycle', () => {
   const u = unitIndex(
-    [{ id: 'S-1', status: 'backlog', depends_on: [] }],
+    [{ id: 'S-1', status: 'draft', depends_on: [] }],
     [{ id: 'F-1', status: 'approved', stories: [] }],
     [
-      { id: 'T-1', status: 'open' },
+      { id: 'T-1', status: 'draft' },
       { id: 'T-2', status: 'done' },
     ],
   );
-  assert.deepEqual(u.get('T-1'), { id: 'T-1', type: 'task', status: 'open' });
+  assert.deepEqual(u.get('T-1'), { id: 'T-1', type: 'task', status: 'draft' });
   assert.deepEqual(edgeProblems(edge('T-1', 'merge', 'F-1'), u, flow), []);
   assert.deepEqual(edgeProblems(edge('S-1', 'merge', 'T-1'), u, flow), [
     { code: 'blockers-gate', message: 'a task has no gate "merge" in flow.json' },
@@ -306,11 +314,11 @@ test("heldBy: an open task's edge holds its unit until the task is done", () => 
     features: [{ id: 'F-1', title: 'One', status: 'running', stories: ['S-1'] }],
   });
   mkdirSync(join(dir, 'tasks'));
-  writeFileSync(join(dir, 'tasks', 'T1-migrate.md'), fm('open'));
+  writeFileSync(join(dir, 'tasks', 'T1-migrate.md'), fm('draft'));
   writeBlockers(dir, [edge('T-1', 'merge', 'F-1')]);
   assert.deepEqual(
     heldBy({ backlogRoot: dir }, 'F-1', 'merge').map((h) => h.line),
-    ['F-1 is held at merge by T-1 (open, needs done)'],
+    ['F-1 is held at merge by T-1 (draft, needs done)'],
   );
   writeFileSync(join(dir, 'tasks', 'T1-migrate.md'), fm('done'));
   assert.deepEqual(heldBy({ backlogRoot: dir }, 'F-1', 'merge'), []);
@@ -330,9 +338,9 @@ test("gateEdges: merge holds the unit's merge, next every run once the unit is d
     [{ id: 'S-7', status: 'in_progress' }],
     [{ id: 'F-53', status: 'running', stories: [] }],
     [
-      { id: 'T-3', status: 'open' },
-      { id: 'T-4', status: 'open' },
-      { id: 'T-5', status: 'open' },
+      { id: 'T-3', status: 'draft' },
+      { id: 'T-4', status: 'draft' },
+      { id: 'T-5', status: 'draft' },
     ],
   );
   units.set('F-54', { id: 'F-54', type: 'feature', status: 'done', stories: [] });
@@ -349,10 +357,10 @@ test('flow.json needs the task type (F-65 D1)', () => {
   const raw = JSON.parse(JSON.stringify(flow.types));
   delete raw.task;
   assert.throws(
-    () => new Flow('flow.json', { schema: 'bl-flow/v1', types: raw }),
+    () => new Flow('flow.json', { schema: 'bl-flow/v2', types: raw }),
     (err) => err instanceof FlowError && /no "task" type/.test(err.message),
   );
-  assert.deepEqual(flow.statusesOf('task'), ['open', 'done']);
-  assert.equal(flow.meets('task', 'done', 'open'), true);
+  assert.deepEqual(flow.statusesOf('task'), ['draft', 'done']);
+  assert.equal(flow.meets('task', 'done', 'draft'), true);
   assert.deepEqual(flow.gatesOf('task'), {});
 });

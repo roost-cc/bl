@@ -2,7 +2,7 @@
  * template.js — bl's unit templates, `templates/<name>.md` (F-62 D3).
  *
  * A template's frontmatter is YAML holding its keys in order, the fixed values
- * set (`status: backlog`) and the variable ones empty. bl parses it, sets the
+ * set (`status: draft`) and the variable ones empty. bl parses it, sets the
  * values on the object and writes it with `serializeFrontmatter`, so a value
  * (a title holding `: ` or ` #`) is quoted by the `yaml` package, never by bl.
  * `{{var}}` placeholders live only in template bodies.

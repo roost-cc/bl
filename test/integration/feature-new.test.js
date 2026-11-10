@@ -5,11 +5,12 @@ import { dirname, join, resolve } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
-import { parseFrontmatter } from '../../src/config.js';
+import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { findFeature, normalizeFeatureId } from '../../src/feature.js';
 import { loadConfig } from '../../src/config.js';
 import { rendered } from '../helpers/rendered.js';
 import { HOME, REPOS, fm, newFeature, newStory } from '../helpers/feature-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 /** A feature's stories, the ones whose `feature:` names it (F-77 D3), in its order. */
 function members(dir, id = 'F-1') {
@@ -40,7 +41,7 @@ test('bl new --feature scaffolds features/F1-<slug>/index.md, which the rendered
     assert.equal(rel, 'features/F1-invite-codes/index.md');
     const f = fm(join(dir, rel));
     assert.equal(f.feature_id, 'F-1');
-    assert.equal(f.status, 'draft');
+    assert.equal(logStatusOf('feature', f), 'draft');
     assert.equal(f.primary_repo, undefined, 'a feature names no repo (F-52 D3)');
     assert.equal(f.review_rounds_max, '2');
     const content = readFileSync(join(dir, rel), 'utf8');
@@ -125,7 +126,10 @@ test('bl new --feature tags the story, links it on the feature, and keeps the or
 
     // A done feature stays in features/, and the rendered root lists open
     // units only; whatever it links must resolve.
-    writeFileSync(featurePath, readFileSync(featurePath, 'utf8').replace('status: draft', 'status: done'));
+    // Closed by hand: an operator entry in its log (F-69 D2).
+    const closed = parseFrontmatter(readFileSync(featurePath, 'utf8'));
+    closed.fm.transitions.push({ at: closed.fm.transitions[0].at, to: 'done', by: 'operator' });
+    writeFileSync(featurePath, serializeFrontmatter(closed.fm) + closed.body);
     assert.ok(existsSync(featurePath));
     const root = rendered(dir);
     assert.doesNotMatch(root, /\[F-1\]/, 'the Priority table lists open units only');

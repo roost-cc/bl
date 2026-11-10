@@ -8,7 +8,7 @@
 # project's own: curate it here. A later change to bl's seed does not reach this copy.
 #
 # Limit: this dictionary shapes the words agents write in prose. It does not rename bl's CLI
-# verbs, frontmatter keys or section headings (`bl validate`, `review_round`, `## Review Log`).
+# verbs, frontmatter keys or section headings (`bl validate`, `review_rounds_max`, `## Review Log`).
 #
 # Each entry:
 #   term     the word to use
@@ -128,6 +128,97 @@ entries:
     avoid: [to do, todo, follow-up, later]
     decided: bl src/AGENTS.md, "`## Deferred`, `## Notes` and tasks"
 
+  # --- Statuses: one word for each state (F-69 A3) ----------------------------------------------
+  #
+  # Stories, features, tasks and epics use the ten work unit statuses; each type uses the subset
+  # `flow.json` gives it. A change document has its own three: `open`, `merged` and `dropped`.
+
+  - term: draft
+    meaning: >-
+      A work unit that is written and not yet refined: the first status of a story, a feature
+      and a task. An epic is draft while it has no features or only draft ones.
+    avoid: [backlog (as a status), open (for a work unit), new, todo]
+    decided: F-69 Decision A3
+
+  - term: refined
+    meaning: >-
+      A story or feature whose design and plan are written (`bl refine`). A refined story can
+      run; a refined feature waits for the operator's approval.
+    avoid: [ready, groomed, planned]
+    decided: F-69 Decision A3
+
+  - term: approved
+    meaning: >-
+      A feature the operator approved to run (`bl approve`). Only a feature has this status.
+    avoid: [accepted, signed off]
+    decided: F-69 Decision A3
+
+  - term: in_progress
+    meaning: >-
+      A work unit whose work has started: a session or a run works on it on its branch. An epic
+      is in_progress while some feature is past draft and not every one is done.
+    avoid: [running, active, started, WIP]
+    decided: F-69 Decision A3
+
+  - term: in_review
+    meaning: >-
+      A work unit whose change is in a review round, or waits for the next one after a fix.
+    avoid: [reviewing, under review]
+    decided: F-69 Decision A3
+
+  - term: fixing
+    meaning: >-
+      A work unit whose latest review left open items, which a fix session works on.
+    avoid: [rework, changes requested]
+    decided: F-69 Decision A3
+
+  - term: ready_for_merge
+    meaning: >-
+      A work unit whose latest review is clean, so `bl merge` may land it.
+    avoid: [mergeable, approved (for a review)]
+    decided: F-69 Decision A3
+
+  - term: escalated
+    meaning: >-
+      A work unit stopped until the operator decides: its `## Escalation` section holds the
+      question.
+    avoid: [blocked, stuck, failed]
+    decided: F-69 Decision A3
+
+  - term: done
+    meaning: >-
+      A work unit that is finished: merged, or closed by `bl done`. A task is done when the
+      operator closes it. An epic is done when every feature under it is done.
+    avoid: [closed (for a work unit), complete, finished, merged (for a work unit)]
+    decided: F-69 Decision A3
+
+  - term: superseded
+    meaning: >-
+      A work unit replaced by another or dropped without being done. `superseded_by:` names the
+      replacement, when there is one.
+    avoid: [dropped (for a work unit), cancelled, obsolete, won't fix]
+    decided: F-69 Decision A3
+
+  - term: open
+    meaning: >-
+      A change document whose change is live: not yet merged or dropped. bl works on a work
+      unit's highest-numbered open change document. A work unit is never open.
+    avoid: [active, pending]
+    decided: F-69 Decision A3
+
+  - term: merged
+    meaning: >-
+      A change document whose branches `bl merge` landed on `main`.
+    avoid: [landed, closed]
+    decided: F-69 Decision A3
+
+  - term: dropped
+    meaning: >-
+      A change document whose change was closed without a merge. bl reads the old word `closed`
+      as dropped.
+    avoid: [closed (for a change document), abandoned, cancelled]
+    decided: F-69 Decision A3
+
   # --- Control: gates, holds and escalations -----------------------------------------------------
 
   - term: gate
@@ -158,8 +249,9 @@ entries:
   - term: round
     meaning: >-
       One review of a work unit's change: the passes, then the verifier, which writes one Review
-      Log session. The change document's `review_round` counts rounds, and `review_rounds_max`
-      caps them.
+      Log session. A work unit's round is the number of entries into `in_review` in its
+      transition log (F-69), less a return to a round with no verdict yet; `review_rounds_max`
+      caps them. Before F-69 the change document's `review_round` counted them.
     avoid: [iteration, cycle]
     decided: bl src/AGENTS.md, "Review Cycle"
 

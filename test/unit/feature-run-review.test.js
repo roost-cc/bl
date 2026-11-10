@@ -16,7 +16,6 @@ import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
 import { spawnSync } from 'child_process';
 import { featureReviewGate } from '../../src/review-log.js';
 import { extractSection } from '../../src/feature.js';
-import { parseChange } from '../../src/change-doc.js';
 import { _hooks as atomicHooks } from '../../src/atomic-write.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
@@ -35,6 +34,7 @@ import {
 import { FIX_OUTCOME, reviewOutcome, SELF_REVIEW_OUTCOME } from '../helpers/outcomes.js';
 import { validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
+import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
 // Quarantine against a real git worktree
@@ -372,7 +372,7 @@ test("bl review on a two-repo feature spends one round and keeps both repos' ope
       otherRepos,
       maxRounds: 3,
     });
-    assert.deepEqual(r, { status: 'pending', round: 1, escalated: false, error: null, end: PENDING_END });
+    assert.deepEqual(r, { status: 'fixing', round: 1, verdict: true, escalated: false, error: null, end: PENDING_END });
     const sessions = runner.calls.filter((c) => c.type === 'session');
     assert.equal(sessions.filter((c) => c.prompt === 'review-verify').length, 1, 'one verifier: one round spent');
     for (const s of sessions) {
@@ -384,10 +384,15 @@ test("bl review on a two-repo feature spends one round and keeps both repos' ope
       assert.ok(s.vars.reviewScope.includes(wtB), `${s.prompt} names repo B's worktree`);
       assert.equal(s.vars.prNumber, '7', `${s.prompt}: the primary PR`);
     }
-    const { fm, body } = parseFrontmatter(readFileSync(CH(feature), 'utf8'));
-    assert.equal(fm.review_round, '1');
+    const { body } = parseFrontmatter(readFileSync(CH(feature), 'utf8'));
+    const unitFm = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm;
+    assert.equal(reviewOf('feature', unitFm).reviewed, 1);
     assert.equal(loadRunState(config, 'F-1').pr.number, '7', 'run state keeps the primary PR');
-    assert.equal(featureReviewGate(fm.review_status, body).blocked, true, "repo B's open Must gates the merge");
+    assert.equal(
+      featureReviewGate(logStatusOf('feature', unitFm), body).blocked,
+      true,
+      "repo B's open Must gates the merge",
+    );
     assert.equal(existsSync(join(wtB, probe)), false, 'the secondary worktree is quarantined too');
   } finally {
     rmSync(wtB, { recursive: true, force: true });
@@ -721,8 +726,9 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
   // this process; another process is refused each one; all are released after.
   const ok = await scenario({});
   assert.deepEqual(ok.r, {
-    status: 'addressed',
+    status: 'ready_for_merge',
     round: 1,
+    verdict: true,
     escalated: false,
     error: null,
     end: { outcome: 'nothing left to fix', cap: '', next: 'bl merge F-1' },
@@ -784,10 +790,14 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
         `${name}: nothing runs after it`,
       );
       assert.match(x.r.error, /failed: /, name);
-      assert.equal(x.r.status, '', `${name}: no verdict`);
+      assert.equal(x.r.verdict, false, `${name}: no verdict`);
+      assert.equal(x.r.status, 'in_review', `${name}: the unit stays in review`);
       assert.equal(x.r.round, 0, `${name}: the round is not spent`);
       assert.equal(parseFrontmatter(x.after).fm.review_status, undefined, name);
-      assert.equal(x.after, x.before, `${name}: the feature file is as it was`);
+      // The review started (F-69 D3): the log holds `in_review`, so the next
+      // round resumes it without another entry; nothing else changed.
+      assert.equal(logStatusOf('feature', parseFrontmatter(x.after).fm), 'in_review', name);
+      assert.equal(parseFrontmatter(x.after).body, parseFrontmatter(x.before).body, `${name}: the body is as it was`);
       assert.deepEqual(x.locksAfter, [null, null, null], `${name}: locks released`);
       assert.equal(x.state.status, 'failed', name);
       assert.ok(
@@ -967,9 +977,10 @@ test('a fix self-review with permission denials but a good result continues to t
   }
 });
 
-test('a review round that ends without a verdict leaves review_round and review_status as the round found them', async () => {
+test('a review round that ends without a verdict records none in the log', async () => {
   // Each case breaks the round at one point after the verifier starts. The
-  // fields must be as before, and a rerun at a cap of 1 must review.
+  // unit's log must hold no verdict for the round (F-69 D5), and a rerun at a
+  // cap of 1 must review.
   const cases = [
     {
       name: 'the verifier session throws a plain Error',
@@ -993,23 +1004,24 @@ test('a review round that ends without a verdict leaves review_round and review_
       name: 'writing the verdict fails after a good verifier',
       verify: () => {
         atomicHooks.beforeRename = (tmp) => {
-          if (!readFileSync(tmp, 'utf8').includes('change_of:')) return;
+          if (!readFileSync(tmp, 'utf8').includes('to: ready_for_merge')) return;
           atomicHooks.beforeRename = null;
           throw new Error('injected change write failure');
         };
       },
     },
     {
-      // A killed bl leaves the change document as it was while the verifier ran.
+      // A killed bl leaves the log as it was while the verifier ran.
       name: 'bl is killed while the verifier runs',
       verify: (s, feature) => {
-        s.whileVerifying = reviewFieldsOf(CH(feature));
+        s.whileVerifying = reviewedOf(feature);
       },
     },
   ];
-  const reviewFieldsOf = (path) => {
-    const { fm } = parseChange(readFileSync(path, 'utf8'));
-    return { review_round: String(fm.review_round ?? ''), review_status: String(fm.review_status ?? '') };
+  // The rounds with a verdict, and whether the last one has one.
+  const reviewedOf = (feature) => {
+    const r = reviewOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm);
+    return { reviewed: r.reviewed, verdict: r.position === 'fixing' || r.position === 'ready_for_merge' };
   };
   for (const c of cases) {
     const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
@@ -1031,24 +1043,24 @@ test('a review round that ends without a verdict leaves review_round and review_
         if (s.broken && c.session && o.promptName === 'review-verify') c.session();
         return session(o);
       };
-      const before = reviewFieldsOf(CH(feature));
+      const before = reviewedOf(feature);
       try {
         await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 3 });
       } catch {
-        // A plain Error unwinds; the fields are what this test checks.
+        // A plain Error unwinds; the log is what this test checks.
       }
       atomicHooks.beforeRename = null;
       if (c.name.includes('killed')) {
         // The fake round itself finishes; what a kill would leave is what matters.
-        assert.deepEqual(s.whileVerifying, before, `${c.name}: the fields while the verifier ran`);
+        assert.deepEqual(s.whileVerifying, before, `${c.name}: the log while the verifier ran`);
         continue;
       }
-      assert.deepEqual(reviewFieldsOf(CH(feature)), before, `${c.name}: the fields after the round`);
+      assert.deepEqual(reviewedOf(feature), before, `${c.name}: the log after the round`);
       s.broken = false;
       s.failRevParse = false;
       const r = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 1 });
       assert.equal(r.round, 1, `${c.name}: a rerun at a cap of 1 reviews`);
-      assert.equal(reviewFieldsOf(CH(feature)).review_status, 'addressed', `${c.name}: with a verdict`);
+      assert.deepEqual(reviewedOf(feature), { reviewed: 1, verdict: true }, `${c.name}: with a verdict`);
     } finally {
       atomicHooks.beforeRename = null;
       cleanup();
@@ -1056,42 +1068,43 @@ test('a review round that ends without a verdict leaves review_round and review_
   }
 });
 
-test('review_outcome_decides_the_round: the loop takes each branch from the outcomes and writes the review fields from them', async () => {
-  // `seen` holds the change document's review fields as each session starts:
-  // the verifier sees the fields the last verdict left (bl writes both after
-  // the verifier returns), the fix sees the verifier's
-  // verdict, the fix self-review sees `fixed`. `final` is the run's end.
+test('review_outcome_decides_the_round: the loop takes each branch from the outcomes and records it in the log', async () => {
+  // `seen` holds the unit's review state (F-69 D5) as each session starts, as
+  // <rounds with a verdict>/<position>, `+fix` when a fix opened the round:
+  // the verifier sees the round open (bl records the verdict after it
+  // returns), the fix and its self-review see the verdict's `fixing`, the
+  // re-review sees the round the fix opened. `final` is the run's end.
   const FIXED_NOT = { summary: 'item 1 needs the operator', fixed: false, open: 1 };
   const cases = [
     {
       name: 'must: 1 → a fix round, then a clean re-review',
       verdicts: [{ must: 1 }, {}],
       expect: 'clean',
-      seen: ['verify 0/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 1/fixed'],
-      final: '2/addressed',
+      seen: ['verify 0/in_review', 'fix 1/fixing', 'fix-self-review 1/fixing', 'verify 1/in_review+fix'],
+      final: '2/ready_for_merge',
     },
     {
       name: 'should: 1 → a fix round',
       verdicts: [{ should: 1 }, {}],
       expect: 'clean',
-      seen: ['verify 0/', 'fix 1/pending', 'fix-self-review 1/fixed', 'verify 1/fixed'],
-      final: '2/addressed',
+      seen: ['verify 0/in_review', 'fix 1/fixing', 'fix-self-review 1/fixing', 'verify 1/in_review+fix'],
+      final: '2/ready_for_merge',
     },
     {
       name: 'must: 0, should: 0 → clean, open nits or not',
       verdicts: [{ nits: 2 }],
       expect: 'clean',
-      seen: ['verify 0/'],
-      final: '1/addressed',
+      seen: ['verify 0/in_review'],
+      final: '1/ready_for_merge',
     },
     {
-      name: 'fixed: false → escalates, the status left pending',
+      name: 'fixed: false → escalates, the items left in fixing',
       verdicts: [{ must: 1 }],
       fix: FIXED_NOT,
       expect: 'escalated',
       error: /^fix session for round 1 left 1 item\(s\) open: item 1 needs the operator$/,
-      seen: ['verify 0/', 'fix 1/pending'],
-      final: '1/pending',
+      seen: ['verify 0/in_review', 'fix 1/fixing'],
+      final: '1/fixing',
     },
     {
       name: 'escalated: true with no ## Escalation → bl writes it',
@@ -1099,16 +1112,16 @@ test('review_outcome_decides_the_round: the loop takes each branch from the outc
       expect: 'escalated',
       error: /^reviewer escalated in round 1$/,
       escalation: /review round 1: the verifier escalated\n\nThe verifier's outcome: open items/,
-      seen: ['verify 0/'],
-      final: '1/pending',
+      seen: ['verify 0/in_review'],
+      final: '1/fixing',
     },
   ];
   for (const c of cases) {
     const { dir, cleanup, config, feature, prep } = setup();
     try {
       const fields = () => {
-        const { fm } = parseChange(readFileSync(CH(feature), 'utf8'));
-        return `${fm.review_round}/${fm.review_status ?? ''}`;
+        const r = reviewOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm);
+        return `${r.reviewed}/${r.position}${r.fixed ? '+fix' : ''}`;
       };
       const seen = [];
       let round = 0;
@@ -1153,6 +1166,80 @@ test('review_outcome_decides_the_round: the loop takes each branch from the outc
   }
 });
 
+test('a failed verdict write stops the run instead of continuing', async () => {
+  // [the verdict, the entry whose write fails]
+  const cases = [
+    [{ must: 1 }, 'to: fixing'],
+    [{}, 'to: ready_for_merge'],
+  ];
+  for (const [verdict, entry] of cases) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const steps = [];
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          verify: () => {
+            steps.push('verify');
+            verifySession(CH(feature), { pending: (verdict.must ?? 0) > 0, round: 1 });
+            atomicHooks.beforeRename = (tmp) => {
+              if (!readFileSync(tmp, 'utf8').includes(entry)) return;
+              atomicHooks.beforeRename = null;
+              throw new Error('injected log write failure');
+            };
+            return reviewOutcome(verdict);
+          },
+          fix: () => {
+            steps.push('fix');
+            return FIX_OUTCOME;
+          },
+        },
+      });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'failed', `${entry}: ${state.lastError}`);
+      assert.match(state.lastError, /^the transition log could not be written at review: .*injected log write failure/);
+      assert.deepEqual(steps, ['verify'], `${entry}: no step after the failed write`);
+      const r = reviewOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm);
+      assert.equal(r.position, 'in_review', `${entry}: no verdict in the log`);
+    } finally {
+      atomicHooks.beforeRename = null;
+      cleanup();
+    }
+  }
+});
+
+test('a log write that fails during bl review is reported as failed, not escalated', async () => {
+  const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        verify: () => {
+          verifySession(CH(feature), { pending: true, round: 1 });
+          atomicHooks.beforeRename = (tmp) => {
+            if (!readFileSync(tmp, 'utf8').includes('to: fixing')) return;
+            atomicHooks.beforeRename = null;
+            throw new Error('injected log write failure');
+          };
+          return reviewOutcome({ must: 1 });
+        },
+      },
+    });
+    const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
+    assert.equal(result.escalated, false);
+    assert.equal(result.end, null, 'no escalation end, which would tell the operator to clear ## Escalation');
+    assert.match(result.error, /^the transition log could not be written at review: .*injected log write failure/);
+    assert.equal(loadRunState(config, 'F-1').status, 'failed');
+    const body = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).body;
+    assert.match(extractSection(body, 'Escalation')?.trim() ?? 'None.', /^None\.$/);
+  } finally {
+    atomicHooks.beforeRename = null;
+    cleanup();
+  }
+});
+
 test('the fake agents return outcomes their schemas accept', () => {
   for (const [name, o] of [
     ['review', reviewOutcome({ pending: true })],
@@ -1170,7 +1257,7 @@ test('the fake agents return outcomes their schemas accept', () => {
   assert.match(validateOutcome(loadSchema('fix'), { summary: 's', fixed: true }).structuredError, /schema violation/);
 });
 
-test('a fix self-review that changes review_status is a warning: bl keeps fixed and re-reviews', async () => {
+test('a fix self-review that writes the old review_status changes nothing: bl re-reviews the fixes', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
     const runner = fakeRunner({
@@ -1187,18 +1274,21 @@ test('a fix self-review that changes review_status is a warning: bl keeps fixed 
     assert.equal(state.status, 'clean');
     const verifies = runner.calls.filter((c) => c.prompt === 'review-verify');
     assert.equal(verifies.length, 2, 'the re-review runs');
-    assert.equal(verifies[1].vars.reReview, 'true', 'from fixed: a re-review, not a first review');
-    const warning = state.history.find((h) => h.step === 'fix-self-review' && h.warning);
-    assert.match(warning.note, /the session changed review_status to "pending"; bl writes "fixed" from the outcome/);
+    assert.equal(verifies[1].vars.reReview, 'true', 'the fix opened the round: a re-review, not a first review');
+    assert.deepEqual(
+      state.history.filter((h) => h.warning && /review_status/.test(h.note ?? '')),
+      [],
+      'the review state is the log, so the edit is no warning',
+    );
   } finally {
     cleanup();
   }
 });
 
-test('a fix session that sets review_status and reports fixed false leaves the status as it found it', async () => {
-  // Every exit of the fix and fix self-review steps: the session writes the
-  // review fields, then the step stops. bl puts back what the step found:
-  // the verdict before the fix, `fixed` before the fix self-review.
+test('every exit of the fix and fix self-review steps before the hop leaves the unit in fixing', async () => {
+  // The session writes the old review fields, then the step stops. Only the
+  // fix's `in_review` entry, after the fix self-review passes, says the items
+  // are fixed (F-69 D5): on every other exit the log keeps round 1's `fixing`.
   const escalate = (feature) =>
     editFile(feature.indexPath, (fm, body) => body.replace(/## Escalation\n\nNone\./, '## Escalation\n\nStop.'));
   const breakStory = (feature, prep) =>
@@ -1224,14 +1314,7 @@ test('a fix session that sets review_status and reports fixed false leaves the s
   for (const r of rows) {
     const { dir, cleanup, config, feature, prep } = setup();
     try {
-      const fields = () => {
-        const { fm } = parseChange(readFileSync(CH(feature), 'utf8'));
-        return `${fm.review_round}/${fm.review_status ?? ''}`;
-      };
-      let found = null;
       const session = () => {
-        // The first session's view: a retry finds what the first one wrote.
-        found ??= fields();
         editFile(CH(feature), (fm, body) => {
           fm.review_round = '5';
           fm.review_status = 'addressed';
@@ -1244,8 +1327,10 @@ test('a fix session that sets review_status and reports fixed false leaves the s
       const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
       assert.equal(state.status, 'escalated', r.name);
       assert.match(state.lastError, r.error, `${r.name}: ${state.lastError}`);
-      assert.equal(found, r.at === 'fix' ? '1/pending' : '1/fixed', `${r.name}: the fields the session found`);
-      assert.equal(fields(), found, `${r.name}: the fields after the step`);
+      const fm = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm;
+      const { reviewed, position } = reviewOf('feature', fm);
+      assert.deepEqual([reviewed, position], [1, 'fixing'], `${r.name}: the log after the step`);
+      assert.ok(!fm.transitions.some((e) => e.by === 'fix' && e.to === 'in_review'), `${r.name}: no fix recorded`);
     } finally {
       cleanup();
     }

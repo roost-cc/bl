@@ -98,11 +98,9 @@ export function editFile(path, fn) {
   writeFileSync(path, serializeFrontmatter(fm) + out);
 }
 
+/** What an implement session leaves: every criterion checked. bl records the status (F-69 D3). */
 export function checkAll(path) {
-  editFile(path, (fm, body) => {
-    fm.status = 'in_progress';
-    return body.replaceAll('- [ ]', '- [x]');
-  });
+  editFile(path, (fm, body) => body.replaceAll('- [ ]', '- [x]'));
 }
 
 /**

@@ -11,9 +11,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BL="$REPO_ROOT/bin/bl"
 source "$REPO_ROOT/test/helpers/tempdir.sh"
 
-# Fixture: loose stories S-1 (refined, its component's repo unknown so implement stops
-# before any worktree), S-3 (backlog), S-4 (refined, review pending), S-5
-# (done), S-6 (refined, an open escalation); S-2 in F-1. Features in each
+# Fixture: loose stories S-1 (in progress, its component's repo unknown so implement stops
+# before any worktree), S-3 (backlog), S-4 (in progress, review pending: fixing), S-5
+# (done), S-6 (in progress, an open escalation); S-2 in F-1. Start states are
+# flow.json's (F-69 D3), so each refusal names the verb's `from`. Features in each
 # status the handlers gate on.
 DIR=$(node --input-type=module -e "
 import { mkTempBacklog } from '$REPO_ROOT/test/helpers/tempdir.js';
@@ -26,12 +27,12 @@ const { dir } = mkTempBacklog({
     { id: 'C02', title: 'Demo', dirSuffix: 'demo', repo: 'demo-repo' },
   ],
   stories: [
-    story('S-1', 'loose', { status: 'refined', component: 'C01' }),
+    story('S-1', 'loose', { status: 'in_progress', component: 'C01' }),
     story('S-2', 'in-feature', { status: 'refined', feature: 'F-1' }),
     story('S-3', 'backlog', { status: 'backlog' }),
-    story('S-4', 'pending', { status: 'refined', component: 'C02' }),
+    story('S-4', 'pending', { status: 'in_progress', component: 'C02' }),
     story('S-5', 'closed', { status: 'done', completed: '2026-01-01' }),
-    story('S-6', 'escalated', { status: 'refined', component: 'C02', body: '## Escalation\\n\\nWhich way?\\n' }),
+    story('S-6', 'escalated', { status: 'in_progress', component: 'C02', body: '## Escalation\\n\\nWhich way?\\n' }),
   ],
   features: [
     { id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'approved', primary_repo: 'demo-repo', stories: ['S-2'] },
@@ -67,7 +68,7 @@ assert_contains "status F-1 → feature status" "F-1 · Feat" "$OUT"
 
 blrun approve F-3
 assert_exit "approve F-3" 1 "$RC"
-assert_contains "approve F-3 → feature approve" 'still a draft — run `bl refine F-3`' "$ERR"
+assert_contains "approve F-3 → feature approve" 'F-3 is draft; approve starts from refined (bl refine F-3 reaches refined); or pass --force' "$ERR"
 
 blrun run F-1 --plan
 assert_exit "run F-1 --plan" 0 "$RC"
@@ -75,7 +76,7 @@ assert_contains "run F-1 → feature run" "1. setup" "$OUT"
 
 blrun implement F-2
 assert_exit "implement F-2" 1 "$RC"
-assert_contains "implement F-2 → feature workon" 'run `bl approve F-2` first' "$ERR"
+assert_contains "implement F-2 → feature workon" 'F-2 is refined; implement starts from approved, in_progress or escalated (bl approve F-2 reaches approved)' "$ERR"
 
 blrun review F-2
 assert_exit "review F-2" 1 "$RC"
@@ -83,16 +84,17 @@ assert_contains "review F-2 → feature review" "has no branch yet" "$ERR"
 
 blrun merge F-2
 assert_exit "merge F-2" 1 "$RC"
-assert_contains "merge F-2 → feature merge" "nothing has been implemented on a branch yet" "$ERR"
+assert_contains "merge F-2 → feature merge" "F-2 is refined; merge starts from in_progress, in_review, ready_for_merge or escalated" "$ERR"
 
 blrun refine F-4
 assert_exit "refine F-4" 1 "$RC"
-assert_contains "refine F-4 → feature refine" "Feature F-4 is done; nothing to refine." "$ERR"
+assert_contains "refine F-4 → feature refine" "F-4 is done; refine starts from draft or refined" "$ERR"
 
 # --- Story cells: today's story commands ----------------------------------
 blrun implement S-3
 assert_exit "implement S-3" 1 "$RC"
-assert_contains "implement S-3 → workon" "must be refined first (run: bl refine S-3)" "$ERR"
+# implement starts from draft (F-69 D1): S-3 gets as far as its repo.
+assert_contains "implement S-3 → workon" "Story S-3 has no repo" "$ERR"
 
 blrun review S-1
 assert_exit "review S-1" 1 "$RC"
@@ -100,12 +102,12 @@ assert_contains "review S-1 → story review" "No open PR found for story S-1." 
 
 blrun merge S-4
 assert_exit "merge S-4" 1 "$RC"
-assert_contains "merge S-4 → cleanup" "S-4 has unresolved review state" "$ERR"
-assert_contains "merge S-4 hint uses the new verb" "Address the review feedback (bl implement S-4)" "$ERR"
+assert_contains "merge S-4 → cleanup" "S-4 is fixing; merge starts from in_progress, in_review, ready_for_merge or escalated" "$ERR"
+assert_contains "merge S-4 hint uses the new verb" "(bl implement S-4 reaches in_review)" "$ERR"
 
 blrun refine S-5
 assert_exit "refine S-5" 1 "$RC"
-assert_contains "refine S-5 → story refine" "Story S-5 has status 'done' — skipping (cannot refine)." "$ERR"
+assert_contains "refine S-5 → story refine" "S-5 is done; refine starts from draft or refined — skipping." "$ERR"
 
 # --- Refusals --------------------------------------------------------------
 for verb in run implement; do
@@ -149,7 +151,7 @@ assert_contains "run S-1 plan implements the story" " 2. implement S-1" "$OUT"
 
 blrun run S-3
 assert_exit "run S-3" 1 "$RC"
-assert_contains "run refuses a backlog story" 'Story S-3 is backlog — run `bl refine S-3` first.' "$ERR"
+assert_contains "run refuses a draft story (a v1 backlog one)" 'S-3 is draft; run starts from refined, in_progress or escalated (bl refine S-3 reaches refined)' "$ERR"
 
 blrun run S-6
 assert_exit "run S-6" 1 "$RC"
@@ -158,7 +160,7 @@ assert_contains "run refuses an open escalation" "Story S-6 has an open ## Escal
 blrun status S-1
 assert_exit "status S-1" 0 "$RC"
 assert_contains "status S-1 → story status" "S-1 · loose" "$OUT"
-assert_contains "status S-1 shows status and branch" "status: refined   repo: nope   branch: -   pr: -   points: 3" "$OUT"
+assert_contains "status S-1 shows status and branch" "status: in_progress   repo: nope   branch: -   pr: -   points: 3" "$OUT"
 assert_contains "status S-1 shows the review round" "review: none (round 0/2)" "$OUT"
 
 blrun status S-6

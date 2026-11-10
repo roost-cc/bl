@@ -23,8 +23,13 @@
  * `bl run S-n` drives the same loop over one story: `feature` is then a story
  * unit (unit.js) with `kind: "story"`, `prep.ordered` is `[story]`, the story
  * file stands in for the feature file, and the implement step uses
- * `prompts/story-run.md`. A story has no `escalated` status: its open
- * `## Escalation` is what blocks it.
+ * `prompts/story-run.md`.
+ *
+ * The loop records each hop in the unit's transition log (F-69 D3,
+ * `transition.js`): `in_progress` at run start, `in_review` after the PR,
+ * `fixing` or `ready_for_merge`
+ * after a review, `in_review` after a fix, `escalated` with every escalation,
+ * and `in_progress` by `implement` on each story before its session.
  */
 
 import {
@@ -59,6 +64,7 @@ import {
   configForRepo,
 } from './config.js';
 import {
+  escalationOpen,
   extractSection,
   replaceSection,
   sectionHasContent,
@@ -89,6 +95,7 @@ import {
   scriptedSummary,
 } from './scripted.js';
 import {
+  CHECKED_BOX_RE,
   parseLatestSession,
   extractReviewLog,
   featureReviewGate,
@@ -103,9 +110,7 @@ import {
   currentChange,
   ensureChange,
   readChange,
-  REVIEW_FIELDS,
   setRepo,
-  setReviewFields,
   updateChange,
   writeChange,
 } from './change-doc.js';
@@ -117,7 +122,18 @@ import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt } from './test-excerpt.js';
 import * as processScope from './process-scope.js';
 import { regenerateConflicts, regeneratePlugins } from './regenerate.js';
-import { loadFlow } from './flow.js';
+import { REVIEW, loadFlow } from './flow.js';
+import {
+  NoEdgeError,
+  applyTransition,
+  enterVerb,
+  ensureLog,
+  isoAt,
+  requireBranch,
+  reviewOf,
+  statusOf,
+  transition,
+} from './transition.js';
 
 export { liveLockHolder };
 
@@ -244,6 +260,14 @@ export function uncheckedCriteria(storyIndexPath) {
   return openCheckboxItems(section).map((i) => [i.text, ...i.lines].join(' '));
 }
 
+/** How many checked items a story's `## Acceptance Criteria` has: 0 when the file or the section is missing. */
+function checkedCriteriaCount(storyIndexPath) {
+  if (!existsSync(storyIndexPath)) return 0;
+  const { body } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
+  const section = extractSection(body, 'Acceptance Criteria') ?? '';
+  return section.split('\n').filter((line) => CHECKED_BOX_RE.test(line)).length;
+}
+
 /** Open criteria as the loop reports them; a missing section is one of them. */
 function unmetCriteria(storyIndexPath) {
   return (
@@ -324,23 +348,9 @@ export function parseMaxRounds(raw, fallback) {
   return raw !== true && /^\d+$/.test(s) && parseInt(s, 10) >= 1 ? parseInt(s, 10) : NaN;
 }
 
-/**
- * `review_round` as a non-negative integer: 0 when unset, NaN when it holds
- * anything but digits. Rounds are compared strictly, so a value the loop
- * cannot read never passes for a number.
- */
-export function parseRound(value) {
-  const s = String(value ?? '').trim();
-  if (s === '') return 0;
-  return /^\d+$/.test(s) ? parseInt(s, 10) : NaN;
-}
-
 const isStory = (unit) => unit?.kind === 'story';
 
-export function escalationOpen(featureIndexPath) {
-  const { body } = parseFrontmatter(readText(featureIndexPath).text);
-  return sectionHasContent(extractSection(body, 'Escalation'));
-}
+export { escalationOpen };
 
 /**
  * The unit's change document: the current one, else where the first one
@@ -365,9 +375,13 @@ function readChangeText(ctx) {
   return existsSync(p) ? parseFrontmatter(readText(p).text) : { fm: {}, body: '' };
 }
 
-/** The review state (`review_round`, `review_status`) the change document holds. */
-function changeFm(ctx) {
-  return readChangeText(ctx).fm;
+/**
+ * The unit's review state, from its log (`reviewOf`, F-69 D5): its round,
+ * the rounds with a verdict, and its review position. A unit with no log
+ * reads its change document's old fields (D4).
+ */
+function reviewState(ctx) {
+  return reviewOf(unitKind(ctx), readFm(ctx.feature.indexPath), readChangeText(ctx));
 }
 
 /**
@@ -449,13 +463,38 @@ function recordGateLine(ctx, gate) {
   commitChangeFile(ctx, 'test', `chore: ${ctx.feature.id} gate ${verdict}${attempt}`);
 }
 
+/**
+ * Whether the implement step skips `story`: it is closed, or no acceptance
+ * criterion is unchecked. A story that is not started (`draft`, `refined`)
+ * also needs at least one checked box: criteria with no checkbox (prose, a
+ * plain list) say nothing about work done. An agent files an ad-hoc story
+ * with its criteria checked.
+ */
 function storyComplete(story, backlogRoot) {
-  if (loadFlow(backlogRoot).meets('story', story.status, 'done')) return true;
+  const flow = loadFlow(backlogRoot);
+  if (flow.meets('story', story.status, 'done')) return true;
   const path = join(backlogRoot, story.storyRelPath);
-  const fm = readFm(path);
-  if (fm.status === 'done') return true;
+  const status = statusOf('story', readFm(path));
+  if (flow.meets('story', status, 'done')) return true;
   const open = uncheckedCriteria(path);
-  return fm.status === 'in_progress' && open !== null && open.length === 0;
+  if (open === null || open.length > 0) return false;
+  return flow.meets('story', status, 'in_progress') || checkedCriteriaCount(path) > 0;
+}
+
+/**
+ * Record `in_progress` by `implement` on story `s` when it is not started
+ * yet (`draft` or `refined`), and commit it (F-69 D3): before its session,
+ * and for a complete story an agent filed or attached during the run
+ * (`_blocked-by-bug.md`). The agent no longer sets a status. A story run on
+ * its own is started by its run already.
+ */
+function startStory(ctx, s) {
+  const root = ctx.config.backlogRoot;
+  const path = join(root, s.storyRelPath);
+  if (!loadFlow(root).isUnstarted('story', statusOf('story', readFm(path)))) return;
+  if (logWrite(ctx, 'implement', () => enterVerb(root, { kind: 'story', indexPath: path }, 'implement'))) {
+    commitUnitPaths(ctx, 'implement', [s.storyRelPath], `chore: ${s.id} in_progress (implement)`);
+  }
 }
 
 function tail(text, lines = 200) {
@@ -774,19 +813,96 @@ function commitChangeFile(ctx, step, message) {
   return commitUnitPaths(ctx, step, [changeRelPath(ctx)], message);
 }
 
+/** The unit's type in `flow.json`: a story run on its own, or a feature. */
+function unitKind(ctx) {
+  return isStory(ctx.feature) ? 'story' : 'feature';
+}
+
+/** The unit as `transition` takes it. */
+function unitRef(ctx) {
+  return { kind: unitKind(ctx), indexPath: ctx.feature.indexPath };
+}
+
+/** The unit's status now, from its log. */
+function unitStatus(ctx) {
+  return statusOf(unitKind(ctx), readFm(ctx.feature.indexPath));
+}
+
 /**
- * Write `## Escalation` unless it already has content. With `fold`, used by
+ * Record a hop of the loop in the unit's log (F-69 D3) and commit the unit
+ * file, through `logWrite`.
+ */
+function hop(ctx, step, to, opts) {
+  writeHop(ctx, step, () => transition(ctx.config.backlogRoot, unitRef(ctx), to, opts));
+}
+
+/** `hop` for a verb's start (`enterVerb`). */
+function enterHop(ctx, step, verb) {
+  writeHop(ctx, step, () => enterVerb(ctx.config.backlogRoot, unitRef(ctx), verb));
+}
+
+/** Run `write` through `logWrite`, and commit the unit file when it recorded an entry. */
+function writeHop(ctx, step, write) {
+  const entry = logWrite(ctx, step, write);
+  if (entry) commitFeatureFile(ctx, step, `chore: ${ctx.feature.id} ${entry.to} (${entry.by})`);
+}
+
+/**
+ * Run `write`, a write to a transition log that returns the entry it
+ * recorded or null. A status with no such edge (`NoEdgeError`: an operator
+ * moved the unit while the run went on) records nothing, and a warning in
+ * the run's history says so. Any other error (a spec lock timeout, a disk
+ * error) stops the run: the next step depends on the entry.
+ */
+function logWrite(ctx, step, write) {
+  try {
+    return write();
+  } catch (e) {
+    if (!(e instanceof NoEdgeError)) {
+      const reason = `the transition log could not be written at ${step}: ${e.message}`;
+      throw new RunStoppedError(reason, finish(ctx, 'failed', reason));
+    }
+    record(ctx, { step, ok: true, warning: true, note: `not recorded in the transition log: ${e.message}` });
+    ctx.runner.log(`  warning: not recorded in the transition log: ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * The verb whose failure branch takes a unit at `status` to `escalated`:
+ * `merge` inside `bl merge`'s integration, else the one running at that
+ * status (`run`, `review`, `fix`); null when no verb does or it is escalated
+ * already (`merge` starts from `escalated`, so its failure branch is an edge
+ * from `escalated` to itself).
+ */
+export function escalatingVerb(flow, kind, status, integration) {
+  if (status === 'escalated') return null;
+  const bys = flow
+    .edges(kind)
+    .filter((e) => e.from === status && e.to === 'escalated')
+    .map((e) => e.by);
+  if (integration && bys.includes('merge')) return 'merge';
+  return bys.find((b) => b !== 'merge') ?? bys[0] ?? null;
+}
+
+/**
+ * Write `## Escalation` unless it already has content, and record
+ * `escalated` in the unit's log, story or feature (F-69 D1, D3), by the verb
+ * that escalated, with the reason as its note. With `fold`, used by
  * `bl merge`'s integration, content an agent wrote during the merge is kept
  * below bl's own reason and details instead of standing alone (F-36 D8).
  */
 function writeEscalation(ctx, reason, details = '', { fold = false } = {}) {
   const { feature } = ctx;
   const text = `${reason}${details ? `\n\n${details}` : ''}`.trim();
+  const flow = loadFlow(ctx.config.backlogRoot);
+  const kind = unitKind(ctx);
   // Under the spec lock, inside the backlog lock when `bl merge` holds it
   // (F-67 D4): a token step entry a session writes meanwhile is kept.
   updateSpecFile(ctx.config.backlogRoot, feature.indexPath, (fm, body) => {
-    // Stories have no `escalated` status; the open section blocks them.
-    if (!isStory(feature)) fm.status = 'escalated';
+    const by = escalatingVerb(flow, kind, statusOf(kind, fm), Boolean(ctx.integration));
+    const note = String(reason).split('\n')[0];
+    if (by) applyTransition(flow, kind, fm, 'escalated', { by, note });
     const existing = extractSection(body, 'Escalation');
     if (!sectionHasContent(existing)) {
       return existing == null
@@ -974,9 +1090,11 @@ function withContainerCleanup(ctx, label, fn) {
 
 /**
  * A run the loop stopped from inside a step, after `finish()` saved the
- * escalated state. Thrown so the step's callers skip their bookkeeping (a
+ * escalated state, or the failed one when a log write failed (`logWrite`,
+ * `recordVerdict`). Thrown so the step's callers skip their bookkeeping (a
  * nudge retry, a review round's verdict), and caught by runFeature and
- * reviewFeature, which return the escalated state.
+ * reviewFeature, which return that state; `escalated` is true only for an
+ * escalated one.
  */
 export class RunStoppedError extends Error {
   constructor(message, state) {
@@ -2458,6 +2576,7 @@ function implementStories(ctx) {
     if (ctx.implemented.has(s.id)) continue;
     ctx.implemented.add(s.id);
     if (storyComplete(s, config.backlogRoot)) {
+      startStory(ctx, s);
       record(ctx, { step: 'implement', story: s.id, ok: true, note: 'already complete — skipped' });
       continue;
     }
@@ -2471,6 +2590,7 @@ function implementStories(ctx) {
       saveRunState(config, state);
       continue;
     }
+    startStory(ctx, s);
     const storyVars = {
       storyId: s.id,
       storyTitle: s.title,
@@ -2562,14 +2682,13 @@ function implementScripted(ctx, s, storyAbsPath) {
     worktreePath: target.worktreePath,
     runner: ctx.runner,
   });
-  const date = runnerNow(ctx.runner).toISOString().slice(0, 10);
   recordScriptedRun({
     backlogRoot: config.backlogRoot,
     indexPath: storyAbsPath,
     changePath: existsSync(changeFile(ctx)) ? changeFile(ctx) : null,
     id: s.id,
     repo: target.repo,
-    date,
+    at: isoAt(runnerNow(ctx.runner)),
     result,
   });
   const note = scriptedSummary(s.id, result);
@@ -3285,21 +3404,20 @@ function finishClean(ctx) {
   }
   // `clean` means `bl merge` will take it: the same gate, read the
   // same way.
-  const { fm, body } = readChangeText(ctx);
-  const gate = featureReviewGate(fm.review_status, body);
+  const status = reviewState(ctx).position;
+  const gate = featureReviewGate(status, readChangeText(ctx).body);
   if (gate.blocked) {
     return finish(
       ctx,
       'escalated',
-      `review_status is ${fm.review_status || 'unset'} but the latest session has ${gate.review?.blocking ?? 0} open Must/Should item(s)`,
+      `${ctx.feature.id} is ${status ?? unitStatus(ctx)} and the latest session has ${gate.review?.blocking ?? 0} open Must/Should item(s)`,
       openItemsSummary(ctx),
     );
   }
   return finish(ctx, 'clean');
 }
 
-function reviewVars(ctx, { reReview, changedFiles, round, fullScope, closing = false, scope = null }) {
-  const fm = changeFm(ctx);
+function reviewVars(ctx, { reReview, changedFiles, round, position, fullScope, closing = false, scope = null }) {
   const max = ctx.state.maxRounds;
   const changed = changedFiles?.length ? changedFiles.map((f) => `- ${f}`).join('\n') : '';
   // A feature with a PR in more than one repo gets one round over all of
@@ -3312,7 +3430,8 @@ function reviewVars(ctx, { reReview, changedFiles, round, fullScope, closing = f
     mainRef: 'main',
     prNumber: ctx.state.pr?.number || recordedRepo(ctx)?.pr || '(none)',
     prUrl: ctx.state.pr?.url || '(no pull request)',
-    reviewStatus: fm.review_status || '(none)',
+    // The review position the round starts from (F-69 D5).
+    reviewStatus: position ?? '(none)',
     reviewRound: String(round),
     nextRound: String(round + 1),
     reviewRoundsMax: String(max),
@@ -3350,16 +3469,12 @@ function branchFiles(ctx) {
  * worktree cannot be restored, or any session fails.
  */
 function reviewRound(ctx, { reReview, closing = false, scope = null }) {
-  const raw = changeFm(ctx).review_round;
-  const round = parseRound(raw);
-  // Every caller gets this refusal, `bl merge`'s integration round included:
-  // bl would otherwise write review_round "NaN" with a verdict.
-  if (Number.isNaN(round))
-    return roundAborted(ctx, round, `review_round "${raw}" in ${changeRelPath(ctx)} is not a number`);
+  // The rounds with a verdict (F-69 D5): this round is the next one.
+  const { reviewed: round, position } = reviewState(ctx);
   const locks = holdReviewLocks(ctx);
   if (locks.error) return roundAborted(ctx, round, locks.error);
   try {
-    return reviewRoundLocked(ctx, { reReview, round, closing, scope });
+    return reviewRoundLocked(ctx, { reReview, round, position, closing, scope });
   } finally {
     locks.release();
   }
@@ -3370,9 +3485,18 @@ function reviewRound(ctx, { reReview, closing = false, scope = null }) {
  * `bl merge`'s round over a merge resolution (F-36 D7). Every other caller
  * passes none.
  */
-function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null }) {
+function reviewRoundLocked(ctx, { reReview, round, position, closing = false, scope = null }) {
   const { prep, feature, config } = ctx;
   setStep(ctx, closing ? 'closing-review' : reReview ? 're-review' : 'review', { round: round + 1 });
+  // The review starts (F-69 D3): a unit with no log gets one, and a unit in
+  // progress (`bl review` after `bl implement`) or ready for merge (`bl
+  // merge`'s round over a merge resolution) goes to `in_review`, the
+  // `review` verb's `during`. Its verdict is recorded below (D5).
+  ensureLog(config.backlogRoot, { ...unitRef(ctx), change: readChange(changeFile(ctx)) });
+  const flow = loadFlow(config.backlogRoot);
+  if (flow.fromOf(unitKind(ctx), flow.verbOf(unitKind(ctx), 'review')).includes(unitStatus(ctx))) {
+    enterHop(ctx, 'review', 'review');
+  }
 
   // A re-review narrows to the files the fixes touched only when there is a
   // recorded base to diff against and the diff names something. Otherwise
@@ -3386,7 +3510,15 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
   // The configuration of each pass, for the verifier's Review Log header and
   // the round's history entry (F-64 D4).
   const passes = [];
-  const common = reviewVars(ctx, { reReview, changedFiles, round, fullScope, closing, scope: scope?.text ?? null });
+  const common = reviewVars(ctx, {
+    reReview,
+    changedFiles,
+    round,
+    position,
+    fullScope,
+    closing,
+    scope: scope?.text ?? null,
+  });
   // The closing round runs no dimension passes: it verifies that the items
   // already found were fixed, and does not look for new ones.
   for (const dim of closing ? [] : REVIEW_DIMENSIONS) {
@@ -3432,13 +3564,13 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
     changeBefore
       ? atomicWriteFile(ctx.config.backlogRoot, changeFile(ctx), changeBefore)
       : rmSync(changeFile(ctx), { force: true });
-  // The round's number is bl's (F-68 D3). bl writes it together with the
-  // status, once, after the verifier returns a verdict: a round that ends
-  // any other way (a throw, an abort, a killed bl) leaves both as they were.
-  // The Review Log may not: if bl dies after the verifier committed its
-  // session block, the log holds a block for round N+1 while review_round
-  // says N. The prompt gives the verifier the round as `nextRound`.
-  const fieldsBefore = reviewFields(ctx);
+  // The round's verdict is bl's (F-68 D3). bl records it in the unit's log
+  // once, after the verifier returns one: a round that ends any other way (a
+  // throw, an abort, a killed bl) records none, and the unit stays in
+  // `in_review`. The Review Log may not: if bl dies after the verifier
+  // committed its session block, the Review Log holds a block for round N+1
+  // while the log has no verdict for it. The prompt gives the verifier the
+  // round as `nextRound`.
   let rv;
   try {
     rv = quarantineOnCleanupError(ctx, `r${round + 1}-verify`, beforeVerify.snaps, () =>
@@ -3504,16 +3636,11 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
     repos: [...new Set([...covered.repos, ...reviewOtherRepos(ctx).map((r) => r.repoName)])],
   };
   saveRunState(config, ctx.state);
-  // The verdict is the outcome's (F-68 D3): bl writes review_status from it.
+  // The verdict is the outcome's (F-68 D3): clean with no Must fix or Should
+  // fix item open. bl records it in the unit's log (F-69 D5).
   const outcome = rv.structured;
-  const status = reviewStatusOf(outcome);
-  writeReviewFields(
-    ctx,
-    'review:verify',
-    fieldsBefore,
-    { review_round: String(round + 1), review_status: status },
-    `chore: ${feature.id} review round ${round + 1} ${status}`,
-  );
+  const clean = outcome.must + outcome.should === 0;
+  const to = recordVerdict(ctx, { clean, round: round + 1, summary: outcome.summary });
   // An escalation the outcome claims is one the operator reads: when the
   // verifier wrote none, bl writes it.
   if (outcome.escalated && !escalationOpen(feature.indexPath)) {
@@ -3523,55 +3650,7 @@ function reviewRoundLocked(ctx, { reReview, round, closing = false, scope = null
       `The verifier's outcome: ${outcome.summary}\n\nIt wrote no ## Escalation; the session block in ${changeRelPath(ctx)} has its findings.`,
     );
   }
-  return { status, round: round + 1 };
-}
-
-/** `pending` while the round left a Must fix or Should fix item open, else `addressed` (F-68 D3). */
-function reviewStatusOf({ must, should }) {
-  return must + should === 0 ? 'addressed' : 'pending';
-}
-
-/** The change document's review fields as strings (`''` when unset). */
-function reviewFields(ctx) {
-  const fm = changeFm(ctx);
-  return Object.fromEntries(REVIEW_FIELDS.map((k) => [k, String(fm[k] ?? '')]));
-}
-
-/**
- * Write the review fields bl decides into the change document under its lock
- * and commit it (F-68 D3): `before` is what they held when `step`'s session
- * started, `fields` what the outcome sets. A field the session changed is a
- * warning in the history, never a decision: bl's value replaces it.
- */
-function writeReviewFields(ctx, step, before, fields, message) {
-  const next = { ...before, ...fields };
-  const found = setReviewFields(ctx.config.backlogRoot, changeFile(ctx), next);
-  for (const k of REVIEW_FIELDS) {
-    // A field the session left, or set to bl's own value, is no warning.
-    if (found[k] === before[k] || found[k] === next[k]) continue;
-    const note = `${step}: the session changed ${k} to "${found[k]}"; bl writes "${next[k]}" from the outcome`;
-    ctx.runner.log(`  warning: ${note}`);
-    record(ctx, { step, ok: true, warning: true, note });
-  }
-  if (REVIEW_FIELDS.some((k) => found[k] !== next[k])) commitChangeFile(ctx, step, message);
-}
-
-/**
- * Run a step's session (`run`). When it throws (no valid outcome, no agent),
- * `keep` first puts back the review fields the step found; the session's
- * error is the one thrown.
- */
-function keepingReviewFields(ctx, keep, run) {
-  try {
-    return run();
-  } catch (e) {
-    try {
-      keep();
-    } catch (k) {
-      ctx.runner.log(`  warning: cannot put back the review fields: ${k.message}`);
-    }
-    throw e;
-  }
+  return { clean, to, round: round + 1, summary: outcome.summary };
 }
 
 /**
@@ -3596,13 +3675,7 @@ function quarantineOnCleanupError(ctx, label, snaps, fn) {
  */
 function roundAborted(ctx, round, error) {
   record(ctx, { step: 'review:abort', ok: false, note: error });
-  const fm = changeFm(ctx);
-  return {
-    status: fm.review_status ?? '',
-    round: parseRound(fm.review_round),
-    expected: round + 1,
-    abortError: error,
-  };
+  return { round, expected: round + 1, abortError: error };
 }
 
 export function sessionError(r) {
@@ -3678,7 +3751,7 @@ function wrapItem(claim, width = 100) {
  * over the resolution (D7). A green tree is pushed. A stop rolls back the
  * merges this call made, so every branch is left as it was reviewed and a
  * rerun integrates (and gates) again; only a resolution whose review left
- * open items stays on the branch, with `review_status: pending`.
+ * open items stays on the branch, with the unit in `fixing` (F-69 D5).
  *
  * `prep` is the shape `bl review` builds: `{ cfg, worktreePath, branchName,
  * baseVars, targetRepoName, otherWorktrees }`.
@@ -3722,8 +3795,9 @@ export function integrateUnit({ unit, config, prep, runner }) {
  * Whatever stops the integration by throwing (a session that could not run, a
  * failed container cleanup, a failed run-state write, a bug) leaves no
  * worktree mid-merge, still under the run lock: every merge in progress is
- * aborted and the merges are rolled back. A `RunStoppedError` has escalated
- * already; any other error escalates as a merge here (F-36 D8), with the
+ * aborted and the merges are rolled back. A `RunStoppedError` has stopped
+ * the run already, escalated or failed (a log write that failed writes no
+ * ## Escalation); any other error escalates as a merge here (F-36 D8), with the
  * conflict evidence read before the abort: what the resolution recorded
  * (`ctx.integrationEvidence`), else each repo still mid-merge.
  */
@@ -3732,7 +3806,9 @@ function integrationThrew(ctx, e) {
   const evidence = e instanceof RunStoppedError ? '' : integrationEvidence(ctx);
   const stuck = ctx.repos.filter((r) => !abortIntegration(ctx, r.worktreePath));
   const rolledBack = rollBackNote(ctx, ctx.repos);
-  if (e instanceof RunStoppedError) return { ok: false, escalated: true, reason: e.message, repos: ctx.repos };
+  if (e instanceof RunStoppedError) {
+    return { ok: false, escalated: e.state?.status === 'escalated', reason: e.message, repos: ctx.repos };
+  }
   ctx.runner.log(`  ${e.stack ?? e}`);
   const reason = `merge with main: stopped by an error: ${e.message}`;
   const details = [evidence, abortNote(stuck).trim(), rolledBack, integrationNextStep(ctx, ctx.repos)]
@@ -4011,18 +4087,18 @@ function resolveIntegration(ctx, repos, { conflicts, gate }) {
     });
     runner.log('  review of the resolution...');
     const result = reviewRound(ctx, { reReview: false, scope: { text: resolutionScope(scope), files } });
-    const verdict = result.abortError ? null : result.status;
-    if (verdict === 'addressed' && !escalationOpen(unit.indexPath)) {
+    const verdict = result.abortError ? null : result.clean;
+    if (verdict === true && !escalationOpen(unit.indexPath)) {
       ctx.integration = null;
       return pushIntegrated(ctx, repos);
     }
-    if (verdict === 'pending') {
+    if (verdict === false) {
       // Outside the round cap, so `bl run --resume` owes it a fix whatever the cap.
       ctx.state.integrationReview = result.round;
-      // The resume's loop gates and reviews it now; `pending` blocks the merge.
+      // The resume's loop gates and reviews it now; `fixing` blocks the merge.
       setRetained(ctx, {});
       const reason = 'merge with main: the review of the resolution left open items';
-      const next = `Next: the resolution stays on the branch with \`review_status: pending\`. Clear this section to "None.", run \`bl run ${unit.id} --resume\` (it fixes the open items through the ordinary loop), then \`bl merge ${unit.id}\`, which integrates again.`;
+      const next = `Next: the resolution stays on the branch, and ${unit.id} is in fixing. Clear this section to "None.", run \`bl run ${unit.id} --resume\` (it fixes the open items through the ordinary loop), then \`bl merge ${unit.id}\`, which integrates again.`;
       escalateIntegration(
         ctx,
         reason,
@@ -4345,7 +4421,8 @@ function escalateIntegration(ctx, reason, details, { save = false } = {}) {
  * review step, so there is one review path per feature and a later
  * `run --resume` re-reviews from the base this round recorded. Refuses while
  * a run holds the feature, and at the round cap. Returns
- * `{ status, round, escalated, error, end }` (`end` from `reviewEnd`, `null`
+ * `{ status, round, verdict, escalated, error, end }` (`status` the unit's
+ * after the round, `end` from `reviewEnd`, `null`
  * for a round that did not finish: `error` set and no escalation) or a
  * refusal.
  *
@@ -4388,26 +4465,28 @@ export async function reviewFeature({
         repos: [{ repo: prepRepo(ctx), branch: prep.branchName }],
       }).path;
     }
-    const fm = changeFm(ctx);
-    const round = parseRound(fm.review_round);
-    if (Number.isNaN(round)) return refuse(runner, feature, `review_round "${fm.review_round}" is not a number`);
-    const owed = integrationRoundOwed(state, fm, round);
+    // The unit's review state, from its log (F-69 D5).
+    const review = reviewState(ctx);
+    const round = review.reviewed;
+    const owed = integrationRoundOwed(state, review);
     if (round >= maxRounds && !owed) {
       return refuse(runner, feature, `review round cap (${maxRounds}) already reached at round ${round}`);
     }
     let result;
     try {
       reapStaleScopes(ctx);
-      result = reviewRound(ctx, { reReview: fm.review_status === 'fixed', closing: owed && round >= maxRounds });
+      result = reviewRound(ctx, { reReview: isReReview(review), closing: owed && round >= maxRounds });
     } catch (e) {
       if (!(e instanceof RunStoppedError)) throw e;
-      const after = readChangeText(ctx);
+      // A failed log write stops the run as `failed`, with no ## Escalation.
+      const escalated = e.state?.status === 'escalated';
       return {
-        status: after.fm.review_status ?? '',
-        round: parseRound(after.fm.review_round),
-        escalated: true,
+        status: unitStatus(ctx),
+        round: reviewState(ctx).reviewed,
+        verdict: false,
+        escalated,
         error: e.message,
-        end: endOfReview(ctx, maxRounds, true, after),
+        end: escalated ? endOfReview(ctx, maxRounds, true) : null,
       };
     }
     state.status = result.abortError ? 'failed' : 'reviewed';
@@ -4416,10 +4495,12 @@ export async function reviewFeature({
     const escalated = escalationOpen(feature.indexPath);
     const error = result.abortError ?? null;
     return {
-      status: result.status,
+      status: unitStatus(ctx),
       round: result.round,
+      // Whether the round reached a verdict, which the unit's log records.
+      verdict: !error,
       escalated,
-      // A round that did not finish wrote no review fields: no end.
+      // A round that did not finish recorded no verdict: no end.
       end: error && !escalated ? null : endOfReview(ctx, maxRounds, escalated),
       error,
     };
@@ -4429,17 +4510,43 @@ export async function reviewFeature({
 }
 
 /**
- * `reviewEnd` for the round `bl review` just ran, from the change document it
- * left (`text`, read here when the caller has not read it).
+ * Record a review round's verdict in the unit's log (F-69 D1, D3): the
+ * first branch of `flow.json`'s `review` row whose guards hold, a `success`
+ * one with no open item, else a `failure` one (`fixing` while the round is
+ * within the cap, `round_within_cap`; then `escalated`). `bl merge`'s round
+ * over a merge resolution is outside the cap (F-36 D7), so its open items go
+ * to `fixing` whatever the round. Returns the unit's status read back from
+ * its log, which is the branch's unless the hop was not recorded. No branch
+ * that holds stops the run.
  */
-function endOfReview(ctx, maxRounds, escalated, text = readChangeText(ctx)) {
-  const { fm, body } = text;
+function recordVerdict(ctx, { clean, round, summary }) {
+  const guardCtx = {
+    config: ctx.config,
+    id: ctx.feature.id,
+    indexPath: ctx.feature.indexPath,
+    round,
+    maxRounds: ctx.integration ? Infinity : ctx.state.maxRounds,
+  };
+  const outcome = clean ? 'success' : 'failure';
+  let branch;
+  try {
+    branch = requireBranch(loadFlow(ctx.config.backlogRoot), unitKind(ctx), 'review', outcome, guardCtx);
+  } catch (e) {
+    const reason = `the round's verdict could not be recorded: ${e.message}`;
+    throw new RunStoppedError(reason, finish(ctx, 'failed', reason));
+  }
+  hop(ctx, 'review', branch.to, { by: 'review', via: 'review', outcome: summary });
+  return unitStatus(ctx);
+}
+
+/** `reviewEnd` for the round `bl review` just ran, from the log and the change document it left. */
+function endOfReview(ctx, maxRounds, escalated) {
   return reviewEnd({
     id: ctx.feature.id,
     unitRelPath: ctx.feature.featureRelPath,
     maxRounds,
-    fm,
-    body,
+    review: reviewState(ctx),
+    body: readChangeText(ctx).body,
     state: ctx.state,
     escalated,
   });
@@ -4486,8 +4593,8 @@ export async function runFeature({ feature, config, prep, runner, opts = {} }) {
 
 /**
  * A story's first run gives its frontmatter the review budget a feature has,
- * `review_rounds_max` (kept when already set). The branch, PR and review
- * round go to the change document. Returns whether the file changed.
+ * `review_rounds_max` (kept when already set). The branch and PR go to the
+ * change document, the review round to the story's log. Returns whether the file changed.
  */
 function recordStoryRunFields(ctx, maxRounds) {
   const { feature } = ctx;
@@ -4502,26 +4609,42 @@ function recordStoryRunFields(ctx, maxRounds) {
  * review runs outside the round cap, so its items are owed a fix and a closing
  * round whatever the cap, below, at or above it.
  */
-function integrationRoundOwed(state, fm, round) {
-  return state?.integrationReview === round && (fm.review_status === 'pending' || fm.review_status === 'fixed');
+function integrationRoundOwed(state, review) {
+  return state?.integrationReview === review.reviewed && itemsOwed(review);
+}
+
+/**
+ * Whether the last round's open items are owed a review (`reviewOf`, F-69
+ * D5): the unit is in `fixing`, or back in review after a fix with no
+ * verdict yet.
+ */
+function itemsOwed(review) {
+  return review.position === 'fixing' || isReReview(review);
+}
+
+/** Whether the next review re-reviews fixes: a round is open, and a fix opened it. */
+function isReReview(review) {
+  return review.position === 'in_review' && review.fixed;
 }
 
 /**
  * Where a run that starts now stands against the round cap: `'below'` the
  * cap; `'closing'` at or past it with a closing round owed (the last full
- * round, at the cap, still `pending` or `fixed`, or an open integration
- * round); else `'reached'`, where `bl run` refuses until the operator raises
- * the cap with --max-rounds. `state` is the run state, or `null` when there
- * is none (then no integration round is owed).
+ * round, at the cap, left items in `fixing` or fixed them, or an open
+ * integration round); else `'reached'`, where `bl run` refuses until the
+ * operator raises the cap with --max-rounds. `review` is the unit's review
+ * state (`reviewOf`, F-69 D5); `state` is the run state, or `null` when
+ * there is none (then no integration round is owed).
  *
+ * @param {object|null} state
+ * @param {{ reviewed: number, position: string|null, fixed: boolean }} review
+ * @param {number} maxRounds
  * @returns {'below'|'closing'|'reached'}
  */
-export function roundCapStanding(state, fm, maxRounds) {
-  const round = parseRound(fm.review_round);
+export function roundCapStanding(state, review, maxRounds) {
+  const round = review.reviewed;
   if (round < maxRounds) return 'below';
-  const owed =
-    (round === maxRounds && (fm.review_status === 'pending' || fm.review_status === 'fixed')) ||
-    integrationRoundOwed(state, fm, round);
+  const owed = (round === maxRounds && itemsOwed(review)) || integrationRoundOwed(state, review);
   return owed ? 'closing' : 'reached';
 }
 
@@ -4534,28 +4657,26 @@ function higherCapCommand(id, round) {
  * How `bl review` ends: the round's outcome words, the cap sentence (`''`
  * when there is none) and the next command (`null` when there is none). The
  * next command follows `roundCapStanding`, the rule `bl run` refuses by, so
- * the two cannot disagree. `fm` and `body` are the change document's after
- * the round; `unitRelPath` is the unit's `index.md`, relative to the backlog.
+ * the two cannot disagree. `review` is the unit's review state after the
+ * round (`reviewOf`, F-69 D5), `body` its change document's; `unitRelPath`
+ * is the unit's `index.md`, relative to the backlog.
  *
  * @returns {{ outcome: string, cap: string, next: string|null }}
  */
-export function reviewEnd({ id, unitRelPath, maxRounds, fm, body, state, escalated }) {
+export function reviewEnd({ id, unitRelPath, maxRounds, review, body, state, escalated }) {
   if (escalated) return { outcome: 'escalated', cap: '', next: `read ## Escalation in ${unitRelPath}` };
-  if (Number.isNaN(parseRound(fm.review_round))) {
-    return { outcome: `no verdict recorded (review_round: ${fm.review_round})`, cap: '', next: null };
-  }
-  const status = fm.review_status;
+  const { position } = review;
   const session = summarizeLatestReviewSession(body ?? '');
-  const outcome = reviewOutcome(status, session);
+  const outcome = reviewOutcome(position, session);
   if (outcome == null) {
-    return { outcome: `no verdict recorded (review_status: ${status || 'unset'})`, cap: '', next: null };
+    return { outcome: `no verdict recorded (${position ?? 'never reviewed'})`, cap: '', next: null };
   }
-  if (changeNextVerb(status) === 'merge') {
-    // Open Must/Should boxes block the merge gate: name the command it names.
-    const next = (session?.blocking ?? 0) > 0 ? `bl implement ${id}` : `bl merge ${id}`;
+  if (changeNextVerb(position) === 'merge') {
+    // Open Must/Should boxes block the merge gate: a review checks them again.
+    const next = (session?.blocking ?? 0) > 0 ? `bl review ${id}` : `bl merge ${id}`;
     return { outcome, cap: '', next };
   }
-  const standing = roundCapStanding(state, fm, maxRounds);
+  const standing = roundCapStanding(state, review, maxRounds);
   if (standing === 'below') return { outcome, cap: '', next: `bl run ${id} --resume` };
   if (standing === 'closing') {
     const items = (session?.unchecked ?? 0) > 0;
@@ -4568,7 +4689,7 @@ export function reviewEnd({ id, unitRelPath, maxRounds, fm, body, state, escalat
   return {
     outcome,
     cap: ` The round cap (${maxRounds}) is reached.`,
-    next: higherCapCommand(id, parseRound(fm.review_round)),
+    next: higherCapCommand(id, review.reviewed),
   };
 }
 
@@ -4609,7 +4730,12 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   };
   clearUntimedOut(ctx);
   const started = [];
-  if (isStory(feature) && recordStoryRunFields(ctx, maxRounds)) started.push(feature.featureRelPath);
+  // A unit with no log gets the one its status and change document give
+  // (F-69 D4) before the run records a hop: the document as it is now, since
+  // its review fields place the unit (D5).
+  const logged = ensureLog(config.backlogRoot, { ...unitRef(ctx), change: readChange(changeFile(ctx)) });
+  const runFields = isStory(feature) && recordStoryRunFields(ctx, maxRounds);
+  if (logged || runFields) started.push(feature.featureRelPath);
   if (setupChange(ctx)) started.push(changeRelPath(ctx));
   if (started.length > 0)
     commitUnitPaths(ctx, 'setup', started, `chore: ${feature.id} run started on ${prep.branchName}`);
@@ -4629,6 +4755,12 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   // restart until it is cleared — that is the point of the section.
   if (escalationOpen(feature.indexPath)) {
     return finish(ctx, 'failed', '## Escalation is not empty — clear it to "None." before running again');
+  }
+  // The run starts (F-69 D3): `in_progress` by `run` from a status `run`
+  // starts from. A unit in review or fixing resumes where it is.
+  const flow = loadFlow(config.backlogRoot);
+  if (flow.fromOf(unitKind(ctx), flow.verbOf(unitKind(ctx), 'run')).includes(unitStatus(ctx))) {
+    enterHop(ctx, 'setup', 'run');
   }
 
   // 1. Implement stories in dependency order. A story unit's one story uses
@@ -4688,44 +4820,53 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     record(ctx, { step: 'review', ok: true, note: 'skipped: scripted story, nothing an agent wrote' });
     return finishClean(ctx);
   }
-
-  // 5. Review loop. A session already pending (a resumed run, or a review
-  // written before this run) is fixed first: re-reviewing unfixed code would
-  // only spend a round.
-  const entryFm = changeFm(ctx);
-  // Addressed is a verdict on the scope that was reviewed: work this run
-  // implemented, or a story or repo the last review did not cover, is
-  // reviewed first.
-  if (reachedReview && entryFm.review_status === 'addressed' && !ctx.implementedThisRun && scopeReviewed(ctx))
-    return finishClean(ctx);
-  const entryRound = parseRound(entryFm.review_round);
-  if (Number.isNaN(entryRound)) {
-    return finish(ctx, 'escalated', `review_round "${entryFm.review_round}" in ${changeRelPath(ctx)} is not a number`);
+  // The run's success: the unit goes to review (F-69 D3). A resumed unit in
+  // review or fixing stays where it is.
+  if (unitStatus(ctx) === 'in_progress') {
+    hop(ctx, 'pr', 'in_review', { by: 'run', via: 'open_pr', outcome: state.pr?.url || undefined });
   }
+
+  // 5. Review loop. The unit's status places it (F-69 D3): a unit in
+  // `fixing` (a resumed run, or a review written before this run) is fixed
+  // first, since re-reviewing unfixed code would only spend a round.
+  // A run resumed after an escalation is back in review; the last review's
+  // open items, which nobody fixed, are still its verdict. Its return to
+  // `in_review` opened no round (`reviewOf`, F-69 D5).
+  const entry = reviewState(ctx);
+  if (unitStatus(ctx) === REVIEW.open && entry.position === REVIEW.items) {
+    hop(ctx, 'review', 'fixing', { by: 'review', note: `round ${entry.round} items still open` });
+  }
+  const position = unitStatus(ctx);
+  // Ready for merge is a verdict on the scope that was reviewed: work this
+  // run implemented, or a story or repo the last review did not cover, is
+  // reviewed first.
+  if (reachedReview && position === 'ready_for_merge' && !ctx.implementedThisRun && scopeReviewed(ctx))
+    return finishClean(ctx);
   // The cap is re-checked on entry. A feature at the cap with its last full
-  // round still open (pending) or claimed fixed is owed its closing round;
-  // anything else at the cap, or past it, would spend a round the cap does not
-  // allow — the same refusal `bl review` makes. Raising the cap is the
-  // operator's call, made with --max-rounds.
-  if (roundCapStanding(state, entryFm, maxRounds) === 'reached') {
+  // round's items still in `fixing`, or fixed and not yet re-reviewed, is
+  // owed its closing round; anything else at the cap, or past it, would
+  // spend a round the cap does not allow — the same refusal `bl review`
+  // makes. Raising the cap is the operator's call, made with --max-rounds.
+  if (roundCapStanding(state, entry, maxRounds) === 'reached') {
     return finish(
       ctx,
       'escalated',
-      `review round cap (${maxRounds}) already reached at round ${entryRound}`,
-      `Another round needs a higher cap: ${higherCapCommand(feature.id, entryRound)}\n\n${openItemsSummary(ctx)}`.trim(),
+      `review round cap (${maxRounds}) already reached at round ${entry.reviewed}`,
+      `Another round needs a higher cap: ${higherCapCommand(feature.id, entry.reviewed)}\n\n${openItemsSummary(ctx)}`.trim(),
     );
   }
-  let pendingRound = entryFm.review_status === 'pending' ? entryRound : null;
+  // The round of the open items: the log's.
+  let pendingRound = position === 'fixing' ? entry.round : null;
   for (;;) {
     let fixRound = pendingRound;
     pendingRound = null;
     if (fixRound == null) {
-      const fm = changeFm(ctx);
-      const reReview = fm.review_status === 'fixed';
+      const review = reviewState(ctx);
+      const reReview = isReReview(review);
       // After the last full round, the verifier checks only that round's
       // items: on F-4 a cap of 2 stopped a run whose round 2 had one Should
       // item left, which one more fix would have closed.
-      const closing = parseRound(fm.review_round) >= maxRounds;
+      const closing = review.reviewed >= maxRounds;
       const pushErr = pushBranch(ctx, reReview ? 're-review' : 'review');
       if (pushErr) return finish(ctx, 'escalated', 'push before review failed', pushErr);
       const others = openOtherPullRequests(ctx);
@@ -4740,8 +4881,8 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
       const scope = rescope(ctx);
       if (scope.stop) return scope.stop;
       // Stories or repos added during the round are not in its verdict: they
-      // are gated and get a round of their own.
-      if (result.status === 'addressed' && scope.changed) {
+      // are gated and get a round of their own, from `ready_for_merge`.
+      if (result.clean && scope.changed) {
         if (closing) {
           return finish(
             ctx,
@@ -4754,8 +4895,10 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         if (!testGateWithFix(ctx)) return state;
         continue;
       }
-      if (result.status === 'addressed') return finishClean(ctx);
-      if (closing) {
+      // Open items went to `fixing` while the round was within the cap; the
+      // closing round's open items escalate (`recordVerdict`).
+      if (result.clean) return finishClean(ctx);
+      if (result.to === 'escalated') {
         return finish(
           ctx,
           'escalated',
@@ -4767,31 +4910,22 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     }
     setStep(ctx, 'fix', { round: fixRound });
     const preFixSha = headSha(ctx);
-    const fixBefore = reviewFields(ctx);
-    // Every exit without `fixed` puts back the fields the session found.
-    const keepFixFields = () =>
-      writeReviewFields(ctx, 'fix', fixBefore, {}, `chore: ${feature.id} review round ${fixRound} not fixed`);
-    const fix = keepingReviewFields(ctx, keepFixFields, () =>
-      runSession(ctx, {
-        step: 'fix',
-        mode: 'workon',
-        promptName: 'feature-workon-review',
-        vars: { scratchDir: scratchFor(ctx, `r${fixRound}.fix`) },
-        label: `${feature.id}: address review r${fixRound}`,
-        schema: loadSchema('fix'),
-      }),
-    );
+    // The unit stays in `fixing` on every exit before the fix self-review
+    // passes: only `in_review` by `fix` says the items are fixed (F-69 D5).
+    const fix = runSession(ctx, {
+      step: 'fix',
+      mode: 'workon',
+      promptName: 'feature-workon-review',
+      vars: { scratchDir: scratchFor(ctx, `r${fixRound}.fix`) },
+      label: `${feature.id}: address review r${fixRound}`,
+      schema: loadSchema('fix'),
+    });
     if (escalationOpen(feature.indexPath)) {
-      keepFixFields();
       return finish(ctx, 'escalated', 'agent escalated while addressing review feedback');
     }
     const afterFix = rescope(ctx);
-    if (afterFix.stop) {
-      keepFixFields();
-      return afterFix.stop;
-    }
+    if (afterFix.stop) return afterFix.stop;
     if (!fix.structured.fixed) {
-      keepFixFields();
       return finish(
         ctx,
         'escalated',
@@ -4799,13 +4933,6 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         openItemsSummary(ctx),
       );
     }
-    writeReviewFields(
-      ctx,
-      'fix',
-      fixBefore,
-      { review_status: 'fixed' },
-      `chore: ${feature.id} review round ${fixRound} fixed`,
-    );
     // The author re-reads the fix diff in a fresh context before anyone else
     // does: on F-2, fix rounds wrote more code than the feature and none of it
     // was re-read before the next review, which then reviewed it for them.
@@ -4814,32 +4941,22 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     // branch, whose feature code no review item "asked for".
     const fixBaseSha = ctx.state.reviewBaseSha ?? preFixSha;
     setStep(ctx, 'fix-self-review', { round: fixRound });
-    const fixedFields = reviewFields(ctx);
-    // The fix round's `fixed` stands on every exit: bl keeps it whatever the session wrote.
-    const keepFixedFields = () =>
-      writeReviewFields(ctx, 'fix-self-review', fixedFields, {}, `chore: ${feature.id} review round ${fixRound} fixed`);
-    const selfReview = keepingReviewFields(ctx, keepFixedFields, () =>
-      runSession(ctx, {
-        step: 'fix-self-review',
-        mode: 'workon',
-        promptName: 'feature-fix-self-review',
-        vars: {
-          fixBaseSha: fixBaseSha ?? '',
-          fixDiff: fixBaseSha ? `git diff ${fixBaseSha}..HEAD` : 'git diff main...HEAD',
-        },
-        label: `${feature.id}: self-review fix r${fixRound}`,
-        schema: loadSchema('self-review'),
-      }),
-    );
+    const selfReview = runSession(ctx, {
+      step: 'fix-self-review',
+      mode: 'workon',
+      promptName: 'feature-fix-self-review',
+      vars: {
+        fixBaseSha: fixBaseSha ?? '',
+        fixDiff: fixBaseSha ? `git diff ${fixBaseSha}..HEAD` : 'git diff main...HEAD',
+      },
+      label: `${feature.id}: self-review fix r${fixRound}`,
+      schema: loadSchema('self-review'),
+    });
     if (escalationOpen(feature.indexPath)) {
-      keepFixedFields();
       return finish(ctx, 'escalated', 'agent escalated during the fix self-review');
     }
     const afterSelfReview = rescope(ctx);
-    if (afterSelfReview.stop) {
-      keepFixedFields();
-      return afterSelfReview.stop;
-    }
+    if (afterSelfReview.stop) return afterSelfReview.stop;
     // A fix diff nobody re-read is what this step exists to prevent.
     // A denied command is a warning, not a failure: the agent sees a tool
     // error and takes another route (runSession has already recorded it in
@@ -4849,7 +4966,6 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     // job (operator decision 2026-09-24).
     if (!selfReview.ok || selfReview.isError || !selfReview.structured.ok) {
       const why = selfReview.structured?.ok === false ? selfReview.structured.summary : sessionError(selfReview);
-      keepFixedFields();
       return finish(
         ctx,
         'escalated',
@@ -4857,7 +4973,11 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
         openItemsSummary(ctx),
       );
     }
-    keepFixedFields();
+    hop(ctx, 'fix-self-review', 'in_review', {
+      by: 'fix',
+      via: 'fix_self_review',
+      outcome: selfReview.structured.summary,
+    });
     setStep(ctx, 'test');
     if (!testGateWithFix(ctx)) return state;
   }

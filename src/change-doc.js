@@ -9,9 +9,7 @@
  *
  *   ---
  *   change_of: F-42          # the unit; must match the directory
- *   status: open             # open | merged | closed
- *   review_round: 0
- *   review_status:           # pending | fixed | addressed
+ *   status: open             # open | merged | dropped
  *   repos:
  *     - repo: bl
  *       branch: f42-…
@@ -28,7 +26,11 @@
  *
  * `approved`, `review_rounds_max` and the `tokens_*` fields (`tokens_by_step`
  * among them) stay on the spec:
- * they are the plan's gate and budget, written before any branch exists.
+ * they are the plan's gate and budget, written before any branch exists. The
+ * review state is the unit's transition log's (`reviewOf` in transition.js,
+ * F-69 D5): before F-69 the document held it as `review_round` and
+ * `review_status` (`REVIEW_FIELDS`), which bl reads only for a unit with no
+ * log.
  */
 
 import { existsSync, readFileSync, readdirSync } from 'fs';
@@ -37,12 +39,32 @@ import { FrontmatterError, listMembers, parseFrontmatter, serializeFrontmatter, 
 import { extractSection, replaceSection } from './feature.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { commitPaths } from './backlog-commit.js';
-import { withSpecLock } from './spec-file.js';
 import { substituteVars, templatePath } from './template.js';
+import { FlowError } from './flow.js';
+import { transition } from './transition.js';
 
 export const CHANGE_FILE = 'change.md';
 
-export const CHANGE_STATUSES = new Set(['open', 'merged', 'closed']);
+/**
+ * A change document's statuses (F-69 A3): the change, like a pull request, is
+ * `open`, `merged` or `dropped` (closed without a merge). They are not a work
+ * unit's statuses, which are `flow.json`'s.
+ */
+export const CHANGE_STATUSES = new Set(['open', 'merged', 'dropped']);
+
+/** The change-document words before F-69 (A3), each with the word it reads as. */
+export const LEGACY_CHANGE_STATUSES = { closed: 'dropped' };
+
+/**
+ * A change document's status: `open` when unset, and an old word
+ * (`LEGACY_CHANGE_STATUSES`) read as its current one.
+ * @param {object} fm  the document's frontmatter
+ * @returns {string}
+ */
+export function changeStatus(fm) {
+  const status = fm.status || 'open';
+  return Object.hasOwn(LEGACY_CHANGE_STATUSES, status) ? LEGACY_CHANGE_STATUSES[status] : status;
+}
 
 /** The body sections, in the order a document holds them. */
 export const CHANGE_SECTIONS = ['Description', 'Gate', 'Review Log', 'Merge'];
@@ -83,12 +105,13 @@ export function currentChange(unitDir, read = readChange) {
   const all = listChanges(unitDir);
   const docs = all.map((c) => ({ ...c, doc: read(c.path) }));
   for (let i = docs.length - 1; i >= 0; i--) {
-    if (isOpen(docs[i].doc)) return docs[i];
+    if (isOpenChange(docs[i].doc)) return docs[i];
   }
   return docs.at(-1) ?? null;
 }
 
-const isOpen = (doc) => doc != null && (doc.fm.status || 'open') === 'open';
+/** Whether a document (`readChange`; null for none) is an open change. */
+export const isOpenChange = (doc) => doc != null && changeStatus(doc.fm) === 'open';
 
 /**
  * The unit id a change directory belongs to: `F-42` for `F42-…`, `S-890` for
@@ -165,89 +188,64 @@ export function updateChange(backlogRoot, path, mutate) {
   return doc;
 }
 
-/** The review fields bl writes from the review and fix outcomes (F-68 D3); no prompt asks an agent for them. */
+/**
+ * The review fields a change document held before F-69 (D5). bl no longer
+ * writes them: it reads them only for a unit with no transition log
+ * (`legacyLog`), `bl validate` reports them as a warning, and the migration
+ * removes them.
+ */
 export const REVIEW_FIELDS = ['review_round', 'review_status'];
 
 /**
- * The review fields of the change document at `path` (`{ review_round,
- * review_status }`, strings, `''` when unset) read under its lock
- * (`withSpecLock`), then set to `fields` when a key's value differs. Returns
- * the values the document held before the write, so a caller can tell an
- * agent's edit from its own.
+ * Apply the outcome of an interactive fix session (`bl implement` on a unit
+ * in `fixing`, F-68 D3): with `fixed: true`, record `in_review` by `fix` in
+ * the unit's log (F-69 D3), the summary as its outcome, and commit the unit
+ * file; otherwise, or when the log refuses the entry (a `FlowError`: the
+ * unit moved during the session), the unit stays where it is, and bl prints
+ * why. Any other error throws. `change` is
+ * the unit's change document as the session found it, which places a unit
+ * with no log (D4). Returns whether the fix was recorded.
  * @param {string} backlogRoot
- * @param {string} path
- * @param {{ review_round?: string, review_status?: string }} fields
- * @returns {{ review_round: string, review_status: string }}
- */
-export function setReviewFields(backlogRoot, path, fields) {
-  return withSpecLock(path, () => {
-    const doc = readChange(path);
-    if (!doc) throw new Error(`no change document at ${path}`);
-    const before = Object.fromEntries(REVIEW_FIELDS.map((k) => [k, String(doc.fm[k] ?? '')]));
-    if (Object.entries(fields).some(([k, v]) => before[k] !== v)) {
-      Object.assign(doc.fm, fields);
-      writeChange(backlogRoot, path, doc);
-    }
-    return before;
-  });
-}
-
-/**
- * The review fields of the change document at `path` (strings, `''` when
- * unset), or `{}` when there is no document.
- * @param {string} path
- * @returns {{ review_round?: string, review_status?: string }}
- */
-export function reviewFieldsAt(path) {
-  const doc = readChange(path);
-  return doc ? Object.fromEntries(REVIEW_FIELDS.map((k) => [k, String(doc.fm[k] ?? '')])) : {};
-}
-
-/**
- * Apply the outcome of an interactive fix session (`bl implement` while a
- * review is pending, F-68 D3): with `fixed: true`, set `review_status: fixed`
- * in the change document at `changePath`; otherwise put back the review
- * fields `before` (what they held when the session started) and print why.
- * bl commits the document when it wrote it. Returns whether the status is now
- * `fixed`.
- * @param {string} backlogRoot
- * @param {{ id: string, changePath: string }} unit
+ * @param {{ id: string, kind: "story" | "feature", indexPath: string }} unit
  * @param {{ structured: object|null, structuredError: string|null }} outcome
- * @param {{ review_round?: string, review_status?: string }} [before]
+ * @param {{ fm: object } | null} [change]
  * @returns {boolean}
  */
-export function applyFixOutcome(backlogRoot, { id, changePath }, { structured, structuredError }, before = {}) {
+export function applyFixOutcome(backlogRoot, { id, kind, indexPath }, { structured, structuredError }, change = null) {
   const fixed = Boolean(structured?.fixed);
   if (!structured) {
-    warn(`no fix outcome (${structuredError}); ${id}'s review status is unchanged`);
+    warn(`no fix outcome (${structuredError}); ${id} stays in fixing`);
   } else if (!fixed) {
-    warn(`${id}: ${structured.open} review item(s) still open; the review status is unchanged: ${structured.summary}`);
+    warn(`${id}: ${structured.open} review item(s) still open; ${id} stays in fixing: ${structured.summary}`);
   }
-  if (!existsSync(changePath)) {
-    if (fixed) warn(`${id}: no change document at ${changePath}; the review status is not written`);
+  if (!fixed) return false;
+  const opts = { by: 'fix', via: 'fix', outcome: structured.summary };
+  try {
+    if (!transition(backlogRoot, { kind, indexPath, change }, 'in_review', opts)) return false;
+  } catch (e) {
+    // The unit moved during the session (`NoEdgeError`), or its log is malformed.
+    if (!(e instanceof FlowError)) throw e;
+    warn(`${id}: the fix is not recorded in the transition log: ${e.message}`);
     return false;
   }
-  const next = fixed ? { ...before, review_status: 'fixed' } : before;
-  const found = setReviewFields(backlogRoot, changePath, next);
-  if (Object.entries(next).some(([k, v]) => found[k] !== v)) {
-    commitChangeDoc(backlogRoot, changePath, fixed ? `chore: ${id} review fixed` : `chore: ${id} review not fixed`);
-  }
-  return fixed;
+  commitChangeDoc(backlogRoot, indexPath, `chore: ${id} review fixed`);
+  return true;
 }
 
 /**
- * Commit the change document at `path` in the backlog, skipped when the
- * backlog is not a git repository; a failed commit is a warning.
+ * Commit the change document at `path` (or the files at `path`, a list) in
+ * the backlog, skipped when the backlog is not a git repository; a failed
+ * commit is a warning.
  */
 function commitChangeDoc(backlogRoot, path, message) {
   if (!existsSync(join(backlogRoot, '.git'))) return;
-  const rel = relative(backlogRoot, path);
-  const c = commitPaths(backlogRoot, [rel], message);
-  if (!c.committed) warn(`${rel} is written but not committed (${c.error ?? 'nothing to commit'})`);
+  const rels = [path].flat().map((p) => relative(backlogRoot, p));
+  const c = commitPaths(backlogRoot, rels, message);
+  if (!c.committed) warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
 }
 
 /**
- * A new document from `templates/change.md`: `status: open`, round 0, one
+ * A new document from `templates/change.md`: `status: open`, one
  * `repos:` entry per `{ repo, branch }`. `change_of:` is set on the parsed
  * frontmatter (F-62 D3); `{{changeOf}}` and `{{title}}` are filled in the body.
  */
@@ -275,7 +273,7 @@ export function setRepo(doc, repo, fields = {}) {
  * Make sure the unit has an open change document naming every repo in
  * `repos` (`[{ repo, branch }]`). The current open document gains the
  * entries it lacks, and an entry without a branch gets the one given; with
- * no open document (none yet, or the last one merged or closed) the next
+ * no open document (none yet, or the last one merged or dropped) the next
  * number is created. The entries take the order of `repos`, so a resumed
  * document's first entry is the lead repo of the order derived now (F-52
  * D3); an entry `repos` does not name keeps its place after them. Writes
@@ -288,7 +286,7 @@ export function ensureChange(backlogRoot, unitDir, { changeOf, title = '', repos
   let path;
   let doc;
   let created = false;
-  if (cur && isOpen(cur.doc)) {
+  if (cur && isOpenChange(cur.doc)) {
     ({ path, doc } = cur);
   } else {
     path = changePath(unitDir, cur ? cur.n + 1 : 1);
@@ -388,20 +386,22 @@ export function appendSection(body, name, text) {
 }
 
 /**
- * The verb that moves an open change on: `merge` once its review is
- * `addressed`, else `run` (`bl review`'s summary line, `bl inbox`'s change
- * items). `reviewEnd` refines it by the session counts: `addressed` with an
- * open Must fix/Should fix box gives `bl implement`, not `bl merge`.
+ * The verb that moves an open change on: `merge` once its unit is
+ * `ready_for_merge` (F-69 D5), else `run` (`bl review`'s summary line, `bl
+ * inbox`'s change items). `status` is the unit's, with its review position
+ * (`statusOf` with its change document). `reviewEnd` refines it by the session counts:
+ * `ready_for_merge` with an open Must fix/Should fix box gives `bl review`,
+ * not `bl merge`.
  */
-export function changeNextVerb(reviewStatus) {
-  return reviewStatus === 'addressed' ? 'merge' : 'run';
+export function changeNextVerb(status) {
+  return status === 'ready_for_merge' ? 'merge' : 'run';
 }
 
 /**
  * What the rest of bl reads off a unit's current change: `repo`'s branch, PR
  * and URL (a story passes its one repo; a feature none, so its first
- * `repos:` entry, the lead repo's, F-52 D3), the review state, and the body
- * the Review Log lives in. Every field is empty when the unit has no change
+ * `repos:` entry, the lead repo's, F-52 D3), and the body the Review Log
+ * lives in. Every field is empty when the unit has no change
  * document. `read` as for `currentChange`.
  */
 export function unitChange(unitDir, repo = '', read = readChange) {
@@ -415,8 +415,6 @@ export function unitChange(unitDir, repo = '', read = readChange) {
     branch: primary.branch ?? '',
     pr: primary.pr ?? '',
     prUrl: primary.url ?? '',
-    reviewStatus: doc?.fm.review_status ?? '',
-    reviewRoundRaw: doc?.fm.review_round ?? '',
     changeBody: doc?.body ?? '',
   };
 }

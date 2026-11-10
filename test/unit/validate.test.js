@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   findCycles,
   findDanglingFindings,
@@ -13,7 +13,7 @@ import {
   VALID_STORY_KEYS,
 } from '../../src/validate.js';
 import { loadBacklog } from '../../src/backlog-graph.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 import { MALFORMED_UPDATE_REQUESTS } from '../helpers/update-requests.js';
 import { Flow, loadFlow } from '../../src/flow.js';
 import { EFFORT_LEVELS } from '../../src/effort.js';
@@ -71,7 +71,7 @@ test('repo-key: either repo key on a story or a feature is an error, once each, 
 
 test("findFeatureFindings no longer reads a feature's repo keys (F-52 D5)", () => {
   const f = feat({ fm: { primary_repo: 'bl', secondary_repos: '[x]' } });
-  assert.deepEqual(featureCodes(findFeatureFindings([f])), []);
+  assert.deepEqual(featureCodes(findFeatureFindings([f], loadFlow(dirname(FLOW_TEMPLATE)))), []);
 });
 
 test('found-by: a found_by naming no feature or story is an error; a real one, or none, is not (F-48 D2)', () => {
@@ -303,6 +303,21 @@ test('validateFrontmatter checks required keys', () => {
   const codes = findings.map((f) => f.code);
   assert.ok(codes.includes('missing-required-key'));
   assert.ok(findings.some((f) => f.message.includes('title')));
+});
+
+test('a story or feature with a transition log needs no status: (F-69 D2)', () => {
+  const transitions = [{ at: '2026-11-01T00:00:00Z', to: 'draft', by: 'new' }];
+  for (const [kind, fm] of [
+    ['story', { story_id: 'S-1', title: 'T', transitions }],
+    ['feature', { feature_id: 'F-1', title: 'T', transitions }],
+  ]) {
+    assert.deepEqual(validateFrontmatter(fm, kind, 'path/1'), [], kind);
+    const missing = validateFrontmatter({ ...fm, transitions: [] }, kind, 'path/1');
+    assert.deepEqual(
+      missing.map((f) => f.message),
+      [`${kind} missing required key "status"`],
+    );
+  }
 });
 
 test('validateFrontmatter checks status against the flow it is given', () => {
@@ -747,14 +762,32 @@ test('validateFrontmatter accepts pending, fixed, and addressed', async () => {
   }
 });
 
-test('validateReviewLog: pending without a Review Log section fires', async () => {
+/** The unit logs the review findings read (F-69 D5): each name is the status it ends at. */
+const REVIEW_LOGS = {
+  in_progress: ['draft', 'in_progress'],
+  fixing: ['draft', 'in_progress', 'in_review', 'fixing'],
+  fixed: ['draft', 'in_progress', 'in_review', 'fixing', 'in_review'],
+  ready_for_merge: ['draft', 'in_progress', 'in_review', 'ready_for_merge'],
+  // Escalated, with the review position the escalation left (fixing, clean).
+  escalated_fixing: ['draft', 'in_progress', 'in_review', 'fixing', 'escalated'],
+  escalated_clean: ['draft', 'in_progress', 'in_review', 'ready_for_merge', 'escalated'],
+  done: ['draft', 'in_progress', 'in_review', 'ready_for_merge', 'done'],
+};
+
+/** validateReviewLog on a feature whose log ends as `state` names, against a change body. */
+async function reviewLogFindings(state, body) {
   const { validateReviewLog } = await import('../../src/validate.js');
-  const findings = validateReviewLog({ review_status: 'pending' }, '# Title\n\n## Summary\nfoo\n', 'path/1');
+  const flow = loadFlow(dirname(FLOW_TEMPLATE));
+  const fm = { feature_id: 'F-1', transitions: REVIEW_LOGS[state].map((to) => ({ to, by: 'operator' })) };
+  return validateReviewLog({ kind: 'feature', fm, flow }, { fm: {}, body }, 'path/1');
+}
+
+test('validateReviewLog: fixing without a Review Log section fires', async () => {
+  const findings = await reviewLogFindings('fixing', '# Title\n\n## Summary\nfoo\n');
   assert.ok(findings.some((f) => f.code === 'review-log-missing'));
 });
 
-test('validateReviewLog: pending with a session passes', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: fixing with a session passes', async () => {
   const body = `# Title
 
 ## Review Log
@@ -765,12 +798,11 @@ test('validateReviewLog: pending with a session passes', async () => {
 
 - [ ] open
 `;
-  const findings = validateReviewLog({ review_status: 'pending' }, body, 'path/1');
+  const findings = await reviewLogFindings('fixing', body);
   assert.equal(findings.length, 0);
 });
 
-test('validateReviewLog: addressed with unchecked items fires', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: ready_for_merge with unchecked items fires', async () => {
   const body = `# Title
 
 ## Review Log
@@ -781,12 +813,11 @@ test('validateReviewLog: addressed with unchecked items fires', async () => {
 
 - [ ] still open
 `;
-  const findings = validateReviewLog({ review_status: 'addressed' }, body, 'path/1');
+  const findings = await reviewLogFindings('ready_for_merge', body);
   assert.ok(findings.some((f) => f.code === 'review-log-unaddressed'));
 });
 
-test('validateReviewLog: addressed with only an open nit passes, as bl merge does', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: ready_for_merge with only an open nit passes, as bl merge does', async () => {
   const body = `# Title
 
 ## Review Log
@@ -805,12 +836,11 @@ None.
 
 - [ ] [safe] optional tidy-up
 `;
-  const findings = validateReviewLog({ review_status: 'addressed' }, body, 'path/1');
+  const findings = await reviewLogFindings('ready_for_merge', body);
   assert.equal(findings.length, 0);
 });
 
-test('validateReviewLog: addressed with all items checked passes', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: ready_for_merge with all items checked passes', async () => {
   const body = `# Title
 
 ## Review Log
@@ -821,18 +851,16 @@ test('validateReviewLog: addressed with all items checked passes', async () => {
 
 - [x] done
 `;
-  const findings = validateReviewLog({ review_status: 'addressed' }, body, 'path/1');
+  const findings = await reviewLogFindings('ready_for_merge', body);
   assert.equal(findings.length, 0);
 });
 
-test('validateReviewLog: fixed without a Review Log section fires', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
-  const findings = validateReviewLog({ review_status: 'fixed' }, '# Title\n\n## Summary\nfoo\n', 'path/1');
+test('validateReviewLog: in_review after a fix without a Review Log section fires', async () => {
+  const findings = await reviewLogFindings('fixed', '# Title\n\n## Summary\nfoo\n');
   assert.ok(findings.some((f) => f.code === 'review-log-missing'));
 });
 
-test('validateReviewLog: fixed with unchecked items fires', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: in_review after a fix with unchecked items fires', async () => {
   const body = `# Title
 
 ## Review Log
@@ -843,12 +871,11 @@ test('validateReviewLog: fixed with unchecked items fires', async () => {
 
 - [ ] still open
 `;
-  const findings = validateReviewLog({ review_status: 'fixed' }, body, 'path/1');
+  const findings = await reviewLogFindings('fixed', body);
   assert.ok(findings.some((f) => f.code === 'review-log-unaddressed'));
 });
 
-test('validateReviewLog: fixed with all items checked passes', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
+test('validateReviewLog: in_review after a fix with all items checked passes', async () => {
   const body = `# Title
 
 ## Review Log
@@ -859,14 +886,46 @@ test('validateReviewLog: fixed with all items checked passes', async () => {
 
 - [x] done → fixed in abc1234
 `;
-  const findings = validateReviewLog({ review_status: 'fixed' }, body, 'path/1');
+  const findings = await reviewLogFindings('fixed', body);
   assert.equal(findings.length, 0);
 });
 
-test('validateReviewLog: no review_status returns no findings', async () => {
-  const { validateReviewLog } = await import('../../src/validate.js');
-  const findings = validateReviewLog({}, '# Title\n', 'path/1');
+test('validateReviewLog reads the review position, whatever the status (F-69 D5)', async () => {
+  const open = '## Review Log\n\n### Session 2026-05-11 (PR #1)\n\n**Must fix**\n\n- [ ] still open\n';
+  const cases = [
+    ['escalated_fixing', '# Title\n', 'review-log-missing', 'the unit is escalated with its review at fixing'],
+    ['escalated_clean', open, 'review-log-unaddressed', 'the unit is escalated with its review at ready_for_merge'],
+  ];
+  for (const [state, body, code, message] of cases) {
+    const findings = await reviewLogFindings(state, body);
+    assert.deepEqual(
+      findings.map((f) => [f.code, f.message.startsWith(message)]),
+      [[code, true]],
+      state,
+    );
+  }
+});
+
+test('validateReviewLog: a unit with no review returns no findings', async () => {
+  const findings = await reviewLogFindings('in_progress', '# Title\n');
   assert.equal(findings.length, 0);
+});
+
+test('validateReviewLog: a closed unit is not checked, whatever its Review Log holds', async () => {
+  const body = '## Review Log\n\n### Session 2026-05-11 (PR #1)\n\n**Must fix**\n\n- [ ] still open\n';
+  assert.deepEqual(await reviewLogFindings('done', body), []);
+});
+
+test('validateReviewLog: a unit with no log reads its change document, the old shape (F-69 D4)', async () => {
+  const { validateReviewLog } = await import('../../src/validate.js');
+  const flow = loadFlow(dirname(FLOW_TEMPLATE));
+  const fm = { feature_id: 'F-1', status: 'running' };
+  const change = { fm: { review_round: '1', review_status: 'pending' }, body: '# F-1\n' };
+  const findings = validateReviewLog({ kind: 'feature', fm, flow }, change, 'path/1');
+  assert.deepEqual(
+    findings.map((f) => [f.code, f.message]),
+    [['review-log-missing', 'the unit is fixing but no ## Review Log session is present']],
+  );
 });
 
 test('headless token keys written by the feature loop are known frontmatter keys', async () => {
@@ -1150,11 +1209,11 @@ test('frontmatter_list_members_cannot_silently_remove_blockers', async () => {
 
 test("bad-status: story and feature statuses are the flow's, not bl's code's (F-66 D1)", () => {
   const flow = new Flow('flow.json', {
-    schema: 'bl-flow/v1',
+    schema: 'bl-flow/v2',
     types: {
-      story: { statuses: { open: { implies: [] }, done: { implies: ['open'] } }, gates: {} },
-      feature: { statuses: { draft: { implies: [] } }, gates: {} },
-      task: { statuses: { open: { implies: [] } }, gates: {} },
+      story: { statuses: ['open', 'done'], terminal: ['done'], verbs: {}, gates: {} },
+      feature: { statuses: ['draft'], terminal: [], verbs: {}, gates: {} },
+      task: { statuses: ['open'], terminal: [], verbs: {}, gates: {} },
     },
   });
   const status = (fm, kind) =>
@@ -1163,11 +1222,34 @@ test("bad-status: story and feature statuses are the flow's, not bl's code's (F-
       .map((f) => f.message);
   assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'open' }, 'story'), []);
   assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'refined' }, 'story'), [
-    'status "refined" not in known set (flow.json story statuses)',
+    'status "refined" not in known set (flow.json story statuses: open, done)',
   ]);
   assert.deepEqual(status({ feature_id: 'F-1', title: 'X', status: 'draft' }, 'feature'), []);
   assert.deepEqual(status({ feature_id: 'F-1', title: 'X', status: 'running' }, 'feature'), [
-    'status "running" not in known set (flow.json feature statuses)',
+    'status "running" not in known set (flow.json feature statuses: draft)',
+  ]);
+});
+
+test('bad-status: a v1 word is a warning naming its current word; an unknown word stays an error (F-69 D6)', () => {
+  const flow = loadFlow(dirname(FLOW_TEMPLATE));
+  const status = (fm, kind) =>
+    validateFrontmatter(fm, kind, 'p', { flow })
+      .filter((f) => f.code === 'bad-status')
+      .map((f) => `${f.severity}: ${f.message}`);
+  const migrate = 'node bl/scripts/migrate-transitions.js rewrites it';
+  assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'backlog' }, 'story'), [
+    `warning: status "backlog" is the old word for "draft"; ${migrate}`,
+  ]);
+  assert.deepEqual(status({ feature_id: 'F-1', title: 'X', status: 'running' }, 'feature'), [
+    `warning: status "running" is the old word for "in_progress"; ${migrate}`,
+  ]);
+  assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'draft' }, 'story'), []);
+  assert.deepEqual(status({ feature_id: 'F-1', title: 'X', status: 'ready_for_merge' }, 'feature'), []);
+  assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'approved' }, 'story'), [
+    'error: status "approved" not in known set (flow.json story statuses: draft, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+  ]);
+  assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'open' }, 'story'), [
+    'error: status "open" not in known set (flow.json story statuses: draft, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
   ]);
 });
 

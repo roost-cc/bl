@@ -6,6 +6,7 @@ import { findExistingWorktree } from '../../src/story.js';
 import { runBl } from '../helpers/run-bl.js';
 import { git, headFiles, statusLines, dirtyBystanders } from '../helpers/git-backlog.js';
 import { build, fmOf, members, storyDirs } from '../helpers/side-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 /** The HEAD commit's paths. */
 function committed(dir) {
@@ -27,7 +28,7 @@ test("bl side <repo> --from a running feature: a story in the repo's home compon
   assert.equal(fm.component, 'C01');
   assert.equal(fm.feature, 'F-1');
   assert.equal(fm.found_by, 'F-1');
-  assert.equal(fm.status, 'in_progress');
+  assert.equal(logStatusOf('story', fm), 'in_progress');
   assert.equal(fm.type, 'chore');
   assert.equal(fm.title, "Fix: B's thing");
   assert.deepEqual(Object.keys(fm).slice(Object.keys(fm).indexOf('feature'), Object.keys(fm).indexOf('feature') + 2), [
@@ -115,7 +116,7 @@ test('bl side --from a draft feature or a standalone story: a standalone story o
     const fm = fmOf(join(dir, out.path));
     assert.equal(fm.feature, undefined);
     assert.equal(fm.found_by, from);
-    assert.equal(fm.status, 'in_progress');
+    assert.equal(logStatusOf('story', fm), 'in_progress');
     // An empty list key reads as "" (a bare `key:`); required_for is
     // derived, never written (F-77 D3).
     assert.deepEqual([fm.depends_on, Object.hasOwn(fm, 'required_for')], ['', false]);

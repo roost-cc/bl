@@ -22,9 +22,8 @@ The backlog is a **separate git repo** from the code. That means:
 
 1. {{readTool}} the story file directly at `{{storyAbsPath}}`. Do not search for it.
 
-2. If the story is not yet `status: in_progress`, update the frontmatter in the story file, on
-   the backlog repo's main branch. Commit it as **Backlog commits** below says, with the message
-   `chore: mark {{storyId}} in_progress` and `--story {{storyId}}`.
+2. Do not set the story's status: `bl implement` recorded `in_progress` on it before this
+   session started.
 
 3. Implement the story in this worktree by its execution plan.
    When the story fixes a bug, first write a test that fails because of the bug, then make it

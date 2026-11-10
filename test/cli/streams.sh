@@ -241,12 +241,13 @@ node -e '
   fs.writeFileSync(path2, t2);
 ' "$S2"
 
-# Mark S-1 done by editing frontmatter (skip bl done — just need a closed story).
+# Mark S-1 done by editing frontmatter (skip bl done — just need a closed story):
+# an operator entry to done in its transition log (F-69 D2).
 node -e '
   const fs = require("fs");
   const p = process.argv[1];
   let t = fs.readFileSync(p, "utf8")
-    .replace(/^status:.*$/m, "status: done")
+    .replace(/^(  - at: (\S+)\n    to: draft\n    by: new)$/m, "$1\n  - at: $2\n    to: done\n    by: operator")
     .replace(/^completed:.*$/m, "completed: 2026-05-03")
     .replace(/^commit:.*$/m, "commit: deadbee");
   fs.writeFileSync(p, t);

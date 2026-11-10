@@ -75,7 +75,11 @@ story_id: S-1
 title: First
 type: feature
 points: 1
-status: backlog
+transitions:
+  - at: 2026-01-01T00:00:00Z
+    to: draft
+    by: new
+added: 2026-01-01
 ---
 MD
   # The priority (F-78 D1): an empty `ranked:` is a clean one.
@@ -167,7 +171,7 @@ story_id: S-2
 title: Second
 type: feature
 points: 1
-status: backlog
+status: draft
 bogus_key: x
 ---
 MD

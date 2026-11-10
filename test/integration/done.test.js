@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import { dirname, join } from 'path';
 import { mkTempBacklog, STORY_INDEX_TEMPLATE } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
-import { parseFrontmatter } from '../../src/config.js';
+import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import {
   GIT_ENV,
   git,
@@ -14,6 +14,7 @@ import {
   dirtyBystanders,
   statusLines,
 } from '../helpers/git-backlog.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const FOUNDATION = { id: 'C00', title: 'Foundation', dirSuffix: 'foundation' };
 
@@ -46,7 +47,7 @@ test('bl done <story-id> sets status, commit and completed, and moves nothing', 
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     const fm = storyFm(dir, rel);
-    assert.equal(fm.status, 'done');
+    assert.equal(logStatusOf('story', fm), 'done');
     assert.equal(fm.commit, 'deadbeef');
     assert.match(fm.completed, /^\d{4}-\d{2}-\d{2}$/);
     assertNothingArchived(dir);
@@ -61,7 +62,7 @@ test('bl done --superseded marks story as superseded rather than done', () => {
   try {
     const r = runBl(['done', '--superseded', 'S-1', 'abcdef0'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(storyFm(dir, rel).status, 'superseded');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'superseded');
     assertNothingArchived(dir);
   } finally {
     cleanup();
@@ -98,51 +99,68 @@ test('bl done refuses a story that is already done', () => {
   }
 });
 
-/** Write the story's change document with `reviewStatus` and a Review Log of Must-fix `items` and `nits`. */
-function writeReview(dir, rel, reviewStatus, date, items, nits = 'None.') {
-  const { fm } = parseFrontmatter(readFileSync(join(dir, rel), 'utf8'));
+/** The story logs `writeReview` writes (F-69 D5), by the review state each ends at. */
+const REVIEWED = {
+  fixing: ['in_review:run', 'fixing:review'],
+  fixed: ['in_review:run', 'fixing:review', 'in_review:fix'],
+  ready_for_merge: ['in_review:run', 'ready_for_merge:review'],
+};
+
+/**
+ * Put the story's log at `state` (`REVIEWED`), and write its change document
+ * with a Review Log of Must-fix `items` and `nits`.
+ */
+function writeReview(dir, rel, state, date, items, nits = 'None.') {
+  const { fm, body } = parseFrontmatter(readFileSync(join(dir, rel), 'utf8'));
+  delete fm.status;
+  fm.transitions = ['draft:new', 'in_progress:implement', ...REVIEWED[state]].map((step) => {
+    const [to, by] = step.split(':');
+    return { at: '2026-11-01T00:00:00Z', to, by };
+  });
+  writeFileSync(join(dir, rel), serializeFrontmatter(fm) + body);
   const log =
     items == null
       ? ''
       : `\n## Review Log\n\n### Session ${date} (PR #1)\n\n**Must fix**\n\n${items}\n\n**Should fix**\nNone.\n\n**Nits**\n${nits}\n`;
   writeFileSync(
     join(dirname(join(dir, rel)), 'change.md'),
-    `---\nchange_of: S-1\nstatus: open\nreview_status: ${reviewStatus}\n---\n\n# ${fm.title}\n${log}`,
+    `---\nchange_of: S-1\nstatus: open\n---\n\n# ${fm.title}\n${log}`,
   );
 }
 
-test('bl done refuses while review_status: pending', () => {
+test('bl done refuses while the story is in fixing', () => {
   const { dir, rel, cleanup } = backlogWithStory('Pending Review Story');
   try {
-    writeReview(dir, rel, 'pending', '2026-05-11', '- [ ] still open');
+    writeReview(dir, rel, 'fixing', '2026-05-11', '- [ ] still open');
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /review_status: pending/);
+    assert.match(r.stderr, /\(fixing, round 1,/);
+    assert.match(r.stderr, /bl implement S-1/);
     assert.match(r.stderr, /1 unchecked Must\/Should/);
     assert.match(r.stderr, /2026-05-11/);
-    assert.equal(storyFm(dir, rel).status, 'backlog', 'the story is left as it was');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'fixing', 'the story is left as it was');
   } finally {
     cleanup();
   }
 });
 
-test('bl done refuses while review_status: fixed (awaiting re-review)', () => {
+test('bl done refuses while the story is in review after a fix (awaiting re-review)', () => {
   const { dir, rel, cleanup } = backlogWithStory('Fixed Awaiting Rereview');
   try {
     writeReview(dir, rel, 'fixed', '2026-07-01', '- [x] was broken → fixed in abc1234');
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.notEqual(r.status, 0, 'fixed must block done until re-reviewed');
-    assert.match(r.stderr, /review_status: fixed/);
+    assert.match(r.stderr, /\(in_review, round 2,/);
     assert.match(r.stderr, /bl review S-1/);
   } finally {
     cleanup();
   }
 });
 
-test('bl done refuses when addressed but the latest session has unchecked items', () => {
+test('bl done refuses when ready_for_merge but the latest session has unchecked items', () => {
   const { dir, rel, cleanup } = backlogWithStory('Falsely Addressed Story');
   try {
-    writeReview(dir, rel, 'addressed', '2026-07-01', '- [ ] never actually fixed');
+    writeReview(dir, rel, 'ready_for_merge', '2026-07-01', '- [ ] never actually fixed');
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.notEqual(r.status, 0, 'unchecked items must block done even when frontmatter says addressed');
     assert.match(r.stderr, /1 unchecked Must\/Should/);
@@ -151,25 +169,25 @@ test('bl done refuses when addressed but the latest session has unchecked items'
   }
 });
 
-test('bl done proceeds when addressed with only an open nit, as bl merge does', () => {
+test('bl done proceeds when ready_for_merge with only an open nit, as bl merge does', () => {
   const { dir, rel, cleanup } = backlogWithStory('Addressed With Nit');
   try {
-    writeReview(dir, rel, 'addressed', '2026-11-07', '- [x] fixed in abc1234', '- [ ] [safe] optional tidy-up');
+    writeReview(dir, rel, 'ready_for_merge', '2026-11-07', '- [x] fixed in abc1234', '- [ ] [safe] optional tidy-up');
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(storyFm(dir, rel).status, 'done');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'done');
   } finally {
     cleanup();
   }
 });
 
-test('bl done proceeds when review_status: addressed', () => {
+test('bl done proceeds when the story is ready_for_merge', () => {
   const { dir, rel, cleanup } = backlogWithStory('Addressed Review Story');
   try {
-    writeReview(dir, rel, 'addressed', '', null);
+    writeReview(dir, rel, 'ready_for_merge', '', null);
     const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(storyFm(dir, rel).status, 'done');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'done');
   } finally {
     cleanup();
   }
@@ -185,7 +203,7 @@ test('bl done --commit <repo>=<sha> records a map in frontmatter', () => {
     assert.equal(r.status, 0, r.stderr);
     const fm = storyFm(dir, rel);
     assert.deepEqual(fm.commit, { bl: 'abc1234', containers: 'def5678' });
-    assert.equal(fm.status, 'done');
+    assert.equal(logStatusOf('story', fm), 'done');
   } finally {
     cleanup();
   }
@@ -332,7 +350,7 @@ test("bl done commits the story's status change in place, nothing else", () => {
     assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: mark S-1 done');
     assert.deepEqual(headFiles(dir), [`M\t${S1}/index.md`]);
     const { fm } = parseFrontmatter(git(dir, 'show', `HEAD:${S1}/index.md`));
-    assert.equal(fm.status, 'done');
+    assert.equal(logStatusOf('story', fm), 'done');
     assert.equal(fm.commit, 'deadbeef');
     assertOnlyBystandersDirty(dir);
   } finally {
@@ -399,7 +417,7 @@ test('bl done exits 1 and names the paths when the commit fails, leaving the edi
     assert.match(r.stderr, /Commit these backlog paths by hand:/);
     assert.match(r.stderr, new RegExp(`${S1}/index\\.md`));
     assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
-    assert.equal(parseFrontmatter(readFileSync(join(dir, S1, 'index.md'), 'utf8')).fm.status, 'done');
+    assert.equal(logStatusOf('story', parseFrontmatter(readFileSync(join(dir, S1, 'index.md'), 'utf8')).fm), 'done');
     assert.ok(existsSync(join(dir, '.bl', 'run', 'commit-failed', 'done_S-1.json')), 'the failed commit is recorded');
   } finally {
     cleanup();
@@ -623,7 +641,7 @@ test('bl done: a failed write of the story leaves the previous spec and no stagi
 
     const again = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
     assert.equal(again.status, 0, again.stderr);
-    assert.equal(storyFm(dir, rel).status, 'done');
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'done');
   } finally {
     cleanup();
   }
@@ -645,7 +663,7 @@ test('bl done: a token write racing the reconciliation keeps the session differe
     for (let i = 0; i < 200 && !existsSync(out); i++) await new Promise((res) => setTimeout(res, 25));
     assert.deepEqual(JSON.parse(readFileSync(out, 'utf8')), { wrote: true });
     const fm = parseFrontmatter(readFileSync(path, 'utf8')).fm;
-    assert.equal(fm.status, 'done');
+    assert.equal(logStatusOf('story', fm), 'done');
     assert.equal(fm.commit, 'deadbeef');
     assert.equal(fm.tokens_by_step?.implement?.input, '5', 'the session difference is kept');
     assert.equal(fm.tokens_input, '20', 'the reconciled 15 plus the difference written after it');
@@ -665,7 +683,7 @@ test('bl done: a CRLF story keeps one frontmatter block and its line end', () =>
     const text = readFileSync(path, 'utf8');
     assert.equal(text.match(/^---\r$/gm).length, 2, 'one block');
     assert.doesNotMatch(text.replace(/\r\n/g, ''), /\n/, 'every line ends CRLF');
-    assert.equal(parseFrontmatter(text.replace(/\r\n/g, '\n')).fm.status, 'done');
+    assert.equal(logStatusOf('story', parseFrontmatter(text.replace(/\r\n/g, '\n')).fm), 'done');
   } finally {
     cleanup();
   }

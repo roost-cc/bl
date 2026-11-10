@@ -16,8 +16,9 @@ import { outcomePath } from '../../src/outcome.js';
 import { refineBatchId } from '../../src/refine.js';
 import { git, statusLines } from '../helpers/git-backlog.js';
 import { F1, S1, S2, S3, gitBacklog, refine } from '../helpers/refine-session.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
-const statusOf = (dir, rel) => parseFrontmatter(readFileSync(join(dir, rel), 'utf8')).fm.status;
+const statusOf = (dir, rel) => logStatusOf('story', parseFrontmatter(readFileSync(join(dir, rel), 'utf8')).fm);
 const json = (o) => JSON.stringify(o);
 
 test('refined: true sets the story to refined, and bl commits the status', () => {
@@ -37,7 +38,7 @@ test('refined: false leaves the story in backlog and prints the reason', () => {
   const outcome = json({ summary: 'Stopped.', refined: false, reason: 'the API it needs is undecided' });
   const r = refine(dir, ['S-1'], { outcome, outcomeUnit: 'S-1' });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(statusOf(dir, S1), 'backlog');
+  assert.equal(statusOf(dir, S1), 'draft');
   assert.match(r.stderr, /S-1 is not refined; its status is unchanged: the API it needs is undecided/);
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
 });
@@ -46,7 +47,7 @@ test('no outcome file leaves the status alone, prints the fault, and the session
   const dir = gitBacklog();
   const r = refine(dir, ['S-1'], { write: [S1] });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(statusOf(dir, S1), 'backlog');
+  assert.equal(statusOf(dir, S1), 'draft');
   assert.match(r.stderr, /No refine outcome \(no outcome file at .*S-1\.json\); every status is unchanged/);
   assert.match(r.stderr, /Run `bl refine S-1` again/);
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: refine S-1');
@@ -57,7 +58,7 @@ test('an outcome that does not match the schema leaves the status alone and name
   const dir = gitBacklog();
   const r = refine(dir, ['S-1'], { outcome: json({ summary: 'Planned it.', refined: 'yes' }), outcomeUnit: 'S-1' });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(statusOf(dir, S1), 'backlog');
+  assert.equal(statusOf(dir, S1), 'draft');
   assert.match(r.stderr, /No refine outcome \(schema violation at \$\/refined: must be boolean\)/);
 });
 
@@ -82,7 +83,7 @@ test('the batch sets each story from its entry, and prints the reason for the ot
   const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: refineBatchId(['S-1', 'S-2']) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'refined');
-  assert.equal(statusOf(dir, S2), 'backlog');
+  assert.equal(statusOf(dir, S2), 'draft');
   assert.match(r.stderr, /S-2 is not refined; its status is unchanged: too large/);
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: refine S-1, S-2');
   assert.deepEqual(statusLines(dir), []);
@@ -94,7 +95,7 @@ test('the batch leaves a story the outcome does not name, and says so', () => {
   const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: refineBatchId(['S-1', 'S-2']) });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'refined');
-  assert.equal(statusOf(dir, S2), 'backlog');
+  assert.equal(statusOf(dir, S2), 'draft');
   assert.match(r.stderr, /S-2 is not refined; its status is unchanged: the outcome has no entry for it/);
 });
 

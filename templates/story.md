@@ -5,7 +5,7 @@ title:
 type:
 points:
 effort:
-status: backlog
+transitions:
 added:
 feature:
 found_by:

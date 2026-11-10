@@ -30,13 +30,44 @@ import {
   warn,
 } from './config.js';
 import { statusWords } from './flow.js';
+import { CHECKBOX_RE } from './review-log.js';
+import { statusOf } from './transition.js';
 import { entryMatches, ownFm, parseIdList, readAllStories } from './story.js';
 import { graphOf } from './backlog-graph.js';
 
 export const FEATURES_DIR = 'features';
 
-/** Statuses from which `bl run` / `bl implement` may start or resume a feature. */
-export const FEATURE_WORKABLE_STATUSES = new Set(['approved', 'running', 'escalated']);
+/**
+ * Whether `bl run` / `bl implement` may start or resume a feature at `status`:
+ * it meets `approved` and does not meet `done` (`approved` up to `escalated`).
+ * @param {import("./flow.js").Flow} flow
+ * @param {string} status
+ * @returns {boolean}
+ */
+export function isFeatureWorkable(flow, status) {
+  return flow.meets('feature', status, 'approved') && !flow.meets('feature', status, 'done');
+}
+
+/**
+ * Whether a feature at `status` has branches and worktrees, so a fixed set of
+ * repos: it meets `in_progress` and does not meet `done`.
+ * @param {import("./flow.js").Flow} flow
+ * @param {string} status
+ * @returns {boolean}
+ */
+export function isFeatureBranched(flow, status) {
+  return isFeatureWorkable(flow, status) && flow.meets('feature', status, 'in_progress');
+}
+
+/**
+ * The feature statuses `isFeatureBranched` accepts, in lifecycle order, for a
+ * message.
+ * @param {import("./flow.js").Flow} flow
+ * @returns {string[]}
+ */
+export function branchedStatusesOf(flow) {
+  return flow.statusesOf('feature').filter((s) => isFeatureBranched(flow, s));
+}
 
 export const DEFAULT_REVIEW_ROUNDS_MAX = 2;
 
@@ -92,7 +123,10 @@ function featureRecord(unit, config) {
   return {
     id: fm.feature_id,
     title: fm.title ?? '',
-    status: fm.status ?? 'draft',
+    // The log's last `to` and its review rounds (F-69 D2, D5); with no log,
+    // `status:` (a v1 word mapped) placed by the change document (D4).
+    status: statusOf('feature', fm, change.change) || unit.status,
+    round: unit.round,
     // The value axis (F-51 D1): the theme slug and the epic id as written.
     theme: String(fm.theme ?? '').trim(),
     epic: String(fm.epic ?? '').trim(),
@@ -104,8 +138,6 @@ function featureRecord(unit, config) {
     branch: change.branch,
     pr: change.pr,
     prUrl: change.prUrl,
-    reviewStatus: change.reviewStatus,
-    reviewRound: toInt(change.reviewRoundRaw),
     reviewRoundsMax: toInt(fm.review_rounds_max, DEFAULT_REVIEW_ROUNDS_MAX),
     changePath: change.changePath,
     change: change.change,
@@ -174,8 +206,9 @@ export function storyMoveRefusal(id, fm, featureId, flow) {
     if (featureId != null && (normalizeFeatureId(named)?.id ?? named) === featureId) return null;
     return `${id} is already in ${named}.`;
   }
-  if (!flow.isUnstarted('story', fm.status)) {
-    return `${id} is ${fm.status}; only a ${statusWords(flow.unstartedStatusesOf('story'))} story moves into a feature.`;
+  const status = statusOf('story', fm);
+  if (!flow.isUnstarted('story', status)) {
+    return `${id} is ${status}; only a ${statusWords(flow.unstartedStatusesOf('story'))} story moves into a feature.`;
   }
   return null;
 }
@@ -432,7 +465,7 @@ export function checkCriteria(body, { branchDeleted = true } = {}) {
   const checked = section
     .split('\n')
     .map((l) => {
-      if (!/^\s*[-*+]\s+\[ \]/.test(l)) return l;
+      if (!CHECKBOX_RE.test(l)) return l;
       if (!branchDeleted && /remote branch deleted/i.test(l)) return l;
       return l.replace('[ ]', '[x]');
     })
@@ -456,4 +489,14 @@ export function sectionHasContent(text) {
   const stripped = text.replace(/<!--[\s\S]*?-->/g, '').trim();
   if (stripped === '') return false;
   return !/^(none|n\/a|tbd|nothing|—|-)?\.?$/i.test(stripped);
+}
+
+/**
+ * Whether the unit file at `indexPath` has an open `## Escalation`: one with
+ * content (`sectionHasContent`). Here, not in `feature-run.js`, so the guards
+ * (`guards.js`) load without the loop.
+ */
+export function escalationOpen(indexPath) {
+  const text = readFileSync(indexPath, 'utf8').replace(/\r\n/g, '\n');
+  return sectionHasContent(extractSection(parseFrontmatterOf(text, indexPath).body, 'Escalation'));
 }

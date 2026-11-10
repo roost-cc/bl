@@ -115,8 +115,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
                                   each, all by hand (F-53 D2)
   coding-dictionary.yaml        ← the coding dictionary: bl init's copy of
                                   bl's seed, curated by the project (F-82)
-  flow.json                     ← every story and feature status, what each
-                                  implies, and the gates per type (F-66 D1)
+  flow.json                     ← per type the statuses, the verbs between
+                                  them and the gates (F-66 D1, F-69 D1)
   blockers.json                 ← every hold between units, one edge per line,
                                   sorted, written only by bl block (F-66 D2)
   tasks/
@@ -430,7 +430,8 @@ title: User Login # short title (used in index tables)
 type: feature # feature | bug | chore
 points: 3 # story-point estimate (Fibonacci: 1 2 3 5 8 13)
 effort: medium # optional — the refiner's effort level (low | medium | high | xhigh | max)
-status: backlog # backlog | refined | in_progress | done | superseded
+transitions: # the status log; bl writes it (see **The transition log**)
+  - { at: 2026-03-15T09:12:40Z, to: draft, by: new } # draft | refined | in_progress | in_review | fixing | ready_for_merge | escalated | done | superseded
 added: 2026-03-15 # date the story was added (YYYY-MM-DD)
 parent: S-10 # optional — parent story ID
 superseded_by: S-50 # optional — replacement story ID
@@ -471,31 +472,31 @@ positional `[commit-hash]` and `--commit` are mutually exclusive.
 
 ### Field Reference
 
-| Field               | Required | Values                                                | Notes                                                                                                             |
-| ------------------- | -------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `component`         | yes      | `C<nn>`                                               | The code boundary; the story's repo is its `repo` (F-49 D4, F-52 D1)                                              |
-| `story_id`          | yes      | `S-<nn>` (dash required)                              | Unique across the entire backlog                                                                                  |
-| `title`             | yes      | short string                                          | Appears in all index tables                                                                                       |
-| `type`              | yes      | `feature` `bug` `chore`                               | Story type                                                                                                        |
-| `points`            | yes      | 1 2 3 5 8 13                                          | Fibonacci; feature and backlog totals roll up                                                                     |
-| `effort`            | no       | `low` `medium` `high` `xhigh` `max`                   | The effort level refine chose (F-85 D1); unset runs at `effort.default`; `bad-effort` refuses another value       |
-| `status`            | yes      | `backlog` `refined` `in_progress` `done` `superseded` | Drives table placement and gates                                                                                  |
-| `added`             | yes      | `YYYY-MM-DD`                                          | Set once, never changed                                                                                           |
-| `parent`            | no       | `S-<nn>`                                              | Parent story if this was split from one                                                                           |
-| `superseded_by`     | no       | `S-<nn>`                                              | Replacement story ID                                                                                              |
-| `commit`            | on done  | short hash _or_ map `<repo>: <sha>`                   | String for single-repo stories; map for multi-repo                                                                |
-| `completed`         | on done  | `YYYY-MM-DD`                                          | Set with `status: done`                                                                                           |
-| `feature`           | no       | `F-<n>`                                               | The feature this story is part of (see **Features**); set by `bl new --feature`                                   |
-| `found_by`          | no       | `F-<n>` or `S-<n>`                                    | The unit whose work found a side story; set by `bl side --from` (F-48 D2)                                         |
-| `review_rounds_max` | no       | integer                                               | Written by a story run; caps review rounds                                                                        |
-| `update_repo`       | no       | forge slug, e.g. `acme/tools`                         | Written by `bl updates sync`; with `update_branch` the key of an update story                                     |
-| `update_branch`     | no       | branch name, e.g. `renovate/koa-3.x`                  | Written by `bl updates sync`                                                                                      |
-| `update_pr`         | no       | PR number                                             | Written by `bl updates sync`                                                                                      |
-| `update_head`       | no       | commit sha                                            | The branch head the last sync saw; `bl updates run` skips a known-red head                                        |
-| `update_security`   | no       | `true`, else absent                                   | A vulnerability-alert update; `bl updates run` takes it first                                                     |
-| `update_lockfile`   | no       | path in the repo, e.g. `mcp/package-lock.json`        | Written by `bl updates vulns`; with `update_repo` the key of a vulns story                                        |
-| `update_advisory`   | no       | advisory ids (list)                                   | Written by `bl updates vulns` on a `decide` story, sorted; any id matches, directly or through a chain of aliases |
-| `update_dropped`    | no       | date                                                  | The operator dropped this vulns story: the same findings file no new one                                          |
+| Field               | Required | Values                                         | Notes                                                                                                             |
+| ------------------- | -------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `component`         | yes      | `C<nn>`                                        | The code boundary; the story's repo is its `repo` (F-49 D4, F-52 D1)                                              |
+| `story_id`          | yes      | `S-<nn>` (dash required)                       | Unique across the entire backlog                                                                                  |
+| `title`             | yes      | short string                                   | Appears in all index tables                                                                                       |
+| `type`              | yes      | `feature` `bug` `chore`                        | Story type                                                                                                        |
+| `points`            | yes      | 1 2 3 5 8 13                                   | Fibonacci; feature and backlog totals roll up                                                                     |
+| `effort`            | no       | `low` `medium` `high` `xhigh` `max`            | The effort level refine chose (F-85 D1); unset runs at `effort.default`; `bad-effort` refuses another value       |
+| `status`            | yes      | `flow.json`'s story statuses (`draft` first)   | Drives table placement and gates                                                                                  |
+| `added`             | yes      | `YYYY-MM-DD`                                   | Set once, never changed                                                                                           |
+| `parent`            | no       | `S-<nn>`                                       | Parent story if this was split from one                                                                           |
+| `superseded_by`     | no       | `S-<nn>`                                       | Replacement story ID                                                                                              |
+| `commit`            | on done  | short hash _or_ map `<repo>: <sha>`            | String for single-repo stories; map for multi-repo                                                                |
+| `completed`         | on done  | `YYYY-MM-DD`                                   | Set by the log's entry to `done` or `superseded`                                                                  |
+| `feature`           | no       | `F-<n>`                                        | The feature this story is part of (see **Features**); set by `bl new --feature`                                   |
+| `found_by`          | no       | `F-<n>` or `S-<n>`                             | The unit whose work found a side story; set by `bl side --from` (F-48 D2)                                         |
+| `review_rounds_max` | no       | integer                                        | Written by a story run; caps review rounds                                                                        |
+| `update_repo`       | no       | forge slug, e.g. `acme/tools`                  | Written by `bl updates sync`; with `update_branch` the key of an update story                                     |
+| `update_branch`     | no       | branch name, e.g. `renovate/koa-3.x`           | Written by `bl updates sync`                                                                                      |
+| `update_pr`         | no       | PR number                                      | Written by `bl updates sync`                                                                                      |
+| `update_head`       | no       | commit sha                                     | The branch head the last sync saw; `bl updates run` skips a known-red head                                        |
+| `update_security`   | no       | `true`, else absent                            | A vulnerability-alert update; `bl updates run` takes it first                                                     |
+| `update_lockfile`   | no       | path in the repo, e.g. `mcp/package-lock.json` | Written by `bl updates vulns`; with `update_repo` the key of a vulns story                                        |
+| `update_advisory`   | no       | advisory ids (list)                            | Written by `bl updates vulns` on a `decide` story, sorted; any id matches, directly or through a chain of aliases |
+| `update_dropped`    | no       | date                                           | The operator dropped this vulns story: the same findings file no new one                                          |
 
 ## Component Frontmatter
 
@@ -566,8 +567,9 @@ theme: backlog
 ```
 
 An epic stores no `features:` or `status:` (F-77 D3): its features are the features whose
-`epic:` names it, and its status is `done` once it has features and every one is done or
-superseded, else `open` (`epicStatus`, `backlog-graph.js`).
+`epic:` names it, and its status is derived in the feature words (`epicStatus`, `backlog-graph.js`,
+F-69 D6): `draft` when it has no features or every one is `draft`, `done` when every one is done
+or superseded, else `in_progress`.
 
 A theme's body is an `## Overview` paragraph and a `## State` (F-53 D4): a hand-readable
 log, newest last, that `bl merge F-<n>` appends `- <date>: F-<n> done (<title>).` to. Its
@@ -704,68 +706,243 @@ backlog → refined → in_progress → done
 A status change rewrites no other file: the index tables are rendered from the frontmatter when
 a page is read.
 
-## Statuses and gates (`flow.json`, F-66 D1)
+## Statuses and gates (`flow.json`, F-66 D1, F-69 D1)
 
-`flow.json`, at the backlog root, names every status of a story and a feature, what each
-status implies, and the gates a unit of each type can be held at. It is plain JSON, read by
-`src/flow.js`:
+`flow.json`, at the backlog root, names per type (story, feature, task) its statuses in
+lifecycle order, the terminal ones, the verbs that move a unit between them, and the gates a
+unit can be held at. It is plain JSON, read by `src/flow.js`:
 
 ```json
 {
-  "schema": "bl-flow/v1",
+  "schema": "bl-flow/v2",
   "types": {
-    "story": {
-      "statuses": {
-        "backlog": { "implies": [] },
-        "refined": { "implies": ["backlog"] },
-        "in_progress": { "implies": ["refined", "backlog"] },
-        "done": { "implies": ["in_progress", "refined", "backlog"] },
-        "superseded": { "implies": ["done", "in_progress", "refined", "backlog"] }
+    "feature": {
+      "statuses": [
+        "draft",
+        "refined",
+        "approved",
+        "in_progress",
+        "in_review",
+        "fixing",
+        "ready_for_merge",
+        "escalated",
+        "done",
+        "superseded"
+      ],
+      "terminal": ["done", "superseded"],
+      "verbs": {
+        "run": {
+          "from": ["approved", "in_progress", "escalated"],
+          "when": ["gate_free:run", "escalation_cleared"],
+          "during": "in_progress",
+          "via": ["implement", "test", "self_review", "open_pr"],
+          "success": [{ "to": "in_review", "then": "review" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "review": {
+          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
+          "during": "in_review",
+          "via": ["review"],
+          "success": [{ "to": "ready_for_merge" }],
+          "failure": [{ "when": ["round_within_cap"], "to": "fixing", "then": "fix" }, { "to": "escalated" }]
+        },
+        "supersede": { "from": "*", "success": [{ "to": "superseded" }] }
       },
       "gates": { "run": { "verbs": ["run", "implement"] }, "merge": { "verbs": ["merge"] } }
-    },
-    "feature": { "statuses": { "draft": …, "superseded": … }, "gates": { … } }
+    }
   }
 }
 ```
 
-- **Meets.** A status meets `X` when it is `X` or lists `X` in `implies`. `implies` is
-  written in full, never derived, because the flows are not a line: a feature loops
-  `running → escalated → running`, and `superseded` is reached from any status. So
-  `superseded` meets `done` (F-66 A4) and `escalated` meets `running` but not `done`.
+- **The tables.** The template's are F-69 D1's. Feature: `new`, `refine`, `approve`, `run`,
+  `implement` (`bl implement F-n`), `review`, `fix`, `merge`, `supersede`. Story: the same
+  without `approve`, `run` from `refined`, plus `implement`, `side` and `done`. Task: `new` (to
+  `draft`) and `done`. Two rows start from more than D1 says (S-1130): `review` from
+  `in_progress` and `ready_for_merge` too, so `bl review` follows `bl implement` and re-reviews a
+  unit ready for merge; `merge` from `in_progress`, `in_review` and `ready_for_merge` for both
+  types, so `--no-review` has an edge. `review`, `merge` and `fix` start from `escalated` too,
+  and the story's `implement` as the feature's does, so the command an escalation names
+  (`bl review`, `bl merge`, `bl implement`) runs once `## Escalation` is `None.`; `fix` starts
+  from `in_progress` too, for a resumed run that stopped with items open. `mergeGates` still
+  refuses a merge with open review items, by the review position. A story uses
+  the ten words of F-69 A3 except `approved`; a task uses `draft` and `done`.
+- **A verb row.** `from` is the statuses it starts from, or `*` for every status that is not
+  terminal. `when` names guards that must hold before it starts. `during` is the status recorded
+  when it starts; its `from` lists its own `during`, so invoking it again resumes it. `via` names
+  capabilities, in order; a verb without one is a hand transition. `success` and `failure` are
+  branches `{ when?, to, then? }`, tried in order. In F-69 bl validates `then` but does not
+  follow it: `bl run` chains in code.
+- **Meets.** A status meets `X` when it is `X` or comes after `X` in `statuses`. Terminal
+  statuses come last, so `superseded` meets `done` (F-66 A4), and `escalated` meets
+  `in_progress` but not `done`. Order, not reachability, decides: `refine`'s failure branch
+  makes `draft` and `refined` a cycle, and a draft unit must not meet `refined`.
+- **Guards and capabilities** are names of functions in two registries, `src/guards.js`
+  (`GUARDS`: `gate_free:<gate>`, `escalation_cleared`, `round_within_cap`) and
+  `src/capabilities.js` (`CAPABILITIES`: every `DISPATCH` cell of `src/verbs.js`, which
+  `bl <verb> <id>` calls through it, and the steps the loop still runs in code). A `via` may
+  name only a step (`VIA_CAPABILITIES`), not a `DISPATCH` handler. The file wires them; the
+  registries define them. A guard name may carry one argument after a colon.
 - **Gates** name what a unit of the type can be held at and the verbs that check each. bl
   checks gates only at `run`, `implement` and `merge`.
 - **`src/flow.js`.** `loadFlow(backlogRoot)` returns the parsed flow (cached while the file's
-  mtime and size are unchanged) with `statusesOf(type)`, `openStatusesOf(type)` (those that do
-  not meet `done`, most `implies` first, ties in file order), `listRankOf(type, status)` (the
-  sort rank of `bl list` and `bl grep`: open statuses that meet `in_progress`, then the other open
-  statuses with any unknown one, then closed statuses in file order), `meets(type, status, wanted)`,
-  `isRunnable(type, status)` (meets `refined` and not `done`), `isUnstarted(type, status)` (a status
-  of the type that does not meet `in_progress`; an unknown one is neither), `closedStatusesOf(type)`,
-  `runnableStatusesOf(type)`, `unstartedStatusesOf(type)` (those sets in file order, which messages
-  name through `statusWords(names)`) and `gatesOf(type)`. It
-  throws a `FlowError` whose message starts with the file's path when the
-  file is missing, not JSON, has a `schema` other than `bl-flow/v1`, lacks the `story`,
-  `feature` or `task` type (`FLOW_TYPES`), or has a `statuses` or `gates` of the wrong shape;
-  a command that reads it
-  stops there. A backlog's flow is its own: code reads the running backlog's file through
-  `loadFlow`, never the template, and a pure function takes `flow` as a parameter. `bl init`
-  writes `templates/flow.json` into a backlog that has none and leaves an
-  existing one alone; test fixtures (`mkTempBacklog`, `mk_temp_backlog`) copy the same file. Only
-  `--help` falls back to the template (`flowForHelp`), since help works outside a backlog. `bl report`
-  and `bl history` read the flow once in `main` and pass it down, so a run's parts agree.
-- **The `task` type** (F-65 D1): `open` (implies nothing) and `done` (implies `open`), with
-  `gates: {}`. A task can block a unit; nothing holds a task.
+  mtime and size are unchanged) with `statusesOf(type)` (lifecycle order), `initial(type)` (the
+  first status), `openStatusesOf(type)` (those that do not meet `done`, furthest along first),
+  `listRankOf(type, status)` (the sort rank of `bl list` and `bl grep`: open statuses that meet
+  `in_progress`, then the other open statuses with any unknown one, then closed statuses in
+  order), `meets(type, status, wanted)`, `isRunnable(type, status)` (meets `refined` and not
+  `done`), `isUnstarted(type, status)` (a status of the type that does not meet `in_progress`;
+  an unknown one is neither), `closedStatusesOf(type)`, `runnableStatusesOf(type)`,
+  `unstartedStatusesOf(type)` (those sets in lifecycle order, which messages name through
+  `statusWords(names)`), `gatesOf(type)`, `verbOf(type, verb)` (the row with its optional keys
+  filled, or null), `fromOf(type, row)` (`from` with `*` expanded) and `edges(type)` (every
+  `{ from, to, by }` the table defines: each `from` to the `during`, unless they are equal, and
+  each branch's `to` from the `during`, or from each `from` when there is none; `new` gives
+  `from: null`). It throws a `FlowError` whose message starts with the file's path when the
+  file is missing, not JSON, has a `schema` other than `bl-flow/v2` or `bl-flow/v1`, lacks the
+  `story`, `feature` or `task` type (`FLOW_TYPES`), or has a part of the wrong shape; a command
+  that reads it stops there. A backlog's flow is its own: code reads the running backlog's file
+  through `loadFlow`, and a pure function takes `flow` as a parameter. `bl init` writes
+  `templates/flow.json` into a backlog that has none and leaves an existing one alone; test
+  fixtures (`mkTempBacklog`, `mk_temp_backlog`) copy the same file. `--help` falls back to the
+  template (`flowForHelp`), since help works outside a backlog. `bl report` and `bl history` read
+  the flow once in `main` and pass it down, so a run's parts agree.
+- **A v1 file** (`bl-flow/v1`: statuses with `implies`, no verbs) still loads until the
+  migration rewrites it (F-69 D4): as the template with the file's own `gates`, and
+  `flow.legacy` set. `bl validate` reports it as one `flow-json` warning that names
+  `bl/scripts/migrate-transitions.js`. The v1 words map through `LEGACY_STATUSES`
+  (`fromLegacy(type, status)`: story `backlog`, feature `running` and task `open` read as
+  `draft`, `in_progress` and `draft`). `makeUnit` (`src/backlog-graph.js`) sets `.status`
+  through it, and every `Flow` helper that takes a status reads one through it.
+- **The `task` type** (F-65 D1): `draft` and `done`, with `gates: {}`. A task can block a unit;
+  nothing holds a task.
 - **Who reads it.** `bl validate` takes story, feature and task statuses from it (`bad-status`,
   `task-field`), and reports `flow-json` for the file's own faults (see **`bl validate`**). Story
   status sets, closed checks and status tables all derive from it (S-1166), so a command that
-  reads a status stops on a `flow.json` it cannot read. What still lives in code: the feature-only
-  tables (`FEATURE_WORKABLE_STATUSES`, `BRANCHED` in `src/move.js`, `ESCALATION_GATED_STATUSES`,
-  the check for an active feature with no stories in `src/validate.js`), comparisons that name the one
-  status a line acts on (`s.status === 'superseded'` in `progress()`), and the writes that choose a
-  closing status (`src/done.js`, `src/updates.js`), which S-1130 moves.
+  reads a status stops on a `flow.json` it cannot read. The feature sets derive from it too
+  (F-69 D6): `isFeatureWorkable` (`approved` up to `escalated`: `bl side`, the
+  `feature-no-stories` check) and `isFeatureBranched` (`in_progress` up to `escalated`:
+  `bl move`, `bl attach`) in `src/feature.js`, and `escalation-not-none`'s (`Flow.isRunnable`
+  short of `escalated`). Every verb handler's start-state check is the table's (`startOf`, F-69
+  D3). What still lives in code: comparisons that name the one status a line acts on
+  (`s.status === 'superseded'` in `progress()`), and `src/updates.js`'s closing write.
   `test/unit/status-literals.test.js` counts every set of story statuses in `src/`. Status names in
   this document are the shipped flow's; messages and help name the running backlog's.
+
+## The transition log (`transitions:`, F-69 D2, D4)
+
+A story's, feature's and task's frontmatter holds `transitions:`, an append-only list of entries
+`{ at, to, by, via?, outcome?, note? }`: `at` is ISO 8601 UTC, `to` a status of the type, `by`
+the verb (`operator` for a hand edit), `via` the last capability that ran, `outcome` one line
+from its outcome, `note` free text (`migrated` on a synthesized entry). An entry's `from` is the
+previous entry's `to`.
+
+- **Derived.** The status is the last entry's `to`, and the round is the number of entries into
+  `in_review`, less the returns below. Neither is stored, and the change document holds no
+  review field (D5): before F-69 its `review_round` and `review_status` held the review state,
+  which bl now reads only for a unit with no log. `added` (the first entry's date) and `completed` (a task's
+  `done`: the date of the entry to a terminal status) stay as fields for one release; the writer
+  sets them and `bl validate` checks them (`transition-log`).
+- **The one writer** is `src/transition.js`. `applyTransition(flow, kind, fm, to, { by, via,
+outcome, note, at, change })` is pure: it appends the entry when the type's table has the edge
+  from the current status to `to` under `by` (`Flow.edges`: the verb's `during`, or a `success`
+  or `failure` branch), and throws `FlowError` with `fm` unchanged when it does not. A `during`
+  equal to the current status records nothing (null), so a review started on a unit already
+  `in_review` does not count twice. `transition(backlogRoot, unit, to, opts)` is
+  `updateSpecFile` around it and returns the entry. A caller that changes other fields in the
+  same locked write calls `applyTransition` inside its own mutate.
+  `test/unit/single-writer.test.js` fails when another module in `src/` assigns or deletes a
+  frontmatter `status` or `transitions`, renders one into a template, or writes a `status:`
+  line; `updates.js`, `updates-run.js` and `updates-vulns.js` are exempt (Out of Scope).
+- **The writers (F-69 D3).** `applyNew` gives a new story, feature or task its first entry,
+  `draft` by `new` (the templates hold `transitions:`, no `status:`). `bl refine` records
+  `refined` or `draft` by `refine`; `bl approve` `approved` by `approve` (`--force` on a draft
+  first records `refined` by `operator`); `bl side` `in_progress` by `side`; `bl done`
+  `done` by `done` or `superseded` by `supersede`; `bl task done` `done` by `done`; a scripted
+  run `in_progress` by `implement` or `done` by `done`. `enterVerb(backlogRoot, unit, verb)`
+  records a verb's start, its `during` or a hand verb's success, unless the unit is there
+  already: `bl implement` records `in_progress` by `implement` on the story (on each story of
+  a feature) before the session, and the loop does so for each story it starts or finds
+  complete. The loop records `in_progress` by `run` at run start, `in_review` by `run` via
+  `open_pr` after the PR, the review verdict (`branchOf` over the `review` row: `ready_for_merge`,
+  `fixing` while `round_within_cap`, else `escalated`) by `review`, `in_review` by `fix` via
+  `fix_self_review` after a fix, and `escalated` with every escalation (`writeEscalation`, by
+  the verb whose failure branch leaves the current status: `merge` inside `bl merge`'s
+  integration). Each session hop carries the session summary as `outcome`. `bl review` records
+  `in_review` by `review` when it starts on a unit in progress or ready for merge, and its
+  verdict. `bl merge` records `done` by `merge` via `merge` on the feature and each story
+  (`applyMerged`; a story never started, by `done`). `ensureLog` writes a unit's synthesized
+  log when a run or a review starts on a unit with no log, from its change document as it is
+  then, so its hops read the stored log. `bl merge`'s review of a merge resolution records
+  `in_review` and its verdict too, outside the round cap (`round_within_cap` always holds), so
+  open items leave the unit in `fixing` and the escalation that follows is by `fix`.
+- **Start states (F-69 D3).** `startOf(config, kind, unit, verbs)` picks the first of `verbs`
+  whose `from` holds the unit's status (`statusOf` with its change document's review
+  position, for a unit with no log) and checks it with `assertFrom`. `bl run` passes its `then`
+  chain (`Flow.chainOf`: `run`, `review`, `fix`), so it resumes a unit in review or fixing;
+  `bl implement` passes `implementVerbOf(kind, unit)`: `fix` when the unit's review position
+  (`reviewOf`) is `fixing`, whatever its status, else `implement` (a `done` or `superseded`
+  unit always gets `implement`, whose row refuses it); a started `fix` records
+  `fixing`, its `during`;
+  `bl review`, `bl merge`, `bl refine` and `bl approve` their own verb. `bl merge` checks the
+  `when` guards in `mergeGates` with their own messages (`guards: false`). A malformed
+  `transitions:` (`malformedLogRefusal`) refuses every verb; `bl merge F-n` and
+  `prepareFeatureWorktree` also refuse a feature whose story has one, before the first repo step.
+- **A unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the log the
+  migration would write, `legacyLog(kind, fm, change)`: `draft` at `added`, then its `status:`
+  through `LEGACY_STATUSES`; a terminal status at `completed`. A unit at `in_progress` or
+  `escalated` takes its review position from its change document: one `in_review` per
+  `review_round` (a `fixing` between two), then `fixing` for `pending`, `fixing` and `in_review`
+  for `fixed`, `ready_for_merge` for `addressed`, and last `escalated` for an escalated unit. A
+  `done` or `superseded` unit whose change document records a round gets `in_progress` and that
+  review part before its terminal entry, so its rounds survive the migration, which removes
+  `review_round` (`bl report` reads them). The
+  first `applyTransition` on such a unit writes that log (an entry with no date takes the new
+  entry's `at`), then the new entry, and removes `status:`; `transitions:` takes its place.
+- **The migration**, `node scripts/migrate-transitions.js [--dry-run] [--backlog <dir>]`
+  (`src/migrate-transitions.js`, F-69 D4), writes that log with git dates (`datedLog`): the
+  entry to the stored status, when it is neither `draft` nor terminal, at the last commit that
+  set the `status:` line (`git log --follow -S`); the `in_review` entries at the Review Log
+  session dates (`sessionDates`), the newest session for the newest round; a unit with no
+  `added` starts at the commit that added its file; no entry is before the one above it. It
+  converts one unit at a time through `updateSpecFile` (`setLog` puts the log in `status:`'s
+  place), then removes `review_round` and `review_status` from the unit's change documents
+  through `updateChange`, writes `flow.json` v2 (`migratedFlowText`: the template with the
+  backlog's gates), and commits the changed paths once (`commitPaths`) with the counts. It does
+  not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
+  (`liveSessionLocks`, by the worktree's branch) has a live holder other than the script and its
+  parent processes is skipped and listed, with the stories of such a feature, and so is a unit
+  whose `transitions:` is malformed (`logShape`); a rerun converts a held unit, a malformed one
+  once someone fixes it, and, with nothing left, prints `nothing to do`. It sets `added` and
+  `completed` to the days of the new log's first and terminal entries (`setDates`). A run that
+  fails after it wrote (a step throws, or the commit fails) records the paths it wrote in
+  `.bl/run/commit-failed/migrate-transitions.json`. The rerun commits each one that is still
+  uncommitted with the recorded content along with its own paths, and names each one that was
+  committed or edited since. `--dry-run` prints the same counts and the paths it would carry,
+  and writes nothing.
+- **The review state (D5).** `reviewOf(kind, fm, change)` reads it from the log: `round`, the
+  rounds the log opened; `reviewed`, the rounds with a verdict (`round`, less the open one);
+  `position`, the last of `in_review` (a round open), `fixing` (its items open) and
+  `ready_for_merge` (clean), null before the first review; `fixed`, the open round follows a fix
+  (its review is a re-review). The roles are `REVIEW` in `flow.js`. A verdict is an entry to
+  `fixing` or `ready_for_merge`, or the review's own entry to `escalated` (`via: review`: the
+  closing round left items open), which leaves the items in `fixing`. An entry into `in_review`
+  opens a round, except a return to a round with no verdict yet, or a resumed run's (`by: run`)
+  return to open items: a run resumed after an escalation goes `escalated` → `in_progress` →
+  `in_review`, and that is no review, so it spends no round. `reviewed` is what the old
+  `review_round` counted; `fixing`, `in_review` after a fix and `ready_for_merge` are the old
+  `pending`, `fixed` and `addressed`.
+- **Readers.** `statusOf`, `roundOf` and `logOf(kind, fm, change)` read the log, or `legacyLog`.
+  `makeUnit` sets `.status`, `.round` and `.transitions` through them. For a unit with no log,
+  `makeUnit`'s `.status` reads no change document, so it is the `status:` word (a v1 word
+  mapped) as before F-69; at `in_progress`, `escalated` or a terminal status (`readsChange`),
+  `.round` and `.transitions` are getters that read the change document when asked. A change document bl cannot read gives no
+  review part. The records the review readers take, `storyUnit` (`src/unit.js`) and the feature
+  record (`readAllFeatures`), set `.status` with the review position (`statusOf` with the
+  change document) and `.round`; the merge gates, `bl done`, `bl inbox`, `bl status`, `bl
+review` and the loop read those, or `reviewOf`, and never the change document's fields.
+- **`assertFrom(flow, unit, verb, ctx)`** returns null, or the refusal "S-5 is draft; run starts
+  from refined, in_progress or escalated (bl refine S-5 reaches refined)": the unit's status must
+  be in the row's `from`, and then each `when` guard (`src/guards.js`) must hold on `ctx`.
 
 ## Holds between units (`blockers.json`, F-66 D2)
 
@@ -877,8 +1054,8 @@ in a file as `derived-key` (error), naming what it is derived from.
 `scripts/migrate-derived-keys.js` removes them from every file in one commit
 (`--dry-run` prints the per-kind counts). `bl validate` reports a story naming
 a feature that does not exist (`dangling-feature`) and warns
-`feature-no-stories` for an approved or running feature no story names. It also warns
-`escalation-not-none` for a `refined`, `approved` or `running` feature whose
+`feature-no-stories` for a feature from `approved` up to `escalated` that no story names. It also
+warns `escalation-not-none` for a feature from `refined` up to `ready_for_merge` whose
 `## Escalation` is not `None.`, since approve and run both refuse it. A story
 with no `feature:` goes through the same loop on its own branch (`bl run S-n`,
 see **`bl run` for a story** below), or through the manual steps
@@ -890,7 +1067,8 @@ see **`bl run` for a story** below), or through the manual steps
 ---
 feature_id: F-3
 title: Invite codes & redemption engine
-status: draft # draft | refined | approved | running | escalated | done | superseded
+transitions: # draft | refined | approved | in_progress | in_review | fixing | ready_for_merge | escalated | done | superseded
+  - { at: 2026-09-24T09:12:40Z, to: draft, by: new }
 theme: residence # required: the theme it serves (see **Themes and Epics**)
 epic: E52 # optional: the epic it belongs to, in the same theme
 # no stories:, points: or components: — derived from the stories naming it (F-77 D3)
@@ -938,8 +1116,9 @@ has a task, the `## Tasks` table are rendered after `## Acceptance` when the
 page is read, never committed (F-79). Operator decisions never live in
 `## Escalation`: refine records them as dated `**Decision …**` bullets in the
 Design (or the Premise), and a decided escalation is set back to `None.` with
-the outcome in the Review Log or the Design. The branch, PR, review state
-and Review Log are not in `index.md`: they are the change document's (below).
+the outcome in the Review Log or the Design. The branch, PR and Review Log
+are not in `index.md`: they are the change document's (below). The review
+state is the unit's transition log's (see **The transition log**).
 
 Stories inside a feature use the shorter `story-feature` template (Summary,
 Acceptance Criteria, Implementation Plan of at most 40 lines, Dependencies):
@@ -957,9 +1136,7 @@ ran has none.
 ```yaml
 ---
 change_of: F-3 # or S-<n>; must match the directory
-status: open # open | merged | closed
-review_round: 0
-review_status: # pending | fixed | addressed
+status: open # open | merged | dropped (closed without a merge; a closed reads as dropped)
 repos: # one entry per repo the unit spans
   - repo: app.acme.com
     branch: f3-invite-codes
@@ -976,18 +1153,20 @@ review prompts) and `## Merge` (one line per repo's merge commit, then the
 feature's tag and release manifest, written by `bl merge`). `bl run` records
 the PR it opens on its repo's entry; `bl review` records every repo's PR.
 
-A unit that needs a second change (its last one `merged` or `closed`) gets
+A unit that needs a second change (its last one `merged` or `dropped`) gets
 `change-2.md`; bl reads the highest-numbered open one, and `bl status` prints
 every repo's branch, PR, URL and merge state for each document.
 
 `approved`, `review_rounds_max` and the `tokens_*` fields stay on the spec:
 they are the plan's gate and budget, written before any branch exists.
-`bl validate` fails `run-state-in-spec` (a `branch:`, `pr:`,
+`bl validate` fails `run-state-in-spec` (a `branch:`, `pr:`, or the old
 `review_round:` or `review_status:` key, or a `## Review Log`, in any
 `index.md`), `change-of-mismatch` (`change_of` not naming the directory's
 unit), `change-repo-incomplete` (a `repos:` entry without `repo` or
-`branch`) and `bad-change-status`; each message names the key, and the
-location the file.
+`branch`) and `bad-change-status` (a `status` other than `open`, `merged` or `dropped`; the old
+`closed` is a warning), and warns `legacy-review-fields` on a change document that still holds
+the old `review_round` or `review_status` (bl reads them only for a unit with no log, and the
+migration removes them); each message names the key, and the location the file.
 
 Specs from before F-42 were moved by the one-off `scripts/migrate-f42.js`,
 which has run on the live backlog; F-49 removed it, since it read only the
@@ -996,21 +1175,21 @@ pre-F-49 layout (it is in git history before F-49).
 ### Lifecycle
 
 ```
-draft → refined → approved → running → done
-                                  ↘ escalated ↗
+draft → refined → approved → in_progress → in_review ⇄ fixing → ready_for_merge → done
+                                        ↘ escalated ↗
 ```
 
-| Command                      | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bl new --feature --title …` | Scaffolds `features/F<n>-<slug>/index.md` from `templates/feature.md`; `--rounds <n>` sets `review_rounds_max`; `--body-file` supplies the body. `--repo` is refused: a feature's repos are its stories'. Unless `--no-sync`, commits and pushes the feature file and each listed story's `index.md` as `chore: add F-<n>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `bl refine F-3`              | Agent session in the backlog repo (`prompts/feature-refine.md`): writes Premise (with the `Challenged:` check), Design, Acceptance, and cuts the stories via `bl new --from` with `"feature": "F-3"`. Sets `refined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `bl approve F-3`             | **The human gate.** Requires `refined` and a consistent, non-empty story list; warns on dependencies outside the feature and on totals outside 8–20 points. Sets `approved`. Refuses while `## Escalation` is not `None.` (`--force` skips only the draft gate). Commits and pushes the feature file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `bl implement F-3`           | One worktree per repo at `worktrees/f3-<slug>/<repo>` on branch `f3-<slug>`; runs bootstrap/workon plugins; sets `running`; launches `prompts/feature-workon.md` (stories in dependency order, one PR at the end) or `feature-workon-review.md` when `review_status: pending`. Refuses on outside blockers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `bl review F-3`              | Takes each repo's PR from the change document, else `change.find` by branch (a branch with commits and no PR gets one through `change.open`), syncs each branch with main (refuses on a conflict), then takes one review round over all of them — one verifier, one Review Log session, `review_round` up by one; the PRs are taken in the feature's repo order, and the lead repo's PR is the one run state keeps. The round is the same review step as `run`: the `review-correctness.md` and `review-failure-paths.md` passes and `review-verify.md`, on the review agent, headless unless `--interactive` (or the agent has no headless mode). Shares `run`'s state in `.bl/run/`, refuses while a run holds the feature and at the round cap. bl writes `review_round` and `review_status` from the verifier's outcome; the verifier writes `## Escalation` when the cap is hit with Must-fix items left.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `bl run F-3`                 | **The autonomous loop.** Same gates as `implement`, then: implement each story in dependency order (`feature-story.md`, headless) → test gate (`test` stage plugin; one `feature-fix-tests.md` attempt) → self-review (`feature-self-review.md`) → push + a PR per repo (the lead always, another repo when its branch has commits) → review (two dimension passes `review-correctness.md` / `review-failure-paths.md` writing findings files, then `review-verify.md` writing the session) → fix (`feature-workon-review.md`, minimal changes) → fix self-review (`feature-fix-self-review.md`, scoped to the fix diff) → re-review … until `addressed`. Items still open after the last full round (`review_rounds_max`) get one closing round: fix → fix self-review → test gate → `review-verify.md` alone, checking only those items (`closingRound`); anything still open → `escalated`. Every headless prompt ends with the headless rules (`withHeadlessRules`: no background commands, commit before ending). State in `.bl/run/F-3.json`; `--resume`, `--plan`, `--interactive`, `--max-rounds <n>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `bl status F-3`              | Stories in dependency order, review state, blockers, deferred count, escalation, and the last run's state.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `bl merge F-3`               | Gates: the one set `bl merge S-n` applies too (`mergeGates`, `src/merge-gates.js`, F-36 D1; see `### bl merge`): `review_status` not `pending`/`fixed`, no unchecked Must/Should items in the latest session (open nits do not block; `bl run` ends `clean` only when this gate passes), a Review Log session on record unless `--no-review`, `## Escalation` empty, no worktree on the branch in a repo no story names, every main checkout on `main`. Then every worktree is brought up to date with main, gated and pushed (`integrateUnit`, F-36 D4; see `### bl merge`): conflicted generated files are regenerated (D5), other conflicts and a red gate go to a resolution agent whose resolution is gated and re-reviewed (D6, D7). A failed merge into `main` is aborted (D9). Then per repo in the feature's repo order (`bl` first, then by first story, F-52 D3): `git merge --no-ff`, push, close the open PR (`change.find`, `change.close`), remove worktree — the same routine as `bl merge`; right after `bl` merges, the backlog is synced from its merged checkout (`runBacklogSync`, as a story merge does, S-864). The repos a release records are those whose `backlog.json` `repos` entry sets `deployable: true` (every entry must set it; `loadConfig` refuses one that does not). After the last push, each touched repo's merge commit gets an annotated tag `F-3` (`F-3.2` for a second change; title and change-document path in the message), the tags are pushed last, and `releases/F-3.json` records the `main` commit of every deployable repo as its `origin` has it (an unreadable `origin` main, read before tagging, or a failed tag push, which takes back the tags it made, exits 1 before the manifest or anything `done` is written; a re-run resumes); the change document gets `merged:` per repo, the `## Merge` lines (tag, manifest link) and `status: merged`. Marks every listed story and the feature `done`, rolls up tokens, syncs, commits only the backlog paths it changed (your own uncommitted edits stay out), prints `## Deferred`. |
-| `bl list --features [-a]`    | Table of features (default verb). With `--theme`, `--epic`, `--feature` or `--component`, grouped by epic with stories and points done/total; `bl list --epic <E-id>` implies `--features`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Command                      | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bl new --feature --title …` | Scaffolds `features/F<n>-<slug>/index.md` from `templates/feature.md`; `--rounds <n>` sets `review_rounds_max`; `--body-file` supplies the body. `--repo` is refused: a feature's repos are its stories'. Unless `--no-sync`, commits and pushes the feature file and each listed story's `index.md` as `chore: add F-<n>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `bl refine F-3`              | Agent session in the backlog repo (`prompts/feature-refine.md`): writes Premise (with the `Challenged:` check), Design, Acceptance, and cuts the stories via `bl new --from` with `"feature": "F-3"`. Sets `refined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `bl approve F-3`             | **The human gate.** Requires `refined` and a consistent, non-empty story list; warns on dependencies outside the feature and on totals outside 8–20 points. Sets `approved`. Refuses while `## Escalation` is not `None.` (`--force` skips only the draft gate). Commits and pushes the feature file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `bl implement F-3`           | One worktree per repo at `worktrees/f3-<slug>/<repo>` on branch `f3-<slug>`; runs bootstrap/workon plugins; sets `in_progress`; launches `prompts/feature-workon.md` (stories in dependency order, one PR at the end) or `feature-workon-review.md` when the feature is in `fixing`. Refuses on outside blockers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `bl review F-3`              | Takes each repo's PR from the change document, else `change.find` by branch (a branch with commits and no PR gets one through `change.open`), syncs each branch with main (refuses on a conflict), then takes one review round over all of them — one verifier, one Review Log session, one verdict in the feature's transition log; the PRs are taken in the feature's repo order, and the lead repo's PR is the one run state keeps. The round is the same review step as `run`: the `review-correctness.md` and `review-failure-paths.md` passes and `review-verify.md`, on the review agent, headless unless `--interactive` (or the agent has no headless mode). Shares `run`'s state in `.bl/run/`, refuses while a run holds the feature and at the round cap. bl records the verdict (`fixing` or `ready_for_merge`, or `escalated` past the cap) from the verifier's outcome; the verifier writes `## Escalation` when the cap is hit with Must-fix items left.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `bl run F-3`                 | **The autonomous loop.** Same gates as `implement`, then: implement each story in dependency order (`feature-story.md`, headless) → test gate (`test` stage plugin; one `feature-fix-tests.md` attempt) → self-review (`feature-self-review.md`) → push + a PR per repo (the lead always, another repo when its branch has commits) → review (two dimension passes `review-correctness.md` / `review-failure-paths.md` writing findings files, then `review-verify.md` writing the session) → fix (`feature-workon-review.md`, minimal changes) → fix self-review (`feature-fix-self-review.md`, scoped to the fix diff) → re-review … until `ready_for_merge`. Items still open after the last full round (`review_rounds_max`) get one closing round: fix → fix self-review → test gate → `review-verify.md` alone, checking only those items (`closingRound`); anything still open → `escalated`. Every headless prompt ends with the headless rules (`withHeadlessRules`: no background commands, commit before ending). State in `.bl/run/F-3.json`; `--resume`, `--plan`, `--interactive`, `--max-rounds <n>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `bl status F-3`              | Stories in dependency order, review state, blockers, deferred count, escalation, and the last run's state.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `bl merge F-3`               | Gates: the one set `bl merge S-n` applies too (`mergeGates`, `src/merge-gates.js`, F-36 D1; see `### bl merge`): the feature not in `fixing` or `in_review`, no unchecked Must/Should items in the latest session (open nits do not block; `bl run` ends `clean` only when this gate passes), a Review Log session on record unless `--no-review`, `## Escalation` empty, no worktree on the branch in a repo no story names, every main checkout on `main`. Then every worktree is brought up to date with main, gated and pushed (`integrateUnit`, F-36 D4; see `### bl merge`): conflicted generated files are regenerated (D5), other conflicts and a red gate go to a resolution agent whose resolution is gated and re-reviewed (D6, D7). A failed merge into `main` is aborted (D9). Then per repo in the feature's repo order (`bl` first, then by first story, F-52 D3): `git merge --no-ff`, push, close the open PR (`change.find`, `change.close`), remove worktree — the same routine as `bl merge`; right after `bl` merges, the backlog is synced from its merged checkout (`runBacklogSync`, as a story merge does, S-864). The repos a release records are those whose `backlog.json` `repos` entry sets `deployable: true` (every entry must set it; `loadConfig` refuses one that does not). After the last push, each touched repo's merge commit gets an annotated tag `F-3` (`F-3.2` for a second change; title and change-document path in the message), the tags are pushed last, and `releases/F-3.json` records the `main` commit of every deployable repo as its `origin` has it (an unreadable `origin` main, read before tagging, or a failed tag push, which takes back the tags it made, exits 1 before the manifest or anything `done` is written; a re-run resumes); the change document gets `merged:` per repo, the `## Merge` lines (tag, manifest link) and `status: merged`. Marks every listed story and the feature `done`, rolls up tokens, syncs, commits only the backlog paths it changed (your own uncommitted edits stay out), prints `## Deferred`. |
+| `bl list --features [-a]`    | Table of features (default verb). With `--theme`, `--epic`, `--feature` or `--component`, grouped by epic with stories and points done/total; `bl list --epic <E-id>` implies `--features`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 `bl edit`, `bl view`, and `bl which` accept `F-<n>` ids. `bl list` grows a
 `Feature` column once any listed story has one.
@@ -1133,10 +1312,11 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   (`{ summary, stories: { "S-n": { refined, reason? } } }`) or
   `feature-refine.json` (`{ summary, premise_holds, refined, reason? }`) to
   `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
-  before its backlog commit. `refined: true` writes `status: refined`;
-  `premise_holds: false` writes a feature's `status: draft`; otherwise the
-  status stays and `reason` is printed (`applyRefineStatus`, through
-  `updateSpecFile`). A batch story the outcome does not name stays as it is. A
+  before its backlog commit. `refined: true` records the `refine` row's
+  success, `refined`; `premise_holds: false` records its failure, a feature's
+  `draft`; otherwise the status stays and `reason` is printed
+  (`applyRefineStatus`, through `transition`, with `reason` as the entry's
+  `outcome`). A batch story the outcome does not name stays as it is. A
   session without a valid outcome file changes no status and prints the
   fault; the agent's own commit of the refinement is not affected. No refine
   prompt asks the agent to write a status
@@ -1235,8 +1415,8 @@ sessions of one key add up.
   `tokens_*` in one write with `accumulateStepTokensOnFile`, however the
   spawn ended (nonzero status, error result, throw), before the totals
   re-read. `bl implement`
-  records under `implement`, or `fix.<review_round>` while a review is
-  pending.
+  records under `implement`, or `fix.<round>` (the log's round) while the
+  unit is in `fixing`.
 - **Run state** (F-87 D3b): `runSession` also writes the session's `usage`
   (the four kinds, as numbers) on the history entry it records in
   `.bl/run/<id>.json`, when the result has usage. An entry written before
@@ -1275,13 +1455,13 @@ The loop reads outcomes from files, never from the agent's prose: a story is
 done when its `## Acceptance Criteria` section exists and every checkbox in it
 is checked, whatever the list marker (`-`, `*`, `+`, `1.`); a story without
 that section is never skipped as complete and never passes the
-post-implement check; a review round ends with the `review_status` bl writes
-from the verifier's outcome (see **Review fields from outcomes** below); an
+post-implement check; a review round ends with the verdict bl records in the
+unit's transition log from the verifier's outcome (see **Review verdicts from outcomes** below); an
 agent stops the run by writing `## Escalation`. Machine-local run state lives under `<backlog>/.bl/run/`
 (self-ignored by a `.gitignore` inside it). `run` refuses while `## Escalation`
 has content. `--resume` skips completed stories; once the run has reached the
-PR it also skips self-review, fixes a `pending` review session before
-reviewing again, and ends at once when the review is already `addressed`.
+PR it also skips self-review, fixes a review session left in `fixing` before
+reviewing again, and ends at once when the unit is already `ready_for_merge`.
 One run per feature: `run` holds `.bl/run/<id>.lock` (created exclusively; a
 dead holder's lock is reclaimed) and does not start while another live
 process holds the unit directory's `.workon.lock` (F-60 D3). A headless step
@@ -1290,14 +1470,14 @@ The loop pushes the branch and checks that `origin/<branch>` contains HEAD
 before every review pass and before it ends `clean`; a failed push, or a
 forge that cannot open or find the PR, escalates. Having no forge configured
 at all is the one way to finish without a PR.
-bl raises `review_round` by exactly one with each verifier verdict, so the
-round is always a number that goes up. A run that starts at the
-round cap with the last round `pending` or `fixed` runs the one closing round
-it is owed: it fixes that round's items (when `pending`), and the verifier
+Each verifier verdict is one entry in the unit's transition log, so the
+rounds with a verdict (`reviewOf`'s `reviewed`) only go up. A run that starts at the
+round cap with the last round's items in `fixing`, or fixed and not yet re-reviewed, runs the
+one closing round it is owed: it fixes that round's items (when in `fixing`), and the verifier
 checks only those items. A round that `bl merge`'s review of a merge
 resolution left open is owed the same, below, at or past the cap. Any other
 run that starts at or past the cap escalates at once instead of spending a
-round the cap does not allow (a resumed run already signed off `addressed`
+round the cap does not allow (a resumed run already `ready_for_merge`
 ends clean without a review) — raise the cap with `--max-rounds <n>`.
 `roundCapStanding` (`src/feature-run.js`) holds this rule.
 
@@ -1717,27 +1897,26 @@ PR review feedback is persisted in the unit's **change document**
 (`change.md` beside its `index.md`), not in any worktree-side artifact
 (S-458 retired `.pr-review.md`).
 
-### `review_status` frontmatter field
+### The review state (F-69 D5)
 
-The optional `review_status:` field of the change document tracks where the
-implementation stands relative to the most recent PR review:
+A unit's review state is in its transition log (see **The transition log**), not in the change
+document:
 
-| Value       | Meaning                                                                                                                   |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Value       | Meaning                                                                                                                   |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------  |
-| _omitted_   | Story has never been reviewed.                                                                                            |
-| `pending`   | The reviewer wrote a session block with an open Must fix or Should fix item; the implementing agent has items to address. |
-| `fixed`     | The implementing agent checked every item off — claimed resolved, awaiting re-review.                                     |
-| `addressed` | The reviewer verified the fixes (or the session was an audit-only "no issues" entry).                                     |
+| Status            | Meaning                                                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| no review entry   | The unit has never been reviewed.                                                                                         |
+| `in_review`       | A round is open: the run or `bl review` started it, or a fix put the unit back in review; no verdict yet.                 |
+| `fixing`          | The verifier wrote a session block with an open Must fix or Should fix item; the implementing agent has items to address. |
+| `ready_for_merge` | The verifier passed the round (or the session was an audit-only "no issues" entry).                                       |
 
-Lifecycle: `unset → pending → fixed → (addressed | pending → fixed → …)`.
-bl writes the field, never an agent (F-68 D3): see **Review fields from
-outcomes** below. A fix round's outcome moves `pending → fixed`; only a
-review round's outcome moves `fixed → addressed` (after the verifier checks
-each resolution) or back to `pending` with a new session.
+Lifecycle: `in_review → (ready_for_merge | fixing → in_review → …)`. bl records each entry, never
+an agent (F-68 D3, F-69 D3): see **Review verdicts from outcomes** below. A fix round's outcome
+moves `fixing → in_review`; only a review round's outcome moves `in_review → ready_for_merge` or
+back to `fixing` with a new session. Before F-69 the change document's `review_status`
+(`pending`, `fixed`, `addressed`) and `review_round` held this; bl reads them only for a unit with
+no log.
 
-#### Review fields from outcomes (F-68 D2, D3)
+#### Review verdicts from outcomes (F-68 D2, D3; F-69 D5)
 
 The review, fix and self-review sessions each return an outcome object (see
 **Session outcomes**), validated against its schema in `schemas/`:
@@ -1754,39 +1933,30 @@ a headless session; `_outcome-file.md`, the outcome file, when
 `vars.outcomeCarrier` is `file`). `_fix-outcome.md` and
 `_self-review-outcome.md` hold the objects two prompts share.
 
-- **Review round** (`reviewRoundLocked`). From the outcome bl writes
-  `review_round` (the round + 1) and `review_status` together, once, after
-  the verifier returns: `pending` when `must + should > 0`, else `addressed`
-  (`reviewStatusOf`). The prompt gives the verifier the round as
-  `{{nextRound}}`. `escalated: true` with an empty `## Escalation` makes bl
-  write one with the summary. A round that ends without a verdict (a throw,
-  an abort, a killed bl) leaves both fields as the round found them. The
-  Review Log may not match them: if bl dies after the verifier committed its
-  session block, the log holds a block for round N+1 while `review_round`
-  says N. A round
-  stopped before an outcome (a failed verifier, no valid outcome after the
-  retry, no agent) also puts the rest of the change document back.
-- **Fix** (`fixed`). `true`: bl writes `review_status: fixed`. `false`: the
-  run escalates with `open` and the summary, and the status stays `pending`.
-  Every exit without `fixed` (an open `## Escalation`, a scope stop,
-  `fixed: false`, a session that throws) puts back the fields the fix
-  session found.
+- **Review round** (`reviewRoundLocked`). From the outcome bl records the verdict once, after the
+  verifier returns (`recordVerdict`, the first branch of the `review` row whose guards hold):
+  `ready_for_merge` when `must + should` is 0, else `fixing` while the round is within the cap
+  (`round_within_cap`), else `escalated`. `bl merge`'s round over a merge resolution is outside
+  the cap. The prompt gives the verifier the round as `{{nextRound}}`. `escalated: true` with an
+  empty `## Escalation` makes bl write one with the summary. A round that ends without a verdict
+  (a throw, an abort, a killed bl) records none: the unit stays in `in_review`, and the next
+  review is the same round. The Review Log may not match: if bl dies after the verifier
+  committed its session block, the Review Log holds a block for round N+1 while the log has no
+  verdict for it. A round stopped before an outcome (a failed verifier, no valid outcome after
+  the retry, no agent) also puts the change document back.
+- **Fix** (`fixed`). The unit stays in `fixing` on every exit before the fix self-review passes
+  (an open `## Escalation`, a scope stop, `fixed: false`, a session that throws); `fixed: false`
+  escalates with `open` and the summary.
 - **Self-review** (`ok`, `changed`). `ok: false` escalates with the summary;
-  `changed: true` runs the test gate again. On every exit of the fix
-  self-review, bl keeps `fixed`.
-- **What a session wrote is a warning, never a decision.** bl reads the
-  fields when a session starts and again before it writes
-  (`writeReviewFields`, through `setReviewFields` in `change-doc.js` under
-  the change document's lock). A field the session changed is recorded as a
-  warning event (`<step>: the session changed review_status to "x"; bl writes
-"y" from the outcome`), and bl's value replaces it. The read-back never
-  picks the round's branch; the outcome does. `bl validate`'s review-status
-  findings still guard hand edits.
-- **`bl implement` with a review pending** (story and feature) runs the fix
+  `changed: true` runs the test gate again. When the fix self-review passes, bl records
+  `in_review` by `fix` via `fix_self_review`.
+- **What a session writes to the change document decides nothing.** bl reads the review state
+  from the log only, and never writes `review_round` or `review_status`; a session that writes
+  one leaves a `legacy-review-fields` warning for `bl validate`.
+- **`bl implement` on a unit in `fixing`** (story and feature) runs the fix
   prompt interactively with `schema: fix`; the agent writes the outcome file.
-  After the session `applyFixOutcome` (`change-doc.js`) writes and commits
-  `review_status: fixed` when `fixed` is true. Otherwise it prints why and
-  puts back the review fields the session found (`reviewFieldsAt`).
+  After the session `applyFixOutcome` (`change-doc.js`) records `in_review` by `fix` and commits
+  the unit file when `fixed` is true. Otherwise it prints why, and the unit stays in `fixing`.
 - `test/unit/prompts-no-status-writes.test.js` fails when a prompt names
   `review_status:` or `review_round:`.
 
@@ -1938,41 +2108,45 @@ and `resume`), with bl's names unchanged. Gemini ignores it.
 
 Gates and effects:
 
-- `bl implement` reads `review_status`. When it's `pending`, the
+- `bl implement` reads the unit's status. When it is `fixing`, the
   implementing agent is launched with the `workon-review` prompt and an
   info line `Review pending in story — using review-feedback prompt.`;
   otherwise the standard `workon` prompt is used. The fix session's outcome
-  file sets `fixed` (see **Review fields from outcomes**).
-- `bl done` refuses while `review_status` is `pending` or `fixed`, and
-  also while the latest `## Review Log` session has unchecked Must or
-  Should items regardless of the frontmatter value (an open nit does not
-  block). It prints the story ID, latest session date, and the count of
-  unchecked Must/Should items, then exits non-zero. `bl merge`
-  applies the feature's rule to both kinds (F-36 D1): `pending`/`fixed`
-  or an unchecked Must or Should box blocks, an open nit does not, and a
-  unit with no session is refused unless `--no-review` (see `### bl merge`).
-  `--force` is intentionally absent; if you need to bypass, edit the
-  change document manually.
+  file sets `fixed` (see **Review verdicts from outcomes**).
+- `bl done` refuses while the story is in `fixing` or `in_review` (the merge
+  gate's rule, `featureReviewGate`), and also while the latest `## Review
+Log` session has unchecked Must or Should items whatever the status (an
+  open nit does not block). It prints the story ID, its status and round,
+  the latest session date, the count of unchecked Must/Should items and the
+  next verb (`bl implement` for `fixing`, `bl review` for `in_review`), then
+  exits non-zero. `bl merge` applies the same rule to both kinds (F-36 D1):
+  `fixing`, `in_review` or an unchecked Must or Should box blocks,
+  `ready_for_merge` and an open nit do not, and a unit with no session is
+  refused unless `--no-review` (see `### bl merge`). `--force` is
+  intentionally absent; to bypass, record the status by hand as a log entry
+  `by: operator`.
 - `bl implement` (story or feature) ends with
   `Next: bl review <id>, then bl merge <id>.` when its session exits 0.
 - `bl merge` runs one more round when its resolution agent resolved a
   merge with main (F-36 D7): the same dimension passes and verifier, with
   `{{reviewScope}}` narrowed to the resolution (`git show --remerge-diff` of
   each merge plus the commits after it) and `{{changedFiles}}` to the files
-  it resolved or changed after. It writes a Review Log session and advances
-  `review_round` like any round, but is not counted against
-  `review_rounds_max`: the cap bounds the fix loop, and integration has none.
-  `pending` leaves the resolution on the branch for `bl run --resume`.
-- `bl review` sets `review_status` back to `pending` whenever its
-  verifier's outcome counts an open Must fix or Should fix item; on a
-  re-review of a `fixed` story the verifier checks each claimed resolution,
-  and the outcome either promotes it to `addressed` or leaves a new
-  `pending` session.
-- `bl validate` enforces two integrity rules:
-  `review-log-missing` (`pending`/`fixed` but no `## Review Log`
-  session) and `review-log-unaddressed` (`fixed`/`addressed` but the
-  latest session still has unchecked Must/Should items; open nits
-  do not count, as in `bl merge`).
+  it resolved or changed after. It writes a Review Log session and records
+  `in_review` and its verdict in the log like any round, but is not counted
+  against `review_rounds_max`: the cap bounds the fix loop, and integration
+  has none. Open items leave the unit in `fixing` and the resolution on the
+  branch for `bl run --resume`.
+- `bl review` records `fixing` whenever its verifier's outcome counts an
+  open Must fix or Should fix item; on a re-review of a unit a fix put back
+  in review, the verifier checks each claimed resolution, and the outcome
+  either records `ready_for_merge` or `fixing` with a new session.
+- `bl validate` enforces two integrity rules on an open unit, comparing its
+  review position (`reviewOf`), whatever its status, with the latest session
+  of its current change document:
+  `review-log-missing` (`fixing`, or `in_review` after a fix, but no
+  `## Review Log` session) and `review-log-unaddressed` (`in_review` after a
+  fix, or `ready_for_merge`, but the latest session still has unchecked
+  Must/Should items; open nits do not count, as in `bl merge`).
 
 ### `## Review Log` section
 
@@ -2013,8 +2187,8 @@ Rules:
   `- [x]` in place and appends a short `→ <resolution>` note (typically
   a commit SHA and a few words; for deferred items, a deferral reason).
 - The implementing agent makes **one commit** to the backlog repo per
-  review session, after the final item is checked. bl then writes
-  `review_status: fixed` from the fix outcome. Commit message:
+  review session, after the final item is checked. bl then records
+  `in_review` by `fix` from the fix outcome. Commit message:
   `chore: address review feedback ({{storyId}}, session <YYYY-MM-DD>)`.
 
 ### `## Deferred`, `## Notes` and tasks
@@ -2066,7 +2240,7 @@ written, and no rule runs on it.
 
 `## Review Log` is the **review cycle's** state — items in the latest
 session must be checked off with a resolution note and then verified by
-a re-review (`review_status: addressed`) before `bl done` or
+a re-review (`ready_for_merge` in the unit's log) before `bl done` or
 `bl merge` will accept the story.
 
 Do not mix the two. A review item that should become its own story is
@@ -2231,8 +2405,8 @@ bl side <repo|C-id> --from <F-n|S-n> --title <t> --points <n> [--type chore|bug|
   component, or a component with no `repo`, exits 1 naming it.
 - **`--from` is required**: the unit the session is working on. There is no
   "current unit". The story records it as `found_by:` (F-48 D2).
-- **Attach rule.** The story joins a feature when `--from` is a feature in
-  `FEATURE_WORKABLE_STATUSES` (`approved`, `running`, `escalated`) or a story
+- **Attach rule.** The story joins a feature when `--from` is a feature that
+  `isFeatureWorkable` accepts (`approved` up to `escalated`) or a story
   of one: `feature:` is set (which makes it the feature's, F-77 D3), its
   worktree is on the feature's branch (`prepareFeatureRepo`, prepared before
   the story is written) and the feature's change document gets the repo, in
@@ -2241,8 +2415,8 @@ bl side <repo|C-id> --from <F-n|S-n> --title <t> --points <n> [--type chore|bug|
   its own `change.md`. Neither switches a main checkout.
 - **Creation.** The story is written by `bl new [<F-n>] <C-id> … --no-sync
 --json`, run as a child, so story creation keeps one implementation; `bl
-side` then sets `status: in_progress` and `found_by:` through
-  `serializeFrontmatter`. `--type` defaults to `chore`; the `--body-file`
+side` then records `in_progress` by `side` in its log and sets `found_by:`
+  through `updateSpecFile`. `--type` defaults to `chore`; the `--body-file`
   text (stdin for `-`) is read and checked by `bl side` first, then given to
   `bl new` on its stdin.
 - **Commit.** One hold of the backlog lock covers `bl new`, the marks, the
@@ -2302,10 +2476,10 @@ bl attach <S-n> <F-n> [--no-sync] [--json]
   component names no repo, or is absent or unknown (`storyRepoOrExit`, in
   every feature status); a `done` or
   `superseded` feature (`closedFeatureRefusal`, as `bl new F-<n>`); a story
-  whose `feature:` names another feature, or that is not `backlog` or
+  whose `feature:` names another feature, or that is not `draft` or
   `refined` (`storyMoveRefusal`, as `bl new --feature … S-<n>`: an
   `in_progress` story is someone's work in flight, and this feature's merge
-  would mark it done); and, for a `running` or `escalated` feature, a
+  would mark it done); and, for a started feature (`isFeatureBranched`), a
   story whose component's repo is not in `reposForFeature`. Only those have
   branches and worktrees, so before the feature runs a story in a new repo
   simply joins it. The message names `bl side <repo> --from F-<n>` as the way
@@ -2346,9 +2520,9 @@ bl move <S-n>… <C-n> [--no-sync] [--json]
 - **Refusals** (exit 1, nothing written, every offending story listed),
   checked under the backlog lock on the files as they are then, before any
   write: an unknown component, or one that names no repo; an unknown story;
-  a story that is not `backlog` or `refined` (an `in_progress` story has a
+  a story that is not `draft` or `refined` (an `in_progress` story has a
   worktree in its current repo); and a story whose repo would change while
-  its feature is `running` or `escalated` (that feature's branches span a
+  its feature has started (`isFeatureBranched`: that feature's branches span a
   fixed set of repos, as `bl attach` refuses a story in another repo). A
   story is in the feature its `feature:` names (F-77 D3). A move within the
   repo is fine there. A story whose
@@ -2376,14 +2550,14 @@ a story: no repo, branch, change document, points or review.
 bl task F-53 --gate merge --title "Run the tasks migration" --body-file b.md  # → T-7
 bl task F-54 --gate next --title "Re-mint the key" --body-file - --json      # body on stdin
 bl task F-50 --gate none --title "Check the runner after 2026-10-28"         # a reminder
-bl task list [--open] [F-53]     # T-7  F-53  open  Run the tasks migration
+bl task list [--open] [F-53]     # T-7  F-53  draft  Run the tasks migration
 bl task done T-7 "ran it, 13 tasks filed"                                     # operator only
 ```
 
 - **The file.** `tasks/T<n>-<slug>.md`, one flat file per task, never moved. YAML frontmatter
   (`parseFrontmatter` / `serializeFrontmatter`), keys in this order: `task_id` (`T-<n>`),
   `title`, `unit` (the `F-<n>` or `S-<n>` it belongs to), `owner` (`operator`, the only one so
-  far), `status` (`open` or `done`, `flow.json`'s `task` type), `added`, and at done `done`
+  far), `status` (`draft` or `done`, `flow.json`'s `task` type), `added`, and at done `done`
   (the date) and `note` (what was done, or why it is moot). No `points`, no `gate`. The body
   starts `# T-<n> · <title>` and holds the task: what to do, the exact commands as pasteable
   blocks with their expected output, and why it is a task and not code.
@@ -2391,8 +2565,8 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   `task_id` (`bl next-id task`). `bl task` takes the next one under the backlog lock, so two
   calls in a row get consecutive ids.
 - **`bl task <F-n|S-n> --title <t> --gate <merge|next|none> [--body-file <path>|-] [--json]`**
-  checks the unit exists, takes the backlog lock, writes the file (`status: open`,
-  `owner: operator`, `added: <today>`), then the task's edge in `blockers.json` (below), and
+  checks the unit exists, takes the backlog lock, writes the file (the log's first entry,
+  `draft` by `new`; `owner: operator`; `added: <today>`), then the task's edge in `blockers.json` (below), and
   commits the task file and `blockers.json` (with `.gitattributes` while HEAD lacks the merge
   driver's line) in one commit: `chore: task T-<n> (<unit>)`. The unit's file is not
   written: its `## Tasks` table is rendered when the page is read. stdout is `T-<n>`; `--json` prints
@@ -2423,13 +2597,15 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   `src/task.js`, case as written) and takes `--gate merge` only, so no unit merges past an open
   decision (S-1403); `bl task` refuses `none` and `next` for it.
 
-- **`bl task done <T-n> [note]`** sets `status: done`, `done: <today>` and `note:`, syncs and
+- **`bl task done <T-n> [note]`** records `done` by `done` (which sets `done: <today>`) and `note:`, syncs and
   commits `chore: task T-<n> done[: <note>]`; a task already done refuses. Its edges stay in
   `blockers.json`, met. It is the operator's: `MODE_DENY` in `src/allowed-tools.js` denies
   `bl task done:*` in every mode (generator v15), beside `bl block remove:*`, since closing a
   task lifts the holds its edges make. `bl task` and `bl task list` stay allowed through `bl:*`.
+
 - **`bl task list [--open] [<F-n|S-n>]`** prints one line per task,
-  `T-<n>  <unit>  <status>[ <done date>]  <title>`, in id order.
+  `T-<n>  <unit>  <status>[ <done date>]  <title>`, in id order. `--open` keeps the tasks that
+  are not `done`.
 - **A unit lists no tasks.** A unit's page renders a `## Tasks` table (ID, Title, Holds,
   Status, Done) from the task files' `unit:` when it is read (`renderPage`), after `## Stories`
   in a feature and after `## Dependencies` in a story, only when the unit has a task; nothing
@@ -2486,8 +2662,11 @@ bl refine -t S34              # detach into a new tmux window
 
 ### `bl implement`
 
-Requires `status: refined` or `status: in_progress`. Creates a git worktree and launches
-an agent session to implement the story. Refused while an unmet `blockers.json` edge holds the
+Starts from what `flow.json`'s `implement` row allows (`draft`, `refined`, `in_progress`,
+`escalated`), or, for a story whose review position is `fixing`, with the `fix` session
+(`implementVerbOf`, `startOf`), which records `fixing` first. Records `in_progress` by
+`implement` before the session (F-69 D3), creates a git worktree and launches an agent session to
+implement the story. Refused while an unmet `blockers.json` edge holds the
 story at its `run` gate (F-66 D3; see "The gate checks" above), naming each blocker.
 
 ```bash
@@ -2509,12 +2688,11 @@ fix rounds use the feature prompts, which read `{{unitKind}}` and
 component under the story file's `plugins-test`.
 
 The first run writes `review_rounds_max` (2, or `--max-rounds`) to the story
-frontmatter and the branch, PR and `review_round: 0` to the story's change
-document; run state is `.bl/run/S-34.json`. An escalation goes to the story's
-`## Escalation` and the story keeps its `status` (stories have no
-`escalated`): the open section is what blocks `bl run` and `bl merge`.
-`bl status S34` prints the status, branch, PR, review state and round, the
-escalation and the run state. `--plan`, `--resume`, `--interactive` and
+frontmatter and the branch and PR to the story's change document (its round
+is its log's); run state is `.bl/run/S-34.json`. An escalation goes to the story's
+`## Escalation`, and its log records `escalated` (F-69 D1): the open section is what blocks
+`bl run` and `bl merge`. `bl status S34` prints the status, branch, PR, review state and
+round, the last three transitions, the escalation and the run state. `--plan`, `--resume`, `--interactive` and
 `--max-rounds` behave as for a feature. A story with `feature:` set is
 refused: run its feature. Like `bl run F-n` (whose gate also checks each of
 its stories), it is refused while an unmet `blockers.json` edge holds it at
@@ -2582,8 +2760,8 @@ parse, a story is missing, or a new story fails the checks
 document that cannot name a new repo. After a session that is not an
 implementation, `rescope` implements any story it added; the self-review
 gates again when any repo moved or the scope grew; a round that ends
-`addressed` after adding scope is gated and reviewed again (in the closing
-round it escalates); and a resumed `addressed` run finishes without a round
+`ready_for_merge` after adding scope is gated and reviewed again (in the closing
+round it escalates); and a resumed `ready_for_merge` run finishes without a round
 only when nothing was implemented and the last round's `reviewedScope`
 covers every current story and repo. `bl run S-n` has one repo and skips the
 refresh.
@@ -2610,43 +2788,42 @@ reports "no changes in <repo>" and removes the worktree and branch.
 
 One review round on the review agent, the step `bl run` takes: two dimension
 passes (`review-correctness.md`, `review-failure-paths.md`) and the verifier
-(`review-verify.md`), one session in the Review Log and `review_round` up by
-one. For a story, the open PRs are found by title (`S34 in:title`) in every
+(`review-verify.md`), one session in the Review Log and one verdict in the
+unit's transition log. For a story, the open PRs are found by title (`S34 in:title`) in every
 repo, each worktree is synced with main first (a conflict exits, pointing at
 `bl implement S34`), and every repo's PR is recorded on its `repos:` entry in
 the change document. With no
 open PR it says why, including a PR that merged before review.
 
 `bl review` ends with the round's outcome and, when there is one, the next
-command (`reviewEnd`, `src/feature-run.js`, S-1348). No line shows a raw
-`review_status` value without its field name.
+command (`reviewEnd`, `src/feature-run.js`, S-1348). It reads the unit's
+review state from its transition log (`reviewOf`, F-69 D5): `<n>` is the
+rounds with a verdict.
 
-- Open items (`pending`): `Review round <n> done: <k> open item(s) (<a> Must fix, <b> Should fix, <c> nit(s)).`
+- Open items (`fixing`): `Review round <n> done: <k> open item(s) (<a> Must fix, <b> Should fix, <c> nit(s)).`
   The counts come from the latest Review Log session, zero counts are left
-  out, and boxes under any other heading count as `<o> other`. A `pending`
-  round whose session has no open box says so with
-  `review_status: pending, but the latest Review Log session has no open item`.
-- Nothing left (`addressed`): `Review round <n> done: nothing left to fix.`,
+  out, and boxes under any other heading count as `<o> other`. A round in
+  `fixing` whose session has no open box says so with
+  `fixing, but the latest Review Log session has no open item`.
+- Nothing left (`ready_for_merge`): `Review round <n> done: nothing left to fix.`,
   or `nothing left to fix (<c> open nit(s) left).` while the session has open nits.
   If the session still has an open Must fix or Should fix box, the line is
-  `review_status: addressed, but the latest Review Log session has <k> open Must fix/Should fix item(s)`.
-- Any other value: `Review round <n> done: no verdict recorded (review_status: <value>).`
-  (`unset` when empty), with no `Next:` line. A `review_round` that is not a
-  number gives `no verdict recorded (review_round: <value>)`, also with no
-  `Next:` line. This is a guard only: `bl review` refuses such a round before
-  it starts and exits non-zero, so neither its own lines nor the
-  several-target summary print it today. Escalated: `Review round <n>: escalated.`
+  `ready_for_merge, but the latest Review Log session has <k> open Must fix/Should fix item(s)`.
+- No verdict (a round open, or none yet): `Review round <n> done: no verdict recorded (<position>).`
+  (`never reviewed` when there is none), with no `Next:` line. Escalated:
+  `Review round <n>: escalated.`
 - A round that did not finish (an error and no escalation, for example a
   verifier that failed): `The review round did not finish.`, then the error
-  line, with no `done` line and no `Next:` line. The change document is put
-  back as the round found it, so `bl review` builds no outcome from it. A
-  verifier with no valid outcome after its retry escalates (F-68 D5).
+  line, with no `done` line and no `Next:` line. The round recorded no
+  verdict, so `bl review` builds no outcome from it. A verifier with no valid
+  outcome after its retry escalates (F-68 D5).
 
 The second line is `Next: <command>`:
 
-- `addressed`: `bl merge <id>`. If the session still has an open Must fix or
-  Should fix box, the merge gate (`featureReviewGate`) blocks the merge, so
-  the command is `bl implement <id>`, the one the merge gate's refusal names.
+- `ready_for_merge`: `bl merge <id>`. If the session still has an open Must fix
+  or Should fix box, the merge gate (`featureReviewGate`) blocks the merge, so
+  the command is `bl review <id>`: a review checks the boxes again, and the
+  table's `implement` row does not start from `ready_for_merge`.
   `bl status` prints no next command.
 - Open items below the round cap: `bl run <id> --resume`.
 - Open items in the round that reached the cap: the outcome line adds
@@ -2660,14 +2837,18 @@ The second line is `Next: <command>`:
 
 The cap cases come from `roundCapStanding`, the check by which `bl run`
 refuses a run at the cap, so the two cannot disagree. `bl status <id>` prints
-the same outcome words on its `review:` line
-(`review: round <r>/<cap> done: <outcome>`; `review: round <r>/<cap>, review_status: <value>`
-for another value; `review: none (round <r>/<cap>)` when unset; each with
-`, latest session <date>` when the change document has a session). With
-several targets, each child that exited 0 gets
-`<id>: reviewed, round <n> done: <outcome><pr> — next: <command>`. The exit
-codes are as before: 0 after a `pending` or `addressed` round with no error
-and no escalation, else 1.
+the unit's status, then the same outcome words on its `review:` line
+(`review: round <r>/<cap> done: <outcome>`; `review: round <r>/<cap>, <position>`
+for a round with no verdict; `review: none (round <r>/<cap>)` before the first
+review; each with `, latest session <date>` when the change document has a
+session; `<r>` is the log's round), then the last three entries of the
+transition log, one per line: `<at>  <to>  by <verb> via <capability>: <outcome> (<note>)`
+under `transitions (last 3 of <n>):` (a unit with no log shows the log
+`legacyLog` reads). With several targets, each child that exited 0 gets
+`<id>: reviewed, round <n> done: <outcome><pr> — next: <command>`, the review
+state read from the unit's log after the child ran (`its file cannot be read`
+when it cannot be). The exit codes are as before: 0 after a round that
+recorded a verdict with no error and no escalation, else 1.
 
 ```bash
 bl review S34                 # alias: bl pr S34
@@ -3037,13 +3218,14 @@ a filter is refused.
 
 `bl status` with no arguments prints the same table for the open stories, in a different order:
 strictly by status, furthest along first as `flow.json` has it (`Flow.openStatusesOf('story')`:
-`in_progress`, then `refined`, then `backlog` in the shipped flow), the backlog's priority
+`escalated`, `ready_for_merge`, `fixing`, `in_review`, `in_progress`, `refined`, then `draft` in the
+shipped flow), the backlog's priority
 (`byRank`, see **Priority**) then numeric id within each. A story is open when its status does not meet `done`; a status `flow.json` does not
 name meets nothing, so it stays listed, last. A `flow.json` bl cannot read stops the command with
 its `FlowError`, even with no stories. `bl list` and `bl grep` read `flow.json` the same way, and
 stop the same way, but sort differently: worktree stories first, then `Flow.listRankOf('story', …)`
-(`in_progress`; then `backlog`, `refined` and any status `flow.json` does not name, equally; then
-`done`, then `superseded`). Here a story with a worktree keeps its status group and shows the `*`.
+(`in_progress` up to `escalated`; then `draft`, `refined` and any status `flow.json` does not name,
+equally; then `done`, then `superseded`). Here a story with a worktree keeps its status group and shows the `*`.
 Any flag with no id is a usage error, not a filter.
 
 ### `bl history`
@@ -3075,7 +3257,7 @@ bl history --scope F-40       # a theme (slug), an epic (E<n>), a feature or a c
   and `completed`, each feature's `epic` and `theme`.
 - **Backfill.** Each calendar day from the earliest `added` to the day before the first commit
   is projected from the current stories: in scope from `added`, `done` (or `superseded`) from
-  `completed`, current points, any other status `backlog`, no features. Such a day has
+  `completed`, current points, any other status `draft`, no features. Such a day has
   `backfilled: true` and `commit: null`; the table marks it `(backfilled)`.
 - **Scope.** A feature's stories are the union of the stories whose `feature:` named it that
   day and the `stories:` it listed that day (a commit before F-77 D3; a backfilled day has
@@ -3129,7 +3311,8 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
   the current tree's. Scope is the points of stories not `superseded`; done, of `done` ones.
 - **Tables.** Themes, Epics, Features and Components: scope, done, remaining and percent done
   over each one's stories (`scopeStories`). Feature rows add stories done / in scope, the
-  feature's status and the `review_round` of its highest-numbered `change*.md`. Rows link to
+  feature's status and its review round (`reviewRoundOf`: its log's, else the old
+  `review_round` of its highest-numbered `change*.md`). Rows link to
   `../<dir>/<entry>/index.md`.
 - **Throughput.** Points and stories per ISO week reaching `done` (a story's first snapshot
   showing it; on backfilled days that is its `completed` date), for the 26 weeks ending with the
@@ -3157,8 +3340,8 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
   shows `—` and is in neither; a zero-point unit has no per-point figure.
 - **Token efficiency** (`data.efficiency`, D7), over done units with tokens and points: output
   tokens per point by unit type (`feature` for a feature, else the story's `type`) as median,
-  90th percentile and count; the median for 0 to 2 review rounds and for 3 or more (the
-  highest-numbered `change*.md`'s `review_round`, none counting as 0); `tokens_by_step`
+  90th percentile and count; the median for 0 to 2 review rounds and for 3 or more (`reviewRoundOf`,
+  none counting as 0); `tokens_by_step`
   (see Tokens per step) summed per step name, `—` for a unit without it; and the outliers, units
   above their type's 90th percentile. `units`, `cost` and `efficiency` are exported for
   `bl retro` (S-905).
@@ -3515,7 +3698,21 @@ flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
 task-unit, task-field, deferred-unsized, deferred-duplicate, operator-tasks-retired,
 deferred-heading-retired, bad-tokens-by-step, agent-config, derived-key, dangling-feature,
-feature-no-stories
+feature-no-stories, transition-log, legacy-status
+
+`transition-log` (F-69 D2, `findTransitionFindings` in `src/transition.js`, error) is at a story,
+feature or task file whose `transitions:` is not a list of entries, or has an entry with a field
+outside `at`, `to`, `by`, `via`, `outcome` and `note`, no `by`, an `at` that is not ISO 8601
+UTC or is before the entry above it, or a `to` that is not a status of the type. It is also a
+first entry that is not the type's initial status by `new`, and an entry after it whose pair
+with the entry above it is no edge of the table under its `by` (`by: operator` matches any
+verb), unless the entry has `note: migrated`. And it is an `added` that is not the first
+entry's date, or a `completed` (a task's `done`) that is not the date of the entry to a
+terminal status; for a story or a feature, also a missing `added`, or a missing `completed` on
+a log that ends terminal (a task's are `task-field`'s). The migration sets both from the log
+for a unit that has neither. `legacy-status` (warning) is a
+`status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
+a log, which bl does not read. A unit with a log needs no `status:` (`missing-required-key`).
 
 `derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's
 `required_for:` (even empty), a feature's `stories:`, `points:` or `components:`, or an epic's
@@ -3535,10 +3732,17 @@ validate` loads with `lenientAgents` so it reports the error instead of stopping
 
 `bad-status` on a story or a feature is a status `flow.json` does not name for its type, so
 removing a status from the file makes every unit at it a finding, and adding one makes it
-valid. A missing or unreadable `flow.json` is not a finding: `bl validate` stops with the
-`FlowError` naming the file. `flow-json` (F-66 D1, `findFlowFindings`, error at `flow.json`) is
-an `implies` that names a status its type lacks, one that is not closed (A implies B, B implies
-C, A does not list C), or a gate verb other than `run`, `implement` and `merge`.
+valid. A v1 word that `LEGACY_STATUSES` maps (story `backlog`, feature `running`; task `open` in
+`task-field`) is a warning that names the migration, not an error (`statusWordProblem`, F-69 D6).
+A missing or unreadable `flow.json` is not a finding: `bl validate` stops with the `FlowError`
+naming the file. `flow-json` (F-66 D1, F-69 D1, `findFlowFindings`, at
+`flow.json`) is an error for: a `from`, `during`, `to` or terminal status the type lacks; a
+`when` or `via` name `src/guards.js` or `src/capabilities.js` does not register; a `then` that
+is not a verb of the type, or one whose `from` lacks the branch's `to`; a status that is no
+branch's `to`; a terminal status before an open one, or one that a verb other than `supersede`
+starts from; a verb `DISPATCH` (`src/verbs.js`) has for a type whose table lacks it (`status`
+only reads, `READ_VERBS`); a gate verb other than `run`, `implement` and `merge`. A `bl-flow/v1`
+file is one `flow-json` warning that names `bl/scripts/migrate-transitions.js`.
 
 The `blockers-*` findings (F-66 D5, `findBlockersFindings`) are at `blockers.json`; a missing
 file has none. All are errors except `blockers-order`:
@@ -3717,8 +3921,8 @@ function, `mergeGates(unit, { config, args, repos })` in `src/merge-gates.js`
 returns findings and never exits; `main` (`cleanup.js`) and `cmdMerge`
 (`feature-cmd.js`) print every finding and exit 1. The messages name the id
 only, so a story and a feature refused for the same reason read the same.
-Kind-specific preconditions stay with the caller (a feature must be `running`
-or `escalated`; a story's repo must be its component's, registered). There is
+Kind-specific preconditions stay with the caller (a feature must have started,
+`isFeatureBranched`; a story's repo must be its component's, registered). There is
 no CI gate (D2): no repo has hosted CI since S-565, and the repo-local
 pre-push gate runs on `git push origin main`. In order:
 
@@ -3728,11 +3932,14 @@ pre-push gate runs on `git push origin main`. In order:
   `held`): `<unit> is held at merge by <blocker> (<status>, needs <until>): <id>
 merges once <blocker> meets "<until>" (bl status <blocker>).` No flag
   bypasses it; the blocker moving on or `bl block remove` lifts it.
-- **Review gate** — `featureReviewGate` for both kinds: refused while
-  `review_status` is `pending`/`fixed` or the latest review session has an
-  unchecked **Must** or **Should** box, both read from the change document.
-  Open nits do not block, so a unit `bl run` ended `clean` always passes. No
-  flag bypasses it; edit the change document to override. After the merge,
+- **Review gate** — `featureReviewGate` for both kinds: refused while the
+  unit is in `fixing` or `in_review` (its transition log, F-69 D5; a unit with
+  no log is placed by its change document) or the latest review session of
+  its change document has an unchecked **Must** or **Should** box. The
+  refusal names the status, the round and the next verb: `bl implement` for
+  `fixing`, `bl review` for `in_review`. `ready_for_merge` and open nits pass,
+  so a unit `bl run` ended `clean` always passes. No flag bypasses it; to
+  override, record the status by hand as a log entry `by: operator`. After the merge,
   each repo's commit goes to its `merged:` entry and a `## Merge` line, and
   the change is `merged`; a story merged alone gets no tag and no release
   manifest.
@@ -3831,22 +4038,23 @@ resolve it`, with what bl found, the outcome's summary and where its
   and **one review round over the resolution only** (D7, see `## Review
 Cycle`): per repo `git show --remerge-diff <merge>` and
   `git diff <merge>..HEAD` (`resolutionScope`), and for a repo current with
-  main that a session committed in, `git diff <start>..HEAD`. `addressed`
-  pushes and the merge goes on. `pending` escalates `merge with main: the
+  main that a session committed in, `git diff <start>..HEAD`. The round
+  records `in_review` and its verdict in the unit's log. `ready_for_merge`
+  pushes and the merge goes on. `fixing` escalates `merge with main: the
 review of the resolution left open items` with the open items and keeps the
-  resolution on the branch with `review_status: pending`: clear
+  resolution on the branch, the unit in `fixing`: clear
   `## Escalation`, then `bl run <id> --resume` fixes it through the ordinary
   loop and `bl merge <id>` integrates again. The round is outside the round
   cap, and the run state records it (`integrationReview`), so the resume owes
   it its fix and a closing round below, at or above the cap. Anything else
-  (an aborted round, no verdict, or `addressed` with an escalation written
+  (an aborted round, no verdict, or `ready_for_merge` with an escalation written
   during the round) rolls back and escalates. A clean merge or a regeneration
   alone is never re-reviewed.
 - Every escalation names, per repo, the ref, the conflicted files with both
   sides' commits, and the next step (D8); what an agent wrote in
   `## Escalation` during the merge is kept below bl's text ("Written during
   the merge:").
-- Every stop before the push, except the `pending` review, rolls back the
+- Every stop before the push, except the review that leaves items in `fixing`, rolls back the
   merges it made and every commit a session made in any repo, current ones
   too (`git reset --keep` to each repo's start), so each branch is left as it
   was reviewed and the rerun integrates and gates it again. A stop by any
@@ -3860,9 +4068,9 @@ review of the resolution left open items` with the open items and keeps the
   is left as its own merge, gates it before it can land, and rolls back to
   that start. When a resolution or fix session had run, the record says so
   (`review`, with the files the resolution was to merge), and the rerun owes
-  that work the resolution checks, the gate with its fix step and an
-  `addressed` review of the resolution (no new session when nothing else
-  conflicts) before it can land; a `pending` review keeps it on the branch as
+  that work the resolution checks, the gate with its fix step and a clean
+  review of the resolution (no new session when nothing else
+  conflicts) before it can land; a review that leaves items in `fixing` keeps it on the branch as
   above and clears the record.
   `bl merge` then exits 1 having touched no main checkout. The sessions run
   headless unless the agent has no headless mode, as `bl review` chooses.
@@ -4220,13 +4428,17 @@ bl block list --fix      # rewrite a hand-edited blockers.json sorted, and commi
 
 Everything waiting on the operator, in one list (F-42 Design D1,
 `src/inbox.js`). It scans the backlog on every call (no index) and prints
-the groups below, each by unit id, newest first, features before stories:
+the groups below, each by unit id, newest first, features before stories. The `change`
+items are grouped by their unit's status (its transition log's, F-69 D5; a unit with no log is
+placed by its change document), in the lifecycle order of `flow.json`, under a heading per
+status: `change · in_progress (2)`, and `change · ready_for_merge, the merge gate (1)` for the
+units `bl merge` takes next:
 
 | Kind         | Source                                                                                                                                                                                 | Id                         | Answered by                                                         |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------- |
 | `escalation` | an active (not `done` or `superseded`) feature's or story's `## Escalation` with content                                                                                               | `F-42:esc`                 | `bl status F-42`                                                    |
 | `task`       | an open task (`tasks/`, see **`bl task`**) of any unit, open or closed, with a `holds:` line per edge of it in `blockers.json` that holds now                                          | `T-7`                      | `bl task done T-7 [note]`                                           |
-| `change`     | unmerged work (F-48 D4): an open feature, or an open story with no `feature:`, whose current change document is `status: open` and names a branch with commits ahead of `main` (below) | `S-7:change`               | `bl run S-7`; `bl merge S-7` once its review is `addressed`         |
+| `change`     | unmerged work (F-48 D4): an open feature, or an open story with no `feature:`, whose current change document is `status: open` and names a branch with commits ahead of `main` (below) | `S-7:change`               | `bl run S-7`; `bl merge S-7` once it is `ready_for_merge`           |
 | `update`     | an entry in the red list of the update job's latest heartbeat (F-80 D4, B2, below)                                                                                                     | `tools:renovate/glob-11.x` | nothing here: the next update run tests it again; read its gate log |
 
 One more line comes first, `runner: …` (kind `runner`, id `updates:run`),
@@ -4440,7 +4652,8 @@ them.
 - `story_id` format is always `S-<number>` with a hyphen (e.g. `S-40`). Directory names omit
   the hyphen (e.g. `S40-my-feature/`).
 - Points use the Fibonacci sequence: 1, 2, 3, 5, 8, 13. Never use other values.
-- Only set `status: done` after a real commit exists. Set `commit` and `completed` simultaneously.
+- Never write `status:` or `transitions:` by hand: `bl done`, `bl merge` and the loop record
+  them (F-69 D3), and `bl done` only after a real commit exists.
 - A story, component or feature directory never moves: status is frontmatter. Do not
   create `.completed/` directories; bl does not read them.
 - **Commit story edits with `bl validate`, then `bl sync --commit`.** Run `bl validate`

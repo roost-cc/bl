@@ -12,8 +12,10 @@
  *               with no `feature:`, whose current change document is open
  *               and names a branch with commits ahead of `main` in its
  *               repo's main checkout; id `S-<n>:change`, answered by
- *               `bl run S-<n>`, or `bl merge S-<n>` once the review is
- *               `addressed`
+ *               `bl run S-<n>`, or `bl merge S-<n>` once the unit is
+ *               `ready_for_merge`; grouped by the unit's status (its
+ *               transition log's, F-69 D5), `ready_for_merge` as the
+ *               merge gate
  *   update      a red update in the update job's latest heartbeat (F-80
  *               D4, B2); id `<repo>:<branch>`; nothing to answer here: the
  *               next update run tests it again
@@ -34,7 +36,7 @@ import { dirname, relative } from 'path';
 // it is read from the namespace: a pre-F-80 config.js leaves it undefined,
 // which collectInbox reports as a warning.
 import * as configModule from './config.js';
-import { changeNextVerb, currentChange } from './change-doc.js';
+import { changeNextVerb, currentChange, isOpenChange } from './change-doc.js';
 import { extractSection, sectionHasContent } from './feature.js';
 import { loadBacklog } from './backlog-graph.js';
 import { loadFlow } from './flow.js';
@@ -53,6 +55,13 @@ export const STALE_RUN_HOURS = 8;
 export const HEARTBEAT_SCHEMA = 'roost-update-heartbeat/v1';
 
 /**
+ * A graph unit's status with its review position: its log's last `to`
+ * (`unit.transitions`, which places a unit with no log by its change
+ * document, F-69 D4, D5).
+ */
+const positionOfUnit = (u) => u.transitions?.at(-1)?.to || u.status;
+
+/**
  * Every unit, features then stories, open and closed, with its file's text
  * (LF line ends) and body, from the graph (`loadBacklog`), so no unit file is
  * read again.
@@ -68,7 +77,7 @@ function readUnits(config) {
       id: fm.feature_id,
       title: fm.title ?? '',
       feature: '',
-      status: fm.status ?? 'draft',
+      status: positionOfUnit(u),
       indexPath: u.file,
       text: u.text(),
       body: u.body(),
@@ -82,7 +91,9 @@ function readUnits(config) {
       id: fm.story_id,
       title: fm.title ?? '',
       feature: fm.feature ?? '',
-      status: fm.status ?? 'backlog',
+      // Only a unit with no `feature:` gets a change item, so a story in a
+      // feature does not read its change document here.
+      status: fm.feature ? u.status : positionOfUnit(u),
       indexPath: u.file,
       text: u.text(),
       body: u.body(),
@@ -101,7 +112,7 @@ function readUnits(config) {
 function taskItems(config, warnings, flow) {
   let tasks;
   try {
-    tasks = readAllTasks(config).filter((t) => t.status === 'open');
+    tasks = readAllTasks(config).filter((t) => !flow.meets('task', t.status, 'done'));
   } catch (e) {
     warnings.push(`tasks not read: ${e.message}`);
     return [];
@@ -288,7 +299,7 @@ function changeItems(config, units, warnings, flow) {
       continue;
     }
     const doc = cur?.doc;
-    if (!doc || (doc.fm.status || 'open') !== 'open') continue;
+    if (!isOpenChange(doc)) continue;
     const ahead = [];
     for (const r of doc.repos) {
       if (!r.branch || !branchesOf(r.repo)?.has(r.branch)) continue;
@@ -309,7 +320,8 @@ function changeItems(config, units, warnings, flow) {
       id: `${u.id}:change`,
       unit: u.id,
       line: `${ahead.map((a) => a.repo).join(', ')}: ${u.title} · ${counts}, not merged`,
-      next: `bl ${changeNextVerb(doc.fm.review_status)} ${u.id}`,
+      status: u.status,
+      next: `bl ${changeNextVerb(u.status)} ${u.id}`,
       path: relative(config.backlogRoot, cur.path),
     });
   }
@@ -324,8 +336,9 @@ function byUnitNewest(a, b) {
 }
 
 /**
- * Everything in the inbox, grouped by kind (KINDS order) and by unit id,
- * newest first. `warnings` names a source that could not be read (the
+ * Everything in the inbox, grouped by kind (KINDS order), `change` items by
+ * their unit's status in lifecycle order (`flow.json`'s feature statuses),
+ * and by unit id, newest first. `warnings` names a source that could not be read (the
  * update job's heartbeat, when a setting is missing or git cannot fetch it;
  * a repo whose branches git cannot read); the other sources are still
  * listed. A `flow.json` that cannot be read throws: closed units cannot be
@@ -334,7 +347,7 @@ function byUnitNewest(a, b) {
  * @param {object} config
  * @param {{ now?: number }} [opts]  the clock the heartbeat's age is read by
  * @returns {{ items: Array<{ kind: string, id: string, unit: string,
- *   line: string, holds?: string[], next: string, path: string }>,
+ *   line: string, holds?: string[], status?: string, next: string, path: string }>,
  *   warnings: string[] }}
  */
 export function collectInbox(config, { now = Date.now() } = {}) {
@@ -367,14 +380,20 @@ export function collectInbox(config, { now = Date.now() } = {}) {
   items.push(...taskItems(config, warnings, flow));
   items.push(...changeItems(config, units, warnings, flow));
   // Red updates keep the heartbeat's order, which is the job's repo order.
-  items.sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || (a.kind === 'update' ? 0 : byUnitNewest(a, b)));
+  const { statuses } = flow.typeOf('feature');
+  const byStatus = (a, b) => (a.kind === 'change' ? statuses.indexOf(a.status) - statuses.indexOf(b.status) : 0);
+  items.sort(
+    (a, b) =>
+      KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || byStatus(a, b) || (a.kind === 'update' ? 0 : byUnitNewest(a, b)),
+  );
   return { items: items.map(({ ordinal, ...rest }) => rest), warnings };
 }
 
 /**
  * The lines `bl inbox` prints: the stale-run line on its own first (one
- * line, no heading), then a heading per kind with its count, two lines per
- * item and a task's `holds:` lines between them.
+ * line, no heading), then a heading per kind with its count (`change` items
+ * one per unit status, `ready_for_merge` named the merge gate), two lines
+ * per item and a task's `holds:` lines between them.
  */
 export function renderInbox(items) {
   if (items.length === 0) return ['inbox: empty'];
@@ -382,11 +401,21 @@ export function renderInbox(items) {
   const listed = items.filter((e) => e.kind !== 'runner');
   const idW = Math.max(...listed.map((e) => e.id.length));
   const unitW = Math.max(...listed.map((e) => e.unit.length));
+  const groups = [];
   for (const kind of KINDS.filter((k) => k !== 'runner')) {
     const of = listed.filter((e) => e.kind === kind);
+    if (kind !== 'change') groups.push({ heading: kind, of });
+    else {
+      for (const status of new Set(of.map((e) => e.status))) {
+        const gate = status === 'ready_for_merge' ? ', the merge gate' : '';
+        groups.push({ heading: `change · ${status}${gate}`, of: of.filter((e) => e.status === status) });
+      }
+    }
+  }
+  for (const { heading, of } of groups) {
     if (of.length === 0) continue;
     if (lines.length > 0) lines.push('');
-    lines.push(`${kind} (${of.length})`);
+    lines.push(`${heading} (${of.length})`);
     for (const e of of) {
       lines.push(`  ${e.id.padEnd(idW)}  ${e.unit.padEnd(unitW)}  ${e.line}`.trimEnd());
       for (const h of e.holds ?? []) lines.push(`  ${''.padEnd(idW)}  ${''.padEnd(unitW)}  holds: ${h}`);

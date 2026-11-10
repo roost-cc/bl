@@ -8,6 +8,7 @@ import { LOCK_FILE } from '../../src/lock.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { rendered } from '../helpers/rendered.js';
 import { HOME, REPOS, fm, newFeature, newStory } from '../helpers/feature-fixture.js';
+import { statusOf as logStatusOf, transition } from '../../src/transition.js';
 
 test('bl approve gates on refined status and a non-empty, consistent story list, and commits and pushes the approval', () => {
   const { dir, cleanup } = mkTempBacklog({ repos: REPOS, components: [HOME] });
@@ -22,10 +23,13 @@ test('bl approve gates on refined status and a non-empty, consistent story list,
     let before = head();
     let r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /still a draft/);
+    assert.match(
+      r.stderr,
+      /F-1 is draft; approve starts from refined \(bl refine F-1 reaches refined\); or pass --force/,
+    );
     assert.equal(head(), before);
     // refined but no stories → refuse, and no commit
-    writeFileSync(featurePath, readFileSync(featurePath, 'utf8').replace('status: draft', 'status: refined'));
+    transition(dir, { kind: 'feature', indexPath: featurePath }, 'refined', { by: 'refine', via: 'refine' });
     r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /has no stories/);
@@ -35,7 +39,7 @@ test('bl approve gates on refined status and a non-empty, consistent story list,
     r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 0, r.stderr);
     const f = fm(featurePath);
-    assert.equal(f.status, 'approved');
+    assert.equal(logStatusOf('feature', f), 'approved');
     assert.match(f.approved, /^\d{4}-\d{2}-\d{2}$/);
     assert.match(r.stderr, /3 points/);
     assert.match(r.stderr, /^ {2}S-1 {2}effort: high \(default\) {2}Mint$/m, 'an unset effort shows effort.default');
@@ -73,7 +77,7 @@ test('approve_retry_commits_after_failed_commit: a rerun after a refused commit 
     writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     let r = runBl(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
     assert.equal(r.status, 1, r.stderr);
-    assert.equal(fm(join(dir, rel)).status, 'approved');
+    assert.equal(logStatusOf('feature', fm(join(dir, rel))), 'approved');
     assert.equal(git(dir, 'rev-parse', 'HEAD'), base);
 
     rmSync(hook);
@@ -103,7 +107,7 @@ test('approve_write_and_commit_share_lock: bl approve writes nothing until it ho
     writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
     const run = startBlBehindLock(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
     await run.blocked;
-    assert.equal(fm(join(dir, rel)).status, 'refined', 'nothing written before the lock');
+    assert.equal(logStatusOf('feature', fm(join(dir, rel))), 'refined', 'nothing written before the lock');
     rmSync(join(dir, LOCK_FILE));
     const r = await run.closed;
     assert.equal(r.status, 0, r.stderr);
@@ -136,7 +140,7 @@ test('bl approve warns about open dependencies outside the feature', () => {
   try {
     const r = runBl(['approve', 'F-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /S-2 depends on S-1 \(backlog\)/);
+    assert.match(r.stderr, /S-2 depends on S-1 \(draft\)/);
     assert.match(r.stderr, /^ {2}S-2 {2}effort: xhigh {2}Inside$/m, "each story's effort (F-85 D1)");
     // workon refuses on the same blocker (before touching git).
     const w = runBl(['implement', 'F-1'], { cwd: dir });
@@ -173,13 +177,13 @@ test('bl approve refuses while ## Escalation has content, even with --force, and
         r.stderr,
         /record the decision in the Design \(or the Review Log\) and set `## Escalation` to `None\.`/i,
       );
-      assert.equal(fm(featurePath).status, 'refined');
+      assert.equal(logStatusOf('feature', fm(featurePath)), 'refined');
     }
     const text = readFileSync(featurePath, 'utf8');
     writeFileSync(featurePath, text.replace(/(## Escalation\n\n)[^\n]*/, '$1None.'));
     const r = runBl(['approve', 'F-1', '--no-sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(fm(featurePath).status, 'approved');
+    assert.equal(logStatusOf('feature', fm(featurePath)), 'approved');
   } finally {
     cleanup();
   }

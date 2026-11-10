@@ -62,7 +62,6 @@ import {
   extractSection,
   sectionHasContent,
   resolveFeaturePlugins,
-  FEATURE_WORKABLE_STATUSES,
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
 import { heldLines } from './blockers.js';
@@ -117,17 +116,32 @@ import { applyRefineStatus, refineAndCommit } from './refine.js';
 import {
   applyFixOutcome,
   changeName,
+  changeStatus,
   ensureChange,
   listChanges,
   openUnitChange,
   readChange,
   recordMerge,
-  reviewFieldsAt,
   setRepo,
   updateChange,
 } from './change-doc.js';
 import { deployableRepos, mainCommits, tagRepos, writeReleaseManifest } from './release.js';
-import { loadFlow, statusWords } from './flow.js';
+import { loadFlow } from './flow.js';
+import {
+  IMPLEMENT_VERBS,
+  OPERATOR,
+  applyMerged,
+  applyNew,
+  applyTransition,
+  enterVerb,
+  implementVerbOf,
+  logOf,
+  malformedLogRefusal,
+  nowAt,
+  reviewOf,
+  startOf,
+  statusOf,
+} from './transition.js';
 
 const POINTS_GUIDELINE = { min: 8, max: 20 };
 
@@ -153,21 +167,23 @@ export function updateFeature(config, feature, mutate) {
  * each spec lock the inner one, and no two spec locks are held at once
  * (F-67 D4). The fold happens once, by the merge that finds the feature not
  * yet closed. `decided` is the `commit:` shape to record, or null.
+ *
+ * Each unit records `done` in its log (F-69 D3, `applyMerged`), at `at`,
+ * which also sets its `completed:`.
  */
-export function markFeatureMerged(config, feature, stories, { decided, stamp }) {
+export function markFeatureMerged(config, feature, stories, { decided, at = nowAt() }) {
   const flow = loadFlow(config.backlogRoot);
   const tokens = { input: 0n, output: 0n, cache_creation: 0n, cache_read: 0n };
   let anyTokens = false;
   let storySteps = {};
+  const note = `merged with ${feature.id}`;
   for (const s of stories) {
     // Spec lock inside the caller's backlog lock (F-67 D4).
     const wrote = updateSpecFile(config.backlogRoot, s.indexPath, (fm) => {
       if (addTokenTotals(tokens, fm)) anyTokens = true;
       storySteps = mergeStepTokens(storySteps, fm.tokens_by_step);
-      if (flow.meets('story', fm.status, 'done')) return false;
-      fm.status = 'done';
+      if (!applyMerged(flow, 'story', fm, { at, note })) return false;
       if (decided !== null) fm.commit = decided;
-      fm.completed = stamp;
     });
     if (wrote) info(`Marked ${s.id} done.`);
   }
@@ -177,16 +193,15 @@ export function markFeatureMerged(config, feature, stories, { decided, stamp }) 
     // The stories are folded in once, by the merge that marks the feature
     // done: a caller that loaded it before another merge finished finds it
     // closed here, under the lock, and adds nothing again.
-    if (!flow.meets('feature', fm.status, 'done')) {
+    if (!flow.meets('feature', statusOf('feature', fm, feature.change), 'done')) {
       if (addTokenTotals(tokens, fm)) anyTokens = true;
       if (anyTokens) applyTokensToFrontmatter(fm, tokens);
       // Per step as well, key by key (S-904): the feature's own keys first.
       const steps = mergeStepTokens(fm.tokens_by_step, storySteps);
       if (Object.keys(steps).length > 0) fm.tokens_by_step = steps;
+      applyMerged(flow, 'feature', fm, { at, change: feature.change, note });
     }
-    fm.status = 'done';
     if (decided !== null) fm.commit = decided;
-    fm.completed = stamp;
   });
 }
 
@@ -231,6 +246,19 @@ function exitOnStoryWithoutRepo(feature, stories) {
   }
 }
 
+/**
+ * Exit when a story of the feature has a malformed `transitions:`
+ * (`malformedLogRefusal`): its log is written later (its start, its merge),
+ * after a worktree, a merge or a tag that the refusal would not undo.
+ */
+function exitOnMalformedStoryLog(stories) {
+  const refusal = malformedLogRefusal(stories.map((s) => ({ id: s.id, fm: s.frontmatter })));
+  if (refusal) {
+    console.error(refusal);
+    process.exit(1);
+  }
+}
+
 /** The first story that puts `repoName` in a feature. */
 function repoSource(stories, repoName) {
   const s = stories.find((st) => st.unitRepo === repoName);
@@ -267,7 +295,8 @@ export function recordFeatureTokens(feature, config) {
       updateFeature(config, feature, (fm) => {
         // A merged feature's totals hold its stories' too, folded in once by
         // `bl merge`: a re-read of its own transcripts must not replace them.
-        if (!loadFlow(config.backlogRoot).meets('feature', fm.status, 'done')) applyFeatureTokens(fm, totals);
+        if (!loadFlow(config.backlogRoot).meets('feature', statusOf('feature', fm), 'done'))
+          applyFeatureTokens(fm, totals);
       });
     });
   } catch {
@@ -486,15 +515,17 @@ export async function cmdNew(args, config, { beforeCreate = null, afterCreate = 
   };
   // The template holds `theme:` and `epic:` after `title:`; a feature
   // with no epic leaves the key out.
+  const values = {
+    feature_id: id,
+    title,
+    theme: valueAxis.theme,
+    epic: valueAxis.epic ?? undefined,
+    review_rounds_max: vars.reviewRoundsMax,
+    added: vars.today,
+  };
+  applyNew(loadFlow(config.backlogRoot), 'feature', values);
   const content = renderTemplate('feature', {
-    values: {
-      feature_id: id,
-      title,
-      theme: valueAxis.theme,
-      epic: valueAxis.epic ?? undefined,
-      review_rounds_max: vars.reviewRoundsMax,
-      added: vars.today,
-    },
+    values,
     vars,
     body: customBody,
   });
@@ -526,8 +557,9 @@ export async function cmdNew(args, config, { beforeCreate = null, afterCreate = 
 // ---------------------------------------------------------------------------
 
 export function cmdRefine(args, config, feature) {
-  if (loadFlow(config.backlogRoot).meets('feature', feature.status, 'done')) {
-    console.error(`Feature ${feature.id} is ${feature.status}; nothing to refine.`);
+  const { refusal } = startOf(config, 'feature', feature, 'refine');
+  if (refusal) {
+    console.error(refusal);
     process.exit(1);
   }
   const all = readAllStories(config);
@@ -538,9 +570,7 @@ export function cmdRefine(args, config, feature) {
   info(`Repos   : ${storyReposList(feature, stories)}`);
   info(`File    : ${feature.featureRelPath}`);
   info('');
-  if (feature.status !== 'draft') {
-    info(`Feature ${feature.id} is already ${feature.status}. Re-refining.\n`);
-  }
+  if (feature.status === 'refined') info(`Feature ${feature.id} is already refined. Re-refining.\n`);
 
   const vars = {
     featureId: feature.id,
@@ -587,7 +617,12 @@ export function cmdRefine(args, config, feature) {
     [feature.id],
     // A premise that does not hold puts the feature back to draft (F-68 D2).
     ({ premise_holds, refined, reason }) =>
-      applyRefineStatus(config.backlogRoot, feature, !premise_holds ? 'draft' : refined ? 'refined' : null, reason),
+      applyRefineStatus(
+        config.backlogRoot,
+        { ...feature, kind: 'feature' },
+        !premise_holds ? 'failure' : refined ? 'success' : null,
+        reason,
+      ),
   );
 }
 
@@ -610,17 +645,18 @@ export async function cmdApprove(args, config, feature) {
 }
 
 async function approveLocked(args, config, feature) {
-  if (loadFlow(config.backlogRoot).meets('feature', feature.status, 'done')) {
-    console.error(`Feature ${feature.id} is ${feature.status}.`);
-    process.exit(1);
-  }
-  if (feature.status !== 'draft' && feature.status !== 'refined') {
-    info(`Feature ${feature.id} is already ${feature.status}.`);
-    if (feature.status === 'approved') await retryApprovalCommit(config, feature);
+  // A rerun after a failed commit commits that approval (S-1330).
+  if (feature.status === 'approved') {
+    info(`Feature ${feature.id} is already approved.`);
+    await retryApprovalCommit(config, feature);
     return;
   }
-  if (feature.status === 'draft' && !args.force) {
-    console.error(`Feature ${feature.id} is still a draft — run \`bl refine ${feature.id}\` first (or pass --force).`);
+  // --force approves a draft: the operator stands in for the refine.
+  const flow = loadFlow(config.backlogRoot);
+  const forced = Boolean(args.force) && feature.status === flow.initial('feature');
+  const { refusal } = forced ? {} : startOf(config, 'feature', feature, 'approve');
+  if (refusal) {
+    console.error(feature.status === flow.initial('feature') ? `${refusal}; or pass --force` : refusal);
     process.exit(1);
   }
   // An open escalation blocks `bl run`, so approving past it only
@@ -658,8 +694,9 @@ async function approveLocked(args, config, feature) {
 
   // An edit outside bl since the read (an editor) is not approved over.
   const wrote = updateFeature(config, feature, (fm) => {
-    if ((fm.status ?? 'draft') !== feature.status) return false;
-    fm.status = 'approved';
+    if (statusOf('feature', fm) !== feature.status) return false;
+    if (forced) applyTransition(flow, 'feature', fm, 'refined', { by: OPERATOR, note: 'bl approve --force' });
+    applyTransition(flow, 'feature', fm, 'approved', { by: 'approve' });
     fm.approved = today();
   });
   if (!wrote) {
@@ -841,8 +878,15 @@ export function tokensLines(fm) {
   return lines;
 }
 
-/** The header lines `bl status` prints for a feature or a story; `repos` is its repo list. */
-function printUnitHead(unit, repos) {
+/** How many of the log's last entries `bl status` prints (F-69 D5). */
+const STATUS_TRANSITIONS = 3;
+
+/**
+ * The header lines `bl status` prints for a feature or a story: its status,
+ * its review round and outcome, and the last transitions of its log (F-69
+ * D5); `repos` is its repo list.
+ */
+function printUnitHead(unit, repos, kind) {
   const review = summarizeLatestReviewSession(unit.changeBody ?? '');
   console.log(`${unit.id} · ${unit.title}`);
   // A side story's `found_by` (F-48 D2): a record, printed when set.
@@ -850,15 +894,31 @@ function printUnitHead(unit, repos) {
   console.log(
     `status: ${unit.status}   repo: ${repos || '-'}   branch: ${unit.branch || '-'}   pr: ${unit.pr ? `#${unit.pr}` : '-'}   points: ${unit.points}${foundBy ? `   found by: ${foundBy}` : ''}`,
   );
-  const rounds = `${unit.reviewRound}/${unit.reviewRoundsMax}`;
-  const outcome = reviewOutcome(unit.reviewStatus, review);
-  const state = !unit.reviewStatus
-    ? `none (round ${rounds})`
-    : outcome != null
-      ? `round ${rounds} done: ${outcome}`
-      : `round ${rounds}, review_status: ${unit.reviewStatus}`;
+  const { round, position } = reviewOf(kind, unit.fm, unit.change ?? null);
+  const rounds = `${round}/${unit.reviewRoundsMax}`;
+  const outcome = reviewOutcome(position, review);
+  const state =
+    position == null
+      ? `none (round ${rounds})`
+      : outcome != null
+        ? `round ${rounds} done: ${outcome}`
+        : `round ${rounds}, ${position}`;
   console.log(`review: ${state}${review ? `, latest session ${review.date}` : ''}`);
+  const log = logOf(kind, unit.fm, unit.change ?? null);
+  if (log.length > 0) {
+    const shown = log.slice(-STATUS_TRANSITIONS);
+    console.log(`transitions (last ${shown.length} of ${log.length}):`);
+    for (const e of shown) console.log(`  ${transitionLine(e)}`);
+  }
   printChanges(unit);
+}
+
+/** One log entry as `bl status` prints it: `at  to  by <verb> via <capability>: <outcome> (<note>)`. */
+function transitionLine(e) {
+  const via = e.via ? ` via ${e.via}` : '';
+  const outcome = e.outcome ? `: ${e.outcome}` : '';
+  const note = e.note ? ` (${e.note})` : '';
+  return `${e.at ?? '-'}  ${e.to}  by ${e.by ?? '-'}${via}${outcome}${note}`;
 }
 
 /**
@@ -873,7 +933,7 @@ function printChanges(unit) {
     const doc = readChange(c.path);
     if (!doc) continue;
     const current = all.length > 1 && c.path === unit.changePath ? ', current' : '';
-    console.log(`\nchange ${relative(dir, c.path)} (${doc.fm.status || 'open'}${current}):`);
+    console.log(`\nchange ${relative(dir, c.path)} (${changeStatus(doc.fm)}${current}):`);
     if (doc.repos.length === 0) console.log('  (no repos recorded)');
     for (const r of doc.repos) {
       console.log(
@@ -887,7 +947,7 @@ export function cmdStatus(args, config, feature) {
   const all = readAllStories(config);
   const { stories } = resolveFeatureStories(feature, config, all);
   const ordered = orderStoriesByDeps(stories);
-  printUnitHead(feature, featureRepoOrder(stories).join(', '));
+  printUnitHead(feature, featureRepoOrder(stories).join(', '), 'feature');
   console.log('');
   if (ordered.length > 0) {
     printTable(
@@ -911,7 +971,7 @@ export function cmdStatus(args, config, feature) {
  */
 export function cmdStatusStory(args, config, story) {
   const { unit } = loadStoryUnit(story, config);
-  printUnitHead(unit, unit.primaryRepo);
+  printUnitHead(unit, unit.primaryRepo, 'story');
   const all = readAllStories(config);
   const blockers = outsideBlockers([storyAsOrdered(unit)], all, loadFlow(config.backlogRoot));
   if (blockers.length > 0) {
@@ -1034,9 +1094,16 @@ export function prepareFeatureRepo(config, feature, repoName, { strict = false }
 
 /**
  * Everything `workon` and `run` share: gates, worktrees, bootstrap, stage
- * plugins, the `running` transition, and the prompt variables every feature
+ * plugins, the `in_progress` transition, and the prompt variables every feature
  * session receives. Exits the process on a hard guard (same as `bl implement`
- * on a story). Every repo of the feature (`featureRepoOrder`, F-52 D3) gets
+ * on a story).
+ *
+ * `verb` is `run` or `implement`. The start state is `flow.json`'s
+ * (`startOf`): `run` starts from its own `from` or resumes into a verb of its
+ * `then` chain (`review`, `fix`); `implement` starts from its own `from`, or
+ * runs the `fix` session of a feature whose review position is `fixing`
+ * (`implementVerbOf`). A started `implement` records `in_progress`, and a
+ * started `fix` `fixing` (`enterVerb`, F-69 D3); the loop records a run's. Every repo of the feature (`featureRepoOrder`, F-52 D3) gets
  * its worktree, in that order and strictly, before any agent starts (S-862),
  * under the feature's unit directory `unitDir`, where the session starts
  * (F-60 D3). The lead repo is the first; its config is `cfg`.
@@ -1045,15 +1112,12 @@ export function prepareFeatureRepo(config, feature, repoName, { strict = false }
  *             ordered, baseVars, reviewPending, targetRepoName,
  *             otherWorktrees }}
  */
-export function prepareFeatureWorktree(config, feature) {
-  if (!FEATURE_WORKABLE_STATUSES.has(feature.status)) {
-    const hint =
-      feature.status === 'draft'
-        ? `run \`bl refine ${feature.id}\` and then \`bl approve ${feature.id}\``
-        : feature.status === 'refined'
-          ? `run \`bl approve ${feature.id}\` first`
-          : 'it is closed';
-    console.error(`Feature ${feature.id} is ${feature.status} — ${hint}.`);
+export function prepareFeatureWorktree(config, feature, verb = 'run') {
+  const verbs =
+    verb === 'run' ? loadFlow(config.backlogRoot).chainOf('feature', 'run') : implementVerbOf('feature', feature);
+  const start = startOf(config, 'feature', feature, verbs);
+  if (start.refusal) {
+    console.error(start.refusal);
     process.exit(1);
   }
   const all = readAllStories(config);
@@ -1077,6 +1141,7 @@ export function prepareFeatureWorktree(config, feature) {
     process.exit(1);
   }
   exitOnStoryWithoutRepo(feature, stories);
+  exitOnMalformedStoryLog(stories);
   const names = featureRepoOrder(stories);
   for (const name of names) {
     if (!config.reposByName[name]) {
@@ -1116,12 +1181,11 @@ export function prepareFeatureWorktree(config, feature) {
   }
   const sessionVars = featureSessionVars(feature);
 
-  updateFeature(config, feature, (fm) => {
-    if (fm.status === 'approved' || fm.status === 'escalated') fm.status = 'running';
-  });
+  // `fix` from `escalated` or `in_progress` goes back to `fixing`, its `during`.
+  if (IMPLEMENT_VERBS.includes(start.verb)) enterVerb(config.backlogRoot, { ...feature, kind: 'feature' }, start.verb);
   // The branch is recorded in the change document, with every repo prepared.
   const change = openUnitChange(cfg.backlogRoot, feature, branchName, names);
-  const reviewPending = feature.reviewStatus === 'pending';
+  const reviewPending = start.verb === 'fix';
 
   const baseVars = {
     featureId: feature.id,
@@ -1167,23 +1231,30 @@ export function prepareFeatureWorktree(config, feature) {
 }
 
 export async function cmdWorkon(args, config, feature) {
-  const prep = prepareFeatureWorktree(config, feature);
+  const prep = prepareFeatureWorktree(config, feature, 'implement');
   const { cfg, parsed, reviewPending } = prep;
   const promptName = reviewPending ? 'feature-workon-review' : 'feature-workon';
   if (reviewPending) info('Review pending on the feature — using the review-feedback prompt.\n');
+  // One session works every story: bl, not the agent, records each one's
+  // start before it begins (F-69 D3).
+  const flow = loadFlow(cfg.backlogRoot);
+  for (const s of reviewPending ? [] : prep.ordered) {
+    if (flow.isUnstarted('story', s.status))
+      enterVerb(cfg.backlogRoot, { kind: 'story', indexPath: s.indexPath }, 'implement');
+  }
   const vars = { ...prep.baseVars };
   if (reviewPending) {
     // A fix session returns its outcome in the outcome file (F-68 D1, D3).
     vars.outcomeCarrier = 'file';
     // The same slot `bl run` gives this round's fix session.
     ensureRunDir(cfg);
-    vars.scratchDir = join(cfg.backlogRoot, RUN_DIR, `${feature.id}.r${feature.reviewRound}.fix.scratch`);
+    vars.scratchDir = join(cfg.backlogRoot, RUN_DIR, `${feature.id}.r${feature.round}.fix.scratch`);
     mkdirSync(vars.scratchDir, { recursive: true });
   }
   const sessionPrompt = loadPrompt(promptName, vars, { agent: cfg.agent, config: cfg });
 
-  // What a fix session found; applyFixOutcome puts it back unless the outcome is `fixed`.
-  const fixBefore = reviewPending ? reviewFieldsAt(vars.changeAbsPath) : {};
+  // The change document the fix session found, which places a feature with no log.
+  const changeBefore = reviewPending ? readChange(vars.changeAbsPath) : null;
   const ret = launchSession({
     mode: 'workon',
     parsed,
@@ -1203,7 +1274,7 @@ export async function cmdWorkon(args, config, feature) {
     recordTokens: false,
     // The same key `bl run` gives this session (S-904): the round's fix
     // while a review is pending.
-    tokensStep: reviewPending ? tokensStepKey('fix', feature.reviewRound) : 'implement',
+    tokensStep: reviewPending ? tokensStepKey('fix', feature.round) : 'implement',
     tokensIndexPath: feature.indexPath,
     // One session for every story: the highest of their levels (F-85 D4).
     effort: sessionEffort(cfg, { mode: 'workon', stories: prep.ordered }),
@@ -1212,7 +1283,8 @@ export async function cmdWorkon(args, config, feature) {
   const status = reviewPending ? ret.status : ret;
   recordFeatureTokens(feature, cfg);
   if (reviewPending) {
-    applyFixOutcome(cfg.backlogRoot, { id: feature.id, changePath: vars.changeAbsPath }, ret, fixBefore);
+    const unit = { id: feature.id, kind: 'feature', indexPath: feature.indexPath };
+    applyFixOutcome(cfg.backlogRoot, unit, ret, changeBefore);
   }
   if (!status) info(implementNextSteps(feature.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.
@@ -1246,8 +1318,9 @@ export async function cmdReview(args, config, feature, opts = {}) {
     );
     process.exit(1);
   }
-  if (feature.status !== 'running' && feature.status !== 'escalated') {
-    console.error(`Feature ${feature.id} is ${feature.status}; nothing to review.`);
+  const { refusal } = startOf(config, 'feature', feature, 'review');
+  if (refusal) {
+    console.error(refusal);
     process.exit(1);
   }
   reviewAgentOrExit(config);
@@ -1367,13 +1440,14 @@ function openMissingPRs(config, unit, found, branchName, ordered) {
 export async function cmdReviewStory(args, baseConfig, story, opts = {}) {
   refuseStoryRepo('review', args);
   const { config, unit } = loadStoryUnit(story, baseConfig);
-  if (loadFlow(config.backlogRoot).meets('story', unit.status, 'done')) {
-    console.error(`Story ${unit.id} is ${unit.status}; nothing to review.`);
-    process.exit(1);
-  }
   if (reviewSkipped(unit.fm)) {
     info(`${unit.id} is a scripted story: nothing an agent wrote, so review is skipped (review: true opts in).`);
     return;
+  }
+  const { refusal } = startOf(config, 'story', unit, 'review');
+  if (refusal) {
+    console.error(refusal);
+    process.exit(1);
   }
   reviewAgentOrExit(config);
   const branchName = unit.branch || unit.featureEntry.toLowerCase();
@@ -1400,7 +1474,12 @@ async function reviewUnitPRs(
 ) {
   const reviewAgent = config.reviewAgent;
   const parsed = unit.kind === 'story' ? normalizeId(unit.id) : parsedFor(unit);
-  const round = unit.reviewRound;
+  // The rounds with a verdict, and whether the open one re-reviews fixes (F-69 D5).
+  const {
+    reviewed: round,
+    position,
+    fixed,
+  } = reviewOf(unit.kind === 'story' ? 'story' : 'feature', unit.fm, unit.change ?? null);
   // The same review step `bl run` takes: two dimension passes and a
   // verifier, headless unless the agent has no headless mode or
   // --interactive asks to attach each session.
@@ -1414,14 +1493,14 @@ async function reviewUnitPRs(
     });
 
   // One invocation is one review round over every PR the unit has: one
-  // verifier, one Review Log session, `review_round` up by one. The primary
-  // repo's PR (else the first found) is the one the run state keeps.
+  // verifier, one Review Log session, one verdict in the unit's log. The
+  // primary repo's PR (else the first found) is the one the run state keeps.
   const primary = prs.find((p) => p.isPrimary) ?? prs[0];
   const targets = [primary, ...prs.filter((p) => p !== primary)];
   info(`${unit.kind === 'story' ? 'Story   ' : 'Feature '} : ${unit.id} — ${unit.title}`);
   info(`Branch   : ${branchName}`);
   info(
-    `Round    : ${round + 1} of ${unit.reviewRoundsMax}${unit.reviewStatus === 'fixed' ? ' (re-review of claimed fixes)' : ''}`,
+    `Round    : ${round + 1} of ${unit.reviewRoundsMax}${position === 'in_review' && fixed ? ' (re-review of claimed fixes)' : ''}`,
   );
   const syncs = new Map();
   for (const pr of targets) {
@@ -1520,7 +1599,7 @@ async function reviewUnitPRs(
   else info(`\nReview round ${result.round} done: ${end.outcome}.${end.cap}`);
   if (end?.next) info(`Next: ${end.next}`);
   if (result.error) console.error(`bl review: ${result.error}`);
-  const ok = !result.error && !result.escalated && (result.status === 'pending' || result.status === 'addressed');
+  const ok = !result.error && !result.escalated && result.verdict;
   process.exit(ok ? 0 : 1);
 }
 
@@ -1536,21 +1615,25 @@ export async function cmdRun(args, config, feature) {
 }
 
 /**
- * `bl run S-n`: a runnable story (`Flow.isRunnable`) through the feature loop,
- * as a one-story unit on its own branch (F-35 Design §3).
+ * `bl run S-n`: a story through the feature loop, as a one-story unit on its
+ * own branch (F-35 Design §3). Its start state is `flow.json`'s, as for a
+ * feature (`startOf` over `run`'s chain), checked after `runUnit`'s gates.
  */
 export async function cmdRunStory(args, baseConfig, story) {
   refuseStoryRepo('run', args);
   const { config, unit, found, parsed } = loadStoryUnit(story, baseConfig);
   const flow = loadFlow(config.backlogRoot);
-  if (!flow.isRunnable('story', unit.status)) {
-    // Only the shipped key keeps its prose spelling; any other is named as flow.json has it.
-    const named = flow.runnableStatusesOf('story').map((s) => (s === 'in_progress' ? 'in-progress' : s));
-    const runnable = statusWords(named);
-    const hint = unit.status === 'backlog' ? `run \`bl refine ${unit.id}\` first` : `only a ${runnable} story runs`;
-    console.error(`Story ${unit.id} is ${unit.status} — ${hint}.`);
-    process.exit(1);
-  }
+  const start = (guards) => {
+    const s = startOf(config, 'story', unit, flow.chainOf('story', 'run'), { guards });
+    if (s.refusal) {
+      console.error(s.refusal);
+      process.exit(1);
+    }
+    return s;
+  };
+  // A story `bl run` cannot start is refused before its blockers are listed;
+  // the guards are checked after `runUnit`'s own escalation check.
+  if (!args.plan) start(false);
   const ordered = [storyAsOrdered(unit)];
   if (!args.plan) {
     const blockers = outsideBlockers(ordered, readAllStories(config), flow);
@@ -1563,7 +1646,10 @@ export async function cmdRunStory(args, baseConfig, story) {
   }
   return runUnit(args, config, unit, {
     ordered: () => ordered,
-    prepare: () => prepareStoryRun(parsed, found, config, { unit }),
+    prepare: () => {
+      start(true);
+      return prepareStoryRun(parsed, found, config, { unit });
+    },
   });
 }
 
@@ -1611,8 +1697,8 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
     );
     process.exit(1);
   }
-  // Checked before prep, which would flip `escalated` back to `running`
-  // and leave the feature running with an open escalation.
+  // Checked before prep, which would flip `escalated` back to `in_progress`
+  // and leave the feature in progress with an open escalation.
   if (escalationOpen(unit.indexPath)) {
     console.error(
       `${kind} ${unit.id} has an open ## Escalation — resolve it and set the section to "None." before running again.`,
@@ -1647,12 +1733,10 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
 // ---------------------------------------------------------------------------
 
 export async function cmdMerge(args, config, feature) {
-  if (loadFlow(config.backlogRoot).meets('feature', feature.status, 'done')) {
-    console.error(`Feature ${feature.id} is already ${feature.status}.`);
-    process.exit(1);
-  }
-  if (feature.status !== 'running' && feature.status !== 'escalated') {
-    console.error(`Feature ${feature.id} is ${feature.status} — nothing has been implemented on a branch yet.`);
+  // The status from the table; the merge gate's blockers are `mergeGates`'.
+  const { refusal } = startOf(config, 'feature', feature, 'merge', { guards: false });
+  if (refusal) {
+    console.error(refusal);
     process.exit(1);
   }
 
@@ -1660,6 +1744,7 @@ export async function cmdMerge(args, config, feature) {
   const { stories } = resolveFeatureStories(feature, config, all);
   // Before any repo lands: every story is merged and marked done below.
   exitOnStoryWithoutRepo(feature, stories);
+  exitOnMalformedStoryLog(stories);
 
   // The release manifest written after the merge records every deployable
   // repo (`deployable: true` in `repos`, which every entry must set).
@@ -1809,7 +1894,7 @@ export async function cmdMerge(args, config, feature) {
     const recorded = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm.commit;
     const union = unionLandedCommits(recorded, landed, tips);
     const decided = commitFmShape(union);
-    markFeatureMerged(config, feature, stories, { decided, stamp });
+    markFeatureMerged(config, feature, stories, { decided });
     recordMerge(config.backlogRoot, feature.featureDir, {
       commits: union,
       date: stamp,

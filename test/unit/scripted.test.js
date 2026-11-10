@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import {
@@ -28,10 +28,11 @@ import { implementScripted } from '../../src/workon.js';
 import { mergeGates } from '../../src/merge-gates.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { git, GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
-import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { newChange, writeChange } from '../../src/change-doc.js';
 import { defaultOutcome } from '../helpers/outcomes.js';
+import { statusOf } from '../../src/transition.js';
 
 const AC = '## Acceptance Criteria\n\n- [ ] the lock is fresh\n';
 const PLUGINS = { relock: { implement: 'relock {{storyId}}' }, other: { test: 'npm test' } };
@@ -117,6 +118,13 @@ test('a dirty worktree is refused before the command runs', () => {
   assert.equal(git(dir, 'status', '--porcelain', 'marker'), '');
 });
 
+/** A temp directory with the backlog's flow.json, which the story writes read. */
+function backlogDir() {
+  const root = mkTempDir('bl-scripted-record-');
+  copyFileSync(FLOW_TEMPLATE, join(root, 'flow.json'));
+  return root;
+}
+
 test('recordScriptedRun preserves paired story and change state when the second write fails', () => {
   const story = '---\nstory_id: S-1\nstatus: refined\n---\n\n## Acceptance Criteria\n\n- [ ] Done\n';
   const result = (kind) => ({ kind, sha: 'abc1234', plugin: 'relock', command: 'relock', tail: '' });
@@ -127,12 +135,12 @@ test('recordScriptedRun preserves paired story and change state when the second 
       changePath,
       id: 'S-1',
       repo: 'x',
-      date: '2026-11-01',
+      at: '2026-11-01T10:00:00Z',
       result: result(kind),
     });
   for (const kind of ['changed', 'unchanged']) {
     // The change document cannot be written: the story reads as it did.
-    const root = mkTempDir('bl-scripted-record-');
+    const root = backlogDir();
     writeFileSync(join(root, 'index.md'), story);
     assert.throws(() => record(root, join(root, 'missing-change.md'), kind), /no change document/, kind);
     assert.equal(readFileSync(join(root, 'index.md'), 'utf8'), story, kind);
@@ -164,7 +172,7 @@ test('record-scripted-run-rollback-failure-preserves-recovery-state', () => {
     const code = `
       import { recordScriptedRun } from ${JSON.stringify(scripted)};
       try {
-        recordScriptedRun({ ...${JSON.stringify(opts)}, date: '2026-11-01', result: ${JSON.stringify(result)} });
+        recordScriptedRun({ ...${JSON.stringify(opts)}, at: '2026-11-01T10:00:00Z', result: ${JSON.stringify(result)} });
       } catch (e) {
         console.log('THROWN ' + e.message);
       }`;
@@ -173,14 +181,14 @@ test('record-scripted-run-rollback-failure-preserves-recovery-state', () => {
   };
   for (const kind of ['changed', 'unchanged']) {
     // Nothing to roll back: the first failure is the only one, and it is the one thrown.
-    const missing = mkTempDir('bl-scripted-record-');
+    const missing = backlogDir();
     writeFileSync(join(missing, 'index.md'), story);
     const absent = record(missing, join(missing, 'absent.md'), kind, 2);
     assert.match(absent.stdout, /THROWN .*no change document/, kind);
     assert.equal(readFileSync(join(missing, 'index.md'), 'utf8'), story, kind);
 
     // The story fails, then so does putting the change document back.
-    const root = mkTempDir('bl-scripted-record-');
+    const root = backlogDir();
     const changePath = join(root, 'change.md');
     writeChange(root, changePath, newChange({ changeOf: 'S-1' }));
     writeFileSync(join(root, 'index.md'), 'no frontmatter\n');
@@ -195,7 +203,7 @@ test('record-scripted-run-rollback-failure-preserves-recovery-state', () => {
     writeFileSync(join(root, 'index.md'), story);
     assert.equal(record(root, changePath, kind).stdout, '', kind);
     const { fm } = parseFrontmatter(readFileSync(join(root, 'index.md'), 'utf8'));
-    assert.equal(fm.status, kind === 'changed' ? 'in_progress' : 'done', kind);
+    assert.equal(statusOf('story', fm), kind === 'changed' ? 'in_progress' : 'done', kind);
   }
 });
 
@@ -263,12 +271,12 @@ test('no_op_scripted_run_with_matching_prior_commit_subject_is_unchanged', () =>
 test('a retry from the callers: bl implement runs the command once and records it', async () => {
   const { status, wt, record, calls, retry } = await implement(FM, COUNT, { breakChange: true });
   assert.equal(status, 'threw');
-  assert.notEqual(parseFrontmatter(textOf(record.indexPath)).fm.status, 'in_progress', 'no record yet');
+  assert.notEqual(statusOf('story', parseFrontmatter(textOf(record.indexPath)).fm), 'in_progress', 'no record yet');
   assert.equal(counted(wt), 1);
   assert.equal(await retry(), 0);
   assert.equal(counted(wt), 1, 'the retry did not run it');
   assert.equal(calls.filter((c) => c === COUNT).length, 1);
-  assert.equal(parseFrontmatter(textOf(record.indexPath)).fm.status, 'in_progress');
+  assert.equal(statusOf('story', parseFrontmatter(textOf(record.indexPath)).fm), 'in_progress');
   assert.match(textOf(join(dirname(record.indexPath), 'change.md')), /already committed as/);
 });
 
@@ -484,7 +492,7 @@ test('a story run: command, commit, gate, push, PR, clean, and the agent provide
   const change = textOf(join(dirname(unit.indexPath), 'change.md'));
   assert.match(extractSection(change, 'Gate'), /· pass \(scripted S-3\)[\s\S]*relocked/);
   const { fm, body } = parseFrontmatter(textOf(unit.indexPath));
-  assert.equal(fm.status, 'in_progress');
+  assert.equal(statusOf('story', fm), 'in_progress');
   assert.match(body, /- \[x\] the lock is fresh/);
 });
 
@@ -522,8 +530,12 @@ test('exit 0 with no change: the story is done with a note and nothing is pushed
   assert.ok(!cmds.some((c) => c.startsWith('git push') || c.startsWith("git commit -q -m 'chore: Solo")));
   assert.ok(!cmds.includes('npm test'));
   const { fm, body } = parseFrontmatter(textOf(unit.indexPath));
-  assert.equal(fm.status, 'done');
-  assert.equal(fm.completed, '2026-11-01');
+  assert.equal(statusOf('story', fm), 'done');
+  // The runner's clock (2026-11-01) is behind the entries bl wrote at the run
+  // start, so the entry takes the one above it's time and completed its date.
+  const [prev, last] = fm.transitions.slice(-2);
+  assert.ok(last.at >= prev.at, `${last.at} before ${prev.at}`);
+  assert.equal(fm.completed, last.at.slice(0, 10));
   assert.equal(fm.commit, 'abc1234');
   assert.match(extractSection(body, 'Notes'), /no change needed/);
 });
@@ -537,7 +549,7 @@ test('a non-zero exit stops with an escalation and launches no agent', async () 
   assert.deepEqual(agentCalls(runner), []);
   assert.ok(!shellCmds(runner).includes('npm test'));
   const { fm, body } = parseFrontmatter(textOf(unit.indexPath));
-  assert.notEqual(fm.status, 'in_progress');
+  assert.notEqual(statusOf('story', fm), 'in_progress');
   const esc = extractSection(body, 'Escalation');
   assert.match(esc, /exited 3/);
   assert.match(esc, /it broke/);
@@ -604,7 +616,7 @@ test('a retry from the callers: a feature run finds its commit, runs nothing and
   const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
   assert.equal(state.status, 'clean', state.lastError);
   assert.ok(!shellCmds(runner).some((c) => c.startsWith('relock')));
-  assert.equal(parseFrontmatter(textOf(unit.indexPath)).fm.status, 'in_progress');
+  assert.equal(statusOf('story', parseFrontmatter(textOf(unit.indexPath)).fm), 'in_progress');
   assert.match(
     extractSection(textOf(join(dirname(unit.indexPath), 'change.md')), 'Gate'),
     /already committed as abc1234/,
@@ -669,7 +681,7 @@ test('bl implement commits, records and commits the backlog; exit 0', async () =
   const { status, dir, wt, record } = await implement(FM, 'echo new > lock; echo sess {{sessionNum}}');
   assert.equal(status, 0);
   assert.equal(git(wt, 'log', '-1', '--format=%s'), 'chore: Solo (S-3)');
-  assert.equal(parseFrontmatter(textOf(record.indexPath)).fm.status, 'in_progress');
+  assert.equal(statusOf('story', parseFrontmatter(textOf(record.indexPath)).fm), 'in_progress');
   assert.equal(git(dir, 'status', '--porcelain', '--', 'stories'), '');
   assert.match(textOf(join(dirname(record.indexPath), 'change.md')), /sess 3/);
 });
@@ -684,7 +696,7 @@ test('bl implement of a failing command writes the escalation; exit 1', async ()
 test('bl implement with no change marks the story done; exit 0', async () => {
   const { status, record } = await implement(FM, 'true');
   assert.equal(status, 0);
-  assert.equal(parseFrontmatter(textOf(record.indexPath)).fm.status, 'done');
+  assert.equal(statusOf('story', parseFrontmatter(textOf(record.indexPath)).fm), 'done');
 });
 
 test('bl merge does not ask a scripted story for a review, unless review: true', () => {

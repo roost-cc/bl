@@ -1,13 +1,60 @@
 {
-  "schema": "bl-flow/v1",
+  "schema": "bl-flow/v2",
   "types": {
     "story": {
-      "statuses": {
-        "backlog": { "implies": [] },
-        "refined": { "implies": ["backlog"] },
-        "in_progress": { "implies": ["refined", "backlog"] },
-        "done": { "implies": ["in_progress", "refined", "backlog"] },
-        "superseded": { "implies": ["done", "in_progress", "refined", "backlog"] }
+      "statuses": [
+        "draft",
+        "refined",
+        "in_progress",
+        "in_review",
+        "fixing",
+        "ready_for_merge",
+        "escalated",
+        "done",
+        "superseded"
+      ],
+      "terminal": ["done", "superseded"],
+      "verbs": {
+        "new": { "from": [], "success": [{ "to": "draft" }] },
+        "refine": {
+          "from": ["draft", "refined"],
+          "via": ["refine"],
+          "success": [{ "to": "refined" }],
+          "failure": [{ "to": "draft" }]
+        },
+        "run": {
+          "from": ["refined", "in_progress", "escalated"],
+          "when": ["gate_free:run", "escalation_cleared"],
+          "during": "in_progress",
+          "via": ["implement", "test", "self_review", "open_pr"],
+          "success": [{ "to": "in_review", "then": "review" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "review": {
+          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
+          "during": "in_review",
+          "via": ["review"],
+          "success": [{ "to": "ready_for_merge" }],
+          "failure": [{ "when": ["round_within_cap"], "to": "fixing", "then": "fix" }, { "to": "escalated" }]
+        },
+        "fix": {
+          "from": ["in_progress", "fixing", "escalated"],
+          "during": "fixing",
+          "via": ["fix", "fix_self_review"],
+          "success": [{ "to": "in_review", "then": "review" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "merge": {
+          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
+          "when": ["gate_free:merge"],
+          "via": ["merge"],
+          "success": [{ "to": "done" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "supersede": { "from": "*", "success": [{ "to": "superseded" }] },
+        "implement": { "from": ["draft", "refined", "in_progress", "escalated"], "success": [{ "to": "in_progress" }] },
+        "side": { "from": ["draft", "refined"], "success": [{ "to": "in_progress" }] },
+        "done": { "from": "*", "success": [{ "to": "done" }] }
       },
       "gates": {
         "run": { "verbs": ["run", "implement"] },
@@ -15,16 +62,63 @@
       }
     },
     "feature": {
-      "statuses": {
-        "draft": { "implies": [] },
-        "refined": { "implies": ["draft"] },
-        "approved": { "implies": ["refined", "draft"] },
-        "running": { "implies": ["approved", "refined", "draft"] },
-        "escalated": { "implies": ["running", "approved", "refined", "draft"] },
-        "done": { "implies": ["escalated", "running", "approved", "refined", "draft"] },
-        "superseded": {
-          "implies": ["done", "escalated", "running", "approved", "refined", "draft"]
-        }
+      "statuses": [
+        "draft",
+        "refined",
+        "approved",
+        "in_progress",
+        "in_review",
+        "fixing",
+        "ready_for_merge",
+        "escalated",
+        "done",
+        "superseded"
+      ],
+      "terminal": ["done", "superseded"],
+      "verbs": {
+        "new": { "from": [], "success": [{ "to": "draft" }] },
+        "refine": {
+          "from": ["draft", "refined"],
+          "via": ["refine"],
+          "success": [{ "to": "refined" }],
+          "failure": [{ "to": "draft" }]
+        },
+        "approve": { "from": ["refined"], "success": [{ "to": "approved" }] },
+        "run": {
+          "from": ["approved", "in_progress", "escalated"],
+          "when": ["gate_free:run", "escalation_cleared"],
+          "during": "in_progress",
+          "via": ["implement", "test", "self_review", "open_pr"],
+          "success": [{ "to": "in_review", "then": "review" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "implement": {
+          "from": ["approved", "in_progress", "escalated"],
+          "when": ["gate_free:run"],
+          "success": [{ "to": "in_progress" }]
+        },
+        "review": {
+          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
+          "during": "in_review",
+          "via": ["review"],
+          "success": [{ "to": "ready_for_merge" }],
+          "failure": [{ "when": ["round_within_cap"], "to": "fixing", "then": "fix" }, { "to": "escalated" }]
+        },
+        "fix": {
+          "from": ["in_progress", "fixing", "escalated"],
+          "during": "fixing",
+          "via": ["fix", "fix_self_review"],
+          "success": [{ "to": "in_review", "then": "review" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "merge": {
+          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
+          "when": ["gate_free:merge"],
+          "via": ["merge"],
+          "success": [{ "to": "done" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "supersede": { "from": "*", "success": [{ "to": "superseded" }] }
       },
       "gates": {
         "run": { "verbs": ["run", "implement"] },
@@ -32,9 +126,11 @@
       }
     },
     "task": {
-      "statuses": {
-        "open": { "implies": [] },
-        "done": { "implies": ["open"] }
+      "statuses": ["draft", "done"],
+      "terminal": ["done"],
+      "verbs": {
+        "new": { "from": [], "success": [{ "to": "draft" }] },
+        "done": { "from": ["draft"], "success": [{ "to": "done" }] }
       },
       "gates": {}
     }

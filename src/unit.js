@@ -12,6 +12,7 @@ import { readFileSync } from 'fs';
 import { basename, dirname, relative } from 'path';
 import { parseFrontmatter, normalizeComponentId } from './config.js';
 import { DEFAULT_REVIEW_ROUNDS_MAX } from './feature.js';
+import { roundOf, statusOf } from './transition.js';
 import { unitChange } from './change-doc.js';
 import { storyEffort } from './effort.js';
 
@@ -45,7 +46,10 @@ export function storyUnit(story, config) {
     kind: 'story',
     id,
     title: fm.title ?? storyEntry,
-    status: fm.status ?? 'backlog',
+    // The log's last `to` and its review rounds (F-69 D2, D5); with no log,
+    // `status:` (a v1 word mapped) placed by the change document (D4).
+    status: statusOf('story', fm, change.change) || 'draft',
+    round: roundOf('story', fm, change.change),
     primaryRepo,
     // featureSessionVars numbers the test session after the first story.
     stories: [id],
@@ -53,8 +57,6 @@ export function storyUnit(story, config) {
     branch: change.branch,
     pr: change.pr,
     prUrl: change.prUrl,
-    reviewStatus: change.reviewStatus,
-    reviewRound: toInt(change.reviewRoundRaw),
     reviewRoundsMax: toInt(fm.review_rounds_max, DEFAULT_REVIEW_ROUNDS_MAX),
     changePath: change.changePath,
     change: change.change,

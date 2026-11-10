@@ -37,7 +37,7 @@ import { filterFromArgs, filterStories, hasFilter, filterLabel } from './filter.
 import { flowForHelp, loadFlow } from './flow.js';
 
 function formatNode(story, flow, extra = '', color = false) {
-  const status = story.status ?? 'backlog';
+  const status = story.status ?? 'draft';
   const closed = flow.meets('story', status, 'done');
   const marker = closed ? ' (done)' : ` (${status})`;
   const title = story.title ? ` ${story.title}` : '';

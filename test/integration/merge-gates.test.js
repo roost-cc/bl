@@ -19,6 +19,7 @@ import { parseFrontmatter } from '../../src/config.js';
 import { extractSection } from '../../src/feature.js';
 import { mergeGates, unitBranch } from '../../src/merge-gates.js';
 import { writeBlockers } from '../../src/blockers.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 
@@ -131,7 +132,7 @@ function refusedAlike(fx, extraArgs = []) {
   assert.equal(generic(s.stderr, 'S-1', 's1-loose'), generic(f.stderr, 'F-1', 'f1-feat'));
   assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'nothing merged');
   const story = parseFrontmatter(readFileSync(join(fx.dir, 'stories', 'S1-loose', 'index.md'), 'utf8')).fm;
-  assert.equal(story.status, 'in_progress');
+  assert.equal(logStatusOf('story', story), 'in_progress');
   return generic(s.stderr, 'S-1', 's1-loose');
 }
 
@@ -139,12 +140,14 @@ const CASES = [
   {
     name: 'a pending review',
     review: { review_status: 'pending', reviewLog: SESSION({ must: '- [ ] broken' }) },
-    want: /^<id> has unresolved review state \(review_status: pending, latest session 2026-10-20, 1 unchecked Must\/Should\)\.\nAddress the review feedback \(bl implement <id>\)/,
+    // A pending review is `fixing`: the table refuses the merge (F-69 D3).
+    want: /^<id> is fixing; merge starts from in_progress, in_review, ready_for_merge or escalated \(bl implement <id> reaches in_review\)$/m,
   },
   {
     name: 'a fixed review',
+    // The old shape (F-69 D4): a fixed review reads as in_review after a fix (D5).
     review: { review_status: 'fixed', reviewLog: SESSION({ must: '- [x] broken → fixed' }) },
-    want: /^<id> has unresolved review state \(review_status: fixed.*\nRe-review the fixes \(bl review <id>\)/,
+    want: /^<id> has unresolved review state \(in_review, round 1,.*\nReview it \(bl review <id>\) before merging\.$/m,
   },
   {
     name: 'an open Should',
@@ -214,9 +217,9 @@ test('an open nit alone merges a story and a feature', () => {
       assert.equal(r.status, 0, `${id}: ${r.stderr}`);
     }
     const story = parseFrontmatter(readFileSync(join(fx.dir, 'stories', 'S1-loose', 'index.md'), 'utf8')).fm;
-    assert.equal(story.status, 'done');
+    assert.equal(logStatusOf('story', story), 'done');
     const feature = parseFrontmatter(readFileSync(join(fx.dir, 'features', 'F1-feat', 'index.md'), 'utf8')).fm;
-    assert.equal(feature.status, 'done');
+    assert.equal(logStatusOf('feature', feature), 'done');
   } finally {
     fx.cleanup();
   }
@@ -266,12 +269,17 @@ test('--no-review merges a never-reviewed story and feature and records the choi
 // `mergeGates` called directly on real repos: its stray-worktree check reads
 // each registered repo's `git worktree list`. No forge, a passing preflight.
 
+/** A log reviewed clean: the merge gate reads the review position from it (F-69 D5). */
+const CLEAN = {
+  transitions: ['draft', 'in_progress', 'in_review', 'ready_for_merge'].map((to) => ({ to, by: 'operator' })),
+};
+
 const UNITS = {
   story: {
     kind: 'story',
     id: 'S-7',
     storyEntry: 'S7-thing',
-    reviewStatus: 'addressed',
+    fm: CLEAN,
     changeBody: `## Review Log\n\n${SESSION()}\n`,
     body: '',
   },
@@ -280,7 +288,7 @@ const UNITS = {
     id: 'F-7',
     featureEntry: 'F7-thing',
     branch: 'f7-thing',
-    reviewStatus: 'addressed',
+    fm: CLEAN,
     changeBody: `## Review Log\n\n${SESSION()}\n`,
     body: '',
   },
@@ -405,11 +413,11 @@ test('a merge task (bl task --gate merge) holds bl merge of its story and its fe
     assert.equal(s.status, 1, s.stderr);
     assert.match(
       s.stderr,
-      /^S-1 is held at merge by T-1 \(open, needs done\): S-1 merges once T-1 meets "done" \(bl status T-1\)\.$/m,
+      /^S-1 is held at merge by T-1 \(draft, needs done\): S-1 merges once T-1 meets "done" \(bl status T-1\)\.$/m,
     );
     const f = runBl(['merge', 'F-1'], { cwd: fx.dir, env: ENV });
     assert.equal(f.status, 1, f.stderr);
-    assert.match(f.stderr, /^F-1 is held at merge by T-2 \(open, needs done\)/m);
+    assert.match(f.stderr, /^F-1 is held at merge by T-2 \(draft, needs done\)/m);
     assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'nothing merged');
     const inbox = runBl(['inbox'], { cwd: fx.dir, env: ENV }).stdout;
     assert.match(inbox, /^  T-2 +F-1 +Migrate F-1\n +holds: bl merge F-1\n +next: bl task done T-2 \[note\]$/m);

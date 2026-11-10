@@ -17,11 +17,10 @@ import { serializeFrontmatter } from '../../src/config.js';
 /** The flow.json `bl init` writes, and every fixture backlog gets. */
 export const FLOW_TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates', 'flow.json');
 
-/** The template flow with a story status `blocked`, implying `backlog`, right after `backlog`. */
+/** The template flow with a story status `blocked` right after `draft`, so it meets `draft`. */
 export function blockedFlow() {
   const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
-  const { backlog, ...rest } = flow.types.story.statuses;
-  flow.types.story.statuses = { backlog, blocked: { implies: ['backlog'] }, ...rest };
+  flow.types.story.statuses.splice(1, 0, 'blocked');
   return flow;
 }
 
@@ -127,7 +126,9 @@ export const FEATURE_INDEX_TEMPLATE = (f) => `${serializeFrontmatter({
   title: f.title,
   theme: f.theme === null ? undefined : (f.theme ?? DEFAULT_THEME),
   epic: f.epic || undefined,
-  status: f.status ?? 'draft',
+  // A fixture with a transition log (F-69 D2) has no status:.
+  status: f.transitions ? undefined : (f.status ?? 'draft'),
+  transitions: f.transitions ?? undefined,
   added: f.added || undefined,
   primary_repo: f.primary_repo || undefined,
   review_rounds_max: f.review_rounds_max ?? 2,
@@ -179,8 +180,10 @@ ${entries.map((e) => `\n## ${e.title}\n\n_Added ${e.added}._ Prose for ${e.title
 export const CHANGE_TEMPLATE = (id, c) => `${serializeFrontmatter({
   change_of: id,
   status: c.change_status ?? 'open',
-  review_round: c.review_round ?? 0,
-  review_status: c.review_status ?? '',
+  // The old shape (F-69 D4), written only when a fixture gives it: the review
+  // state is the unit's transition log's (D5).
+  review_round: c.review_round ?? undefined,
+  review_status: c.review_status ?? undefined,
   repos: c.repo ? [{ repo: c.repo, branch: c.branch ?? '', pr: c.pr ?? '', url: '', merged: '' }] : [],
 })}
 # ${id}
@@ -217,7 +220,8 @@ export const STORY_INDEX_TEMPLATE = (story) => `${serializeFrontmatter({
   type: story.type ?? 'feature',
   points: story.points ?? 1,
   effort: story.effort || undefined,
-  status: story.status ?? 'backlog',
+  status: story.transitions ? undefined : (story.status ?? 'draft'),
+  transitions: story.transitions ?? undefined,
   added: story.added || undefined,
   depends_on: refList(story.depends_on),
   // Derived since F-77 D3; a fixture sets it only to test `derived-key`
@@ -246,15 +250,18 @@ ${story.body ?? ''}
  *           same way, an `E<nn>` id becoming `C<nn>`.
  * @property {Array<{ id: string, component?: string,
  *           epic?: string, title: string, type?: string, points?: number,
- *           effort?: string, status?: string, added?: string, depends_on?: string, required_for?: string,
+ *           effort?: string, status?: string, transitions?: object[], added?: string,
+ *           depends_on?: string, required_for?: string,
  *           completed?: string, dirSuffix?: string, body?: string,
  *           feature?: string, primary_repo?: string,
  *           secondary_repos?: string[] }>} [stories]
- *           Written under stories/S<n>-<dirSuffix>/ whatever the status.
+ *           Written under stories/S<n>-<dirSuffix>/ whatever the status. A
+ *           story or feature with `transitions` (F-69 D2) gets no `status:`.
  *           `component` (or a pre-F-49 `epic`, `E<nn>` → `C<nn>`) is the
  *           story's `component:`.
  * @property {Array<{ id: string, title: string, dirSuffix?: string,
- *           status?: string, added?: string, changeRepo?: string, stories?: string[],
+ *           status?: string, transitions?: object[], added?: string, changeRepo?: string,
+ *           stories?: string[],
  *           review_status?: string, branch?: string, premise?: string,
  *           deferred?: string, reviewLog?: string, escalation?: string }>} [features]
  *           Written under features/F<n>-<dirSuffix>/ whatever the status.

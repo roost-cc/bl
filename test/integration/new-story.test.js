@@ -6,6 +6,7 @@ import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { componentBacklog, fmOf } from '../helpers/new-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
 // A story names its component; its repo and project are the component's.
@@ -23,7 +24,7 @@ test("bl new C<n> writes component: and no repo field under stories/: the story'
     assert.equal(fm.story_id, 'S-1');
     assert.equal(fm.title, 'Hello World');
     assert.equal(fm.points, '1');
-    assert.equal(fm.status, 'backlog');
+    assert.equal(logStatusOf('story', fm), 'draft');
     assert.equal(fm.component, 'C03');
     assert.equal(fm.primary_repo, undefined, 'no primary_repo (F-52 D1)');
     assert.equal(fm.secondary_repos, undefined);
@@ -108,7 +109,7 @@ test('bl new --frontmatter writes the keys a client finds its story by, and refu
     const fm = fmOf(dir, r.stdout.trim());
     assert.equal(fm.component, 'C01');
     assert.deepEqual([fm.update_repo, fm.update_lockfile, fm.update_advisory], Object.values(keys));
-    assert.equal(fm.status, 'backlog');
+    assert.equal(logStatusOf('story', fm), 'draft');
     const validate = runBl(['validate'], { cwd: dir });
     assert.equal(validate.status, 0, validate.stdout + validate.stderr);
 

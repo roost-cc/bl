@@ -23,6 +23,8 @@
  * in `bl`'s code path generates session blocks.
  */
 
+import { REVIEW } from './flow.js';
+
 /**
  * Find the `## Review Log` section in a story body and return its
  * content (everything between the heading and the next `##` or EOF).
@@ -37,11 +39,17 @@ export function extractReviewLog(body) {
   return m ? m[1] : null;
 }
 
-/** A checkbox list item, any marker: `-`, `*`, `+`, `1.`, `1)`. */
-export const CHECKBOX_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[ \]/;
+/** A list item's start, any marker: `-`, `*`, `+`, `1.`, `1)`. Every checkbox pattern is built on it. */
+const LIST_MARKER = String.raw`^[ \t]*(?:[-*+]|\d+[.)])[ \t]+`;
+
+/** An open checkbox list item (`[ ]`), any marker. */
+export const CHECKBOX_RE = new RegExp(String.raw`${LIST_MARKER}\[ \]`);
+
+/** A checked checkbox list item (`[x]` or `[X]`), any marker. */
+export const CHECKED_BOX_RE = new RegExp(String.raw`${LIST_MARKER}\[[xX]\]`);
 
 /** Any list item, checked, open or plain, with the same markers. */
-const LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/;
+const LIST_ITEM_RE = new RegExp(LIST_MARKER);
 
 /** A `**…**` category heading on a line of its own. */
 const HEADING_RE = /^[ \t]*\*\*([^*]+)\*\*[ \t]*$/;
@@ -131,6 +139,18 @@ export function parseLatestSession(log) {
 }
 
 /**
+ * The dates (`YYYY-MM-DD`) of every `### Session` heading in a review-log
+ * slice, oldest first. A heading without a date gives none.
+ *
+ * @param {string|null} log
+ * @returns {string[]}
+ */
+export function sessionDates(log) {
+  const re = /^###[ \t]+Session[ \t]+(\d{4}-\d{2}-\d{2})\b/gm;
+  return [...String(log ?? '').matchAll(re)].map((m) => m[1]).sort();
+}
+
+/**
  * Convenience: pull the latest session out of a full story body.
  * Returns `null` if there's no Review Log or no session inside it.
  *
@@ -149,27 +169,28 @@ function plural(n, word) {
 
 /**
  * The words that say how a finished review round ended, for `bl review`'s
- * end line and `bl status`'s `review:` line; `null` for a `review_status`
- * other than `pending` or `addressed`. `session` is the latest Review Log
- * session (`parseLatestSession`), or `null`.
+ * end line and `bl status`'s `review:` line; `null` for a review position
+ * other than `fixing` or `ready_for_merge` (`reviewOf` in transition.js,
+ * F-69 D5). `session` is the latest Review Log session
+ * (`parseLatestSession`), or `null`.
  *
- * @param {string|undefined} reviewStatus
+ * @param {string|null|undefined} position
  * @param {ReturnType<typeof parseLatestSession>} session
  * @returns {string|null}
  */
-export function reviewOutcome(reviewStatus, session) {
-  if (reviewStatus === 'addressed') {
+export function reviewOutcome(position, session) {
+  if (position === 'ready_for_merge') {
     // The merge gate blocks on these, so this is not "nothing left to fix".
     const blocking = session?.blocking ?? 0;
     if (blocking > 0) {
-      return `review_status: addressed, but the latest Review Log session has ${plural(blocking, 'open Must fix/Should fix item')}`;
+      return `ready_for_merge, but the latest Review Log session has ${plural(blocking, 'open Must fix/Should fix item')}`;
     }
     const nits = session?.nits ?? 0;
     return `nothing left to fix${nits > 0 ? ` (${plural(nits, 'open nit')} left)` : ''}`;
   }
-  if (reviewStatus !== 'pending') return null;
+  if (position !== 'fixing') return null;
   if (!session || session.unchecked === 0) {
-    return 'review_status: pending, but the latest Review Log session has no open item';
+    return 'fixing, but the latest Review Log session has no open item';
   }
   const { unchecked, must, should, nits } = session;
   const other = unchecked - must - should - nits;
@@ -183,14 +204,16 @@ export function reviewOutcome(reviewStatus, session) {
 }
 
 /**
- * The feature merge gate: blocked while the review is `pending`/`fixed` or
- * the latest session has an open Must or Should box. Open nits do not block.
+ * The merge gate's review rule: blocked while the unit's review position
+ * (`reviewOf`) is `fixing` or `in_review` (F-69 D5), or the latest session
+ * has an open Must or Should box. Open nits do not block; `ready_for_merge`
+ * passes.
  *
- * @param {string} reviewStatus
+ * @param {string|null} status  the unit's review position (`reviewOf(...).position`)
  * @param {string} body
  */
-export function featureReviewGate(reviewStatus, body) {
+export function featureReviewGate(status, body) {
   const review = summarizeLatestReviewSession(body);
-  const blocked = reviewStatus === 'pending' || reviewStatus === 'fixed' || (review?.blocking ?? 0) > 0;
+  const blocked = REVIEW.blocked.includes(status) || (review?.blocking ?? 0) > 0;
   return { blocked, review };
 }

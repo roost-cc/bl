@@ -20,6 +20,8 @@ import { appendSection, updateChange } from './change-doc.js';
 import { parsePluginList, warn } from './config.js';
 import { appendSectionLine, checkCriteria, extractSection, replaceSection } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
+import { loadFlow } from './flow.js';
+import { applyTransition, statusOf } from './transition.js';
 
 /** Lines of a command's output kept in a record (`## Gate result`, `## Gate`, an escalation). */
 export const GATE_TAIL_LINES = 30;
@@ -256,8 +258,11 @@ export function scriptedEscalation(id, r, rerun) {
 /**
  * Record a scripted run on the story and in the change document. `changed`
  * leaves the story `in_progress` with its criteria checked, what an implementer
- * leaves, so a resumed run skips it. `unchanged` marks it done with a note.
- * `failed` touches the story not at all: it stays runnable.
+ * leaves, so a resumed run skips it: a story not yet started records
+ * `in_progress` by `implement` (F-69 D3). `unchanged` records `done` by `done`,
+ * `via: implement`, with a note. `failed` touches the story not at all: it
+ * stays runnable. `at` (ISO 8601, UTC) is the entries' time, and its date the
+ * `## Gate` and `## Notes` lines'.
  *
  * The change document goes first, and the story last, as the story is what a
  * retry reads: while it has not moved, the run is not recorded and a retry records
@@ -267,9 +272,11 @@ export function scriptedEscalation(id, r, rerun) {
  * line, which is true: the run happened.
  *
  * @param {{ backlogRoot: string, indexPath: string, changePath: string|null, id: string,
- *   repo: string, date: string, result: object }} opts
+ *   repo: string, at: string, result: object }} opts
  */
-export function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo, date, result }) {
+export function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo, at, result }) {
+  const date = at.slice(0, 10);
+  const flow = loadFlow(backlogRoot);
   const change = changePath && existsSync(changePath) ? readFileSync(changePath, 'utf8') : null;
   if (changePath) {
     updateChange(backlogRoot, changePath, (doc) => {
@@ -279,13 +286,14 @@ export function recordScriptedRun({ backlogRoot, indexPath, changePath, id, repo
   try {
     if (result.kind === 'changed') {
       updateSpecFile(backlogRoot, indexPath, (fm, body) => {
-        fm.status = 'in_progress';
+        if (flow.isUnstarted('story', statusOf('story', fm))) {
+          applyTransition(flow, 'story', fm, 'in_progress', { by: 'implement', at });
+        }
         return checkCriteria(body);
       });
     } else if (result.kind === 'unchanged') {
       updateSpecFile(backlogRoot, indexPath, (fm, body) => {
-        fm.status = 'done';
-        fm.completed = date;
+        applyTransition(flow, 'story', fm, 'done', { by: 'done', via: 'implement', note: 'no change needed', at });
         fm.commit = result.sha;
         return appendSectionLine(checkCriteria(body), 'Notes', `- ${date}: no change needed (\`${result.plugin}\`).`);
       });

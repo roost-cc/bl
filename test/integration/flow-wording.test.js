@@ -19,24 +19,33 @@ import { runBl } from '../helpers/run-bl.js';
 import { commitAt, committedBacklog, put, story } from '../helpers/scripted-backlog.js';
 import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
 
+/** `status` into the type's statuses right after `after`; a closed one at the end. */
+function addStatus(raw, type, status, after) {
+  const { statuses, terminal } = raw.types[type];
+  if (after == null) {
+    statuses.push(status);
+    terminal.push(status);
+  } else statuses.splice(statuses.indexOf(after) + 1, 0, status);
+}
+
 /** The template with a closed status, a runnable one and an unstarted one. */
 function customFlow() {
   const raw = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
-  const { statuses } = raw.types.story;
-  statuses.parked = { implies: ['backlog'] };
-  statuses.in_review = { implies: ['in_progress', 'refined', 'backlog'] };
-  statuses.closed_early = { implies: ['done', 'in_progress', 'refined', 'backlog'] };
-  raw.types.feature.statuses.cancelled = {
-    implies: ['done', 'escalated', 'running', 'approved', 'refined', 'draft'],
-  };
+  addStatus(raw, 'story', 'parked', 'draft');
+  addStatus(raw, 'story', 'in_test', 'in_progress');
+  addStatus(raw, 'story', 'closed_early');
+  addStatus(raw, 'feature', 'cancelled');
   return raw;
 }
 
 const CLOSED = { shipped: 'done or superseded', custom: 'done, superseded or closed_early' };
 const CLOSED_SLASHED = { shipped: 'done/superseded', custom: 'done/superseded/closed_early' };
 const CLOSED_FEATURES = { shipped: 'done or superseded', custom: 'done, superseded or cancelled' };
-const RUNNABLE = { shipped: 'refined or in_progress', custom: 'refined, in_progress or in_review' };
-const UNSTARTED = { shipped: 'backlog or refined', custom: 'backlog, refined or parked' };
+const RUNNABLE = {
+  shipped: 'refined, in_progress, in_review, fixing, ready_for_merge or escalated',
+  custom: 'refined, in_progress, in_test, in_review, fixing, ready_for_merge or escalated',
+};
+const UNSTARTED = { shipped: 'draft or refined', custom: 'draft, parked or refined' };
 
 const flows = [
   ['shipped', () => undefined],
@@ -52,7 +61,7 @@ test('statusWords joins one, two and more names', () => {
 
 test('flow_derived_diagnostics_match_decisions', () => {
   for (const [name, raw] of flows) {
-    const dir = committedBacklog([['S-1', 'backlog']], raw());
+    const dir = committedBacklog([['S-1', 'draft']], raw());
     const flow = loadFlow(dir);
     const config = loadConfig({ backlogRoot: dir });
     const page = renderMarkdown(buildReport(buildHistory(config), config, flow), {}, flow);
@@ -77,16 +86,17 @@ test('flow_derived_diagnostics_match_decisions', () => {
   }
 });
 
-test('bl_run_refusal_names_custom_status_keys_exactly', () => {
-  const withPlainKey = () => {
+test('bl_run_refusal_names_the_run_rows_from_exactly', () => {
+  // The start state is the table's (F-69 D3): the refusal names the `run`
+  // row's `from` as flow.json has it, a status the backlog added included.
+  const withTestFrom = () => {
     const raw = customFlow();
-    raw.types.story.statuses.qa = { implies: ['in_progress', 'refined', 'backlog'] };
+    raw.types.story.verbs.run.from.push('in_test');
     return raw;
   };
   const cases = [
-    ['shipped', () => undefined, 'refined or in-progress'],
-    ['underscore key', customFlow, 'refined, in-progress or in_review'],
-    ['plain key too', withPlainKey, 'refined, in-progress, in_review or qa'],
+    ['shipped', () => undefined, 'refined, in_progress or escalated'],
+    ['a custom status in from', withTestFrom, 'refined, in_progress, escalated or in_test'],
   ];
   for (const [name, raw, wanted] of cases) {
     const dir = committedBacklog([['S-1', 'done']], raw());
@@ -94,12 +104,12 @@ test('bl_run_refusal_names_custom_status_keys_exactly', () => {
     commitAt(dir, '2026-04-22T09:00:00', 'no feature');
     const r = runBl(['run', 'S-1'], { cwd: dir });
     assert.notEqual(r.status, 0, name);
-    assert.ok(r.stderr.includes(`Story S-1 is done — only a ${wanted} story runs.\n`), `${name}: ${r.stderr}`);
+    assert.ok(r.stderr.includes(`S-1 is done; run starts from ${wanted}\n`), `${name}: ${r.stderr}`);
   }
 });
 
 test('help words its status lists from the flow, and from the template outside a backlog', () => {
-  const dir = (raw) => committedBacklog([['S-1', 'backlog']], raw);
+  const dir = (raw) => committedBacklog([['S-1', 'draft']], raw);
   const closedQuoted = { shipped: '`done` and\n`superseded`', custom: '`done`, `superseded` and\n`closed_early`' };
   const cases = (name) => [
     [['--help'], `a story not ${UNSTARTED[name].replace(/, | or /g, '/')}, and a`],
@@ -127,11 +137,11 @@ test('help words its status lists from the flow, and from the template outside a
 });
 
 test('wrapped help keeps its line break on the shipped flow', () => {
-  const cwd = committedBacklog([['S-1', 'backlog']]);
-  assert.match(runBl(['new', '--help'], { cwd }).stdout, /stories \(backlog or\n {23}refined, in no feature\)/);
+  const cwd = committedBacklog([['S-1', 'draft']]);
+  assert.match(runBl(['new', '--help'], { cwd }).stdout, /stories \(draft or\n {23}refined, in no feature\)/);
   assert.match(
     runBl(['updates', '--help'], { cwd }).stdout,
-    /\(else every refined or\n {33}in_progress update story\)/,
+    /\(else every refined, in_progress, in_review, fixing, ready_for_merge or\n {33}escalated update story\)/,
   );
 });
 

@@ -47,9 +47,10 @@ import {
 } from './session.js';
 import { featureSessionVars } from './feature.js';
 import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
-import { applyFixOutcome, openUnitChange, reviewFieldsAt, unitChange } from './change-doc.js';
+import { applyFixOutcome, openUnitChange, readChange, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
 import { loadFlow } from './flow.js';
+import { enterVerb, implementVerbOf, nowAt, roundOf, startOf } from './transition.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { syncAndCommit } from './sync.js';
 import { sessionEffort, storyEffort } from './effort.js';
@@ -70,11 +71,13 @@ export function idNum(id) {
  * Resolve workon targets from positional args, then split them by dependency
  * readiness.
  *
- * Component IDs expand to their `status: refined` stories (backlog stories must be
+ * Component IDs expand to their refined stories (draft stories must be
  * refined first; closed ones are complete). An explicitly-named story is
- * included when `Flow.isRunnable` accepts its status; any other is reported as
- * a notice. Named targets outrank component-expanded ones
- * on dedup.
+ * included when `flow.json`'s `implement` row starts from its status, or its
+ * `fix` row does when its review position is `fixing` (`implementVerbOf`,
+ * `startOf`); any
+ * other is reported as a notice with the table's refusal. Named targets
+ * outrank component-expanded ones on dedup.
  *
  * Each resolved target is then classified:
  *   - `startable` — every `depends_on` is already closed.
@@ -128,14 +131,10 @@ export function resolveWorkonTargets(positionals, config) {
       errors.push(`Story ${parsed.id} not found in backlog`);
       continue;
     }
-    if (closed(story.status)) {
-      notices.push(`Story ${parsed.id} has status '${story.status}' — skipping (already complete).`);
-      continue;
-    }
-    if (!flow.isRunnable('story', story.status)) {
-      notices.push(
-        `Story ${parsed.id} has status '${story.status}' — must be refined first (run: bl refine ${parsed.id}).`,
-      );
+    const unit = storyUnit(story, config);
+    const { refusal } = startOf(config, 'story', unit, implementVerbOf('story', unit));
+    if (refusal) {
+      notices.push(`${refusal} — skipping.`);
       continue;
     }
     addStory(story, 'named');
@@ -254,8 +253,8 @@ export function otherWorktreesLine(list) {
  * Create/resume a story's worktree through `prepareStoryRepo`, record the
  * branch in the story's change document (change-doc.js), and build the
  * prompt-template variables. Shared by the interactive flow and
- * `bl run S-n`'s prep. The change document's `review_status`
- * selects the `workon-review` prompt over `workon`.
+ * `bl run S-n`'s prep. A story whose review position is `fixing` (its
+ * transition log, F-69 D5) gets the `workon-review` prompt over `workon`.
  *
  * Side-effecting and may `process.exit(1)` on a hard guard (no repo,
  * uncommitted changes, local main ahead) — same guards as a single workon.
@@ -309,8 +308,10 @@ function prepareStoryWorktree(parsed, found, config, { strict = false } = {}) {
   };
 
   const unitState = unitChange(dirname(indexPath), repoName);
-  const reviewPending = unitState.reviewStatus === 'pending';
-  const reviewRound = parseInt(unitState.reviewRoundRaw, 10) || 0;
+  // A unit whose review position is `fixing`, whatever its status, gets the
+  // fix session (F-69 D3), for its log's round (D5).
+  const reviewPending = implementVerbOf('story', { fm, change: unitState.change }) === 'fix';
+  const reviewRound = roundOf('story', fm, unitState.change);
   const legacyPrReview = existsSync(join(effectiveWorktreePath, '.pr-review.md'));
   const promptName = reviewPending ? 'workon-review' : 'workon';
 
@@ -417,7 +418,7 @@ export async function implementScripted(parsed, found, config, prep, runner) {
       changePath: prep.promptVars.changeAbsPath,
       id: parsed.id,
       repo,
-      date: new Date().toISOString().slice(0, 10),
+      at: nowAt(),
       result,
     });
     if (result.kind === 'failed') {
@@ -452,7 +453,7 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   if (prep.legacyPrReview && !prep.reviewPending) {
     console.error(
       `Found a legacy .pr-review.md in ${prep.effectiveWorktreePath} but the` +
-        ` story has no review_status: pending. The .pr-review.md flow was` +
+        ` story is not in fixing. The .pr-review.md flow was` +
         ` retired in S-458 — review feedback now lives in the ## Review Log` +
         ` of the story's change.md. Delete the stale file by hand and re-run` +
         ` bl review if you actually need a feedback cycle.`,
@@ -466,6 +467,11 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     process.exit(await implementScripted(parsed, found, config, prep, defaultRunner()));
   }
 
+  // bl, not the agent, records that the story started (F-69 D3): a fix from
+  // `escalated` or `in_progress` goes back to `fixing`.
+  const verb = prep.reviewPending ? 'fix' : 'implement';
+  enterVerb(config.backlogRoot, { kind: 'story', indexPath: prep.indexPath }, verb);
+
   // A fix session returns its outcome in the outcome file (F-68 D1, D3).
   const vars = prep.reviewPending ? { ...prep.promptVars, outcomeCarrier: 'file' } : prep.promptVars;
   const sessionPrompt = loadPrompt(prep.promptName, vars, {
@@ -477,8 +483,8 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
     info('Review pending in story — using review-feedback prompt.\n');
   }
 
-  // What a fix session found; applyFixOutcome puts it back unless the outcome is `fixed`.
-  const fixBefore = prep.reviewPending ? reviewFieldsAt(prep.promptVars.changeAbsPath) : {};
+  // The change document the fix session found, which places a story with no log.
+  const changeBefore = prep.reviewPending ? readChange(prep.promptVars.changeAbsPath) : null;
   const ret = launchSession({
     mode: 'workon',
     parsed,
@@ -505,7 +511,8 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   });
   const status = prep.reviewPending ? ret.status : ret;
   if (prep.reviewPending) {
-    applyFixOutcome(config.backlogRoot, { id: parsed.id, changePath: prep.promptVars.changeAbsPath }, ret, fixBefore);
+    const unit = { id: parsed.id, kind: 'story', indexPath: prep.indexPath };
+    applyFixOutcome(config.backlogRoot, unit, ret, changeBefore);
   }
   if (!status) info(implementNextSteps(parsed.id));
   // launchSession returns exitStatus of the agent: a kill is nonzero.

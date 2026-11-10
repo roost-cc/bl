@@ -219,7 +219,8 @@ test('the root renders the Total backlog line, Themes, Components and Priority, 
       '[S-6](stories/S6-x/index.md)',
       'feature',
       'Orphan',
-      'backlog',
+      // A v1 word renders as its current one (F-69 D4).
+      'draft',
       '6',
       // A component with no directory is named, not linked.
       'C09',
@@ -229,7 +230,7 @@ test('the root renders the Total backlog line, Themes, Components and Priority, 
       '[F-1](features/F1-web-flow/index.md)',
       'feature',
       'Web flow',
-      'running',
+      'in_progress',
       '7',
       '[C00](components/C00-core/index.md), [C01](components/C01-web/index.md)',
     ]);
@@ -273,7 +274,7 @@ test('a component renders its open stories in priority order and its open featur
     assert.deepEqual(rowIn(web, 'Features', 'F-1'), [
       '[F-1](../../features/F1-web-flow/index.md)',
       'Web flow',
-      'running',
+      'in_progress',
       '2',
     ]);
     // S-7 (unranked, added 2026-01-01) before S-1 (in F-1, added 2026-01-03).
@@ -332,7 +333,7 @@ test('an epic renders its Features table after Outcome; a theme its epics, then 
     assert.deepEqual(rowIn(e50, 'Features', 'F-1'), [
       '[F-1](../../features/F1-invites/index.md)',
       'Invites',
-      'running',
+      'in_progress',
       '1/2',
       '2/5',
     ]);
@@ -352,7 +353,7 @@ test('an epic renders its Features table after Outcome; a theme its epics, then 
     assert.deepEqual(rowIn(demo, 'Epics', 'E50'), [
       '[E50](../../epics/E50-sign-up/index.md)',
       'Sign-up',
-      'open',
+      'in_progress',
       '1/2',
     ]);
     assert.deepEqual(rowIn(demo, 'Epics', 'E51'), [
@@ -364,7 +365,7 @@ test('an epic renders its Features table after Outcome; a theme its epics, then 
     assert.deepEqual(rowIn(demo, 'Epics', 'E52'), [
       '[E52](../../epics/E52-empty-epic/index.md)',
       'Empty epic',
-      'open',
+      'draft',
       '0/0',
     ]);
     assert.deepEqual(sectionIds(demo, 'Features'), ['F-4']);
@@ -399,7 +400,7 @@ test('a feature and a story with a task render its Tasks table, a feature after 
     const task = (n, unit) =>
       writeFileSync(
         join(dir, 'tasks', `T${n}-do-it.md`),
-        `---\ntask_id: T-${n}\ntitle: Do it ${n}\nunit: ${unit}\nowner: operator\nstatus: open\nadded: 2026-01-01\n---\n`,
+        `---\ntask_id: T-${n}\ntitle: Do it ${n}\nunit: ${unit}\nowner: operator\nstatus: draft\nadded: 2026-01-01\n---\n`,
       );
     task(1, 'F-1');
     task(2, 'S-6');
@@ -409,7 +410,13 @@ test('a feature and a story with a task render its Tasks table, a feature after 
 
     const feature = renderPage(g, g.get('F-1'));
     assert.match(feature, /## Stories\n\n[\s\S]*?\n\n## Tasks\n\n\| ID +\| Title +\| Holds \| Status \| Done \|\n/);
-    assert.deepEqual(rowIn(feature, 'Tasks', 'T-1'), ['[T-1](../../tasks/T1-do-it.md)', 'Do it 1', 'none', 'open', '']);
+    assert.deepEqual(rowIn(feature, 'Tasks', 'T-1'), [
+      '[T-1](../../tasks/T1-do-it.md)',
+      'Do it 1',
+      'none',
+      'draft',
+      '',
+    ]);
     assertLinksResolve(join(dir, 'features/F1-web-flow/index.md'), feature);
 
     const story = renderPage(g, g.get('S-6'));
@@ -441,7 +448,7 @@ test('a deeper heading with a generated name (### Tasks) is hand-written and sta
     mkdirSync(join(dir, 'tasks'));
     writeFileSync(
       join(dir, 'tasks', 'T1-do-it.md'),
-      '---\ntask_id: T-1\ntitle: Do it\nunit: S-6\nowner: operator\nstatus: open\nadded: 2026-01-01\n---\n',
+      '---\ntask_id: T-1\ntitle: Do it\nunit: S-6\nowner: operator\nstatus: draft\nadded: 2026-01-01\n---\n',
     );
     const s6 = join(dir, 'stories/S6-x/index.md');
     const notes = '## Notes\n\n### Tasks\n\nMy own list.\n';
@@ -559,7 +566,7 @@ test('render_preserves_or_rejects_authored_generated_heading: every kind and hea
     ]) {
       writeFileSync(
         join(dir, 'tasks', `T${n}-do-it.md`),
-        `---\ntask_id: T-${n}\ntitle: Do it\nunit: ${unit}\nowner: operator\nstatus: open\nadded: 2026-01-01\n---\n`,
+        `---\ntask_id: T-${n}\ntitle: Do it\nunit: ${unit}\nowner: operator\nstatus: draft\nadded: 2026-01-01\n---\n`,
       );
     }
     writeFileSync(join(dir, 'index.md'), '# Backlog\n\nIntro.\n');
@@ -622,7 +629,7 @@ test('a story with hand-written ## Tasks keeps it as written, and keeps it above
     mkdirSync(join(dir, 'tasks'));
     writeFileSync(
       join(dir, 'tasks', 'T1-do-it.md'),
-      '---\ntask_id: T-1\ntitle: Do it\nunit: S-7\nowner: operator\nstatus: open\nadded: 2026-01-01\n---\n',
+      '---\ntask_id: T-1\ntitle: Do it\nunit: S-7\nowner: operator\nstatus: draft\nadded: 2026-01-01\n---\n',
     );
     const g = graphOf(dir);
     assert.match(renderPage(g, g.get('S-7')), /## Tasks\n\nCall the supplier first\.\n\n\| ID +\| Title/);

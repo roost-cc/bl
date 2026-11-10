@@ -90,7 +90,8 @@ test('bl grep puts ranked stories first, then the unranked by added:, undated fi
 
 test('a closed status added to flow.json is filtered out and sorts last', () => {
   const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
-  flow.types.story.statuses.wontfix = { implies: ['done', 'in_progress', 'refined', 'backlog'] };
+  flow.types.story.statuses.push('wontfix');
+  flow.types.story.terminal.push('wontfix');
   const dir = fixture([story('S-1', 'wontfix'), story('S-2', 'backlog'), story('S-3', 'superseded')], [], { flow });
   assert.deepEqual(ids(dir), ['S-2']);
   assert.deepEqual(ids(dir, '-a'), ['S-2', 'S-3', 'S-1']);

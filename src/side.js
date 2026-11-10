@@ -6,13 +6,13 @@
  *           [--type chore|bug|feature] [--body-file <p>] [--json]
  *
  * The story is written by `bl new` itself, run as a child, so story creation
- * keeps one implementation; `bl side` then sets `status: in_progress` and
+ * keeps one implementation; `bl side` then records `in_progress` and
  * `found_by: <from>` (D2), prepares the story's worktree and change document
  * entry, and commits the story, the feature file and the change document by
  * path under the backlog lock.
  *
- * Attach rule: the story joins a feature when `--from` is a feature in
- * `FEATURE_WORKABLE_STATUSES`, or a story of one, and its worktree is on the
+ * Attach rule: the story joins a feature when `--from` is a feature that
+ * `isFeatureWorkable` accepts, or a story of one, and its worktree is on the
  * feature's branch (`prepareFeatureRepo`). Otherwise it is a standalone story
  * on its own branch (`prepareStoryRepo`). Neither switches a main checkout.
  * A standalone side story gets no dependency edge to its `--from` story:
@@ -54,13 +54,15 @@ import {
   removeUnitDirIfEmpty,
 } from './story.js';
 import {
-  FEATURE_WORKABLE_STATUSES,
   featureBranchName,
   featureRepoOrder,
   findFeature,
+  isFeatureWorkable,
   normalizeFeatureId,
   resolveFeatureStories,
 } from './feature.js';
+import { loadFlow } from './flow.js';
+import { applyTransition } from './transition.js';
 import { prepareFeatureRepo } from './feature-cmd.js';
 import { prepareStoryRepo } from './workon.js';
 import { newWorktreeGuards } from './session.js';
@@ -83,7 +85,7 @@ const TYPES = ['chore', 'bug', 'feature'];
 const HELP = `Usage: bl side <repo|C-id> --from <F-n|S-n> --title <t> --points <n> [options]
 
 A change to another repo, as a story with its worktree (F-48 D1). Creates the
-story with bl new, sets status: in_progress and found_by: <from>, prepares its
+story with bl new, records in_progress (by side) and found_by: <from>, prepares its
 worktree and change document entry, and commits the backlog paths it wrote.
 
 Arguments:
@@ -93,8 +95,8 @@ Arguments:
 
 Options:
   --from <F-n|S-n>     Required. The unit the session is working on; recorded
-                       as found_by. A feature that is approved, running or
-                       escalated, or a story of one, takes the side story in:
+                       as found_by. A feature that is approved or later and
+                       not closed, or a story of one, takes the side story in:
                        its worktree is on the feature's branch and the
                        feature's change.md gets the repo. Anything else (a
                        draft or refined feature, a standalone story) gives a
@@ -169,11 +171,12 @@ function resolveComponent(raw, config) {
  * @returns {{ fromId: string, feature: object | null }}
  */
 function resolveFrom(raw, config) {
+  const workable = (feature) => isFeatureWorkable(loadFlow(config.backlogRoot), feature.status);
   const featureId = normalizeFeatureId(raw);
   if (featureId) {
     const feature = findFeature(featureId, config);
     if (!feature) fail(`bl side: --from ${featureId.id}: no such feature under features/.`);
-    return { fromId: feature.id, feature: FEATURE_WORKABLE_STATUSES.has(feature.status) ? feature : null };
+    return { fromId: feature.id, feature: workable(feature) ? feature : null };
   }
   const storyId = normalizeId(raw);
   if (!storyId) fail(`bl side: --from ${raw} is not a feature (F-<n>) or story (S-<n>) id.`);
@@ -184,7 +187,7 @@ function resolveFrom(raw, config) {
   const feature = parent ? findFeature(parent, config) : null;
   return {
     fromId: storyId.id,
-    feature: feature && FEATURE_WORKABLE_STATUSES.has(feature.status) ? feature : null,
+    feature: feature && workable(feature) ? feature : null,
   };
 }
 
@@ -243,13 +246,15 @@ function newStory({ feature, component, title, points, type, body }) {
 }
 
 /**
- * The new story's frontmatter: `status: in_progress` and `found_by` after
- * `feature:` (after `added:` on a story with no feature), written through
- * `updateSpecFile` (F-67), inside the backlog lock (the outer lock, D4).
+ * The new story's frontmatter: `in_progress` by `side` in its log (F-69 D3)
+ * and `found_by` after `feature:` (after `added:` on a story with no
+ * feature), written through `updateSpecFile` (F-67), inside the backlog lock
+ * (the outer lock, D4).
  */
 function markSideStory(backlogRoot, indexPath, fromId) {
+  const flow = loadFlow(backlogRoot);
   updateSpecFile(backlogRoot, indexPath, (fm) => {
-    fm.status = 'in_progress';
+    applyTransition(flow, 'story', fm, 'in_progress', { by: 'side' });
     const out = insertAfter(fm, 'feature' in fm ? 'feature' : 'added', { found_by: fromId });
     // `updateSpecFile` serializes the object it passed in: refill it in `out`'s order.
     for (const key of Object.keys(fm)) delete fm[key];

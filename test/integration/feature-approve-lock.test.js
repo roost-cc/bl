@@ -7,6 +7,7 @@ import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js
 import { LOCK_FILE } from '../../src/lock.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { fm } from '../helpers/feature-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 /** A git backlog with an `origin` and F-1 (`status`) holding the refined S-1. */
 function approveBacklog(status) {
@@ -58,7 +59,7 @@ function failApproval(dir) {
   writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const r = runBl(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
   assert.equal(r.status, 1, r.stderr);
-  assert.equal(fm(join(dir, APPROVE_REL)).status, 'approved');
+  assert.equal(logStatusOf('feature', fm(join(dir, APPROVE_REL))), 'approved');
   rmSync(hook);
 }
 
@@ -81,7 +82,7 @@ test('approve_rechecks_state_under_lock_and_retry_commits_only_its_write: an edi
 // Another command changes and commits F-1 while approve waits for the lock:
 // approve checks the status it finds under the lock and writes nothing.
 for (const [label, status, exit, said] of [
-  ['marked done', 'done', 1, /Feature F-1 is done/],
+  ['marked done', 'done', 1, /F-1 is done; approve starts from refined/],
   ['approved by someone else', 'approved', 0, /already approved/],
 ]) {
   test(`approve_rechecks_state_under_lock_and_retry_commits_only_its_write: F-1 ${label} while approve waits`, async (t) => {
@@ -105,7 +106,7 @@ for (const [label, status, exit, said] of [
       const r = await run.closed;
       assert.equal(r.status, exit, r.stderr);
       assert.match(r.stderr, said);
-      assert.equal(fm(path).status, status, 'approve wrote nothing over it');
+      assert.equal(logStatusOf('feature', fm(path)), status, 'approve wrote nothing over it');
       assert.equal(git(dir, 'log', '-1', '--format=%s'), 'another command');
       assert.deepEqual(statusLines(dir), []);
     } finally {

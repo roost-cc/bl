@@ -26,7 +26,8 @@ import { classifyId, resolveTargets } from './targets.js';
 import { schedule, dependencyOrder, byId } from './schedule.js';
 import { heldBy, readBlockers, readUnits } from './blockers.js';
 import { loadFlow } from './flow.js';
-import { RUN_DIR, ensureRunDir, escalationOpen, loadRunState, reviewEnd } from './feature-run.js';
+import { RUN_DIR, ensureRunDir, escalationOpen, loadRunState, readFm, reviewEnd } from './feature-run.js';
+import { reviewOf } from './transition.js';
 import { currentChange } from './change-doc.js';
 import { featureUnit, storyUnit } from './unit.js';
 
@@ -131,7 +132,7 @@ Options:
 
 One review round, the step bl run takes: two dimension passes and a verifier
 on the review agent over the open PR(s), one session in the Review Log, and
-review_round up by one. Several targets are reviewed in parallel, each as a
+one verdict in the unit's transition log. Several targets are reviewed in parallel, each as a
 child bl review with its output in .bl/run/<id>.out.`,
   merge: `Usage: bl merge <id...> [options]
 
@@ -159,7 +160,7 @@ stopping at the first that fails.`,
 
 Arguments:
   <id...>              A feature (F-3), or stories (S-34) and/or components
-                       (C01). A component expands to its 'backlog' stories.
+                       (C01). A component expands to its 'draft' stories.
 
 Options:
   -A, --agent <id>     Agent provider
@@ -350,15 +351,11 @@ export function heldTargets(verb, targets, config) {
   return out;
 }
 
-/** Run `verb` on one target, `argv` and `args` naming only it. */
+/** Run `verb` on one target, `argv` and `args` naming only it: its cell's capability. */
 async function runTarget(verb, target, args, argv, config) {
-  const cell = DISPATCH[verb][target.kind];
-  if (!cell.startsWith('./')) {
-    const handlers = await import('./feature-cmd.js');
-    return handlers[cell](args, config, target.record);
-  }
-  const { main } = await import(cell);
-  return main(argv);
+  // Imported here: capabilities.js derives its registry from DISPATCH.
+  const { CAPABILITIES } = await import('./capabilities.js');
+  return CAPABILITIES.get(DISPATCH[verb][target.kind])(args, config, target.record, argv);
 }
 
 /** `runTarget` for one of several targets: the shared flags plus its id. */
@@ -531,13 +528,19 @@ export function outcomeLine(verb, { target, code, outPath, error = null }, confi
   } catch {
     // an unreadable change document leaves the line without a PR
   }
-  const fm = change?.fm ?? {};
   const prs = (change?.repos ?? []).filter((r) => r.pr).map((r) => `#${r.pr}`);
   const pr = prs.length > 0 ? `, PR ${prs.join(', ')}` : '';
   if (code === 0) {
     if (verb === 'review') {
-      // The unit's cap and path only: a feature record's change fields were
-      // read before the child ran.
+      // The unit's cap and path only: a feature record was read before the
+      // child ran, so the review state is read from the log now (F-69 D5).
+      let review;
+      try {
+        review = reviewOf(target.kind === 'feature' ? 'feature' : 'story', readFm(target.record.indexPath), change);
+      } catch {
+        // An unreadable unit file has no review state to show.
+        return { line: `${id}: reviewed, its file cannot be read${pr}`, ok: true };
+      }
       let unit = null;
       try {
         unit = target.kind === 'feature' ? featureUnit(target.record) : storyUnit(target.record, config);
@@ -554,13 +557,13 @@ export function outcomeLine(verb, { target, code, outPath, error = null }, confi
         id,
         unitRelPath: unit?.featureRelPath,
         maxRounds: unit?.reviewRoundsMax,
-        fm,
+        review,
         body: change?.body ?? '',
         state,
         escalated: false,
       });
       return {
-        line: `${id}: reviewed, round ${fm.review_round ?? '?'} done: ${end.outcome}${pr}${unit && end.next ? ` — next: ${end.next}` : ''}`,
+        line: `${id}: reviewed, round ${review.reviewed} done: ${end.outcome}${pr}${unit && end.next ? ` — next: ${end.next}` : ''}`,
         ok: true,
       };
     }

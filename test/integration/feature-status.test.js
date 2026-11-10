@@ -25,7 +25,7 @@ test('bl implement refuses unapproved features with a hint', () => {
   }
 });
 
-test('bl status prints stories in dependency order plus review and blocker state', () => {
+test('bl status prints the log, stories in dependency order plus review and blocker state', () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,
     components: [{ id: 'C00', title: 'Core', dirSuffix: 'core' }],
@@ -47,10 +47,18 @@ test('bl status prints stories in dependency order plus review and blocker state
         id: 'F-1',
         title: 'Feat',
         dirSuffix: 'feat',
-        status: 'running',
+        // The log (F-69 D2): bl status prints its status, round and last three entries (D5).
+        transitions: [
+          { at: '2026-09-18T08:00:00Z', to: 'draft', by: 'new' },
+          { at: '2026-09-18T09:00:00Z', to: 'refined', by: 'refine', via: 'refine' },
+          { at: '2026-09-18T10:00:00Z', to: 'approved', by: 'approve' },
+          { at: '2026-09-19T08:00:00Z', to: 'in_progress', by: 'run' },
+          { at: '2026-09-19T15:00:00Z', to: 'in_review', by: 'run', via: 'open_pr' },
+          { at: '2026-09-20T09:30:00Z', to: 'fixing', by: 'review', via: 'review', outcome: '1 open (1 must)' },
+        ],
+        added: '2026-09-18',
         stories: ['S-1', 'S-2'],
         branch: 'f1-feat',
-        review_status: 'pending',
         reviewLog:
           '### Session 2026-09-20 (PR #7)\n\n**Must fix**\n\n- [ ] invariant X — Repro: y. Test: z.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.',
         escalation: 'Design problem: premise false.',
@@ -60,17 +68,28 @@ test('bl status prints stories in dependency order plus review and blocker state
   try {
     const r = runBl(['status', 'F-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /status: running/);
+    assert.match(r.stdout, /status: fixing/);
     assert.match(r.stdout, /branch: f1-feat/);
-    assert.match(r.stdout, /review: round 0\/2 done: 1 open item \(1 Must fix\), latest session 2026-09-20\n/);
+    assert.match(r.stdout, /review: round 1\/2 done: 1 open item \(1 Must fix\), latest session 2026-09-20\n/);
+    assert.ok(
+      r.stdout.includes(
+        [
+          'transitions (last 3 of 6):',
+          '  2026-09-19T08:00:00Z  in_progress  by run',
+          '  2026-09-19T15:00:00Z  in_review  by run via open_pr',
+          '  2026-09-20T09:30:00Z  fixing  by review via review: 1 open (1 must)',
+        ].join('\n'),
+      ),
+      r.stdout,
+    );
     // S-2 first (S-1 depends on it)
     const s2 = r.stdout.indexOf('S-2');
     const s1 = r.stdout.indexOf('S-1');
     assert.ok(s2 < s1, 'S-2 should be listed before S-1');
     // Each story's effort, an unset one at effort.default (F-85 D1).
     assert.match(r.stdout, /# +ID +Status +Pts +Effort +Component +Title/);
-    assert.match(r.stdout, /S-2 +backlog +5 +high \(default\) +C00 +Second/);
-    assert.match(r.stdout, /S-1 +backlog +3 +low +C00 +First/);
+    assert.match(r.stdout, /S-2 +draft +5 +high \(default\) +C00 +Second/);
+    assert.match(r.stdout, /S-1 +draft +3 +low +C00 +First/);
     assert.match(r.stdout, /escalation:\nDesign problem/);
   } finally {
     cleanup();
@@ -114,16 +133,139 @@ test('bl merge refuses on pending review and on an open escalation', () => {
   try {
     let r = runBl(['merge', 'F-1'], { cwd: dir });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /unresolved review state/);
-    assert.match(r.stderr, /1 unchecked/);
+    assert.match(r.stderr, /F-1 is fixing; merge starts from in_progress, in_review, ready_for_merge or escalated/);
+    // An escalated feature passes the start state; its open ## Escalation refuses it.
     r = runBl(['merge', 'F-2'], { cwd: dir });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /open Escalation section/);
+    assert.doesNotMatch(r.stderr, /starts from/);
+    assert.match(r.stderr, /Escalation/);
     r = runBl(['merge', 'F-3'], { cwd: dir });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /nothing has been implemented/);
+    assert.match(
+      r.stderr,
+      /F-3 is approved; merge starts from in_progress, in_review, ready_for_merge or escalated \(bl run F-3 reaches in_progress\)/,
+    );
   } finally {
     cleanup();
+  }
+});
+
+test('bl merge and bl review accept a unit that a merge or a review escalated, once its ## Escalation is cleared', () => {
+  const at = (n) => `2026-11-0${n}T00:00:00Z`;
+  const reviewed = [
+    { at: at(1), to: 'draft', by: 'new' },
+    { at: at(2), to: 'in_progress', by: 'operator' },
+    { at: at(3), to: 'in_review', by: 'run', via: 'open_pr' },
+  ];
+  // The escalation a merge records after a clean review, and a review's closing round.
+  const escalations = {
+    merge: [
+      ...reviewed,
+      { at: at(4), to: 'ready_for_merge', by: 'review' },
+      { at: at(5), to: 'escalated', by: 'merge' },
+    ],
+    review: [...reviewed, { at: at(4), to: 'escalated', by: 'review', via: 'review' }],
+  };
+  for (const [by, transitions] of Object.entries(escalations)) {
+    const { dir, cleanup } = mkTempBacklog({
+      repos: REPOS,
+      components: [HOME],
+      stories: [
+        { id: 'S-1', component: 'C00', title: 'One', dirSuffix: 'one', feature: 'F-1' },
+        { id: 'S-2', component: 'C00', title: 'Two', dirSuffix: 'two', transitions, branch: 's2-two' },
+      ],
+      features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', transitions, stories: ['S-1'], branch: 'f1-feat' }],
+    });
+    try {
+      for (const id of ['F-1', 'S-2']) {
+        for (const verb of ['merge', 'review']) {
+          const r = runBl([verb, id], { cwd: dir });
+          // A later step stops it (no PR, no worktree); the start state does not.
+          assert.doesNotMatch(r.stderr, /starts from/, `escalated by ${by}: bl ${verb} ${id}\n${r.stderr}`);
+        }
+      }
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+test('bl merge refuses a feature whose story has a malformed transitions: before it touches any repo', () => {
+  const at = (n) => `2026-11-0${n}T00:00:00Z`;
+  const started = [
+    { at: at(1), to: 'draft', by: 'new' },
+    { at: at(2), to: 'in_progress', by: 'operator' },
+  ];
+  const reviewed = [
+    ...started,
+    { at: at(3), to: 'in_review', by: 'run' },
+    { at: at(4), to: 'ready_for_merge', by: 'review' },
+  ];
+  // An entry with no `to`: `bl validate` reports it, and no writer may append to it.
+  const malformed = [{ at: at(1), by: 'new' }];
+  // [command, the unit whose log is malformed]: each refuses before a worktree, a merge or a tag.
+  const cases = [
+    [['merge', 'F-1'], 'S-2'],
+    [['merge', 'F-1'], 'F-1'],
+    [['implement', 'F-1'], 'S-2'],
+    [['implement', 'F-1'], 'F-1'],
+    [['run', 'F-1'], 'S-2'],
+    [['merge', 'S-3'], 'S-3'],
+    [['implement', 'S-3'], 'S-3'],
+  ];
+  for (const [args, bad] of cases) {
+    const log = (id, good) => (id === bad ? malformed : good);
+    const merging = args[0] === 'merge';
+    const { dir, cleanup } = mkTempBacklog({
+      repos: REPOS,
+      components: [HOME],
+      stories: [
+        { id: 'S-1', component: 'C00', title: 'One', dirSuffix: 'one', feature: 'F-1', transitions: started },
+        {
+          id: 'S-2',
+          component: 'C00',
+          title: 'Two',
+          dirSuffix: 'two',
+          feature: 'F-1',
+          transitions: log('S-2', started),
+        },
+        {
+          id: 'S-3',
+          component: 'C00',
+          title: 'Three',
+          dirSuffix: 'three',
+          transitions: log('S-3', merging ? reviewed : started),
+          branch: 's3-three',
+        },
+      ],
+      features: [
+        {
+          id: 'F-1',
+          title: 'Feat',
+          dirSuffix: 'feat',
+          transitions: log('F-1', merging ? reviewed : started),
+          stories: ['S-1', 'S-2'],
+          branch: 'f1-feat',
+        },
+      ],
+    });
+    const name = `bl ${args.join(' ')} with ${bad} malformed`;
+    try {
+      const files = ['stories/S1-one/index.md', 'stories/S2-two/index.md', 'features/F1-feat/index.md'];
+      const before = files.map((f) => readFileSync(join(dir, f), 'utf8'));
+      const r = runBl(args, { cwd: dir });
+      assert.equal(r.status, 1, `${name}\n${r.stdout}\n${r.stderr}`);
+      assert.match(r.stderr, new RegExp(`^${bad} has a transitions: that is not a list of entries`, 'm'), name);
+      // Refused before the first repo step: no repo line, no worktree, no unit written.
+      assert.doesNotMatch(`${r.stdout}${r.stderr}`, /^(Repos|Branch|Worktree)\s+:/m, name);
+      assert.deepEqual(
+        files.map((f) => readFileSync(join(dir, f), 'utf8')),
+        before,
+        name,
+      );
+    } finally {
+      cleanup();
+    }
   }
 });
 
@@ -248,7 +390,7 @@ test('bl list shows a Feature column only when a listed story belongs to one; bl
     const storyPath = join(dir, 'stories', 'S1-plain', 'index.md');
     writeFileSync(
       storyPath,
-      readFileSync(storyPath, 'utf8').replace('status: backlog\n', 'status: backlog\nfeature: F-1\n'),
+      readFileSync(storyPath, 'utf8').replace('status: draft\n', 'status: draft\nfeature: F-1\n'),
     );
     r = runBl(['list'], { cwd: dir });
     assert.match(r.stdout, /Feature/);
@@ -393,7 +535,7 @@ test("bl status reports the last run's state from .bl/run", () => {
     assert.match(r.stdout, /✗ implement S-1: denied: Bash\(touch x\)\n {2}✗ test: node exited 1/);
 
     // An open escalation refuses the run before the worktree is touched, so
-    // the feature stays `escalated` instead of flipping to `running`.
+    // the feature stays `escalated` instead of flipping to `in_progress`.
     const fpath = join(dir, 'features', 'F1-feat', 'index.md');
     writeFileSync(
       fpath,
@@ -446,7 +588,7 @@ test("bl status prints each repo's branch, PR, URL and merge state from the chan
   }
 });
 
-test('bl status words the review line by outcome, and shows any other review_status with its field name', () => {
+test('bl status words the review line by outcome; a feature with no log reads its change document (F-69 D4, D5)', () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,
     features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'running', branch: 'f1-feat' }],
@@ -459,23 +601,23 @@ test('bl status words the review line by outcome, and shows any other review_sta
       writeFileSync(
         change,
         base
-          .replace(/review_round:.*\n/, `review_round: ${round}\n`)
-          .replace(/review_status:.*\n/, `review_status: ${status}\n`)
+          .replace('status: open\n', `status: open\nreview_round: ${round}\nreview_status: ${status}\n`)
           .replace('No reviews yet.', reviewLog),
       );
       const r = runBl(['status', 'F-1'], { cwd: dir });
       assert.equal(r.status, 0, r.stderr);
       return r.stdout.match(/^review: .*$/m)[0];
     };
-    assert.equal(statusWith('fixed', 1), 'review: round 1/2, review_status: fixed, latest session 2026-11-09');
+    // Fixed after round 1: round 2 is in review, with no verdict yet.
+    assert.equal(statusWith('fixed', 1), 'review: round 2/2, in_review, latest session 2026-11-09');
     assert.equal(
       statusWith('addressed', 2),
       'review: round 2/2 done: nothing left to fix (1 open nit left), latest session 2026-11-09',
     );
-    // An open Must fix box under addressed: never "nothing left to fix".
+    // An open Must fix box at ready_for_merge: never "nothing left to fix".
     assert.equal(
       statusWith('addressed', 1, log.replace('[x] done', '[ ] open')),
-      'review: round 1/2 done: review_status: addressed, but the latest Review Log session has 1 open Must fix/Should fix item, latest session 2026-11-09',
+      'review: round 1/2 done: ready_for_merge, but the latest Review Log session has 1 open Must fix/Should fix item, latest session 2026-11-09',
     );
     assert.equal(statusWith('', 0, ''), 'review: none (round 0/2)');
     assert.equal(statusWith('', 0), 'review: none (round 0/2), latest session 2026-11-09');
@@ -484,7 +626,7 @@ test('bl status words the review line by outcome, and shows any other review_sta
   }
 });
 
-test('bl validate warns escalation-not-none for a refined/approved/running feature, not for an escalated one', () => {
+test('bl validate warns escalation-not-none for a refined to ready_for_merge feature, not for an escalated one', () => {
   const esc = 'Resolved 2026-10-04. The operator chose A1.';
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,
@@ -493,17 +635,24 @@ test('bl validate warns escalation-not-none for a refined/approved/running featu
       { id: 'S-1', component: 'C00', title: 'One', dirSuffix: 'one', feature: 'F-1' },
       { id: 'S-2', component: 'C00', title: 'Two', dirSuffix: 'two', feature: 'F-2' },
       { id: 'S-3', component: 'C00', title: 'Three', dirSuffix: 'three', feature: 'F-3' },
+      { id: 'S-4', component: 'C00', title: 'Four', dirSuffix: 'four', feature: 'F-4' },
     ],
     features: [
       { id: 'F-1', title: 'Refined', dirSuffix: 'refined', status: 'refined', stories: ['S-1'], escalation: esc },
       { id: 'F-2', title: 'Escalated', dirSuffix: 'escalated', status: 'escalated', stories: ['S-2'], escalation: esc },
       { id: 'F-3', title: 'Clean', dirSuffix: 'clean', status: 'approved', stories: ['S-3'] },
+      { id: 'F-4', title: 'Fixing', dirSuffix: 'fixing', status: 'fixing', stories: ['S-4'], escalation: esc },
     ],
   });
   try {
     const r = runBl(['validate', '--json'], { cwd: dir });
-    const hits = JSON.parse(r.stdout).findings.filter((f) => f.code === 'escalation-not-none');
-    assert.equal(hits.length, 1, JSON.stringify(hits));
+    const hits = JSON.parse(r.stdout)
+      .findings.filter((f) => f.code === 'escalation-not-none')
+      .sort((a, b) => a.location.localeCompare(b.location));
+    assert.deepEqual(
+      hits.map((f) => f.location),
+      ['features/F1-refined/index.md', 'features/F4-fixing/index.md'],
+    );
     assert.equal(hits[0].severity, 'warning');
     assert.equal(hits[0].location, 'features/F1-refined/index.md');
     assert.match(hits[0].message, /feature F-1 is refined/);

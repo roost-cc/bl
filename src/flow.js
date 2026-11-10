@@ -1,40 +1,141 @@
 /**
- * flow.js — the backlog's `flow.json` (F-66 D1): every status of each unit
- * type, what each status implies, and the gates a type can be held at.
+ * flow.js — the backlog's `flow.json` (F-66 D1, F-69 D1): per unit type, its
+ * statuses in lifecycle order, the terminal ones, the verbs that move a unit
+ * between them, and the gates a unit can be held at.
  *
  *   {
- *     "schema": "bl-flow/v1",
+ *     "schema": "bl-flow/v2",
  *     "types": {
  *       "story": {
- *         "statuses": { "backlog": { "implies": [] }, "done": { "implies": ["backlog"] } },
+ *         "statuses": ["draft", "refined", "in_progress", "done", "superseded"],
+ *         "terminal": ["done", "superseded"],
+ *         "verbs": {
+ *           "refine": { "from": ["draft", "refined"], "via": ["refine"],
+ *                       "success": [{ "to": "refined" }], "failure": [{ "to": "draft" }] }
+ *         },
  *         "gates": { "run": { "verbs": ["run", "implement"] } }
  *       }
  *     }
  *   }
  *
- * A status meets `X` when it is `X` or lists `X` in `implies`. `implies` is
- * written in full, never derived: `findFlowFindings` (`bl validate`'s
- * `flow-json`) checks it is closed and names only statuses of its type, and
- * that every gate verb is one bl checks. `loadFlow` fails loud on a file the
- * helpers cannot read at all: missing, not JSON, a wrong `schema`, a type bl
- * needs missing, or a shape that is not the one above.
+ * A verb is `{ from, when?, during?, via?, success?, failure? }`: `from` is a
+ * list of statuses or `*` (every status that is not terminal), `when` and
+ * `via` name guards (`guards.js`) and capabilities (`capabilities.js`), and
+ * each branch is `{ when?, to, then? }`. A status meets `X` when it is `X` or
+ * comes after `X` in `statuses`. `findFlowFindings` (`bl validate`'s
+ * `flow-json`) checks the tables. `loadFlow` fails loud on a file the helpers
+ * cannot read at all: missing, not JSON, a wrong `schema`, a type bl needs
+ * missing, or a shape that is not the one above.
+ *
+ * A `bl-flow/v1` file (statuses with `implies`, no verbs) still loads, until
+ * the migration rewrites it (F-69 D4): as bl's v2 template with the file's own
+ * gates, and `flow.legacy` set. `LEGACY_STATUSES` maps the v1 words.
  */
 
 import { readFileSync, statSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { isDeepStrictEqual } from 'util';
 import { findBacklogRoot } from './config.js';
 
 /** The file's name, at the backlog root. */
 export const FLOW_FILE = 'flow.json';
 
-export const FLOW_SCHEMA = 'bl-flow/v1';
+export const FLOW_SCHEMA = 'bl-flow/v2';
+
+/** The schema before F-69: read as the template plus the file's gates. */
+export const LEGACY_FLOW_SCHEMA = 'bl-flow/v1';
+
+/** The script that rewrites a v1 backlog (F-69 D4); `flow-json` names it. */
+export const MIGRATION_SCRIPT = 'bl/scripts/migrate-transitions.js';
 
 /** The types every backlog's flow names: `task` since F-65 (D1). */
 export const FLOW_TYPES = ['story', 'feature', 'task'];
 
 /** The verbs bl checks a gate at (F-66 D3); any other is `flow-json`. */
 export const GATE_VERBS = ['run', 'implement', 'merge'];
+
+/** The `bl` verbs that only read a unit, so no table has a row for them. */
+export const READ_VERBS = ['status'];
+
+/** `from: "*"`: every status of the type that is not terminal. */
+export const ANY_OPEN = '*';
+
+/**
+ * The v1 status words that F-69 renamed (Decision A3), per type. The reader,
+ * the migration and `history.js` map them through `fromLegacy`.
+ */
+export const LEGACY_STATUSES = {
+  story: { backlog: 'draft' },
+  feature: { running: 'in_progress' },
+  task: { open: 'draft' },
+};
+
+/**
+ * How a unit with no transition log reads (F-69 D4), beside
+ * `LEGACY_STATUSES`; `legacyLog` (`transition.js`) and the migration use it.
+ * `reviewed`: the statuses (in the current words) whose log takes its change
+ * document's review part. `terminal`: the ones whose entry is dated at
+ * `completed`. `review`: the statuses that follow the `in_review` entries for
+ * each v1 `review_status` of a change document (`fixed`: the fix put the unit
+ * back in review for the next round).
+ */
+export const LEGACY_LOG = {
+  reviewed: ['in_progress', 'escalated'],
+  terminal: ['done', 'superseded'],
+  review: { pending: ['fixing'], fixed: ['fixing', 'in_review'], addressed: ['ready_for_merge'] },
+};
+
+/**
+ * The statuses a review round moves a unit between (F-69 D5), by role:
+ * `open`, a round in review with no verdict yet; `items`, the round's open
+ * items, being fixed; `clean`, the round passed. `reviewOf`
+ * (`transition.js`) reads a unit's review state from them, and the merge
+ * gate refuses `blocked`.
+ */
+export const REVIEW = Object.freeze({
+  open: 'in_review',
+  items: 'fixing',
+  clean: 'ready_for_merge',
+  blocked: Object.freeze(['in_review', 'fixing']),
+});
+
+/**
+ * `status` in the current words: a v1 word of `type` mapped, anything else
+ * unchanged.
+ * @param {string} type
+ * @param {any} status
+ * @returns {any}
+ */
+export function fromLegacy(type, status) {
+  const map = LEGACY_STATUSES[type];
+  return map && typeof status === 'string' && Object.hasOwn(map, status) ? map[status] : status;
+}
+
+/**
+ * `bl validate`'s reading of a stored status word of `type` (F-69 D6): null
+ * when it is one of the type's statuses, a warning when it is a v1 word
+ * `LEGACY_STATUSES` maps (the migration rewrites it), and an error otherwise.
+ * @param {Flow} flow
+ * @param {string} type
+ * @param {string} status
+ * @returns {{ severity: "error" | "warning", message: string } | null}
+ */
+export function statusWordProblem(flow, type, status) {
+  const statuses = flow.statusesOf(type);
+  if (statuses.includes(status)) return null;
+  const word = fromLegacy(type, status);
+  if (statuses.includes(word)) {
+    return {
+      severity: 'warning',
+      message: `status "${status}" is the old word for "${word}"; node ${MIGRATION_SCRIPT} rewrites it`,
+    };
+  }
+  return {
+    severity: 'error',
+    message: `status "${status}" not in known set (${FLOW_FILE} ${type} statuses: ${statuses.join(', ')})`,
+  };
+}
 
 /** A `flow.json` bl cannot read: the message names the file and the fault. */
 export class FlowError extends Error {
@@ -49,14 +150,17 @@ export class FlowError extends Error {
 /** One parsed flow per file, kept while its mtime and size are unchanged. */
 const cache = new Map();
 
+/** Where `bl init`'s `flow.json` lives. */
+const TEMPLATE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
+
 export function flowPath(backlogRoot) {
   return join(backlogRoot, FLOW_FILE);
 }
 
 /**
  * Read `<backlogRoot>/flow.json`. Throws `FlowError` when it is missing,
- * unparsable, of a wrong schema, lacks a type in `FLOW_TYPES`, or has a
- * `statuses` or `gates` of the wrong shape.
+ * unparsable, of a wrong schema, lacks a type in `FLOW_TYPES`, or has a part
+ * of the wrong shape.
  * @param {string} backlogRoot
  * @returns {Flow}
  */
@@ -71,15 +175,17 @@ export function loadFlow(backlogRoot) {
   const key = `${stat.mtimeMs}:${stat.size}`;
   const hit = cache.get(path);
   if (hit?.key === key) return hit.flow;
-  let raw;
+  const flow = new Flow(path, readJson(path));
+  cache.set(path, { key, flow });
+  return flow;
+}
+
+function readJson(path) {
   try {
-    raw = JSON.parse(readFileSync(path, 'utf8'));
+    return JSON.parse(readFileSync(path, 'utf8'));
   } catch (err) {
     throw new FlowError(path, `not valid JSON (${err.message})`);
   }
-  const flow = new Flow(path, raw);
-  cache.set(path, { key, flow });
-  return flow;
 }
 
 /**
@@ -91,7 +197,7 @@ export function flowForHelp() {
   try {
     return loadFlow(findBacklogRoot());
   } catch {
-    return loadFlow(join(dirname(fileURLToPath(import.meta.url)), '..', 'templates'));
+    return loadFlow(TEMPLATE_DIR);
   }
 }
 
@@ -110,6 +216,106 @@ export function statusWords(names, word = 'or') {
 const isObject = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
 const isStringList = (v) => Array.isArray(v) && v.every((s) => typeof s === 'string');
 
+/**
+ * @typedef {{ when: string[], to: string, then: string | null }} Branch
+ * @typedef {{ from: string[] | "*", when: string[], during: string | null, via: string[],
+ *   success: Branch[], failure: Branch[] }} Verb
+ * @typedef {{ statuses: string[], terminal: string[], verbs: Record<string, Verb>,
+ *   gates: Record<string, { verbs: string[] }> }} FlowType
+ */
+
+/**
+ * A v1 file as v2: bl's template, with the file's own gates per type.
+ * @param {string} path
+ * @param {any} raw  a v1 file with every type in `FLOW_TYPES`
+ */
+function legacyAsV2(path, raw) {
+  const template = readJson(join(TEMPLATE_DIR, FLOW_FILE));
+  const types = {};
+  for (const [type, def] of Object.entries(template.types)) {
+    if (!isObject(raw.types[type])) throw new FlowError(path, `type "${type}" is not an object`);
+    types[type] = { ...def, gates: raw.types[type].gates };
+  }
+  return types;
+}
+
+/**
+ * The `flow.json` text the migration writes over a v1 file (F-69 D4): bl's
+ * template with the file's own gates per type, or null when the file is v2
+ * already. When the gates are the template's, the text is the template's.
+ * Throws `FlowError` as `loadFlow` does.
+ * @param {string} backlogRoot
+ * @returns {string | null}
+ */
+export function migratedFlowText(backlogRoot) {
+  const flow = loadFlow(backlogRoot);
+  if (!flow.legacy) return null;
+  const templatePath = join(TEMPLATE_DIR, FLOW_FILE);
+  const template = readJson(templatePath);
+  const types = legacyAsV2(flow.path, readJson(flow.path));
+  if (isDeepStrictEqual(types, template.types)) return readFileSync(templatePath, 'utf8');
+  return `${JSON.stringify({ ...template, types }, null, 2)}\n`;
+}
+
+/** A branch list, checked; `at` names it in a message. */
+function parseBranches(path, at, v) {
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) throw new FlowError(path, `${at} is not a list of branches`);
+  return v.map((b, i) => {
+    if (!isObject(b) || typeof b.to !== 'string') throw new FlowError(path, `${at} branch ${i + 1} has no "to" status`);
+    if (b.when !== undefined && !isStringList(b.when)) {
+      throw new FlowError(path, `${at} branch ${i + 1} has a "when" that is not a list of guards`);
+    }
+    if (b.then !== undefined && typeof b.then !== 'string') {
+      throw new FlowError(path, `${at} branch ${i + 1} has a "then" that is not a verb`);
+    }
+    return { when: b.when ?? [], to: b.to, then: b.then ?? null };
+  });
+}
+
+/** A verb row, checked and with its optional keys filled. */
+function parseVerb(path, at, v) {
+  if (!isObject(v)) throw new FlowError(path, `${at} is not an object`);
+  if (v.from !== ANY_OPEN && !isStringList(v.from)) {
+    throw new FlowError(path, `${at} has no "from" list of statuses (or "${ANY_OPEN}")`);
+  }
+  for (const key of ['when', 'via']) {
+    if (v[key] !== undefined && !isStringList(v[key]))
+      throw new FlowError(path, `${at} "${key}" is not a list of names`);
+  }
+  if (v.during !== undefined && typeof v.during !== 'string') {
+    throw new FlowError(path, `${at} "during" is not a status`);
+  }
+  return {
+    from: v.from,
+    when: v.when ?? [],
+    during: v.during ?? null,
+    via: v.via ?? [],
+    success: parseBranches(path, `${at} "success"`, v.success),
+    failure: parseBranches(path, `${at} "failure"`, v.failure),
+  };
+}
+
+/** One type of a v2 file, checked. */
+function parseType(path, type, def) {
+  const at = `type "${type}"`;
+  if (!isObject(def)) throw new FlowError(path, `${at} is not an object`);
+  if (!isStringList(def.statuses) || def.statuses.length === 0) {
+    throw new FlowError(path, `${at} has no "statuses" list`);
+  }
+  if (!isStringList(def.terminal)) throw new FlowError(path, `${at} has no "terminal" list`);
+  if (!isObject(def.verbs)) throw new FlowError(path, `${at} has no "verbs" object`);
+  if (!isObject(def.gates)) throw new FlowError(path, `${at} has no "gates" object`);
+  for (const [gate, g] of Object.entries(def.gates)) {
+    if (!isObject(g) || !isStringList(g.verbs) || g.verbs.length === 0) {
+      throw new FlowError(path, `${at} gate "${gate}" has no "verbs" list`);
+    }
+  }
+  const verbs = {};
+  for (const [verb, v] of Object.entries(def.verbs)) verbs[verb] = parseVerb(path, `${at} verb "${verb}"`, v);
+  return { statuses: def.statuses, terminal: def.terminal, verbs, gates: def.gates };
+}
+
 export class Flow {
   /**
    * @param {string} path  the file, for messages
@@ -118,33 +324,19 @@ export class Flow {
   constructor(path, raw) {
     this.path = path;
     if (!isObject(raw)) throw new FlowError(path, 'not a JSON object');
-    if (raw.schema !== FLOW_SCHEMA) {
+    if (raw.schema !== FLOW_SCHEMA && raw.schema !== LEGACY_FLOW_SCHEMA) {
       throw new FlowError(path, `"schema" is ${JSON.stringify(raw.schema)}, not "${FLOW_SCHEMA}"`);
     }
     if (!isObject(raw.types)) throw new FlowError(path, `"types" is not an object`);
     for (const type of FLOW_TYPES) {
       if (!Object.hasOwn(raw.types, type)) throw new FlowError(path, `no "${type}" type in "types"`);
     }
-    for (const [type, def] of Object.entries(raw.types)) {
-      const at = `type "${type}"`;
-      if (!isObject(def)) throw new FlowError(path, `${at} is not an object`);
-      if (!isObject(def.statuses) || Object.keys(def.statuses).length === 0) {
-        throw new FlowError(path, `${at} has no "statuses" object`);
-      }
-      for (const [status, s] of Object.entries(def.statuses)) {
-        if (!isObject(s) || !isStringList(s.implies)) {
-          throw new FlowError(path, `${at} status "${status}" has no "implies" list of statuses`);
-        }
-      }
-      if (!isObject(def.gates)) throw new FlowError(path, `${at} has no "gates" object`);
-      for (const [gate, g] of Object.entries(def.gates)) {
-        if (!isObject(g) || !isStringList(g.verbs) || g.verbs.length === 0) {
-          throw new FlowError(path, `${at} gate "${gate}" has no "verbs" list`);
-        }
-      }
-    }
-    /** @type {Record<string, { statuses: Record<string, { implies: string[] }>, gates: Record<string, { verbs: string[] }> }>} */
-    this.types = raw.types;
+    /** Whether the file is v1, read as the template with its gates (F-69 D4). */
+    this.legacy = raw.schema === LEGACY_FLOW_SCHEMA;
+    const types = this.legacy ? legacyAsV2(path, raw) : raw.types;
+    /** @type {Record<string, FlowType>} */
+    this.types = {};
+    for (const [type, def] of Object.entries(types)) this.types[type] = parseType(path, type, def);
   }
 
   /** The type's definition, or a `FlowError` when the flow has no such type. */
@@ -155,30 +347,50 @@ export class Flow {
   }
 
   /**
-   * The type's statuses, in the file's order.
+   * The type's statuses, in lifecycle order.
    * @param {string} type
    * @returns {string[]}
    */
   statusesOf(type) {
-    return Object.keys(this.typeOf(type).statuses);
+    return [...this.typeOf(type).statuses];
+  }
+
+  /**
+   * The status a unit of `type` starts in: the first of `statuses`.
+   * @param {string} type
+   * @returns {string}
+   */
+  initial(type) {
+    return this.typeOf(type).statuses[0];
+  }
+
+  /**
+   * `status` as a status of `type`, a v1 word mapped (`fromLegacy`); null
+   * when it is not one, or not a string.
+   * @returns {string | null}
+   */
+  #known(type, status) {
+    const { statuses } = this.typeOf(type);
+    // A string only: frontmatter's `[superseded]` is no status.
+    if (typeof status !== 'string') return null;
+    const word = statuses.includes(status) ? status : fromLegacy(type, status);
+    return statuses.includes(word) ? word : null;
   }
 
   /**
    * The type's open statuses (those that do not meet `done`), furthest along
-   * first: most `implies` entries first, since `bl validate` keeps `implies`
-   * closed but does not check the file's order. Ties keep the file's order.
+   * first: the reverse of lifecycle order.
    * @param {string} type
    * @returns {string[]}
    */
   openStatusesOf(type) {
-    const { statuses } = this.typeOf(type);
     return this.statusesOf(type)
       .filter((status) => !this.meets(type, status, 'done'))
-      .sort((a, b) => statuses[b].implies.length - statuses[a].implies.length);
+      .reverse();
   }
 
   /**
-   * The type's closed statuses (those that meet `done`), in the file's order.
+   * The type's closed statuses (those that meet `done`), in lifecycle order.
    * @param {string} type
    * @returns {string[]}
    */
@@ -187,7 +399,7 @@ export class Flow {
   }
 
   /**
-   * The statuses `isRunnable` accepts, in the file's order.
+   * The statuses `isRunnable` accepts, in lifecycle order.
    * @param {string} type
    * @returns {string[]}
    */
@@ -196,7 +408,7 @@ export class Flow {
   }
 
   /**
-   * The statuses `isUnstarted` accepts, in the file's order.
+   * The statuses `isUnstarted` accepts, in lifecycle order.
    * @param {string} type
    * @returns {string[]}
    */
@@ -208,36 +420,34 @@ export class Flow {
    * Where `bl list` and `bl grep` sort a unit at `status`, lowest first: open
    * statuses that meet `in_progress`; the other open statuses together, an
    * unknown one among them since it meets nothing; then closed statuses (those
-   * that meet `done`), in the file's order.
+   * that meet `done`), in lifecycle order.
    * @param {string} type
    * @param {string} status
    * @returns {number}
    */
   listRankOf(type, status) {
     if (this.meets(type, status, 'done')) {
-      return (
-        2 +
-        this.statusesOf(type)
-          .filter((s) => this.meets(type, s, 'done'))
-          .indexOf(status)
-      );
+      return 2 + this.closedStatusesOf(type).indexOf(this.#known(type, status));
     }
     return this.meets(type, status, 'in_progress') ? 0 : 1;
   }
 
   /**
    * Whether a unit of `type` at `status` meets `wanted`: it is `wanted` or
-   * lists it in `implies`. An unknown `status` meets nothing.
+   * comes after it in `statuses`. Terminal statuses come last, so one meets
+   * every open status, and `superseded` meets `done` (F-66 A4). A v1 word
+   * reads as its current one; an unknown `status` meets nothing.
    * @param {string} type
    * @param {string} status
    * @param {string} wanted
    * @returns {boolean}
    */
   meets(type, status, wanted) {
+    const s = this.#known(type, status);
+    const w = this.#known(type, wanted);
+    if (s == null || w == null) return false;
     const { statuses } = this.typeOf(type);
-    // `hasOwn` coerces its key: frontmatter's `[superseded]` is no status.
-    if (typeof status !== 'string' || !Object.hasOwn(statuses, status)) return false;
-    return status === wanted || statuses[status].implies.includes(wanted);
+    return statuses.indexOf(s) >= statuses.indexOf(w);
   }
 
   /**
@@ -259,7 +469,7 @@ export class Flow {
    * @returns {boolean}
    */
   isUnstarted(type, status) {
-    return this.statusesOf(type).includes(status) && !this.meets(type, status, 'in_progress');
+    return this.#known(type, status) != null && !this.meets(type, status, 'in_progress');
   }
 
   /**
@@ -271,35 +481,162 @@ export class Flow {
     const { gates } = this.typeOf(type);
     return Object.fromEntries(Object.entries(gates).map(([gate, g]) => [gate, [...g.verbs]]));
   }
+
+  /**
+   * The row of `verb` in the type's table, or null when it has none.
+   * @param {string} type
+   * @param {string} verb
+   * @returns {Verb | null}
+   */
+  verbOf(type, verb) {
+    const { verbs } = this.typeOf(type);
+    return Object.hasOwn(verbs, verb) ? verbs[verb] : null;
+  }
+
+  /**
+   * The statuses a verb row starts from, `*` expanded.
+   * @param {string} type
+   * @param {Verb} row
+   * @returns {string[]}
+   */
+  fromOf(type, row) {
+    const { statuses, terminal } = this.typeOf(type);
+    return row.from === ANY_OPEN ? statuses.filter((s) => !terminal.includes(s)) : [...row.from];
+  }
+
+  /**
+   * `verb` and the verbs its branches' `then` reach, transitively, each once,
+   * in the order they are first reached: `run`'s chain is `run`, `review`,
+   * `fix`.
+   * @param {string} type
+   * @param {string} verb
+   * @returns {string[]}
+   */
+  chainOf(type, verb) {
+    const out = [verb];
+    for (let i = 0; i < out.length; i++) {
+      const row = this.verbOf(type, out[i]);
+      for (const b of row ? [...row.success, ...row.failure] : []) {
+        if (b.then && !out.includes(b.then)) out.push(b.then);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Every transition the type's table defines, once each: from each `from`
+   * to the verb's `during` (none when they are equal: that records nothing),
+   * and to each branch's `to`, from the `during` status when the verb has one
+   * and from each `from` when it has none. A verb with an empty `from` (`new`)
+   * gives edges `from: null`.
+   * @param {string} type
+   * @returns {Array<{ from: string | null, to: string, by: string }>}
+   */
+  edges(type) {
+    const out = [];
+    const seen = new Set();
+    const add = (from, to, by) => {
+      const key = `${from}\0${to}\0${by}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ from, to, by });
+    };
+    for (const [verb, row] of Object.entries(this.typeOf(type).verbs)) {
+      const from = this.fromOf(type, row);
+      const starts = from.length === 0 ? [null] : from;
+      if (row.during != null) for (const f of starts) if (f !== row.during) add(f, row.during, verb);
+      const sources = row.during != null ? [row.during] : starts;
+      for (const b of [...row.success, ...row.failure]) for (const f of sources) add(f, b.to, verb);
+    }
+    return out;
+  }
 }
 
 /**
- * `bl validate`'s `flow-json` findings (F-66 D1) on a flow `loadFlow` could
- * read: an `implies` that names a status its type lacks, or that is not
- * closed (A implies B, B implies C, A does not list C); a gate verb bl does
- * not check.
- * @param {Flow} flow
- * @param {string} location  the file, relative to the backlog root
- * @returns {Array<{ severity: "error", code: "flow-json", message: string, location: string }>}
+ * @typedef {object} FlowWiring  what bl defines that `flow.json` names
+ * @property {Map<string, Function>} guards        `guards.js`'s `GUARDS`
+ * @property {Map<string, Function>} capabilities  `capabilities.js`'s `VIA_CAPABILITIES`
+ * @property {Record<string, Record<string, string | null>>} dispatch  `verbs.js`'s `DISPATCH`
  */
-export function findFlowFindings(flow, location = FLOW_FILE) {
+
+/**
+ * `bl validate`'s `flow-json` findings (F-66 D1, F-69 D1) on a flow `loadFlow`
+ * could read. Errors: a `from`, `during`, `to` or terminal status the type
+ * lacks; a `when` or `via` name bl does not register; a last `success` or
+ * `failure` branch with a `when`; a `then` that is not a
+ * verb of the type starting from the branch's `to`; a status no branch goes
+ * to; a terminal status before an open one, or one a verb other than
+ * `supersede` starts from; a verb bl dispatches for a type that the type's
+ * table lacks; a gate verb bl does not check. A warning: a v1 file.
+ * @param {Flow} flow
+ * @param {FlowWiring} wiring
+ * @param {string} location  the file, relative to the backlog root
+ * @returns {Array<{ severity: "error" | "warning", code: "flow-json", message: string, location: string }>}
+ */
+export function findFlowFindings(flow, wiring, location = FLOW_FILE) {
   const findings = [];
-  const add = (message) => findings.push({ severity: 'error', code: 'flow-json', message, location });
+  const add = (message, severity = 'error') => findings.push({ severity, code: 'flow-json', message, location });
+  if (flow.legacy) {
+    add(
+      `${location} is ${LEGACY_FLOW_SCHEMA}; bl reads it as its ${FLOW_SCHEMA} template with this file's gates. ` +
+        `Run node ${MIGRATION_SCRIPT} to rewrite the backlog.`,
+      'warning',
+    );
+  }
+  const guardRegistered = (name) => wiring.guards.has(name.split(':')[0]);
   for (const [type, def] of Object.entries(flow.types)) {
-    for (const [status, { implies }] of Object.entries(def.statuses)) {
-      for (const implied of implies) {
-        if (!Object.hasOwn(def.statuses, implied)) {
-          add(`${type} status "${status}" implies "${implied}", which is not a ${type} status`);
-          continue;
-        }
-        // An unknown `next` is reported on its own status's line.
-        const missing = def.statuses[implied].implies.filter(
-          (next) => next !== status && !implies.includes(next) && Object.hasOwn(def.statuses, next),
-        );
-        for (const next of missing) {
-          add(`${type} status "${status}" implies "${implied}", which implies "${next}"; list "${next}" too`);
+    const isStatus = (s) => def.statuses.includes(s);
+    const notStatus = (what, s) => add(`${type} ${what} "${s}", which is not a ${type} status`);
+    for (const t of def.terminal.filter((s) => !isStatus(s))) notStatus('terminal names', t);
+    const firstTerminal = Math.min(...def.terminal.filter(isStatus).map((s) => def.statuses.indexOf(s)));
+    for (const s of def.statuses.slice(firstTerminal).filter((x) => !def.terminal.includes(x))) {
+      add(`${type} status "${s}" comes after a terminal status; terminal statuses come last in "statuses"`);
+    }
+    const reached = new Set();
+    for (const [verb, row] of Object.entries(def.verbs)) {
+      const at = `${type} verb "${verb}"`;
+      if (row.from !== ANY_OPEN) {
+        for (const f of row.from.filter((s) => !isStatus(s))) notStatus(`verb "${verb}" starts from`, f);
+        for (const f of row.from.filter((s) => def.terminal.includes(s) && verb !== 'supersede')) {
+          add(`${at} starts from terminal status "${f}"; only supersede may`);
         }
       }
+      if (row.during != null && !isStatus(row.during)) notStatus(`verb "${verb}" records during`, row.during);
+      for (const g of row.when.filter((n) => !guardRegistered(n))) {
+        add(`${at} checks guard "${g}", which bl does not register (bl/src/guards.js)`);
+      }
+      for (const c of row.via.filter((n) => !wiring.capabilities.has(n))) {
+        add(`${at} runs capability "${c}", which bl does not register (bl/src/capabilities.js)`);
+      }
+      for (const [outcome, branches] of [
+        ['success', row.success],
+        ['failure', row.failure],
+      ]) {
+        // When no guard holds, bl has no branch to record (`requireBranch`).
+        if (branches.at(-1)?.when.length > 0) {
+          add(`${at} has a "when" on its last ${outcome} branch; the last branch must hold always`);
+        }
+        for (const b of branches) {
+          reached.add(b.to);
+          if (!isStatus(b.to)) notStatus(`verb "${verb}" goes on ${outcome} to`, b.to);
+          for (const g of b.when.filter((n) => !guardRegistered(n))) {
+            add(`${at} checks guard "${g}" on ${outcome}, which bl does not register (bl/src/guards.js)`);
+          }
+          if (b.then == null) continue;
+          const next = flow.verbOf(type, b.then);
+          if (!next) add(`${at} chains on ${outcome} to "${b.then}", which is not a ${type} verb`);
+          else if (!flow.fromOf(type, next).includes(b.to)) {
+            add(`${at} chains on ${outcome} to "${b.then}", which does not start from "${b.to}"`);
+          }
+        }
+      }
+    }
+    for (const s of def.statuses.filter((x) => !reached.has(x))) {
+      add(`${type} status "${s}" is no branch's "to"; no verb reaches it`);
+    }
+    for (const [verb, kinds] of Object.entries(wiring.dispatch)) {
+      if (READ_VERBS.includes(verb) || !kinds[type] || flow.verbOf(type, verb)) continue;
+      add(`bl dispatches "${verb}" for a ${type}, and the ${type} table has no "${verb}" verb`);
     }
     for (const [gate, { verbs }] of Object.entries(def.gates)) {
       for (const verb of verbs.filter((v) => !GATE_VERBS.includes(v))) {

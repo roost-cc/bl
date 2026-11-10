@@ -17,6 +17,7 @@ import { rendered } from '../helpers/rendered.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { writeBlockers } from '../../src/blockers.js';
 import { createTask, markTaskDone } from '../../src/task.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const bl = (args, cwd, opts = {}) => runBl(args, { cwd, env: GIT_ENV, ...opts });
 
@@ -53,14 +54,17 @@ test('bl task files a task on a feature and commits the task file alone; the ren
   assert.deepEqual(tasksIn(dir), ['T1-run-the-migration.md']);
   const { fm, body } = parseFrontmatter(read(dir, 'tasks/T1-run-the-migration.md'));
   const added = new Date().toISOString().slice(0, 10);
+  // The log's first entry, `draft` by `new`, and no status: (F-69 D3).
+  const [entry] = fm.transitions;
   assert.deepEqual(fm, {
     task_id: 'T-1',
     title: 'Run the migration',
     unit: 'F-1',
     owner: 'operator',
-    status: 'open',
+    transitions: [{ at: entry.at, to: 'draft', by: 'new' }],
     added,
   });
+  assert.equal(entry.at.slice(0, 10), added);
   assert.equal(body, '\n# T-1 · Run the migration\n\nRun the migration:\n\n```bash\nnode scripts/migrate.js\n```\n');
 
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: task T-1 (F-1)');
@@ -68,19 +72,20 @@ test('bl task files a task on a feature and commits the task file alone; the ren
   assert.equal(git(dir, 'status', '--porcelain'), '');
   assert.match(
     rendered(dir, 'F-1'),
-    /## Stories\n\n[\s\S]*?\n\n## Tasks\n\n\| ID +\| Title +\| Holds \| Status \| Done \|\n\| -+ \| -+ \| -+ \| -+ \| -+ \|\n\| \[T-1\]\(\.\.\/\.\.\/tasks\/T1-run-the-migration\.md\) \| Run the migration \| none +\| open +\| +\|\n\n## Deferred/,
+    /## Stories\n\n[\s\S]*?\n\n## Tasks\n\n\| ID +\| Title +\| Holds \| Status \| Done \|\n\| -+ \| -+ \| -+ \| -+ \| -+ \|\n\| \[T-1\]\(\.\.\/\.\.\/tasks\/T1-run-the-migration\.md\) \| Run the migration \| none +\| draft +\| +\|\n\n## Deferred/,
   );
   assert.equal(read(dir, 'stories/S2/index.md'), s2Before, 'a unit with no task is left byte for byte');
 
   const list = bl(['task', 'list'], dir);
   assert.equal(list.status, 0, list.stderr);
-  assert.equal(list.stdout, 'T-1  F-1  open  Run the migration\n');
+  assert.equal(list.stdout, 'T-1  F-1  draft  Run the migration\n');
 
   const done = bl(['task', 'done', 'T-1', 'ran', 'it'], dir);
   assert.equal(done.status, 0, done.stderr);
   assert.equal(done.stdout, 'done: T-1\n');
   const closed = parseFrontmatter(read(dir, 'tasks/T1-run-the-migration.md')).fm;
-  assert.equal(closed.status, 'done');
+  assert.equal(logStatusOf('task', closed), 'done');
+  assert.deepEqual([closed.transitions.at(-1).to, closed.transitions.at(-1).by], ['done', 'done']);
   assert.equal(closed.done, added);
   assert.equal(closed.note, 'ran it');
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: task T-1 done: ran it');
@@ -142,8 +147,8 @@ test('bl task on a story puts its Tasks table after ## Dependencies; --body-file
   assert.equal(bl(['next-id', 'task'], dir).stdout, 'T-3\n');
   assert.equal(bl(['next-id', 'task', '--count', '2'], dir).stdout, 'T-3\nT-4\n');
   assert.equal(bl(['task', 'F-1', '--title', 'B', '--gate', 'none'], dir).stdout, 'T-3\n');
-  assert.equal(bl(['task', 'list', 'F-1'], dir).stdout, 'T-2  F-1  open  A\nT-3  F-1  open  B\n');
-  assert.equal(bl(['task', 'list', 'S-1'], dir).stdout, 'T-1  S-1  open  Re-mint the key\n');
+  assert.equal(bl(['task', 'list', 'F-1'], dir).stdout, 'T-2  F-1  draft  A\nT-3  F-1  draft  B\n');
+  assert.equal(bl(['task', 'list', 'S-1'], dir).stdout, 'T-1  S-1  draft  Re-mint the key\n');
 });
 
 test('bl task refuses an unknown unit, a missing --title and a body with frontmatter, writing nothing', () => {
@@ -215,14 +220,14 @@ test('a task is a blocker in blockers.json: bl block add accepts it, a task is n
   assert.equal(r.status, 1);
   assert.match(r.stderr, /a task has no gate "merge" in flow\.json \(blockers-gate\)/);
   assert.equal(
-    bl(['block', 'list', 'F-1'], dir).stdout.includes('F-1 held at merge by T-1 (open, needs done): unmet'),
+    bl(['block', 'list', 'F-1'], dir).stdout.includes('F-1 held at merge by T-1 (draft, needs done): unmet'),
     true,
   );
 
   // The rendered table names what the task holds, in blockers.json's order.
   assert.match(
     rendered(dir, 'F-1'),
-    /\| \[T-1\]\([^)]*\) \| Migrate \| bl run, bl implement \(every unit\) once F-1 is done; bl merge F-1; bl run, bl implement S-2 \| open/,
+    /\| \[T-1\]\([^)]*\) \| Migrate \| bl run, bl implement \(every unit\) once F-1 is done; bl merge F-1; bl run, bl implement S-2 \| draft/,
   );
 
   const v = bl(['validate', '--json', '--skip', 'plugin-binary'], dir);
@@ -242,21 +247,22 @@ test('bl validate reports task-unit and task-field on hand-edited task files', (
         .map(([k, v]) => `${k}: ${v}`)
         .join('\n')}\n---\nbody\n`,
     );
-  const ok = { title: 't', unit: 'F-1', owner: 'operator', status: 'open', added: '2026-10-27' };
+  const ok = { title: 't', unit: 'F-1', owner: 'operator', status: 'draft', added: '2026-10-27' };
   put('T1-ok.md', { task_id: 'T-1', ...ok });
   put('T2-no-unit.md', { task_id: 'T-2', ...ok, unit: 'F-9' });
   put('T3-a-task.md', { task_id: 'T-3', ...ok, unit: 'T-1' });
   put('T4-owner.md', { task_id: 'T-4', ...ok, owner: 'agent' });
   put('T5-status.md', { task_id: 'T-5', ...ok, status: 'closed' });
   put('T6-undated.md', { task_id: 'T-6', ...ok, status: 'done' });
-  put('T7-missing.md', { task_id: 'T-7', title: 't', unit: 'F-1', status: 'open' });
+  put('T7-missing.md', { task_id: 'T-7', title: 't', unit: 'F-1', status: 'draft' });
   put('T8-mismatch.md', { task_id: 'T-1', ...ok });
   put('T9-extra.md', { task_id: 'T-9', ...ok, gate: 'merge' });
   writeFileSync(join(dir, 'tasks', 'T10-bad.md'), '---\ntask_id: [\n---\n');
 
   const r = bl(['validate', '--json', '--skip', 'plugin-binary'], dir);
+  // The files keep `status:`, so each is also `legacy-status` (F-69 D4), which is not this test's.
   const got = JSON.parse(r.stdout)
-    .findings.filter((f) => f.location.startsWith('tasks/'))
+    .findings.filter((f) => f.location.startsWith('tasks/') && f.code !== 'legacy-status')
     .map((f) => `${f.location} ${f.severity} ${f.code}: ${f.message}`);
   assert.deepEqual(
     got.sort(),
@@ -266,7 +272,7 @@ test('bl validate reports task-unit and task-field on hand-edited task files', (
       'tasks/T2-no-unit.md error task-unit: unit F-9 is not a feature or story in the backlog',
       'tasks/T3-a-task.md error task-unit: unit T-1 is not a feature or story in the backlog',
       'tasks/T4-owner.md error task-field: owner "agent" is not one of operator',
-      'tasks/T5-status.md error task-field: status "closed" not in known set (flow.json task statuses: open, done)',
+      'tasks/T5-status.md error task-field: status "closed" not in known set (flow.json task statuses: draft, done)',
       'tasks/T6-undated.md error task-field: a done task needs its done: date',
       'tasks/T7-missing.md error task-field: task missing required key "added"',
       'tasks/T7-missing.md error task-field: task missing required key "owner"',
@@ -292,7 +298,7 @@ test('bl task --gate merge commits the task file, its edge in blockers.json and 
     '.gitattributes\nblockers.json\ntasks/T1-run-the-migration.md',
   );
   assert.equal(git(dir, 'status', '--porcelain'), '');
-  assert.match(rendered(dir, 'F-1'), /\| \[T-1\]\([^)]*\) \| Run the migration \| bl merge F-1 +\| open/);
+  assert.match(rendered(dir, 'F-1'), /\| \[T-1\]\([^)]*\) \| Run the migration \| bl merge F-1 +\| draft/);
 
   // The second edge: blockers.json alone beside the task, the mapping already in HEAD.
   const n = bl(['task', 'S-1', '--gate', 'next', '--title', 'Reinstall'], dir);
@@ -507,7 +513,8 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
       err.unrecovered.map((u) => u.path),
       [taskPath],
     );
-    assert.match(err.unrecovered[0].text, /status: open/, "the open task's text is kept for recovery");
+    assert.match(err.unrecovered[0].text, /to: draft/, "the open task's text is kept for recovery");
+    assert.doesNotMatch(err.unrecovered[0].text, /to: done/, "the open task's text is kept for recovery");
     assert.equal(read(dir, featureFile), before, 'the unit is untouched');
   }
 });

@@ -371,7 +371,7 @@ test('readAllStories reads every story under stories/, whatever its status', () 
   assert.deepEqual(
     stories.map((s) => [s.id, s.status, s.storyRelPath]),
     [
-      ['S-1', 'backlog', 'stories/S1-open/index.md'],
+      ['S-1', 'draft', 'stories/S1-open/index.md'],
       ['S-2', 'done', 'stories/S2-done/index.md'],
       ['S-3', 'superseded', 'stories/S3-gone/index.md'],
     ],

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "fix outcome",
-  "description": "The outcome of a fix round (feature-workon-review.md, workon-review.md). bl writes the change document's review_status: fixed when fixed is true (F-68 D3); the loop escalates when it is false.",
+  "description": "The outcome of a fix round (feature-workon-review.md, workon-review.md). bl records in_review by fix in the unit's transition log when fixed is true (F-68 D3, F-69 D5); the loop escalates when it is false.",
   "type": "object",
   "additionalProperties": false,
   "required": ["summary", "fixed", "open"],

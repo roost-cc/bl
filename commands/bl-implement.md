@@ -23,8 +23,12 @@ bl implement <id...>                # several targets: one tmux window each
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<id...>` | One or more story (S34, S-34, s34) or feature (F-3) IDs. A component is refused: make its stories a feature. A story that belongs to a feature is refused: use the feature. |
 
-A story is started when its status is `refined` or `in_progress`. A feature needs `approved`,
-`running`, or `escalated`, and refuses on open dependencies outside it.
+`flow.json`'s `implement` row names the statuses it starts from: a story `draft`, `refined`,
+`in_progress` or `escalated`; a feature `approved`, `in_progress` or `escalated`. A unit whose
+review position is `fixing` (a review round left items open), whatever its status, starts the
+`fix` row instead, and bl records `fixing` before the session. A `done` or `superseded` unit is
+refused under `implement`. A feature refuses on open dependencies outside it, and on a story
+whose `transitions:` is malformed.
 
 ## One or several
 
@@ -58,8 +62,8 @@ targets start.
 6. Writes a lock file in the unit directory while the session is running to prevent
    double-starts
 
-When the target's `review_status` is `pending`, the session addresses the review instead
-(the fix round).
+When the target is in `fixing` (its transition log), the session addresses the review instead
+(the fix round); a `fixed` outcome records `in_review` by `fix`.
 
 ## Resuming Interrupted Sessions
 

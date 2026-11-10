@@ -130,14 +130,14 @@ test('a named in_progress story is included', () => {
   }
 });
 
-test('a named backlog story is skipped with a refine-first notice', () => {
+test("a named draft story starts: flow.json's implement row starts from draft (F-69 D1)", () => {
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
     const { startable, deferred, notices } = resolveWorkonTargets(['S-13'], cfg);
-    assert.deepEqual(ids(startable), []);
+    assert.deepEqual(ids(startable), ['S-13']);
     assert.deepEqual(ids(deferred), []);
-    assert.ok(notices.some((n) => n.includes('S-13') && n.includes('refined first')));
+    assert.deepEqual(notices, []);
   } finally {
     cleanup();
   }

@@ -22,8 +22,8 @@ not reasons to stop. Make a serious effort before you give up on anything.
    bl attach S-<id> {{featureId}} --no-sync
    ```
 
-   Then check off in that story's file every criterion the fix meets. Set `status: in_progress`
-   in its frontmatter as for a new story, and go on from step 3 with its id. The story keeps its
+   Then check off in that story's file every criterion the fix meets, and go on from step 3
+   with its id. Do not set its status: bl records it. The story keeps its
    own sections; the body file is only needed if attach refuses.
    - If `bl attach` refuses because the story's repo is outside the feature, treat the bug as one
      in another repo. Run `bl side` as below, and name the existing `S-<id>` in the side
@@ -49,9 +49,9 @@ not reasons to stop. Make a serious effort before you give up on anything.
    A bug in another repo is a side story instead, because it needs that repo's worktree. For it,
    run `bl side <repo> --from {{featureId}} --type bug --points <1|2|3> --title "<the bug>" --body-file <the same file>`
    in place of `bl new`. Fix the bug in the worktree that `bl side` prints, and go on from
-   step 3. `bl new` prints the new `S-<id>` and its file. Set `status: in_progress` in that
-   file's frontmatter (`bl side` sets it for you). With every criterion checked, `bl run` treats
-   the story as finished, and `bl merge` marks it done along with the feature.
+   step 3. `bl new` prints the new `S-<id>` and its file. Do not set its status: with every
+   criterion checked, `bl run` records it as started and treats it as finished, and `bl merge`
+   marks it done along with the feature.
 
 3. **Fix the bug in its own commit.** The commit touches only that bug, has a Conventional
    Commits message, and its subject ends in ` ({{featureId}} S-<id>)`. Never skip or weaken

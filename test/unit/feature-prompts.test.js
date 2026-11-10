@@ -310,8 +310,9 @@ test("a story run's prompts name the story file and its Deferred, never the feat
       verify,
       /Prepend a session block to `## Review Log` in the change document\n\s+\(`\/b\/projects\/demo\/E3-x\/S9-nine\/change\.md`\)/,
     );
-    // The review state is bl's (F-68 D3): the verifier returns an outcome as its final message.
-    assert.match(verify, /bl owns the review state in the change document's frontmatter/);
+    // The review state is bl's (F-68 D3), in the story's log (F-69 D5): the verifier returns
+    // an outcome as its final message.
+    assert.match(verify, /bl owns the review state: it records your verdict on round 1 in the story's\ntransition log/);
     assert.match(verify, /End the session with this JSON object as your final message/);
     assert.match(verify, /"must": 0, "should": 0, "nits": 0, "escalated": false/);
     const self = loadPrompt('feature-self-review', STORY_CASES['feature-self-review'], { agent: 'claude', config });

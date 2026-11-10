@@ -189,7 +189,7 @@ test('nextFeatureId is F-1 on a backlog without features', () => {
   }
 });
 
-test("resolveFeatureStories is the stories whose feature: names it, in dependency order (F-77 D3)", () => {
+test('resolveFeatureStories is the stories whose feature: names it, in dependency order (F-77 D3)', () => {
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -247,7 +247,7 @@ test('outsideBlockers ignores done and in-feature deps, flags open ones', () => 
     assert.deepEqual(outsideBlockers(stories, all, flow), []);
     // Add an open outside dependency.
     const withBlocker = stories.map((s) => (s.id === 'S-4' ? { ...s, depends_on: ['S-2'] } : s));
-    assert.deepEqual(outsideBlockers(withBlocker, all, flow), [{ story: 'S-4', dep: 'S-2', status: 'backlog' }]);
+    assert.deepEqual(outsideBlockers(withBlocker, all, flow), [{ story: 'S-4', dep: 'S-2', status: 'draft' }]);
   } finally {
     cleanup();
   }

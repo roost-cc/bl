@@ -16,6 +16,8 @@ import { fileURLToPath } from 'url';
 import { epicStatus, loadBacklog, loadStats, resetLoadStats, unitFiles } from '../../src/backlog-graph.js';
 import { FrontmatterError, FrontmatterListError } from '../../src/config.js';
 import { FlowError, loadFlow } from '../../src/flow.js';
+import { legacyLog } from '../../src/transition.js';
+import { updateSpecFile } from '../../src/spec-file.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'backlog-graph');
@@ -70,6 +72,72 @@ test('loadBacklog returns one Map per kind keyed by canonical id, and get() for 
   assert.equal(g.get('S-404'), null);
   assert.equal(g.get('nothing'), null);
   assert.equal(g.get(''), null);
+});
+
+test('a unit at a v1 status word reads as its current one; the frontmatter keeps the word (F-69 D4)', () => {
+  const { config } = fixture();
+  const g = loadBacklog(config);
+  assert.equal(g.flow.legacy, true, 'the fixture is a v1 backlog');
+  for (const [id, stored, read] of [
+    ['S-5', 'backlog', 'draft'],
+    ['S-1', 'done', 'done'],
+    ['F-2', 'running', 'in_progress'],
+    ['F-3', 'draft', 'draft'],
+    ['T-1', 'open', 'draft'],
+    ['T-2', 'done', 'done'],
+  ]) {
+    assert.equal(g.get(id).fm.status, stored, id);
+    assert.equal(g.get(id).status, read, id);
+  }
+  assert.equal(g.get('F-2').done, false);
+});
+
+// F-69 D2, D4: a unit reads the same with or without its transition log. One
+// exception: an unmigrated running unit's status is its `status:` word, as
+// before F-69, and the migration moves it to its review position.
+test('every story, feature and task reads the same status, round and log migrated and unmigrated', () => {
+  const { root, config } = fixture();
+  // F-2 is running with one review round whose items are open: it is fixing.
+  replace(
+    join(root, 'features', 'F2-beta', 'change.md'),
+    '---\nchange_of: F-2\nstatus: open\nreview_round: "1"\nreview_status: pending\nrepos: []\n---\n',
+  );
+  const read = (g) =>
+    ['story', 'feature', 'task'].flatMap((kind) =>
+      g.list(kind).map((u) => [u.id, u.status, u.round, u.transitions.map((e) => e.to).join(' ')]),
+    );
+  const before = read(loadBacklog(config, { reload: true }));
+  const f2 = before.find(([id]) => id === 'F-2');
+  assert.deepEqual(f2, ['F-2', 'in_progress', 1, 'draft in_progress in_review fixing']);
+  assert.deepEqual(
+    before.find(([id]) => id === 'T-1'),
+    ['T-1', 'draft', 0, 'draft'],
+  );
+
+  const g = loadBacklog(config);
+  for (const kind of ['story', 'feature', 'task']) {
+    for (const u of g.list(kind)) {
+      const change = kind === 'task' ? null : u.change().change;
+      updateSpecFile(root, u.file, (fm) => {
+        fm.transitions = legacyLog(kind, fm, change).map((e) => ({ at: '2026-11-01T00:00:00Z', ...e }));
+        delete fm.status;
+      });
+    }
+  }
+  const after = loadBacklog(config);
+  assert.ok(after.list('story').every((s) => s.fm.status === undefined && s.fm.transitions.length > 0));
+  f2[1] = 'fixing';
+  assert.deepEqual(read(after), before);
+});
+
+test('an unmigrated running unit whose change document cannot be read has no review part', () => {
+  const { root, config } = fixture();
+  replace(join(root, 'features', 'F2-beta', 'change.md'), '---\nchange_of: F-2\nrepos: bl\n---\n');
+  const f2 = loadBacklog(config).get('F-2');
+  assert.equal(f2.status, 'in_progress');
+  assert.equal(f2.round, 0);
+  assert.equal(f2.transitions.at(-1).to, 'in_progress');
+  assert.throws(() => f2.change(), FrontmatterListError);
 });
 
 test('every unit carries the common fields, its frontmatter frozen', () => {
@@ -196,8 +264,9 @@ test('component, epic and theme links, with the epic status derived', () => {
   const e51 = g.get('E51');
   assert.equal(e51.theme, null);
   assert.deepEqual(ids(e51.features), ['F-2']);
-  assert.equal(e51.status, 'open');
-  assert.equal(g.get('E52').status, 'open');
+  assert.equal(e51.status, 'in_progress');
+  // No features: draft (F-69 D6).
+  assert.equal(g.get('E52').status, 'draft');
   assert.deepEqual(ids(g.get('E52').features), []);
 
   assert.deepEqual(ids(g.get('demo').epics), ['E50']);
@@ -211,11 +280,13 @@ test('component, epic and theme links, with the epic status derived', () => {
   }
 });
 
-test('epicStatus: done once it has features and every one is closed', () => {
+test('epicStatus: draft with no features or only draft ones, done when every one is closed, else in_progress', () => {
   const flow = loadFlow(FIXTURE);
-  assert.equal(epicStatus([], flow), 'open');
+  assert.equal(epicStatus([], flow), 'draft');
+  assert.equal(epicStatus([{ status: 'draft' }, { status: 'draft' }], flow), 'draft');
+  assert.equal(epicStatus([{ status: 'draft' }, { status: 'refined' }], flow), 'in_progress');
+  assert.equal(epicStatus([{ status: 'done' }, { status: 'in_progress' }], flow), 'in_progress');
   assert.equal(epicStatus([{ status: 'done' }, { status: 'superseded' }], flow), 'done');
-  assert.equal(epicStatus([{ status: 'done' }, { status: 'running' }], flow), 'open');
 });
 
 test("list(kind) keeps every readable unit, a duplicate id's later copies included", () => {
@@ -440,7 +511,7 @@ test('no body is sliced and no change document read unless asked; each is cached
   const f1 = g.get('F-1');
   assert.equal(f1.change().branch, 'f1-alpha');
   assert.equal(f1.change().pr, '7');
-  assert.equal(f1.change().reviewStatus, 'addressed');
+  assert.equal(f1.change().prUrl, 'https://forge.example/pull/7');
   assert.equal(loadStats.changes, 1);
   assert.equal(g.get('S-1').change().change, null);
   assert.throws(() => g.get('S-5').change(), FrontmatterError);

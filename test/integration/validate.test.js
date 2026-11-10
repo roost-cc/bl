@@ -12,9 +12,22 @@ import { BL_BIN, runBl } from '../helpers/run-bl.js';
  * has one home component. `fixture.repos`, `fixture.components` and
  * `fixture.stories` add to demo-repo and its C00.
  */
+/**
+ * A unit in the shape after the migration (F-69 D2): a `draft` transition
+ * log and its `added:`, no `status:`, so it has no `legacy-status` warning. A
+ * fixture unit that sets a status or a log keeps it.
+ */
+const migrated = (u) => {
+  if (u.status != null || u.transitions != null) return u;
+  const added = u.added ?? '2026-01-01';
+  return { ...u, added, transitions: [{ at: `${added}T00:00:00Z`, to: 'draft', by: 'new' }] };
+};
+
 function cleanBacklog(fixture = {}) {
   return mkTempBacklog({
     ...fixture,
+    stories: fixture.stories?.map(migrated),
+    features: fixture.features?.map(migrated),
     repos: ['../demo-repo', ...(fixture.repos ?? [])],
     components: [
       { id: 'C00', title: 'Foundation', dirSuffix: 'foundation', repo: 'demo-repo', home: true },
@@ -552,7 +565,7 @@ test('bl validate fires review-log-unaddressed on addressed with open items', as
   td.cleanup();
 });
 
-test('bl validate fires bad-review-status and bad-change-status on unknown values', async () => {
+test('bl validate warns on the old review fields, whatever their value, and errors on an unknown change status (F-69 D5)', async () => {
   const td = cleanBacklog();
   writeStoryWithChange(td, 'review_status: garbage\n');
   writeFileSync(
@@ -561,8 +574,28 @@ test('bl validate fires bad-review-status and bad-change-status on unknown value
   );
   const { stdout, status } = await runBl(['validate'], { cwd: td.dir });
   assert.equal(status, 1);
-  assert.match(stdout, /bad-review-status: "review_status:" "garbage" not in known set/);
+  assert.match(
+    stdout,
+    /legacy-review-fields: "review_round:" "1", "review_status:" "garbage": the unit's transition log holds the review state; node bl\/scripts\/migrate-transitions\.js removes them/,
+  );
+  assert.doesNotMatch(stdout, /bad-review-status/);
   assert.match(stdout, /bad-change-status: "status:" "shipped" not in known set/);
+  td.cleanup();
+});
+
+test('bl validate warns on a change document whose status is the old closed (F-69 D6)', async () => {
+  const td = cleanBacklog();
+  writeStoryWithChange(td, '');
+  writeFileSync(
+    join(td.dir, CHANGE_REL),
+    readFileSync(join(td.dir, CHANGE_REL), 'utf8').replace('status: open', 'status: closed'),
+  );
+  const { stdout } = await runBl(['validate', '--json'], { cwd: td.dir });
+  const found = JSON.parse(stdout).findings.filter((f) => f.code === 'bad-change-status');
+  assert.deepEqual(
+    found.map((f) => [f.severity, f.message]),
+    [['warning', '"status:" "closed" is the old word for "dropped"; write "dropped"']],
+  );
   td.cleanup();
 });
 
@@ -585,6 +618,42 @@ test('bl validate passes when pending matches a real session', async () => {
   assert.equal(status, 0, stdout);
   assert.doesNotMatch(stdout, /review-log-|change-/);
   td.cleanup();
+});
+
+test('bl validate checks the log against the latest Review Log session: fixing with none, in_review after a fix with open items (F-69 D5)', async () => {
+  const log = (...tos) =>
+    tos
+      .map((to, i) => `  - at: 2026-11-0${i + 1}T00:00:00Z\n    to: ${to.split(':')[0]}\n    by: ${to.split(':')[1]}\n`)
+      .join('');
+  const cases = [
+    {
+      log: log('draft:new', 'in_progress:implement', 'in_review:run', 'fixing:review'),
+      body: '',
+      code: 'review-log-missing',
+    },
+    {
+      log: log('draft:new', 'in_progress:implement', 'in_review:run', 'fixing:review', 'in_review:fix'),
+      body: '\n## Review Log\n\n### Session 2026-11-04 (PR #1)\n\n**Must fix**\n\n- [ ] still open\n',
+      code: 'review-log-unaddressed',
+    },
+  ];
+  for (const c of cases) {
+    const td = cleanBacklog();
+    writeStory(td, 'S100-x', STORY_FM.replace('status: in_progress\n', `transitions:\n${c.log}added: 2026-11-01\n`));
+    writeChange(
+      td,
+      'S100-x',
+      `---\nchange_of: S-100\nstatus: open\nrepos:\n  - repo: demo\n    branch: s100-x\n---\n\n# S-100\n${c.body}`,
+    );
+    const { stdout } = await runBl(['validate', '--json'], { cwd: td.dir });
+    const hits = JSON.parse(stdout).findings.filter((f) => /^review-log-|legacy-review/.test(f.code));
+    assert.deepEqual(
+      hits.map((f) => [f.code, f.location]),
+      [[c.code, CHANGE_REL]],
+      stdout,
+    );
+    td.cleanup();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -818,7 +887,7 @@ test("bl validate reports frontmatter-yaml at the parser's line and frontmatter-
     s2,
     readFileSync(s2, 'utf8').replace('status: refined\n', 'status: refined\ndepends_on: S-1\nrequired_for:\n  a: b\n'),
   );
-  // F-1's change document is not YAML (a bad indent at line 8): the feature is not read either.
+  // F-1's change document is not YAML (a bad indent at line 6): the feature is not read either.
   const change = join(td.dir, 'features', 'F1-feat', 'change.md');
   writeFileSync(change, readFileSync(change, 'utf8').replace('    branch: f1-feat', '   branch: f1-feat'));
 
@@ -828,7 +897,7 @@ test("bl validate reports frontmatter-yaml at the parser's line and frontmatter-
   const of = (code) => findings.filter((f) => f.code === code).map((f) => [f.location, f.line]);
   assert.deepEqual(of('frontmatter-yaml'), [
     ['stories/S3-colon/index.md', 4],
-    ['features/F1-feat/change.md', 8],
+    ['features/F1-feat/change.md', 6],
   ]);
   assert.match(
     findings.find((f) => f.location === 'stories/S3-colon/index.md').message,
@@ -879,35 +948,39 @@ test('bl validate takes story and feature statuses from flow.json and reports fl
 
   // A status the flow file does not name is bad-status, even one bl's code knows.
   const narrowed = structuredClone(flow);
-  delete narrowed.types.story.statuses.refined;
-  for (const s of Object.values(narrowed.types.story.statuses)) s.implies = s.implies.filter((x) => x !== 'refined');
-  delete narrowed.types.feature.statuses.approved;
-  for (const s of Object.values(narrowed.types.feature.statuses)) s.implies = s.implies.filter((x) => x !== 'approved');
+  narrowed.types.story.statuses = narrowed.types.story.statuses.filter((s) => s !== 'refined');
+  narrowed.types.feature.statuses = narrowed.types.feature.statuses.filter((s) => s !== 'approved');
   writeFileSync(flowPath, JSON.stringify(narrowed, null, 2));
   assert.deepEqual(
-    (await codes()).map((f) => [f.code, f.location, f.message]),
+    (await codes()).filter((f) => f.code === 'bad-status').map((f) => [f.code, f.location, f.message]),
     [
-      ['bad-status', 'stories/S1/index.md', 'status "refined" not in known set (flow.json story statuses)'],
-      ['bad-status', 'features/F1/index.md', 'status "approved" not in known set (flow.json feature statuses)'],
+      [
+        'bad-status',
+        'stories/S1/index.md',
+        'status "refined" not in known set (flow.json story statuses: draft, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+      ],
+      [
+        'bad-status',
+        'features/F1/index.md',
+        'status "approved" not in known set (flow.json feature statuses: draft, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+      ],
     ],
   );
 
-  // A status bl's code does not know is accepted once flow.json names it.
+  // A status bl's code does not know is accepted once flow.json names it and a verb reaches it.
   const widened = structuredClone(flow);
-  widened.types.story.statuses.parked = { implies: ['refined', 'backlog'] };
+  widened.types.story.statuses.splice(2, 0, 'parked');
+  widened.types.story.verbs.park = { from: ['refined'], success: [{ to: 'parked' }] };
   writeFileSync(flowPath, JSON.stringify(widened, null, 2));
   assert.deepEqual(await codes(), []);
 
-  // flow-json: an implies that is not closed.
-  const open = structuredClone(flow);
-  open.types.story.statuses.done.implies = ['in_progress'];
-  writeFileSync(flowPath, JSON.stringify(open, null, 2));
+  // flow-json: a then that names no verb of the type.
+  const broken = structuredClone(flow);
+  broken.types.story.verbs.fix.success[0].then = 'publish';
+  writeFileSync(flowPath, JSON.stringify(broken, null, 2));
   const { stdout, status } = await runBl(['validate'], { cwd: td.dir });
   assert.equal(status, 1);
-  assert.match(
-    stdout,
-    /flow-json: story status "done" implies "in_progress", which implies "refined"; list "refined" too/,
-  );
+  assert.match(stdout, /flow-json: story verb "fix" chains on success to "publish", which is not a story verb/);
 
   td.cleanup();
 });

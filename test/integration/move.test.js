@@ -127,10 +127,10 @@ test('bl move with every story unchanged writes and commits nothing', () => {
 });
 
 test('bl move takes an unbranched story to another repo, in a feature before it runs too', () => {
-  for (const featureStatus of ['draft', 'refined', 'approved', 'running']) {
+  for (const featureStatus of ['draft', 'refined', 'approved', 'in_progress']) {
     const dir = backlog({ featureStatus });
-    // S-1 is in F-1; S-2 is in no feature, so a running F-1 does not hold it.
-    const args = featureStatus === 'running' ? ['S-2', 'C02'] : ['S-1', 'S-2', 'C02'];
+    // S-1 is in F-1; S-2 is in no feature, so a started F-1 does not hold it.
+    const args = featureStatus === 'in_progress' ? ['S-2', 'C02'] : ['S-1', 'S-2', 'C02'];
     const r = bl(['move', ...args, '--no-sync'], dir);
     assert.equal(r.status, 0, `${featureStatus}: ${r.stderr}`);
     assert.equal(fm(dir, story(2)).component, 'C02', featureStatus);
@@ -139,8 +139,8 @@ test('bl move takes an unbranched story to another repo, in a feature before it 
   }
 });
 
-test('bl move keeps a story of a running feature in its repo', () => {
-  for (const featureStatus of ['running', 'escalated']) {
+test('bl move keeps a story of a started feature in its repo', () => {
+  for (const featureStatus of ['in_progress', 'fixing', 'escalated']) {
     const dir = backlog({ featureStatus });
     const r = bl(['move', 'S-1', 'C01', '--no-sync'], dir);
     assert.equal(r.status, 0, `${featureStatus}: ${r.stderr}`);
@@ -148,7 +148,7 @@ test('bl move keeps a story of a running feature in its repo', () => {
   }
 });
 
-test("move refuses a cross-repo move of a running feature's story, its feature: the only membership (F-77 D3)", () => {
+test("move refuses a cross-repo move of a started feature's story, its feature: the only membership (F-77 D3)", () => {
   // S-1's feature: as written: valid, missing, empty, not a feature id, a feature that does not exist.
   const backlinks = {
     valid: 'feature: F-1\n',
@@ -157,7 +157,7 @@ test("move refuses a cross-repo move of a running feature's story, its feature: 
     malformed: 'feature: not-a-feature\n',
     dangling: 'feature: F-9\n',
   };
-  for (const featureStatus of ['running', 'escalated']) {
+  for (const featureStatus of ['in_progress', 'ready_for_merge', 'escalated']) {
     for (const [kind, line] of Object.entries(backlinks)) {
       const label = `${featureStatus} ${kind}`;
       const member = kind === 'valid';
@@ -203,7 +203,7 @@ test('bl move refuses the whole call, writing nothing and naming every offending
     {
       opts: { stories: { 'S-2': { status: 'in_progress' }, 'S-3': { status: 'done' } } },
       args: ['S-2', 'S-3', 'C01'],
-      err: /S-2 is in_progress; only a backlog or refined story moves to another component\.\n {2}S-3 is done; only a backlog/,
+      err: /S-2 is in_progress; only a draft or refined story moves to another component\.\n {2}S-3 is done; only a draft/,
     },
     {
       opts: { stories: { 'S-3': { status: 'superseded' } } },
@@ -211,9 +211,9 @@ test('bl move refuses the whole call, writing nothing and naming every offending
       err: /S-3 is superseded/,
     },
     {
-      opts: { featureStatus: 'running' },
+      opts: { featureStatus: 'in_progress' },
       args: ['S-1', 'S-2', 'C02'],
-      err: /S-1 is in F-1, which is running: moving it to C02 changes its repo from demo-repo to other-repo, and the feature's branches span a fixed set of repos\./,
+      err: /S-1 is in F-1, which is in_progress: moving it to C02 changes its repo from demo-repo to other-repo, and the feature's branches span a fixed set of repos\./,
     },
     {
       opts: { featureStatus: 'escalated' },
@@ -347,8 +347,8 @@ test('bl move --help lists the flags and the refusals, and bl --help lists the v
     'bl-move-json/v1',
     'does not exist',
     'names no repo',
-    'backlog or refined',
-    'running or escalated',
+    'draft or refined',
+    'in_progress, in_review, fixing, ready_for_merge or escalated',
   ]) {
     assert.ok(r.stdout.includes(s), s);
   }

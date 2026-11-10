@@ -27,6 +27,7 @@ import { runBl } from '../helpers/run-bl.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { defaultOutcome, reviewOutcome } from '../helpers/outcomes.js';
+import { statusOf as logStatusOf, transition } from '../../src/transition.js';
 
 const DONE = '## Acceptance Criteria\n\n- [x] done\n';
 const fmOf = (path) => parseFrontmatter(readFileSync(path, 'utf8')).fm;
@@ -86,14 +87,9 @@ function commitIn(wt, file, text) {
   git(wt, 'commit', '-q', '-m', `add ${file}`);
 }
 
-/** The change document at `path` with a clean review session and `review_status: addressed`. */
-function markAddressed(path, round, { fields = true } = {}) {
+/** The change document at `path` with a clean review session; bl records the verdict in the log (F-69 D5). */
+function markAddressed(path, round) {
   const doc = parseChange(readFileSync(path, 'utf8'));
-  // A fake verifier leaves the fields to bl, which writes them from its outcome (F-68 D3).
-  if (fields) {
-    doc.fm.review_round = String(round);
-    doc.fm.review_status = 'addressed';
-  }
   const block = `### Session 2026-10-26 r${round}\n\n**Must fix**\nNone.\n\n**Should fix**\nNone.\n\n**Nits**\nNone.\n`;
   doc.body = doc.body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
   writeFileSync(path, serializeChange(doc));
@@ -151,7 +147,7 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
         writeFileSync(o.vars.findingsPath, `# ${o.vars.dimension}\n\nNone.\n`);
       } else if (o.promptName === 'review-verify') {
         round += 1;
-        markAddressed(changePath, round, { fields: false });
+        markAddressed(changePath, round);
         return { ok: true, output: '', isError: false, usage: null, structured: reviewOutcome() };
       }
       return { ok: true, output: '', isError: false, usage: null, structured: defaultOutcome(o.promptName) };
@@ -211,9 +207,9 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
     assert.match(e.merged, /^[0-9a-f]{7,}$/, e.repo);
     assert.ok(git(repos[e.repo], 'rev-parse', 'main').startsWith(e.merged), e.repo);
   }
-  assert.equal(fmOf(join(dir, side.path)).status, 'done');
-  assert.equal(fmOf(join(dir, 'stories', 'S1-one', 'index.md')).status, 'done');
-  assert.equal(fmOf(feature.indexPath).status, 'done');
+  assert.equal(logStatusOf('story', fmOf(join(dir, side.path))), 'done');
+  assert.equal(logStatusOf('story', fmOf(join(dir, 'stories', 'S1-one', 'index.md'))), 'done');
+  assert.equal(logStatusOf('feature', fmOf(feature.indexPath)), 'done');
   assert.deepEqual(mainBranches(), { repoA: 'main', repoB: 'main' });
 });
 
@@ -241,8 +237,13 @@ test('standalone_side_batch_merge_clears_inbox: three standalone side stories ar
     ids.map((id) => [`${id}:change`, `bl run ${id}`]),
   );
 
-  // Reviewed and addressed (what bl run would record), the next step is bl merge.
-  for (const s of made) markAddressed(join(dir, s.path.replace(/index\.md$/, 'change.md')), 1);
+  // Reviewed clean (the session, and the log hops bl run would record), the next step is bl merge.
+  for (const s of made) {
+    markAddressed(join(dir, s.path.replace(/index\.md$/, 'change.md')), 1);
+    const unit = { kind: 'story', indexPath: join(dir, s.path) };
+    transition(dir, unit, 'in_review', { by: 'run', via: 'open_pr' });
+    transition(dir, unit, 'ready_for_merge', { by: 'review', via: 'review', outcome: 'clean' });
+  }
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'reviewed');
   assert.deepEqual(
@@ -256,7 +257,7 @@ test('standalone_side_batch_merge_clears_inbox: three standalone side stories ar
   assert.deepEqual(listed(), []);
   for (const s of made) {
     assert.equal(git(join(tmp, 'repoB.git'), 'show', `main:${s.story}.txt`), s.story);
-    assert.equal(fmOf(join(dir, s.path)).status, 'done');
+    assert.equal(logStatusOf('story', fmOf(join(dir, s.path))), 'done');
     const change = parseChange(readFileSync(join(dir, s.path.replace(/index\.md$/, 'change.md')), 'utf8'));
     assert.equal(change.fm.status, 'merged', s.story);
     assert.match(change.repos[0].merged, /^[0-9a-f]{7,}$/, s.story);

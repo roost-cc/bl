@@ -53,13 +53,13 @@ Commands:
                --no-sync      Write the story, commit nothing
                --json         Print {schema, story, feature, changed}
                Refuses a closed feature, a story in another feature or not
-               ${unstarted}, and a repo a running feature does not span
+               ${unstarted}, and a repo a started feature does not span
   move       Move stories to another component (<S-n>… <C-n>, any order):
                sets each story's component:, commits
                --no-sync      Write the stories, commit nothing
                --json         Print {schema, component, moved, unchanged}
                Refuses an unknown id, a story not ${unstarted}, and a
-               repo change for a story in a running or escalated feature
+               repo change for a story in a started feature
   task       An action for the operator, with no branch, in tasks/ (F-65)
                <F-n|S-n> --title <t> --gate <merge|next|none>
                  [--body-file <p>] [--json]  File one; prints T-<n>

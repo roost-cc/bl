@@ -178,6 +178,20 @@ function activeRuns(config) {
     const pid = liveLockHolder(join(runDir, f.replace(/\.json$/, '.lock')));
     if (pid != null && pid !== process.pid) out.push(`a bl run is active (${join(RUN_DIR, f)}, pid ${pid})`);
   }
+  for (const { dir, pid } of liveSessionLocks(config)) {
+    if (pid !== process.pid) out.push(`a bl session is running in ${dir} (pid ${pid})`);
+  }
+  return out;
+}
+
+/**
+ * Each `bl` session lock with a live holder: the directory that holds it,
+ * the branch of the worktree it belongs to, and the holder's pid.
+ * @param {object} config  the backlog config
+ * @returns {{ dir: string, branch: string, pid: number }[]}
+ */
+export function liveSessionLocks(config) {
+  const root = config.backlogRoot;
   // An unmigrated backlog.json registers its repos under `projects`.
   const repos = { ...config.repos };
   for (const [id, def] of Object.entries(config.topLevel?.projects ?? {})) {
@@ -189,10 +203,16 @@ function activeRuns(config) {
   }
   // A session's lock is in its unit directory (F-60 D3), the worktree's
   // parent; one started before that is in the worktree itself.
-  const dirs = new Set(allActiveWorktrees({ repos }).flatMap((wt) => [wt.path, dirname(wt.path)]));
-  for (const dir of dirs) {
+  const dirs = new Map(
+    allActiveWorktrees({ repos }).flatMap((wt) => [
+      [wt.path, wt.branch],
+      [dirname(wt.path), wt.branch],
+    ]),
+  );
+  const out = [];
+  for (const [dir, branch] of dirs) {
     const pid = liveLockHolder(join(dir, SESSION_LOCK_FILE));
-    if (pid != null && pid !== process.pid) out.push(`a bl session is running in ${dir} (pid ${pid})`);
+    if (pid != null) out.push({ dir, branch, pid });
   }
   return out;
 }

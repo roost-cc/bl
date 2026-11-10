@@ -7,6 +7,7 @@ import { runBl } from '../helpers/run-bl.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { abortFailedMerge } from '../../src/cleanup.js';
 import { ENV, escalation, featureFile, fixture, g, landOnMain, ok } from '../helpers/merge-integrate-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 test('bl merge F-n integrates a branch behind main, gates and pushes it, then lands it', () => {
   const fx = fixture({ test: 'test -f other.txt' });
@@ -16,7 +17,7 @@ test('bl merge F-n integrates a branch behind main, gates and pushes it, then la
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr + r.stdout, /code: merged 1 commit from origin\/main/);
     assert.match(r.stderr + r.stdout, /code: pushed the integrated branch/);
-    assert.equal(parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm.status, 'done');
+    assert.equal(logStatusOf('feature', parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm), 'done');
     assert.equal(readFileSync(join(fx.repo, 'f1-feat.txt'), 'utf8'), 'f1-feat\n');
     assert.equal(readFileSync(join(fx.repo, 'other.txt'), 'utf8'), 'other\n');
   } finally {
@@ -38,7 +39,9 @@ test('bl merge S-n stops on a conflict before any main checkout is touched', () 
     assert.equal(g(fx.repo, 'rev-parse', 'main'), before);
     assert.equal(g(fx.repo, 'status', '--porcelain'), '');
     const story = join(fx.dir, 'stories', 'S1-loose', 'index.md');
-    assert.equal(parseFrontmatter(readFileSync(story, 'utf8')).fm.status, 'in_progress');
+    // A merge escalation records `escalated` by `merge`, for a story too (F-69 D1, D3).
+    const log = parseFrontmatter(readFileSync(story, 'utf8')).fm.transitions;
+    assert.deepEqual([log.at(-1).to, log.at(-1).by], ['escalated', 'merge']);
     assert.match(escalation(story), /- `s1-loose\.txt`/);
   } finally {
     fx.cleanup();
@@ -80,7 +83,7 @@ git(clone, "push", "-q", "origin", "main");
     assert.equal(g(fx.repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
     assert.equal(ok(fx.repo, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'), false);
     assert.equal(g(fx.repo, 'status', '--porcelain', '--untracked-files=no'), '');
-    assert.equal(parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm.status, 'running');
+    assert.equal(logStatusOf('feature', parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm), 'in_progress');
 
     // Resolved by hand in the worktree, as the escalation's next step says.
     const wt = fx.wts['f1-feat'];
@@ -94,7 +97,7 @@ git(clone, "push", "-q", "origin", "main");
     assert.equal(second.status, 0, second.stderr);
     assert.match(second.stderr + second.stdout, /code: current with origin\/main/);
     assert.equal(readFileSync(join(fx.repo, 'f1-feat.txt'), 'utf8'), 'both\n');
-    assert.equal(parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm.status, 'done');
+    assert.equal(logStatusOf('feature', parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm), 'done');
   } finally {
     fx.cleanup();
   }

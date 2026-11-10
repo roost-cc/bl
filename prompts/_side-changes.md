@@ -26,10 +26,10 @@ story for) is not a side change: escalate it instead (see **Writing an escalatio
    bl sync --commit -m "chore: S-<id> side change" --story S-<id>
    ```
 
-When `--from` is a running feature or one of its stories, the side story joins that feature and
-`bl merge` of the feature merges it. Otherwise it stands alone, and the operator runs and merges
-it. Until it merges, `bl inbox` lists it as a `change` entry. Write no operator-task bullet for
-it.
+When `--from` is a feature from `approved` up to `escalated`, or one of its stories, the side
+story joins that feature and `bl merge` of the feature merges it. Otherwise it stands alone, and
+the operator runs and merges it. Until it merges, `bl inbox` lists it as a `change` entry.
+Write no operator-task bullet for it.
 
 Never create a worktree yourself, never use the forge CLI, and never switch, branch or commit in a
 repo's main checkout. A checkout left on a side branch blocks `bl merge` until the operator

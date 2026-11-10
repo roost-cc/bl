@@ -129,7 +129,7 @@ test('a next task (bl task --gate next) holds nothing while its unit is open, th
     ]) {
       r = bl(fx.dir, args);
       assert.equal(r.status, 1, args.join(' '));
-      assert.match(r.stderr, /^S-[12] is held at run by T-1 \(open, needs done\)\nnext: bl status T-1\n$/);
+      assert.match(r.stderr, /^S-[12] is held at run by T-1 \(draft, needs done\)\nnext: bl status T-1\n$/);
     }
     r = bl(fx.dir, ['run', '--plan', 'S-1', 'S-2']);
     assert.equal(r.status, 1, 'several targets');

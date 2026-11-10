@@ -14,7 +14,8 @@
  * next Monday `x2`: Vega-Lite's `utcyearweek` starts weeks on Sunday.
  * Stacked series share a layer stacked from zero; a `dash` series is a dashed
  * line. Colours follow the series' order through a fixed colour-blind-safe
- * scale (Okabe-Ito blue, orange, green, grey); light and dark themes are
+ * scale (Okabe-Ito blue, orange, green, grey, then four more for the flow
+ * chart's eight story statuses); light and dark themes are
  * up-doc's job, so the spec sets no background or text colour.
  */
 
@@ -22,8 +23,12 @@ import { registerAdapter } from '../chart.js';
 
 export const SCHEMA = 'https://vega.github.io/schema/vega-lite/v5.json';
 
-/** Okabe-Ito blue, orange, green and grey, then reused in turn. */
-export const COLOURS = ['#0072B2', '#E69F00', '#009E73', '#999999'];
+/**
+ * Okabe-Ito blue, orange, green and grey, then sky blue, vermillion, reddish
+ * purple and yellow, so each of the flow chart's eight story statuses (F-69)
+ * gets its own; a ninth series reuses them in turn.
+ */
+export const COLOURS = ['#0072B2', '#E69F00', '#009E73', '#999999', '#56B4E9', '#D55E00', '#CC79A7', '#F0E442'];
 
 const DASH = [6, 4];
 

@@ -1,7 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addDays, backfill, isoWeek, parseBlob, pointsByStatus, scopeStories, weeklyDays } from '../../src/history.js';
+import {
+  addDays,
+  backfill,
+  isoWeek,
+  parseBlob,
+  pointsByStatus,
+  readDay,
+  scopeStories,
+  weeklyDays,
+} from '../../src/history.js';
 import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
+import { commitAt, committedBacklog, feature, put, story } from '../helpers/scripted-backlog.js';
 import { loadFlow } from '../../src/flow.js';
 import { dirname } from 'path';
 
@@ -51,7 +61,7 @@ test("weeklyDays keeps each week's last snapshot and pointsByStatus sums it", ()
   assert.deepEqual(pointsByStatus(weeks[0].day), { done: 3, backlog: 2 });
 });
 
-test('backfill projects added and completed with current points; open statuses read backlog', () => {
+test('backfill projects added and completed with current points; open statuses read draft', () => {
   const groups = {
     stories: {
       'S-1': { feature: '', component: 'C01', added: '2026-04-01', completed: '2026-04-02' },
@@ -63,7 +73,7 @@ test('backfill projects added and completed with current points; open statuses r
   const current = new Map([
     ['S-1', { status: 'done', points: 2 }],
     ['S-2', { status: 'refined', points: 5 }],
-    ['S-3', { status: 'backlog', points: 1 }],
+    ['S-3', { status: 'draft', points: 1 }],
   ]);
   const days = backfill(groups, current, '2026-04-04', flow);
   assert.deepEqual(
@@ -71,12 +81,27 @@ test('backfill projects added and completed with current points; open statuses r
     ['2026-04-01', '2026-04-02', '2026-04-03'],
   );
   assert.ok(days.every((d) => d.backfilled && d.commit === null));
-  assert.deepEqual(days[0].stories, { 'S-1': { status: 'backlog', points: 2, feature: '' } });
+  assert.deepEqual(days[0].stories, { 'S-1': { status: 'draft', points: 2, feature: '' } });
   assert.deepEqual(days[1].stories, {
     'S-1': { status: 'done', points: 2, feature: '' },
-    'S-2': { status: 'backlog', points: 5, feature: '' },
+    'S-2': { status: 'draft', points: 5, feature: '' },
   });
   assert.deepEqual(backfill(groups, current, '2026-04-01', flow), [], 'nothing before the first commit');
+});
+
+test('readDay: a day before the F-69 rename and a day after it count the same states', () => {
+  const dir = committedBacklog([['S-1', 'backlog']]);
+  put(dir, 'features/F1-a/index.md', feature(['S-1'], 'running'));
+  const before = commitAt(dir, '2026-04-22T09:00:00', 'old words');
+  put(dir, 'stories/S1-x/index.md', story('S-1', { status: 'draft', points: 2, added: '2026-04-01' }));
+  put(dir, 'features/F1-a/index.md', feature(['S-1'], 'in_progress'));
+  const after = commitAt(dir, '2026-04-23T09:00:00', 'new words');
+  const read = (sha) => {
+    const day = readDay(dir, sha);
+    return { story: day.stories['S-1'].status, feature: day.features['F-1'].status };
+  };
+  assert.deepEqual(read(before), { story: 'draft', feature: 'in_progress' });
+  assert.deepEqual(read(after), read(before));
 });
 
 test("scopeStories: a feature's listed stories that day, its epic and theme; a component; current stories only", () => {

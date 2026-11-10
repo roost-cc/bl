@@ -87,8 +87,8 @@ test('bl status: a refined story with a worktree stays in its group; bl list sti
     ['S-2', 'refined'],
     ['S-9', 'refined'],
     ['S-10', 'refined'],
-    ['S-4', 'backlog'],
-    ['S-20', 'backlog'],
+    ['S-4', 'draft'],
+    ['S-20', 'draft'],
   ]);
   const list = runBl(['list'], { cwd: dir });
   assert.equal(ids(list.stdout)[0], 'S-5');
@@ -145,24 +145,22 @@ test('a backlog of only closed stories says so on stderr', () => {
   assert.match(r.stderr, /^No stories found\.$/m);
 });
 
-/** The shipped flow with `in_review` after `in_progress`, written last in the file. */
-function flowWithInReview() {
+/** The shipped flow with `testing` right after `in_progress`. */
+function flowWithTesting() {
   const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
   const { statuses } = flow.types.story;
-  statuses.in_review = { implies: ['in_progress', 'refined', 'backlog'] };
-  statuses.done.implies.unshift('in_review');
-  statuses.superseded.implies.unshift('in_review');
+  statuses.splice(statuses.indexOf('in_progress') + 1, 0, 'testing');
   return flow;
 }
 
-test('a status added to flow.json sorts by what it implies, with no code change', () => {
+test('a status added to flow.json sorts by its place in statuses, with no code change', () => {
   const { dir } = mkTempBacklog({
-    flow: flowWithInReview(),
+    flow: flowWithTesting(),
     components: [{ id: 'C00', title: 'Work' }],
     stories: [
-      { id: 'S-1', status: 'backlog', component: 'C00', title: 'Plain' },
+      { id: 'S-1', status: 'draft', component: 'C00', title: 'Plain' },
       { id: 'S-2', status: 'in_progress', component: 'C00', title: 'Active' },
-      { id: 'S-3', status: 'in_review', component: 'C00', title: 'Reviewing' },
+      { id: 'S-3', status: 'testing', component: 'C00', title: 'Testing' },
       { id: 'S-4', status: 'refined', component: 'C00', title: 'Ready' },
       { id: 'S-5', status: 'blocked', component: 'C00', title: 'Odd' },
     ],
@@ -175,12 +173,13 @@ test('a status added to flow.json sorts by what it implies, with no code change'
 
 test('a closed status added to flow.json is not listed', () => {
   const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
-  flow.types.story.statuses.wontfix = { implies: ['done', 'in_progress', 'refined', 'backlog'] };
+  flow.types.story.statuses.push('wontfix');
+  flow.types.story.terminal.push('wontfix');
   const { dir } = mkTempBacklog({
     flow,
     components: [{ id: 'C00', title: 'Work' }],
     stories: [
-      { id: 'S-1', status: 'backlog', component: 'C00', title: 'Plain' },
+      { id: 'S-1', status: 'draft', component: 'C00', title: 'Plain' },
       { id: 'S-2', status: 'wontfix', component: 'C00', title: 'Dropped' },
     ],
   });

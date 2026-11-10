@@ -5,6 +5,7 @@ import { join } from 'path';
 import { runBl } from '../helpers/run-bl.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { integrateUnit } from '../../src/feature-run.js';
+import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
 import {
   ENV,
   RESOLVED,
@@ -23,7 +24,7 @@ import {
 } from '../helpers/merge-integrate-fixture.js';
 
 test('a conflict the agent resolves is gated, re-reviewed outside the round cap, pushed and lands on main', () => {
-  // review_round is already at the cap (2): the integration round is not counted against it.
+  // Two rounds reviewed, the cap (2): the integration round is not counted against it.
   const fx = fixture({ reviewRound: 2 });
   try {
     const mainSha = landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
@@ -52,7 +53,17 @@ test('a conflict the agent resolves is gated, re-reviewed outside the round cap,
     assert.ok(scope.includes(`diff ${merge}..HEAD\``), scope);
     assert.equal(calls.vars['review-verify'].changedFiles, '- f1-feat.txt');
     const change = readFileSync(changeFile(fx), 'utf8');
-    assert.equal(String(parseFrontmatter(change).fm.review_round), '3');
+    // The round and its verdict are in the feature's log (F-69 D5).
+    const unitFm = parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm;
+    const { reviewed, position } = reviewOf('feature', unitFm);
+    assert.deepEqual([reviewed, position], [3, 'ready_for_merge']);
+    assert.deepEqual(
+      unitFm.transitions.slice(-2).map((e) => [e.to, e.by, e.via ?? null]),
+      [
+        ['in_review', 'review', null],
+        ['ready_for_merge', 'review', 'review'],
+      ],
+    );
     assert.match(change, /### Session 2026-10-26 \(merge resolution\)/);
     g(fx.repo, 'fetch', '-q', 'origin');
     assert.equal(g(fx.repo, 'rev-parse', 'origin/f1-feat'), merge, 'the resolution is pushed');
@@ -71,19 +82,23 @@ test('a conflict the agent resolves is gated, re-reviewed outside the round cap,
   }
 });
 
-test('reviewRound refuses an unreadable review_round', () => {
-  // `bl merge` reaches the review round without the entry checks of `bl run`
-  // and `bl review`: the round itself refuses, and writes no "NaN".
+test('the integration round on a feature with no log records its verdict in the log, never in the change document', () => {
+  // The old shape (F-69 D4): the change document's review fields place the
+  // feature, an unreadable round as none. bl writes the log, not the fields (D5).
   const fx = fixture({ reviewRound: 'two' });
   try {
     landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
     const { config, unit, prep } = featureCtx(fx);
     const { runner, calls } = scriptedRunner({ test: 'true', resolve: resolveBoth });
     const res = integrateUnit({ unit, config, prep, runner });
-    assert.equal(res.ok, false);
-    assert.match(res.reason, /aborted before a verdict: review_round "two" in .*change\.md is not a number/);
-    assert.deepEqual(calls.sessions, ['merge-resolve'], 'no review session ran');
-    assert.equal(String(parseFrontmatter(readFileSync(changeFile(fx), 'utf8')).fm.review_round), 'two');
+    assert.equal(res.ok, true, res.reason);
+    assert.deepEqual(calls.sessions, ['merge-resolve', ...REVIEW_SESSIONS]);
+    const unitFm = parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm;
+    assert.equal(unitFm.status, undefined, 'the log replaced status:');
+    const { reviewed, position } = reviewOf('feature', unitFm);
+    assert.deepEqual([reviewed, position], [1, 'ready_for_merge']);
+    const { fm } = parseFrontmatter(readFileSync(changeFile(fx), 'utf8'));
+    assert.deepEqual([String(fm.review_round), fm.review_status], ['two', 'addressed'], 'left as they were');
   } finally {
     fx.cleanup();
   }
@@ -201,7 +216,7 @@ test('a resolution the test gate and its fix step leave red is rolled back and e
   }
 });
 
-test('a re-review that leaves open items escalates and keeps the resolution on the branch, pending', () => {
+test('a re-review that leaves open items escalates and keeps the resolution on the branch, in fixing', () => {
   const fx = fixture();
   try {
     landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
@@ -222,7 +237,10 @@ test('a re-review that leaves open items escalates and keeps the resolution on t
     assert.ok(ok(wt, 'merge-base', '--is-ancestor', 'origin/main', 'HEAD'));
     g(fx.repo, 'fetch', '-q', 'origin');
     assert.equal(g(fx.repo, 'rev-parse', 'origin/f1-feat'), pushed, 'nothing pushed');
-    assert.equal(parseFrontmatter(readFileSync(changeFile(fx), 'utf8')).fm.review_status, 'pending');
+    // The verdict's open items put the feature in fixing; the escalation, by fix, follows (F-69 D5).
+    const unitFm = parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm;
+    assert.equal(reviewOf('feature', unitFm).position, 'fixing');
+    assert.equal(logStatusOf('feature', unitFm), 'escalated');
     const esc = escalation(featureFile(fx));
     assert.match(esc, /^merge with main: the review of the resolution left open items/);
     assert.match(esc, /- `f1-feat\.txt`\n {4}- main: \S+ main edits f1-feat\.txt/);

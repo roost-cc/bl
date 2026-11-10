@@ -7,6 +7,7 @@ import { findExistingWorktree } from '../../src/story.js';
 import { runBl } from '../helpers/run-bl.js';
 import { git, statusLines } from '../helpers/git-backlog.js';
 import { FAULTS, build, fmOf, members, sideWithFaults, storyDirs } from '../helpers/side-fixture.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 
 test("side_failure_and_concurrent_sync_preserve_unit_consistency: bl new writes the story under bl side's backlog lock", () => {
   for (const from of ['F-1', 'S-3']) {
@@ -157,8 +158,8 @@ test('a failed markSideStory write leaves the previous story file and no staging
   assert.match(r.stderr, /ENOSPC/);
   const fm = fmOf(storyPath);
   assert.deepEqual(
-    [fm.story_id, fm.status, fm.found_by],
-    ['S-4', 'backlog', undefined],
+    [fm.story_id, logStatusOf('story', fm), fm.found_by],
+    ['S-4', 'draft', undefined],
     'the story as bl new wrote it',
   );
   const tmpDir = join(dir, '.bl', 'tmp');

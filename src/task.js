@@ -9,7 +9,8 @@
  *   title: Re-mint the Sign in with Apple key
  *   unit: F-54
  *   owner: operator
- *   status: open
+ *   transitions:
+ *     - { at: 2026-10-26T09:12:40Z, to: draft, by: new }
  *   added: 2026-10-26
  *   ---
  *
@@ -37,6 +38,8 @@ import { graphOf } from './backlog-graph.js';
 import { findFeature, normalizeFeatureId } from './feature.js';
 import { withLock } from './lock.js';
 import { BLOCKERS_FILE, WILDCARD } from './blockers.js';
+import { loadFlow, statusWordProblem } from './flow.js';
+import { applyNew, applyTransition, nowAt, storedLog } from './transition.js';
 
 export const TASKS_DIR = 'tasks';
 
@@ -46,7 +49,7 @@ export const TASK_JSON_SCHEMA = 'bl-task-json/v1';
 export const TASK_OWNERS = ['operator'];
 
 /** A task file's keys, in the order bl writes them. */
-export const TASK_KEYS = ['task_id', 'title', 'unit', 'owner', 'status', 'added', 'done', 'note'];
+export const TASK_KEYS = ['task_id', 'title', 'unit', 'owner', 'status', 'transitions', 'added', 'done', 'note'];
 
 const REQUIRED_KEYS = ['task_id', 'title', 'unit', 'owner', 'status', 'added'];
 
@@ -100,8 +103,6 @@ export function gateEdges(taskId, unitId, gate) {
 /** The longest slug a task file's name takes, so a long title stays a legal name. */
 const SLUG_MAX = 80;
 
-const today = () => new Date().toISOString().slice(0, 10);
-
 export function tasksRoot(config) {
   return join(config.backlogRoot, TASKS_DIR);
 }
@@ -146,7 +147,8 @@ export function readAllTasks(config) {
         title: str(fm.title),
         unit: str(fm.unit),
         owner: str(fm.owner),
-        status: str(fm.status),
+        // A v1 word reads as its current one (`makeUnit`, F-69 D4).
+        status: unit.status,
         added: str(fm.added),
         done: str(fm.done),
         note: str(fm.note),
@@ -216,16 +218,17 @@ function taskFileName(id, title) {
 }
 
 /**
- * A new task's file: its path under `tasks/` and its text (`status: open`,
- * `owner: operator`, `added: <date>`, a `# T-<n> · <title>` heading, then
- * `body`). `createTask` writes it.
+ * A new task's file: its path under `tasks/` and its text (the log's first
+ * entry, `draft` by `new`, at `at`; `owner: operator`; `added:` at's date; a
+ * `# T-<n> · <title>` heading, then `body`). `createTask` writes it.
  * @param {object} config
- * @param {{ id: string, title: string, unit: string, body?: string | null, date: string }} opts
+ * @param {{ id: string, title: string, unit: string, body?: string | null, at?: string }} opts
  * @returns {{ path: string, text: string }}
  */
-export function newTaskFile(config, { id, title, unit, body = null, date }) {
+export function newTaskFile(config, { id, title, unit, body = null, at = nowAt() }) {
   if (normalizeTaskId(id)?.id !== id) throw new Error(`${id} is not a task id (T-1 … T-${MAX_TASK_NUM})`);
-  const fm = { task_id: id, title, unit, owner: TASK_OWNERS[0], status: 'open', added: date };
+  const fm = { task_id: id, title, unit, owner: TASK_OWNERS[0] };
+  applyNew(loadFlow(config.backlogRoot), 'task', fm, at);
   const text = body == null || body.trim() === '' ? '' : `${body.replace(/^\n+/, '').trimEnd()}\n`;
   return {
     path: join(tasksRoot(config), taskFileName(id, title)),
@@ -278,8 +281,7 @@ function snapshot(root, paths, left = '') {
 
 /**
  * `bl task <unit> --gate <gate>`: file a task. Under the backlog lock it
- * takes the next id, writes `tasks/T<n>-<slug>.md` (`status: open`,
- * `owner: operator`, `added: <today>`), then the `--gate` edge
+ * takes the next id, writes `tasks/T<n>-<slug>.md` (`newTaskFile`), then the `--gate` edge
  * (`gateEdges`) through `bl block add`'s check and write (`writeEdge`, once
  * the task file makes the task a unit), and commits the task file and
  * `blockers.json` (and `.gitattributes` the first time) together; the
@@ -288,18 +290,18 @@ function snapshot(root, paths, left = '') {
  * no commit; so does any other failure before the commit, by throwing.
  * @param {object} config
  * @param {{ unit: { id: string }, title: string, gate: string,
- *   body?: string | null, today?: string }} opts
+ *   body?: string | null }} opts
  * @returns {Promise<{ refused?: string[], id?: string, path?: string, unit?: string,
  *   edges?: object[], commit?: object }>}
  */
-export async function createTask(config, { unit, title, gate, body = null, today: date = today() }) {
+export async function createTask(config, { unit, title, gate, body = null }) {
   const root = config.backlogRoot;
   const { syncAndCommit } = await import('./sync.js');
   const { writeEdge } = await import('./block.js');
   return withLock(root, async () => {
     const [id] = nextTaskNums(config, 1);
     const edges = gateEdges(id, unit.id, gate);
-    const { path, text } = newTaskFile(config, { id, title, unit: unit.id, body, date });
+    const { path, text } = newTaskFile(config, { id, title, unit: unit.id, body });
     const rel = relative(root, path);
     const graph = edges.length > 0 ? [join(root, BLOCKERS_FILE), join(root, '.gitattributes')] : [];
     const undo = snapshot(root, [path, ...graph], ` of task ${id}`);
@@ -327,12 +329,12 @@ export async function createTask(config, { unit, title, gate, body = null, today
 }
 
 /**
- * `bl task done T-<n> [note]`: set `status: done`, `done: <today>` and
- * `note:`, and commit the task file. A task already done, or one that is not there,
+ * `bl task done T-<n> [note]`: record `done` by `done` in the log (which sets
+ * `done:` to the entry's date) and `note:`, and commit the task file. A task already done, or one that is not there,
  * refuses. Its edges stay in `blockers.json`, met.
  * @returns {Promise<{ refused?: string, id?: string, path?: string, commit?: object }>}
  */
-export async function markTaskDone(config, rawId, note = '', { today: date = today() } = {}) {
+export async function markTaskDone(config, rawId, note = '', { at = nowAt() } = {}) {
   const parsed = normalizeTaskId(rawId);
   if (!parsed) return { refused: `${rawId} is not a task id (T-<n>)` };
   const root = config.backlogRoot;
@@ -350,8 +352,7 @@ export async function markTaskDone(config, rawId, note = '', { today: date = tod
     const n = String(note ?? '')
       .replace(/\s+/g, ' ')
       .trim();
-    fm.status = 'done';
-    fm.done = date;
+    applyTransition(loadFlow(root), 'task', fm, 'done', { by: 'done', at });
     if (n) fm.note = n;
     else delete fm.note;
     try {
@@ -448,11 +449,12 @@ export function taskTableRows(tasks, edges, flow, link) {
  */
 export function findTaskFindings(tasks, units, flow) {
   const findings = [];
-  const statuses = flow.statusesOf('task');
   const seen = new Map();
   for (const t of tasks) {
     const add = (code, message, severity = 'error') => findings.push({ severity, code, message, location: t.relPath });
     for (const key of REQUIRED_KEYS) {
+      // A task with a transition log needs no `status:` (F-69 D2).
+      if (key === 'status' && storedLog(t.fm)) continue;
       const v = t.fm[key];
       if (typeof v !== 'string' || v.trim() === '') add('task-field', `task missing required key "${key}"`);
     }
@@ -471,9 +473,9 @@ export function findTaskFindings(tasks, units, flow) {
     if (t.owner && !TASK_OWNERS.includes(t.owner)) {
       add('task-field', `owner "${t.owner}" is not one of ${TASK_OWNERS.join(', ')}`);
     }
-    if (t.status && !statuses.includes(t.status)) {
-      add('task-field', `status "${t.status}" not in known set (flow.json task statuses: ${statuses.join(', ')})`);
-    }
+    // The stored word: a v1 `open` is a warning until the migration (F-69 D4).
+    const problem = t.fm.status ? statusWordProblem(flow, 'task', t.fm.status) : null;
+    if (problem) add('task-field', problem.message, problem.severity);
     if (t.status && flow.meets('task', t.status, 'done') && !t.done) {
       add('task-field', `a ${t.status} task needs its done: date`);
     }
@@ -502,7 +504,7 @@ one feature or story, whose page shows it in a ## Tasks table that bl
 renders when the page is read (F-65 D1, F-79 D2).
 
   <unit>       File a task on the feature or story: write the file
-               (status: open, owner: operator, added: today) and its
+               (draft in its transitions:, owner: operator, added: today) and its
                edge in blockers.json, and commit them; print T-<n>
     --title <t>          Required. What to do, in a few words. A title
                          that starts with "${DECISION_PREFIX}" is a decision for the
@@ -516,9 +518,9 @@ renders when the page is read (F-65 D1, F-79 D2).
                          why it is not code ("-" for stdin)
     --json               Print { schema: "${TASK_JSON_SCHEMA}", id, path,
                          unit, edges }
-  done         Close the task: status: done, done: today, note:; commit
+  done         Close the task: done in its transitions:, done: today, note:; commit
                the task file (operator only)
-  list         Print every task, --open only open ones, <unit> only that
+  list         Print every task, --open only those not done, <unit> only that
                unit's`;
 
 function fail(message) {
@@ -547,7 +549,7 @@ function readBody(bodyFile) {
   return text;
 }
 
-/** `T-3  F-54  open  Re-mint the key`, `done 2026-10-27` for a done one. */
+/** `T-3  F-54  draft  Re-mint the key`, `done 2026-10-27` for a done one. */
 export function listLine(t) {
   return `${t.id}  ${t.unit}  ${t.status}${t.done ? ` ${t.done}` : ''}  ${t.title}`;
 }
@@ -566,8 +568,9 @@ export async function main(argv) {
     if (positionals.length > 1) fail(`list takes one unit; got ${positionals.join(', ')}`);
     const unit = positionals[0] ? findTaskUnit(config, positionals[0]) : null;
     if (positionals[0] && !unit) fail(`${positionals[0]} is not a feature or story in the backlog`);
+    const flow = loadFlow(config.backlogRoot);
     const tasks = readAllTasks(config).filter(
-      (t) => (!values.open || t.status === 'open') && (!unit || t.unit === unit.id),
+      (t) => (!values.open || !flow.meets('task', t.status, 'done')) && (!unit || t.unit === unit.id),
     );
     if (tasks.length === 0) info(unit ? `No tasks on ${unit.id}.` : 'No tasks.');
     for (const t of tasks) console.log(listLine(t));

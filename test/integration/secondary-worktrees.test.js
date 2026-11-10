@@ -14,9 +14,10 @@ import assert from 'node:assert/strict';
 import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
-import { loadConfig, normalizeId } from '../../src/config.js';
+import { loadConfig, normalizeId, parseFrontmatter } from '../../src/config.js';
+import { statusOf as logStatusOf } from '../../src/transition.js';
 import { findStoryDir, findExistingWorktree } from '../../src/story.js';
-import { prepareStoryRun } from '../../src/workon.js';
+import { prepareStoryRun, resolveWorkonTargets } from '../../src/workon.js';
 import { prepareFeatureWorktree } from '../../src/feature-cmd.js';
 import { findFeature, normalizeFeatureId } from '../../src/feature.js';
 import { cleanupOneRepo } from '../../src/cleanup.js';
@@ -222,18 +223,15 @@ function writeFeature(backlog, others = []) {
   });
   const dir = join(backlog, 'features', 'F1-pair');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, 'index.md'),
-    '---\nfeature_id: F-1\ntitle: Pair\nstatus: approved\n---\n\n# Pair\n',
-  );
+  writeFileSync(join(dir, 'index.md'), '---\nfeature_id: F-1\ntitle: Pair\nstatus: approved\n---\n\n# Pair\n');
 }
 
-function prepFeature(backlog, others) {
+function prepFeature(backlog, others, verb = 'run') {
   if (!existsSync(join(backlog, 'features', 'F1-pair'))) writeFeature(backlog, others);
   return withBacklog(backlog, () => {
     const config = loadConfig({ backlogRoot: backlog });
     const feature = findFeature(normalizeFeatureId('F-1'), config);
-    return { feature, ...capture(() => prepareFeatureWorktree(config, feature)) };
+    return { feature, ...capture(() => prepareFeatureWorktree(config, feature, verb)) };
   });
 }
 
@@ -273,6 +271,58 @@ test("bl run F-n's prep stops, naming the repo, when another repo's bootstrap fa
     err,
     /F-1: bootstrap failed in repoB \(.*\/worktrees\/f1-pair\/repoB\) — stopping before the agent starts\./,
   );
+});
+
+test('bl implement on an escalated feature or story whose review position is fixing starts the fix session: resolveWorkonTargets accepts it, prepareFeatureWorktree returns reviewPending, prepareStoryWorktree uses workon-review', () => {
+  const at = (n) => `2026-11-0${n}T00:00:00Z`;
+  const started = [
+    { at: at(1), to: 'draft', by: 'new' },
+    { at: at(2), to: 'in_progress', by: 'operator' },
+  ];
+  const fixing = [...started, { at: at(3), to: 'in_review', by: 'run' }, { at: at(4), to: 'fixing', by: 'review' }];
+  // [name, log, whether the review position is fixing]: the old `status === 'fixing'` test is wrong for the first two.
+  const cases = [
+    ['a fix that escalated', [...fixing, { at: at(5), to: 'escalated', by: 'fix' }], true],
+    ["the loop's escalation", [...fixing, { at: at(5), to: 'escalated', by: 'run' }], true],
+    ['a unit in fixing', fixing, true],
+    ['escalated with no open items', [...started, { at: at(3), to: 'escalated', by: 'run' }], false],
+  ];
+  const yamlLog = (log) =>
+    `transitions:\n${log.map((e) => `  - { at: '${e.at}', to: ${e.to}, by: ${e.by} }`).join('\n')}\n`;
+  const lastEntry = (path) => {
+    const e = parseFrontmatter(readFileSync(path, 'utf8')).fm.transitions.at(-1);
+    return `${e.to} by ${e.by}`;
+  };
+  for (const [name, log, fix] of cases) {
+    // A story: `bl implement S-7` accepts it, and its prep picks the fix session.
+    const story = build();
+    const s7 = join(story.backlog, 'stories', 'S7-two', 'index.md');
+    writeFileSync(s7, readFileSync(s7, 'utf8').replace('status: refined\n', yamlLog(log)));
+    const targets = withBacklog(story.backlog, () =>
+      resolveWorkonTargets(['S-7'], loadConfig({ backlogRoot: story.backlog })),
+    );
+    assert.deepEqual(
+      targets.startable.map((t) => t.id),
+      ['S-7'],
+      `story, ${name}: ${targets.notices.join('; ')}`,
+    );
+    assert.equal(prep(story.backlog).prep.reviewPending, fix, `story, ${name}: reviewPending`);
+
+    // A feature: `bl implement F-1`'s prep picks the fix session and records `fixing` by fix.
+    const feature = build();
+    writeFeature(feature.backlog, []);
+    const f1 = join(feature.backlog, 'features', 'F1-pair', 'index.md');
+    writeFileSync(f1, readFileSync(f1, 'utf8').replace('status: approved\n', yamlLog(log)));
+    const { exit, err, value } = prepFeature(feature.backlog, [], 'implement');
+    assert.equal(exit, null, `feature, ${name}: ${err}`);
+    assert.equal(value.reviewPending, fix, `feature, ${name}: reviewPending`);
+    const last = log.at(-1);
+    assert.equal(
+      lastEntry(f1),
+      fix ? 'fixing by ' + (last.to === 'fixing' ? last.by : 'fix') : 'in_progress by implement',
+      `feature, ${name}: the start bl records`,
+    );
+  }
 });
 
 test('a feature with no stories exits 1 naming the fix, and nothing is written to the feature', () => {
@@ -341,10 +391,7 @@ test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, a
   }
   const fdir = join(backlog, 'features', 'F1-trio');
   mkdirSync(fdir, { recursive: true });
-  writeFileSync(
-    join(fdir, 'index.md'),
-    '---\nfeature_id: F-1\ntitle: Trio\nstatus: approved\n---\n\n# Trio\n',
-  );
+  writeFileSync(join(fdir, 'index.md'), '---\nfeature_id: F-1\ntitle: Trio\nstatus: approved\n---\n\n# Trio\n');
   const { exit, err, value } = withBacklog(backlog, () => {
     const config = loadConfig({ backlogRoot: backlog });
     return capture(() => prepareFeatureWorktree(config, findFeature(normalizeFeatureId('F-1'), config)));
@@ -637,17 +684,20 @@ test("prepareStoryRun retries a failed workon plugin or bootstrap in the story's
   }
 });
 
-test("prepareFeatureWorktree retries another repo's failed workon plugin before marking running", () => {
+// `bl implement F-n` records `in_progress` in the prep (F-69 D3); a run's is the loop's.
+test("prepareFeatureWorktree retries another repo's failed workon plugin before marking in_progress", () => {
   for (const r of RETRIES) {
     const { tmp, backlog } = build(r.opts(r.failing));
-    const first = prepFeature(backlog, ['repoB']);
+    const first = prepFeature(backlog, ['repoB'], 'implement');
     assert.equal(first.exit, 1, r.kind);
     assert.match(first.err, new RegExp(`${r.what} failed in ${r.failing} `), r.kind);
     assert.match(readFileSync(first.feature.indexPath, 'utf8'), /^status: approved$/m, r.kind);
-    const second = prepFeature(backlog, ['repoB']);
+    const second = prepFeature(backlog, ['repoB'], 'implement');
     assert.equal(second.exit, null, `${r.kind}: ${second.err}`);
     assert.equal(workonRuns(tmp, r.failing, 'f1-pair'), 1, r.kind);
-    assert.match(readFileSync(second.feature.indexPath, 'utf8'), /^status: running$/m, r.kind);
+    const fm = parseFrontmatter(readFileSync(second.feature.indexPath, 'utf8')).fm;
+    assert.equal(logStatusOf('feature', fm), 'in_progress', r.kind);
+    assert.equal(fm.transitions.at(-1).by, 'implement', r.kind);
   }
 });
 

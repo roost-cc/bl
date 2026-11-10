@@ -60,8 +60,8 @@ Options:
 
 Registers the backlog repo in your global agent settings so agents can
 commit and push backlog changes from any cwd, and creates allowed-tools.json,
-flow.json (the statuses and gates per type), roadmap.md, priority.md and
-coding-dictionary.yaml (bl's seed of software-engineering terms) from
+flow.json (the statuses, verbs and gates per type), roadmap.md, priority.md
+and coding-dictionary.yaml (bl's seed of software-engineering terms) from
 their templates, and the root index.md (the "title" and a heading of it),
 when the backlog has none; an existing one is left as it is. A new
 backlog.json (in $BL_BACKLOG_DIR, else the current directory), one with no
@@ -121,9 +121,9 @@ init"); edits you made before it stay uncommitted.`);
 }
 
 /**
- * Give a new backlog its `flow.json` (F-66 D1), the statuses and gates per
- * type that `bl validate` reads, from the template. An existing one is the
- * operator's and is left alone.
+ * Give a new backlog its `flow.json` (F-66 D1, F-69 D1), the statuses, verbs
+ * and gates per type that `bl validate` reads, from the `bl-flow/v2` template.
+ * An existing one is the operator's and is left alone.
  */
 export function ensureFlowFile(backlogRoot) {
   copySeed(backlogRoot, FLOW_FILE);

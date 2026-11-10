@@ -50,8 +50,8 @@ test('bl deps prints the cone leaf-first on stdout, the plan on stderr', () => {
     // S-1 is done, so it is pruned; the rest is ordered leaf-first.
     assert.equal(r.stdout, 'S-2\nS-3\nS-4\n');
     assert.match(r.stderr, /Plan for S-4/);
-    assert.match(r.stderr, /S-2\s+backlog\s+unblocks 2/);
-    assert.match(r.stderr, /S-4\s+backlog\s+unblocks 0/);
+    assert.match(r.stderr, /S-2\s+draft\s+unblocks 2/);
+    assert.match(r.stderr, /S-4\s+draft\s+unblocks 0/);
   } finally {
     cleanup();
   }
@@ -64,7 +64,7 @@ test('bl deps aligns the status column across mixed-width statuses', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /S-2\s+in_progress\s+unblocks 2/);
     assert.match(r.stderr, /S-3\s+refined\s+unblocks 1/);
-    assert.match(r.stderr, /S-4\s+backlog\s+unblocks 0/);
+    assert.match(r.stderr, /S-4\s+draft\s+unblocks 0/);
 
     // `unblocks` starts at the same column on every row despite the statuses
     // differing in width.
