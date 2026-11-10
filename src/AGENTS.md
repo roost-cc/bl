@@ -2934,7 +2934,10 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `--push-argv '<JSON array>'`, an internal flag that the view decodes with `encoding/json`, so
   the view still reads no backlog file. `--no-push` (passed on to the view) drops the sender. A
   push that fails warns as `push failed: …` in the bottom border. bl holds no secret and names
-  no push service: the command does that.
+  no push service: the command does that. The view cannot put `--` before the two arguments it
+  appends, because it does not know the command's options. So a line that starts with `-` can
+  reach the command as an option: when the command needs it, the operator puts `--` at the end
+  of `top.push`.
 - **backlog.json `top`.** `"top": { "push": ["<command>", "<arg>", …] }`. `topSettings`
   (`src/config.js`) reads it as `updateSettings` reads `updates`: only when used, never by
   `loadConfig`, and only for the view (`--json` and `--stream` do not read it). No `top` block
