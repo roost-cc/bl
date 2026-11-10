@@ -4741,7 +4741,8 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     commitUnitPaths(ctx, 'setup', started, `chore: ${feature.id} run started on ${prep.branchName}`);
   // A resumed run that already got as far as the PR has been self-reviewed;
   // it goes back through the gate and the push, then on to the review loop.
-  const reachedReview = Boolean(opts.resume && (state.pr || state.history.some((h) => h.step === 'pr')));
+  // A `pr` entry that a no-commit finish skipped (S-1437) opened no PR.
+  const reachedReview = Boolean(opts.resume && (state.pr || state.history.some((h) => h.step === 'pr' && !h.skipped)));
   saveRunState(config, state);
   record(ctx, {
     step: 'setup',
@@ -4832,8 +4833,8 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
       );
     }
     const note = 'skipped: no commits, nothing to review';
-    record(ctx, { step: 'pr', ok: true, note });
-    record(ctx, { step: 'review', ok: true, note });
+    record(ctx, { step: 'pr', ok: true, skipped: true, note });
+    record(ctx, { step: 'review', ok: true, skipped: true, note });
     return finish(ctx, 'clean');
   }
 

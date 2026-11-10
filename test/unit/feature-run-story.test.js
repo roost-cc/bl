@@ -364,6 +364,26 @@ test('a resumed run of a story already at ready_for_merge with no commits record
   }
 });
 
+test('a resume after a no-commit finish, with commits now on the branch, runs the self-review', async () => {
+  const { cleanup, config, unit, prep } = storySetup();
+  try {
+    const first = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
+    assert.equal(
+      (await runFeature({ feature: unit, config, prep, runner: first, opts: { maxRounds: 2 } })).status,
+      'clean',
+    );
+    editFile(unit.indexPath, (fm) => {
+      fm.transitions.push({ at: '2026-11-10T08:00:00Z', to: 'in_progress', by: 'implement' });
+    });
+    const runner = fakeRunner({ dir: config.backlogRoot, feature: unit });
+    await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });
+    const prompts = runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt);
+    assert.ok(prompts.includes('feature-self-review'), `self-review ran: ${prompts.join(', ')}`);
+  } finally {
+    cleanup();
+  }
+});
+
 test("a story's review finding routed to its Deferred: the review sessions get the story's kind", async () => {
   const { cleanup, config, unit, prep } = storySetup();
   try {
