@@ -26,17 +26,18 @@ const restartDelay = 400 * time.Millisecond
 
 // keyMap holds the keys of D6 that F-87 has. The help overlay lists them.
 type keyMap struct {
-	boxes, next, prev, longer, shorter, help, quit key.Binding
+	boxes, next, prev, capacity, longer, shorter, help, quit key.Binding
 }
 
 var keys = keyMap{
-	boxes:   key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "hide or show a box")),
-	next:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "move the focus to the next box")),
-	prev:    key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "move the focus to the previous box")),
-	longer:  key.NewBinding(key.WithKeys("+"), key.WithHelp("+", fmt.Sprintf("refresh interval up (to %d s)", maxInterval/1000))),
-	shorter: key.NewBinding(key.WithKeys("-"), key.WithHelp("-", fmt.Sprintf("refresh interval down (to %d ms)", minInterval))),
-	help:    key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "show or hide this help")),
-	quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	boxes:    key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "hide or show a box")),
+	next:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "move the focus to the next box")),
+	prev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "move the focus to the previous box")),
+	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
+	longer:   key.NewBinding(key.WithKeys("+"), key.WithHelp("+", fmt.Sprintf("refresh interval up (to %d s)", maxInterval/1000))),
+	shorter:  key.NewBinding(key.WithKeys("-"), key.WithHelp("-", fmt.Sprintf("refresh interval down (to %d ms)", minInterval))),
+	help:     key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "show or hide this help")),
+	quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
 // startedMsg carries a stream that has started.
@@ -157,6 +158,13 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.focus = m.nextFocus(m.focus, 1)
 	case key.Matches(msg, keys.prev):
 		m.focus = m.nextFocus(m.focus, -1)
+	case key.Matches(msg, keys.capacity):
+		if s := m.stream; s != nil {
+			return m, func() tea.Msg {
+				s.RequestCapacity()
+				return nil
+			}
+		}
 	case key.Matches(msg, keys.longer, keys.shorter):
 		step := intervalStep
 		if key.Matches(msg, keys.shorter) {
@@ -196,7 +204,7 @@ func (m Model) View() tea.View {
 
 // helpBox draws the help overlay: each key of keyMap and what it does.
 func helpBox() []string {
-	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.longer, keys.shorter, keys.help, keys.quit}
+	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
 	lines := []string{""}
 	for _, b := range bindings {
 		lines = append(lines, fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc)))

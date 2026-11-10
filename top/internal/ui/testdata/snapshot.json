@@ -1,0 +1,276 @@
+{
+  "schema": "bl-top-json/v1",
+  "at": "2026-11-09T23:17:31.000Z",
+  "runs": { "read_at": "2026-11-09T23:17:31.000Z", "rows": [] },
+  "attention": { "read_at": "2026-11-09T23:17:31.000Z", "items": [], "warnings": [] },
+  "next": { "read_at": "2026-11-09T23:17:31.000Z", "pick": null, "ranked": [], "rankedCount": 0, "unrankedCount": 0 },
+  "capacity": {
+    "read_at": "2026-11-09T23:14:31.000Z",
+    "configurations": [
+      {
+        "role": "agent",
+        "agent": "claude",
+        "model": "opus",
+        "state": "unknown",
+        "scope": "model",
+        "until": null,
+        "windows": [],
+        "message": "claude cannot report capacity"
+      },
+      {
+        "role": "agent",
+        "agent": "claude",
+        "model": "sonnet",
+        "state": "unknown",
+        "scope": "model",
+        "until": null,
+        "windows": [],
+        "message": "claude cannot report capacity"
+      },
+      {
+        "role": "review",
+        "agent": "codex",
+        "model": "gpt-6-sol",
+        "state": "available",
+        "scope": "account",
+        "until": null,
+        "windows": [
+          { "name": "codex 5h", "remainingPercent": 80, "resetsAt": "2026-11-10T00:52:00.000Z" },
+          { "name": "codex 7d", "remainingPercent": 13, "resetsAt": "2026-11-12T15:04:17.000Z" }
+        ],
+        "message": ""
+      },
+      {
+        "role": "review",
+        "agent": "codex",
+        "model": "gpt-6-astra",
+        "state": "available",
+        "scope": "account",
+        "until": null,
+        "windows": [
+          { "name": "codex 5h", "remainingPercent": 80, "resetsAt": "2026-11-10T00:52:00.000Z" },
+          { "name": "codex 7d", "remainingPercent": 13, "resetsAt": "2026-11-12T15:04:17.000Z" }
+        ],
+        "message": ""
+      },
+      {
+        "role": "review",
+        "agent": "claude",
+        "model": "opus",
+        "state": "unknown",
+        "scope": "model",
+        "until": null,
+        "windows": [],
+        "message": "claude cannot report capacity"
+      }
+    ]
+  },
+  "history": {
+    "read_at": "2026-11-09T23:14:31.000Z",
+    "days": [
+      { "date": "2026-10-11", "stories": [], "points": 0 },
+      { "date": "2026-10-12", "stories": ["S-1001"], "points": 3 },
+      { "date": "2026-10-13", "stories": ["S-1002"], "points": 5 },
+      { "date": "2026-10-14", "stories": ["S-1003"], "points": 8 },
+      { "date": "2026-10-15", "stories": ["S-1004"], "points": 2 },
+      { "date": "2026-10-16", "stories": [], "points": 0 },
+      { "date": "2026-10-17", "stories": [], "points": 0 },
+      { "date": "2026-10-18", "stories": ["S-1007"], "points": 13 },
+      { "date": "2026-10-19", "stories": ["S-1008"], "points": 5 },
+      { "date": "2026-10-20", "stories": ["S-1009"], "points": 1 },
+      { "date": "2026-10-21", "stories": [], "points": 0 },
+      { "date": "2026-10-22", "stories": [], "points": 0 },
+      { "date": "2026-10-23", "stories": ["S-1012"], "points": 3 },
+      { "date": "2026-10-24", "stories": ["S-1013"], "points": 8 },
+      { "date": "2026-10-25", "stories": ["S-1014"], "points": 21 },
+      { "date": "2026-10-26", "stories": ["S-1015"], "points": 5 },
+      { "date": "2026-10-27", "stories": [], "points": 0 },
+      { "date": "2026-10-28", "stories": ["S-1017"], "points": 2 },
+      { "date": "2026-10-29", "stories": ["S-1018"], "points": 3 },
+      { "date": "2026-10-30", "stories": [], "points": 0 },
+      { "date": "2026-10-31", "stories": [], "points": 0 },
+      { "date": "2026-11-01", "stories": ["S-1021"], "points": 5 },
+      { "date": "2026-11-02", "stories": ["S-1022"], "points": 8 },
+      { "date": "2026-11-03", "stories": ["S-1023"], "points": 13 },
+      { "date": "2026-11-04", "stories": ["S-1024"], "points": 2 },
+      { "date": "2026-11-05", "stories": [], "points": 0 },
+      { "date": "2026-11-06", "stories": ["S-1026"], "points": 3 },
+      { "date": "2026-11-07", "stories": ["S-1027"], "points": 5 },
+      { "date": "2026-11-08", "stories": ["S-1028"], "points": 8 },
+      { "date": "2026-11-09", "stories": ["S-1029"], "points": 10 }
+    ]
+  },
+  "activity": {
+    "read_at": "2026-11-09T23:17:31.000Z",
+    "events": [
+      {
+        "at": "2026-11-09T23:16:31.000Z",
+        "unit": "F-81",
+        "step": "implement",
+        "story": "S-1310",
+        "round": null,
+        "ok": true,
+        "durationMs": 180000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "low",
+        "note": "outcome: implemented S-1310"
+      },
+      {
+        "at": "2026-11-09T23:12:31.000Z",
+        "unit": "F-81",
+        "step": "implement",
+        "story": "S-1277",
+        "round": null,
+        "ok": true,
+        "durationMs": 1620000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T23:05:31.000Z",
+        "unit": "S-1330",
+        "step": "review:verify",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": 540000,
+        "agent": "codex",
+        "model": "gpt-6-sol",
+        "effort": null,
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T23:01:31.000Z",
+        "unit": "S-1330",
+        "step": "review:round",
+        "story": null,
+        "round": 1,
+        "ok": true,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": "round 1 reviewed by codex gpt-6-sol"
+      },
+      {
+        "at": "2026-11-09T22:56:31.000Z",
+        "unit": "S-1330",
+        "step": "fix-tests",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": 360000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": "2 attempts"
+      },
+      {
+        "at": "2026-11-09T22:50:31.000Z",
+        "unit": "S-1330",
+        "step": "self-review",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": 240000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T22:45:31.000Z",
+        "unit": "F-81",
+        "step": "implement",
+        "story": "S-1309",
+        "round": null,
+        "ok": false,
+        "durationMs": 660000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": "denied: Bash(cd /home/robert/work/roost/worktrees/f81-every-repo-s-pre-push-gate && git…"
+      },
+      {
+        "at": "2026-11-09T22:34:31.000Z",
+        "unit": "F-81",
+        "step": "setup",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": "resumed"
+      },
+      {
+        "at": "2026-11-09T22:26:31.000Z",
+        "unit": "S-1330",
+        "step": "implement",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": 1440000,
+        "agent": "claude",
+        "model": "opus",
+        "effort": "high",
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T22:24:31.000Z",
+        "unit": "S-1330",
+        "step": "setup",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": ""
+      },
+      {
+        "at": "2026-11-09T22:07:31.000Z",
+        "unit": "F-85",
+        "step": "test",
+        "story": null,
+        "round": null,
+        "ok": false,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": "bl · test exited 1 — log: .bl/run/F-85.test-2.log"
+      },
+      {
+        "at": "2026-11-09T21:42:31.000Z",
+        "unit": "F-85",
+        "step": "pr",
+        "story": null,
+        "round": null,
+        "ok": true,
+        "durationMs": null,
+        "agent": null,
+        "model": null,
+        "effort": null,
+        "note": "https://example.invalid/bl/pull/14"
+      }
+    ]
+  },
+  "tokens": {
+    "read_at": "2026-11-09T23:17:31.000Z",
+    "from": "2026-11-09T21:18:00.000Z",
+    "minutes": [
+      0, 300, 900, 400, 0, 1200, 0, 0, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4040, 4417, 4794, 5171, 5548, 5925, 6302,
+      4179, 4556, 4933, 5310, 5687, 6064, 6441, 4318, 4695, 5072, 5449, 5826, 6203, 4080, 4457, 4834, 5211, 5588, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3660, 3871, 4082, 4293, 3004, 3215, 3426, 3637, 3848, 4059, 4270, 4481,
+      3192, 3403, 3614, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6085, 6608, 7131, 7654, 8177, 8700,
+      6123, 6646, 7169, 7692, 8215, 8738, 6161, 6684, 7207, 7730, 8253, 0, 0, 0, 0, 0, 0, 0, 0
+    ],
+    "today": { "input": 1200000, "output": 640000, "cache_creation": 2300000, "cache_read": 51000000 }
+  }
+}

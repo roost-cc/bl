@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/roost-cc/bl/top/internal/stream"
 )
 
 // The screen sizes of D4: the full layout from fullWidth×fullHeight, the stacked one below it, and
@@ -15,20 +17,23 @@ const (
 	sizeMessage = "bl top needs at least 80x24"
 )
 
-// box is one of D4's boxes: its number and name, and the snapshot sections it draws. A section
+// box is one of D4's boxes: its number and name, the snapshot sections it draws, the option at
+// the right of its top border, and the drawer of its content in its inner w×h cells. A section
 // whose last read failed puts a red `!` and its error in the box's top border.
 type box struct {
 	name     string
 	sections []string
+	option   string
+	draw     func(s *stream.Snapshot, w, h int) []string
 }
 
 // boxes are D4's boxes by number. Box ⁶ (detail) is F-88's, and has no entry until then.
 var boxes = map[int]box{
-	1: {"runs", []string{"runs"}},
-	2: {"attention", []string{"attention"}},
-	3: {"next", []string{"next"}},
-	4: {"tokens", []string{"capacity"}},
-	5: {"activity", []string{"history"}},
+	1: {name: "runs", sections: []string{"runs"}},
+	2: {name: "attention", sections: []string{"attention"}},
+	3: {name: "next", sections: []string{"next"}},
+	4: {name: "tokens", sections: []string{"tokens", "capacity"}, option: "2h", draw: drawTokens},
+	5: {name: "activity", sections: []string{"activity", "history"}, option: "30d", draw: drawActivity},
 }
 
 // node is a box (box > 0), or a split of nodes side by side (across) or stacked. Each node takes
@@ -118,7 +123,8 @@ func (m Model) draw(n node, w, h int) []string {
 	return lines
 }
 
-// boxLines draws box num: the error of its first section that failed, then its options.
+// boxLines draws box num: the error of its first section that failed, then its options, and its
+// content once there is a snapshot.
 func (m Model) boxLines(num, w, h int) []string {
 	b := boxes[num]
 	var options []string
@@ -136,7 +142,14 @@ func (m Model) boxLines(num, w, h int) []string {
 		}
 		options = append(options, styleKey.Render("-")+styleText.Render(fmt.Sprintf(" %dms ", m.interval))+styleKey.Render("+"))
 	}
-	return drawBox(num, b.name, options, m.focus == num, nil, w, h)
+	if b.option != "" {
+		options = append(options, styleText.Render(b.option))
+	}
+	var content []string
+	if m.snap != nil && b.draw != nil {
+		content = b.draw(m.snap, w-2, h-2)
+	}
+	return drawBox(num, b.name, options, m.focus == num, content, w, h)
 }
 
 // blank is h lines of w spaces.

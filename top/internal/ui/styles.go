@@ -13,6 +13,9 @@ var (
 	colorPeach    = lipgloss.Color("#fab387") // peach
 	colorRed      = lipgloss.Color("#f38ba8") // red
 	colorMauve    = lipgloss.Color("#cba6f7") // mauve
+	colorGreen    = lipgloss.Color("#a6e3a1") // green
+	colorYellow   = lipgloss.Color("#f9e2af") // yellow
+	colorOverlay1 = lipgloss.Color("#7f849c") // overlay1
 
 	// styleBorder is a box border. styleFocus is the border of the box with the focus: mauve, the
 	// color of the box names.
@@ -22,4 +25,6 @@ var (
 	styleText   = lipgloss.NewStyle().Foreground(colorText)
 	styleKey    = lipgloss.NewStyle().Foreground(colorPeach)
 	styleError  = lipgloss.NewStyle().Foreground(colorRed)
+	styleDim    = lipgloss.NewStyle().Foreground(colorOverlay1)
+	styleOK     = lipgloss.NewStyle().Foreground(colorGreen)
 )

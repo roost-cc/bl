@@ -19,6 +19,8 @@ type Snapshot struct {
 	Next      Next      `json:"next"`
 	Capacity  Capacity  `json:"capacity"`
 	History   History   `json:"history"`
+	Activity  Activity  `json:"activity"`
+	Tokens    Tokens    `json:"tokens"`
 }
 
 // Section is what every section carries: the time of its last good read, and the message of its
@@ -153,6 +155,37 @@ type Day struct {
 	Points  float64  `json:"points"`
 }
 
+// Activity is the `activity` section: the newest run events of all run states, newest first
+// (D3c).
+type Activity struct {
+	Section
+	Events []Event `json:"events"`
+}
+
+// Event is one history entry of a run state. DurationMs is nil for an entry with no start.
+type Event struct {
+	At         time.Time `json:"at"`
+	Unit       string    `json:"unit"`
+	Step       string    `json:"step"`
+	Story      string    `json:"story"`
+	Round      int       `json:"round"`
+	OK         *bool     `json:"ok"`
+	DurationMs *int64    `json:"durationMs"`
+	Agent      string    `json:"agent"`
+	Model      string    `json:"model"`
+	Effort     string    `json:"effort"`
+	Note       string    `json:"note"`
+}
+
+// Tokens is the `tokens` section (D3b): the output tokens of each minute from From, oldest first,
+// the last the minute of the snapshot, and today's totals.
+type Tokens struct {
+	Section
+	From    time.Time `json:"from"`
+	Minutes []float64 `json:"minutes"`
+	Today   Usage     `json:"today"`
+}
+
 // Section returns the read time and error of the section with that name.
 func (s *Snapshot) Section(name string) Section {
 	switch name {
@@ -166,6 +199,10 @@ func (s *Snapshot) Section(name string) Section {
 		return s.Capacity.Section
 	case "history":
 		return s.History.Section
+	case "activity":
+		return s.Activity.Section
+	case "tokens":
+		return s.Tokens.Section
 	}
 	return Section{}
 }

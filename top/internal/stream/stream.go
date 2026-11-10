@@ -89,6 +89,12 @@ func (s *Stream) Stop() {
 	})
 }
 
+// RequestCapacity writes a `capacity` line to the stream's stdin, so its next snapshot reads
+// capacity (key `c`). After Stop it does nothing.
+func (s *Stream) RequestCapacity() {
+	io.WriteString(s.stdin, "capacity\n")
+}
+
 // send hands m to Next, unless the stream is stopped first.
 func (s *Stream) send(m any) bool {
 	select {

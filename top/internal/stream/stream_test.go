@@ -51,6 +51,13 @@ func TestDecodeRecordedLines(t *testing.T) {
 		t.Errorf("history day = %+v", d)
 	}
 
+	if e := first.Activity.Events; len(e) != 2 || e[0].Unit != "F-9" || e[0].OK == nil || !*e[0].OK || *e[0].DurationMs != 180000 || e[1].DurationMs != nil || e[1].Round != 1 {
+		t.Errorf("activity = %+v", e)
+	}
+	if tk := first.Tokens; len(tk.Minutes) != 3 || tk.Minutes[1] != 100 || tk.Today.Output != 300 || !tk.From.Equal(time.Date(2026, 11, 9, 22, 15, 0, 0, time.UTC)) {
+		t.Errorf("tokens = %+v", tk)
+	}
+
 	second, err := Decode(lines[1])
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +139,18 @@ func TestStreamExitWithNoStderrNamesTheExit(t *testing.T) {
 	}
 	if m := next(t, s); !reflect.DeepEqual(m, EndMsg{Gen: 1, Reason: "bl top --stream: exit status 3"}) {
 		t.Fatalf("end = %#v", m)
+	}
+}
+
+func TestRequestCapacityWritesACapacityLine(t *testing.T) {
+	// The script echoes its first stdin line to stderr, which the end message carries.
+	s, err := Start([]string{"sh", "-c", `read line; echo "$line" >&2; exit 1`}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.RequestCapacity()
+	if m := next(t, s); !reflect.DeepEqual(m, EndMsg{Gen: 1, Reason: "capacity"}) {
+		t.Fatalf("end = %#v, want the capacity line", m)
 	}
 }
 

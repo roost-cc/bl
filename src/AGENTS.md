@@ -1235,6 +1235,11 @@ sessions of one key add up.
   re-read. `bl implement`
   records under `implement`, or `fix.<review_round>` while a review is
   pending.
+- **Run state** (F-87 D3b): `runSession` also writes the session's `usage`
+  (the four kinds, as numbers) on the history entry it records in
+  `.bl/run/<id>.json`, when the result has usage. An entry written before
+  F-87, or for a session with no usage, has no `usage` key and counts 0.
+  `bl top`'s `tokens` section reads it.
 - A session with no usage writes no entry; a `bl` killed mid-session records
   nothing for it, so the map may sum to less than the totals, never more.
   The writers read CRLF files and leave a file with no `---` block alone.
@@ -2814,7 +2819,7 @@ refused, `unknown` otherwise; the message names the URL.
 ### `bl top`
 
 `bl top` is a live view of bl (F-87): the runs, what waits on the operator, what `bl next`
-picks, agent capacity, and the stories done per day. It has two halves. The JSON half,
+picks, token use and agent capacity, the stories done per day, and the newest run events. It has two halves. The JSON half,
 `--json` and `--stream` (`src/top.js`), reads the backlog. The view, a terminal UI in Go
 (`top/`), draws the stream's snapshots and never reads a backlog file.
 
@@ -2840,10 +2845,12 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
 - **Stream.** The view starts `bl top --stream --interval <ms>` once, through
   `--bl-argv '<JSON array>'` (`[node, src/bl.js]`, from `src/top.js`), and redraws on each line
   (`top/internal/stream`). Bubble Tea redraws only the cells that change, so the screen does not
-  flicker. A line that is not a `bl-top-json/v1` snapshot ends the stream. When the stream ends,
-  the view exits 1 with `bl top: the snapshot stream ended: <its last stderr line>`.
+  flicker. The stream runs in a process group of its own. A line that is not a `bl-top-json/v1`
+  snapshot kills that group and ends the stream. When the stream ends, the view exits 1 with
+  `bl top: the snapshot stream ended: <its last stderr line>`.
 - **Boxes and layout** (D4, `top/internal/ui/layout.go`). Box ¹ runs, ² attention, ³ next,
-  ⁴ tokens (section `capacity`) and ⁵ activity (section `history`). Box ⁶ comes with F-88. At
+  ⁴ tokens (sections `tokens` and `capacity`) and ⁵ activity (sections `activity` and
+  `history`). Each box's drawer is in the `boxes` table. Box ⁶ comes with F-88. At
   171×50 or larger the view draws the two columns of Mockup A; from 80×24 up to that it stacks
   the boxes as in Mockup B; below 80×24 it prints `bl top needs at least 80x24`. Each node of a
   layout takes its weight's share of its parent; a hidden box's share goes to the boxes left in
@@ -2855,32 +2862,60 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   focus has a mauve border. Box ¹'s options are the time of the last snapshot and the interval
   (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data, and its
   box's top border shows a red `! <error>`.
+- **Graphs and meters** (`top/internal/ui/braille.go`, `meter.go`). A graph is a braille area
+  graph: two samples per cell, four dot rows per cell, the highest sample at full height. A
+  series longer than the graph keeps the highest value of each share, so a peak stays. Each
+  graph line takes btop's gradient by its height: green at the bottom, yellow in the middle, red
+  at the top. A quota meter has a `■` for each share left and a `·` for each share used. Its
+  `■` are green above 50 % left, yellow from 20 to 50 %, and red below 20 %.
+- **Box ⁴ tokens** (`tokens.go`). The graph of output tokens per minute over 2 h, labelled
+  `ended sessions` (D3b), with its peak and an axis of the local half hours and `now`. Then
+  one meter per quota window of `bl capacity`, with the percent left and the reset (local
+  `15:04` within a day, else `Nov 12`). A window that two configurations report (Codex's
+  account quota) shows once. A configuration with no window shows `<agent>  <state>: <message>`,
+  for example `unknown: claude cannot report capacity`, once per distinct line. Then today's
+  totals of the four kinds, and the local time capacity was last read.
+- **Box ⁵ activity** (`activity.go`). The graph of points done per day over the `history`
+  days, with the total of the last 7 days and a date axis. Then the `activity` events, newest
+  first, as many as fit: local time, work unit, step with its story or round, `✓` or `✗` and
+  the duration, then the agent, model and effort, or the note for a failed session or an event
+  with no agent.
+- Below an inner height of 12 lines, boxes ⁴ and ⁵ leave out their axis and blank lines (Mockup
+  B).
 - **Keys** (D6, `top/internal/ui/model.go`): `1`–`5` hide or show a box; `tab` and `⇧tab` move
-  the focus to the next or previous shown box; `+` and `-` change the interval by 500 ms within
+  the focus to the next or previous shown box; `c` writes `capacity` to the stream's stdin, so
+  the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
   help, and any key closes it; `q` or `ctrl+c` quits.
 - **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
-  `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, and one
-  set of boxes, without colors; `go test ./internal/ui -update` writes them again.
+  `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, one set
+  of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
+  `testdata/snapshot.json` in a fixed zone (UTC−5), without colors;
+  `go test ./internal/ui -update` writes them again.
   `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`.
 
 #### The snapshot
 
 The snapshot is one object, schema `bl-top-json/v1`:
-`{ schema, at, runs, attention, next, capacity, history }`. `at` and every time in it are ISO
+`{ schema, at, runs, attention, next, capacity, history, activity, tokens }`. `at` and every time in it are ISO
 times with a zone. Each section is an object with `read_at`, the ISO time of its last good
 read. A section whose read throws keeps its last good value and carries `error`, the message;
 the next good read drops `error`. Each section comes from bl's own reader, in the same process
 (`src/top-snapshot.js`), so nothing else parses a backlog file:
 
-| Section     | Holds                                                                                                                                                                                                                                               | Read (`--stream`)                                        |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's live holder or null), and `agent`, `model`, `effort` of its newest session entry | every snapshot                                           |
-| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                               | when the backlog changes, and at least every 30 s        |
-| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                  | as `attention`                                           |
-| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                              | every 5 min, and at the snapshot after a `capacity` line |
-| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                               | every 5 min                                              |
+| Section     | Holds                                                                                                                                                                                                                                                                                                    | Read (`--stream`)                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's live holder or null), and `agent`, `model`, `effort` of its newest session entry                                                      | every snapshot                                           |
+| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                    | when the backlog changes, and at least every 30 s        |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                                                       | as `attention`                                           |
+| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                   | every 5 min, and at the snapshot after a `capacity` line |
+| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                    | every 5 min                                              |
+| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                              | every snapshot                                           |
+| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date | every snapshot                                           |
 
+- `activity` and `tokens` read the run states' history entries (F-87 D3b, D3c). A session that
+  is still running counts only when it ends: its run state holds no usage until then. The
+  `runs`, `activity` and `tokens` readers share one parse cache (`runStatesReader`).
 - A `runs` row whose run state says `running` while its run lock (`.bl/run/<id>.lock`) has no
   live holder has `status: "stale"`: its bl was killed. The stream parses a run state again
   only when the file's mtime changes.
