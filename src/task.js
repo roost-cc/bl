@@ -289,7 +289,10 @@ export async function createTask(config, { unit, title, gate, body = null }) {
       const commit = await syncAndCommit(config, { message: `chore: task ${id} (${unit.id})`, extraPaths });
       return { id, path: rel, unit: unit.id, edges, commit };
     } catch (err) {
-      throw undone ? err : undo(err);
+      if (undone) throw err;
+      const out = undo(err);
+      // `writeEdge` could not put a file back (`left`), and this put-back did: its text is stale.
+      throw out === err && err.left ? err.cause : out;
     }
   });
 }

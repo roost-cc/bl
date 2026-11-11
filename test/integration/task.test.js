@@ -410,6 +410,49 @@ async function withFsFaults(fails, fn) {
   }
 }
 
+// createTask: the blockers.json write fails after .gitattributes got its
+// merge-driver line, and writeEdge's put-back of .gitattributes fails. When
+// createTask's own put-back works, the error is the first failure alone; when
+// it fails too, .gitattributes is named.
+test('create_task_names_only_a_file_still_left_changed', async () => {
+  for (const persistent of [false, true]) {
+    const dir = backlog();
+    initGitBacklog(dir);
+    const before = existsSync(join(dir, '.gitattributes')) ? read(dir, '.gitattributes') : null;
+    const config = loadConfig({ backlogRoot: dir });
+    const hits = new Map();
+    const hit = (p) => hits.set(p, (hits.get(p) ?? 0) + 1).get(p);
+    let err = null;
+    await withFsFaults(
+      (op, p) => {
+        if (op === 'renameSync' && p === join(dir, 'blockers.json')) return hit(p) === 1;
+        // The file was not there, so a put-back removes it. 1: prepareCommit's
+        // line; 2: writeEdge's put-back; 3: createTask's put-back.
+        if ((op === 'renameSync' || op === 'rmSync') && p === join(dir, '.gitattributes')) {
+          const n = hit(p);
+          return n === 2 || (persistent && n > 2);
+        }
+        return false;
+      },
+      async () => {
+        try {
+          await createTask(config, { unit: { id: 'F-1' }, title: 'Run it', gate: 'merge' });
+        } catch (e) {
+          err = e;
+        }
+      },
+    );
+    assert.ok(err, `${persistent}: the task write fails`);
+    assert.deepEqual(tasksIn(dir), [], `${persistent}: the task file is removed`);
+    if (persistent) {
+      assert.match(err.message, /could not undo the write of task T-1: \.gitattributes/, `${persistent}`);
+    } else {
+      assert.equal(err.message, 'injected renameSync failure', `${persistent}: no stale put-back text`);
+      assert.equal(existsSync(join(dir, '.gitattributes')) ? read(dir, '.gitattributes') : null, before);
+    }
+  }
+});
+
 test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async () => {
   const thrown = async (p) => {
     try {
