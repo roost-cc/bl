@@ -177,8 +177,11 @@ for (const [name, bad, good] of [
   });
 }
 
-/** A git-backed backlog: S-1 and S-2 in no feature, F-1 empty, and the run edge S-1 → S-2 in blockers.json. */
-function gitJoinBacklog() {
+/**
+ * A git-backed backlog: S-1 and S-2 in no feature, F-1 empty, and the run
+ * edge S-1 → S-2 (with `extra` fields) in blockers.json.
+ */
+function gitJoinBacklog(extra = {}) {
   const t = componentBacklog({
     stories: [
       { id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one' },
@@ -188,7 +191,7 @@ function gitJoinBacklog() {
   });
   writeFileSync(
     join(t.dir, 'blockers.json'),
-    formatBlockers([{ blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done' }]),
+    formatBlockers([{ blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done', ...extra }]),
   );
   initGitBacklog(t.dir);
   return t;
@@ -227,6 +230,30 @@ for (const [name, steps, subject] of [
       const v = runBl(['validate', '--json'], { cwd: dir });
       const codes = JSON.parse(v.stdout).findings.map((f) => f.code);
       assert.ok(!codes.includes('blockers-cycle'), codes.join(', '));
+    } finally {
+      cleanup();
+    }
+  });
+
+  // An order edge takes no active_when, so the join is refused with the edge
+  // named, and nothing of the last step is written: no field is dropped.
+  test(`attach_keeps_or_refuses_a_run_edge_with_active_when: ${name}`, () => {
+    const { dir, cleanup } = gitJoinBacklog({ active_when: { unit: 'S-1', status: 'done' } });
+    try {
+      const last = steps.at(-1);
+      for (const args of steps.slice(0, -1)) assert.equal(runBl(args, { cwd: dir, env: GIT_ENV }).status, 0);
+      const head = git(dir, 'rev-parse', 'HEAD');
+      const before = readFileSync(join(dir, 'blockers.json'), 'utf8');
+      const r = runBl(last, { cwd: dir, env: GIT_ENV });
+      assert.equal(r.status, 1, r.stderr);
+      assert.match(
+        r.stderr,
+        /S-2 at run by S-1 holds only once S-1 is done, and an order edge takes no active_when; remove it first \(bl block remove S-1 --gate run --unit S-2\)/,
+      );
+      assert.equal(readFileSync(join(dir, 'blockers.json'), 'utf8'), before, 'the edge keeps its active_when');
+      assert.equal(fmOf(dir, 'stories/S2-two/index.md').feature ?? '', '', 'S-2 joins no feature');
+      assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+      assert.deepEqual(statusLines(dir), []);
     } finally {
       cleanup();
     }

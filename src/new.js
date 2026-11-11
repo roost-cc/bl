@@ -56,7 +56,7 @@ import {
 import { renderTemplate, templatePath } from './template.js';
 import { VALID_STORY_KEYS } from './validate.js';
 import { implementPluginProblem } from './scripted.js';
-import { normalizeFeatureId, findFeature, closedFeatureRefusal, storyMoveRefusal } from './feature.js';
+import { normalizeFeatureId, findFeature, closedFeatureRefusal, nextFeatureId, storyMoveRefusal } from './feature.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { prepareBody } from './body.js';
@@ -66,7 +66,7 @@ import { failPoint, settle, writeRecord } from './feature-links.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { BLOCKERS_FILE, dependencyEdge, edgeKey, edgeLabel, readUnits } from './blockers.js';
-import { orderJoinedEdges, writeEdges } from './block.js';
+import { joinRefusal, orderJoinedEdges, writeEdges } from './block.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
 import { applyNew } from './transition.js';
 
@@ -434,6 +434,12 @@ async function newFeature(args, stories) {
         const refusal = storyMoveRefusal(s.id, fm, null, flow);
         if (refusal) refusals.push(refusal);
       }
+      const held = joinRefusal(
+        config,
+        stories.map((s) => s.id),
+        nextFeatureId(config),
+      );
+      if (held) refusals.push(held);
       for (const r of refusals) console.error(r);
       if (refusals.length > 0) process.exit(1);
     },

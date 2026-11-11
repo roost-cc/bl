@@ -39,7 +39,7 @@ import {
 } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
 import { snapshot } from './atomic-write.js';
-import { orderJoinedEdges } from './block.js';
+import { joinRefusal, orderJoinedEdges } from './block.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
@@ -63,6 +63,8 @@ Refused, with nothing written:
   - a feature that is ${statusWords(flow.closedStatusesOf('feature'))}
   - a story whose feature: names another feature
   - a story that is not ${statusWords(flow.unstartedStatusesOf('story'))}
+  - a run edge with active_when between the story and a story of the
+    feature: an order edge takes no active_when
   - for a ${statusWords(branchedStatusesOf(flow))} feature, a story whose
     component's repo the feature's branches do not span (bl side <repo> --from F-<n> brings a
     repo in)
@@ -161,6 +163,9 @@ export async function main(argv) {
       );
     }
   }
+
+  const held = joinRefusal(config, [storyId], feature.id);
+  if (held) fail(`bl attach: ${held}.`);
 
   // `feature: F77` names F-77 already; it is not rewritten.
   const changed = (normalizeFeatureId(named)?.id ?? named) !== feature.id;

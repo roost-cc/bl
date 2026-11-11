@@ -211,28 +211,70 @@ export function writeEdges(config, edges) {
 }
 
 /**
- * Stories that joined a feature (their `feature:` already written, F-111
- * D5): each run edge between one of `joined` and another story of the same
- * feature becomes the order edge between the two, since a run edge inside one
- * feature holds the feature on itself. Under the backlog lock the caller
- * holds, with no commit. Returns null when no edge changed, else the paths to
- * commit (empty when the backlog is not a repo).
- * @param {object} config
- * @param {string[]} joined  story ids
- * @returns {string[] | null}
+ * The run edges that become order edges when `joined` are in `feature`
+ * (null: the feature their `feature:` names already), each a run edge between
+ * one of `joined` and another story of that feature, and `order`, which maps
+ * one to its order edge.
  */
-export function orderJoinedEdges(config, joined) {
-  const root = config.backlogRoot;
-  const { edges } = readBlockers(root);
+function joinedRunEdges(config, joined, feature = null) {
+  const { edges } = readBlockers(config.backlogRoot);
   const units = readUnits(config);
+  const featureOf = (id) => (feature && joined.includes(id) ? feature : (units.get(id)?.feature ?? ''));
   // The edge the pair stands for now: an order edge when both are in one feature.
-  const order = (e) => dependencyEdge(e.blocker, e.unit, (id) => units.get(id)?.feature ?? '');
+  const order = (e) => dependencyEdge(e.blocker, e.unit, featureOf);
   const turned = edges.filter(
     (e) =>
       e.gate === RUN_EDGE.gate &&
       (joined.includes(e.unit) || joined.includes(e.blocker)) &&
       order(e).gate === ORDER_EDGE.gate,
   );
+  return { edges, turned, order };
+}
+
+/**
+ * The refusal of `joined` joining `feature` (F-111 D5), null when there is
+ * none: a run edge with `active_when` that the join would turn into an order
+ * edge, which takes no `active_when`. `bl attach` and `bl new --feature … S-n`
+ * check it before they write; `orderJoinedEdges` throws it.
+ * @param {object} config
+ * @param {string[]} joined  story ids
+ * @param {string | null} [feature]  null: the feature their `feature:` names
+ * @returns {string | null}
+ */
+export function joinRefusal(config, joined, feature = null) {
+  return refusalOf(joinedRunEdges(config, joined, feature).turned);
+}
+
+/** `joinRefusal` of the run edges a join turns. */
+function refusalOf(turned) {
+  const held = turned.filter((e) => e.active_when);
+  if (held.length === 0) return null;
+  return held
+    .map(
+      (e) =>
+        `${edgeLabel(e)} holds only once ${e.active_when.unit} is ${e.active_when.status}, and an order edge ` +
+        `takes no active_when; remove it first (bl block remove ${e.blocker} --gate ${e.gate} --unit ${e.unit})`,
+    )
+    .join('; ');
+}
+
+/**
+ * Stories that joined a feature (their `feature:` already written, F-111
+ * D5): each run edge between one of `joined` and another story of the same
+ * feature becomes the order edge between the two, since a run edge inside one
+ * feature holds the feature on itself. It throws `joinRefusal` before it
+ * writes anything. Under the backlog lock the caller holds, with no commit.
+ * Returns null when no edge changed, else the paths to commit (empty when the
+ * backlog is not a repo).
+ * @param {object} config
+ * @param {string[]} joined  story ids
+ * @returns {string[] | null}
+ */
+export function orderJoinedEdges(config, joined) {
+  const root = config.backlogRoot;
+  const { edges, turned, order } = joinedRunEdges(config, joined);
+  const refusal = refusalOf(turned);
+  if (refusal) throw new Error(refusal);
   if (turned.length === 0) return null;
   const kept = edges.filter((e) => !turned.includes(e));
   const keys = new Set(kept.map(edgeKey));

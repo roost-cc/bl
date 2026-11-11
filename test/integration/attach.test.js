@@ -175,6 +175,33 @@ test('attach_already_in_feature_non_repo_reports_turned_edges', () => {
   }
 });
 
+test('attach_keeps_or_refuses_a_run_edge_with_active_when: a story already in the feature', () => {
+  // S-1 is refined, so the edge holds now: a deadlock bl attach cannot turn.
+  const dir = backlog({ story: { feature: 'F-1' } });
+  const edge = {
+    blocker: 'S-1',
+    gate: 'run',
+    unit: 'S-2',
+    until: 'done',
+    active_when: { unit: 'S-1', status: 'refined' },
+  };
+  writeBlockers(dir, [edge]);
+  initGitBacklog(dir);
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const v = JSON.parse(bl(['validate', '--json'], dir).stdout).findings.filter((f) => f.code === 'blockers-cycle');
+  assert.deepEqual(
+    v.map((f) => f.message),
+    ['deadlock: F-1 → F-1 (S-2 at run by S-1)'],
+    'no bl attach hint for an edge it refuses',
+  );
+  const r = bl(['attach', 'S-2', 'F-1'], dir);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /S-2 at run by S-1 holds only once S-1 is refined, and an order edge takes no active_when/);
+  assert.deepEqual(readBlockers(dir).edges, [edge]);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+});
+
 test('bl attach fills an empty feature: key in place', () => {
   const dir = backlog();
   writeFileSync(join(dir, STORY), read(dir, STORY).replace('type: feature\n', 'type: feature\nfeature:\n'));

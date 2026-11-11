@@ -933,9 +933,10 @@ export function findBlockersFindings(config, units, flow) {
   const all = readEdges(config);
   for (const cycle of findHoldCycles(holdGraph(all, units, flow))) {
     // A run edge between two stories of one feature holds the feature on
-    // itself: a story that joined it left the edge (F-111 D5).
+    // itself: a story that joined it left the edge (F-111 D5). `bl attach`
+    // refuses to turn one with `active_when`, so the hint is not given for it.
     const e = cycle.length === 1 ? cycle[0].edge : null;
-    const joined = e?.gate === RUN_EDGE.gate && inFeature({ ...e, gate: ORDER_EDGE.gate }, units);
+    const joined = e?.gate === RUN_EDGE.gate && !e.active_when && inFeature({ ...e, gate: ORDER_EDGE.gate }, units);
     const fix = joined ? `; bl attach ${e.unit} ${cycle[0].from} turns it into an order edge` : '';
     add('error', 'blockers-cycle', `deadlock: ${describeCycle(cycle)}${fix}`);
   }
