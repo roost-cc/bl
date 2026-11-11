@@ -93,6 +93,13 @@ test('migrate-lock-files adds .bl/, deletes the free old lock files, skips a hel
   const third = await migrate(config, { log: (l) => said.push(l) });
   assert.equal(third.commit, null);
   assert.deepEqual(said, ['nothing to do']);
+
+  // A run that puts back a `.bl/` line someone removed did something.
+  writeFileSync(join(dir, '.gitignore'), 'node_modules/\n');
+  const fourth = [];
+  await migrate(config, { log: (l) => fourth.push(l) });
+  assert.deepEqual(fourth, ['added .bl/ to .gitignore']);
+  assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
 });
 
 test('migrate-lock-files with every old lock file free does it all in one run, and --dry-run changes nothing', async () => {
