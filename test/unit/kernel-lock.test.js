@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
-import { adopt, holderOf, release, tryLock } from '../../src/kernel-lock.js';
+import { adopt, holderOf, release, tryLock, tryLockOnce } from '../../src/kernel-lock.js';
 import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
@@ -74,6 +74,21 @@ test('tryLock is re-entrant in one process: only the last release frees the lock
   assert.equal(holderOf(path), null);
   release(a.taken);
   assert.equal(holderOf(path), null, 'a release of a freed handle does nothing');
+});
+
+test('tryLockOnce refuses a lock this process holds with its own PID, and takes a free one', () => {
+  const path = join(mkTempDir('bl-kernel-lock-'), 'x.lock');
+  const a = tryLockOnce(path);
+  assert.ok('taken' in a, JSON.stringify(a));
+  assert.deepEqual(tryLockOnce(path), { holder: process.pid });
+  release(a.taken);
+  assert.equal(holderOf(path), null, 'the refusal added no depth');
+  const other = holdLock(path);
+  try {
+    assert.deepEqual(tryLockOnce(path), { holder: process.pid }, 'another descriptor in this process');
+  } finally {
+    other.release();
+  }
 });
 
 test('holderOf creates no file for a missing lock', () => {

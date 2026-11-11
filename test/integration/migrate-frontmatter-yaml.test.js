@@ -8,6 +8,7 @@ import { migrate } from '../../src/migrate-frontmatter-yaml.js';
 import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 import { addOrigin, git, statusLines } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
+import { holdLock } from '../helpers/hold-lock.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const SCRIPT = fileURLToPath(new URL('../../scripts/migrate-frontmatter-yaml.js', import.meta.url));
@@ -233,10 +234,19 @@ test('it refuses while a bl run is active and writes nothing', () => {
   const before = head(dir);
   mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
   writeFileSync(join(dir, '.bl', 'run', 'F-1.json'), JSON.stringify({ status: 'running' }));
-  writeFileSync(join(dir, '.bl', 'run', 'F-1.lock'), `${process.pid}\n`);
-  const r = script(dir);
+  // The script runs in a child; this process holds the run lock (a kernel lock, F-104).
+  const held = holdLock(join(dir, '.bl', 'run', 'F-1.lock'));
+  let r;
+  try {
+    r = script(dir);
+  } finally {
+    held.release();
+  }
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /migration refused: a bl run is active \(\.bl\/run\/F-1\.json, pid \d+\)/);
+  assert.match(
+    r.stderr,
+    new RegExp(`migration refused: a bl run is active \\(\\.bl/run/F-1\\.json, pid ${process.pid}\\)`),
+  );
   assert.equal(head(dir), before);
   assert.deepEqual(statusLines(dir), []);
 });

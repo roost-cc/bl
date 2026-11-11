@@ -118,7 +118,7 @@ import {
   writeChange,
 } from './change-doc.js';
 import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
-import { RUN_DIR, runLockPath, ensureRunDir } from './run-lock.js';
+import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt } from './test-excerpt.js';
@@ -137,12 +137,9 @@ import {
   transition,
 } from './transition.js';
 
-export { liveLockHolder };
-
-// The run directory, its locks and its self-ignoring setup live in the
-// dependency-free run-lock.js (F-74 D4: running-man takes the updates run lock
-// with them); re-exported for the loop's callers.
-export { RUN_DIR, runLockPath, ensureRunDir };
+// The run directory, its run lock and its self-ignoring setup live in
+// run-lock.js; re-exported for the loop's callers.
+export { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock };
 export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 // ---------------------------------------------------------------------------
@@ -151,22 +148,6 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 export function runStatePath(config, featureId) {
   return join(config.backlogRoot, RUN_DIR, `${featureId}.json`);
-}
-
-/**
- * Take the per-feature run lock (see pid-lock.js: exclusive, and a dead
- * holder's lock is reclaimed atomically). Returns the content written (the
- * release token), or `{ holder }` when a live run has it. `hooks` is a test
- * seam passed to `acquirePidLock`.
- */
-export function acquireRunLock(config, featureId, hooks = {}) {
-  ensureRunDir(config);
-  const content = `${process.pid}\n${new Date().toISOString()}\nbl run ${featureId}\n${Math.random().toString(36).slice(2)}\n`;
-  return acquirePidLock(runLockPath(config, featureId), content, hooks);
-}
-
-function releaseRunLock(config, featureId, content) {
-  releasePidLock(runLockPath(config, featureId), content);
 }
 
 /**
@@ -3837,7 +3818,7 @@ export async function integrateUnit({ unit, config, prep, runner }) {
       return await integrationThrew(ctx, e);
     }
   } finally {
-    releaseRunLock(config, unit.id, lock.content);
+    releaseRunLock(lock.taken);
   }
 }
 
@@ -4555,7 +4536,7 @@ export async function reviewFeature({
       error,
     };
   } finally {
-    releaseRunLock(config, feature.id, lock.content);
+    releaseRunLock(lock.taken);
   }
 }
 
@@ -4637,7 +4618,7 @@ export async function runFeature({ feature, config, prep, runner, opts = {} }) {
     if (e instanceof RunStoppedError) return e.state;
     throw e;
   } finally {
-    releaseRunLock(config, feature.id, lock.content);
+    releaseRunLock(lock.taken);
   }
 }
 

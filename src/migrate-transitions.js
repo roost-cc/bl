@@ -51,7 +51,7 @@ import { loadBacklog } from './backlog-graph.js';
 import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChange } from './change-doc.js';
 import { FLOW_FILE, FLOW_TYPES, LEGACY_LOG, flowPath, fromLegacy, migratedFlowText } from './flow.js';
 import { liveSessionLocks } from './migration-txn.js';
-import { liveLockHolder } from './pid-lock.js';
+import { holderOf } from './kernel-lock.js';
 import { isUpdateStory } from './priority.js';
 import { extractReviewLog, sessionDates } from './review-log.js';
 import { RUN_DIR } from './run-lock.js';
@@ -156,7 +156,7 @@ export function heldUnits(config) {
   const runDir = join(root, RUN_DIR);
   for (const f of existsSync(runDir) ? readdirSync(runDir) : []) {
     if (!f.endsWith('.lock')) continue;
-    const pid = liveLockHolder(join(runDir, f));
+    const pid = holderOf(join(runDir, f));
     if (pid != null && !self.has(pid)) held.set(f.slice(0, -5), `a bl run holds ${join(RUN_DIR, f)} (pid ${pid})`);
   }
   for (const { dir, branch, pid } of liveSessionLocks(config)) {

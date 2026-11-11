@@ -5,6 +5,7 @@ import { dirname, join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { applyMigration } from '../../src/migration-txn.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
 import { addOrigin, git, statusLines } from '../helpers/git-backlog.js';
 
 // F-51 decision R2: the all-or-nothing guarantee comes from git. The run
@@ -73,11 +74,12 @@ test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', as
     ['no origin remote', (d) => git(d, 'remote', 'remove', 'origin'), /^git fetch origin main failed/],
     [
       'an active bl run',
-      (d) => (
-        put(d, '.bl/run/F-9.json', '{"feature":"F-9","status":"running"}\n'),
-        put(d, '.bl/run/F-9.lock', `${process.ppid}\n`)
-      ),
-      new RegExp(`^a bl run is active \\(\\.bl/run/F-9\\.json, pid ${process.ppid}\\)`),
+      // A child holds the run lock (a kernel lock, F-104): the check ignores this process.
+      async (d) => {
+        put(d, '.bl/run/F-9.json', '{"feature":"F-9","status":"running"}\n');
+        return holdLockInChild(join(d, '.bl/run/F-9.lock'));
+      },
+      (holder) => new RegExp(`^a bl run is active \\(\\.bl/run/F-9\\.json, pid ${holder.pid}\\)`),
     ],
     [
       "a session in a registered repo's worktree",
@@ -101,17 +103,19 @@ test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', as
   for (const [name, arrange, expected] of cases) {
     const dir = backlog();
     const config = { backlogRoot: dir };
-    const made = arrange(dir, config);
+    const made = await arrange(dir, config);
     const head = git(dir, 'rev-parse', 'HEAD');
     const status = statusLines(dir);
     const message = await applyMigration(config, {
       message: 'm',
       apply: () => assert.fail(`${name}: apply reached`),
       commit: async () => assert.fail(`${name}: commit reached`),
-    }).then(
-      () => assert.fail(`${name}: no refusal`),
-      (e) => e.message,
-    );
+    })
+      .then(
+        () => assert.fail(`${name}: no refusal`),
+        (e) => e.message,
+      )
+      .finally(() => made?.kill?.());
     const re = typeof expected === 'function' ? expected(made) : expected;
     assert.match(message.replace(/^migration refused: /, ''), re, name);
     assert.match(message, /^migration refused: .*, then rerun$/, name);

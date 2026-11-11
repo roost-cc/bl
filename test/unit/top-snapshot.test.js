@@ -1,12 +1,13 @@
 // F-87 D3: bl top's snapshot sections. `runs` lists the run states that are
 // running or stopped, or were updated in the last 24 h, with their run lock's
-// live holder; a section that throws keeps its last good value.
+// holder; a section that throws keeps its last good value.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
 import { mkdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
+import { holdLock } from '../helpers/hold-lock.js';
 import { loadConfig } from '../../src/config.js';
 import { TOKEN_KEYS } from '../../src/tokens.js';
 import {
@@ -55,7 +56,8 @@ function runsBacklog() {
   const recent = new Date(NOW - HOUR).toISOString();
   const old = new Date(NOW - 48 * HOUR).toISOString();
   const session = { step: 'implement', agent: 'claude', model: 'opus', effort: 'high', ok: true, at: recent };
-  // Live: its lock names this test's own pid.
+  // Live: this test holds its run lock (a kernel lock, F-104) for the rest of
+  // the process, so the row names this test's own pid.
   put(
     'F-1.json',
     JSON.stringify(
@@ -68,8 +70,9 @@ function runsBacklog() {
       }),
     ),
   );
-  put('F-1.lock', `${process.pid}\n`);
-  // Says running, but its bl is gone: stale.
+  holdLock(join(run, 'F-1.lock'));
+  // Says running, but its bl is gone: its lock file names a dead pid, and
+  // nobody holds it. Stale.
   put('F-2.json', JSON.stringify(runState('F-2', { status: 'running', updatedAt: old })));
   put('F-2.lock', `${deadPid()}\n`);
   // Ended more than 24 h ago: left out.
@@ -84,7 +87,7 @@ function runsBacklog() {
   return { dir, run, config: loadConfig({ backlogRoot: dir }) };
 }
 
-test('runs: running or stopped, or updated in the last 24 h; running with no live holder is stale', () => {
+test('runs: running or stopped, or updated in the last 24 h; running with no holder is stale', () => {
   const { config } = runsBacklog();
   const { rows } = runsReader(config)(NOW);
   assert.deepEqual(

@@ -1564,8 +1564,8 @@ agent stops the run by writing `## Escalation`. Machine-local run state lives un
 has content. `--resume` skips completed stories; once the run has reached the
 PR it also skips self-review, fixes a review session left in `fixing` before
 reviewing again, and ends at once when the unit is already `ready_for_merge`.
-One run per feature: `run` holds `.bl/run/<id>.lock` (created exclusively; a
-dead holder's lock is reclaimed) and does not start while another live
+One run per feature: `run` holds `.bl/run/<id>.lock` (a kernel lock whose file
+stays; a killed run leaves no lock) and does not start while another live
 process holds the unit directory's `.workon.lock` (F-60 D3). A headless step
 never overwrites or removes a live session's `.workon.lock`.
 The loop pushes the branch and checks that `origin/<branch>` contains HEAD
@@ -3322,7 +3322,7 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 
 | Section     | Holds                                                                                                                                                                                                                                                                                                    | Read (`--stream`)                                        |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's live holder or null), and `agent`, `model`, `effort` of its newest session entry                                                      | every snapshot                                           |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), and `agent`, `model`, `effort` of its newest session entry                                                          | every snapshot                                           |
 | `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                    | when the backlog changes, and at least every 30 s        |
 | `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                     | as `attention`                                           |
 | `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                   | every 5 min, and at the snapshot after a `capacity` line |
@@ -3348,9 +3348,9 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   non-negative number counts 0, and an
   `activity` `at` is a full ISO time in the years 0000 to 9999 (Go reads four-digit years only):
   an entry with another `at` is left out, and a `startedAt` outside them gives no duration.
-- A `runs` row whose run state says `running` while its run lock (`.bl/run/<id>.lock`) has no
-  live holder has `status: "stale"`: its bl was killed. The stream parses a run state again
-  only when the file's mtime changes.
+- A `runs` row whose run state says `running` while nobody holds its run lock
+  (`.bl/run/<id>.lock`, checked with a try-lock) has `status: "stale"`: its bl was killed. The
+  stream parses a run state again only when the file's mtime changes.
 - "The backlog changes" means git `HEAD` moves, or a unit file, change document or
   `priority.md` changes: `backlogStamp()` (`src/top-stream.js`) compares `HEAD` and
   `backlogSignature()`, the stat signature `loadBacklog()` compares (`src/backlog-graph.js`).
@@ -3515,10 +3515,11 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
   (see Tokens per step) summed per step name, `—` for a unit without it; and the outliers, units
   above their type's 90th percentile. `units`, `cost` and `efficiency` are exported for
   `bl retro` (S-905).
-- No activity log, no commit, and no lock but the output's own (`.reports.lock` beside it): a
-  second run while one is writing exits 1 naming the holder. Exit 1 also on a git or IO error,
-  a bad `--since`, an empty `--out` or an unknown `--charts` adapter (the message names the
-  registered ones).
+- No activity log, no commit, and no lock but the output's own (`.reports.lock` beside it, a
+  kernel lock whose file stays after the report; `bl init` adds it to `.gitignore`): a second
+  run while one is writing exits 1 naming the holder. Exit 1 also on a git or IO error, a bad
+  `--since`, an empty `--out` or an unknown `--charts` adapter (the message names the registered
+  ones).
 
 **Chart adapters** (F-40 D4, `src/chart.js`). An adapter is `{ name, render(chart) }`, where
 `render` returns `{ markdown, files }`: `markdown` takes the chart's place in `index.md`, and

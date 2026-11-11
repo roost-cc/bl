@@ -64,6 +64,8 @@ test("bl init ignores bl's runtime directory .bl/, so a session's activity log i
   git(dir, 'init', '-q', '-b', 'main');
   assert.equal(init(dir).status, 0);
   assert.equal(git(dir, 'check-ignore', '.bl/activity.log'), '.bl/activity.log');
+  // The lock files that stay after their locks are released (F-104 D3).
+  for (const lock of ['.bl-new.lock', '.reports.lock']) assert.equal(git(dir, 'check-ignore', lock), lock);
   // A rerun adds nothing twice.
   const text = readFileSync(join(dir, '.gitignore'), 'utf8');
   assert.equal(init(dir).status, 0);

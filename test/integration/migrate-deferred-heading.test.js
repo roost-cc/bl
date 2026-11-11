@@ -20,6 +20,7 @@ import { findDeferredErrors } from '../../src/validate.js';
 import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const SCRIPT = fileURLToPath(new URL('../../scripts/migrate-deferred-heading.js', import.meta.url));
@@ -333,11 +334,12 @@ test('migration_refuses_dirty_or_off_origin_with_zero_or_nonzero_plan, dry run o
     [
       'an active bl run',
       // `.bl/` is gitignored in a real backlog, so the run state alone is not a change.
-      (d) => (
-        put(d, '.git/info/exclude', '.bl/\n'),
-        put(d, '.bl/run/F-9.json', '{"feature":"F-9","status":"running"}\n'),
-        put(d, '.bl/run/F-9.lock', `${process.ppid}\n`)
-      ),
+      // A child holds the run lock (a kernel lock, F-104): the check ignores this process.
+      async (d) => {
+        put(d, '.git/info/exclude', '.bl/\n');
+        put(d, '.bl/run/F-9.json', '{"feature":"F-9","status":"running"}\n');
+        return holdLockInChild(join(d, '.bl/run/F-9.lock'));
+      },
       /a bl run is active/,
     ],
   ];
@@ -350,16 +352,20 @@ test('migration_refuses_dirty_or_off_origin_with_zero_or_nonzero_plan, dry run o
       for (const dryRun of [false, true]) {
         const label = `${state}, ${planName}, dryRun ${dryRun}`;
         const dir = make();
-        spoil(dir);
-        const before = head(dir);
-        const lines = [];
-        await assert.rejects(
-          migrate(loadConfig({ backlogRoot: dir }), { dryRun, log: (l) => lines.push(l) }),
-          (e) => e.message.startsWith('migration refused: ') && why.test(e.message),
-          label,
-        );
-        assert.deepEqual(lines, [], `${label}: nothing planned or printed`);
-        assert.equal(head(dir), before, label);
+        const holder = await spoil(dir);
+        try {
+          const before = head(dir);
+          const lines = [];
+          await assert.rejects(
+            migrate(loadConfig({ backlogRoot: dir }), { dryRun, log: (l) => lines.push(l) }),
+            (e) => e.message.startsWith('migration refused: ') && why.test(e.message),
+            label,
+          );
+          assert.deepEqual(lines, [], `${label}: nothing planned or printed`);
+          assert.equal(head(dir), before, label);
+        } finally {
+          await holder?.kill?.();
+        }
       }
     }
   }

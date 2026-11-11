@@ -104,6 +104,7 @@ import { updateSpecFile, updateSpecFileHeld, withSpecLock } from './spec-file.js
 import { atomicWriteFile } from './atomic-write.js';
 import { tok, tokenFields } from './report.js';
 import { acquireLock, releaseLock, withLock } from './lock.js';
+import { holderOf } from './kernel-lock.js';
 import { failPoint } from './feature-links.js';
 import { prepareBody } from './body.js';
 import { scanDeferred, DEFERRED_HEADING } from './deferred.js';
@@ -1644,16 +1645,8 @@ export async function cmdRunStory(args, baseConfig, story) {
 
 /** The run both kinds share: flags, gates, prep, the loop, the exit code. */
 async function runUnit(args, config, unit, { ordered, prepare }) {
-  const {
-    planSteps,
-    formatPlan,
-    runFeature,
-    defaultRunner,
-    escalationOpen,
-    liveLockHolder,
-    runLockPath,
-    parseMaxRounds,
-  } = await import('./feature-run.js');
+  const { planSteps, formatPlan, runFeature, defaultRunner, escalationOpen, runLockPath, parseMaxRounds } =
+    await import('./feature-run.js');
   const kind = unit.kind === 'story' ? 'Story' : 'Feature';
   const maxRounds = parseMaxRounds(args['max-rounds'], unit.reviewRoundsMax);
   if (!Number.isInteger(maxRounds) || maxRounds < 1) {
@@ -1695,7 +1688,7 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
     process.exit(1);
   }
   // Checked before prep too, so a refused run leaves the feature file alone.
-  const holder = liveLockHolder(runLockPath(config, unit.id));
+  const holder = holderOf(runLockPath(config, unit.id));
   if (holder != null) {
     console.error(`Another bl run (pid ${holder}) is running ${unit.id}.`);
     process.exit(1);

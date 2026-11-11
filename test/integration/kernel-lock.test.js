@@ -15,6 +15,7 @@ import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
+import { RUN_DIR, acquireRunLock, ensureRunDir, releaseRunLock, runLockPath } from '../../src/run-lock.js';
 import { waitingForLock } from '../../src/lock-wait.js';
 
 test('a backlog lock holder killed with SIGKILL leaves a lock that the next bl sync --commit takes at once', async () => {
@@ -41,6 +42,48 @@ test('a backlog lock holder killed with SIGKILL leaves a lock that the next bl s
     assert.ok(ms < 10_000, `took ${ms} ms`);
     assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: one');
     assert.equal(holderOf(lockPath), null, 'free after the sync');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a run killed with SIGKILL is stale in bl top --json, and the next acquireRunLock takes it at once', async () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const config = { backlogRoot: dir };
+    ensureRunDir(config);
+    const now = new Date().toISOString();
+    writeFileSync(
+      join(dir, RUN_DIR, 'F-1.json'),
+      JSON.stringify({
+        feature: 'F-1',
+        status: 'running',
+        step: 'implement',
+        startedAt: now,
+        updatedAt: now,
+        history: [],
+      }),
+    );
+    const lockPath = runLockPath(config, 'F-1');
+    const holder = await holdLockInChild(lockPath);
+    const row = () => {
+      const r = runBl(['top', '--json'], { cwd: dir });
+      assert.equal(r.status, 0, r.stderr);
+      return JSON.parse(r.stdout).runs.rows.find((x) => x.id === 'F-1');
+    };
+    const live = row();
+    assert.deepEqual([live.status, live.pid], ['running', holder.pid], 'live while the child holds it');
+    await holder.kill('SIGKILL');
+
+    assert.equal(holderOf(lockPath), null);
+    const stale = row();
+    assert.equal(stale.status, 'stale');
+    assert.equal(stale.pid, null);
+    const start = Date.now();
+    const lock = acquireRunLock(config, 'F-1');
+    assert.ok(Date.now() - start < 1000, 'no wait');
+    assert.ok('taken' in lock, JSON.stringify(lock));
+    releaseRunLock(lock.taken);
   } finally {
     cleanup();
   }

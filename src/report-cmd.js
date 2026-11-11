@@ -22,7 +22,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
 import { loadConfig, parseArgs, warn } from './config.js';
-import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { release, tryLockOnce } from './kernel-lock.js';
 import { formatBacklogMarkdown } from './sync.js';
 import { adapter, adapterNames, DEFAULT_ADAPTER, pathsClash, renderCharts } from './chart.js';
 import './chart-adapters/vega-lite.js';
@@ -35,6 +35,8 @@ import { loadBacklog } from './backlog-graph.js';
 /** The output directory under the backlog root, and what marks one as a report's. */
 export const REPORTS_DIR = 'reports';
 export const REPORT_GITIGNORE = '*\n';
+/** The lock file beside the default output (`.<dir>.lock`); it stays, so the backlog's .gitignore lists it. */
+export const REPORTS_LOCK = `.${REPORTS_DIR}.lock`;
 
 /** The files a run writes itself, which no adapter file may replace. */
 const OWN_FILES = new Set(['.gitignore', 'data.json', 'index.md', SITE_DIR]);
@@ -90,9 +92,9 @@ export function checkReportDir(dir) {
  * failure before the swap leaves the last report as it was; one between the
  * renames moves the last report back, and if that fails too it stays in
  * `.<dir>.old`, which the next run (any process) moves back before it
- * stages. `.<dir>.lock` keeps a second run from writing until the first is
- * done; that run fails naming the holder. The lock is released whatever
- * cleanup throws.
+ * stages. `.<dir>.lock` (a kernel lock, whose file stays) keeps a second run
+ * from writing until the first is done; that run fails naming the holder.
+ * The lock is released whatever cleanup throws.
  * @param {import("./flow.js").Flow} flow  the flow `data` was built from
  * @returns {string} the path of `index.md`
  */
@@ -104,10 +106,8 @@ export function writeReport(config, dir, data, flow, charts = DEFAULT_ADAPTER) {
   checkReportDir(dir);
   const beside = (suffix) => join(dirname(dir), `.${basename(dir)}.${suffix}`);
   mkdirSync(dirname(dir), { recursive: true });
-  const lock = beside('lock');
-  const token = `${process.pid}\n${new Date().toISOString()}\nbl report\n`;
-  const taken = acquirePidLock(lock, token);
-  if (!taken.content)
+  const taken = tryLockOnce(beside('lock'), 'bl report');
+  if (taken.holder != null)
     throw new Error(`another bl report (pid ${taken.holder}) is writing ${dir}; try again when it is done`);
   const stage = beside('new');
   const old = beside('old');
@@ -147,7 +147,7 @@ export function writeReport(config, dir, data, flow, charts = DEFAULT_ADAPTER) {
     try {
       rmSync(stage, { recursive: true, force: true });
     } finally {
-      releasePidLock(lock, token);
+      release(taken.taken);
     }
   }
 }

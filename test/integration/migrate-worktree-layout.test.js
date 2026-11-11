@@ -7,6 +7,7 @@ import { JOURNAL, migrate, rewritePaths, rootOfTemplate, setWorktrees } from '..
 import { _hooks } from '../../src/atomic-write.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
 
 // F-60 D4: the whole migration on a workspace directory with a backlog at
 // origin/main, two repos and real old-layout worktrees.
@@ -491,6 +492,14 @@ test('migrate refuses before anything moves when a bl run is active', async () =
   const fixture = roost();
   const runDir = join(fixture.dir, '.bl', 'run');
   writeFileSync(join(runDir, 'F-9.json'), JSON.stringify({ status: 'running' }));
-  writeFileSync(join(runDir, 'F-9.lock'), `${process.ppid}\n`);
-  await assertRefused(fixture, /migration refused: a bl run is active/);
+  // A child holds the run lock (a kernel lock, F-104): the check ignores this process.
+  const holder = await holdLockInChild(join(runDir, 'F-9.lock'));
+  try {
+    await assertRefused(
+      fixture,
+      new RegExp(`migration refused: a bl run is active \\(.*F-9\\.json, pid ${holder.pid}\\)`),
+    );
+  } finally {
+    await holder.kill();
+  }
 });

@@ -3,15 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
-import {
-  runFeature,
-  loadRunState,
-  runLockPath,
-  reviewFeature,
-  acquireRunLock,
-  RUN_DIR,
-  OutcomeError,
-} from '../../src/feature-run.js';
+import { runFeature, loadRunState, reviewFeature, RUN_DIR, OutcomeError } from '../../src/feature-run.js';
 import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
 import { spawnSync } from 'child_process';
 import { featureReviewGate } from '../../src/review-log.js';
@@ -514,41 +506,33 @@ test('the test gate refuses a dirty tree with no test plugin configured', async 
 
 test('two runs reclaiming the same stale lock cannot both acquire it', () => {
   const deadPid = spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
-  // The run lock, and the helper the headless `.workon.lock` uses.
-  const { dir, cleanup, config } = setup();
+  // The helper the headless `.workon.lock` uses (the run lock is a kernel lock, F-104).
+  const { dir, cleanup } = setup();
   try {
-    mkdirSync(join(dir, RUN_DIR), { recursive: true });
-    const cases = {
-      'run lock': { path: runLockPath(config, 'F-1'), take: (hooks) => acquireRunLock(config, 'F-1', hooks) },
-      '.workon.lock': {
-        path: join(dir, '.workon.lock'),
-        take: (hooks) => acquirePidLock(join(dir, '.workon.lock'), `${process.pid}\nx\n${Math.random()}\n`, hooks),
+    const path = join(dir, '.workon.lock');
+    const take = (hooks) => acquirePidLock(path, `${process.pid}\nx\n${Math.random()}\n`, hooks);
+    writeFileSync(path, `${deadPid}\n2026-09-24T00:00:00Z\nstale\n`);
+    // B reads the stale lock; before B reclaims it, A reclaims it and takes it.
+    let a = null;
+    const b = take({
+      beforeReclaim: () => {
+        a ??= take();
       },
-    };
-    for (const [name, { path, take }] of Object.entries(cases)) {
-      writeFileSync(path, `${deadPid}\n2026-09-24T00:00:00Z\nstale\n`);
-      // B reads the stale lock; before B reclaims it, A reclaims it and takes it.
-      let a = null;
-      const b = take({
-        beforeReclaim: () => {
-          a ??= take();
-        },
-      });
-      assert.ok(a?.content, `${name}: A took the reclaimed lock`);
-      assert.equal(b.content, undefined, `${name}: B did not also take it`);
-      assert.equal(b.holder, process.pid, `${name}: B reports A as the holder`);
-      assert.equal(readFileSync(path, 'utf8'), a.content, `${name}: A's lock is intact`);
-      assert.ok(!existsSync(`${path}.reclaim`), `${name}: reclaim mutex released`);
-      releasePidLock(path, a.content);
-      assert.ok(!existsSync(path), name);
+    });
+    assert.ok(a?.content, 'A took the reclaimed lock');
+    assert.equal(b.content, undefined, 'B did not also take it');
+    assert.equal(b.holder, process.pid, 'B reports A as the holder');
+    assert.equal(readFileSync(path, 'utf8'), a.content, "A's lock is intact");
+    assert.ok(!existsSync(`${path}.reclaim`), 'reclaim mutex released');
+    releasePidLock(path, a.content);
+    assert.ok(!existsSync(path));
 
-      // A reclaim mutex left by a reclaimer that died does not block for ever.
-      writeFileSync(path, `${deadPid}\n`);
-      writeFileSync(`${path}.reclaim`, `${deadPid}\n`);
-      const c = take();
-      assert.ok(c.content, `${name}: stale lock reclaimed past a dead reclaimer's mutex`);
-      releasePidLock(path, c.content);
-    }
+    // A reclaim mutex left by a reclaimer that died does not block for ever.
+    writeFileSync(path, `${deadPid}\n`);
+    writeFileSync(`${path}.reclaim`, `${deadPid}\n`);
+    const c = take();
+    assert.ok(c.content, "stale lock reclaimed past a dead reclaimer's mutex");
+    releasePidLock(path, c.content);
   } finally {
     cleanup();
   }

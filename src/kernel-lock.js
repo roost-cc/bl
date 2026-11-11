@@ -90,6 +90,20 @@ export function tryLock(path, info) {
 }
 
 /**
+ * `tryLock` that is not re-entrant: a lock this process already holds is
+ * refused with `{ holder: process.pid }`. For a lock whose holder must not
+ * start its guarded work a second time (a run, a report).
+ *
+ * @param {string} path
+ * @param {string} [info]
+ * @returns {{ taken: LockHandle } | { holder: number | 'unknown' }}
+ */
+export function tryLockOnce(path, info) {
+  if (held.has(resolve(path))) return { holder: process.pid };
+  return tryLock(path, info);
+}
+
+/**
  * One depth less; at zero, close the descriptor, which frees the lock. Never
  * `flock(fd, 'un')`: an inherited descriptor (D5) shares its lock with the
  * parent, and an unlock from the child would free the parent's lock too.

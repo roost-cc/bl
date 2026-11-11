@@ -49,8 +49,8 @@ import {
 import { removeUnitDirIfEmpty } from './story.js';
 import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { checkCriteria, extractSection, replaceSection, sectionHasContent } from './feature.js';
-import { RUN_DIR, ensureRunDir, acquireRunLock, runLockPath, shellMerged } from './feature-run.js';
-import { releasePidLock } from './pid-lock.js';
+import { RUN_DIR, ensureRunDir, shellMerged } from './feature-run.js';
+import { acquireRunLock, releaseRunLock, updatesLockRefusal } from './run-lock.js';
 import { updateSpecFile } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { syncAndCommit } from './sync.js';
@@ -1403,7 +1403,7 @@ export async function runUpdates(config, opts = {}) {
   if (lock.holder != null) {
     return {
       ...result,
-      refused: `another bl updates command (pid ${lock.holder}) holds ${runLockPath(config, RUN_LOCK_ID)}`,
+      refused: updatesLockRefusal(config, lock.holder),
     };
   }
   try {
@@ -1573,7 +1573,7 @@ export async function runUpdates(config, opts = {}) {
     if (failure) throw failure;
     throwIfUncommitted(result.commit);
   } finally {
-    releasePidLock(runLockPath(config, RUN_LOCK_ID), lock.content);
+    releaseRunLock(lock.taken);
   }
   return result;
 }

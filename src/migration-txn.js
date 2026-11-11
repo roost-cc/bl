@@ -20,6 +20,7 @@ import { dirname, join, relative, resolve } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE } from './lock.js';
 import { MAIN_REFSPEC } from './main-sync.js';
+import { holderOf } from './kernel-lock.js';
 import { liveLockHolder } from './pid-lock.js';
 import { RUN_DIR } from './run-lock.js';
 import { allActiveWorktrees, LOCK_FILE as SESSION_LOCK_FILE } from './story.js';
@@ -161,7 +162,7 @@ function refuse(config, git) {
   return null;
 }
 
-/** Each live `bl run` (a running run state whose lock has a live holder) and `bl` session. */
+/** Each live `bl run` (a running run state whose run lock is held) and `bl` session. */
 function activeRuns(config) {
   const root = config.backlogRoot;
   const out = [];
@@ -175,7 +176,7 @@ function activeRuns(config) {
       continue;
     }
     if (state?.status !== 'running') continue;
-    const pid = liveLockHolder(join(runDir, f.replace(/\.json$/, '.lock')));
+    const pid = holderOf(join(runDir, f.replace(/\.json$/, '.lock')));
     if (pid != null && pid !== process.pid) out.push(`a bl run is active (${join(RUN_DIR, f)}, pid ${pid})`);
   }
   for (const { dir, pid } of liveSessionLocks(config)) {
