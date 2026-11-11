@@ -187,7 +187,7 @@ export async function main(argv) {
     const state = e.left || err.unrecovered ? '' : ' Nothing was changed.';
     fail(`bl attach: could not turn ${storyId}'s run edges into order edges: ${err.message}.${state}`);
   }
-  if (!changed && edgePaths.length === 0) {
+  if (!changed && edgePaths === null) {
     info(`${storyId} is already in ${feature.id}; nothing to do.`);
   } else {
     info(changed ? `Attached ${storyId} to ${feature.id}.` : `${storyId} is already in ${feature.id}.`);
@@ -200,7 +200,7 @@ export async function main(argv) {
         res = await syncAndCommit(config, {
           message: `chore: attach ${storyId} to ${feature.id}`,
           storyIds: [storyId],
-          extraPaths: edgePaths,
+          extraPaths: edgePaths ?? [],
         });
       } catch (e) {
         fail(

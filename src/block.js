@@ -215,11 +215,11 @@ export function writeEdges(config, edges) {
  * D5): each run edge between one of `joined` and another story of the same
  * feature becomes the order edge between the two, since a run edge inside one
  * feature holds the feature on itself. Under the backlog lock the caller
- * holds, with no commit. Returns the paths to commit, empty when no edge
- * changed.
+ * holds, with no commit. Returns null when no edge changed, else the paths to
+ * commit (empty when the backlog is not a repo).
  * @param {object} config
  * @param {string[]} joined  story ids
- * @returns {string[]}
+ * @returns {string[] | null}
  */
 export function orderJoinedEdges(config, joined) {
   const root = config.backlogRoot;
@@ -233,7 +233,7 @@ export function orderJoinedEdges(config, joined) {
       (joined.includes(e.unit) || joined.includes(e.blocker)) &&
       order(e).gate === ORDER_EDGE.gate,
   );
-  if (turned.length === 0) return [];
+  if (turned.length === 0) return null;
   const kept = edges.filter((e) => !turned.includes(e));
   const keys = new Set(kept.map(edgeKey));
   const added = turned.map(order).filter((e) => !keys.has(edgeKey(e)) && keys.add(edgeKey(e)));

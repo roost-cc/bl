@@ -464,10 +464,11 @@ async function newFeature(args, stories) {
         }
         info(`Linked ${stories.map((s) => s.id).join(', ')} to ${feature.id}.`);
         // A run edge between two of them is now inside one feature: an order edge (F-111 D5).
-        edgePaths = orderJoinedEdges(
-          config,
-          stories.map((s) => s.id),
-        );
+        edgePaths =
+          orderJoinedEdges(
+            config,
+            stories.map((s) => s.id),
+          ) ?? [];
       } catch (err) {
         let state, left;
         try {

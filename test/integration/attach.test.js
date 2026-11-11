@@ -147,6 +147,34 @@ test('attach on a story already in the feature still turns its run edges into or
   }
 });
 
+test('attach_already_in_feature_non_repo_reports_turned_edges', () => {
+  // [case, a git backlog, extra args, what stderr says after the turn]. A
+  // turned edge is a change whether or not there is a path to commit.
+  const cases = [
+    ['not a repo', false, [], /Backlog is not a git repository; skipping commit\./],
+    ['not a repo, --no-sync', false, ['--no-sync'], /Skipped the commit\./],
+    ['a repo, --no-sync', true, ['--no-sync'], /Skipped the commit\./],
+  ];
+  for (const [name, inGit, extra, said] of cases) {
+    const dir = backlog({ story: { feature: 'F-1' } });
+    writeBlockers(dir, [{ blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done' }]);
+    if (inGit) initGitBacklog(dir);
+    const r = bl(['attach', 'S-2', 'F-1', ...extra], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /S-2 at run by S-1 is now the order edge S-1 → S-2/, name);
+    assert.match(r.stderr, /^S-2 is already in F-1\.$/m, name);
+    assert.doesNotMatch(r.stderr, /nothing to do/, name);
+    assert.match(r.stderr, said, name);
+    assert.deepEqual(
+      readBlockers(dir).edges,
+      [{ blocker: 'S-1', gate: 'order', unit: 'S-2', until: 'implemented' }],
+      name,
+    );
+    // Nothing is left to turn, so the rerun says so.
+    assert.match(bl(['attach', 'S-2', 'F-1', ...extra], dir).stderr, /S-2 is already in F-1; nothing to do\./, name);
+  }
+});
+
 test('bl attach fills an empty feature: key in place', () => {
   const dir = backlog();
   writeFileSync(join(dir, STORY), read(dir, STORY).replace('type: feature\n', 'type: feature\nfeature:\n'));
