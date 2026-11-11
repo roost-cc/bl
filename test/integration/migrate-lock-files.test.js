@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../../src/config.js';
 import { migrate } from '../../src/migrate-lock-files.js';
@@ -99,6 +99,53 @@ test('migrate-lock-files with every old lock file free does it all in one run, a
   assert.ok(!existsSync(join(busy, '.workon.lock')));
   assert.equal(git(dir, 'rev-list', '--count', `${head}..HEAD`), '1', 'one commit');
 });
+
+/**
+ * Each way a run can fail after it wrote `.bl/`: `fail` breaks the step, and
+ * `mend` undoes the break before the rerun.
+ */
+const FAILURES = [
+  {
+    step: 'a delete (a directory where an old lock file was)',
+    fail: (dir) => {
+      rmSync(join(dir, '.bl-new.lock'));
+      mkdirSync(join(dir, '.bl-new.lock'));
+    },
+    mend: (dir) => rmSync(join(dir, '.bl-new.lock'), { recursive: true }),
+  },
+  {
+    step: 'the commit (a pre-commit hook that refuses it)',
+    fail: (dir) => writeFileSync(join(dir, '.git/hooks/pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 }),
+    mend: (dir) => rmSync(join(dir, '.git/hooks/pre-commit')),
+  },
+];
+
+for (const { step, fail, mend } of FAILURES) {
+  test(`migrate_lock_files_persists_bl_ignore_before_delete_failure and migrate_lock_files_retries_failed_commit: ${step}`, async () => {
+    const { dir } = oldBacklog();
+    const config = loadConfig({ backlogRoot: dir });
+    const head = git(dir, 'rev-parse', 'HEAD');
+    fail(dir);
+    const first = await migrate(config, { log: () => {} }).catch((e) => ({ thrown: e }));
+    assert.ok(first.thrown || first.commit?.error, 'the first run fails');
+    assert.match(gitignore(dir), /^\.bl\/$/m, '.bl/ is on disk although the run failed');
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'and not committed');
+
+    const said = [];
+    const dry = await migrate(config, { dryRun: true, log: (l) => said.push(l) });
+    assert.equal(dry.commit, null);
+    assert.ok(!said.includes('nothing to do'), `a dry run names the commit left to do: ${said}`);
+
+    mend(dir);
+    const rerun = await migrate(config, { log: () => {} });
+    assert.equal(rerun.commit?.committed, true, rerun.commit?.error);
+    assert.equal(git(dir, 'show', 'HEAD:.gitignore'), 'node_modules/\n.bl/');
+    assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
+    const last = [];
+    await migrate(config, { log: (l) => last.push(l) });
+    assert.deepEqual(last, ['nothing to do']);
+  });
+}
 
 test('migrate-lock-files on a backlog that already ignores .bl/ only removes the old lines', async () => {
   const { dir } = oldBacklog();

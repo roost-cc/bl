@@ -10,14 +10,16 @@
  * each unit directory (in the backlog root for a refine, and in a worktree for
  * a session from before F-60). The migration:
  *
- *   1. adds `.bl/` to the backlog's `.gitignore` if the line is missing;
+ *   1. adds `.bl/` to the backlog's `.gitignore` if the line is missing, and
+ *      writes the file before it deletes anything;
  *   2. deletes each old lock file that no other process holds (`otherHolder`),
  *      and the unit directory it leaves empty (`removeUnitDirIfEmpty`). It
  *      skips, and lists, a file whose lock a live process holds (a `bl` from
  *      before S-1495 that still runs); a rerun tries that file again;
  *   3. once no old lock file is left, removes the old lock lines from
  *      `.gitignore`;
- *   4. commits `.gitignore` when it changed (`commitPaths`).
+ *   4. commits `.gitignore` when it differs from HEAD (`commitPaths`), so a
+ *      rerun commits what a run that failed after step 1 wrote.
  *
  * It does not use `applyMigration` (`migration-txn.js`), which refuses to
  * start while any bl run or session is live: each step is safe beside a live
@@ -25,6 +27,7 @@
  * nothing is left.
  */
 
+import { spawnSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, rmSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
@@ -74,10 +77,15 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   const verb = (done, would) => (dryRun ? would : done);
   const gitignorePath = join(root, '.gitignore');
   const before = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+  const write = (next) => dryRun || atomicWriteFile(root, gitignorePath, next);
 
-  // 1. `.bl/` first, so no lock file is ever outside what git ignores.
+  // 1. `.bl/` first, written before any delete, so no lock file is ever
+  // outside what git ignores and a step that fails leaves it for a rerun.
   let { text } = withGitignoreLines(before, [BL_DIR_LINE]);
-  if (text !== before) log(`${verb('added', 'would add')} ${BL_DIR_LINE} to .gitignore`);
+  if (text !== before) {
+    write(text);
+    log(`${verb('added', 'would add')} ${BL_DIR_LINE} to .gitignore`);
+  }
 
   // 2. Each old lock file that no other process holds.
   const deleted = [];
@@ -103,17 +111,26 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
     const kept = lines.filter((l) => !OLD_LOCK_FILES.includes(l.trim()));
     if (kept.length !== lines.length) {
       text = kept.join('\n');
+      write(text);
       log(`${verb('removed', 'would remove')} the old lock lines from .gitignore`);
     }
   }
 
-  // 4. One commit of `.gitignore`.
-  if (text === before) {
+  // 4. One commit of `.gitignore`, also when an earlier run wrote it and
+  // then failed before its commit or in it.
+  const leftOver = text === before && uncommitted(root, '.gitignore');
+  if (text === before && !leftOver) {
     if (deleted.length === 0 && skipped.length === 0) log('nothing to do');
     return { deleted, skipped, commit: null };
   }
+  if (leftOver) log(`${verb('commits', 'would commit')} the .gitignore an earlier run left uncommitted`);
   if (dryRun) return { deleted, skipped, commit: null };
-  atomicWriteFile(root, gitignorePath, text);
   const commit = await commitPaths(root, ['.gitignore'], 'chore: S-1495 lock files live under .bl/');
   return { deleted, skipped, commit };
+}
+
+/** Whether `path` in the git work tree `root` differs from HEAD, staged or not. */
+function uncommitted(root, path) {
+  const res = spawnSync('git', ['status', '--porcelain', '--', path], { cwd: root, encoding: 'utf8' });
+  return res.status === 0 && res.stdout.trim() !== '';
 }
