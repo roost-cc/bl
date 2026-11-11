@@ -302,6 +302,15 @@ test(`a bl child given the parent's locked descriptor in ${LOCK_FD_ENV} takes th
       ];
       // Each of its two acquires times out.
       assert.deepEqual(JSON.parse(refused.stdout), [...timedOut, ...timedOut]);
+      // A descriptor open on the lock file but not holding its lock is not the lock.
+      const unlocked = openSync(lockPath, 'r+');
+      try {
+        const waited = child({ [LOCK_FD_ENV]: '3' }, ['ignore', 'pipe', 'pipe', unlocked]);
+        assert.equal(waited.status, 0, waited.stderr);
+        assert.deepEqual(JSON.parse(waited.stdout), [...timedOut, ...timedOut], 'an unlocked descriptor');
+      } finally {
+        closeSync(unlocked);
+      }
     } finally {
       closeSync(other);
     }

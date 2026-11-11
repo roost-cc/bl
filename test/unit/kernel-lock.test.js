@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import fsExt from 'fs-ext';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { adopt, holderOf, release, tryLock, tryLockOnce } from '../../src/kernel-lock.js';
 import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
@@ -146,6 +147,61 @@ test('adopt registers a descriptor open on the lock file, and refuses any other'
   assert.equal(again.taken, handle, 'a take re-enters the adopted handle');
   release(again.taken);
   assert.equal(holderOf(path), process.pid, 'the adopted depth is never released');
+});
+
+test('adopt_rejects_unlocked_descriptor_while_another_process_holds_lock: adopt registers only a descriptor that holds the lock', async () => {
+  const dir = mkTempDir('bl-kernel-lock-');
+  const cases = [
+    [
+      'an unlocked descriptor on the file while another process holds it',
+      async (path) => {
+        const holder = await holdLockInChild(path);
+        return { fd: openSync(path, 'r+'), holder, end: () => holder.kill() };
+      },
+      false,
+    ],
+    [
+      'a descriptor on another file',
+      async (path) => {
+        writeFileSync(`${path}.other`, '');
+        return { fd: openSync(`${path}.other`, 'r+') };
+      },
+      false,
+    ],
+    ['a descriptor that is not open', async () => ({ fd: 987654 }), false],
+    [
+      'the locked descriptor a parent passes down (bl side, D5)',
+      async (path) => {
+        const fd = openSync(path, 'w');
+        fsExt.flockSync(fd, 'exnb');
+        return { fd };
+      },
+      true,
+    ],
+    [
+      'a second adoption of a path already adopted',
+      async (path) => {
+        const fd = openSync(path, 'w');
+        fsExt.flockSync(fd, 'exnb');
+        assert.ok(adopt(path, fd), 'the first adoption');
+        return { fd, adoptedBefore: true };
+      },
+      false,
+    ],
+  ];
+  for (const [i, [name, arrange, adopted]] of cases.entries()) {
+    const path = join(dir, `case${i}.lock`);
+    const { fd, holder, end, adoptedBefore } = await arrange(path);
+    try {
+      const handle = adopt(path, fd);
+      assert.equal(handle != null, adopted, name);
+      if (holder) assert.equal(holderOf(path), holder.pid, `${name}: the other process still holds it`);
+      else if (!adopted && !adoptedBefore) assert.equal(holderOf(path), null, `${name}: nothing registered`);
+      else assert.equal(holderOf(path), process.pid, `${name}: this process holds it`);
+    } finally {
+      await end?.();
+    }
+  }
 });
 
 test('an adopted descriptor is close-on-exec, so the process’s own children do not inherit it', () => {

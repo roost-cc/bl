@@ -50,7 +50,8 @@ export function releaseLock(backlogRoot) {
 /**
  * Adopt the locked descriptor a bl parent passed down for `lockPath` (D5), at
  * most once. A descriptor open on another file (the parent locked another
- * backlog root) is not adopted, and this process takes its lock as usual.
+ * backlog root), or one that does not hold the lock while another process
+ * does, is not adopted, and this process takes its lock as usual.
  */
 function adoptInherited(lockPath) {
   const raw = process.env[LOCK_FD_ENV];

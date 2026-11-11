@@ -153,7 +153,10 @@ export function holderOf(path) {
 /**
  * Register a descriptor this process inherited from its parent (D5) as its
  * handle for `path`, when `fd` is open on that file (the same device and
- * inode). Else return null and register nothing. The handle starts at depth 1,
+ * inode) and holds its lock. Else return null and register nothing. A
+ * try-lock on `fd` proves the lock: it succeeds on the descriptor that holds
+ * it (or takes a free lock), and fails while another descriptor holds it.
+ * A path this process already holds is not adopted again. The handle starts at depth 1,
  * which nobody releases: the process holds the lock for the rest of its life.
  * The descriptor is made close-on-exec, as Node opens every file, so the
  * process's own children (git, a formatter) do not hold the lock after it ends.
@@ -164,10 +167,12 @@ export function holderOf(path) {
  */
 export function adopt(path, fd) {
   const key = resolve(path);
+  if (held.has(key)) return null;
   try {
     const open = fstatSync(fd, { bigint: true });
     const file = statSync(key, { bigint: true });
     if (open.dev !== file.dev || open.ino !== file.ino) return null;
+    flockSync(fd, 'exnb');
   } catch {
     return null;
   }
