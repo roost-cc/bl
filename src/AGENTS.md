@@ -285,7 +285,9 @@ worktree).
   holder ends, and its file stays. `runHeadlessSession` and `launchSession`
   take it with one try-lock (`session.js` `takeSessionLock`): a lock this
   process holds is reused, and a lock another process holds refuses the
-  session with that process's PID, the interactive launch included. A review
+  session with that process's PID, the interactive launch included. The
+  session lock and the work unit lock (`unit-lock.js`, F-122 D2, below) take
+  through one helper, `lock.js` `takeDirLock` (F-122 D6). A review
   round's `holdReviewLocks` takes it the same way (the unit directory, plus
   any reviewed worktree outside it). Every other check asks `holderOf` (D6):
   `isSessionRunning(backlogRoot, unitDir)` and `bl merge`'s cleanup. A check that leaves
@@ -3767,10 +3769,28 @@ which deletes retired lock files. The lock files stay and collect: one per spec 
 each repo's git common dir one main sync lock and one `bl-prepare-<branch>.lock` per branch. No lock
 wait sleeps synchronously. Every lock file bl keeps in a backlog lives under `.bl/` (S-1495),
 which the backlog's `.gitignore` ignores, so git never sees one and bl never asks git to ignore a
-lock file: the backlog lock, one session lock per unit directory and one report lock per output
-directory in `.bl/lock/` (`lock.js` `LOCK_DIR`, `dirLockPath`), and the run locks in `.bl/run/`.
-`dirLockPath` names a directory's lock file from a hash of its path with links resolved
-(`canonical`), so a unit directory reached through a link has the same lock as its real path.
+lock file: the backlog lock, one session lock per unit directory, one work unit lock per work
+unit directory and one report lock per output directory in `.bl/lock/` (`lock.js` `LOCK_DIR`,
+`dirLockPath`), and the run locks in `.bl/run/`. `dirLockPath` names a directory's lock file from
+a hash of its path with links resolved (`canonical`), so a unit directory reached through a link
+has the same lock as its real path.
+
+The work unit lock (`src/unit-lock.js`, F-122 D2) is one kernel lock per work unit directory
+(`stories/S<n>-…/`, `features/F<n>-…/`), `unit-<dir>-<hash>.lock` (`unitLockPath`). A verb that
+holds a session on a work unit takes it at start with `takeUnitLocks(config, units, info)`: the
+lock of each unit's directory and, for a feature, of each of its stories' directories
+(`unitLockDirs`, read fresh from disk), all or nothing, with one try-lock each through
+`takeDirLock`. It never waits. If another process holds one, it releases what it took and
+refuses with `<id> is locked by a live bl process (pid <n>): <lock path>`. A lock this process
+holds is taken again, one depth deeper. On success it returns `release` and `scope`; `scope()`
+reads `unitLockDirs` again and returns the backlog-relative directories, so a story tagged to the
+feature after the take is in the verb's commit scope (F-122 D3). The work unit lock sits beside
+the spec lock and does not replace it: the spec lock guards one write and waits up to 60 s, and
+the work unit lock is held for a whole session. Lock order: a verb takes its work unit locks
+first, and the backlog lock and the spec lock inside them, one write at a time. A work unit lock
+never waits, so it cannot wait in a cycle with them. Short commands (`bl new`, `bl sync --commit`,
+`bl block`, `bl done`, `bl approve`, `bl task`) neither take nor check it, because a session's
+agent runs them as children, and a check would find the parent's lock.
 `bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
 [--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
 before S-1495. It writes `.bl/` to `.gitignore` before it deletes anything. It deletes each old

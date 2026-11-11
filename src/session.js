@@ -31,8 +31,8 @@ import {
   unitDirOf,
   dictionariesOf,
 } from './config.js';
-import { findExistingWorktree, isSessionRunning, reposForStory, sessionLockPath } from './story.js';
-import { ensureLockDir } from './lock.js';
+import { findExistingWorktree, isSessionRunning, reposForStory } from './story.js';
+import { takeDirLock } from './lock.js';
 import { reassertTabTitle, unitTitleFields, updateTabTitle } from './tab-title.js';
 import { ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
 import { resolvePermissionScopes, loadLocalTools } from './permissions.js';
@@ -48,7 +48,7 @@ import { renderToolGuide, renderFragment } from './tool-guide.js';
 import { renderSessionStack, sessionStackOf } from './session-stack.js';
 import { resolveLocale, fragmentCandidates } from './locale.js';
 import { awaitLock } from './lock-wait.js';
-import { release, tryLock, tryLockOnce } from './kernel-lock.js';
+import { release, tryLockOnce } from './kernel-lock.js';
 import { syncMain, reportMainSync } from './main-sync.js';
 import { outcomePath, readOutcomeFile } from './outcome.js';
 
@@ -685,7 +685,7 @@ export function runStagePlugins(
 
 /**
  * Take the session lock of `dir` (`sessionLockPath`: one per unit directory,
- * F-60 D3, in the backlog's `.bl/lock/`) with one try-lock (`kernel-lock.js`).
+ * F-60 D3, in the backlog's `.bl/lock/`) through `takeDirLock` (`lock.js`).
  * A lock this process already holds (a review round holds every unit
  * directory's for the whole round) is reused, one depth deeper. A lock another process holds refuses the session
  * with that process's PID. A lock file that cannot be opened refuses the
@@ -695,19 +695,10 @@ export function runStagePlugins(
  * @param {string} backlogRoot
  * @param {string} dir
  * @param {string} info  one line that names the session
- * @returns {{ refused: string } | { refused: null, release: () => void }}
+ * @returns {ReturnType<typeof takeDirLock>}
  */
 export function takeSessionLock(backlogRoot, dir, info) {
-  const path = sessionLockPath(backlogRoot, dir);
-  let got;
-  try {
-    ensureLockDir(backlogRoot);
-    got = tryLock(path, info);
-  } catch (e) {
-    return { refused: `${path} could not be opened: ${e.message}` };
-  }
-  if (got.holder != null) return { refused: `a live session (pid ${got.holder}) holds ${path}` };
-  return { refused: null, release: () => release(got.taken) };
+  return takeDirLock(backlogRoot, 'session', dir, info);
 }
 
 /**
