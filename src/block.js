@@ -6,7 +6,10 @@
  * duplicate and an edge that would close a cycle in the deadlock graph, and
  * `add`, `remove` and `list --fix` write the file sorted and commit it alone
  * under the backlog lock. `bl task --gate` (F-65 D2) files its edge through
- * the same check and write (`writeEdge`) and commits it with the task file.
+ * the same check and write (`writeEdge`) and commits it with the task file;
+ * `bl new` writes a new story's dependency edges through it (`writeEdges`),
+ * and a story that joins a feature has its run edges with the feature's
+ * stories turned into order edges (`orderJoinedEdges`, F-111 D5).
  * The backlog is pulled first (`commandPullsBacklog`). Agents may not run
  * `remove` (`MODE_DENY`, F-66 A7): lifting a hold is the operator's.
  */
