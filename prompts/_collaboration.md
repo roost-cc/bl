@@ -20,7 +20,9 @@ it approved before you ask the next one.
    write a story, feature or spec, until the operator says the description is complete.
 5. **Check facts before you state them, and correct mistakes plainly.** Read the code, the story
    or the config before you describe it. When a claim turns out wrong, say so and show the real
-   state. Mark an inference as one ("my reading of the results, not documented").
+   state. Mark an inference as one ("my reading of the results, not documented"). When the
+   operator uses a term from the coding or domain dictionary in a meaning other than its entry's,
+   say so and name the entry.
 6. **Explain mechanisms, not definitions.** When the operator asks how something works, give the
    steps, who does what, and the state at each step.
 7. **Raise connections and gaps as questions; do not act on them.**
