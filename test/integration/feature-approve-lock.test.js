@@ -8,6 +8,7 @@ import { LOCK_FILE } from '../../src/lock.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { fm } from '../helpers/feature-fixture.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
+import { holdLock } from '../helpers/hold-lock.js';
 
 /** A git backlog with an `origin` and F-1 (`status`) holding the refined S-1. */
 function approveBacklog(status) {
@@ -97,12 +98,12 @@ for (const [label, status, exit, said] of [
       // No origin: the pull before the command would wait for the lock first.
       initGitBacklog(dir);
       const path = join(dir, APPROVE_REL);
-      writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
+      const held = holdLock(join(dir, LOCK_FILE));
       const run = startBlBehindLock(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
       await run.blocked;
       writeFileSync(path, readFileSync(path, 'utf8').replace('status: refined', `status: ${status}`));
       git(dir, 'commit', '-q', '-m', 'another command', '--', APPROVE_REL);
-      rmSync(join(dir, LOCK_FILE));
+      held.release();
       const r = await run.closed;
       assert.equal(r.status, exit, r.stderr);
       assert.match(r.stderr, said);

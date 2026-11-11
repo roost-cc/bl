@@ -13,7 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { lockOwnerVisible, startBlBehindLock } from '../helpers/run-bl.js';
@@ -22,6 +22,8 @@ import { LOCK_FILE } from '../../src/lock.js';
 import { mainSyncLockPath } from '../../src/main-sync.js';
 import { waitingForLock } from '../../src/lock-wait.js';
 import { specLockPath } from '../../src/spec-file.js';
+import { holderOf } from '../../src/kernel-lock.js';
+import { holdLock } from '../helpers/hold-lock.js';
 
 /** A git backlog with an `origin`, so `bl refine` pulls first, and the story S-1. */
 function refineBacklog() {
@@ -77,7 +79,7 @@ test('Ctrl+C while bl waits for the main sync lock exits 130 within 1 s and remo
     const waiting = waitingForLock(lockPath, process.pid);
     assert.equal(r.stderr.split(waiting).length - 1, 1, `said once: ${r.stderr}`);
     assert.doesNotMatch(r.stderr, /^Story/m, 'no refine session started');
-    assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'bl removed the backlog lock it took');
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null, 'the backlog lock bl took is free');
     assert.equal(readFileSync(lockPath, 'utf8'), ours, 'the test’s main sync lock is untouched');
   } finally {
     cleanup();
@@ -107,14 +109,13 @@ test('Ctrl+C while bl waits for the backlog lock exits 130 within 1 s and leaves
   const { dir, cleanup } = refineBacklog();
   try {
     const lockPath = join(dir, LOCK_FILE);
-    const ours = `${process.pid}\n${new Date().toISOString()}\n`;
-    writeFileSync(lockPath, ours);
-    const r = await interrupt(dir, undefined);
+    const held = holdLock(lockPath);
+    const r = await interrupt(dir, undefined).finally(held.release);
     assert.equal(r.status, 130, `signal ${r.signal}: ${r.stderr}`);
     assert.ok(r.ms < 1000, `bl took ${r.ms} ms to exit`);
     const waiting = waitingForLock(LOCK_FILE, process.pid);
     assert.equal(r.stderr.split(waiting).length - 1, 1, `said once: ${r.stderr}`);
-    assert.equal(readFileSync(lockPath, 'utf8'), ours, 'the test’s backlog lock is untouched');
+    assert.equal(readFileSync(lockPath, 'utf8'), held.content, 'the test’s backlog lock is untouched');
   } finally {
     cleanup();
   }
@@ -145,7 +146,7 @@ test('Ctrl+C while bl waits for a spec lock exits 130 within 1 s and leaves the 
     const waiting = waitingForLock(lockPath, process.pid);
     assert.equal(r.stderr.split(waiting).length - 1, 1, `said once: ${r.stderr}`);
     assert.equal(readFileSync(story, 'utf8'), before, 'the story is not written');
-    assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'bl removed the backlog lock it took');
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null, 'the backlog lock bl took is free');
     assert.equal(readFileSync(lockPath, 'utf8'), ours, 'the test’s spec lock is untouched');
   } finally {
     rmSync(lockPath, { force: true });

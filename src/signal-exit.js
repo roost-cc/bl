@@ -4,10 +4,12 @@
  * Node's default action for SIGINT and SIGTERM ends the process without the
  * `exit` event. `exitOnSignal` replaces it with `process.exit(130)` (SIGINT)
  * or `process.exit(143)` (SIGTERM), so the `exit` listeners run and see the
- * code. Only a process that needs this calls it: `lock.js` when it loads (to
- * remove its lock files), and `tab-title.js` on the first title (to end the
- * title as `interrupted`, S-1393). Any other `bl` command keeps Node's
- * default action. The handlers are registered once per process.
+ * code. `bl.js` calls it when `bl` starts, so every command exits 130 or 143
+ * and runs its `exit` listeners (the throwaway worktree of `bl merge`, a
+ * session's lock file). `tab-title.js` calls it on the first title too (to
+ * end the title as `interrupted`, S-1393). The backlog lock needs none: the
+ * kernel frees it when the process ends (F-104). The handlers are registered
+ * once per process.
  *
  * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
  * `raiseSignal` raises one of them again after a synchronous child ended on
@@ -54,7 +56,7 @@ export function interruptOf(r) {
  * Take the action of an interrupt (`INTERRUPT_SIGNALS`) that ended a
  * synchronous child. Node runs no listener during a synchronous wait, so a
  * caller that sees the child end on one of them raises it here: the listeners
- * run now (`lock.js` removes its locks and exits 130 or 143), or Node's
+ * run now (`exitOnSignal`'s exit 130 or 143, and the `exit` listeners), or Node's
  * default action ends the process when there are none. Any other signal is
  * not raised. Returns whether `signal` was raised (a listener may let the
  * process go on).

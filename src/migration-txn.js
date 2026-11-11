@@ -68,7 +68,7 @@ export async function applyMigration(config, { apply, message, commit, commitCon
   };
 
   // A Ctrl-C (or SIGTERM) reaches Node only between synchronous steps, and
-  // the signal-exit.js handler (registered by lock.js) then exits before the
+  // the signal-exit.js handler (registered by bl.js) then exits before the
   // catch below runs: restore first.
   const onSignal = () => console.error(`migration interrupted${restore()}`);
   process.prependListener('SIGINT', onSignal);

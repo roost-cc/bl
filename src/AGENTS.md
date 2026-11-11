@@ -300,7 +300,8 @@ worktree).
 Every frontmatter block in the backlog is YAML under the failsafe schema (F-62 D1), read
 only by `parseFrontmatter` and written only by `serializeFrontmatter` (`config.js`), both
 through the `yaml` package, bl's one runtime dependency (pinned, `package-lock.json`
-committed; `bin/bl` stops with `npm ci --prefix <bl>` when `node_modules` is missing).
+committed; `bin/bl` stops with `npm ci --prefix <bl>` when `fs-ext`'s native module is
+missing, which also catches an install from before `fs-ext`).
 Every scalar is a string (`points: 5` reads `"5"`, an empty `key:` reads `""`); mappings and
 sequences are objects and arrays at any depth. The writer keeps the keys in object order,
 writes a sequence of scalars in flow style (`[S-1, S-2]`, `[]` when empty), mappings and
@@ -2530,8 +2531,9 @@ side` then records `in_progress` by `side` in its log and sets `found_by:`
 - **Commit.** One hold of the backlog lock covers `bl new`, the marks, the
   change document and one `syncAndCommit` of the story directory and the
   change document: `chore: add S-<n> (bl side, found by <id>)`. The `bl new`
-  child works under the parent's lock (`BL_LOCK_HOLDER`, `lock.js`), so no
-  other bl commits a half-made story.
+  child works under the parent's lock: `bl side` passes the locked descriptor
+  as the child's fd 3 and names it in `BL_LOCK_FD`, and the child adopts it
+  (`lock.js`, F-104 D5). So no other bl commits a half-made story.
 - **No dependency edge** to the `--from` story: its run edge would then hold
   `bl run <from> --resume` (`heldBy`) until the side story merged. If the source
   cannot merge without the side change, that is an escalation.
@@ -3081,10 +3083,10 @@ bl's prompts and plugin commands use, not a new format.
   keeps the escalated title). Otherwise it sets the status from the exit code (`ended` for 0,
   `interrupted` for 130 or 143, `failed (exit N)` otherwise), unsets `next` and sends the
   title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
-  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `lock.js` registers when it loads:
+  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `bl.js` registers when `bl` starts:
   they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
-  registered once per process. A command that sets no title and loads no `lock.js` keeps
-  Node's default signal action.
+  registered once per process. A process that loads `tab-title.js` without `bl.js` and sets no
+  title keeps Node's default signal action.
 - The title width only grows while the process runs: `showTabTitle` pads a shorter title with
   trailing spaces to the widest title shown, so the tmux status bar does not move. A final
   title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`
@@ -3725,16 +3727,19 @@ turns. A command that finds the lock held by a live process says so once on stde
 (`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
 60 s pass (F-104 D2). The wait is `awaitLock` (`src/lock-wait.js`, F-105 W1), which awaits a
 timer between tries; on a timeout `bl` names the holder and exits 1, and never tells anyone to
-remove the lock file. The lock is re-entrant within a process. As the spec lock is, it is created whole
-and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock name never
-exists without its holder's pid and two processes cannot both hold it. The main sync lock wait
+remove the lock file. The lock is re-entrant within a process. It is a kernel lock (`flock(2)`
+through `src/kernel-lock.js`, F-104 K1): the kernel frees it when the holder closes the
+descriptor or ends, even by SIGKILL, so a killed holder leaves no lock. The file stays (D3), and
+the PID in it is information only (D4): the holder writes it after it takes the lock. A `bl`
+child under its parent's lock (`bl new` under `bl side`) adopts the descriptor its parent passed
+in `BL_LOCK_FD` (D5). The main sync lock wait
 (`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
 the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
 The prepare-lock wait (`session.js` `prepareWorktreeOnce`) says so the same way and has no
 deadline, because the lock is held while bootstrap and `workon` plugins run. Every lock wait is
 awaited: the backlog, spec, main sync and prepare lock waits all go through `awaitLock`, so one
-Ctrl+C during any of them runs the SIGINT listener at once and exits 130. The `exit` listener in
-`lock.js` removes only the backlog lock. A Ctrl+C while `prepareWorktreeOnce` runs its async
+Ctrl+C during any of them runs the SIGINT listener (`exitOnSignal`, which `bl.js` registers
+when `bl` starts) at once and exits 130. A Ctrl+C while `prepareWorktreeOnce` runs its async
 `fn` leaves `bl-prepare-*.lock` with a dead pid, and the next preparer reclaims it. No lock
 wait sleeps synchronously. The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer
 too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every

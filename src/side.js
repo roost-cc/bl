@@ -72,7 +72,7 @@ import { updateSpecFile } from './spec-file.js';
 import { ensureChange } from './change-doc.js';
 import { unitFiles } from './backlog-graph.js';
 import { insertAfter } from './template.js';
-import { withLock } from './lock.js';
+import { LOCK_FD_ENV, withLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
 
 const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
@@ -214,11 +214,12 @@ function readSideBody(bodyFile) {
 
 /**
  * Run `bl new … --no-sync --json` as a child, under this process's backlog
- * lock (`BL_LOCK_HOLDER`), the body on its stdin, and return its JSON record.
+ * lock: `lock`'s locked descriptor is the child's fd 3, named in `BL_LOCK_FD`
+ * (F-104 D5). The body goes on its stdin; return its JSON record.
  * The body and the JSON go through files: a Node child cannot use a socket
  * for its stdio inside Codex's sandbox (`spawnSyncFiles`, F-70 D1).
  */
-function newStory({ feature, component, title, points, type, body }) {
+function newStory({ feature, component, title, points, type, body, lock }) {
   const argv = [
     BL_PATH,
     'new',
@@ -232,9 +233,9 @@ function newStory({ feature, component, title, points, type, body }) {
     '--json',
   ];
   const res = spawnSyncFiles(process.execPath, argv, {
-    stdio: [body != null ? 'pipe' : 'ignore', 'pipe', 'inherit'],
+    stdio: [body != null ? 'pipe' : 'ignore', 'pipe', 'inherit', lock.fd],
     ...(body != null ? { input: body } : {}),
-    env: { ...process.env, BL_LOCK_HOLDER: String(process.pid) },
+    env: { ...process.env, [LOCK_FD_ENV]: '3' },
     encoding: 'utf8',
   });
   if (res.status !== 0) fail(`bl side: bl new failed (exit ${res.status ?? res.signal}).`);
@@ -281,10 +282,10 @@ function undoOnFailure() {
     }
     if (hint) console.error(hint);
   };
-  // Ahead of lock.js's `exit` listener, which removes the lock file (also
-  // after a signal: the signal-exit.js handler calls process.exit). So the undo
-  // runs while the backlog lock is still held and no other bl sees (or commits)
-  // the half-made story.
+  // An `exit` listener runs (also after a signal: the signal-exit.js handler
+  // calls process.exit) before the process ends and the kernel frees the
+  // backlog lock (F-104). So the undo runs while the lock is still held and no
+  // other bl sees (or commits) the half-made story.
   process.prependListener('exit', run);
   return {
     add: (what, how, fn) => steps.push({ what, how, fn }),
@@ -456,7 +457,7 @@ export async function main(argv) {
   let created;
   let storyId;
   let found;
-  await withLock(cfg.backlogRoot, async () =>
+  await withLock(cfg.backlogRoot, async (lock) =>
     exitOnThrow(async () => {
       // The worktree prepared before the lock may be gone: another bl side that
       // failed in the meantime removes one it made and nobody had committed to.
@@ -472,7 +473,7 @@ export async function main(argv) {
         'Compare them with `git -C <backlog> status`, and remove or restore what is left.',
         backlogUndo(cfg.backlogRoot, featureDir),
       );
-      created = newStory({ feature, component, title: title.trim(), points: points.trim(), type, body });
+      created = newStory({ feature, component, title: title.trim(), points: points.trim(), type, body, lock });
       storyId = created.id;
       const indexPath = join(cfg.backlogRoot, created.path);
       found = findStoryDir(normalizeId(storyId), cfg);

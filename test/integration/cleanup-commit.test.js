@@ -32,6 +32,7 @@ import { parseChange } from '../../src/change-doc.js';
 import { extractSection } from '../../src/feature.js';
 import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
+import { holderOf } from '../../src/kernel-lock.js';
 
 const GIT_ENV = '-c user.email=t@t -c user.name=t';
 
@@ -187,6 +188,8 @@ ${reviewLog ?? ''}
     mkdirSync(backlogUpstream, { recursive: true });
     execSync(`git init -q --bare -b main "${backlogUpstream}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
     execSync(`git init -q -b main "${backlog}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // A real backlog ignores its lock file (`bl init`), which stays after a release (F-104 D3).
+    writeFileSync(join(backlog, '.git', 'info', 'exclude'), '.bl-new.lock\n');
     execSync(`git -C "${backlog}" config user.email t@t`, { stdio: ['ignore', 'pipe', 'pipe'] });
     execSync(`git -C "${backlog}" config user.name t`, { stdio: ['ignore', 'pipe', 'pipe'] });
     execSync(`git -C "${backlog}" add -A`, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -826,7 +829,7 @@ test('a bl story runs the mark-done sync as a child of its merged checkout', asy
     execSync(`git -C "${backlog}" status --porcelain`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
     '',
   );
-  assert.equal(existsSync(join(backlog, '.bl-new.lock')), false);
+  assert.equal(holderOf(join(backlog, '.bl-new.lock')), null);
 
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
   assert.equal(logStatusOf('story', fm), 'done');

@@ -58,7 +58,7 @@ const BLOCKERS_BEFORE = `{
 function oldBacklog() {
   const dir = mkTempDir('bl-migrate-depends-on-');
   const files = {
-    '.gitignore': '.workon.lock\n.bl/\n',
+    '.gitignore': '.workon.lock\n.bl-new.lock\n.bl/\n',
     'flow.json': readFileSync(FLOW_TEMPLATE, 'utf8'),
     'backlog.json': `${JSON.stringify({ agent: [{ agent: 'claude' }], review_agent: [{ agent: 'claude' }], effort: { refine: 'high', review: 'high', default: 'high' }, worktrees: '../worktrees', repos: { bl: { path: '../bl', deployable: false, update_tests: [] } } }, null, 2)}\n`,
     'blockers.json': BLOCKERS_BEFORE,

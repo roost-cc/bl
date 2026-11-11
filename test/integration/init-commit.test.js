@@ -12,6 +12,7 @@ import { AGENT_CONFIG, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { GIT_ENV, addOrigin, git, statusLines } from '../helpers/git-backlog.js';
+import { holdLock } from '../helpers/hold-lock.js';
 
 /** A new backlog: a backlog.json with no "repos" yet. */
 function newBacklog() {
@@ -193,12 +194,12 @@ test('init_write_and_commit_share_lock: bl init writes nothing until it holds th
   git(dir, 'add', '.');
   git(dir, 'commit', '-q', '-m', 'base');
   const json = readFileSync(join(dir, 'backlog.json'), 'utf8');
-  writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
+  const held = holdLock(join(dir, LOCK_FILE));
   const run = startBlBehindLock(['init'], { cwd: dir, env: { ...GIT_ENV, HOME: mkTempDir('bl-init-home-') } });
   await run.blocked;
   assert.equal(readFileSync(join(dir, 'backlog.json'), 'utf8'), json, 'nothing written before the lock');
   assert.equal(existsSync(join(dir, '.gitignore')), false);
-  rmSync(join(dir, LOCK_FILE));
+  held.release();
   const r = await run.closed;
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(statusLines(dir), []);

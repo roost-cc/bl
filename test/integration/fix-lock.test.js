@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
 import { BL_BIN, lockOwnerVisible, startBlBehindLock } from '../helpers/run-bl.js';
 import { acquireLock, LOCK_FILE, releaseLock } from '../../src/lock.js';
+import { holderOf } from '../../src/kernel-lock.js';
 
 // S-866: `bl fix` holds the backlog lock, part of its contract. It has no
 // code to repair since F-77 D3 retired `asymmetric-dep`, so it writes
@@ -59,7 +60,7 @@ test('bl fix waits for the backlog lock', async (t) => {
     const r = await within(20_000, 'bl fix after the lock was released', pending);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readFileSync(s3, 'utf8'), before, 'bl fix wrote nothing');
-    assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'lock released');
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null, 'lock released');
   } finally {
     releaseLock(dir);
     cleanup();

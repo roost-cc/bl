@@ -180,7 +180,7 @@ test('applyMigration_failure_before_HEAD_moves_leaves_git_status_clean_and_HEAD_
           put(dir, 'idx.md', 'committed\n');
           put(dir, 'gen/new/index.md', 'gen\n');
           stage(dir, [...extraPaths, 'idx.md', 'gen/new/index.md']);
-          // The handler applyMigration put first (lock.js's own would exit).
+          // The handler applyMigration put first (bl.js's exitOnSignal would exit).
           if (signal) process.listeners(signal)[0](signal);
           if (signal || moment === 'commit throws') throw new Error('injected');
           return { committed: false, paths: extraPaths, error: 'injected' };

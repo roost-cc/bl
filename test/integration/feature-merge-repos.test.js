@@ -319,7 +319,7 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
   // The merge decides under the lock, so it must find that SHA and keep it
   // instead of installing main's tip.
   const { spawnSync } = await import('child_process');
-  const { unlinkSync } = await import('fs');
+  const { holdLock } = await import('../helpers/hold-lock.js');
   const { BL_BIN } = await import('../helpers/run-bl.js');
   const { spawnToFiles } = await import('../helpers/spawn-files.js');
   const { LOCK_FILE } = await import('../../src/lock.js');
@@ -370,8 +370,7 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
     g(dir, 'add', '.');
     g(dir, 'commit', '-q', '-m', 'backlog');
 
-    const lockPath = join(dir, LOCK_FILE);
-    writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n`, { flag: 'wx' });
+    const held = holdLock(join(dir, LOCK_FILE));
     const run = spawnToFiles(BL_BIN, ['merge', 'F-1'], {
       cwd: dir,
       env: { ...process.env, BL_BACKLOG_DIR: dir, ...env },
@@ -406,7 +405,7 @@ test('concurrent feature no-branch cleanup keeps the exact SHA written after its
       fpath,
       readFileSync(fpath, 'utf8').replace(/^review_rounds_max:/m, 'commit:\n  code: exact111\nreview_rounds_max:'),
     );
-    unlinkSync(lockPath);
+    held.release();
     assert.equal(await exited, 0, (await run.closed).stderr);
 
     assert.notEqual(g(origin, 'rev-parse', '--short', 'main'), 'exact111', "main's tip is not the SHA on record");

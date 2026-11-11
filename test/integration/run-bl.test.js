@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { lockOwnerVisible, startBlBehindLock } from '../helpers/run-bl.js';
 import { LOCK_FILE } from '../../src/lock.js';
+import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 
 // S-877: startBlBehindLock must observe a live lock this process owns, must
 // settle both promises for every way the child ends, and must not reject
@@ -22,8 +23,7 @@ function backlog() {
   });
 }
 
-const holdLock = (dir, pid = process.pid) =>
-  writeFileSync(join(dir, LOCK_FILE), `${pid}\n${new Date().toISOString()}\n`);
+const holdBacklogLock = (dir) => holdLock(join(dir, LOCK_FILE));
 
 /** An executable node script in `dir` that never writes and never exits. */
 function silentBin(dir, body) {
@@ -37,10 +37,10 @@ test('startBlBehindLock observes a live lock before its timeout', async (t) => {
   if (!lockOwnerVisible(t)) return;
   const { dir, cleanup } = backlog();
   try {
-    holdLock(dir);
+    const held = holdBacklogLock(dir);
     const run = startBlBehindLock(['fix', '--story', 'S-1'], { cwd: dir });
     await run.blocked;
-    unlinkSync(join(dir, LOCK_FILE));
+    held.release();
     const r = await run.closed;
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.signal, null);
@@ -49,31 +49,38 @@ test('startBlBehindLock observes a live lock before its timeout', async (t) => {
   }
 });
 
-test('startBlBehindLock refuses a lock this process does not own', () => {
+test('startBlBehindLock refuses a lock this process does not hold', async () => {
   const cases = [
     { name: 'no lock file', setup: () => {}, found: /found "ENOENT"/ },
     {
-      name: 'lock held by another pid',
-      setup: (dir) => holdLock(dir, process.ppid),
-      found: new RegExp(`found "${process.ppid}\\\\n`),
+      // A kernel lock is held on a descriptor: a file that names us is not enough.
+      name: 'a lock file that names this process, held by nobody',
+      setup: (dir) => writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`),
+      found: new RegExp(`found "${process.pid}\\\\n`),
+    },
+    {
+      name: 'lock held by another process',
+      setup: async (dir) => (await holdLockInChild(join(dir, LOCK_FILE))).kill,
+      found: /found "\d+\\n/,
     },
     {
       // The child would look for the lock under the overridden root.
       name: 'BL_BACKLOG_DIR overridden away from the held lock',
       setup: (dir) => {
-        holdLock(dir);
         mkdirSync(join(dir, 'elsewhere'));
+        return holdBacklogLock(dir).release;
       },
       env: (dir) => ({ BL_BACKLOG_DIR: join(dir, 'elsewhere') }),
-      found: /elsewhere\/\.bl-new\.lock must name this process .* found "ENOENT"/,
+      found: /must hold .*elsewhere\/\.bl-new\.lock, found "ENOENT"/,
     },
   ];
   for (const c of cases) {
     const { dir, cleanup } = backlog();
+    const release = await c.setup(dir);
     try {
-      c.setup(dir);
       assert.throws(() => startBlBehindLock(['help'], { cwd: dir, env: c.env?.(dir) }), c.found, c.name);
     } finally {
+      await release?.();
       cleanup();
     }
   }
@@ -116,8 +123,8 @@ const failures = [
 for (const c of failures) {
   test(`startBlBehindLock settles after the child ${c.name}`, async () => {
     const { dir, cleanup } = backlog();
+    const held = holdBacklogLock(dir);
     try {
-      holdLock(dir);
       const run = startBlBehindLock(c.args ?? [], {
         cwd: dir,
         bin: c.bin?.(dir),
@@ -131,6 +138,7 @@ for (const c of failures) {
       assert.equal(r.status, c.status, r.stderr);
       assert.equal(r.signal, c.signal);
     } finally {
+      held.release();
       cleanup();
     }
   });

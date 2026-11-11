@@ -16,11 +16,15 @@ import { append as logAppend } from './log.js';
 import { info, warn, editorCommand, openTmuxWindow } from './config.js';
 import { captureTmuxWindowId, renderTabTitle, unitTitleFields } from './tab-title.js';
 import { flowForHelp } from './flow.js';
+import { exitOnSignal } from './signal-exit.js';
 
 // Grab the window id the moment bl starts, before any async work, so later
 // tab titles (tab-title.js) target this window even if the user has switched
 // tabs in the meantime.
 captureTmuxWindowId();
+// Ctrl+C and SIGTERM end bl with 130 and 143 through `process.exit`, so its
+// `exit` listeners run (signal-exit.js).
+exitOnSignal();
 
 const argv = process.argv.slice(2);
 const command = argv[0];

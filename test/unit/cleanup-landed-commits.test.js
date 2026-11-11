@@ -20,6 +20,7 @@ import { parseFrontmatter } from '../../src/config.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
+import { holderOf } from '../../src/kernel-lock.js';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 
@@ -94,7 +95,7 @@ for (const [name, onDisk, landed, expected] of [
     assert.deepEqual(fm.commit, expected);
     assert.equal(fm.status, 'in_progress');
     assert.ok(readFileSync(indexPath, 'utf8').endsWith(STORY_BODY), 'body kept');
-    assert.ok(!existsSync(join(root, LOCK_FILE)), 'lock released');
+    assert.equal(holderOf(join(root, LOCK_FILE)), null, 'lock released');
   });
 }
 
@@ -175,7 +176,7 @@ test('persistLandedCommits: a failed write leaves the file intact, throws and re
     /ENOSPC/,
   );
   assert.equal(readFileSync(indexPath, 'utf8'), before);
-  assert.ok(!existsSync(join(root, LOCK_FILE)), 'lock released');
+  assert.equal(holderOf(join(root, LOCK_FILE)), null, 'lock released');
   // The next write still goes through.
   await persistLandedCommits(root, indexPath, { beta: 'bbb2222' });
   assert.deepEqual(readFm(indexPath).commit, {
@@ -190,7 +191,9 @@ test('persistLandedCommits: the real write stages in .bl/tmp and leaves no temp 
     status: 'in_progress',
   });
   await persistLandedCommits(root, indexPath, { alpha: 'aaa1111' });
-  assert.deepEqual(readdirSync(root).sort(), ['.bl', 'index.md']);
+  // The backlog lock's file stays (F-104 D3); the lock itself is free.
+  assert.deepEqual(readdirSync(root).sort(), ['.bl', LOCK_FILE, 'index.md']);
+  assert.equal(holderOf(join(root, LOCK_FILE)), null);
   assert.deepEqual(readdirSync(join(root, '.bl', 'tmp')), []);
 });
 
@@ -228,7 +231,7 @@ test('concurrent --repo merges union their landed SHA maps, including when one p
       alpha: 'aaa1111',
       beta: 'bbb2222',
     });
-    assert.ok(!existsSync(join(root, LOCK_FILE)), 'lock released');
+    assert.equal(holderOf(join(root, LOCK_FILE)), null, 'lock released');
   }
   // Three merges, gamma's write fails: alpha and beta are still recorded,
   // gamma's process fails, and the story file is intact.
@@ -251,7 +254,7 @@ test('concurrent --repo merges union their landed SHA maps, including when one p
     const fm = readFm(indexPath);
     assert.equal(fm.status, 'in_progress');
     assert.deepEqual(fm.commit, { alpha: 'aaa1111', beta: 'bbb2222' });
-    assert.ok(!existsSync(join(root, LOCK_FILE)), 'lock released');
+    assert.equal(holderOf(join(root, LOCK_FILE)), null, 'lock released');
   }
 });
 
@@ -317,7 +320,7 @@ for (const [name, onDisk, landed, tips, expected] of [
     });
     assert.deepEqual(done.commitMap, expected);
     assert.deepEqual(readFm(indexPath).commit, commitFmShape(expected));
-    assert.ok(!existsSync(join(root, LOCK_FILE)), 'lock released');
+    assert.equal(holderOf(join(root, LOCK_FILE)), null, 'lock released');
   });
 }
 
@@ -354,7 +357,7 @@ test('concurrent no-branch cleanup keeps the SHA written after its initial story
   const fm = readFm(indexPath);
   assert.equal(fm.status, 'done');
   assert.equal(fm.commit, 'exact111');
-  assert.ok(!existsSync(join(root, LOCK_FILE)), 'lock released');
+  assert.equal(holderOf(join(root, LOCK_FILE)), null, 'lock released');
 });
 
 test("persistLandedCommits reads and writes inside the story's spec lock, through its read and write seams", async () => {

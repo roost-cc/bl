@@ -488,8 +488,11 @@ for (const [signal, number] of [
     assert.equal(r.calls.at(-1), 'rename-window\n-t\n@7\n--\nF-2 :  : clean → bl merge\n');
   });
 
-  test(`a process that loads lock.js ends on ${signal} with exit ${number}`, async () => {
-    const r = await signalChild(`await import(src(lock.js)); setInterval(() => {}, 1000);`, signal);
+  test(`a process that calls exitOnSignal, as bl.js does when bl starts, ends on ${signal} with exit ${number}`, async () => {
+    const r = await signalChild(
+      `(await import(src(signal-exit.js))).exitOnSignal(); setInterval(() => {}, 1000);`,
+      signal,
+    );
     assert.deepEqual([r.exitCode, r.exitSignal], [number, null]);
   });
 }

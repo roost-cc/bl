@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { holderOf } from '../../src/kernel-lock.js';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { parseFrontmatter, serializeFrontmatter, worktreeRoot } from '../../src/config.js';
@@ -2198,7 +2199,7 @@ test('sync and answer/run operations serialize story and forge mutations', async
       }
       assert.equal(stories(t).get('S-1').text, before, 'the story is untouched');
       assert.ok(!existsSync(join(t.dir, 'updates')), 'no report written');
-      assert.ok(!existsSync(join(t.dir, '.bl-new.lock')), 'a refused sync took no backlog lock');
+      assert.equal(holderOf(join(t.dir, '.bl-new.lock')), null, 'a refused sync took no backlog lock');
       assert.ok(existsSync(lockPath), "a refused command leaves the holder's lock");
     } finally {
       releasePidLock(lockPath, taken.content);
@@ -2208,7 +2209,7 @@ test('sync and answer/run operations serialize story and forge mutations', async
     assert.equal(ok.refused, undefined);
     assert.deepEqual(ok.unchanged, ['S-1']);
     assert.ok(!existsSync(lockPath), 'run lock released after the sync');
-    assert.ok(!existsSync(join(t.dir, '.bl-new.lock')), 'backlog lock released after the sync');
+    assert.equal(holderOf(join(t.dir, '.bl-new.lock')), null, 'backlog lock released after the sync');
     const merged = await run(t, fakeRunner({ gate: [0] }));
     assert.equal(merged.res.outcomes[0].kind, 'merged');
     assert.ok(!existsSync(lockPath), 'run lock released after the run');
