@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import fsExt from 'fs-ext';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
@@ -227,7 +227,7 @@ test('existing_backlog_ignores_permanent_lock_files: a lock file tryLock creates
     ['a lock file outside any work tree', join(mkTempDir('bl-kernel-lock-'), 'x.lock'), null],
   ];
   for (const [name, path] of cases) {
-    // Twice: only the take that creates the file writes an exclude line.
+    // Twice: only the first take writes an exclude line.
     for (let i = 0; i < 2; i += 1) release(tryLock(path).taken);
     assert.ok(existsSync(path), name);
   }
@@ -237,6 +237,92 @@ test('existing_backlog_ignores_permanent_lock_files: a lock file tryLock creates
   // The linked worktree shares the clone's exclude file, where `/.workon.lock` already is.
   const expected = cases.filter((c) => c[2]).map((c) => c[2]);
   assert.deepEqual(added, expected, 'one line per created file, in the clone-wide exclude file');
+});
+
+/** A git repo with one commit and no ignore rules, and its `info/exclude` path. */
+function bareBacklog() {
+  const repo = mkTempDir('bl-kernel-lock-repo-');
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'commit', '-q', '--allow-empty', '-m', 'base');
+  mkdirSync(join(repo, 'custom'));
+  return { repo, exclude: join(repo, '.git', 'info', 'exclude') };
+}
+
+test('existing_unignored_lock_files_stay_out_of_git_after_try_lock: a lock file that existed before the take', async () => {
+  const { repo, exclude } = bareBacklog();
+  const cases = [
+    ['an existing free lock in the root', '.reports.lock', (p) => release(tryLock(p).taken)],
+    ['an existing free session lock', '.workon.lock', (p) => release(tryLock(p).taken)],
+    ['an existing free custom report lock in a subdirectory', 'custom/.out.lock', (p) => release(tryLock(p).taken)],
+    ['an existing free lock through tryLockOnce', '.once.lock', (p) => release(tryLockOnce(p).taken)],
+    [
+      'an existing lock another descriptor holds',
+      '.held.lock',
+      (p) => {
+        const other = holdLock(p);
+        try {
+          assert.ok('holder' in tryLock(p), 'refused while held');
+        } finally {
+          other.release();
+        }
+      },
+    ],
+  ];
+  for (const [name, rel, take] of cases) {
+    const path = join(repo, rel);
+    writeFileSync(path, '');
+    assert.equal(
+      git(repo, 'status', '--porcelain', '--untracked-files=all', '--', path),
+      `?? ${rel}`,
+      `${name}: untracked before`,
+    );
+    take(path);
+    take(path);
+    assert.equal(git(repo, 'status', '--porcelain', '--untracked-files=all', '--', path), '', name);
+  }
+  const lines = readFileSync(exclude, 'utf8').split('\n');
+  for (const [name, rel] of cases) {
+    assert.equal(lines.filter((l) => l === `/${rel}`).length, 1, `${name}: one exclude line`);
+  }
+});
+
+test('tryLock_repairs_git_exclude_after_transient_failure: a failed exclude write or git command is tried again', () => {
+  const cases = [
+    [
+      'the exclude file cannot be written',
+      (exclude) => {
+        chmodSync(exclude, 0o444);
+        return () => chmodSync(exclude, 0o644);
+      },
+    ],
+    [
+      'git cannot run',
+      () => {
+        const path = process.env.PATH;
+        process.env.PATH = '';
+        return () => {
+          process.env.PATH = path;
+        };
+      },
+    ],
+  ];
+  for (const [name, fail] of cases) {
+    const { repo, exclude } = bareBacklog();
+    const path = join(repo, '.reports.lock');
+    const restore = fail(exclude);
+    try {
+      release(tryLock(path).taken);
+    } finally {
+      restore();
+    }
+    assert.equal(
+      git(repo, 'status', '--porcelain', '--untracked-files=all'),
+      '?? .reports.lock',
+      `${name}: the failed take leaves it`,
+    );
+    release(tryLock(path).taken);
+    assert.equal(git(repo, 'status', '--porcelain', '--untracked-files=all'), '', `${name}: the next take repairs it`);
+  }
 });
 
 test('an adopted descriptor is close-on-exec, so the process’s own children do not inherit it', () => {
