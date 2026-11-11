@@ -168,6 +168,10 @@ function deleteUnderLock(path) {
 
 /** Whether `path` in the git work tree `root` differs from HEAD, staged or not. */
 function uncommitted(root, path) {
-  const res = spawnSync('git', ['status', '--porcelain', '--', path], { cwd: root, encoding: 'utf8' });
+  const res = spawnSync('git', ['status', '--porcelain', '--', path], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   return res.status === 0 && res.stdout.trim() !== '';
 }
