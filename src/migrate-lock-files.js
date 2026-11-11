@@ -15,11 +15,11 @@
  *   2. deletes each old lock file that no other process holds, while it holds
  *      the file's kernel lock itself (`deleteUnderLock`), so nobody takes the
  *      lock between the check and the delete; and the unit directory it
- *      leaves empty (`removeUnitDirIfEmpty`). It
- *      skips, and lists, a file whose kernel lock another process holds; a
- *      rerun tries that file again. A `bl` from before F-104 holds its locks
- *      as PID files, which this step cannot see, so the migration runs only
- *      when no older `bl` runs;
+ *      leaves empty (`removeUnitDirIfEmpty`). It skips, and lists, a file
+ *      whose kernel lock another process holds; a rerun tries that file
+ *      again. A `bl` from before F-104 holds its locks as PID files, which
+ *      this step cannot see, so the migration runs only when no older `bl`
+ *      runs;
  *   3. once a second scan finds no old lock file left, removes the old lock
  *      lines from `.gitignore`;
  *   4. commits `.gitignore` (`commitPaths`) when it is what steps 1 and 3
