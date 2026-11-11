@@ -16,7 +16,7 @@
  * process only.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { execSync, execFileSync, spawnSync } from 'child_process';
 import {
@@ -784,7 +784,8 @@ const CHECK_RUNS = 2;
  *
  * 1. In a throwaway worktree detached at origin/main, `git merge --no-ff` the
  *    branch with the usual message. The worktree is under the worktree root,
- *    where a session stack serves an app.roost.cc worktree's own client. A
+ *    where a session stack serves an app.roost.cc worktree's own client. Its
+ *    throwaway directory has mode 0775, so the stack's nginx can read it. A
  *    conflict means main moved after the integration: stop, and the operator
  *    reruns `bl merge`.
  * 2. With no `plugins`, skip to step 3. Otherwise run the `check` plugins
@@ -822,6 +823,8 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
   const root = worktreeRoot(config);
   mkdirSync(root, { recursive: true });
   const tmp = mkdtempSync(join(root, 'bl-merge-'));
+  // mkdtempSync makes the directory 0700; a session stack's nginx (another uid) must enter it (S-1487).
+  chmodSync(tmp, 0o775);
   const wt = join(tmp, basename(repoPath));
   // Removes the throwaway worktree, once. It also runs on `exit`, because a
   // listener can end bl inside a call: a Ctrl+C during the lock wait of the
