@@ -12,6 +12,7 @@ import {
   outsideBlockers,
   reposForFeature,
   featureRepoOrder,
+  mergeOrder,
   storyLinkFromFeature,
   extractSection,
   sectionHasContent,
@@ -312,6 +313,29 @@ test('featureRepoOrder: bl first when present, then each repo by its first story
     featureRepoOrder([{ id: 'S-1', primaryRepo: 'app', unitRepo: 'km', secondaryRepos: ['docs.acme.com'] }]),
     ['km'],
   );
+});
+
+test('mergeOrder: merge edges put a repo after the repos it waits for; free repos keep the given order', () => {
+  const m = (blocker, unit) => ({ blocker: `F-1:${blocker}`, gate: 'merge', unit: `F-1:${unit}`, until: 'merged' });
+  const names = ['bl', 'ci-cd', 'app'];
+  // No edge: the given order (bl first).
+  assert.deepEqual(mergeOrder(names, []), { order: names, edges: [], cycle: null });
+  // One edge: ci-cd before bl; app stays after them.
+  const one = [m('ci-cd', 'bl')];
+  assert.deepEqual(mergeOrder(names, one), { order: ['ci-cd', 'bl', 'app'], edges: one, cycle: null });
+  // A chain of three: app, then ci-cd, then bl.
+  const chain = [m('ci-cd', 'bl'), m('app', 'ci-cd')];
+  assert.deepEqual(mergeOrder(names, chain).order, ['app', 'ci-cd', 'bl']);
+  // An edge to a repo that is not the feature's is left out.
+  assert.deepEqual(mergeOrder(names, [m('docs', 'bl')]), { order: names, edges: [], cycle: null });
+  // A cycle: no order, and the edges of the cycle, not the free one.
+  const cycle = [m('ci-cd', 'bl'), m('bl', 'ci-cd'), m('bl', 'app')];
+  const res = mergeOrder(names, cycle);
+  assert.equal(res.order, null);
+  assert.deepEqual(res.cycle.map((e) => `${e.blocker} → ${e.unit}`).sort(), [
+    'F-1:bl → F-1:ci-cd',
+    'F-1:ci-cd → F-1:bl',
+  ]);
 });
 
 test('reposForFeature follows featureRepoOrder and reads no feature primary_repo or change document', () => {

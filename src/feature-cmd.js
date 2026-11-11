@@ -57,6 +57,7 @@ import {
   orderStoriesByDeps,
   outsideBlockers,
   featureRepoOrder,
+  mergeOrder,
   reposForFeature,
   LEAD_REPO,
   extractSection,
@@ -64,7 +65,7 @@ import {
   resolveFeaturePlugins,
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
-import { heldLines } from './blockers.js';
+import { featureMergeEdges, heldLines, mergeEdgeLabel, readBlockers } from './blockers.js';
 import {
   ensureWorktree,
   launchSession,
@@ -1757,9 +1758,8 @@ export async function cmdMerge(args, config, feature) {
   const deployable = deployableRepos(config);
 
   const branchName = feature.branch || featureBranchName(feature.featureEntry);
-  // The feature's repos in the one order (F-52 D3): `bl` first, so the
-  // backlog is synced by the new `bl` before a later repo's push gate reads
-  // it (S-864), then each other repo by its first story.
+  // The feature's repos in the one order (F-52 D3): `bl` first, the lead
+  // repo, then each other repo by its first story.
   const names = featureRepoOrder(stories);
   const unknown = names.filter((n) => !config.reposByName[n]);
   if (unknown.length > 0) {
@@ -1772,8 +1772,20 @@ export async function cmdMerge(args, config, feature) {
     console.error(`Feature ${feature.id} has no story with a repo, so there is nothing to merge.`);
     process.exit(1);
   }
-  const targets = names.map((repoName) => ({ repoName, repoPath: config.reposByName[repoName] }));
-  const primary = targets[0];
+  // The merge order (F-111 D2): the feature's merge edges put a repo after
+  // the repos it waits for; otherwise `names`, so `bl` merges first and syncs
+  // the backlog before a later repo's push gate reads it (S-864). A cycle is
+  // refused before any repo is touched.
+  const plan = mergeOrder(names, featureMergeEdges(readBlockers(config.backlogRoot).edges, feature.id));
+  if (plan.cycle) {
+    console.error(
+      `Feature ${feature.id}: its merge edges form a cycle, so no repo can merge first: ${plan.cycle.map(mergeEdgeLabel).join(', ')}.\nRemove one with bl block remove <blocker> --gate merge --unit <unit>.`,
+    );
+    process.exit(1);
+  }
+  const targets = plan.order.map((repoName) => ({ repoName, repoPath: config.reposByName[repoName] }));
+  // The lead repo stays `names`' first, wherever it merges (F-111 R3).
+  const primary = targets.find((t) => t.repoName === names[0]);
 
   // One gate set with `bl merge S-n` (F-36 D1), before any repo is touched:
   // an unmet blockers.json edge on it or a story (F-66 D3), review state,
@@ -1785,7 +1797,11 @@ export async function cmdMerge(args, config, feature) {
 
   info(`Feature : ${feature.id} — ${feature.title}`);
   info(`Branch  : ${branchName}`);
-  info(`Repos   : ${targets.map((t) => t.repoName).join(', ')}`);
+  const behind =
+    plan.edges.length === 0
+      ? ''
+      : ` (merge edge${plan.edges.length > 1 ? 's' : ''} ${plan.edges.map(mergeEdgeLabel).join(', ')})`;
+  info(`Repos   : ${plan.order.join(', ')}${behind}`);
   info(`Stories : ${stories.map((s) => s.id).join(', ') || '(none)'}`);
 
   // Every branch is brought up to date with main in its worktree, gated and

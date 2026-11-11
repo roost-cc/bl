@@ -34,6 +34,7 @@ import { CHECKBOX_RE } from './review-log.js';
 import { statusOf } from './transition.js';
 import { entryMatches, ownFm, parseIdList, readAllStories } from './story.js';
 import { graphOf } from './backlog-graph.js';
+import { findHoldCycles, mergeGraph, repoEnd } from './blockers.js';
 
 export const FEATURES_DIR = 'features';
 
@@ -305,6 +306,34 @@ export function featureRepoOrder(stories) {
   const lead = names.indexOf(LEAD_REPO);
   if (lead > 0) names.unshift(...names.splice(lead, 1));
   return names;
+}
+
+/**
+ * The order `bl merge` merges a feature's repos in (F-111 D2): a
+ * topological sort of `names` (`featureRepoOrder`) by the feature's merge
+ * edges, each edge's blocker repo before its unit repo. Among the repos no
+ * unmerged repo holds, `names`' order stays, so with no merge edge the order
+ * is `names`. `edges` are the edges between two of `names`. A cycle gives no
+ * order and the edges of one cycle.
+ * @param {string[]} names
+ * @param {import("./blockers.js").Edge[]} edges  the feature's merge edges (`featureMergeEdges`)
+ * @returns {{ order: string[] | null, edges: import("./blockers.js").Edge[], cycle: import("./blockers.js").Edge[] | null }}
+ */
+export function mergeOrder(names, edges) {
+  const repo = (id) => repoEnd(id)?.repo;
+  const used = edges.filter((e) => names.includes(repo(e.blocker)) && names.includes(repo(e.unit)));
+  const order = [];
+  const rest = [...names];
+  while (rest.length > 0) {
+    const free = rest.findIndex((n) => used.every((e) => repo(e.unit) !== n || order.includes(repo(e.blocker))));
+    if (free === -1) {
+      const stuck = used.filter((e) => !order.includes(repo(e.unit)) && !order.includes(repo(e.blocker)));
+      const [cycle] = findHoldCycles(mergeGraph(stuck));
+      return { order: null, edges: used, cycle: cycle.map((arc) => arc.edge) };
+    }
+    order.push(...rest.splice(free, 1));
+  }
+  return { order, edges: used, cycle: null };
 }
 
 /**
