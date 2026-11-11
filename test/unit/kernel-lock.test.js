@@ -76,6 +76,23 @@ test('tryLock is re-entrant in one process: only the last release frees the lock
   assert.equal(holderOf(path), null, 'a release of a freed handle does nothing');
 });
 
+test('a release of a freed handle leaves the lock that a later take holds', async () => {
+  const path = join(mkTempDir('bl-kernel-lock-'), 'x.lock');
+  const old = tryLock(path).taken;
+  release(old);
+  const now = tryLock(path).taken;
+  try {
+    release(old);
+    assert.equal(holderOf(path), process.pid);
+    // Another process sees the lock held too: the later descriptor is still open.
+    // The child's holdLock fails at once with EAGAIN, so it ends without holding it.
+    await assert.rejects(holdLockInChild(path), /never held/);
+  } finally {
+    release(now);
+  }
+  assert.equal(holderOf(path), null);
+});
+
 test('tryLockOnce refuses a lock this process holds with its own PID, and takes a free one', () => {
   const path = join(mkTempDir('bl-kernel-lock-'), 'x.lock');
   const a = tryLockOnce(path);
