@@ -297,6 +297,49 @@ for (const { where, configFor, setup, during, vanishes } of ALIASES) {
   });
 }
 
+/**
+ * Each directory entry the scan cannot stat, in the worktree root and in a
+ * unit directory. `make` puts it there and returns what undoes it. A `nonRoot`
+ * row needs a user that file permissions apply to.
+ */
+const UNSTATTABLE = [
+  { what: 'a link loop in the worktree root', make: ({ units }) => symlinkSync('loop', join(units, 'loop')) },
+  { what: 'a link loop in a unit directory', make: ({ free }) => symlinkSync('loop', join(free, 'loop')) },
+  { what: 'a dangling link in a unit directory', make: ({ free }) => symlinkSync('gone', join(free, 'dangling')) },
+  {
+    what: 'an entry in a unit directory without search permission',
+    nonRoot: true,
+    make: ({ units }) => {
+      const unit = join(units, 'f8-closed');
+      mkdirSync(join(unit, 'repo'), { recursive: true });
+      fs.chmodSync(unit, 0o644);
+      return () => fs.chmodSync(unit, 0o755);
+    },
+  },
+];
+
+for (const { what, make, nonRoot } of UNSTATTABLE) {
+  test(
+    `migrate_lock_files_skips_unstattable_entry: ${what}`,
+    { skip: nonRoot && process.getuid?.() === 0 },
+    async () => {
+      const fixture = oldBacklog();
+      const undo = make(fixture);
+      try {
+        const config = loadConfig({ backlogRoot: fixture.dir });
+        const dry = await migrate(config, { dryRun: true, log: () => {} });
+        assert.ok(dry.deleted.includes(join(fixture.dir, '.bl-new.lock')), 'a dry run lists the files');
+        const result = await migrate(config, { log: () => {} });
+        assert.equal(result.commit?.committed, true, result.commit?.error);
+        assert.ok(!existsSync(join(fixture.busy, '.workon.lock')), 'the other unit directories are scanned');
+        assert.equal(git(fixture.dir, 'status', '--porcelain', '--untracked-files=all'), '');
+      } finally {
+        undo?.();
+      }
+    },
+  );
+}
+
 test('migrate_lock_files_preserves_held_inode: no descriptor takes an old lock between the check and the delete', async () => {
   const { dir, free } = oldBacklog();
   const config = loadConfig({ backlogRoot: dir });

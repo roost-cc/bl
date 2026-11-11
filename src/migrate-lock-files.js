@@ -75,7 +75,11 @@ export function oldLockFiles(config) {
   ].filter((p) => existsSync(p));
 }
 
-/** The directories in `dir`, links to directories included; none when `dir` cannot be read. */
+/**
+ * The directories in `dir`, links to directories included; none when `dir`
+ * cannot be read. An entry that cannot be stat'ed (a dangling link, a link
+ * loop, no permission) is skipped.
+ */
 function subdirs(dir) {
   let names;
   try {
@@ -83,7 +87,15 @@ function subdirs(dir) {
   } catch {
     return [];
   }
-  return names.map((n) => join(dir, n)).filter((p) => statSync(p, { throwIfNoEntry: false })?.isDirectory());
+  return names.map((n) => join(dir, n)).filter(isDir);
+}
+
+function isDir(path) {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**
