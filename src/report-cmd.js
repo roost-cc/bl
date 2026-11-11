@@ -35,8 +35,10 @@ import { loadBacklog } from './backlog-graph.js';
 /** The output directory under the backlog root, and what marks one as a report's. */
 export const REPORTS_DIR = 'reports';
 export const REPORT_GITIGNORE = '*\n';
-/** The lock file beside the default output (`.<dir>.lock`); it stays, so the backlog's .gitignore lists it. */
-export const REPORTS_LOCK = `.${REPORTS_DIR}.lock`;
+/** The name of the file `.<dir>.<suffix>` that a run keeps beside its output directory `dir`. */
+const besideName = (dir, suffix) => `.${basename(dir)}.${suffix}`;
+/** The lock file beside the default output; it stays, so the backlog's .gitignore lists it. */
+export const REPORTS_LOCK = besideName(REPORTS_DIR, 'lock');
 
 /** The files a run writes itself, which no adapter file may replace. */
 const OWN_FILES = new Set(['.gitignore', 'data.json', 'index.md', SITE_DIR]);
@@ -104,7 +106,7 @@ export function writeReport(config, dir, data, flow, charts = DEFAULT_ADAPTER) {
   const clash = files.find((f) => [...OWN_FILES].some((own) => pathsClash(f.path, own)));
   if (clash) throw new Error(`chart adapter ${charts}: file ${clash.path} would replace the report's own`);
   checkReportDir(dir);
-  const beside = (suffix) => join(dirname(dir), `.${basename(dir)}.${suffix}`);
+  const beside = (suffix) => join(dirname(dir), besideName(dir, suffix));
   mkdirSync(dirname(dir), { recursive: true });
   const taken = tryLockOnce(beside('lock'), 'bl report');
   if (taken.holder != null)
