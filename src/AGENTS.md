@@ -3760,8 +3760,8 @@ each repo's git common dir one main sync lock and one `bl-prepare-<branch>.lock`
 wait sleeps synchronously. When `tryLock` opens a lock file, new or old, free or held, in a git
 work tree that does not ignore it (a backlog whose `.gitignore` predates F-104, the lock beside a
 `bl report --out` output), it adds the file's path to that clone's `info/exclude`, so the file
-never shows as untracked. A failed git command or exclude write is tried again at the next take. The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer
-too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
+never shows as untracked. A failed git command or exclude write is tried again at the next take.
+The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
 caller awaits it (`test/unit/awaited-calls.test.js`).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over

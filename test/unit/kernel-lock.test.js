@@ -248,7 +248,7 @@ function bareBacklog() {
   return { repo, exclude: join(repo, '.git', 'info', 'exclude') };
 }
 
-test('existing_unignored_lock_files_stay_out_of_git_after_try_lock: a lock file that existed before the take', async () => {
+test('existing_unignored_lock_files_stay_out_of_git_after_try_lock: a lock file that existed before the take', () => {
   const { repo, exclude } = bareBacklog();
   const cases = [
     ['an existing free lock in the root', '.reports.lock', (p) => release(tryLock(p).taken)],
