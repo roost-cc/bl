@@ -45,7 +45,6 @@ import {
   refuseStoryRepo,
   storyRepoOrExit,
   removeUnitDirIfEmpty,
-  LOCK_FILE,
 } from './story.js';
 import { getAllowedTools, loadPrompt } from './session.js';
 import { addGateLine, gateLine, recordMerge } from './change-doc.js';
@@ -584,7 +583,7 @@ export async function cleanupOneRepo({
 
   const wt = findExistingWorktree(repoPath, branchName);
   const unitDir = unitDirFor(config, branchName);
-  if (wt && isSessionRunning(unitDir)) {
+  if (wt && isSessionRunning(config.backlogRoot, unitDir)) {
     console.error(`A session appears to be running in ${unitDir}. Stop it first.`);
     return { ok: false };
   }
@@ -1081,8 +1080,8 @@ export function commitsAhead(repoPath, branchName) {
 }
 
 /**
- * Uncommitted changes in a worktree (tracked or untracked), not counting the
- * session lock file. Null when git cannot tell.
+ * Uncommitted changes in a worktree (tracked or untracked). Null when git
+ * cannot tell.
  *
  * @returns {string[] | null}
  */
@@ -1094,7 +1093,7 @@ function worktreeChanges(worktreePath) {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
       .split('\n')
-      .filter((l) => l.trim() && l.slice(3) !== LOCK_FILE);
+      .filter((l) => l.trim());
   } catch {
     return null;
   }

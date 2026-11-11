@@ -82,7 +82,7 @@ import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { LOCK_FILE, readComponents } from './story.js';
+import { readComponents, sessionLockPath } from './story.js';
 import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
@@ -1993,9 +1993,9 @@ async function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUnti
 // Worktree hygiene
 // ---------------------------------------------------------------------------
 
-// bl's own bookkeeping in every worktree. Several repos do not gitignore these,
-// so they are excluded explicitly rather than trusted to be ignored.
-const BOOKKEEPING = [LOCK_FILE, '.bl'];
+// bl's own bookkeeping in every worktree. Several repos do not gitignore it,
+// so it is excluded explicitly rather than trusted to be ignored.
+const BOOKKEEPING = ['.bl'];
 const BOOKKEEPING_EXCLUDES = BOOKKEEPING.map((p) => `':(exclude)${p}'`).join(' ');
 const BOOKKEEPING_PATHS = BOOKKEEPING.map((p) => `'${p}'`).join(' ');
 
@@ -2143,8 +2143,8 @@ function reviewOtherRepos(ctx) {
 }
 
 /**
- * Take the session lock of every unit directory a review round reaches (the
- * lock lives there, F-60 D3: one per unit, whichever repos it holds), so no
+ * Take the session lock of every unit directory a review round reaches (one
+ * per unit, whichever repos it holds, F-60 D3; `sessionLockPath`), so no
  * other bl session starts in one while the round's snapshots are live: its
  * edits would be quarantined and reverted as the reviewer's. Each is taken
  * as a session takes its own (`takeSessionLock`); a lock this process already
@@ -2162,7 +2162,7 @@ function holdReviewLocks(ctx) {
   const unitDir = prepUnitDir(ctx.prep);
   const outside = reviewWorktrees(ctx).filter((wt) => wt !== unitDir && !wt.startsWith(`${unitDir}/`));
   for (const dir of new Set([unitDir, ...outside])) {
-    const lock = takeSessionLock(dir, `${ctx.feature.id} review round`);
+    const lock = takeSessionLock(ctx.config.backlogRoot, dir, `${ctx.feature.id} review round`);
     if (lock.refused) {
       releaseAll();
       return { error: lock.refused };
@@ -4593,10 +4593,10 @@ function refuse(runner, feature, reason) {
  *
  * One run per feature: the run holds `.bl/run/<id>.lock` for its whole
  * length, and does not start while another live process holds the unit
- * directory's `.workon.lock`.
+ * directory's session lock (`sessionLockPath`).
  */
 export async function runFeature({ feature, config, prep, runner, opts = {} }) {
-  const sessionLock = join(prepUnitDir(prep), LOCK_FILE);
+  const sessionLock = sessionLockPath(config.backlogRoot, prepUnitDir(prep));
   const wtHolder = otherHolder(sessionLock);
   if (wtHolder != null) {
     return refuse(runner, feature, `a live session (pid ${wtHolder}) holds ${sessionLock}`);

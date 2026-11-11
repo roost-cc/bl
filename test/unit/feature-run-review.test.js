@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { runFeature, loadRunState, reviewFeature, RUN_DIR, OutcomeError } from '../../src/feature-run.js';
 import { holderOf, release, tryLock } from '../../src/kernel-lock.js';
@@ -27,6 +27,7 @@ import {
 import { FIX_OUTCOME, reviewOutcome, SELF_REVIEW_OUTCOME } from '../helpers/outcomes.js';
 import { validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
+import { sessionLockPath } from '../../src/story.js';
 import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
@@ -41,14 +42,13 @@ function git(wt, ...args) {
 
 /**
  * `setup()` whose worktree is a real git repo with a.js, b.js, c.js, gone.js committed on main.
- * The fixture's unit directory is the worktree, so the session lock file, which stays (F-104 D3),
- * is in it: git ignores it, as bl's bookkeeping.
+ * The fixture's unit directory is the worktree; its session lock file is in the backlog's
+ * `.bl/lock/` (S-1495), not in it.
  */
 function realGitSetup(extra) {
   const s = setup(extra);
   const wt = s.prep.worktreePath;
   git(wt, 'init', '-q', '-b', 'main');
-  writeFileSync(join(wt, '.git', 'info', 'exclude'), '.workon.lock\n');
   git(wt, 'config', 'user.email', 't@example.com');
   git(wt, 'config', 'user.name', 't');
   git(wt, 'config', 'commit.gpgsign', 'false');
@@ -73,12 +73,12 @@ function realGitRunner(args, wt) {
   return runner;
 }
 
-/** Everything a review session could disturb: HEAD, status, index, and every file's bytes but bl's session lock. */
+/** Everything a review session could disturb: HEAD, status, index, and every file's bytes. */
 function treeState(wt) {
   const files = {};
   const walk = (d) => {
     for (const e of readdirSync(join(wt, d), { withFileTypes: true })) {
-      if (e.name === '.git' || e.name === '.workon.lock') continue;
+      if (e.name === '.git') continue;
       const rel = d ? `${d}/${e.name}` : e.name;
       if (e.isDirectory()) walk(rel);
       else files[rel] = readFileSync(join(wt, rel), 'utf8');
@@ -553,7 +553,7 @@ test('a review round over a unit directory takes its one session lock, not one p
     s.prep.unitDir = mkTempDir('bl-unit-');
     const others = ['repo-b', 'repo-c'].map((r) => join(s.prep.unitDir, r));
     for (const wt of others) mkdirSync(wt);
-    const lock = join(s.prep.unitDir, '.workon.lock');
+    const lock = sessionLockPath(s.config.backlogRoot, s.prep.unitDir);
     const runner = fakeRunner({
       dir: s.dir,
       feature: s.feature,
@@ -564,7 +564,7 @@ test('a review round over a unit directory takes its one session lock, not one p
     runner.session = (o) => {
       seen.push({
         unit: existsSync(lock) ? readFileSync(lock, 'utf8').split('\n', 1)[0] : null,
-        worktrees: others.filter((wt) => existsSync(join(wt, '.workon.lock'))),
+        worktrees: others.filter((wt) => existsSync(sessionLockPath(s.config.backlogRoot, wt))),
       });
       return session(o);
     };
@@ -621,18 +621,17 @@ test('a review round over a unit directory takes its one session lock, not one p
       maxRounds: 3,
     });
     assert.deepEqual(seen, []);
-    assert.match(unusable.error, /\.workon\.lock could not be opened: /);
+    assert.match(unusable.error, /\/\.bl\/lock\/session-.* could not be opened: /);
   } finally {
     s.cleanup();
   }
 });
 
 test('a review round locks every scoped worktree and aborts without verification when any pass fails', async () => {
-  const lockOf = (wt) => join(wt, '.workon.lock');
-  // Another process trying to start a session in `wt`: what its try-lock tells it.
-  const otherProcessTakes = (wt) => {
+  // Another process trying to start a session on the lock `path`: what its try-lock tells it.
+  const otherProcessTakes = (path) => {
     const src = `import { tryLock } from ${JSON.stringify(new URL('../../src/kernel-lock.js', import.meta.url).href)};
-const t = tryLock(${JSON.stringify(lockOf(wt))}, 'other');
+const t = tryLock(${JSON.stringify(path)}, 'other');
 console.log(t.taken ? "taken" : "held by " + t.holder);`;
     return spawnSyncFiles(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8' }).stdout.trim();
   };
@@ -644,6 +643,7 @@ console.log(t.taken ? "taken" : "held by " + t.holder);`;
     failure = { ok: false, isError: true, error: 'provider crashed' },
   }) => {
     const s = setup({ pr: '7' });
+    const lockOf = (wt) => sessionLockPath(s.config.backlogRoot, wt);
     const others = [mkTempDir('bl-wt-b-'), mkTempDir('bl-wt-c-')];
     const all = [s.prep.worktreePath, ...others];
     const releasePre = preLock ? await preLock.hold(lockOf(all[preLock.at])) : () => {};
@@ -659,7 +659,7 @@ console.log(t.taken ? "taken" : "held by " + t.holder);`;
         seen.push({
           prompt: o.promptName,
           locks: all.map((wt) => (existsSync(lockOf(wt)) ? readFileSync(lockOf(wt), 'utf8').split('\n', 1)[0] : null)),
-          other: o.promptName === 'review-correctness' ? all.map(otherProcessTakes) : null,
+          other: o.promptName === 'review-correctness' ? all.map((wt) => otherProcessTakes(lockOf(wt))) : null,
         });
         const r = session(o);
         return o.promptName === failAt ? { ...r, ...failure } : r;
@@ -724,6 +724,7 @@ console.log(t.taken ? "taken" : "held by " + t.holder);`;
 
   // A lock this process already held is used and left held.
   const own = (path) => {
+    mkdirSync(dirname(path), { recursive: true });
     const { taken } = tryLock(path, 'F-1 run');
     return () => release(taken);
   };

@@ -191,8 +191,9 @@ test('persistLandedCommits: the real write stages in .bl/tmp and leaves no temp 
     status: 'in_progress',
   });
   await persistLandedCommits(root, indexPath, { alpha: 'aaa1111' });
-  // The backlog lock's file stays (F-104 D3); the lock itself is free.
-  assert.deepEqual(readdirSync(root).sort(), ['.bl', LOCK_FILE, 'index.md']);
+  // The backlog lock's file stays under .bl/ (F-104 D3, S-1495); the lock itself is free.
+  assert.deepEqual(readdirSync(root).sort(), ['.bl', 'index.md']);
+  assert.ok(existsSync(join(root, LOCK_FILE)));
   assert.equal(holderOf(join(root, LOCK_FILE)), null);
   assert.deepEqual(readdirSync(join(root, '.bl', 'tmp')), []);
 });

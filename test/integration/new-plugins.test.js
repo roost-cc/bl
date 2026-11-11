@@ -7,6 +7,7 @@ import { parseFrontmatter } from '../../src/config.js';
 import { componentBacklog } from '../helpers/new-fixture.js';
 import { holdLock } from '../helpers/hold-lock.js';
 import { holderOf } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 
 // ---------------------------------------------------------------------------
 // --plugins-from <S-id> (S-870): inherit plugins / plugins-<stage> keys
@@ -176,7 +177,7 @@ test('bl new --plugins-from with an unknown id fails before writing anything', (
     assert.match(r.stderr, /--plugins-from S-999: story not found/);
     assert.equal(r.stdout, '');
     assert.deepEqual(readdirSync(join(dir, 'stories')), ['S1-parent']);
-    assert.equal(holderOf(join(dir, '.bl-new.lock')), null, 'lock left held');
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null, 'lock left held');
   } finally {
     cleanup();
   }
@@ -257,7 +258,7 @@ test("bl new --plugins-from preserves the accepted story ID's digit sequence", (
  * reflect the mutated state: that is what reading under the lock buys.
  */
 async function runBlBehindLock(dir, args, mutate) {
-  const held = holdLock(join(dir, '.bl-new.lock'));
+  const held = holdLock(join(dir, LOCK_FILE));
   const { blocked, closed } = startBlBehindLock(args, { cwd: dir });
   try {
     await blocked;
@@ -319,7 +320,7 @@ test('bl new --plugins-from rereads and compares its source under the creation l
         assert.ok(fmText.includes(c.copied), label);
         assert.doesNotMatch(fmText, /^primary_repo:/m, label);
       }
-      assert.equal(holderOf(join(dir, '.bl-new.lock')), null, `${c.name}: lock left held`);
+      assert.equal(holderOf(join(dir, LOCK_FILE)), null, `${c.name}: lock left held`);
     } finally {
       cleanup();
     }
@@ -344,7 +345,7 @@ test('bl new --plugins-from rejects duplicate source IDs', () => {
     assert.ok(r.stderr.includes('stories/S1-dup/index.md'), r.stderr);
     assert.equal(r.stdout, '');
     assert.ok(!existsSync(join(dir, CHILD)));
-    assert.equal(holderOf(join(dir, '.bl-new.lock')), null, 'lock left held');
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null, 'lock left held');
   } finally {
     cleanup();
   }

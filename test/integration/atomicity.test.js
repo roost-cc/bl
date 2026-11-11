@@ -6,6 +6,7 @@ import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl, BL_BIN } from '../helpers/run-bl.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
 import { holdLock } from '../helpers/hold-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 
 function seedStory(dir) {
   const r = runBl(['new', 'C00', '--title', 'Seed', '--points', '1'], { cwd: dir });
@@ -163,7 +164,7 @@ test('new --feature serializes eligibility validation and preserves bidirectiona
   // lock: the test holds it until both have started.
   {
     const { dir, cleanup } = featureBacklog();
-    const held = holdLock(join(dir, '.bl-new.lock'));
+    const held = holdLock(join(dir, LOCK_FILE));
     try {
       const run = (title) =>
         spawnToFiles(BL_BIN, ['new', '--feature', '--theme', 'demo', '--title', title, 'S-1', '--no-sync'], {

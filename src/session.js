@@ -31,7 +31,8 @@ import {
   unitDirOf,
   dictionariesOf,
 } from './config.js';
-import { findExistingWorktree, isSessionRunning, reposForStory, LOCK_FILE } from './story.js';
+import { findExistingWorktree, isSessionRunning, reposForStory, sessionLockPath } from './story.js';
+import { ensureLockDir } from './lock.js';
 import { reassertTabTitle, unitTitleFields, updateTabTitle } from './tab-title.js';
 import { ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
 import { resolvePermissionScopes, loadLocalTools } from './permissions.js';
@@ -423,8 +424,9 @@ function realOrResolved(path) {
  * @param {string} repoPath — absolute path to the code repo to create the worktree in
  * @param {string} branchName
  * @param {string} worktreePath — desired absolute worktree path
+ * @param {string} backlogRoot — where the unit directory's session lock lives
  */
-export async function ensureWorktree(repoPath, branchName, worktreePath) {
+export async function ensureWorktree(repoPath, branchName, worktreePath, backlogRoot) {
   const existingWorktree = findExistingWorktree(repoPath, branchName);
   const isNewWorktree = existingWorktree == null;
 
@@ -490,7 +492,7 @@ export async function ensureWorktree(repoPath, branchName, worktreePath) {
     info('');
   } else {
     info(`Worktree already exists at ${existingWorktree.path}`);
-    if (isSessionRunning(unitDirOf(worktreePath))) {
+    if (isSessionRunning(backlogRoot, unitDirOf(worktreePath))) {
       console.error("\nWarning: a live session holds the unit directory's session lock.");
       console.error('A session launch here is refused until that session ends.\n');
     }
@@ -682,22 +684,24 @@ export function runStagePlugins(
 }
 
 /**
- * Take the session lock in `dir` (`.workon.lock`, one per unit directory,
- * F-60 D3) with one try-lock (`kernel-lock.js`). A lock this process already
- * holds (a review round holds every unit directory's for the whole round) is
- * reused, one depth deeper. A lock another process holds refuses the session
+ * Take the session lock of `dir` (`sessionLockPath`: one per unit directory,
+ * F-60 D3, in the backlog's `.bl/lock/`) with one try-lock (`kernel-lock.js`).
+ * A lock this process already holds (a review round holds every unit
+ * directory's for the whole round) is reused, one depth deeper. A lock another process holds refuses the session
  * with that process's PID. A lock file that cannot be opened refuses the
  * session too: no session runs without the lock. `release` gives back what
  * this call took. A review round takes each of its locks with it too.
  *
+ * @param {string} backlogRoot
  * @param {string} dir
  * @param {string} info  one line that names the session
  * @returns {{ refused: string } | { refused: null, release: () => void }}
  */
-export function takeSessionLock(dir, info) {
-  const path = join(dir, LOCK_FILE);
+export function takeSessionLock(backlogRoot, dir, info) {
+  const path = sessionLockPath(backlogRoot, dir);
   let got;
   try {
+    ensureLockDir(backlogRoot);
     got = tryLock(path, info);
   } catch (e) {
     return { refused: `${path} could not be opened: ${e.message}` };
@@ -819,7 +823,7 @@ export async function runHeadlessSession({
   }
 
   // Never start beside a live session in the same unit directory.
-  const lock = takeSessionLock(cwd, `${label ?? parsed.id} (headless)`);
+  const lock = takeSessionLock(backlogRoot, cwd, `${label ?? parsed.id} (headless)`);
   if (lock.refused) return notRun(lock.refused);
 
   let result;
@@ -964,7 +968,7 @@ export async function launchSession({
 
   // Never start beside a live session in the same unit directory, before
   // anything the session would change (its outcome file, the tab title).
-  const lock = takeSessionLock(cwd, sessionName);
+  const lock = takeSessionLock(backlogRoot, cwd, sessionName);
   if (lock.refused) {
     console.error(`Error: ${lock.refused}.`);
     if (!returnOnExit) process.exit(1);

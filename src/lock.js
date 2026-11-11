@@ -7,7 +7,12 @@
  * and the commit; `pullBeforeCommand` across the pull; `bl fix` (without
  * `--dry-run`) holds it from its story scan through its last frontmatter
  * write, so two fixes that land on the same story file serialise. The file
- * keeps its historical name `<backlogRoot>/.bl-new.lock`.
+ * is `<backlogRoot>/.bl/lock/backlog.lock` (`LOCK_FILE`).
+ *
+ * Every lock file bl keeps in a backlog lives under `.bl/` (S-1495), which
+ * the backlog's `.gitignore` ignores, so git never sees one: the backlog
+ * lock, the session locks and the report locks in `.bl/lock/` (`LOCK_DIR`,
+ * `dirLockPath`), and the run locks in `.bl/run/` (`run-lock.js`).
  *
  * It is a kernel lock (`kernel-lock.js`, F-104 K1): the kernel frees it when
  * the holder closes the descriptor or ends, even by SIGKILL. The file stays
@@ -23,12 +28,50 @@
  * acquire adopts it. The child holds the lock as long as it lives.
  */
 
-import { join } from 'path';
+import { createHash } from 'crypto';
+import { mkdirSync } from 'fs';
+import { basename, dirname, join, resolve } from 'path';
 import { adopt, release, tryLock } from './kernel-lock.js';
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
 
-export const LOCK_FILE = '.bl-new.lock';
+/** The directory of bl's lock files in a backlog, backlog-relative. */
+export const LOCK_DIR = join('.bl', 'lock');
+/** The backlog lock file, backlog-relative. */
+export const LOCK_FILE = join(LOCK_DIR, 'backlog.lock');
 const LOCK_POLL_MS = 500;
+
+/**
+ * The lock file of `kind` for the directory `dir`, one per directory:
+ * `<backlogRoot>/.bl/lock/<kind>-<base name>-<hash>.lock`. The base name of
+ * `dir` makes it readable; a hash of `dir`'s absolute path keeps two
+ * directories with one base name apart.
+ *
+ * @param {string} backlogRoot
+ * @param {string} kind  `session` or `report`
+ * @param {string} dir
+ */
+export function dirLockPath(backlogRoot, kind, dir) {
+  const abs = resolve(dir);
+  const hash = createHash('sha256').update(abs).digest('hex').slice(0, 12);
+  return join(backlogRoot, LOCK_DIR, `${kind}-${basename(abs)}-${hash}.lock`);
+}
+
+/**
+ * Create `<backlogRoot>/.bl/lock/` when it is missing, before a take opens
+ * (and creates) a lock file in it. A missing backlog root is not created: the
+ * error (ENOENT) is thrown.
+ *
+ * @param {string} backlogRoot
+ */
+export function ensureLockDir(backlogRoot) {
+  for (const dir of [dirname(LOCK_DIR), LOCK_DIR]) {
+    try {
+      mkdirSync(join(backlogRoot, dir));
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+  }
+}
 
 /** The environment variable that names the descriptor a bl parent passed down locked (D5). */
 export const LOCK_FD_ENV = 'BL_LOCK_FD';
@@ -77,6 +120,7 @@ export async function acquireLock(backlogRoot, options = {}) {
     error = console.error,
   } = options;
   const lockPath = join(backlogRoot, LOCK_FILE);
+  ensureLockDir(backlogRoot);
   adoptInherited(lockPath);
   try {
     const { taken } = await awaitLock(LOCK_FILE, () => tryLock(lockPath), {

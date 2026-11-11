@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
 import fs, { existsSync, openSync, closeSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { acquireLock, LOCK_FD_ENV, LOCK_FILE, releaseLock, withLock } from '../../src/lock.js';
@@ -56,6 +56,7 @@ test('acquireLock takes at once, and silently, a lock file that nobody holds, wh
   ]) {
     const { dir, lockPath, cleanup } = mkBacklogRoot();
     try {
+      fs.mkdirSync(dirname(lockPath), { recursive: true });
       writeFileSync(lockPath, content);
       await acquireLock(dir, {
         error: (message) => {
@@ -104,8 +105,8 @@ test('acquireLock keeps a held lock and exits after the configured timeout', asy
     // The wait is announced once (two polls, one line), then the timeout,
     // which names the holder and never tells anyone to remove the file.
     assert.deepEqual(errors, [
-      `Waiting for lock (.bl-new.lock) held by pid ${process.pid}…`,
-      `Timed out after 50 ms waiting for lock (.bl-new.lock) held by pid ${process.pid}.`,
+      `Waiting for lock (${LOCK_FILE}) held by pid ${process.pid}…`,
+      `Timed out after 50 ms waiting for lock (${LOCK_FILE}) held by pid ${process.pid}.`,
     ]);
   } finally {
     holder.release();
@@ -157,7 +158,7 @@ test('a waiter that polls a held lock writes nothing in the backlog root', async
   const git = (...args) =>
     spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   git('init', '-q');
-  writeFileSync(join(dir, '.git', 'info', 'exclude'), `${LOCK_FILE}\n`);
+  writeFileSync(join(dir, '.git', 'info', 'exclude'), '.bl/\n');
   const holder = holdLock(lockPath);
   // A file the waiter writes in the backlog root, even for a moment, is one
   // that the holder's `git status` (migration-txn.js) lists or its `git clean`
@@ -189,7 +190,8 @@ test('a waiter that polls a held lock writes nothing in the backlog root', async
   try {
     assert.deepEqual(writes, []);
     assert.deepEqual(statuses, ['', '', '', '', '']);
-    assert.deepEqual(readdirSync(dir).sort(), ['.bl-new.lock', '.git']);
+    assert.deepEqual(readdirSync(dir).sort(), ['.bl', '.git']);
+    assert.deepEqual(readdirSync(dirname(lockPath)), ['backlog.lock'], 'the lock file lives under .bl/lock/');
     assert.equal(readFileSync(lockPath, 'utf8'), holder.content, 'the waiter never truncated it');
   } finally {
     holder.release();
@@ -214,7 +216,7 @@ test('acquireLock names a holder that has not written its PID yet as unknown, an
       },
     });
 
-    assert.deepEqual(errors, ['Waiting for lock (.bl-new.lock) held by pid unknown…']);
+    assert.deepEqual(errors, [`Waiting for lock (${LOCK_FILE}) held by pid unknown…`]);
     assert.equal(polls, 1);
     assertOurs(lockPath);
   } finally {
@@ -296,8 +298,8 @@ test(`a bl child given the parent's locked descriptor in ${LOCK_FD_ENV} takes th
       const refused = child({ [LOCK_FD_ENV]: '3' }, ['ignore', 'pipe', 'pipe', other]);
       assert.equal(refused.status, 0, refused.stderr);
       const timedOut = [
-        `Waiting for lock (.bl-new.lock) held by pid ${process.pid}…`,
-        `Timed out after 0 ms waiting for lock (.bl-new.lock) held by pid ${process.pid}.`,
+        `Waiting for lock (${LOCK_FILE}) held by pid ${process.pid}…`,
+        `Timed out after 0 ms waiting for lock (${LOCK_FILE}) held by pid ${process.pid}.`,
         'exit 1',
       ];
       // Each of its two acquires times out.

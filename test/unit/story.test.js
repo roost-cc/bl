@@ -26,11 +26,10 @@ import {
   reposForStory,
 } from '../../src/story.js';
 import { loadBacklog } from '../../src/backlog-graph.js';
-import { holdLock } from '../helpers/hold-lock.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
 
-test('removeUnitDirIfEmpty removes only an empty unit directory; one with only its lock file stays (F-60 D2, F-104 A2)', () => {
+test('removeUnitDirIfEmpty removes only an empty unit directory (F-60 D2)', () => {
   const root = mkTempDir('bl-unit-dir-');
   const unit = (name, entries = {}) => {
     const dir = join(root, name);
@@ -44,27 +43,13 @@ test('removeUnitDirIfEmpty removes only an empty unit directory; one with only i
   const empty = unit('f1-empty');
   assert.equal(removeUnitDirIfEmpty(empty), true);
   assert.equal(existsSync(empty), false);
-  const locked = unit('f2-locked', { '.workon.lock': '999999999\n' });
-  assert.equal(removeUnitDirIfEmpty(locked), false);
-  assert.ok(existsSync(join(locked, '.workon.lock')), 'a free lock file is permanent (F-104 D3)');
-  const held = unit('f3-held', { '.workon.lock': '1\n', bl: 'dir' });
+  const held = unit('f3-held', { bl: 'dir' });
   assert.equal(removeUnitDirIfEmpty(held), false);
-  assert.ok(
-    existsSync(join(held, 'bl')) && existsSync(join(held, '.workon.lock')),
-    'a unit directory with a worktree is left as it is',
-  );
+  assert.ok(existsSync(join(held, 'bl')), 'a unit directory with a worktree is left as it is');
   const stray = unit('f4-stray', { 'notes.txt': 'x' });
   assert.equal(removeUnitDirIfEmpty(stray), false);
   assert.ok(existsSync(join(stray, 'notes.txt')));
   assert.equal(removeUnitDirIfEmpty(join(root, 'f5-missing')), false);
-  const live = unit('f6-live');
-  const holder = holdLock(join(live, '.workon.lock'));
-  try {
-    assert.equal(removeUnitDirIfEmpty(live), false);
-    assert.ok(existsSync(join(live, '.workon.lock')), 'a held session lock is never removed');
-  } finally {
-    holder.release();
-  }
 });
 
 test('parseIdList refuses a plain object (no phantom object/Object)', () => {

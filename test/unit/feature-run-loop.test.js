@@ -28,6 +28,7 @@ import { featureReviewGate, summarizeLatestReviewSession } from '../../src/revie
 import { mkTempDir } from '../helpers/tempdir.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
 import { holderOf } from '../../src/kernel-lock.js';
+import { sessionLockPath } from '../../src/story.js';
 import { parseChange, serializeChange } from '../../src/change-doc.js';
 import {
   PENDING_END,
@@ -393,7 +394,11 @@ test("every session of a run starts in the prep's unit directory; the gate and g
       shells.every((c) => c.cwd !== prep.unitDir),
       'no command runs in the unit directory',
     );
-    assert.equal(holderOf(join(prep.unitDir, '.workon.lock')), null, "the review round's lock is released");
+    assert.equal(
+      holderOf(sessionLockPath(config.backlogRoot, prep.unitDir)),
+      null,
+      "the review round's lock is released",
+    );
   } finally {
     cleanup();
   }
@@ -1409,7 +1414,9 @@ test('second bl run on the same feature refuses while the first is alive', async
       writeFileSync(runStatePath(config, 'F-1'), JSON.stringify({ feature: 'F-1', status: 'running', history: [] }));
       const before = readFileSync(runStatePath(config, 'F-1'), 'utf8');
       const lockPath =
-        which === 'run lock' ? runLockPath(config, 'F-1') : join(prep.unitDir ?? prep.worktreePath, '.workon.lock');
+        which === 'run lock'
+          ? runLockPath(config, 'F-1')
+          : sessionLockPath(config.backlogRoot, prep.unitDir ?? prep.worktreePath);
       // Every lock is a kernel lock (F-104), held by a child.
       child = await holdLockInChild(lockPath);
       const holderPid = child.pid;

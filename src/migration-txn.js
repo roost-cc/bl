@@ -18,11 +18,10 @@ import { spawnSync } from 'child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from 'fs';
 import { dirname, join, relative, resolve } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
-import { LOCK_FILE } from './lock.js';
 import { MAIN_REFSPEC } from './main-sync.js';
 import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR } from './run-lock.js';
-import { allActiveWorktrees, LOCK_FILE as SESSION_LOCK_FILE } from './story.js';
+import { allActiveWorktrees, sessionLockPath } from './story.js';
 
 /**
  * @typedef {object} MigrationOps
@@ -58,9 +57,7 @@ export async function applyMigration(config, { apply, message, commit, commitCon
     if (restored) return '';
     restored = true;
     if (headOf() !== startHead) return '; the commit landed, so a rerun plans nothing';
-    const failed = [git('reset', '-q', '--hard', 'HEAD'), git('clean', '-q', '-fd', '-e', LOCK_FILE)].find(
-      (r) => r.status !== 0,
-    );
+    const failed = [git('reset', '-q', '--hard', 'HEAD'), git('clean', '-q', '-fd')].find((r) => r.status !== 0);
     if (failed) {
       return `; could not restore the backlog (${firstLine(failed)}): run git -C "${root}" reset --hard HEAD && git -C "${root}" clean -fd`;
     }
@@ -148,8 +145,7 @@ function refuse(config, git) {
   if (head !== origin) {
     return `the backlog's HEAD (${head.slice(0, 7)}) is not origin/main (${origin.slice(0, 7)}): push or pull until they match, then rerun`;
   }
-  // The backlog lock, which the caller holds, is not a change.
-  const status = git('status', '--porcelain', '--untracked-files=all', '--', '.', `:!${LOCK_FILE}`);
+  const status = git('status', '--porcelain', '--untracked-files=all', '--', '.');
   const dirty = status.stdout.split('\n').filter(Boolean);
   if (status.status !== 0 || dirty.length > 0) {
     const what =
@@ -203,8 +199,8 @@ export function liveSessionLocks(config) {
     ];
     for (const p of list) if (typeof p === 'string') repos[`${id}:${p}`] = { name: p, path: resolve(root, p) };
   }
-  // A session's lock is in its unit directory (F-60 D3), the worktree's
-  // parent; one started before that is in the worktree itself.
+  // A session runs in its unit directory (F-60 D3), the worktree's parent; a
+  // review round also locks a worktree outside its unit directory.
   const dirs = new Map(
     allActiveWorktrees({ repos }).flatMap((wt) => [
       [wt.path, wt.branch],
@@ -213,7 +209,7 @@ export function liveSessionLocks(config) {
   );
   const out = [];
   for (const [dir, branch] of dirs) {
-    const pid = otherHolder(join(dir, SESSION_LOCK_FILE));
+    const pid = otherHolder(sessionLockPath(root, dir));
     if (pid != null) out.push({ dir, branch, pid });
   }
   return out;

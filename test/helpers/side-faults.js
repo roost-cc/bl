@@ -31,6 +31,7 @@ import { syncBuiltinESMExports } from 'module';
 import { spawnSync } from 'child_process';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { holderOf } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 
 const faults = new Set(
   String(process.env.BL_SIDE_FAULT ?? '')
@@ -45,7 +46,7 @@ const rename = fs.renameSync;
 const rm = fs.rmSync;
 
 /** The backlog lock of the backlog this process works on. */
-const backlogLock = () => resolve(process.env.BL_BACKLOG_DIR ?? process.cwd(), '.bl-new.lock');
+const backlogLock = () => resolve(process.env.BL_BACKLOG_DIR ?? process.cwd(), LOCK_FILE);
 
 /**
  * Run `fn` once, just before this process first opens the backlog lock:

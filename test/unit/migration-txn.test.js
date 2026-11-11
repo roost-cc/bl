@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { applyMigration } from '../../src/migration-txn.js';
+import { sessionLockPath } from '../../src/story.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
 import { addOrigin, git, statusLines } from '../helpers/git-backlog.js';
@@ -86,7 +87,7 @@ test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', as
       async (d, config) => {
         const { repo, wt } = sessionRepo();
         config.repos = { r: { name: 'r', path: repo } };
-        return { wt, ...(await holdLockInChild(join(wt, '.workon.lock'))) };
+        return { wt, ...(await holdLockInChild(sessionLockPath(d, wt))) };
       },
       (held) => new RegExp(`^a bl session is running in ${held.wt} \\(pid ${held.pid}\\)`),
     ],
@@ -95,7 +96,7 @@ test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', as
       async (d, config) => {
         const { repo, wt } = sessionRepo();
         config.topLevel = { projects: { infra: { repos: [relative(d, repo)] } } };
-        return { wt, ...(await holdLockInChild(join(wt, '.workon.lock'))) };
+        return { wt, ...(await holdLockInChild(sessionLockPath(d, wt))) };
       },
       (held) => new RegExp(`^a bl session is running in ${held.wt} \\(pid ${held.pid}\\)`),
     ],
@@ -140,7 +141,7 @@ test('applyMigration_runs_past_a_run_state_or_session_lock_whose_process_is_gone
   put(dir, '.bl/run/F-9.lock', `${deadPid()}\n`);
   const { repo, wt } = sessionRepo();
   // A lock file that its killed holder left: nobody holds it.
-  const holder = await holdLockInChild(join(wt, '.workon.lock'));
+  const holder = await holdLockInChild(sessionLockPath(dir, wt));
   await holder.kill();
   const head = git(dir, 'rev-parse', 'HEAD');
   const result = await applyMigration(

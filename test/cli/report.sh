@@ -29,8 +29,8 @@ MD
 
 export GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 export GIT_AUTHOR_DATE="2026-04-21T09:00:00+00:00" GIT_COMMITTER_DATE="2026-04-21T09:00:00+00:00"
-# As bl init seeds it: the report lock file stays after bl report (F-104 D3).
-printf '.bl/\n.reports.lock\nerr\n' > "$TMPDIR_ROOT/.gitignore"
+# As bl init seeds it: .bl/ holds every lock file, the report's included (S-1495).
+printf '.bl/\nerr\n' > "$TMPDIR_ROOT/.gitignore"
 git -C "$TMPDIR_ROOT" init -q -b main
 git -C "$TMPDIR_ROOT" add -A
 git -C "$TMPDIR_ROOT" commit -q -m base

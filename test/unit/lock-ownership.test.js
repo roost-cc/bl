@@ -13,6 +13,7 @@ import { specLockPath, updateSpecFileHeld } from '../../src/spec-file.js';
 import { runFeature } from '../../src/feature-run.js';
 import { heldUnits } from '../../src/migrate-transitions.js';
 import { assertMigrationCanStart } from '../../src/migration-txn.js';
+import { sessionLockPath } from '../../src/story.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { addOrigin, git } from '../helpers/git-backlog.js';
@@ -35,14 +36,14 @@ function migrationBacklog() {
   return dir;
 }
 
-/** A repo with S-1's worktree; its session lock is in the worktree. */
-function sessionRepo() {
+/** A repo with S-1's worktree; its session lock is the unit directory's, in `backlogRoot`'s `.bl/lock/`. */
+function sessionRepo(backlogRoot) {
   const repo = mkTempDir('bl-lock-ownership-repo-');
   git(repo, 'init', '-q', '-b', 'main');
   git(repo, 'commit', '-q', '--allow-empty', '-m', 'base');
   const wt = join(mkTempDir('bl-lock-ownership-wt-'), 's1-story');
   git(repo, 'worktree', 'add', '-q', '-b', 's1-story', wt);
-  return { repos: { r: { name: 'r', path: repo } }, lockPath: join(wt, '.workon.lock') };
+  return { repos: { r: { name: 'r', path: repo } }, lockPath: sessionLockPath(backlogRoot, dirname(wt)) };
 }
 
 /** Whether `fn` throws an error whose message matches `re`. */
@@ -78,7 +79,7 @@ const CHECKS = [
     () => {
       const { config, feature, prep, dir } = setup();
       return {
-        lockPath: join(prep.unitDir ?? prep.worktreePath, '.workon.lock'),
+        lockPath: sessionLockPath(config.backlogRoot, prep.unitDir ?? prep.worktreePath),
         own: false,
         blocked: async () => {
           const state = await runFeature({ feature, config, prep, runner: fakeRunner({ dir, feature }) });
@@ -102,7 +103,7 @@ const CHECKS = [
     'heldUnits_reports_foreign_flock_with_matching_pid_text (session lock)',
     () => {
       const dir = mkTempDir('bl-lock-ownership-');
-      const { repos, lockPath } = sessionRepo();
+      const { repos, lockPath } = sessionRepo(dir);
       return { lockPath, blocked: () => heldUnits({ backlogRoot: dir, repos }).has('S-1') };
     },
   ],
@@ -120,7 +121,7 @@ const CHECKS = [
     'assertMigrationCanStart_refuses_foreign_flock_with_matching_pid_text (session lock)',
     () => {
       const dir = migrationBacklog();
-      const { repos, lockPath } = sessionRepo();
+      const { repos, lockPath } = sessionRepo(dir);
       return {
         lockPath,
         blocked: () =>
@@ -157,6 +158,7 @@ test('a lock this process holds never blocks its own ownership checks', async ()
   for (const [name, arrange] of CHECKS) {
     const { lockPath, blocked, own } = arrange();
     if (own === false) continue; // runFeature would run its whole loop; the review round covers it.
+    mkdirSync(dirname(lockPath), { recursive: true });
     const { taken } = tryLock(lockPath);
     try {
       assert.equal(await blocked(), false, name);

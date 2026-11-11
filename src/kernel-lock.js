@@ -9,9 +9,9 @@
  *
  * - A lock file is permanent (D3). Release closes the descriptor; no code
  *   deletes the file, because a process that locked a new file at the same
- *   path would then hold "the lock" beside the old holder. A lock file that
- *   `tryLock` opens in a git work tree that does not ignore it goes in that
- *   clone's `info/exclude` (`keepOutOfGit`).
+ *   path would then hold "the lock" beside the old holder. Every lock file
+ *   in a backlog lives under `.bl/` (`lock.js`), which the backlog's
+ *   `.gitignore` ignores.
  * - The PID in the file is information only (D4). The holder truncates the
  *   file and writes `${pid}\n${iso}\n[${info}\n]` after it takes the lock, so
  *   a reader can find the file empty for an instant and shows "unknown".
@@ -24,21 +24,8 @@
  * release that brings the depth to zero closes the descriptor.
  */
 
-import { spawnSync } from 'child_process';
-import {
-  appendFileSync,
-  closeSync,
-  constants,
-  existsSync,
-  fstatSync,
-  ftruncateSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  statSync,
-  writeSync,
-} from 'fs';
-import { basename, dirname, resolve } from 'path';
+import { closeSync, constants, fstatSync, ftruncateSync, openSync, readFileSync, statSync, writeSync } from 'fs';
+import { resolve } from 'path';
 import fsExt from 'fs-ext';
 
 const { fcntlSync, flockSync } = fsExt;
@@ -65,49 +52,9 @@ function pidIn(path) {
   return Number.isInteger(pid) && pid > 0 ? pid : 'unknown';
 }
 
-/** The lock files this process has kept out of git (`keepOutOfGit`). */
-const outOfGit = new Set();
-
-/**
- * Keep the lock file `path` out of git, once per process. A lock file is
- * permanent (D3), so in a git work tree that does not ignore it (a backlog
- * whose `.gitignore` predates F-104, the lock beside a custom report output)
- * it would stay untracked for good. The file's path goes in the repo's
- * `info/exclude`, which applies to this clone only and is never committed.
- * Outside a work tree, or when git ignores it already, nothing is written.
- * Only a path that ends ignored (or outside a work tree) is remembered, so a
- * failed git command or exclude write is tried again at the next take. Never
- * throws: a lock works the same whether git sees its file.
- *
- * @param {string} path  an absolute path
- */
-function keepOutOfGit(path) {
-  if (outOfGit.has(path)) return;
-  const git = (...args) =>
-    spawnSync('git', ['-C', dirname(path), ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  try {
-    // 0: ignored already; 128: not in a work tree; else (no git): try again later.
-    const ignored = git('check-ignore', '-q', '--', basename(path)).status;
-    if (ignored === 0 || ignored === 128) return void outOfGit.add(path);
-    if (ignored !== 1) return;
-    const where = git('rev-parse', '--show-prefix', '--git-path', 'info/exclude');
-    if (where.status !== 0) return;
-    const [prefix, exclude] = where.stdout.split('\n');
-    const file = resolve(dirname(path), exclude);
-    const before = existsSync(file) ? readFileSync(file, 'utf8') : '';
-    const pattern = `/${prefix}${basename(path)}`.replace(/[*?[\\]/g, '\\$&');
-    mkdirSync(dirname(file), { recursive: true });
-    appendFileSync(file, `${before === '' || before.endsWith('\n') ? '' : '\n'}${pattern}\n`);
-    outOfGit.add(path);
-  } catch {
-    // The lock does not depend on it; the next take tries again.
-  }
-}
-
 /**
  * One try-lock on `path`, created if missing and never truncated before the
- * lock is taken. The file, new or old, free or held, is kept out of git
- * (`keepOutOfGit`). Taken: truncate, write `${pid}\n${iso}\n` and `info` as one
+ * lock is taken. Taken: truncate, write `${pid}\n${iso}\n` and `info` as one
  * more line when given (D4), and return `{ taken: handle }`. Held by another
  * descriptor: close ours and return `{ holder: pid | 'unknown' }`. A path this
  * process holds: the same handle, one depth deeper (re-entrant). The return
@@ -125,7 +72,6 @@ export function tryLock(path, info) {
     return { taken: mine.handle };
   }
   const fd = openSync(key, constants.O_RDWR | constants.O_CREAT, 0o644);
-  keepOutOfGit(key);
   try {
     flockSync(fd, 'exnb');
   } catch (e) {

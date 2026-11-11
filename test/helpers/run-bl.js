@@ -76,7 +76,7 @@ export function runBl(args, opts = {}) {
 /**
  * Start `bl <args>` while this process holds a lock, and report when the
  * child says it is blocked on that lock. The lock is the backlog lock
- * (`.bl-new.lock`) or the one `opts.lockPath` names, such as a main sync
+ * (`LOCK_FILE`) or the one `opts.lockPath` names, such as a main sync
  * lock (`bl-main-sync.lock`, S-1394). `acquireLock` and `withMainSyncLock`
  * print `Waiting for lock (<LOCK_FILE or the lock's path>) held by pid
  * <ours>…` once, only for a live holder and only after every pre-lock step,
@@ -87,7 +87,7 @@ export function runBl(args, opts = {}) {
  * `acquireLock` (the backlog lock) or `holdLock` (`hold-lock.js`, any bl
  * lock: every one is a kernel lock, F-104). The helper throws before
  * spawning unless this process holds the lock (`opts.lockPath`, else
- * `.bl-new.lock` in the child's backlog root, `BL_BACKLOG_DIR` after
+ * `LOCK_FILE` in the child's backlog root, `BL_BACKLOG_DIR` after
  * `opts.env`), so a caller cannot wait on a lock the child will never see as
  * ours.
  *

@@ -9,21 +9,24 @@
  * Both write the file the way a holder does (D4): PID, time, one info line.
  */
 
-import { closeSync, constants, ftruncateSync, openSync, writeSync } from 'fs';
+import { closeSync, constants, ftruncateSync, mkdirSync, openSync, writeSync } from 'fs';
+import { dirname } from 'path';
 import { setTimeout as delay } from 'timers/promises';
 import fsExt from 'fs-ext';
 import { holderOf } from '../../src/kernel-lock.js';
 import { spawnToFiles } from './spawn-files.js';
 
 /**
- * Hold `path`'s lock from this process until `release()`. Throws EAGAIN when
- * anyone else holds it.
+ * Hold `path`'s lock from this process until `release()`, creating its
+ * directory as a bl take does (`ensureLockDir`). Throws EAGAIN when anyone
+ * else holds it.
  *
  * @param {string} path
  * @param {string} [info]  the info line written after the PID and the time
  * @returns {{ content: string, release: () => void }}  `content` is what the file holds
  */
 export function holdLock(path, info = 'held by the test') {
+  mkdirSync(dirname(path), { recursive: true });
   const fd = openSync(path, constants.O_RDWR | constants.O_CREAT, 0o644);
   try {
     fsExt.flockSync(fd, 'exnb');

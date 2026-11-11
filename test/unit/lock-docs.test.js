@@ -1,7 +1,7 @@
 /**
- * Since F-104 the session lock `.workon.lock` is a kernel lock whose file
- * stays after every session (D3), and a launch refuses a lock another live
- * process holds. No instruction an agent or the operator reads may say that
+ * Since F-104 the session lock is a kernel lock whose file stays after every
+ * session (D3), in the backlog's `.bl/lock/` since S-1495, and a launch
+ * refuses a lock another live process holds. No instruction an agent or the operator reads may say that
  * the file's existence means a session runs, or that a held lock only warns.
  */
 import { test } from 'node:test';
@@ -38,5 +38,5 @@ test('bl_implement_guide_matches_session_guard: no guide describes the PID-file 
   assert.deepEqual(found, []);
   const guide = readFileSync(join(ROOT, 'commands/bl-implement.md'), 'utf8');
   assert.match(guide, /\*\*Concurrent sessions\*\*: refuses the launch while another live process holds/);
-  assert.match(guide, /`\.workon\.lock` stays after every session/);
+  assert.match(guide, /The lock file stays in the backlog's `\.bl\/lock\/` after every\s+session/);
 });

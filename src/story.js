@@ -16,6 +16,7 @@ import { join, matchesGlob } from 'path';
 import { execSync } from 'child_process';
 import { graphOf } from './backlog-graph.js';
 import { holderOf } from './kernel-lock.js';
+import { dirLockPath } from './lock.js';
 import {
   listMembers,
   listValue,
@@ -31,7 +32,17 @@ import { storyEffort } from './effort.js';
 
 export { normalizeId, normalizeComponentId };
 
-export const LOCK_FILE = '.workon.lock';
+/**
+ * The session lock of the directory `dir` a session runs in (a unit
+ * directory, F-60 D3, or the backlog root for a refine): one file per
+ * directory under the backlog's `.bl/lock/` (`dirLockPath`, S-1495).
+ *
+ * @param {string} backlogRoot
+ * @param {string} dir
+ */
+export function sessionLockPath(backlogRoot, dir) {
+  return dirLockPath(backlogRoot, 'session', dir);
+}
 
 /**
  * A parsed list key of story IDs (`depends_on: [S-1, S-2]`, F-62 D2): the
@@ -296,10 +307,9 @@ export function findExistingWorktree(repoPath, branchName) {
 
 /**
  * Remove a unit directory (`unitDirFor`, F-60 D2) once its last worktree is
- * gone, when it is empty. One that holds anything, a worktree or only its
- * session lock file, stays: a lock file is permanent (F-104 D3, A2). One that
- * is not there stays as well. Never throws: a directory that cannot be read
- * or removed stays.
+ * gone, when it is empty. One that holds anything stays, and so does one that
+ * is not there. Never throws: a directory that cannot be read or removed
+ * stays.
  * @returns {boolean} whether the directory was removed
  */
 export function removeUnitDirIfEmpty(unitDir) {
@@ -314,10 +324,11 @@ export function removeUnitDirIfEmpty(unitDir) {
 
 /**
  * Is a session running in `dir` (a unit directory, F-60 D3)? Whether a process,
- * this one included, holds its `.workon.lock` (a try-lock, F-104 D6).
+ * this one included, holds its session lock (`sessionLockPath`; a try-lock,
+ * F-104 D6).
  */
-export function isSessionRunning(dir) {
-  return holderOf(join(dir, LOCK_FILE)) != null;
+export function isSessionRunning(backlogRoot, dir) {
+  return holderOf(sessionLockPath(backlogRoot, dir)) != null;
 }
 
 /**

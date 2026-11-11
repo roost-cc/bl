@@ -435,8 +435,8 @@ remote it does nothing.
 
 Options:
   --commit          After the pull, commit to the backlog repo and push, under
-                    the backlog lockfile (.bl-new.lock). Formats the changed
-                    Markdown files among the named paths, then stages and
+                    the backlog lockfile (.bl/lock/backlog.lock). Formats the
+                    changed Markdown files among the named paths, then stages and
                     commits only each --story directory and each --path, never
                     the whole backlog. Exits 0 without a commit when nothing
                     changed.

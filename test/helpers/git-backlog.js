@@ -7,8 +7,6 @@
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
-import { LOCK_FILE } from '../../src/lock.js';
-import { LOCK_FILE as SESSION_LOCK_FILE } from '../../src/story.js';
 import { runBl } from './run-bl.js';
 import { mkTempDir } from './tempdir.js';
 
@@ -35,12 +33,12 @@ export function git(cwd, ...args) {
 
 /**
  * `git init -b main` the backlog at `dir`, sync it once and commit the result
- * as the base, so a test starts from a clean tree. Its `.gitignore` holds the
- * backlog and session lock files and bl's runtime directory `.bl/`, as every
+ * as the base, so a test starts from a clean tree. Its `.gitignore` holds
+ * bl's runtime directory `.bl/`, where every lock file lives, as every
  * backlog's does.
  */
 export function initGitBacklog(dir) {
-  writeFileSync(join(dir, '.gitignore'), `${LOCK_FILE}\n${SESSION_LOCK_FILE}\n.bl/\n`);
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   const r = runBl(['sync'], { cwd: dir });
   if (r.status !== 0) throw new Error(`seed sync failed: ${r.stderr}`);

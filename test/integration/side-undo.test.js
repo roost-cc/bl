@@ -9,6 +9,7 @@ import { git, statusLines } from '../helpers/git-backlog.js';
 import { FAULTS, build, fmOf, members, sideWithFaults, storyDirs } from '../helpers/side-fixture.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
 import { holderOf } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 
 test("side_failure_and_concurrent_sync_preserve_unit_consistency: bl new writes the story under bl side's backlog lock", () => {
   for (const from of ['F-1', 'S-3']) {
@@ -23,7 +24,7 @@ test("side_failure_and_concurrent_sync_preserve_unit_consistency: bl new writes 
     assert.notEqual(seen.holder, seen.pid, from);
     // bl new works under the descriptor bl side passed down (F-104 D5).
     assert.equal(seen.held, true, from);
-    assert.equal(holderOf(join(dir, '.bl-new.lock')), null, `${from}: released at the end`);
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null, `${from}: released at the end`);
   }
 });
 
@@ -40,7 +41,7 @@ test('side_failure_and_concurrent_sync_preserve_unit_consistency: a failed bl si
       undefined,
       `${from}: no story left`,
     );
-    assert.equal(holderOf(join(dir, '.bl-new.lock')), null, `${from}: released at the end`);
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null, `${from}: released at the end`);
   }
 });
 

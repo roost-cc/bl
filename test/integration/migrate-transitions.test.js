@@ -156,7 +156,7 @@ function oldBacklog() {
     join(dir, rel.t1),
     '---\ntask_id: T-1\ntitle: Check\nunit: F-1\nowner: operator\nstatus: done\nadded: 2026-11-02\ndone: 2026-11-03\n---\n\n# Check\n',
   );
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   setStatus(dir, rel.f(1), 'draft', 'refined');
@@ -337,7 +337,7 @@ test('a rerun after a failed commit, or after a unit that failed to convert, com
         added: '2026-11-01',
       })),
     });
-    writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+    writeFileSync(join(dir, '.gitignore'), '.bl/\n');
     git(dir, 'init', '-q', '-b', 'main');
     commitAt(dir, '2026-11-01T10:00:00Z', 'base');
     return dir;
@@ -385,7 +385,7 @@ function failedFirstRun() {
     components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
     stories: [{ id: 'S-1', title: 'One', component: 'C01', status: 'backlog', added: '2026-11-01' }],
   });
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const hook = join(dir, '.git/hooks/pre-commit');
@@ -449,7 +449,7 @@ test('the migration sets added and completed from the log for a unit that has ne
       { id: 'S-3', title: 'Three', component: 'C01', status: 'done', added: '2026-10-01', completed: '2026-10-05' },
     ],
   });
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const r = script(dir);
@@ -486,7 +486,7 @@ test('the migration leaves an update story in the old shape, and a rerun prints 
   ]) {
     writeFileSync(join(dir, p), read(dir, p).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\n${update}`));
   }
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const before = { [rel.s2]: read(dir, rel.s2), [rel.s3]: read(dir, rel.s3) };
@@ -549,7 +549,7 @@ test('the migration keeps an update story’s change document and counts a held 
       read(dir, p).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\nupdate_repo: acme/core\n`),
     );
   }
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
@@ -620,7 +620,7 @@ test('migration leaves added and completed equal to the log’s first and termin
     join(dir, rel.t1),
     '---\ntask_id: T-1\ntitle: Check\nunit: F-1\nowner: operator\nstatus: done\nadded: 2026-10-05\ndone: 2026-10-01\n---\n\n# Check\n',
   );
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const r = script(dir);
@@ -666,7 +666,7 @@ test('migration writes the synthesized log for a unit whose transitions: is empt
       read(dir, path(id)).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\n${line}\n`),
     );
   }
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const before = Object.fromEntries(cases.map(([id]) => [id, read(dir, path(id))]));

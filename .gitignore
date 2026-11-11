@@ -1,7 +1,6 @@
 node_modules/
 .DS_Store
 .bl/
-.workon.lock
 # bl uses npm (package-lock.json); a pnpm run leaves this behind.
 pnpm-lock.yaml
 # bl top's TUI binary, built on first use (src/top.js).

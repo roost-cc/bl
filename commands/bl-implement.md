@@ -58,7 +58,7 @@ targets start.
 3. Creates a git worktree at `<root>/<branch>/<repo>` (the root is `backlog.json`
    `worktrees`, relative to the backlog) with a story branch
 4. Installs dependencies (`pnpm install`) in the worktree if needed
-5. Takes the session lock, `.workon.lock` in the unit directory `<root>/<branch>`, for the
+5. Takes the unit directory's session lock, a file in the backlog's `.bl/lock/`, for the
    session's whole length (a kernel lock, F-104). If another live process holds it, or the file
    cannot be opened, the launch is refused and nothing starts
 6. Launches an agent session in the unit directory, with full edit/commit/push permissions in
@@ -82,8 +82,8 @@ Re-running the same ID automatically resumes:
 - **Unpushed main**: blocks if local main is ahead of origin (prevents orphaned branches)
 - **Uncommitted changes**: warns if main has uncommitted changes
 - **Concurrent sessions**: refuses the launch while another live process holds the unit
-  directory's session lock. The lock file `.workon.lock` stays after every session (F-104 D3),
-  so a lock file with no session running is normal: do not remove it
+  directory's session lock. The lock file stays in the backlog's `.bl/lock/` after every
+  session (F-104 D3), so a lock file with no session running is normal: do not remove it
 
 ## Agent Permissions
 

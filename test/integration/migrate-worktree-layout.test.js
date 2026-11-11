@@ -8,6 +8,7 @@ import { _hooks } from '../../src/atomic-write.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
+import { sessionLockPath } from '../../src/story.js';
 
 // F-60 D4: the whole migration on a workspace directory with a backlog at
 // origin/main, two repos and real old-layout worktrees.
@@ -175,11 +176,11 @@ async function assertRefused(fixture, re) {
   assert.ok(existsSync(join(wt, 'beta', BRANCH)));
 }
 
-test('migrate refuses before anything moves when a worktree has a live .workon.lock', async () => {
+test('migrate refuses before anything moves when a live session holds a worktree', async () => {
   const fixture = roost();
-  const live = holdLock(join(fixture.wt, 'beta', BRANCH, '.workon.lock'));
+  const live = holdLock(sessionLockPath(fixture.dir, join(fixture.wt, 'beta', BRANCH)));
   try {
-    await assertRefused(fixture, /migration refused: a bl session holds .*beta.*\.workon\.lock/);
+    await assertRefused(fixture, /migration refused: a bl session holds .*\/\.bl\/lock\/session-/);
   } finally {
     live.release();
   }

@@ -1041,7 +1041,12 @@ export async function prepareFeatureRepo(config, feature, repoName, { strict = f
   const branchName = featureBranchName(feature.featureEntry);
   const worktreePath = worktreePathFor(cfg, repoName, branchName);
   return prepareWorktreeOnce(repoPath, branchName, async () => {
-    const { effectiveWorktreePath, isNewWorktree } = await ensureWorktree(repoPath, branchName, worktreePath);
+    const { effectiveWorktreePath, isNewWorktree } = await ensureWorktree(
+      repoPath,
+      branchName,
+      worktreePath,
+      config.backlogRoot,
+    );
     // Owed before bootstrap, so a run stopped there still owes them (S-862).
     const workonPending = workonDue(effectiveWorktreePath, isNewWorktree);
     const stop = (what) => {
@@ -1501,7 +1506,7 @@ async function reviewUnitPRs(
       );
       process.exit(1);
     }
-    if (isSessionRunning(unitDirOf(wt.path))) {
+    if (isSessionRunning(config.backlogRoot, unitDirOf(wt.path))) {
       console.error(`Warning: a workon session appears to be running in ${unitDirOf(wt.path)}.`);
     }
     pr.worktreePath = wt.path;

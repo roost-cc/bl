@@ -16,13 +16,15 @@
  * is refused. stdout is the path of `index.md`, or with `--json` the data and
  * nothing written. Like `bl history` it only reads git objects and the
  * working tree: no activity log, no commit, and no lock but the output's own
- * (`.<dir>.lock` beside it), which keeps two runs from swapping at once.
+ * (`reportLockPath`, in the backlog's `.bl/lock/`), which keeps two runs from
+ * swapping at once.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
 import { loadConfig, parseArgs, warn } from './config.js';
 import { release, tryLockOnce } from './kernel-lock.js';
+import { dirLockPath, ensureLockDir } from './lock.js';
 import { formatBacklogMarkdown } from './sync.js';
 import { adapter, adapterNames, DEFAULT_ADAPTER, pathsClash, renderCharts } from './chart.js';
 import './chart-adapters/vega-lite.js';
@@ -35,10 +37,18 @@ import { loadBacklog } from './backlog-graph.js';
 /** The output directory under the backlog root, and what marks one as a report's. */
 export const REPORTS_DIR = 'reports';
 export const REPORT_GITIGNORE = '*\n';
-/** The name of the file `.<dir>.<suffix>` that a run keeps beside its output directory `dir`. */
-const besideName = (dir, suffix) => `.${basename(dir)}.${suffix}`;
-/** The lock file beside the default output; it stays, so the backlog's .gitignore lists it. */
-export const REPORTS_LOCK = besideName(REPORTS_DIR, 'lock');
+
+/**
+ * The lock file of the output directory `dir`, the default or any `--out`:
+ * in the backlog's `.bl/lock/`, named from `dir`'s absolute path
+ * (`dirLockPath`), so a run creates no lock file beside its output.
+ *
+ * @param {string} backlogRoot
+ * @param {string} dir
+ */
+export function reportLockPath(backlogRoot, dir) {
+  return dirLockPath(backlogRoot, 'report', dir);
+}
 
 /** The files a run writes itself, which no adapter file may replace. */
 const OWN_FILES = new Set(['.gitignore', 'data.json', 'index.md', SITE_DIR]);
@@ -94,7 +104,7 @@ export function checkReportDir(dir) {
  * failure before the swap leaves the last report as it was; one between the
  * renames moves the last report back, and if that fails too it stays in
  * `.<dir>.old`, which the next run (any process) moves back before it
- * stages. `.<dir>.lock` (a kernel lock, whose file stays) keeps a second run
+ * stages. `reportLockPath` (a kernel lock, whose file stays) keeps a second run
  * from writing until the first is done; that run fails naming the holder.
  * The lock is released whatever cleanup throws.
  * @param {import("./flow.js").Flow} flow  the flow `data` was built from
@@ -106,9 +116,11 @@ export function writeReport(config, dir, data, flow, charts = DEFAULT_ADAPTER) {
   const clash = files.find((f) => [...OWN_FILES].some((own) => pathsClash(f.path, own)));
   if (clash) throw new Error(`chart adapter ${charts}: file ${clash.path} would replace the report's own`);
   checkReportDir(dir);
-  const beside = (suffix) => join(dirname(dir), besideName(dir, suffix));
+  const beside = (suffix) => join(dirname(dir), `.${basename(dir)}.${suffix}`);
   mkdirSync(dirname(dir), { recursive: true });
-  const taken = tryLockOnce(beside('lock'), 'bl report');
+  const lockPath = reportLockPath(config.backlogRoot, dir);
+  ensureLockDir(config.backlogRoot);
+  const taken = tryLockOnce(lockPath, 'bl report');
   if (taken.holder != null)
     throw new Error(`another bl report (pid ${taken.holder}) is writing ${dir}; try again when it is done`);
   const stage = beside('new');

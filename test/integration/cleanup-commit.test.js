@@ -33,6 +33,7 @@ import { extractSection } from '../../src/feature.js';
 import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
 import { holderOf } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 
 const GIT_ENV = '-c user.email=t@t -c user.name=t';
 
@@ -188,8 +189,8 @@ ${reviewLog ?? ''}
     mkdirSync(backlogUpstream, { recursive: true });
     execSync(`git init -q --bare -b main "${backlogUpstream}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
     execSync(`git init -q -b main "${backlog}"`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    // A real backlog ignores its lock file (`bl init`), which stays after a release (F-104 D3).
-    writeFileSync(join(backlog, '.git', 'info', 'exclude'), '.bl-new.lock\n');
+    // A real backlog ignores `.bl/` (`bl init`), where its lock files stay after a release (F-104 D3).
+    writeFileSync(join(backlog, '.git', 'info', 'exclude'), '.bl/\n');
     execSync(`git -C "${backlog}" config user.email t@t`, { stdio: ['ignore', 'pipe', 'pipe'] });
     execSync(`git -C "${backlog}" config user.name t`, { stdio: ['ignore', 'pipe', 'pipe'] });
     execSync(`git -C "${backlog}" add -A`, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -270,13 +271,11 @@ test('single-repo cleanup writes commit as a bare string', async () => {
   assert.match(fm.commit, /^[0-9a-f]{7,}$/);
 });
 
-test('bl merge removes the emptied unit directory, and keeps one with its lock file or another worktree (F-60 D2, F-104 A2)', async () => {
-  for (const other of [null, '.workon.lock', 'docs']) {
+test('bl merge removes the emptied unit directory, and keeps one with another worktree (F-60 D2)', async () => {
+  for (const other of [null, 'docs']) {
     const { tmp, backlog, branchName } = buildStoryBacklog({ repoNames: ['bl'] });
     const unitDir = join(tmp, 'worktrees', branchName);
     assert.ok(existsSync(join(unitDir, 'bl')), "the story's worktree is <root>/<branch>/<repo>");
-    // A unit directory that held a session keeps its lock file (F-104 D3).
-    if (other) writeFileSync(join(unitDir, '.workon.lock'), '999999999\n');
     // Another repo's worktree in the same unit directory.
     if (other === 'docs') mkdirSync(join(unitDir, other, 'src'), { recursive: true });
     process.env.BL_BACKLOG_DIR = backlog;
@@ -289,11 +288,7 @@ test('bl merge removes the emptied unit directory, and keeps one with its lock f
     assert.equal(out.result.exit, null, out.stderr);
     assert.equal(existsSync(join(unitDir, 'bl')), false, 'the worktree is removed');
     if (other) {
-      assert.deepEqual(
-        readdirSync(unitDir).sort(),
-        [...new Set(['.workon.lock', other])],
-        'a unit directory that still holds a lock file or a worktree is left as it is',
-      );
+      assert.deepEqual(readdirSync(unitDir), [other], 'a unit directory that still holds a worktree is left as it is');
     } else {
       assert.equal(existsSync(unitDir), false, 'the emptied unit directory is removed');
       assert.match(out.stderr, /Removed unit directory: .*s99-test-cleanup/);
@@ -830,7 +825,7 @@ test('a bl story runs the mark-done sync as a child of its merged checkout', asy
     execSync(`git -C "${backlog}" status --porcelain`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
     '',
   );
-  assert.equal(holderOf(join(backlog, '.bl-new.lock')), null);
+  assert.equal(holderOf(join(backlog, LOCK_FILE)), null);
 
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
   assert.equal(logStatusOf('story', fm), 'done');

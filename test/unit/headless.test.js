@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { ClaudeProvider, buildClaudeArgs, parseClaudeJsonResult, parseLimit } from '../../src/agents/claude.js';
 import {
@@ -13,8 +13,8 @@ import {
 import { AgentProvider } from '../../src/agents/provider.js';
 import { GeminiProvider } from '../../src/agents/gemini.js';
 import { addUsageToFrontmatter, accumulateTokensOnFile, applyFeatureTokens } from '../../src/tokens.js';
-import { runHeadlessSession, launchSession } from '../../src/session.js';
-import { isSessionRunning } from '../../src/story.js';
+import { runHeadlessSession, launchSession, takeSessionLock } from '../../src/session.js';
+import { isSessionRunning, sessionLockPath } from '../../src/story.js';
 import { holderOf, release, tryLock } from '../../src/kernel-lock.js';
 import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
@@ -468,9 +468,9 @@ test('runHeadlessSession and launchSession start in the unit directory: cwd, wri
           cwd: opts.cwd,
           worktreePath: opts.worktreePath,
           write: opts.scopes.write,
-          unitLock: existsSync(join(unitDir, '.workon.lock')),
-          worktreeLock: existsSync(join(wt, '.workon.lock')),
-          running: isSessionRunning(unitDir),
+          unitLock: holderOf(sessionLockPath(dir, unitDir)) === process.pid,
+          worktreeLock: existsSync(sessionLockPath(dir, wt)),
+          running: isSessionRunning(dir, unitDir),
         });
         return { status: 0, output: '', isError: false, usage: null };
       }
@@ -503,8 +503,8 @@ test('runHeadlessSession and launchSession start in the unit directory: cwd, wri
       assert.equal(s.cwd, unitDir, 'the agent starts in the unit directory');
       assert.equal(s.worktreePath, wt, 'the lead worktree rides along');
       assert.deepEqual(s.write, [unitDir, dir], 'the unit directory and the backlog are the write roots');
-      assert.equal(s.unitLock, true, 'the lock is in the unit directory');
-      assert.equal(s.worktreeLock, false, 'and not in the worktree');
+      assert.equal(s.unitLock, true, "the lock is the unit directory's");
+      assert.equal(s.worktreeLock, false, "and not the worktree's");
       assert.equal(s.running, true);
     }
     assert.deepEqual(
@@ -512,15 +512,16 @@ test('runHeadlessSession and launchSession start in the unit directory: cwd, wri
       [{ findSession: unitDir }],
       'a resume looks in the unit directory',
     );
-    assert.equal(isSessionRunning(unitDir), false, 'released after each session');
-    assert.ok(existsSync(join(unitDir, '.workon.lock')), 'the lock file stays (F-104 D3)');
+    assert.equal(isSessionRunning(dir, unitDir), false, 'released after each session');
+    assert.ok(existsSync(sessionLockPath(dir, unitDir)), 'the lock file stays (F-104 D3)');
+    assert.deepEqual(readdirSync(unitDir), ['repo'], 'no lock file in the unit directory (S-1495)');
 
-    // A live session's lock in the unit directory refuses a headless one.
-    const other = holdLock(join(unitDir, '.workon.lock'), 'other');
+    // A live session's lock on the unit directory refuses a headless one.
+    const other = holdLock(sessionLockPath(dir, unitDir), 'other');
     try {
       const refused = await runHeadlessSession({ ...common, prompt: 'p', label: 'F-1: S-2' });
       assert.equal(refused.isError, true);
-      assert.match(refused.error, new RegExp(`a live session \\(pid ${process.pid}\\) holds .*\\.workon\\.lock`));
+      assert.match(refused.error, new RegExp(`a live session \\(pid ${process.pid}\\) holds .*/\\.bl/lock/session-`));
       assert.equal(spawns.length, 2, 'nothing spawned');
     } finally {
       other.release();
@@ -543,7 +544,7 @@ test('runHeadlessSession holds the worktree lock during spawn, logs, passes head
         return true;
       }
       spawn(opts) {
-        seen = { ...opts, lockDuringSpawn: readFileSync(join(opts.worktreePath, '.workon.lock'), 'utf8') };
+        seen = { ...opts, lockDuringSpawn: readFileSync(sessionLockPath(dir, opts.worktreePath), 'utf8') };
         return {
           status: 0,
           output: 'DONE S-1',
@@ -578,7 +579,7 @@ test('runHeadlessSession holds the worktree lock during spawn, logs, passes head
     assert.equal(seen.sessionId, null);
     assert.match(seen.lockDuringSpawn, /F-1: S-1 \(headless\)/);
     assert.ok(seen.scopes.write.includes(wt), 'worktree is a write scope');
-    assert.equal(isSessionRunning(wt), false, 'lock released after spawn');
+    assert.equal(isSessionRunning(dir, wt), false, 'lock released after spawn');
     assert.match(readFileSync(join(wt, '.bl', 'activity.log'), 'utf8'), /bl implement F-1 --headless/);
     const fm = readFileSync(featurePath, 'utf8');
     assert.match(fm, /tokens_output: 15/);
@@ -593,7 +594,7 @@ test('headless session does not clobber a live worktree lock, and starts at once
   try {
     const cfg = loadConfig({ backlogRoot: dir });
     const wt = mkTempDir('bl-wt-');
-    const lockPath = join(wt, '.workon.lock');
+    const lockPath = sessionLockPath(dir, wt);
     let spawned = 0;
     const provider = new (class extends AgentProvider {
       supportsHeadless() {
@@ -623,7 +624,7 @@ test('headless session does not clobber a live worktree lock, and starts at once
       assert.match(r.error, new RegExp(`a live session \\(pid ${live.pid}\\) holds`));
       assert.equal(spawned, 0, 'no agent ran in a worktree someone else holds');
       assert.match(readFileSync(lockPath, 'utf8'), /held by a test child/, 'lock left exactly as it was');
-      assert.equal(isSessionRunning(wt), true, 'bl merge still sees the live session');
+      assert.equal(isSessionRunning(dir, wt), true, 'bl merge still sees the live session');
     } finally {
       // A session killed with SIGKILL: the kernel frees its lock.
       await live.kill('SIGKILL');
@@ -826,7 +827,7 @@ test('launchSession reuses a lock this process holds, takes and releases a free 
   try {
     const cfg = loadConfig({ backlogRoot: dir });
     const wt = mkTempDir('bl-wt-');
-    const lockPath = join(wt, '.workon.lock');
+    const lockPath = sessionLockPath(dir, wt);
     const during = [];
     const provider = new (class extends AgentProvider {
       findSession() {
@@ -857,14 +858,14 @@ test('launchSession reuses a lock this process holds, takes and releases a free 
       });
 
     // A review round's lock: an interactive pass inside it neither rewrites nor releases it.
-    const round = tryLock(lockPath, 'F-1 review round').taken;
+    const round = takeSessionLock(dir, wt, 'F-1 review round');
     try {
       const content = readFileSync(lockPath, 'utf8');
       assert.equal(await launch(), 0);
       assert.equal(during[0], content, "the round's lock held during the session");
       assert.equal(holderOf(lockPath), process.pid, 'and still held after it');
     } finally {
-      release(round);
+      round.release();
     }
 
     // A free lock: the session takes it and releases it; the file stays.
@@ -886,7 +887,7 @@ test('launchSession reuses a lock this process holds, takes and releases a free 
       await live.kill('SIGKILL');
     }
     assert.equal(during.length, 2, 'nothing spawned');
-    assert.match(errors.join('\n'), new RegExp(`a live session \\(pid ${live.pid}\\) holds .*\\.workon\\.lock`));
+    assert.match(errors.join('\n'), new RegExp(`a live session \\(pid ${live.pid}\\) holds .*/\\.bl/lock/session-`));
     assert.equal(await launch(), 0, 'the next launch starts at once');
     assert.equal(during.length, 3);
   } finally {
@@ -920,11 +921,18 @@ test('session_launch_refuses_when_lock_cannot_be_opened: both launch paths, what
         'a directory in its place',
         () => {
           const unitDir = mkTempDir('bl-unit-');
-          mkdirSync(join(unitDir, '.workon.lock'));
+          mkdirSync(sessionLockPath(dir, unitDir), { recursive: true });
           return unitDir;
         },
       ],
-      ['an absent unit directory', () => join(mkTempDir('bl-unit-'), 'gone')],
+      [
+        'a file in place of the lock directory',
+        () => {
+          rmSync(join(dir, '.bl', 'lock'), { recursive: true, force: true });
+          writeFileSync(join(dir, '.bl', 'lock'), '');
+          return mkTempDir('bl-unit-');
+        },
+      ],
     ];
     const paths = [
       [
@@ -981,7 +989,7 @@ test('session_launch_refuses_when_lock_cannot_be_opened: both launch paths, what
     for (const [how, make] of unusable) {
       for (const [name, launch] of paths) {
         const said = await launch(make());
-        assert.match(said, /\.workon\.lock could not be opened: /, `${name}, ${how}`);
+        assert.match(said, /\/\.bl\/lock\/session-.* could not be opened: /, `${name}, ${how}`);
         assert.equal(spawned, 0, `${name}, ${how}: nothing spawned`);
       }
     }

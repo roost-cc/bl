@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { lockOwnerVisible, startBlBehindLock } from '../helpers/run-bl.js';
 import { LOCK_FILE } from '../../src/lock.js';
@@ -55,7 +55,10 @@ test('startBlBehindLock refuses a lock this process does not hold', async () => 
     {
       // A kernel lock is held on a descriptor: a file that names us is not enough.
       name: 'a lock file that names this process, held by nobody',
-      setup: (dir) => writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`),
+      setup: (dir) => {
+        mkdirSync(dirname(join(dir, LOCK_FILE)), { recursive: true });
+        writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
+      },
       found: new RegExp(`found "${process.pid}\\\\n`),
     },
     {
@@ -71,7 +74,7 @@ test('startBlBehindLock refuses a lock this process does not hold', async () => 
         return holdBacklogLock(dir).release;
       },
       env: (dir) => ({ BL_BACKLOG_DIR: join(dir, 'elsewhere') }),
-      found: /must hold .*elsewhere\/\.bl-new\.lock, found "ENOENT"/,
+      found: /must hold .*elsewhere\/\.bl\/lock\/backlog\.lock, found "ENOENT"/,
     },
   ];
   for (const c of cases) {
