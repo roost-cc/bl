@@ -538,22 +538,23 @@ test('collectInbox: a failed update run is one runner line naming its step; "red
   }
 });
 
-test('collectInbox: one runner line when the heartbeat is more than 8 h old, none at 8 h; an old failure is still one line', () => {
+test('collectInbox: one runner line when the heartbeat is more than 48 h old, none at 30 h or 48 h; an old failure is still one line', () => {
   const t = setupHeartbeat();
   try {
     const at = '2026-10-15T03:00:00Z';
     const runner = (now) => ofKind(collectInbox(t.config(), { now: Date.parse(now) }).items, 'runner');
     t.beat(heartbeat({ red: [] }), { at });
-    assert.deepEqual(runner('2026-10-15T11:00:00Z'), [], 'exactly 8 h is not older than 8 h');
-    let stale = runner('2026-10-15T12:00:00Z');
+    assert.deepEqual(runner('2026-10-16T09:00:00Z'), [], '30 h is fresh');
+    assert.deepEqual(runner('2026-10-17T03:00:00Z'), [], 'exactly 48 h is not older than 48 h');
+    let stale = runner('2026-10-17T04:00:00Z');
     assert.equal(stale.length, 1);
-    assert.equal(stale[0].line, 'no update run since 2026-10-15T03:00:00Z (9 h, more than 8 h)');
+    assert.equal(stale[0].line, 'no update run since 2026-10-15T03:00:00Z (49 h, more than 48 h)');
     t.beat(heartbeat({ result: 'failure', failed_step: 'job', red: [] }), { at, subject: 'update run failed at job' });
-    stale = runner('2026-10-15T12:00:00Z');
+    stale = runner('2026-10-17T04:00:00Z');
     assert.equal(stale.length, 1);
     assert.equal(
       stale[0].line,
-      'no update run since 2026-10-15T03:00:00Z (9 h, more than 8 h); the update run of 2026-10-15T03:00:00Z failed at job: update run failed at job',
+      'no update run since 2026-10-15T03:00:00Z (49 h, more than 48 h); the update run of 2026-10-15T03:00:00Z failed at job: update run failed at job',
     );
   } finally {
     t.cleanup();
