@@ -48,8 +48,8 @@ const { info, loadConfig } = configModule;
 /** The kinds, in the order `bl inbox` prints them. */
 export const KINDS = ['runner', 'escalation', 'task', 'change', 'update'];
 
-/** Twice the update job's 4 h timer: a newer heartbeat means it is alive. */
-export const STALE_RUN_HOURS = 8;
+/** Twice a daily start of the guest (F-103 D5): a newer heartbeat means the update job is alive. */
+export const STALE_RUN_HOURS = 48;
 
 /** The heartbeat body this reader knows (F-80 B3). */
 export const HEARTBEAT_SCHEMA = 'roost-update-heartbeat/v1';
@@ -510,7 +510,7 @@ in blockers.json make now; closed with bl task done T-7 [note]), unmerged work
 change document names a branch with commits ahead of main; answered by
 bl run, or bl merge once the review is addressed), and the red updates of
 the update job's latest heartbeat (<repo>:<branch>, with the notes link and
-the gate log). One runner: line says when that heartbeat is more than 8 h
+the gate log). One runner: line says when that heartbeat is more than ${STALE_RUN_HOURS} h
 old or records a failure. bl reads the heartbeat with git from the clone of
 backlog.json "updates": { "heartbeat": { "repo" } }; a fetch that fails is a
 warning, and the other items are still listed.
