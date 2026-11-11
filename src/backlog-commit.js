@@ -182,15 +182,20 @@ export function failedCommitRecord(owner) {
  * call; a failed snapshot after leaves the record as it was; and a failed
  * snapshot before records every dirty path as `unsure`, which the next call
  * names as a failure and does not commit (`readFailedCommit`).
+ * With `scope` (backlog-relative directories or files: the verb's work units,
+ * F-122 D8), only a path equal to or under an entry is committed. Each other
+ * changed path stays uncommitted and is named in one line, and a carried path
+ * outside the scope stays in the record. Without `scope`, every changed path
+ * is committed (`bl init`).
  * Shared by feature `bl merge`, story `bl merge`'s triage, `bl refine` and
  * `bl init` (S-1330).
  * @param {string} root
  * @param {Map<string, string> | null} before
  * @param {string} message
- * @param {{ session?: boolean, owner?: string }} [opts]
+ * @param {{ session?: boolean, owner?: string, scope?: string[] }} [opts]
  * @returns {Promise<boolean>} whether the commit failed
  */
-export async function commitChangedSince(root, before, message, { session = false, owner = message } = {}) {
+export async function commitChangedSince(root, before, message, { session = false, owner = message, scope } = {}) {
   if (!hasOwnRepo(root)) return false;
   const after = dirtySnapshot(root);
   // In a repo, a null snapshot is a `git status` that failed, not "no change".
@@ -230,6 +235,9 @@ export async function commitChangedSince(root, before, message, { session = fals
     );
   }
   let touched = [...new Set([...pathsChangedSince(before, after), ...carried])].sort();
+  const inScope = (p) => !scope || scope.some((e) => p === e || p.startsWith(`${e}/`));
+  const outside = touched.filter((p) => !inScope(p));
+  touched = touched.filter(inScope);
   const held = session && touched.includes(PRIORITY_FILE);
   if (held) {
     touched = touched.filter((p) => p !== PRIORITY_FILE);
@@ -244,16 +252,22 @@ export async function commitChangedSince(root, before, message, { session = fals
       console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);
     }
   }
-  // A carried priority.md that this session held stays pending.
-  const keep = [...(commitFailed ? touched : []), ...(held && carried.includes(PRIORITY_FILE) ? [PRIORITY_FILE] : [])];
+  // A carried priority.md that this session held, and a carried path outside
+  // the scope, stay pending.
+  const keep = [
+    ...(commitFailed ? touched : []),
+    ...(held && carried.includes(PRIORITY_FILE) ? [PRIORITY_FILE] : []),
+    ...carried.filter((p) => outside.includes(p)),
+  ];
   if (!saveFailedCommit(root, owner, { commit: keep.map((p) => [p, after.get(p)]), unsure: [] })) {
     failed = true;
   }
   failed ||= commitFailed;
+  if (outside.length > 0) info(`Left uncommitted, outside ${owner}'s work units: ${outside.join(' ')}`);
   // Still dirty: a path the session committed itself was not left alone. A
-  // held priority.md has its own line above.
+  // held priority.md and a path outside the scope have their own lines.
   const leftAlone = [...before.keys()].filter(
-    (p) => after.has(p) && !touched.includes(p) && !(held && p === PRIORITY_FILE),
+    (p) => after.has(p) && !touched.includes(p) && !outside.includes(p) && !(held && p === PRIORITY_FILE),
   );
   if (leftAlone.length > 0) info(`Left your uncommitted backlog edits alone: ${leftAlone.join(', ')}`);
   return failed;

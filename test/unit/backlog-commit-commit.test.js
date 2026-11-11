@@ -304,6 +304,80 @@ test('commitChangedSince: a failed commit returns true and names the paths', asy
   assert.match(err, /backlog commit failed: git commit exited 1\n {2}Commit these paths yourself: x\.md/);
 });
 
+// `scope` (F-122 D8): a directory entry takes the paths under it, a file
+// entry itself; a sibling that only shares the prefix is outside. Without
+// `scope`, every changed path is committed and no path is named.
+const SCOPED = ['stories/S1-a/index.md', 'stories/S1-a/notes/n.md', 'roadmap.md'];
+const OUTSIDE = ['stories/S1-ab/index.md', 'x.md'];
+for (const scope of [undefined, ['stories/S1-a', 'roadmap.md']]) {
+  test(`commit_changed_since_scope: ${scope ? 'commits only the scope and names the rest' : 'no scope commits every changed path'}`, async () => {
+    const dir = changedSinceRepo();
+    writeFileSync(join(dir, 'y.md'), 'operator\n');
+    const before = dirtySnapshot(dir);
+    for (const p of [...SCOPED, ...OUTSIDE]) {
+      mkdirSync(join(dir, p, '..'), { recursive: true });
+      writeFileSync(join(dir, p), 'the command\n');
+    }
+    const [failed, err] = await captureStderr(() =>
+      commitChangedSince(dir, before, 'chore: refine S-1', { owner: 'refine S-1', scope }),
+    );
+    assert.equal(failed, false, err);
+    const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort();
+    assert.match(err, /Left your uncommitted backlog edits alone: y\.md\n/);
+    if (scope) {
+      assert.deepEqual(files, [...SCOPED].sort());
+      assert.equal(
+        err.match(/Left uncommitted, outside .*/g)?.join('\n'),
+        "Left uncommitted, outside refine S-1's work units: stories/S1-ab/index.md x.md",
+      );
+      assert.deepEqual(
+        g(dir, 'status', '--porcelain', '-uall')
+          .split('\n')
+          .map((l) => l.trim())
+          .sort(),
+        ['?? stories/S1-ab/index.md', 'M x.md', 'M y.md'],
+      );
+    } else {
+      assert.deepEqual(files, [...SCOPED, ...OUTSIDE].sort());
+      assert.doesNotMatch(err, /Left uncommitted, outside/);
+      assert.equal(g(dir, 'status', '--porcelain'), 'M y.md');
+    }
+  });
+}
+
+test('commit_changed_since_scope_keeps_carried_paths_outside_it: a scoped retry commits the scope, the record keeps the rest', async () => {
+  const dir = changedSinceRepo();
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const opts = { owner: 'refine S-1', scope: ['stories/S1-a'] };
+  const first = dirtySnapshot(dir);
+  mkdirSync(join(dir, 'stories', 'S1-a'), { recursive: true });
+  writeFileSync(join(dir, 'stories', 'S1-a', 'index.md'), 'the command\n');
+  writeFileSync(join(dir, 'x.md'), 'the command\n');
+  // An unscoped call of the same owner fails and records both paths.
+  assert.equal((await captureStderr(() => commitChangedSince(dir, first, 'chore: r', { owner: opts.owner })))[0], true);
+  rmSync(hook);
+
+  const [failed, err] = await captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), 'chore: r', opts));
+  assert.equal(failed, false, err);
+  assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['stories/S1-a/index.md']);
+  assert.match(err, /Left uncommitted, outside refine S-1's work units: x\.md\n/);
+  assert.doesNotMatch(err, /Left your uncommitted backlog edits alone/);
+  const record = JSON.parse(readFileSync(join(dir, failedCommitRecord(opts.owner)), 'utf8'));
+  assert.deepEqual(
+    record.commit.map(([p]) => p),
+    ['x.md'],
+  );
+
+  // The next call of the owner whose scope holds it commits it.
+  const [again, err2] = await captureStderr(() =>
+    commitChangedSince(dir, dirtySnapshot(dir), 'chore: r', { owner: opts.owner }),
+  );
+  assert.equal(again, false, err2);
+  assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['x.md']);
+  assert.equal(existsSync(join(dir, failedCommitRecord(opts.owner))), false);
+});
+
 // A failed commit, then a retry that writes nothing new (its snapshot finds
 // the failed paths dirty already): each path class after the failure.
 for (const [label, after, committed, dirty] of [

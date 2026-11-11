@@ -99,6 +99,15 @@ same way, with the task file and `blockers.json` among the paths.
 After a failed commit, a rerun of `bl done` or `bl approve` commits the file that the failed run
 left, if its content is the same (`commitAndRecord` and `failedCommitPending`, S-1347).
 
+Feature `bl merge`, story `bl merge`'s triage, `bl refine` and `bl init` commit what changed in
+the backlog since they started instead (`commitChangedSince`, `src/backlog-commit.js`, S-1330):
+a `dirtySnapshot` taken before they write, compared with one taken at the end. With the `scope`
+option (backlog-relative directories or files, F-122 D8), only a changed path equal to or under
+an entry is committed. Each other changed path stays uncommitted and is named in one line,
+`Left uncommitted, outside <owner>'s work units: <paths>`. A path carried from a failed commit's
+record (`readFailedCommit`) and outside the scope stays in the record. Without `scope`
+(`bl init`), every changed path is committed.
+
 When adding a new command, ask: "what is the one piece of information
 the caller needs?" That goes on stdout. Everything else goes through
 the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
