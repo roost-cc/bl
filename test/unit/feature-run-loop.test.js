@@ -1233,7 +1233,7 @@ test('a failed push escalates with the failed test and its error, then the last 
       const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
       assert.equal(state.status, 'escalated', name);
       const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
-      assert.match(esc, /git push failed:/, name);
+      assert.match(esc.trim(), /^push failed\n\ngit push failed:/, name);
       for (const s of c.has) assert.ok(esc.includes(s), `${name}: has ${s}\n${esc}`);
       for (const s of c.lacks) assert.ok(!esc.includes(s), `${name}: lacks ${s}\n${esc}`);
     } finally {
