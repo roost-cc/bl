@@ -687,14 +687,14 @@ export function runStagePlugins(
  * holds (a review round holds every unit directory's for the whole round) is
  * reused, one depth deeper. A lock another process holds refuses the session
  * with that process's PID. A lock file that cannot be opened refuses the
- * session too, as a review round's does: no session runs without the lock.
- * `release` gives back what this call took.
+ * session too: no session runs without the lock. `release` gives back what
+ * this call took. A review round takes each of its locks with it too.
  *
  * @param {string} dir
  * @param {string} info  one line that names the session
  * @returns {{ refused: string } | { refused: null, release: () => void }}
  */
-function takeSessionLock(dir, info) {
+export function takeSessionLock(dir, info) {
   const path = join(dir, LOCK_FILE);
   let got;
   try {

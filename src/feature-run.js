@@ -76,7 +76,7 @@ import {
   orderStoriesByDeps,
 } from './feature.js';
 import { heldBy, readEdges } from './blockers.js';
-import { runHeadlessSession, launchSession, loadPrompt, loadSchema } from './session.js';
+import { runHeadlessSession, launchSession, loadPrompt, loadSchema, takeSessionLock } from './session.js';
 import { cleanStderrLine } from './outcome.js';
 import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
@@ -117,7 +117,7 @@ import {
   updateChange,
   writeChange,
 } from './change-doc.js';
-import { otherHolder, release as releaseLock, tryLock } from './kernel-lock.js';
+import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
@@ -2146,33 +2146,28 @@ function reviewOtherRepos(ctx) {
  * Take the session lock of every unit directory a review round reaches (the
  * lock lives there, F-60 D3: one per unit, whichever repos it holds), so no
  * other bl session starts in one while the round's snapshots are live: its
- * edits would be quarantined and reverted as the reviewer's. Each is one
- * try-lock (`kernel-lock.js`); a lock this process already holds is reused,
- * one depth deeper. Returns `{ release }`, which closes what the round took,
- * or `{ error }` with nothing taken when a live session holds one.
+ * edits would be quarantined and reverted as the reviewer's. Each is taken
+ * as a session takes its own (`takeSessionLock`); a lock this process already
+ * holds is reused, one depth deeper. Returns `{ release }`, which closes what
+ * the round took, or `{ error }` with nothing taken when a live session holds
+ * one or a lock file cannot be opened.
  */
 function holdReviewLocks(ctx) {
   const held = [];
   const releaseAll = () => {
-    for (const h of held) releaseLock(h);
+    for (const release of held) release();
   };
   // A worktree outside the unit directory (`bl review` given one elsewhere)
   // is locked on its own.
   const unitDir = prepUnitDir(ctx.prep);
   const outside = reviewWorktrees(ctx).filter((wt) => wt !== unitDir && !wt.startsWith(`${unitDir}/`));
   for (const dir of new Set([unitDir, ...outside])) {
-    const path = join(dir, LOCK_FILE);
-    let got;
-    try {
-      got = tryLock(path, `${ctx.feature.id} review round`);
-    } catch (e) {
-      got = { error: `${path} could not be opened: ${e.message}` };
-    }
-    if (!got.taken) {
+    const lock = takeSessionLock(dir, `${ctx.feature.id} review round`);
+    if (lock.refused) {
       releaseAll();
-      return { error: got.error ?? `a live session (pid ${got.holder}) holds ${path}` };
+      return { error: lock.refused };
     }
-    held.push(got.taken);
+    held.push(lock.release);
   }
   return { release: releaseAll };
 }
