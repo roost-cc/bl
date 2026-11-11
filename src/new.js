@@ -883,7 +883,8 @@ function newEdges(cfg, pairs, newIds, feature) {
  * write fails, `blockers.json` is as it was and the directories in `created`
  * (the new stories, a new component) are removed, so the same `bl new` can
  * run again and get the same ids; the error names whatever could not be
- * undone.
+ * undone. When `blockers.json` cannot be put back, the new stories are kept,
+ * since an edge in it may name them.
  * @param {any} cfg
  * @param {import("./blockers.js").Edge[]} edges
  * @param {string[]} created  absolute directories this `bl new` made
@@ -902,19 +903,26 @@ function writeNewEdges(cfg, edges, created) {
     for (const e of edges) info(`blocked: ${edgeLabel(e)} until ${e.until}`);
     return res.paths;
   }
-  const left = [];
-  for (const dir of created) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch (e) {
-      left.push(`${relative(cfg.backlogRoot, dir)} is still there (${e.message})`);
+  const why = error ? error.message : res.refused.join('; ');
+  // A file `writeEdges` could not put back (its reason is in `why`).
+  const left = [...(error?.left ?? res?.left ?? [])];
+  if (left.includes(BLOCKERS_FILE)) {
+    // blockers.json may still hold an edge that names a new story: keep them.
+    const kept = created.map((dir) => relative(cfg.backlogRoot, dir)).join(', ');
+    left.push(`${kept} kept, since an edge in ${BLOCKERS_FILE} may name it`);
+  } else {
+    for (const dir of created) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch (e) {
+        left.push(`${relative(cfg.backlogRoot, dir)} is still there (${e.message})`);
+      }
     }
   }
   const state =
     left.length === 0
       ? 'nothing is written or committed: the new stories are removed, so bl new can run again'
       : `nothing is committed, but undoing failed, so fix these by hand: ${left.join('; ')}`;
-  const why = error ? error.message : res.refused.join('; ');
   throw new Error(`could not write the edges to ${BLOCKERS_FILE} (${why}); ${state}.`, error ? { cause: error } : {});
 }
 

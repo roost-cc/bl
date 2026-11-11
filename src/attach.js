@@ -25,6 +25,7 @@
  */
 
 import { readFileSync } from 'fs';
+import { relative } from 'path';
 import { loadConfig, parseArgs, parseFrontmatterOf, normalizeId, info } from './config.js';
 import { findStoryDir, storyRepoOrExit } from './story.js';
 import {
@@ -179,8 +180,18 @@ export async function main(argv) {
       // A run edge between it and a story of the feature is now an order edge (F-111 D5).
       edgePaths = orderJoinedEdges(config, [storyId]);
     } catch (e) {
-      atomicWriteFile(config.backlogRoot, found.indexPath, before);
-      fail(`bl attach: could not turn ${storyId}'s run edges into order edges: ${e.message}. Nothing was changed.`);
+      // A file the edge write could not put back is named in its message (`allOrNothing`).
+      const left = [...(e.left ?? [])];
+      let story = '';
+      try {
+        atomicWriteFile(config.backlogRoot, found.indexPath, before);
+      } catch (re) {
+        const rel = relative(config.backlogRoot, found.indexPath);
+        story = `; could not put back ${rel} (${re.message}), so it still names ${feature.id}`;
+        left.push(rel);
+      }
+      const state = left.length === 0 ? 'Nothing was changed.' : `Fix these by hand: ${left.join(', ')}.`;
+      fail(`bl attach: could not turn ${storyId}'s run edges into order edges: ${e.message}${story}. ${state}`);
     }
     info(`Attached ${storyId} to ${feature.id}.`);
 

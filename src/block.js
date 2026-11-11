@@ -82,6 +82,54 @@ function prepareCommit(root) {
   return head.status === 0 && mapped(head.stdout) ? [BLOCKERS_FILE] : [BLOCKERS_FILE, '.gitattributes'];
 }
 
+/**
+ * Run `fn`, which writes `blockers.json` and maybe `.gitattributes`, all or
+ * nothing. When `fn` throws or returns `{ refused }`, each of the two files
+ * that changed gets back the bytes it had. The backlog-relative path of a
+ * file that cannot be put back is in `left`, on the result beside `refused`
+ * or on the thrown error, and the refusal or the error message says why and
+ * that it is left changed.
+ * @template T
+ * @param {string} root
+ * @param {() => T} fn
+ * @returns {T & { left?: string[] }}
+ */
+export function allOrNothing(root, fn) {
+  const saved = [BLOCKERS_FILE, '.gitattributes'].map((rel) => {
+    const path = join(root, rel);
+    return { rel, path, text: existsSync(path) ? readFileSync(path, 'utf8') : null };
+  });
+  /** Put each changed file back; returns `{ left, text }` for those that could not be. */
+  const restore = () => {
+    const failed = [];
+    for (const { rel, path, text } of saved) {
+      try {
+        if ((existsSync(path) ? readFileSync(path, 'utf8') : null) === text) continue;
+        if (text == null) rmSync(path, { force: true });
+        else atomicWriteFile(root, path, text);
+      } catch (e) {
+        failed.push({ rel, why: e.message });
+      }
+    }
+    const text = failed.map((f) => `could not put back ${f.rel} (${f.why}), so it is left changed`).join('; ');
+    return { left: failed.map((f) => f.rel), text };
+  };
+  let res;
+  try {
+    res = fn();
+  } catch (err) {
+    const { left, text } = restore();
+    if (left.length > 0) {
+      err.message += `; ${text}`;
+      err.left = left;
+    }
+    throw err;
+  }
+  if (!res?.refused) return res;
+  const { left, text } = restore();
+  return left.length > 0 ? { ...res, refused: [...res.refused, text], left } : res;
+}
+
 /** Commit `paths` (`prepareCommit`'s), or say the backlog is not a repo. */
 async function commitBlockers(root, paths, message) {
   if (!paths) return { committed: false, paths: [BLOCKERS_FILE], notRepo: true };
@@ -132,39 +180,24 @@ export function writeEdge(config, edge) {
  * `writeEdge` for several edges, all or nothing, under the backlog lock the
  * caller holds, with no commit: `bl new` writes a new story's dependencies
  * through it (F-111 D5). When one edge is refused, or a write throws,
- * `blockers.json` and `.gitattributes` get back the bytes they had, and the
- * refusal is returned or the error thrown. `paths` are the paths to commit.
+ * `blockers.json` and `.gitattributes` get back the bytes they had
+ * (`allOrNothing`, which names in `left` a file it could not put back), and
+ * the refusal is returned or the error thrown. `paths` are the paths to
+ * commit.
  * @param {object} config
  * @param {import("./blockers.js").Edge[]} edges
- * @returns {{ refused?: string[], paths: string[] }}
+ * @returns {{ refused?: string[], left?: string[], paths: string[] }}
  */
 export function writeEdges(config, edges) {
-  const root = config.backlogRoot;
-  const saved = [BLOCKERS_FILE, '.gitattributes'].map((rel) => {
-    const path = join(root, rel);
-    return { path, text: existsSync(path) ? readFileSync(path, 'utf8') : null };
-  });
-  const undo = () => {
-    for (const { path, text } of saved) {
-      if (text == null) rmSync(path, { force: true });
-      else atomicWriteFile(root, path, text);
-    }
-  };
-  let paths = [];
-  try {
+  return allOrNothing(config.backlogRoot, () => {
+    let paths = [];
     for (const edge of edges) {
       const res = writeEdge(config, edge);
-      if (res.refused) {
-        undo();
-        return { refused: res.refused, paths: [] };
-      }
+      if (res.refused) return { refused: res.refused, paths: [] };
       paths = res.paths ?? [];
     }
-  } catch (err) {
-    undo();
-    throw err;
-  }
-  return { paths };
+    return { paths };
+  });
 }
 
 /**
