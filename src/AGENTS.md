@@ -1837,10 +1837,14 @@ containers before and after and removes the new ones that carry no
 `minio-in-memory` that would otherwise hold the stack's ports. Compose stacks
 (the dev stack, session stacks) and containers that already existed are never
 touched. Each removal is a `hygiene:containers` history entry;
-`BL_KEEP_TEST_CONTAINERS=1` turns the cleanup off. The snapshot is host-wide,
-so a non-compose container started by anything else during the step (another
-feature run's test gate, a manual `docker run`) is removed too; set the opt-out
-when running loops side by side.
+`BL_KEEP_TEST_CONTAINERS=1` turns the cleanup off. Each `bl` that makes the
+default runner sets `BL_CONTAINER_OWNER` to a token of its own, which every
+step inherits; the app's test helper (`@roost/tools/docker`) sets it as the
+`cc.roost.bl-owner` label of each container it creates. The snapshot leaves
+out containers whose label names another `bl`, so loops running side by side
+do not remove each other's test containers. An unlabelled non-compose container
+started by anything else during the step (a manual `docker run`) is still
+removed.
 
 Processes get the same hygiene (F-70 D4, `src/process-scope.js`). Every
 headless session `runSession` starts and every test-gate command runs in a user

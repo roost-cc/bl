@@ -2,8 +2,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { runFeature, loadRunState, reviewFeature } from '../../src/feature-run.js';
+import { runFeature, loadRunState, reviewFeature, parseContainerList } from '../../src/feature-run.js';
 import { setup, fakeRunner, statusOf, withContainers } from '../helpers/feature-run-fixture.js';
+
+test('the container list leaves out containers another bl owns, so its cleanup never removes them', () => {
+  const stdout = [
+    'aaa\tdynamodb-mine\t\tme',
+    'bbb\tdynamodb-other-loop\t\tsomeone-else',
+    'ccc\tminio-in-memory\t\t',
+    'ddd\tcontainers-minio-1\tcontainers\t',
+    '',
+  ].join('\n');
+  assert.deepEqual(parseContainerList(stdout, 'me'), [
+    { id: 'aaa', name: 'dynamodb-mine', compose: false },
+    { id: 'ccc', name: 'minio-in-memory', compose: false },
+    { id: 'ddd', name: 'containers-minio-1', compose: true },
+  ]);
+});
 
 test('containers a session leaves behind are removed; compose-stack and pre-existing containers are not', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
