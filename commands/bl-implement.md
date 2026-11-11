@@ -58,10 +58,11 @@ targets start.
 3. Creates a git worktree at `<root>/<branch>/<repo>` (the root is `backlog.json`
    `worktrees`, relative to the backlog) with a story branch
 4. Installs dependencies (`pnpm install`) in the worktree if needed
-5. Launches an agent session in the unit directory, `<root>/<branch>`, with full
-   edit/commit/push permissions in every repo worktree under it
-6. Writes a lock file in the unit directory while the session is running to prevent
-   double-starts
+5. Takes the session lock, `.workon.lock` in the unit directory `<root>/<branch>`, for the
+   session's whole length (a kernel lock, F-104). If another live process holds it, or the file
+   cannot be opened, the launch is refused and nothing starts
+6. Launches an agent session in the unit directory, with full edit/commit/push permissions in
+   every repo worktree under it
 
 When the target is in `fixing` (its transition log), the session addresses the review instead
 (the fix round); a `fixed` outcome records `in_review` by `fix`.
@@ -80,7 +81,9 @@ Re-running the same ID automatically resumes:
 - **Done/superseded stories**: refuses to start work on completed stories
 - **Unpushed main**: blocks if local main is ahead of origin (prevents orphaned branches)
 - **Uncommitted changes**: warns if main has uncommitted changes
-- **Concurrent sessions**: warns if a lock file exists in the unit directory
+- **Concurrent sessions**: refuses the launch while another live process holds the unit
+  directory's session lock. The lock file `.workon.lock` stays after every session (F-104 D3),
+  so a lock file with no session running is normal: do not remove it
 
 ## Agent Permissions
 
