@@ -6,13 +6,13 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../../src/config.js';
-import { LOCK_FILE, withLock } from '../../src/lock.js';
+import { dirLockPath, LOCK_FILE, withLock } from '../../src/lock.js';
 import { acquireRunLock, releaseRunLock, RUN_LOCK_ID, runLockPath } from '../../src/run-lock.js';
 import { takeSessionLock } from '../../src/session.js';
-import { sessionLockPath } from '../../src/story.js';
+import { isSessionRunning, sessionLockPath } from '../../src/story.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 
@@ -46,6 +46,34 @@ test('every lock bl takes in a git backlog lives under .bl/ and leaves git statu
     assert.equal(new Set(files).size, files.length, 'one file per lock');
     assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
     assert.deepEqual(readdirSync(unitDir), [], 'no lock file in the unit directory');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a directory reached through a link has the lock file of its real path', () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const real = mkTempDir('bl-unit-');
+    const link = join(mkTempDir('bl-link-'), 'units');
+    symlinkSync(real, link);
+    mkdirSync(join(real, 'f1'));
+    const cases = [
+      ['an existing directory', join(real, 'f1'), join(link, 'f1')],
+      ['a directory not made yet (a first report output)', join(real, 'out', 'r'), join(link, 'out', 'r')],
+    ];
+    for (const [name, viaReal, viaLink] of cases) {
+      assert.equal(dirLockPath(dir, 'session', viaLink), dirLockPath(dir, 'session', viaReal), name);
+    }
+    // A session taken through the link (a configured unit directory) is seen
+    // through the real path (the path `git worktree list` gives).
+    const lock = takeSessionLock(dir, join(link, 'f1'), 'test');
+    assert.equal(lock.refused, null);
+    try {
+      assert.equal(isSessionRunning(dir, join(real, 'f1')), true);
+    } finally {
+      lock.release();
+    }
   } finally {
     cleanup();
   }

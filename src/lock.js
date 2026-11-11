@@ -29,7 +29,7 @@
  */
 
 import { createHash } from 'crypto';
-import { mkdirSync } from 'fs';
+import { mkdirSync, realpathSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
 import { adopt, release, tryLock } from './kernel-lock.js';
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
@@ -41,17 +41,38 @@ export const LOCK_FILE = join(LOCK_DIR, 'backlog.lock');
 const LOCK_POLL_MS = 500;
 
 /**
+ * Absolute `path` with the links of its longest existing ancestor resolved,
+ * so a path saved through a link compares equal to the real path, even when
+ * the path itself is not there (yet, or any more).
+ *
+ * @param {string} path
+ */
+export function canonical(path) {
+  const rest = [];
+  for (let p = resolve(path); ; p = dirname(p)) {
+    try {
+      return join(realpathSync(p), ...rest);
+    } catch {
+      if (dirname(p) === p) return resolve(path);
+      rest.unshift(basename(p));
+    }
+  }
+}
+
+/**
  * The lock file of `kind` for the directory `dir`, one per directory:
  * `<backlogRoot>/.bl/lock/<kind>-<base name>-<hash>.lock`. The base name of
- * `dir` makes it readable; a hash of `dir`'s absolute path keeps two
- * directories with one base name apart.
+ * `dir` makes it readable; a hash of `dir`'s `canonical` path keeps two
+ * directories with one base name apart, and gives a directory reached through
+ * a link (a configured unit directory) the file of its real path (the one
+ * `git worktree list` gives).
  *
  * @param {string} backlogRoot
  * @param {string} kind  `session` or `report`
  * @param {string} dir
  */
 export function dirLockPath(backlogRoot, kind, dir) {
-  const abs = resolve(dir);
+  const abs = canonical(dir);
   const hash = createHash('sha256').update(abs).digest('hex').slice(0, 12);
   return join(backlogRoot, LOCK_DIR, `${kind}-${basename(abs)}-${hash}.lock`);
 }

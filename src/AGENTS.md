@@ -3764,6 +3764,8 @@ wait sleeps synchronously. Every lock file bl keeps in a backlog lives under `.b
 which the backlog's `.gitignore` ignores, so git never sees one and bl never asks git to ignore a
 lock file: the backlog lock, one session lock per unit directory and one report lock per output
 directory in `.bl/lock/` (`lock.js` `LOCK_DIR`, `dirLockPath`), and the run locks in `.bl/run/`.
+`dirLockPath` names a directory's lock file from a hash of its path with links resolved
+(`canonical`), so a unit directory reached through a link has the same lock as its real path.
 `bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
 [--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
 before S-1495: it adds `.bl/` to `.gitignore` if the line is missing, deletes each old lock file

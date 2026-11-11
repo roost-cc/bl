@@ -55,7 +55,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
 import { loadConfig } from './config.js';
-import { withLock } from './lock.js';
+import { canonical, withLock } from './lock.js';
 import { applyMigration } from './migration-txn.js';
 import { RUN_DIR } from './run-lock.js';
 import { isSessionRunning, sessionLockPath } from './story.js';
@@ -124,23 +124,6 @@ function real(path) {
 function within(dir, path) {
   const rel = relative(dir, path);
   return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-
-/**
- * Absolute `path` with the links of its longest existing ancestor resolved,
- * so a path saved through a link compares equal to the worktree's real path,
- * even once the worktree has moved away from it.
- */
-function canonical(path) {
-  const rest = [];
-  for (let p = resolve(path); ; p = dirname(p)) {
-    try {
-      return join(realpathSync(p), ...rest);
-    } catch {
-      if (dirname(p) === p) return resolve(path);
-      rest.unshift(basename(p));
-    }
-  }
 }
 
 /**
