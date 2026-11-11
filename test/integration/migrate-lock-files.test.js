@@ -19,21 +19,23 @@ import { syncBuiltinESMExports } from 'node:module';
 import { basename, join } from 'node:path';
 import fsExt from 'fs-ext';
 import { loadConfig } from '../../src/config.js';
+import { canonical } from '../../src/lock.js';
 import { migrate, OLD_LOCK_FILES } from '../../src/migrate-lock-files.js';
 import { addOrigin, git } from '../helpers/git-backlog.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
-import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 
 const OLD_LINES = '.workon.lock\n.bl-new.lock\n.reports.lock\n';
 
 /**
  * A backlog at origin/main from before S-1495: its `.gitignore` lists the old
  * lock files and not `.bl/`, and an old lock file is in the backlog root and
- * in two unit directories, one of which also holds a worktree.
+ * in two unit directories, one of which also holds a worktree. `configFor`
+ * gives more `backlog.json` keys, from the worktree root.
  */
-function oldBacklog() {
+function oldBacklog(configFor = () => ({})) {
   const units = mkTempDir('bl-units-');
-  const { dir } = mkTempBacklog({ config: { worktrees: units } });
+  const { dir } = mkTempBacklog({ config: { worktrees: units, ...configFor(units) } });
   writeFileSync(join(dir, '.gitignore'), `node_modules/\n${OLD_LINES}`);
   git(dir, 'init', '-q', '-b', 'main');
   git(dir, 'add', '.');
@@ -225,6 +227,73 @@ for (const { when, before, after } of FOREIGN_EDITS) {
     }
     assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'nothing is committed');
     after(dir);
+  });
+}
+
+/**
+ * Each way the scan can reach one lock file by two names, and a file that
+ * vanishes during the run. `setup` returns the lock file; `during` runs at
+ * the first delete, after the scan (the backlog root's lock files come first).
+ */
+const ALIASES = [
+  {
+    where: 'a link to a unit directory, named to sort before it',
+    setup: ({ units, free }) => {
+      symlinkSync(free, join(units, 'a-link'));
+      return join(free, '.workon.lock');
+    },
+  },
+  {
+    where: 'a link to a unit directory, named to sort after it',
+    setup: ({ units, free }) => {
+      symlinkSync(free, join(units, 'z-link'));
+      return join(free, '.workon.lock');
+    },
+  },
+  {
+    where: 'a registered worktree, with the worktree root configured through a link',
+    configFor: (units) => {
+      const link = join(mkTempDir('bl-units-link-'), 'units');
+      symlinkSync(units, link);
+      const repo = mkTempDir('bl-repo-');
+      git(repo, 'init', '-q', '-b', 'main');
+      git(repo, 'commit', '-q', '--allow-empty', '-m', 'base');
+      git(repo, 'worktree', 'add', '-q', '-b', 'f7', join(units, 'f7-wt', 'repo'));
+      return { worktrees: link, repos: reposConfig({ repo }) };
+    },
+    setup: ({ units }) => {
+      writeFileSync(join(units, 'f7-wt', 'repo', '.workon.lock'), '1\n');
+      return join(units, 'f7-wt', 'repo', '.workon.lock');
+    },
+  },
+  {
+    where: 'a lock file another process deletes after the scan',
+    setup: ({ free }) => join(free, '.workon.lock'),
+    during: (lock) => rmSync(lock, { force: true }),
+    vanishes: true,
+  },
+];
+
+for (const { where, configFor, setup, during, vanishes } of ALIASES) {
+  test(`migrate_lock_files_visits_each_lock_file_once: ${where}`, async () => {
+    const fixture = oldBacklog(configFor);
+    const config = loadConfig({ backlogRoot: fixture.dir });
+    const lock = setup(fixture);
+    const real = canonical(lock);
+    const visits = (list) => list.filter((p) => canonical(p) === real).length;
+    if (!during) assert.equal(visits((await migrate(config, { dryRun: true, log: () => {} })).deleted), 1, 'dry run');
+    let first = true;
+    const log = (l) => {
+      if (!first || !l.startsWith('deleted ')) return;
+      first = false;
+      during?.(lock);
+    };
+    const result = await migrate(config, { log });
+    assert.equal(visits(result.deleted), vanishes ? 0 : 1, 'deleted');
+    assert.equal(visits(result.skipped), 0, 'skipped');
+    assert.ok(!existsSync(lock), `${lock} is gone, and not made again`);
+    assert.equal(gitignore(fixture.dir), 'node_modules/\n.bl/\n');
+    assert.equal(git(fixture.dir, 'status', '--porcelain', '--untracked-files=all'), '');
   });
 }
 

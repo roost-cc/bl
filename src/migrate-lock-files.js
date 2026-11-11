@@ -40,6 +40,7 @@ import { commitPaths, textAt } from './backlog-commit.js';
 import { worktreeRoot } from './config.js';
 import { BL_DIR_LINE, withGitignoreLines } from './init.js';
 import { otherHolder, release, tryLockOnce } from './kernel-lock.js';
+import { canonical } from './lock.js';
 import { allActiveWorktrees, removeUnitDirIfEmpty } from './story.js';
 
 /** The lock files bl kept outside `.bl/` before S-1495; `.gitignore` listed each. */
@@ -51,22 +52,26 @@ const [OLD_BACKLOG_LOCK, OLD_REPORTS_LOCK, OLD_SESSION_LOCK] = OLD_LOCK_FILES;
  * backlog root, and the session lock in the backlog root, in each unit
  * directory (each directory under the worktree root), in each directory in a
  * unit directory (a worktree, registered with git or not), and in each
- * registered worktree. A link to a directory counts as a directory.
+ * registered worktree. A link to a directory counts as a directory. A
+ * directory reached by two names (a link) is listed once, by the first name
+ * the scan finds (`canonical`).
  * @param {object} config
  * @returns {string[]}
  */
 export function oldLockFiles(config) {
   const root = config.backlogRoot;
-  const dirs = new Set([root]);
+  const dirs = new Map();
+  const add = (dir) => dirs.has(canonical(dir)) || dirs.set(canonical(dir), dir);
+  add(root);
   for (const unit of subdirs(worktreeRoot(config))) {
-    dirs.add(unit);
-    for (const wt of subdirs(unit)) dirs.add(wt);
+    add(unit);
+    for (const wt of subdirs(unit)) add(wt);
   }
-  for (const wt of allActiveWorktrees(config)) dirs.add(wt.path);
+  for (const wt of allActiveWorktrees(config)) add(wt.path);
   return [
     join(root, OLD_BACKLOG_LOCK),
     join(root, OLD_REPORTS_LOCK),
-    ...[...dirs].map((d) => join(d, OLD_SESSION_LOCK)),
+    ...[...dirs.values()].map((d) => join(d, OLD_SESSION_LOCK)),
   ].filter((p) => existsSync(p));
 }
 
@@ -109,6 +114,8 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   const deleted = [];
   const skipped = [];
   for (const path of oldLockFiles(config)) {
+    // A file another process deleted since the scan: a take would create it.
+    if (!existsSync(path)) continue;
     const pid = dryRun ? otherHolder(path) : deleteUnderLock(path);
     if (pid != null) {
       skipped.push(path);
