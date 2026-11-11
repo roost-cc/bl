@@ -114,12 +114,12 @@ const ROLLBACK_CASES = [
   [
     'the second edge write throws',
     SINGLE,
-    /\(injected blockers\.json write failure; could not put back blockers\.json/,
+    /\(injected blockers\.json write failure; and could not undo the write of blockers\.json: blockers\.json \(injected/,
   ],
   [
     'the second edge is refused',
     () => ['C01', '--title', 'First', '--points', '1', '--depends-on', 'S-1', '--required-for', 'S-1', '--no-sync'],
-    /would close a deadlock.*; could not put back blockers\.json \(injected/,
+    /would close a deadlock.*; and could not undo the write of blockers\.json: blockers\.json \(injected/,
   ],
 ];
 
@@ -163,7 +163,7 @@ for (const [name, argv, message] of ROLLBACK_CASES) {
     try {
       assert.ok(error, 'bl new failed');
       assert.match(error.message, message);
-      assert.match(error.message, /so it is left changed/);
+      assert.match(error.message, /put it back with git -C ".*" checkout -- blockers\.json/);
       assert.match(
         error.message,
         /fix these by hand: blockers\.json; stories\/S3-\w+ kept, since an edge in blockers\.json may name it/,

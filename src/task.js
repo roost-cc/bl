@@ -27,10 +27,10 @@
  * the task's edges make.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { parseArgs } from 'node:util';
-import { atomicWriteFile } from './atomic-write.js';
+import { atomicWriteFile, snapshot } from './atomic-write.js';
 import { info, loadConfig, normalizeId, parseFrontmatter, serializeFrontmatter, slugify } from './config.js';
 import { hasFrontmatter } from './body.js';
 import { findStoryDir, ownFm } from './story.js';
@@ -243,40 +243,6 @@ export function formatTask(fm, body) {
   for (const [key, value] of Object.entries(fm))
     if (!(key in ordered) && !TASK_KEYS.includes(key)) ordered[key] = value;
   return serializeFrontmatter(ordered) + body;
-}
-
-/**
- * Undo for the files a task write touched, run when the commit could not be
- * reached: each path is put back as it was (removed when it was not there).
- * Every path is tried, whatever fails before it. `undo(cause)` returns
- * `cause` when all were put back, else an error naming `cause` and each path
- * left changed, with what to do; its `unrecovered` holds each such path's
- * text before (`null`: it was not there).
- * @param {string} root  the backlog root, for the paths the error names
- * @param {string[]} paths
- * @param {string} [left]  what a path left changed means, for the error
- */
-function snapshot(root, paths, left = '') {
-  const was = new Map(paths.map((p) => [p, existsSync(p) ? readFileSync(p, 'utf8') : null]));
-  return (cause) => {
-    const unrecovered = [];
-    for (const [p, text] of was) {
-      try {
-        if (text == null) rmSync(p, { force: true });
-        else atomicWriteFile(root, p, text);
-      } catch (e) {
-        unrecovered.push({ path: p, text, error: e.message });
-      }
-    }
-    if (unrecovered.length === 0) return cause;
-    const what = unrecovered.map(({ path, text, error }) => {
-      const rel = relative(root, path);
-      return `${rel} (${error}): ${text == null ? 'remove it' : `put it back with git -C "${root}" checkout -- ${rel}`}`;
-    });
-    const err = new Error(`${cause.message}; and could not undo the write${left}: ${what.join('; ')}`, { cause });
-    err.unrecovered = unrecovered;
-    return err;
-  };
 }
 
 /**

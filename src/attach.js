@@ -25,7 +25,6 @@
  */
 
 import { readFileSync } from 'fs';
-import { relative } from 'path';
 import { loadConfig, parseArgs, parseFrontmatterOf, normalizeId, info } from './config.js';
 import { findStoryDir, storyRepoOrExit } from './story.js';
 import {
@@ -38,7 +37,7 @@ import {
   storyMoveRefusal,
 } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
-import { atomicWriteFile } from './atomic-write.js';
+import { snapshot } from './atomic-write.js';
 import { orderJoinedEdges } from './block.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
@@ -168,6 +167,7 @@ export async function main(argv) {
     info(`${storyId} is already in ${feature.id}; nothing to do.`);
   } else {
     let edgePaths;
+    const undoStory = snapshot(config.backlogRoot, [found.indexPath], ` of ${storyId}'s feature line`);
     try {
       await updateSpecFile(config.backlogRoot, found.indexPath, (specFm) => {
         // An empty `feature:` key is filled in place; a missing one goes last.
@@ -180,18 +180,10 @@ export async function main(argv) {
       // A run edge between it and a story of the feature is now an order edge (F-111 D5).
       edgePaths = orderJoinedEdges(config, [storyId]);
     } catch (e) {
-      // A file the edge write could not put back is named in its message (`allOrNothing`).
-      const left = [...(e.left ?? [])];
-      let story = '';
-      try {
-        atomicWriteFile(config.backlogRoot, found.indexPath, before);
-      } catch (re) {
-        const rel = relative(config.backlogRoot, found.indexPath);
-        story = `; could not put back ${rel} (${re.message}), so it still names ${feature.id}`;
-        left.push(rel);
-      }
-      const state = left.length === 0 ? 'Nothing was changed.' : `Fix these by hand: ${left.join(', ')}.`;
-      fail(`bl attach: could not turn ${storyId}'s run edges into order edges: ${e.message}${story}. ${state}`);
+      // `e` names a file the edge write could not put back (`allOrNothing`), and `err` the story.
+      const err = undoStory(e);
+      const state = e.left || err.unrecovered ? '' : ' Nothing was changed.';
+      fail(`bl attach: could not turn ${storyId}'s run edges into order edges: ${err.message}.${state}`);
     }
     info(`Attached ${storyId} to ${feature.id}.`);
 

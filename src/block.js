@@ -15,10 +15,10 @@
  */
 
 import { spawnSync } from 'child_process';
-import { existsSync, readFileSync, rmSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { join, relative } from 'path';
 import { parseArgs } from 'node:util';
-import { atomicWriteFile } from './atomic-write.js';
+import { atomicWriteFile, snapshot } from './atomic-write.js';
 import { info, loadConfig } from './config.js';
 import { commitPaths } from './backlog-commit.js';
 import { acquireLock, releaseLock, withLock } from './lock.js';
@@ -85,49 +85,58 @@ function prepareCommit(root) {
 /**
  * Run `fn`, which writes `blockers.json` and maybe `.gitattributes`, all or
  * nothing. When `fn` throws or returns `{ refused }`, each of the two files
- * that changed gets back the bytes it had. The backlog-relative path of a
- * file that cannot be put back is in `left`, on the result beside `refused`
- * or on the thrown error, and the refusal or the error message says why and
- * that it is left changed.
+ * that changed gets back the bytes it had (`snapshot`). The backlog-relative
+ * path of a file that cannot be put back is in `left`, on the result beside
+ * `refused` or on the thrown error, and the refusal or the error message
+ * names it and what to do. A call inside another's `fn` only runs its own
+ * `fn`: the outer call saved the bytes from before both.
  * @template T
  * @param {string} root
  * @param {() => T} fn
  * @returns {T & { left?: string[] }}
  */
 export function allOrNothing(root, fn) {
-  const saved = [BLOCKERS_FILE, '.gitattributes'].map((rel) => {
-    const path = join(root, rel);
-    return { rel, path, text: existsSync(path) ? readFileSync(path, 'utf8') : null };
-  });
-  /** Put each changed file back; returns `{ left, text }` for those that could not be. */
-  const restore = () => {
-    const failed = [];
-    for (const { rel, path, text } of saved) {
-      try {
-        if ((existsSync(path) ? readFileSync(path, 'utf8') : null) === text) continue;
-        if (text == null) rmSync(path, { force: true });
-        else atomicWriteFile(root, path, text);
-      } catch (e) {
-        failed.push({ rel, why: e.message });
-      }
-    }
-    const text = failed.map((f) => `could not put back ${f.rel} (${f.why}), so it is left changed`).join('; ');
-    return { left: failed.map((f) => f.rel), text };
-  };
+  if (nested) return fn();
+  nested = true;
+  try {
+    return putBackOnFailure(root, fn);
+  } finally {
+    nested = false;
+  }
+}
+
+let nested = false;
+
+/** `allOrNothing`'s save, run and put-back (`snapshot`). */
+function putBackOnFailure(root, fn) {
+  const undo = snapshot(root, [join(root, BLOCKERS_FILE), join(root, '.gitattributes')], ` of ${BLOCKERS_FILE}`);
+  const leftOf = (err) => err.unrecovered.map((u) => relative(root, u.path));
   let res;
   try {
     res = fn();
   } catch (err) {
-    const { left, text } = restore();
-    if (left.length > 0) {
-      err.message += `; ${text}`;
-      err.left = left;
-    }
-    throw err;
+    const out = undo(err);
+    if (out !== err) out.left = leftOf(out);
+    throw out;
   }
   if (!res?.refused) return res;
-  const { left, text } = restore();
-  return left.length > 0 ? { ...res, refused: [...res.refused, text], left } : res;
+  const out = undo(new Error(res.refused.join('; ')));
+  return out.unrecovered ? { ...res, refused: [out.message], left: leftOf(out) } : res;
+}
+
+/**
+ * Ready the clone (`prepareCommit`) and write `blockers.json` with `edges`,
+ * all or nothing (`allOrNothing`): a failed write leaves `.gitattributes` as
+ * it was too. Returns the paths to commit, null when the backlog is not a
+ * repo.
+ * @returns {string[] | null}
+ */
+function prepareAndWrite(root, edges) {
+  return allOrNothing(root, () => {
+    const paths = prepareCommit(root);
+    writeBlockers(root, edges);
+    return paths;
+  });
 }
 
 /** Commit `paths` (`prepareCommit`'s), or say the backlog is not a repo. */
@@ -152,8 +161,9 @@ async function underLock(config, fn) {
  * holds, with no commit: refuses (returns `{ refused }`) an edge that
  * `edgeProblems` faults (an unknown id, gate or status, an unmeetable
  * `until`), a duplicate, and an edge that closes a cycle; otherwise readies
- * the clone (`prepareCommit`), writes `blockers.json` with the edge, and
- * returns the paths to commit (null when the backlog is not a repo).
+ * the clone and writes `blockers.json` with the edge (`prepareAndWrite`, all
+ * or nothing), and returns the paths to commit (null when the backlog is not
+ * a repo).
  * `bl block add` and `bl task --gate` (F-65 D2) share it.
  * @param {object} config
  * @param {import("./blockers.js").Edge} edge
@@ -171,8 +181,7 @@ export function writeEdge(config, edge) {
   // The cycle is checked among every edge bl reads, the `depends_on:` keys' too.
   const cycle = wouldCycle(edge, readEdges(config), units, flow);
   if (cycle) return { refused: [`${edgeLabel(edge)} would close a deadlock: ${describeCycle(cycle)}`] };
-  const paths = prepareCommit(config.backlogRoot);
-  writeBlockers(config.backlogRoot, [...edges, edge]);
+  const paths = prepareAndWrite(config.backlogRoot, [...edges, edge]);
   return { edge, paths };
 }
 
@@ -224,8 +233,7 @@ export function orderJoinedEdges(config, joined) {
   const kept = edges.filter((e) => !turned.includes(e));
   const keys = new Set(kept.map(edgeKey));
   const added = turned.map(order).filter((e) => !keys.has(edgeKey(e)) && keys.add(edgeKey(e)));
-  const paths = prepareCommit(root);
-  writeBlockers(root, [...kept, ...added]);
+  const paths = prepareAndWrite(root, [...kept, ...added]);
   for (const e of turned) info(`${edgeLabel(e)} is now the order edge ${mergeEdgeLabel(e)}`);
   return paths ?? [];
 }
@@ -255,8 +263,7 @@ export async function removeEdge(config, key) {
   return underLock(config, async ({ edges }) => {
     const found = edges.find((e) => edgeKey(e) === edgeKey(key));
     if (!found) return { refused: [`no edge ${edgeLabel(key)} (see bl block list ${key.unit})`] };
-    const paths = prepareCommit(config.backlogRoot);
-    writeBlockers(
+    const paths = prepareAndWrite(
       config.backlogRoot,
       edges.filter((e) => e !== found),
     );
@@ -274,8 +281,7 @@ export async function removeEdge(config, key) {
 export async function fixOrder(config) {
   return underLock(config, async ({ edges, text }) => {
     if (text == null || text === formatBlockers(edges)) return { fixed: false };
-    const paths = prepareCommit(config.backlogRoot);
-    writeBlockers(config.backlogRoot, edges);
+    const paths = prepareAndWrite(config.backlogRoot, edges);
     return { fixed: true, commit: await commitBlockers(config.backlogRoot, paths, `chore: sort ${BLOCKERS_FILE}`) };
   });
 }
