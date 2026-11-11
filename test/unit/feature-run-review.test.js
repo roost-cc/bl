@@ -607,6 +607,21 @@ test('a review round over a unit directory takes its one session lock, not one p
       held.error,
       new RegExp(`a live session \\(pid ${live.pid}\\) holds ${lock.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
     );
+
+    // A session lock that cannot be opened (a directory in its place): no pass runs either.
+    rmSync(lock);
+    mkdirSync(lock);
+    const unusable = await reviewFeature({
+      feature: s.feature,
+      config: s.config,
+      prep: s.prep,
+      runner,
+      pr: { number: '7', url: 'u' },
+      otherRepos,
+      maxRounds: 3,
+    });
+    assert.deepEqual(seen, []);
+    assert.match(unusable.error, /\.workon\.lock could not be opened: /);
   } finally {
     s.cleanup();
   }

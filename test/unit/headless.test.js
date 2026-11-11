@@ -895,6 +895,102 @@ test('launchSession reuses a lock this process holds, takes and releases a free 
   }
 });
 
+test('session_launch_refuses_when_lock_cannot_be_opened: both launch paths, whatever makes the lock unusable', async () => {
+  const { dir, cleanup } = mkTempBacklog();
+  const tmux = process.env.TMUX;
+  delete process.env.TMUX;
+  try {
+    const cfg = loadConfig({ backlogRoot: dir });
+    let spawned = 0;
+    const provider = new (class extends AgentProvider {
+      supportsHeadless() {
+        return true;
+      }
+      findSession() {
+        return null;
+      }
+      spawn() {
+        spawned += 1;
+        return { status: 0, output: 'ok' };
+      }
+    })();
+    // Each makes a unit directory whose session lock cannot be opened.
+    const unusable = [
+      [
+        'a directory in its place',
+        () => {
+          const unitDir = mkTempDir('bl-unit-');
+          mkdirSync(join(unitDir, '.workon.lock'));
+          return unitDir;
+        },
+      ],
+      ['an absent unit directory', () => join(mkTempDir('bl-unit-'), 'gone')],
+    ];
+    const paths = [
+      [
+        'runHeadlessSession',
+        async (unitDir) => {
+          const r = await runHeadlessSession({
+            mode: 'workon',
+            parsed: { id: 'F-1' },
+            prompt: 'p',
+            worktreePath: unitDir,
+            unitDir,
+            config: cfg,
+            roostDir: cfg.roostDir,
+            backlogRoot: dir,
+            provider,
+          });
+          assert.equal(r.isError, true);
+          return r.error;
+        },
+      ],
+      [
+        'launchSession',
+        async (unitDir) => {
+          const errors = [];
+          const consoleError = console.error;
+          console.error = (...a) => errors.push(a.join(' '));
+          try {
+            const status = await launchSession({
+              mode: 'review',
+              parsed: { id: 'F-1' },
+              title: 'T',
+              worktreePath: unitDir,
+              unitDir,
+              branchName: 'b',
+              sessionPrompt: 'p',
+              roostDir: cfg.roostDir,
+              backlogRoot: dir,
+              isNewWorktree: false,
+              config: cfg,
+              forceNew: true,
+              returnOnExit: true,
+              recordTokens: false,
+              sessionName: 'F-1: review',
+              provider,
+            });
+            assert.equal(status, 1);
+          } finally {
+            console.error = consoleError;
+          }
+          return errors.join('\n');
+        },
+      ],
+    ];
+    for (const [how, make] of unusable) {
+      for (const [name, launch] of paths) {
+        const said = await launch(make());
+        assert.match(said, /\.workon\.lock could not be opened: /, `${name}, ${how}`);
+        assert.equal(spawned, 0, `${name}, ${how}: nothing spawned`);
+      }
+    }
+  } finally {
+    if (tmux != null) process.env.TMUX = tmux;
+    cleanup();
+  }
+});
+
 test('withHeadlessRules tells review sessions not to background or wait, without asking them to commit', async () => {
   const { withHeadlessRules } = await import('../../src/session.js');
   const review = withHeadlessRules('Review this.\n\n', 'review');

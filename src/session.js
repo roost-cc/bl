@@ -686,8 +686,9 @@ export function runStagePlugins(
  * F-60 D3) with one try-lock (`kernel-lock.js`). A lock this process already
  * holds (a review round holds every unit directory's for the whole round) is
  * reused, one depth deeper. A lock another process holds refuses the session
- * with that process's PID. A lock file that cannot be opened is not fatal: the
- * session runs without it. `release` gives back what this call took.
+ * with that process's PID. A lock file that cannot be opened refuses the
+ * session too, as a review round's does: no session runs without the lock.
+ * `release` gives back what this call took.
  *
  * @param {string} dir
  * @param {string} info  one line that names the session
@@ -698,8 +699,8 @@ function takeSessionLock(dir, info) {
   let got;
   try {
     got = tryLock(path, info);
-  } catch {
-    return { refused: null, release: () => {} };
+  } catch (e) {
+    return { refused: `${path} could not be opened: ${e.message}` };
   }
   if (got.holder != null) return { refused: `a live session (pid ${got.holder}) holds ${path}` };
   return { refused: null, release: () => release(got.taken) };
