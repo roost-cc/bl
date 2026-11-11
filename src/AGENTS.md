@@ -1043,8 +1043,9 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
     It removes `required_for:` and an empty `depends_on:` from every story, closed ones too,
     through `planText` (`migrate-derived-keys.js`), and commits once
     (`migration-txn.js`). `--dry-run` prints the counts; it is refused on a backlog that a real
-    run refuses (a dirty work tree, a backlog behind `origin/main`, an active `bl run`). Since `readEdges` gives the file's
-    edge where a key gave the same identity, every verb reads the same edges after it.
+    run refuses (a dirty work tree, a backlog behind `origin/main`, an active `bl run`). Since
+    `readEdges` gives the file's edge where a key gave the same identity, every verb reads the
+    same edges after it.
 - **The schema.** bl reads `bl-blockers/v1` (the same shape, with no merge or order edge) and
   `bl-blockers/v2`, and writes `v2` (`BLOCKERS_SCHEMA`, `BLOCKERS_SCHEMAS`); the merge driver
   reads either side. A sorted `v1` file is no `blockers-order` finding.
