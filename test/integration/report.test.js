@@ -739,6 +739,15 @@ test("bl report --out writes elsewhere, and refuses a directory that is not a re
   assert.equal(readFileSync(join(notOurs, 'keep.md'), 'utf8'), 'mine\n');
 });
 
+test('custom_report_lock_ignored: bl report --out inside the backlog leaves git status clean, its lock file included', () => {
+  const { dir } = reportBacklog();
+  const out = join(dir, 'custom', 'out');
+  const r = runBl(['report', '--out', out], { cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(dir, 'custom', '.out.lock')), 'the lock file stays beside the output (F-104 D3)');
+  assert.equal(git(dir, ['status', '--porcelain', '--untracked-files=all']), '', 'nothing to commit');
+});
+
 /** The rows of the Summary's status table, by their first cell. */
 const statusRows = (page) =>
   page
