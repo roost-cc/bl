@@ -32,6 +32,7 @@ import { probePluginBinaries, formatPluginStatus } from './plugin-binaries.js';
 import { commitChangedSince, dirtySnapshot, recordChangedSince } from './backlog-commit.js';
 import { acquireLock, releaseLock, LOCK_FILE } from './lock.js';
 import { REPORTS_LOCK } from './report-cmd.js';
+import { LOCK_FILE as SESSION_LOCK_FILE } from './story.js';
 import { detectGhCredentialHelper, formatGhCredentialHelperAdvisory } from './credential-helper.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -322,10 +323,10 @@ function addToBacklogJson(dir, path, agent, model) {
 
 // The local tool-grant file holds user-discretion permissions, `.bl/` holds
 // bl's runtime state (the activity log, staging files, run state), and the
-// backlog and report lock files stay after their locks are released (F-104
-// D3): none is ever committed. Seed the backlog's .gitignore with them on init
-// (idempotent).
-const GITIGNORED = [LOCAL_TOOLS_FILE, `${dirname(STAGING_DIR)}/`, LOCK_FILE, REPORTS_LOCK];
+// backlog, report and session lock files stay after their locks are released
+// (F-104 D3; a refine session's lock is in the backlog root): none is ever
+// committed. Seed the backlog's .gitignore with them on init (idempotent).
+const GITIGNORED = [LOCAL_TOOLS_FILE, `${dirname(STAGING_DIR)}/`, LOCK_FILE, REPORTS_LOCK, SESSION_LOCK_FILE];
 
 function ensureGitignored(backlogRoot) {
   const gitignorePath = join(backlogRoot, '.gitignore');
