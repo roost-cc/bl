@@ -121,7 +121,7 @@ import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
 import { RUN_DIR, runLockPath, ensureRunDir } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
-import { failureExcerpt } from './test-excerpt.js';
+import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
 import * as processScope from './process-scope.js';
 import { regenerateConflicts, regeneratePlugins } from './regenerate.js';
 import { REVIEW, loadFlow } from './flow.js';
@@ -2430,9 +2430,35 @@ function gateDetails(gate) {
     `Command: \`${gate.command}\``,
     ...(gate.repo ? [`Repo: ${gate.repo} (${gate.worktreePath})`] : []),
     `Full log: ${gate.logPath}`,
-    `Failure excerpt:\n\n${fenced(gate.excerpt)}`,
-    `Last ${GATE_TAIL_LINES} lines:\n\n${fenced(gate.tail)}`,
+    ...outputSections(gate.excerpt, gate.tail, GATE_TAIL_LINES),
   ].join('\n\n');
+}
+
+/**
+ * The "Failure excerpt" and "Last <lines> lines" sections of a failed
+ * command's output, each fenced. A null `excerpt` leaves its section out.
+ */
+function outputSections(excerpt, last, lines) {
+  return [
+    ...(excerpt == null ? [] : [`Failure excerpt:\n\n${fenced(excerpt)}`]),
+    `Last ${lines} lines:\n\n${fenced(last)}`,
+  ];
+}
+
+/** How many of a failed push's last lines its reason shows. */
+const PUSH_TAIL_LINES = 10;
+
+/**
+ * The reason text of a failed `git push`: the failure excerpt of its output
+ * (a pre-push gate's failed test and error, S-1499), then its last 10 lines.
+ * With no failure marker (a rejected push), the last 10 lines alone.
+ */
+function pushFailure(output) {
+  const shown = String(output ?? '').replace(/\s+$/, '');
+  const excerpt = failureExcerpt(shown);
+  return outputSections(excerpt === NO_MARKERS ? null : excerpt, tail(shown, PUSH_TAIL_LINES), PUSH_TAIL_LINES).join(
+    '\n\n',
+  );
 }
 
 /**
@@ -3249,7 +3275,7 @@ function pushBranch(ctx, step) {
     const push = runner.shell(`git push -u origin ${prep.branchName}`, t.worktreePath);
     let reason = null;
     if (push.status !== 0) {
-      reason = `git push failed:\n\n\`\`\`\n${tail(push.output, 10)}\n\`\`\``;
+      reason = `git push failed:\n\n${pushFailure(push.output)}`;
     } else {
       const ahead = runner.shell(`git rev-list --count origin/${prep.branchName}..HEAD`, t.worktreePath);
       if (ahead.status !== 0 || ahead.output.trim() !== '0') {
@@ -4271,7 +4297,7 @@ function pushIntegrated(ctx, repos) {
     if (push.status !== 0) {
       return {
         ok: false,
-        reason: `${r.repoName}: git push origin HEAD failed after a green gate (the merge is kept on the branch; rerun \`bl merge ${unit.id}\`):\n${tail(push.output, 10).trim()}`,
+        reason: `${r.repoName}: git push origin HEAD failed after a green gate (the merge is kept on the branch; rerun \`bl merge ${unit.id}\`):\n\n${pushFailure(push.output)}`,
         repos,
       };
     }

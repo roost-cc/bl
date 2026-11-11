@@ -1742,7 +1742,11 @@ noise, and on F-4 the error that mattered sat far above it. The fix-tests
 prompt gets `{{testLogPath}}`, `{{testExcerpt}}` and `{{testTail}}`, and is told
 to read the log rather than rerun the suite. A second failed attempt escalates
 as `test gate failed twice` with the command, the log path, the excerpt and
-the tail, in that order.
+the tail, in that order. A failed `git push` (`pushBranch()` in `bl run`,
+`pushIntegrated()` in `bl merge`) gives its reason the same two sections
+through `pushFailure()`: the excerpt of the push output, left out when no
+marker matches, then the last 10 lines. The pre-push gate prints its failed
+test far above its summary (S-1499).
 
 The fix-tests session returns an outcome object (`schemas/fix-tests.json`,
 F-68 D2): `outcome` is one of three values, and `reason` is required for each.

@@ -18,6 +18,16 @@ import {
   stubRunner,
 } from '../helpers/merge-integrate-fixture.js';
 
+/** A pre-push gate's output with one failed node:test test far above its summary (S-1499). */
+const GATE_OUTPUT = [
+  '✖ names the failed test (3ms)',
+  '  AssertionError: expected 1 to equal 2',
+  ...Array.from({ length: 30 }, (_, i) => `✔ passes ${i} (1ms)`),
+  'test summary: 1 failed, 3 passed',
+  'failed: test:unit',
+  '',
+].join('\n');
+
 test('integration_resolution_tracks_changes_in_current_merged_and_conflicted_repos: every repo a session commits in is reviewed, pushed or rolled back', async () => {
   const cases = [
     {
@@ -137,11 +147,14 @@ test('retry_failed_integration_push_for_clean_regenerated_and_agent_resolved_mer
         if (cmd !== 'git push origin HEAD') return shell(cmd, cwd, o);
         const repo = Object.keys(wts).find((k) => wts[k] === cwd);
         pushes.push(repo);
-        return c.reject.includes(repo) ? { status: 1, output: 'rejected by a pre-push hook' } : shell(cmd, cwd, o);
+        return c.reject.includes(repo) ? { status: 1, output: GATE_OUTPUT } : shell(cmd, cwd, o);
       };
       const first = await integrateUnit({ ...ctx, runner });
       assert.equal(first.ok, false, c.name);
       assert.match(first.reason, /git push origin HEAD failed/, c.name);
+      // S-1499: the reason names the failed test and its error, then the last lines.
+      for (const line of ['✖ names the failed test (3ms)', 'AssertionError: expected 1 to equal 2', 'Last 10 lines:'])
+        assert.ok(first.reason.includes(line), `${c.name}: ${line} in ${first.reason}`);
       runner.shell = shell;
       const retry = await integrateUnit({ ...featureCtx(fx), prep: ctx.prep, runner: stubRunner('true').runner });
       assert.equal(retry.ok, true, `${c.name}: ${retry.reason}`);
