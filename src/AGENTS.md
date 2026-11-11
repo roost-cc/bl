@@ -1754,7 +1754,11 @@ noise, and on F-4 the error that mattered sat far above it. The fix-tests
 prompt gets `{{testLogPath}}`, `{{testExcerpt}}` and `{{testTail}}`, and is told
 to read the log rather than rerun the suite. A second failed attempt escalates
 as `test gate failed twice` with the command, the log path, the excerpt and
-the tail, in that order.
+the tail, in that order. A failed `git push` (`pushBranch()` in `bl run`,
+`pushIntegrated()` in `bl merge`) gives its reason the same two sections
+through `pushFailure()`: the excerpt of the push output, left out when no
+marker matches, then the last 10 lines. The pre-push gate prints its failed
+test far above its summary (S-1499).
 
 The fix-tests session returns an outcome object (`schemas/fix-tests.json`,
 F-68 D2): `outcome` is one of three values, and `reason` is required for each.
@@ -4724,9 +4728,9 @@ units `bl merge` takes next:
 | `update`     | an entry in the red list of the update job's latest heartbeat (F-80 D4, B2, below)                                                                                                     | `tools:renovate/glob-11.x` | nothing here: the next update run tests it again; read its gate log |
 
 One more line comes first, `runner: …` (kind `runner`, id `updates:run`),
-when the latest heartbeat is more than 8 h old (twice the job's 4 h timer)
-or records `"result": "failure"`: `no update run since <time> (<n> h, more
-than 8 h)`, `the update run of <time> failed at <step>: <subject>`, or both
+when the latest heartbeat is more than 48 h old (twice a daily start of the
+guest, F-103 D5) or records `"result": "failure"`: `no update run since
+<time> (<n> h, more than 48 h)`, `the update run of <time> failed at <step>: <subject>`, or both
 joined by `; ` (F-80 B3).
 
 The heartbeat (F-80 B3, D6) is one orphan commit on the branch

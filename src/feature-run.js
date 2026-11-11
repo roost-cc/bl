@@ -121,7 +121,7 @@ import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
-import { failureExcerpt } from './test-excerpt.js';
+import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
 import * as processScope from './process-scope.js';
 import { regenerateConflicts, regeneratePlugins } from './regenerate.js';
 import { REVIEW, loadFlow } from './flow.js';
@@ -2362,13 +2362,13 @@ function writeGateLog(ctx, logPath, text) {
  */
 function gateFailure(ctx, { command, logPath, log, output, excerpt, repo, worktreePath, perRepo }) {
   const shownPath = writeGateLog(ctx, logPath, log);
-  const shown = String(output ?? '').replace(/\s+$/, '');
+  const parts = outputParts(output, GATE_TAIL_LINES);
   return {
     ok: false,
     command,
     logPath: shownPath,
-    excerpt: excerpt ?? failureExcerpt(shown),
-    tail: tail(shown, GATE_TAIL_LINES),
+    excerpt: excerpt ?? parts.excerpt,
+    tail: parts.tail,
     // The repo whose check failed and its worktree: where the fix goes.
     repo,
     worktreePath,
@@ -2405,9 +2405,41 @@ function gateDetails(gate) {
     `Command: \`${gate.command}\``,
     ...(gate.repo ? [`Repo: ${gate.repo} (${gate.worktreePath})`] : []),
     `Full log: ${gate.logPath}`,
-    `Failure excerpt:\n\n${fenced(gate.excerpt)}`,
-    `Last ${GATE_TAIL_LINES} lines:\n\n${fenced(gate.tail)}`,
+    ...outputSections(gate.excerpt, gate.tail, GATE_TAIL_LINES),
   ].join('\n\n');
+}
+
+/**
+ * The "Failure excerpt" and "Last <lines> lines" sections of a failed
+ * command's output, each fenced. A null `excerpt` leaves its section out.
+ */
+function outputSections(excerpt, last, lines) {
+  return [
+    ...(excerpt == null ? [] : [`Failure excerpt:\n\n${fenced(excerpt)}`]),
+    `Last ${lines} lines:\n\n${fenced(last)}`,
+  ];
+}
+
+/**
+ * The failure excerpt and the last `lines` lines of a failed command's
+ * output, trailing whitespace dropped first.
+ */
+function outputParts(output, lines) {
+  const shown = String(output ?? '').replace(/\s+$/, '');
+  return { excerpt: failureExcerpt(shown), tail: tail(shown, lines) };
+}
+
+/** How many of a failed push's last lines its reason shows. */
+const PUSH_TAIL_LINES = 10;
+
+/**
+ * The reason text of a failed `git push`: the failure excerpt of its output
+ * (a pre-push gate's failed test and error, S-1499), then its last lines.
+ * With no failure marker (a rejected push), the last lines alone.
+ */
+function pushFailure(output) {
+  const { excerpt, tail: last } = outputParts(output, PUSH_TAIL_LINES);
+  return outputSections(excerpt === NO_MARKERS ? null : excerpt, last, PUSH_TAIL_LINES).join('\n\n');
 }
 
 /**
@@ -3224,7 +3256,7 @@ function pushBranch(ctx, step) {
     const push = runner.shell(`git push -u origin ${prep.branchName}`, t.worktreePath);
     let reason = null;
     if (push.status !== 0) {
-      reason = `git push failed:\n\n\`\`\`\n${tail(push.output, 10)}\n\`\`\``;
+      reason = `git push failed:\n\n${pushFailure(push.output)}`;
     } else {
       const ahead = runner.shell(`git rev-list --count origin/${prep.branchName}..HEAD`, t.worktreePath);
       if (ahead.status !== 0 || ahead.output.trim() !== '0') {
@@ -4246,7 +4278,7 @@ function pushIntegrated(ctx, repos) {
     if (push.status !== 0) {
       return {
         ok: false,
-        reason: `${r.repoName}: git push origin HEAD failed after a green gate (the merge is kept on the branch; rerun \`bl merge ${unit.id}\`):\n${tail(push.output, 10).trim()}`,
+        reason: `${r.repoName}: git push origin HEAD failed after a green gate (the merge is kept on the branch; rerun \`bl merge ${unit.id}\`):\n\n${pushFailure(push.output)}`,
         repos,
       };
     }
