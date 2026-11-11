@@ -3876,8 +3876,8 @@ never a link (no `dangling-dep` from it), and an epic's stored `status:` is not 
 a set. `scripts/migrate-derived-keys.js` removes every one; `feature-story-missing`,
 `feature-story-mismatch` and `feature-story-unlisted`, which compared the stored list with the
 stories, are gone, and so is `asymmetric-dep`, which compared a `depends_on:` with the other
-story's `required_for:`: an edge is stated once, on the dependent story, and the graph's
-`story.requiredFor` is its inverse.
+story's `required_for:`: an edge is stated once, today in `blockers.json` (F-111), and the
+graph's `story.requiredFor` is its inverse.
 
 `depends-on-key` (F-111 D5, warning) is a story file that still holds `depends_on:`, empty or
 not: every hold and order lives in `blockers.json`. Until `scripts/migrate-depends-on.js`
@@ -4029,7 +4029,7 @@ machines with `bl validate --skip plugin-binary`.
 
 Apply auto-fixable remediations for findings that `bl validate` reports. No
 code is supported today: the one there was, `asymmetric-dep`, went with F-77
-D3 (an edge is stated once, on the dependent story's `depends_on`; the
+D3 (an edge is stated once, today in `blockers.json` (F-111); the
 inverse is derived), so every run prints the empty report and writes nothing.
 The command and its contract stay (feature F-77 Q1, which recommends removing
 it in a later story); `SUPPORTED_CODES` in `src/fix.js` is empty, and

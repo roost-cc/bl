@@ -165,3 +165,21 @@ test('no prompt tells an agent to write depends_on:', () => {
     }
   }
 });
+
+// The same for bl's own messages and help: no line of code outside a comment
+// in src/*.js tells a user to add, write or declare `depends_on`.
+test('no string literal in src/*.js tells a user to add depends_on:', () => {
+  const dir = new URL('../../src/', import.meta.url);
+  for (const name of readdirSync(dir).filter((f) => f.endsWith('.js'))) {
+    readFileSync(new URL(name, dir), 'utf8')
+      .split('\n')
+      .forEach((line, i) => {
+        if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+        assert.doesNotMatch(
+          line,
+          /\b(add|declare|write|put)\b[^.]*depends_on/i,
+          `src/${name}:${i + 1}: ${line.trim()}`,
+        );
+      });
+  }
+});
