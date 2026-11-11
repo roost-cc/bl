@@ -1017,10 +1017,14 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
     `writeEdges` (`block.js`: `writeEdge`'s checks for each, all or nothing), under the lock
     that wrote the stories, and `blockers.json` joins their commit. An unknown id warns and
     gets no edge. A refused edge (a deadlock) or a failed write puts `blockers.json` back and
-    removes the new stories, so the same `bl new` runs again with the same ids. When stories
-    join a feature (`bl new --feature … S-n`, `bl attach`), `orderJoinedEdges` turns each run
-    edge between one of them and a story of that feature into an order edge, in the same
-    commit. The story templates have no `depends_on:`.
+    removes the new stories, so the same `bl new` runs again with the same ids. When
+    `blockers.json` cannot be put back, `bl new` keeps the new stories, since an edge in it may
+    name them, and the message names the file (`writeNewEdges`). When stories join a feature
+    (`bl new --feature … S-n`, `bl attach`), `orderJoinedEdges` turns each run edge between
+    one of them and a story of that feature into an order edge, in the same commit. A run edge
+    with `active_when` is not turned, since an order edge takes none: both commands refuse
+    the join before they write anything (`joinRefusal`). The story templates have no
+    `depends_on:`.
   - **The read adapter (R4).** Until `scripts/migrate-depends-on.js` moves them, each
     `depends_on:` entry still in a story file is read as its `dependencyEdge`
     (`dependsOnEdges`). An entry that names no story still gives a run edge, so it holds, and
@@ -1038,7 +1042,8 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
     MIGRATION.md with the missing edges, and a later run removes the key once that is fixed.
     It removes `required_for:` and an empty `depends_on:` from every story, closed ones too,
     through `planText` (`migrate-derived-keys.js`), and commits once
-    (`migration-txn.js`). `--dry-run` prints the counts. Since `readEdges` gives the file's
+    (`migration-txn.js`). `--dry-run` prints the counts; it is refused on a backlog that a real
+    run refuses (a dirty work tree, a backlog behind `origin/main`, an active `bl run`). Since `readEdges` gives the file's
     edge where a key gave the same identity, every verb reads the same edges after it.
 - **The schema.** bl reads `bl-blockers/v1` (the same shape, with no merge or order edge) and
   `bl-blockers/v2`, and writes `v2` (`BLOCKERS_SCHEMA`, `BLOCKERS_SCHEMAS`); the merge driver
@@ -2565,9 +2570,12 @@ bl attach <S-n> <F-n> [--no-sync] [--json]
   `found_by:` or the story's sections.
 - **Ids** in either order, in any form `normalizeId` / `normalizeFeatureId`
   accept; anything other than one of each exits 1.
-- **No-op.** A story that already names the feature (in any form
-  `normalizeFeatureId` accepts) is left alone: exit 0, nothing written or
-  committed, stderr says so, `--json` says `changed: false`.
+- **Already in the feature.** A story that already names the feature (in any
+  form `normalizeFeatureId` accepts) keeps its file, but its run edges are
+  still turned (see **Order edges**), and `blockers.json` is written and
+  committed. With no edge to turn, it is a no-op: exit 0, nothing written or
+  committed, and stderr says so. `--json` `changed` is the `feature:` line
+  alone, so it is `false` for a rerun that turned edges.
 - **Refusals** (exit 1, nothing written), checked under the backlog lock on
   the files as they are then: a missing story or feature; a feature file
   whose `feature_id:` is not its directory's feature; a story whose
@@ -2577,18 +2585,25 @@ bl attach <S-n> <F-n> [--no-sync] [--json]
   whose `feature:` names another feature, or that is not `draft` or
   `refined` (`storyMoveRefusal`, as `bl new --feature … S-<n>`: an
   `in_progress` story is someone's work in flight, and this feature's merge
-  would mark it done); and, for a started feature (`isFeatureBranched`), a
+  would mark it done); a run edge with `active_when` between the story and a
+  story of the feature (`joinRefusal`: an order edge takes no `active_when`);
+  and, for a started feature (`isFeatureBranched`), a
   story whose component's repo is not in `reposForFeature`. Only those have
   branches and worktrees, so before the feature runs a story in a new repo
   simply joins it. The message names `bl side <repo> --from F-<n>` as the way
   to bring a repo in; attach prepares no worktree and stays a backlog edit.
 - **Order edges.** Each run edge in `blockers.json` between the story and a
   story of the feature becomes an order edge (`orderJoinedEdges`, F-111 D5),
-  since a run edge inside one feature would hold the feature on itself. If
-  that write fails, the story gets its old text back and attach exits 1.
+  since a run edge inside one feature would hold the feature on itself. A
+  story already in the feature gets the same turn, so a rerun finishes what a
+  failure between the two writes left. If that write fails, the story gets
+  its old text back and attach exits 1. When `blockers.json` or the story
+  cannot be put back, attach also exits 1, and the message names each file
+  left changed (`left`, `unrecovered`).
 - **Commit.** `syncAndCommit` of the story directory, with `blockers.json`
   when an edge changed: `chore: attach S-<n> to F-<n>`. `--no-sync` writes the
-  story under the lock and commits nothing, as `bl new --no-sync` does.
+  story and `blockers.json` under the lock and commits nothing, as
+  `bl new --no-sync` does.
 - **Failure.** Attach creates nothing, so there is no repair record
   (`feature-links.js`): the story is written through `updateSpecFile`, and a
   write that fails part way leaves it whole.

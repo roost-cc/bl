@@ -70,10 +70,12 @@ Refused, with nothing written:
     repo in)
 
 Options:
-  --no-sync   Write the story under the backlog lock and leave them
-              uncommitted, as bl new --no-sync does
+  --no-sync   Write the story and blockers.json under the backlog lock and
+              leave them uncommitted, as bl new --no-sync does
   --json      Print one JSON object (schema ${ATTACH_JSON_SCHEMA}):
-              { schema, story, feature, changed }
+              { schema, story, feature, changed }. changed is the
+              feature: line alone, so it is false for a rerun that
+              turned edges
   --help      Show this help
 
 stdout is empty without --json; progress goes to stderr.

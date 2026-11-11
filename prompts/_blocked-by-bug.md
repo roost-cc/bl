@@ -32,7 +32,8 @@ not reasons to stop. Make a serious effort before you give up on anything.
      the bug in its own commit (step 3, the subject ending in ` ({{featureId}})`). Other reasons
      are that the story is `in_progress`, in another feature, or `done` or `superseded`. Do not
      run `bl new` for it. Name the existing `S-<id>` in the body's `## Summary` and quote
-     attach's refusal there. Then file a task for the operator with that body file in place of
+     attach's refusal there. If the message names a file that attach left changed (such as
+     `blockers.json`), quote that too, and do not commit or restore the file yourself. Then file a task for the operator with that body file in place of
      step 4, and carry on with your work:
      `bl task {{featureId}} --title "Ad-hoc fix (done, <short sha>): <the bug>" --gate none --body-file {{backlogDir}}/.bl/run/{{featureId}}.adhoc-<slug>.md`.
      The operator decides at merge whether to move the story, file a new one, or supersede the
