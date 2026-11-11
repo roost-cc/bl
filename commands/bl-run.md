@@ -136,5 +136,6 @@ lines and put design in the feature file.
 
 ## Sizing rules the refine prompt enforces
 
-Stories 2–5 points (never 1); 8–20 points per feature; no verification-only
-stories; dependencies outside the feature must be done or pulled in.
+Stories are cut along functional, code-organization and dependency boundaries, not
+by points; a story of 8 points or more is split; 8–20 points per feature; no
+verification-only stories; dependencies outside the feature must be done or pulled in.
