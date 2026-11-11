@@ -4685,9 +4685,9 @@ units `bl merge` takes next:
 | `update`     | an entry in the red list of the update job's latest heartbeat (F-80 D4, B2, below)                                                                                                     | `tools:renovate/glob-11.x` | nothing here: the next update run tests it again; read its gate log |
 
 One more line comes first, `runner: …` (kind `runner`, id `updates:run`),
-when the latest heartbeat is more than 8 h old (twice the job's 4 h timer)
-or records `"result": "failure"`: `no update run since <time> (<n> h, more
-than 8 h)`, `the update run of <time> failed at <step>: <subject>`, or both
+when the latest heartbeat is more than 48 h old (twice a daily start of the
+guest, F-103 D5) or records `"result": "failure"`: `no update run since
+<time> (<n> h, more than 48 h)`, `the update run of <time> failed at <step>: <subject>`, or both
 joined by `; ` (F-80 B3).
 
 The heartbeat (F-80 B3, D6) is one orphan commit on the branch
