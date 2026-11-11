@@ -7,7 +7,8 @@
  * feature's stories, points and components are derived from it (`bl run`
  * orders them, `bl merge` marks exactly them done). `bl attach` sets it, the
  * write `bl new F-<n>` makes for a story it creates, and commits the story
- * directory by path. A story that already names the feature is left alone.
+ * directory by path. A story that already names the feature keeps its file;
+ * only its run edges are turned, as below.
  *
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written. A story in another feature, or one that
@@ -51,8 +52,8 @@ Put an existing story in a feature: set the story's feature:, turn each run
 edge in blockers.json between it and a story of the feature into an order
 edge, then commit the story directory (and blockers.json) by path. The ids
 may come in either order. A story's feature: is the only statement of
-membership. A story that already names the feature is left alone (stderr
-says so).
+membership. A story that already names the feature keeps its file, and
+only its run edges are turned; with none, nothing is done (stderr says so).
 
 Refused, with nothing written:
   - anything other than one story id and one feature id
@@ -163,11 +164,8 @@ export async function main(argv) {
 
   // `feature: F77` names F-77 already; it is not rewritten.
   const changed = (normalizeFeatureId(named)?.id ?? named) !== feature.id;
-  if (!changed) {
-    info(`${storyId} is already in ${feature.id}; nothing to do.`);
-  } else {
-    let edgePaths;
-    const undoStory = snapshot(config.backlogRoot, [found.indexPath], ` of ${storyId}'s feature line`);
+  const undoStory = snapshot(config.backlogRoot, [found.indexPath], ` of ${storyId}'s feature line`);
+  if (changed) {
     try {
       await updateSpecFile(config.backlogRoot, found.indexPath, (specFm) => {
         // An empty `feature:` key is filled in place; a missing one goes last.
@@ -176,16 +174,23 @@ export async function main(argv) {
     } catch (e) {
       fail(`bl attach: could not write ${storyId}: ${e.message}. Nothing was changed.`);
     }
-    try {
-      // A run edge between it and a story of the feature is now an order edge (F-111 D5).
-      edgePaths = orderJoinedEdges(config, [storyId]);
-    } catch (e) {
-      // `e` names a file the edge write could not put back (`allOrNothing`), and `err` the story.
-      const err = undoStory(e);
-      const state = e.left || err.unrecovered ? '' : ' Nothing was changed.';
-      fail(`bl attach: could not turn ${storyId}'s run edges into order edges: ${err.message}.${state}`);
-    }
-    info(`Attached ${storyId} to ${feature.id}.`);
+  }
+  let edgePaths;
+  try {
+    // A run edge between it and a story of the feature is now an order edge
+    // (F-111 D5). A story already in the feature gets this too, so a rerun
+    // after a failure between the two writes finishes the job.
+    edgePaths = orderJoinedEdges(config, [storyId]);
+  } catch (e) {
+    // `e` names a file the edge write could not put back (`allOrNothing`), and `err` the story.
+    const err = changed ? undoStory(e) : e;
+    const state = e.left || err.unrecovered ? '' : ' Nothing was changed.';
+    fail(`bl attach: could not turn ${storyId}'s run edges into order edges: ${err.message}.${state}`);
+  }
+  if (!changed && edgePaths.length === 0) {
+    info(`${storyId} is already in ${feature.id}; nothing to do.`);
+  } else {
+    info(changed ? `Attached ${storyId} to ${feature.id}.` : `${storyId} is already in ${feature.id}.`);
 
     if (noSync) {
       info("Skipped the commit. Commit it with 'bl sync --commit'.");

@@ -739,7 +739,9 @@ function edgeArcs(e, units, flow) {
   if (!units.has(e.blocker) || inFeature(e, units)) return [];
   const to = nodeOf(units, e.blocker);
   const why = edgeLabel(e);
-  if (e.unit !== WILDCARD) return units.has(e.unit) ? [{ from: nodeOf(units, e.unit), to, why, kind: 'edge' }] : [];
+  if (e.unit !== WILDCARD) {
+    return units.has(e.unit) ? [{ from: nodeOf(units, e.unit), to, why, kind: 'edge', edge: e }] : [];
+  }
   const froms = new Set();
   for (const u of units.values()) {
     if (isClosed(u, flow) || !Object.hasOwn(flow.gatesOf(u.type), e.gate)) continue;
@@ -930,7 +932,12 @@ export function findBlockersFindings(config, units, flow) {
   }
   const all = readEdges(config);
   for (const cycle of findHoldCycles(holdGraph(all, units, flow))) {
-    add('error', 'blockers-cycle', `deadlock: ${describeCycle(cycle)}`);
+    // A run edge between two stories of one feature holds the feature on
+    // itself: a story that joined it left the edge (F-111 D5).
+    const e = cycle.length === 1 ? cycle[0].edge : null;
+    const joined = e?.gate === RUN_EDGE.gate && inFeature({ ...e, gate: ORDER_EDGE.gate }, units);
+    const fix = joined ? `; bl attach ${e.unit} ${cycle[0].from} turns it into an order edge` : '';
+    add('error', 'blockers-cycle', `deadlock: ${describeCycle(cycle)}${fix}`);
   }
   for (const cycle of findHoldCycles(featureGraph(all.filter((e) => inFeature(e, units))))) {
     const what = cycle[0].kind === 'order' ? 'story' : 'merge';

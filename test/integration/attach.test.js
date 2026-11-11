@@ -14,6 +14,7 @@ import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
 import { rendered } from '../helpers/rendered.js';
 import { parseFrontmatter } from '../../src/config.js';
+import { BLOCKERS_FILE, readBlockers, writeBlockers } from '../../src/blockers.js';
 
 /** demo-repo's home C00, and other-repo's home C02. */
 const COMPONENTS = [
@@ -107,6 +108,42 @@ test('bl attach on a story already in the feature writes and commits nothing', (
     assert.equal(JSON.parse(r.stdout).changed, false, named);
     assert.equal(git(dir, 'rev-parse', 'HEAD'), head, named);
     assert.equal(git(dir, 'status', '--porcelain'), '', named);
+  }
+});
+
+test('attach on a story already in the feature still turns its run edges into order edges', () => {
+  // [case, S-2's feature: before, the commit's paths]. A story already in F-1
+  // with a run edge to S-1 is what a failure between attach's two writes, or
+  // bl new --feature's, leaves; a rerun of bl attach finishes it.
+  const cases = [
+    ['a story that joins F-1', '', ['.gitattributes', BLOCKERS_FILE, STORY]],
+    ['a story already in F-1', 'F-1', ['.gitattributes', BLOCKERS_FILE]],
+  ];
+  for (const [name, feature, paths] of cases) {
+    const dir = backlog({ story: { feature } });
+    writeBlockers(dir, [{ blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done' }]);
+    initGitBacklog(dir);
+    if (feature) {
+      const v = JSON.parse(bl(['validate', '--json'], dir).stdout).findings.filter((f) => f.code === 'blockers-cycle');
+      assert.deepEqual(
+        v.map((f) => f.message),
+        ['deadlock: F-1 → F-1 (S-2 at run by S-1); bl attach S-2 F-1 turns it into an order edge'],
+        `${name}: bl validate names the fix`,
+      );
+    }
+    const r = bl(['attach', 'S-2', 'F-1'], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /S-2 at run by S-1 is now the order edge S-1 → S-2/, name);
+    assert.doesNotMatch(r.stderr, /nothing to do/, name);
+    assert.deepEqual(
+      readBlockers(dir).edges,
+      [{ blocker: 'S-1', gate: 'order', unit: 'S-2', until: 'implemented' }],
+      name,
+    );
+    assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort(), paths, name);
+    assert.equal(git(dir, 'status', '--porcelain'), '', name);
+    // A second rerun has nothing left to do.
+    assert.match(bl(['attach', 'S-2', 'F-1'], dir).stderr, /S-2 is already in F-1; nothing to do\./, name);
   }
 });
 
