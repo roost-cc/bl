@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync 
 import { join } from 'path';
 import { parseFrontmatter } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
-import { resolveFeatureStories, orderStoriesByDeps, extractSection } from '../../src/feature.js';
+import { resolveFeatureStories, extractSection } from '../../src/feature.js';
 import {
   runFeature,
   loadRunState,
@@ -504,7 +504,7 @@ function effortSetup(levels) {
       else delete fm.effort;
     });
   }
-  fx.prep.ordered = orderStoriesByDeps(resolveFeatureStories(fx.feature, fx.config, readAllStories(fx.config)).stories);
+  fx.prep.ordered = resolveFeatureStories(fx.feature, fx.config, readAllStories(fx.config)).stories;
   return fx;
 }
 

@@ -3,8 +3,9 @@
  * linked, immutable graph of its units (F-77 D1).
  *
  *   const g = loadBacklog(config);
- *   g.get('F-77').stories          // story units, dependency order
- *   g.get('S-1258').requiredFor    // the stories whose depends_on names it
+ *   g.get('F-77').stories          // story units, order-edge order
+ *   g.get('S-1258').requiredFor    // the stories that wait for it
+ *   g.edges                        // every edge bl reads (`readEdges`)
  *
  * Six kinds of unit, each one `Map` keyed by canonical id: stories,
  * features, components, epics, themes and tasks. Every unit carries its
@@ -19,7 +20,11 @@
  * feature's `stories`, `points` and `components`, an epic's `features` and
  * `status`, and a story's `requiredFor` (F-77 D3). The root `priority.md` is
  * read with the units, and its order is the graph's `priority` and
- * `rankOf` (F-78 D1, `src/priority.js`).
+ * `rankOf` (F-78 D1, `src/priority.js`). The root `blockers.json` is read
+ * too: its edges, with the edges the stories' `depends_on:` keys stand for
+ * (`dependsOnEdges`, F-111 R4), are the graph's `edges`, and the run and
+ * order edges between two stories give each story's `dependsOn` and
+ * `requiredFor` and a feature's story order (F-111 D4).
  *
  * Problems never throw from construction: a dangling reference, a duplicate
  * id and a frontmatter that is not YAML (or a list key that is not a list) go
@@ -49,7 +54,7 @@
  * files without reading them uses `unitFiles`.
  */
 
-import { readFileSync, readdirSync, statSync } from 'fs';
+import { lstatSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, relative, resolve, sep } from 'path';
 import {
   COMPONENTS_DIR,
@@ -69,7 +74,15 @@ import {
 import { FlowError, loadFlow } from './flow.js';
 import { logOf, readsChange, roundOf, statusOf } from './transition.js';
 import { FEATURES_DIR, extractSection, normalizeFeatureId, orderStoriesByDeps } from './feature.js';
-import { parseIdList } from './story.js';
+import {
+  BLOCKERS_FILE,
+  BlockersError,
+  dependsOnEdges,
+  parseBlockers,
+  readBlockers,
+  storyDependencies,
+  withDependsOn,
+} from './blockers.js';
 import { THEME_ID_RE, normalizeEpicId } from './theme.js';
 import { TASKS_DIR, TASK_FILE_RE, normalizeTaskId } from './task.js';
 import { listChanges, parseChange, readChange, unitChange } from './change-doc.js';
@@ -134,8 +147,10 @@ import {
  *   change: () => ReturnType<typeof unitChange>,
  * }} StoryUnit
  * `repo` is its component's `repo` (`placeStory`), empty when it has none.
- * `dependsOn` is its `depends_on:` resolved (dangling ids are problems);
- * `requiredFor` the stories whose `depends_on:` names it, by number.
+ * `dependsOn` are the stories it waits for, the blockers of the run and
+ * order edges on it (`storyDependencies` of `edges`), in edge order;
+ * `requiredFor` the stories that wait for it, by number. A `depends_on:`
+ * entry that names no story is a `dangling-dep` problem.
  */
 
 /**
@@ -151,7 +166,7 @@ import {
  *   change: () => ReturnType<typeof unitChange>,
  * }} FeatureUnit
  * `stories` are the stories whose `feature:` names it, in `orderStoriesByDeps`
- * order, ties by number; `points` their points summed (every status);
+ * order of `edges`, ties by number; `points` their points summed (every status);
  * `components` the set of their components, by id; `dependsOn` the stories
  * outside it that its stories depend on, by number.
  */
@@ -249,6 +264,10 @@ import {
  * @property {(id: string | Unit) => number} rankOf  a unit's place in `priority`, from 0; a
  *           story inside a feature takes its feature's place; anything with no place (closed,
  *           an update story, a task, unknown) is `Infinity`
+ * @property {readonly import("./blockers.js").Edge[]} edges  `blockers.json`'s edges and
+ *           those the stories' `depends_on:` keys stand for (`withDependsOn`, F-111 D5);
+ *           an unreadable `blockers.json` throws its `BlockersError` when read (the links
+ *           then use the `depends_on:` edges alone, and `bl validate` reports the file)
  * @property {readonly Problem[]} problems
  */
 
@@ -426,8 +445,8 @@ export function unitFiles(config, kind) {
 
 /**
  * The signature `loadBacklog` compares to reuse a graph, from a tolerant
- * listing: every unit file, change document and `priority.md`, each with its
- * stat key, listed and never read. Equal signatures mean no such file
+ * listing: every unit file, change document, `priority.md` and
+ * `blockers.json`, each with its stat key, listed and never read. Equal signatures mean no such file
  * changed. `bl top`'s stream reads the inbox and `bl next` again when it
  * changes (F-87 D3a).
  * @param {{ backlogRoot: string }} config
@@ -439,10 +458,11 @@ export function backlogSignature(config) {
 
 /**
  * List the backlog: every unit file with its stat key (a tolerant listing:
- * the root `index.md` and every change document too), `priority.md`'s
- * (null when it is missing), and the highest number per kind among the
- * directory and file names.
- * @returns {{ slots: Slot[], priority: { path: string, key: string } | null, nums: Map<string, bigint>, sig: string }}
+ * the root `index.md` and every change document too), `priority.md`'s and
+ * `blockers.json`'s (null when it is no file), and the highest number per
+ * kind among the directory and file names.
+ * @returns {{ slots: Slot[], priority: { path: string, key: string } | null,
+ *   blockers: { path: string, key: string } | null, nums: Map<string, bigint>, sig: string }}
  * @typedef {{ kind: UnitKind | "root", entry: string, dir: string, path: string,
  *   key: string, changes: { path: string, key: string }[] }} Slot
  */
@@ -468,14 +488,18 @@ function listBacklog(root, tolerant) {
   const priorityPath = join(root, PRIORITY_FILE);
   const priorityKey = statKey(priorityPath);
   const priority = priorityKey ? { path: priorityPath, key: priorityKey } : null;
+  const blockersPath = join(root, BLOCKERS_FILE);
+  const blockersKey = statKey(blockersPath);
+  const blockers = blockersKey ? { path: blockersPath, key: blockersKey } : null;
   // The maxima too: a directory with no `index.md` is no slot, but its name
   // takes a number (`maxNum`), so adding or removing one must outdate a snapshot.
   const sig = [
     ...slots.map((s) => `${s.path}\0${s.key}\0${s.changes.map((c) => `${c.path}\0${c.key}`).join('\0')}`),
     [...nums].map(([kind, n]) => `${kind}=${n}`).join('\0'),
     `${PRIORITY_FILE}\0${priorityKey ?? ''}`,
+    `${BLOCKERS_FILE}\0${blockersKey ?? ''}`,
   ].join('\n');
-  return { slots, priority, nums, sig };
+  return { slots, priority, blockers, nums, sig };
 }
 
 /** Deep-freeze a parsed frontmatter value. */
@@ -853,10 +877,11 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
 
 /**
  * Build one snapshot from a listing: parse what the memo lacks, make the
- * units, link them, collect the problems, freeze it all.
+ * units, link them, collect the problems, freeze it all. `blockers` is
+ * `blockers.json` as `blockersOf` read it.
  * @returns {BacklogGraph}
  */
-function buildGraph(root, flow, flowError, listing, files, tolerant) {
+function buildGraph(root, flow, flowError, listing, files, tolerant, blockers) {
   const problems = [];
   const listed = [];
   const problem = (p) => problems.push({ field: null, ref: null, line: 0, ...p });
@@ -915,7 +940,7 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
   }
 
   loadStats.links++;
-  linkUnits(maps, flow, problem);
+  const edges = Object.freeze(linkUnits(maps, flow, problem, blockers.edges).map((e) => Object.freeze(e)));
 
   const ranked = readPriority(root, listing.priority, files, maps, problem);
   for (const e of ranked) Object.freeze(e);
@@ -976,6 +1001,10 @@ function buildGraph(root, flow, flowError, listing, files, tolerant) {
       ranker ??= rankerOf(graph.priority);
       return ranker(typeof unit === 'string' ? graph.get(unit) : unit);
     },
+    get edges() {
+      if (blockers.error) throw blockers.error;
+      return edges;
+    },
     problems: Object.freeze(problems),
   };
   return Object.freeze(graph);
@@ -1022,8 +1051,11 @@ function readPriority(root, slot, files, maps, problem) {
 /**
  * The link pass: every reference resolved to its unit, every inverse
  * computed from the side that states it, dangling references reported.
+ * Returns the graph's `edges`: `fileEdges` (`blockers.json`'s) with the
+ * edges the stories' `depends_on:` keys stand for.
+ * @returns {import("./blockers.js").Edge[]}
  */
-function linkUnits(maps, flow, problem) {
+function linkUnits(maps, flow, problem, fileEdges) {
   const { story: stories, feature: features, component: components, epic: epics, theme: themes, task: tasks } = maps;
   const dangling = (u, code, field, ref, message) =>
     problem({
@@ -1037,9 +1069,10 @@ function linkUnits(maps, flow, problem) {
       message,
     });
 
-  // Stories in number order, so every list filled from this loop
+  // Stories in number order, so every list filled from these loops
   // (`requiredFor`, a component's and a feature's stories) is in number order.
-  for (const s of [...stories.values()].sort(byNum)) {
+  const byNumber = [...stories.values()].sort(byNum);
+  for (const s of byNumber) {
     const rawComponent = str(s.fm.component);
     if (rawComponent) {
       const cid = normalizeComponentId(rawComponent)?.id;
@@ -1071,21 +1104,32 @@ function linkUnits(maps, flow, problem) {
       }
     }
     s.feature?.stories.push(s);
+  }
 
-    for (const dep of new Set(parseIdList(s.fm.depends_on))) {
+  // The `depends_on:` keys as edges (F-111 R4), each entry that names no
+  // story a problem at its file; then every story's dependencies from the
+  // run and order edges between two stories (F-111 D4).
+  const fromKeys = dependsOnEdges(
+    byNumber.map((s) => ({ id: s.id, depends_on: s.fm.depends_on, feature: s.feature?.id ?? '' })),
+  );
+  for (const e of fromKeys) {
+    if (stories.has(e.blocker)) continue;
+    const s = stories.get(e.unit);
+    dangling(s, 'dangling-dep', 'depends_on', e.blocker, `story ${s.id} depends on non-existent story ${e.blocker}`);
+  }
+  const edges = withDependsOn(fileEdges, fromKeys);
+  const waitsFor = storyDependencies(edges);
+  for (const s of byNumber) {
+    for (const dep of waitsFor.get(s.id) ?? []) {
       const d = stories.get(dep);
-      if (d) {
-        s.dependsOn.push(d);
-        d.requiredFor.push(s);
-      } else dangling(s, 'dangling-dep', 'depends_on', dep, `story ${s.id} depends on non-existent story ${dep}`);
+      if (!d) continue;
+      s.dependsOn.push(d);
+      d.requiredFor.push(s);
     }
   }
 
   for (const f of [...features.values()].sort(byNum)) {
-    // Its stories arrived in number order (the loop above), so dependency
-    // order breaks ties by number.
-    const records = f.stories.map((s) => ({ id: s.id, depends_on: s.fm.depends_on, unit: s }));
-    f.stories = orderStoriesByDeps(records).map((r) => r.unit);
+    f.stories = orderStoriesByDeps(f.stories, edges);
     f.points = f.stories.reduce((sum, s) => sum + s.points, 0);
     f.components = [...new Set(f.stories.map((s) => s.component).filter(Boolean))].sort(byId);
     for (const c of f.components) c.features.push(f);
@@ -1156,6 +1200,7 @@ function linkUnits(maps, flow, problem) {
     if (!t.unit) dangling(t, 'task-unit', 'unit', raw, `unit ${raw} is not a feature or story in the backlog`);
     t.unit?.tasks.push(t);
   }
+  return edges;
 }
 
 // ---------------------------------------------------------------------------
@@ -1175,6 +1220,43 @@ function flowOf(root) {
   } catch (e) {
     if (!(e instanceof FlowError)) throw e;
     return { flow: null, flowError: e };
+  }
+}
+
+/**
+ * `blockers.json`'s edges for a snapshot, or the `BlockersError` that says
+ * why it cannot be read, with no edges. `slot` is the listing's (`null`
+ * when it is no regular file). Its text is kept in the memo's `files` at its
+ * stat key, as a unit file's is, so it is read again only when it changed
+ * (`settleRacy` covers a rewrite that keeps the key). A missing file is no
+ * edge and no read; anything else that is not a regular file is read with
+ * `readBlockers`, which throws.
+ * @returns {{ edges: import("./blockers.js").Edge[], error: BlockersError | null }}
+ */
+function blockersOf(root, slot, files) {
+  const path = join(root, BLOCKERS_FILE);
+  try {
+    if (!slot) {
+      if (!lstatSync(path, { throwIfNoEntry: false })) return { edges: [], error: null };
+      return { edges: readBlockers(root).edges, error: null };
+    }
+    let rec = files.get(path);
+    if (rec?.key !== slot.key) {
+      loadStats.parses++;
+      let read;
+      try {
+        read = readText(path, slot.key);
+      } catch {
+        // No permission, or gone since the listing: `readBlockers` names why.
+        return { edges: readBlockers(root).edges, error: null };
+      }
+      rec = { key: slot.key, ...read, fm: null, bodyStart: 0, faults: [] };
+      files.set(path, rec);
+    }
+    return { edges: parseBlockers(rec.text, path), error: null };
+  } catch (e) {
+    if (!(e instanceof BlockersError)) throw e;
+    return { edges: [], error: e };
   }
 }
 
@@ -1224,13 +1306,14 @@ export function loadBacklog(config, opts = {}) {
     graph = prev.graph;
   } else {
     // Drop the records of files that are gone, so a removed unit's text is not kept.
-    const live = new Set(listing.priority ? [listing.priority.path] : []);
+    const live = new Set([listing.priority?.path, listing.blockers?.path].filter(Boolean));
     for (const s of listing.slots) {
       live.add(s.path);
       for (const c of s.changes) live.add(c.path);
     }
     for (const path of memo.files.keys()) if (!live.has(path)) memo.files.delete(path);
-    graph = buildGraph(root, flow, flowError, listing, memo.files, tolerant);
+    const blockers = blockersOf(root, listing.blockers, memo.files);
+    graph = buildGraph(root, flow, flowError, listing, memo.files, tolerant, blockers);
     memo.snaps[mode] = { sig: listing.sig, flow, graph, generation: memo.generation };
   }
   if (!tolerant) {

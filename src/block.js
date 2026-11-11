@@ -24,6 +24,7 @@ import { loadFlow } from './flow.js';
 import { GITATTRIBUTES_LINE, configureMergeDriver } from './blockers-merge.js';
 import {
   BLOCKERS_FILE,
+  ORDER_EDGE,
   WILDCARD,
   describeCycle,
   edgeKey,
@@ -35,6 +36,7 @@ import {
   isMet,
   mergeEdgeLabel,
   readBlockers,
+  readEdges,
   readUnits,
   repoEnd,
   wouldCycle,
@@ -114,7 +116,8 @@ export function writeEdge(config, edge) {
   if (edges.some((e) => edgeKey(e) === edgeKey(edge))) {
     return { refused: [`${edgeLabel(edge)} is already an edge (see bl block list ${edge.unit})`] };
   }
-  const cycle = wouldCycle(edge, edges, units, flow);
+  // The cycle is checked among every edge bl reads, the `depends_on:` keys' too.
+  const cycle = wouldCycle(edge, readEdges(config), units, flow);
   if (cycle) return { refused: [`${edgeLabel(edge)} would close a deadlock: ${describeCycle(cycle)}`] };
   const paths = prepareCommit(config.backlogRoot);
   writeBlockers(config.backlogRoot, [...edges, edge]);
@@ -173,10 +176,10 @@ export async function fixOrder(config) {
 
 /**
  * The edges on and by `id` (every edge without one): held on it, on `*`,
- * on one of a feature's stories, with it as the blocker, or a merge edge
- * inside it (F-111 D1). Each line says whether the edge holds: `unmet`,
- * `met`, or `inactive` until its `active_when` is met. A merge edge holds
- * nothing, so its line names only the order.
+ * on one of a feature's stories, with it as the blocker, or a merge or
+ * order edge inside it (F-111 D1). Each line says whether the edge holds:
+ * `unmet`, `met`, or `inactive` until its `active_when` is met. A merge or
+ * order edge holds nothing, so its line names only the order.
  * @param {import("./blockers.js").Edge[]} edges
  * @param {string | null} id
  * @returns {string[]}
@@ -188,7 +191,11 @@ export function listLines(edges, id, units, flow) {
     .filter((e) => !id || on.has(e.unit) || e.unit === WILDCARD || e.blocker === id || repoEnd(e.unit)?.unit === id)
     .map((e) => {
       if (inFeature(e, units)) {
-        return `merge edge ${mergeEdgeLabel(e)}: ${repoEnd(e.unit).repo} merges after ${repoEnd(e.blocker).repo}`;
+        const after =
+          e.gate === ORDER_EDGE.gate
+            ? `${e.unit} is implemented after ${e.blocker}`
+            : `${repoEnd(e.unit).repo} merges after ${repoEnd(e.blocker).repo}`;
+        return `${e.gate} edge ${mergeEdgeLabel(e)}: ${after}`;
       }
       const line = `${e.unit} held at ${e.gate} by ${e.blocker} (${statusOf(e.blocker)}, needs ${e.until})`;
       const a = e.active_when;
@@ -216,6 +223,9 @@ edge from holding anything until that unit meets that status.
 A merge edge joins two repos of one feature and holds nothing: bl merge
 merges the blocker's repo before the unit's, as in
   bl block add F-96:ci-cd --gate merge --unit F-96:bl --until merged
+An order edge joins two stories of one feature and holds nothing: the
+feature's implement loop takes the blocker before the unit, as in
+  bl block add S-1446 --gate order --unit S-1448 --until implemented
 
   add      Check every field against flow.json and the backlog, refuse a
            duplicate or an edge that would close a deadlock, write the

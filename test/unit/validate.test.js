@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
-  findCycles,
   findDanglingFindings,
   findDuplicateFindings,
   findDuplicateIds,
@@ -107,44 +106,20 @@ test('found-by: a found_by naming no feature or story is an error; a real one, o
   assert.deepEqual(featureCodes(validateFrontmatter(fm, 'story', 'stories/S2-x/index.md', { dirName: 'S2-x' })), []);
 });
 
-test('findCycles detects 2-cycles', () => {
-  const storyMap = new Map([
-    ['S-1', { id: 'S-1', depends_on: ['S-2'] }],
-    ['S-2', { id: 'S-2', depends_on: ['S-1'] }],
-  ]);
-  const findings = findCycles(storyMap);
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].code, 'cycle');
-  assert.ok(findings[0].message.includes('S-1 → S-2 → S-1') || findings[0].message.includes('S-2 → S-1 → S-2'));
-});
-
-test('findCycles detects self-loops', () => {
-  const storyMap = new Map([['S-1', { id: 'S-1', depends_on: ['S-1'] }]]);
-  const findings = findCycles(storyMap);
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].code, 'cycle');
-  assert.ok(findings[0].message.includes('S-1 → S-1'));
-});
-
-test('findCycles handles linear chains', () => {
-  const storyMap = new Map([
-    ['S-1', { id: 'S-1', depends_on: ['S-2'] }],
-    ['S-2', { id: 'S-2', depends_on: ['S-3'] }],
-    ['S-3', { id: 'S-3', depends_on: '' }],
-  ]);
-  const findings = findCycles(storyMap);
-  assert.equal(findings.length, 0);
-});
-
-test('findCycles handles diamonds (DAG)', () => {
-  const storyMap = new Map([
-    ['S-1', { id: 'S-1', depends_on: ['S-2', 'S-3'] }],
-    ['S-2', { id: 'S-2', depends_on: ['S-4'] }],
-    ['S-3', { id: 'S-3', depends_on: ['S-4'] }],
-    ['S-4', { id: 'S-4', depends_on: '' }],
-  ]);
-  const findings = findCycles(storyMap);
-  assert.equal(findings.length, 0);
+test('depends-on-key: a story that still holds depends_on: is a warning, empty or not (F-111 D5)', () => {
+  const base = { story_id: 'S-1', title: 'X', status: 'refined' };
+  for (const depends_on of [['S-2'], '']) {
+    assert.deepEqual(
+      validateFrontmatter({ ...base, depends_on }, 'story', 'stories/S1-x/index.md').map((f) => [
+        f.severity,
+        f.code,
+        f.location,
+      ]),
+      [['warning', 'depends-on-key', 'stories/S1-x/index.md']],
+      JSON.stringify(depends_on),
+    );
+  }
+  assert.deepEqual(featureCodes(validateFrontmatter(base, 'story', 'stories/S1-x/index.md')), []);
 });
 
 /**
@@ -694,34 +669,6 @@ test('component-has-status: points or status on a component', async () => {
       ['component-has-status', 'components/C32/index.md', 'C32 has "status:"; a component has no status or points'],
     ],
   );
-});
-
-test('findCycles detects 3-cycles', () => {
-  const storyMap = new Map([
-    ['S-1', { id: 'S-1', depends_on: ['S-2'] }],
-    ['S-2', { id: 'S-2', depends_on: ['S-3'] }],
-    ['S-3', { id: 'S-3', depends_on: ['S-1'] }],
-  ]);
-  const findings = findCycles(storyMap);
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].code, 'cycle');
-  // All three IDs must be referenced in the cycle path.
-  for (const id of ['S-1', 'S-2', 'S-3']) {
-    assert.ok(findings[0].message.includes(id), `cycle message should include ${id}`);
-  }
-});
-
-test('findCycles handles disconnected components', () => {
-  const storyMap = new Map([
-    ['S-1', { id: 'S-1', depends_on: '' }],
-    ['S-2', { id: 'S-2', depends_on: ['S-3'] }],
-    ['S-3', { id: 'S-3', depends_on: ['S-2'] }],
-    ['S-4', { id: 'S-4', depends_on: ['S-5'] }],
-    ['S-5', { id: 'S-5', depends_on: '' }],
-  ]);
-  const findings = findCycles(storyMap);
-  // Exactly one cycle (S-2 ↔ S-3).
-  assert.equal(findings.length, 1);
 });
 
 test('findDanglingFindings no longer reads a stored required_for (F-77 D3)', () => {

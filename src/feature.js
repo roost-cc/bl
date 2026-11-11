@@ -32,9 +32,9 @@ import {
 import { statusWords } from './flow.js';
 import { CHECKBOX_RE } from './review-log.js';
 import { statusOf } from './transition.js';
-import { entryMatches, ownFm, parseIdList, readAllStories } from './story.js';
+import { entryMatches, ownFm, readAllStories } from './story.js';
 import { graphOf } from './backlog-graph.js';
-import { findHoldCycles, mergeGraph, repoEnd } from './blockers.js';
+import { ORDER_EDGE, featureGraph, findHoldCycles, readEdges, repoEnd } from './blockers.js';
 
 export const FEATURES_DIR = 'features';
 
@@ -223,33 +223,40 @@ export function namesFeature(s, featureId) {
 /**
  * The stories of a feature: the records in `allStories` (read when null)
  * whose `feature:` names it, the only statement of membership (F-77 D3), in
- * the graph's order: dependency order, ties by story number.
+ * the graph's order: order-edge order (`orderStoriesByDeps` of `readEdges`),
+ * ties by story number.
  *
  * @returns {{ stories: Array<object> }}  readAllStories records
  */
 export function resolveFeatureStories(feature, config, allStories = null) {
   const all = allStories ?? readAllStories(config);
-  const num = (s) => Number(String(s.id).match(/(\d+)$/)?.[1] ?? -1);
-  const own = all.filter((s) => namesFeature(s, feature.id)).sort((a, b) => num(a) - num(b));
-  return { stories: orderStoriesByDeps(own) };
+  const own = all.filter((s) => namesFeature(s, feature.id));
+  return { stories: orderStoriesByDeps(own, readEdges(config)) };
 }
 
 /**
- * Order a feature's stories so that every in-feature dependency comes before
- * its dependents. Stable: ties keep the given order. A dependency cycle
- * inside the set falls back to the given order for the stuck remainder.
+ * Order a feature's stories by its order edges (F-111 D4): each story after
+ * the blockers of the order edges on it, ties by story number. Only edges
+ * between two of `stories` count. A cycle (`bl validate`'s
+ * `blockers-cycle`) leaves the stuck remainder in number order.
+ * @template {{ id: string }} S
+ * @param {S[]} stories
+ * @param {import("./blockers.js").Edge[]} edges  `readEdges`'s, or the graph's `edges`
+ * @returns {S[]}
  */
-export function orderStoriesByDeps(stories) {
+export function orderStoriesByDeps(stories, edges) {
+  const num = (s) => Number(String(s.id).match(/(\d+)$/)?.[1] ?? -1);
   const ids = new Set(stories.map((s) => s.id));
-  const remaining = [...stories];
+  const after = new Map();
+  for (const e of edges) {
+    if (e.gate !== ORDER_EDGE.gate || !ids.has(e.unit) || !ids.has(e.blocker)) continue;
+    after.set(e.unit, [...(after.get(e.unit) ?? []), e.blocker]);
+  }
+  const remaining = [...stories].sort((a, b) => num(a) - num(b));
   const emitted = new Set();
   const out = [];
   while (remaining.length > 0) {
-    const idx = remaining.findIndex((s) =>
-      parseIdList(s.depends_on)
-        .filter((d) => ids.has(d))
-        .every((d) => emitted.has(d)),
-    );
+    const idx = remaining.findIndex((s) => (after.get(s.id) ?? []).every((d) => emitted.has(d)));
     if (idx === -1) {
       out.push(...remaining);
       break;
@@ -261,27 +268,6 @@ export function orderStoriesByDeps(stories) {
   return out;
 }
 
-/**
- * Dependencies that block a feature from starting: every `depends_on` of a
- * feature story that is neither part of the feature nor already closed.
- * @returns {{ story: string, dep: string, status: string }[]}
- */
-export function outsideBlockers(stories, allStories, flow) {
-  const inFeature = new Set(stories.map((s) => s.id));
-  const byId = new Map(allStories.map((s) => [s.id, s]));
-  const out = [];
-  for (const s of stories) {
-    for (const dep of parseIdList(s.depends_on)) {
-      if (inFeature.has(dep)) continue;
-      const target = byId.get(dep);
-      const status = target?.status ?? 'missing';
-      if (target && flow.meets('story', status, 'done')) continue;
-      out.push({ story: s.id, dep, status });
-    }
-  }
-  return out;
-}
-
 /** The repo a feature's order puts first whenever one of its stories is in it (F-52 D3). */
 export const LEAD_REPO = 'bl';
 
@@ -289,17 +275,17 @@ export const LEAD_REPO = 'bl';
  * A feature's repos in the one order every step uses (F-52 D3): its stories'
  * repos (`unitRepo`, each story's component's, D1), `bl` first when one is
  * there (S-864: a later repo's push gate reads backlog output the new `bl`
- * generates), then every other repo by its first story in
- * `orderStoriesByDeps`. A repo named twice keeps its first place; an empty
- * name is dropped. The first entry is the lead repo. Pure: the stories are
- * `readAllStories` records.
+ * generates), then every other repo by its first story in the order given:
+ * `resolveFeatureStories`'s (`orderStoriesByDeps`). A repo named twice keeps
+ * its first place; an empty name is dropped. The first entry is the lead
+ * repo. Pure: the stories are `readAllStories` records.
  *
- * @param {Array<{ id?: string, unitRepo?: string, depends_on?: unknown }>} stories
+ * @param {Array<{ id?: string, unitRepo?: string }>} stories
  * @returns {string[]}
  */
 export function featureRepoOrder(stories) {
   const names = [];
-  for (const s of orderStoriesByDeps(stories ?? [])) {
+  for (const s of stories ?? []) {
     const name = String(s.unitRepo ?? '').trim();
     if (name && !names.includes(name)) names.push(name);
   }
@@ -328,7 +314,7 @@ export function mergeOrder(names, edges) {
     const free = rest.findIndex((n) => used.every((e) => repo(e.unit) !== n || order.includes(repo(e.blocker))));
     if (free === -1) {
       const stuck = used.filter((e) => !order.includes(repo(e.unit)) && !order.includes(repo(e.blocker)));
-      const [cycle] = findHoldCycles(mergeGraph(stuck));
+      const [cycle] = findHoldCycles(featureGraph(stuck));
       return { order: null, edges: used, cycle: cycle.map((arc) => arc.edge) };
     }
     order.push(...rest.splice(free, 1));

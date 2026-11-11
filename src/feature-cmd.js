@@ -54,8 +54,6 @@ import {
   featureBranchName,
   featureSessionVars,
   resolveFeatureStories,
-  orderStoriesByDeps,
-  outsideBlockers,
   featureRepoOrder,
   mergeOrder,
   reposForFeature,
@@ -65,7 +63,7 @@ import {
   resolveFeaturePlugins,
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
-import { featureMergeEdges, heldLines, mergeEdgeLabel, readBlockers } from './blockers.js';
+import { featureMergeEdges, heldBy, heldLines, mergeEdgeLabel, readBlockers } from './blockers.js';
 import {
   ensureWorktree,
   launchSession,
@@ -686,10 +684,10 @@ async function approveLocked(args, config, feature) {
       `note: ${feature.id} is ${points} points; the guideline is ${POINTS_GUIDELINE.min}–${POINTS_GUIDELINE.max} per feature.`,
     );
   }
-  const blockers = outsideBlockers(stories, all, loadFlow(config.backlogRoot));
-  if (blockers.length > 0) {
+  const holds = heldBy(config, feature.id, 'run');
+  if (holds.length > 0) {
     info(`note: ${feature.id} depends on work outside the feature that is not done yet:`);
-    for (const b of blockers) info(`  ${b.story} depends on ${b.dep} (${b.status})`);
+    for (const h of holds) info(`  ${h.line}`);
     info('  `bl run` and `bl implement` will refuse until these are merged or pulled into the feature.');
   }
 
@@ -705,7 +703,7 @@ async function approveLocked(args, config, feature) {
     process.exit(1);
   }
   info(`\nApproved ${feature.id} — ${feature.title} (${stories.length} stories, ${points} points).`);
-  for (const s of orderStoriesByDeps(stories)) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
+  for (const s of stories) info(`  ${s.id}  effort: ${effortLabel(s, config)}  ${s.title}`);
 
   info(`\nNext: bl run ${feature.id} (or bl implement ${feature.id} to work interactively)`);
   reportBacklogCommit(await approvalCommit(config, feature), 'bl approve');
@@ -947,21 +945,15 @@ function printChanges(unit) {
 export function cmdStatus(args, config, feature) {
   const all = readAllStories(config);
   const { stories } = resolveFeatureStories(feature, config, all);
-  const ordered = orderStoriesByDeps(stories);
   printUnitHead(feature, featureRepoOrder(stories).join(', '), 'feature');
   console.log('');
-  if (ordered.length > 0) {
+  if (stories.length > 0) {
     printTable(
       ['#', 'ID', 'Status', 'Pts', 'Effort', 'Component', 'Title'],
-      ordered.map((s, i) => [i + 1, s.id, s.status, s.points, effortLabel(s, config), s.componentId, s.title]),
+      stories.map((s, i) => [i + 1, s.id, s.status, s.points, effortLabel(s, config), s.componentId, s.title]),
     );
   } else {
     console.log('(no stories)');
-  }
-  const blockers = outsideBlockers(stories, all, loadFlow(config.backlogRoot));
-  if (blockers.length > 0) {
-    console.log('\nblocked on:');
-    for (const b of blockers) console.log(`  ${b.story} depends on ${b.dep} (${b.status})`);
   }
   printUnitTail(config, feature);
 }
@@ -973,12 +965,6 @@ export function cmdStatus(args, config, feature) {
 export function cmdStatusStory(args, config, story) {
   const { unit } = loadStoryUnit(story, config);
   printUnitHead(unit, unit.primaryRepo, 'story');
-  const all = readAllStories(config);
-  const blockers = outsideBlockers([storyAsOrdered(unit)], all, loadFlow(config.backlogRoot));
-  if (blockers.length > 0) {
-    console.log('\nblocked on:');
-    for (const b of blockers) console.log(`  ${b.story} depends on ${b.dep} (${b.status})`);
-  }
   printUnitTail(config, unit);
 }
 
@@ -1121,16 +1107,11 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
     console.error(start.refusal);
     process.exit(1);
   }
-  const all = readAllStories(config);
-  const { stories } = resolveFeatureStories(feature, config, all);
-  const ordered = orderStoriesByDeps(stories);
-  const blockers = outsideBlockers(ordered, all, loadFlow(config.backlogRoot));
-  if (blockers.length > 0) {
-    console.error(`Feature ${feature.id} is blocked on work outside the feature:`);
-    for (const b of blockers) console.error(`  ${b.story} depends on ${b.dep} (${b.status})`);
-    console.error('Merge those first, or pull them into the feature.');
-    process.exit(1);
-  }
+  // A hold on the feature or one of its stories, a `depends_on:` outside it
+  // among them (`readEdges`), refused it already: `dispatch` names each hold
+  // (`heldTargets`), and `startOf` checks `gate_free:run`.
+  const { stories } = resolveFeatureStories(feature, config);
+  const ordered = stories;
 
   // The feature's repos are its stories' components' (F-52 D3), nothing on
   // the feature itself: a story with no repo, or one the config does not know,
@@ -1345,7 +1326,7 @@ export async function cmdReview(args, config, feature, opts = {}) {
     }
   }
 
-  const ordered = orderStoriesByDeps(stories);
+  const ordered = stories;
   // The lead repo's PR is the one the run state keeps (F-52 D3), and the
   // round reviews the PRs in the feature's repo order.
   const order = reposForFeature(feature, config, stories).map((r) => r.repoName);
@@ -1616,7 +1597,7 @@ async function reviewUnitPRs(
 
 export async function cmdRun(args, config, feature) {
   return runUnit(args, config, feature, {
-    ordered: () => orderStoriesByDeps(resolveFeatureStories(feature, config, readAllStories(config)).stories),
+    ordered: () => resolveFeatureStories(feature, config).stories,
     prepare: async () => prepareFeatureWorktree(config, feature),
   });
 }
@@ -1638,15 +1619,16 @@ export async function cmdRunStory(args, baseConfig, story) {
     }
     return s;
   };
-  // A story `bl run` cannot start is refused before its blockers are listed;
+  // A story `bl run` cannot start is refused before its holds are listed
+  // (`heldBy`: an edge in blockers.json, or a `depends_on:` key's run edge);
   // the guards are checked after `runUnit`'s own escalation check.
   if (!args.plan) start(false);
   const ordered = [storyAsOrdered(unit)];
   if (!args.plan) {
-    const blockers = outsideBlockers(ordered, readAllStories(config), flow);
-    if (blockers.length > 0) {
+    const holds = heldBy(config, unit.id, 'run');
+    if (holds.length > 0) {
       console.error(`Story ${unit.id} is blocked on unmerged work:`);
-      for (const b of blockers) console.error(`  ${b.story} depends on ${b.dep} (${b.status})`);
+      for (const h of holds) console.error(`  ${h.line}`);
       console.error('Merge those first.');
       process.exit(1);
     }

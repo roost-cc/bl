@@ -15,7 +15,7 @@ import {
   BODY_READING_OP,
 } from './config.js';
 import { DERIVED_KEYS, changeDoc, loadBacklog } from './backlog-graph.js';
-import { readAllStories, readComponents, parseIdList, pathEntryProblem } from './story.js';
+import { readAllStories, readComponents, pathEntryProblem } from './story.js';
 import { readAllFeatures, extractSection, isFeatureWorkable, sectionHasContent } from './feature.js';
 import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID_RE } from './theme.js';
 import { findRoadmapFindings } from './roadmap.js';
@@ -65,6 +65,8 @@ export const VALID_STORY_KEYS = new Set([
   // No `primary_repo` or `secondary_repos`: a story's repo is its
   // component's (F-52 D1); either one still set is `repo-key`.
   'plugins',
+  // Read as edges until the migration moves it to blockers.json (F-111 D5);
+  // `depends-on-key` warns about it.
   'depends_on',
   // No `required_for`: the inverse of `depends_on` is derived (F-77 D3);
   // one still set is `derived-key`.
@@ -333,6 +335,19 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
       severity: 'error',
       code: 'derived-key',
       message: `${kind} stores "${key}:", which bl derives from ${derived[key]} and never reads; remove it (scripts/migrate-derived-keys.js removes every one)`,
+      location,
+    });
+  }
+
+  // depends-on-key (F-111 D5): every hold and order lives in blockers.json.
+  // Until the migration moves the key there, bl reads it as the edges it
+  // stands for (`dependsOnEdges`), so the file works.
+  if (kind === 'story' && Object.hasOwn(fm, 'depends_on')) {
+    findings.push({
+      severity: 'warning',
+      code: 'depends-on-key',
+      message:
+        'story holds "depends_on:", which belongs in blockers.json (an order edge inside one feature, else a run edge); bl reads it as those edges until scripts/migrate-depends-on.js moves it there',
       location,
     });
   }
@@ -647,64 +662,6 @@ export function validateReviewLog({ kind, fm, flow }, change, location) {
     });
   }
 
-  return findings;
-}
-
-/**
- * @param {Map<string, any>} storyMap
- * @returns {Finding[]}
- */
-export function findCycles(storyMap) {
-  const findings = [];
-  const visited = new Set(); // black
-  const recStack = new Set(); // grey
-  const byId = storyMap;
-
-  // A story's edges are its depends_on (the inverse is derived, F-77 D3).
-  for (const startId of storyMap.keys()) {
-    if (visited.has(startId)) continue;
-
-    const stack = [[startId, 0]]; // [id, edgeIndex]
-    const path = [];
-
-    while (stack.length > 0) {
-      const [id, edgeIndex] = stack[stack.length - 1];
-
-      if (edgeIndex === 0) {
-        if (recStack.has(id)) {
-          const cyclePath = path.slice(path.indexOf(id));
-          cyclePath.push(id);
-          findings.push({
-            severity: 'error',
-            code: 'cycle',
-            message: `cycle detected: ${cyclePath.join(' → ')}`,
-            location: byId.get(id)?.storyRelPath || 'unknown',
-          });
-          stack.pop();
-          continue;
-        }
-        if (visited.has(id)) {
-          stack.pop();
-          continue;
-        }
-        recStack.add(id);
-        path.push(id);
-      }
-
-      const story = byId.get(id);
-      const deps = story ? parseIdList(story.depends_on) : [];
-
-      if (edgeIndex < deps.length) {
-        stack[stack.length - 1][1]++;
-        stack.push([deps[edgeIndex], 0]);
-      } else {
-        visited.add(id);
-        recStack.delete(id);
-        path.pop();
-        stack.pop();
-      }
-    }
-  }
   return findings;
 }
 
@@ -1594,7 +1551,6 @@ export function runAll(config, opts = {}) {
   // 4. Graph checks over every story.
   const fullMap = new Map();
   for (const s of allStories) fullMap.set(s.id, s);
-  const cycles = findCycles(fullMap);
 
   const featureLinks = findFeatureFindings(allFeatures, flow);
   const foundBy = findFoundByFindings(allFeatures, fullMap);
@@ -1604,7 +1560,6 @@ export function runAll(config, opts = {}) {
     ...dupes.stories,
     ...dupes.features,
     ...dangling.deps,
-    ...cycles,
     ...featureLinks,
     ...dangling.features,
     ...foundBy,
@@ -1619,8 +1574,9 @@ export function runAll(config, opts = {}) {
   // 4a. The priority (F-78 D1): `priority.md`'s `ranked:`, the graph's
   //     problems. The roadmap's shape (F-53 D2) and the themes' briefs (D4).
   // The edges in blockers.json (F-66 D5), against the flow and every unit,
-  // with the deadlock graph that also reads cross-feature depends_on.
-  findings.push(...findBlockersFindings(config.backlogRoot, units, flow));
+  // and the cycles among every edge bl reads, the depends_on: keys' too
+  // (F-111 D4): blockers-cycle.
+  findings.push(...findBlockersFindings(config, units, flow));
   // The task files (F-65 D1): `task-unit`, `task-field`.
   findings.push(...findTaskFindings(allTasks, units, flow));
   // The transition logs (F-69 D2, D4): `transition-log`, `legacy-status`.
@@ -1715,7 +1671,7 @@ export function main(argv) {
     console.log(`Usage: bl validate [--json] [--strict] [--skip <code>]
 
 Run backlog-wide integrity checks (frontmatter, duplicate IDs,
-acyclic dep graph) and report every finding.
+acyclic edges) and report every finding.
 
 Options:
   --json             Emit one JSON object: {findings, summary}.
@@ -1737,7 +1693,7 @@ Exit codes:
 Findings codes:
   missing-required-key, unknown-fm-key, bad-status, bad-points,
   bad-effort, bad-review-status, id-dir-mismatch, bad-id-format, duplicate-id,
-  cycle, dangling-dep, review-log-missing,
+  dangling-dep, depends-on-key, review-log-missing,
   review-log-unaddressed, plugin-binary, derived-key, dangling-feature,
   found-by, feature-no-stories, verification-only-title, run-state-in-spec,
   change-of-mismatch, change-repo-incomplete, bad-change-status,
@@ -1752,8 +1708,11 @@ Findings codes:
 
 Reads flow.json at the backlog root for story and feature statuses;
 a missing or unreadable one stops validate with its name. Checks every
-edge in blockers.json (a missing one has none), and reports a deadlock
-among edges and cross-feature depends_on as blockers-cycle.`);
+edge in blockers.json (a missing one has none). Reads each depends_on:
+entry in a story file as the edge it stands for (an order edge inside one
+feature, else a run edge) and warns depends-on-key for the key; reports a
+deadlock, or a cycle of one feature's merge or order edges, among all of
+them as blockers-cycle.`);
     process.exit(0);
   }
 
