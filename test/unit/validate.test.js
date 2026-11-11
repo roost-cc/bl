@@ -557,7 +557,7 @@ test('validateFrontmatter: a derived key stored in a feature or an epic is deriv
     );
     assert.match(
       found[0][2],
-      /^story stores "required_for:", which bl derives from the stories whose depends_on: names it/,
+      /^story stores "required_for:", which bl derives from the run and order edges in blockers\.json that name it/,
     );
   }
 });

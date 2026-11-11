@@ -229,17 +229,10 @@ err=$(cat "$se")
 assert_contains "bl what-next stderr explains" "No closed stories" "$err"
 
 # Mark S-1 done, and make S-2 depend on it so what-next has a chain to follow
-# (the edge is stated once, on S-2; F-77 D3). We mutate frontmatter directly
-# because `bl done` is not in scope here.
+# (the run edge S-1 -> S-2 in blockers.json, F-111 D5). We mutate S-1's
+# frontmatter directly because `bl done` is not in scope here.
 S1=$("$BL" which S-1)
-S2=$("$BL" which S-2)
-node -e '
-  const fs = require("fs");
-  const path2 = process.argv[1];
-  let t2 = fs.readFileSync(path2, "utf8")
-    .replace(/^depends_on:.*$/m, "depends_on: [S-1]");
-  fs.writeFileSync(path2, t2);
-' "$S2"
+"$BL" block add S-1 --gate run --unit S-2 --until done >/dev/null 2>&1 || fail "bl block add S-1 -> S-2"
 
 # Mark S-1 done by editing frontmatter (skip bl done — just need a closed story):
 # an operator entry to done in its transition log (F-69 D2).

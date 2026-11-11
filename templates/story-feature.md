@@ -9,7 +9,6 @@ transitions:
 added:
 feature:
 found_by:
-depends_on:
 ---
 
 # {{storyId}} · {{title}}
@@ -33,5 +32,7 @@ depends_on:
 
 ## Dependencies
 
-<!-- Story IDs this depends on, or "None". Dependencies outside the feature
-     must be done before the feature can run. -->
+<!-- Story IDs this depends on, or "None". blockers.json holds each as an
+     edge (bl new --depends-on, bl block add): a story of the feature as an
+     order edge, any other as a run edge, which must be done before the
+     feature can run. -->

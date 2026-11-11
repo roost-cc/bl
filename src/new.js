@@ -14,9 +14,10 @@
  * component's repo (F-49 D4); no repo is written on the story (F-52 D1). Prompts for the component (when none is named),
  * title and points. Assigns the next globally-unique story ID. Unless
  * --no-sync or --dry-run, commits the new stories (plus a new component's
- * index.md and the stories whose depends_on it extended) inside the lock hold that
- * allocated the IDs. A new feature is committed the same way, with the
- * stories whose `feature:` line it wrote.
+ * index.md and `blockers.json`, which holds their dependencies as edges, F-111
+ * D5) inside the lock hold that allocated the IDs. A new feature is committed
+ * the same way, with the stories whose `feature:` line it wrote and the run
+ * edges between them it turned into order edges.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, unlinkSync } from 'fs';
@@ -24,7 +25,6 @@ import { join, dirname, relative, isAbsolute, resolve } from 'path';
 import * as readline from 'readline';
 import {
   loadConfig,
-  listValue,
   parseFrontmatter,
   parseFrontmatterOf,
   slugify,
@@ -49,7 +49,6 @@ import {
   findComponentDir,
   homeComponent,
   normalizeId,
-  parseIdList,
   readAllStories,
   readComponents,
   pathEntryProblem,
@@ -65,7 +64,9 @@ import { validateSpec, SpecError } from './spec.js';
 import { resolveTargets } from './targets.js';
 import { failPoint, settle, writeRecord } from './feature-links.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { updateSpecFile, updateSpecFileHeld, withSpecLock } from './spec-file.js';
+import { updateSpecFile } from './spec-file.js';
+import { BLOCKERS_FILE, dependencyEdge, edgeKey, edgeLabel, readUnits } from './blockers.js';
+import { orderJoinedEdges, writeEdges } from './block.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
 import { applyNew } from './transition.js';
 
@@ -421,6 +422,7 @@ async function newFeature(args, stories) {
   const root = config.backlogRoot;
   const { cmdNew } = await import('./feature-cmd.js');
   let created;
+  let edgePaths = [];
   await cmdNew(args, config, {
     beforeCreate: () => {
       // Each story file is read again here: a record read before the lock
@@ -461,6 +463,11 @@ async function newFeature(args, stories) {
           });
         }
         info(`Linked ${stories.map((s) => s.id).join(', ')} to ${feature.id}.`);
+        // A run edge between two of them is now inside one feature: an order edge (F-111 D5).
+        edgePaths = orderJoinedEdges(
+          config,
+          stories.map((s) => s.id),
+        );
       } catch (err) {
         let state, left;
         try {
@@ -491,7 +498,7 @@ async function newFeature(args, stories) {
 
   await commitNew(config, args, {
     message: `chore: add ${created.id}`,
-    files: [created.indexPath, ...stories.map((s) => s.indexPath)].map((p) => relative(root, p)),
+    files: [...[created.indexPath, ...stories.map((s) => s.indexPath)].map((p) => relative(root, p)), ...edgePaths],
     created: `Feature file created at ${relative(root, created.indexPath)}`,
   });
 }
@@ -814,11 +821,11 @@ async function newEpic(args, jsonMode) {
 /**
  * A story template's frontmatter values (F-62 D3): `vars` under their keys,
  * `feature:` only when the story has one, never `found_by:` (`bl side` sets
- * it, F-48 D2), and a dependency list and an effort level only when set (the
- * template's empty key stays otherwise), and the log's first entry
- * (`applyNew`, F-69 D3).
+ * it, F-48 D2), an effort level only when set (the template's empty key
+ * stays otherwise), and the log's first entry (`applyNew`, F-69 D3). A
+ * dependency is an edge in `blockers.json`, never a key (`newEdges`).
  */
-function storyValues(cfg, vars, { feature = null, dependsOn = [], effort = null } = {}) {
+function storyValues(cfg, vars, { feature = null, effort = null } = {}) {
   const values = {
     component: vars.componentId,
     story_id: vars.storyId,
@@ -829,128 +836,86 @@ function storyValues(cfg, vars, { feature = null, dependsOn = [], effort = null 
     added: vars.today,
     feature: feature?.id,
     found_by: undefined,
-    ...(dependsOn.length > 0 ? { depends_on: dependsOn } : {}),
   };
   applyNew(loadFlow(cfg.backlogRoot), 'story', values);
   return values;
 }
 
 /**
- * Write `--required-for` and a spec's `required_for` where the edge lives,
- * on the dependent story (F-77 D3): each existing story in `dependents`
- * (target id → the new ids it waits for) gets those ids appended to its
- * `depends_on:`, through `updateSpecFile` under its spec lock (the caller
- * holds the backlog lock). An id already listed is not added twice. Returns
- * the backlog-relative paths of the files it wrote, for the commit.
- *
- * All or nothing: when one write fails, the edges already written are taken
- * back out and the directories in `created` (the new stories, a new
- * component) removed, so the same `bl new` can run again and get the same
- * ids; the error names whatever could not be undone.
+ * The edges a `bl new`'s dependencies stand for (F-111 D5): each `[unit,
+ * blocker, field]` (story `unit` waits for story `blocker`, from `field`,
+ * `depends_on` or `required_for`) is `dependencyEdge`'s, an order edge when
+ * both stories are in one feature, else a run edge. `newIds` are the stories
+ * this `bl new` creates, in `feature` (null for none). An end that is neither
+ * new nor a story in the backlog is warned about and skipped: an edge names
+ * units that exist. Each edge once.
  * @param {any} cfg
- * @param {Map<string, string[]>} dependents
- * @param {string[]} created  absolute directories this `bl new` made
- * @returns {Promise<string[]>}
+ * @param {Array<[string, string, string]>} pairs
+ * @param {string[]} newIds
+ * @param {{ id: string } | null} feature
+ * @returns {import("./blockers.js").Edge[]}
  */
-async function appendDependsOn(cfg, dependents, created) {
-  if (dependents.size === 0) return [];
-  const byId = new Map(readAllStories(cfg).map((s) => [s.id, s]));
-  /** @type {Edge[]} */
-  const written = [];
-  for (const [targetId, newIds] of dependents) {
-    const target = byId.get(targetId);
-    if (!target) continue;
-    /** @type {Edge | null} */
-    let edge = null;
-    try {
-      await withSpecLock(target.indexPath, () => {
-        const before = readFileSync(target.indexPath, 'utf8');
-        /** @type {string[]} */
-        let added = [];
-        let prev;
-        const wrote = updateSpecFileHeld(cfg.backlogRoot, target.indexPath, (fm) => {
-          const list = listValue(fm.depends_on);
-          if (list == null) {
-            throw new Error(`${target.storyRelPath}: depends_on is not a list; cannot add ${newIds.join(', ')}`);
-          }
-          added = newIds.filter((id) => !parseIdList(list).includes(id));
-          if (added.length === 0) return false;
-          prev = fm.depends_on;
-          fm.depends_on = [...list, ...added];
-          info(`${targetId} now depends on ${added.join(', ')}: ${target.storyRelPath}`);
-        });
-        if (wrote) {
-          const after = readFileSync(target.indexPath, 'utf8');
-          edge = { path: target.indexPath, rel: target.storyRelPath, before, after, added, prev };
-        }
-      });
-    } catch (e) {
-      const left = await undoNew(cfg.backlogRoot, written, created);
-      const state =
-        left.length === 0
-          ? 'nothing is written or committed: the new stories and the edges already added are undone, so bl new can run again'
-          : `nothing is committed, but undoing failed, so fix these by hand: ${left.join('; ')}`;
-      throw new Error(`could not add ${newIds.join(', ')} to ${targetId}'s depends_on (${e.message}); ${state}.`, {
-        cause: e,
-      });
+function newEdges(cfg, pairs, newIds, feature) {
+  if (pairs.length === 0) return [];
+  const units = readUnits(cfg);
+  const isNew = (id) => newIds.includes(id);
+  const exists = (id) => isNew(id) || units.get(id)?.type === 'story';
+  const featureOf = (id) => (isNew(id) ? (feature?.id ?? '') : (units.get(id)?.feature ?? ''));
+  const out = new Map();
+  for (const [unit, blocker, field] of pairs) {
+    const missing = [blocker, unit].find((id) => !exists(id));
+    if (missing) {
+      console.error(`warning: ${field} ${missing} does not match any existing story; no edge written`);
+      continue;
     }
-    if (edge) written.push(edge);
+    const edge = dependencyEdge(blocker, unit, featureOf);
+    out.set(edgeKey(edge), edge);
   }
-  return written.map((w) => w.rel);
+  return [...out.values()];
 }
 
 /**
- * One edge `appendDependsOn` wrote: the target's bytes before and after its
- * write, the ids it added and the `depends_on` value they were added to.
- * @typedef {{ path: string, rel: string, before: string, after: string, added: string[], prev: unknown }} Edge
+ * Write a `bl new`'s edges (`newEdges`) to `blockers.json` once its stories
+ * are in place, through `bl block add`'s checks (`writeEdges`), under the
+ * backlog lock the caller holds. Returns the paths to commit.
+ *
+ * All or nothing: when an edge is refused (a cycle, a closed blocker) or a
+ * write fails, `blockers.json` is as it was and the directories in `created`
+ * (the new stories, a new component) are removed, so the same `bl new` can
+ * run again and get the same ids; the error names whatever could not be
+ * undone.
+ * @param {any} cfg
+ * @param {import("./blockers.js").Edge[]} edges
+ * @param {string[]} created  absolute directories this `bl new` made
+ * @returns {string[]}
  */
-
-/**
- * Undo a `bl new` whose edges failed (`appendDependsOn`): each edited target,
- * newest first and under its spec lock, loses the ids this run added. A
- * target still exactly as this run wrote it gets its bytes back; one changed
- * since keeps that change, only the added ids taken out; one gone has no edge
- * left. Then each created directory is removed, but only when every edge is
- * gone, so no story is left naming a deleted one. Returns what could not be
- * undone, empty when all was.
- * @param {string} backlogRoot
- * @param {Edge[]} written
- * @param {string[]} created
- * @returns {Promise<string[]>}
- */
-async function undoNew(backlogRoot, written, created) {
+function writeNewEdges(cfg, edges, created) {
+  if (edges.length === 0) return [];
+  let res = null;
+  let error = null;
+  try {
+    res = writeEdges(cfg, edges);
+  } catch (e) {
+    error = e;
+  }
+  if (res && !res.refused) {
+    for (const e of edges) info(`blocked: ${edgeLabel(e)} until ${e.until}`);
+    return res.paths;
+  }
   const left = [];
-  for (const w of [...written].reverse()) {
-    try {
-      await withSpecLock(w.path, () => {
-        if (!existsSync(w.path)) return;
-        if (readFileSync(w.path, 'utf8') === w.after) return atomicWriteFile(backlogRoot, w.path, w.before);
-        updateSpecFileHeld(backlogRoot, w.path, (fm) => {
-          const list = listValue(fm.depends_on);
-          if (list == null) throw new Error('its depends_on is no longer a list');
-          const kept = list.filter((id) => !w.added.includes(id));
-          if (kept.length === list.length) return false;
-          if (kept.length > 0 || listValue(w.prev)?.length !== 0) fm.depends_on = kept;
-          else if (w.prev === undefined) delete fm.depends_on;
-          else fm.depends_on = w.prev;
-        });
-      });
-    } catch (e) {
-      left.push(`${w.rel} still has the new edge (${e.message})`);
-    }
-  }
-  if (left.length > 0) {
-    const kept = created.map((dir) => relative(backlogRoot, dir)).join(', ');
-    return kept ? [...left, `${kept} kept, since an edge still names it`] : left;
-  }
   for (const dir of created) {
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch (e) {
-      left.push(`${relative(backlogRoot, dir)} is still there (${e.message})`);
+      left.push(`${relative(cfg.backlogRoot, dir)} is still there (${e.message})`);
     }
   }
-  return left;
+  const state =
+    left.length === 0
+      ? 'nothing is written or committed: the new stories are removed, so bl new can run again'
+      : `nothing is committed, but undoing failed, so fix these by hand: ${left.join('; ')}`;
+  const why = error ? error.message : res.refused.join('; ');
+  throw new Error(`could not write the edges to ${BLOCKERS_FILE} (${why}); ${state}.`, error ? { cause: error } : {});
 }
 
 /**
@@ -1070,12 +1035,14 @@ Options:
                        kind ∈ {story, story-feature, component, feature,
                        change, theme, epic}.
                        No other flags required.
-  --depends-on <ids>   Comma-separated story IDs this story depends on
-                       (e.g. S-379,S-380). Repeatable. Unknown IDs warn.
-  --required-for <ids> Comma-separated story IDs this story unblocks: the
-                       new id is appended to each one's depends_on (an
-                       edge is stated once, on the dependent story).
-                       Repeatable. Unknown IDs warn and are skipped.
+  --depends-on <ids>   Comma-separated story IDs this story waits for
+                       (e.g. S-379,S-380). Repeatable. Each is an edge in
+                       blockers.json: an order edge when both stories are
+                       in one feature, else a run edge (held until done).
+                       Unknown IDs warn and are skipped.
+  --required-for <ids> Comma-separated story IDs that wait for this story:
+                       the same edges, the other way. Repeatable. Unknown
+                       IDs warn and are skipped.
   --json               Emit a JSON object describing the created story to
                        stdout (schema bl-new-json/v3). All other output
                        (sync chatter, plugin output) goes to stderr by
@@ -1414,26 +1381,14 @@ Example:
     today,
   };
 
-  // `--required-for X`: X depends on the new story, an edge stated on X
-  // (F-77 D3); an unknown X is warned about and skipped.
-  const dependents = new Map();
-  if (dependsOn.length > 0 || requiredFor.length > 0) {
-    const existingIds = new Set(
-      readAllStories(cfg)
-        .map((s) => s.id)
-        .filter(Boolean),
-    );
-    for (const id of dependsOn) {
-      if (!existingIds.has(id)) {
-        console.error(`warning: depends_on ${id} does not match any existing story`);
-      }
-    }
-    for (const id of requiredFor) {
-      if (!existingIds.has(id)) {
-        console.error(`warning: required_for ${id} does not match any existing story`);
-      } else dependents.set(id, [storyId]);
-    }
-  }
+  // `--depends-on X`: the new story waits for X; `--required-for X`: X waits
+  // for the new story. Each is an edge in blockers.json (F-111 D5).
+  const edges = newEdges(
+    cfg,
+    [...dependsOn.map((id) => [storyId, id, 'depends_on']), ...requiredFor.map((id) => [id, storyId, 'required_for'])],
+    [storyId],
+    feature,
+  );
 
   // The inherited plugins and the --frontmatter keys go after the feature,
   // which the template holds. No repo: a story's repo is its component's (F-52 D1).
@@ -1441,7 +1396,7 @@ Example:
     cfg.backlogRoot,
     storyIndex,
     renderTemplate(feature ? 'story-feature' : 'story', {
-      values: storyValues(cfg, storyVars, { feature, dependsOn }),
+      values: storyValues(cfg, storyVars, { feature }),
       vars: storyVars,
       body: customBody,
       after: ['feature', { ...plugins, ...extra }],
@@ -1449,11 +1404,11 @@ Example:
   );
 
   info(`Created story: ${relative(cfg.backlogRoot, storyIndex)}`);
-  const dependentPaths = await appendDependsOn(cfg, dependents, [storyDir]);
+  const edgePaths = writeNewEdges(cfg, edges, [storyDir]);
 
   await commitNew(cfg, args, {
     message: `chore: add ${storyId}`,
-    files: [relative(cfg.backlogRoot, storyIndex), ...dependentPaths],
+    files: [relative(cfg.backlogRoot, storyIndex), ...edgePaths],
     created: `Story file created at ${relative(cfg.backlogRoot, storyIndex)}`,
   });
 
@@ -1605,37 +1560,20 @@ async function runBatchMode(args, jsonMode) {
     component = validation.component;
   }
 
-  // --- Warn about unknown bare IDs (consistent with --depends-on) ---
-  // Only check refs that originated as bare `S-<n>` in the spec.
-  // @placeholder refs are validated by validateSpec; checking their resolved
-  // IDs here would emit false positives because siblings created in the same
-  // batch are not yet on disk.
-  const existingIds = new Set(
-    readAllStories(cfg)
-      .map((s) => s.id)
-      .filter(Boolean),
-  );
-  const warnIfMissing = (ref, ctx) => {
-    if (!existingIds.has(ref)) {
-      console.error(`warning: ${ctx} ${ref} does not match any existing story`);
-    }
-  };
-
-  // --- A spec's `required_for` is input only (F-77 D3): each named story
-  // depends on this one, an edge written on it. A sibling's goes into its
-  // rendered `depends_on`; an existing story's is appended to its file once
-  // the batch is in place; an unknown bare id is warned about and skipped.
+  // --- A spec's `depends_on` and `required_for` are input (F-111 D5): each
+  // is an edge in blockers.json, written once the batch is in place. An
+  // @placeholder is a sibling (validateSpec checked it); an unknown bare id
+  // is warned about and skipped.
   const resolveRef = (r) => (r.startsWith('@') ? placeholderToId.get(r.slice(1)) : r);
-  const siblingDeps = new Map(); // new id → ids it depends on via required_for
-  const dependents = new Map(); // existing id → new ids it depends on
-  for (const item of storyPlan) {
-    for (const ref of item.spec.required_for ?? []) {
-      const target = resolveRef(ref);
-      const into = ref.startsWith('@') ? siblingDeps : existingIds.has(ref) ? dependents : null;
-      if (!into) warnIfMissing(ref, 'required_for');
-      else into.set(target, [...(into.get(target) ?? []), item.id]);
-    }
-  }
+  const edges = newEdges(
+    cfg,
+    storyPlan.flatMap((item) => [
+      ...(item.spec.depends_on ?? []).map((ref) => [item.id, resolveRef(ref), 'depends_on']),
+      ...(item.spec.required_for ?? []).map((ref) => [resolveRef(ref), item.id, 'required_for']),
+    ]),
+    storyPlan.map((item) => item.id),
+    feature,
+  );
 
   // --- Build per-story rendered content ---
   const today = new Date().toISOString().slice(0, 10);
@@ -1649,10 +1587,6 @@ async function runBatchMode(args, jsonMode) {
     // Per-story component override (validated by validateSpec against disk).
     const storyComponent = storyComponents?.[i] ?? component;
     const inSpecComponent = !storyComponents?.[i];
-    const dependsOn = [...new Set([...(s.depends_on ?? []).map(resolveRef), ...(siblingDeps.get(item.id) ?? [])])];
-    for (const ref of s.depends_on ?? []) {
-      if (!ref.startsWith('@')) warnIfMissing(ref, 'depends_on');
-    }
 
     const storyVars = {
       componentId: storyComponent.id,
@@ -1675,7 +1609,7 @@ async function runBatchMode(args, jsonMode) {
       process.exit(1);
     }
     const finalContent = renderTemplate(feature ? 'story-feature' : 'story', {
-      values: storyValues(cfg, storyVars, { feature, dependsOn, effort: s.effort }),
+      values: storyValues(cfg, storyVars, { feature, effort: s.effort }),
       vars: storyVars,
       body,
     });
@@ -1766,6 +1700,8 @@ async function runBatchMode(args, jsonMode) {
     const componentNote = r.inSpecComponent ? '' : ` [${r.component.id}]`;
     info(`    @${r.placeholder} → ${r.id}  (${r.points}p)${typeNote}${componentNote}  ${r.relPath}`);
   }
+  if (edges.length > 0) info(`  Edges in ${BLOCKERS_FILE} (${edges.length}):`);
+  for (const e of edges) info(`    ${edgeLabel(e)} until ${e.until}`);
 
   const jsonSummary = (created) =>
     JSON.stringify({
@@ -1870,7 +1806,7 @@ async function runBatchMode(args, jsonMode) {
 
   rmSync(tempRoot, { recursive: true, force: true });
 
-  const dependentPaths = await appendDependsOn(cfg, dependents, [
+  const edgePaths = writeNewEdges(cfg, edges, [
     ...renderedStories.map((r) => r.finalDir),
     ...(creatingNewComponent ? [componentAbsDir] : []),
   ]);
@@ -1882,7 +1818,7 @@ async function runBatchMode(args, jsonMode) {
     files: [
       ...renderedStories.map((r) => r.relPath),
       ...(creatingNewComponent ? [componentRelIndex] : []),
-      ...dependentPaths,
+      ...edgePaths,
     ],
     created: `Story files created at ${renderedStories.map((r) => r.relPath).join(', ')}`,
   });

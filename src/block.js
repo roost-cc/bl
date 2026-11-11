@@ -12,7 +12,7 @@
  */
 
 import { spawnSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { parseArgs } from 'node:util';
 import { atomicWriteFile } from './atomic-write.js';
@@ -25,6 +25,7 @@ import { GITATTRIBUTES_LINE, configureMergeDriver } from './blockers-merge.js';
 import {
   BLOCKERS_FILE,
   ORDER_EDGE,
+  RUN_EDGE,
   WILDCARD,
   describeCycle,
   edgeKey,
@@ -122,6 +123,76 @@ export function writeEdge(config, edge) {
   const paths = prepareCommit(config.backlogRoot);
   writeBlockers(config.backlogRoot, [...edges, edge]);
   return { edge, paths };
+}
+
+/**
+ * `writeEdge` for several edges, all or nothing, under the backlog lock the
+ * caller holds, with no commit: `bl new` writes a new story's dependencies
+ * through it (F-111 D5). When one edge is refused, or a write throws,
+ * `blockers.json` and `.gitattributes` get back the bytes they had, and the
+ * refusal is returned or the error thrown. `undo` does the same later, for a
+ * caller whose next step fails. `paths` are the paths to commit.
+ * @param {object} config
+ * @param {import("./blockers.js").Edge[]} edges
+ * @returns {{ refused?: string[], paths: string[], undo: () => void }}
+ */
+export function writeEdges(config, edges) {
+  const root = config.backlogRoot;
+  const saved = [BLOCKERS_FILE, '.gitattributes'].map((rel) => {
+    const path = join(root, rel);
+    return { path, text: existsSync(path) ? readFileSync(path, 'utf8') : null };
+  });
+  const undo = () => {
+    for (const { path, text } of saved) {
+      if (text == null) rmSync(path, { force: true });
+      else atomicWriteFile(root, path, text);
+    }
+  };
+  let paths = [];
+  try {
+    for (const edge of edges) {
+      const res = writeEdge(config, edge);
+      if (res.refused) {
+        undo();
+        return { refused: res.refused, paths: [], undo };
+      }
+      paths = res.paths ?? [];
+    }
+  } catch (err) {
+    undo();
+    throw err;
+  }
+  return { paths, undo };
+}
+
+/**
+ * Stories that joined a feature (their `feature:` already written, F-111
+ * D5): each run edge between one of `joined` and another story of the same
+ * feature becomes the order edge between the two, since a run edge inside one
+ * feature holds the feature on itself. Under the backlog lock the caller
+ * holds, with no commit. Returns the paths to commit, empty when no edge
+ * changed.
+ * @param {object} config
+ * @param {string[]} joined  story ids
+ * @returns {string[]}
+ */
+export function orderJoinedEdges(config, joined) {
+  const root = config.backlogRoot;
+  const { edges } = readBlockers(root);
+  const units = readUnits(config);
+  const order = (e) => ({ blocker: e.blocker, gate: ORDER_EDGE.gate, unit: e.unit, until: ORDER_EDGE.until });
+  const turned = edges.filter(
+    (e) =>
+      e.gate === RUN_EDGE.gate && (joined.includes(e.unit) || joined.includes(e.blocker)) && inFeature(order(e), units),
+  );
+  if (turned.length === 0) return [];
+  const kept = edges.filter((e) => !turned.includes(e));
+  const keys = new Set(kept.map(edgeKey));
+  const added = turned.map(order).filter((e) => !keys.has(edgeKey(e)) && keys.add(edgeKey(e)));
+  const paths = prepareCommit(root);
+  writeBlockers(root, [...kept, ...added]);
+  for (const e of turned) info(`${edgeLabel(e)} is now the order edge ${mergeEdgeLabel(e)}`);
+  return paths ?? [];
 }
 
 /**

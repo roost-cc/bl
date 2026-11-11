@@ -117,9 +117,9 @@ test('bl side --from a draft feature or a standalone story: a standalone story o
     assert.equal(fm.feature, undefined);
     assert.equal(fm.found_by, from);
     assert.equal(logStatusOf('story', fm), 'in_progress');
-    // An empty list key reads as "" (a bare `key:`); required_for is
-    // derived, never written (F-77 D3).
-    assert.deepEqual([fm.depends_on, Object.hasOwn(fm, 'required_for')], ['', false]);
+    // A dependency is an edge in blockers.json (F-111 D5), never a key;
+    // required_for is derived, never written (F-77 D3).
+    assert.deepEqual([Object.hasOwn(fm, 'depends_on'), Object.hasOwn(fm, 'required_for')], [false, false]);
     assert.equal(findExistingWorktree(repos.repoB, branch)?.path, out.worktree);
     const change = fmOf(join(dir, `stories/S${id.slice(2)}-${slug}/change.md`));
     assert.equal(change.change_of, id);

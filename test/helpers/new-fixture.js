@@ -47,31 +47,20 @@ export function gitNewBacklog() {
 
 export const NEW_IN_C01 = ['new', 'C01', '--points', '1'];
 
-/** A git-backed backlog: C01 with S-1 (depends on nothing) and S-2 (depends on S-1). */
+/**
+ * A git-backed backlog: C01 with S-1 (in feature F-1) and S-2 (in no
+ * feature), no edge between them.
+ */
 export function gitEdgeBacklog() {
   const t = componentBacklog({
     stories: [
-      { id: 'S-1', component: 'C01', title: 'Later', dirSuffix: 'later' },
-      { id: 'S-2', component: 'C01', title: 'Also later', dirSuffix: 'also-later', depends_on: 'S-1' },
+      { id: 'S-1', component: 'C01', title: 'Later', dirSuffix: 'later', feature: 'F-1' },
+      { id: 'S-2', component: 'C01', title: 'Also later', dirSuffix: 'also-later' },
     ],
+    features: [{ id: 'F-1', title: 'Invites', dirSuffix: 'invites' }],
   });
   initGitBacklog(t.dir);
   return t;
-}
-
-/** A one-story spec in C01 whose story is required for S-1 and S-2; its path. */
-export function edgeSpec(dir) {
-  mkdirSync(join(dir, 'plan'), { recursive: true });
-  writeFileSync(join(dir, 'plan', 'a.md'), '## Summary\n\nA.\n');
-  const specPath = join(dir, 'plan', 'spec.json');
-  writeFileSync(
-    specPath,
-    JSON.stringify({
-      component: 'C01',
-      stories: [{ id: 'base', title: 'Base', points: 1, body_file: 'a.md', required_for: ['S-1', 'S-2'] }],
-    }),
-  );
-  return specPath;
 }
 
 /** Write a two-story spec into C01 and return its path. */

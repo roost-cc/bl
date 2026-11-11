@@ -70,10 +70,10 @@ export const MERGE_EDGE = { gate: 'merge', until: 'merged' };
 export const ORDER_EDGE = { gate: 'order', until: 'implemented' };
 
 /**
- * The edge a `depends_on:` entry outside one feature stands for (F-111 D4):
- * it holds the story at `run` until the dependency is `done`.
+ * The edge a dependency outside one feature stands for (F-111 D4): it holds
+ * the story at `run` until the dependency is `done`.
  */
-const RUN_EDGE = { gate: 'run', until: 'done' };
+export const RUN_EDGE = { gate: 'run', until: 'done' };
 
 /** The `unit` that holds every unit of every type with the gate (F-66 A3). */
 export const WILDCARD = '*';
@@ -448,11 +448,26 @@ export function dependsOnEdges(stories) {
   const out = [];
   for (const s of stories) {
     for (const dep of new Set(parseIdList(s.depends_on))) {
-      const one = s.feature !== '' && featureOf.get(dep) === s.feature;
-      out.push({ blocker: dep, ...(one ? ORDER_EDGE : RUN_EDGE), unit: s.id });
+      out.push(dependencyEdge(dep, s.id, (id) => featureOf.get(id) ?? ''));
     }
   }
-  return out.map(normalizeEdge);
+  return out;
+}
+
+/**
+ * The edge for "story `unit` waits for story `blocker`" (F-111 D4): the order
+ * edge when both are in one feature, else the run edge that holds `unit`
+ * until `blocker` is `done`. `bl new` writes it, the migration moves each
+ * `depends_on:` entry to it, and `dependsOnEdges` reads an entry as it.
+ * @param {string} blocker
+ * @param {string} unit
+ * @param {(id: string) => string} featureOf  a story's feature id, `''` for none
+ * @returns {Edge}
+ */
+export function dependencyEdge(blocker, unit, featureOf) {
+  const feature = featureOf(unit);
+  const { gate, until } = feature !== '' && featureOf(blocker) === feature ? ORDER_EDGE : RUN_EDGE;
+  return { blocker, gate, unit, until };
 }
 
 /** `edges` (the file's) and the `extra` edges (`dependsOnEdges`) whose identity is not in the file: the file's edge wins. */

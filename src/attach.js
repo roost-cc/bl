@@ -17,9 +17,11 @@
  * so a story in another repo is refused there: `bl side` brings a repo in.
  * Before the feature runs, a story in a new repo simply joins it.
  *
- * Attach creates nothing and writes one file, the story, through
- * `updateSpecFile` (F-67), so a write that fails part way leaves it as it
- * was, never truncated.
+ * Attach creates nothing and writes the story through `updateSpecFile`
+ * (F-67), so a write that fails part way leaves it as it was, never
+ * truncated. A run edge in `blockers.json` between the story and a story of
+ * the feature becomes an order edge (`orderJoinedEdges`, F-111 D5), in the
+ * same commit.
  */
 
 import { readFileSync } from 'fs';
@@ -35,6 +37,8 @@ import {
   storyMoveRefusal,
 } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
+import { atomicWriteFile } from './atomic-write.js';
+import { orderJoinedEdges } from './block.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
@@ -43,8 +47,10 @@ export const ATTACH_JSON_SCHEMA = 'bl-attach-json/v1';
 
 const help = (flow) => `Usage: bl attach <S-n> <F-n> [options]
 
-Put an existing story in a feature: set the story's feature:, then commit
-the story directory by path. The ids may come in either order. A story's feature: is the only statement of
+Put an existing story in a feature: set the story's feature:, turn each run
+edge in blockers.json between it and a story of the feature into an order
+edge, then commit the story directory (and blockers.json) by path. The ids
+may come in either order. A story's feature: is the only statement of
 membership. A story that already names the feature is left alone (stderr
 says so).
 
@@ -160,6 +166,7 @@ export async function main(argv) {
   if (!changed) {
     info(`${storyId} is already in ${feature.id}; nothing to do.`);
   } else {
+    let edgePaths;
     try {
       await updateSpecFile(config.backlogRoot, found.indexPath, (specFm) => {
         // An empty `feature:` key is filled in place; a missing one goes last.
@@ -167,6 +174,13 @@ export async function main(argv) {
       });
     } catch (e) {
       fail(`bl attach: could not write ${storyId}: ${e.message}. Nothing was changed.`);
+    }
+    try {
+      // A run edge between it and a story of the feature is now an order edge (F-111 D5).
+      edgePaths = orderJoinedEdges(config, [storyId]);
+    } catch (e) {
+      atomicWriteFile(config.backlogRoot, found.indexPath, before);
+      fail(`bl attach: could not turn ${storyId}'s run edges into order edges: ${e.message}. Nothing was changed.`);
     }
     info(`Attached ${storyId} to ${feature.id}.`);
 
@@ -178,6 +192,7 @@ export async function main(argv) {
         res = await syncAndCommit(config, {
           message: `chore: attach ${storyId} to ${feature.id}`,
           storyIds: [storyId],
+          extraPaths: edgePaths,
         });
       } catch (e) {
         fail(

@@ -697,7 +697,7 @@ class FrozenMap extends Map {
  */
 export const DERIVED_KEYS = Object.freeze({
   story: Object.freeze({
-    required_for: 'the stories whose depends_on: names it',
+    required_for: 'the run and order edges in blockers.json that name it',
   }),
   feature: Object.freeze({
     stories: 'the stories whose feature: names it',
