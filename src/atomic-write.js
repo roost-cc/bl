@@ -195,8 +195,8 @@ export function atomicWriteFile(
 
 /**
  * Undo for the files a write touched, run when the commit could not be
- * reached: each path is put back as it was (removed when it was not there).
- * Every path is tried, whatever fails before it. `undo(cause)` returns `cause` when all
+ * reached: each path is put back as it was (removed when it was not there),
+ * and a path that is as it was is left alone. Every path is tried, whatever fails before it. `undo(cause)` returns `cause` when all
  * were put back, else an error naming `cause` and each path left changed,
  * with what to do; its `unrecovered` holds each such path's text before
  * (`null`: it was not there). `bl task` (`task.js`), the edge writes
@@ -211,6 +211,8 @@ export function snapshot(root, paths, left = '') {
     const unrecovered = [];
     for (const [p, text] of was) {
       try {
+        // A path the write never touched is not rewritten, so it cannot fail.
+        if ((existsSync(p) ? readFileSync(p, 'utf8') : null) === text) continue;
         if (text == null) rmSync(p, { force: true });
         else atomicWriteFile(root, p, text);
       } catch (e) {

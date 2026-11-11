@@ -105,6 +105,40 @@ for (const [ending, end] of ENDINGS) {
   }
 }
 
+// A file the write never touched is not rewritten (`snapshot`), so a put-back
+// that would fail on it (a read-only directory) is no error, and it is not named.
+for (const [ending, end] of ENDINGS) {
+  test(`all_or_nothing_leaves_an_untouched_file_alone: fn ${ending}`, () => {
+    const { dir, cleanup } = mkTempBacklog({});
+    writeFileSync(join(dir, 'blockers.json'), BLOCKERS);
+    writeFileSync(join(dir, '.gitattributes'), ATTRIBUTES);
+    let res = null;
+    let error = null;
+    try {
+      res = allOrNothing(dir, () => {
+        atomicWriteFile(dir, join(dir, 'blockers.json'), 'changed blockers\n');
+        _hooks.beforeRename = (tmp) => {
+          if (readFileSync(tmp, 'utf8') === ATTRIBUTES) throw new Error('injected put-back failure');
+        };
+        return end();
+      });
+    } catch (e) {
+      error = e;
+    } finally {
+      _hooks.beforeRename = null;
+    }
+    try {
+      const said = error ? error.message : res.refused.join('; ');
+      assert.match(said, /^first (error|refusal)$/);
+      assert.equal(error ? error.left : res.left, undefined);
+      assert.equal(readFileSync(join(dir, 'blockers.json'), 'utf8'), BLOCKERS);
+      assert.equal(readFileSync(join(dir, '.gitattributes'), 'utf8'), ATTRIBUTES);
+    } finally {
+      cleanup();
+    }
+  });
+}
+
 /** Run `bl attach S-2 F-1 --no-sync` in this process; returns its stderr and exit code. */
 async function runAttach(dir) {
   const cwd = process.cwd();
