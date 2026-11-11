@@ -44,10 +44,10 @@ test('bl_implement_guide_matches_session_guard: no guide describes the PID-file 
 /** A file's text with each line break, and the comment marks after it, made one space. */
 const prose = (path) => readFileSync(path, 'utf8').replace(/\s*\n\s*(?:\*(?!\*)|\/\/)?\s*/g, ' ');
 
-/** Tenet 12 in app.roost.cc, beside bl in the workstation and in a unit directory. */
+/** Tenet 13 in app.roost.cc, beside bl in the workstation and in a unit directory. */
 const TENETS = join(ROOT, '../app.roost.cc/docs/public/tenets.md');
 
-test('tenet_12_documents_legacy_lock_migration: the lock rule names the one-off migration that deletes retired lock files', (t) => {
+test('tenet_13_documents_legacy_lock_migration: the lock rule names the one-off migration that deletes retired lock files', (t) => {
   // Every text that states the rule: no blanket "no code deletes a lock file",
   // and the exception named.
   const rules = [
@@ -55,7 +55,7 @@ test('tenet_12_documents_legacy_lock_migration: the lock rule names the one-off 
     ['src/kernel-lock.js', /one-off S-1495 migration \(`migrate-lock-files\.js`\): it deletes retired lock files/],
   ].map(([file, exception]) => [join(ROOT, file), exception]);
   if (existsSync(TENETS)) rules.push([TENETS, /A one-off migration may delete a retired lock file/]);
-  else t.diagnostic(`${TENETS} is not here; tenet 12 is not checked`);
+  else t.diagnostic(`${TENETS} is not here; tenet 13 is not checked`);
   for (const [path, exception] of rules) {
     const text = prose(path);
     assert.ok(!/\bno code deletes (?:a |the )(?:lock )?file\b(?! that)/i.test(text), `${path}: a blanket rule`);
