@@ -20,7 +20,7 @@ import { dirname, join, relative, resolve } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE } from './lock.js';
 import { MAIN_REFSPEC } from './main-sync.js';
-import { holderOf } from './kernel-lock.js';
+import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR } from './run-lock.js';
 import { allActiveWorktrees, LOCK_FILE as SESSION_LOCK_FILE } from './story.js';
 
@@ -175,19 +175,20 @@ function activeRuns(config) {
       continue;
     }
     if (state?.status !== 'running') continue;
-    const pid = holderOf(join(runDir, f.replace(/\.json$/, '.lock')));
-    if (pid != null && pid !== process.pid) out.push(`a bl run is active (${join(RUN_DIR, f)}, pid ${pid})`);
+    const pid = otherHolder(join(runDir, f.replace(/\.json$/, '.lock')));
+    if (pid != null) out.push(`a bl run is active (${join(RUN_DIR, f)}, pid ${pid})`);
   }
   for (const { dir, pid } of liveSessionLocks(config)) {
-    if (pid !== process.pid) out.push(`a bl session is running in ${dir} (pid ${pid})`);
+    out.push(`a bl session is running in ${dir} (pid ${pid})`);
   }
   return out;
 }
 
 /**
- * Each `bl` session lock that a process holds (a try-lock, F-104 D6): the
- * directory that holds it, the branch of the worktree it belongs to, and the
- * holder's pid from the lock file, or 'unknown'.
+ * Each `bl` session lock that another process holds (`otherHolder`, a
+ * try-lock, F-104 D6): the directory that holds it, the branch of the
+ * worktree it belongs to, and the holder's pid from the lock file, or
+ * 'unknown'. A lock this process holds is left out.
  * @param {object} config  the backlog config
  * @returns {{ dir: string, branch: string, pid: number | 'unknown' }[]}
  */
@@ -212,7 +213,7 @@ export function liveSessionLocks(config) {
   );
   const out = [];
   for (const [dir, branch] of dirs) {
-    const pid = holderOf(join(dir, SESSION_LOCK_FILE));
+    const pid = otherHolder(join(dir, SESSION_LOCK_FILE));
     if (pid != null) out.push({ dir, branch, pid });
   }
   return out;

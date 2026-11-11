@@ -25,7 +25,7 @@ import { join, resolve } from 'path';
 import { createHash } from 'crypto';
 import { FrontmatterError, info, parseFrontmatterOf, serializeFrontmatter } from './config.js';
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
-import { holderOf, release, tryLock } from './kernel-lock.js';
+import { holds, release, tryLock } from './kernel-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 
 /** The spec lock could not be taken: held by a live process past the wait, or not creatable. */
@@ -164,7 +164,7 @@ export async function updateSpecFile(backlogRoot, indexPath, mutate) {
  * @returns {boolean}
  */
 export function updateSpecFileHeld(backlogRoot, indexPath, mutate) {
-  if (holderOf(specLockPath(indexPath)) !== process.pid) {
+  if (!holds(specLockPath(indexPath))) {
     throw new TypeError(`updateSpecFileHeld(${indexPath}): the spec lock is not held; use updateSpecFile`);
   }
   const raw = readFileSync(indexPath, 'utf8');

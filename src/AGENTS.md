@@ -287,8 +287,11 @@ worktree).
   session with that process's PID, the interactive launch included. A review
   round's `holdReviewLocks` takes it the same way (the unit directory, plus
   any reviewed worktree outside it). Every other check asks `holderOf` (D6):
-  `isSessionRunning(unitDir)`, `runFeature`'s refusal, `bl merge`'s cleanup,
-  the migrations' live-session checks (`liveSessionLocks`).
+  `isSessionRunning(unitDir)` and `bl merge`'s cleanup. A check that leaves
+  out this process's own lock asks `otherHolder`, which decides "this
+  process" from its own handles (`holds`), never from the PID in the file:
+  `runFeature`'s refusal and the migrations' live-session checks
+  (`liveSessionLocks`).
 - Resume (`findSession`) and transcript token totals read the unit directory's
   transcripts; `transcriptDirs` adds each worktree's for sessions that started
   there before.
@@ -923,8 +926,8 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   through `updateChange`, writes `flow.json` v2 (`migratedFlowText`: the template with the
   backlog's gates), and commits the changed paths once (`commitPaths`) with the counts. It does
   not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
-  (`liveSessionLocks`, by the worktree's branch) has a live holder other than the script and its
-  parent processes is skipped and listed, with the stories of such a feature, and so is a unit
+  (`liveSessionLocks`, by the worktree's branch) is held by another process (`otherHolder`; the
+  PID in a lock file decides nothing, so a parent `bl` run's lock counts too) is skipped and listed, with the stories of such a feature, and so is a unit
   whose `transitions:` is malformed (`logShape`); a rerun converts a held unit, a malformed one
   once someone fixes it, and, with nothing left, prints `nothing to do`. It sets `added` and
   `completed` to the days of the new log's first and terminal entries (`setDates`). A run that

@@ -117,7 +117,7 @@ import {
   updateChange,
   writeChange,
 } from './change-doc.js';
-import { holderOf, release as releaseLock, tryLock } from './kernel-lock.js';
+import { otherHolder, release as releaseLock, tryLock } from './kernel-lock.js';
 import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
@@ -4602,8 +4602,8 @@ function refuse(runner, feature, reason) {
  */
 export async function runFeature({ feature, config, prep, runner, opts = {} }) {
   const sessionLock = join(prepUnitDir(prep), LOCK_FILE);
-  const wtHolder = holderOf(sessionLock);
-  if (wtHolder != null && wtHolder !== process.pid) {
+  const wtHolder = otherHolder(sessionLock);
+  if (wtHolder != null) {
     return refuse(runner, feature, `a live session (pid ${wtHolder}) holds ${sessionLock}`);
   }
   const lock = acquireRunLock(config, feature.id);

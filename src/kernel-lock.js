@@ -151,6 +151,31 @@ export function holderOf(path) {
 }
 
 /**
+ * Whether this process holds the lock on `path`: it took it (`tryLock`) or
+ * adopted it, and has not released it. Decided from this process's own
+ * handles, never from the PID in the file (D4).
+ *
+ * @param {string} path
+ * @returns {boolean}
+ */
+export function holds(path) {
+  return held.has(resolve(path));
+}
+
+/**
+ * Who else holds the lock on `path`: null when it is free, missing, or held
+ * by this process (`holds`); else the PID in the file, or 'unknown'. A
+ * foreign holder whose file names this process still counts as another
+ * holder. Every check that excludes this process's own lock uses this.
+ *
+ * @param {string} path
+ * @returns {number | 'unknown' | null}
+ */
+export function otherHolder(path) {
+  return holds(path) ? null : holderOf(path);
+}
+
+/**
  * Register a descriptor this process inherited from its parent (D5) as its
  * handle for `path`, when `fd` is open on that file (the same device and
  * inode) and holds its lock. Else return null and register nothing. A
