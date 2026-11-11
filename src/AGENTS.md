@@ -3752,8 +3752,8 @@ taken with `tryLockOnce`: they are not re-entrant, so two callers in one process
 two processes do. A `bl` that ends while it holds one, even by Ctrl+C or SIGKILL,
 leaves no lock, and the next taker gets it at once. Every bl lock is a kernel lock now:
 the PID-file lock module is gone, no code decides from a PID whether a lock is held, and no code
-deletes a lock file (D3). The lock files stay and collect: one per spec in the temp dir, and one main
-sync lock and one `bl-prepare-<branch>.lock` per branch in each repo's git common dir. No lock
+deletes a lock file (D3). The lock files stay and collect: one per spec in the temp dir, and in
+each repo's git common dir one main sync lock and one `bl-prepare-<branch>.lock` per branch. No lock
 wait sleeps synchronously. The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer
 too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
 caller awaits it (`test/unit/awaited-calls.test.js`).
