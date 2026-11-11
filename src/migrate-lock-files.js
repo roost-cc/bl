@@ -31,11 +31,10 @@
  * nothing is left.
  */
 
-import { spawnSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
-import { commitPaths } from './backlog-commit.js';
+import { commitPaths, dirtySnapshot } from './backlog-commit.js';
 import { worktreeRoot } from './config.js';
 import { BL_DIR_LINE, withGitignoreLines } from './init.js';
 import { otherHolder, release, tryLockOnce } from './kernel-lock.js';
@@ -137,7 +136,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
 
   // 4. One commit of `.gitignore`, also when an earlier run wrote it and
   // then failed before its commit or in it.
-  const leftOver = text === before && uncommitted(root, '.gitignore');
+  const leftOver = text === before && dirtySnapshot(root)?.has('.gitignore');
   if (text === before && !leftOver) {
     if (deleted.length === 0 && skipped.length === 0) log('nothing to do');
     return { deleted, skipped, commit: null };
@@ -164,14 +163,4 @@ function deleteUnderLock(path) {
     release(res.taken);
   }
   return null;
-}
-
-/** Whether `path` in the git work tree `root` differs from HEAD, staged or not. */
-function uncommitted(root, path) {
-  const res = spawnSync('git', ['status', '--porcelain', '--', path], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  return res.status === 0 && res.stdout.trim() !== '';
 }
