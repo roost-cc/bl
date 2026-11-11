@@ -92,13 +92,11 @@ func TestMeterAtD5Thresholds(t *testing.T) {
 	}
 }
 
-// snapshot is the recorded snapshot testdata/snapshot.json, with the local zone set to a fixed
-// one for the test, so the times on screen do not depend on the machine.
+// snapshot is the recorded snapshot testdata/snapshot.json, with the local zone fixed for the test
+// (fixedLocal).
 func snapshot(t *testing.T) stream.SnapshotMsg {
 	t.Helper()
-	local := time.Local
-	time.Local = time.FixedZone("UTC-5", -5*60*60)
-	t.Cleanup(func() { time.Local = local })
+	fixedLocal(t)
 	data, err := os.ReadFile("testdata/snapshot.json")
 	if err != nil {
 		t.Fatal(err)

@@ -31,9 +31,11 @@ func fakeNotifySend(t *testing.T, body string) notify.Sender {
 	return s
 }
 
-// notifying is a model of a 100×40 terminal with that bell and those senders.
+// notifying is a model of a 100×40 terminal with that bell and those senders, with the local zone
+// fixed for the test (fixedLocal), so box ¹'s clock does not depend on the machine.
 func notifying(t *testing.T, bell bool, senders []notify.Sender) Model {
 	t.Helper()
+	fixedLocal(t)
 	m, _ := update(t, New([]string{"bl"}, 2000, bell, senders), tea.WindowSizeMsg{Width: 100, Height: 40})
 	return m
 }
