@@ -594,7 +594,9 @@ export async function cmdRefine(args, config, feature) {
     agent: config.agent,
     config,
   });
+  const unit = { ...feature, kind: 'feature' };
   return refineAndCommit(
+    [unit],
     {
       mode: 'refine',
       parsed: parsedFor(feature),
@@ -614,15 +616,9 @@ export async function cmdRefine(args, config, feature) {
       schema: loadSchema('feature-refine'),
     },
     `chore: refine ${feature.id}`,
-    [feature.id],
     // A premise that does not hold puts the feature back to draft (F-68 D2).
     async ({ premise_holds, refined, reason }) =>
-      applyRefineStatus(
-        config.backlogRoot,
-        { ...feature, kind: 'feature' },
-        !premise_holds ? 'failure' : refined ? 'success' : null,
-        reason,
-      ),
+      applyRefineStatus(config.backlogRoot, unit, !premise_holds ? 'failure' : refined ? 'success' : null, reason),
   );
 }
 

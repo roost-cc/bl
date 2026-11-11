@@ -51,13 +51,15 @@ test('a path dirty before the session stays out and is named; one the session ch
   assert.match(r.stderr, new RegExp(`Left your uncommitted backlog edits alone: .*${S2}`));
 });
 
-test('priority.md the session wrote stays uncommitted, with one line: only a person ranks', () => {
+test('priority.md the session wrote stays uncommitted, named once as outside the work units', () => {
   const dir = gitBacklog();
   const r = refine(dir, ['S-1'], { write: [S1, PRIORITY_FILE] });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [S1]);
   assert.deepEqual(statusLines(dir), [` M ${PRIORITY_FILE}`]);
-  assert.equal(r.stderr.match(/Left priority\.md uncommitted: .*only a person ranks/g)?.length, 1, r.stderr);
+  // Outside the refine's scope (F-122 D3), so the outside line names it, not the ranking line.
+  assert.equal(r.stderr.match(/Left uncommitted, outside refine S-1's work units: priority\.md/g)?.length, 1);
+  assert.doesNotMatch(r.stderr, /Left priority\.md uncommitted/);
 });
 
 test('a session that writes nothing makes no commit and prints nothing about committing', () => {
@@ -114,8 +116,10 @@ for (const [label, args, write] of [
 // `bl refine -t`, and several targets with a feature among them, run each
 // refine in a tmux window of its own, named by `renderTabTitle` (tab-title.js):
 // the detached refine commits, pushes and
-// ends with the status the attached one would have.
-for (const [label, args, write, exit, windows, messages] of [
+// ends with the status the attached one would have. Each window's stub writes
+// every file in `write`, and each commit holds only its own work unit (F-122
+// D3): `left` is what stays uncommitted.
+for (const [label, args, write, exit, windows, messages, left = []] of [
   ['bl refine -t S-n', ['-t', 'S-1'], [S1], 0, [': S-1 : refine\t0'], ['chore: refine S-1']],
   ['bl refine -t on a session that exits 7', ['-t', 'S-1'], [S1], 7, [': S-1 : refine\t7'], ['chore: refine S-1']],
   ['the batch with -t', ['-t', 'S-1', 'S-2'], [S1, S2], 0, [': 2 stories : refine\t0'], ['chore: refine S-1, S-2']],
@@ -127,6 +131,8 @@ for (const [label, args, write, exit, windows, messages] of [
     0,
     ['F-1 :  : refine\t0', ': S-2 : refine\t0'],
     ['chore: refine S-2', 'chore: refine F-1'],
+    // The S-2 window, the second, also wrote F-1's file: not its work unit.
+    [` M ${F1}`],
   ],
 ]) {
   test(`refine_detached_window_commits_pushes_and_status: ${label}`, () => {
@@ -135,7 +141,7 @@ for (const [label, args, write, exit, windows, messages] of [
     const r = refine(dir, args, { write, exit, tmuxLog: log });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), windows);
-    assert.deepEqual(statusLines(dir), []);
+    assert.deepEqual(statusLines(dir), left);
     assert.deepEqual(git(dir, 'log', `-${messages.length}`, '--format=%s').split('\n'), messages);
     assert.equal(originMain(dir), git(dir, 'rev-parse', 'HEAD'), 'origin has the commits');
   });

@@ -9,10 +9,15 @@ import {
   getAllowedTools,
   getDeniedTools,
   launchSession,
+  runHeadlessSession,
 } from '../../src/session.js';
 import { AgentProvider } from '../../src/agents/provider.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
+import { holderOf } from '../../src/kernel-lock.js';
+import { sessionLockPath } from '../../src/story.js';
+import { takeUnitLocks, unitLockPath } from '../../src/unit-lock.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { holdLock } from '../helpers/hold-lock.js';
 
 const BASE_PROMPT = 'BODY: original task instructions\n';
 
@@ -362,4 +367,94 @@ test('launchSession records nothing per step for a provider without tokens, no c
   assert.deepEqual(fresh.tokens_by_step, {
     implement: { input: '3', output: '3', cache_creation: '3', cache_read: '3' },
   });
+});
+
+// ---------------------------------------------------------------------------
+// A session in the backlog root runs under its work unit locks (F-122 D7)
+// ---------------------------------------------------------------------------
+
+test('session_in_backlog_root_needs_its_work_unit_locks: no session lock; units missing or not held throw', async () => {
+  const { dir, cleanup } = mkTempBacklog();
+  const tmux = process.env.TMUX;
+  delete process.env.TMUX;
+  try {
+    const cfg = loadConfig({ backlogRoot: dir });
+    const unit = { id: 'S-1', kind: 'story', indexPath: join(dir, 'stories', 'S1-one', 'index.md') };
+    const unitDir = mkTempDir('bl-unit-');
+    /** Per spawn: whether a session lock of the backlog root, or of the unit directory, is held. */
+    const spawns = [];
+    const provider = new (class extends AgentProvider {
+      supportsHeadless() {
+        return true;
+      }
+      findSession() {
+        return null;
+      }
+      spawn(opts) {
+        spawns.push({
+          rootSessionLock: holderOf(sessionLockPath(dir, dir)),
+          unitSessionLock: holderOf(sessionLockPath(dir, unitDir)) === process.pid,
+          cwd: opts.cwd,
+        });
+        return { status: 0, output: '', isError: false, usage: null };
+      }
+    })();
+    const common = {
+      mode: 'refine',
+      parsed: { id: 'S-1' },
+      worktreePath: dir,
+      config: cfg,
+      roostDir: cfg.roostDir,
+      backlogRoot: dir,
+      provider,
+    };
+    const headless = (extra) => runHeadlessSession({ ...common, prompt: 'p', label: 'S-1', ...extra });
+    const interactive = (extra) =>
+      launchSession({
+        ...common,
+        title: 'T',
+        branchName: 'main',
+        sessionPrompt: 'p',
+        isNewWorktree: false,
+        returnOnExit: true,
+        recordTokens: false,
+        ...extra,
+      });
+
+    for (const launch of [headless, interactive]) {
+      await assert.rejects(launch({}), /needs its work units' locks \(units\)/, 'no units');
+      await assert.rejects(launch({ units: [] }), /needs its work units' locks \(units\)/, 'empty units');
+      await assert.rejects(
+        launch({ units: [unit] }),
+        /does not hold S-1's work unit lock .*\/\.bl\/lock\/unit-S1-one-/,
+      );
+      // Another process's lock is not this process's.
+      const other = holdLock(unitLockPath(dir, dirname(unit.indexPath)), 'other');
+      try {
+        await assert.rejects(launch({ units: [unit] }), /does not hold S-1's work unit lock/);
+      } finally {
+        other.release();
+      }
+    }
+    assert.equal(spawns.length, 0, 'nothing spawned');
+
+    const lock = takeUnitLocks(cfg, [unit], 'refine S-1');
+    assert.equal(lock.refused, null);
+    try {
+      assert.equal((await headless({ units: [unit] })).status, 0);
+      assert.equal(await interactive({ units: [unit] }), 0);
+    } finally {
+      lock.release();
+    }
+    // In a unit directory, the session lock is taken as before, and needs no units.
+    assert.equal((await headless({ unitDir })).status, 0);
+    assert.deepEqual(spawns, [
+      { rootSessionLock: null, unitSessionLock: false, cwd: dir },
+      { rootSessionLock: null, unitSessionLock: false, cwd: dir },
+      { rootSessionLock: null, unitSessionLock: true, cwd: unitDir },
+    ]);
+  } finally {
+    if (tmux != null) process.env.TMUX = tmux;
+    cleanup();
+  }
 });

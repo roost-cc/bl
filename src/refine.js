@@ -9,8 +9,8 @@
  *
  * The session ends by writing its outcome file (F-68 D1); when the session
  * exits, sets each story's status to "refined" from it, then commits and
- * pushes what the session left uncommitted in the backlog
- * (`refineAndCommit`).
+ * pushes what the session left uncommitted in its work units' directories
+ * (`refineAndCommit`), whose locks it holds for the whole session (F-122).
  */
 
 import { createHash } from 'crypto';
@@ -31,6 +31,7 @@ import { flowForHelp, loadFlow } from './flow.js';
 import { assertFrom, requireBranch, statusOf, transition } from './transition.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
+import { takeUnitLocks } from './unit-lock.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
@@ -180,37 +181,57 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
  * session's status, or 1 when the status write or the commit failed.
  * `bl refine S-n`, the batch and `bl refine F-n` (`feature-cmd.js`
  * `cmdRefine`) all end here.
+ *
+ * First it takes the work unit locks of `units` (`takeUnitLocks`, F-122 D2):
+ * a lock another process holds refuses the refine with exit 1, before it
+ * writes anything. The commit holds only the paths under the units'
+ * directories (`scope()`, read at the end, so a story the session made for
+ * the feature is in it, D3); bl names each other changed path.
+ * @param {import('./unit-lock.js').WorkUnit[]} units  the refined units: a
+ *   failed commit's paths go to the next refine of the same units
+ *   (`refine <ids>`), whether it is a refine or a re-refine
  * @param {object} opts  `launchSession` options
  * @param {string} message
- * @param {string[]} ids  the refined units: a failed commit's paths go to
- *   the next refine of the same units (`refine <ids>`), whether it is a
- *   refine or a re-refine
  * @param {(structured: object) => Promise<void>} apply  writes the statuses
  *   from the validated outcome
  */
-export async function refineAndCommit(opts, message, ids, apply) {
-  const before = dirtySnapshot(opts.backlogRoot);
-  const { status, structured, structuredError } = await launchSession({ ...opts, returnOnExit: true });
-  let applyFailed = false;
-  if (structured) {
-    try {
-      await apply(structured);
-    } catch (e) {
-      applyFailed = true;
-      console.error(`Error: cannot set the status from the refine outcome: ${e.message}`);
-    }
-  } else {
-    console.error(
-      `No refine outcome (${structuredError}); every status is unchanged.\n` +
-        `  Run \`bl refine ${ids.join(' ')}\` again to set it.`,
-    );
+export async function refineAndCommit(units, opts, message, apply) {
+  const ids = units.map((u) => u.id);
+  const owner = `refine ${ids.join(', ')}`;
+  const lock = takeUnitLocks(opts.config, units, owner);
+  if (lock.refused != null) {
+    console.error(`Error: ${lock.refused}`);
+    process.exit(1);
   }
-  const failed = await commitChangedSince(opts.backlogRoot, before, message, {
-    session: true,
-    owner: `refine ${ids.join(', ')}`,
-  });
-  // A failed commit is 1 whatever the session ended with (S-1330).
-  process.exit(failed || applyFailed ? 1 : status);
+  let exitCode;
+  try {
+    const before = dirtySnapshot(opts.backlogRoot);
+    const { status, structured, structuredError } = await launchSession({ ...opts, units, returnOnExit: true });
+    let applyFailed = false;
+    if (structured) {
+      try {
+        await apply(structured);
+      } catch (e) {
+        applyFailed = true;
+        console.error(`Error: cannot set the status from the refine outcome: ${e.message}`);
+      }
+    } else {
+      console.error(
+        `No refine outcome (${structuredError}); every status is unchanged.\n` +
+          `  Run \`bl refine ${ids.join(' ')}\` again to set it.`,
+      );
+    }
+    const failed = await commitChangedSince(opts.backlogRoot, before, message, {
+      session: true,
+      owner,
+      scope: lock.scope(),
+    });
+    // A failed commit is 1 whatever the session ended with (S-1330).
+    exitCode = failed || applyFailed ? 1 : status;
+  } finally {
+    lock.release();
+  }
+  process.exit(exitCode);
 }
 
 /** Single-story interactive refine (the original `bl refine <story>` flow). */
@@ -234,7 +255,9 @@ async function refineOne(target, config, { additionalPrompt } = {}) {
     config,
   });
 
+  const unit = storyUnit(target);
   return refineAndCommit(
+    [unit],
     {
       mode: 'refine',
       parsed,
@@ -252,15 +275,17 @@ async function refineOne(target, config, { additionalPrompt } = {}) {
       schema: loadSchema('refine'),
     },
     `chore: ${promptName} ${parsed.id}`,
-    [parsed.id],
-    async ({ refined, reason }) =>
-      applyRefineStatus(
-        backlogRoot,
-        { id: parsed.id, kind: 'story', indexPath: target.found.indexPath },
-        refined ? 'success' : null,
-        reason,
-      ),
+    async ({ refined, reason }) => applyRefineStatus(backlogRoot, unit, refined ? 'success' : null, reason),
   );
+}
+
+/**
+ * The work unit of a refine target (`resolveRefineTargets`).
+ * @param {{ id: string, found: { indexPath: string } }} target
+ * @returns {import('./unit-lock.js').WorkUnit}
+ */
+function storyUnit(target) {
+  return { id: target.id, kind: 'story', indexPath: target.found.indexPath };
 }
 
 /**
@@ -325,6 +350,7 @@ async function refineBatch(targets, config) {
   updateTabTitle({ story: `${targets.length} stories` });
 
   return refineAndCommit(
+    targets.map(storyUnit),
     {
       mode: 'refine',
       parsed: { id: refineBatchId(targets.map((t) => t.id)) },
@@ -344,7 +370,6 @@ async function refineBatch(targets, config) {
       schema: loadSchema('refine-batch'),
     },
     `chore: refine ${targets.map((t) => t.id).join(', ')}`,
-    targets.map((t) => t.id),
     async ({ stories }) => applyBatchStatuses(backlogRoot, targets, stories),
   );
 }
@@ -362,9 +387,8 @@ export async function applyBatchStatuses(backlogRoot, targets, stories) {
   const failed = [];
   for (const t of targets) {
     const entry = stories[t.id] ?? { refined: false, reason: 'the outcome has no entry for it' };
-    const unit = { id: t.id, kind: 'story', indexPath: t.found.indexPath };
     try {
-      await applyRefineStatus(backlogRoot, unit, entry.refined ? 'success' : null, entry.reason);
+      await applyRefineStatus(backlogRoot, storyUnit(t), entry.refined ? 'success' : null, entry.reason);
       if (entry.refined) set.push(t.id);
     } catch (e) {
       failed.push(e.message);
@@ -402,7 +426,10 @@ orchestrator session that delegates each story to its own sub-agent, refining
 them in parallel. The session ends by writing its outcome: when the session
 ends, bl sets each story the agent refined to "refined", and prints the reason
 for each one it did not. Then bl commits and pushes what the session left
-uncommitted in the backlog.`);
+uncommitted in the stories' directories, and names each other path it left.
+
+A refine locks its stories first. If another bl process holds one of them,
+the refine refuses with that process's pid.`);
     process.exit(0);
   }
 

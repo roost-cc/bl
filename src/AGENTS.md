@@ -296,7 +296,13 @@ worktree).
   process holds is reused, and a lock another process holds refuses the
   session with that process's PID, the interactive launch included. The
   session lock and the work unit lock (`unit-lock.js`, F-122 D2, below) take
-  through one helper, `lock.js` `takeDirLock` (F-122 D6). A review
+  through one helper, `lock.js` `takeDirLock` (F-122 D6). A session in the
+  backlog root (a refine) takes no session lock (`session.js` `sessionLock`,
+  F-122 D7): its verb took the work unit locks of its targets first, and the
+  launch needs them as `units` and checks with `holds` that this process
+  holds each one's lock. A missing or empty `units`, or a lock this process
+  does not hold, throws before the session starts. So two refines of
+  different work units run at once. A review
   round's `holdReviewLocks` takes it the same way (the unit directory, plus
   any reviewed worktree outside it). Every other check asks `holderOf` (D6):
   `isSessionRunning(backlogRoot, unitDir)` and `bl merge`'s cleanup. A check that leaves
@@ -1436,7 +1442,14 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   (`{ summary, stories: { "S-n": { refined, reason? } } }`) or
   `feature-refine.json` (`{ summary, premise_holds, refined, reason? }`) to
   `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
-  before its backlog commit. `refined: true` records the `refine` row's
+  before its backlog commit. `refineAndCommit(units, opts, message, apply)`
+  first takes the work unit locks of `units` (`takeUnitLocks`: the story,
+  each story of a batch, or the feature and its stories). If another process
+  holds one, the refine prints the refusal and exits 1 before its
+  `dirtySnapshot`: no outcome file, no status, no commit. It passes `units`
+  to `launchSession`, and `scope()` to `commitChangedSince`, so the commit
+  holds only the units' directories, a story made for the feature during the
+  session included (F-122 D3). `refined: true` records the `refine` row's
   success, `refined`; `premise_holds: false` records its failure, a feature's
   `draft`; otherwise the status stays and `reason` is printed
   (`applyRefineStatus`, through `transition`, with `reason` as the entry's
@@ -2803,7 +2816,9 @@ Launches an agent session **on main** to refine and plan a story:
 - Can create child stories via `bl new` if the story should be split
 - Ends by writing its outcome file (F-68 D1); when the session ends, `bl refine` sets the
   status from it (see **Refine outcomes** under **Session outcomes**), then commits and pushes
-  what the session left uncommitted
+  what the session left uncommitted in its work units' directories
+- Takes the work unit locks of its targets first; a target another bl process holds refuses the
+  refine (F-122 D4)
 
 ```bash
 bl refine S34
@@ -3799,7 +3814,8 @@ the work unit lock is held for a whole session. Lock order: a verb takes its wor
 first, and the backlog lock and the spec lock inside them, one write at a time. A work unit lock
 never waits, so it cannot wait in a cycle with them. Short commands (`bl new`, `bl sync --commit`,
 `bl block`, `bl done`, `bl approve`, `bl task`) neither take nor check it, because a session's
-agent runs them as children, and a check would find the parent's lock.
+agent runs them as children, and a check would find the parent's lock. Every `bl refine`
+takes it (`refineAndCommit`, F-122 D4) and holds it in place of a session lock of the backlog root.
 `bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
 [--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
 before S-1495. It writes `.bl/` to `.gitignore` before it deletes anything. It deletes each old

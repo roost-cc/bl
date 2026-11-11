@@ -151,8 +151,9 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
    story scope, so the `--story` form does not apply to them.
 
 10. Commit to the backlog repo's main branch, by path. When this session ends, `bl` commits and
-    pushes what you left uncommitted with `chore: refine {{featureId}}`, but your own commit says
-    why. Name every story you created or edited with its own `--story`:
+    pushes what you left uncommitted in the directories of the feature and its stories with
+    `chore: refine {{featureId}}`, and leaves every other path uncommitted, but your own commit
+    says why. Name every story you created or edited with its own `--story`:
 
     ```
     bl sync --commit -m "chore: refine {{featureId}}" --path {{featureRelPath}} --story S-<id> [--story S-<id> …]

@@ -269,6 +269,8 @@ test('local_server_binding_survives_other_and_failed_loads: a loaded config keep
       mode: 'workon',
       parsed: { id: 'F-1', num: '1' },
       worktreePath: t.dir,
+      // A unit directory: a session in the backlog root needs work unit locks (F-122 D7).
+      unitDir: join(t.dir, 'unit'),
       config: first,
       roostDir: first.roostDir,
       backlogRoot: t.dir,

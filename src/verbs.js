@@ -173,7 +173,10 @@ Options:
 Launches an agent session in the backlog repo to refine and plan the work.
 Several stories go to one orchestrator session with a sub-agent each. With a
 feature among the targets, each target opens in its own tmux window. When the
-session ends, bl commits and pushes what it left uncommitted in the backlog.`,
+session ends, bl commits and pushes what it left uncommitted in the directories
+of its targets (a feature's stories included), and names each other path it
+left. A refine locks its targets first: if another bl process holds one, it
+refuses with that process's pid.`,
   status: `Usage: bl status [<id...>]
 
 Arguments:
