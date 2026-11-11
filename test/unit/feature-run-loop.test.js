@@ -393,7 +393,7 @@ test("every session of a run starts in the prep's unit directory; the gate and g
       shells.every((c) => c.cwd !== prep.unitDir),
       'no command runs in the unit directory',
     );
-    assert.ok(!existsSync(join(prep.unitDir, '.workon.lock')), "the review round's lock is released");
+    assert.equal(holderOf(join(prep.unitDir, '.workon.lock')), null, "the review round's lock is released");
   } finally {
     cleanup();
   }
@@ -1410,15 +1410,9 @@ test('second bl run on the same feature refuses while the first is alive', async
       const before = readFileSync(runStatePath(config, 'F-1'), 'utf8');
       const lockPath =
         which === 'run lock' ? runLockPath(config, 'F-1') : join(prep.unitDir ?? prep.worktreePath, '.workon.lock');
-      // The run lock is a kernel lock (F-104), held by a child; the session
-      // locks still name a live PID (S-1426 moves them).
-      let holderPid = process.ppid;
-      if (which === 'run lock') {
-        child = await holdLockInChild(lockPath);
-        holderPid = child.pid;
-      } else {
-        writeFileSync(lockPath, `${holderPid}\n2026-09-24T00:00:00Z\nother\n`);
-      }
+      // Every lock is a kernel lock (F-104), held by a child.
+      child = await holdLockInChild(lockPath);
+      const holderPid = child.pid;
       const runner = fakeRunner({ dir, feature });
       const state = await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
       assert.equal(state.status, 'failed', which);

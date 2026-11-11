@@ -83,21 +83,21 @@ test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', as
     ],
     [
       "a session in a registered repo's worktree",
-      (d, config) => {
+      async (d, config) => {
         const { repo, wt } = sessionRepo();
         config.repos = { r: { name: 'r', path: repo } };
-        return wt;
+        return { wt, ...(await holdLockInChild(join(wt, '.workon.lock'))) };
       },
-      (wt) => new RegExp(`^a bl session is running in ${wt} \\(pid ${process.ppid}\\)`),
+      (held) => new RegExp(`^a bl session is running in ${held.wt} \\(pid ${held.pid}\\)`),
     ],
     [
       'a session in a repo an unmigrated backlog.json lists under projects',
-      (d, config) => {
+      async (d, config) => {
         const { repo, wt } = sessionRepo();
         config.topLevel = { projects: { infra: { repos: [relative(d, repo)] } } };
-        return wt;
+        return { wt, ...(await holdLockInChild(join(wt, '.workon.lock'))) };
       },
-      (wt) => new RegExp(`^a bl session is running in ${wt} \\(pid ${process.ppid}\\)`),
+      (held) => new RegExp(`^a bl session is running in ${held.wt} \\(pid ${held.pid}\\)`),
     ],
   ];
   for (const [name, arrange, expected] of cases) {
@@ -124,14 +124,13 @@ test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', as
   }
 });
 
-/** A repo with a story worktree whose session lock has a live holder (the test runner). */
+/** A repo with a story worktree, for a session lock in it. */
 function sessionRepo() {
   const repo = mkTempDir('bl-migration-txn-repo-');
   git(repo, 'init', '-q', '-b', 'main');
   git(repo, 'commit', '-q', '--allow-empty', '-m', 'base');
   const wt = join(mkTempDir('bl-migration-txn-wt-'), 's1-story');
   git(repo, 'worktree', 'add', '-q', '-b', 's1-story', wt);
-  put(wt, '.workon.lock', `${process.ppid}\n`);
   return { repo, wt };
 }
 
@@ -140,7 +139,9 @@ test('applyMigration_runs_past_a_run_state_or_session_lock_whose_process_is_gone
   put(dir, '.bl/run/F-9.json', '{"feature":"F-9","status":"running"}\n');
   put(dir, '.bl/run/F-9.lock', `${deadPid()}\n`);
   const { repo, wt } = sessionRepo();
-  put(wt, '.workon.lock', `${deadPid()}\n`);
+  // A lock file that its killed holder left: nobody holds it.
+  const holder = await holdLockInChild(join(wt, '.workon.lock'));
+  await holder.kill();
   const head = git(dir, 'rev-parse', 'HEAD');
   const result = await applyMigration(
     { backlogRoot: dir, repos: { r: { name: 'r', path: repo } } },

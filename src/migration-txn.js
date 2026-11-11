@@ -21,7 +21,6 @@ import { atomicWriteFile } from './atomic-write.js';
 import { LOCK_FILE } from './lock.js';
 import { MAIN_REFSPEC } from './main-sync.js';
 import { holderOf } from './kernel-lock.js';
-import { liveLockHolder } from './pid-lock.js';
 import { RUN_DIR } from './run-lock.js';
 import { allActiveWorktrees, LOCK_FILE as SESSION_LOCK_FILE } from './story.js';
 
@@ -186,10 +185,11 @@ function activeRuns(config) {
 }
 
 /**
- * Each `bl` session lock with a live holder: the directory that holds it,
- * the branch of the worktree it belongs to, and the holder's pid.
+ * Each `bl` session lock that a process holds (a try-lock, F-104 D6): the
+ * directory that holds it, the branch of the worktree it belongs to, and the
+ * holder's pid from the lock file, or 'unknown'.
  * @param {object} config  the backlog config
- * @returns {{ dir: string, branch: string, pid: number }[]}
+ * @returns {{ dir: string, branch: string, pid: number | 'unknown' }[]}
  */
 export function liveSessionLocks(config) {
   const root = config.backlogRoot;
@@ -212,7 +212,7 @@ export function liveSessionLocks(config) {
   );
   const out = [];
   for (const [dir, branch] of dirs) {
-    const pid = liveLockHolder(join(dir, SESSION_LOCK_FILE));
+    const pid = holderOf(join(dir, SESSION_LOCK_FILE));
     if (pid != null) out.push({ dir, branch, pid });
   }
   return out;

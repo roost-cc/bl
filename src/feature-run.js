@@ -117,7 +117,7 @@ import {
   updateChange,
   writeChange,
 } from './change-doc.js';
-import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
+import { holderOf, release as releaseLock, tryLock } from './kernel-lock.js';
 import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
@@ -2146,15 +2146,15 @@ function reviewOtherRepos(ctx) {
  * Take the session lock of every unit directory a review round reaches (the
  * lock lives there, F-60 D3: one per unit, whichever repos it holds), so no
  * other bl session starts in one while the round's snapshots are live: its
- * edits would be quarantined and reverted as the reviewer's. A lock this
- * process already holds is left as it is (and is not released). Returns
- * `{ release }`, or `{ error }` with nothing taken when a live session holds
- * one.
+ * edits would be quarantined and reverted as the reviewer's. Each is one
+ * try-lock (`kernel-lock.js`); a lock this process already holds is reused,
+ * one depth deeper. Returns `{ release }`, which closes what the round took,
+ * or `{ error }` with nothing taken when a live session holds one.
  */
 function holdReviewLocks(ctx) {
   const held = [];
-  const release = () => {
-    for (const h of held) releasePidLock(h.path, h.content);
+  const releaseAll = () => {
+    for (const h of held) releaseLock(h);
   };
   // A worktree outside the unit directory (`bl review` given one elsewhere)
   // is locked on its own.
@@ -2162,20 +2162,19 @@ function holdReviewLocks(ctx) {
   const outside = reviewWorktrees(ctx).filter((wt) => wt !== unitDir && !wt.startsWith(`${unitDir}/`));
   for (const dir of new Set([unitDir, ...outside])) {
     const path = join(dir, LOCK_FILE);
-    if (liveLockHolder(path) === process.pid) continue;
-    let taken;
+    let got;
     try {
-      taken = acquirePidLock(path, `${process.pid}\n${new Date().toISOString()}\n${ctx.feature.id} review round\n`);
+      got = tryLock(path, `${ctx.feature.id} review round`);
     } catch (e) {
-      taken = { error: `${path} could not be written: ${e.message}` };
+      got = { error: `${path} could not be opened: ${e.message}` };
     }
-    if (taken.content == null) {
-      release();
-      return { error: taken.error ?? `a live session (pid ${taken.holder}) holds ${path}` };
+    if (!got.taken) {
+      releaseAll();
+      return { error: got.error ?? `a live session (pid ${got.holder}) holds ${path}` };
     }
-    held.push({ path, content: taken.content });
+    held.push(got.taken);
   }
-  return { release };
+  return { release: releaseAll };
 }
 
 /**
@@ -4603,7 +4602,7 @@ function refuse(runner, feature, reason) {
  */
 export async function runFeature({ feature, config, prep, runner, opts = {} }) {
   const sessionLock = join(prepUnitDir(prep), LOCK_FILE);
-  const wtHolder = liveLockHolder(sessionLock);
+  const wtHolder = holderOf(sessionLock);
   if (wtHolder != null && wtHolder !== process.pid) {
     return refuse(runner, feature, `a live session (pid ${wtHolder}) holds ${sessionLock}`);
   }

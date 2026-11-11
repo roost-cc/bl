@@ -52,4 +52,4 @@ even if it is already `refined` (it is re-refined). IDs are deduped.
   on the stories you touched, then commit with
   `bl sync --commit -m "chore: refine S-XXX" --story S-XXX` (plus a `--story` per child story)
 - You may use `/bl-new` to create child stories if the story should be split
-- You may edit related stories only if they are not currently being worked on (no `.workon.lock` in their worktree)
+- You may edit related stories only if they are not currently being worked on (no bl session runs in their unit directory)

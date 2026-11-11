@@ -5,6 +5,8 @@ import { join } from 'path';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { runFeature, loadRunState, reviewFeature, RUN_DIR, OutcomeError } from '../../src/feature-run.js';
 import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
+import { holderOf, release, tryLock } from '../../src/kernel-lock.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
 import { spawnSync } from 'child_process';
 import { featureReviewGate } from '../../src/review-log.js';
 import { extractSection } from '../../src/feature.js';
@@ -38,11 +40,16 @@ function git(wt, ...args) {
   return r.stdout;
 }
 
-/** `setup()` whose worktree is a real git repo with a.js, b.js, c.js, gone.js committed on main. */
+/**
+ * `setup()` whose worktree is a real git repo with a.js, b.js, c.js, gone.js committed on main.
+ * The fixture's unit directory is the worktree, so the session lock file, which stays (F-104 D3),
+ * is in it: git ignores it, as bl's bookkeeping.
+ */
 function realGitSetup(extra) {
   const s = setup(extra);
   const wt = s.prep.worktreePath;
   git(wt, 'init', '-q', '-b', 'main');
+  writeFileSync(join(wt, '.git', 'info', 'exclude'), '.workon.lock\n');
   git(wt, 'config', 'user.email', 't@example.com');
   git(wt, 'config', 'user.name', 't');
   git(wt, 'config', 'commit.gpgsign', 'false');
@@ -67,12 +74,12 @@ function realGitRunner(args, wt) {
   return runner;
 }
 
-/** Everything a review session could disturb: HEAD, status, index, and every file's bytes. */
+/** Everything a review session could disturb: HEAD, status, index, and every file's bytes but bl's session lock. */
 function treeState(wt) {
   const files = {};
   const walk = (d) => {
     for (const e of readdirSync(join(wt, d), { withFileTypes: true })) {
-      if (e.name === '.git') continue;
+      if (e.name === '.git' || e.name === '.workon.lock') continue;
       const rel = d ? `${d}/${e.name}` : e.name;
       if (e.isDirectory()) walk(rel);
       else files[rel] = readFileSync(join(wt, rel), 'utf8');
@@ -506,10 +513,11 @@ test('the test gate refuses a dirty tree with no test plugin configured', async 
 
 test('two runs reclaiming the same stale lock cannot both acquire it', () => {
   const deadPid = spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
-  // The helper the headless `.workon.lock` uses (the run lock is a kernel lock, F-104).
+  // The helper the spec, main-sync and prepare locks use until S-1427 (the run and
+  // session locks are kernel locks, F-104).
   const { dir, cleanup } = setup();
   try {
-    const path = join(dir, '.workon.lock');
+    const path = join(dir, 'pid.lock');
     const take = (hooks) => acquirePidLock(path, `${process.pid}\nx\n${Math.random()}\n`, hooks);
     writeFileSync(path, `${deadPid}\n2026-09-24T00:00:00Z\nstale\n`);
     // B reads the stale lock; before B reclaims it, A reclaims it and takes it.
@@ -616,10 +624,10 @@ test('a review round over a unit directory takes its one session lock, not one p
       assert.equal(x.unit, String(process.pid), 'the unit directory is locked by this process');
       assert.deepEqual(x.worktrees, [], 'no lock inside a worktree under it');
     }
-    assert.ok(!existsSync(lock), 'released after the round');
+    assert.equal(holderOf(lock), null, 'released after the round');
 
     // A live session in the unit directory: no pass runs.
-    writeFileSync(lock, `${process.ppid}\n2026-10-28T00:00:00Z\nF-1: interactive\n`);
+    const live = await holdLockInChild(lock);
     seen.length = 0;
     const held = await reviewFeature({
       feature: s.feature,
@@ -629,11 +637,11 @@ test('a review round over a unit directory takes its one session lock, not one p
       pr: { number: '7', url: 'u' },
       otherRepos,
       maxRounds: 3,
-    });
+    }).finally(() => live.kill());
     assert.deepEqual(seen, []);
     assert.match(
       held.error,
-      new RegExp(`a live session \\(pid ${process.ppid}\\) holds ${lock.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+      new RegExp(`a live session \\(pid ${live.pid}\\) holds ${lock.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
     );
   } finally {
     s.cleanup();
@@ -642,15 +650,15 @@ test('a review round over a unit directory takes its one session lock, not one p
 
 test('a review round locks every scoped worktree and aborts without verification when any pass fails', async () => {
   const lockOf = (wt) => join(wt, '.workon.lock');
-  // Another process trying to start a session in `wt`: what acquirePidLock tells it.
+  // Another process trying to start a session in `wt`: what its try-lock tells it.
   const otherProcessTakes = (wt) => {
-    const src = `import { acquirePidLock, releasePidLock } from ${JSON.stringify(new URL('../../src/pid-lock.js', import.meta.url).href)};
-const t = acquirePidLock(${JSON.stringify(lockOf(wt))}, process.pid + "\\n");
-if (t.content) releasePidLock(${JSON.stringify(lockOf(wt))}, t.content);
-console.log(t.content ? "taken" : "held by " + t.holder);`;
+    const src = `import { tryLock } from ${JSON.stringify(new URL('../../src/kernel-lock.js', import.meta.url).href)};
+const t = tryLock(${JSON.stringify(lockOf(wt))}, 'other');
+console.log(t.taken ? "taken" : "held by " + t.holder);`;
     return spawnSyncFiles(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8' }).stdout.trim();
   };
   const PASSES = ['review-correctness', 'review-failure-paths', 'review-verify'];
+  // `preLock.hold(path)` holds a worktree's lock before the round and returns its release.
   const scenario = async ({
     failAt = null,
     preLock = null,
@@ -659,8 +667,8 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
     const s = setup({ pr: '7' });
     const others = [mkTempDir('bl-wt-b-'), mkTempDir('bl-wt-c-')];
     const all = [s.prep.worktreePath, ...others];
+    const releasePre = preLock ? await preLock.hold(lockOf(all[preLock.at])) : () => {};
     try {
-      if (preLock) writeFileSync(lockOf(all[preLock.at]), preLock.content);
       const runner = fakeRunner({
         dir: s.dir,
         feature: s.feature,
@@ -697,10 +705,11 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
         seen,
         before,
         after: readFileSync(s.feature.indexPath, 'utf8'),
-        locksAfter: all.map((wt) => (existsSync(lockOf(wt)) ? readFileSync(lockOf(wt), 'utf8') : null)),
+        locksAfter: all.map((wt) => holderOf(lockOf(wt))),
         state: loadRunState(s.config, 'F-1'),
       };
     } finally {
+      await releasePre();
       for (const wt of others) rmSync(wt, { recursive: true, force: true });
       s.cleanup();
     }
@@ -734,23 +743,31 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
   );
   assert.deepEqual(ok.locksAfter, [null, null, null], 'every lock the round took is released');
 
-  // A lock this process already held is used and left in place.
-  const own = `${process.pid}\n2026-09-24T00:00:00Z\nF-1 run\n`;
-  const kept = await scenario({ preLock: { at: 1, content: own } });
+  // A lock this process already held is used and left held.
+  const own = (path) => {
+    const { taken } = tryLock(path, 'F-1 run');
+    return () => release(taken);
+  };
+  const kept = await scenario({ preLock: { at: 1, hold: own } });
   assert.equal(kept.r.error, null);
-  assert.deepEqual(kept.locksAfter, [null, own, null]);
+  assert.deepEqual(kept.locksAfter, [null, process.pid, null]);
 
   // A live session in any scoped worktree: no pass runs, its lock is untouched,
   // and nothing the round took is left behind.
-  const live = `${process.ppid}\n2026-09-24T00:00:00Z\nF-1: interactive\n`;
   for (const at of [0, 1, 2]) {
-    const x = await scenario({ preLock: { at, content: live } });
+    let pid;
+    const live = async (path) => {
+      const child = await holdLockInChild(path);
+      pid = child.pid;
+      return () => child.kill();
+    };
+    const x = await scenario({ preLock: { at, hold: live } });
     assert.deepEqual(x.seen, [], `worktree ${at} held: no session ran`);
-    assert.match(x.r.error, new RegExp(`a live session \\(pid ${process.ppid}\\) holds`));
+    assert.match(x.r.error, new RegExp(`a live session \\(pid ${pid}\\) holds`));
     assert.equal(x.after, x.before, `worktree ${at} held: the feature file is untouched`);
     assert.deepEqual(
       x.locksAfter,
-      [0, 1, 2].map((i) => (i === at ? live : null)),
+      [0, 1, 2].map((i) => (i === at ? pid : null)),
     );
     assert.equal(x.state.status, 'failed');
   }

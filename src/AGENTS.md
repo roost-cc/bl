@@ -225,9 +225,9 @@ init` writes `"../worktrees"` into a new `backlog.json`. One that still holds
   `foreignCheckout` and the Codex branch-bl approval read it, never a
   substring of the path.
 - Removing a worktree (`bl merge`'s cleanup, a `bl side` undo, an update
-  story's run) removes its unit directory too once nothing but its
-  `.workon.lock` is left in it (`story.js` `removeUnitDirIfEmpty`); one that
-  still holds another worktree stays.
+  story's run) removes its unit directory too when it is empty (`story.js`
+  `removeUnitDirIfEmpty`). One that still holds another worktree stays, and so
+  does one that held a session: its `.workon.lock` is permanent (F-104 D3, A2).
 - **F-60's migration**
   (`node scripts/migrate-worktree-layout.js [--dry-run] [--backlog <dir>]`,
   logic in `src/migrate-worktree-layout.js`, D4) moves, for every registered repo, each linked worktree under `<root>/<repo>/` to
@@ -279,10 +279,16 @@ worktree).
   `[unitDir, backlogRoot, …permissions.write]`, so every repo worktree under
   the unit directory is writable; `{{worktree}}` in `permissions` is the unit
   directory. The `Bash(rm <dir>/*)` grant names it too.
-- The session lock `.workon.lock` is in the unit directory, one per unit:
-  `isSessionRunning(unitDir)`, `runFeature`'s refusal, a review round's
-  `holdReviewLocks` (the unit directory, plus any reviewed worktree outside
-  it), `bl merge`'s cleanup and the migration's live-session check.
+- The session lock `.workon.lock` is in the unit directory, one per unit. It
+  is a kernel lock (`kernel-lock.js`, F-104): the kernel frees it when its
+  holder ends, and its file stays. `runHeadlessSession` and `launchSession`
+  take it with one try-lock (`session.js` `takeSessionLock`): a lock this
+  process holds is reused, and a lock another process holds refuses the
+  session with that process's PID, the interactive launch included. A review
+  round's `holdReviewLocks` takes it the same way (the unit directory, plus
+  any reviewed worktree outside it). Every other check asks `holderOf` (D6):
+  `isSessionRunning(unitDir)`, `runFeature`'s refusal, `bl merge`'s cleanup,
+  the migrations' live-session checks (`liveSessionLocks`).
 - Resume (`findSession`) and transcript token totals read the unit directory's
   transcripts; `transcriptDirs` adds each worktree's for sessions that started
   there before.
@@ -1566,8 +1572,8 @@ PR it also skips self-review, fixes a review session left in `fixing` before
 reviewing again, and ends at once when the unit is already `ready_for_merge`.
 One run per feature: `run` holds `.bl/run/<id>.lock` (a kernel lock whose file
 stays; a killed run leaves no lock) and does not start while another live
-process holds the unit directory's `.workon.lock` (F-60 D3). A headless step
-never overwrites or removes a live session's `.workon.lock`.
+process holds the unit directory's `.workon.lock` (F-60 D3). A session step
+never starts while another process holds that lock.
 The loop pushes the branch and checks that `origin/<branch>` contains HEAD
 before every review pass and before it ends `clean`; a failed push, or a
 forge that cannot open or find the PR, escalates. Having no forge configured

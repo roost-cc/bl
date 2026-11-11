@@ -270,14 +270,15 @@ test('single-repo cleanup writes commit as a bare string', async () => {
   assert.match(fm.commit, /^[0-9a-f]{7,}$/);
 });
 
-test('bl merge removes the emptied unit directory, its lock file with it, and keeps one that still holds a worktree (F-60 D2)', async () => {
-  for (const other of [null, 'docs']) {
+test('bl merge removes the emptied unit directory, and keeps one with its lock file or another worktree (F-60 D2, F-104 A2)', async () => {
+  for (const other of [null, '.workon.lock', 'docs']) {
     const { tmp, backlog, branchName } = buildStoryBacklog({ repoNames: ['bl'] });
     const unitDir = join(tmp, 'worktrees', branchName);
     assert.ok(existsSync(join(unitDir, 'bl')), "the story's worktree is <root>/<branch>/<repo>");
-    writeFileSync(join(unitDir, '.workon.lock'), '999999999\n');
+    // A unit directory that held a session keeps its lock file (F-104 D3).
+    if (other) writeFileSync(join(unitDir, '.workon.lock'), '999999999\n');
     // Another repo's worktree in the same unit directory.
-    if (other) mkdirSync(join(unitDir, other, 'src'), { recursive: true });
+    if (other === 'docs') mkdirSync(join(unitDir, other, 'src'), { recursive: true });
     process.env.BL_BACKLOG_DIR = backlog;
     let out;
     try {
@@ -290,8 +291,8 @@ test('bl merge removes the emptied unit directory, its lock file with it, and ke
     if (other) {
       assert.deepEqual(
         readdirSync(unitDir).sort(),
-        ['.workon.lock', other],
-        'a unit directory that still holds a worktree is left as it is',
+        [...new Set(['.workon.lock', other])],
+        'a unit directory that still holds a lock file or a worktree is left as it is',
       );
     } else {
       assert.equal(existsSync(unitDir), false, 'the emptied unit directory is removed');

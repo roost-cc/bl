@@ -23,6 +23,7 @@ import { findFeature, normalizeFeatureId } from '../../src/feature.js';
 import { cleanupOneRepo } from '../../src/cleanup.js';
 import { loadPrompt } from '../../src/session.js';
 import { defaultRunner } from '../../src/feature-run.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
 import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
@@ -494,7 +495,7 @@ test("bl run F-n's sessions start in the unit directory, with both worktrees in 
     assert.equal(s.lock, String(process.pid), 'the session lock is in the unit directory');
     assert.deepEqual(s.repoLocks, [], 'and in no worktree');
   }
-  assert.ok(!existsSync(join(unitDir, '.workon.lock')), 'released after each session');
+  assert.equal(holderOf(join(unitDir, '.workon.lock')), null, 'released after each session');
 });
 
 test("bl run F-n's prep gives a story added after approval its worktree with no feature edit", async () => {

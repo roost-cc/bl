@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
-import { spawnSync } from 'child_process';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { ClaudeProvider, buildClaudeArgs, parseClaudeJsonResult, parseLimit } from '../../src/agents/claude.js';
 import {
@@ -16,6 +15,8 @@ import { GeminiProvider } from '../../src/agents/gemini.js';
 import { addUsageToFrontmatter, accumulateTokensOnFile, applyFeatureTokens } from '../../src/tokens.js';
 import { runHeadlessSession, launchSession } from '../../src/session.js';
 import { isSessionRunning } from '../../src/story.js';
+import { holderOf, release, tryLock } from '../../src/kernel-lock.js';
+import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 
@@ -511,14 +512,19 @@ test('runHeadlessSession and launchSession start in the unit directory: cwd, wri
       [{ findSession: unitDir }],
       'a resume looks in the unit directory',
     );
-    assert.ok(!existsSync(join(unitDir, '.workon.lock')), 'released after each session');
+    assert.equal(isSessionRunning(unitDir), false, 'released after each session');
+    assert.ok(existsSync(join(unitDir, '.workon.lock')), 'the lock file stays (F-104 D3)');
 
     // A live session's lock in the unit directory refuses a headless one.
-    writeFileSync(join(unitDir, '.workon.lock'), `${process.ppid}\n2026-10-28T00:00:00Z\nother\n`);
-    const refused = await runHeadlessSession({ ...common, prompt: 'p', label: 'F-1: S-2' });
-    assert.equal(refused.isError, true);
-    assert.match(refused.error, new RegExp(`a live session \\(pid ${process.ppid}\\) holds .*\\.workon\\.lock`));
-    assert.equal(spawns.length, 2, 'nothing spawned');
+    const other = holdLock(join(unitDir, '.workon.lock'), 'other');
+    try {
+      const refused = await runHeadlessSession({ ...common, prompt: 'p', label: 'F-1: S-2' });
+      assert.equal(refused.isError, true);
+      assert.match(refused.error, new RegExp(`a live session \\(pid ${process.pid}\\) holds .*\\.workon\\.lock`));
+      assert.equal(spawns.length, 2, 'nothing spawned');
+    } finally {
+      other.release();
+    }
   } finally {
     cleanup();
   }
@@ -572,7 +578,7 @@ test('runHeadlessSession holds the worktree lock during spawn, logs, passes head
     assert.equal(seen.sessionId, null);
     assert.match(seen.lockDuringSpawn, /F-1: S-1 \(headless\)/);
     assert.ok(seen.scopes.write.includes(wt), 'worktree is a write scope');
-    assert.throws(() => readFileSync(join(wt, '.workon.lock')), /ENOENT/, 'lock removed after spawn');
+    assert.equal(isSessionRunning(wt), false, 'lock released after spawn');
     assert.match(readFileSync(join(wt, '.bl', 'activity.log'), 'utf8'), /bl implement F-1 --headless/);
     const fm = readFileSync(featurePath, 'utf8');
     assert.match(fm, /tokens_output: 15/);
@@ -582,7 +588,7 @@ test('runHeadlessSession holds the worktree lock during spawn, logs, passes head
   }
 });
 
-test('headless session does not clobber a live worktree lock', async () => {
+test('headless session does not clobber a live worktree lock, and starts at once after a killed holder', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -610,25 +616,35 @@ test('headless session does not clobber a live worktree lock', async () => {
     };
 
     // A live interactive session in another process.
-    const live = `${process.ppid}\n2026-09-24T00:00:00Z\nF-1: interactive\n`;
-    writeFileSync(lockPath, live);
-    const r = await runHeadlessSession(common);
-    assert.equal(r.isError, true);
-    assert.match(r.error, /a live session \(pid \d+\) holds/);
-    assert.equal(spawned, 0, 'no agent ran in a worktree someone else holds');
-    assert.equal(readFileSync(lockPath, 'utf8'), live, 'lock left exactly as it was');
-    assert.equal(isSessionRunning(wt), true, 'bl merge still sees the live session');
+    const live = await holdLockInChild(lockPath);
+    try {
+      const r = await runHeadlessSession(common);
+      assert.equal(r.isError, true);
+      assert.match(r.error, new RegExp(`a live session \\(pid ${live.pid}\\) holds`));
+      assert.equal(spawned, 0, 'no agent ran in a worktree someone else holds');
+      assert.match(readFileSync(lockPath, 'utf8'), /held by a test child/, 'lock left exactly as it was');
+      assert.equal(isSessionRunning(wt), true, 'bl merge still sees the live session');
+    } finally {
+      // A session killed with SIGKILL: the kernel frees its lock.
+      await live.kill('SIGKILL');
+    }
 
-    // A lock this process holds is neither rewritten nor removed.
-    const own = `${process.pid}\n2026-09-24T00:00:00Z\nF-1: run\n`;
-    writeFileSync(lockPath, own);
+    // The lock its killed holder left is taken at once, and released after the session.
     assert.equal((await runHeadlessSession(common)).isError, false);
-    assert.equal(readFileSync(lockPath, 'utf8'), own);
+    assert.equal(spawned, 1);
+    assert.equal(holderOf(lockPath), null, 'released');
+    assert.ok(existsSync(lockPath), 'the lock file stays (F-104 D3)');
 
-    // A stale lock (dead pid) is reclaimed, and released after the session.
-    writeFileSync(lockPath, `${spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid}\n`);
-    assert.equal((await runHeadlessSession(common)).isError, false);
-    assert.equal(existsSync(lockPath), false);
+    // A lock this process holds is reused, and neither rewritten nor released.
+    const own = tryLock(lockPath, 'F-1: run').taken;
+    try {
+      const content = readFileSync(lockPath, 'utf8');
+      assert.equal((await runHeadlessSession(common)).isError, false);
+      assert.equal(readFileSync(lockPath, 'utf8'), content);
+      assert.equal(holderOf(lockPath), process.pid, 'still held');
+    } finally {
+      release(own);
+    }
     assert.equal(spawned, 2);
   } finally {
     cleanup();
@@ -803,7 +819,7 @@ test('parseClaudeJsonResult surfaces permission denials, and runHeadlessSession 
   }
 });
 
-test('launchSession leaves a lock this process holds, and takes and releases a free one', async () => {
+test('launchSession reuses a lock this process holds, takes and releases a free one, and refuses a held one', async () => {
   const { dir, cleanup } = mkTempBacklog();
   const tmux = process.env.TMUX;
   delete process.env.TMUX;
@@ -840,18 +856,39 @@ test('launchSession leaves a lock this process holds, and takes and releases a f
         provider,
       });
 
-    // A review round's lock: an interactive pass inside it neither rewrites nor removes it.
-    const round = `${process.pid}\n2026-09-24T00:00:00Z\nF-1 review round\n`;
-    writeFileSync(lockPath, round);
-    assert.equal(await launch(), 0);
-    assert.equal(during[0], round, "the round's lock held during the session");
-    assert.equal(readFileSync(lockPath, 'utf8'), round, 'and still held after it');
+    // A review round's lock: an interactive pass inside it neither rewrites nor releases it.
+    const round = tryLock(lockPath, 'F-1 review round').taken;
+    try {
+      const content = readFileSync(lockPath, 'utf8');
+      assert.equal(await launch(), 0);
+      assert.equal(during[0], content, "the round's lock held during the session");
+      assert.equal(holderOf(lockPath), process.pid, 'and still held after it');
+    } finally {
+      release(round);
+    }
 
-    // No lock: the session takes one and releases it.
-    rmSync(lockPath);
+    // A free lock: the session takes it and releases it; the file stays.
     assert.equal(await launch(), 0);
     assert.match(during[1], /F-1: review/);
-    assert.equal(existsSync(lockPath), false);
+    assert.equal(holderOf(lockPath), null);
+    assert.ok(existsSync(lockPath));
+
+    // A live session in another process refuses the launch with its PID, before anything runs.
+    const live = await holdLockInChild(lockPath);
+    const errors = [];
+    const consoleError = console.error;
+    console.error = (...a) => errors.push(a.join(' '));
+    try {
+      assert.equal(await launch(), 1);
+    } finally {
+      console.error = consoleError;
+      // A session killed with SIGKILL leaves its unit free for the next launch.
+      await live.kill('SIGKILL');
+    }
+    assert.equal(during.length, 2, 'nothing spawned');
+    assert.match(errors.join('\n'), new RegExp(`a live session \\(pid ${live.pid}\\) holds .*\\.workon\\.lock`));
+    assert.equal(await launch(), 0, 'the next launch starts at once');
+    assert.equal(during.length, 3);
   } finally {
     if (tmux != null) process.env.TMUX = tmux;
     cleanup();

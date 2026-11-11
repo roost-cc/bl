@@ -26,10 +26,11 @@ import {
   reposForStory,
 } from '../../src/story.js';
 import { loadBacklog } from '../../src/backlog-graph.js';
+import { holdLock } from '../helpers/hold-lock.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
 
-test('removeUnitDirIfEmpty removes a unit directory holding nothing but its lock, and nothing else (F-60 D2)', () => {
+test('removeUnitDirIfEmpty removes only an empty unit directory; one with only its lock file stays (F-60 D2, F-104 A2)', () => {
   const root = mkTempDir('bl-unit-dir-');
   const unit = (name, entries = {}) => {
     const dir = join(root, name);
@@ -44,8 +45,8 @@ test('removeUnitDirIfEmpty removes a unit directory holding nothing but its lock
   assert.equal(removeUnitDirIfEmpty(empty), true);
   assert.equal(existsSync(empty), false);
   const locked = unit('f2-locked', { '.workon.lock': '999999999\n' });
-  assert.equal(removeUnitDirIfEmpty(locked), true);
-  assert.equal(existsSync(locked), false, 'the lock goes with it');
+  assert.equal(removeUnitDirIfEmpty(locked), false);
+  assert.ok(existsSync(join(locked, '.workon.lock')), 'a free lock file is permanent (F-104 D3)');
   const held = unit('f3-held', { '.workon.lock': '1\n', bl: 'dir' });
   assert.equal(removeUnitDirIfEmpty(held), false);
   assert.ok(
@@ -56,11 +57,14 @@ test('removeUnitDirIfEmpty removes a unit directory holding nothing but its lock
   assert.equal(removeUnitDirIfEmpty(stray), false);
   assert.ok(existsSync(join(stray, 'notes.txt')));
   assert.equal(removeUnitDirIfEmpty(join(root, 'f5-missing')), false);
-  const live = unit('f6-live', { '.workon.lock': `${process.ppid}\n` });
-  assert.equal(removeUnitDirIfEmpty(live), false);
-  assert.ok(existsSync(join(live, '.workon.lock')), "another live process's session lock is never removed");
-  const mine = unit('f7-mine', { '.workon.lock': `${process.pid}\n` });
-  assert.equal(removeUnitDirIfEmpty(mine), true, 'a lock this process holds goes with its directory');
+  const live = unit('f6-live');
+  const holder = holdLock(join(live, '.workon.lock'));
+  try {
+    assert.equal(removeUnitDirIfEmpty(live), false);
+    assert.ok(existsSync(join(live, '.workon.lock')), 'a held session lock is never removed');
+  } finally {
+    holder.release();
+  }
 });
 
 test('parseIdList refuses a plain object (no phantom object/Object)', () => {
