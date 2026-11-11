@@ -325,6 +325,9 @@ test('mergeOrder: merge edges put a repo after the repos it waits for; free repo
     'F-1:bl → F-1:ci-cd',
     'F-1:ci-cd → F-1:bl',
   ]);
+  // A repo that waits for itself is a cycle of one edge.
+  const self = [m('bl', 'bl')];
+  assert.deepEqual(mergeOrder(names, self), { order: null, edges: self, cycle: self });
 });
 
 test('reposForFeature follows featureRepoOrder and reads no feature primary_repo or change document', () => {
