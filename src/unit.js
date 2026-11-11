@@ -85,7 +85,6 @@ export function storyAsOrdered(unit) {
     // As `readAllStories` reads it (F-85 D1): the run's sessions take their level from it.
     effort: storyEffort(unit.fm),
     status: unit.status,
-    depends_on: unit.fm.depends_on ?? '',
     unitRepo: unit.unitRepo,
     componentId: unit.componentId,
     indexPath: unit.indexPath,

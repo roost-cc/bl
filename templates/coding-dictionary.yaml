@@ -232,9 +232,24 @@ entries:
   - term: hold
     meaning: >-
       One edge in `blockers.json`: a work unit held at a gate until another work unit's status
-      meets a given status. A hold is not a dependency: `depends_on:` only orders stories.
+      meets a given status. `blockers.json` is the one place for holds and for order: a merge
+      edge or an order edge orders two parts of one feature and holds no verb.
     avoid: [lock, freeze, wait]
-    decided: bl src/AGENTS.md, "Holds between units"
+    decided: bl src/AGENTS.md, "Holds between units"; F-111 D1
+
+  - term: merge edge
+    meaning: >-
+      An edge in `blockers.json` between two repos of one feature
+      (`F-96:ci-cd` blocks `F-96:bl`): `bl merge` merges the blocker repo first.
+    avoid: [merge dependency, repo dependency]
+    decided: F-111 D1
+
+  - term: order edge
+    meaning: >-
+      An edge in `blockers.json` between two stories of one feature: the implement loop
+      implements the blocker story first. It replaces `depends_on:` inside a feature.
+    avoid: [story dependency, depends_on (inside a feature)]
+    decided: F-111 D1
 
   - term: escalation
     meaning: >-

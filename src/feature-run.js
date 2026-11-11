@@ -73,15 +73,15 @@ import {
   resolveFeatureStories,
   featureRepoOrder,
   orderStoriesByDeps,
-  outsideBlockers,
 } from './feature.js';
+import { heldBy, readEdges } from './blockers.js';
 import { runHeadlessSession, launchSession, loadPrompt, loadSchema } from './session.js';
 import { cleanStderrLine } from './outcome.js';
 import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { LOCK_FILE, readComponents, readAllStories } from './story.js';
+import { LOCK_FILE, readComponents } from './story.js';
 import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
@@ -2489,9 +2489,9 @@ function withCurrentEffort(backlogRoot, s) {
  * Re-read the feature's stories after an agent session (F-48 D3): the
  * session may have added one (`bl side`), possibly in a repo the run did not
  * prepare. A new story joins `prep.ordered` after the stories the run has
- * taken, and those not taken yet are put in dependency order again
- * (`orderStoriesByDeps`, as `bl run` orders them at the start, on their
- * current `depends_on`), so the implement loop reaches each after its
+ * taken, and those not taken yet are put in order-edge order again
+ * (`orderStoriesByDeps`, as `bl run` orders them at the start, on the
+ * current `readEdges`), so the implement loop reaches each after its
  * prerequisites and the repo guard knows its component. A new repo's worktree
  * on the branch (`bl side` prepares it with the story) joins
  * `prep.otherWorktrees` and the change document's `repos:`, so from then on
@@ -2541,7 +2541,7 @@ async function refreshRepos(ctx) {
     const rest = [...prep.ordered.filter((s) => !ctx.implemented.has(s.id)), ...added].map(
       (s) => current.get(s.id) ?? s,
     );
-    prep.ordered.splice(0, prep.ordered.length, ...taken, ...orderStoriesByDeps(rest));
+    prep.ordered.splice(0, prep.ordered.length, ...taken, ...orderStoriesByDeps(rest, scope.edges));
   }
   if (repos.length > 0) {
     prep.otherWorktrees.push(...repos.map(({ repoName, worktreePath }) => ({ repoName, worktreePath })));
@@ -2834,17 +2834,20 @@ function targetsMoved(ctx, before) {
  * The feature's stories as the backlog has them now: every story whose
  * `feature:` names it (F-77 D3). Each story the run does not hold yet is
  * checked the way `bl run` checks the others before it starts
- * (`prepareFeatureWorktree`): it has a repo the config knows and depends on
- * nothing open outside the feature. Returns `{ stories }` or `{ error }`; a
- * read that fails is an error, never "nothing changed".
+ * (`prepareFeatureWorktree`): it has a repo the config knows and no edge
+ * holds it at `run` (`heldBy`; a `depends_on:` outside the feature is one).
+ * Returns `{ stories, edges }` (`readEdges`'s) or `{ error }`; a read that
+ * fails is an error, never "nothing changed".
  */
 function refreshedStories(ctx) {
   const { feature, config } = ctx;
-  let all;
   let res;
+  let edges;
+  let holds;
   try {
-    all = readAllStories(config);
-    res = resolveFeatureStories(feature, config, all);
+    res = resolveFeatureStories(feature, config);
+    edges = readEdges(config);
+    holds = heldBy(config, feature.id, 'run');
   } catch (e) {
     return { error: e.message };
   }
@@ -2858,15 +2861,11 @@ function refreshedStories(ctx) {
   }
   const unknown = featureRepoOrder(added).filter((name) => !config.reposByName?.[name]);
   if (unknown.length > 0) return { error: `unknown repo ${unknown.join(', ')} (not in backlog.json)` };
-  const blockers = outsideBlockers(added, all, loadFlow(config.backlogRoot)).filter(
-    (b) => !stories.some((s) => s.id === b.dep),
-  );
+  const blockers = holds.filter((h) => added.some((s) => s.id === h.edge.unit));
   if (blockers.length > 0) {
-    return {
-      error: `blocked on work outside the feature: ${blockers.map((b) => `${b.story} depends on ${b.dep} (${b.status})`).join(', ')}`,
-    };
+    return { error: `blocked on work outside the feature: ${blockers.map((h) => h.line).join(', ')}` };
   }
-  return { stories };
+  return { stories, edges };
 }
 
 /**

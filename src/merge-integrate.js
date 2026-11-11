@@ -14,12 +14,13 @@ import { unitVars } from './unit.js';
 
 /**
  * The prep for `integrateUnit`, in the shape `bl review` builds: the first
- * of `repos` (merge order) with a worktree on the unit's branch leads, the
- * rest follow as `otherWorktrees`. Null when no repo has a worktree.
+ * of `repos` (the lead repo first) with a worktree on the unit's branch
+ * leads, the rest follow as `otherWorktrees`. Null when no repo has a
+ * worktree.
  *
  * @param {object} config
  * @param {object} unit — a `storyUnit` or `featureUnit`
- * @param {string[]} repos — the unit's repos, in merge order
+ * @param {string[]} repos — the unit's repos, in `featureRepoOrder` (lead first, F-111 R3)
  */
 export function mergePrep(config, unit, repos) {
   const branchName = unitBranch(unit);

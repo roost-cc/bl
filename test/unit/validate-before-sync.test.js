@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync, writeFileSync } from 'fs';
+import { readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadPrompt } from '../../src/session.js';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -28,10 +28,11 @@ test("the partial renders into {{validateBeforeSync}} with the session's vars", 
   assert.match(text, /bl sync --commit -m "<type>: <subject> \(S-7\)" --story S-7/);
   // Surface, do not fix, findings on stories this session did not touch.
   assert.match(text, /Surface, do not fix/);
-  // An edge is stated once, on the dependent story (F-77 D3): no reverse
-  // edge to add, so no `bl fix` step and no extra `--story` for one.
-  assert.match(text, /A dependency is stated once, on the dependent\s+story's `depends_on`/);
-  assert.match(text, /there is no reverse edge to add/);
+  // A dependency is an edge in blockers.json (F-111 D5), written and
+  // committed by bl new or bl block add: no reverse edge to add, so no
+  // `bl fix` step and no extra `--story` for one.
+  assert.match(text, /A dependency is an edge in `blockers\.json`, the one\s+place for holds and order/);
+  assert.match(text, /There is no reverse edge\s+to add/);
   assert.doesNotMatch(text, /bl fix|asymmetric-dep|both sides/);
   // Why/how goes in the commit message, never in new frontmatter keys.
   assert.match(text, /commit message/);
@@ -149,5 +150,36 @@ test('cleanup-triage preserves existing-story dependencies for singleton and mul
     assert.match(order, /Items with no such relation get no\s+`--depends-on`/, name);
     assert.match(order, /The edge is stated once, on the later item/, name);
     assert.match(text, /one story alone never becomes a feature/, name);
+  }
+});
+
+// F-111 D5: blockers.json is the one place for holds and order. A prompt
+// names `depends_on` only to forbid the key or as a spec entry's input field,
+// never to tell an agent to write it.
+test('no prompt tells an agent to write depends_on:', () => {
+  const dir = new URL('../../prompts/', import.meta.url);
+  for (const name of readdirSync(dir).filter((f) => f.endsWith('.md'))) {
+    const text = readFileSync(new URL(name, dir), 'utf8').replace(/\s+/g, ' ');
+    for (const sentence of text.split(/(?<=\.) /).filter((x) => /depends_on/.test(x))) {
+      assert.match(sentence, /never|spec entry/i, `${name}: ${sentence}`);
+    }
+  }
+});
+
+// The same for bl's own messages and help: no line of code outside a comment
+// in src/*.js tells a user to add, write or declare `depends_on`.
+test('no string literal in src/*.js tells a user to add depends_on:', () => {
+  const dir = new URL('../../src/', import.meta.url);
+  for (const name of readdirSync(dir).filter((f) => f.endsWith('.js'))) {
+    readFileSync(new URL(name, dir), 'utf8')
+      .split('\n')
+      .forEach((line, i) => {
+        if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+        assert.doesNotMatch(
+          line,
+          /\b(add|declare|write|put)\b[^.]*depends_on/i,
+          `src/${name}:${i + 1}: ${line.trim()}`,
+        );
+      });
   }
 });

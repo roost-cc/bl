@@ -7,9 +7,9 @@
  *   2. If no story depends on it (no `requiredFor` parents), it's a root —
  *      nothing to chain to.
  *   3. For each parent (lowest id first), if every one of the parent's
- *      `depends_on` is done, the parent itself is next.
+ *      dependencies is done, the parent itself is next.
  *   4. Otherwise, pick the oldest (lowest id) peer that isn't done; if that
- *      peer has unfinished `depends_on` of its own, descend into it to find
+ *      peer has unfinished dependencies of its own, descend into it to find
  *      the oldest startable descendant.
  *
  * With a component id, or the `--theme`, `--epic`, `--feature` and
@@ -46,8 +46,8 @@ export function buildGraph(stories) {
     parents.get(childId).add(parentId);
   };
 
-  // An edge is stated once, on the dependent story's `depends_on` (F-77 D3);
-  // `requiredFor` is the graph's inverse of it, each edge seen once.
+  // An edge is stated once, in blockers.json (F-111 D4); `requiredFor` is the
+  // graph's inverse of it, each edge seen once.
   for (const s of stories) {
     for (const p of s.requiredFor ?? []) addEdge(p, s.id);
   }
@@ -67,7 +67,7 @@ export function buildGraph(stories) {
 /**
  * Find the oldest startable descendant of `rootId` (including rootId itself)
  * by walking children depth-first, oldest-id first. A node is "startable"
- * when it isn't done and all of its `depends_on` are done.
+ * when it isn't done and all of its dependencies are done.
  * Returns null if every node in the subtree is done.
  */
 export function findOldestStartable(rootId, graph, flow, visited = new Set()) {
@@ -120,7 +120,7 @@ export function pickNextInComponent(componentId, stories, graph, rankOf, flow) {
  *   - `{ kind: "next", story, method }` — `method` is `"priority"` or
  *     `"oldest-leaf"`
  *   - `{ kind: "blocked", open }` — open stories exist but every one of
- *     them has an unfinished `depends_on`
+ *     them has an unfinished dependency
  */
 export function pickNextIn(inSet, graph, rankOf, flow) {
   if (inSet.length === 0) return { kind: 'missing' };
@@ -183,7 +183,7 @@ Arguments:
 
 Suggests the next story to start by walking the dependency graph:
   - If a story that depends on the reference story (a parent) has its
-    other \`depends_on\` all done, that parent is next.
+    other dependencies all done, that parent is next.
   - Otherwise the oldest (lowest-id) peer or peer descendant that has all
     its own dependencies satisfied is next.
   - If no story depends on the reference story, it was a root — there is
@@ -318,7 +318,7 @@ Suggests the next story to start by walking the dependency graph:
     return;
   }
 
-  // Try each parent (oldest first). If all of the parent's depends_on are
+  // Try each parent (oldest first). If all of the parent's dependencies are
   // done, that parent itself is the next story.
   for (const parentId of parents) {
     const parent = graph.byId.get(parentId);

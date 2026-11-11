@@ -18,6 +18,7 @@ import { FrontmatterError, FrontmatterListError } from '../../src/config.js';
 import { FlowError, loadFlow } from '../../src/flow.js';
 import { legacyLog } from '../../src/transition.js';
 import { updateSpecFile } from '../../src/spec-file.js';
+import { BLOCKERS_FILE, BlockersError, formatBlockers } from '../../src/blockers.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'backlog-graph');
@@ -244,6 +245,33 @@ test('feature links: derived stories (dependency order, ties by number), points 
   assert.equal(f3.points, 0);
   assert.equal(f3.epic, null);
   assert.equal(f3.theme, null);
+});
+
+test("blockers.json's run and order edges link stories as a depends_on: does; a rewrite gives a new snapshot (F-111 D4)", () => {
+  const { root, config } = fixture();
+  const before = loadBacklog(config);
+  assert.deepEqual(ids(before.get('F-1').stories), ['S-1', 'S-4', 'S-3']);
+  // S-3 before S-1 by an order edge; S-6 waits for S-4 by a run edge.
+  const file = [
+    { blocker: 'S-3', gate: 'order', unit: 'S-1', until: 'implemented' },
+    { blocker: 'S-4', gate: 'run', unit: 'S-6', until: 'done' },
+  ];
+  replace(join(root, BLOCKERS_FILE), formatBlockers(file));
+  const g = loadBacklog(config);
+  assert.notEqual(g, before);
+  assert.deepEqual(g.edges.slice(0, 2), file, "the file's edges first, then the depends_on: keys'");
+  assert.deepEqual(ids(g.get('F-1').stories), ['S-4', 'S-3', 'S-1']);
+  assert.deepEqual(ids(g.get('S-1').dependsOn), ['S-3']);
+  assert.deepEqual(ids(g.get('S-3').requiredFor), ['S-1', 'S-10']);
+  assert.deepEqual(ids(g.get('S-6').dependsOn), ['S-4']);
+  assert.deepEqual(ids(g.get('S-4').requiredFor), ['S-3', 'S-6']);
+  assert.equal(loadBacklog(config), g, 'nothing changed: the same snapshot');
+
+  // A file bl cannot read: the links keep the depends_on: edges, and edges throws.
+  replace(join(root, BLOCKERS_FILE), '{ nope');
+  const broken = loadBacklog(config);
+  assert.deepEqual(ids(broken.get('F-1').stories), ['S-1', 'S-4', 'S-3']);
+  assert.throws(() => broken.edges, BlockersError);
 });
 
 test('component, epic and theme links, with the epic status derived', () => {

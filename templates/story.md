@@ -9,7 +9,6 @@ transitions:
 added:
 feature:
 found_by:
-depends_on:
 ---
 
 # {{storyId}} · {{title}}
@@ -36,7 +35,8 @@ depends_on:
 
 ## Dependencies
 
-<!-- List story IDs this story depends on, or "None". -->
+<!-- List story IDs this story depends on, or "None". blockers.json holds
+     each as an edge (bl new --depends-on, bl block add). -->
 
 ## Deferred
 

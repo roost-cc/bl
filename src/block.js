@@ -6,16 +6,19 @@
  * duplicate and an edge that would close a cycle in the deadlock graph, and
  * `add`, `remove` and `list --fix` write the file sorted and commit it alone
  * under the backlog lock. `bl task --gate` (F-65 D2) files its edge through
- * the same check and write (`writeEdge`) and commits it with the task file.
+ * the same check and write (`writeEdge`) and commits it with the task file;
+ * `bl new` writes a new story's dependency edges through it (`writeEdges`),
+ * and a story that joins a feature has its run edges with the feature's
+ * stories turned into order edges (`orderJoinedEdges`, F-111 D5).
  * The backlog is pulled first (`commandPullsBacklog`). Agents may not run
  * `remove` (`MODE_DENY`, F-66 A7): lifting a hold is the operator's.
  */
 
 import { spawnSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, relative } from 'path';
 import { parseArgs } from 'node:util';
-import { atomicWriteFile } from './atomic-write.js';
+import { atomicWriteFile, snapshot } from './atomic-write.js';
 import { info, loadConfig } from './config.js';
 import { commitPaths } from './backlog-commit.js';
 import { acquireLock, releaseLock, withLock } from './lock.js';
@@ -24,16 +27,23 @@ import { loadFlow } from './flow.js';
 import { GITATTRIBUTES_LINE, configureMergeDriver } from './blockers-merge.js';
 import {
   BLOCKERS_FILE,
+  ORDER_EDGE,
+  RUN_EDGE,
   WILDCARD,
+  dependencyEdge,
   describeCycle,
+  edgeArrow,
   edgeKey,
   edgeLabel,
   edgeProblems,
   formatBlockers,
+  inFeature,
   isActive,
   isMet,
   readBlockers,
+  readEdges,
   readUnits,
+  repoEnd,
   wouldCycle,
   writeBlockers,
 } from './blockers.js';
@@ -73,6 +83,63 @@ function prepareCommit(root) {
   return head.status === 0 && mapped(head.stdout) ? [BLOCKERS_FILE] : [BLOCKERS_FILE, '.gitattributes'];
 }
 
+/**
+ * Run `fn`, which writes `blockers.json` and maybe `.gitattributes`, all or
+ * nothing. When `fn` throws or returns `{ refused }`, each of the two files
+ * that changed gets back the bytes it had (`snapshot`). The backlog-relative
+ * path of a file that cannot be put back is in `left`, on the result beside
+ * `refused` or on the thrown error, and the refusal or the error message
+ * names it and what to do. A call inside another's `fn` only runs its own
+ * `fn`: the outer call saved the bytes from before both.
+ * @template T
+ * @param {string} root
+ * @param {() => T} fn
+ * @returns {T & { left?: string[] }}
+ */
+export function allOrNothing(root, fn) {
+  if (nested) return fn();
+  nested = true;
+  try {
+    return putBackOnFailure(root, fn);
+  } finally {
+    nested = false;
+  }
+}
+
+let nested = false;
+
+/** `allOrNothing`'s save, run and put-back (`snapshot`). */
+function putBackOnFailure(root, fn) {
+  const undo = snapshot(root, [join(root, BLOCKERS_FILE), join(root, '.gitattributes')], ` of ${BLOCKERS_FILE}`);
+  const leftOf = (err) => err.unrecovered.map((u) => relative(root, u.path));
+  let res;
+  try {
+    res = fn();
+  } catch (err) {
+    const out = undo(err);
+    if (out !== err) out.left = leftOf(out);
+    throw out;
+  }
+  if (!res?.refused) return res;
+  const out = undo(new Error(res.refused.join('; ')));
+  return out.unrecovered ? { ...res, refused: [out.message], left: leftOf(out) } : res;
+}
+
+/**
+ * Ready the clone (`prepareCommit`) and write `blockers.json` with `edges`,
+ * all or nothing (`allOrNothing`): a failed write leaves `.gitattributes` as
+ * it was too. Returns the paths to commit, null when the backlog is not a
+ * repo.
+ * @returns {string[] | null}
+ */
+function prepareAndWrite(root, edges) {
+  return allOrNothing(root, () => {
+    const paths = prepareCommit(root);
+    writeBlockers(root, edges);
+    return paths;
+  });
+}
+
 /** Commit `paths` (`prepareCommit`'s), or say the backlog is not a repo. */
 async function commitBlockers(root, paths, message) {
   if (!paths) return { committed: false, paths: [BLOCKERS_FILE], notRepo: true };
@@ -95,8 +162,9 @@ async function underLock(config, fn) {
  * holds, with no commit: refuses (returns `{ refused }`) an edge that
  * `edgeProblems` faults (an unknown id, gate or status, an unmeetable
  * `until`), a duplicate, and an edge that closes a cycle; otherwise readies
- * the clone (`prepareCommit`), writes `blockers.json` with the edge, and
- * returns the paths to commit (null when the backlog is not a repo).
+ * the clone and writes `blockers.json` with the edge (`prepareAndWrite`, all
+ * or nothing), and returns the paths to commit (null when the backlog is not
+ * a repo).
  * `bl block add` and `bl task --gate` (F-65 D2) share it.
  * @param {object} config
  * @param {import("./blockers.js").Edge} edge
@@ -111,11 +179,109 @@ export function writeEdge(config, edge) {
   if (edges.some((e) => edgeKey(e) === edgeKey(edge))) {
     return { refused: [`${edgeLabel(edge)} is already an edge (see bl block list ${edge.unit})`] };
   }
-  const cycle = wouldCycle(edge, edges, units, flow);
+  // The cycle is checked among every edge bl reads, the `depends_on:` keys' too.
+  const cycle = wouldCycle(edge, readEdges(config), units, flow);
   if (cycle) return { refused: [`${edgeLabel(edge)} would close a deadlock: ${describeCycle(cycle)}`] };
-  const paths = prepareCommit(config.backlogRoot);
-  writeBlockers(config.backlogRoot, [...edges, edge]);
+  const paths = prepareAndWrite(config.backlogRoot, [...edges, edge]);
   return { edge, paths };
+}
+
+/**
+ * `writeEdge` for several edges, all or nothing, under the backlog lock the
+ * caller holds, with no commit: `bl new` writes a new story's dependencies
+ * through it (F-111 D5). When one edge is refused, or a write throws,
+ * `blockers.json` and `.gitattributes` get back the bytes they had
+ * (`allOrNothing`, which names in `left` a file it could not put back), and
+ * the refusal is returned or the error thrown. `paths` are the paths to
+ * commit.
+ * @param {object} config
+ * @param {import("./blockers.js").Edge[]} edges
+ * @returns {{ refused?: string[], left?: string[], paths: string[] }}
+ */
+export function writeEdges(config, edges) {
+  return allOrNothing(config.backlogRoot, () => {
+    let paths = [];
+    for (const edge of edges) {
+      const res = writeEdge(config, edge);
+      if (res.refused) return { refused: res.refused, paths: [] };
+      paths = res.paths ?? [];
+    }
+    return { paths };
+  });
+}
+
+/**
+ * The run edges that become order edges when `joined` are in `feature`
+ * (null: the feature their `feature:` names already), each a run edge between
+ * one of `joined` and another story of that feature, and `order`, which maps
+ * one to its order edge.
+ */
+function joinedRunEdges(config, joined, feature = null) {
+  const { edges } = readBlockers(config.backlogRoot);
+  const units = readUnits(config);
+  const featureOf = (id) => (feature && joined.includes(id) ? feature : (units.get(id)?.feature ?? ''));
+  // The edge the pair stands for now: an order edge when both are in one feature.
+  const order = (e) => dependencyEdge(e.blocker, e.unit, featureOf);
+  const turned = edges.filter(
+    (e) =>
+      e.gate === RUN_EDGE.gate &&
+      (joined.includes(e.unit) || joined.includes(e.blocker)) &&
+      order(e).gate === ORDER_EDGE.gate,
+  );
+  return { edges, turned, order };
+}
+
+/**
+ * The refusal of `joined` joining `feature` (F-111 D5), null when there is
+ * none: a run edge with `active_when` that the join would turn into an order
+ * edge, which takes no `active_when`. `bl attach` and `bl new --feature … S-n`
+ * check it before they write; `orderJoinedEdges` throws it.
+ * @param {object} config
+ * @param {string[]} joined  story ids
+ * @param {string | null} [feature]  null: the feature their `feature:` names
+ * @returns {string | null}
+ */
+export function joinRefusal(config, joined, feature = null) {
+  return refusalOf(joinedRunEdges(config, joined, feature).turned);
+}
+
+/** `joinRefusal` of the run edges a join turns. */
+function refusalOf(turned) {
+  const held = turned.filter((e) => e.active_when);
+  if (held.length === 0) return null;
+  return held
+    .map(
+      (e) =>
+        `${edgeLabel(e)} holds only once ${e.active_when.unit} is ${e.active_when.status}, and an order edge ` +
+        `takes no active_when; remove it first (bl block remove ${e.blocker} --gate ${e.gate} --unit ${e.unit})`,
+    )
+    .join('; ');
+}
+
+/**
+ * Stories that joined a feature (their `feature:` already written, F-111
+ * D5): each run edge between one of `joined` and another story of the same
+ * feature becomes the order edge between the two, since a run edge inside one
+ * feature holds the feature on itself. It throws `joinRefusal` before it
+ * writes anything. Under the backlog lock the caller holds, with no commit.
+ * Returns null when no edge changed, else the paths to commit (empty when the
+ * backlog is not a repo).
+ * @param {object} config
+ * @param {string[]} joined  story ids
+ * @returns {string[] | null}
+ */
+export function orderJoinedEdges(config, joined) {
+  const root = config.backlogRoot;
+  const { edges, turned, order } = joinedRunEdges(config, joined);
+  const refusal = refusalOf(turned);
+  if (refusal) throw new Error(refusal);
+  if (turned.length === 0) return null;
+  const kept = edges.filter((e) => !turned.includes(e));
+  const keys = new Set(kept.map(edgeKey));
+  const added = turned.map(order).filter((e) => !keys.has(edgeKey(e)) && keys.add(edgeKey(e)));
+  const paths = prepareAndWrite(root, [...kept, ...added]);
+  for (const e of turned) info(`${edgeLabel(e)} is now the order edge ${edgeArrow(e)}`);
+  return paths ?? [];
 }
 
 /**
@@ -143,8 +309,7 @@ export async function removeEdge(config, key) {
   return underLock(config, async ({ edges }) => {
     const found = edges.find((e) => edgeKey(e) === edgeKey(key));
     if (!found) return { refused: [`no edge ${edgeLabel(key)} (see bl block list ${key.unit})`] };
-    const paths = prepareCommit(config.backlogRoot);
-    writeBlockers(
+    const paths = prepareAndWrite(
       config.backlogRoot,
       edges.filter((e) => e !== found),
     );
@@ -162,17 +327,17 @@ export async function removeEdge(config, key) {
 export async function fixOrder(config) {
   return underLock(config, async ({ edges, text }) => {
     if (text == null || text === formatBlockers(edges)) return { fixed: false };
-    const paths = prepareCommit(config.backlogRoot);
-    writeBlockers(config.backlogRoot, edges);
+    const paths = prepareAndWrite(config.backlogRoot, edges);
     return { fixed: true, commit: await commitBlockers(config.backlogRoot, paths, `chore: sort ${BLOCKERS_FILE}`) };
   });
 }
 
 /**
  * The edges on and by `id` (every edge without one): held on it, on `*`,
- * on one of a feature's stories, or with it as the blocker. Each line says
- * whether the edge holds: `unmet`, `met`, or `inactive` until its
- * `active_when` is met.
+ * on one of a feature's stories, with it as the blocker, or a merge or
+ * order edge inside it (F-111 D1). Each line says whether the edge holds:
+ * `unmet`, `met`, or `inactive` until its `active_when` is met. A merge or
+ * order edge holds nothing, so its line names only the order.
  * @param {import("./blockers.js").Edge[]} edges
  * @param {string | null} id
  * @returns {string[]}
@@ -181,8 +346,15 @@ export function listLines(edges, id, units, flow) {
   const on = new Set(id ? [id, ...(units.get(id)?.stories ?? [])] : []);
   const statusOf = (unit) => units.get(unit)?.status ?? 'unknown';
   return edges
-    .filter((e) => !id || on.has(e.unit) || e.unit === WILDCARD || e.blocker === id)
+    .filter((e) => !id || on.has(e.unit) || e.unit === WILDCARD || e.blocker === id || repoEnd(e.unit)?.unit === id)
     .map((e) => {
+      if (inFeature(e, units)) {
+        const after =
+          e.gate === ORDER_EDGE.gate
+            ? `${e.unit} is implemented after ${e.blocker}`
+            : `${repoEnd(e.unit).repo} merges after ${repoEnd(e.blocker).repo}`;
+        return `${e.gate} edge ${edgeArrow(e)}: ${after}`;
+      }
       const line = `${e.unit} held at ${e.gate} by ${e.blocker} (${statusOf(e.blocker)}, needs ${e.until})`;
       const a = e.active_when;
       const when = a ? `, active when ${a.unit} is ${a.status} (${statusOf(a.unit)})` : '';
@@ -204,7 +376,15 @@ Holds between units, kept in ${BLOCKERS_FILE} at the backlog root (one
 edge per line, sorted by unit, blocker and gate). An edge holds <unit> at
 <gate> until <blocker>'s status meets <until>, as flow.json says; --unit *
 holds every unit with the gate. --active-when and --active-status keep the
-edge from holding anything until that unit meets that status.
+edge from holding anything until that unit meets that status; a merge or
+order edge takes neither.
+
+A merge edge joins two repos of one feature and holds nothing: bl merge
+merges the blocker's repo before the unit's, as in
+  bl block add F-96:ci-cd --gate merge --unit F-96:bl --until merged
+An order edge joins two stories of one feature and holds nothing: the
+feature's implement loop takes the blocker before the unit, as in
+  bl block add S-1446 --gate order --unit S-1448 --until implemented
 
   add      Check every field against flow.json and the backlog, refuse a
            duplicate or an edge that would close a deadlock, write the

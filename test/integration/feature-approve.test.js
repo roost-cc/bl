@@ -140,12 +140,12 @@ test('bl approve warns about open dependencies outside the feature', () => {
   try {
     const r = runBl(['approve', 'F-1'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /S-2 depends on S-1 \(draft\)/);
+    assert.match(r.stderr, /S-2 is held at run by S-1 \(draft, needs done\)/);
     assert.match(r.stderr, /^ {2}S-2 {2}effort: xhigh {2}Inside$/m, "each story's effort (F-85 D1)");
-    // workon refuses on the same blocker (before touching git).
+    // workon refuses on the same blocker (before touching git): the depends_on: is a run edge (F-111 D4).
     const w = runBl(['implement', 'F-1'], { cwd: dir });
     assert.equal(w.status, 1);
-    assert.match(w.stderr, /blocked on work outside the feature/);
+    assert.equal(w.stderr, 'S-2 is held at run by S-1 (draft, needs done)\nnext: bl status S-1\n');
   } finally {
     cleanup();
   }

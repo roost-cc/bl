@@ -7,7 +7,8 @@
  * feature's stories, points and components are derived from it (`bl run`
  * orders them, `bl merge` marks exactly them done). `bl attach` sets it, the
  * write `bl new F-<n>` makes for a story it creates, and commits the story
- * directory by path. A story that already names the feature is left alone.
+ * directory by path. A story that already names the feature keeps its file;
+ * only its run edges are turned, as below.
  *
  * Every refusal comes under the backlog lock, from the files as they are
  * then, before anything is written. A story in another feature, or one that
@@ -17,9 +18,11 @@
  * so a story in another repo is refused there: `bl side` brings a repo in.
  * Before the feature runs, a story in a new repo simply joins it.
  *
- * Attach creates nothing and writes one file, the story, through
- * `updateSpecFile` (F-67), so a write that fails part way leaves it as it
- * was, never truncated.
+ * Attach creates nothing and writes the story through `updateSpecFile`
+ * (F-67), so a write that fails part way leaves it as it was, never
+ * truncated. A run edge in `blockers.json` between the story and a story of
+ * the feature becomes an order edge (`orderJoinedEdges`, F-111 D5), in the
+ * same commit.
  */
 
 import { readFileSync } from 'fs';
@@ -35,6 +38,8 @@ import {
   storyMoveRefusal,
 } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
+import { snapshot } from './atomic-write.js';
+import { joinRefusal, orderJoinedEdges } from './block.js';
 import { acquireLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
@@ -43,10 +48,12 @@ export const ATTACH_JSON_SCHEMA = 'bl-attach-json/v1';
 
 const help = (flow) => `Usage: bl attach <S-n> <F-n> [options]
 
-Put an existing story in a feature: set the story's feature:, then commit
-the story directory by path. The ids may come in either order. A story's feature: is the only statement of
-membership. A story that already names the feature is left alone (stderr
-says so).
+Put an existing story in a feature: set the story's feature:, turn each run
+edge in blockers.json between it and a story of the feature into an order
+edge, then commit the story directory (and blockers.json) by path. The ids
+may come in either order. A story's feature: is the only statement of
+membership. A story that already names the feature keeps its file, and
+only its run edges are turned; with none, nothing is done (stderr says so).
 
 Refused, with nothing written:
   - anything other than one story id and one feature id
@@ -56,15 +63,19 @@ Refused, with nothing written:
   - a feature that is ${statusWords(flow.closedStatusesOf('feature'))}
   - a story whose feature: names another feature
   - a story that is not ${statusWords(flow.unstartedStatusesOf('story'))}
+  - a run edge with active_when between the story and a story of the
+    feature: an order edge takes no active_when
   - for a ${statusWords(branchedStatusesOf(flow))} feature, a story whose
     component's repo the feature's branches do not span (bl side <repo> --from F-<n> brings a
     repo in)
 
 Options:
-  --no-sync   Write the story under the backlog lock and leave them
-              uncommitted, as bl new --no-sync does
+  --no-sync   Write the story and blockers.json under the backlog lock and
+              leave them uncommitted, as bl new --no-sync does
   --json      Print one JSON object (schema ${ATTACH_JSON_SCHEMA}):
-              { schema, story, feature, changed }
+              { schema, story, feature, changed }. changed is the
+              feature: line alone, so it is false for a rerun that
+              turned edges
   --help      Show this help
 
 stdout is empty without --json; progress goes to stderr.
@@ -155,11 +166,13 @@ export async function main(argv) {
     }
   }
 
+  const held = joinRefusal(config, [storyId], feature.id);
+  if (held) fail(`bl attach: ${held}.`);
+
   // `feature: F77` names F-77 already; it is not rewritten.
   const changed = (normalizeFeatureId(named)?.id ?? named) !== feature.id;
-  if (!changed) {
-    info(`${storyId} is already in ${feature.id}; nothing to do.`);
-  } else {
+  const undoStory = snapshot(config.backlogRoot, [found.indexPath], ` of ${storyId}'s feature line`);
+  if (changed) {
     try {
       await updateSpecFile(config.backlogRoot, found.indexPath, (specFm) => {
         // An empty `feature:` key is filled in place; a missing one goes last.
@@ -168,7 +181,23 @@ export async function main(argv) {
     } catch (e) {
       fail(`bl attach: could not write ${storyId}: ${e.message}. Nothing was changed.`);
     }
-    info(`Attached ${storyId} to ${feature.id}.`);
+  }
+  let edgePaths;
+  try {
+    // A run edge between it and a story of the feature is now an order edge
+    // (F-111 D5). A story already in the feature gets this too, so a rerun
+    // after a failure between the two writes finishes the job.
+    edgePaths = orderJoinedEdges(config, [storyId]);
+  } catch (e) {
+    // `e` names a file the edge write could not put back (`allOrNothing`), and `err` the story.
+    const err = changed ? undoStory(e) : e;
+    const state = e.left || err.unrecovered ? '' : ' Nothing was changed.';
+    fail(`bl attach: could not turn ${storyId}'s run edges into order edges: ${err.message}.${state}`);
+  }
+  if (!changed && edgePaths === null) {
+    info(`${storyId} is already in ${feature.id}; nothing to do.`);
+  } else {
+    info(changed ? `Attached ${storyId} to ${feature.id}.` : `${storyId} is already in ${feature.id}.`);
 
     if (noSync) {
       info("Skipped the commit. Commit it with 'bl sync --commit'.");
@@ -178,6 +207,7 @@ export async function main(argv) {
         res = await syncAndCommit(config, {
           message: `chore: attach ${storyId} to ${feature.id}`,
           storyIds: [storyId],
+          extraPaths: edgePaths ?? [],
         });
       } catch (e) {
         fail(

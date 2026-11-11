@@ -7,12 +7,9 @@
  * It walks `backlog.priority` (`priority.md`'s open ranked units, then every
  * other open unit by `added:`, F-78 D1) and prints the first unit that nothing
  * holds. A unit is held by what `bl run` would refuse it for, so `bl next`
- * never offers what `bl run` refuses:
- *
- *   - an open story outside the unit that one of its stories depends on
- *     (`outsideBlockers`: a loose story's own `depends_on`, a feature's
- *     stories' dependencies outside it);
- *   - an unmet `blockers.json` edge at a gate `run` checks (`heldBy`).
+ * never offers what `bl run` refuses: an unmet edge at a gate `run` checks
+ * (`heldBy` of `readEdges`: `blockers.json`'s, and the run edge of each
+ * `depends_on:` on a loose story or outside a feature).
  *
  * A unit held by an open story or feature gives way to the blocker's unit
  * (the story's feature, or the story itself when loose), ranked or not,
@@ -30,7 +27,6 @@
 
 import { loadConfig, parseArgs, info } from './config.js';
 import { filterContext, filterFromArgs, filterLabel, featureEpicId, featureMatches, storyMatches } from './filter.js';
-import { outsideBlockers } from './feature.js';
 import { heldBy, readUnits } from './blockers.js';
 import { readAllStories } from './story.js';
 import { loadBacklog } from './backlog-graph.js';
@@ -76,10 +72,9 @@ or filter.`;
 function readState(config, flow, ctx) {
   const graph = loadBacklog(config);
   const pinned = { ...config, backlogGraph: graph };
-  const records = readAllStories(pinned);
-  const recordById = new Map(records.map((r) => [r.id, r]));
+  const recordById = new Map(readAllStories(pinned).map((r) => [r.id, r]));
   // `waits`: each unit found held with no free blocker, and what holds it.
-  return { graph, flow, config: pinned, records, recordById, units: readUnits(pinned), ctx, waits: new Map() };
+  return { graph, flow, config: pinned, recordById, units: readUnits(pinned), ctx, waits: new Map() };
 }
 
 /** A unit's member story records: a feature's stories, or the loose story itself. */
@@ -130,9 +125,6 @@ function holdsOf(state, u) {
     if (target) runnable.push({ unit: target, why });
     else waits.push(why);
   };
-  for (const b of outsideBlockers(members(state, u), state.records, state.flow)) {
-    add(b.dep, `${b.story} depends on ${b.dep} (${b.status})`);
-  }
   for (const h of heldBy(state.config, u.id, 'run', { units: state.units })) add(h.edge.blocker, h.line);
   return { runnable, waits, ids: [...ids] };
 }

@@ -410,6 +410,49 @@ async function withFsFaults(fails, fn) {
   }
 }
 
+// createTask: the blockers.json write fails after .gitattributes got its
+// merge-driver line, and writeEdge's put-back of .gitattributes fails. When
+// createTask's own put-back works, the error is the first failure alone; when
+// it fails too, .gitattributes is named.
+test('create_task_names_only_a_file_still_left_changed', async () => {
+  for (const persistent of [false, true]) {
+    const dir = backlog();
+    initGitBacklog(dir);
+    const before = existsSync(join(dir, '.gitattributes')) ? read(dir, '.gitattributes') : null;
+    const config = loadConfig({ backlogRoot: dir });
+    const hits = new Map();
+    const hit = (p) => hits.set(p, (hits.get(p) ?? 0) + 1).get(p);
+    let err = null;
+    await withFsFaults(
+      (op, p) => {
+        if (op === 'renameSync' && p === join(dir, 'blockers.json')) return hit(p) === 1;
+        // The file was not there, so a put-back removes it. 1: prepareCommit's
+        // line; 2: writeEdge's put-back; 3: createTask's put-back.
+        if ((op === 'renameSync' || op === 'rmSync') && p === join(dir, '.gitattributes')) {
+          const n = hit(p);
+          return n === 2 || (persistent && n > 2);
+        }
+        return false;
+      },
+      async () => {
+        try {
+          await createTask(config, { unit: { id: 'F-1' }, title: 'Run it', gate: 'merge' });
+        } catch (e) {
+          err = e;
+        }
+      },
+    );
+    assert.ok(err, `${persistent}: the task write fails`);
+    assert.deepEqual(tasksIn(dir), [], `${persistent}: the task file is removed`);
+    if (persistent) {
+      assert.match(err.message, /could not undo the write of task T-1: \.gitattributes/, `${persistent}`);
+    } else {
+      assert.equal(err.message, 'injected renameSync failure', `${persistent}: no stale put-back text`);
+      assert.equal(existsSync(join(dir, '.gitattributes')) ? read(dir, '.gitattributes') : null, before);
+    }
+  }
+});
+
 test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async () => {
   const thrown = async (p) => {
     try {
@@ -424,9 +467,10 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
   // A file is written in place or renamed into place (`atomicWriteFile`).
   const isWrite = (op) => op === 'writeFileSync' || op === 'renameSync';
 
-  // createTask: the blockers.json write fails once (all put back, the
-  // original error alone), or every time (the task file is still removed;
-  // blockers.json, which held an edge filed by hand, is named).
+  // createTask: the blockers.json write fails once or every time. Either way
+  // the write never reached the file, so it is intact: it is not rewritten
+  // (`snapshot`) and not named, the task file is removed, and the original
+  // error stands alone.
   for (const persistent of [false, true]) {
     const dir = backlog();
     const config = loadConfig({ backlogRoot: dir });
@@ -440,20 +484,9 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
     );
     assert.match(err.message, /^injected renameSync failure/, `${persistent}: the original failure first`);
     assert.deepEqual(tasksIn(dir), [], `${persistent}: the task file is removed`);
-    if (persistent) {
-      assert.match(
-        err.message,
-        /could not undo the write of task T-1: blockers\.json \(injected renameSync failure\): put it back with git/,
-      );
-      assert.deepEqual(
-        err.unrecovered.map((u) => u.path),
-        [blockers],
-      );
-      assert.equal(err.unrecovered[0].text, graphBefore, 'the text before is kept for recovery');
-    } else {
-      assert.equal(err.unrecovered, undefined);
-      assert.equal(read(dir, 'blockers.json'), graphBefore, 'no orphan T-1 edge');
-    }
+    assert.doesNotMatch(err.message, /could not undo/, `${persistent}: an intact file is not named`);
+    assert.equal(err.unrecovered, undefined, `${persistent}`);
+    assert.equal(read(dir, 'blockers.json'), graphBefore, `${persistent}: no orphan T-1 edge`);
   }
 
   // createTask: the task file cannot be removed; the graph is put back.
@@ -492,8 +525,8 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
     assert.deepEqual(edgesOf(dir), []);
   }
 
-  // markTaskDone: the task write fails, then the task cannot be put back: the
-  // original failure, the task file and its lifted hold are all reported.
+  // markTaskDone: every task write fails, so the task file is intact: it is
+  // not rewritten (`snapshot`) and not named, and its hold stays.
   {
     const dir = backlog();
     const config = loadConfig({ backlogRoot: dir });
@@ -505,16 +538,9 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
       (op, p) => isWrite(op) && p === taskPath,
       () => thrown(markTaskDone(config, 'T-1')),
     );
-    assert.match(
-      err.message,
-      /^injected renameSync failure; and could not undo the write \(T-1 may read done, its holds lifted, though bl task done did not commit\): tasks\/T1-run-it\.md \(injected renameSync failure\)/,
-    );
-    assert.deepEqual(
-      err.unrecovered.map((u) => u.path),
-      [taskPath],
-    );
-    assert.match(err.unrecovered[0].text, /to: draft/, "the open task's text is kept for recovery");
-    assert.doesNotMatch(err.unrecovered[0].text, /to: done/, "the open task's text is kept for recovery");
+    assert.equal(err.message, 'injected renameSync failure');
+    assert.equal(err.unrecovered, undefined);
+    assert.doesNotMatch(readFileSync(taskPath, 'utf8'), /to: done/, 'the task is still open');
     assert.equal(read(dir, featureFile), before, 'the unit is untouched');
   }
 });

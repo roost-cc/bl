@@ -7,6 +7,7 @@ import { runBl } from '../helpers/run-bl.js';
 import { GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { findFeature, normalizeFeatureId } from '../../src/feature.js';
+import { parseBlockers } from '../../src/blockers.js';
 import { loadConfig } from '../../src/config.js';
 import { rendered } from '../helpers/rendered.js';
 import { HOME, REPOS, fm, newFeature, newStory } from '../helpers/feature-fixture.js';
@@ -330,7 +331,11 @@ test('bl new --from with feature + per-story component cuts stories across compo
     ]);
     const [store, mint, wire] = paths.map((p) => fm(join(dir, p)));
     for (const s of [store, mint, wire]) assert.equal(s.feature, 'F-1');
-    assert.deepEqual(mint.depends_on, ['S-3']);
+    // Two stories of one feature: the dependency is an order edge in blockers.json (F-111 D5).
+    assert.equal(Object.hasOwn(mint, 'depends_on'), false);
+    assert.deepEqual(parseBlockers(readFileSync(join(dir, 'blockers.json'), 'utf8')), [
+      { blocker: 'S-3', gate: 'order', unit: 'S-4', until: 'implemented' },
+    ]);
     // A spec's effort is written as `effort:`; one with none keeps the template's empty key (F-85 D1).
     assert.equal(mint.effort, 'low');
     assert.match(readFileSync(join(dir, paths[0]), 'utf8'), /^points: 3\neffort:\n/m);

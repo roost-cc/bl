@@ -17,7 +17,7 @@ Backlog repo : {{backlogDir}}
 - A story works in one repo, its component's (`{{targetRepo}}`); there is no secondary worktree.
   A review item may ask for a fix in another repo.
   That fix is another story in a component of that repo (one story per repo). Create it with
-  `bl new <C-id> --depends-on {{storyId}}`, or make this story depend on it. Then note in the item that the new story does the fix.
+  `bl new <C-id> --depends-on {{storyId}}`, or make this story depend on it (`--required-for {{storyId}}`). Then note in the item that the new story does the fix.
 
 ## Steps
 

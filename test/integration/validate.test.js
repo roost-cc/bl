@@ -6,6 +6,7 @@ import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
 import { spawnSync } from 'node:child_process';
 import { BL_BIN, runBl } from '../helpers/run-bl.js';
+import { writeBlockers } from '../../src/blockers.js';
 
 /**
  * A fixture that passes the component rules (F-49 D4): every registered repo
@@ -115,7 +116,11 @@ test('bl validate --json output', async () => {
 
   assert.equal(status, 1);
   const data = JSON.parse(stdout);
-  assert.ok(data.findings.some((f) => f.code === 'cycle'));
+  // A cycle of depends_on: keys is a deadlock among the run edges they stand for (F-111 D4).
+  assert.deepEqual(
+    data.findings.filter((f) => f.severity === 'error').map((f) => [f.code, f.location]),
+    [['blockers-cycle', 'blockers.json']],
+  );
   assert.equal(data.summary.errors, 1);
 
   td.cleanup();
@@ -387,9 +392,15 @@ test('bl validate: an edge stated on one side only is no finding (F-77 D3)', asy
       { id: 'S-2', component: 'C00', title: 'b' },
     ],
   });
-  const { stdout, status } = await runBl(['validate', '--strict'], { cwd: td.dir });
+  const { stdout, status } = await runBl(['validate', '--json'], { cwd: td.dir });
   assert.equal(status, 0, stdout);
-  assert.doesNotMatch(stdout, /asymmetric-dep/);
+  // Only the key itself is reported (F-111 D5), as a warning.
+  assert.deepEqual(
+    JSON.parse(stdout)
+      .findings.filter((f) => f.code !== 'plugin-binary')
+      .map((f) => [f.severity, f.code, f.location]),
+    [['warning', 'depends-on-key', 'stories/S1/index.md']],
+  );
   td.cleanup();
 });
 
@@ -406,7 +417,10 @@ test('bl validate: a stored required_for is derived-key (F-77 D3)', async () => 
     JSON.parse(stdout)
       .findings.filter((f) => f.code !== 'plugin-binary')
       .map((f) => [f.severity, f.code, f.location]),
-    [['error', 'derived-key', 'stories/S2/index.md']],
+    [
+      ['warning', 'depends-on-key', 'stories/S1/index.md'],
+      ['error', 'derived-key', 'stories/S2/index.md'],
+    ],
   );
   td.cleanup();
 });
@@ -1047,7 +1061,95 @@ test('bl validate reports each blockers-* finding on a hand-edited blockers.json
   const json = JSON.parse(result.stdout).findings.filter((f) => f.location === 'blockers.json');
   assert.deepEqual(
     json.map((f) => [f.code, f.message]),
-    [['blockers-json', `"schema" is "bl-blockers/v0", not "bl-blockers/v1"`]],
+    [['blockers-json', `"schema" is "bl-blockers/v0", not "bl-blockers/v1" or "bl-blockers/v2"`]],
+  );
+  td.cleanup();
+});
+
+test('bl validate reports a bad merge edge and a cycle of merge edges with the existing codes (F-111 D1)', async () => {
+  // F-1 over S-1 (demo-repo) and S-2 (ci-cd), F-2 over S-3 (demo-repo).
+  const td = cleanBacklog({
+    repos: ['../ci-cd'],
+    components: [{ id: 'C01', title: 'Ci', dirSuffix: 'ci', repo: 'ci-cd' }],
+    stories: [
+      { id: 'S-1', component: 'C00', title: 'One', feature: 'F-1' },
+      { id: 'S-2', component: 'C01', title: 'Two', feature: 'F-1' },
+      { id: 'S-3', component: 'C00', title: 'Three', feature: 'F-2' },
+    ],
+    features: [
+      { id: 'F-1', title: 'One', status: 'approved', stories: ['S-1', 'S-2'] },
+      { id: 'F-2', title: 'Two', status: 'approved', stories: ['S-3'] },
+    ],
+  });
+  const m = (blocker, unit, gate = 'merge', until = 'merged') => ({ blocker, gate, unit, until });
+  writeBlockers(td.dir, [
+    m('F-1:ci-cd', 'F-1:demo-repo'),
+    m('F-1:demo-repo', 'F-1:ci-cd'),
+    m('F-2:demo-repo', 'F-1:ci-cd'),
+    m('F-1:app', 'F-1:demo-repo'),
+    m('F-2:demo-repo', 'F-2:demo-repo', 'run'),
+    m('F-1:ci-cd', '*', 'merge', 'done'),
+  ]);
+  const result = await runBl(['validate', '--json'], { cwd: td.dir });
+  assert.equal(result.status, 1);
+  const findings = JSON.parse(result.stdout)
+    .findings.filter((f) => f.location === 'blockers.json')
+    .map((f) => `${f.code}: ${f.message}`)
+    .sort();
+  assert.deepEqual(findings, [
+    `blockers-cycle: merge order cycle: F-1:ci-cd → F-1:demo-repo (merge edge F-1:demo-repo → F-1:ci-cd) → F-1:ci-cd (merge edge F-1:ci-cd → F-1:demo-repo)`,
+    `blockers-cycle: merge order cycle: F-2:demo-repo → F-2:demo-repo (merge edge F-2:demo-repo → F-2:demo-repo)`,
+    `blockers-gate: F-2:demo-repo at run by F-2:demo-repo: a merge edge's gate is "merge", not "run"`,
+    `blockers-status: * at merge by F-1:ci-cd: a merge edge's until is "merged", not "done"`,
+    `blockers-unit: * at merge by F-1:ci-cd: a merge edge's unit is never "*"`,
+    `blockers-unit: F-1:ci-cd at merge by F-2:demo-repo: a merge edge joins two repos of one feature, not of F-2 and F-1`,
+    `blockers-unit: F-1:demo-repo at merge by F-1:app: blocker F-1:app: no story of F-1 names repo app`,
+  ]);
+  td.cleanup();
+});
+
+test('bl validate reports a bad order edge and a cycle of order edges with the existing codes (F-111 D1, D4)', async () => {
+  // F-1 over S-1, S-2 and S-4, F-2 over S-3; S-5 is in no feature. S-4 depends_on S-1 by its key.
+  const td = cleanBacklog({
+    stories: [
+      { id: 'S-1', component: 'C00', title: 'One', feature: 'F-1' },
+      { id: 'S-2', component: 'C00', title: 'Two', feature: 'F-1' },
+      { id: 'S-3', component: 'C00', title: 'Three', feature: 'F-2' },
+      { id: 'S-4', component: 'C00', title: 'Four', feature: 'F-1', depends_on: ['S-1'] },
+      { id: 'S-5', component: 'C00', title: 'Five' },
+    ],
+    features: [
+      { id: 'F-1', title: 'One', status: 'approved', stories: ['S-1', 'S-2', 'S-4'] },
+      { id: 'F-2', title: 'Two', status: 'approved', stories: ['S-3'] },
+    ],
+  });
+  const o = (blocker, unit, until = 'implemented') => ({ blocker, gate: 'order', unit, until });
+  writeBlockers(td.dir, [
+    o('S-1', 'S-2'),
+    o('S-3', 'S-2'),
+    o('S-5', 'S-1'),
+    o('S-4', 'S-2', 'done'),
+    // With S-4's key (S-1 → S-4), a cycle S-1 → S-4 → S-1.
+    o('S-4', 'S-1'),
+  ]);
+  const result = await runBl(['validate', '--json'], { cwd: td.dir });
+  assert.equal(result.status, 1);
+  const findings = JSON.parse(result.stdout).findings;
+  assert.deepEqual(
+    findings
+      .filter((f) => f.location === 'blockers.json')
+      .map((f) => `${f.code}: ${f.message}`)
+      .sort(),
+    [
+      'blockers-cycle: story order cycle: S-1 → S-4 (order edge S-4 → S-1) → S-1 (order edge S-1 → S-4)',
+      `blockers-status: S-2 at order by S-4: an order edge's until is "implemented", not "done"`,
+      'blockers-unit: S-1 at order by S-5: blocker S-5 is in no feature',
+      'blockers-unit: S-2 at order by S-3: an order edge joins two stories of one feature, not of F-2 and F-1',
+    ],
+  );
+  assert.deepEqual(
+    findings.filter((f) => f.code === 'depends-on-key').map((f) => [f.severity, f.location]),
+    [['warning', 'stories/S4/index.md']],
   );
   td.cleanup();
 });

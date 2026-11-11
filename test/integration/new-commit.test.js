@@ -5,16 +5,7 @@ import { basename, dirname, join } from 'path';
 import { runBl } from '../helpers/run-bl.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { GIT_ENV, git, initGitBacklog, headFiles, statusLines } from '../helpers/git-backlog.js';
-import {
-  BYSTANDER,
-  NEW_IN_C01,
-  componentBacklog,
-  edgeSpec,
-  fmOf,
-  gitEdgeBacklog,
-  gitNewBacklog,
-  writeSpec,
-} from '../helpers/new-fixture.js';
+import { BYSTANDER, NEW_IN_C01, componentBacklog, fmOf, gitNewBacklog, writeSpec } from '../helpers/new-fixture.js';
 
 function assertOnlyBystandersDirty(dir) {
   assert.deepEqual(statusLines(dir), [` M ${BYSTANDER}`, 'A  staged.txt']);
@@ -141,22 +132,10 @@ test('bl new --feature --no-sync makes no commit (S-1368)', () => {
 
 // A linked story whose index.md was dirty before the command is committed
 // whole, with the new line; a staged file beside it stays staged and out.
+// (`bl new --required-for` writes an edge to blockers.json, not to the other
+// story's file, F-111 D5: new-edges.test.js.)
 for (const [name, setup, target, args, check] of [
   ['bl new --feature', gitPairBacklog, 'stories/S2-two/index.md', NEW_PAIR, (fm) => assert.equal(fm.feature, 'F-2')],
-  [
-    'bl new --required-for',
-    gitEdgeBacklog,
-    'stories/S1-later/index.md',
-    [...NEW_IN_C01, '--title', 'First', '--required-for', 'S-1'],
-    (fm) => assert.deepEqual(fm.depends_on, ['S-3']),
-  ],
-  [
-    "bl new --from with a spec's required_for",
-    gitEdgeBacklog,
-    'stories/S1-later/index.md',
-    (dir) => ['new', '--from', edgeSpec(dir)],
-    (fm) => assert.deepEqual(fm.depends_on, ['S-3']),
-  ],
 ]) {
   test(`${name} commits a dirty linked index but excludes its sibling file`, () => {
     const { dir, cleanup } = setup();
