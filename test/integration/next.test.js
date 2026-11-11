@@ -146,7 +146,7 @@ test('a ranked loose story held by another loose story gives way to it, naming t
   assert.equal(r.stdout, 'S-11\n');
   assert.match(
     r.stderr,
-    /S-10 \(ranked 1\) is held: S-10 depends on S-11 \(draft\)\. S-11 comes first; it unblocks S-10\.\nNext: S-11 /,
+    /S-10 \(ranked 1\) is held: S-10 is held at run by S-11 \(draft, needs done\)\. S-11 comes first; it unblocks S-10\.\nNext: S-11 /,
   );
 });
 
@@ -155,14 +155,17 @@ test("a feature held by a story in another feature offers that feature, followin
   let r = next(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'F-5\n');
-  assert.match(r.stderr, /F-3 \(ranked 1\) is held: S-3 depends on S-5 \(draft\)\. F-5 comes first; it unblocks F-3\./);
+  assert.match(
+    r.stderr,
+    /F-3 \(ranked 1\) is held: S-3 is held at run by S-5 \(draft, needs done\)\. F-5 comes first; it unblocks F-3\./,
+  );
 
   ({ dir } = unitBacklog({ deps: { 'S-3': 'S-5', 'S-5': 'S-11' } }));
   r = next(dir);
   assert.equal(r.stdout, 'S-11\n');
   assert.match(
     r.stderr,
-    /F-3 \(ranked 1\) is held: S-3 depends on S-5 \(draft\), then S-5 depends on S-11 \(draft\)\. S-11 comes first; it unblocks F-3\./,
+    /F-3 \(ranked 1\) is held: S-3 is held at run by S-5 \(draft, needs done\), then S-5 is held at run by S-11 \(draft, needs done\)\. S-11 comes first; it unblocks F-3\./,
   );
 
   // A dependency inside the feature holds nothing; a done one neither.
@@ -212,7 +215,7 @@ test("nextPlan() returns bl next's pick, the ranked units with their holds and h
   assert.equal(plan.pick.unit.id, next(dir).stdout.trim());
   assert.equal(plan.pick.unit.id, 'F-5');
   assert.equal(plan.pick.from.id, 'F-3');
-  assert.deepEqual(plan.pick.path, ['S-3 depends on S-5 (draft)']);
+  assert.deepEqual(plan.pick.path, ['S-3 is held at run by S-5 (draft, needs done)']);
   assert.deepEqual(
     plan.ranked.map(({ position, id, title, status, points, holds, heldBy }) => ({
       position,
@@ -230,7 +233,7 @@ test("nextPlan() returns bl next's pick, the ranked units with their holds and h
         title: 'Unit order',
         status: 'draft',
         points: 1,
-        holds: ['S-3 depends on S-5 (draft)'],
+        holds: ['S-3 is held at run by S-5 (draft, needs done)'],
         heldBy: ['F-5'],
       },
       { position: 2, id: 'S-10', title: 'Loose tool', status: 'draft', points: 1, holds: [], heldBy: [] },

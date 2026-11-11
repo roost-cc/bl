@@ -2,8 +2,8 @@
  * fix.js — apply auto-fixable remediations for `bl validate` findings.
  *
  * No code is supported today. The one there was, `asymmetric-dep`, went with
- * F-77 D3: an edge is stated once, on the dependent story's `depends_on`, and
- * its inverse is derived, so there is no second copy to repair. The command
+ * F-77 D3: an edge is stated once, today in `blockers.json` (F-111), and its
+ * inverse is derived, so there is no second copy to repair. The command
  * and its contract stay (feature F-77 Q1): it scans the stories, judges
  * `--story` and `--theme` against them, and prints its empty report.
  *
@@ -149,8 +149,8 @@ const HELP = `Usage: bl fix [--code <code>] [--theme <slug>] [--story <id>]
 
 Apply auto-fixable remediations for findings that bl validate
 reports. No code is supported today: asymmetric-dep went with
-F-77 (an edge is stated once, on the dependent story's
-depends_on), so every run reports nothing to fix.
+F-77 (an edge is stated once, today in blockers.json), so
+every run reports nothing to fix.
 
 Options:
   --code <code>     Restrict to one finding code. Repeatable.

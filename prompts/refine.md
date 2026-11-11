@@ -41,7 +41,11 @@ Backlog repo : {{backlogDir}}
      that repo (its home component when no other fits). A story names no repo of its own.
    - Set `type:` (feature, bug, or chore).
    - Estimate `points:` (1, 2, 3, 5, 8, or 13).
-   - Add `depends_on:` story IDs if this work needs other stories first.
+   - If this work needs other stories first, add one edge per story to `blockers.json`, the one
+     place for holds and order:
+     `bl block add <S-id> --gate run --unit {{storyId}} --until done`. When both stories are in
+     one feature, use `--gate order --until implemented`. `bl block add` commits the edge. Never
+     write `depends_on:` in the story file.
    - Set `effort:` by **Effort level** below, and write the `**Effort:** <level>: <reason>` line
      as the first line of the Implementation Plan.
 
@@ -49,8 +53,9 @@ Backlog repo : {{backlogDir}}
    them.
 
 7. A story works in one repo. The work may also need a change in another repo.
-   That change is another story in a component of that repo (`bl new <C-id>`), linked by `depends_on`
-   (one story per repo). You may read other repos to plan it.
+   That change is another story in a component of that repo (`bl new <C-id>`), linked by an edge in
+   `blockers.json` (`bl new <C-id> --required-for {{storyId}}`, or `bl block add`; one story per
+   repo). You may read other repos to plan it.
 
 8. Format each file you changed with the formatter for its extension. The **Format and lint**
    section below gives the exact command. Use **relative paths** from cwd.

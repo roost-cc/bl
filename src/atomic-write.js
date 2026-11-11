@@ -23,16 +23,18 @@
 import {
   chmodSync,
   chownSync,
+  existsSync,
   linkSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'fs';
-import { basename, join } from 'path';
+import { basename, join, relative } from 'path';
 import { warn } from './config.js';
 
 /** Staging directory under the backlog root. */
@@ -189,4 +191,41 @@ export function atomicWriteFile(
       warn(`could not remove staging file ${tmp} after a write: ${u.message}`);
     }
   }
+}
+
+/**
+ * Undo for the files a write touched, run when the commit could not be
+ * reached: each path is put back as it was (removed when it was not there),
+ * and a path that is as it was is left alone. Every path is tried, whatever
+ * fails before it. `undo(cause)` returns `cause` when all were put back, else an error naming `cause` and each path left changed,
+ * with what to do; its `unrecovered` holds each such path's text before
+ * (`null`: it was not there). `bl task` (`task.js`), the edge writes
+ * (`allOrNothing` in `block.js`) and `bl attach` share it.
+ * @param {string} root  the backlog root, for the paths the error names
+ * @param {string[]} paths
+ * @param {string} [left]  what a path left changed means, for the error
+ */
+export function snapshot(root, paths, left = '') {
+  const was = new Map(paths.map((p) => [p, existsSync(p) ? readFileSync(p, 'utf8') : null]));
+  return (cause) => {
+    const unrecovered = [];
+    for (const [p, text] of was) {
+      try {
+        // A path the write never touched is not rewritten, so it cannot fail.
+        if ((existsSync(p) ? readFileSync(p, 'utf8') : null) === text) continue;
+        if (text == null) rmSync(p, { force: true });
+        else atomicWriteFile(root, p, text);
+      } catch (e) {
+        unrecovered.push({ path: p, text, error: e.message });
+      }
+    }
+    if (unrecovered.length === 0) return cause;
+    const what = unrecovered.map(({ path, text, error }) => {
+      const rel = relative(root, path);
+      return `${rel} (${error}): ${text == null ? 'remove it' : `put it back with git -C "${root}" checkout -- ${rel}`}`;
+    });
+    const err = new Error(`${cause.message}; and could not undo the write${left}: ${what.join('; ')}`, { cause });
+    err.unrecovered = unrecovered;
+    return err;
+  };
 }

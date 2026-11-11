@@ -282,6 +282,7 @@ test('unitFiles does not schedule from a partial multi-repository branch diff', 
       // A target planning b:shared.js waits for F-1 even though F-1's readable diff never names it.
       const s2 = { kind: 'story', id: 'S-2', record: { id: 'S-2', status: 'refined' } };
       const { start, deferred } = schedule([f1, s2], [...all, s2.record], flow, {
+        config,
         files: (u) => (u === f1 ? unitFiles(f1, config, all) : new Set(['b:shared.js'])),
       });
       assert.deepEqual(
@@ -475,7 +476,7 @@ test('planFiles preserves valid repository paths with spaces and punctuation and
     const make = (id, spans) => {
       const indexPath = join(root, `${id}.md`);
       writeFileSync(indexPath, `---\nstory_id: ${id}\n---\n\n${plan(...spans.map((s) => `- edit \`${s}\``))}`);
-      return { id, indexPath, unitRepo: 'bl', status: 'refined', depends_on: '' };
+      return { id, indexPath, unitRepo: 'bl', status: 'refined' };
     };
     for (const [span, want, why] of PATH_CASES) {
       assert.deepEqual(
@@ -492,7 +493,10 @@ test('planFiles preserves valid repository paths with spaces and punctuation and
       const a = make('S-1', ['src/unrelated.js', span]);
       const b = make('S-2', [span.trim()]);
       const units = [a, b].map((record) => ({ kind: 'story', id: record.id, record }));
-      const { start, deferred } = schedule(units, [a, b], flow, { files: (u) => planFiles([u.record]) });
+      const { start, deferred } = schedule(units, [a, b], flow, {
+        config: { backlogRoot: root },
+        files: (u) => planFiles([u.record]),
+      });
       assert.deepEqual(
         start.map((u) => u.id),
         ['S-1'],
@@ -509,7 +513,7 @@ test('planFiles preserves valid repository paths with spaces and punctuation and
       [dir, file].map((record) => ({ kind: 'story', id: record.id, record })),
       [dir, file],
       flow,
-      { files: (u) => planFiles([u.record]) },
+      { config: { backlogRoot: root }, files: (u) => planFiles([u.record]) },
     );
     assert.deepEqual(
       deferred.map((d) => d.id),

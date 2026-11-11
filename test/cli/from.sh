@@ -188,13 +188,18 @@ if [[ -f "$STORIES/S1-bootstrap-shared-config/index.md" ]]; then pass; else fail
 if [[ -f "$STORIES/S2-reusable-ci-workflow/index.md" ]]; then pass; else fail "story S-2 missing"; fi
 if [[ -f "$STORIES/S3-repo-template/index.md" ]]; then pass; else fail "story S-3 missing"; fi
 
-# Placeholder substitution: S-3's frontmatter should list S-1, S-2, and it
-# takes the component, whose repo is the story's: no repo field (F-52 D1).
+# Placeholder substitution: S-3 waits for S-1 and S-2 through run edges in
+# blockers.json, never a depends_on: key (F-111 D5), and it takes the
+# component, whose repo is the story's: no repo field (F-52 D1).
 TEMPLATE_FM=$(head -20 "$STORIES/S3-repo-template/index.md")
 case "$TEMPLATE_FM" in
-  *"depends_on: [S-1, S-2]"*) pass ;;
-  *) fail "template story depends_on substitution: $TEMPLATE_FM" ;;
+  *"depends_on"*) fail "template story writes no depends_on: $TEMPLATE_FM" ;;
+  *) pass ;;
 esac
+for edge in '{"blocker":"S-1","gate":"run","unit":"S-3","until":"done"}' \
+  '{"blocker":"S-2","gate":"run","unit":"S-3","until":"done"}'; do
+  if grep -qF "$edge" "$TMPDIR_ROOT/blockers.json"; then pass; else fail "template story edge $edge"; fi
+done
 case "$TEMPLATE_FM" in
   *"primary_repo"*) fail "template story writes no primary_repo: $TEMPLATE_FM" ;;
   *"component: C01"*) pass ;;
@@ -302,22 +307,29 @@ case $(cat "$se") in
   *) fail "expected unknown bare-ID warning on stderr (got: $(cat "$se"))" ;;
 esac
 
-# Mixed list rendered as a flow sequence.
+# A bare id is an edge; the unknown S-9999 is skipped (F-111 D5).
 EXTRA_FM=$(head -20 "$STORIES/S4-extra-story/index.md")
 case "$EXTRA_FM" in
-  *"depends_on: [S-1, S-9999]"*) pass ;;
-  *) fail "extra depends_on render: $EXTRA_FM" ;;
+  *"depends_on"*) fail "extra writes no depends_on: $EXTRA_FM" ;;
+  *) pass ;;
 esac
+if grep -qF '{"blocker":"S-1","gate":"run","unit":"S-4","until":"done"}' "$TMPDIR_ROOT/blockers.json" &&
+  ! grep -qF 'S-9999' "$TMPDIR_ROOT/blockers.json"; then
+  pass
+else
+  fail "extra edges: $(cat "$TMPDIR_ROOT/blockers.json")"
+fi
 case "$EXTRA_FM" in
   *"primary_repo"*) fail "extra writes no primary_repo: $EXTRA_FM" ;;
   *"component: C00"*) pass ;;
   *) fail "extra takes the spec's component C00: $EXTRA_FM" ;;
 esac
 MORE_FM=$(head -20 "$STORIES/S5-more-work/index.md")
-case "$MORE_FM" in
-  *"depends_on: [S-4]"*) pass ;;
-  *) fail "more @extra resolved to S-4: $MORE_FM" ;;
-esac
+if grep -qF '{"blocker":"S-4","gate":"run","unit":"S-5","until":"done"}' "$TMPDIR_ROOT/blockers.json"; then
+  pass
+else
+  fail "more @extra resolved to S-4: $(cat "$TMPDIR_ROOT/blockers.json")"
+fi
 case "$MORE_FM" in
   *"primary_repo"*) fail "more writes no primary_repo: $MORE_FM" ;;
   *"component: C01"*) pass ;;

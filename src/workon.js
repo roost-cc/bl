@@ -9,8 +9,9 @@
  * Several targets are scheduled by verbs.js, which opens one tmux window per
  * started story (F-35 decision J); this module works on one story.
  *
- * Dependency gating: a story is only launched when every `depends_on` is
- * already closed (i.e. merged).
+ * Dependency gating: a story is only launched when every story it waits for
+ * (the blockers of the run and order edges on it, `storyDependencies` of
+ * `readEdges`, F-111 D4) is already closed (i.e. merged).
  */
 
 import { existsSync, readFileSync } from 'fs';
@@ -26,14 +27,7 @@ import {
   normalizeId,
   normalizeComponentId,
 } from './config.js';
-import {
-  findStoryDir,
-  findComponentDir,
-  readAllStories,
-  parseIdList,
-  refuseStoryRepo,
-  storyRepoOrExit,
-} from './story.js';
+import { findStoryDir, findComponentDir, readAllStories, refuseStoryRepo, storyRepoOrExit } from './story.js';
 import {
   ensureWorktree,
   installDeps,
@@ -46,6 +40,7 @@ import {
   launchSession,
 } from './session.js';
 import { featureSessionVars } from './feature.js';
+import { readEdges, storyDependencies } from './blockers.js';
 import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { applyFixOutcome, openUnitChange, readChange, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
@@ -80,8 +75,8 @@ export function idNum(id) {
  * outrank component-expanded ones on dedup.
  *
  * Each resolved target is then classified:
- *   - `startable` — every `depends_on` is already closed.
- *   - `deferred`  — at least one `depends_on` is unmet; `blockers` lists them.
+ *   - `startable` — every story it waits for is already closed.
+ *   - `deferred`  — at least one is not; `blockers` lists them.
  * A dependency that is itself a not-yet-merged story (even one in the same
  * batch) is unmet, so the dependent defers.
  *
@@ -142,9 +137,9 @@ export function resolveWorkonTargets(positionals, config) {
 
   const startable = [];
   const deferred = [];
+  const waits = storyDependencies(readEdges(config));
   for (const t of byId.values()) {
-    const deps = parseIdList(t.depends_on);
-    const blockers = deps.filter((d) => !closed(statusById.get(d)));
+    const blockers = (waits.get(t.id) ?? []).filter((d) => !closed(statusById.get(d)));
     if (blockers.length === 0) startable.push(t);
     else deferred.push({ ...t, blockers });
   }

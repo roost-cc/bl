@@ -24,7 +24,7 @@ import { renderTabTitle, TAB_TITLE_ENV, unitTitleFields } from './tab-title.js';
 import { readAllStories } from './story.js';
 import { classifyId, resolveTargets } from './targets.js';
 import { schedule, dependencyOrder, byId } from './schedule.js';
-import { heldBy, readBlockers, readUnits } from './blockers.js';
+import { heldBy, readEdges, readUnits } from './blockers.js';
 import { loadFlow } from './flow.js';
 import { RUN_DIR, ensureRunDir, escalationOpen, loadRunState, readFm, reviewEnd } from './feature-run.js';
 import { reviewOf } from './transition.js';
@@ -330,13 +330,14 @@ export async function dispatch(verb, argv) {
 export const GATED_VERBS = new Set(['run', 'implement']);
 
 /**
- * The targets an unmet `blockers.json` edge holds at a gate `verb` checks
- * (F-66 D3), each with one line per edge and its blockers. Units are read
- * once, and only when the file has an edge.
+ * The targets an unmet edge (`readEdges`: `blockers.json`'s and the
+ * `depends_on:` keys') holds at a gate `verb` checks (F-66 D3), each with
+ * one line per edge and its blockers. Units are read once, and only when
+ * there is an edge.
  * @returns {Array<{ id: string, kind: string, lines: string[], blockers: string[] }>}
  */
 export function heldTargets(verb, targets, config) {
-  if (readBlockers(config.backlogRoot).edges.length === 0) return [];
+  if (readEdges(config).length === 0) return [];
   const units = readUnits(config);
   const out = [];
   for (const t of targets) {

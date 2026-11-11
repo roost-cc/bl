@@ -9,7 +9,7 @@
 #   - exit codes: 0 (clean), 2 (bad args)
 #   - S-858: unknown options / positionals exit 2 before anything is written.
 #   - F-77 D3: no code is supported (asymmetric-dep is gone: an edge is stated
-#     once, on the dependent story), so every run prints the empty report.
+#     once, today in blockers.json), so every run prints the empty report.
 #
 # Run from the bl repo root:
 #   bash test/cli/fix-streams.sh

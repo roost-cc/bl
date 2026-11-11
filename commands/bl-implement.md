@@ -41,7 +41,8 @@ whose `transitions:` is malformed.
 
 ## Dependency gating
 
-A story is only launched when every `depends_on` is already `done`/`superseded`
+A story is only launched when every story it waits for (the blockers of the run
+and order edges on it in `blockers.json`) is already `done`/`superseded`
 (i.e. **merged**). A dependency that is itself one of the targets counts as
 unmet until its PR merges, so the dependent is **deferred** and reported, not
 launched. So is a target whose files (its branch diff, else the backticked paths

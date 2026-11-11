@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
-import { findFeature, normalizeFeatureId, resolveFeatureStories, orderStoriesByDeps } from '../../src/feature.js';
+import { findFeature, normalizeFeatureId, resolveFeatureStories } from '../../src/feature.js';
 import { mkTempBacklog, mkTempDir } from './tempdir.js';
 import { parseChange, serializeChange } from '../../src/change-doc.js';
 import { storyUnit, storyAsOrdered, unitVars } from '../../src/unit.js';
@@ -51,8 +51,7 @@ export function setup(extra, backlogConfig = null) {
   const { dir, cleanup } = fixture(extra, backlogConfig);
   const config = loadConfig({ backlogRoot: dir });
   const feature = findFeature(normalizeFeatureId('F-1'), config);
-  const all = readAllStories(config);
-  const ordered = orderStoriesByDeps(resolveFeatureStories(feature, config, all).stories);
+  const ordered = resolveFeatureStories(feature, config).stories;
   const worktreePath = mkTempDir('bl-wt-');
   const prep = {
     cfg: config,

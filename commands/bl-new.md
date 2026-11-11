@@ -16,8 +16,8 @@ repo; no repo is written on the story or on a feature.
 | `--title`        | Yes      | Short story title (used in index tables)                                 |
 | `--points`       | Yes      | Fibonacci story points: 1, 2, 3, 5, 8, 13                                |
 | `--type`         | No       | Story type (default: `feature`). E.g. feature, bug                       |
-| `--depends-on`   | No       | Comma-separated story IDs this depends on (repeatable)                   |
-| `--required-for` | No       | Story IDs this unblocks: adds the new id to their `depends_on`           |
+| `--depends-on`   | No       | Story IDs this waits for: an edge in `blockers.json` each (repeatable)   |
+| `--required-for` | No       | Story IDs that wait for this: the same edges, the other way              |
 | `--json`         | No       | Emit JSON to stdout (schema `bl-new-json/v2`); human output → stderr     |
 | `--from`         | No       | Batch mode: read N stories (and optionally a new component) from a spec  |
 | `--dry-run`      | No       | With `--from`: validate spec and print the plan, write nothing           |
@@ -56,6 +56,10 @@ the stories' component (`"component": "C32"`, or `{ "repo", "title", "body_file"
 one) and one entry per story (placeholder id, title, points, body_file, optional
 type/component/depends_on/required_for). Sibling cross-references use `@<placeholder>` and
 resolve to the assigned `S-<n>` IDs before any file is written.
+
+`bl new` writes no `depends_on:` to a story file. Each dependency is an edge in `blockers.json`,
+the one place for holds and order: an order edge between two stories of one feature, else a run
+edge that holds the story until the other is done.
 
 ```bash
 bl new --from plan.json

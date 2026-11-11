@@ -59,8 +59,8 @@ from the shorter `story-feature` template.
 | `type`         | string   | no       | Default `feature`                                         |
 | `body_file`    | string   | yes      | Path to markdown body, no frontmatter                     |
 | `component`    | string   | no       | An existing `C<nn>` for this story instead of the spec's  |
-| `depends_on`   | string[] | no       | Mix of `@<placeholder>` and bare `S-<n>`                  |
-| `required_for` | string[] | no       | Same syntax; written as the others' `depends_on`          |
+| `depends_on`   | string[] | no       | Mix of `@<placeholder>` and bare `S-<n>`; input only      |
+| `required_for` | string[] | no       | Same syntax, the other way; input only                    |
 
 A story's `component` override lets one spec cut a feature's stories across
 several components (and so several repos); the story's repo is the
@@ -74,16 +74,19 @@ Inside `depends_on` / `required_for`:
   field. Resolved to the assigned `S-<n>` before the story is written.
   Unknown placeholders fail validation (exit 2). The leading `@` is
   required to disambiguate placeholders from real IDs.
-- `S-<n>` — bare story ID, passed through unchanged. Unknown bare IDs
-  warn but do not block (consistent with `bl new --depends-on`).
+- `S-<n>` — bare story ID, passed through unchanged. An unknown bare ID
+  warns and gets no edge (as with `bl new --depends-on`).
 
-An edge is stated once, on the dependent story (F-77 D3): a story's
-`depends_on`. Its inverse, the stories a story is required for, is derived and
-never stored. Declare each edge on one side only; `depends_on` on the later
-story is the usual way. `required_for` is input only: `bl new` appends the
-story's new id to the `depends_on` of each story it names (a sibling's as it
-is written, an existing story's in its `index.md`, committed with the batch)
-and writes no `required_for:`.
+`blockers.json` is the one place for holds and order (F-111 D5), and both
+fields are input only: no story file gets `depends_on:` or `required_for:`.
+`bl new` writes each dependency as an edge in `blockers.json`, in the commit
+of the batch: an order edge (`gate: order`, until `implemented`) when both
+stories are in one feature, else a run edge (`gate: run`, until `done`). A
+story's `depends_on` names the stories it waits for; its `required_for` names
+the stories that wait for it. Declare each dependency on one side only;
+`depends_on` on the later story is the usual way. An edge that `bl block add`
+would refuse (one that closes a deadlock) fails the whole batch, and nothing
+is written.
 
 Mixed lists are allowed: `["@bootstrap", "S-379"]`.
 
@@ -186,5 +189,5 @@ written.
 - `bl/templates/spec.example.existing-component.json` — existing component
   (`"component": "C32"`) + 2 stories, one of them in another component
   (`"component": "C31"`): `metrics` states its edge to `dashboard` as
-  `required_for` (written as `dashboard`'s `depends_on`, beside its bare
-  `S-379`).
+  `required_for`, and `dashboard` its edge to the existing `S-379` as
+  `depends_on`; both are written to `blockers.json`.

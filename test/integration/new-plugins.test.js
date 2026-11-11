@@ -61,7 +61,7 @@ test('bl new --plugins-from copies plugins-* keys verbatim from a same-repo stor
 
 test('bl new --plugins-from accepts a lowercase id and copies list values as sequences', () => {
   // A flow list and a block list both come through the parsed object, so the
-  // new block writes each as a flow sequence (F-62 D3), before `depends_on:`.
+  // new block writes each as a flow sequence (F-62 D3), at the block's end.
   const listFm = 'plugins: [a, b]\nplugins-test:\n  - bl-tests\n  - extra\nplugins-lint: [-foo]\n';
   const { dir, cleanup } = pluginsBacklog({ extraFm: listFm });
   try {
@@ -69,7 +69,7 @@ test('bl new --plugins-from accepts a lowercase id and copies list values as seq
     assert.equal(r.status, 0, r.stderr);
     const fmText = childFrontmatter(dir);
     const written = 'plugins: [a, b]\nplugins-test: [bl-tests, extra]\nplugins-lint: [-foo]\n';
-    assert.ok(fmText.includes(`added: ${new Date().toISOString().slice(0, 10)}\n${written}depends_on:`), fmText);
+    assert.ok(fmText.includes(`added: ${new Date().toISOString().slice(0, 10)}\n${written}`), fmText);
   } finally {
     cleanup();
   }

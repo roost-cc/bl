@@ -26,8 +26,10 @@ Each sub-agent refines exactly one story, on its own. It does these steps:
 1. It reads the story file and explores the relevant repo or repos.
 2. It fills in the summary, the acceptance criteria and the implementation plan, with the plan's
    `### Sources of truth` part.
-3. It updates the frontmatter (type, points, depends_on, component, effort), and writes the
-   `**Effort:** <level>: <reason>` line as the first line of the implementation plan.
+3. It updates the frontmatter (type, points, component, effort), and writes the
+   `**Effort:** <level>: <reason>` line as the first line of the implementation plan. It writes
+   each story its story waits for as an edge in `blockers.json`, the one place for holds and
+   order (`bl block add`), never as `depends_on:`.
 4. It formats each file it changed.
 5. It commits its story through the locked `bl validate` → `bl sync --commit` flow that its file
    describes.

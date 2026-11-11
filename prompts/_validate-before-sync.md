@@ -7,10 +7,11 @@ edits:
 1. **Validate.** Run `bl validate`. It is read-only and checks the whole backlog.
 2. **Fix what you touched.** Resolve every finding on a story you created or edited in this
    session, including child stories from `bl new`. Fix the story itself. Do not add frontmatter
-   keys or story fields to explain a change. A dependency is stated once, on the dependent
-   story's `depends_on`. bl derives the stories that a story is required for and never writes
-   them, so there is no reverse edge to add. `bl new --required-for` writes its edge on the other
-   story's `depends_on` and names that file in its output.
+   keys or story fields to explain a change. A dependency is an edge in `blockers.json`, the one
+   place for holds and order, never a `depends_on:` or `required_for:` key in a story file.
+   `bl new --depends-on` and `--required-for` write the edge with the new story, and
+   `bl block add` writes one for stories that exist; each commits it. There is no reverse edge
+   to add.
 3. **Surface, do not fix, the rest.** A finding on a story you did not touch is pre-existing.
    Leave that story alone and mention the finding in your final report.
 4. **Re-run** `bl validate` until nothing is left on the stories you touched.
