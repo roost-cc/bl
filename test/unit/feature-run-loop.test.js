@@ -38,6 +38,7 @@ import {
   statusOf,
 } from '../helpers/feature-run-fixture.js';
 import { fixTestsOutcome, reviewOutcome } from '../helpers/outcomes.js';
+import { NO_MARKERS } from '../../src/test-excerpt.js';
 import { validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
 import { reviewOf, statusOf as logStatusOf, transition } from '../../src/transition.js';
@@ -451,6 +452,24 @@ test('a test gate that fails twice escalates with the log and never opens a PR',
       order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])),
       `details in order: ${esc}`,
     );
+  } finally {
+    cleanup();
+  }
+});
+
+test('a test gate with no failure marker keeps the NO_MARKERS note in its excerpt section (S-1499)', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: { shell: (cmd) => (cmd === 'npm test' ? { status: 1, output: 'building…\nexit 1\n' } : null) },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    const at = esc.indexOf(`Failure excerpt:\n\n\`\`\`text\n${NO_MARKERS}\n\`\`\``);
+    assert.ok(at >= 0 && esc.indexOf('Last 30 lines:') > at, esc);
   } finally {
     cleanup();
   }
