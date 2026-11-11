@@ -390,7 +390,7 @@ backlog lock and need `atomicWriteFile` only.
   other writer lets the error propagate, so a write that could not happen fails the command
   instead of being lost.
 - **Lock order.** The backlog lock (`lock.js`) is the outer lock, a spec lock the inner one:
-  `bl merge`, `bl new --required-for` and `persistLandedCommits` take the spec lock per file inside the
+  `bl merge`, `bl new --feature … S-n`, `bl attach` and `persistLandedCommits` take the spec lock per file inside the
   backlog lock. Nothing takes the backlog lock while holding a spec lock, and nothing holds two
   spec locks at once. A caller that adds a spec lock says so in a comment at the call.
 - **Who is on it.** The token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
@@ -401,8 +401,9 @@ backlog lock and need `atomicWriteFile` only.
   transcript totals collected inside the hold; a collection failure is non-fatal, a write
   failure fails `bl done`). `persistLandedCommits` keeps its `read`/`write` seams and runs them
   inside `withSpecLock`, using `readSpecText` and `specText` (`spec-file.js`) for the same CRLF
-  and fence handling. `bl new`'s `--required-for` and a spec's `required_for` append to the
-  other story's `depends_on:` through `updateSpecFile`, inside the backlog lock `bl new` holds. A new feature's file is written
+  and fence handling. `bl new` writes no other story's file: its `--depends-on`,
+  `--required-for` and a spec's `depends_on` / `required_for` are edges in `blockers.json`
+  (F-111 D5). A new feature's file is written
   with `atomicWriteFile`. The run loop's writers (`writeEscalation`, `recordStoryRunFields`) and
   `bl updates`' (`recordMerge`, `recordOutcome`, `dropStory`, the request write in
   `requestUpdate`, and `syncUpdates`' refresh and close, which apply their change to the spec
@@ -1005,18 +1006,40 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
   `implemented`). A cycle of one feature's order edges is `blockers-cycle`
   (`story order cycle: …`); `bl block add` refuses the edge that would close one.
   `bl block list F-1` lists them as `order edge S-1 → S-2: S-2 is implemented after S-1`.
-- **`depends_on:` as edges** (F-111 D4, D5). Every hold and order lives here. Until
-  `scripts/migrate-depends-on.js` moves them (S-1456), each `depends_on:` entry still in a
-  story file is read as the edge it stands for (`dependsOnEdges`, the read adapter of R4):
-  `S-a depends_on S-b` is the order edge `S-b → S-a` when both name one feature, else the run
-  edge `{"blocker":"S-b","gate":"run","unit":"S-a","until":"done"}`, which holds `S-a` (and its
-  feature) at `run` until `S-b` is done. An entry that names no story still gives a run edge,
-  so it holds, and the graph reports it `dangling-dep`. `readEdges(config)` is the one call
-  every reader makes: the file's edges, then the keys' edges whose identity the file lacks
-  (`withDependsOn`, an edge in the file wins), as the backlog graph holds them (`edges`).
-  `bl validate` warns `depends-on-key` for each story file that still holds the key, empty or
-  not. `bl block add` and `bl block list` read and write the file's edges alone; `bl block add`
-  checks a cycle against `readEdges`.
+- **Story dependencies are edges** (F-111 D4, D5). `blockers.json` is the one place for
+  holds and order; a unit file holds no `depends_on:` and no `required_for:`. "Story `S-a`
+  waits for `S-b`" is `dependencyEdge(S-b, S-a, featureOf)`: the order edge `S-b → S-a` when
+  both are in one feature, else the run edge
+  `{"blocker":"S-b","gate":"run","unit":"S-a","until":"done"}`, which holds `S-a` (and its
+  feature) at `run` until `S-b` is done.
+  - **The writers.** `bl new --depends-on` / `--required-for` and a spec's `depends_on` /
+    `required_for` (input only) write these edges once the new stories are in place, through
+    `writeEdges` (`block.js`: `writeEdge`'s checks for each, all or nothing), under the lock
+    that wrote the stories, and `blockers.json` joins their commit. An unknown id warns and
+    gets no edge. A refused edge (a deadlock) or a failed write puts `blockers.json` back and
+    removes the new stories, so the same `bl new` runs again with the same ids. When stories
+    join a feature (`bl new --feature … S-n`, `bl attach`), `orderJoinedEdges` turns each run
+    edge between one of them and a story of that feature into an order edge, in the same
+    commit. The story templates have no `depends_on:`.
+  - **The read adapter (R4).** Until `scripts/migrate-depends-on.js` moves them, each
+    `depends_on:` entry still in a story file is read as its `dependencyEdge`
+    (`dependsOnEdges`). An entry that names no story still gives a run edge, so it holds, and
+    the graph reports it `dangling-dep`. `readEdges(config)` is the one call every reader
+    makes: the file's edges, then the keys' edges whose identity the file lacks
+    (`withDependsOn`, an edge in the file wins), as the backlog graph holds them (`edges`).
+    `bl validate` warns `depends-on-key` for each story file that still holds the key, empty
+    or not. `bl block add` and `bl block list` read and write the file's edges alone;
+    `bl block add` checks a cycle against `readEdges`.
+  - **The migration** (`scripts/migrate-depends-on.js`, `src/migrate-depends-on.js`, Decision
+    A3; the operator runs it after `bl merge F-111`, task T-72). It writes each entry's edge
+    that `blockers.json` lacks, and lists an entry `bl block add` would refuse (an id that is
+    no story). It then re-reads the file and removes a story's `depends_on:` only when every
+    edge the key gives is there; a story that does not match keeps its key and is listed in
+    MIGRATION.md with the missing edges, and a later run removes the key once that is fixed.
+    It removes `required_for:` and an empty `depends_on:` from every story, closed ones too,
+    through `planText` (`migrate-derived-keys.js`), and commits once
+    (`migration-txn.js`). `--dry-run` prints the counts. Since `readEdges` gives the file's
+    edge where a key gave the same identity, every verb reads the same edges after it.
 - **The schema.** bl reads `bl-blockers/v1` (the same shape, with no merge or order edge) and
   `bl-blockers/v2`, and writes `v2` (`BLOCKERS_SCHEMA`, `BLOCKERS_SCHEMAS`); the merge driver
   reads either side. A sorted `v1` file is no `blockers-order` finding.
@@ -1069,7 +1092,8 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
   `gateIds`, `gatesAt`, `heldBy`, `heldLines`, `edgeProblems` (the per-edge checks `bl block add`
   and `bl validate` share), `holdGraph`, `findHoldCycles`, `wouldCycle`, `findBlockersFindings`,
   for merge and order edges `repoEnd`, `mergeEdgeLabel`, `inFeature`, `featureMergeEdges` and
-  `featureGraph`, and for `depends_on:` `dependsOnEdges`, `withDependsOn`, `readEdges` and
+  `featureGraph`, and for story dependencies `dependencyEdge` (the edge "S-a waits for S-b"
+  stands for, `RUN_EDGE` or `ORDER_EDGE`), `dependsOnEdges`, `withDependsOn`, `readEdges` and
   `storyDependencies` (each story's dependencies from the run and order edges between two
   stories, which the graph's `dependsOn`, `schedule`, `dependencyOrder` and `bl implement S-n`'s
   deferral read).
@@ -2446,12 +2470,13 @@ Highlights:
 - `stories[].id` is a **placeholder** name (e.g. `bootstrap`), not a real ID.
 - Cross-refs in `depends_on` / `required_for` use `@<placeholder>` for
   siblings in the spec, or bare `S-<n>` for already-existing stories.
-- An edge is stated once, on the dependent story (F-77 D3). `required_for` is
-  input only: each story it names gets the new id appended to its
-  `depends_on:` (a sibling's as it is rendered, an existing story's in its
-  file, committed with the batch); no `required_for:` is written. An unknown
-  bare id warns and is skipped. `bl new --required-for` does the same for one
-  story.
+- `depends_on` and `required_for` are input only (F-111 D5): `bl new` writes
+  each as an edge in `blockers.json` once the batch is in place (an order edge
+  when both stories are in one feature, else a run edge), and `blockers.json`
+  joins the batch's commit; no story file gets `depends_on:` or
+  `required_for:`. The plan lists the edges. An unknown bare id warns and gets
+  no edge. A refused edge undoes the batch. `bl new --depends-on` and
+  `--required-for` do the same for one story.
 - `body_file` paths resolve against the spec file's directory. Body files
   must not contain frontmatter.
 - Validation errors exit **2** with messages keyed by spec path
@@ -2557,12 +2582,16 @@ bl attach <S-n> <F-n> [--no-sync] [--json]
   branches and worktrees, so before the feature runs a story in a new repo
   simply joins it. The message names `bl side <repo> --from F-<n>` as the way
   to bring a repo in; attach prepares no worktree and stays a backlog edit.
-- **Commit.** `syncAndCommit` of the story directory:
-  `chore: attach S-<n> to F-<n>`. `--no-sync` writes the
+- **Order edges.** Each run edge in `blockers.json` between the story and a
+  story of the feature becomes an order edge (`orderJoinedEdges`, F-111 D5),
+  since a run edge inside one feature would hold the feature on itself. If
+  that write fails, the story gets its old text back and attach exits 1.
+- **Commit.** `syncAndCommit` of the story directory, with `blockers.json`
+  when an edge changed: `chore: attach S-<n> to F-<n>`. `--no-sync` writes the
   story under the lock and commits nothing, as `bl new --no-sync` does.
-- **Failure.** Attach creates nothing and writes one file, so there is no
-  repair record (`feature-links.js`): the story is written through
-  `updateSpecFile`, and a write that fails part way leaves it whole.
+- **Failure.** Attach creates nothing, so there is no repair record
+  (`feature-links.js`): the story is written through `updateSpecFile`, and a
+  write that fails part way leaves it whole.
 - **In the blocked-by-bug prompt** (`prompts/_blocked-by-bug.md`), an agent
   whose bug already has a story runs `bl attach S-<id> <F-n> --no-sync` in
   place of `bl new`. A repo outside the feature goes through `bl side`
@@ -2797,7 +2826,7 @@ no `repo` makes `bl implement` / `bl run` / `bl merge` exit 1 naming the
 component (`storyRepoOrExit`, `story.js`). `bl implement`, `bl review`,
 `bl merge` and `bl run` refuse `--repo` (`-r`) on a story as an unknown option
 (`refuseStoryRepo`). Work in another repo is another story in a component of
-that repo, linked by `depends_on` (`prompts/workon.md`, `story-run.md`,
+that repo, linked by an edge in `blockers.json` (`prompts/workon.md`, `story-run.md`,
 `workon-review.md`); in a feature, a repo no story of the feature is in is a
 missing story, which the agent escalates (`feature-story.md`,
 `feature-workon.md`).

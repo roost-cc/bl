@@ -45,6 +45,6 @@ test('the rubric holds the D6 levels and picks the lowest that fits', () => {
 test('refine-batch starts each sub-agent at the refine level and has it set effort:', () => {
   const text = prose(loadPrompt('refine-batch', VARS));
   assert.match(text, /Start each sub-agent at effort level `medium`/);
-  assert.match(text, /depends_on, component, effort/);
+  assert.match(text, /type, points, component, effort/);
   assert.doesNotMatch(text, /\{\{refineEffort\}\}/);
 });

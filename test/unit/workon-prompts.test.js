@@ -73,7 +73,10 @@ for (const [name, says] of [
   ['workon', /that\s+change is another story in a component of that repo \(one story per repo\)/],
   ['workon-review', /another story in a component of that repo \(one story per repo\)/],
   ['story-run', /A change in another repo is another story in a component of that repo \(one story per repo\)/],
-  ['refine', /That change is another story in a component of that repo\s+\(`bl new <C-id>`\), linked by `depends_on`/],
+  [
+    'refine',
+    /That change is another story in a component of that repo\s+\(`bl new <C-id>`\), linked by an edge in\s+`blockers\.json`/,
+  ],
 ]) {
   test(`${name} says a change in another repo is another story, not a secondary worktree`, () => {
     const text = render(name);
