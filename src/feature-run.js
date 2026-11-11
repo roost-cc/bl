@@ -50,6 +50,7 @@ import {
 import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
 import { spawnSync } from 'child_process';
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   parseFrontmatter,
@@ -549,7 +550,36 @@ export function formatPlan(feature, steps) {
 // Default runner (real side effects)
 // ---------------------------------------------------------------------------
 
+/** The environment variable that carries this bl's container-owner token to its steps. */
+export const CONTAINER_OWNER_ENV = 'BL_CONTAINER_OWNER';
+/** The label a test helper sets to that token on each container it creates. */
+export const CONTAINER_OWNER_LABEL = 'cc.roost.bl-owner';
+
+/**
+ * Parse `docker ps` lines (ID, name, compose project, owner label; tab-separated)
+ * into the container cleanup's snapshot. A container whose owner label names
+ * another bl is left out: two loops run at the same time, and one loop's
+ * cleanup must not remove the containers that the other loop's step uses. A
+ * container without the label is kept, as before.
+ * @param {string|null|undefined} stdout
+ * @param {string} owner - this bl's token
+ * @returns {{ id: string, name: string, compose: boolean }[]}
+ */
+export function parseContainerList(stdout, owner) {
+  return String(stdout ?? '')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => l.split('\t'))
+    .filter(([, , , label]) => !label || label === owner)
+    .map(([id, name, project]) => ({ id, name, compose: Boolean(project) }));
+}
+
 export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
+  // Every step this bl starts inherits the token. A test helper sets it as the
+  // CONTAINER_OWNER_LABEL of each container it creates, and listContainers
+  // leaves out containers that carry another bl's token.
+  const containerOwner = `${process.pid}-${randomUUID()}`;
+  process.env[CONTAINER_OWNER_ENV] = containerOwner;
   return {
     // An interactive run attaches each session and does not walk the list.
     interactive,
@@ -681,25 +711,26 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       return resolveFeaturePluginsReport('test', config, featureIndexPath, { componentEntry });
     },
     /**
-     * Every container on the host, with whether it belongs to a compose
-     * project. Null when docker is unavailable or the operator opted out with
-     * BL_KEEP_TEST_CONTAINERS=1 — the cleanup then does nothing.
+     * Every container on the host that no other bl owns, with whether it
+     * belongs to a compose project. Null when docker is unavailable or the
+     * operator opted out with BL_KEEP_TEST_CONTAINERS=1 — the cleanup then
+     * does nothing.
      */
     listContainers() {
       if (process.env.BL_KEEP_TEST_CONTAINERS === '1') return null;
       const r = spawnSync(
         'docker',
-        ['ps', '-a', '--no-trunc', '--format', '{{.ID}}\t{{.Names}}\t{{.Label "com.docker.compose.project"}}'],
+        [
+          'ps',
+          '-a',
+          '--no-trunc',
+          '--format',
+          `{{.ID}}\t{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "${CONTAINER_OWNER_LABEL}"}}`,
+        ],
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000 },
       );
       if (r.error || r.status !== 0) return null;
-      return String(r.stdout ?? '')
-        .split('\n')
-        .filter(Boolean)
-        .map((l) => {
-          const [id, name, project] = l.split('\t');
-          return { id, name, compose: Boolean(project) };
-        });
+      return parseContainerList(r.stdout, containerOwner);
     },
     removeContainers(ids) {
       const r = spawnSync('docker', ['rm', '-f', ...ids], {
