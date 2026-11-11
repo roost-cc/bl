@@ -135,6 +135,41 @@ test('--dry-run prints the edges, the files, the kept file and the counts, and w
   assert.deepEqual(statusLines(dir), []);
 });
 
+test('migrate --dry-run on a dirty work tree is refused, and so is a run that plans nothing or a backlog off origin/main', () => {
+  // [case, how the backlog is made unfit, script args, stderr says]
+  const dirty = (dir) => writeFileSync(join(dir, 'stray.txt'), 'x\n');
+  const cases = [
+    ['--dry-run on a dirty work tree', dirty, ['--dry-run'], /work tree is not clean \(\?\? stray\.txt\)/],
+    [
+      '--dry-run on a HEAD that is not origin/main',
+      (dir) => git(dir, 'commit', '-q', '--allow-empty', '-m', 'local'),
+      ['--dry-run'],
+      /is not origin\/main/,
+    ],
+    [
+      'a run that plans nothing, on a dirty work tree',
+      (dir) => {
+        assert.equal(script(dir).status, 0);
+        git(dir, 'push', '-q', 'origin', 'main');
+        dirty(dir);
+      },
+      [],
+      /work tree is not clean \(\?\? stray\.txt\)/,
+    ],
+  ];
+  for (const [name, unfit, args, message] of cases) {
+    const dir = oldBacklog();
+    unfit(dir);
+    const before = head(dir);
+    const r = script(dir, ...args);
+    assert.notEqual(r.status, 0, name);
+    assert.match(r.stderr, /migration refused: /, name);
+    assert.match(r.stderr, message, name);
+    assert.doesNotMatch(r.stdout, /would write|^order edges:/m, `${name}: nothing planned`);
+    assert.equal(head(dir), before, name);
+  }
+});
+
 test('a run moves every depends_on into blockers.json in one commit, bl reads the same, a second run changes nothing', () => {
   const dir = oldBacklog();
   const before = head(dir);

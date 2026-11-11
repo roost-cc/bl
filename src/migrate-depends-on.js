@@ -50,7 +50,7 @@ import {
 import { loadFlow } from './flow.js';
 import { withLock } from './lock.js';
 import { planText } from './migrate-derived-keys.js';
-import { applyMigration } from './migration-txn.js';
+import { applyMigration, assertMigrationCanStart } from './migration-txn.js';
 import { syncAndCommit } from './sync.js';
 
 const MIGRATION_HEADING = '## F-111 depends_on migration';
@@ -201,6 +201,8 @@ export function commitMessage(c) {
 export async function migrate(config, { dryRun = false, log = console.log, commit = syncAndCommit } = {}) {
   const root = config.backlogRoot;
   return withLock(root, async () => {
+    // Before the plan: a dry run, or a run with nothing to change, is refused too.
+    assertMigrationCanStart(config);
     const plan = planDependsOn(config);
     const counts = planCounts(plan);
     const verb = dryRun ? 'would ' : '';
