@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -85,6 +86,15 @@ func screen(t *testing.T, m Model) string {
 		}
 	}
 	return ansi.Strip(out)
+}
+
+// fixedLocal sets the local zone to a fixed one until the test ends, so the times on screen do not
+// depend on the machine's zone.
+func fixedLocal(t *testing.T) {
+	t.Helper()
+	local := time.Local
+	time.Local = time.FixedZone("UTC-5", -5*60*60)
+	t.Cleanup(func() { time.Local = local })
 }
 
 // recorded is the snapshot of line i of the stream package's recorded lines.
