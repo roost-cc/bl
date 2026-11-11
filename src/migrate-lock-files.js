@@ -12,8 +12,10 @@
  *
  *   1. adds `.bl/` to the backlog's `.gitignore` if the line is missing, and
  *      writes the file before it deletes anything;
- *   2. deletes each old lock file that no other process holds (`otherHolder`),
- *      and the unit directory it leaves empty (`removeUnitDirIfEmpty`). It
+ *   2. deletes each old lock file that no other process holds, while it holds
+ *      the file's kernel lock itself (`deleteUnderLock`), so nobody takes the
+ *      lock between the check and the delete; and the unit directory it
+ *      leaves empty (`removeUnitDirIfEmpty`). It
  *      skips, and lists, a file whose lock a live process holds (a `bl` from
  *      before S-1495 that still runs); a rerun tries that file again;
  *   3. once no old lock file is left, removes the old lock lines from
@@ -34,7 +36,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { commitPaths } from './backlog-commit.js';
 import { worktreeRoot } from './config.js';
 import { BL_DIR_LINE, withGitignoreLines } from './init.js';
-import { otherHolder } from './kernel-lock.js';
+import { otherHolder, release, tryLockOnce } from './kernel-lock.js';
 import { allActiveWorktrees, removeUnitDirIfEmpty } from './story.js';
 
 /** The lock files bl kept outside `.bl/` before S-1495; `.gitignore` listed each. */
@@ -91,16 +93,13 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   const deleted = [];
   const skipped = [];
   for (const path of oldLockFiles(config)) {
-    const pid = otherHolder(path);
+    const pid = dryRun ? otherHolder(path) : deleteUnderLock(path);
     if (pid != null) {
       skipped.push(path);
       log(`skipped ${path}: a live process (pid ${pid}) holds its lock; a rerun deletes it`);
       continue;
     }
-    if (!dryRun) {
-      rmSync(path, { force: true });
-      if (basename(path) === OLD_SESSION_LOCK && dirname(path) !== root) removeUnitDirIfEmpty(dirname(path));
-    }
+    if (!dryRun && basename(path) === OLD_SESSION_LOCK && dirname(path) !== root) removeUnitDirIfEmpty(dirname(path));
     deleted.push(path);
     log(`${verb('deleted', 'would delete')} ${path}`);
   }
@@ -127,6 +126,24 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   if (dryRun) return { deleted, skipped, commit: null };
   const commit = await commitPaths(root, ['.gitignore'], 'chore: S-1495 lock files live under .bl/');
   return { deleted, skipped, commit };
+}
+
+/**
+ * Delete the old lock file `path` while this process holds its kernel lock,
+ * so no other descriptor can take the lock between the check and the delete.
+ * When another process holds the lock, delete nothing and return its holder.
+ * @param {string} path
+ * @returns {number | 'unknown' | null}
+ */
+function deleteUnderLock(path) {
+  const res = tryLockOnce(path);
+  if ('holder' in res) return res.holder;
+  try {
+    rmSync(path, { force: true });
+  } finally {
+    release(res.taken);
+  }
+  return null;
 }
 
 /** Whether `path` in the git work tree `root` differs from HEAD, staged or not. */

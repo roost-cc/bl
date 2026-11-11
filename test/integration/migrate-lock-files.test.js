@@ -5,10 +5,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import fs, { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { basename, join } from 'node:path';
+import fsExt from 'fs-ext';
 import { loadConfig } from '../../src/config.js';
-import { migrate } from '../../src/migrate-lock-files.js';
+import { migrate, OLD_LOCK_FILES } from '../../src/migrate-lock-files.js';
 import { addOrigin, git } from '../helpers/git-backlog.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
@@ -146,6 +148,49 @@ for (const { step, fail, mend } of FAILURES) {
     assert.deepEqual(last, ['nothing to do']);
   });
 }
+
+test('migrate_lock_files_preserves_held_inode: no descriptor takes an old lock between the check and the delete', async () => {
+  const { dir, free } = oldBacklog();
+  const config = loadConfig({ backlogRoot: dir });
+  // At each delete of an old lock file, a new descriptor tries to take its
+  // lock, as a process that starts between the check and the delete would.
+  const tries = {};
+  const realRmSync = fs.rmSync;
+  fs.rmSync = (path, opts) => {
+    if (OLD_LOCK_FILES.includes(basename(path))) {
+      const fd = openSync(path, 'r+');
+      try {
+        fsExt.flockSync(fd, 'exnb');
+        tries[path] = 'taken';
+      } catch (e) {
+        tries[path] = e.code;
+      } finally {
+        closeSync(fd);
+      }
+    }
+    return realRmSync(path, opts);
+  };
+  syncBuiltinESMExports();
+  let result;
+  try {
+    result = await migrate(config, { log: () => {} });
+  } finally {
+    fs.rmSync = realRmSync;
+    syncBuiltinESMExports();
+  }
+  const paths = [
+    ...['.bl-new.lock', '.reports.lock', '.workon.lock'].map((n) => join(dir, n)),
+    join(free, '.workon.lock'),
+  ];
+  for (const path of paths) {
+    assert.ok(result.deleted.includes(path), path);
+    assert.match(
+      tries[path] ?? 'no delete',
+      /^(EAGAIN|EWOULDBLOCK)$/,
+      `${path}: the migration holds the lock while it deletes`,
+    );
+  }
+});
 
 test('migrate-lock-files on a backlog that already ignores .bl/ only removes the old lines', async () => {
   const { dir } = oldBacklog();
