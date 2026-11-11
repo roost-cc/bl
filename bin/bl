@@ -4,9 +4,11 @@
 # so this works whether invoked via PATH, symlink, or absolute path.
 SELF="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
 BL_ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
-# bl's one runtime dependency (yaml, F-62 D1) is installed from the lockfile.
-if [ ! -d "$BL_ROOT/node_modules/yaml" ]; then
-  echo "bl: $BL_ROOT/node_modules is missing; install bl's dependencies: npm ci --prefix $BL_ROOT" >&2
+# bl's dependencies are installed from the lockfile. The check looks for
+# fs-ext's native module (F-104 D1): it exists only when npm ci built it, so it
+# also catches an install from before fs-ext or one that skipped its build.
+if [ ! -f "$BL_ROOT/node_modules/fs-ext/build/Release/fs_ext.node" ]; then
+  echo "bl: $BL_ROOT/node_modules is missing or out of date; install bl's dependencies: npm ci --prefix $BL_ROOT" >&2
   exit 1
 fi
 exec node "$BL_ROOT/src/bl.js" "$@"
