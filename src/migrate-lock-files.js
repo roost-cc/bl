@@ -18,8 +18,8 @@
  *      leaves empty (`removeUnitDirIfEmpty`). It
  *      skips, and lists, a file whose lock a live process holds (a `bl` from
  *      before S-1495 that still runs); a rerun tries that file again;
- *   3. once no old lock file is left, removes the old lock lines from
- *      `.gitignore`;
+ *   3. once a second scan finds no old lock file left, removes the old lock
+ *      lines from `.gitignore`;
  *   4. commits `.gitignore` when it differs from HEAD (`commitPaths`), so a
  *      rerun commits what a run that failed after step 1 wrote.
  *
@@ -30,7 +30,7 @@
  */
 
 import { spawnSync } from 'child_process';
-import { existsSync, readdirSync, readFileSync, rmSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
 import { commitPaths } from './backlog-commit.js';
@@ -46,16 +46,18 @@ const [OLD_BACKLOG_LOCK, OLD_REPORTS_LOCK, OLD_SESSION_LOCK] = OLD_LOCK_FILES;
 /**
  * Every old lock file that exists: the backlog and report locks in the
  * backlog root, and the session lock in the backlog root, in each unit
- * directory (each directory under the worktree root) and in each worktree.
+ * directory (each directory under the worktree root), in each directory in a
+ * unit directory (a worktree, registered with git or not), and in each
+ * registered worktree. A link to a directory counts as a directory.
  * @param {object} config
  * @returns {string[]}
  */
 export function oldLockFiles(config) {
   const root = config.backlogRoot;
   const dirs = new Set([root]);
-  const units = worktreeRoot(config);
-  for (const e of existsSync(units) ? readdirSync(units, { withFileTypes: true }) : []) {
-    if (e.isDirectory()) dirs.add(join(units, e.name));
+  for (const unit of subdirs(worktreeRoot(config))) {
+    dirs.add(unit);
+    for (const wt of subdirs(unit)) dirs.add(wt);
   }
   for (const wt of allActiveWorktrees(config)) dirs.add(wt.path);
   return [
@@ -63,6 +65,17 @@ export function oldLockFiles(config) {
     join(root, OLD_REPORTS_LOCK),
     ...[...dirs].map((d) => join(d, OLD_SESSION_LOCK)),
   ].filter((p) => existsSync(p));
+}
+
+/** The directories in `dir`, links to directories included; none when `dir` cannot be read. */
+function subdirs(dir) {
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names.map((n) => join(dir, n)).filter((p) => statSync(p, { throwIfNoEntry: false })?.isDirectory());
 }
 
 /**
@@ -104,8 +117,13 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
     log(`${verb('deleted', 'would delete')} ${path}`);
   }
 
-  // 3. The old lines, once no old lock file is left.
-  if (skipped.length === 0) {
+  // 3. The old lines, once no old lock file is left. A new scan finds a file
+  // that a process created after the first scan.
+  const left = dryRun ? skipped : oldLockFiles(config);
+  for (const path of left) {
+    if (!skipped.includes(path)) log(`left ${path}: it appeared during this run; a rerun deletes it`);
+  }
+  if (left.length === 0) {
     const lines = text.split('\n');
     const kept = lines.filter((l) => !OLD_LOCK_FILES.includes(l.trim()));
     if (kept.length !== lines.length) {

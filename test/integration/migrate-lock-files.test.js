@@ -5,7 +5,16 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { basename, join } from 'node:path';
 import fsExt from 'fs-ext';
@@ -38,7 +47,7 @@ function oldBacklog() {
     mkdirSync(unit, { recursive: true });
     writeFileSync(join(unit, '.workon.lock'), '1\n');
   }
-  return { dir, free, busy };
+  return { dir, free, busy, units };
 }
 
 const gitignore = (dir) => readFileSync(join(dir, '.gitignore'), 'utf8');
@@ -191,6 +200,67 @@ test('migrate_lock_files_preserves_held_inode: no descriptor takes an old lock b
     );
   }
 });
+
+/**
+ * Each place an old session lock can be that the first version of the scan
+ * missed. `place` makes the directory and returns it. A `late` row makes it,
+ * and writes the lock file, only after the first delete, as a process that
+ * starts during the run would.
+ */
+const HIDDEN = [
+  {
+    where: 'a worktree in a unit directory that git no longer lists',
+    place: (units) => {
+      mkdirSync(join(units, 'f3-orphan', 'bl'), { recursive: true });
+      return join(units, 'f3-orphan', 'bl');
+    },
+  },
+  {
+    where: 'a unit directory that is a link',
+    place: (units) => {
+      symlinkSync(mkTempDir('bl-linked-unit-'), join(units, 'f4-linked'));
+      return join(units, 'f4-linked');
+    },
+  },
+  {
+    where: 'a worktree in a unit directory that is a link',
+    place: (units) => {
+      const real = mkTempDir('bl-linked-unit-');
+      mkdirSync(join(real, 'bl'));
+      symlinkSync(real, join(units, 'f5-linked'));
+      return join(units, 'f5-linked', 'bl');
+    },
+  },
+  {
+    where: 'a unit directory made after the scan',
+    late: true,
+    place: (units) => mkdirSync(join(units, 'f6-late'), { recursive: true }),
+  },
+];
+
+for (const { where, place, late } of HIDDEN) {
+  test(`migrate_lock_files_keeps_old_ignore_until_all_old_session_locks_are_gone: ${where}`, async () => {
+    const { dir, units } = oldBacklog();
+    const config = loadConfig({ backlogRoot: dir });
+    let lock = late ? null : join(place(units), '.workon.lock');
+    if (lock) writeFileSync(lock, '1\n');
+    const log = (l) => {
+      if (late && !lock && l.startsWith('deleted ')) {
+        lock = join(place(units), '.workon.lock');
+        writeFileSync(lock, '1\n');
+      }
+    };
+    await migrate(config, { log });
+    if (existsSync(lock))
+      assert.match(gitignore(dir), /^\.workon\.lock$/m, `${lock} is left, so its ignore line stays`);
+    else assert.equal(gitignore(dir), 'node_modules/\n.bl/\n');
+
+    await migrate(config, { log: () => {} });
+    assert.ok(!existsSync(lock), `${lock} is deleted`);
+    assert.equal(gitignore(dir), 'node_modules/\n.bl/\n');
+    assert.equal(git(dir, 'status', '--porcelain', '--untracked-files=all'), '');
+  });
+}
 
 test('migrate-lock-files on a backlog that already ignores .bl/ only removes the old lines', async () => {
   const { dir } = oldBacklog();
