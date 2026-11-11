@@ -112,3 +112,9 @@ test('the partial opens with its heading and the scope, lists nine rules and nam
   assert.equal(PARTIAL.match(/^\d\. \*\*/gm).length, 9);
   assert.doesNotMatch(prose, /roost/i);
 });
+
+test('rule 5 has the agent name the dictionary entry when the operator uses its term in another meaning (S-1497)', () => {
+  const rule5 = PARTIAL.slice(PARTIAL.indexOf('\n5. '), PARTIAL.indexOf('\n6. ')).replace(/\s+/g, ' ');
+  assert.match(rule5, /operator uses a term from the coding or domain dictionary in a meaning other than its entry's/);
+  assert.match(rule5, /say so and name the entry/);
+});
