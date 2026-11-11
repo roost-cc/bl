@@ -100,6 +100,10 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
      inverse, and a stored `required_for:` is a `derived-key` error.
    - A dependency outside the feature must already be done, or be pulled into the feature.
      Otherwise `bl approve` warns and `bl implement` refuses.
+   - If the feature has more than one repo, and one repo's tests or push gate run another repo's
+     new code, add a merge edge after `bl new`. Then `bl merge` merges the other repo first:
+     `bl block add {{featureId}}:<repo to merge first> --gate merge --unit {{featureId}}:<repo that needs it> --until merged`.
+     Without a merge edge, `bl merge` merges `bl` first, then each repo by its first story.
 
    Create the stories in one call, so that their IDs and cross-references resolve together:
 
