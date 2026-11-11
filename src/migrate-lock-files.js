@@ -163,7 +163,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   const head = textAt(root, 'HEAD', '.gitignore') ?? '';
   const ours = migrated(head, dropOld);
   if (ours === head) {
-    if (deleted.length === 0 && skipped.length === 0) log('nothing to do');
+    if (deleted.length === 0 && skipped.length === 0 && left.length === 0) log('nothing to do');
     return { deleted, skipped, commit: null };
   }
   const staged = textAt(root, '', '.gitignore') ?? '';
