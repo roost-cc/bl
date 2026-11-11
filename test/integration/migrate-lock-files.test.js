@@ -158,6 +158,76 @@ for (const { step, fail, mend } of FAILURES) {
   });
 }
 
+/**
+ * Each way `.gitignore` can carry a change the migration did not make.
+ * `before` sets the backlog up and returns what the run should log about the
+ * commit; `after` checks the change is still where it was.
+ */
+const FOREIGN = '# my notes\nmy-private-notes/\n';
+const FOREIGN_EDITS = [
+  {
+    when: 'a backlog the migration already finished, with an uncommitted line',
+    before: async (dir, config) => {
+      await migrate(config, { log: () => {} });
+      fs.appendFileSync(join(dir, '.gitignore'), FOREIGN);
+      return /^nothing to do$/;
+    },
+    after: (dir) => assert.ok(gitignore(dir).endsWith(FOREIGN)),
+  },
+  {
+    when: 'a first run on a .gitignore with an uncommitted line',
+    before: (dir) => {
+      fs.appendFileSync(join(dir, '.gitignore'), FOREIGN);
+      return /^left \.gitignore uncommitted: it holds changes this migration did not make/;
+    },
+    after: (dir) => assert.equal(gitignore(dir), `node_modules/\n${FOREIGN}.bl/\n`),
+  },
+  {
+    when: 'a rerun after a failed commit, with a line added since',
+    before: async (dir, config) => {
+      const hook = join(dir, '.git/hooks/pre-commit');
+      writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      await migrate(config, { log: () => {} });
+      rmSync(hook);
+      fs.appendFileSync(join(dir, '.gitignore'), FOREIGN);
+      return /^left \.gitignore uncommitted: it holds changes this migration did not make/;
+    },
+    after: (dir) => assert.equal(gitignore(dir), `node_modules/\n.bl/\n${FOREIGN}`),
+  },
+  {
+    when: 'a staged edit, with the file itself as HEAD has it',
+    before: (dir) => {
+      const head = gitignore(dir);
+      fs.appendFileSync(join(dir, '.gitignore'), FOREIGN);
+      git(dir, 'add', '.gitignore');
+      writeFileSync(join(dir, '.gitignore'), head);
+      return /^left \.gitignore uncommitted: it holds changes this migration did not make/;
+    },
+    after: (dir) => assert.ok(git(dir, 'show', ':.gitignore').endsWith(FOREIGN.trim()), 'the staged edit stays'),
+  },
+];
+
+for (const { when, before, after } of FOREIGN_EDITS) {
+  test(`migrate_lock_files_does_not_commit_foreign_gitignore_edit: ${when}`, async () => {
+    const { dir } = oldBacklog();
+    const config = loadConfig({ backlogRoot: dir });
+    const expected = await before(dir, config);
+    const head = git(dir, 'rev-parse', 'HEAD');
+    for (const dryRun of [true, false]) {
+      const said = [];
+      const result = await migrate(config, { dryRun, log: (l) => said.push(l) });
+      assert.equal(result.commit, null, `dryRun ${dryRun}`);
+      assert.ok(
+        said.some((l) => expected.test(l)),
+        `dryRun ${dryRun}: ${said}`,
+      );
+      assert.ok(!said.some((l) => /commits/.test(l)), `dryRun ${dryRun}: ${said}`);
+    }
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'nothing is committed');
+    after(dir);
+  });
+}
+
 test('migrate_lock_files_preserves_held_inode: no descriptor takes an old lock between the check and the delete', async () => {
   const { dir, free } = oldBacklog();
   const config = loadConfig({ backlogRoot: dir });

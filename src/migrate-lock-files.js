@@ -22,8 +22,10 @@
  *      when no older `bl` runs;
  *   3. once a second scan finds no old lock file left, removes the old lock
  *      lines from `.gitignore`;
- *   4. commits `.gitignore` when it differs from HEAD (`commitPaths`), so a
- *      rerun commits what a run that failed after step 1 wrote.
+ *   4. commits `.gitignore` (`commitPaths`) when it is what steps 1 and 3
+ *      make of the HEAD version, so a rerun commits what a run that failed
+ *      after step 1 wrote. A `.gitignore` with any other change stays
+ *      uncommitted, and the migration says so.
  *
  * It does not use `applyMigration` (`migration-txn.js`), which refuses to
  * start while any bl run or session is live: each step is safe beside a live
@@ -34,7 +36,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
-import { commitPaths, dirtySnapshot } from './backlog-commit.js';
+import { commitPaths, textAt } from './backlog-commit.js';
 import { worktreeRoot } from './config.js';
 import { BL_DIR_LINE, withGitignoreLines } from './init.js';
 import { otherHolder, release, tryLockOnce } from './kernel-lock.js';
@@ -97,7 +99,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
 
   // 1. `.bl/` first, written before any delete, so no lock file is ever
   // outside what git ignores and a step that fails leaves it for a rerun.
-  let { text } = withGitignoreLines(before, [BL_DIR_LINE]);
+  let text = migrated(before, false);
   if (text !== before) {
     write(text);
     log(`${verb('added', 'would add')} ${BL_DIR_LINE} to .gitignore`);
@@ -124,27 +126,43 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   for (const path of left) {
     if (!skipped.includes(path)) log(`left ${path}: it appeared during this run; a rerun deletes it`);
   }
-  if (left.length === 0) {
-    const lines = text.split('\n');
-    const kept = lines.filter((l) => !OLD_LOCK_FILES.includes(l.trim()));
-    if (kept.length !== lines.length) {
-      text = kept.join('\n');
-      write(text);
-      log(`${verb('removed', 'would remove')} the old lock lines from .gitignore`);
-    }
+  const dropOld = left.length === 0;
+  if (dropOld && migrated(text, true) !== text) {
+    text = migrated(text, true);
+    write(text);
+    log(`${verb('removed', 'would remove')} the old lock lines from .gitignore`);
   }
 
-  // 4. One commit of `.gitignore`, also when an earlier run wrote it and
-  // then failed before its commit or in it.
-  const leftOver = text === before && dirtySnapshot(root)?.has('.gitignore');
-  if (text === before && !leftOver) {
+  // 4. One commit of `.gitignore`, only when it is what steps 1 and 3 make of
+  // the HEAD version: also when an earlier run wrote it and then failed
+  // before its commit or in it, never with a change the migration did not
+  // make. The index must hold HEAD's version or that text, since the commit
+  // stages the file over whatever the index holds.
+  const head = textAt(root, 'HEAD', '.gitignore') ?? '';
+  const ours = migrated(head, dropOld);
+  if (ours === head) {
     if (deleted.length === 0 && skipped.length === 0) log('nothing to do');
     return { deleted, skipped, commit: null };
   }
-  if (leftOver) log(`${verb('commits', 'would commit')} the .gitignore an earlier run left uncommitted`);
+  const staged = textAt(root, '', '.gitignore') ?? '';
+  if (text !== ours || (staged !== head && staged !== ours)) {
+    log(`left .gitignore uncommitted: it holds changes this migration did not make; commit it yourself`);
+    return { deleted, skipped, commit: null };
+  }
+  if (text === before) log(`${verb('commits', 'would commit')} the .gitignore an earlier run left uncommitted`);
   if (dryRun) return { deleted, skipped, commit: null };
   const commit = await commitPaths(root, ['.gitignore'], 'chore: S-1495 lock files live under .bl/');
   return { deleted, skipped, commit };
+}
+
+/** What steps 1 and 3 make of the `.gitignore` text: `.bl/` added, and with `dropOld` the old lock lines removed. */
+function migrated(text, dropOld) {
+  const added = withGitignoreLines(text, [BL_DIR_LINE]).text;
+  if (!dropOld) return added;
+  return added
+    .split('\n')
+    .filter((l) => !OLD_LOCK_FILES.includes(l.trim()))
+    .join('\n');
 }
 
 /**

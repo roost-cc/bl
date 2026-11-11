@@ -3774,8 +3774,10 @@ lock file (`.bl-new.lock`, `.reports.lock`, every `.workon.lock` in the backlog 
 directory, in a directory inside one, links followed, or in a registered worktree) while it holds
 that file's kernel lock itself (`deleteUnderLock`), so nobody takes the lock between the check
 and the delete; it skips a file whose lock another process holds. Once a second scan finds no old
-lock file, it removes their lines from `.gitignore`. It commits `.gitignore` whenever it differs
-from HEAD, so a rerun commits what a failed run wrote, and a rerun tries a skipped file again. A
+lock file, it removes their lines from `.gitignore`. It commits `.gitignore` only when the file
+(and the index, if it differs from HEAD) is what those two edits make of HEAD's version, so a
+rerun commits what a failed run wrote, and a `.gitignore` with any other change stays
+uncommitted and the migration says so. A rerun tries a skipped file again. A
 `bl` from before F-104 holds its locks as PID files, which the migration cannot see, so it runs
 only when no older `bl` runs (task T-76).
 The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every

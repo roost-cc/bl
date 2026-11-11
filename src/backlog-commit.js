@@ -125,6 +125,15 @@ export function dirtySnapshot(root) {
   return snap;
 }
 
+/**
+ * The text of `rel` in the repo at `root` at `rev` (`HEAD`; `''` is the
+ * index), or null when `rev` has no such file (or there is no such rev).
+ */
+export function textAt(root, rev, rel) {
+  const r = git(root, ['show', `${rev}:${rel}`]);
+  return r.error || r.status !== 0 ? null : r.stdout;
+}
+
 /** Paths dirty in `after` that were clean in `before` or whose content changed. */
 export function pathsChangedSince(before, after) {
   if (!before || !after) return [];
