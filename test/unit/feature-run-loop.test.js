@@ -38,6 +38,7 @@ import {
   statusOf,
 } from '../helpers/feature-run-fixture.js';
 import { fixTestsOutcome, reviewOutcome } from '../helpers/outcomes.js';
+import { NO_MARKERS } from '../../src/test-excerpt.js';
 import { validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
 import { reviewOf, statusOf as logStatusOf, transition } from '../../src/transition.js';
@@ -451,6 +452,24 @@ test('a test gate that fails twice escalates with the log and never opens a PR',
       order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])),
       `details in order: ${esc}`,
     );
+  } finally {
+    cleanup();
+  }
+});
+
+test('a test gate with no failure marker keeps the NO_MARKERS note in its excerpt section (S-1499)', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: { shell: (cmd) => (cmd === 'npm test' ? { status: 1, output: 'building…\nexit 1\n' } : null) },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    const at = esc.indexOf(`Failure excerpt:\n\n\`\`\`text\n${NO_MARKERS}\n\`\`\``);
+    assert.ok(at >= 0 && esc.indexOf('Last 30 lines:') > at, esc);
   } finally {
     cleanup();
   }
@@ -1158,6 +1177,65 @@ test('run never finishes clean with unpushed commits or without a PR when a forg
       } else {
         assert.ok(!runner.calls.some((x) => x.prompt === 'review-verify'), `${name}: reviewed without a publish`);
       }
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+test('a failed push escalates with the failed test and its error, then the last 10 lines (S-1499)', async () => {
+  const passing = (from, n) => Array.from({ length: n }, (_, i) => `✔ passes ${from + i} (1ms)`);
+  const gateOutput = [
+    'running test:unit',
+    ...passing(0, 20),
+    '✖ names the failed test (3ms)',
+    '  AssertionError [ERR_ASSERTION]: expected 1 to equal 2',
+    ...passing(20, 20),
+    'test summary: 1 failed, 3 passed',
+    'failed: test:unit',
+    "error: failed to push some refs to 'origin'",
+    '',
+  ].join('\n');
+  const rejected = [
+    'To origin',
+    ' ! [rejected]        f1-feat -> f1-feat (fetch first)',
+    "error: failed to push some refs to 'origin'",
+    '',
+  ].join('\n');
+  const cases = {
+    'the pre-push gate fails on a node:test test': {
+      output: gateOutput,
+      has: [
+        'Failure excerpt:',
+        '✖ names the failed test (3ms)',
+        'AssertionError [ERR_ASSERTION]: expected 1 to equal 2',
+        'Last 10 lines:',
+        'failed: test:unit',
+      ],
+      lacks: ['✔ passes 10 (1ms)'],
+    },
+    'a rejected push with no failure marker': {
+      output: rejected,
+      has: ['Last 10 lines:', ' ! [rejected]        f1-feat -> f1-feat (fetch first)'],
+      lacks: ['Failure excerpt:', 'no failure markers matched'],
+    },
+  };
+  for (const [name, c] of Object.entries(cases)) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          shell: (cmd) => (cmd.startsWith('git push') ? { status: 1, output: c.output } : null),
+        },
+      });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'escalated', name);
+      const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+      assert.match(esc.trim(), /^push failed\n\ngit push failed:/, name);
+      for (const s of c.has) assert.ok(esc.includes(s), `${name}: has ${s}\n${esc}`);
+      for (const s of c.lacks) assert.ok(!esc.includes(s), `${name}: lacks ${s}\n${esc}`);
     } finally {
       cleanup();
     }
