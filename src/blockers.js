@@ -671,19 +671,19 @@ export function heldLines(config, id) {
  * and does not meet `until`, so would hold forever (`blockers-unmeetable`).
  * An edge that names a `<feature>:<repo>` end is a merge edge, and one at
  * gate `order` an order edge; each is checked by its own rules
- * (`mergeEdgeProblems`, `orderEdgeProblems`). `bl block add` refuses an edge
+ * (`mergeEdgeProblems`, `orderEdgeProblems`), and takes no `active_when`
+ * (`blockers-gate`), since it holds nothing. `bl block add` refuses an edge
  * with any; `bl validate` reports each.
  * @returns {Array<{ code: string, message: string }>}
  */
 export function edgeProblems(e, units, flow) {
   const out = [];
   const add = (code, message) => out.push({ code, message });
-  if (repoEnd(e.blocker) || repoEnd(e.unit)) {
-    mergeEdgeProblems(e, units, add);
-    return out;
-  }
-  if (e.gate === ORDER_EDGE.gate) {
-    orderEdgeProblems(e, units, add);
+  const kind = repoEnd(e.blocker) || repoEnd(e.unit) ? 'a merge' : e.gate === ORDER_EDGE.gate ? 'an order' : null;
+  if (kind) {
+    (kind === 'a merge' ? mergeEdgeProblems : orderEdgeProblems)(e, units, add);
+    // It holds nothing, so nothing can keep it from holding.
+    if (e.active_when) add('blockers-gate', `${kind} edge holds nothing, so it takes no active_when`);
     return out;
   }
   const known = (id) => units.get(id) ?? null;

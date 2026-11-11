@@ -261,6 +261,60 @@ test('bl block add writes an order edge inside one feature, refuses a bad one or
   );
 });
 
+test('block add refuses active_when on a merge edge and on an order edge, and bl validate reports each', () => {
+  // F-1 over S-1 (bl) and S-2 (ci-cd).
+  const { dir } = mkTempBacklog({
+    components: [
+      { id: 'C01', title: 'Bl', repo: 'bl' },
+      { id: 'C02', title: 'Ci', repo: 'ci-cd' },
+    ],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'One', feature: 'F-1' },
+      { id: 'S-2', component: 'C02', title: 'Two', feature: 'F-1' },
+    ],
+    features: [{ id: 'F-1', title: 'One', status: 'approved', stories: ['S-1', 'S-2'] }],
+  });
+  initGitBacklog(dir);
+  // [kind, the edge]; an active_when naming no unit, and one naming a real unit and status
+  const edges = [
+    ['a merge', { blocker: 'F-1:ci-cd', gate: 'merge', unit: 'F-1:bl', until: 'merged' }],
+    ['an order', { blocker: 'S-2', gate: 'order', unit: 'S-1', until: 'implemented' }],
+  ];
+  const whens = [
+    { unit: 'F-99', status: 'nope' },
+    { unit: 'S-1', status: 'done' },
+  ];
+  for (const [kind, e] of edges) {
+    for (const when of whens) {
+      const r = bl(
+        ['block', 'add', e.blocker, '--gate', e.gate, '--unit', e.unit, '--until', e.until].concat([
+          '--active-when',
+          when.unit,
+          '--active-status',
+          when.status,
+        ]),
+        dir,
+      );
+      assert.equal(r.status, 1, `${kind} ${when.unit}`);
+      assert.match(r.stderr, new RegExp(`${kind} edge holds nothing, so it takes no active_when \\(blockers-gate\\)`));
+    }
+  }
+  assert.equal(readBlockers(dir).text, null, 'nothing written');
+
+  writeBlockers(
+    dir,
+    edges.map(([, e]) => ({ ...e, active_when: whens[1] })),
+  );
+  const v = bl(['validate', '--json'], dir);
+  const messages = JSON.parse(v.stdout)
+    .findings.filter((f) => f.code === 'blockers-gate')
+    .map((f) => f.message);
+  assert.deepEqual(messages.sort(), [
+    'F-1:bl at merge by F-1:ci-cd: a merge edge holds nothing, so it takes no active_when',
+    'S-1 at order by S-2: an order edge holds nothing, so it takes no active_when',
+  ]);
+});
+
 test('bl validate reports a deadlock of cross-feature depends_on alone', () => {
   const { dir } = backlog({ deps: { 'S-11': 'S-12', 'S-13': 'S-14' } });
   const r = bl(['validate', '--json'], dir);

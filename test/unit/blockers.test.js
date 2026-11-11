@@ -733,6 +733,26 @@ test('edgeProblems: an order edge joins two stories of one feature, until implem
   ]);
 });
 
+test('edgeProblems: a merge edge and an order edge take no active_when, whatever it names', () => {
+  // [kind, its units, the edge]
+  for (const [kind, u, e] of [
+    ['a merge', repoUnits(), mergeEdge('F-1:ci-cd', 'F-1:bl')],
+    ['an order', units(), orderEdge('S-a', 'S-d')],
+  ]) {
+    // An active_when naming no unit and no status, and one naming a real unit and status.
+    for (const when of [
+      { unit: 'F-99', status: 'nope' },
+      { unit: 'F-1', status: 'done' },
+    ]) {
+      assert.deepEqual(
+        edgeProblems({ ...e, active_when: when }, u, flow).map((p) => `${p.code}: ${p.message}`),
+        [`blockers-gate: ${kind} edge holds nothing, so it takes no active_when`],
+        `${kind} ${when.unit}`,
+      );
+    }
+  }
+});
+
 test('an order edge is inside its feature: no holdGraph arc, never a hold; wouldCycle refuses the one that closes a cycle', () => {
   const u = units();
   const forward = orderEdge('S-a', 'S-d');

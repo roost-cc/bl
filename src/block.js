@@ -330,7 +330,8 @@ Holds between units, kept in ${BLOCKERS_FILE} at the backlog root (one
 edge per line, sorted by unit, blocker and gate). An edge holds <unit> at
 <gate> until <blocker>'s status meets <until>, as flow.json says; --unit *
 holds every unit with the gate. --active-when and --active-status keep the
-edge from holding anything until that unit meets that status.
+edge from holding anything until that unit meets that status; a merge or
+order edge takes neither.
 
 A merge edge joins two repos of one feature and holds nothing: bl merge
 merges the blocker's repo before the unit's, as in
