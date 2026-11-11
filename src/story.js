@@ -496,7 +496,7 @@ export function activeWorktreesByStory(config) {
  * and its one repo (`unitRepo`, `placeStory`).
  * @returns {Array<{
  *   unitRepo, componentId, componentEntry, id, title, status, type, points, effort,
- *   depends_on, requiredFor, feature, found_by, added, completed,
+ *   requiredFor, feature, found_by, added, completed,
  *   storyEntry, indexPath, storyRelPath
  * }>}
  */
@@ -517,9 +517,9 @@ export function readAllStories(config) {
       points: fm.points ?? '',
       // The refiner's effort level (F-85 D1); null when the key is unset or empty.
       effort: storyEffort(fm),
-      depends_on: fm.depends_on ?? '',
-      // The stories whose depends_on names this one, in number order: the
-      // graph's derived inverse (F-77 D3), never a stored `required_for:`.
+      // The stories that wait for this one, in number order: the graph's
+      // inverse of the run and order edges (F-77 D3, F-111 D4), never a
+      // stored `required_for:`.
       requiredFor: (unit.requiredFor ?? []).map((r) => r.id),
       feature: fm.feature ?? '',
       found_by: fm.found_by ?? '',

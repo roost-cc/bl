@@ -8,7 +8,6 @@ import {
   findFeature,
   normalizeFeatureId,
   resolveFeatureStories,
-  orderStoriesByDeps,
   extractSection,
   resolveFeaturePluginsReport,
 } from '../../src/feature.js';
@@ -55,7 +54,7 @@ function setupMulti({ docs = 'make -C {{worktreePath}} check' } = {}) {
   });
   const config = loadConfig({ backlogRoot: dir });
   const feature = findFeature(normalizeFeatureId('F-1'), config);
-  const ordered = orderStoriesByDeps(resolveFeatureStories(feature, config, readAllStories(config)).stories);
+  const ordered = resolveFeatureStories(feature, config, readAllStories(config)).stories;
   const worktreePath = mkTempDir('bl-wt-');
   const wtB = mkTempDir('bl-wt-b-');
   const wtC = mkTempDir('bl-wt-c-');
@@ -326,7 +325,7 @@ function setupGuard() {
   // repo-c's main checkout, holding a worktree on the branch no story names.
   mkdirSync(config.reposByName['repo-c'], { recursive: true });
   const feature = findFeature(normalizeFeatureId('F-1'), config);
-  const ordered = orderStoriesByDeps(resolveFeatureStories(feature, config, readAllStories(config)).stories);
+  const ordered = resolveFeatureStories(feature, config, readAllStories(config)).stories;
   const worktreePath = mkTempDir('bl-wt-');
   const wtB = mkTempDir('bl-wt-b-');
   const wtC = mkTempDir('bl-wt-c-');
@@ -459,7 +458,7 @@ function setupSide({ withWorktree = true } = {}) {
   const config = loadConfig({ backlogRoot: dir });
   mkdirSync(config.reposByName['repo-b'], { recursive: true });
   const feature = findFeature(normalizeFeatureId('F-1'), config);
-  const ordered = orderStoriesByDeps(resolveFeatureStories(feature, config, readAllStories(config)).stories);
+  const ordered = resolveFeatureStories(feature, config, readAllStories(config)).stories;
   const worktreePath = mkTempDir('bl-wt-');
   const wtB = mkTempDir('bl-wt-b-');
   const prep = {
@@ -696,7 +695,7 @@ test('refresh_rejects_unresolvable_story_scope: an unresolvable story list or st
           fm.depends_on = ['S-77'];
         });
       },
-      error: /S-3 depends on S-77 \(missing\)/,
+      error: /S-3 is held at run by S-77 \(unknown, needs done\)/,
     },
     {
       name: 'change document write fails',
@@ -940,7 +939,7 @@ test('late_side_stories_complete_gates_before_clean: a resumed addressed run rev
     const again = findFeature(normalizeFeatureId('F-1'), config);
     const resumed = {
       ...prep,
-      ordered: orderStoriesByDeps(resolveFeatureStories(again, config, readAllStories(config)).stories),
+      ordered: resolveFeatureStories(again, config, readAllStories(config)).stories,
       otherWorktrees: [{ repoName: 'repo-b', worktreePath: wtB }],
     };
     const runner = sideShell(fakeRunner({ dir, feature: again, behaviour }));
@@ -1079,9 +1078,11 @@ test('late_stories_follow_dependency_order: an existing story not taken yet wait
           points: '1',
         }) + AC_BODY,
       );
-      prep.ordered = orderStoriesByDeps(
-        resolveFeatureStories(findFeature(normalizeFeatureId('F-1'), config), config, readAllStories(config)).stories,
-      );
+      prep.ordered = resolveFeatureStories(
+        findFeature(normalizeFeatureId('F-1'), config),
+        config,
+        readAllStories(config),
+      ).stories;
       const behaviour = {
         story: (o) => {
           checkAll(o.vars.storyAbsPath);

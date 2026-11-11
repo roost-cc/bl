@@ -4,8 +4,10 @@
  * `bl run|implement <id...>` start only units that neither depend on nor
  * overlap another unmerged unit (F-35 Design §5, decision F):
  *
- * - A unit whose stories `depends_on` a story of another target, or a story
+ * - A unit whose stories wait for a story of another target, or a story
  *   outside the targets that is not done, is deferred, naming the blocker.
+ *   A story waits for the blockers of the run and order edges on it
+ *   (`storyDependencies` of `readEdges`, F-111 D4).
  * - Of the rest, lowest id first, a unit whose files overlap a unit already
  *   started is deferred, naming the shared files. One branch per unit and no
  *   stacking: two units that touch one file would conflict at merge.
@@ -21,7 +23,8 @@ import { existsSync, readFileSync } from 'fs';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { toString } from 'mdast-util-to-string';
 import { parseFrontmatter } from './config.js';
-import { parseIdList, reposForStory } from './story.js';
+import { reposForStory } from './story.js';
+import { readEdges, storyDependencies } from './blockers.js';
 import { resolveFeatureStories, reposForFeature, featureRepoOrder, extractSection } from './feature.js';
 import { idNum } from './workon.js';
 import { loadFlow } from './flow.js';
@@ -186,15 +189,17 @@ function storyOwners(units, config, all) {
  * @param {Array<{ kind: string, id: string, record: object }>} units
  * @param {object[]} all  every story (`readAllStories`)
  * @param {import("./flow.js").Flow} flow
- * @param {{ config?: object, files?: (unit) => Set<string> }} [opts]
- *   `files` defaults to `unitFiles`; a test seam.
+ * @param {{ config: object, files?: (unit) => Set<string> }} opts
+ *   `config` is the backlog's, for its edges (`readEdges`); `files`
+ *   defaults to `unitFiles`, a test seam.
  * @returns {{ start: object[], deferred: Array<{ id: string, reason: string,
  *             blockers: string[] }> }}
  */
-export function schedule(units, all, flow, { config = null, files = (u) => unitFiles(u, config, all) } = {}) {
+export function schedule(units, all, flow, { config, files = (u) => unitFiles(u, config, all) }) {
   const sorted = [...units].sort(byId);
   const statusById = new Map(all.map((s) => [s.id, s.status]));
   const { owner, storiesOf } = storyOwners(sorted, config, all);
+  const waits = storyDependencies(readEdges(config));
 
   const deferred = [];
   const candidates = [];
@@ -202,7 +207,7 @@ export function schedule(units, all, flow, { config = null, files = (u) => unitF
     const reasons = [];
     const blockers = [];
     for (const s of storiesOf.get(u)) {
-      for (const dep of parseIdList(s.depends_on)) {
+      for (const dep of waits.get(s.id) ?? []) {
         const other = owner.get(dep);
         // A merged dependency blocks nothing, even when it is among the targets.
         if (other === u || flow.meets('story', statusById.get(dep), 'done')) continue;
@@ -252,14 +257,15 @@ export function schedule(units, all, flow, { config = null, files = (u) => unitF
  * Units in dependency order (a unit after every target it depends on),
  * lowest id first among equals. A cycle falls back to id order for the rest.
  */
-export function dependencyOrder(units, all, { config = null } = {}) {
+export function dependencyOrder(units, all, { config }) {
   const remaining = [...units].sort(byId);
   const { owner, storiesOf } = storyOwners(remaining, config, all);
+  const waits = storyDependencies(readEdges(config));
   const deps = new Map();
   for (const u of remaining) {
     const set = new Set();
     for (const s of storiesOf.get(u)) {
-      for (const d of parseIdList(s.depends_on)) {
+      for (const d of waits.get(s.id) ?? []) {
         const other = owner.get(d);
         if (other && other !== u) set.add(other);
       }

@@ -3,13 +3,7 @@ import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
-import {
-  orderStoriesByDeps,
-  extractSection,
-  findFeature,
-  normalizeFeatureId,
-  resolveFeatureStories,
-} from '../../src/feature.js';
+import { extractSection, findFeature, normalizeFeatureId, resolveFeatureStories } from '../../src/feature.js';
 import { runFeature, shellMerged } from '../../src/feature-run.js';
 import {
   implementPluginProblem,
@@ -562,7 +556,7 @@ test('a non-zero exit stops with an escalation and launches no agent', async () 
 test('in a feature the command runs in its repo, the agent takes the next story, and review runs', async () => {
   const { config } = backlog();
   const feature = findFeature(normalizeFeatureId('F-1'), config);
-  const ordered = orderStoriesByDeps(resolveFeatureStories(feature, config, readAllStories(config)).stories);
+  const ordered = resolveFeatureStories(feature, config, readAllStories(config)).stories;
   const wt = mkTempDir('bl-wt-');
   const prep = {
     cfg: config,

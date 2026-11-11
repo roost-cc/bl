@@ -10,6 +10,7 @@ import { extractSection } from '../../src/feature.js';
 import { loadConfig } from '../../src/config.js';
 import { HOME, REPOS, fm, initFeatureRepo } from '../helpers/feature-fixture.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
+import { writeBlockers } from '../../src/blockers.js';
 
 /** Land an unrelated commit on origin's main and leave the clone behind it. */
 function advanceOriginMain(g, repo) {
@@ -146,10 +147,10 @@ for (const [name, repos, recorded, commitFm, expected] of [
 /**
  * A running, reviewed feature F-1 over one story per repo in `repos` (in
  * that listed order, `deps` its depends_on), each repo a clone with an
- * origin and, unless in `noBranch`, a commit on f1-feat. Returns the paths
- * and a git runner.
+ * origin and, unless in `noBranch`, a commit on f1-feat, and `edges` in its
+ * blockers.json. Returns the paths and a git runner.
  */
-async function mergeFixture(repos, { deps = {}, extraRepos = [] } = {}) {
+async function mergeFixture(repos, { deps = {}, extraRepos = [], edges = [] } = {}) {
   const { spawnSync } = await import('child_process');
   const all = [...repos, ...extraRepos];
   const { dir, cleanup } = mkTempBacklog({
@@ -193,6 +194,7 @@ async function mergeFixture(repos, { deps = {}, extraRepos = [] } = {}) {
   const built = {};
   for (const r of all) built[r] = initFeatureRepo(g, dir, r, { branch: 'f1-feat' });
   writeFileSync(join(dir, '.gitignore'), `${all.map((r) => `${r}/\n${r}-origin.git/\n`).join('')}.bl/\n`);
+  if (edges.length > 0) writeBlockers(dir, edges);
   g(dir, 'init', '-q', '-b', 'main');
   g(dir, 'add', '.');
   g(dir, 'commit', '-q', '-m', 'backlog');
@@ -218,6 +220,54 @@ test('bl merge F-n merges bl first, syncs the backlog, then the other repos in d
     const app = at('=== app ===');
     assert.ok(bl < sync && sync < containers && containers < app, 'bl, the sync, containers, app');
     assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'done');
+  } finally {
+    cleanup();
+  }
+});
+
+const mergeEdge = (blocker, unit) => ({
+  blocker: `F-1:${blocker}`,
+  gate: 'merge',
+  unit: `F-1:${unit}`,
+  until: 'merged',
+});
+
+test('bl merge F-n merges by its merge edges: ci-cd before bl, the backlog sync right after bl', async () => {
+  const { dir, cleanup, env } = await mergeFixture(['bl', 'ci-cd', 'app'], { edges: [mergeEdge('ci-cd', 'bl')] });
+  try {
+    const r = runBl(['merge', 'F-1'], { cwd: dir, env });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^Repos {3}: ci-cd, bl, app \(merge edge F-1:ci-cd → F-1:bl\)$/m);
+    const at = (s) => {
+      const i = r.stderr.indexOf(s);
+      assert.notEqual(i, -1, `missing ${s}`);
+      return i;
+    };
+    const ciCd = at('=== ci-cd ===');
+    const bl = at('=== bl ===');
+    const sync = at('Syncing backlog with the merged bl...');
+    const app = at('=== app ===');
+    assert.ok(ciCd < bl && bl < sync && sync < app, 'ci-cd, bl, the sync, app');
+    assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'done');
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl merge F-n refuses a cycle of merge edges before it touches any repo, naming the edges', async () => {
+  const { dir, cleanup, env, g, built } = await mergeFixture(['bl', 'ci-cd'], {
+    edges: [mergeEdge('ci-cd', 'bl'), mergeEdge('bl', 'ci-cd')],
+  });
+  try {
+    const before = Object.fromEntries(['bl', 'ci-cd'].map((n) => [n, g(built[n].repo, 'rev-parse', 'main')]));
+    const r = runBl(['merge', 'F-1'], { cwd: dir, env });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /F-1: its merge edges form a cycle, so no repo can merge first: /);
+    assert.match(r.stderr, /F-1:ci-cd → F-1:bl/);
+    assert.match(r.stderr, /F-1:bl → F-1:ci-cd/);
+    assert.doesNotMatch(r.stderr, /^Repos /m);
+    for (const n of ['bl', 'ci-cd']) assert.equal(g(built[n].repo, 'rev-parse', 'main'), before[n], `${n} not merged`);
+    assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'in_progress');
   } finally {
     cleanup();
   }

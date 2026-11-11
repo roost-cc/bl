@@ -21,7 +21,7 @@ test('bl block add writes one sorted line, commits blockers.json alone, and list
   assert.equal(
     readFileSync(join(dir, BLOCKERS_FILE), 'utf8'),
     `{
-  "schema": "bl-blockers/v1",
+  "schema": "bl-blockers/v2",
   "edges": [
     {"blocker":"S-1","gate":"merge","unit":"F-1","until":"done"},
     {"blocker":"S-2","gate":"merge","unit":"S-1","until":"done"}
@@ -131,7 +131,7 @@ test('bl block add refuses a cycle with a cross-feature depends_on, and a wildca
   assert.equal(r.status, 1);
   assert.match(
     r.stderr,
-    /S-13 at run by S-11 would close a deadlock: F-2 → F-1 \(S-13 at run by S-11\) → F-2 \(S-11 depends_on S-12\)/,
+    /S-13 at run by S-11 would close a deadlock: F-2 → F-1 \(S-13 at run by S-11\) → F-2 \(S-11 at run by S-12\)/,
   );
   r = bl(['block', 'add', 'S-1', '--gate', 'run', '--unit', '*', '--until', 'done'], dir);
   assert.equal(r.status, 1);
@@ -144,13 +144,184 @@ test('bl block add refuses a cycle with a cross-feature depends_on, and a wildca
   assert.equal(readBlockers(dir).edges.length, 1);
 });
 
+test('bl block add writes a merge edge inside one feature, refuses a bad one, and list shows it under the feature', () => {
+  // F-1 over S-1 (bl) and S-2 (ci-cd), F-2 over S-3 (app).
+  const { dir } = mkTempBacklog({
+    components: [
+      { id: 'C01', title: 'Bl', repo: 'bl' },
+      { id: 'C02', title: 'Ci', repo: 'ci-cd' },
+      { id: 'C03', title: 'App', repo: 'app' },
+    ],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'One', feature: 'F-1' },
+      { id: 'S-2', component: 'C02', title: 'Two', feature: 'F-1' },
+      { id: 'S-3', component: 'C03', title: 'Three', feature: 'F-2' },
+    ],
+    features: [
+      { id: 'F-1', title: 'One', status: 'approved', stories: ['S-1', 'S-2'] },
+      { id: 'F-2', title: 'Two', status: 'approved', stories: ['S-3'] },
+    ],
+  });
+  initGitBacklog(dir);
+  const add = (blocker, unit, until = 'merged') =>
+    bl(['block', 'add', blocker, '--gate', 'merge', '--unit', unit, '--until', until], dir);
+  const refusals = [
+    [['F-2:app', 'F-1:bl'], /a merge edge joins two repos of one feature, not of F-2 and F-1 \(blockers-unit\)/],
+    [['F-1:app', 'F-1:bl'], /blocker F-1:app: no story of F-1 names repo app \(blockers-unit\)/],
+    [['F-1:ci-cd', 'F-1:bl', 'done'], /a merge edge's until is "merged", not "done" \(blockers-status\)/],
+    [['F-1:ci-cd', '*'], /a merge edge's unit is never "\*" \(blockers-unit\)/],
+  ];
+  for (const [args, message] of refusals) {
+    const r = add(...args);
+    assert.equal(r.status, 1, args.join(' '));
+    assert.match(r.stderr, message, args.join(' '));
+  }
+  assert.equal(readBlockers(dir).text, null, 'nothing written');
+
+  const r = add('F-1:ci-cd', 'F-1:bl');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'blocked: F-1:bl at merge by F-1:ci-cd until merged\n');
+  assert.deepEqual(readBlockers(dir).edges, [{ blocker: 'F-1:ci-cd', gate: 'merge', unit: 'F-1:bl', until: 'merged' }]);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: block F-1:bl at merge on F-1:ci-cd');
+
+  // The edge that closes a cycle, and one repo on itself.
+  for (const [blocker, unit] of [
+    ['F-1:bl', 'F-1:ci-cd'],
+    ['F-1:bl', 'F-1:bl'],
+  ]) {
+    const cyc = add(blocker, unit);
+    assert.equal(cyc.status, 1, `${blocker} → ${unit}`);
+    assert.match(cyc.stderr, /would close a deadlock: F-1:/);
+  }
+  assert.equal(readBlockers(dir).edges.length, 1);
+
+  const list = bl(['block', 'list', 'F-1'], dir);
+  assert.equal(list.status, 0, list.stderr);
+  assert.equal(list.stdout, 'merge edge F-1:ci-cd → F-1:bl: bl merges after ci-cd\n');
+  assert.equal(bl(['block', 'list', 'F-2'], dir).stdout, '');
+  // A merge edge is never a hold: bl status prints no held: line.
+  const status = bl(['status', 'F-1'], dir);
+  assert.equal(status.status, 0, status.stderr);
+  assert.doesNotMatch(status.stdout, /held/);
+});
+
+test('bl block add writes an order edge inside one feature, refuses a bad one or a cycle, and list shows it under the feature', () => {
+  // F-1 over S-1, S-2 and S-4 (S-4 depends_on S-2 by its key), F-2 over S-3; S-5 is in no feature.
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Bl', repo: 'bl' }],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'One', feature: 'F-1' },
+      { id: 'S-2', component: 'C01', title: 'Two', feature: 'F-1' },
+      { id: 'S-3', component: 'C01', title: 'Three', feature: 'F-2' },
+      { id: 'S-4', component: 'C01', title: 'Four', feature: 'F-1', depends_on: ['S-2'] },
+      { id: 'S-5', component: 'C01', title: 'Five' },
+    ],
+    features: [
+      { id: 'F-1', title: 'One', status: 'approved', stories: ['S-1', 'S-2', 'S-4'] },
+      { id: 'F-2', title: 'Two', status: 'approved', stories: ['S-3'] },
+    ],
+  });
+  initGitBacklog(dir);
+  const add = (blocker, unit, until = 'implemented') =>
+    bl(['block', 'add', blocker, '--gate', 'order', '--unit', unit, '--until', until], dir);
+  const refusals = [
+    [['S-3', 'S-1'], /an order edge joins two stories of one feature, not of F-2 and F-1 \(blockers-unit\)/],
+    [['S-5', 'S-1'], /blocker S-5 is in no feature \(blockers-unit\)/],
+    [['S-2', 'S-1', 'done'], /an order edge's until is "implemented", not "done" \(blockers-status\)/],
+    [['S-2', '*'], /an order edge's unit is never "\*" \(blockers-unit\)/],
+    // S-4's depends_on: S-2 is the order edge S-2 → S-4, so S-4 → S-2 closes a cycle.
+    [
+      ['S-4', 'S-2'],
+      /S-2 at order by S-4 would close a deadlock: S-2 → S-4 \(order edge S-4 → S-2\) → S-2 \(order edge S-2 → S-4\)/,
+    ],
+  ];
+  for (const [args, message] of refusals) {
+    const r = add(...args);
+    assert.equal(r.status, 1, args.join(' '));
+    assert.match(r.stderr, message, args.join(' '));
+  }
+  assert.equal(readBlockers(dir).text, null, 'nothing written');
+
+  const r = add('S-2', 'S-1');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'blocked: S-1 at order by S-2 until implemented\n');
+  assert.deepEqual(readBlockers(dir).edges, [{ blocker: 'S-2', gate: 'order', unit: 'S-1', until: 'implemented' }]);
+  assert.match(add('S-1', 'S-2').stderr, /would close a deadlock: S-2 → S-1 /);
+
+  const list = bl(['block', 'list', 'F-1'], dir);
+  assert.equal(list.status, 0, list.stderr);
+  assert.equal(list.stdout, 'order edge S-2 → S-1: S-1 is implemented after S-2\n');
+  // An order edge is never a hold; bl status lists the stories in its order.
+  const status = bl(['status', 'F-1'], dir);
+  assert.equal(status.status, 0, status.stderr);
+  assert.doesNotMatch(status.stdout, /held/);
+  assert.deepEqual(
+    [...status.stdout.matchAll(/^\d+\s+(S-\d+)/gm)].map((m) => m[1]),
+    ['S-2', 'S-1', 'S-4'],
+  );
+});
+
+test('block add refuses active_when on a merge edge and on an order edge, and bl validate reports each', () => {
+  // F-1 over S-1 (bl) and S-2 (ci-cd).
+  const { dir } = mkTempBacklog({
+    components: [
+      { id: 'C01', title: 'Bl', repo: 'bl' },
+      { id: 'C02', title: 'Ci', repo: 'ci-cd' },
+    ],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'One', feature: 'F-1' },
+      { id: 'S-2', component: 'C02', title: 'Two', feature: 'F-1' },
+    ],
+    features: [{ id: 'F-1', title: 'One', status: 'approved', stories: ['S-1', 'S-2'] }],
+  });
+  initGitBacklog(dir);
+  // [kind, the edge]; an active_when naming no unit, and one naming a real unit and status
+  const edges = [
+    ['a merge', { blocker: 'F-1:ci-cd', gate: 'merge', unit: 'F-1:bl', until: 'merged' }],
+    ['an order', { blocker: 'S-2', gate: 'order', unit: 'S-1', until: 'implemented' }],
+  ];
+  const whens = [
+    { unit: 'F-99', status: 'nope' },
+    { unit: 'S-1', status: 'done' },
+  ];
+  for (const [kind, e] of edges) {
+    for (const when of whens) {
+      const r = bl(
+        ['block', 'add', e.blocker, '--gate', e.gate, '--unit', e.unit, '--until', e.until].concat([
+          '--active-when',
+          when.unit,
+          '--active-status',
+          when.status,
+        ]),
+        dir,
+      );
+      assert.equal(r.status, 1, `${kind} ${when.unit}`);
+      assert.match(r.stderr, new RegExp(`${kind} edge holds nothing, so it takes no active_when \\(blockers-gate\\)`));
+    }
+  }
+  assert.equal(readBlockers(dir).text, null, 'nothing written');
+
+  writeBlockers(
+    dir,
+    edges.map(([, e]) => ({ ...e, active_when: whens[1] })),
+  );
+  const v = bl(['validate', '--json'], dir);
+  const messages = JSON.parse(v.stdout)
+    .findings.filter((f) => f.code === 'blockers-gate')
+    .map((f) => f.message);
+  assert.deepEqual(messages.sort(), [
+    'F-1:bl at merge by F-1:ci-cd: a merge edge holds nothing, so it takes no active_when',
+    'S-1 at order by S-2: an order edge holds nothing, so it takes no active_when',
+  ]);
+});
+
 test('bl validate reports a deadlock of cross-feature depends_on alone', () => {
   const { dir } = backlog({ deps: { 'S-11': 'S-12', 'S-13': 'S-14' } });
   const r = bl(['validate', '--json'], dir);
   const cycle = JSON.parse(r.stdout).findings.filter((f) => f.code === 'blockers-cycle');
   assert.deepEqual(
     cycle.map((f) => f.message),
-    ['deadlock: F-1 → F-2 (S-11 depends_on S-12) → F-1 (S-13 depends_on S-14)'],
+    ['deadlock: F-1 → F-2 (S-11 at run by S-12) → F-1 (S-13 at run by S-14)'],
   );
   assert.equal(cycle[0].severity, 'error');
 });

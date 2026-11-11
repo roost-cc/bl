@@ -85,7 +85,7 @@ function prLine(p) {
  * @param {object} unit — a `storyUnit` or `featureUnit`: its `status` and `round` are its log's,
  *   and its `fm` and `change` give its review position
  * @param {{ config: object, args?: object, repos: string[], find?: Function, preflight?: Function, held?: Function }} opts
- *   `repos` are the unit's repos, in merge order; `held(id)` is the gate
+ *   `repos` are the unit's repos, lead first (`featureRepoOrder`); `held(id)` is the gate
  *   check, `heldBy` at `merge` by default
  * @returns {{ findings: Array<{ gate: string, message: string }>, unreviewed: null | { prs: object[] }, noCommits: boolean }}
  */

@@ -100,11 +100,17 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
    - Give each story an effort level by **Effort level** below: put `"effort": "<level>"` on its
      spec entry, and write the `**Effort:** <level>: <reason>` line as the first line of its
      Implementation Plan.
-   - Order matters. Declare `depends_on` between stories so that `bl implement` runs them in
-     sequence. Declare each edge once, as `depends_on` on the later story. bl derives the
-     inverse, and a stored `required_for:` is a `derived-key` error.
-   - A dependency outside the feature must already be done, or be pulled into the feature.
-     Otherwise `bl approve` warns and `bl implement` refuses.
+   - Order matters. `blockers.json` is the one place for holds and order. Give the later
+     story's spec entry a `depends_on` that names the earlier one: `bl new` writes it as an
+     order edge, so `bl implement` runs the stories in sequence. State each order once. Never
+     write `depends_on:` or `required_for:` in a story file. To add an order after `bl new`:
+     `bl block add <S-first> --gate order --unit <S-later> --until implemented`.
+   - A dependency outside the feature is a run edge in `blockers.json`. It must already be done,
+     or be pulled into the feature. Otherwise `bl approve` warns and `bl implement` refuses.
+   - If the feature has more than one repo, and one repo's tests or push gate run another repo's
+     new code, add a merge edge after `bl new`. Then `bl merge` merges the other repo first:
+     `bl block add {{featureId}}:<repo to merge first> --gate merge --unit {{featureId}}:<repo that needs it> --until merged`.
+     Without a merge edge, `bl merge` merges `bl` first, then each repo by its first story.
 
    Create the stories in one call, so that their IDs and cross-references resolve together:
 

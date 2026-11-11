@@ -65,9 +65,10 @@ blrun() {
 # --- run: deferral before anything starts ----------------------------------
 blrun run S-3 S-2 S-1 S-6 --plan
 assert_exit "run S-3 S-2 S-1 S-6 --plan" 0 "$RC"
-assert_contains "a dependent waits, naming its blocker" "  S-2: S-2 depends on S-1; run it after S-1 merges" "$ERR"
+# A depends_on: is a run edge (F-111 D4): dispatch names it as a hold.
+assert_contains "a dependent waits, naming its blocker" "  S-2: S-2 is held at run by S-1 (refined, needs done)" "$ERR"
 assert_contains "an overlap waits, naming the shared file" "  S-3: S-3 overlaps S-1 on src/a.js; run it after S-1 merges" "$ERR"
-assert_contains "an undone outside dependency waits" "  S-6: S-6 depends on S-9, which is draft; merge S-9 first" "$ERR"
+assert_contains "an undone outside dependency waits" "  S-6: S-6 is held at run by S-9 (draft, needs done)" "$ERR"
 assert_contains "the deferred list comes first" $'Deferred:\n' "${ERR%%Starting:*}"
 assert_contains "only S-1 starts" "Starting: S-1" "$ERR"
 assert_contains "the one started unit runs in place" "S-1 · story S-1 — run plan" "$OUT"
@@ -111,7 +112,7 @@ assert_contains "implement needs tmux for several" \
 
 blrun implement S-2 S-1 S-6
 assert_exit "implement with one startable" 1 "$RC"
-assert_contains "implement defers S-2" "S-2: S-2 depends on S-1" "$ERR"
+assert_contains "implement defers S-2" "S-2: S-2 is held at run by S-1" "$ERR"
 assert_contains "the one started unit runs here" "Unknown repo: nope" "$ERR"
 if [[ "$ERR" == *"need tmux"* ]]; then fail "one started unit needs no tmux"; else pass; fi
 

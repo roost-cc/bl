@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
-import { INTERRUPT_SIGNALS, isInterrupt, raiseSignal } from '../../src/signal-exit.js';
+import { INTERRUPT_SIGNALS, interruptOf, isInterrupt, raiseSignal } from '../../src/signal-exit.js';
 
 const SIGNAL_EXIT = fileURLToPath(new URL('../../src/signal-exit.js', import.meta.url));
 
@@ -25,6 +25,22 @@ test('isInterrupt is true for SIGINT and SIGTERM only', () => {
     [undefined, false],
   ];
   for (const [signal, want] of cases) assert.equal(isInterrupt(signal), want, String(signal));
+});
+
+test('interruptOf is the interrupt that ended a child, never a kill by Node (r.error set)', () => {
+  const enobufs = Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+  const timedOut = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  const cases = [
+    [{ signal: 'SIGINT', status: null }, 'SIGINT'],
+    [{ signal: 'SIGTERM', status: null }, 'SIGTERM'],
+    [{ signal: 'SIGTERM', status: null, error: enobufs }, null],
+    [{ signal: 'SIGTERM', status: null, error: timedOut }, null],
+    [{ signal: 'SIGINT', status: null, error: enobufs }, null],
+    [{ signal: 'SIGKILL', status: null }, null],
+    [{ signal: null, status: 1 }, null],
+    [{ signal: null, status: 0 }, null],
+  ];
+  for (const [r, want] of cases) assert.equal(interruptOf(r), want, JSON.stringify(r));
 });
 
 test('raiseSignal raises nothing for a signal that is not an interrupt', () => {

@@ -50,4 +50,6 @@ story's files by hand, so that the story's id, directory and frontmatter stay co
 
 {{collaborationGuide}}
 
+{{simplicityGuide}}
+
 {{writingGuide}}

@@ -50,6 +50,7 @@ import {
 import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
 import { spawnSync } from 'child_process';
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   parseFrontmatter,
@@ -73,15 +74,15 @@ import {
   resolveFeatureStories,
   featureRepoOrder,
   orderStoriesByDeps,
-  outsideBlockers,
 } from './feature.js';
+import { heldBy, readEdges } from './blockers.js';
 import { runHeadlessSession, launchSession, loadPrompt, loadSchema } from './session.js';
 import { cleanStderrLine } from './outcome.js';
 import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { LOCK_FILE, readComponents, readAllStories } from './story.js';
+import { LOCK_FILE, readComponents } from './story.js';
 import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
@@ -549,7 +550,36 @@ export function formatPlan(feature, steps) {
 // Default runner (real side effects)
 // ---------------------------------------------------------------------------
 
+/** The environment variable that carries this bl's container-owner token to its steps. */
+export const CONTAINER_OWNER_ENV = 'BL_CONTAINER_OWNER';
+/** The label a test helper sets to that token on each container it creates. */
+export const CONTAINER_OWNER_LABEL = 'cc.roost.bl-owner';
+
+/**
+ * Parse `docker ps` lines (ID, name, compose project, owner label; tab-separated)
+ * into the container cleanup's snapshot. A container whose owner label names
+ * another bl is left out: two loops run at the same time, and one loop's
+ * cleanup must not remove the containers that the other loop's step uses. A
+ * container without the label is kept, as before.
+ * @param {string|null|undefined} stdout
+ * @param {string} owner - this bl's token
+ * @returns {{ id: string, name: string, compose: boolean }[]}
+ */
+export function parseContainerList(stdout, owner) {
+  return String(stdout ?? '')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => l.split('\t'))
+    .filter(([, , , label]) => !label || label === owner)
+    .map(([id, name, project]) => ({ id, name, compose: Boolean(project) }));
+}
+
 export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
+  // Every step this bl starts inherits the token. A test helper sets it as the
+  // CONTAINER_OWNER_LABEL of each container it creates, and listContainers
+  // leaves out containers that carry another bl's token.
+  const containerOwner = `${process.pid}-${randomUUID()}`;
+  process.env[CONTAINER_OWNER_ENV] = containerOwner;
   return {
     // An interactive run attaches each session and does not walk the list.
     interactive,
@@ -681,25 +711,26 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       return resolveFeaturePluginsReport('test', config, featureIndexPath, { componentEntry });
     },
     /**
-     * Every container on the host, with whether it belongs to a compose
-     * project. Null when docker is unavailable or the operator opted out with
-     * BL_KEEP_TEST_CONTAINERS=1 — the cleanup then does nothing.
+     * Every container on the host that no other bl owns, with whether it
+     * belongs to a compose project. Null when docker is unavailable or the
+     * operator opted out with BL_KEEP_TEST_CONTAINERS=1 — the cleanup then
+     * does nothing.
      */
     listContainers() {
       if (process.env.BL_KEEP_TEST_CONTAINERS === '1') return null;
       const r = spawnSync(
         'docker',
-        ['ps', '-a', '--no-trunc', '--format', '{{.ID}}\t{{.Names}}\t{{.Label "com.docker.compose.project"}}'],
+        [
+          'ps',
+          '-a',
+          '--no-trunc',
+          '--format',
+          `{{.ID}}\t{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "${CONTAINER_OWNER_LABEL}"}}`,
+        ],
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 30_000 },
       );
       if (r.error || r.status !== 0) return null;
-      return String(r.stdout ?? '')
-        .split('\n')
-        .filter(Boolean)
-        .map((l) => {
-          const [id, name, project] = l.split('\t');
-          return { id, name, compose: Boolean(project) };
-        });
+      return parseContainerList(r.stdout, containerOwner);
     },
     removeContainers(ids) {
       const r = spawnSync('docker', ['rm', '-f', ...ids], {
@@ -2489,9 +2520,9 @@ function withCurrentEffort(backlogRoot, s) {
  * Re-read the feature's stories after an agent session (F-48 D3): the
  * session may have added one (`bl side`), possibly in a repo the run did not
  * prepare. A new story joins `prep.ordered` after the stories the run has
- * taken, and those not taken yet are put in dependency order again
- * (`orderStoriesByDeps`, as `bl run` orders them at the start, on their
- * current `depends_on`), so the implement loop reaches each after its
+ * taken, and those not taken yet are put in order-edge order again
+ * (`orderStoriesByDeps`, as `bl run` orders them at the start, on the
+ * current `readEdges`), so the implement loop reaches each after its
  * prerequisites and the repo guard knows its component. A new repo's worktree
  * on the branch (`bl side` prepares it with the story) joins
  * `prep.otherWorktrees` and the change document's `repos:`, so from then on
@@ -2541,7 +2572,7 @@ async function refreshRepos(ctx) {
     const rest = [...prep.ordered.filter((s) => !ctx.implemented.has(s.id)), ...added].map(
       (s) => current.get(s.id) ?? s,
     );
-    prep.ordered.splice(0, prep.ordered.length, ...taken, ...orderStoriesByDeps(rest));
+    prep.ordered.splice(0, prep.ordered.length, ...taken, ...orderStoriesByDeps(rest, scope.edges));
   }
   if (repos.length > 0) {
     prep.otherWorktrees.push(...repos.map(({ repoName, worktreePath }) => ({ repoName, worktreePath })));
@@ -2834,17 +2865,20 @@ function targetsMoved(ctx, before) {
  * The feature's stories as the backlog has them now: every story whose
  * `feature:` names it (F-77 D3). Each story the run does not hold yet is
  * checked the way `bl run` checks the others before it starts
- * (`prepareFeatureWorktree`): it has a repo the config knows and depends on
- * nothing open outside the feature. Returns `{ stories }` or `{ error }`; a
- * read that fails is an error, never "nothing changed".
+ * (`prepareFeatureWorktree`): it has a repo the config knows and no edge
+ * holds it at `run` (`heldBy`; a `depends_on:` outside the feature is one).
+ * Returns `{ stories, edges }` (`readEdges`'s) or `{ error }`; a read that
+ * fails is an error, never "nothing changed".
  */
 function refreshedStories(ctx) {
   const { feature, config } = ctx;
-  let all;
   let res;
+  let edges;
+  let holds;
   try {
-    all = readAllStories(config);
-    res = resolveFeatureStories(feature, config, all);
+    res = resolveFeatureStories(feature, config);
+    edges = readEdges(config);
+    holds = heldBy(config, feature.id, 'run');
   } catch (e) {
     return { error: e.message };
   }
@@ -2858,15 +2892,11 @@ function refreshedStories(ctx) {
   }
   const unknown = featureRepoOrder(added).filter((name) => !config.reposByName?.[name]);
   if (unknown.length > 0) return { error: `unknown repo ${unknown.join(', ')} (not in backlog.json)` };
-  const blockers = outsideBlockers(added, all, loadFlow(config.backlogRoot)).filter(
-    (b) => !stories.some((s) => s.id === b.dep),
-  );
+  const blockers = holds.filter((h) => added.some((s) => s.id === h.edge.unit));
   if (blockers.length > 0) {
-    return {
-      error: `blocked on work outside the feature: ${blockers.map((b) => `${b.story} depends on ${b.dep} (${b.status})`).join(', ')}`,
-    };
+    return { error: `blocked on work outside the feature: ${blockers.map((h) => h.line).join(', ')}` };
   }
-  return { stories };
+  return { stories, edges };
 }
 
 /**

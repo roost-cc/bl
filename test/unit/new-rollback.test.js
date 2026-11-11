@@ -1,39 +1,27 @@
 /**
- * new-rollback.test.js — F-77 D3: a failed `bl new --required-for` (or a
- * spec's `required_for`) undoes what it wrote without breaking an edge or an
- * edit it did not make.
+ * new-rollback.test.js — F-111 D5: a `bl new` whose dependency edges cannot
+ * be written to `blockers.json` undoes what it wrote.
  *
- * new_required_for_rollback_failure_preserves_referential_integrity_and_concurrent_edits:
- * `bl new` runs in this process with `atomicWriteFile`'s test hook failing the
- * second target's edge write, and, per case, something else going wrong on the
- * way: the undo of the first target fails, the first target is edited by
- * someone else before the undo, a created directory cannot be removed, or the
- * second target turns malformed or disappears after the lookup. In every case
- * no story names a story that is not there, and an edit by someone else
- * survives.
+ * new_edge_write_failure_restores_blockers_and_removes_the_new_stories:
+ * `bl new` runs in this process with `atomicWriteFile`'s test hook failing a
+ * write of `blockers.json` (the first edge's or the second's) and, in one
+ * case, a created directory that cannot be removed. In every case
+ * `blockers.json` is as it was, so no edge names a story that is not there,
+ * and the error says what is left.
+ *
+ * new_edge_rollback_failure_keeps_new_stories_and_names_blockers_json: the
+ * write that puts `blockers.json` back fails too, after a thrown write or a
+ * refused edge. The error names `blockers.json` as left changed, and the new
+ * story is kept, so no edge names a story that is not there.
  */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { _hooks } from '../../src/atomic-write.js';
-import { updateSpecInChild } from '../helpers/spec-writer.js';
-import { listValue, parseFrontmatter } from '../../src/config.js';
 import { main } from '../../src/new.js';
-
-/** Every story's depends_on ids that name no story directory, as `S-n → S-m`. */
-function danglingEdges(dir) {
-  const stories = readdirSync(join(dir, 'stories')).filter((e) => existsSync(join(dir, 'stories', e, 'index.md')));
-  const ids = new Set(stories.map((e) => `S-${e.match(/^S(\d+)/)[1]}`));
-  const out = [];
-  for (const e of stories) {
-    const { fm } = parseFrontmatter(readFileSync(join(dir, 'stories', e, 'index.md'), 'utf8'));
-    for (const id of listValue(fm.depends_on) ?? []) if (!ids.has(id)) out.push(`${fm.story_id} → ${id}`);
-  }
-  return out;
-}
 
 const SINGLE = () => ['C01', '--title', 'First', '--points', '1', '--required-for', 'S-1,S-2', '--no-sync'];
 const SPEC = (dir) => {
@@ -50,22 +38,25 @@ const SPEC = (dir) => {
   return ['--from', spec, '--no-sync'];
 };
 
-// [case, what happens, expected: new story kept, first target still names S-3, error names]
+// [case, the blockers.json write that fails (1 = the first edge's), the new directory is read-only, error names]
 const CASES = [
-  ['the undo of the first target fails', 'rollback', true, true, /S1-one\/index\.md still has the new edge.*kept/],
-  ['the first target is edited before the undo', 'concurrent', false, false, /nothing is written or committed/],
-  ['a created directory cannot be removed', 'remove', true, false, /S3-\w+ is still there/],
-  ['the second target turns malformed after the lookup', 'malformed', false, false, /depends_on is not a list/],
-  ['the second target disappears after the lookup', 'missing', false, false, /ENOENT/],
+  ['the first edge write fails', 1, false, /nothing is written or committed: the new stories are removed/],
+  ['the second edge write fails', 2, false, /nothing is written or committed: the new stories are removed/],
+  [
+    'a created directory cannot be removed',
+    2,
+    true,
+    /undoing failed, so fix these by hand: stories\/S3-\w+ is still there/,
+  ],
 ];
 
 for (const [how, argv] of [
   ['--required-for', SINGLE],
   ["a spec's required_for", SPEC],
 ]) {
-  for (const [name, mode, storyKept, firstNamesS3, message] of CASES) {
-    test(`new_required_for_rollback_failure_preserves_referential_integrity_and_concurrent_edits: ${how}, ${name}`, async (t) => {
-      if (mode === 'remove' && process.getuid?.() === 0) return t.skip('root removes from a read-only directory');
+  for (const [name, failAt, readOnly, message] of CASES) {
+    test(`new_edge_write_failure_restores_blockers_and_removes_the_new_stories: ${how}, ${name}`, async (t) => {
+      if (readOnly && process.getuid?.() === 0) return t.skip('root removes from a read-only directory');
       const { dir, cleanup } = mkTempBacklog({
         repos: ['../repos/alpha'],
         components: [{ id: 'C01', title: 'Core', repo: 'alpha', home: true }],
@@ -76,30 +67,14 @@ for (const [how, argv] of [
       });
       const cwd = process.cwd();
       const env = process.env.BL_BACKLOG_DIR;
-      const first = join(dir, 'stories/S1-one/index.md');
-      const second = join(dir, 'stories/S2-two/index.md');
-      const original = readFileSync(first, 'utf8');
       const newDir = () => readdirSync(join(dir, 'stories')).find((e) => e.startsWith('S3-'));
-      let phase = 'first-edge';
-      // The hook sees each staged file before its rename: tell the targets
-      // apart by their title and whether the text names S-3.
+      let writes = 0;
+      // The hook sees each staged file before its rename: count the blockers.json writes.
       _hooks.beforeRename = (tmp) => {
-        const text = readFileSync(tmp, 'utf8');
-        const is = (title) => new RegExp(`^title: ${title}$`, 'm').test(text);
-        if (phase === 'first-edge' && is('One') && text.includes('S-3')) {
-          phase = 'second-edge';
-          if (mode === 'malformed') {
-            writeFileSync(second, readFileSync(second, 'utf8').replace('\n---\n', '\ndepends_on: {bad: true}\n---\n'));
-          }
-          if (mode === 'missing') unlinkSync(second);
-        } else if (phase === 'second-edge' && is('Two')) {
-          phase = 'undo';
-          if (mode === 'concurrent') updateSpecInChild(dir, first, (_fm, body) => body + '\n## Concurrent edit\n');
-          if (mode === 'remove') chmodSync(join(dir, 'stories', newDir()), 0o555);
-          throw new Error('injected second dependency write failure');
-        } else if (phase === 'undo' && is('One') && mode === 'rollback') {
-          throw new Error('injected rollback failure');
-        }
+        if (!readFileSync(tmp, 'utf8').startsWith('{\n  "schema": "bl-blockers/')) return;
+        if (++writes !== failAt) return;
+        if (readOnly) chmodSync(join(dir, 'stories', newDir()), 0o555);
+        throw new Error('injected blockers.json write failure');
       };
       let error = null;
       try {
@@ -113,27 +88,95 @@ for (const [how, argv] of [
         process.chdir(cwd);
         if (env === undefined) delete process.env.BL_BACKLOG_DIR;
         else process.env.BL_BACKLOG_DIR = env;
-        if (mode === 'remove' && newDir()) chmodSync(join(dir, 'stories', newDir()), 0o755);
+        if (readOnly && newDir()) chmodSync(join(dir, 'stories', newDir()), 0o755);
       }
       try {
-        assert.equal(
-          phase,
-          ['malformed', 'missing'].includes(mode) ? 'second-edge' : 'undo',
-          'the failing write was reached',
-        );
+        assert.equal(writes, failAt, 'the failing write was reached');
         assert.ok(error, 'bl new failed');
+        assert.match(
+          error.message,
+          /could not write the edges to blockers\.json \(injected blockers\.json write failure\)/,
+        );
         assert.match(error.message, message);
-        assert.equal(Boolean(newDir()), storyKept, 'new story kept');
-        assert.equal(readFileSync(first, 'utf8').includes('S-3'), firstNamesS3, 'first target names S-3');
-        assert.deepEqual(danglingEdges(dir), [], 'no edge names a missing story');
-        if (mode === 'concurrent') {
-          assert.equal(readFileSync(first, 'utf8'), `${original}\n## Concurrent edit\n`, 'the other edit survives');
-        } else if (!firstNamesS3) {
-          assert.equal(readFileSync(first, 'utf8'), original, 'first target as it was');
-        }
+        assert.equal(Boolean(newDir()), readOnly, 'new story kept only when it cannot be removed');
+        assert.equal(existsSync(join(dir, 'blockers.json')), false, 'blockers.json as it was: none');
       } finally {
         cleanup();
       }
     });
   }
+}
+
+// new_edge_rollback_failure_keeps_new_stories_and_names_blockers_json: the
+// edge write fails (a thrown write, or a refused edge) and so does the write
+// that puts blockers.json back. [case, argv, the error names]
+const ROLLBACK_CASES = [
+  [
+    'the second edge write throws',
+    SINGLE,
+    /\(injected blockers\.json write failure; and could not undo the write of blockers\.json: blockers\.json \(injected/,
+  ],
+  [
+    'the second edge is refused',
+    () => ['C01', '--title', 'First', '--points', '1', '--depends-on', 'S-1', '--required-for', 'S-1', '--no-sync'],
+    /would close a deadlock.*; and could not undo the write of blockers\.json: blockers\.json \(injected/,
+  ],
+];
+
+for (const [name, argv, message] of ROLLBACK_CASES) {
+  test(`new_edge_rollback_failure_keeps_new_stories_and_names_blockers_json: ${name}`, async () => {
+    const { dir, cleanup } = mkTempBacklog({
+      repos: ['../repos/alpha'],
+      components: [{ id: 'C01', title: 'Core', repo: 'alpha', home: true }],
+      stories: [
+        { id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one' },
+        { id: 'S-2', component: 'C01', title: 'Two', dirSuffix: 'two' },
+      ],
+    });
+    const blockers = join(dir, 'blockers.json');
+    writeFileSync(
+      blockers,
+      '{\n  "schema": "bl-blockers/v2",\n  "edges": [\n    {"blocker":"S-1","gate":"run","unit":"S-2","until":"done"}\n  ]\n}\n',
+    );
+    const cwd = process.cwd();
+    const env = process.env.BL_BACKLOG_DIR;
+    const newDir = () => readdirSync(join(dir, 'stories')).find((e) => e.startsWith('S3-'));
+    let writes = 0;
+    // Every blockers.json write after the first fails: the second edge's and the one that puts it back.
+    _hooks.beforeRename = (tmp) => {
+      if (!readFileSync(tmp, 'utf8').startsWith('{\n  "schema": "bl-blockers/')) return;
+      if (++writes >= 2) throw new Error('injected blockers.json write failure');
+    };
+    let error = null;
+    try {
+      process.env.BL_BACKLOG_DIR = dir;
+      process.chdir(dir);
+      await main(argv(dir));
+    } catch (e) {
+      error = e;
+    } finally {
+      _hooks.beforeRename = null;
+      process.chdir(cwd);
+      if (env === undefined) delete process.env.BL_BACKLOG_DIR;
+      else process.env.BL_BACKLOG_DIR = env;
+    }
+    try {
+      assert.ok(error, 'bl new failed');
+      assert.match(error.message, message);
+      assert.match(error.message, /put it back with git -C ".*" checkout -- blockers\.json/);
+      assert.match(
+        error.message,
+        /fix these by hand: blockers\.json; stories\/S3-\w+ kept, since an edge in blockers\.json may name it/,
+      );
+      assert.doesNotMatch(error.message, /nothing is written/);
+      // Every edge left in blockers.json names a story that is there.
+      const ids = readdirSync(join(dir, 'stories')).map((e) => `S-${e.match(/^S(\d+)/)[1]}`);
+      for (const e of JSON.parse(readFileSync(blockers, 'utf8')).edges) {
+        assert.ok(ids.includes(e.blocker) && ids.includes(e.unit), `${JSON.stringify(e)} names stories that are there`);
+      }
+      assert.ok(newDir(), 'the new story is kept');
+    } finally {
+      cleanup();
+    }
+  });
 }

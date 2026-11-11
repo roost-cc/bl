@@ -51,7 +51,7 @@ test("bl new with a title holding ': ' and ' #' writes a block yaml reads back (
     assert.equal(r.status, 0, r.stderr);
     let fm = assertTemplateBlock(dir, r.stdout.trim(), 'story');
     assert.equal(fm.feature, undefined, 'no feature: key on a story with none');
-    assert.equal(fm.depends_on, '');
+    assert.equal(Object.hasOwn(fm, 'depends_on'), false, 'a dependency is an edge, never a key (F-111 D5)');
     assert.match(readFileSync(join(dir, r.stdout.trim()), 'utf8'), /^# S-1 · Parse: the title #1 keeps its colon$/m);
 
     r = runBl(['new', 'F-1', 'C01', '--title', TRICKY, '--points', '3', '--depends-on', 'S-1', '--no-sync'], {
@@ -60,7 +60,7 @@ test("bl new with a title holding ': ' and ' #' writes a block yaml reads back (
     assert.equal(r.status, 0, r.stderr);
     fm = assertTemplateBlock(dir, r.stdout.trim(), 'story-feature');
     assert.equal(fm.feature, 'F-1');
-    assert.deepEqual(fm.depends_on, ['S-1']);
+    assert.equal(Object.hasOwn(fm, 'depends_on'), false);
   } finally {
     cleanup();
   }
@@ -93,7 +93,7 @@ test("bl new --from with ': ' and ' #' titles writes story and component blocks 
     const a = assertTemplateBlock(dir, `stories/${stories[0]}/index.md`, 'story');
     const b = assertTemplateBlock(dir, `stories/${stories[1]}/index.md`, 'story');
     assert.equal(a.component, 'C04');
-    assert.deepEqual(b.depends_on, [a.story_id]);
+    assert.equal(Object.hasOwn(b, 'depends_on'), false);
     assert.match(
       readFileSync(join(dir, `stories/${stories[0]}/index.md`), 'utf8'),
       /^Parse: the title #1 keeps its colon\.$/m,

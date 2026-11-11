@@ -28,6 +28,9 @@ test('bl tree on a backlog with no edges prints nothing on stdout', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, '');
     assert.match(r.stderr, /No dependency trees/);
+    // A dependency is an edge in blockers.json (F-111), never a depends_on: key.
+    assert.match(r.stderr, /Add one with bl new --depends-on or bl block add \(blockers\.json\)\./);
+    assert.doesNotMatch(r.stderr, /depends_on/);
   } finally {
     cleanup();
   }
@@ -180,7 +183,8 @@ test('bl tree on a component whose pending stories have no edges reports it', ()
     const r = runBl(['tree', 'C00'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, '');
-    assert.match(r.stderr, /No dependency trees for pending stories in C00/);
+    assert.match(r.stderr, /No dependency trees for pending stories in C00\. Add one with bl new --depends-on/);
+    assert.doesNotMatch(r.stderr, /depends_on/);
   } finally {
     cleanup();
   }

@@ -4,8 +4,8 @@
  * Answers "what do I have to build before I can start this story, and in what
  * order?". Collects the target's transitive dependency closure (via
  * `buildGraph()`'s `children` map, from the graph's `requiredFor`, the inverse
- * of every `depends_on`), drops everything already closed, and
- * emits the remainder leaf-first, target last.
+ * of every run and order edge in blockers.json), drops everything already
+ * closed, and emits the remainder leaf-first, target last.
  *
  * `bl tree` renders the same edges but buries the target inside a forest of
  * unrelated parents; `bl what-next` picks a single next story. This command
@@ -168,9 +168,10 @@ Arguments:
   <story-id>   Required. The story you want to land.
 
 Prints the ordered work plan for a story: every open story in its
-transitive \`depends_on\` closure, leaf-first, ending with the story
-itself. No story is listed before one of its own dependencies; within
-that constraint, stories that unblock more of the plan come first.
+transitive dependency closure (the story edges in blockers.json),
+leaf-first, ending with the story itself. No story is listed before
+one of its own dependencies; within that constraint, stories that
+unblock more of the plan come first.
 
 ${closedWords} stories are omitted, and the walk does not
 descend through them.

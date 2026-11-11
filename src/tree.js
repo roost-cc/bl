@@ -1,13 +1,13 @@
 /**
- * tree.js — render dependency trees built from depends_on frontmatter.
+ * tree.js — render dependency trees built from the run and order edges
+ * between stories in blockers.json (F-111 D4).
  *
- * Each story may declare:
- *   depends_on: [S-56, S-78]     # stories that must be done before this can start
- * and the stories that cannot start until it is done are derived, the graph's
- * `requiredFor` (F-77 D3).
+ * A story's dependencies are the stories that block it (`bl new
+ * --depends-on`, `bl block add`), and the stories that wait for it are the
+ * graph's `requiredFor` (F-77 D3).
  *
  * A "tree" is rooted at a story nothing else depends on (empty `requiredFor`),
- * and a node's children are its `depends_on` entries. Trees are collected as
+ * and a node's children are the stories it waits for. Trees are collected as
  * connected components in the undirected graph — a story with multiple
  * parents shows up under the first one it's encountered; subsequent
  * appearances are marked "(↑ see above)" to keep output finite and readable.
@@ -36,6 +36,9 @@ import { readAllStories, normalizeId, normalizeComponentId, findComponentDir } f
 import { filterFromArgs, filterStories, hasFilter, filterLabel } from './filter.js';
 import { flowForHelp, loadFlow } from './flow.js';
 
+/** How to record a dependency, for the messages that find none. */
+const ADD_EDGE = 'Add one with bl new --depends-on or bl block add (blockers.json).';
+
 function formatNode(story, flow, extra = '', color = false) {
   const status = story.status ?? 'draft';
   const closed = flow.meets('story', status, 'done');
@@ -52,7 +55,7 @@ function formatNode(story, flow, extra = '', color = false) {
 /**
  * Build the dependency graph.
  * @returns {{
- *   children: Map<string, string[]>,  // parent → children (depends_on)
+ *   children: Map<string, string[]>,  // parent → children (what it waits for)
  *   parents: Map<string, string[]>,   // child → parents (requiredFor)
  * }}
  */
@@ -69,8 +72,8 @@ export function buildGraph(stories) {
     parentSet.get(childId).add(parentId);
   };
 
-  // An edge is stated once, on the dependent story's `depends_on` (F-77 D3);
-  // `requiredFor` is the graph's inverse of it, each edge seen once.
+  // An edge is stated once, in blockers.json (F-111 D4); `requiredFor` is the
+  // graph's inverse of it, each edge seen once.
   for (const s of stories) {
     for (const p of s.requiredFor ?? []) addEdge(p, s.id);
   }
@@ -206,8 +209,8 @@ Options:
   --help               Show this help
 
 Notes:
-  - Trees are built from the \`depends_on\` frontmatter field.
-  - A root is a story nothing depends on; its children are its \`depends_on\` list.
+  - Trees are built from the run and order edges between stories in blockers.json.
+  - A root is a story nothing depends on; its children are the stories it waits for.
   - Orphan stories (no dependencies) are not shown.
   - With a component id, only trees containing pending stories in the component are
     shown; use -a/--all to include done-only trees. The filters work the same way,
@@ -283,7 +286,7 @@ Notes:
     }
     const hasAnyEdge = seedIds.some((id) => graph.children.has(id) || graph.parents.has(id));
     if (!hasAnyEdge) {
-      info(`No dependency trees for pending stories in ${label}. Add depends_on to story frontmatter.`);
+      info(`No dependency trees for pending stories in ${label}. ${ADD_EDGE}`);
       return;
     }
     candidateIds = ancestorsOf(seedIds, graph);
@@ -304,7 +307,7 @@ Notes:
     info(
       args.positional[0]
         ? `No dependencies recorded for ${normalizeId(args.positional[0]).id}.`
-        : 'No dependency trees found. Add `depends_on:` to story frontmatter.',
+        : `No dependency trees found. ${ADD_EDGE}`,
     );
     return;
   }

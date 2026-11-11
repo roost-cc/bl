@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { constants as osConstants } from 'os';
 import { spawnSync } from 'child_process';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -313,6 +314,41 @@ test('bl merge S-n finishes a story at ready_for_merge whose branch has no commi
     fx.cleanup();
   }
 });
+
+// The no-changes call site of `removeWorktreeAndBranch` (S-1463): a signal
+// that ends its worktree removal ends `bl merge` on that signal.
+const REAL_GIT = spawnSync('sh', ['-c', 'command -v git'], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'pipe'],
+}).stdout.trim();
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  test(`the no-changes removal ended by ${signal} ends bl merge as ${signal}`, () => {
+    const fx = noCommitStory(NO_COMMIT_LOG);
+    const bin = mkTempDir('bl-sig-');
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\ncase "$*" in 'worktree remove '*wt-s1) kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"\n`,
+      { mode: 0o755 },
+    );
+    try {
+      const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: { ...ENV, PATH: `${bin}:${process.env.PATH}` } });
+      assert.match(r.stdout + r.stderr, /no changes in code/);
+      assert.match(
+        r.stderr,
+        new RegExp(`code: \`git worktree remove [^\`]+\` was ended by ${signal}; rerun \`bl merge S-1\`\\.`),
+      );
+      assert.ok(
+        r.status === 128 + osConstants.signals[signal] || r.signal === signal,
+        `status ${r.status}, signal ${r.signal}\n${r.stderr}`,
+      );
+      // Stopped at the child: no `--force` remove, no branch deletion.
+      assert.ok(existsSync(fx.wt));
+      assert.notEqual(g(fx.repos.code, 'branch', '--list', 's1-loose'), '');
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
 
 test('bl merge S-n refuses as never reviewed a ready_for_merge story whose branch has commits', () => {
   const fx = noCommitStory(NO_COMMIT_LOG, { empty: false });

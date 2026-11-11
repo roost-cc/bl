@@ -151,7 +151,10 @@ test('bl run S-n refuses while a dependency is not merged', async () => {
   const { backlog } = build({ dependsOn: 'S-6' });
   const { exit, err } = await run(backlog, {});
   assert.equal(exit, 1);
-  assert.match(err, /Story S-7 is blocked on unmerged work:\n {2}S-7 depends on S-6 \(in_progress\)/);
+  assert.match(
+    err,
+    /Story S-7 is blocked on unmerged work:\n {2}S-7 is held at run by S-6 \(in_progress, needs done\)/,
+  );
 });
 
 test('bl run S-n refuses an open ## Escalation before any worktree is made', async () => {

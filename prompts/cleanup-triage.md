@@ -44,7 +44,9 @@ Deferred section :
      existing backlog story, pass that story's ID the same way, at any item
      count, including one. Items with no such relation get no
      `--depends-on`. The edge is stated once, on the later item. Never pass `--required-for` to
-     the earlier item, because its later item does not exist yet. Never edit `depends_on` by hand.
+     the earlier item, because its later item does not exist yet. `bl new` writes each
+     dependency as an edge in `blockers.json`, the one place for holds and order. Never write
+     `depends_on:` in a story file.
 
 3. Group overlapping stories into a feature. With only one new story, skip this step:
    one story alone never becomes a feature.
@@ -82,6 +84,8 @@ Deferred section :
    feature directory is the path that `bl new --feature` printed, without its trailing `/index.md` (for example `features/F68-<slug>`).
 
 {{validateBeforeSync}}
+
+{{simplicityGuide}}
 
 {{writingGuide}}
 

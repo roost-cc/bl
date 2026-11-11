@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 
-// F-77 D3: an edge is stated once, on the dependent story's `depends_on`,
-// and its inverse is derived, so `asymmetric-dep` is gone and `bl fix` has
+// F-77 D3: an edge is stated once, today in blockers.json (F-111; bl still
+// reads a `depends_on:` key as one), and its inverse is derived, so `asymmetric-dep` is gone and `bl fix` has
 // no code to repair (feature Q1). The command and its contract stay.
 
 function readStory(td, storyEntry) {

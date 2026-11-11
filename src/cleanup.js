@@ -16,7 +16,7 @@
  * process only.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { execSync, execFileSync, spawnSync } from 'child_process';
 import {
@@ -50,7 +50,7 @@ import {
 import { getAllowedTools, loadPrompt } from './session.js';
 import { addGateLine, gateLine, recordMerge } from './change-doc.js';
 import { shellMerged } from './feature-run.js';
-import { isInterrupt, raiseSignal } from './signal-exit.js';
+import { interruptOf, isInterrupt, raiseSignal } from './signal-exit.js';
 import { GATE_TAIL_LINES, codeSpan, interpolateCommand, tail } from './scripted.js';
 import { storyUnit } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
@@ -637,7 +637,9 @@ export async function cleanupOneRepo({
   const ahead = mayBeEmpty && branchExists ? commitsAhead(repoPath, branchName) : null;
   if (ahead === 0) {
     info(`Skipping the merge: no changes in ${repoName}.`);
-    removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists, keepBranch, config });
+    if (!removeWorktreeAndBranch({ parsed, repoPath, repoName, branchName, branchExists, keepBranch, config })) {
+      return { ok: false };
+    }
     return { ok: true, mergeCommitHash: null, branchExists, noChanges: true };
   }
   // The merge gate passed the story with no commits on its branch; a commit
@@ -709,11 +711,11 @@ export async function cleanupOneRepo({
       cwd: repoPath,
       stdio: ['inherit', process.stderr, process.stderr],
     });
-    if (isInterrupt(push.signal)) {
+    if (interruptOf(push)) {
       console.error(
         `${repoName}: the push of main to origin was ended by ${push.signal}; rerun \`bl merge ${parsed.id}\`.`,
       );
-      raiseSignal(push.signal);
+      raiseSignal(interruptOf(push));
       return { ok: false };
     }
     if (push.status !== 0) {
@@ -737,9 +739,9 @@ export async function cleanupOneRepo({
     const r = spawnSync(cmd, args, { cwd: repoPath, stdio: ['ignore', process.stderr, process.stderr] });
     if (r.status !== 0) {
       console.error(
-        `${repoName}: main is pushed, but \`${install}\` in the main checkout ${isInterrupt(r.signal) ? 'was interrupted' : 'failed'}. Run it by hand, then rerun \`bl merge ${parsed.id}\`:\n  cd ${shellQuote(repoPath)} && ${install}`,
+        `${repoName}: main is pushed, but \`${install}\` in the main checkout ${interruptOf(r) ? 'was interrupted' : 'failed'}. Run it by hand, then rerun \`bl merge ${parsed.id}\`:\n  cd ${shellQuote(repoPath)} && ${install}`,
       );
-      raiseSignal(r.signal);
+      raiseSignal(interruptOf(r));
       return { ok: false };
     }
   }
@@ -766,7 +768,9 @@ export async function cleanupOneRepo({
     // no PR or gh unavailable — not fatal
   }
 
-  removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists, keepBranch, config });
+  if (!removeWorktreeAndBranch({ parsed, repoPath, repoName, branchName, branchExists, keepBranch, config })) {
+    return { ok: false };
+  }
 
   return { ok: true, mergeCommitHash, branchExists };
 }
@@ -780,7 +784,8 @@ const CHECK_RUNS = 2;
  *
  * 1. In a throwaway worktree detached at origin/main, `git merge --no-ff` the
  *    branch with the usual message. The worktree is under the worktree root,
- *    where a session stack serves an app.roost.cc worktree's own client. A
+ *    where a session stack serves an app.roost.cc worktree's own client. Its
+ *    throwaway directory has mode 0775, so the stack's nginx can read it. A
  *    conflict means main moved after the integration: stop, and the operator
  *    reruns `bl merge`.
  * 2. With no `plugins`, skip to step 3. Otherwise run the `check` plugins
@@ -808,7 +813,7 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
   let signal = null;
   const git = (args, cwd) => {
     const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    if (isInterrupt(r.signal)) signal ??= r.signal;
+    signal ??= interruptOf(r);
     return r;
   };
   const outputOf = (r) => `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
@@ -818,6 +823,8 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
   const root = worktreeRoot(config);
   mkdirSync(root, { recursive: true });
   const tmp = mkdtempSync(join(root, 'bl-merge-'));
+  // mkdtempSync makes the directory 0700; a session stack's nginx (another uid) must enter it (S-1487).
+  chmodSync(tmp, 0o775);
   const wt = join(tmp, basename(repoPath));
   // Removes the throwaway worktree, once. It also runs on `exit`, because a
   // listener can end bl inside a call: a Ctrl+C during the lock wait of the
@@ -966,7 +973,7 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
       cwd: wt,
       stdio: ['ignore', process.stderr, process.stderr],
     });
-    if (isInterrupt(push.signal)) signal ??= push.signal;
+    signal ??= interruptOf(push);
     if (signal) {
       interrupted(`the push of ${commit}`);
       return false;
@@ -1038,7 +1045,7 @@ export function fastForwardBlocker(git, repoPath, commit) {
 export function landedMergeCommit(repoPath, branchName) {
   const git = (...args) => {
     const r = spawnSync('git', args, { cwd: repoPath, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    raiseSignal(r.signal);
+    raiseSignal(interruptOf(r));
     return r.status === 0 ? r.stdout.trim() : null;
   };
   const tip = git('rev-parse', '--verify', `${branchName}^{commit}`);
@@ -1095,70 +1102,60 @@ function worktreeChanges(worktreePath) {
 
 /**
  * The end of every repo's cleanup: its worktree, then its unit directory
- * once no other repo's worktree is in it, then its branches.
+ * once no other repo's worktree is in it, then its branches. A git command
+ * ended by SIGINT or SIGTERM (`INTERRUPT_SIGNALS`) stops it before the next
+ * command or fallback, and that signal is raised again (`raiseSignal`).
+ * Returns false when a signal stopped it.
  */
-function removeWorktreeAndBranch({ repoPath, repoName, branchName, branchExists, keepBranch, config }) {
-  try {
-    execSync('git worktree prune', { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch {
-    // non-fatal
-  }
+function removeWorktreeAndBranch({ parsed, repoPath, repoName, branchName, branchExists, keepBranch, config }) {
+  // No shell: a shell would turn git's signal into an exit code. True when
+  // git succeeded, false when it failed, null when a signal ended it.
+  const git = (args, stdio = ['ignore', 'pipe', 'pipe']) => {
+    const r = spawnSync('git', args, { cwd: repoPath, stdio });
+    if (!interruptOf(r)) return r.status === 0;
+    console.error(`${repoName}: \`git ${args.join(' ')}\` was ended by ${r.signal}; rerun \`bl merge ${parsed.id}\`.`);
+    raiseSignal(interruptOf(r));
+    return null;
+  };
+
+  // A failed prune is not fatal.
+  if (git(['worktree', 'prune']) === null) return false;
 
   const wtNow = findExistingWorktree(repoPath, branchName);
   if (wtNow) {
     info(`Removing worktree: ${wtNow.path}`);
-    try {
-      execSync(`git worktree remove "${wtNow.path}"`, {
-        cwd: repoPath,
-        stdio: ['inherit', process.stderr, process.stderr],
-      });
-    } catch {
+    const shown = ['inherit', process.stderr, process.stderr];
+    let removed = git(['worktree', 'remove', wtNow.path], shown);
+    if (removed === false) {
       info('  Normal remove failed, trying --force...');
-      try {
-        execSync(`git worktree remove --force "${wtNow.path}"`, {
-          cwd: repoPath,
-          stdio: ['inherit', process.stderr, process.stderr],
-        });
-      } catch {
+      removed = git(['worktree', 'remove', '--force', wtNow.path], shown);
+      if (removed === false) {
         info(`  Could not remove worktree. Remove manually:\n    rm -rf "${wtNow.path}" && git worktree prune`);
       }
     }
+    if (removed === null) return false;
   }
   const unitDir = unitDirFor(config, branchName);
   if (removeUnitDirIfEmpty(unitDir)) info(`Removed unit directory: ${unitDir}`);
 
   if (keepBranch) {
     info(`--keep: keeping branch '${branchName}' in ${repoName}.`);
-  } else {
-    try {
-      execSync(`git push origin --delete "${branchName}"`, {
-        cwd: repoPath,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      info(`Deleted remote branch: origin/${branchName}`);
-    } catch {
-      // already deleted — fine
-    }
-    if (branchExists) {
-      try {
-        execSync(`git branch -d "${branchName}"`, {
-          cwd: repoPath,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        info(`Deleted branch: ${branchName}`);
-      } catch {
-        try {
-          execSync(`git branch -D "${branchName}"`, {
-            cwd: repoPath,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-          info(`Deleted branch: ${branchName} (force — squash merge)`);
-        } catch {
-          info(`Could not delete branch ${branchName}.`);
-        }
-      }
-    }
+    return true;
   }
+  // A failed delete is a branch already deleted on origin.
+  const remote = git(['push', 'origin', '--delete', branchName]);
+  if (remote === null) return false;
+  if (remote) info(`Deleted remote branch: origin/${branchName}`);
+  if (!branchExists) return true;
+  let local = git(['branch', '-d', branchName]);
+  if (local) {
+    info(`Deleted branch: ${branchName}`);
+  } else if (local === false) {
+    local = git(['branch', '-D', branchName]);
+    if (local) info(`Deleted branch: ${branchName} (force — squash merge)`);
+    else if (local === false) info(`Could not delete branch ${branchName}.`);
+  }
+  return local !== null;
 }
 
 // ---------------------------------------------------------------------------
