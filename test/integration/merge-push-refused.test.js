@@ -61,6 +61,26 @@ test("the push's hook output reaches stderr before the push ends", async () => {
   }
 });
 
+test("the throwaway merge worktree's directory has mode 0775, so a session stack's nginx can read it", () => {
+  const fx = fixture();
+  const scratch = mkTempDir('bl-merge-mode-');
+  const where = join(scratch, 'where');
+  const modeFile = join(scratch, 'mode');
+  writeFileSync(
+    join(fx.repo, '.git', 'hooks', 'pre-push'),
+    `#!/bin/sh\nwhile read l ls r rs; do\n  if [ "$r" = refs/heads/main ]; then pwd > '${where}'; ls -ld .. | cut -c1-10 > '${modeFile}'; fi\ndone\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  try {
+    const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(readFileSync(where, 'utf8').trim(), /\/bl-merge-[^/]+\/code$/);
+    assert.equal(readFileSync(modeFile, 'utf8').trim(), 'drwxrwxr-x');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test("the install's output reaches stderr before the install ends", async () => {
   const fx = fixture();
   const dir = mkTempDir('bl-install-stream-');
