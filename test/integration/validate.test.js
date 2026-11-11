@@ -6,6 +6,7 @@ import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
 import { spawnSync } from 'node:child_process';
 import { BL_BIN, runBl } from '../helpers/run-bl.js';
+import { writeBlockers } from '../../src/blockers.js';
 
 /**
  * A fixture that passes the component rules (F-49 D4): every registered repo
@@ -1047,7 +1048,49 @@ test('bl validate reports each blockers-* finding on a hand-edited blockers.json
   const json = JSON.parse(result.stdout).findings.filter((f) => f.location === 'blockers.json');
   assert.deepEqual(
     json.map((f) => [f.code, f.message]),
-    [['blockers-json', `"schema" is "bl-blockers/v0", not "bl-blockers/v1"`]],
+    [['blockers-json', `"schema" is "bl-blockers/v0", not "bl-blockers/v1" or "bl-blockers/v2"`]],
   );
+  td.cleanup();
+});
+
+test('bl validate reports a bad merge edge and a cycle of merge edges with the existing codes (F-111 D1)', async () => {
+  // F-1 over S-1 (demo-repo) and S-2 (ci-cd), F-2 over S-3 (demo-repo).
+  const td = cleanBacklog({
+    repos: ['../ci-cd'],
+    components: [{ id: 'C01', title: 'Ci', dirSuffix: 'ci', repo: 'ci-cd' }],
+    stories: [
+      { id: 'S-1', component: 'C00', title: 'One', feature: 'F-1' },
+      { id: 'S-2', component: 'C01', title: 'Two', feature: 'F-1' },
+      { id: 'S-3', component: 'C00', title: 'Three', feature: 'F-2' },
+    ],
+    features: [
+      { id: 'F-1', title: 'One', status: 'approved', stories: ['S-1', 'S-2'] },
+      { id: 'F-2', title: 'Two', status: 'approved', stories: ['S-3'] },
+    ],
+  });
+  const m = (blocker, unit, gate = 'merge', until = 'merged') => ({ blocker, gate, unit, until });
+  writeBlockers(td.dir, [
+    m('F-1:ci-cd', 'F-1:demo-repo'),
+    m('F-1:demo-repo', 'F-1:ci-cd'),
+    m('F-2:demo-repo', 'F-1:ci-cd'),
+    m('F-1:app', 'F-1:demo-repo'),
+    m('F-2:demo-repo', 'F-2:demo-repo', 'run'),
+    m('F-1:ci-cd', '*', 'merge', 'done'),
+  ]);
+  const result = await runBl(['validate', '--json'], { cwd: td.dir });
+  assert.equal(result.status, 1);
+  const findings = JSON.parse(result.stdout)
+    .findings.filter((f) => f.location === 'blockers.json')
+    .map((f) => `${f.code}: ${f.message}`)
+    .sort();
+  assert.deepEqual(findings, [
+    `blockers-cycle: merge order cycle: F-1:ci-cd → F-1:demo-repo (merge edge F-1:demo-repo → F-1:ci-cd) → F-1:ci-cd (merge edge F-1:ci-cd → F-1:demo-repo)`,
+    `blockers-cycle: merge order cycle: F-2:demo-repo → F-2:demo-repo (merge edge F-2:demo-repo → F-2:demo-repo)`,
+    `blockers-gate: F-2:demo-repo at run by F-2:demo-repo: a merge edge's gate is "merge", not "run"`,
+    `blockers-status: * at merge by F-1:ci-cd: a merge edge's until is "merged", not "done"`,
+    `blockers-unit: * at merge by F-1:ci-cd: a merge edge's unit is never "*"`,
+    `blockers-unit: F-1:ci-cd at merge by F-2:demo-repo: a merge edge joins two repos of one feature, not of F-2 and F-1`,
+    `blockers-unit: F-1:demo-repo at merge by F-1:app: blocker F-1:app: no story of F-1 names repo app`,
+  ]);
   td.cleanup();
 });

@@ -3,8 +3,9 @@
  * holds a unit at a gate until another unit's status meets a status.
  *
  *   {
- *     "schema": "bl-blockers/v1",
+ *     "schema": "bl-blockers/v2",
  *     "edges": [
+ *       {"blocker":"F-96:ci-cd","gate":"merge","unit":"F-96:bl","until":"merged"},
  *       {"blocker":"T-22","gate":"merge","unit":"F-1","until":"done"},
  *       {"blocker":"T-30","gate":"run","unit":"*","until":"done","active_when":{"unit":"F-54","status":"done"}}
  *     ]
@@ -15,6 +16,14 @@
  * is never `*`. `active_when` keeps the edge from holding anything until
  * that unit's status meets that status. Statuses meet through `flow.json`
  * (`Flow.meets`). Met edges stay as history; nothing prunes them.
+ *
+ * A merge edge (F-111 D1) joins two repos of one feature, each end
+ * `<feature>:<repo>`: `bl merge` merges the blocker's repo before the
+ * unit's (`mergeOrder` in `feature.js`). It is an edge inside one feature
+ * (`inFeature`): no verb checks it as a gate, so it is never a hold and adds
+ * no arc to `holdGraph`; a cycle of one feature's merge edges is
+ * `blockers-cycle`. bl reads `bl-blockers/v1` (which has no merge edge) and
+ * `v2`, and writes `v2`.
  *
  * The file is written only by bl (`writeBlockers`, through
  * `atomicWriteFile`), sorted by `unit`, then `blocker`, then `gate` in code
@@ -32,13 +41,20 @@ import { join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
 import { loadFlow } from './flow.js';
 import { parseIdList, readAllStories } from './story.js';
-import { normalizeFeatureId, readAllFeatures } from './feature.js';
+import { featureRepoOrder, normalizeFeatureId, readAllFeatures } from './feature.js';
 import { readAllTasks } from './task.js';
 
 /** The file's name, at the backlog root. */
 export const BLOCKERS_FILE = 'blockers.json';
 
-export const BLOCKERS_SCHEMA = 'bl-blockers/v1';
+/** The schema bl writes. */
+export const BLOCKERS_SCHEMA = 'bl-blockers/v2';
+
+/** Every schema bl reads: `v1` is `v2` without merge edges (F-111 D1). */
+export const BLOCKERS_SCHEMAS = ['bl-blockers/v1', BLOCKERS_SCHEMA];
+
+/** A merge edge's gate and `until` (F-111 D1): neither is in `flow.json`. */
+export const MERGE_EDGE = { gate: 'merge', until: 'merged' };
 
 /** The `unit` that holds every unit of every type with the gate (F-66 A3). */
 export const WILDCARD = '*';
@@ -66,14 +82,19 @@ const isName = (v) => typeof v === 'string' && v.trim() !== '' && v === v.trim()
 
 /**
  * Parse a `blockers.json` text into its edges. Throws `BlockersError` when it
- * is not JSON, has a `schema` other than `bl-blockers/v1`, or an edge of the
- * wrong shape (a missing or empty field, an unknown key, an `active_when`
- * that is not `{ unit, status }`).
+ * is not JSON, has a `schema` that is not one of `BLOCKERS_SCHEMAS`, or an
+ * edge of the wrong shape (a missing or empty field, an unknown key, an
+ * `active_when` that is not `{ unit, status }`).
  * @param {string} text
  * @param {string} [path]  for messages
  * @returns {Edge[]}
  */
 export function parseBlockers(text, path = BLOCKERS_FILE) {
+  return parseFile(text, path).edges;
+}
+
+/** `parseBlockers`, with the file's schema. */
+function parseFile(text, path) {
   let raw;
   try {
     raw = JSON.parse(text);
@@ -81,8 +102,9 @@ export function parseBlockers(text, path = BLOCKERS_FILE) {
     throw new BlockersError(path, `not valid JSON (${err.message})`);
   }
   if (!isObject(raw)) throw new BlockersError(path, 'not a JSON object');
-  if (raw.schema !== BLOCKERS_SCHEMA) {
-    throw new BlockersError(path, `"schema" is ${JSON.stringify(raw.schema)}, not "${BLOCKERS_SCHEMA}"`);
+  if (!BLOCKERS_SCHEMAS.includes(raw.schema)) {
+    const known = BLOCKERS_SCHEMAS.map((s) => `"${s}"`).join(' or ');
+    throw new BlockersError(path, `"schema" is ${JSON.stringify(raw.schema)}, not ${known}`);
   }
   for (const key of Object.keys(raw)) {
     if (key !== 'schema' && key !== 'edges') throw new BlockersError(path, `unknown key "${key}"`);
@@ -105,7 +127,7 @@ export function parseBlockers(text, path = BLOCKERS_FILE) {
       }
     }
   });
-  return raw.edges.map(normalizeEdge);
+  return { schema: raw.schema, edges: raw.edges.map(normalizeEdge) };
 }
 
 /** The edge with its keys in bl's order. */
@@ -123,9 +145,10 @@ function normalizeEdge(e) {
  * Read `<backlogRoot>/blockers.json`. A missing file is an empty graph
  * (`text` null); one that is there but cannot be read (a directory, a
  * dangling symlink, no permission) or parsed throws `BlockersError`, so a
- * gate never takes it for an empty graph.
+ * gate never takes it for an empty graph. `schema` is the file's (null when
+ * it is missing).
  * @param {string} backlogRoot
- * @returns {{ edges: Edge[], text: string | null, path: string }}
+ * @returns {{ edges: Edge[], text: string | null, path: string, schema: string | null }}
  */
 export function readBlockers(backlogRoot) {
   const path = blockersPath(backlogRoot);
@@ -133,10 +156,12 @@ export function readBlockers(backlogRoot) {
   try {
     text = readFileSync(path, 'utf8');
   } catch (err) {
-    if (err.code === 'ENOENT' && !lstatSync(path, { throwIfNoEntry: false })) return { edges: [], text: null, path };
+    if (err.code === 'ENOENT' && !lstatSync(path, { throwIfNoEntry: false })) {
+      return { edges: [], text: null, path, schema: null };
+    }
     throw new BlockersError(path, `cannot be read (${err.code ?? err.message})`);
   }
-  return { edges: parseBlockers(text, path), text, path };
+  return { ...parseFile(text, path), text, path };
 }
 
 // Code point order, so the layout is the same under every locale.
@@ -149,14 +174,17 @@ export function compareEdges(a, b) {
 
 /**
  * The file's text as bl writes it: sorted, one edge per line. Reading it
- * back and formatting again gives the same bytes.
+ * back and formatting again gives the same bytes. `schema` is the one bl
+ * writes; `bl validate` passes a `v1` file's own, so the old schema alone is
+ * not a layout fault.
  * @param {Edge[]} edges
+ * @param {string} [schema]
  * @returns {string}
  */
-export function formatBlockers(edges) {
+export function formatBlockers(edges, schema = BLOCKERS_SCHEMA) {
   const lines = [...edges].sort(compareEdges).map((e) => `    ${JSON.stringify(normalizeEdge(e))}`);
   const list = lines.length === 0 ? '[]' : `[\n${lines.join(',\n')}\n  ]`;
-  return `{\n  "schema": "${BLOCKERS_SCHEMA}",\n  "edges": ${list}\n}\n`;
+  return `{\n  "schema": "${schema}",\n  "edges": ${list}\n}\n`;
 }
 
 /** Write `edges` to `<backlogRoot>/blockers.json`, sorted, atomically. */
@@ -211,16 +239,112 @@ export function edgeLabel(e) {
 }
 
 // ---------------------------------------------------------------------------
+// Merge edges (F-111 D1)
+// ---------------------------------------------------------------------------
+
+/**
+ * A merge edge's end, `<feature>:<repo>` (`F-96:bl` → `{ unit: "F-96", repo:
+ * "bl" }`); null for a unit id or `*`.
+ * @param {string} id
+ * @returns {{ unit: string, repo: string } | null}
+ */
+export function repoEnd(id) {
+  const at = id.indexOf(':');
+  return at > 0 && at < id.length - 1 ? { unit: id.slice(0, at), repo: id.slice(at + 1) } : null;
+}
+
+/** `F-96:ci-cd → F-96:bl`: a merge edge as `bl merge` and `bl block list` name it. */
+export function mergeEdgeLabel(e) {
+  return `${e.blocker} → ${e.unit}`;
+}
+
+/**
+ * Whether an edge joins two parts of one feature: two repo ends of one
+ * feature (a merge edge). The feature's own loops read such an edge; no verb
+ * checks it as a gate.
+ * @param {Edge} e
+ * @param {Map<string, Unit>} units
+ */
+export function inFeature(e, units) {
+  const [b, u] = [repoEnd(e.blocker), repoEnd(e.unit)];
+  return b != null && u != null && b.unit === u.unit && units.get(b.unit)?.type === 'feature';
+}
+
+/** The merge edges of feature `id`: both ends `<id>:<repo>`. */
+export function featureMergeEdges(edges, id) {
+  return edges.filter((e) => repoEnd(e.blocker)?.unit === id && repoEnd(e.unit)?.unit === id);
+}
+
+/**
+ * The graph of merge edges for `findHoldCycles`: an arc from each edge's
+ * unit end to its blocker end (the unit's repo merges after the blocker's),
+ * with the edge.
+ * @param {Edge[]} edges
+ * @returns {Map<string, Arc[]>}
+ */
+export function mergeGraph(edges) {
+  const graph = new Map();
+  for (const e of edges) {
+    if (!graph.has(e.unit)) graph.set(e.unit, []);
+    graph
+      .get(e.unit)
+      .push({ from: e.unit, to: e.blocker, why: `merge edge ${mergeEdgeLabel(e)}`, kind: 'merge', edge: e });
+  }
+  return graph;
+}
+
+/** The repos of feature `id` (`featureRepoOrder` of its stories, F-52 D3). */
+function featureRepos(units, id) {
+  return featureRepoOrder([...units.values()].filter((u) => u.type === 'story' && u.feature === id));
+}
+
+/**
+ * What is wrong with a merge edge (one that names a `<feature>:<repo>` end),
+ * by F-111 D1: an end that is `*`, not `<feature>:<repo>`, not a feature, or
+ * a repo no story of the feature names, or ends in two features
+ * (`blockers-unit`); a gate other than `merge` (`blockers-gate`); an `until`
+ * other than `merged` (`blockers-status`).
+ */
+function mergeEdgeProblems(e, units, add) {
+  const ends = [];
+  for (const [role, id] of [
+    ['blocker', e.blocker],
+    ['unit', e.unit],
+  ]) {
+    const end = repoEnd(id);
+    let problem = null;
+    if (id === WILDCARD) problem = `a merge edge's ${role} is never "${WILDCARD}"`;
+    else if (!end) problem = `a merge edge's ${role} is <feature>:<repo>, not ${id}`;
+    else if (units.get(end.unit)?.type !== 'feature')
+      problem = `${role} ${id}: ${end.unit} is not a feature in the backlog`;
+    else if (!featureRepos(units, end.unit).includes(end.repo)) {
+      problem = `${role} ${id}: no story of ${end.unit} names repo ${end.repo}`;
+    }
+    if (problem) add('blockers-unit', problem);
+    else ends.push(end);
+  }
+  if (ends.length === 2 && ends[0].unit !== ends[1].unit) {
+    add('blockers-unit', `a merge edge joins two repos of one feature, not of ${ends[0].unit} and ${ends[1].unit}`);
+  }
+  if (e.gate !== MERGE_EDGE.gate) {
+    add('blockers-gate', `a merge edge's gate is "${MERGE_EDGE.gate}", not "${e.gate}"`);
+  }
+  if (e.until !== MERGE_EDGE.until) {
+    add('blockers-status', `a merge edge's until is "${MERGE_EDGE.until}", not "${e.until}"`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Units and statuses
 // ---------------------------------------------------------------------------
 
 /**
  * Every unit an edge can name, by id. A story's `feature` is the feature
  * it runs and merges with: its `feature:` when that names a feature (the
- * only statement of membership, F-77 D3). A task (F-65 D1) is a unit too, so
- * it can be a blocker or an `active_when` unit; its type has no gates, so no
- * edge holds it (`blockers-gate`).
- * @param {Array<{ id: string, status: string, feature?: string, depends_on?: any }>} stories
+ * only statement of membership, F-77 D3), and `unitRepo` its one repo. A
+ * task (F-65 D1) is a unit too, so it can be a blocker or an `active_when`
+ * unit; its type has no gates, so no edge holds it (`blockers-gate`).
+ * @param {Array<{ id: string, status: string, feature?: string, unitRepo?: string, depends_on?: any }>} stories
  * @param {Array<{ id: string, status: string, stories: string[] }>} features
  * @param {Array<{ id: string, status: string }>} [tasks]
  * @returns {Map<string, Unit>}
@@ -239,6 +363,7 @@ export function unitIndex(stories, features, tasks = []) {
       type: 'story',
       status: s.status,
       feature: own,
+      unitRepo: s.unitRepo ?? '',
       depends_on: parseIdList(s.depends_on),
     });
   }
@@ -329,7 +454,8 @@ export function heldLine(edge, id, units) {
  * The active, unmet edges that hold unit `id`, in the file's order: each on
  * one of `gateIds(units, id)` or on `*`, at a gate that `gatesFor(type)`
  * names for that member's own type. So a feature's gate honours each of its
- * stories' gates with the story type's verbs, not the feature's.
+ * stories' gates with the story type's verbs, not the feature's. An edge
+ * inside one feature (`inFeature`) never holds.
  * @param {(type: string) => string[]} gatesFor
  * @returns {Edge[]}
  */
@@ -337,6 +463,7 @@ function holding(edges, units, flow, id, gatesFor) {
   const members = gateIds(units, id).map((m) => ({ id: m, gates: gatesFor(units.get(m).type) }));
   return edges.filter(
     (e) =>
+      !inFeature(e, units) &&
       members.some((m) => m.gates.includes(e.gate) && (e.unit === WILDCARD || e.unit === m.id)) &&
       isActive(e, units, flow) &&
       !isMet(e, units, flow),
@@ -409,12 +536,18 @@ export function heldLines(config, id) {
  * ids (`blockers-unit`), a gate the unit's type lacks (`blockers-gate`), a
  * status its unit's type lacks (`blockers-status`), a blocker that is closed
  * and does not meet `until`, so would hold forever (`blockers-unmeetable`).
- * `bl block add` refuses an edge with any; `bl validate` reports each.
+ * An edge that names a `<feature>:<repo>` end is a merge edge and is checked
+ * by its own rules (`mergeEdgeProblems`). `bl block add` refuses an edge
+ * with any; `bl validate` reports each.
  * @returns {Array<{ code: string, message: string }>}
  */
 export function edgeProblems(e, units, flow) {
   const out = [];
   const add = (code, message) => out.push({ code, message });
+  if (repoEnd(e.blocker) || repoEnd(e.unit)) {
+    mergeEdgeProblems(e, units, add);
+    return out;
+  }
   const known = (id) => units.get(id) ?? null;
   const blocker = e.blocker === WILDCARD ? null : known(e.blocker);
   if (e.blocker === WILDCARD) add('blockers-unit', `the blocker is never "${WILDCARD}"`);
@@ -460,11 +593,12 @@ function nodeOf(units, id) {
 /**
  * The arcs one edge adds (`from` waits on `to`), as if it were active and
  * unmet. A wildcard is expanded to every open unit whose type has the gate,
- * so a blocker that has the gate itself holds its own node.
+ * so a blocker that has the gate itself holds its own node. An edge inside
+ * one feature (`inFeature`) adds none: both its ends are one node.
  * @returns {Arc[]}
  */
 function edgeArcs(e, units, flow) {
-  if (!units.has(e.blocker)) return [];
+  if (!units.has(e.blocker) || inFeature(e, units)) return [];
   const to = nodeOf(units, e.blocker);
   const why = edgeLabel(e);
   if (e.unit !== WILDCARD) return units.has(e.unit) ? [{ from: nodeOf(units, e.unit), to, why, kind: 'edge' }] : [];
@@ -597,10 +731,16 @@ export function describeCycle(arcs) {
  * The cycle `edge` would close in the graph of `edges`, or null. Like the
  * graph's other edges, it adds arcs only while active and unmet, so an edge
  * filed to start holding later (`active_when`) is checked by `bl validate`
- * once it does.
+ * once it does. A merge edge is checked against the merge edges alone
+ * (`mergeGraph`).
  * @returns {Arc[] | null}
  */
 export function wouldCycle(edge, edges, units, flow) {
+  if (inFeature(edge, units)) {
+    const graph = mergeGraph([...edges.filter((e) => inFeature(e, units)), edge]);
+    const back = shortestPath(graph, edge.blocker, edge.unit);
+    return back ? [graph.get(edge.unit).at(-1), ...back] : null;
+  }
   if (!isActive(edge, units, flow) || isMet(edge, units, flow)) return null;
   const graph = holdGraph(edges, units, flow);
   const added = edgeArcs(edge, units, flow);
@@ -624,10 +764,11 @@ export function wouldCycle(edge, edges, units, flow) {
  * `blockers-json` (unreadable; nothing else is checked), `blockers-unit`,
  * `blockers-gate`, `blockers-status`, `blockers-duplicate`,
  * `blockers-unmeetable` (a closed blocker that does not meet `until`),
- * `blockers-cycle` (a deadlock in `holdGraph`; one of standalone stories'
- * `depends_on` alone is `cycle`'s, not reported twice), all errors, and
- * `blockers-order` (a warning: the text is not what `formatBlockers` writes).
- * A missing file has no findings.
+ * `blockers-cycle` (a deadlock in `holdGraph`, or a cycle of one feature's
+ * merge edges; one of standalone stories' `depends_on` alone is `cycle`'s,
+ * not reported twice), all errors, and `blockers-order` (a warning: the text
+ * is not what `formatBlockers` writes in the file's schema). A missing file
+ * has no findings.
  * @param {string} backlogRoot
  * @param {Map<string, Unit>} units
  * @param {import("./flow.js").Flow} flow
@@ -643,8 +784,8 @@ export function findBlockersFindings(backlogRoot, units, flow) {
     add('error', 'blockers-json', err.reason);
     return findings;
   }
-  const { edges, text } = read;
-  if (text != null && text !== formatBlockers(edges)) {
+  const { edges, text, schema } = read;
+  if (text != null && text !== formatBlockers(edges, schema)) {
     add(
       'warning',
       'blockers-order',
@@ -662,6 +803,9 @@ export function findBlockersFindings(backlogRoot, units, flow) {
     if (cycle.every((a) => a.kind === 'depends_on' && units.get(a.from)?.type === 'story')) continue;
     add('error', 'blockers-cycle', `deadlock: ${describeCycle(cycle)}`);
   }
+  for (const cycle of findHoldCycles(mergeGraph(edges.filter((e) => inFeature(e, units))))) {
+    add('error', 'blockers-cycle', `merge order cycle: ${describeCycle(cycle)}`);
+  }
   return findings;
 }
 
@@ -669,6 +813,7 @@ export function findBlockersFindings(backlogRoot, units, flow) {
  * @typedef {{ blocker: string, gate: string, unit: string, until: string,
  *   active_when?: { unit: string, status: string } }} Edge
  * @typedef {{ id: string, type: string, status: string, feature?: string,
- *   stories?: string[], depends_on?: string[] }} Unit
- * @typedef {{ from: string, to: string, why: string, kind: "edge" | "depends_on" }} Arc
+ *   stories?: string[], unitRepo?: string, depends_on?: string[] }} Unit
+ * @typedef {{ from: string, to: string, why: string, kind: "edge" | "depends_on" | "merge",
+ *   edge?: Edge }} Arc
  */

@@ -17,11 +17,14 @@ import {
   heldBy,
   heldLines,
   holdGraph,
+  inFeature,
   isActive,
   isMet,
+  edgeProblems,
   mergeEdges,
   parseBlockers,
   readBlockers,
+  repoEnd,
   unitIndex,
   unmetEdges,
   wouldCycle,
@@ -74,7 +77,7 @@ test('formatBlockers sorts by unit, blocker, gate, one edge per line, and round-
   assert.equal(
     text,
     `{
-  "schema": "bl-blockers/v1",
+  "schema": "bl-blockers/v2",
   "edges": [
     {"blocker":"S-z","gate":"run","unit":"*","until":"done"},
     {"blocker":"S-b","gate":"merge","unit":"F-1","until":"done"},
@@ -86,12 +89,12 @@ test('formatBlockers sorts by unit, blocker, gate, one edge per line, and round-
 `,
   );
   assert.equal(formatBlockers(parseBlockers(text)), text);
-  assert.equal(formatBlockers([]), `{\n  "schema": "bl-blockers/v1",\n  "edges": []\n}\n`);
+  assert.equal(formatBlockers([]), `{\n  "schema": "bl-blockers/v2",\n  "edges": []\n}\n`);
 });
 
 test('readBlockers: a missing file is an empty graph; writeBlockers writes it sorted and a read-write is byte-identical', () => {
   const dir = mkTempDir('bl-blockers-');
-  assert.deepEqual(readBlockers(dir), { edges: [], text: null, path: join(dir, BLOCKERS_FILE) });
+  assert.deepEqual(readBlockers(dir), { edges: [], text: null, path: join(dir, BLOCKERS_FILE), schema: null });
   writeBlockers(dir, [edge('S-y', 'run', 'S-x'), edge('S-b', 'run', 'F-1')]);
   const first = readFileSync(join(dir, BLOCKERS_FILE), 'utf8');
   const read = readBlockers(dir);
@@ -108,7 +111,10 @@ test('readBlockers: a missing file is an empty graph; writeBlockers writes it so
 test('parseBlockers refuses JSON it cannot read, naming the file', () => {
   for (const [text, reason] of [
     ['{ nope', /not valid JSON/],
-    [`{"schema":"bl-blockers/v2","edges":[]}`, /"schema" is "bl-blockers\/v2"/],
+    [
+      `{"schema":"bl-blockers/v0","edges":[]}`,
+      /"schema" is "bl-blockers\/v0", not "bl-blockers\/v1" or "bl-blockers\/v2"/,
+    ],
     [`{"schema":"bl-blockers/v1"}`, /"edges" is not a list/],
     [`{"schema":"bl-blockers/v1","edges":[],"x":1}`, /unknown key "x"/],
     [`{"schema":"bl-blockers/v1","edges":[{"blocker":"S-1","gate":"run","unit":"S-2"}]}`, /edge 1 has no "until"/],
@@ -534,4 +540,142 @@ test('merge_driver_rejects_blank_existing_sides_without_dropping_holds: only a z
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Merge edges (F-111 D1)
+// ---------------------------------------------------------------------------
+
+/** F-1 over S-a (bl) and S-d (ci-cd), F-2 over S-b (bl) and S-c (app), standalone S-x. */
+function repoUnits() {
+  return unitIndex(
+    [
+      { id: 'S-a', status: 'backlog', feature: 'F-1', unitRepo: 'bl' },
+      { id: 'S-d', status: 'backlog', feature: 'F-1', unitRepo: 'ci-cd' },
+      { id: 'S-b', status: 'backlog', feature: 'F-2', unitRepo: 'bl' },
+      { id: 'S-c', status: 'backlog', feature: 'F-2', unitRepo: 'app' },
+      { id: 'S-x', status: 'backlog', unitRepo: 'bl' },
+    ],
+    [
+      { id: 'F-1', status: 'approved', stories: ['S-a', 'S-d'] },
+      { id: 'F-2', status: 'approved', stories: ['S-b', 'S-c'] },
+    ],
+  );
+}
+
+const mergeEdge = (blocker, unit) => edge(blocker, 'merge', unit, 'merged');
+
+test('parseBlockers reads bl-blockers/v1 and v2; formatBlockers writes v2; a sorted v1 file is no blockers-order', () => {
+  const edges = [edge('S-y', 'run', 'S-x')];
+  const v1 = formatBlockers(edges, 'bl-blockers/v1');
+  assert.match(v1, /"schema": "bl-blockers\/v1"/);
+  assert.deepEqual(parseBlockers(v1), edges);
+  assert.deepEqual(parseBlockers(formatBlockers(edges)), edges);
+  assert.match(formatBlockers(parseBlockers(v1)), /"schema": "bl-blockers\/v2"/);
+  const dir = mkTempDir('bl-blockers-');
+  writeFileSync(join(dir, BLOCKERS_FILE), v1);
+  assert.equal(readBlockers(dir).schema, 'bl-blockers/v1');
+  assert.deepEqual(findBlockersFindings(dir, units(), flow), []);
+});
+
+test('the merge driver merges a v1 side with a v2 side and writes v2', () => {
+  const driver = fileURLToPath(new URL('../../src/blockers-merge.js', import.meta.url));
+  const a = edge('S-1', 'merge', 'F-1');
+  const m = mergeEdge('F-1:ci-cd', 'F-1:bl');
+  const dir = mkTempDir('bl-blockers-driver-');
+  const paths = ['base', 'ours', 'theirs'].map((p) => join(dir, p));
+  [formatBlockers([], 'bl-blockers/v1'), formatBlockers([a], 'bl-blockers/v1'), formatBlockers([m])].forEach(
+    (text, i) => writeFileSync(paths[i], text),
+  );
+  const r = spawnSyncFiles(process.execPath, [driver, ...paths], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(paths[1], 'utf8'), formatBlockers([a, m]));
+});
+
+test('repoEnd: <feature>:<repo> splits at the first colon; a unit id or * is no repo end', () => {
+  assert.deepEqual(repoEnd('F-96:bl'), { unit: 'F-96', repo: 'bl' });
+  assert.deepEqual(repoEnd('F-13:app.roost.cc'), { unit: 'F-13', repo: 'app.roost.cc' });
+  for (const id of ['F-96', 'S-1', '*', ':bl', 'F-96:']) assert.equal(repoEnd(id), null, id);
+});
+
+test('edgeProblems: a merge edge joins two repos of one feature, at merge, until merged', () => {
+  const u = repoUnits();
+  const codes = (e) => edgeProblems(e, u, flow).map((p) => `${p.code}: ${p.message}`);
+  assert.deepEqual(codes(mergeEdge('F-1:ci-cd', 'F-1:bl')), []);
+  assert.deepEqual(codes(mergeEdge('F-2:app', 'F-1:bl')), [
+    'blockers-unit: a merge edge joins two repos of one feature, not of F-2 and F-1',
+  ]);
+  assert.deepEqual(codes(mergeEdge('F-1:app', 'F-1:bl')), [
+    'blockers-unit: blocker F-1:app: no story of F-1 names repo app',
+  ]);
+  assert.deepEqual(codes(mergeEdge('F-1:ci-cd', 'S-x:bl')), [
+    'blockers-unit: unit S-x:bl: S-x is not a feature in the backlog',
+  ]);
+  assert.deepEqual(codes(mergeEdge('F-1:ci-cd', 'F-9:bl')), [
+    'blockers-unit: unit F-9:bl: F-9 is not a feature in the backlog',
+  ]);
+  assert.deepEqual(codes(mergeEdge('F-1:ci-cd', '*')), [`blockers-unit: a merge edge's unit is never "*"`]);
+  assert.deepEqual(codes(mergeEdge('F-1:ci-cd', 'F-1')), [
+    "blockers-unit: a merge edge's unit is <feature>:<repo>, not F-1",
+  ]);
+  assert.deepEqual(codes(edge('F-1:ci-cd', 'merge', 'F-1:bl', 'done')), [
+    `blockers-status: a merge edge's until is "merged", not "done"`,
+  ]);
+  assert.deepEqual(codes(edge('F-1:ci-cd', 'run', 'F-1:bl', 'merged')), [
+    `blockers-gate: a merge edge's gate is "merge", not "run"`,
+  ]);
+});
+
+test('a merge edge is inside its feature: no holdGraph arc, never a hold', () => {
+  const u = repoUnits();
+  const e = mergeEdge('F-1:ci-cd', 'F-1:bl');
+  assert.equal(inFeature(e, u), true);
+  assert.equal(inFeature(mergeEdge('F-2:app', 'F-1:bl'), u), false);
+  assert.equal(inFeature(edge('S-x', 'merge', 'F-1'), u), false);
+  assert.deepEqual([...holdGraph([e], u, flow).keys()], []);
+
+  const { dir } = mkTempBacklog({
+    components: [
+      { id: 'C01', title: 'Bl', repo: 'bl' },
+      { id: 'C02', title: 'Ci', repo: 'ci-cd' },
+    ],
+    stories: [
+      { id: 'S-2', component: 'C01', title: 'Two', feature: 'F-1' },
+      { id: 'S-4', component: 'C02', title: 'Four', feature: 'F-1' },
+    ],
+    features: [{ id: 'F-1', title: 'Feat', status: 'running', stories: ['S-2', 'S-4'] }],
+  });
+  writeBlockers(dir, [e]);
+  const config = { backlogRoot: dir };
+  for (const verb of ['run', 'implement', 'merge']) assert.deepEqual(heldBy(config, 'F-1', verb), [], verb);
+  assert.deepEqual(heldAt(config, 'F-1', 'merge'), []);
+  assert.deepEqual(heldLines(config, 'F-1'), []);
+});
+
+test("wouldCycle and blockers-cycle: a cycle among one feature's merge edges", () => {
+  const u = repoUnits();
+  const forward = mergeEdge('F-1:ci-cd', 'F-1:bl');
+  assert.equal(wouldCycle(forward, [], u, flow), null);
+  assert.equal(
+    describeCycle(wouldCycle(mergeEdge('F-1:bl', 'F-1:ci-cd'), [forward], u, flow)),
+    'F-1:ci-cd → F-1:bl (merge edge F-1:bl → F-1:ci-cd) → F-1:ci-cd (merge edge F-1:ci-cd → F-1:bl)',
+  );
+  assert.equal(
+    describeCycle(wouldCycle(mergeEdge('F-1:bl', 'F-1:bl'), [], u, flow)),
+    'F-1:bl → F-1:bl (merge edge F-1:bl → F-1:bl)',
+  );
+
+  const dir = mkTempDir('bl-blockers-');
+  writeBlockers(dir, [forward]);
+  assert.deepEqual(findBlockersFindings(dir, u, flow), []);
+  writeBlockers(dir, [forward, mergeEdge('F-1:bl', 'F-1:ci-cd')]);
+  assert.deepEqual(
+    findBlockersFindings(dir, u, flow).map((f) => [f.code, f.message]),
+    [
+      [
+        'blockers-cycle',
+        'merge order cycle: F-1:bl → F-1:ci-cd (merge edge F-1:ci-cd → F-1:bl) → F-1:bl (merge edge F-1:bl → F-1:ci-cd)',
+      ],
+    ],
+  );
 });

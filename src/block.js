@@ -30,10 +30,13 @@ import {
   edgeLabel,
   edgeProblems,
   formatBlockers,
+  inFeature,
   isActive,
   isMet,
+  mergeEdgeLabel,
   readBlockers,
   readUnits,
+  repoEnd,
   wouldCycle,
   writeBlockers,
 } from './blockers.js';
@@ -170,9 +173,10 @@ export async function fixOrder(config) {
 
 /**
  * The edges on and by `id` (every edge without one): held on it, on `*`,
- * on one of a feature's stories, or with it as the blocker. Each line says
- * whether the edge holds: `unmet`, `met`, or `inactive` until its
- * `active_when` is met.
+ * on one of a feature's stories, with it as the blocker, or a merge edge
+ * inside it (F-111 D1). Each line says whether the edge holds: `unmet`,
+ * `met`, or `inactive` until its `active_when` is met. A merge edge holds
+ * nothing, so its line names only the order.
  * @param {import("./blockers.js").Edge[]} edges
  * @param {string | null} id
  * @returns {string[]}
@@ -181,8 +185,11 @@ export function listLines(edges, id, units, flow) {
   const on = new Set(id ? [id, ...(units.get(id)?.stories ?? [])] : []);
   const statusOf = (unit) => units.get(unit)?.status ?? 'unknown';
   return edges
-    .filter((e) => !id || on.has(e.unit) || e.unit === WILDCARD || e.blocker === id)
+    .filter((e) => !id || on.has(e.unit) || e.unit === WILDCARD || e.blocker === id || repoEnd(e.unit)?.unit === id)
     .map((e) => {
+      if (inFeature(e, units)) {
+        return `merge edge ${mergeEdgeLabel(e)}: ${repoEnd(e.unit).repo} merges after ${repoEnd(e.blocker).repo}`;
+      }
       const line = `${e.unit} held at ${e.gate} by ${e.blocker} (${statusOf(e.blocker)}, needs ${e.until})`;
       const a = e.active_when;
       const when = a ? `, active when ${a.unit} is ${a.status} (${statusOf(a.unit)})` : '';
@@ -205,6 +212,10 @@ edge per line, sorted by unit, blocker and gate). An edge holds <unit> at
 <gate> until <blocker>'s status meets <until>, as flow.json says; --unit *
 holds every unit with the gate. --active-when and --active-status keep the
 edge from holding anything until that unit meets that status.
+
+A merge edge joins two repos of one feature and holds nothing: bl merge
+merges the blocker's repo before the unit's, as in
+  bl block add F-96:ci-cd --gate merge --unit F-96:bl --until merged
 
   add      Check every field against flow.json and the backlog, refuse a
            duplicate or an edge that would close a deadlock, write the

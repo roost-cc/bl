@@ -21,7 +21,7 @@ test('bl block add writes one sorted line, commits blockers.json alone, and list
   assert.equal(
     readFileSync(join(dir, BLOCKERS_FILE), 'utf8'),
     `{
-  "schema": "bl-blockers/v1",
+  "schema": "bl-blockers/v2",
   "edges": [
     {"blocker":"S-1","gate":"merge","unit":"F-1","until":"done"},
     {"blocker":"S-2","gate":"merge","unit":"S-1","until":"done"}
@@ -142,6 +142,67 @@ test('bl block add refuses a cycle with a cross-feature depends_on, and a wildca
   assert.equal(r.status, 1);
   assert.match(r.stderr, /S-1 → S-2 \(S-1 at run by S-2\) → S-1 \(S-2 at merge by S-1\)/);
   assert.equal(readBlockers(dir).edges.length, 1);
+});
+
+test('bl block add writes a merge edge inside one feature, refuses a bad one, and list shows it under the feature', () => {
+  // F-1 over S-1 (bl) and S-2 (ci-cd), F-2 over S-3 (app).
+  const { dir } = mkTempBacklog({
+    components: [
+      { id: 'C01', title: 'Bl', repo: 'bl' },
+      { id: 'C02', title: 'Ci', repo: 'ci-cd' },
+      { id: 'C03', title: 'App', repo: 'app' },
+    ],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'One', feature: 'F-1' },
+      { id: 'S-2', component: 'C02', title: 'Two', feature: 'F-1' },
+      { id: 'S-3', component: 'C03', title: 'Three', feature: 'F-2' },
+    ],
+    features: [
+      { id: 'F-1', title: 'One', status: 'approved', stories: ['S-1', 'S-2'] },
+      { id: 'F-2', title: 'Two', status: 'approved', stories: ['S-3'] },
+    ],
+  });
+  initGitBacklog(dir);
+  const add = (blocker, unit, until = 'merged') =>
+    bl(['block', 'add', blocker, '--gate', 'merge', '--unit', unit, '--until', until], dir);
+  const refusals = [
+    [['F-2:app', 'F-1:bl'], /a merge edge joins two repos of one feature, not of F-2 and F-1 \(blockers-unit\)/],
+    [['F-1:app', 'F-1:bl'], /blocker F-1:app: no story of F-1 names repo app \(blockers-unit\)/],
+    [['F-1:ci-cd', 'F-1:bl', 'done'], /a merge edge's until is "merged", not "done" \(blockers-status\)/],
+    [['F-1:ci-cd', '*'], /a merge edge's unit is never "\*" \(blockers-unit\)/],
+  ];
+  for (const [args, message] of refusals) {
+    const r = add(...args);
+    assert.equal(r.status, 1, args.join(' '));
+    assert.match(r.stderr, message, args.join(' '));
+  }
+  assert.equal(readBlockers(dir).text, null, 'nothing written');
+
+  const r = add('F-1:ci-cd', 'F-1:bl');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'blocked: F-1:bl at merge by F-1:ci-cd until merged\n');
+  assert.deepEqual(readBlockers(dir).edges, [{ blocker: 'F-1:ci-cd', gate: 'merge', unit: 'F-1:bl', until: 'merged' }]);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: block F-1:bl at merge on F-1:ci-cd');
+
+  // The edge that closes a cycle, and one repo on itself.
+  for (const [blocker, unit] of [
+    ['F-1:bl', 'F-1:ci-cd'],
+    ['F-1:bl', 'F-1:bl'],
+  ]) {
+    const cyc = add(blocker, unit);
+    assert.equal(cyc.status, 1, `${blocker} → ${unit}`);
+    assert.match(cyc.stderr, /would close a deadlock: F-1:/);
+  }
+  assert.equal(readBlockers(dir).edges.length, 1);
+
+  const list = bl(['block', 'list', 'F-1'], dir);
+  assert.equal(list.status, 0, list.stderr);
+  assert.equal(list.stdout, 'merge edge F-1:ci-cd → F-1:bl: bl merges after ci-cd\n');
+  assert.equal(bl(['block', 'list', 'F-2'], dir).stdout, '');
+  // A merge edge is never a hold: bl status prints no held: line.
+  const status = bl(['status', 'F-1'], dir);
+  assert.equal(status.status, 0, status.stderr);
+  assert.doesNotMatch(status.stdout, /held/);
 });
 
 test('bl validate reports a deadlock of cross-feature depends_on alone', () => {
