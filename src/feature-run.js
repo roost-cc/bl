@@ -2387,13 +2387,13 @@ function writeGateLog(ctx, logPath, text) {
  */
 function gateFailure(ctx, { command, logPath, log, output, excerpt, repo, worktreePath, perRepo }) {
   const shownPath = writeGateLog(ctx, logPath, log);
-  const shown = String(output ?? '').replace(/\s+$/, '');
+  const parts = outputParts(output, GATE_TAIL_LINES);
   return {
     ok: false,
     command,
     logPath: shownPath,
-    excerpt: excerpt ?? failureExcerpt(shown),
-    tail: tail(shown, GATE_TAIL_LINES),
+    excerpt: excerpt ?? parts.excerpt,
+    tail: parts.tail,
     // The repo whose check failed and its worktree: where the fix goes.
     repo,
     worktreePath,
@@ -2445,20 +2445,26 @@ function outputSections(excerpt, last, lines) {
   ];
 }
 
+/**
+ * The failure excerpt and the last `lines` lines of a failed command's
+ * output, trailing whitespace dropped first.
+ */
+function outputParts(output, lines) {
+  const shown = String(output ?? '').replace(/\s+$/, '');
+  return { excerpt: failureExcerpt(shown), tail: tail(shown, lines) };
+}
+
 /** How many of a failed push's last lines its reason shows. */
 const PUSH_TAIL_LINES = 10;
 
 /**
  * The reason text of a failed `git push`: the failure excerpt of its output
- * (a pre-push gate's failed test and error, S-1499), then its last 10 lines.
- * With no failure marker (a rejected push), the last 10 lines alone.
+ * (a pre-push gate's failed test and error, S-1499), then its last lines.
+ * With no failure marker (a rejected push), the last lines alone.
  */
 function pushFailure(output) {
-  const shown = String(output ?? '').replace(/\s+$/, '');
-  const excerpt = failureExcerpt(shown);
-  return outputSections(excerpt === NO_MARKERS ? null : excerpt, tail(shown, PUSH_TAIL_LINES), PUSH_TAIL_LINES).join(
-    '\n\n',
-  );
+  const { excerpt, tail: last } = outputParts(output, PUSH_TAIL_LINES);
+  return outputSections(excerpt === NO_MARKERS ? null : excerpt, last, PUSH_TAIL_LINES).join('\n\n');
 }
 
 /**
