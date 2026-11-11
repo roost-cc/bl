@@ -3758,7 +3758,8 @@ taken with `tryLockOnce`: they are not re-entrant, so two callers in one process
 two processes do. A `bl` that ends while it holds one, even by Ctrl+C or SIGKILL,
 leaves no lock, and the next taker gets it at once. Every bl lock is a kernel lock now:
 the PID-file lock module is gone, no code decides from a PID whether a lock is held, and no code
-deletes a lock file (D3). The lock files stay and collect: one per spec in the temp dir, and in
+deletes a lock file that bl still takes (D3); the one exception is the one-off migration below,
+which deletes retired lock files. The lock files stay and collect: one per spec in the temp dir, and in
 each repo's git common dir one main sync lock and one `bl-prepare-<branch>.lock` per branch. No lock
 wait sleeps synchronously. Every lock file bl keeps in a backlog lives under `.bl/` (S-1495),
 which the backlog's `.gitignore` ignores, so git never sees one and bl never asks git to ignore a
@@ -3768,10 +3769,15 @@ directory in `.bl/lock/` (`lock.js` `LOCK_DIR`, `dirLockPath`), and the run lock
 (`canonical`), so a unit directory reached through a link has the same lock as its real path.
 `bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
 [--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
-before S-1495: it adds `.bl/` to `.gitignore` if the line is missing, deletes each old lock file
-(`.bl-new.lock`, `.reports.lock`, every `.workon.lock`) that no other process holds and skips one
-that a live process holds, and once none is left removes their lines from `.gitignore`, then
-commits `.gitignore`. A rerun tries a skipped file again.
+before S-1495. It writes `.bl/` to `.gitignore` before it deletes anything. It deletes each old
+lock file (`.bl-new.lock`, `.reports.lock`, every `.workon.lock` in the backlog root, in a unit
+directory, in a directory inside one, links followed, or in a registered worktree) while it holds
+that file's kernel lock itself (`deleteUnderLock`), so nobody takes the lock between the check
+and the delete; it skips a file whose lock another process holds. Once a second scan finds no old
+lock file, it removes their lines from `.gitignore`. It commits `.gitignore` whenever it differs
+from HEAD, so a rerun commits what a failed run wrote, and a rerun tries a skipped file again. A
+`bl` from before F-104 holds its locks as PID files, which the migration cannot see, so it runs
+only when no older `bl` runs (task T-76).
 The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
 caller awaits it (`test/unit/awaited-calls.test.js`).
 

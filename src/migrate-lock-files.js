@@ -16,8 +16,10 @@
  *      the file's kernel lock itself (`deleteUnderLock`), so nobody takes the
  *      lock between the check and the delete; and the unit directory it
  *      leaves empty (`removeUnitDirIfEmpty`). It
- *      skips, and lists, a file whose lock a live process holds (a `bl` from
- *      before S-1495 that still runs); a rerun tries that file again;
+ *      skips, and lists, a file whose kernel lock another process holds; a
+ *      rerun tries that file again. A `bl` from before F-104 holds its locks
+ *      as PID files, which this step cannot see, so the migration runs only
+ *      when no older `bl` runs;
  *   3. once a second scan finds no old lock file left, removes the old lock
  *      lines from `.gitignore`;
  *   4. commits `.gitignore` when it differs from HEAD (`commitPaths`), so a

@@ -10,10 +10,12 @@
  *   node scripts/migrate-lock-files.js [--dry-run] [--backlog <dir>]
  *
  * `--dry-run` prints what it would do and changes nothing. A lock file whose
- * lock a live process holds (a `bl` from before S-1495 that still runs) is
- * skipped and listed, and its `.gitignore` line stays; a rerun deletes it and
- * removes the lines. A changed `.gitignore` is committed once; a rerun with
- * nothing left prints "nothing to do". `--backlog` names the backlog root; by
+ * kernel lock another process holds is skipped and listed, and its
+ * `.gitignore` line stays; a rerun deletes it and removes the lines. A `bl`
+ * from before F-104 holds its locks as PID files, not kernel locks, which the
+ * migration cannot see: run it only when no older `bl` runs. A changed
+ * `.gitignore` is committed once; a rerun with nothing left prints "nothing
+ * to do". `--backlog` names the backlog root; by
  * default it is found as `bl` finds it.
  *
  * Exit codes: 0 done (or nothing to do), 1 a step or the commit failed, 2 bad

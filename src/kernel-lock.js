@@ -8,8 +8,11 @@
  * Nothing here decides from a PID whether a lock is held:
  *
  * - A lock file is permanent (D3). Release closes the descriptor; no code
- *   deletes the file, because a process that locked a new file at the same
- *   path would then hold "the lock" beside the old holder. Every lock file
+ *   deletes a lock file that bl still takes, because a process that locked a
+ *   new file at the same path would then hold "the lock" beside the old
+ *   holder. The one exception is the one-off S-1495 migration
+ *   (`migrate-lock-files.js`): it deletes retired lock files, each while it
+ *   holds that file's lock. Every lock file
  *   in a backlog lives under `.bl/` (`lock.js`), which the backlog's
  *   `.gitignore` ignores.
  * - The PID in the file is information only (D4). The holder truncates the
