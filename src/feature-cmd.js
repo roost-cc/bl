@@ -63,7 +63,7 @@ import {
   resolveFeaturePlugins,
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
-import { featureMergeEdges, heldBy, heldLines, mergeEdgeLabel, readBlockers } from './blockers.js';
+import { edgeArrow, featureMergeEdges, heldBy, heldLines, readBlockers } from './blockers.js';
 import {
   ensureWorktree,
   launchSession,
@@ -1761,7 +1761,7 @@ export async function cmdMerge(args, config, feature) {
   const plan = mergeOrder(names, featureMergeEdges(readBlockers(config.backlogRoot).edges, feature.id));
   if (plan.cycle) {
     console.error(
-      `Feature ${feature.id}: its merge edges form a cycle, so no repo can merge first: ${plan.cycle.map(mergeEdgeLabel).join(', ')}.\nRemove one with bl block remove <blocker> --gate merge --unit <unit>.`,
+      `Feature ${feature.id}: its merge edges form a cycle, so no repo can merge first: ${plan.cycle.map(edgeArrow).join(', ')}.\nRemove one with bl block remove <blocker> --gate merge --unit <unit>.`,
     );
     process.exit(1);
   }
@@ -1782,7 +1782,7 @@ export async function cmdMerge(args, config, feature) {
   const behind =
     plan.edges.length === 0
       ? ''
-      : ` (merge edge${plan.edges.length > 1 ? 's' : ''} ${plan.edges.map(mergeEdgeLabel).join(', ')})`;
+      : ` (merge edge${plan.edges.length > 1 ? 's' : ''} ${plan.edges.map(edgeArrow).join(', ')})`;
   info(`Repos   : ${plan.order.join(', ')}${behind}`);
   info(`Stories : ${stories.map((s) => s.id).join(', ') || '(none)'}`);
 

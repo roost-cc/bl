@@ -273,7 +273,7 @@ export function repoEnd(id) {
 }
 
 /** `F-96:ci-cd → F-96:bl`: a merge or order edge as `bl merge` and `bl block list` name it. */
-export function mergeEdgeLabel(e) {
+export function edgeArrow(e) {
   return `${e.blocker} → ${e.unit}`;
 }
 
@@ -314,7 +314,7 @@ export function featureGraph(edges) {
     // A merge edge with a wrong gate (`blockers-gate`) is still a merge edge here.
     const kind = e.gate === ORDER_EDGE.gate ? 'order' : 'merge';
     if (!graph.has(e.unit)) graph.set(e.unit, []);
-    graph.get(e.unit).push({ from: e.unit, to: e.blocker, why: `${kind} edge ${mergeEdgeLabel(e)}`, kind, edge: e });
+    graph.get(e.unit).push({ from: e.unit, to: e.blocker, why: `${kind} edge ${edgeArrow(e)}`, kind, edge: e });
   }
   return graph;
 }

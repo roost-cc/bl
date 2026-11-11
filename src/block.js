@@ -30,7 +30,9 @@ import {
   ORDER_EDGE,
   RUN_EDGE,
   WILDCARD,
+  dependencyEdge,
   describeCycle,
+  edgeArrow,
   edgeKey,
   edgeLabel,
   edgeProblems,
@@ -38,7 +40,6 @@ import {
   inFeature,
   isActive,
   isMet,
-  mergeEdgeLabel,
   readBlockers,
   readEdges,
   readUnits,
@@ -224,17 +225,20 @@ export function orderJoinedEdges(config, joined) {
   const root = config.backlogRoot;
   const { edges } = readBlockers(root);
   const units = readUnits(config);
-  const order = (e) => ({ blocker: e.blocker, gate: ORDER_EDGE.gate, unit: e.unit, until: ORDER_EDGE.until });
+  // The edge the pair stands for now: an order edge when both are in one feature.
+  const order = (e) => dependencyEdge(e.blocker, e.unit, (id) => units.get(id)?.feature ?? '');
   const turned = edges.filter(
     (e) =>
-      e.gate === RUN_EDGE.gate && (joined.includes(e.unit) || joined.includes(e.blocker)) && inFeature(order(e), units),
+      e.gate === RUN_EDGE.gate &&
+      (joined.includes(e.unit) || joined.includes(e.blocker)) &&
+      order(e).gate === ORDER_EDGE.gate,
   );
   if (turned.length === 0) return [];
   const kept = edges.filter((e) => !turned.includes(e));
   const keys = new Set(kept.map(edgeKey));
   const added = turned.map(order).filter((e) => !keys.has(edgeKey(e)) && keys.add(edgeKey(e)));
   const paths = prepareAndWrite(root, [...kept, ...added]);
-  for (const e of turned) info(`${edgeLabel(e)} is now the order edge ${mergeEdgeLabel(e)}`);
+  for (const e of turned) info(`${edgeLabel(e)} is now the order edge ${edgeArrow(e)}`);
   return paths ?? [];
 }
 
@@ -307,7 +311,7 @@ export function listLines(edges, id, units, flow) {
           e.gate === ORDER_EDGE.gate
             ? `${e.unit} is implemented after ${e.blocker}`
             : `${repoEnd(e.unit).repo} merges after ${repoEnd(e.blocker).repo}`;
-        return `${e.gate} edge ${mergeEdgeLabel(e)}: ${after}`;
+        return `${e.gate} edge ${edgeArrow(e)}: ${after}`;
       }
       const line = `${e.unit} held at ${e.gate} by ${e.blocker} (${statusOf(e.blocker)}, needs ${e.until})`;
       const a = e.active_when;

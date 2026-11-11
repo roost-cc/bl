@@ -1091,7 +1091,7 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
   story with the feature it runs with and its `unitRepo`), `isActive`, `isMet`, `unmetEdges`,
   `gateIds`, `gatesAt`, `heldBy`, `heldLines`, `edgeProblems` (the per-edge checks `bl block add`
   and `bl validate` share), `holdGraph`, `findHoldCycles`, `wouldCycle`, `findBlockersFindings`,
-  for merge and order edges `repoEnd`, `mergeEdgeLabel`, `inFeature`, `featureMergeEdges` and
+  for merge and order edges `repoEnd`, `edgeArrow`, `inFeature`, `featureMergeEdges` and
   `featureGraph`, and for story dependencies `dependencyEdge` (the edge "S-a waits for S-b"
   stands for, `RUN_EDGE` or `ORDER_EDGE`), `dependsOnEdges`, `withDependsOn`, `readEdges` and
   `storyDependencies` (each story's dependencies from the run and order edges between two
