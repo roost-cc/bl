@@ -2,11 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { awaitLock, LockWaitTimeout, waitingForLock } from '../../src/lock-wait.js';
-import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
-import { holderOf } from '../../src/kernel-lock.js';
+import { holderOf, release, tryLock } from '../../src/kernel-lock.js';
 import { acquireLock, LOCK_FILE, withLock } from '../../src/lock.js';
 import { mainSyncLockPath, withMainSyncLock } from '../../src/main-sync.js';
 import { SpecLockError, specLockPath, withSpecLock } from '../../src/spec-file.js';
@@ -86,19 +85,23 @@ test('awaitLock rejects with a LockWaitTimeout naming the lock and the holder', 
   assert.equal(said.length, 1);
 });
 
-test('awaitLock takes acquirePidLock as it is: it resolves what the take returned, and waits while the lock is held', async () => {
+test('awaitLock takes tryLock as it is: it resolves what the take returned, and waits while another descriptor holds the lock', async () => {
   const dir = mkTempDir('bl-lock-wait-');
   const lockPath = join(dir, 'x.lock');
-  const mine = `${process.pid}\n${new Date().toISOString()}\nmine\n`;
-  const take = () => acquirePidLock(lockPath, mine);
   const opts = { deadlineMs: 0, pollMs: 5, announce: () => {}, sleep: noSleep };
-  assert.deepEqual(await awaitLock(lockPath, take, opts), { content: mine });
-  assert.equal(readFileSync(lockPath, 'utf8'), mine);
-  const other = `${process.pid}\n${new Date().toISOString()}\nother\n`;
-  const err = await awaitLock(lockPath, () => acquirePidLock(lockPath, other), opts).catch((e) => e);
-  assert.ok(err instanceof LockWaitTimeout, String(err));
-  assert.equal(err.holder, process.pid);
-  releasePidLock(lockPath, mine);
+  const got = await awaitLock(lockPath, () => tryLock(lockPath, 'mine'), opts);
+  assert.equal(got.taken.path, lockPath);
+  assert.match(readFileSync(lockPath, 'utf8'), new RegExp(`^${process.pid}\\n.*\\nmine\\n$`));
+  release(got.taken);
+  const other = holdLock(lockPath, 'other');
+  try {
+    const err = await awaitLock(lockPath, () => tryLock(lockPath, 'mine'), opts).catch((e) => e);
+    assert.ok(err instanceof LockWaitTimeout, String(err));
+    assert.equal(err.holder, process.pid);
+    assert.equal(readFileSync(lockPath, 'utf8'), other.content, 'the waiter never truncated it');
+  } finally {
+    other.release();
+  }
 });
 
 test('two concurrent takes of one re-entrant lock in one process: the second re-enters, it never waits for itself', async () => {
@@ -128,7 +131,7 @@ test('two concurrent takes of one re-entrant lock in one process: the second re-
     },
     {
       name: 'spec lock (withSpecLock)',
-      released: () => !existsSync(specLockPath(spec)),
+      released: () => holderOf(specLockPath(spec)) === null,
       run: (said, order, tag) => withSpecLock(spec, () => order.push(tag), { waitMs: 3000 }),
       // fn is synchronous, so the two never overlap; both run.
       ok: (order) => [...order].sort().join() === 'A,B',
@@ -187,14 +190,12 @@ test('awaitLock sleeps at most the time left to the deadline', async () => {
 test('every lock wait with a live holder gives up near its deadline, not after a full poll', async () => {
   const repo = mkTempDir('bl-lock-wait-');
   execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: ['ignore', 'pipe', 'pipe'] });
-  const holderContent = `${process.pid}\n${new Date().toISOString()}\nheld by the test\n`;
   const spec = join(repo, 'index.md');
   writeFileSync(spec, '---\na: 1\n---\nbody\n');
   const cases = [
     {
       name: 'backlog lock (acquireLock)',
       lockPath: join(repo, LOCK_FILE),
-      hold: (path) => holdLock(path).release,
       wait: async () => {
         const exits = [];
         await acquireLock(repo, { timeoutMs: 100, pollMs: 2000, exit: (c) => exits.push(c), error: () => {} });
@@ -214,20 +215,15 @@ test('every lock wait with a live holder gives up near its deadline, not after a
         (await withSpecLock(spec, () => 'ran', { waitMs: 100 }).catch((e) => e)) instanceof SpecLockError,
     },
   ];
-  // A kernel lock is held on a descriptor; a PID lock by its file.
-  const writePidLock = (path) => {
-    writeFileSync(path, holderContent);
-    return () => {};
-  };
   for (const c of cases) {
-    const release = (c.hold ?? writePidLock)(c.lockPath);
+    const holder = holdLock(c.lockPath);
     try {
       const start = Date.now();
       assert.ok(await c.wait(), `${c.name}: timed out`);
       const ms = Date.now() - start;
       assert.ok(ms < 1000, `${c.name}: took ${ms} ms`);
     } finally {
-      release();
+      holder.release();
       rmSync(c.lockPath, { force: true });
     }
   }
@@ -282,7 +278,7 @@ test('awaitLock awaits a timer by default, so the event loop runs while it waits
   const ticker = setInterval(() => (ticks += 1), 1);
   setTimeout(() => (held = false), 40);
   try {
-    await awaitLock('x.lock', () => (held ? { holder: 43 } : { content: 'mine' }), {
+    await awaitLock('x.lock', () => (held ? { holder: 43 } : { taken: 'mine' }), {
       deadlineMs: 5000,
       pollMs: 5,
       announce: () => {},

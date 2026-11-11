@@ -27,11 +27,24 @@
 import { spawnSync } from 'child_process';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { isPidAlive } from './pid-lock.js';
 import { spawnSyncFiles } from './child-stdio.js';
 
 /** How long `systemctl stop` lets a scope's processes exit on SIGTERM before SIGKILL. */
 const STOP_TIMEOUT = 'TimeoutStopSec=10s';
+
+/**
+ * Whether `pid` names a live process. Only `staleScopes` asks it, about the
+ * bl that started a scope; no lock decides from a PID (F-104).
+ */
+export function isPidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** A process's command line is trimmed to this many characters in a record. */
 const COMMAND_MAX = 120;

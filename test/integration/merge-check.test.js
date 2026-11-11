@@ -13,11 +13,13 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync }
 import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { setTimeout as delay } from 'timers/promises';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { BL_BIN, lockOwnerVisible, personEnv, runBl } from '../helpers/run-bl.js';
 import { addOrigin } from '../helpers/git-backlog.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
 import { spawnToFiles, untilStderrHas } from '../helpers/spawn-files.js';
+import { holdLock } from '../helpers/hold-lock.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { extractSection } from '../../src/feature.js';
 import { mainSyncLockPath } from '../../src/main-sync.js';
@@ -470,17 +472,25 @@ test('a SIGINT that ends the rebase fetch of the gate-line push stops the merge'
 
 test('a Ctrl+C while the gate-line commit waits for the backlog lock exits 130, pushes nothing and leaves no worktree', async (t) => {
   if (!lockOwnerVisible(t)) return;
-  // The check passes, then makes this process the holder of the backlog's
-  // main sync lock, which the gate line's commit takes (the backlog has an origin).
-  const lock = `{{backlogDir}}/.git/bl-main-sync.lock`;
-  const fx = fixture({ verdicts: ['pass'], check: `${CHECK_COMMAND} && echo ${process.pid} > ${lock}` });
+  // The check passes, then waits while this process takes the backlog's main
+  // sync lock, which the gate line's commit takes (the backlog has an origin).
+  const fx = fixture({
+    verdicts: ['pass'],
+    check: `${CHECK_COMMAND} && touch {{backlogDir}}/check-passed && until [ -e {{backlogDir}}/check-go ]; do sleep 0.05; done`,
+  });
   const u = UNITS[0];
   let run = null;
+  let holder = null;
   try {
     addOrigin(fx.dir);
     const before = g(fx.origin, 'rev-parse', 'main');
     const env = withNoAgent({ ...personEnv(), BL_BACKLOG_DIR: fx.dir, ...ENV });
     run = spawnToFiles(BL_BIN, ['merge', u.id], { cwd: fx.dir, env, detached: true });
+    for (const start = Date.now(); !existsSync(join(fx.dir, 'check-passed')); await delay(20)) {
+      assert.ok(Date.now() - start < 30_000, `the check never passed: ${run.read().stderr}`);
+    }
+    holder = holdLock(mainSyncLockPath(fx.dir));
+    writeFileSync(join(fx.dir, 'check-go'), '');
     await untilStderrHas(run, waitingForLock(mainSyncLockPath(fx.dir), process.pid));
     // A terminal's Ctrl+C: SIGINT to the whole process group.
     process.kill(-run.child.pid, 'SIGINT');
@@ -500,6 +510,7 @@ test('a Ctrl+C while the gate-line commit waits for the backlog lock exits 130, 
       }
       await run.closed;
     }
+    holder?.release();
     fx.cleanup();
   }
 });

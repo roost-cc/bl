@@ -8,13 +8,15 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync } from 'child_process';
 import { setTimeout as delay } from 'timers/promises';
 import { syncMain, mainSyncLockPath, reportMainSync, MAIN_SYNC_LOCK } from '../../src/main-sync.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { waitingForLock } from '../../src/lock-wait.js';
+import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { spawnToFiles, untilStderrHas } from '../helpers/spawn-files.js';
 
@@ -97,7 +99,7 @@ test('two processes syncing one clone at once both succeed', async () => {
     for (const r of results) assert.equal(r.state, 'updated', JSON.stringify(r));
     assert.equal(git(repo, 'rev-parse', 'main'), upstream);
     assert.equal(git(repo, 'rev-parse', 'main'), git(repo, 'rev-parse', 'origin/main'));
-    assert.equal(existsSync(mainSyncLockPath(repo)), false, 'lock released');
+    assert.equal(holderOf(mainSyncLockPath(repo)), null, 'lock released');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -220,7 +222,7 @@ test("diverged main → ff-failed carrying git's stderr", async () => {
     assert.equal(r.state, 'ff-failed');
     assert.match(r.message, /Not possible to fast-forward/);
     assert.equal(git(repo, 'rev-parse', 'main'), local, 'main untouched');
-    assert.equal(existsSync(mainSyncLockPath(repo)), false, 'lock released');
+    assert.equal(holderOf(mainSyncLockPath(repo)), null, 'lock released');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -242,10 +244,10 @@ test('unpushed local main with checkAhead → ahead, and the fast-forward is not
 test('a lock held by a live process → lock-timeout, nothing synced', async () => {
   const { root, origin, repo } = makeClone();
   const lockPath = mainSyncLockPath(repo);
+  const holder = holdLock(lockPath);
   try {
     advanceOrigin(root, origin);
     const before = git(repo, 'rev-parse', 'main');
-    writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\ntest\n`);
     const started = Date.now();
     const r = await syncMain(repo, { lockTimeoutMs: 300, pollMs: 50 });
     assert.equal(r.state, 'lock-timeout');
@@ -253,8 +255,9 @@ test('a lock held by a live process → lock-timeout, nothing synced', async () 
     assert.equal(r.lockPath, lockPath);
     assert.ok(Date.now() - started >= 250, 'waited for the timeout');
     assert.equal(git(repo, 'rev-parse', 'main'), before, 'main untouched');
-    assert.ok(existsSync(lockPath), "the holder's lock is left alone");
+    assert.equal(readFileSync(lockPath, 'utf8'), holder.content, "the holder's lock is left alone");
   } finally {
+    holder.release();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -278,20 +281,19 @@ const waitLines = (stderr) => stderr.split('\n').filter((l) => l.startsWith('Wai
 test('withMainSyncLock announces the wait once over several polls', async () => {
   const { root, repo } = makeClone();
   const lockPath = mainSyncLockPath(repo);
-  // A live holder that ends about 6 polls after the announcement; its lock is then stale.
-  const holder = spawn('sleep', ['30'], { stdio: 'ignore' });
+  // A live holder that ends about 6 polls after the announcement, which frees its lock.
+  const holder = await holdLockInChild(lockPath);
   try {
-    writeFileSync(lockPath, `${holder.pid}\n${new Date().toISOString()}\ntest\n`);
     const run = lockInChild(repo, { pollMs: 50 });
     await untilStderrHas(run, waitingForLock(lockPath, holder.pid));
     await delay(300);
-    holder.kill();
+    await holder.kill();
     const r = await run.closed;
     assert.equal(r.status, 0, r.stderr);
     assert.equal(JSON.parse(r.stdout), 'ran');
     assert.deepEqual(waitLines(r.stderr), [waitingForLock(lockPath, holder.pid)]);
   } finally {
-    holder.kill();
+    await holder.kill();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -299,8 +301,8 @@ test('withMainSyncLock announces the wait once over several polls', async () => 
 test('withMainSyncLock announces a wait that times out once, at once or after several polls', async () => {
   const { root, repo } = makeClone();
   const lockPath = mainSyncLockPath(repo);
+  const holder = holdLock(lockPath);
   try {
-    writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\ntest\n`);
     for (const opts of [{ lockTimeoutMs: 0 }, { lockTimeoutMs: 300, pollMs: 50 }]) {
       const r = await lockInChild(repo, opts).closed;
       assert.equal(r.status, 0, r.stderr);
@@ -308,6 +310,7 @@ test('withMainSyncLock announces a wait that times out once, at once or after se
       assert.deepEqual(waitLines(r.stderr), [waitingForLock(lockPath, process.pid)], JSON.stringify(opts));
     }
   } finally {
+    holder.release();
     rmSync(root, { recursive: true, force: true });
   }
 });

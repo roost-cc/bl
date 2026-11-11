@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'child_process';
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { FrontmatterError, parseFrontmatter } from '../../src/config.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { waitingForLock } from '../../src/lock-wait.js';
 import { SpecLockError, specLockPath, updateSpecFile, updateSpecFileHeld, withSpecLock } from '../../src/spec-file.js';
 import { accumulateTokensOnFile } from '../../src/tokens.js';
+import { holdLock } from '../helpers/hold-lock.js';
 import { withPartialWrites } from '../helpers/partial-write.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
@@ -78,7 +80,7 @@ test('failed_token_write_preserves_previous_spec', async () => {
   });
   assert.equal(readFileSync(path, 'utf8'), SPEC, 'the previous spec is in place');
   assert.deepEqual(staging(dir), [], 'no file in .bl/tmp/');
-  assert.equal(existsSync(specLockPath(path)), false, 'the lock is released');
+  assert.equal(holderOf(specLockPath(path)), null, 'the lock is released');
   // A retry writes the update.
   assert.equal(await accumulateTokensOnFile(dir, path, use, 'implement'), true);
   const { fm } = parseFrontmatter(readFileSync(path, 'utf8'));
@@ -90,22 +92,22 @@ test('failed_token_write_preserves_previous_spec', async () => {
 test('withSpecLock is re-entrant within a process and releases on the way out', async () => {
   const { dir, path } = spec();
   const lock = specLockPath(path);
-  let inner = null;
+  let nested;
   const out = await withSpecLock(path, () => {
-    assert.equal(existsSync(lock), true);
-    // A nested lock for the same spec runs its fn at once, with no wait.
-    void withSpecLock(path, () => (inner = 'inner'), { waitMs: 0 });
-    assert.equal(inner, 'inner');
+    assert.equal(holderOf(lock), process.pid);
+    // A nested lock for the same spec takes it again at once, with no wait.
+    nested = withSpecLock(path, () => 'inner', { waitMs: 0 });
     // The outer fn is synchronous, so its nested write is updateSpecFileHeld.
     assert.equal(
       updateSpecFileHeld(dir, path, (fm) => void (fm.status = 'done')),
       true,
     );
-    assert.equal(existsSync(lock), true, 'the nested call leaves the outer hold');
     return 'outer';
   });
   assert.equal(out, 'outer');
-  assert.equal(existsSync(lock), false, 'released');
+  assert.equal(await nested, 'inner');
+  assert.equal(holderOf(lock), null, 'released');
+  assert.equal(existsSync(lock), true, 'the lock file stays (F-104 D3)');
   assert.match(readFileSync(path, 'utf8'), /^status: done$/m);
 });
 
@@ -118,41 +120,37 @@ test('updateSpecFileHeld refuses a spec whose lock this process does not hold', 
 test('withSpecLock waits for a live holder, says so once, and takes the lock when it ends', async () => {
   const { dir, path } = spec();
   const lock = specLockPath(path);
-  const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const holder = holdLock(lock, 'another bl');
   const said = [];
   const write = process.stderr.write;
   process.stderr.write = (chunk, ...rest) => (said.push(String(chunk)), write.call(process.stderr, chunk, ...rest));
   try {
-    writeFileSync(lock, `${holder.pid}\nanother bl\n`);
     // The wait awaits a timer, so this timer frees the lock during it.
-    setTimeout(() => rmSync(lock, { force: true }), 100);
+    setTimeout(holder.release, 100);
     assert.equal(await updateSpecFile(dir, path, (fm) => void (fm.status = 'done')), true);
   } finally {
     process.stderr.write = write;
-    holder.kill();
-    rmSync(lock, { force: true });
+    holder.release();
   }
-  assert.deepEqual(said, [`${waitingForLock(lock, holder.pid)}\n`]);
+  assert.deepEqual(said, [`${waitingForLock(lock, process.pid)}\n`]);
   assert.match(readFileSync(path, 'utf8'), /^status: done$/m);
-  assert.equal(existsSync(lock), false, 'released');
+  assert.equal(holderOf(lock), null, 'released');
 });
 
 test('withSpecLock throws SpecLockError naming the spec when another live process holds it past waitMs', async () => {
   const { path } = spec();
   const lock = specLockPath(path);
-  const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const holder = holdLock(lock, 'another bl');
   try {
-    writeFileSync(lock, `${holder.pid}\nanother bl\n`);
     let ran = false;
     await assert.rejects(
       async () => withSpecLock(path, () => (ran = true), { waitMs: 50 }),
-      (e) => e instanceof SpecLockError && e.indexPath === path && e.holder === holder.pid && e.message.includes(path),
+      (e) => e instanceof SpecLockError && e.indexPath === path && e.holder === process.pid && e.message.includes(path),
     );
     assert.equal(ran, false);
-    assert.equal(readFileSync(lock, 'utf8'), `${holder.pid}\nanother bl\n`, "the holder's lock is left alone");
+    assert.equal(readFileSync(lock, 'utf8'), holder.content, "the holder's lock is left alone");
   } finally {
-    holder.kill();
-    rmSync(lock, { force: true });
+    holder.release();
   }
 });
 
@@ -178,11 +176,11 @@ test('two processes that write the same spec at once take turns, and no write is
     );
   assert.deepEqual(await Promise.all([writer(), writer()]), [0, 0]);
   assert.equal(Number(parseFrontmatter(readFileSync(path, 'utf8')).fm.n), 20);
-  assert.equal(existsSync(specLockPath(path)), false, 'released');
+  assert.equal(holderOf(specLockPath(path)), null, 'released');
 });
 
 test('withSpecLock refuses an async fn and still releases the lock', async () => {
   const { path } = spec();
   await assert.rejects(async () => withSpecLock(path, async () => {}), TypeError);
-  assert.equal(existsSync(specLockPath(path)), false);
+  assert.equal(holderOf(specLockPath(path)), null);
 });

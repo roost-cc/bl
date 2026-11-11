@@ -7,9 +7,9 @@
  * (`atomicWriteFile`), so a writer that dies, runs out of disk or overlaps
  * another `bl` never leaves a truncated, doubled-fence or stale spec behind.
  *
- * `withSpecLock(indexPath, fn)` is the lock: a pid lock in the temp dir keyed
- * by the spec's real path (the file `withTokensLock` used, so an older `bl`
- * and this one still exclude each other). It is re-entrant within a process,
+ * `withSpecLock(indexPath, fn)` is the lock: a kernel lock (`kernel-lock.js`,
+ * F-104) on a file in the temp dir keyed by the spec's real path. The file
+ * stays after release (F-104 D3). It is re-entrant within a process,
  * awaits its wait (`awaitLock`, F-105 W1) and rejects with `SpecLockError`
  * when the lock never frees. Its `fn` is synchronous, so a nested write in it
  * calls `updateSpecFileHeld`.
@@ -25,7 +25,7 @@ import { join, resolve } from 'path';
 import { createHash } from 'crypto';
 import { FrontmatterError, info, parseFrontmatterOf, serializeFrontmatter } from './config.js';
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
-import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { holderOf, release, tryLock } from './kernel-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 
 /** The spec lock could not be taken: held by a live process past the wait, or not creatable. */
@@ -41,8 +41,8 @@ export class SpecLockError extends Error {
 /**
  * The lock file every writer of `indexPath` shares: in the temp dir, keyed by
  * the spec's real path, so the backlog never sees it. The `bl-tokens-` name
- * is the one the token writers used before F-67, kept so an older process
- * and a newer one take the same lock.
+ * is the one the token writers used before F-67. The file stays after
+ * release (F-104 D3).
  */
 export function specLockPath(indexPath) {
   let path = resolve(indexPath);
@@ -53,9 +53,6 @@ export function specLockPath(indexPath) {
   }
   return join(tmpdir(), `bl-tokens-${createHash('sha1').update(path).digest('hex').slice(0, 16)}.lock`);
 }
-
-/** Lock paths this process holds, so a nested `withSpecLock` runs without waiting on itself. */
-const held = new Map();
 
 /** `fn()`, refusing a promise: the lock is released when `fn` returns, not when it settles. */
 function runSync(fn, indexPath) {
@@ -71,25 +68,20 @@ function runSync(fn, indexPath) {
  * (parallel headless sessions, an interactive session's difference, a totals
  * re-read, a status write) never both write from one snapshot and drop the
  * other's change. Waits through `awaitLock` (`lock-wait.js`) up to `waitMs`
- * (60 s, F-104 D2) for a live holder, and says so once on stderr; a dead
- * holder's lock is reclaimed. A nested call for a lock this process already
- * holds runs `fn` directly. Resolves `fn`'s result. Rejects with
- * `SpecLockError` naming the spec and the holder when the lock never frees,
- * or when it cannot be created. `fn` must be synchronous (F-105 W4): the
- * re-entrancy map is per process, so an `await` inside `fn` would let another
- * task of this process skip the lock.
+ * (60 s, F-104 D2) for a live holder, and says so once on stderr. The lock is
+ * a kernel lock (`kernel-lock.js`): a killed holder leaves none, and release
+ * closes the descriptor. A nested call for a lock this process already holds
+ * takes it again at once (`tryLock` is re-entrant). Resolves `fn`'s result.
+ * Rejects with `SpecLockError` naming the spec and the holder when the lock
+ * never frees, or when it cannot be created. `fn` must be synchronous (F-105
+ * W4): the lock is re-entrant per process, so an `await` inside `fn` would let
+ * another task of this process skip the lock.
  */
 export async function withSpecLock(indexPath, fn, { waitMs = LOCK_WAIT_MS } = {}) {
   const lockPath = specLockPath(indexPath);
-  if (held.has(lockPath)) return runSync(fn, indexPath);
-  const content = `${process.pid}\n${new Date().toISOString()}\nspec ${indexPath}\n`;
-  // The take records the lock in the same step, so another task of this
-  // process that asks before `awaitLock` resolves runs `fn` directly, not waits.
   const take = () => {
     try {
-      const got = acquirePidLock(lockPath, content);
-      if ('content' in got) held.set(lockPath, content);
-      return got;
+      return tryLock(lockPath, `spec ${indexPath}`);
     } catch (e) {
       throw new SpecLockError(`${indexPath}: cannot take the spec lock ${lockPath}: ${e.message}`, {
         indexPath,
@@ -97,8 +89,9 @@ export async function withSpecLock(indexPath, fn, { waitMs = LOCK_WAIT_MS } = {}
       });
     }
   };
+  let handle;
   try {
-    await awaitLock(lockPath, take, { deadlineMs: waitMs, pollMs: 10, announce: info });
+    ({ taken: handle } = await awaitLock(lockPath, take, { deadlineMs: waitMs, pollMs: 10, announce: info }));
   } catch (e) {
     if (!(e instanceof LockWaitTimeout)) throw e;
     throw new SpecLockError(
@@ -113,8 +106,7 @@ export async function withSpecLock(indexPath, fn, { waitMs = LOCK_WAIT_MS } = {}
   try {
     return runSync(fn, indexPath);
   } finally {
-    held.delete(lockPath);
-    releasePidLock(lockPath, content);
+    release(handle);
   }
 }
 
@@ -172,7 +164,7 @@ export async function updateSpecFile(backlogRoot, indexPath, mutate) {
  * @returns {boolean}
  */
 export function updateSpecFileHeld(backlogRoot, indexPath, mutate) {
-  if (!held.has(specLockPath(indexPath))) {
+  if (holderOf(specLockPath(indexPath)) !== process.pid) {
     throw new TypeError(`updateSpecFileHeld(${indexPath}): the spec lock is not held; use updateSpecFile`);
   }
   const raw = readFileSync(indexPath, 'utf8');

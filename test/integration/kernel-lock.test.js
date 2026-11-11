@@ -7,9 +7,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
@@ -17,6 +18,9 @@ import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { RUN_DIR, acquireRunLock, ensureRunDir, releaseRunLock, runLockPath } from '../../src/run-lock.js';
 import { waitingForLock } from '../../src/lock-wait.js';
+import { mainSyncLockPath, withMainSyncLock } from '../../src/main-sync.js';
+import { prepareWorktreeOnce } from '../../src/session.js';
+import { specLockPath, withSpecLock } from '../../src/spec-file.js';
 
 test('a backlog lock holder killed with SIGKILL leaves a lock that the next bl sync --commit takes at once', async () => {
   const { dir, cleanup } = mkTempBacklog({
@@ -86,5 +90,54 @@ test('a run killed with SIGKILL is stale in bl top --json, and the next acquireR
     releaseRunLock(lock.taken);
   } finally {
     cleanup();
+  }
+});
+
+test('a spec, main-sync or prepare lock holder killed with SIGKILL leaves a lock that the next take gets at once', async () => {
+  const repo = mkTempDir('bl-kernel-lock-');
+  execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const spec = join(repo, 'index.md');
+  writeFileSync(spec, '---\nstory_id: S-1\n---\n\nBody\n');
+  const cases = [
+    { name: 'spec lock', lockPath: specLockPath(spec), take: () => withSpecLock(spec, () => 'ran', { waitMs: 0 }) },
+    {
+      name: 'main-sync lock',
+      lockPath: mainSyncLockPath(repo),
+      take: () => withMainSyncLock(repo, () => 'ran', { lockTimeoutMs: 0 }),
+    },
+    {
+      name: 'prepare lock',
+      lockPath: join(repo, '.git', 'bl-prepare-b.lock'),
+      take: () => prepareWorktreeOnce(repo, 'b', async () => 'ran'),
+    },
+  ];
+  try {
+    for (const c of cases) {
+      const holder = await holdLockInChild(c.lockPath);
+      await holder.kill('SIGKILL');
+      const said = [];
+      const write = process.stderr.write;
+      process.stderr.write = (chunk, ...rest) => (said.push(String(chunk)), write.call(process.stderr, chunk, ...rest));
+      const start = Date.now();
+      let out;
+      try {
+        out = await c.take();
+      } finally {
+        process.stderr.write = write;
+      }
+      const ms = Date.now() - start;
+      assert.equal(out, 'ran', `${c.name}: ${JSON.stringify(out)}`);
+      assert.ok(ms < 1000, `${c.name}: took ${ms} ms`);
+      assert.deepEqual(
+        said.filter((l) => l.startsWith('Waiting for lock')),
+        [],
+        `${c.name}: no wait`,
+      );
+      assert.equal(holderOf(c.lockPath), null, `${c.name}: released`);
+      assert.ok(existsSync(c.lockPath), `${c.name}: the lock file stays (D3)`);
+    }
+  } finally {
+    rmSync(cases[0].lockPath, { force: true });
+    rmSync(repo, { recursive: true, force: true });
   }
 });

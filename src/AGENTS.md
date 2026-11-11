@@ -381,18 +381,19 @@ worked out from the path. A write of a whole new file, or a snapshot restore, ca
 `atomicWriteFile` directly; epic, theme and component index files are written only under the
 backlog lock and need `atomicWriteFile` only.
 
-- **The lock.** `withSpecLock(indexPath, fn, { waitMs })` is a pid lock in the temp dir keyed
-  by the spec's real path (`specLockPath`; the `bl-tokens-<hash>.lock` file the token writers
-  took before F-67, so an older `bl` and a newer one exclude each other). It is re-entrant within
-  a process: a nested call for a lock this process holds runs `fn` directly. It is async: it
+- **The lock.** `withSpecLock(indexPath, fn, { waitMs })` is a kernel lock (`kernel-lock.js`
+  `tryLock`, F-104) on a file in the temp dir keyed by the spec's real path (`specLockPath`, a
+  `bl-tokens-<hash>.lock` file). A killed holder leaves no lock, release closes the descriptor,
+  and the file stays (D3), so these files collect in the temp dir. It is re-entrant within a
+  process: a nested call for a lock this process holds takes it again at once. It is async: it
   waits through `awaitLock` (`lock-wait.js`, F-105 W1) up to `waitMs` (60 s, F-104 D2) for a
-  live holder, says so once on stderr (`Waiting for lock (<lock path>) held by pid <n>…`),
-  reclaims a dead holder's lock, and otherwise rejects with `SpecLockError` naming the spec and
-  the holder. The wait awaits a timer, so Ctrl+C ends `bl` at once during it. `fn` is
-  synchronous; a returned promise is an error (F-105 W4: the re-entrancy map is per process, so
-  an `await` inside `fn` would let another task of the process skip the lock). A write nested in
-  a hold calls `updateSpecFileHeld`, the same read-modify-write without the lock, which throws
-  unless this process holds the spec's lock.
+  live holder, says so once on stderr (`Waiting for lock (<lock path>) held by pid <n>…`), and
+  otherwise rejects with `SpecLockError` naming the spec and the holder. The wait awaits a
+  timer, so Ctrl+C ends `bl` at once during it. `fn` is synchronous; a returned promise is an
+  error (F-105 W4: the lock is re-entrant per process, so an `await` inside `fn` would let
+  another task of the process skip the lock). A write nested in a hold calls
+  `updateSpecFileHeld`, the same read-modify-write without the lock, which throws unless this
+  process holds the spec's lock.
 - **Failure.** Token bookkeeping is best-effort: the token writers catch and return false. Every
   other writer lets the error propagate, so a write that could not happen fails the command
   instead of being lost.
@@ -3746,8 +3747,13 @@ The prepare-lock wait (`session.js` `prepareWorktreeOnce`) says so the same way 
 deadline, because the lock is held while bootstrap and `workon` plugins run. Every lock wait is
 awaited: the backlog, spec, main sync and prepare lock waits all go through `awaitLock`, so one
 Ctrl+C during any of them runs the SIGINT listener (`exitOnSignal`, which `bl.js` registers
-when `bl` starts) at once and exits 130. A Ctrl+C while `prepareWorktreeOnce` runs its async
-`fn` leaves `bl-prepare-*.lock` with a dead pid, and the next preparer reclaims it. No lock
+when `bl` starts) at once and exits 130. The main sync and prepare locks are kernel locks too,
+taken with `tryLockOnce`: they are not re-entrant, so two callers in one process take turns as
+two processes do. A `bl` that ends while it holds one, even by Ctrl+C or SIGKILL,
+leaves no lock, and the next taker gets it at once. Every bl lock is a kernel lock now:
+the PID-file lock module is gone, no code decides from a PID whether a lock is held, and no code
+deletes a lock file (D3). The lock files stay and collect: one per spec in the temp dir, and one main
+sync lock and one `bl-prepare-<branch>.lock` per branch in each repo's git common dir. No lock
 wait sleeps synchronously. The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer
 too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
 caller awaits it (`test/unit/awaited-calls.test.js`).

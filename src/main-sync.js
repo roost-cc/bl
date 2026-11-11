@@ -22,7 +22,7 @@ import { spawnSync } from 'child_process';
 import { resolve } from 'path';
 import { info } from './config.js';
 import { awaitLock, LockWaitTimeout } from './lock-wait.js';
-import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { release, tryLockOnce } from './kernel-lock.js';
 import { interruptOf, raiseSignal } from './signal-exit.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
@@ -78,8 +78,8 @@ function git(cwd, args) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  // A raise inside `withMainSyncLock` leaves the lock file with a dead PID;
-  // the next `acquirePidLock` reclaims it.
+  // A raise inside `withMainSyncLock` ends this process, and the kernel frees
+  // its lock with it.
   raiseSignal(interruptOf(r));
   return {
     ok: r.status === 0,
@@ -168,7 +168,10 @@ export async function syncMain(repoPath, opts = {}) {
  * The wait goes through `awaitLock` (`lock-wait.js`, F-105 W1): the first try
  * that finds a live holder says so once on stderr, and Ctrl+C during the wait
  * ends `bl` at once. `fn` stays synchronous (F-105 W4): every caller runs
- * git in it.
+ * git in it. The lock is a kernel lock (`kernel-lock.js`, F-104): a killed
+ * holder leaves none, release closes the descriptor, and the file stays (D3).
+ * It is not re-entrant (`tryLockOnce`): two callers in one process take turns
+ * as two processes do, and the second says that it waits.
  *
  * @template T
  * @param {string} repoPath
@@ -179,10 +182,10 @@ export async function syncMain(repoPath, opts = {}) {
 export async function withMainSyncLock(repoPath, fn, opts = {}) {
   const { lockTimeoutMs = LOCK_TIMEOUT_MS, pollMs = LOCK_POLL_MS } = opts;
   const lockPath = mainSyncLockPath(repoPath);
-  const content = `${process.pid}\n${new Date().toISOString()}\nbl main sync ${repoPath}\n`;
-  const take = () => acquirePidLock(lockPath, content);
+  const take = () => tryLockOnce(lockPath, `bl main sync ${repoPath}`);
+  let handle;
   try {
-    await awaitLock(lockPath, take, { deadlineMs: lockTimeoutMs, pollMs, announce: info });
+    ({ taken: handle } = await awaitLock(lockPath, take, { deadlineMs: lockTimeoutMs, pollMs, announce: info }));
   } catch (e) {
     if (!(e instanceof LockWaitTimeout)) throw e;
     return { state: 'lock-timeout', holder: e.holder, lockPath };
@@ -190,7 +193,7 @@ export async function withMainSyncLock(repoPath, fn, opts = {}) {
   try {
     return fn();
   } finally {
-    releasePidLock(lockPath, content);
+    release(handle);
   }
 }
 

@@ -47,8 +47,7 @@ import { renderToolGuide, renderFragment } from './tool-guide.js';
 import { renderSessionStack, sessionStackOf } from './session-stack.js';
 import { resolveLocale, fragmentCandidates } from './locale.js';
 import { awaitLock } from './lock-wait.js';
-import { acquirePidLock, releasePidLock } from './pid-lock.js';
-import { release, tryLock } from './kernel-lock.js';
+import { release, tryLock, tryLockOnce } from './kernel-lock.js';
 import { syncMain, reportMainSync } from './main-sync.js';
 import { outcomePath, readOutcomeFile } from './outcome.js';
 
@@ -616,14 +615,16 @@ export function workonDone(worktreePath) {
  * as the only preparer of `branchName`'s worktree in `repoPath` (S-862): a
  * concurrent `bl run` or `bl implement` waits here, then finds the worktree
  * made and its `workon` debt paid, or still owed if this one failed. The lock
- * sits in the repo's common git dir, since the worktree may not exist yet; a
- * preparer that exits holding it leaves a lock the next one reclaims.
+ * sits in the repo's common git dir, since the worktree may not exist yet. It
+ * is a kernel lock (`kernel-lock.js`, F-104): a preparer that ends holding it
+ * leaves no lock, and its file stays (D3).
  *
  * The wait goes through `awaitLock` (`lock-wait.js`, F-105 W1) with no
  * deadline (F-105 A3): the lock is held while bootstrap and `workon` plugins
  * run. Ctrl+C during the wait ends `bl` at once. `fn` is async and awaited
  * (F-105 W4): `ensureWorktree` in it waits for the main-sync lock, so the
- * lock order is prepare, then main-sync.
+ * lock order is prepare, then main-sync. Because `fn` awaits, the take is not
+ * re-entrant (`tryLockOnce`): another task of this process waits too.
  */
 export async function prepareWorktreeOnce(repoPath, branchName, fn) {
   const commonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
@@ -632,13 +633,12 @@ export async function prepareWorktreeOnce(repoPath, branchName, fn) {
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   const lockPath = join(commonDir, `bl-prepare-${branchName.replace(/[^\w.-]/g, '_')}.lock`);
-  const content = `${process.pid}\n${new Date().toISOString()}\nprepare ${branchName}\n`;
-  const take = () => acquirePidLock(lockPath, content);
-  await awaitLock(lockPath, take, { deadlineMs: null, pollMs: 100, announce: info });
+  const take = () => tryLockOnce(lockPath, `prepare ${branchName}`);
+  const { taken } = await awaitLock(lockPath, take, { deadlineMs: null, pollMs: 100, announce: info });
   try {
     return await fn();
   } finally {
-    releasePidLock(lockPath, content);
+    release(taken);
   }
 }
 

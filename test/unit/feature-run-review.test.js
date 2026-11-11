@@ -4,7 +4,6 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { join } from 'path';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { runFeature, loadRunState, reviewFeature, RUN_DIR, OutcomeError } from '../../src/feature-run.js';
-import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
 import { holderOf, release, tryLock } from '../../src/kernel-lock.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
 import { spawnSync } from 'child_process';
@@ -508,41 +507,6 @@ test('the test gate refuses a dirty tree with no test plugin configured', async 
     } finally {
       cleanup();
     }
-  }
-});
-
-test('two runs reclaiming the same stale lock cannot both acquire it', () => {
-  const deadPid = spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
-  // The helper the spec, main-sync and prepare locks use until S-1427 (the run and
-  // session locks are kernel locks, F-104).
-  const { dir, cleanup } = setup();
-  try {
-    const path = join(dir, 'pid.lock');
-    const take = (hooks) => acquirePidLock(path, `${process.pid}\nx\n${Math.random()}\n`, hooks);
-    writeFileSync(path, `${deadPid}\n2026-09-24T00:00:00Z\nstale\n`);
-    // B reads the stale lock; before B reclaims it, A reclaims it and takes it.
-    let a = null;
-    const b = take({
-      beforeReclaim: () => {
-        a ??= take();
-      },
-    });
-    assert.ok(a?.content, 'A took the reclaimed lock');
-    assert.equal(b.content, undefined, 'B did not also take it');
-    assert.equal(b.holder, process.pid, 'B reports A as the holder');
-    assert.equal(readFileSync(path, 'utf8'), a.content, "A's lock is intact");
-    assert.ok(!existsSync(`${path}.reclaim`), 'reclaim mutex released');
-    releasePidLock(path, a.content);
-    assert.ok(!existsSync(path));
-
-    // A reclaim mutex left by a reclaimer that died does not block for ever.
-    writeFileSync(path, `${deadPid}\n`);
-    writeFileSync(`${path}.reclaim`, `${deadPid}\n`);
-    const c = take();
-    assert.ok(c.content, "stale lock reclaimed past a dead reclaimer's mutex");
-    releasePidLock(path, c.content);
-  } finally {
-    cleanup();
   }
 });
 

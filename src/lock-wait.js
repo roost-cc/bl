@@ -43,9 +43,8 @@ export class LockWaitTimeout extends Error {
 /**
  * Take a lock, waiting for a live holder. `take()` tries once and returns
  * `{ holder: number | 'unknown' }` while a live process holds the lock, and
- * anything else once it took it: `{ taken: handle }` from `tryLock`
- * (`kernel-lock.js`), `{ content }` from `acquirePidLock` (`pid-lock.js`). On
- * the first holder it calls `announce(waitingForLock(name, holder))` once,
+ * `{ taken: handle }` once it took it (`tryLock`, `kernel-lock.js`). On the
+ * first holder it calls `announce(waitingForLock(name, holder))` once,
  * then awaits `pollMs` (at most the time left to the deadline) and tries
  * again, until it takes the lock or `deadlineMs` (null: none) has passed.
  * Resolves what the taking `take()` returned; rejects with a LockWaitTimeout

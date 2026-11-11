@@ -362,7 +362,6 @@ test('concurrent no-branch cleanup keeps the SHA written after its initial story
 
 test("persistLandedCommits reads and writes inside the story's spec lock, through its read and write seams", async () => {
   const { specLockPath } = await import('../../src/spec-file.js');
-  const { liveLockHolder } = await import('../../src/pid-lock.js');
   const { root, indexPath } = story({ story_id: 'S-99', status: 'in_progress' });
   const held = [];
   const { written } = await persistLandedCommits(
@@ -371,18 +370,18 @@ test("persistLandedCommits reads and writes inside the story's spec lock, throug
     { alpha: 'aaa1111' },
     {
       read: (path, enc) => {
-        held.push(liveLockHolder(specLockPath(path)));
+        held.push(holderOf(specLockPath(path)));
         return readFileSync(path, enc);
       },
       write: (path, text) => {
-        held.push(liveLockHolder(specLockPath(path)));
+        held.push(holderOf(specLockPath(path)));
         writeFileSync(path, text);
       },
     },
   );
   assert.equal(written, true);
   assert.deepEqual(held, [process.pid, process.pid]);
-  assert.equal(liveLockHolder(specLockPath(indexPath)), null, 'released');
+  assert.equal(holderOf(specLockPath(indexPath)), null, 'released');
   assert.deepEqual(readFm(indexPath).commit, { alpha: 'aaa1111' });
 });
 
