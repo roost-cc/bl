@@ -100,8 +100,11 @@ function isDir(path) {
 
 /**
  * Run the migration. With `dryRun`, say what it would do and change nothing.
- * `log` gets one line per lock file deleted or skipped, one per `.gitignore`
- * change, or "nothing to do".
+ * `log` gets one line per lock file deleted or skipped, one per lock file
+ * left because it appeared during the run, one per `.gitignore` change, one
+ * when it commits a `.gitignore` an earlier run left uncommitted, one when it
+ * leaves `.gitignore` uncommitted because of a change it did not make, or
+ * "nothing to do".
  *
  * @param {object} config  the loaded backlog config
  * @param {{ dryRun?: boolean, log?: (line: string) => void }} [opts]
