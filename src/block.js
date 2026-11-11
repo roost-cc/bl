@@ -130,11 +130,10 @@ export function writeEdge(config, edge) {
  * caller holds, with no commit: `bl new` writes a new story's dependencies
  * through it (F-111 D5). When one edge is refused, or a write throws,
  * `blockers.json` and `.gitattributes` get back the bytes they had, and the
- * refusal is returned or the error thrown. `undo` does the same later, for a
- * caller whose next step fails. `paths` are the paths to commit.
+ * refusal is returned or the error thrown. `paths` are the paths to commit.
  * @param {object} config
  * @param {import("./blockers.js").Edge[]} edges
- * @returns {{ refused?: string[], paths: string[], undo: () => void }}
+ * @returns {{ refused?: string[], paths: string[] }}
  */
 export function writeEdges(config, edges) {
   const root = config.backlogRoot;
@@ -154,7 +153,7 @@ export function writeEdges(config, edges) {
       const res = writeEdge(config, edge);
       if (res.refused) {
         undo();
-        return { refused: res.refused, paths: [], undo };
+        return { refused: res.refused, paths: [] };
       }
       paths = res.paths ?? [];
     }
@@ -162,7 +161,7 @@ export function writeEdges(config, edges) {
     undo();
     throw err;
   }
-  return { paths, undo };
+  return { paths };
 }
 
 /**
