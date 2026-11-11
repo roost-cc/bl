@@ -9,9 +9,11 @@
  * - `change`: the change document's rename into place throws.
  * - `undo`: removing a story directory throws, so the undo itself fails.
  * - `undo-lock`: removing a story directory writes, to `BL_SIDE_FAULT_OUT`,
- *   whether the backlog lock file is still there, then removes it as usual.
- * - `lock`: the `bl new` child writes, to `BL_SIDE_FAULT_OUT`, which pid the
- *   backlog lock file names when it exits, with its own and its parent's.
+ *   whether `bl side` still holds the backlog lock, then removes it as usual.
+ * - `lock`: the `bl new` child writes, to `BL_SIDE_FAULT_OUT`, when it exits:
+ *   which pid the backlog lock file names, whether the child holds the lock
+ *   (it adopted the descriptor `bl side` passed down, F-104 D5), and its own
+ *   pid and its parent's.
  * - `adopt`: just before `bl side` takes the backlog lock, a second
  *   `bl side repoB --from F-1` (no faults) runs to the end, its JSON written
  *   to `BL_SIDE_FAULT_OUT`, and a file is left uncommitted in the worktree
@@ -24,10 +26,12 @@
  */
 
 import fs from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { syncBuiltinESMExports } from 'module';
 import { spawnSync } from 'child_process';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
+import { holderOf } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 
 const faults = new Set(
   String(process.env.BL_SIDE_FAULT ?? '')
@@ -41,14 +45,23 @@ const write = fs.writeFileSync;
 const rename = fs.renameSync;
 const rm = fs.rmSync;
 
+/** The backlog lock of the backlog this process works on. */
+const backlogLock = () => resolve(process.env.BL_BACKLOG_DIR ?? process.cwd(), LOCK_FILE);
+
 /**
- * Whether `path` is the temp file `pid-lock.js` writes the backlog lock to
- * before it links it into place: the first step of taking the lock.
+ * Run `fn` once, just before this process first opens the backlog lock:
+ * the first step of taking it (`tryLock`, `kernel-lock.js`).
  */
-function isLockWrite(root, path) {
-  const p = String(path);
-  const lock = join(root, '.bl-new.lock');
-  return p.startsWith(`${lock}.`) && /^\d+\.[a-z0-9]+\.tmp$/.test(p.slice(lock.length + 1));
+function beforeLockOpen(fn) {
+  let done = false;
+  const inner = fs.openSync;
+  fs.openSync = (path, ...rest) => {
+    if (!done && String(path) === backlogLock()) {
+      done = true;
+      fn();
+    }
+    return inner(path, ...rest);
+  };
 }
 if (side && faults.has('mark')) {
   const story = /\/stories\/S\d+-[^/]+\/index\.md$/;
@@ -75,48 +88,33 @@ if (side && faults.has('undo')) {
 }
 if (side && faults.has('adopt') && process.env.BL_SIDE_FAULT_OUT) {
   const root = process.env.BL_BACKLOG_DIR ?? process.cwd();
-  let done = false;
-  const inner = fs.writeFileSync;
-  fs.writeFileSync = (path, ...rest) => {
-    if (!done && isLockWrite(root, path)) {
-      done = true;
-      const env = { ...process.env, BL_SIDE_FAULT: '' };
-      const r = spawnSyncFiles(
-        process.execPath,
-        [process.argv[1], 'side', 'repoB', '--from', 'F-1', '--title', 'Survivor', '--points', '1', '--json'],
-        { cwd: root, env, encoding: 'utf8' },
-      );
-      write(process.env.BL_SIDE_FAULT_OUT, JSON.stringify({ status: r.status, stdout: r.stdout, stderr: r.stderr }));
-      if (r.status === 0) write(join(JSON.parse(r.stdout).worktree, 'uncommitted.txt'), "the second caller's work\n");
-    }
-    return inner(path, ...rest);
-  };
+  beforeLockOpen(() => {
+    const env = { ...process.env, BL_SIDE_FAULT: '' };
+    const r = spawnSyncFiles(
+      process.execPath,
+      [process.argv[1], 'side', 'repoB', '--from', 'F-1', '--title', 'Survivor', '--points', '1', '--json'],
+      { cwd: root, env, encoding: 'utf8' },
+    );
+    write(process.env.BL_SIDE_FAULT_OUT, JSON.stringify({ status: r.status, stdout: r.stdout, stderr: r.stderr }));
+    if (r.status === 0) write(join(JSON.parse(r.stdout).worktree, 'uncommitted.txt'), "the second caller's work\n");
+  });
 }
 if (side && faults.has('gone') && process.env.BL_SIDE_FAULT_REPO) {
-  const root = process.env.BL_BACKLOG_DIR ?? process.cwd();
   const repo = process.env.BL_SIDE_FAULT_REPO;
-  let done = false;
-  const inner = fs.writeFileSync;
-  fs.writeFileSync = (path, ...rest) => {
-    if (!done && isLockWrite(root, path)) {
-      done = true;
-      const list = spawnSync('git', ['-C', repo, 'worktree', 'list', '--porcelain'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).stdout;
-      const block = list.split('\n\n').find((b) => b.includes(`branch refs/heads/${process.env.BL_SIDE_FAULT_BRANCH}`));
-      const wt = block?.match(/^worktree (.*)$/m)?.[1];
-      if (wt)
-        spawnSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt], { stdio: ['ignore', 'pipe', 'pipe'] });
-    }
-    return inner(path, ...rest);
-  };
+  beforeLockOpen(() => {
+    const list = spawnSync('git', ['-C', repo, 'worktree', 'list', '--porcelain'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).stdout;
+    const block = list.split('\n\n').find((b) => b.includes(`branch refs/heads/${process.env.BL_SIDE_FAULT_BRANCH}`));
+    const wt = block?.match(/^worktree (.*)$/m)?.[1];
+    if (wt) spawnSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt], { stdio: ['ignore', 'pipe', 'pipe'] });
+  });
 }
 if (side && faults.has('undo-lock') && process.env.BL_SIDE_FAULT_OUT) {
   fs.rmSync = (path, ...rest) => {
     if (/\/stories\/S\d+-[^/]+$/.test(String(path))) {
-      const lock = join(process.env.BL_BACKLOG_DIR ?? process.cwd(), '.bl-new.lock');
-      write(process.env.BL_SIDE_FAULT_OUT, JSON.stringify({ locked: fs.existsSync(lock) }));
+      write(process.env.BL_SIDE_FAULT_OUT, JSON.stringify({ locked: holderOf(backlogLock()) === process.pid }));
     }
     return rm(path, ...rest);
   };
@@ -125,8 +123,8 @@ syncBuiltinESMExports();
 
 if (verb === 'new' && faults.has('lock') && process.env.BL_SIDE_FAULT_OUT) {
   process.on('exit', () => {
-    const lock = join(process.env.BL_BACKLOG_DIR ?? process.cwd(), '.bl-new.lock');
-    const holder = fs.existsSync(lock) ? parseInt(fs.readFileSync(lock, 'utf8').split('\n')[0], 10) : null;
-    write(process.env.BL_SIDE_FAULT_OUT, JSON.stringify({ holder, pid: process.pid, ppid: process.ppid }));
+    const holder = parseInt(fs.readFileSync(backlogLock(), 'utf8').split('\n')[0], 10);
+    const held = holderOf(backlogLock()) === process.pid;
+    write(process.env.BL_SIDE_FAULT_OUT, JSON.stringify({ holder, held, pid: process.pid, ppid: process.ppid }));
   });
 }

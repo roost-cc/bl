@@ -17,7 +17,8 @@ import { addDays, buildHistory } from '../../src/history.js';
 import { buildReport, readTree, renderMarkdown, units } from '../../src/report.js';
 import { registerAdapter } from '../../src/chart.js';
 import { renderPage } from '../../src/render.js';
-import { main as reportMain, writeReport } from '../../src/report-cmd.js';
+import { main as reportMain, reportLockPath, writeReport } from '../../src/report-cmd.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { runBl } from '../helpers/run-bl.js';
 import { rendered } from '../helpers/rendered.js';
 import { commitAt, committedBacklog, feature, git, put, scriptedBacklog, story } from '../helpers/scripted-backlog.js';
@@ -545,6 +546,7 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
   const before = snapshot(out);
   assert.match(before['index.md'], /- Stories: 111,/);
   const siblings = () => readdirSync(dir).filter((n) => n.startsWith(`.${basename(out)}.`));
+  const lock = reportLockPath(dir, out);
 
   const isUnder = (name) => (p) => String(p).endsWith(`/${name}`) && !String(p).startsWith(`${out}/`);
   for (const [name, when] of [
@@ -567,7 +569,8 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
       `${name} ${when}`,
     );
     assert.deepEqual(snapshot(out), before, `the last report is whole after a failed ${name}`);
-    assert.deepEqual(siblings(), [], 'no staged copy or lock left behind');
+    assert.deepEqual(siblings(), [], 'no staged copy left behind, and no lock file beside the output');
+    assert.equal(holderOf(lock), null, 'the lock is released');
   }
 
   // A second run while the first is writing fails without touching the output;
@@ -594,6 +597,8 @@ test('writeReport_preserves_complete_generation_on_failure_and_concurrent_publis
   assert.match(after['index.md'], /- Stories: 222,/);
   assert.equal(after['charts/flow.txt'], 'flow\n');
   assert.deepEqual(siblings(), []);
+  assert.ok(existsSync(lock), 'the lock file stays in .bl/lock/ (F-104 D3, S-1495)');
+  assert.equal(holderOf(lock), null);
 });
 
 test('writeReport_rollback_and_cleanup_failures_preserve_recovery_and_release_lock', () => {
@@ -606,7 +611,12 @@ test('writeReport_rollback_and_cleanup_failures_preserve_recovery_and_release_lo
   const stage = join(dir, '.reports.new');
   const next = (total) => ({ ...data, summary: { ...data.summary, stories: { ...data.summary.stories, total } } });
   const write = (total) => writeReport(config, out, next(total), flow);
-  const siblings = () => readdirSync(dir).filter((n) => n.startsWith('.reports.'));
+  // Each check below also finds the lock released.
+  const lock = reportLockPath(dir, out);
+  const siblings = () => {
+    assert.equal(holderOf(lock), null, 'the lock is released');
+    return readdirSync(dir).filter((n) => n.startsWith('.reports.'));
+  };
   write(111);
   const before = snapshot(out);
   const toOut = (_, to) => to === out;
@@ -728,6 +738,27 @@ test("bl report --out writes elsewhere, and refuses a directory that is not a re
   assert.equal(bad.stdout, '');
   assert.match(bad.stderr, /not a report directory/);
   assert.equal(readFileSync(join(notOurs, 'keep.md'), 'utf8'), 'mine\n');
+});
+
+test('the bl report lock lives in .bl/lock/ for the default output and every --out, and git status stays empty (S-1495)', () => {
+  const { dir } = reportBacklog();
+  const outside = mkTempDir('bl-report-out-');
+  git(outside, ['init', '-q', '-b', 'main']);
+  for (const out of [join(dir, 'reports'), join(dir, 'custom', 'out'), join(outside, 'out')]) {
+    const r = runBl(['report', ...(out === join(dir, 'reports') ? [] : ['--out', out])], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    const lock = reportLockPath(dir, out);
+    assert.equal(dirname(lock), join(dir, '.bl', 'lock'), out);
+    assert.ok(existsSync(lock), `${out}: the lock file stays (F-104 D3)`);
+    assert.deepEqual(
+      readdirSync(dirname(out)).filter((n) => n.endsWith('.lock')),
+      [],
+      `${out}: no lock file beside the output`,
+    );
+  }
+  assert.notEqual(reportLockPath(dir, join(dir, 'custom', 'out')), reportLockPath(dir, join(outside, 'out')));
+  assert.equal(git(dir, ['status', '--porcelain', '--untracked-files=all']), '', 'nothing to commit');
+  assert.equal(git(outside, ['status', '--porcelain', '--untracked-files=all']), '', 'nor beside an outside output');
 });
 
 /** The rows of the Summary's status table, by their first cell. */

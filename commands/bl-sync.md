@@ -25,8 +25,8 @@ commits that. With no `origin` remote it does nothing.
 
 ## `--commit`
 
-After the pull, under the backlog lockfile (`<backlog>/.bl-new.lock`, shared with `bl new`),
-`bl sync --commit` formats the changed Markdown files among the named paths with the backlog's
+After the pull, under the backlog lockfile (`<backlog>/.bl/lock/backlog.lock`, shared with
+`bl new`), `bl sync --commit` formats the changed Markdown files among the named paths with the backlog's
 `.md` format plugin. It then stages exactly each `--story` directory and each `--path`, commits
 them with `git commit --only`, and pushes. It never stages the whole backlog, so another
 person's uncommitted story edit, even one made while the lock is held, stays out of the commit.

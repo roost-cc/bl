@@ -14,8 +14,7 @@ import { join } from 'path';
 import { normalizeId } from './config.js';
 import { extractSection, sectionHasContent } from './feature.js';
 import { isScripted } from './scripted.js';
-import { acquireRunLock, runLockPath } from './feature-run.js';
-import { releasePidLock } from './pid-lock.js';
+import { acquireRunLock, releaseRunLock, updatesLockRefusal } from './run-lock.js';
 import { updateSpecFile } from './spec-file.js';
 import { syncAndCommit } from './sync.js';
 import {
@@ -277,7 +276,7 @@ export async function requestUpdate(config, opts) {
   const lock = acquireRunLock(config, RUN_LOCK_ID);
   if (lock.holder != null) {
     return {
-      refused: `another bl updates command (pid ${lock.holder}) holds ${runLockPath(config, RUN_LOCK_ID)}; try again when it ends`,
+      refused: updatesLockRefusal(config, lock.holder),
     };
   }
   try {
@@ -324,7 +323,7 @@ export async function requestUpdate(config, opts) {
     );
     return { id: s.id, request, replaced, pr, commit };
   } finally {
-    releasePidLock(runLockPath(config, RUN_LOCK_ID), lock.content);
+    releaseRunLock(lock.taken);
   }
 }
 

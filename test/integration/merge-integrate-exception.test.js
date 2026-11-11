@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { installPartialWrites } from '../helpers/partial-write.js';
 import { _hooks as atomicHooks } from '../../src/atomic-write.js';
 import { integrateForMerge } from '../../src/merge-integrate.js';
 import { integrateUnit, loadRunState, runLockPath } from '../../src/feature-run.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import {
   addSecond,
   escalation,
@@ -60,7 +61,7 @@ test('resolution_exception_aborts_all_repos_and_escalates_before_unlock: an ordi
       const lockHeld = [];
       const log = runner.log;
       runner.log = (m) => {
-        if (/F-1 escalated — /.test(m)) lockHeld.push(existsSync(runLockPath(config, 'F-1')));
+        if (/F-1 escalated — /.test(m)) lockHeld.push(holderOf(runLockPath(config, 'F-1')) === process.pid);
         log(m);
       };
       const titles = [];
@@ -80,7 +81,7 @@ test('resolution_exception_aborts_all_repos_and_escalates_before_unlock: an ordi
         `${c.name}: the final title`,
       );
       assert.deepEqual(lockHeld, [true], `${c.name}: escalated under the run lock`);
-      assert.equal(existsSync(runLockPath(config, 'F-1')), false, `${c.name}: the lock is released`);
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, `${c.name}: the lock is released`);
     } finally {
       fx.cleanup();
     }

@@ -3,8 +3,8 @@
  *
  * Each section has one reader, and each reader calls bl's existing reader
  * for its data, in this process: run states (`loadRunState`) with their run
- * locks' live holders (`liveLockHolder`), `collectInbox()`, `nextPlan()`,
- * `capacityRows()`, and `buildHistory()` with `firstSeen()`. `activity` and
+ * locks' holders (`holderOf`, a try-lock: F-104 D6), `collectInbox()`,
+ * `nextPlan()`, `capacityRows()`, and `buildHistory()` with `firstSeen()`. `activity` and
  * `tokens` read the run states' history entries (D3b, D3c). The Go TUI
  * draws the snapshot and never reads a backlog file.
  *
@@ -15,7 +15,8 @@
 
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { RUN_DIR, liveLockHolder, loadRunState, runLockPath } from './feature-run.js';
+import { RUN_DIR, loadRunState, runLockPath } from './feature-run.js';
+import { holderOf } from './kernel-lock.js';
 import { collectInbox } from './inbox.js';
 import { nextPlan } from './next.js';
 import { parseFilter } from './filter.js';
@@ -95,13 +96,14 @@ export function readSection(prev, read, now) {
 /**
  * A run state as a `runs` row, or null when it is left out: not running or
  * stopped, and not updated in the last RUN_WINDOW_MS. A run state that says
- * `running` while its run lock has no live holder is `stale`.
+ * `running` while nobody holds its run lock is `stale`. A holder whose PID the
+ * lock file does not name yet ('unknown') shows as `pid: null`.
  */
 function runRow(config, state, now) {
   const updated = Date.parse(state.updatedAt ?? state.startedAt ?? '');
   const open = state.status === 'running' || state.status === 'stopped';
   if (!open && !(updated >= now - RUN_WINDOW_MS)) return null;
-  const pid = liveLockHolder(runLockPath(config, state.feature));
+  const pid = holderOf(runLockPath(config, state.feature));
   // The newest entry that names an agent: a round's summary entry names none.
   const session = state.history.findLast((h) => h.agent) ?? {};
   return {

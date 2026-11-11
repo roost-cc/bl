@@ -19,6 +19,7 @@ import {
   defaultRunner,
 } from '../../src/feature-run.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
 import { accumulateTokensOnFile } from '../../src/tokens.js';
 import {
@@ -1424,7 +1425,7 @@ test("bl review: an unavailable agent on a review pass escalates, names bl revie
       'the quarantine is recorded',
     );
     assert.equal(existsSync(join(prep.worktreePath, probe)), false, 'probe moved out of the worktree');
-    assert.ok(!existsSync(runLockPath(config, 'F-1')), 'lock released');
+    assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'lock released');
     const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
     assert.match(
       esc,

@@ -10,15 +10,15 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { once } from 'events';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { parseFrontmatter } from '../../src/config.js';
 import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { GIT_ENV, git, statusLines } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const SCRIPT = fileURLToPath(new URL('../../scripts/migrate-transitions.js', import.meta.url));
@@ -156,7 +156,7 @@ function oldBacklog() {
     join(dir, rel.t1),
     '---\ntask_id: T-1\ntitle: Check\nunit: F-1\nowner: operator\nstatus: done\nadded: 2026-11-02\ndone: 2026-11-03\n---\n\n# Check\n',
   );
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   setStatus(dir, rel.f(1), 'draft', 'refined');
@@ -170,12 +170,10 @@ function oldBacklog() {
   return dir;
 }
 
-/** Hold F-7's run lock with a live process that is not the script's parent. */
+/** Hold F-7's run lock (a kernel lock, F-104) from a child that is not the script's parent. */
 function holdRunLock(dir) {
-  const holder = spawn('sleep', ['300'], { stdio: 'ignore' });
   mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
-  writeFileSync(join(dir, '.bl', 'run', 'F-7.lock'), `${holder.pid}\n2026-11-09T00:00:00Z\nrun F-7\n`);
-  return holder;
+  return holdLockInChild(join(dir, '.bl', 'run', 'F-7.lock'));
 }
 
 const script = (dir, ...args) =>
@@ -211,9 +209,9 @@ const SKIPPED = [
   /^skipped F-7: a bl run holds \.bl\/run\/F-7\.lock \(pid \d+\); a rerun converts it$/m,
 ];
 
-test('--dry-run prints the counts and the skipped units, and writes nothing', (t) => {
+test('--dry-run prints the counts and the skipped units, and writes nothing', async (t) => {
   const dir = oldBacklog();
-  const holder = holdRunLock(dir);
+  const holder = await holdRunLock(dir);
   t.after(() => holder.kill());
   const before = head(dir);
   const r = script(dir, '--dry-run');
@@ -226,7 +224,7 @@ test('--dry-run prints the counts and the skipped units, and writes nothing', (t
 
 test('a run writes each log with git dates in one commit, skips the live run, and a rerun converts it', async (t) => {
   const dir = oldBacklog();
-  const holder = holdRunLock(dir);
+  const holder = await holdRunLock(dir);
   t.after(() => holder.kill());
   const before = head(dir);
   const f7 = read(dir, rel.f(7));
@@ -297,8 +295,7 @@ test('a run writes each log with git dates in one commit, skips the live run, an
   assert.deepEqual(errors(dir), []);
   assert.deepEqual(legacyWarnings(dir), [rel.f(7), rel.s3]);
 
-  holder.kill();
-  await once(holder, 'exit');
+  await holder.kill();
   const after = head(dir);
   const rerun = script(dir);
   assert.equal(rerun.status, 0, rerun.stderr);
@@ -340,7 +337,7 @@ test('a rerun after a failed commit, or after a unit that failed to convert, com
         added: '2026-11-01',
       })),
     });
-    writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+    writeFileSync(join(dir, '.gitignore'), '.bl/\n');
     git(dir, 'init', '-q', '-b', 'main');
     commitAt(dir, '2026-11-01T10:00:00Z', 'base');
     return dir;
@@ -388,7 +385,7 @@ function failedFirstRun() {
     components: [{ id: 'C01', title: 'core', dirSuffix: 'core', repo: 'core', home: true }],
     stories: [{ id: 'S-1', title: 'One', component: 'C01', status: 'backlog', added: '2026-11-01' }],
   });
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const hook = join(dir, '.git/hooks/pre-commit');
@@ -452,7 +449,7 @@ test('the migration sets added and completed from the log for a unit that has ne
       { id: 'S-3', title: 'Three', component: 'C01', status: 'done', added: '2026-10-01', completed: '2026-10-05' },
     ],
   });
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const r = script(dir);
@@ -489,7 +486,7 @@ test('the migration leaves an update story in the old shape, and a rerun prints 
   ]) {
     writeFileSync(join(dir, p), read(dir, p).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\n${update}`));
   }
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const before = { [rel.s2]: read(dir, rel.s2), [rel.s3]: read(dir, rel.s3) };
@@ -522,7 +519,7 @@ test('the migration leaves an update story in the old shape, and a rerun prints 
   assert.equal(head(dir), after);
 });
 
-test('the migration keeps an update story’s change document and counts a held update story as kept', (t) => {
+test('the migration keeps an update story’s change document and counts a held update story as kept', async (t) => {
   const { dir } = mkTempBacklog({
     flow: JSON.parse(readFileSync(V1_FLOW, 'utf8')),
     repos: ['core'],
@@ -552,13 +549,12 @@ test('the migration keeps an update story’s change document and counts a held 
       read(dir, p).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\nupdate_repo: acme/core\n`),
     );
   }
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
-  const holder = spawn('sleep', ['300'], { stdio: 'ignore' });
-  t.after(() => holder.kill());
   mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
-  writeFileSync(join(dir, '.bl', 'run', 'S-3.lock'), `${holder.pid}\n2026-11-09T00:00:00Z\nrun S-3\n`);
+  const holder = await holdLockInChild(join(dir, '.bl', 'run', 'S-3.lock'));
+  t.after(() => holder.kill());
   const change2 = 'stories/S2/change.md';
   const files = [rel.s2, change2, rel.s3];
   const before = Object.fromEntries(files.map((p) => [p, read(dir, p)]));
@@ -624,7 +620,7 @@ test('migration leaves added and completed equal to the log’s first and termin
     join(dir, rel.t1),
     '---\ntask_id: T-1\ntitle: Check\nunit: F-1\nowner: operator\nstatus: done\nadded: 2026-10-05\ndone: 2026-10-01\n---\n\n# Check\n',
   );
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const r = script(dir);
@@ -670,7 +666,7 @@ test('migration writes the synthesized log for a unit whose transitions: is empt
       read(dir, path(id)).replace(`\nstatus: ${status}\n`, `\nstatus: ${status}\n${line}\n`),
     );
   }
-  writeFileSync(join(dir, '.gitignore'), '.workon.lock\n.bl/\n');
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
   commitAt(dir, '2026-11-01T10:00:00Z', 'base');
   const before = Object.fromEntries(cases.map(([id]) => [id, read(dir, path(id))]));

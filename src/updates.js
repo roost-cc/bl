@@ -32,9 +32,7 @@ import {
 import { readAllStories, findMaxStoryNum, homeComponent, storiesRoot } from './story.js';
 import { checkCriteria, extractSection, replaceSection } from './feature.js';
 import { acquireLock, releaseLock } from './lock.js';
-import { acquireRunLock, runLockPath } from './feature-run.js';
-import { RUN_LOCK_ID } from './run-lock.js';
-import { releasePidLock } from './pid-lock.js';
+import { RUN_LOCK_ID, acquireRunLock, releaseRunLock, updatesLockRefusal } from './run-lock.js';
 import { updateSpecFile } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
@@ -53,9 +51,8 @@ export const CONFLICT_NOTE = 'conflict, left for Renovate';
 /**
  * The one lock `sync`, `run`, `approve` and `drop` share:
  * `<backlog>/.bl/run/updates.lock`, taken before any story is read, so one
- * command at a time rewrites stories or touches the forge. Defined in the
- * dependency-free run-lock.js, where running-man's update.sh takes it too
- * (F-74 D4).
+ * command at a time rewrites stories or touches the forge. Defined in
+ * run-lock.js, beside the run lock and its refusal.
  */
 export { RUN_LOCK_ID };
 
@@ -538,7 +535,7 @@ export async function syncUpdates(config, opts = {}) {
   if (lock.holder != null) {
     return {
       ...result,
-      refused: `another bl updates command (pid ${lock.holder}) holds ${runLockPath(config, RUN_LOCK_ID)}; try again when it ends`,
+      refused: updatesLockRefusal(config, lock.holder),
     };
   }
   try {
@@ -714,7 +711,7 @@ export async function syncUpdates(config, opts = {}) {
     }
   } finally {
     releaseLock(config.backlogRoot);
-    releasePidLock(runLockPath(config, RUN_LOCK_ID), lock.content);
+    releaseRunLock(lock.taken);
   }
   return result;
 }

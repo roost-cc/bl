@@ -42,27 +42,29 @@ export class LockWaitTimeout extends Error {
 
 /**
  * Take a lock, waiting for a live holder. `take()` tries once and returns
- * what `acquirePidLock` (`pid-lock.js`) returns: `{ content }` when taken,
- * `{ holder: number | 'unknown' }` when a live process holds it. On the first
- * holder it calls `announce(waitingForLock(name, holder))` once, then awaits
- * `pollMs` (at most the time left to the deadline) and tries again, until it
- * takes the lock or `deadlineMs` (null: none) has passed. Resolves the
- * content; rejects with a LockWaitTimeout naming the lock and the live
- * holder. The message never tells anyone to remove the file. An error that
- * `take` throws rejects the wait as it is. `sleep` is a test seam.
+ * `{ holder: number | 'unknown' }` while a live process holds the lock, and
+ * `{ taken: handle }` once it took it (`tryLock`, `kernel-lock.js`). On the
+ * first holder it calls `announce(waitingForLock(name, holder))` once,
+ * then awaits `pollMs` (at most the time left to the deadline) and tries
+ * again, until it takes the lock or `deadlineMs` (null: none) has passed.
+ * Resolves what the taking `take()` returned; rejects with a LockWaitTimeout
+ * naming the lock and the live holder. The message never tells anyone to
+ * remove the file. An error that `take` throws rejects the wait as it is.
+ * `sleep` is a test seam.
  *
+ * @template T
  * @param {string} name  the lock's name or path, as the reader should see it
- * @param {() => { content: string } | { holder: number | 'unknown' }} take
+ * @param {() => T | { holder: number | 'unknown' }} take
  * @param {{ deadlineMs: number | null, pollMs: number, announce: (line: string) => void,
  *   sleep?: (ms: number) => Promise<unknown> }} opts
- * @returns {Promise<string>}
+ * @returns {Promise<T>}
  */
 export async function awaitLock(name, take, { deadlineMs, pollMs, announce, sleep = delay }) {
   const start = Date.now();
   let announced = false;
   for (;;) {
     const got = take();
-    if ('content' in got) return got.content;
+    if (!('holder' in got)) return got;
     if (!announced) {
       announced = true;
       announce(waitingForLock(name, got.holder));

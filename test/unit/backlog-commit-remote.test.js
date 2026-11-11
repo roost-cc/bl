@@ -12,6 +12,8 @@ import {
 } from '../../src/backlog-commit.js';
 import { mkTempDir, mkTempBacklog } from '../helpers/tempdir.js';
 import { initGitBacklog } from '../helpers/git-backlog.js';
+import { holdLock } from '../helpers/hold-lock.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { runBl } from '../helpers/run-bl.js';
 import { loadConfig } from '../../src/config.js';
 import { ensureAllowedTools } from '../../src/allowed-tools.js';
@@ -84,14 +86,11 @@ test('a push rejected for another reason is one warning naming the retry, with n
 test('commitPaths waits while a pull holds the main sync lock, then commits and pushes', async () => {
   const { tmp, remote, alice } = twoClones({ [STORY]: 'a\n' });
   try {
-    // A holder outside this process that lives about a second: the shell
-    // exits at once, so init reaps the sleep and its PID goes dead.
-    const pid = spawnSync('sh', ['-c', 'sleep 1 >/dev/null 2>&1 & echo $!'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).stdout.trim();
+    // A holder that lets go after about a second; the wait awaits a timer, so
+    // this timer runs during it.
     const lockPath = join(alice, '.git', 'bl-main-sync.lock');
-    writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\nbl main sync ${alice}\n`);
+    const holder = holdLock(lockPath, `bl main sync ${alice}`);
+    setTimeout(holder.release, 1000);
     writeFileSync(join(alice, STORY), 'a, edited\n');
     const start = Date.now();
     const res = await commitPaths(alice, [STORY], 'chore: edit');
@@ -99,7 +98,7 @@ test('commitPaths waits while a pull holds the main sync lock, then commits and 
     assert.equal(res.committed, true, res.error);
     assert.equal(res.pushed, true, res.pushError);
     assert.equal(g(remote, 'rev-parse', 'main'), g(alice, 'rev-parse', 'HEAD'));
-    assert.equal(existsSync(lockPath), false, 'the lock is released');
+    assert.equal(holderOf(lockPath), null, 'the lock is released');
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

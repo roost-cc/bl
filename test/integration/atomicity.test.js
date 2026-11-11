@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, symlinkSync, writeFileSync, readdirSync, readFileSync, unlinkSync } from 'fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync, readdirSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl, BL_BIN } from '../helpers/run-bl.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
+import { holdLock } from '../helpers/hold-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 
 function seedStory(dir) {
   const r = runBl(['new', 'C00', '--title', 'Seed', '--points', '1'], { cwd: dir });
@@ -162,9 +164,8 @@ test('new --feature serializes eligibility validation and preserves bidirectiona
   // lock: the test holds it until both have started.
   {
     const { dir, cleanup } = featureBacklog();
-    const lock = join(dir, '.bl-new.lock');
+    const held = holdLock(join(dir, LOCK_FILE));
     try {
-      writeFileSync(lock, `${process.pid}\n${new Date().toISOString()}\n`);
       const run = (title) =>
         spawnToFiles(BL_BIN, ['new', '--feature', '--theme', 'demo', '--title', title, 'S-1', '--no-sync'], {
           cwd: dir,
@@ -172,12 +173,13 @@ test('new --feature serializes eligibility validation and preserves bidirectiona
         }).closed.then(({ status, stderr }) => ({ status, stderr }));
       const both = Promise.all([run('Alpha'), run('Beta')]);
       await new Promise((r) => setTimeout(r, 1500));
-      unlinkSync(lock);
+      held.release();
       const results = await both;
       assert.deepEqual(results.map((r) => r.status).sort(), [0, 1], results.map((r) => r.stderr).join('\n'));
       assert.match(results.find((r) => r.status === 1).stderr, /S-1 is already in F-1\./);
       assert.deepEqual(membership(dir), { stories: { 'S-1': 'F-1', 'S-2': null }, features: { 'F-1': ['S-1'] } });
     } finally {
+      held.release();
       cleanup();
     }
   }
@@ -214,7 +216,8 @@ test('new --feature serializes eligibility validation and preserves bidirectiona
 
 /** No story names a feature that is not on disk. */
 function assertNoDangling({ stories, features }, label) {
-  for (const [s, f] of Object.entries(stories)) if (f) assert.ok(features[f], `${label}: ${s} names ${f}, which exists`);
+  for (const [s, f] of Object.entries(stories))
+    if (f) assert.ok(features[f], `${label}: ${s} names ${f}, which exists`);
 }
 
 const records = (dir) => {

@@ -11,18 +11,19 @@
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, unlinkSync } from 'fs';
+import { copyFileSync, mkdirSync, readdirSync, writeFileSync, readFileSync, existsSync, rmSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { loadConfig, normalizeId, parseFrontmatter } from '../../src/config.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
-import { findStoryDir, findExistingWorktree } from '../../src/story.js';
+import { findStoryDir, findExistingWorktree, sessionLockPath } from '../../src/story.js';
 import { prepareStoryRun, resolveWorkonTargets } from '../../src/workon.js';
 import { prepareFeatureWorktree } from '../../src/feature-cmd.js';
 import { findFeature, normalizeFeatureId } from '../../src/feature.js';
 import { cleanupOneRepo } from '../../src/cleanup.js';
 import { loadPrompt } from '../../src/session.js';
 import { defaultRunner } from '../../src/feature-run.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
 import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
@@ -428,7 +429,8 @@ test("bl run F-n's prep makes every repo's worktree in the D3 order, bl first, a
 });
 
 // F-60 D3: the feature's sessions start in its unit directory, which is their
-// write root, so both repos' worktrees are writable; the lock lives there.
+// write root, so both repos' worktrees are writable; the lock is the unit
+// directory's, in the backlog's .bl/lock/ (S-1495).
 test("bl run F-n's sessions start in the unit directory, with both worktrees in their write roots", async () => {
   const { tmp, backlog } = build();
   const { exit, err, value: p } = await prepFeature(backlog, ['repoB']);
@@ -444,12 +446,12 @@ test("bl run F-n's sessions start in the unit directory, with both worktrees in 
   const spawned = [];
   const original = ClaudeProvider.prototype.spawn;
   ClaudeProvider.prototype.spawn = function (o) {
-    const lock = join(o.cwd, '.workon.lock');
+    const lock = sessionLockPath(backlog, o.cwd);
     spawned.push({
       cwd: o.cwd,
       write: o.scopes.write,
       lock: existsSync(lock) ? readFileSync(lock, 'utf8').split('\n', 1)[0] : null,
-      repoLocks: [p.worktreePath, join(unitDir, 'repoB')].filter((wt) => existsSync(join(wt, '.workon.lock'))),
+      repoLocks: [p.worktreePath, join(unitDir, 'repoB')].filter((wt) => existsSync(sessionLockPath(backlog, wt))),
     });
     return { status: 0, output: 'DONE', isError: false, usage: null };
   };
@@ -491,10 +493,11 @@ test("bl run F-n's sessions start in the unit directory, with both worktrees in 
         `${wt} is writable`,
       );
     }
-    assert.equal(s.lock, String(process.pid), 'the session lock is in the unit directory');
-    assert.deepEqual(s.repoLocks, [], 'and in no worktree');
+    assert.equal(s.lock, String(process.pid), "the session lock is the unit directory's");
+    assert.deepEqual(s.repoLocks, [], "and no worktree's");
   }
-  assert.ok(!existsSync(join(unitDir, '.workon.lock')), 'released after each session');
+  assert.equal(holderOf(sessionLockPath(backlog, unitDir)), null, 'released after each session');
+  assert.deepEqual(readdirSync(unitDir).sort(), ['repoA', 'repoB'], 'no lock file in the unit directory');
 });
 
 test("bl run F-n's prep gives a story added after approval its worktree with no feature edit", async () => {

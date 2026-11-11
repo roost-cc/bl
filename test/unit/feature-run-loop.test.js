@@ -12,6 +12,8 @@ import {
   loadRunState,
   runStatePath,
   runLockPath,
+  acquireRunLock,
+  releaseRunLock,
   reviewFeature,
   parseMaxRounds,
   RUN_DIR,
@@ -24,6 +26,9 @@ import {
 import { spawnSync } from 'child_process';
 import { featureReviewGate, summarizeLatestReviewSession } from '../../src/review-log.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
+import { holderOf } from '../../src/kernel-lock.js';
+import { sessionLockPath } from '../../src/story.js';
 import { parseChange, serializeChange } from '../../src/change-doc.js';
 import {
   PENDING_END,
@@ -390,7 +395,11 @@ test("every session of a run starts in the prep's unit directory; the gate and g
       shells.every((c) => c.cwd !== prep.unitDir),
       'no command runs in the unit directory',
     );
-    assert.ok(!existsSync(join(prep.unitDir, '.workon.lock')), "the review round's lock is released");
+    assert.equal(
+      holderOf(sessionLockPath(config.backlogRoot, prep.unitDir)),
+      null,
+      "the review round's lock is released",
+    );
   } finally {
     cleanup();
   }
@@ -1467,7 +1476,7 @@ test('second bl run on the same feature refuses while the first is alive', async
       assert.match(second.lastError, /another bl run \(pid \d+\) is running F-1/);
       assert.equal(outer.status, 'clean', 'the first run is unaffected');
       assert.equal(loadRunState(config, 'F-1').status, 'clean', 'the refusal did not overwrite run state');
-      assert.ok(!existsSync(runLockPath(config, 'F-1')), 'the lock is released when the run ends');
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the lock is released when the run ends');
     } finally {
       cleanup();
     }
@@ -1476,25 +1485,31 @@ test('second bl run on the same feature refuses while the first is alive', async
   // directory's (F-60 D3), or a prep's with none, its worktree's.
   for (const which of ['run lock', 'worktree lock', 'unit directory lock']) {
     const { dir, cleanup, config, feature, prep } = setup();
+    let child;
     try {
       if (which === 'unit directory lock') prep.unitDir = mkTempDir('bl-unit-');
       mkdirSync(join(dir, RUN_DIR), { recursive: true });
       writeFileSync(runStatePath(config, 'F-1'), JSON.stringify({ feature: 'F-1', status: 'running', history: [] }));
       const before = readFileSync(runStatePath(config, 'F-1'), 'utf8');
       const lockPath =
-        which === 'run lock' ? runLockPath(config, 'F-1') : join(prep.unitDir ?? prep.worktreePath, '.workon.lock');
-      writeFileSync(lockPath, `${process.ppid}\n2026-09-24T00:00:00Z\nother\n`);
+        which === 'run lock'
+          ? runLockPath(config, 'F-1')
+          : sessionLockPath(config.backlogRoot, prep.unitDir ?? prep.worktreePath);
+      // Every lock is a kernel lock (F-104), held by a child.
+      child = await holdLockInChild(lockPath);
+      const holderPid = child.pid;
       const runner = fakeRunner({ dir, feature });
       const state = await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
       assert.equal(state.status, 'failed', which);
       assert.equal(runner.calls.filter((c) => c.type === 'session').length, 0, which);
       assert.equal(readFileSync(runStatePath(config, 'F-1'), 'utf8'), before, `${which}: run state untouched`);
-      assert.match(readFileSync(lockPath, 'utf8'), new RegExp(`^${process.ppid}\\n`), `${which}: lock untouched`);
+      assert.match(readFileSync(lockPath, 'utf8'), new RegExp(`^${holderPid}\\n`), `${which}: lock untouched`);
     } finally {
+      await child?.kill();
       cleanup();
     }
   }
-  // A lock left by a dead process is reclaimed.
+  // A run-lock file that names a dead process and that nobody holds is free.
   {
     const { dir, cleanup, config, feature, prep } = setup();
     try {
@@ -1787,7 +1802,7 @@ test("bl review takes the loop's review path: split passes, verifier, shared run
     const saved = loadRunState(config, 'F-1');
     assert.equal(saved.status, 'reviewed');
     assert.equal(saved.reviewBaseSha, 'sha0', 'a later re-review narrows from this base');
-    assert.ok(!existsSync(runLockPath(config, 'F-1')), 'lock released');
+    assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'lock released');
 
     // After a fix (`in_review` by `fix` in the log, F-69 D5), the re-review
     // narrows to the files the fix changed.
@@ -1804,10 +1819,14 @@ test("bl review takes the loop's review path: split passes, verifier, shared run
     assert.match(capped.lastError, /round cap \(2\) already reached at round 2/);
 
     // It refuses while a run holds the feature.
-    writeFileSync(runLockPath(config, 'F-1'), `${process.ppid}\n`);
-    const busy = await reviewFeature({ feature, config, prep, runner, maxRounds: 5 });
-    assert.equal(busy.refused, true);
-    assert.match(busy.lastError, /a bl run \(pid \d+\) is running F-1/);
+    const run = acquireRunLock(config, 'F-1');
+    try {
+      const busy = await reviewFeature({ feature, config, prep, runner, maxRounds: 5 });
+      assert.equal(busy.refused, true);
+      assert.match(busy.lastError, new RegExp(`a bl run \\(pid ${process.pid}\\) is running F-1`));
+    } finally {
+      releaseRunLock(run.taken);
+    }
   } finally {
     cleanup();
   }

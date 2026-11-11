@@ -1,13 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadConfig, normalizeId, parseFrontmatter } from '../../src/config.js';
 import { findStoryDir } from '../../src/story.js';
 import { extractSection } from '../../src/feature.js';
 import { storyUnit } from '../../src/unit.js';
 import { mergePrep } from '../../src/merge-integrate.js';
-import { integrateUnit, acquireRunLock, runLockPath } from '../../src/feature-run.js';
+import { integrateUnit } from '../../src/feature-run.js';
+import { acquireRunLock, releaseRunLock, runLockPath } from '../../src/run-lock.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import {
   RESOLVED,
   REVIEW_SESSIONS,
@@ -213,12 +215,16 @@ test("integration is refused while a bl run holds the unit's run lock", async ()
     const { config, unit, prep } = featureCtx(fx);
     const lock = acquireRunLock(config, 'F-1');
     assert.equal(lock.holder, undefined);
-    const { runner } = stubRunner('true');
-    const res = await integrateUnit({ unit, config, prep, runner });
-    assert.equal(res.ok, false);
-    assert.equal(res.refused, true);
-    assert.match(res.reason, new RegExp(`^a bl run \\(pid ${process.pid}\\) is running F-1$`));
-    assert.ok(existsSync(runLockPath(config, 'F-1')), "the holder's lock is kept");
+    try {
+      const { runner } = stubRunner('true');
+      const res = await integrateUnit({ unit, config, prep, runner });
+      assert.equal(res.ok, false);
+      assert.equal(res.refused, true);
+      assert.match(res.reason, new RegExp(`^a bl run \\(pid ${process.pid}\\) is running F-1$`));
+      assert.equal(holderOf(runLockPath(config, 'F-1')), process.pid, "the holder's lock is kept");
+    } finally {
+      releaseRunLock(lock.taken);
+    }
   } finally {
     fx.cleanup();
   }

@@ -187,7 +187,12 @@ export async function prepareStoryRepo(parsed, found, config, repoName, { role =
   info('');
 
   return prepareWorktreeOnce(repoPath, branchName, async () => {
-    const { effectiveWorktreePath, isNewWorktree } = await ensureWorktree(repoPath, branchName, worktreePath);
+    const { effectiveWorktreePath, isNewWorktree } = await ensureWorktree(
+      repoPath,
+      branchName,
+      worktreePath,
+      config.backlogRoot,
+    );
     // Owed before bootstrap, so a run stopped there still owes them (S-862).
     const workonPending = workonDue(effectiveWorktreePath, isNewWorktree);
 

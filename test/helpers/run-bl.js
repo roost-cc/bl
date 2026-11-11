@@ -13,6 +13,7 @@ import { readFileSync, watch } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { waitingForLock } from '../../src/lock-wait.js';
 import { HEADLESS_ENV } from '../../src/agents/provider.js';
@@ -75,19 +76,20 @@ export function runBl(args, opts = {}) {
 /**
  * Start `bl <args>` while this process holds a lock, and report when the
  * child says it is blocked on that lock. The lock is the backlog lock
- * (`.bl-new.lock`) or the one `opts.lockPath` names, such as a main sync
+ * (`LOCK_FILE`) or the one `opts.lockPath` names, such as a main sync
  * lock (`bl-main-sync.lock`, S-1394). `acquireLock` and `withMainSyncLock`
  * print `Waiting for lock (<LOCK_FILE or the lock's path>) held by pid
  * <ours>…` once, only for a live holder and only after every pre-lock step,
  * so a test that waits for it observes the child at the lock instead of
  * guessing from a delay.
  *
- * The caller takes the lock before calling (via `acquireLock`, or by writing
- * the lock file with this process's pid) and releases it afterwards. The
- * helper throws before spawning unless the lock file (`opts.lockPath`, else
- * `.bl-new.lock` in the child's backlog root, `BL_BACKLOG_DIR` after
- * `opts.env`) names this process, so a caller cannot wait on a lock the
- * child will never see as ours.
+ * The caller takes the lock before calling and releases it afterwards, with
+ * `acquireLock` (the backlog lock) or `holdLock` (`hold-lock.js`, any bl
+ * lock: every one is a kernel lock, F-104). The helper throws before
+ * spawning unless this process holds the lock (`opts.lockPath`, else
+ * `LOCK_FILE` in the child's backlog root, `BL_BACKLOG_DIR` after
+ * `opts.env`), so a caller cannot wait on a lock the child will never see as
+ * ours.
  *
  * @param {string[]} args              CLI args to pass to bl
  * @param {object}   opts
@@ -134,9 +136,9 @@ export function startBlBehindLock(args, opts = {}) {
       return err.code;
     }
   };
-  if (parseInt(lockText(), 10) !== process.pid) {
+  if (holderOf(lockPath) !== process.pid) {
     throw new Error(
-      `startBlBehindLock: ${lockPath} must name this process (pid ${process.pid}), found ${JSON.stringify(lockText())}`,
+      `startBlBehindLock: this process (pid ${process.pid}) must hold ${lockPath}, found ${JSON.stringify(lockText())}`,
     );
   }
   // The child writes to files this process watches, not to pipes (F-70 D1):

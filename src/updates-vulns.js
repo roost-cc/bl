@@ -24,9 +24,9 @@ import { spawnSync } from 'child_process';
 import { parseFrontmatter, serializeFrontmatter, slugify, info, warn } from './config.js';
 import { findMaxStoryNum, homeComponent, storiesRoot } from './story.js';
 import { extractSection, replaceSection } from './feature.js';
-import { RUN_DIR, acquireRunLock, ensureRunDir, runLockPath } from './feature-run.js';
+import { RUN_DIR, ensureRunDir } from './feature-run.js';
+import { acquireRunLock, releaseRunLock, updatesLockRefusal } from './run-lock.js';
 import { acquireLock, releaseLock } from './lock.js';
-import { releasePidLock } from './pid-lock.js';
 import { updateSpecFile } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { syncAndCommit } from './sync.js';
@@ -528,7 +528,7 @@ export async function vulnsUpdates(config, opts = {}) {
   if (lock.holder != null) {
     return {
       ...result,
-      refused: `another bl updates command (pid ${lock.holder}) holds ${runLockPath(config, RUN_LOCK_ID)}; try again when it ends`,
+      refused: updatesLockRefusal(config, lock.holder),
     };
   }
   let locked = false;
@@ -604,6 +604,6 @@ export async function vulnsUpdates(config, opts = {}) {
     return result;
   } finally {
     if (locked) releaseLock(config.backlogRoot);
-    releasePidLock(runLockPath(config, RUN_LOCK_ID), lock.content);
+    releaseRunLock(lock.taken);
   }
 }

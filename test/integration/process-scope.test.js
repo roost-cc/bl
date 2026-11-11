@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
-import { isPidAlive } from '../../src/pid-lock.js';
+import { isPidAlive } from '../../src/process-scope.js';
 import { shellMerged } from '../../src/feature-run.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import {

@@ -225,9 +225,10 @@ init` writes `"../worktrees"` into a new `backlog.json`. One that still holds
   `foreignCheckout` and the Codex branch-bl approval read it, never a
   substring of the path.
 - Removing a worktree (`bl merge`'s cleanup, a `bl side` undo, an update
-  story's run) removes its unit directory too once nothing but its
-  `.workon.lock` is left in it (`story.js` `removeUnitDirIfEmpty`); one that
-  still holds another worktree stays.
+  story's run) removes its unit directory too when it is empty (`story.js`
+  `removeUnitDirIfEmpty`). One that still holds another worktree stays. A
+  session's lock file is not in the unit directory: it is in the backlog's
+  `.bl/lock/` (S-1495).
 - **F-60's migration**
   (`node scripts/migrate-worktree-layout.js [--dry-run] [--backlog <dir>]`,
   logic in `src/migrate-worktree-layout.js`, D4) moves, for every registered repo, each linked worktree under `<root>/<repo>/` to
@@ -244,8 +245,8 @@ init` writes `"../worktrees"` into a new `backlog.json`. One that still holds
   `<root>/<repo>/` directories the moves emptied, leaves and lists anything
   else in them, sets `backlog.json` `worktrees` to the root (the template with
   `/{repo}` cut; unset meant `../worktrees/{repo}`) and commits once through
-  `migration-txn.js`. It refuses before anything moves when a worktree to move
-  holds a live `.workon.lock`, a target exists or two moves share one, a file
+  `migration-txn.js`. It refuses before anything moves when a live session
+  holds a worktree to move (`isSessionRunning`), a target exists or two moves share one, a file
   or link stands where a target's parent would be made, a target lies inside a
   worktree to move or another target, another registered repo checkout or
   worktree lies inside a worktree to move (it would lose its git
@@ -279,10 +280,19 @@ worktree).
   `[unitDir, backlogRoot, …permissions.write]`, so every repo worktree under
   the unit directory is writable; `{{worktree}}` in `permissions` is the unit
   directory. The `Bash(rm <dir>/*)` grant names it too.
-- The session lock `.workon.lock` is in the unit directory, one per unit:
-  `isSessionRunning(unitDir)`, `runFeature`'s refusal, a review round's
-  `holdReviewLocks` (the unit directory, plus any reviewed worktree outside
-  it), `bl merge`'s cleanup and the migration's live-session check.
+- The session lock is one file per unit directory in the backlog's
+  `.bl/lock/` (`story.js` `sessionLockPath`, S-1495). It is a kernel lock (`kernel-lock.js`, F-104): the kernel frees it when its
+  holder ends, and its file stays. `runHeadlessSession` and `launchSession`
+  take it with one try-lock (`session.js` `takeSessionLock`): a lock this
+  process holds is reused, and a lock another process holds refuses the
+  session with that process's PID, the interactive launch included. A review
+  round's `holdReviewLocks` takes it the same way (the unit directory, plus
+  any reviewed worktree outside it). Every other check asks `holderOf` (D6):
+  `isSessionRunning(backlogRoot, unitDir)` and `bl merge`'s cleanup. A check that leaves
+  out this process's own lock asks `otherHolder`, which decides "this
+  process" from its own handles (`holds`), never from the PID in the file:
+  `runFeature`'s refusal and the migrations' live-session checks
+  (`liveSessionLocks`).
 - Resume (`findSession`) and transcript token totals read the unit directory's
   transcripts; `transcriptDirs` adds each worktree's for sessions that started
   there before.
@@ -300,7 +310,8 @@ worktree).
 Every frontmatter block in the backlog is YAML under the failsafe schema (F-62 D1), read
 only by `parseFrontmatter` and written only by `serializeFrontmatter` (`config.js`), both
 through the `yaml` package, bl's one runtime dependency (pinned, `package-lock.json`
-committed; `bin/bl` stops with `npm ci --prefix <bl>` when `node_modules` is missing).
+committed; `bin/bl` stops with `npm ci --prefix <bl>` when `fs-ext`'s native module is
+missing, which also catches an install from before `fs-ext`).
 Every scalar is a string (`points: 5` reads `"5"`, an empty `key:` reads `""`); mappings and
 sequences are objects and arrays at any depth. The writer keeps the keys in object order,
 writes a sequence of scalars in flow style (`[S-1, S-2]`, `[]` when empty), mappings and
@@ -374,18 +385,19 @@ worked out from the path. A write of a whole new file, or a snapshot restore, ca
 `atomicWriteFile` directly; epic, theme and component index files are written only under the
 backlog lock and need `atomicWriteFile` only.
 
-- **The lock.** `withSpecLock(indexPath, fn, { waitMs })` is a pid lock in the temp dir keyed
-  by the spec's real path (`specLockPath`; the `bl-tokens-<hash>.lock` file the token writers
-  took before F-67, so an older `bl` and a newer one exclude each other). It is re-entrant within
-  a process: a nested call for a lock this process holds runs `fn` directly. It is async: it
+- **The lock.** `withSpecLock(indexPath, fn, { waitMs })` is a kernel lock (`kernel-lock.js`
+  `tryLock`, F-104) on a file in the temp dir keyed by the spec's real path (`specLockPath`, a
+  `bl-tokens-<hash>.lock` file). A killed holder leaves no lock, release closes the descriptor,
+  and the file stays (D3), so these files collect in the temp dir. It is re-entrant within a
+  process: a nested call for a lock this process holds takes it again at once. It is async: it
   waits through `awaitLock` (`lock-wait.js`, F-105 W1) up to `waitMs` (60 s, F-104 D2) for a
-  live holder, says so once on stderr (`Waiting for lock (<lock path>) held by pid <n>…`),
-  reclaims a dead holder's lock, and otherwise rejects with `SpecLockError` naming the spec and
-  the holder. The wait awaits a timer, so Ctrl+C ends `bl` at once during it. `fn` is
-  synchronous; a returned promise is an error (F-105 W4: the re-entrancy map is per process, so
-  an `await` inside `fn` would let another task of the process skip the lock). A write nested in
-  a hold calls `updateSpecFileHeld`, the same read-modify-write without the lock, which throws
-  unless this process holds the spec's lock.
+  live holder, says so once on stderr (`Waiting for lock (<lock path>) held by pid <n>…`), and
+  otherwise rejects with `SpecLockError` naming the spec and the holder. The wait awaits a
+  timer, so Ctrl+C ends `bl` at once during it. `fn` is synchronous; a returned promise is an
+  error (F-105 W4: the lock is re-entrant per process, so an `await` inside `fn` would let
+  another task of the process skip the lock). A write nested in a hold calls
+  `updateSpecFileHeld`, the same read-modify-write without the lock, which throws unless this
+  process holds the spec's lock.
 - **Failure.** Token bookkeeping is best-effort: the token writers catch and return false. Every
   other writer lets the error propagate, so a write that could not happen fails the command
   instead of being lost.
@@ -915,8 +927,8 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   through `updateChange`, writes `flow.json` v2 (`migratedFlowText`: the template with the
   backlog's gates), and commits the changed paths once (`commitPaths`) with the counts. It does
   not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
-  (`liveSessionLocks`, by the worktree's branch) has a live holder other than the script and its
-  parent processes is skipped and listed, with the stories of such a feature, and so is a unit
+  (`liveSessionLocks`, by the worktree's branch) is held by another process (`otherHolder`; the
+  PID in a lock file decides nothing, so a parent `bl` run's lock counts too) is skipped and listed, with the stories of such a feature, and so is a unit
   whose `transitions:` is malformed (`logShape`); a rerun converts a held unit, a malformed one
   once someone fixes it, and, with nothing left, prints `nothing to do`. It sets `added` and
   `completed` to the days of the new log's first and terminal entries (`setDates`). A run that
@@ -1563,10 +1575,10 @@ agent stops the run by writing `## Escalation`. Machine-local run state lives un
 has content. `--resume` skips completed stories; once the run has reached the
 PR it also skips self-review, fixes a review session left in `fixing` before
 reviewing again, and ends at once when the unit is already `ready_for_merge`.
-One run per feature: `run` holds `.bl/run/<id>.lock` (created exclusively; a
-dead holder's lock is reclaimed) and does not start while another live
-process holds the unit directory's `.workon.lock` (F-60 D3). A headless step
-never overwrites or removes a live session's `.workon.lock`.
+One run per feature: `run` holds `.bl/run/<id>.lock` (a kernel lock whose file
+stays; a killed run leaves no lock) and does not start while another live
+process holds the unit directory's session lock (F-60 D3). A session step
+never starts while another process holds that lock.
 The loop pushes the branch and checks that `origin/<branch>` contains HEAD
 before every review pass and before it ends `clean`; a failed push, or a
 forge that cannot open or find the PR, escalates. Having no forge configured
@@ -1903,8 +1915,8 @@ does not bring it back to the snapshot, the round stops there (a run
 escalates) rather than let the next pass inherit the debris. The test gate
 itself refuses a dirty tree, and reads a failed `git status` as dirty: it lists
 the stray paths and hands them to the fix-tests session to commit or delete, so
-the gate only ever certifies committed code. bl's own `.workon.lock` and `.bl/`
-are excluded from the check whether or not a repo ignores them.
+the gate only ever certifies committed code. bl's own `.bl/` is excluded from the
+check whether or not a repo ignores it.
 
 ### Defect classes
 
@@ -2534,8 +2546,9 @@ side` then records `in_progress` by `side` in its log and sets `found_by:`
 - **Commit.** One hold of the backlog lock covers `bl new`, the marks, the
   change document and one `syncAndCommit` of the story directory and the
   change document: `chore: add S-<n> (bl side, found by <id>)`. The `bl new`
-  child works under the parent's lock (`BL_LOCK_HOLDER`, `lock.js`), so no
-  other bl commits a half-made story.
+  child works under the parent's lock: `bl side` passes the locked descriptor
+  as the child's fd 3 and names it in `BL_LOCK_FD`, and the child adopts it
+  (`lock.js`, F-104 D5). So no other bl commits a half-made story.
 - **No dependency edge** to the `--from` story: its run edge would then hold
   `bl run <from> --resume` (`heldBy`) until the side story merged. If the source
   cannot merge without the side change, that is an escalation.
@@ -3085,10 +3098,10 @@ bl's prompts and plugin commands use, not a new format.
   keeps the escalated title). Otherwise it sets the status from the exit code (`ended` for 0,
   `interrupted` for 130 or 143, `failed (exit N)` otherwise), unsets `next` and sends the
   title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
-  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `lock.js` registers when it loads:
+  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `bl.js` registers when `bl` starts:
   they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
-  registered once per process. A command that sets no title and loads no `lock.js` keeps
-  Node's default signal action.
+  registered once per process. A process that loads `tab-title.js` without `bl.js` and sets no
+  title keeps Node's default signal action.
 - The title width only grows while the process runs: `showTabTitle` pads a shorter title with
   trailing spaces to the widest title shown, so the tmux status bar does not move. A final
   title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`
@@ -3324,7 +3337,7 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 
 | Section     | Holds                                                                                                                                                                                                                                                                                                    | Read (`--stream`)                                        |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's live holder or null), and `agent`, `model`, `effort` of its newest session entry                                                      | every snapshot                                           |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), and `agent`, `model`, `effort` of its newest session entry                                                          | every snapshot                                           |
 | `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                    | when the backlog changes, and at least every 30 s        |
 | `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                     | as `attention`                                           |
 | `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                   | every 5 min, and at the snapshot after a `capacity` line |
@@ -3350,9 +3363,9 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   non-negative number counts 0, and an
   `activity` `at` is a full ISO time in the years 0000 to 9999 (Go reads four-digit years only):
   an entry with another `at` is left out, and a `startedAt` outside them gives no duration.
-- A `runs` row whose run state says `running` while its run lock (`.bl/run/<id>.lock`) has no
-  live holder has `status: "stale"`: its bl was killed. The stream parses a run state again
-  only when the file's mtime changes.
+- A `runs` row whose run state says `running` while nobody holds its run lock
+  (`.bl/run/<id>.lock`, checked with a try-lock) has `status: "stale"`: its bl was killed. The
+  stream parses a run state again only when the file's mtime changes.
 - "The backlog changes" means git `HEAD` moves, or a unit file, change document or
   `priority.md` changes: `backlogStamp()` (`src/top-stream.js`) compares `HEAD` and
   `backlogSignature()`, the stat signature `loadBacklog()` compares (`src/backlog-graph.js`).
@@ -3517,10 +3530,13 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
   (see Tokens per step) summed per step name, `—` for a unit without it; and the outliers, units
   above their type's 90th percentile. `units`, `cost` and `efficiency` are exported for
   `bl retro` (S-905).
-- No activity log, no commit, and no lock but the output's own (`.reports.lock` beside it): a
-  second run while one is writing exits 1 naming the holder. Exit 1 also on a git or IO error,
-  a bad `--since`, an empty `--out` or an unknown `--charts` adapter (the message names the
-  registered ones).
+- No activity log, no commit, and no lock but the output's own (`report-cmd.js`
+  `reportLockPath`: a kernel lock whose file stays after the report, in the backlog's
+  `.bl/lock/` and named from a hash of the output's absolute path, for the default output and
+  for every `--out`, so no lock file is ever beside the output): a second run while one is
+  writing exits 1 naming the holder. Exit 1 also on a git or IO error, a bad
+  `--since`, an empty `--out` or an unknown `--charts` adapter (the message names the registered
+  ones).
 
 **Chart adapters** (F-40 D4, `src/chart.js`). An adapter is `{ name, render(chart) }`, where
 `render` returns `{ markdown, files }`: `markdown` takes the chart's place in `index.md`, and
@@ -3723,25 +3739,52 @@ with `-` (a lone `-` is fine): `-m --story S-42` fails with `-m needs a value` i
 taking `--story` as the message, and the same holds for `--story` and `--path`. Give such a
 value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 
-`bl sync --commit` (`syncAndCommit`) holds the backlog lockfile (`.bl-new.lock`,
+`bl sync --commit` (`syncAndCommit`) holds the backlog lockfile (`.bl/lock/backlog.lock`,
 `src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
 turns. A command that finds the lock held by a live process says so once on stderr
-(`Waiting for lock (.bl-new.lock) held by pid <n>…`) and polls until the holder releases it or
+(`Waiting for lock (.bl/lock/backlog.lock) held by pid <n>…`) and polls until the holder releases it or
 60 s pass (F-104 D2). The wait is `awaitLock` (`src/lock-wait.js`, F-105 W1), which awaits a
 timer between tries; on a timeout `bl` names the holder and exits 1, and never tells anyone to
-remove the lock file. The lock is re-entrant within a process. As the spec lock is, it is created whole
-and a dead holder's lock is reclaimed through `src/pid-lock.js`, so the lock name never
-exists without its holder's pid and two processes cannot both hold it. The main sync lock wait
+remove the lock file. The lock is re-entrant within a process. It is a kernel lock (`flock(2)`
+through `src/kernel-lock.js`, F-104 K1): the kernel frees it when the holder closes the
+descriptor or ends, even by SIGKILL, so a killed holder leaves no lock. The file stays (D3), and
+the PID in it is information only (D4): the holder writes it after it takes the lock. A `bl`
+child under its parent's lock (`bl new` under `bl side`) adopts the descriptor its parent passed
+in `BL_LOCK_FD` (D5). The main sync lock wait
 (`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
 the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
 The prepare-lock wait (`session.js` `prepareWorktreeOnce`) says so the same way and has no
 deadline, because the lock is held while bootstrap and `workon` plugins run. Every lock wait is
 awaited: the backlog, spec, main sync and prepare lock waits all go through `awaitLock`, so one
-Ctrl+C during any of them runs the SIGINT listener at once and exits 130. The `exit` listener in
-`lock.js` removes only the backlog lock. A Ctrl+C while `prepareWorktreeOnce` runs its async
-`fn` leaves `bl-prepare-*.lock` with a dead pid, and the next preparer reclaims it. No lock
-wait sleeps synchronously. The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer
-too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
+Ctrl+C during any of them runs the SIGINT listener (`exitOnSignal`, which `bl.js` registers
+when `bl` starts) at once and exits 130. The main sync and prepare locks are kernel locks too,
+taken with `tryLockOnce`: they are not re-entrant, so two callers in one process take turns as
+two processes do. A `bl` that ends while it holds one, even by Ctrl+C or SIGKILL,
+leaves no lock, and the next taker gets it at once. Every bl lock is a kernel lock now:
+the PID-file lock module is gone, no code decides from a PID whether a lock is held, and no code
+deletes a lock file that bl still takes (D3); the one exception is the one-off migration below,
+which deletes retired lock files. The lock files stay and collect: one per spec in the temp dir, and in
+each repo's git common dir one main sync lock and one `bl-prepare-<branch>.lock` per branch. No lock
+wait sleeps synchronously. Every lock file bl keeps in a backlog lives under `.bl/` (S-1495),
+which the backlog's `.gitignore` ignores, so git never sees one and bl never asks git to ignore a
+lock file: the backlog lock, one session lock per unit directory and one report lock per output
+directory in `.bl/lock/` (`lock.js` `LOCK_DIR`, `dirLockPath`), and the run locks in `.bl/run/`.
+`dirLockPath` names a directory's lock file from a hash of its path with links resolved
+(`canonical`), so a unit directory reached through a link has the same lock as its real path.
+`bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
+[--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
+before S-1495. It writes `.bl/` to `.gitignore` before it deletes anything. It deletes each old
+lock file (`.bl-new.lock`, `.reports.lock`, every `.workon.lock` in the backlog root, in a unit
+directory, in a directory inside one, links followed, or in a registered worktree) while it holds
+that file's kernel lock itself (`deleteUnderLock`), so nobody takes the lock between the check
+and the delete; it skips a file whose lock another process holds. Once a second scan finds no old
+lock file, it removes their lines from `.gitignore`. It commits `.gitignore` only when the file
+(and the index, if it differs from HEAD) is what those two edits make of HEAD's version, so a
+rerun commits what a failed run wrote, and a `.gitignore` with any other change stays
+uncommitted and the migration says so. A rerun tries a skipped file again. A
+`bl` from before F-104 holds its locks as PID files, which the migration cannot see, so it runs
+only when no older `bl` runs (task T-76).
+The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
 caller awaits it (`test/unit/awaited-calls.test.js`).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over

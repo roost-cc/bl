@@ -1,12 +1,13 @@
 /**
- * run-lock.js — where bl's run locks and run state live, and the lock the
- * `bl updates` commands share. Dependency-free (node built-ins only), so
- * running-man's `provision/tick-lock.mjs` can take the updates run lock with
- * bl's own definition even when bl's dependencies are not installed (F-74 D4).
+ * run-lock.js — where bl's run locks and run state live, the run lock itself,
+ * and the lock the `bl updates` commands share. A run lock is a kernel lock
+ * (`kernel-lock.js`, F-104): its file stays, and a killed run leaves no lock.
+ * A run lock never waits: a held lock is refused.
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { release, tryLockOnce } from './kernel-lock.js';
 
 /** The run directory under the backlog root: machine-local scratch. */
 export const RUN_DIR = join('.bl', 'run');
@@ -26,4 +27,26 @@ export function ensureRunDir(config) {
   // ride along with a backlog commit.
   const gi = join(dir, '.gitignore');
   if (!existsSync(gi)) writeFileSync(gi, '*\n');
+}
+
+/**
+ * Take the run lock of `id`: `{ taken: handle }`, or `{ holder }` when another
+ * process holds it. A lock this process already holds is refused with
+ * `process.pid` too (`tryLockOnce`): one process runs a unit once.
+ *
+ * @returns {{ taken: import('./kernel-lock.js').LockHandle } | { holder: number | 'unknown' }}
+ */
+export function acquireRunLock(config, id) {
+  ensureRunDir(config);
+  return tryLockOnce(runLockPath(config, id), `bl run ${id}`);
+}
+
+/** Free a run lock that `acquireRunLock` took. The file stays. */
+export function releaseRunLock(handle) {
+  release(handle);
+}
+
+/** The refusal of a `bl updates` command when another one holds the `updates` lock. */
+export function updatesLockRefusal(config, holder) {
+  return `another bl updates command (pid ${holder}) holds ${runLockPath(config, RUN_LOCK_ID)}; try again when it ends`;
 }

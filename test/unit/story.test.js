@@ -29,7 +29,7 @@ import { loadBacklog } from '../../src/backlog-graph.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
 
-test('removeUnitDirIfEmpty removes a unit directory holding nothing but its lock, and nothing else (F-60 D2)', () => {
+test('removeUnitDirIfEmpty removes only an empty unit directory (F-60 D2)', () => {
   const root = mkTempDir('bl-unit-dir-');
   const unit = (name, entries = {}) => {
     const dir = join(root, name);
@@ -43,24 +43,13 @@ test('removeUnitDirIfEmpty removes a unit directory holding nothing but its lock
   const empty = unit('f1-empty');
   assert.equal(removeUnitDirIfEmpty(empty), true);
   assert.equal(existsSync(empty), false);
-  const locked = unit('f2-locked', { '.workon.lock': '999999999\n' });
-  assert.equal(removeUnitDirIfEmpty(locked), true);
-  assert.equal(existsSync(locked), false, 'the lock goes with it');
-  const held = unit('f3-held', { '.workon.lock': '1\n', bl: 'dir' });
+  const held = unit('f3-held', { bl: 'dir' });
   assert.equal(removeUnitDirIfEmpty(held), false);
-  assert.ok(
-    existsSync(join(held, 'bl')) && existsSync(join(held, '.workon.lock')),
-    'a unit directory with a worktree is left as it is',
-  );
+  assert.ok(existsSync(join(held, 'bl')), 'a unit directory with a worktree is left as it is');
   const stray = unit('f4-stray', { 'notes.txt': 'x' });
   assert.equal(removeUnitDirIfEmpty(stray), false);
   assert.ok(existsSync(join(stray, 'notes.txt')));
   assert.equal(removeUnitDirIfEmpty(join(root, 'f5-missing')), false);
-  const live = unit('f6-live', { '.workon.lock': `${process.ppid}\n` });
-  assert.equal(removeUnitDirIfEmpty(live), false);
-  assert.ok(existsSync(join(live, '.workon.lock')), "another live process's session lock is never removed");
-  const mine = unit('f7-mine', { '.workon.lock': `${process.pid}\n` });
-  assert.equal(removeUnitDirIfEmpty(mine), true, 'a lock this process holds goes with its directory');
 });
 
 test('parseIdList refuses a plain object (no phantom object/Object)', () => {

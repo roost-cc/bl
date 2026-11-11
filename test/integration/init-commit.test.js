@@ -12,6 +12,7 @@ import { AGENT_CONFIG, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { GIT_ENV, addOrigin, git, statusLines } from '../helpers/git-backlog.js';
+import { holdLock } from '../helpers/hold-lock.js';
 
 /** A new backlog: a backlog.json with no "repos" yet. */
 function newBacklog() {
@@ -63,6 +64,14 @@ test("bl init ignores bl's runtime directory .bl/, so a session's activity log i
   git(dir, 'init', '-q', '-b', 'main');
   assert.equal(init(dir).status, 0);
   assert.equal(git(dir, 'check-ignore', '.bl/activity.log'), '.bl/activity.log');
+  // Every lock file lives under .bl/ (S-1495), so init seeds no line for one.
+  assert.equal(git(dir, 'check-ignore', LOCK_FILE), LOCK_FILE);
+  assert.deepEqual(
+    readFileSync(join(dir, '.gitignore'), 'utf8')
+      .split('\n')
+      .filter((l) => l.includes('lock')),
+    [],
+  );
   // A rerun adds nothing twice.
   const text = readFileSync(join(dir, '.gitignore'), 'utf8');
   assert.equal(init(dir).status, 0);
@@ -193,12 +202,12 @@ test('init_write_and_commit_share_lock: bl init writes nothing until it holds th
   git(dir, 'add', '.');
   git(dir, 'commit', '-q', '-m', 'base');
   const json = readFileSync(join(dir, 'backlog.json'), 'utf8');
-  writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
+  const held = holdLock(join(dir, LOCK_FILE));
   const run = startBlBehindLock(['init'], { cwd: dir, env: { ...GIT_ENV, HOME: mkTempDir('bl-init-home-') } });
   await run.blocked;
   assert.equal(readFileSync(join(dir, 'backlog.json'), 'utf8'), json, 'nothing written before the lock');
   assert.equal(existsSync(join(dir, '.gitignore')), false);
-  rmSync(join(dir, LOCK_FILE));
+  held.release();
   const r = await run.closed;
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(statusLines(dir), []);

@@ -1,18 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
-import {
-  runFeature,
-  loadRunState,
-  runLockPath,
-  reviewFeature,
-  acquireRunLock,
-  RUN_DIR,
-  OutcomeError,
-} from '../../src/feature-run.js';
-import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
+import { runFeature, loadRunState, reviewFeature, RUN_DIR, OutcomeError } from '../../src/feature-run.js';
+import { holderOf, release, tryLock } from '../../src/kernel-lock.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
 import { spawnSync } from 'child_process';
 import { featureReviewGate } from '../../src/review-log.js';
 import { extractSection } from '../../src/feature.js';
@@ -34,6 +27,7 @@ import {
 import { FIX_OUTCOME, reviewOutcome, SELF_REVIEW_OUTCOME } from '../helpers/outcomes.js';
 import { validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
+import { sessionLockPath } from '../../src/story.js';
 import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
 
 // ---------------------------------------------------------------------------
@@ -46,7 +40,11 @@ function git(wt, ...args) {
   return r.stdout;
 }
 
-/** `setup()` whose worktree is a real git repo with a.js, b.js, c.js, gone.js committed on main. */
+/**
+ * `setup()` whose worktree is a real git repo with a.js, b.js, c.js, gone.js committed on main.
+ * The fixture's unit directory is the worktree; its session lock file is in the backlog's
+ * `.bl/lock/` (S-1495), not in it.
+ */
 function realGitSetup(extra) {
   const s = setup(extra);
   const wt = s.prep.worktreePath;
@@ -512,48 +510,6 @@ test('the test gate refuses a dirty tree with no test plugin configured', async 
   }
 });
 
-test('two runs reclaiming the same stale lock cannot both acquire it', () => {
-  const deadPid = spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
-  // The run lock, and the helper the headless `.workon.lock` uses.
-  const { dir, cleanup, config } = setup();
-  try {
-    mkdirSync(join(dir, RUN_DIR), { recursive: true });
-    const cases = {
-      'run lock': { path: runLockPath(config, 'F-1'), take: (hooks) => acquireRunLock(config, 'F-1', hooks) },
-      '.workon.lock': {
-        path: join(dir, '.workon.lock'),
-        take: (hooks) => acquirePidLock(join(dir, '.workon.lock'), `${process.pid}\nx\n${Math.random()}\n`, hooks),
-      },
-    };
-    for (const [name, { path, take }] of Object.entries(cases)) {
-      writeFileSync(path, `${deadPid}\n2026-09-24T00:00:00Z\nstale\n`);
-      // B reads the stale lock; before B reclaims it, A reclaims it and takes it.
-      let a = null;
-      const b = take({
-        beforeReclaim: () => {
-          a ??= take();
-        },
-      });
-      assert.ok(a?.content, `${name}: A took the reclaimed lock`);
-      assert.equal(b.content, undefined, `${name}: B did not also take it`);
-      assert.equal(b.holder, process.pid, `${name}: B reports A as the holder`);
-      assert.equal(readFileSync(path, 'utf8'), a.content, `${name}: A's lock is intact`);
-      assert.ok(!existsSync(`${path}.reclaim`), `${name}: reclaim mutex released`);
-      releasePidLock(path, a.content);
-      assert.ok(!existsSync(path), name);
-
-      // A reclaim mutex left by a reclaimer that died does not block for ever.
-      writeFileSync(path, `${deadPid}\n`);
-      writeFileSync(`${path}.reclaim`, `${deadPid}\n`);
-      const c = take();
-      assert.ok(c.content, `${name}: stale lock reclaimed past a dead reclaimer's mutex`);
-      releasePidLock(path, c.content);
-    }
-  } finally {
-    cleanup();
-  }
-});
-
 test("review passes and the verifier run on the first review_agent configuration; implementation stays on agent's", async () => {
   const { dir, cleanup, feature, prep } = setup();
   try {
@@ -597,7 +553,7 @@ test('a review round over a unit directory takes its one session lock, not one p
     s.prep.unitDir = mkTempDir('bl-unit-');
     const others = ['repo-b', 'repo-c'].map((r) => join(s.prep.unitDir, r));
     for (const wt of others) mkdirSync(wt);
-    const lock = join(s.prep.unitDir, '.workon.lock');
+    const lock = sessionLockPath(s.config.backlogRoot, s.prep.unitDir);
     const runner = fakeRunner({
       dir: s.dir,
       feature: s.feature,
@@ -608,7 +564,7 @@ test('a review round over a unit directory takes its one session lock, not one p
     runner.session = (o) => {
       seen.push({
         unit: existsSync(lock) ? readFileSync(lock, 'utf8').split('\n', 1)[0] : null,
-        worktrees: others.filter((wt) => existsSync(join(wt, '.workon.lock'))),
+        worktrees: others.filter((wt) => existsSync(sessionLockPath(s.config.backlogRoot, wt))),
       });
       return session(o);
     };
@@ -632,10 +588,10 @@ test('a review round over a unit directory takes its one session lock, not one p
       assert.equal(x.unit, String(process.pid), 'the unit directory is locked by this process');
       assert.deepEqual(x.worktrees, [], 'no lock inside a worktree under it');
     }
-    assert.ok(!existsSync(lock), 'released after the round');
+    assert.equal(holderOf(lock), null, 'released after the round');
 
     // A live session in the unit directory: no pass runs.
-    writeFileSync(lock, `${process.ppid}\n2026-10-28T00:00:00Z\nF-1: interactive\n`);
+    const live = await holdLockInChild(lock);
     seen.length = 0;
     const held = await reviewFeature({
       feature: s.feature,
@@ -645,38 +601,53 @@ test('a review round over a unit directory takes its one session lock, not one p
       pr: { number: '7', url: 'u' },
       otherRepos,
       maxRounds: 3,
-    });
+    }).finally(() => live.kill());
     assert.deepEqual(seen, []);
     assert.match(
       held.error,
-      new RegExp(`a live session \\(pid ${process.ppid}\\) holds ${lock.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+      new RegExp(`a live session \\(pid ${live.pid}\\) holds ${lock.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
     );
+
+    // A session lock that cannot be opened (a directory in its place): no pass runs either.
+    rmSync(lock);
+    mkdirSync(lock);
+    const unusable = await reviewFeature({
+      feature: s.feature,
+      config: s.config,
+      prep: s.prep,
+      runner,
+      pr: { number: '7', url: 'u' },
+      otherRepos,
+      maxRounds: 3,
+    });
+    assert.deepEqual(seen, []);
+    assert.match(unusable.error, /\/\.bl\/lock\/session-.* could not be opened: /);
   } finally {
     s.cleanup();
   }
 });
 
 test('a review round locks every scoped worktree and aborts without verification when any pass fails', async () => {
-  const lockOf = (wt) => join(wt, '.workon.lock');
-  // Another process trying to start a session in `wt`: what acquirePidLock tells it.
-  const otherProcessTakes = (wt) => {
-    const src = `import { acquirePidLock, releasePidLock } from ${JSON.stringify(new URL('../../src/pid-lock.js', import.meta.url).href)};
-const t = acquirePidLock(${JSON.stringify(lockOf(wt))}, process.pid + "\\n");
-if (t.content) releasePidLock(${JSON.stringify(lockOf(wt))}, t.content);
-console.log(t.content ? "taken" : "held by " + t.holder);`;
+  // Another process trying to start a session on the lock `path`: what its try-lock tells it.
+  const otherProcessTakes = (path) => {
+    const src = `import { tryLock } from ${JSON.stringify(new URL('../../src/kernel-lock.js', import.meta.url).href)};
+const t = tryLock(${JSON.stringify(path)}, 'other');
+console.log(t.taken ? "taken" : "held by " + t.holder);`;
     return spawnSyncFiles(process.execPath, ['--input-type=module', '-e', src], { encoding: 'utf8' }).stdout.trim();
   };
   const PASSES = ['review-correctness', 'review-failure-paths', 'review-verify'];
+  // `preLock.hold(path)` holds a worktree's lock before the round and returns its release.
   const scenario = async ({
     failAt = null,
     preLock = null,
     failure = { ok: false, isError: true, error: 'provider crashed' },
   }) => {
     const s = setup({ pr: '7' });
+    const lockOf = (wt) => sessionLockPath(s.config.backlogRoot, wt);
     const others = [mkTempDir('bl-wt-b-'), mkTempDir('bl-wt-c-')];
     const all = [s.prep.worktreePath, ...others];
+    const releasePre = preLock ? await preLock.hold(lockOf(all[preLock.at])) : () => {};
     try {
-      if (preLock) writeFileSync(lockOf(all[preLock.at]), preLock.content);
       const runner = fakeRunner({
         dir: s.dir,
         feature: s.feature,
@@ -688,7 +659,7 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
         seen.push({
           prompt: o.promptName,
           locks: all.map((wt) => (existsSync(lockOf(wt)) ? readFileSync(lockOf(wt), 'utf8').split('\n', 1)[0] : null)),
-          other: o.promptName === 'review-correctness' ? all.map(otherProcessTakes) : null,
+          other: o.promptName === 'review-correctness' ? all.map((wt) => otherProcessTakes(lockOf(wt))) : null,
         });
         const r = session(o);
         return o.promptName === failAt ? { ...r, ...failure } : r;
@@ -713,10 +684,11 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
         seen,
         before,
         after: readFileSync(s.feature.indexPath, 'utf8'),
-        locksAfter: all.map((wt) => (existsSync(lockOf(wt)) ? readFileSync(lockOf(wt), 'utf8') : null)),
+        locksAfter: all.map((wt) => holderOf(lockOf(wt))),
         state: loadRunState(s.config, 'F-1'),
       };
     } finally {
+      await releasePre();
       for (const wt of others) rmSync(wt, { recursive: true, force: true });
       s.cleanup();
     }
@@ -750,23 +722,32 @@ console.log(t.content ? "taken" : "held by " + t.holder);`;
   );
   assert.deepEqual(ok.locksAfter, [null, null, null], 'every lock the round took is released');
 
-  // A lock this process already held is used and left in place.
-  const own = `${process.pid}\n2026-09-24T00:00:00Z\nF-1 run\n`;
-  const kept = await scenario({ preLock: { at: 1, content: own } });
+  // A lock this process already held is used and left held.
+  const own = (path) => {
+    mkdirSync(dirname(path), { recursive: true });
+    const { taken } = tryLock(path, 'F-1 run');
+    return () => release(taken);
+  };
+  const kept = await scenario({ preLock: { at: 1, hold: own } });
   assert.equal(kept.r.error, null);
-  assert.deepEqual(kept.locksAfter, [null, own, null]);
+  assert.deepEqual(kept.locksAfter, [null, process.pid, null]);
 
   // A live session in any scoped worktree: no pass runs, its lock is untouched,
   // and nothing the round took is left behind.
-  const live = `${process.ppid}\n2026-09-24T00:00:00Z\nF-1: interactive\n`;
   for (const at of [0, 1, 2]) {
-    const x = await scenario({ preLock: { at, content: live } });
+    let pid;
+    const live = async (path) => {
+      const child = await holdLockInChild(path);
+      pid = child.pid;
+      return () => child.kill();
+    };
+    const x = await scenario({ preLock: { at, hold: live } });
     assert.deepEqual(x.seen, [], `worktree ${at} held: no session ran`);
-    assert.match(x.r.error, new RegExp(`a live session \\(pid ${process.ppid}\\) holds`));
+    assert.match(x.r.error, new RegExp(`a live session \\(pid ${pid}\\) holds`));
     assert.equal(x.after, x.before, `worktree ${at} held: the feature file is untouched`);
     assert.deepEqual(
       x.locksAfter,
-      [0, 1, 2].map((i) => (i === at ? live : null)),
+      [0, 1, 2].map((i) => (i === at ? pid : null)),
     );
     assert.equal(x.state.status, 'failed');
   }

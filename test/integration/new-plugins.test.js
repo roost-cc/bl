@@ -1,10 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { lockOwnerVisible, runBl, startBlBehindLock } from '../helpers/run-bl.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { componentBacklog } from '../helpers/new-fixture.js';
+import { holdLock } from '../helpers/hold-lock.js';
+import { holderOf } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 
 // ---------------------------------------------------------------------------
 // --plugins-from <S-id> (S-870): inherit plugins / plugins-<stage> keys
@@ -174,7 +177,7 @@ test('bl new --plugins-from with an unknown id fails before writing anything', (
     assert.match(r.stderr, /--plugins-from S-999: story not found/);
     assert.equal(r.stdout, '');
     assert.deepEqual(readdirSync(join(dir, 'stories')), ['S1-parent']);
-    assert.ok(!existsSync(join(dir, '.bl-new.lock')), 'lock file left behind');
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null, 'lock left held');
   } finally {
     cleanup();
   }
@@ -255,14 +258,13 @@ test("bl new --plugins-from preserves the accepted story ID's digit sequence", (
  * reflect the mutated state: that is what reading under the lock buys.
  */
 async function runBlBehindLock(dir, args, mutate) {
-  const lock = join(dir, '.bl-new.lock');
-  writeFileSync(lock, `${process.pid}\n${new Date().toISOString()}\n`);
+  const held = holdLock(join(dir, LOCK_FILE));
   const { blocked, closed } = startBlBehindLock(args, { cwd: dir });
   try {
     await blocked;
     mutate();
   } finally {
-    unlinkSync(lock);
+    held.release();
   }
   return closed;
 }
@@ -318,7 +320,7 @@ test('bl new --plugins-from rereads and compares its source under the creation l
         assert.ok(fmText.includes(c.copied), label);
         assert.doesNotMatch(fmText, /^primary_repo:/m, label);
       }
-      assert.ok(!existsSync(join(dir, '.bl-new.lock')), `${c.name}: lock file left behind`);
+      assert.equal(holderOf(join(dir, LOCK_FILE)), null, `${c.name}: lock left held`);
     } finally {
       cleanup();
     }
@@ -343,7 +345,7 @@ test('bl new --plugins-from rejects duplicate source IDs', () => {
     assert.ok(r.stderr.includes('stories/S1-dup/index.md'), r.stderr);
     assert.equal(r.stdout, '');
     assert.ok(!existsSync(join(dir, CHILD)));
-    assert.ok(!existsSync(join(dir, '.bl-new.lock')), 'lock file left behind');
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null, 'lock left held');
   } finally {
     cleanup();
   }

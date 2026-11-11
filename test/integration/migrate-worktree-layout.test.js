@@ -7,6 +7,8 @@ import { JOURNAL, migrate, rewritePaths, rootOfTemplate, setWorktrees } from '..
 import { _hooks } from '../../src/atomic-write.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
+import { sessionLockPath } from '../../src/story.js';
 
 // F-60 D4: the whole migration on a workspace directory with a backlog at
 // origin/main, two repos and real old-layout worktrees.
@@ -174,10 +176,14 @@ async function assertRefused(fixture, re) {
   assert.ok(existsSync(join(wt, 'beta', BRANCH)));
 }
 
-test('migrate refuses before anything moves when a worktree has a live .workon.lock', async () => {
+test('migrate refuses before anything moves when a live session holds a worktree', async () => {
   const fixture = roost();
-  writeFileSync(join(fixture.wt, 'beta', BRANCH, '.workon.lock'), `${process.pid}\n`);
-  await assertRefused(fixture, /migration refused: a bl session holds .*beta.*\.workon\.lock/);
+  const live = holdLock(sessionLockPath(fixture.dir, join(fixture.wt, 'beta', BRANCH)));
+  try {
+    await assertRefused(fixture, /migration refused: a bl session holds .*\/\.bl\/lock\/session-/);
+  } finally {
+    live.release();
+  }
 });
 
 test('migrate refuses before anything moves when a target path exists', async () => {
@@ -491,6 +497,14 @@ test('migrate refuses before anything moves when a bl run is active', async () =
   const fixture = roost();
   const runDir = join(fixture.dir, '.bl', 'run');
   writeFileSync(join(runDir, 'F-9.json'), JSON.stringify({ status: 'running' }));
-  writeFileSync(join(runDir, 'F-9.lock'), `${process.ppid}\n`);
-  await assertRefused(fixture, /migration refused: a bl run is active/);
+  // A child holds the run lock (a kernel lock, F-104): the check ignores this process.
+  const holder = await holdLockInChild(join(runDir, 'F-9.lock'));
+  try {
+    await assertRefused(
+      fixture,
+      new RegExp(`migration refused: a bl run is active \\(.*F-9\\.json, pid ${holder.pid}\\)`),
+    );
+  } finally {
+    await holder.kill();
+  }
 });

@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { holderOf } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { basename, join } from 'path';
 import { loadConfig, parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
@@ -731,7 +733,7 @@ test('a missing report exits early with nothing created', async () => {
     assert.deepEqual(res.created, []);
     assert.deepEqual(lines, []);
     assert.equal(stories(t).size, 0);
-    assert.ok(!existsSync(join(t.dir, '.bl-new.lock')));
+    assert.equal(holderOf(join(t.dir, LOCK_FILE)), null);
   } finally {
     t.cleanup();
   }

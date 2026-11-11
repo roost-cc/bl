@@ -30,7 +30,7 @@ import { atomicWriteFile, STAGING_DIR } from './atomic-write.js';
 import { getProvider, PROVIDER_NAMES } from './agents/index.js';
 import { probePluginBinaries, formatPluginStatus } from './plugin-binaries.js';
 import { commitChangedSince, dirtySnapshot, recordChangedSince } from './backlog-commit.js';
-import { acquireLock, releaseLock, LOCK_FILE } from './lock.js';
+import { acquireLock, releaseLock } from './lock.js';
 import { detectGhCredentialHelper, formatGhCredentialHelperAdvisory } from './credential-helper.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -319,21 +319,40 @@ function addToBacklogJson(dir, path, agent, model) {
   info(`Updated : backlog.json (+ ${keys.join(', ')})`);
 }
 
+/** The `.gitignore` line that ignores `.bl/`, bl's runtime directory in a backlog. */
+export const BL_DIR_LINE = `${dirname(STAGING_DIR)}/`;
+
 // The local tool-grant file holds user-discretion permissions, and `.bl/`
-// holds bl's runtime state (the activity log, staging files, run state), and
-// the backlog lock file exists only while a bl command holds it: none is ever
-// committed. Seed the backlog's .gitignore with them on init (idempotent).
-const GITIGNORED = [LOCAL_TOOLS_FILE, `${dirname(STAGING_DIR)}/`, LOCK_FILE];
+// holds bl's runtime state (the activity log, staging files, run state) and
+// every lock file (S-1495): none is ever committed. Seed the backlog's
+// .gitignore with them on init (idempotent).
+const GITIGNORED = [LOCAL_TOOLS_FILE, BL_DIR_LINE];
+
+/**
+ * `.gitignore` text with each of `entries` that it lacks (as a whole,
+ * trimmed line) appended, one per line, and the entries it added.
+ *
+ * @param {string} text
+ * @param {string[]} entries
+ * @returns {{ text: string, added: string[] }}
+ */
+export function withGitignoreLines(text, entries) {
+  const lines = text.split('\n');
+  const added = entries.filter((entry) => !lines.some((l) => l.trim() === entry));
+  if (added.length === 0) return { text, added };
+  const needsNewline = text !== '' && !text.endsWith('\n');
+  return { text: text + (needsNewline ? '\n' : '') + added.map((m) => `${m}\n`).join(''), added };
+}
 
 function ensureGitignored(backlogRoot) {
   const gitignorePath = join(backlogRoot, '.gitignore');
-  const text = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
-  const lines = text.split('\n');
-  const missing = GITIGNORED.filter((entry) => !lines.some((l) => l.trim() === entry));
-  if (missing.length === 0) return;
-  const needsNewline = text !== '' && !text.endsWith('\n');
-  writeFileSync(gitignorePath, text + (needsNewline ? '\n' : '') + missing.map((m) => `${m}\n`).join(''));
-  info(`Updated : .gitignore (+ ${missing.join(', ')})`);
+  const { text, added } = withGitignoreLines(
+    existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '',
+    GITIGNORED,
+  );
+  if (added.length === 0) return;
+  writeFileSync(gitignorePath, text);
+  info(`Updated : .gitignore (+ ${added.join(', ')})`);
 }
 
 function warnIfGhCredentialHelper() {

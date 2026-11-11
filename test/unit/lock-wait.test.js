@@ -2,25 +2,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { awaitLock, LockWaitTimeout, waitingForLock } from '../../src/lock-wait.js';
-import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
+import { holderOf, release, tryLock } from '../../src/kernel-lock.js';
 import { acquireLock, LOCK_FILE, withLock } from '../../src/lock.js';
 import { mainSyncLockPath, withMainSyncLock } from '../../src/main-sync.js';
 import { SpecLockError, specLockPath, withSpecLock } from '../../src/spec-file.js';
+import { holdLock } from '../helpers/hold-lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 /**
  * A `take` that finds `holders` in turn (one per try), then takes the lock
- * with content `value`, in `acquirePidLock`'s shape.
+ * as `value`, in `tryLock`'s shape (`kernel-lock.js`).
  */
 function takeAfter(holders, value = 'mine') {
   const left = [...holders];
   const tries = { count: 0 };
   const take = () => {
     tries.count += 1;
-    return left.length > 0 ? { holder: left.shift() } : { content: value };
+    return left.length > 0 ? { holder: left.shift() } : { taken: value };
   };
   return { take, tries };
 }
@@ -38,7 +39,7 @@ test('awaitLock takes a free lock at once, with no announcement and no sleep', a
     announce: (l) => said.push(l),
     sleep: noSleep,
   });
-  assert.equal(got, 'mine');
+  assert.deepEqual(got, { taken: 'mine' });
   assert.equal(tries.count, 1);
   assert.deepEqual(said, []);
 });
@@ -53,7 +54,7 @@ test('awaitLock takes the lock after its holder ends, announcing the wait once',
     announce: (l) => said.push(l),
     sleep: async (ms) => void sleeps.push(ms),
   });
-  assert.equal(got, 'mine');
+  assert.deepEqual(got, { taken: 'mine' });
   assert.equal(tries.count, 4);
   assert.deepEqual(sleeps, [7, 7, 7]);
   assert.deepEqual(said, [waitingForLock('x.lock', 41)]);
@@ -84,19 +85,23 @@ test('awaitLock rejects with a LockWaitTimeout naming the lock and the holder', 
   assert.equal(said.length, 1);
 });
 
-test("awaitLock takes acquirePidLock as it is: it resolves the lock's content, and waits while the lock is held", async () => {
+test('awaitLock takes tryLock as it is: it resolves what the take returned, and waits while another descriptor holds the lock', async () => {
   const dir = mkTempDir('bl-lock-wait-');
   const lockPath = join(dir, 'x.lock');
-  const mine = `${process.pid}\n${new Date().toISOString()}\nmine\n`;
-  const take = () => acquirePidLock(lockPath, mine);
   const opts = { deadlineMs: 0, pollMs: 5, announce: () => {}, sleep: noSleep };
-  assert.equal(await awaitLock(lockPath, take, opts), mine);
-  assert.equal(readFileSync(lockPath, 'utf8'), mine);
-  const other = `${process.pid}\n${new Date().toISOString()}\nother\n`;
-  const err = await awaitLock(lockPath, () => acquirePidLock(lockPath, other), opts).catch((e) => e);
-  assert.ok(err instanceof LockWaitTimeout, String(err));
-  assert.equal(err.holder, process.pid);
-  releasePidLock(lockPath, mine);
+  const got = await awaitLock(lockPath, () => tryLock(lockPath, 'mine'), opts);
+  assert.equal(got.taken.path, lockPath);
+  assert.match(readFileSync(lockPath, 'utf8'), new RegExp(`^${process.pid}\\n.*\\nmine\\n$`));
+  release(got.taken);
+  const other = holdLock(lockPath, 'other');
+  try {
+    const err = await awaitLock(lockPath, () => tryLock(lockPath, 'mine'), opts).catch((e) => e);
+    assert.ok(err instanceof LockWaitTimeout, String(err));
+    assert.equal(err.holder, process.pid);
+    assert.equal(readFileSync(lockPath, 'utf8'), other.content, 'the waiter never truncated it');
+  } finally {
+    other.release();
+  }
 });
 
 test('two concurrent takes of one re-entrant lock in one process: the second re-enters, it never waits for itself', async () => {
@@ -106,7 +111,7 @@ test('two concurrent takes of one re-entrant lock in one process: the second re-
   const cases = [
     {
       name: 'backlog lock (withLock)',
-      lockPath: join(dir, LOCK_FILE),
+      released: () => holderOf(join(dir, LOCK_FILE)) === null,
       run: (said, order, tag) =>
         withLock(
           dir,
@@ -126,7 +131,7 @@ test('two concurrent takes of one re-entrant lock in one process: the second re-
     },
     {
       name: 'spec lock (withSpecLock)',
-      lockPath: specLockPath(spec),
+      released: () => holderOf(specLockPath(spec)) === null,
       run: (said, order, tag) => withSpecLock(spec, () => order.push(tag), { waitMs: 3000 }),
       // fn is synchronous, so the two never overlap; both run.
       ok: (order) => [...order].sort().join() === 'A,B',
@@ -153,7 +158,7 @@ test('two concurrent takes of one re-entrant lock in one process: the second re-
       `${c.name}: no task waited for its own process`,
     );
     assert.ok(Date.now() - start < 1000, `${c.name}: took ${Date.now() - start} ms`);
-    assert.equal(existsSync(c.lockPath), false, `${c.name}: the lock is released`);
+    assert.ok(c.released(), `${c.name}: the lock is released`);
   }
 });
 
@@ -185,7 +190,6 @@ test('awaitLock sleeps at most the time left to the deadline', async () => {
 test('every lock wait with a live holder gives up near its deadline, not after a full poll', async () => {
   const repo = mkTempDir('bl-lock-wait-');
   execFileSync('git', ['init', '-q', '-b', 'main', repo], { stdio: ['ignore', 'pipe', 'pipe'] });
-  const holderContent = `${process.pid}\n${new Date().toISOString()}\nheld by the test\n`;
   const spec = join(repo, 'index.md');
   writeFileSync(spec, '---\na: 1\n---\nbody\n');
   const cases = [
@@ -212,13 +216,14 @@ test('every lock wait with a live holder gives up near its deadline, not after a
     },
   ];
   for (const c of cases) {
-    writeFileSync(c.lockPath, holderContent);
+    const holder = holdLock(c.lockPath);
     try {
       const start = Date.now();
       assert.ok(await c.wait(), `${c.name}: timed out`);
       const ms = Date.now() - start;
       assert.ok(ms < 1000, `${c.name}: took ${ms} ms`);
     } finally {
+      holder.release();
       rmSync(c.lockPath, { force: true });
     }
   }
@@ -248,7 +253,7 @@ test('awaitLock with no deadline keeps waiting until the lock frees', async () =
     announce: (l) => said.push(l),
     sleep: async () => {},
   });
-  assert.equal(got, 'mine');
+  assert.deepEqual(got, { taken: 'mine' });
   assert.equal(tries.count, 501);
   assert.deepEqual(said, ['Waiting for lock (x.lock) held by pid unknown…']);
 });
@@ -273,7 +278,7 @@ test('awaitLock awaits a timer by default, so the event loop runs while it waits
   const ticker = setInterval(() => (ticks += 1), 1);
   setTimeout(() => (held = false), 40);
   try {
-    await awaitLock('x.lock', () => (held ? { holder: 43 } : { content: 'mine' }), {
+    await awaitLock('x.lock', () => (held ? { holder: 43 } : { taken: 'mine' }), {
       deadlineMs: 5000,
       pollMs: 5,
       announce: () => {},

@@ -87,6 +87,7 @@ export function committedBacklog(stories, flow) {
     repos: { 'demo-repo': '../demo-repo' },
     components: [{ id: 'C01', title: 'Core', repo: 'demo-repo', home: true, dirSuffix: 'core' }],
   });
+  // As bl init seeds it: every lock file, the report's included, lives under .bl/.
   writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, ['init', '-q', '-b', 'main']);
   for (const [id, status] of stories) {
@@ -131,6 +132,7 @@ export function scriptedBacklog() {
     components: [{ id: 'C01', title: 'Core', repo: 'demo-repo', home: true, dirSuffix: 'core' }],
     valueEpics: [{ id: 'E50', title: 'Epic', dirSuffix: 'epic' }],
   });
+  // As bl init seeds it: every lock file, the report's included, lives under .bl/.
   writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, ['init', '-q', '-b', 'main']);
   const shas = {};

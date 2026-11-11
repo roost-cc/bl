@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { holderOf } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { parseFrontmatter, serializeFrontmatter, worktreeRoot } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
 import { extractSection } from '../../src/feature.js';
-import { runLockPath } from '../../src/feature-run.js';
-import { acquirePidLock, releasePidLock } from '../../src/pid-lock.js';
+import { acquireRunLock, releaseRunLock, runLockPath, updatesLockRefusal } from '../../src/run-lock.js';
 import { installPartialWrites } from '../helpers/partial-write.js';
 import { foreignCheckout, syncUpdates } from '../../src/updates.js';
 import {
@@ -655,7 +656,7 @@ test('green non-majors merge: rebase, gate, push the branch, merge --no-ff, push
       fields: { feature: 'updates', story: '', status: '2 merged', next: '' },
       final: true,
     });
-    assert.ok(!existsSync(runLockPath(t.config(), RUN_LOCK_ID)), 'lock released');
+    assert.equal(holderOf(runLockPath(t.config(), RUN_LOCK_ID)), null, 'lock released');
   } finally {
     t.cleanup();
   }
@@ -1549,7 +1550,7 @@ test('post-forge mutation failures remain actionable and recover on retry', asyn
     const report = readFileSync(reportPath(partial.config(), '2026-10-14'), 'utf8');
     assert.match(report, /1 merged, 0 held, 0 decision\(s\) needed, 0 skipped/);
     assert.match(report, /\| S-1 +\| bl +\| #7 +\| vitest@4\.1\.0 +\| `m1`/);
-    assert.ok(!existsSync(runLockPath(partial.config(), RUN_LOCK_ID)), 'lock released');
+    assert.equal(holderOf(runLockPath(partial.config(), RUN_LOCK_ID)), null, 'lock released');
   } finally {
     partial.cleanup();
   }
@@ -1662,15 +1663,13 @@ test('--dry-run prints the order and touches nothing; no open stories ends at on
     await assert.rejects(run(t, fakeRunner(), { ids: ['S-7'] }), /S-7 is not an update story/);
 
     // A second live run is refused.
-    const lockPath = runLockPath(t.config(), RUN_LOCK_ID);
-    mkdirSync(join(t.dir, '.bl', 'run'), { recursive: true });
-    const taken = acquirePidLock(lockPath, `${process.pid}\nheld\n`);
+    const taken = acquireRunLock(t.config(), RUN_LOCK_ID);
     try {
       const refused = await run(t, fakeRunner());
-      assert.match(refused.res.refused, /another bl updates command \(pid \d+\)/);
+      assert.equal(refused.res.refused, updatesLockRefusal(t.config(), process.pid));
       assert.equal(refused.res.outcomes.length, 0);
     } finally {
-      releasePidLock(lockPath, taken.content);
+      releaseRunLock(taken.taken);
     }
 
     // Nothing open: a dry run writes nothing; a live run writes only the
@@ -2141,7 +2140,7 @@ test('run executes a drop: closes the PR with the reason, supersedes the story a
         `\\n## Drop S-1 · 2026-10-14T16:00:00Z\\n\\nbl #7 closed, story superseded\\. Reason: vitest 4\\.1 breaks the reporter; wait for 4\\.2\\n\\n## Run 2026-10-14T16:00:00Z\\n\\n0 merged, 0 held, 0 decision\\(s\\) needed, 0 skipped\\.\\n`,
       ),
     );
-    assert.ok(!existsSync(runLockPath(t.config(), RUN_LOCK_ID)), 'lock released');
+    assert.equal(holderOf(runLockPath(t.config(), RUN_LOCK_ID)), null, 'lock released');
     const status = statusUpdates(t.config());
     assert.deepEqual(status.stories, []);
     assert.equal(status.lastReport.entry, 'Run 2026-10-14T16:00:00Z');
@@ -2173,7 +2172,7 @@ test('sync and answer/run operations serialize story and forge mutations', async
       lookupPr: () => ({ url: null, security: false }),
       out: () => {},
     };
-    const taken = acquirePidLock(lockPath, `${process.pid}\nheld\n`);
+    const taken = acquireRunLock(t.config(), RUN_LOCK_ID);
     try {
       // Every command that rewrites stories or touches the forge takes the
       // same lock, before it reads a story: with the lock held each one is
@@ -2194,24 +2193,24 @@ test('sync and answer/run operations serialize story and forge mutations', async
       ];
       for (const [name, go] of attempts) {
         const r = await go();
-        assert.match(r.refused ?? '', /^another bl updates command \(pid \d+\) holds .*updates\.lock/, name);
+        assert.equal(r.refused, updatesLockRefusal(t.config(), process.pid), name);
       }
       assert.equal(stories(t).get('S-1').text, before, 'the story is untouched');
       assert.ok(!existsSync(join(t.dir, 'updates')), 'no report written');
-      assert.ok(!existsSync(join(t.dir, '.bl-new.lock')), 'a refused sync took no backlog lock');
-      assert.ok(existsSync(lockPath), "a refused command leaves the holder's lock");
+      assert.equal(holderOf(join(t.dir, LOCK_FILE)), null, 'a refused sync took no backlog lock');
+      assert.equal(holderOf(lockPath), process.pid, "a refused command leaves the holder's lock");
     } finally {
-      releasePidLock(lockPath, taken.content);
+      releaseRunLock(taken.taken);
     }
     // Released: the sync runs, and lets go of both locks when it ends.
     const ok = await syncUpdates(t.config(), syncOpts);
     assert.equal(ok.refused, undefined);
     assert.deepEqual(ok.unchanged, ['S-1']);
-    assert.ok(!existsSync(lockPath), 'run lock released after the sync');
-    assert.ok(!existsSync(join(t.dir, '.bl-new.lock')), 'backlog lock released after the sync');
+    assert.equal(holderOf(lockPath), null, 'run lock released after the sync');
+    assert.equal(holderOf(join(t.dir, LOCK_FILE)), null, 'backlog lock released after the sync');
     const merged = await run(t, fakeRunner({ gate: [0] }));
     assert.equal(merged.res.outcomes[0].kind, 'merged');
-    assert.ok(!existsSync(lockPath), 'run lock released after the run');
+    assert.equal(holderOf(lockPath), null, 'run lock released after the run');
   } finally {
     t.cleanup();
   }
@@ -2272,6 +2271,9 @@ test('updates commands under test never resolve the real backlog', async (ctx) =
     writeFileSync(cfgPath, JSON.stringify(raw));
     assert.match(foreignCheckout(t.config()) ?? '', /not the installed checkout/);
     const before = stories(t).get('S-1').text;
+    // The setup's sync took the run lock, and its file stays (F-104 D3): a
+    // take would write a new PID line and time into it.
+    const lockBefore = readFileSync(runLockPath(t.config(), RUN_LOCK_ID), 'utf8');
     const syncOpts = {
       reportPath: join(t.dir, 'report.json'),
       today: '2026-10-15',
@@ -2291,7 +2293,7 @@ test('updates commands under test never resolve the real backlog', async (ctx) =
     }
     assert.equal(stories(t).get('S-1').text, before, 'nothing written');
     assert.ok(!existsSync(join(t.dir, 'updates')), 'no report');
-    assert.ok(!existsSync(runLockPath(t.config(), RUN_LOCK_ID)), 'no lock taken');
+    assert.equal(readFileSync(runLockPath(t.config(), RUN_LOCK_ID), 'utf8'), lockBefore, 'no lock taken');
     const dry = await run(t, fakeRunner(), { dryRun: true });
     assert.equal(dry.res.refused, undefined);
     assert.equal(dry.lines.length, 1);
@@ -2553,7 +2555,7 @@ test('a run killed after two stories leaves both committed and pushed, the repor
       fields: { feature: 'updates', story: '', status: '1 merged, 1 dropped', next: '' },
       final: false,
     });
-    assert.ok(!existsSync(runLockPath(t.config(), RUN_LOCK_ID)), 'lock released');
+    assert.equal(holderOf(runLockPath(t.config(), RUN_LOCK_ID)), null, 'lock released');
   } finally {
     c.cleanup();
   }
@@ -2748,7 +2750,7 @@ test('run_updates_last_story_commit_failure_remains_pending_and_fails: a failed 
         assert.deepEqual(dirty, [], `${c.name}: nothing left uncommitted`);
         assert.equal(backlogGit(t.dir, 'show', 'HEAD:updates/2026-10-14.md'), report.replace(/\s+$/, ''), c.name);
       }
-      assert.ok(!existsSync(runLockPath(t.config(), RUN_LOCK_ID)), `${c.name}: lock released`);
+      assert.equal(holderOf(runLockPath(t.config(), RUN_LOCK_ID)), null, `${c.name}: lock released`);
     } finally {
       s.cleanup();
     }

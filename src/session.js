@@ -31,7 +31,8 @@ import {
   unitDirOf,
   dictionariesOf,
 } from './config.js';
-import { findExistingWorktree, isSessionRunning, reposForStory, LOCK_FILE } from './story.js';
+import { findExistingWorktree, isSessionRunning, reposForStory, sessionLockPath } from './story.js';
+import { ensureLockDir } from './lock.js';
 import { reassertTabTitle, unitTitleFields, updateTabTitle } from './tab-title.js';
 import { ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
 import { resolvePermissionScopes, loadLocalTools } from './permissions.js';
@@ -47,7 +48,7 @@ import { renderToolGuide, renderFragment } from './tool-guide.js';
 import { renderSessionStack, sessionStackOf } from './session-stack.js';
 import { resolveLocale, fragmentCandidates } from './locale.js';
 import { awaitLock } from './lock-wait.js';
-import { acquirePidLock, releasePidLock } from './pid-lock.js';
+import { release, tryLock, tryLockOnce } from './kernel-lock.js';
 import { syncMain, reportMainSync } from './main-sync.js';
 import { outcomePath, readOutcomeFile } from './outcome.js';
 
@@ -423,8 +424,9 @@ function realOrResolved(path) {
  * @param {string} repoPath — absolute path to the code repo to create the worktree in
  * @param {string} branchName
  * @param {string} worktreePath — desired absolute worktree path
+ * @param {string} backlogRoot — where the unit directory's session lock lives
  */
-export async function ensureWorktree(repoPath, branchName, worktreePath) {
+export async function ensureWorktree(repoPath, branchName, worktreePath, backlogRoot) {
   const existingWorktree = findExistingWorktree(repoPath, branchName);
   const isNewWorktree = existingWorktree == null;
 
@@ -490,10 +492,9 @@ export async function ensureWorktree(repoPath, branchName, worktreePath) {
     info('');
   } else {
     info(`Worktree already exists at ${existingWorktree.path}`);
-    if (isSessionRunning(unitDirOf(worktreePath))) {
-      console.error('\nWarning: a session lock exists in the unit directory.');
-      console.error('Another agent session may be running. Proceeding anyway,');
-      console.error('but be aware of conflicts if two sessions edit the same files.\n');
+    if (isSessionRunning(backlogRoot, unitDirOf(worktreePath))) {
+      console.error("\nWarning: a live session holds the unit directory's session lock.");
+      console.error('A session launch here is refused until that session ends.\n');
     }
   }
 
@@ -616,14 +617,16 @@ export function workonDone(worktreePath) {
  * as the only preparer of `branchName`'s worktree in `repoPath` (S-862): a
  * concurrent `bl run` or `bl implement` waits here, then finds the worktree
  * made and its `workon` debt paid, or still owed if this one failed. The lock
- * sits in the repo's common git dir, since the worktree may not exist yet; a
- * preparer that exits holding it leaves a lock the next one reclaims.
+ * sits in the repo's common git dir, since the worktree may not exist yet. It
+ * is a kernel lock (`kernel-lock.js`, F-104): a preparer that ends holding it
+ * leaves no lock, and its file stays (D3).
  *
  * The wait goes through `awaitLock` (`lock-wait.js`, F-105 W1) with no
  * deadline (F-105 A3): the lock is held while bootstrap and `workon` plugins
  * run. Ctrl+C during the wait ends `bl` at once. `fn` is async and awaited
  * (F-105 W4): `ensureWorktree` in it waits for the main-sync lock, so the
- * lock order is prepare, then main-sync.
+ * lock order is prepare, then main-sync. Because `fn` awaits, the take is not
+ * re-entrant (`tryLockOnce`): another task of this process waits too.
  */
 export async function prepareWorktreeOnce(repoPath, branchName, fn) {
   const commonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
@@ -632,13 +635,12 @@ export async function prepareWorktreeOnce(repoPath, branchName, fn) {
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
   const lockPath = join(commonDir, `bl-prepare-${branchName.replace(/[^\w.-]/g, '_')}.lock`);
-  const content = `${process.pid}\n${new Date().toISOString()}\nprepare ${branchName}\n`;
-  const take = () => acquirePidLock(lockPath, content);
-  await awaitLock(lockPath, take, { deadlineMs: null, pollMs: 100, announce: info });
+  const take = () => tryLockOnce(lockPath, `prepare ${branchName}`);
+  const { taken } = await awaitLock(lockPath, take, { deadlineMs: null, pollMs: 100, announce: info });
   try {
     return await fn();
   } finally {
-    releasePidLock(lockPath, content);
+    release(taken);
   }
 }
 
@@ -681,14 +683,31 @@ export function runStagePlugins(
   return ok;
 }
 
-/** PID on the first line of a lock file, or null when absent/unreadable. */
-function lockHolderPid(lockPath) {
+/**
+ * Take the session lock of `dir` (`sessionLockPath`: one per unit directory,
+ * F-60 D3, in the backlog's `.bl/lock/`) with one try-lock (`kernel-lock.js`).
+ * A lock this process already holds (a review round holds every unit
+ * directory's for the whole round) is reused, one depth deeper. A lock another process holds refuses the session
+ * with that process's PID. A lock file that cannot be opened refuses the
+ * session too: no session runs without the lock. `release` gives back what
+ * this call took. A review round takes each of its locks with it too.
+ *
+ * @param {string} backlogRoot
+ * @param {string} dir
+ * @param {string} info  one line that names the session
+ * @returns {{ refused: string } | { refused: null, release: () => void }}
+ */
+export function takeSessionLock(backlogRoot, dir, info) {
+  const path = sessionLockPath(backlogRoot, dir);
+  let got;
   try {
-    const pid = parseInt(readFileSync(lockPath, 'utf8').split('\n', 1)[0], 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
+    ensureLockDir(backlogRoot);
+    got = tryLock(path, info);
+  } catch (e) {
+    return { refused: `${path} could not be opened: ${e.message}` };
   }
+  if (got.holder != null) return { refused: `a live session (pid ${got.holder}) holds ${path}` };
+  return { refused: null, release: () => release(got.taken) };
 }
 
 /**
@@ -803,52 +822,35 @@ export async function runHeadlessSession({
     return notRun(`agent provider '${agent}' has no headless mode`);
   }
 
-  // Never take over a live session's lock: overwriting it and unlinking it
-  // afterwards would hide that session from `bl merge`'s guard. A lock this
-  // process already holds is left as it is; a stale one is reclaimed, taken
-  // exclusively (see pid-lock.js) so two reclaimers cannot both win.
-  const lockPath = join(cwd, LOCK_FILE);
-  let lockContent = null;
-  if (lockHolderPid(lockPath) !== process.pid) {
-    let taken;
-    try {
-      taken = acquirePidLock(
-        lockPath,
-        `${process.pid}\n${new Date().toISOString()}\n${label ?? parsed.id} (headless)\n`,
-      );
-    } catch {
-      taken = {}; // an unwritable lock is non-fatal
-    }
-    if (taken.holder != null && taken.holder !== process.pid) {
-      return notRun(`a live session (pid ${taken.holder}) holds ${lockPath}`);
-    }
-    lockContent = taken.content ?? null;
-  }
-  try {
-    logAppendTo(worktreePath, logCommand ?? mode, [parsed.id, '--headless']);
-  } catch {
-    // logging is non-fatal
-  }
-
-  const allowedTools = getAllowedTools(mode, {
-    backlogRoot,
-    roostDir,
-    worktreePath: cwd,
-    config,
-  });
-  const deniedTools = getDeniedTools(mode, { backlogRoot, config });
-  const translatedPermissions = provider.translatePermissions(allowedTools, {
-    mode,
-    roostDir,
-    backlogRoot,
-    worktreePath,
-    unitDir: cwd,
-    worktreeRoot: config ? worktreeRoot(config) : null,
-  });
-  const scopes = resolvePermissionScopes(config, { unitDir: cwd });
+  // Never start beside a live session in the same unit directory.
+  const lock = takeSessionLock(backlogRoot, cwd, `${label ?? parsed.id} (headless)`);
+  if (lock.refused) return notRun(lock.refused);
 
   let result;
   try {
+    try {
+      logAppendTo(worktreePath, logCommand ?? mode, [parsed.id, '--headless']);
+    } catch {
+      // logging is non-fatal
+    }
+
+    const allowedTools = getAllowedTools(mode, {
+      backlogRoot,
+      roostDir,
+      worktreePath: cwd,
+      config,
+    });
+    const deniedTools = getDeniedTools(mode, { backlogRoot, config });
+    const translatedPermissions = provider.translatePermissions(allowedTools, {
+      mode,
+      roostDir,
+      backlogRoot,
+      worktreePath,
+      unitDir: cwd,
+      worktreeRoot: config ? worktreeRoot(config) : null,
+    });
+    const scopes = resolvePermissionScopes(config, { unitDir: cwd });
+
     result = provider.spawn({
       mode,
       name: label,
@@ -872,12 +874,7 @@ export async function runHeadlessSession({
       ...(run ? { run } : {}),
     });
   } finally {
-    // Only the lock this call wrote, and only while it is still ours.
-    try {
-      if (lockContent != null && readFileSync(lockPath, 'utf8') === lockContent) unlinkSync(lockPath);
-    } catch {
-      // already gone
-    }
+    lock.release();
   }
 
   if (result?.error) {
@@ -968,95 +965,80 @@ export async function launchSession({
   // `provider` is a test seam; production resolves it from `agent`.
   const provider = providerOverride ?? getProvider(agent);
   const cwd = unitDir ?? worktreePath;
-  const shouldResume = !isNewWorktree && !forceNew;
-  const existingSessionId = shouldResume ? provider.findSession(cwd, sessionName) : null;
 
-  if (existingSessionId) {
-    info(`Found existing session for ${parsed.id} — will resume.\n`);
-  } else if (shouldResume) {
-    info(`Worktree exists but no previous session found — starting fresh.\n`);
-  }
-
-  updateTabTitle({ ...unitTitleFields(parsed.id), status: mode === 'workon' ? 'implement' : mode });
-
-  // A lock this process already holds (a feature's `bl review` round holds every
-  // unit directory's for the whole round) is neither rewritten nor released here.
-  const lockPath = join(cwd, LOCK_FILE);
-  const takeLock = lockHolderPid(lockPath) !== process.pid;
-  try {
-    if (takeLock) {
-      writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n${sessionName}\n`);
-    }
-  } catch {
-    // non-fatal
-  }
-  // The `finally` below releases the lock this call took. The exit listener
-  // is a belt-and-braces guard for the terminal case where the process exits
-  // without unwinding the spawn frame. Skip it in `returnOnExit` mode — the
-  // multi-PR loop calls this repeatedly, and accumulated listeners would trip
-  // MaxListenersExceededWarning past 10 PRs.
-  if (takeLock && !returnOnExit) {
-    process.on('exit', () => {
-      try {
-        unlinkSync(lockPath);
-      } catch {
-        // already gone
-      }
-    });
-  }
-
-  const blCommand = isRefine ? 'refine' : 'workon';
-  logAppendTo(worktreePath, blCommand, [parsed.id]);
-
-  const allowedTools = getAllowedTools(mode, {
-    backlogRoot,
-    roostDir,
-    worktreePath: cwd,
-    config,
-  });
-  // Generic deny tokens ride along untranslated — each provider renders them
-  // into its own refusal mechanism inside spawn (codex's translatePermissions
-  // returns an object, so a shared pre-translation here can't work).
-  const deniedTools = getDeniedTools(mode, { backlogRoot, config });
-
-  const translatedPermissions = provider.translatePermissions(allowedTools, {
-    mode,
-    roostDir,
-    backlogRoot,
-    worktreePath,
-    unitDir: cwd,
-    worktreeRoot: config ? worktreeRoot(config) : null,
-  });
-  const scopes = resolvePermissionScopes(config, { unitDir: cwd });
-
-  let effectivePrompt = applyAdditionalPrompt(sessionPrompt, additionalPrompt, {
-    mode,
-    storyId: parsed.id,
-    agent,
-    config,
-  });
-  // The outcome file (F-68 D1): no stale one from an earlier session, and its
-  // directory ready for the agent's write.
-  const outcomeFile = schema ? outcomePath(backlogRoot, parsed.id) : null;
-  if (outcomeFile) {
-    rmSync(outcomeFile, { force: true });
-    mkdirSync(dirname(outcomeFile), { recursive: true });
-    effectivePrompt = effectivePrompt.replaceAll('{{outcomePath}}', outcomeFile);
+  // Never start beside a live session in the same unit directory, before
+  // anything the session would change (its outcome file, the tab title).
+  const lock = takeSessionLock(backlogRoot, cwd, sessionName);
+  if (lock.refused) {
+    console.error(`Error: ${lock.refused}.`);
+    if (!returnOnExit) process.exit(1);
+    return schema ? { status: 1, structured: null, structuredError: lock.refused } : 1;
   }
 
   // The transcript totals before the session, for its per-step difference.
   // `undefined` when they could not be read: then nothing is recorded.
   let tokensBefore;
-  if (tokensStep && tokensIndexPath) {
-    try {
-      tokensBefore = sessionTokens(provider, cwd, parsed.id);
-    } catch {
-      // bookkeeping must never block the session
-    }
-  }
-
   let result;
+  let outcomeFile;
   try {
+    const shouldResume = !isNewWorktree && !forceNew;
+    const existingSessionId = shouldResume ? provider.findSession(cwd, sessionName) : null;
+
+    if (existingSessionId) {
+      info(`Found existing session for ${parsed.id} — will resume.\n`);
+    } else if (shouldResume) {
+      info(`Worktree exists but no previous session found — starting fresh.\n`);
+    }
+
+    updateTabTitle({ ...unitTitleFields(parsed.id), status: mode === 'workon' ? 'implement' : mode });
+
+    const blCommand = isRefine ? 'refine' : 'workon';
+    logAppendTo(worktreePath, blCommand, [parsed.id]);
+
+    const allowedTools = getAllowedTools(mode, {
+      backlogRoot,
+      roostDir,
+      worktreePath: cwd,
+      config,
+    });
+    // Generic deny tokens ride along untranslated — each provider renders them
+    // into its own refusal mechanism inside spawn (codex's translatePermissions
+    // returns an object, so a shared pre-translation here can't work).
+    const deniedTools = getDeniedTools(mode, { backlogRoot, config });
+
+    const translatedPermissions = provider.translatePermissions(allowedTools, {
+      mode,
+      roostDir,
+      backlogRoot,
+      worktreePath,
+      unitDir: cwd,
+      worktreeRoot: config ? worktreeRoot(config) : null,
+    });
+    const scopes = resolvePermissionScopes(config, { unitDir: cwd });
+
+    let effectivePrompt = applyAdditionalPrompt(sessionPrompt, additionalPrompt, {
+      mode,
+      storyId: parsed.id,
+      agent,
+      config,
+    });
+    // The outcome file (F-68 D1): no stale one from an earlier session, and its
+    // directory ready for the agent's write.
+    outcomeFile = schema ? outcomePath(backlogRoot, parsed.id) : null;
+    if (outcomeFile) {
+      rmSync(outcomeFile, { force: true });
+      mkdirSync(dirname(outcomeFile), { recursive: true });
+      effectivePrompt = effectivePrompt.replaceAll('{{outcomePath}}', outcomeFile);
+    }
+
+    if (tokensStep && tokensIndexPath) {
+      try {
+        tokensBefore = sessionTokens(provider, cwd, parsed.id);
+      } catch {
+        // bookkeeping must never block the session
+      }
+    }
+
     result = provider.spawn({
       mode,
       name: sessionName,
@@ -1074,11 +1056,7 @@ export async function launchSession({
       effort,
     });
   } finally {
-    try {
-      if (takeLock) unlinkSync(lockPath);
-    } catch {
-      // already gone
-    }
+    lock.release();
     // Here, so a spawn that throws or fails still records what its session
     // used, step and totals in one write; before `recordStoryTokens`, which
     // re-reads the file this writes.

@@ -9,6 +9,7 @@ import { GIT_ENV, git, headFiles, initGitBacklog } from '../helpers/git-backlog.
 import { loadConfig } from '../../src/config.js';
 import { acquireLock, LOCK_FILE, releaseLock } from '../../src/lock.js';
 import { syncAndCommit } from '../../src/sync.js';
+import { holderOf } from '../../src/kernel-lock.js';
 
 // S-578: `bl sync --commit` serialises on the backlog lock and commits only
 // the named stories' directories and paths (F-79 D1: it writes no index).
@@ -55,7 +56,7 @@ test('(a) a bare bl sync releases the lock when it finishes', () => {
   try {
     const r = runBl(['sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(existsSync(join(dir, LOCK_FILE)), false);
+    assert.equal(holderOf(join(dir, LOCK_FILE)), null);
   } finally {
     cleanup();
   }

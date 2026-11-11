@@ -24,8 +24,8 @@
  *   4. sets `backlog.json` `worktrees` to the root (the template with
  *      `/{repo}` cut) and commits the backlog once through `applyMigration`.
  *
- * It refuses before anything moves when a worktree to move holds a live
- * `.workon.lock`, when a target path already exists or two moves share one,
+ * It refuses before anything moves when a live session holds a worktree to
+ * move (its session lock, `sessionLockPath`), when a target path already exists or two moves share one,
  * when a file or link stands where a target's parent directory would be made,
  * when a target lies inside a worktree to move or inside another target,
  * when another registered git worktree lies inside a worktree to move,
@@ -55,10 +55,10 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
 import { loadConfig } from './config.js';
-import { withLock } from './lock.js';
+import { canonical, withLock } from './lock.js';
 import { applyMigration } from './migration-txn.js';
 import { RUN_DIR } from './run-lock.js';
-import { isSessionRunning } from './story.js';
+import { isSessionRunning, sessionLockPath } from './story.js';
 
 /** What `worktrees` meant before F-60 when `backlog.json` left it unset. */
 export const LEGACY_TEMPLATE = '../worktrees/{repo}';
@@ -124,23 +124,6 @@ function real(path) {
 function within(dir, path) {
   const rel = relative(dir, path);
   return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-
-/**
- * Absolute `path` with the links of its longest existing ancestor resolved,
- * so a path saved through a link compares equal to the worktree's real path,
- * even once the worktree has moved away from it.
- */
-function canonical(path) {
-  const rest = [];
-  for (let p = resolve(path); ; p = dirname(p)) {
-    try {
-      return join(realpathSync(p), ...rest);
-    } catch {
-      if (dirname(p) === p) return resolve(path);
-      rest.unshift(basename(p));
-    }
-  }
 }
 
 /**
@@ -259,8 +242,8 @@ export function planWorktreeLayout(config) {
         );
       }
     }
-    if (isSessionRunning(m.from))
-      refusals.push(`a bl session holds ${join(m.from, '.workon.lock')}: let it finish or stop it`);
+    if (isSessionRunning(backlogRoot, m.from))
+      refusals.push(`a bl session holds ${sessionLockPath(backlogRoot, m.from)}: let it finish or stop it`);
     if (present(m.to)) refusals.push(`${m.to} already exists, so ${m.from} cannot move there`);
     const blocked = obstruction(root, m.to);
     if (blocked) refusals.push(`${blocked} is not a directory, so ${m.from} cannot move to ${m.to}`);

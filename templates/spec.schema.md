@@ -140,7 +140,8 @@ bl new --from <spec.json> --dry-run --json   # composable
 ```
 
 `--dry-run` writes no component, story, or sync files, but it does briefly
-acquire `<backlogRoot>/.bl-new.lock` (created and removed on exit) so the
+take the backlog lock `<backlogRoot>/.bl/lock/backlog.lock` (a kernel lock that the
+file keeps; the lock is freed on exit) so the
 printed IDs match exactly what an apply run would assign at that instant.
 
 `--from` cannot be combined with single-story flags (`--title`,

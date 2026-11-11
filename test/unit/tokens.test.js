@@ -465,8 +465,9 @@ test('step-usage-rejects-nonfinite-and-fractional-counts-consistently', async ()
 
 test('overlapping_token_writers_preserve_committed_steps', async () => {
   const { spawn } = await import('child_process');
-  const { existsSync, rmSync } = await import('fs');
   const { specLockPath } = await import('../../src/spec-file.js');
+  const { holderOf } = await import('../../src/kernel-lock.js');
+  const { holdLock } = await import('../helpers/hold-lock.js');
   const dir = mkTempDir('bl-tokens-race-');
   const path = join(dir, 'index.md');
   writeFileSync(path, '---\nstory_id: S-1\n---\n\nBody\n');
@@ -488,11 +489,11 @@ test('overlapping_token_writers_preserve_committed_steps', async () => {
   const CALLS = 20;
   // A live holder (this process) delays every writer until it lets go.
   const lock = specLockPath(path);
-  writeFileSync(lock, `${process.pid}\n`);
+  const holder = holdLock(lock);
   const exits = Promise.all(Array.from({ length: WRITERS }, (_, n) => run(n, CALLS)));
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(readFileSync(path, 'utf8'), '---\nstory_id: S-1\n---\n\nBody\n', 'nobody writes past a held lock');
-  rmSync(lock);
+  holder.release();
   assert.deepEqual(await exits, Array(WRITERS).fill(0));
   const { fm } = parseFrontmatter(readFileSync(path, 'utf8'));
   const steps = fm.tokens_by_step;
@@ -503,7 +504,7 @@ test('overlapping_token_writers_preserve_committed_steps', async () => {
   assert.equal(steps['review.1'].input, String((WRITERS * CALLS) / 2), 'the shared step');
   assert.equal(fm.tokens_input, String(WRITERS * CALLS * 2), 'the totals');
   assert.equal(fm.tokens_headless_input, String(WRITERS * CALLS));
-  assert.equal(existsSync(lock), false, 'the lock is released');
+  assert.equal(holderOf(lock), null, 'the lock is released');
 });
 
 test('valid_large_counts_survive_merge_and_repeated_accumulation', async () => {
@@ -570,91 +571,6 @@ test('valid_large_counts_survive_merge_and_repeated_accumulation', async () => {
   assert.equal(usageDelta(null, use(2 ** 53)), null, 'an unsafe provider number');
 });
 
-test('token_lock_reclaim_cannot_remove_new_live_holder', async () => {
-  const fs = (await import('fs')).default;
-  const { syncBuiltinESMExports } = await import('module');
-  const { spawnSync } = await import('child_process');
-  const { specLockPath, withSpecLock, SpecLockError } = await import('../../src/spec-file.js');
-  const deadPid = spawnSync('true', { stdio: ['ignore', 'pipe', 'pipe'] }).pid;
-  const dir = mkTempDir('bl-tokens-reclaim-');
-  const path = join(dir, 'index.md');
-  writeFileSync(path, '---\nstory_id: S-1\n---\n\nBody\n');
-  const lock = specLockPath(path);
-  const live = `${process.pid}\nnew live holder\n`;
-  // Each case: the lock's state before a writer tries it, whether the writer
-  // runs, and what the lock holds afterwards (null: released).
-  const cases = {
-    free: { before: null, runs: true, after: null },
-    'live-held': { before: live, runs: false, after: live },
-    'dead-held': { before: `${deadPid}\nstale\n`, runs: true, after: null },
-    // Another reclaimer removes the dead holder's lock between the writer's
-    // create and its look at the lock, and a new holder takes it while the
-    // writer finds it missing. (A live old holder is seen before any create.)
-    'release/reacquire': { before: `${deadPid}\nold holder\n`, runs: false, after: live, race: true },
-    // A dead reclaimer's mutex is cleared, and a new reclaimer's is not.
-    'dead-held, live reclaim mutex': {
-      before: `${deadPid}\nstale\n`,
-      mutex: live,
-      runs: false,
-      after: `${deadPid}\nstale\n`,
-    },
-    'dead-held, dead reclaim mutex': {
-      before: `${deadPid}\nstale\n`,
-      mutex: `${deadPid}\nreclaim\n`,
-      runs: true,
-      after: null,
-    },
-  };
-  const { readFileSync: read, linkSync: link } = fs;
-  for (const [name, c] of Object.entries(cases)) {
-    fs.rmSync(lock, { force: true });
-    fs.rmSync(`${lock}.reclaim`, { force: true });
-    if (c.before) writeFileSync(lock, c.before);
-    if (c.mutex) writeFileSync(`${lock}.reclaim`, c.mutex);
-    if (c.race) {
-      let released = false;
-      let retaken = false;
-      fs.linkSync = (src, dest) => {
-        if (dest === lock && !released) {
-          released = true;
-          fs.unlinkSync(lock);
-          throw Object.assign(new Error('exists'), { code: 'EEXIST' });
-        }
-        return link(src, dest);
-      };
-      fs.readFileSync = (p, ...args) => {
-        try {
-          return read(p, ...args);
-        } catch (e) {
-          // Inside the reclaim mutex, where the reclaimer decides what to remove.
-          if (p === lock && released && !retaken && fs.existsSync(`${lock}.reclaim`)) {
-            retaken = true;
-            writeFileSync(lock, live);
-          }
-          throw e;
-        }
-      };
-      syncBuiltinESMExports();
-    }
-    let ran = false;
-    try {
-      await withSpecLock(path, () => (ran = true), { waitMs: 50 });
-    } catch (e) {
-      // A lock that never frees throws instead of running the writer.
-      if (!(e instanceof SpecLockError)) throw e;
-    } finally {
-      fs.readFileSync = read;
-      fs.linkSync = link;
-      syncBuiltinESMExports();
-    }
-    assert.equal(ran, c.runs, `${name}: writer ran`);
-    assert.equal(fs.existsSync(lock) ? read(lock, 'utf8') : null, c.after, `${name}: lock afterwards`);
-    if (!c.mutex || c.runs) assert.equal(fs.existsSync(`${lock}.reclaim`), false, `${name}: reclaim mutex released`);
-  }
-  fs.rmSync(lock, { force: true });
-  fs.rmSync(`${lock}.reclaim`, { force: true });
-});
-
 test('reconciliation_snapshot_and_commit_share_token_lock', async () => {
   const { mkTempBacklog } = await import('../helpers/tempdir.js');
   const { loadConfig } = await import('../../src/config.js');
@@ -662,7 +578,7 @@ test('reconciliation_snapshot_and_commit_share_token_lock', async () => {
   const { recordFeatureTokens } = await import('../../src/feature-cmd.js');
   const { recordStoryTokens } = await import('../../src/tokens.js');
   const { specLockPath } = await import('../../src/spec-file.js');
-  const { liveLockHolder } = await import('../../src/pid-lock.js');
+  const { holderOf } = await import('../../src/kernel-lock.js');
   const { dir, cleanup } = mkTempBacklog({
     repos: { code: './code' },
     components: [{ id: 'C00', title: 'Core', repo: 'code', home: true }],
@@ -685,7 +601,7 @@ test('reconciliation_snapshot_and_commit_share_token_lock', async () => {
       const held = [];
       // The session started in the unit directory: its transcripts are there.
       ClaudeProvider.prototype.getTokens = (p) => {
-        held.push(liveLockHolder(specLockPath(path)));
+        held.push(holderOf(specLockPath(path)));
         return isUnitDir(p) ? use(15) : null;
       };
       await record();

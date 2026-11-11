@@ -76,13 +76,13 @@ import {
   orderStoriesByDeps,
 } from './feature.js';
 import { heldBy, readEdges } from './blockers.js';
-import { runHeadlessSession, launchSession, loadPrompt, loadSchema } from './session.js';
+import { runHeadlessSession, launchSession, loadPrompt, loadSchema, takeSessionLock } from './session.js';
 import { cleanStderrLine } from './outcome.js';
 import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { LOCK_FILE, readComponents } from './story.js';
+import { readComponents, sessionLockPath } from './story.js';
 import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
@@ -117,8 +117,8 @@ import {
   updateChange,
   writeChange,
 } from './change-doc.js';
-import { liveLockHolder, acquirePidLock, releasePidLock } from './pid-lock.js';
-import { RUN_DIR, runLockPath, ensureRunDir } from './run-lock.js';
+import { otherHolder } from './kernel-lock.js';
+import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock } from './run-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
@@ -137,12 +137,9 @@ import {
   transition,
 } from './transition.js';
 
-export { liveLockHolder };
-
-// The run directory, its locks and its self-ignoring setup live in the
-// dependency-free run-lock.js (F-74 D4: running-man takes the updates run lock
-// with them); re-exported for the loop's callers.
-export { RUN_DIR, runLockPath, ensureRunDir };
+// The run directory, its run lock and its self-ignoring setup live in
+// run-lock.js; re-exported for the loop's callers.
+export { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock };
 export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 // ---------------------------------------------------------------------------
@@ -151,22 +148,6 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 export function runStatePath(config, featureId) {
   return join(config.backlogRoot, RUN_DIR, `${featureId}.json`);
-}
-
-/**
- * Take the per-feature run lock (see pid-lock.js: exclusive, and a dead
- * holder's lock is reclaimed atomically). Returns the content written (the
- * release token), or `{ holder }` when a live run has it. `hooks` is a test
- * seam passed to `acquirePidLock`.
- */
-export function acquireRunLock(config, featureId, hooks = {}) {
-  ensureRunDir(config);
-  const content = `${process.pid}\n${new Date().toISOString()}\nbl run ${featureId}\n${Math.random().toString(36).slice(2)}\n`;
-  return acquirePidLock(runLockPath(config, featureId), content, hooks);
-}
-
-function releaseRunLock(config, featureId, content) {
-  releasePidLock(runLockPath(config, featureId), content);
 }
 
 /**
@@ -2012,9 +1993,9 @@ async function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUnti
 // Worktree hygiene
 // ---------------------------------------------------------------------------
 
-// bl's own bookkeeping in every worktree. Several repos do not gitignore these,
-// so they are excluded explicitly rather than trusted to be ignored.
-const BOOKKEEPING = [LOCK_FILE, '.bl'];
+// bl's own bookkeeping in every worktree. Several repos do not gitignore it,
+// so it is excluded explicitly rather than trusted to be ignored.
+const BOOKKEEPING = ['.bl'];
 const BOOKKEEPING_EXCLUDES = BOOKKEEPING.map((p) => `':(exclude)${p}'`).join(' ');
 const BOOKKEEPING_PATHS = BOOKKEEPING.map((p) => `'${p}'`).join(' ');
 
@@ -2162,39 +2143,33 @@ function reviewOtherRepos(ctx) {
 }
 
 /**
- * Take the session lock of every unit directory a review round reaches (the
- * lock lives there, F-60 D3: one per unit, whichever repos it holds), so no
+ * Take the session lock of every unit directory a review round reaches (one
+ * per unit, whichever repos it holds, F-60 D3; `sessionLockPath`), so no
  * other bl session starts in one while the round's snapshots are live: its
- * edits would be quarantined and reverted as the reviewer's. A lock this
- * process already holds is left as it is (and is not released). Returns
- * `{ release }`, or `{ error }` with nothing taken when a live session holds
- * one.
+ * edits would be quarantined and reverted as the reviewer's. Each is taken
+ * as a session takes its own (`takeSessionLock`); a lock this process already
+ * holds is reused, one depth deeper. Returns `{ release }`, which closes what
+ * the round took, or `{ error }` with nothing taken when a live session holds
+ * one or a lock file cannot be opened.
  */
 function holdReviewLocks(ctx) {
   const held = [];
-  const release = () => {
-    for (const h of held) releasePidLock(h.path, h.content);
+  const releaseAll = () => {
+    for (const release of held) release();
   };
   // A worktree outside the unit directory (`bl review` given one elsewhere)
   // is locked on its own.
   const unitDir = prepUnitDir(ctx.prep);
   const outside = reviewWorktrees(ctx).filter((wt) => wt !== unitDir && !wt.startsWith(`${unitDir}/`));
   for (const dir of new Set([unitDir, ...outside])) {
-    const path = join(dir, LOCK_FILE);
-    if (liveLockHolder(path) === process.pid) continue;
-    let taken;
-    try {
-      taken = acquirePidLock(path, `${process.pid}\n${new Date().toISOString()}\n${ctx.feature.id} review round\n`);
-    } catch (e) {
-      taken = { error: `${path} could not be written: ${e.message}` };
+    const lock = takeSessionLock(ctx.config.backlogRoot, dir, `${ctx.feature.id} review round`);
+    if (lock.refused) {
+      releaseAll();
+      return { error: lock.refused };
     }
-    if (taken.content == null) {
-      release();
-      return { error: taken.error ?? `a live session (pid ${taken.holder}) holds ${path}` };
-    }
-    held.push({ path, content: taken.content });
+    held.push(lock.release);
   }
-  return { release };
+  return { release: releaseAll };
 }
 
 /**
@@ -3869,7 +3844,7 @@ export async function integrateUnit({ unit, config, prep, runner }) {
       return await integrationThrew(ctx, e);
     }
   } finally {
-    releaseRunLock(config, unit.id, lock.content);
+    releaseRunLock(lock.taken);
   }
 }
 
@@ -4587,7 +4562,7 @@ export async function reviewFeature({
       error,
     };
   } finally {
-    releaseRunLock(config, feature.id, lock.content);
+    releaseRunLock(lock.taken);
   }
 }
 
@@ -4650,12 +4625,12 @@ function refuse(runner, feature, reason) {
  *
  * One run per feature: the run holds `.bl/run/<id>.lock` for its whole
  * length, and does not start while another live process holds the unit
- * directory's `.workon.lock`.
+ * directory's session lock (`sessionLockPath`).
  */
 export async function runFeature({ feature, config, prep, runner, opts = {} }) {
-  const sessionLock = join(prepUnitDir(prep), LOCK_FILE);
-  const wtHolder = liveLockHolder(sessionLock);
-  if (wtHolder != null && wtHolder !== process.pid) {
+  const sessionLock = sessionLockPath(config.backlogRoot, prepUnitDir(prep));
+  const wtHolder = otherHolder(sessionLock);
+  if (wtHolder != null) {
     return refuse(runner, feature, `a live session (pid ${wtHolder}) holds ${sessionLock}`);
   }
   const lock = acquireRunLock(config, feature.id);
@@ -4669,7 +4644,7 @@ export async function runFeature({ feature, config, prep, runner, opts = {} }) {
     if (e instanceof RunStoppedError) return e.state;
     throw e;
   } finally {
-    releaseRunLock(config, feature.id, lock.content);
+    releaseRunLock(lock.taken);
   }
 }
 

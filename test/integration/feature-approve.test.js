@@ -9,6 +9,7 @@ import { GIT_ENV, addOrigin, git, initGitBacklog, statusLines } from '../helpers
 import { rendered } from '../helpers/rendered.js';
 import { HOME, REPOS, fm, newFeature, newStory } from '../helpers/feature-fixture.js';
 import { statusOf as logStatusOf, transition } from '../../src/transition.js';
+import { holdLock } from '../helpers/hold-lock.js';
 
 test('bl approve gates on refined status and a non-empty, consistent story list, and commits and pushes the approval', async () => {
   const { dir, cleanup } = mkTempBacklog({ repos: REPOS, components: [HOME] });
@@ -104,11 +105,11 @@ test('approve_write_and_commit_share_lock: bl approve writes nothing until it ho
     // No origin: the pull before the command would wait for the lock first.
     initGitBacklog(dir);
     const rel = 'features/F1-feat/index.md';
-    writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n${new Date().toISOString()}\n`);
+    const held = holdLock(join(dir, LOCK_FILE));
     const run = startBlBehindLock(['approve', 'F-1'], { cwd: dir, env: GIT_ENV });
     await run.blocked;
     assert.equal(logStatusOf('feature', fm(join(dir, rel))), 'refined', 'nothing written before the lock');
-    rmSync(join(dir, LOCK_FILE));
+    held.release();
     const r = await run.closed;
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(statusLines(dir), []);

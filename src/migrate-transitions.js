@@ -36,7 +36,7 @@
  */
 
 import { spawnSync } from 'child_process';
-import { existsSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
 import {
@@ -51,7 +51,7 @@ import { loadBacklog } from './backlog-graph.js';
 import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChange } from './change-doc.js';
 import { FLOW_FILE, FLOW_TYPES, LEGACY_LOG, flowPath, fromLegacy, migratedFlowText } from './flow.js';
 import { liveSessionLocks } from './migration-txn.js';
-import { liveLockHolder } from './pid-lock.js';
+import { otherHolder } from './kernel-lock.js';
 import { isUpdateStory } from './priority.js';
 import { extractReviewLog, sessionDates } from './review-log.js';
 import { RUN_DIR } from './run-lock.js';
@@ -123,45 +123,26 @@ export function datedLog(kind, fm, change, { setAt = null, firstAt = null } = {}
 }
 
 /**
- * The pids that count as this migration: this process and its parents (the
- * `bl` run or session an agent runs it in), read from `/proc` where there is
- * one.
- * @returns {Set<number>}
- */
-function callerPids() {
-  const pids = new Set([process.pid]);
-  let pid = process.ppid;
-  while (pid > 1 && !pids.has(pid)) {
-    pids.add(pid);
-    try {
-      pid = parseInt(readFileSync(`/proc/${pid}/status`, 'utf8').match(/^PPid:\s+(\d+)/m)[1], 10);
-    } catch {
-      break;
-    }
-  }
-  return pids;
-}
-
-/**
- * The units a live `bl` run or session holds, other than this migration's
- * own: id → why. A run lock is `.bl/run/<id>.lock`; a session lock names its
- * unit by its worktree's branch (`s<n>-…`, `f<n>-…`).
+ * The units whose run or session lock another process holds (`otherHolder`,
+ * F-104 D6): id → why. A lock this process holds is its own. The PID in a
+ * lock file decides nothing, so a parent `bl` run or session's lock counts as
+ * another holder too. A run lock is `.bl/run/<id>.lock`; a session lock names
+ * its unit by its worktree's branch (`s<n>-…`, `f<n>-…`).
  * @param {object} config
  * @returns {Map<string, string>}
  */
 export function heldUnits(config) {
   const root = config.backlogRoot;
-  const self = callerPids();
   const held = new Map();
   const runDir = join(root, RUN_DIR);
   for (const f of existsSync(runDir) ? readdirSync(runDir) : []) {
     if (!f.endsWith('.lock')) continue;
-    const pid = liveLockHolder(join(runDir, f));
-    if (pid != null && !self.has(pid)) held.set(f.slice(0, -5), `a bl run holds ${join(RUN_DIR, f)} (pid ${pid})`);
+    const pid = otherHolder(join(runDir, f));
+    if (pid != null) held.set(f.slice(0, -5), `a bl run holds ${join(RUN_DIR, f)} (pid ${pid})`);
   }
   for (const { dir, branch, pid } of liveSessionLocks(config)) {
     const m = branch.match(/^([sf])(\d+)(?:-|$)/i);
-    if (m && !self.has(pid)) held.set(`${m[1].toUpperCase()}-${m[2]}`, `a bl session runs in ${dir} (pid ${pid})`);
+    if (m) held.set(`${m[1].toUpperCase()}-${m[2]}`, `a bl session runs in ${dir} (pid ${pid})`);
   }
   return held;
 }

@@ -11,10 +11,12 @@
  * reads a unit directory itself.
  */
 
-import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync } from 'fs';
+import { existsSync, readdirSync, rmdirSync } from 'fs';
 import { join, matchesGlob } from 'path';
 import { execSync } from 'child_process';
 import { graphOf } from './backlog-graph.js';
+import { holderOf } from './kernel-lock.js';
+import { dirLockPath } from './lock.js';
 import {
   listMembers,
   listValue,
@@ -30,7 +32,17 @@ import { storyEffort } from './effort.js';
 
 export { normalizeId, normalizeComponentId };
 
-export const LOCK_FILE = '.workon.lock';
+/**
+ * The session lock of the directory `dir` a session runs in (a unit
+ * directory, F-60 D3, or the backlog root for a refine): one file per
+ * directory under the backlog's `.bl/lock/` (`dirLockPath`, S-1495).
+ *
+ * @param {string} backlogRoot
+ * @param {string} dir
+ */
+export function sessionLockPath(backlogRoot, dir) {
+  return dirLockPath(backlogRoot, 'session', dir);
+}
 
 /**
  * A parsed list key of story IDs (`depends_on: [S-1, S-2]`, F-62 D2): the
@@ -295,19 +307,14 @@ export function findExistingWorktree(repoPath, branchName) {
 
 /**
  * Remove a unit directory (`unitDirFor`, F-60 D2) once its last worktree is
- * gone: one that holds nothing but its session lock file goes, the lock with
- * it, unless another live process holds that lock. One that still holds
- * anything else, a worktree above all, is left as it is, and so is one that
+ * gone, when it is empty. One that holds anything stays, and so does one that
  * is not there. Never throws: a directory that cannot be read or removed
  * stays.
  * @returns {boolean} whether the directory was removed
  */
 export function removeUnitDirIfEmpty(unitDir) {
   try {
-    const entries = readdirSync(unitDir);
-    if (entries.some((e) => e !== LOCK_FILE)) return false;
-    if (entries.length && isSessionRunning(unitDir) && lockPid(unitDir) !== process.pid) return false;
-    if (entries.length) rmSync(join(unitDir, LOCK_FILE), { force: true });
+    if (readdirSync(unitDir).length) return false;
     rmdirSync(unitDir);
     return true;
   } catch {
@@ -315,36 +322,13 @@ export function removeUnitDirIfEmpty(unitDir) {
   }
 }
 
-/** The pid on the first line of `dir`'s session lock, or null. */
-function lockPid(dir) {
-  try {
-    return parseInt(readFileSync(join(dir, LOCK_FILE), 'utf8').split('\n', 1)[0], 10) || null;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Is a workon session currently running? The lock file's first line is the
- * PID of the owning process; if that PID is no longer alive the lock is stale
- * and we treat the session as not running.
+ * Is a session running in `dir` (a unit directory, F-60 D3)? Whether a process,
+ * this one included, holds its session lock (`sessionLockPath`; a try-lock,
+ * F-104 D6).
  */
-export function isSessionRunning(worktreePath) {
-  const lockPath = join(worktreePath, LOCK_FILE);
-  if (!existsSync(lockPath)) return false;
-  let pid;
-  try {
-    pid = parseInt(readFileSync(lockPath, 'utf8').split('\n', 1)[0], 10);
-  } catch {
-    return false;
-  }
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+export function isSessionRunning(backlogRoot, dir) {
+  return holderOf(sessionLockPath(backlogRoot, dir)) != null;
 }
 
 /**
