@@ -47,7 +47,7 @@ var keys = keyMap{
 	open: key.NewBinding(key.WithKeys("enter"),
 		key.WithHelp("↵", "show the selected run in the detail box; open the update group")),
 	act:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "open the action menu of the selected row")),
-	follow:  key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed on or off")),
+	follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed on or off")),
 	watch:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "open bl watch of the run in a tmux window")),
 	order:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "show the unranked units newest or oldest first")),
 	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
