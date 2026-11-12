@@ -124,6 +124,7 @@ _roost_bl() {
     'capacity:Whether each agent configuration can take work now'
     'top:A live view of the runs, the inbox, bl next, capacity and history'
     'watch:Follow the live agent session of a run, step by step'
+    'stop:Stop a running bl run cleanly, so --resume continues it'
     'help:Show help'
   )
 
@@ -201,6 +202,11 @@ _roost_bl() {
         '--from-start[Print the current session from its beginning]' \
         '--json[Print one JSON object per line]' \
         '1:feature or story id:(${ids})'
+      ;;
+    stop)
+      local -a ids
+      ids=( ${(f)"$(_roost_feature_ids)"} ${(f)"$(_roost_story_ids)"} )
+      _arguments -s '1:feature or story id:(${ids})'
       ;;
     inbox)
       if [[ "${words[2]}" == done ]]; then

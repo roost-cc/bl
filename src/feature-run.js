@@ -118,7 +118,7 @@ import {
   writeChange,
 } from './change-doc.js';
 import { otherHolder } from './kernel-lock.js';
-import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock } from './run-lock.js';
+import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock, stopRequestPath } from './run-lock.js';
 import { takeUnitLocks } from './unit-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
@@ -152,7 +152,9 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
  *
  * Returns `{ refused }`, which names the other holder, with neither lock held;
  * or `{ refused: null, release }`, where `release()` gives back both. If the
- * take throws (the stories cannot be read), it holds neither either.
+ * take throws (the stories cannot be read), it holds neither either. With
+ * both held, a stop request left by `bl stop` for an earlier holder is
+ * deleted (F-87 D7a): it was not for this run.
  *
  * @param {object} config
  * @param {import('./unit-lock.js').WorkUnit} unit
@@ -173,6 +175,7 @@ function takeRunLocks(config, unit, owner) {
     releaseRunLock(run.taken);
     return { refused: units.refused };
   }
+  rmSync(stopRequestPath(config, unit.id), { force: true });
   return {
     refused: null,
     release: () => {
@@ -248,7 +251,8 @@ export function newRunState(feature, { branch, worktreePath, maxRounds }) {
     worktreePath,
     startedAt: new Date().toISOString(),
     updatedAt: null,
-    status: 'running', // running | clean | escalated | failed | reviewed (bl review)
+    // running | clean | escalated | failed | reviewed (bl review) | stopped (bl stop, with `stoppedAt`)
+    status: 'running',
     step: 'setup',
     storyIndex: 0,
     // Test-gate attempts so far; attempt n's output is .bl/run/<id>.test-<n>.log.
@@ -813,6 +817,7 @@ function record(ctx, entry) {
   saveRunState(ctx.config, ctx.state);
 }
 
+/** Enter `step` and save it; a stop request stops the run here, before the step does anything. */
 function setStep(ctx, step, extra = {}) {
   ctx.state.step = step;
   Object.assign(ctx.state, extra);
@@ -822,6 +827,44 @@ function setStep(ctx, step, extra = {}) {
   ctx.runner.log(
     `\n── ${ctx.feature.id} ▸ ${step}${extra.story ? ` ${extra.story}` : ''}${extra.round ? ` (round ${extra.round})` : ''}`,
   );
+  checkStop(ctx);
+}
+
+/**
+ * Mark run state `state` stopped (F-87 D7a): a `{ step: "stopped" }` history
+ * entry with `note`, `status: stopped` and `stoppedAt`. `step` keeps the step
+ * the run stopped in, which `bl status` shows. The caller saves the state.
+ * The loop (`checkStop`) and `bl stop` for a run no bl holds both use it.
+ */
+export function markStopped(state, note) {
+  const at = new Date().toISOString();
+  state.history.push({ step: 'stopped', ok: true, note, at });
+  state.status = 'stopped';
+  state.stoppedAt = at;
+  state.lastError = null;
+}
+
+/**
+ * Stop the run when `bl stop` has written its stop request (F-87 D7a):
+ * called at each step start (`setStep`) and after each spawn in
+ * `newScope(ctx)` returns, before the loop reads its result, so the stopped
+ * session is not an attempt and does not escalate. Marks the state stopped
+ * (`markStopped`), saves it, deletes the request and throws a
+ * StopRequestError, which unwinds the step's cleanups to `runFeature`. The
+ * locks go with it, and `bl run` exits 130. The unit's `status:` does not
+ * change.
+ */
+function checkStop(ctx) {
+  const request = stopRequestPath(ctx.config, ctx.feature.id);
+  if (!existsSync(request)) return;
+  const { state } = ctx;
+  const reason = `stopped by bl stop at ${state.step}`;
+  markStopped(state, reason);
+  saveRunState(ctx.config, state);
+  rmSync(request, { force: true });
+  finalTitle(ctx, 'stopped');
+  safeLog(ctx.runner, `\n${ctx.feature.id} stopped at ${state.step}; resume: ${ctx.resumeHint}`);
+  throw new StopRequestError(reason, state);
 }
 
 /**
@@ -1145,7 +1188,7 @@ async function withContainerCleanup(ctx, label, fn) {
 /**
  * A run the loop stopped from inside a step, after `finish()` saved the
  * escalated state, or the failed one when a log write failed (`logWrite`,
- * `recordVerdict`). Thrown so the step's callers skip their bookkeeping (a
+ * `recordVerdict`), or after `checkStop` saved the stopped one. Thrown so the step's callers skip their bookkeeping (a
  * nudge retry, a review round's verdict), and caught by runFeature and
  * reviewFeature, which return that state; `escalated` is true only for an
  * escalated one.
@@ -1167,6 +1210,9 @@ export class AgentUnavailableError extends RunStoppedError {}
 
 /** A step's session returned no valid outcome, retried once (F-68 D5). */
 export class OutcomeError extends RunStoppedError {}
+
+/** `bl stop` asked the run to stop (F-87 D7a, `checkStop`). */
+export class StopRequestError extends RunStoppedError {}
 
 /** Remove what `label` left behind; returns why it could not, or null. Never throws. */
 function removeFreshContainers(ctx, label, before) {
@@ -1801,6 +1847,8 @@ export async function runSession(
       ...(retry ? { retry } : {}),
       ...(follow ? { follow } : {}),
     });
+    // A session `bl stop` ended is no attempt: the loop stops before it reads it.
+    checkStop(ctx);
     // Usage first, on every spawn: the provider has already added it to the
     // unit file, and the run state must agree even when the spawn was a
     // refusal (marked out, waited out or escalated, all of which save it).
@@ -3188,6 +3236,7 @@ function runTestGateInner(ctx) {
       // Merged streams: an error printed on stderr stays next to the stdout
       // lines around it (runners without the option ignore it).
       const r = runner.shell(cmd, t.worktreePath, { mergeStreams: true, scope: newScope(ctx) });
+      checkStop(ctx);
       const output = String(r.output ?? '');
       log += `── ${t.repo} · ${name}: ${cmd}\n${output}${output.endsWith('\n') || !output ? '' : '\n'}`;
       if (r.status !== 0) {
@@ -4854,6 +4903,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   } else {
     state.status = 'running';
     state.lastError = null;
+    delete state.stoppedAt;
     state.maxRounds = maxRounds;
   }
   const implementPrompt = isStory(feature) ? 'story-run' : 'feature-story';

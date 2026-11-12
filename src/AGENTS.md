@@ -85,6 +85,7 @@ Per-command stdout contracts:
 | `bl top`             | the view (a terminal UI); `--version`: one line           |
 | `bl watch`           | one line per header or event, then the end line           |
 | `bl watch --json`    | one JSON object per line, the last `{kind: "end"}`        |
+| `bl stop`            | nothing (`stopped <id> at <step>; …` → stderr)            |
 | `bl help`            | help text                                                 |
 | `bl <cmd> --help`    | help text                                                 |
 
@@ -3527,6 +3528,45 @@ id before the spawn (Codex); `--json`'s `session` is the id or null. `at` is an 
 the transcript record's time for Claude, the time `watch` read the event for Codex. No
 thinking and no tool output is printed. A session with no live feed (interactive, or Gemini,
 which has no headless mode) gets its header and one stderr line that says so.
+
+### `bl stop`
+
+`bl stop <F-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly, so
+that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s stop action
+runs it. The run loop is synchronous (agent sessions start through `spawnSync`), so a signal
+to its bl would be handled only after the run ends. `bl stop` never sends one:
+
+1. It reads the holder of the run lock (`otherHolder(runLockPath())`). With no holder and a run
+   state that says `running` (its bl died), it marks the run state stopped itself
+   (`markStopped`), prints `stopped <id> at <step> (no live bl held the run); resume: …` and
+   exits 0. With no run state, or one that is not `running`, it exits 1 with
+   `no running run for <id>`.
+2. It writes the stop request `.bl/run/<id>.stop` (`stopRequestPath()` in `src/run-lock.js`):
+   one JSON object, `{ pid, at }`, its own pid and the time.
+3. It stops each process scope of the holder (`scopesOf()` in `src/process-scope.js`, the scopes
+   named `bl-<unit>-<holder pid>-<n>`) with `stopScope()`. That ends the current agent session
+   or test-gate command, and the loop's spawn returns. Without user systemd there is no scope,
+   and the run stops when its current session ends.
+4. The loop checks the request (`checkStop()` in `src/feature-run.js`) at each step start
+   (`setStep`) and after each spawn in `newScope(ctx)` returns (the session in `runSession`,
+   each test-gate command in `runTestGateInner`), before it reads the result. So the stopped
+   session is not an attempt and does not escalate, and its tokens are lost, as for a killed
+   bl (**Tokens per step**). With the request there, the loop records a `{ step: "stopped" }`
+   history entry, writes `status: stopped` and `stoppedAt` (`markStopped`), deletes the
+   request and throws a `StopRequestError`. Its step cleanups run, `runFeature` releases the
+   run lock and the work unit locks, and `bl run` exits 130.
+5. `bl stop` waits up to 30 s for the run lock to go, then prints
+   `stopped <id> at <step>; resume: bl run <id> --resume` on stderr and exits 0. If the lock is
+   still held, it exits 1 with `stop requested: <id> (pid <n>) stops at its next check`
+   (`pid unknown` when the lock file names no pid yet), and the request stays. A run that ended
+   on its own before it read the request gets a line that says so, and the request is deleted.
+
+The work unit's `status:` does not change: `--resume` continues any run state (`driveFeature`
+sets it back to `running` and drops `stoppedAt`). `takeRunLocks` deletes a leftover stop
+request once it holds the locks, so a request never stops a later run, `bl review` or
+`bl merge`. `bl stop` is a short command (F-122 D2): it neither takes nor checks work unit
+locks, since the run it stops holds them. `bl status <id>` shows a stopped run as
+`run: stopped at <step> (<local time>)`.
 
 ### `bl list`
 

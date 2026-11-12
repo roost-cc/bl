@@ -20,6 +20,7 @@ import {
 } from '../../src/feature-run.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { holderOf } from '../../src/kernel-lock.js';
+import { stopRequestPath } from '../../src/run-lock.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
 import { accumulateTokensOnFile } from '../../src/tokens.js';
 import {
@@ -1776,6 +1777,125 @@ test("each headless step's session is in the run state before it spawns, with th
   } finally {
     if (prev == null) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = prev;
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// bl stop: the loop's stop check (F-87 D7a, S-1335)
+// ---------------------------------------------------------------------------
+
+/** The unit's status from its log, read now. */
+const unitStatusNow = (feature) => logStatusOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm);
+
+/** Whether the unit's `## Escalation` is still `None.`. */
+const noEscalation = (feature) =>
+  /^\s*None\.\s*$/.test(extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation'));
+
+test('stop_check_session: a session that returns while a stop request exists stops the run: no attempt, no escalation; --resume reruns the step', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const request = stopRequestPath(config, 'F-1');
+    let statusAtStop = null;
+    // `bl stop` writes the request and ends the session: S-1's criteria stay open.
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        story: (o) => {
+          if (o.vars.storyId !== 'S-1') return checkAll(o.vars.storyAbsPath);
+          statusAtStop = unitStatusNow(feature);
+          writeFileSync(request, '{"pid":1,"at":"2026-11-11T00:00:00Z"}\n');
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'stopped');
+    assert.equal(state.step, 'implement');
+    assert.equal(state.story, 'S-1');
+    assert.equal(state.lastError, null);
+    assert.ok(Number.isFinite(Date.parse(state.stoppedAt)));
+    const last = state.history.at(-1);
+    assert.equal(last.step, 'stopped');
+    assert.equal(last.note, 'stopped by bl stop at implement');
+    assert.equal(state.history.filter((h) => h.step === 'implement').length, 0, 'the stopped session is no attempt');
+    assert.equal(runner.calls.filter((c) => c.type === 'session').length, 1, 'no nudge retry, no next story');
+    assert.equal(existsSync(request), false, 'the loop deletes the request');
+    assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the run lock is released');
+    assert.equal(unitStatusNow(feature), statusAtStop, "the unit's status does not change");
+    assert.ok(noEscalation(feature), 'no escalation');
+    assert.deepEqual(loadRunState(config, 'F-1'), state, 'saved as returned');
+    assert.equal(lastTitle(runner).status, 'stopped');
+
+    const again = fakeRunner({ dir, feature });
+    const resumed = await runFeature({ feature, config, prep, runner: again, opts: { resume: true, maxRounds: 2 } });
+    assert.equal(resumed.status, 'clean', JSON.stringify(resumed.history.slice(-4)));
+    assert.equal(resumed.stoppedAt, undefined);
+    const first = again.calls.find((c) => c.type === 'session');
+    assert.deepEqual([first.prompt, first.story], ['feature-story', 'S-1'], 'resumes at the stopped step');
+  } finally {
+    cleanup();
+  }
+});
+
+test('stop_check_step_start: a stop request found at a step start stops the run before the step does anything', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const request = stopRequestPath(config, 'F-1');
+    const runner = fakeRunner({ dir, feature });
+    const title = runner.title;
+    runner.title = (fields, opts) => {
+      // setStep sets the title, then checks the request.
+      if (fields.status === 'test' && !opts?.final) writeFileSync(request, '{}\n');
+      title(fields, opts);
+    };
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'stopped');
+    assert.equal(state.step, 'test');
+    assert.equal(runner.calls.filter((c) => c.type === 'shell' && c.cmd === 'npm test').length, 0, 'no gate command');
+    assert.equal(existsSync(request), false);
+  } finally {
+    cleanup();
+  }
+});
+
+test('stop_check_test_gate: a test-gate command that returns while a stop request exists is no failed attempt', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const request = stopRequestPath(config, 'F-1');
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        shell: (cmd) => {
+          if (cmd !== 'npm test') return null;
+          writeFileSync(request, '{}\n');
+          return { status: 143, output: 'Terminated\n' };
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'stopped');
+    assert.equal(state.step, 'test');
+    assert.equal(state.history.filter((h) => h.step === 'test' && h.ok === false).length, 0, 'no failed gate');
+    assert.equal(runner.calls.filter((c) => c.prompt === 'feature-fix-tests').length, 0, 'no fix-tests session');
+    assert.ok(noEscalation(feature), 'no escalation');
+  } finally {
+    cleanup();
+  }
+});
+
+test('stop_leftover: bl run deletes a stop request left from an earlier run when it starts', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const request = stopRequestPath(config, 'F-1');
+    mkdirSync(join(dir, RUN_DIR), { recursive: true });
+    writeFileSync(request, '{}\n');
+    const runner = fakeRunner({ dir, feature });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    assert.equal(existsSync(request), false);
+  } finally {
     cleanup();
   }
 });

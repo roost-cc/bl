@@ -112,7 +112,7 @@ _roost_bl() {
 
   # First arg: subcommand
   if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "init new side attach move next-id run implement approve status refine review pr edit view show which grep list ls tree history report next rank what-next done inbox block task sync s merge log allow agents capacity top watch help" -- "$cur") )
+    COMPREPLY=( $(compgen -W "init new side attach move next-id run implement approve status refine review pr edit view show which grep list ls tree history report next rank what-next done inbox block task sync s merge log allow agents capacity top watch stop help" -- "$cur") )
     return
   fi
 
@@ -176,6 +176,13 @@ _roost_bl() {
     watch)
       if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "--from-start --json --help" -- "$cur") )
+      else
+        COMPREPLY=( $(compgen -W "$(_roost_feature_ids) $(_roost_story_ids)" -- "$cur") )
+      fi
+      ;;
+    stop)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--help" -- "$cur") )
       else
         COMPREPLY=( $(compgen -W "$(_roost_feature_ids) $(_roost_story_ids)" -- "$cur") )
       fi

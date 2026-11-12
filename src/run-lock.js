@@ -20,6 +20,15 @@ export function runLockPath(config, featureId) {
   return join(config.backlogRoot, RUN_DIR, `${featureId}.lock`);
 }
 
+/**
+ * `<backlog>/.bl/run/<id>.stop`: the stop request `bl stop` writes for the
+ * bl that holds `id`'s run lock (F-87 D7a). The loop checks it at each step
+ * start and after each scoped spawn; `takeRunLocks` deletes a leftover one.
+ */
+export function stopRequestPath(config, featureId) {
+  return join(config.backlogRoot, RUN_DIR, `${featureId}.stop`);
+}
+
 export function ensureRunDir(config) {
   const dir = join(config.backlogRoot, RUN_DIR);
   mkdirSync(dir, { recursive: true });

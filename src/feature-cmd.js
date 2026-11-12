@@ -803,9 +803,12 @@ function printUnitTail(config, unit) {
     try {
       const run = JSON.parse(readFileSync(statePath, 'utf8'));
       const last = run.history?.[run.history.length - 1];
-      console.log(
-        `\nrun: ${run.status} at step ${run.step}${run.lastError ? ` — ${run.lastError}` : ''} (updated ${run.updatedAt ?? '?'}, ${run.history?.length ?? 0} events${last?.note ? `, last: ${last.note}` : ''})`,
-      );
+      // A run `bl stop` stopped (F-87 D7a): the step it stopped in, and when.
+      if (run.status === 'stopped') console.log(`\nrun: stopped at ${run.step} (${localTime(run.stoppedAt)})`);
+      else
+        console.log(
+          `\nrun: ${run.status} at step ${run.step}${run.lastError ? ` — ${run.lastError}` : ''} (updated ${run.updatedAt ?? '?'}, ${run.history?.length ?? 0} events${last?.note ? `, last: ${last.note}` : ''})`,
+        );
       // A run sleeping through an agent usage limit: what it waits for, and
       // until when (local time).
       if (run.status === 'running' && last?.step === 'waiting') {
@@ -1721,7 +1724,8 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
   if (interactive) await recordFeatureTokens(unit, prep.cfg);
   const { printInboxCount } = await import('./inbox.js');
   printInboxCount(config);
-  process.exit(state.status === 'clean' || state.status === 'no-change' ? 0 : 1);
+  // A run `bl stop` stopped exits 130, as an interrupted command does (F-87 D7a).
+  process.exit(state.status === 'clean' || state.status === 'no-change' ? 0 : state.status === 'stopped' ? 130 : 1);
 }
 
 // ---------------------------------------------------------------------------
