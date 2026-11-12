@@ -9,7 +9,7 @@ import { collectInbox, doneRefusal, inboxCountLine, readHeartbeat, renderInbox }
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { withEnv } from '../helpers/fake-pagers.js';
 // The S-970 scanner's last reader is F-65's migration (D5).
-import { writeBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { formatTask } from '../../src/task.js';
 import { runBl } from '../helpers/run-bl.js';
 import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
@@ -115,7 +115,7 @@ function setup() {
     until: 'done',
     active_when: { unit, status: 'done' },
   });
-  writeBlockers(dir, [
+  writeBlockersLocked(dir, [
     { blocker: 'T-1', gate: 'merge', unit: 'F-42', until: 'done' },
     next('T-2', 'S-10'),
     { blocker: 'T-3', gate: 'merge', unit: 'F-35', until: 'done' },

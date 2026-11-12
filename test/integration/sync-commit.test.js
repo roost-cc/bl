@@ -200,6 +200,40 @@ test('(c) --commit formats the changed Markdown files among its paths and commit
   }
 });
 
+test('(c) --commit runs the format plugin on one changed Markdown file at a time (F-126 D4)', () => {
+  const { dir, cleanup } = gitBacklog();
+  try {
+    const marker = join(dir, '.git', 'formatted.jsonl');
+    const recorder = join(dir, '.git', 'record-format.mjs');
+    writeFileSync(
+      recorder,
+      "import { writeFileSync } from 'fs';\n" +
+        "writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3)) + '\\n', { flag: 'a' });\n",
+    );
+    const cfgPath = join(dir, 'backlog.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    cfg.plugins = { md: { format: `node ${recorder} ${marker} {{path}}` } };
+    cfg.language_dispatch = { format: { '.md': 'md' } };
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    git(dir, 'add', 'backlog.json');
+    git(dir, 'commit', '-q', '-m', 'formatter');
+
+    setField(dir, S2, 'points', 5);
+    writeFileSync(join(dir, S2, 'notes.md'), '# Notes\n');
+
+    const r = runBl(['sync', '--commit', '-m', 'chore: S-2', '--story', 'S-2'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+
+    const lines = readFileSync(marker, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(lines, [[`${S2}/index.md`], [`${S2}/notes.md`]]);
+  } finally {
+    cleanup();
+  }
+});
+
 test('(c) --commit with nothing to commit exits 0 without a commit', () => {
   const { dir, cleanup } = gitBacklog();
   try {

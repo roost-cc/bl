@@ -6,9 +6,8 @@ import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
 import { extractSection, resolveFeaturePluginsReport } from '../../src/feature.js';
 import { runFeature, planSteps, formatPlan, runStatePath } from '../../src/feature-run.js';
-import { spawnSync } from 'child_process';
 import { mkTempDir } from '../helpers/tempdir.js';
-import { initGitBacklog, git as backlogGit, GIT_ENV } from '../helpers/git-backlog.js';
+import { initGitBacklog, git as backlogGit } from '../helpers/git-backlog.js';
 import { parseChange } from '../../src/change-doc.js';
 import { unitVars } from '../../src/unit.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
@@ -60,6 +59,7 @@ test('bl run S-n --plan prints the same steps as a one-story feature', () => {
 test('a story run: implement, gate, self-review, one PR titled S-n: <title>, review → fix → clean; stops before merge', async () => {
   const { cleanup, config, unit, prep } = storySetup();
   try {
+    initGitBacklog(config.backlogRoot);
     const runner = fakeRunner({ dir: config.backlogRoot, feature: unit });
     const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'clean');
@@ -97,7 +97,7 @@ test('a story run: implement, gate, self-review, one PR titled S-n: <title>, rev
     );
     assert.match(extractSection(change.body, 'Description'), /^\nStory S-5: Loose \(3 pts\)\n/);
     assert.ok(existsSync(runStatePath(config, 'S-5')), 'run state keyed by the story id');
-    assert.ok(runner.calls.some((c) => c.type === 'shell' && /git commit .*S-5 run started on s5-loose/.test(c.cmd)));
+    assert.match(backlogGit(config.backlogRoot, 'log', '--format=%s'), /S-5 run started on s5-loose/);
   } finally {
     cleanup();
   }
@@ -112,24 +112,8 @@ test("bl run's own backlog commits are pushed to origin main (F-50 D4)", async (
     backlogGit(remote, 'init', '-q', '--bare', '-b', 'main');
     backlogGit(dir, 'remote', 'add', 'origin', remote);
     backlogGit(dir, 'push', '-q', 'origin', 'main');
-    // The backlog's own add and commit run for real; everything else is fake.
-    const runner = fakeRunner({
-      dir,
-      feature: unit,
-      behaviour: {
-        shell: (cmd) =>
-          /^git (add --|commit -q -m) /.test(cmd)
-            ? (({ status, stdout, stderr }) => ({ status, output: stdout + stderr }))(
-                spawnSync('sh', ['-c', cmd], {
-                  cwd: dir,
-                  encoding: 'utf8',
-                  env: { ...process.env, ...GIT_ENV },
-                  stdio: ['ignore', 'pipe', 'pipe'],
-                }),
-              )
-            : null,
-      },
-    });
+    // The backlog's own commit and push run for real (`commitPaths`); everything else is fake.
+    const runner = fakeRunner({ dir, feature: unit });
     await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
     assert.match(
       backlogGit(dir, 'log', '-1', '--format=%s', '--grep=run started', 'main'),

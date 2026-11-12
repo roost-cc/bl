@@ -5,13 +5,14 @@ import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
-import { BLOCKERS_FILE, formatBlockers, readBlockers, writeBlockers } from '../../src/blockers.js';
+import { BLOCKERS_FILE, formatBlockers, readBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { backlog, bl } from '../helpers/block-fixture.js';
 
 test('bl block add writes one sorted line, commits blockers.json alone, and list shows it unmet', () => {
   const { dir } = backlog();
   initGitBacklog(dir);
-  writeBlockers(dir, [{ blocker: 'S-2', gate: 'merge', unit: 'S-1', until: 'done' }]);
+  writeBlockersLocked(dir, [{ blocker: 'S-2', gate: 'merge', unit: 'S-1', until: 'done' }]);
   git(dir, 'add', BLOCKERS_FILE);
   git(dir, 'commit', '-q', '-m', 'seed');
 
@@ -301,7 +302,7 @@ test('block add refuses active_when on a merge edge and on an order edge, and bl
   }
   assert.equal(readBlockers(dir).text, null, 'nothing written');
 
-  writeBlockers(
+  writeBlockersLocked(
     dir,
     edges.map(([, e]) => ({ ...e, active_when: whens[1] })),
   );

@@ -6,7 +6,7 @@ import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { buildSampleBacklog } from '../helpers/sample-backlog.js';
 import { spawnSync } from 'node:child_process';
 import { BL_BIN, runBl } from '../helpers/run-bl.js';
-import { writeBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 
 /**
  * A fixture that passes the component rules (F-49 D4): every registered repo
@@ -1082,7 +1082,7 @@ test('bl validate reports a bad merge edge and a cycle of merge edges with the e
     ],
   });
   const m = (blocker, unit, gate = 'merge', until = 'merged') => ({ blocker, gate, unit, until });
-  writeBlockers(td.dir, [
+  writeBlockersLocked(td.dir, [
     m('F-1:ci-cd', 'F-1:demo-repo'),
     m('F-1:demo-repo', 'F-1:ci-cd'),
     m('F-2:demo-repo', 'F-1:ci-cd'),
@@ -1124,7 +1124,7 @@ test('bl validate reports a bad order edge and a cycle of order edges with the e
     ],
   });
   const o = (blocker, unit, until = 'implemented') => ({ blocker, gate: 'order', unit, until });
-  writeBlockers(td.dir, [
+  writeBlockersLocked(td.dir, [
     o('S-1', 'S-2'),
     o('S-3', 'S-2'),
     o('S-5', 'S-1'),

@@ -50,7 +50,7 @@ function writingClaude() {
  * draft of S-1, and `extraStories` more stories in backlog from S-101 on
  * (`stories/S<n>/index.md`).
  */
-export function gitBacklog({ extraStories = 0 } = {}) {
+export async function gitBacklog({ extraStories = 0 } = {}) {
   const extra = Array.from({ length: extraStories }, (_, i) => ({
     id: `S-${101 + i}`,
     component: 'C01',
@@ -68,7 +68,7 @@ export function gitBacklog({ extraStories = 0 } = {}) {
     features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'draft', stories: ['S-1'] }],
   });
   // A real backlog has it committed; otherwise the session's launch writes it.
-  ensureAllowedTools(dir, loadConfig({ backlogRoot: dir }));
+  await ensureAllowedTools(dir, loadConfig({ backlogRoot: dir }));
   initGitBacklog(dir);
   addOrigin(dir);
   return dir;

@@ -7,7 +7,16 @@ import { withPartialWrites } from '../helpers/partial-write.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { extractSection } from '../../src/feature.js';
 import { loadPrompt } from '../../src/session.js';
-import { readAllThemes, recordThemeState, splitBriefEntry, themeBriefList } from '../../src/theme.js';
+import {
+  readAllThemes,
+  recordThemeState as recordThemeStateHeld,
+  splitBriefEntry,
+  themeBriefList,
+} from '../../src/theme.js';
+import { underLock } from '../helpers/covering-lock.js';
+
+/** `recordThemeState` in the backlog lock hold `bl merge` calls it in (F-126). */
+const recordThemeState = (config, ...a) => underLock(config.backlogRoot, () => recordThemeStateHeld(config, ...a));
 import { VALID_THEME_KEYS, findThemeBriefFindings, runAll } from '../../src/validate.js';
 
 // F-53 D4: a theme's `brief:` (validated, listed in the feature prompts) and

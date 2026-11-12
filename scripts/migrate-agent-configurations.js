@@ -33,9 +33,11 @@
  */
 
 import { readFileSync, realpathSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { atomicWriteFile } from '../src/atomic-write.js';
+import { release, tryLock } from '../src/kernel-lock.js';
+import { ensureLockDir, LOCK_FILE } from '../src/lock.js';
 
 const USAGE = 'Usage: node scripts/migrate-agent-configurations.js [--dry-run] <backlog.json>';
 
@@ -180,13 +182,21 @@ export function main(argv) {
     console.log('(dry run: nothing written)');
     return 0;
   }
+  // backlog.json sits in the backlog root, whose .bl/tmp/ stages the write;
+  // a symlink stays one and the file keeps its mode and owner. Its covering
+  // lock is the backlog lock (F-126), taken with one try: `main` is synchronous.
+  const root = dirname(path);
+  let got;
   try {
-    // backlog.json sits in the backlog root, whose .bl/tmp/ stages the write;
-    // a symlink stays one and the file keeps its mode and owner.
-    atomicWriteFile(dirname(path), path, JSON.stringify(result.json, null, 2) + '\n', { preserve: true });
+    ensureLockDir(root);
+    got = tryLock(join(root, LOCK_FILE), `bl migrate-agent-configurations ${path}`);
+    if (!('taken' in got)) throw new Error(`pid ${got.holder} holds the backlog lock; rerun when it ends`);
+    atomicWriteFile(root, path, JSON.stringify(result.json, null, 2) + '\n', { preserve: true });
   } catch (e) {
     console.error(`${path}: not rewritten, left as it was: ${e.message}`);
     return 1;
+  } finally {
+    if (got?.taken) release(got.taken);
   }
   console.log(`${path} rewritten`);
   return 0;

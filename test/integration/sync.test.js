@@ -38,11 +38,11 @@ function tree(dir, root = dir, out = new Map()) {
  * `seeded()` as Alice's git clone, a bare origin, and Bob's clone of it, each
  * with its own identity.
  */
-function twoClones() {
+async function twoClones() {
   const { dir: alice, cleanup } = seeded();
   initGitBacklog(alice);
   // The one generated file, current, so no pull regenerates it.
-  ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
+  await ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
   git(alice, 'add', '.');
   git(alice, 'commit', '-q', '--allow-empty', '-m', 'allowed tools');
   const tmp = mkTempDir('bl-sync-remote-');
@@ -77,8 +77,8 @@ test('bl sync on a clean tree with no origin writes no file and creates no index
   }
 });
 
-test('bl sync pulls what origin has and pushes what main has, and writes nothing else', () => {
-  const { alice, bob, remote, cleanup } = twoClones();
+test('bl sync pulls what origin has and pushes what main has, and writes nothing else', async () => {
+  const { alice, bob, remote, cleanup } = await twoClones();
   try {
     // Bob's story arrives at Alice by her bare bl sync.
     git(bob, 'mv', 'stories/S1-first-story', 'stories/S1-renamed');
@@ -125,8 +125,8 @@ test('bl sync refuses a backlog.json title that is not a one-line string', () =>
   }
 });
 
-test('two clones that each bl new a story under the same component and feature rebase onto each other without a conflict', () => {
-  const { alice, bob, remote, cleanup } = twoClones();
+test('two clones that each bl new a story under the same component and feature rebase onto each other without a conflict', async () => {
+  const { alice, bob, remote, cleanup } = await twoClones();
   try {
     // Alice adds her story: bl new commits it and pushes.
     const a = bl(['new', 'F-1', 'C01', '--title', 'Alice story', '--points', '1'], alice);

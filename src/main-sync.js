@@ -21,7 +21,7 @@
 import { resolve } from 'path';
 import { info } from './config.js';
 import { awaitLock, LockWaitTimeout } from './lock-wait.js';
-import { release, tryLockOnce } from './kernel-lock.js';
+import { assertHeld, release, tryLockOnce } from './kernel-lock.js';
 import { describeExit, git } from './child.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
@@ -77,6 +77,18 @@ export function mainSyncLockPath(repoPath) {
     throw new Error(`${repoPath} is not a git repository: ${describeExit(r, 'git rev-parse')}`);
   }
   return resolve(repoPath, r.stdout.trim(), MAIN_SYNC_LOCK);
+}
+
+/**
+ * Throw unless this process holds `repoPath`'s main sync lock (`assertHeld`).
+ * Every bl git call that changes the backlog's index, working tree or refs
+ * makes this check first (F-126 D1): `backlog-commit.js` `commitLocked`,
+ * `pushBacklog`, `pullLocked`, `resetPaths` and `discardChanges`.
+ *
+ * @param {string} repoPath
+ */
+export function assertMainSyncLock(repoPath) {
+  assertHeld(mainSyncLockPath(repoPath), 'the main sync lock', repoPath);
 }
 
 function shortMain(repoPath) {
@@ -169,6 +181,40 @@ export async function withMainSyncLock(repoPath, fn, opts = {}) {
   } finally {
     release(handle);
   }
+}
+
+/**
+ * Run the synchronous `fn` holding `repoPath`'s main sync lock, taken with one
+ * try (F-126 D7): code that cannot await a lock wait, such as a signal
+ * listener, uses it. Returns `{ value }`, what `fn` returned, or `{ holder }`
+ * when another process holds the lock and `fn` did not run.
+ *
+ * @template T
+ * @param {string} repoPath
+ * @param {() => T} fn
+ * @returns {{ value: T } | { holder: number | string }}
+ */
+export function withMainSyncLockNow(repoPath, fn) {
+  const lock = tryLockOnce(mainSyncLockPath(repoPath), `bl main sync ${repoPath}`);
+  if (!('taken' in lock)) return { holder: lock.holder };
+  try {
+    return { value: fn() };
+  } finally {
+    release(lock.taken);
+  }
+}
+
+/**
+ * `git fetch origin main` into `repoPath`'s `origin/main`, from synchronous
+ * code: under the main sync lock taken with one try (`withMainSyncLockNow`),
+ * so the fetch never meets a pull or a commit of the same checkout (F-126 D1).
+ *
+ * @param {string} repoPath
+ * @param {import('./child.js').ChildOptions} [opts]
+ * @returns {{ value: import('child_process').SpawnSyncReturns<string> } | { holder: number | string }}
+ */
+export function fetchMainNow(repoPath, opts = {}) {
+  return withMainSyncLockNow(repoPath, () => git(repoPath, ['fetch', '-q', 'origin', MAIN_REFSPEC], opts));
 }
 
 /**

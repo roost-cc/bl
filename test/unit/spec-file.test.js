@@ -1,12 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'child_process';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
+import { dirname, join } from 'path';
 import { FrontmatterError, parseFrontmatter } from '../../src/config.js';
-import { holderOf } from '../../src/kernel-lock.js';
+import { holderOf, holds } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 import { waitingForLock } from '../../src/lock-wait.js';
-import { SpecLockError, specLockPath, updateSpecFile, updateSpecFileHeld, withSpecLock } from '../../src/spec-file.js';
+import {
+  runPluginLocked,
+  SpecLockError,
+  specLockPath,
+  updateSpecFile,
+  updateSpecFileHeld,
+  withSpecFileLock,
+  withSpecLock,
+} from '../../src/spec-file.js';
 import { accumulateTokensOnFile } from '../../src/tokens.js';
 import { holdLock } from '../helpers/hold-lock.js';
 import { withPartialWrites } from '../helpers/partial-write.js';
@@ -14,10 +32,11 @@ import { mkTempDir } from '../helpers/tempdir.js';
 
 const SPEC = '---\nstory_id: S-1\nstatus: backlog\n---\n\n# T\n\nBody.\n';
 
-/** A backlog-like dir holding one spec: `{ dir, path }`. */
+/** A backlog-like dir holding one story spec, whose covering lock is its spec lock: `{ dir, path }`. */
 function spec(content = SPEC) {
   const dir = mkTempDir('bl-spec-file-');
-  const path = join(dir, 'index.md');
+  const path = join(dir, 'stories', 'S1-t', 'index.md');
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content);
   return { dir, path };
 }
@@ -113,8 +132,19 @@ test('withSpecLock is re-entrant within a process and releases on the way out', 
 
 test('updateSpecFileHeld refuses a spec whose lock this process does not hold', () => {
   const { dir, path } = spec();
-  assert.throws(() => updateSpecFileHeld(dir, path, (fm) => void (fm.status = 'done')), TypeError);
+  assert.throws(() => updateSpecFileHeld(dir, path, (fm) => void (fm.status = 'done')), /does not hold the spec lock/);
   assert.equal(readFileSync(path, 'utf8'), SPEC);
+});
+
+test('withSpecFileLock holds the spec lock alone on an existing file, and the backlog lock too on a missing one', async () => {
+  const { dir, path } = spec();
+  const backlogLock = join(dir, LOCK_FILE);
+  const seen = await withSpecFileLock(dir, path, () => [holds(specLockPath(path)), holds(backlogLock)]);
+  assert.deepEqual(seen, [true, false], 'an existing file: the spec lock, not the backlog lock');
+  const fresh = join(dir, 'change.md');
+  const seenNew = await withSpecFileLock(dir, fresh, () => [holds(specLockPath(fresh)), holds(backlogLock)]);
+  assert.deepEqual(seenNew, [true, true], 'a missing file: both');
+  assert.equal(holds(specLockPath(fresh)) || holds(backlogLock), false, 'both released');
 });
 
 test('withSpecLock waits for a live holder, says so once, and takes the lock when it ends', async () => {
@@ -178,6 +208,185 @@ test('two processes that write the same spec at once take turns, and no write is
   assert.equal(Number(parseFrontmatter(readFileSync(path, 'utf8')).fm.n), 20);
   assert.equal(holderOf(specLockPath(path)), null, 'released');
 });
+
+/**
+ * A backlog-like dir with `a.md` and `b.md`, and a plugin command that
+ * appends its arguments as one JSON line to `marker`: `{ dir, marker, command }`.
+ */
+function recorded() {
+  const dir = mkTempDir('bl-plugin-locked-');
+  for (const f of ['a.md', 'b.md']) writeFileSync(join(dir, f), `# ${f}\n`);
+  const marker = join(dir, 'formatted.jsonl');
+  const recorder = join(dir, 'record.mjs');
+  writeFileSync(
+    recorder,
+    "import { writeFileSync } from 'fs';\n" +
+      "writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3)) + '\\n', { flag: 'a' });\n",
+  );
+  return { dir, marker, command: `${JSON.stringify(process.execPath)} ${recorder} ${marker} {{path}}` };
+}
+
+const lines = (marker) =>
+  existsSync(marker)
+    ? readFileSync(marker, 'utf8')
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l))
+    : [];
+
+test('runPluginLocked runs the plugin on one file at a time, each inside its spec lock', async () => {
+  const { dir, marker, command } = recorded();
+  // A second plugin step records who holds each argument's spec lock.
+  const probe = join(dir, 'holders.mjs');
+  const src = (f) => JSON.stringify(new URL(`../../src/${f}`, import.meta.url).href);
+  writeFileSync(
+    probe,
+    "import { appendFileSync } from 'fs';\nimport { resolve } from 'path';\n" +
+      `const { holderOf } = await import(${src('kernel-lock.js')});\n` +
+      `const { specLockPath } = await import(${src('spec-file.js')});\n` +
+      'const [out, ...paths] = process.argv.slice(2);\n' +
+      "appendFileSync(out, JSON.stringify(paths.map((p) => holderOf(specLockPath(resolve(p))))) + '\\n');\n",
+  );
+  const holders = join(dir, 'holders.jsonl');
+  const both = `${command} && ${JSON.stringify(process.execPath)} ${probe} ${holders} {{path}}`;
+  const r = await runPluginLocked('md', both, ['a.md', 'b.md'], {}, dir, dir);
+  assert.deepEqual(r, { ok: true, status: 0 });
+  assert.deepEqual(lines(marker), [['a.md'], ['b.md']]);
+  assert.deepEqual(lines(holders), [[process.pid], [process.pid]], 'each run inside its spec lock');
+  for (const f of ['a.md', 'b.md']) assert.equal(holderOf(specLockPath(join(dir, f))), null, `${f} released`);
+});
+
+test('runPluginLocked waits for a held spec lock, says so once, and runs the file after it frees', async () => {
+  const { dir, marker, command } = recorded();
+  const lock = specLockPath(join(dir, 'b.md'));
+  const holder = holdLock(lock, 'a token writer');
+  const said = [];
+  const write = process.stderr.write;
+  process.stderr.write = (chunk, ...rest) => (said.push(String(chunk)), write.call(process.stderr, chunk, ...rest));
+  let freed = false;
+  try {
+    setTimeout(() => {
+      freed = true;
+      holder.release();
+    }, 100);
+    const r = await runPluginLocked('md', command, ['a.md', 'b.md'], {}, dir, dir);
+    assert.equal(r.status, 0);
+    assert.equal(freed, true, 'the helper finished after the lock was freed');
+  } finally {
+    process.stderr.write = write;
+    holder.release();
+  }
+  assert.equal(said.filter((s) => s === `${waitingForLock(lock, process.pid)}\n`).length, 1, said.join(''));
+  assert.deepEqual(lines(marker), [['a.md'], ['b.md']]);
+});
+
+test('runPluginLocked stops after the first file when the plugin binary is missing', async () => {
+  const { dir } = recorded();
+  const said = [];
+  const write = process.stderr.write;
+  process.stderr.write = (chunk, ...rest) => (said.push(String(chunk)), write.call(process.stderr, chunk, ...rest));
+  let r;
+  try {
+    r = await runPluginLocked('md', 'this-binary-does-not-exist-1527 {{path}}', ['a.md', 'b.md'], {}, dir, dir);
+  } finally {
+    process.stderr.write = write;
+  }
+  assert.deepEqual(r, { ok: false, status: 127, missing: true });
+  assert.equal(said.filter((s) => /command not found/.test(s)).length, 1, said.join(''));
+  assert.equal(said.filter((s) => s.includes("'b.md'")).length, 0, 'b.md never runs');
+});
+
+test('runPluginLocked runs every file after a failing one and returns the worst status', async () => {
+  const { dir, marker, command } = recorded();
+  const r = await runPluginLocked('md', `${command} && false`, ['a.md', 'b.md'], {}, dir, dir);
+  assert.deepEqual(r, { ok: false, status: 1 });
+  assert.deepEqual(lines(marker), [['a.md'], ['b.md']]);
+});
+
+// format_waits_for_covering_lock_by_path_class: each path class waits for its
+// covering lock (`lockFor`), held by another holder, before the plugin writes.
+for (const [rel, exists, held] of [
+  ['tasks/T1-x.md', true, 'backlog'],
+  ['themes/T1/index.md', true, 'backlog'],
+  ['stories/S1-x/index.md', true, 'spec'],
+  ['features/F1-x/change.md', true, 'spec'],
+  ['allowed-tools.json', true, 'spec'],
+  ['stories/S1-x/change.md', false, 'backlog'],
+  ['stories/S2-demo/index.md', false, 'backlog'],
+  ['tasks/T2-y.md', false, 'backlog'],
+  ['.bl/x.md', true, null],
+]) {
+  test(`runPluginLocked waits for the covering lock of ${exists ? 'an existing' : 'a missing'} ${rel}`, async () => {
+    const dir = mkTempDir('bl-plugin-covering-');
+    const path = join(dir, rel);
+    mkdirSync(dirname(path), { recursive: true });
+    if (exists) writeFileSync(path, 'before');
+    const writer = join(dir, 'writer.mjs');
+    writeFileSync(writer, "import { writeFileSync } from 'fs';\nwriteFileSync(process.argv[2], 'plugin');\n");
+    const lock = held === 'spec' ? specLockPath(path) : join(dir, LOCK_FILE);
+    const holder = holdLock(lock, 'another writer');
+    let freed = false;
+    const timer = setTimeout(() => {
+      freed = true;
+      holder.release();
+    }, 100);
+    try {
+      await runPluginLocked('md', `${JSON.stringify(process.execPath)} ${writer} {{path}}`, [rel], {}, dir, dir);
+      assert.equal(freed, held != null, held ? `waited for the ${held} lock` : 'no covering lock to wait for');
+      assert.equal(readFileSync(path, 'utf8'), 'plugin');
+    } finally {
+      clearTimeout(timer);
+      holder.release();
+    }
+  });
+}
+
+// plugin_alias_retarget_keeps_covering_lock and
+// plugin_rechecks_link_after_lock_wait: the plugin writes through `.bl/dir`,
+// a link to the first directory. While runPluginLocked waits for the first
+// file's covering lock, the link moves to the second directory, and the
+// second file's lock stays held. The plugin writes the first file, whose lock
+// it holds, and leaves the second.
+for (const [kind, sub, held] of [
+  ['story spec', 'stories', (dir, path) => specLockPath(path)],
+  ['ordinary file', 'tasks', (dir) => join(dir, LOCK_FILE)],
+]) {
+  test(`runPluginLocked writes the ${kind} it locked when a link to it moves during the lock wait`, async () => {
+    const dir = mkTempDir('bl-plugin-retarget-');
+    const first = join(dir, sub, 'one', 'index.md');
+    const second = join(dir, sub, 'two', 'index.md');
+    for (const [path, text] of [
+      [first, 'first'],
+      [second, 'second'],
+    ]) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+    }
+    const alias = join(dir, '.bl', 'dir');
+    mkdirSync(dirname(alias), { recursive: true });
+    symlinkSync(dirname(first), alias);
+    const writer = join(dir, 'writer.mjs');
+    writeFileSync(writer, "import { writeFileSync } from 'fs';\nwriteFileSync(process.argv[2], 'plugin');\n");
+    const firstHolder = holdLock(held(dir, first), 'another writer');
+    const secondHolder = sub === 'stories' ? holdLock(held(dir, second), 'a third writer') : null;
+    const timer = setTimeout(() => {
+      unlinkSync(alias);
+      symlinkSync(dirname(second), alias);
+      firstHolder.release();
+    }, 100);
+    try {
+      const command = `${JSON.stringify(process.execPath)} ${writer} {{path}}`;
+      await runPluginLocked('md', command, ['.bl/dir/index.md'], {}, dir, dir);
+    } finally {
+      clearTimeout(timer);
+      firstHolder.release();
+      secondHolder?.release();
+    }
+    assert.equal(readlinkSync(alias), dirname(second), 'the link moved during the wait');
+    assert.equal(readFileSync(first, 'utf8'), 'plugin');
+    assert.equal(readFileSync(second, 'utf8'), 'second');
+  });
+}
 
 test('withSpecLock refuses an async fn and still releases the lock', async () => {
   const { path } = spec();

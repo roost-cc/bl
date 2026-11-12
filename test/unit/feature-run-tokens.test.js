@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { loadConfig, parseFrontmatter, serializeFrontmatter, FrontmatterError } from '../../src/config.js';
 import { extractSection, replaceSection } from '../../src/feature.js';
 import { runFeature, tokensStepKey, restoreKeepingTokens } from '../../src/feature-run.js';
@@ -179,7 +179,14 @@ test('interactive-run-refreshes-totals-for-story-and-feature-after-each-session'
       ],
     ];
     for (const [kind, content, parsed] of units) {
-      const indexPath = join(dir, `${kind}.md`);
+      // A unit spec: the token writer holds its spec lock, its covering lock (F-126).
+      const indexPath = join(
+        dir,
+        kind === 'story' ? 'stories' : 'features',
+        `${parsed.id.replace('-', '')}-t`,
+        'index.md',
+      );
+      mkdirSync(dirname(indexPath), { recursive: true });
       writeFileSync(indexPath, content);
       for (const [n, step] of [
         [1, 'self-review'],
@@ -354,7 +361,8 @@ test('a failed review-verify session keeps the usage it recorded on the feature,
 
 test('failed_verify_restores_missing_or_malformed_spec_and_change_document', async () => {
   const dir = mkTempDir('bl-restore-');
-  const path = join(dir, 'index.md');
+  const path = join(dir, 'features', 'F1-t', 'index.md');
+  mkdirSync(dirname(path), { recursive: true });
   const snapshot = '---\nfeature_id: F-1\nstatus: running\ntokens_input: 1\n---\n\nOriginal\n';
   const crlf = (t) => t.replace(/\n/g, '\r\n');
   try {

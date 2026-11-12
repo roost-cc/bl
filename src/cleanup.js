@@ -1247,7 +1247,7 @@ the main checkout as it was.`);
         // The change document records each repo's merge commit; a story
         // merged alone gets no tag and no release manifest.
         if (doneWrite.written) {
-          recordMerge(config.backlogRoot, dirname(indexPath), {
+          await recordMerge(config.backlogRoot, dirname(indexPath), {
             commits: doneWrite.commitMap,
             date: today,
             extra: [
@@ -1324,7 +1324,7 @@ the main checkout as it was.`);
       const triageName = `${parsed.id}: triage — ${storyFm.title ?? storyEntry}`;
       updateTabTitle({ story: parsed.id, status: 'triage' });
       const provider = getProvider(config.agent);
-      const allowedTools = getAllowedTools('triage', {
+      const allowedTools = await getAllowedTools('triage', {
         backlogRoot: config.backlogRoot,
         roostDir: config.roostDir,
         config,

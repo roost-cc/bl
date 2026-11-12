@@ -312,6 +312,8 @@ test('history: the last day is the UTC date of now, in any zone (box ¹ and ⁵ 
         GIT_COMMITTER_EMAIL: 't@t',
       },
     });
+  // As in every backlog (`bl init`): git ignores `.bl/`, where the history cache lives.
+  writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git('init', '-q', '-b', 'main');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');

@@ -430,9 +430,50 @@ backlog lock and need `atomicWriteFile` only.
   other writer lets the error propagate, so a write that could not happen fails the command
   instead of being lost.
 - **Lock order.** The backlog lock (`lock.js`) is the outer lock, a spec lock the inner one:
-  `bl merge`, `bl new --feature … S-n`, `bl attach` and `persistLandedCommits` take the spec lock per file inside the
-  backlog lock. Nothing takes the backlog lock while holding a spec lock, and nothing holds two
+  `bl merge`, `bl new --feature … S-n`, `bl attach`, `persistLandedCommits` and `bl sync --commit`'s format pass
+  (`formatBacklogFiles`) take the spec lock per file inside the backlog lock. Nothing takes the backlog lock while holding a spec lock, and nothing holds two
   spec locks at once. A caller that adds a spec lock says so in a comment at the call.
+- **The covering lock (F-126).** Every bl write to a backlog path that git does not ignore
+  holds that path's covering lock. `lockFor(backlogRoot, path)` (`write-lock.js`) is the one
+  statement of the rule: the spec lock (`specLockPath`) of an existing story or feature
+  `index.md`, change document (`isChangeFile`) or `allowed-tools.json`; the backlog lock to
+  create one of those, and for every other path (`blockers.json`, `priority.yaml`,
+  `releases/`, `themes/`, `tasks/`, `updates/`, `.gitignore`, `flow.json`, a removed unit
+  directory, …); none for a path outside the backlog, or in `.bl/` when git ignores it or the
+  backlog is no git repository. The rule and the ignore check apply to the path the write
+  changes: links in its directory are resolved, and a link at the path itself is resolved only
+  for a write through it
+  (`atomicWriteFile`'s `preserve`, a plugin), since a rename or removal replaces the link. The
+  three write chokepoints in `atomic-write.js` call `assertCovered` before they change
+  anything: `atomicWriteFile`, `removeBacklogPath` (a file or tree) and `moveIntoBacklog` (a
+  rename, both ends checked). Without the lock, and unless `git check-ignore` says git ignores
+  that path, they throw `<path>: bl writes it without its covering lock (<kind> lock <lock path>)`.
+  Each one then changes the path `assertCovered` returns, the one it checked, and a plugin
+  gets the path its lock covers (`withCoveringLock`), never the link that reached it: a link
+  moved after the check cannot send the write to another file. The check runs in production.
+  Synchronous code, which cannot await a lock wait, takes a spec lock with one try: `withSpecLockNow(path, fn)` (`spec-file.js`, F-126 D7) throws
+  `SpecLockError` naming the holder when another process holds it, and the caller decides
+  what that means. `writeBacklogPathNow` (`atomic-write.js`) writes or removes a path that way,
+  under the caller's backlog lock: `snapshot`'s undo and `bl side`'s exit-time undo leave a
+  busy file and name it, and a migration's `write` op fails and restores. A git call that
+  changes the backlog's index, working tree or refs holds the main sync lock instead
+  (`main-sync.js`, F-126 D1). A test that calls a writer directly holds the covering lock
+  around it (`test/helpers/covering-lock.js`).
+- **The static guard (F-126 D6).** `test/unit/backlog-write-guard.test.js` parses every module
+  in `src/` except the chokepoints (`atomic-write.js`, `backlog-commit.js`, `main-sync.js`,
+  `child.js`). It fails on each raw write call (`writeFileSync`, `rmSync`, `renameSync`, an
+  `openSync` or `fs.promises.open` whose flag has `w`, `a` or `+`, …), under any local name
+  (an import alias, a destructured name, `const put = fs.writeFileSync`), and each git call
+  that changes state (`commit`, `reset`, `fetch`, …,
+  or a subcommand it cannot read) that its `ALLOWED` map does not name. It finds git calls by
+  import binding: `git` from `child.js` under any local name, `runChild`, `spawnSyncFiles`
+  and the `child_process` calls with the command `'git'`, and command lines that start with
+  `git ` (`runCommandLine`, `execSync`, a runner's `shell`). A finding names the file, the
+  enclosing function and the call, for example `block.js addEdge writeFileSync`. Write to a
+  tracked backlog path through a chokepoint instead. Add an `ALLOWED` entry only for a call
+  that writes outside the backlog or to a path git ignores, or runs git in a code repository:
+  the key is `"<file under src/> <function> <call>"` and the value is that reason. An entry
+  that matches no call fails the test, so a story that removes a call removes its entry.
 - **Who is on it.** The token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
   `recordStoryTokens`) write through `updateSpecFile`, and `recordFeatureTokens` holds
   `withSpecLock` across its transcript read and nests `updateSpecFileHeld` in that hold. `feature-cmd.js` `updateFeature` (approve, the run's status, the totals re-read),
@@ -447,22 +488,41 @@ backlog lock and need `atomicWriteFile` only.
   with `atomicWriteFile`. The run loop's writers (`writeEscalation`, `recordStoryRunFields`) and
   `bl updates`' (`recordMerge`, `recordOutcome`, `dropStory`, the request write in
   `requestUpdate`, and `syncUpdates`' refresh and close, which apply their change to the spec
-  read under the lock, inside the backlog lock) write through it too; a new update story, and
-  `dropStory`'s restore after a failed PR close, are written with `atomicWriteFile`. `bl new`'s
+  read under the lock, inside the backlog lock) write through it too; a new update story is
+  written with `atomicWriteFile`, and `dropStory`'s restore after a failed PR close with
+  `atomicWriteFile` inside the story's spec lock. `bl new`'s
   feature links (each story's `feature:` in `bl new --feature`), `bl attach`'s and `bl side`'s
   `markSideStory` write through it too, each inside the backlog lock; `bl new`'s new story, component, theme and
-  epic files, and the snapshot restores of `bl side`, `bl task` and `settle`, are written with
-  `atomicWriteFile`. No spec in `src/` is written in place any more (`bl new --from` stages its
-  stories in a temp directory and renames it into place; `bl migrate-*` is out of scope).
+  epic files, and the snapshot restores of `bl side`, `bl task` and `settleRecord`, are written
+  with `atomicWriteFile`, each under its covering lock. No spec in `src/` is written in place any
+  more (`bl new --from` stages its stories in `.bl/tmp/new-<pid>/` and moves them into place
+  with `moveIntoBacklog`).
+  A change document and `allowed-tools.json` take a spec lock of their own too (F-126 D2, D3).
+  Every change document write is in `change-doc.js`: `updateChange` (async, through
+  `withSpecLock`), `updateChangeHeld` for a caller already in that hold, and `ensureChange`,
+  `recordMerge`, `addGateLine` and `restoreChange` on those or on `withSpecFileLock`.
+  `ensureAllowedTools` reads, regenerates and writes in `withSpecFileLock`. `withSpecFileLock`
+  (`spec-file.js`) is the spec lock for an existing file, and the backlog lock with the spec lock
+  inside it for a file it creates, as for a new spec file.
+  A format or lint plugin rewrites a backlog file in place, so it runs on one backlog file per
+  process, inside that file's covering lock (`runPluginLocked`, `spec-file.js`, through
+  `withCoveringLock`, `write-lock.js`, F-126 D4): `bl sync --commit`'s format pass and
+  `bl format` / `bl lint`. An existing spec file takes its spec lock. Any other file (a
+  `tasks/T1-x.md`, a spec file that does not exist yet) takes the backlog lock and then the
+  spec lock keyed by its own path. Only
+  `bl report`'s pages, outside the backlog or under its ignored `reports/`, are formatted in one
+  batch with no lock (`formatBacklogMarkdown`).
 - **A restore keeps the session's tokens.** When a review-verify session fails, the loop puts
   back the unit file it snapshotted before the session with `restoreKeepingTokens`
-  (`feature-run.js`): the snapshot's frontmatter and body, under the spec lock and through
-  `atomicWriteFile`, with the current file's `tokens_*` keys (`tokens_headless_*`,
+  (`feature-run.js`): the snapshot's frontmatter and body, under the file's covering lock
+  (`withSpecFileLock`) and through `atomicWriteFile`, with the current file's `tokens_*` keys (`tokens_headless_*`,
   `tokens_updated`, `tokens_by_step`) and line end kept, since the failed session already
   recorded its usage on that file. A current file the session deleted, emptied or left without a
   readable `---` block gets the snapshot back whole; a snapshot that is not a spec is refused and
-  the current file left alone. The change document beside it is put back with `atomicWriteFile`,
-  and the quarantine runs, whatever an earlier restore threw; the round aborts naming each failure.
+  the current file left alone. The change document beside it is put back with `restoreChange`
+  (`change-doc.js`, under its covering lock), and the quarantine runs, whatever an earlier
+  restore threw; the round aborts naming each failure. A round that `bl stop` stops puts back the
+  change document alone, the same way: the unit file keeps the escalation the stop wrote.
 
 ## Story Frontmatter
 
@@ -950,7 +1010,7 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   `added` starts at the commit that added its file; no entry is before the one above it. It
   converts one unit at a time through `updateSpecFile` (`setLog` puts the log in `status:`'s
   place), then removes `review_round` and `review_status` from the unit's change documents
-  through `updateChange`, writes `flow.json` v2 (`migratedFlowText`: the template with the
+  through `updateChangeHeld` in each document's spec lock, writes `flow.json` v2 (`migratedFlowText`: the template with the
   backlog's gates), and commits the changed paths once (`commitPaths`) with the counts. It does
   not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
   (`liveSessionLocks`, by the worktree's branch) is held by another process (`otherHolder`; the
@@ -1290,6 +1350,19 @@ pass or fail), `## Review Log` (session blocks, newest first, written by the
 review prompts) and `## Merge` (one line per repo's merge commit, then the
 feature's tag and release manifest, written by `bl merge`). `bl run` records
 the PR it opens on its repo's entry; `bl review` records every repo's PR.
+
+`change-doc.js` is the only module that writes a change document, apart from
+`bl side`'s exit-time undo (F-126 D2). Each write holds the document's spec
+lock (`updateChange`, or `updateChangeHeld` inside a hold), and a write that
+creates the document holds the backlog lock first (`ensureChange` and
+`restoreChange` through `withSpecFileLock`). So a `## Gate` line from
+`bl merge S-n` and a run loop's write to the same document take turns.
+`bl side`'s undo (`backlogUndo`) runs in a synchronous `exit` listener under
+the backlog lock. It puts back only the change documents of the feature
+directory, never its `index.md`, which `bl side` does not write (F-79 D1), so a
+restore could only revert another session's write (F-126 Decision A1). It takes
+each document's spec lock with one try (`writeBacklogPathNow`); a document
+whose lock another process holds is left, and the undo's error names it.
 
 A unit that needs a second change (its last one `merged` or `dropped`) gets
 `change-2.md`; bl reads the highest-numbered open one, and `bl status` prints
@@ -2560,9 +2633,9 @@ Highlights:
   errors exit 1.
 - `--from` rejects single-story flags (`--title`, `--component`, `--body-file`,
   etc.) — the spec is the source of truth.
-- Atomic: every file is staged in `<backlogRoot>/.bl-new-<pid>/` and
-  `renameSync`'d into place at the end. On any error mid-write nothing
-  partial remains.
+- Atomic: every file is staged in the ignored `<backlogRoot>/.bl/tmp/new-<pid>/`
+  and moved into place at the end (`moveIntoBacklog`, under the backlog lock).
+  On any error mid-write nothing partial remains.
 - JSON output schema is `bl-new-batch-json/v2` (a `component` object in
   place of v1's `epic`, and each story's `component`).
 
@@ -4127,8 +4200,10 @@ only when no older `bl` runs (task T-76).
 The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
 caller awaits it (`test/unit/awaited-calls.test.js`).
 
-Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
-the Markdown files among its paths that git reports changed. Then it stages exactly each
+Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogFiles`) over
+the Markdown files among its paths that git reports changed. It runs the plugin on one file per
+process, inside that file's spec lock (F-126 D4), so it waits for a token writer that holds the
+file. The cost is about 100 ms per file, so about 3 s for a merge's sync. Then it stages exactly each
 `--story` directory and each `--path` (a backlog-relative path you wrote or moved yourself,
 such as both ends of a `git mv`; repeatable), and commits them with `git commit --only`
 (`backlog-commit.js` `commitPaths`), so another person's dirty story file stays out. A `--path`
@@ -4140,9 +4215,11 @@ Nothing to commit exits 0; `--commit` without `-m` or `--story`, `--path` withou
 `--commit`, or a `--path` that is neither on disk nor tracked by git, is a usage error.
 
 **Pull before, push after (F-50 D4).** The backlog is shared through its `origin` remote, so
-every clone (the operator's, the update runner's) sees the others' work. Every commit
-`commitPaths` makes, and each step commit of `bl run`'s loop (`feature-run.js`
-`commitBacklog`), is followed by `git push origin main` (`backlog-commit.js` `pushBacklog`).
+every clone (the operator's, the update runner's) sees the others' work. `commitPaths` is the
+only backlog add, commit and push in bl: each step commit of `bl run`'s loop goes through it too
+(`feature-run.js` `commitUnitPaths`). Every commit it makes is followed by `git push origin main`
+(`backlog-commit.js` `pushBacklog`). A backlog with no repo of its own (`hasOwnRepo`) runs no git
+there: `commitPaths` returns `notRepo`, and its callers take that as nothing to do.
 A push rejected because `origin` moved on (git's `[rejected] … (fetch first)` or
 `(non-fast-forward)`, `isNonFastForwardRejection`) is rebased onto `origin/main` with the pull's
 own rebase (`pullLocked`, below, which settles generated paths and puts everything back when it
@@ -4157,10 +4234,18 @@ written stops the retry before anything moves, and a push never publishes settle
 it. A push that still fails (a
 conflict outside the generated paths, a hook, auth, offline: the last three get no rebase) is
 one warning (`pushWarning`) naming the conflicting paths, if any, and the command to retry, and
-the command exits as it would have. With an `origin` remote the
-commit and its push hold the main sync lock the pull holds, so a commit from a process without
-the backlog lock (`openUnitChange`, the loop) never lands mid-rebase or loses its file to a
-pull's autostash. Every command that commits the
+the command exits as it would have. Every backlog commit holds the main sync lock the pull
+holds, with or without an `origin` remote (F-126 D1), so a commit from a process without the
+backlog lock (`openUnitChange`, the loop) never lands mid-rebase or loses its file to a pull's
+autostash. Every bl git call that changes the backlog's index, working tree or refs lives in
+`backlog-commit.js` or `main-sync.js`, and each chokepoint (`commitLocked`, `pushBacklog`,
+`pullLocked`, `resetPaths`, `discardChanges`) throws first when this process does not hold the
+main sync lock (`assertMainSyncLock`, through `kernel-lock.js` `assertHeld`, which makes every
+"this process must hold this lock" check). `bl rank --commit`'s rollback of a failed commit
+unstages `priority.yaml` with `resetPaths` under the lock. The migration restore
+(`migration-txn.js`) runs in a signal listener and cannot wait: it takes the lock with one try
+(`tryLockOnce`), and when another process holds it, it leaves the backlog and prints the manual
+`git reset --hard HEAD && git clean -fd`. Every command that commits the
 backlog (`new`, `side`, `run`, `implement`, `merge`, `done`, `updates`, `sync --commit`,
 `block add`, `block remove`, `block list --fix`, `task`, `task done`), plus `bl inbox` and `bl updates status`, first rebases onto `origin/main` with
 `--autostash` (`backlog-commit.js` `pullBacklog`, under the backlog lock and the main sync
@@ -5859,7 +5944,13 @@ prettier wrapper) in `bl sync` and to `pnpm install` in `bl implement`.
   any story scope. A feature ID (`--story F-5`, what feature sessions pass)
   covers the feature's `index.md` and the `index.md` of every story it
   lists, each under its own plugin cascade (the feature file under the
-  backlog root's); explicit paths narrow it to those files.
+  backlog root's); explicit paths narrow it to those files. A plugin runs
+  on one backlog file per process, inside that file's covering lock
+  (`runPluginLocked`, F-126 D4). With `--no-story`, the paths outside
+  the backlog go to each plugin in one batch, and a path inside it (by
+  its real location, however it is written) runs on its own. A missing
+  binary stops a plugin after its first file, with one warning; the
+  command exits with the worst status.
 
 #### `language_dispatch` shape
 
@@ -5944,11 +6035,15 @@ trigger to stderr (`allowed-tools.json regenerated: config hash
 `atomicWriteFile` in `src/atomic-write.js`, the helper `bl merge` and the
 spec writers use too. The temp file is staged in the backlog's ignored
 `.bl/tmp/` (`.bl/tmp/allowed-tools.json.<pid>.<random>.tmp`), so a crash
-between write and rename leaves nothing in `git status`. Its name is
-per-process because concurrent `bl` processes regenerate the same file
-outside the backlog lock, and a fixed staging path let one rename consume
-the other's. The staging file is created exclusively (`wx`): a name that
-already exists belongs to another regeneration in this process that drew
+between write and rename leaves nothing in `git status`. The read, the
+regeneration and the write hold the file's covering lock
+(`withSpecFileLock`, F-126 D3): its spec lock, and the backlog lock first
+when the file is missing. So two `bl` processes regenerate it one after the
+other, and the second reads the first's file. `ensureAllowedTools`,
+`getAllowedTools` and `getDeniedTools` are async for that wait. The staging
+name is per-process all the same (`atomicWriteFile`), and the staging file
+is created exclusively (`wx`): a name that
+already exists belongs to another write in this process that drew
 the same random token, so a fresh name is tried instead of truncating
 theirs, up to `STAGING_ATTEMPTS` (10); after that the EEXIST propagates
 and the other caller's file is left alone. A write or rename that throws
@@ -5957,7 +6052,7 @@ failure other than ENOENT (the file is already gone) is reported on
 stderr with the staging path, never swallowed, since it leaves an orphan.
 `_hooks.beforeRename` (in `src/atomic-write.js`) is a
 private test seam that runs
-between the two steps so a unit test can interleave two regenerations;
+between the two steps so a unit test can start a second regeneration there;
 like the `BL_INTERNAL_TEST_*` seams it is not public surface. The
 `templates/allowed-tools.json` in the bl repo is a **seed** copied at
 `bl init`; it is never regenerated against bl source changes —

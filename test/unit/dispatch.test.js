@@ -5,7 +5,7 @@ import { join } from 'path';
 import { pluginForExtension, bucketByPlugin, runPluginBatch, runPlugins } from '../../src/config.js';
 import { DISPATCH, GATED_VERBS, VERBS, flagsOf, heldTargets } from '../../src/verbs.js';
 import * as featureCmd from '../../src/feature-cmd.js';
-import { writeBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 
 // ---------------------------------------------------------------------------
@@ -260,7 +260,7 @@ test('heldTargets: each held target with its lines and blockers; an unheld one i
     ],
     features: [{ id: 'F-1', title: 'Feat', status: 'approved', stories: ['S-4'] }],
   });
-  writeBlockers(dir, [
+  writeBlockersLocked(dir, [
     { blocker: 'S-3', gate: 'run', unit: 'S-1', until: 'done' },
     { blocker: 'S-3', gate: 'run', unit: 'S-4', until: 'done' },
     { blocker: 'S-3', gate: 'merge', unit: 'S-2', until: 'done' },

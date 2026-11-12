@@ -30,16 +30,16 @@ for (const [label, args, write, message] of [
   ['the batch refine', ['S-1', 'S-2'], [S1, S2], 'chore: refine S-1, S-2'],
   ['bl refine F-n', ['F-1'], [F1], 'chore: refine F-1'],
 ]) {
-  test(`${label} commits and pushes what the session left, with "${message}"`, () => {
-    const dir = gitBacklog();
+  test(`${label} commits and pushes what the session left, with "${message}"`, async () => {
+    const dir = await gitBacklog();
     const r = refine(dir, args, { write });
     assert.equal(r.status, 0, r.stderr);
     assertCommitted(dir, message, write);
   });
 }
 
-test('a path dirty before the session stays out and is named; one the session changed again is committed', () => {
-  const dir = gitBacklog();
+test('a path dirty before the session stays out and is named; one the session changed again is committed', async () => {
+  const dir = await gitBacklog();
   dirtyBystanders(dir, S2);
   writeFileSync(join(dir, S1), '\nThe operator, before the session.\n', { flag: 'a' });
   const r = refine(dir, ['S-1'], { write: [S1] });
@@ -51,8 +51,8 @@ test('a path dirty before the session stays out and is named; one the session ch
   assert.match(r.stderr, new RegExp(`Left your uncommitted backlog edits alone: .*${S2}`));
 });
 
-test('priority.yaml the session wrote stays uncommitted, named once as outside the work units', () => {
-  const dir = gitBacklog();
+test('priority.yaml the session wrote stays uncommitted, named once as outside the work units', async () => {
+  const dir = await gitBacklog();
   const r = refine(dir, ['S-1'], { write: [S1, PRIORITY_FILE] });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [S1]);
@@ -62,8 +62,8 @@ test('priority.yaml the session wrote stays uncommitted, named once as outside t
   assert.doesNotMatch(r.stderr, /Left priority\.yaml uncommitted/);
 });
 
-test('a session that writes nothing makes no commit and prints nothing about committing', () => {
-  const dir = gitBacklog();
+test('a session that writes nothing makes no commit and prints nothing about committing', async () => {
+  const dir = await gitBacklog();
   const head = git(dir, 'rev-parse', 'HEAD');
   const r = refine(dir, ['S-1']);
   assert.equal(r.status, 0, r.stderr);
@@ -72,15 +72,15 @@ test('a session that writes nothing makes no commit and prints nothing about com
   assert.doesNotMatch(r.stderr, /Committing backlog changes|Left your uncommitted|backlog commit failed/);
 });
 
-test('a session that exits 1 still has its work committed, and bl refine exits 1', () => {
-  const dir = gitBacklog();
+test('a session that exits 1 still has its work committed, and bl refine exits 1', async () => {
+  const dir = await gitBacklog();
   const r = refine(dir, ['S-1'], { write: [S1], exit: 1 });
   assert.equal(r.status, 1, r.stderr);
   assertCommitted(dir, 'chore: refine S-1', [S1]);
 });
 
-test('a refine rerun after a refused commit commits what the first session left', () => {
-  const dir = gitBacklog();
+test('a refine rerun after a refused commit commits what the first session left', async () => {
+  const dir = await gitBacklog();
   const hook = join(dir, '.git', 'hooks', 'pre-commit');
   writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   assert.equal(refine(dir, ['S-1'], { write: [S1] }).status, 1);
@@ -98,8 +98,8 @@ for (const [label, args, write] of [
   ['bl refine F-n', ['F-1'], [F1]],
 ]) {
   for (const exit of ['0', '7', 'TERM']) {
-    test(`refine_commit_failure_overrides_session_status: ${label}, session ends ${exit}, a refused commit exits 1 naming the paths`, () => {
-      const dir = gitBacklog();
+    test(`refine_commit_failure_overrides_session_status: ${label}, session ends ${exit}, a refused commit exits 1 naming the paths`, async () => {
+      const dir = await gitBacklog();
       writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
       const head = git(dir, 'rev-parse', 'HEAD');
       const r = refine(dir, args, { write, exit });
@@ -135,8 +135,8 @@ for (const [label, args, write, exit, windows, messages, left = []] of [
     [` M ${F1}`],
   ],
 ]) {
-  test(`refine_detached_window_commits_pushes_and_status: ${label}`, () => {
-    const dir = gitBacklog();
+  test(`refine_detached_window_commits_pushes_and_status: ${label}`, async () => {
+    const dir = await gitBacklog();
     const log = join(mkTempDir('bl-tmux-log-'), 'windows');
     const r = refine(dir, args, { write, exit, tmuxLog: log });
     assert.equal(r.status, 0, r.stderr);
@@ -147,8 +147,8 @@ for (const [label, args, write, exit, windows, messages, left = []] of [
   });
 }
 
-test('refine_detached_window_commits_pushes_and_status: a refused commit in the window ends it 1', () => {
-  const dir = gitBacklog();
+test('refine_detached_window_commits_pushes_and_status: a refused commit in the window ends it 1', async () => {
+  const dir = await gitBacklog();
   writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const head = git(dir, 'rev-parse', 'HEAD');
   const log = join(mkTempDir('bl-tmux-log-'), 'windows');

@@ -14,7 +14,7 @@ import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
-import { writeBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 
 /**
  * Refined S-1 and S-2, the blocker S-3 and S-5 (the `active_when` unit),
@@ -38,7 +38,7 @@ function fixture(edges) {
     ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-q', '-m', 'init'],
     { stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  writeBlockers(dir, edges);
+  writeBlockersLocked(dir, edges);
   return { dir, cleanup };
 }
 

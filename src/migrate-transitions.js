@@ -11,7 +11,7 @@
  *      the log `legacyLog` synthesizes, with git dates (`datedLog`), in place
  *      of `status:`; a unit that has a log only loses a stale `status:`;
  *   2. then each of the unit's change documents, under its lock
- *      (`updateChange`): `review_round` and `review_status` removed;
+ *      (`updateChangeHeld`): `review_round` and `review_status` removed;
  *   3. `flow.json` v2: bl's template with the backlog's own gates;
  *   4. one commit of the changed paths (`commitPaths`), with the counts.
  *
@@ -48,10 +48,12 @@ import {
   saveFailedCommit,
 } from './backlog-commit.js';
 import { loadBacklog } from './backlog-graph.js';
-import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChange } from './change-doc.js';
+import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChangeHeld } from './change-doc.js';
 import { FLOW_FILE, FLOW_TYPES, LEGACY_LOG, flowPath, fromLegacy, migratedFlowText } from './flow.js';
 import { liveSessionLocks } from './migration-txn.js';
 import { otherHolder } from './kernel-lock.js';
+import { withLock } from './lock.js';
+import { lockFor } from './write-lock.js';
 import { isUpdateStory } from './priority.js';
 import { extractReviewLog, sessionDates } from './review-log.js';
 import { RUN_DIR } from './run-lock.js';
@@ -176,7 +178,7 @@ function planUnit(root, rel, kind, fm, change) {
 
 /**
  * The unit's change documents that hold a review field, each with them
- * removed (`updateChange`, under its lock) unless `dryRun`. `onPath` gets
+ * removed (`updateChangeHeld`, under its lock) unless `dryRun`. `onPath` gets
  * each one's path as it is written, so a later throw does not lose it.
  */
 async function stripChanges(root, unitDir, dryRun, onPath) {
@@ -185,7 +187,7 @@ async function stripChanges(root, unitDir, dryRun, onPath) {
       const doc = readChange(path);
       if (!doc || !REVIEW_FIELDS.some((k) => Object.hasOwn(doc.fm, k))) return;
       if (!dryRun) {
-        updateChange(root, path, (d) => {
+        updateChangeHeld(root, path, (d) => {
           for (const k of REVIEW_FIELDS) delete d.fm[k];
         });
       }
@@ -324,13 +326,17 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
         const rel = relative(root, unit.file);
         let planned = null;
         try {
-          await updateSpecFile(root, unit.file, (fm) => {
-            const change = kind === 'task' ? null : (currentChange(unit.dir)?.doc ?? null);
-            planned = planUnit(root, rel, kind, fm, change);
-            if (!planned || planned.skip || dryRun) return false;
-            setLog(fm, planned.log);
-            if (planned.entries > 0) setDates(kind, fm, planned.log);
-          });
+          const convert = async () => {
+            await updateSpecFile(root, unit.file, (fm) => {
+              const change = kind === 'task' ? null : (currentChange(unit.dir)?.doc ?? null);
+              planned = planUnit(root, rel, kind, fm, change);
+              if (!planned || planned.skip || dryRun) return false;
+              setLog(fm, planned.log);
+              if (planned.entries > 0) setDates(kind, fm, planned.log);
+            });
+          };
+          // A task's covering lock is the backlog lock (F-126): taken first, then its spec lock.
+          await (lockFor(root, unit.file)?.kind === 'backlog' ? withLock(root, convert) : convert());
         } catch (e) {
           if (!(e instanceof SpecLockError)) throw new Error(`${rel}: ${e.message}`, { cause: e });
           skipped.push(`${unit.id}: ${e.message}; a rerun converts it`);
@@ -356,7 +362,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
     }
     const flowText = migratedFlowText(root);
     if (flowText != null) {
-      if (!dryRun) atomicWriteFile(root, flowPath(root), flowText);
+      if (!dryRun) await withLock(root, () => atomicWriteFile(root, flowPath(root), flowText));
       counts.flow = true;
       paths.push(FLOW_FILE);
     }

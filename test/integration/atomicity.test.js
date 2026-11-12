@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, symlinkSync, writeFileSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync, readdirSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl, BL_BIN } from '../helpers/run-bl.js';
@@ -60,8 +60,9 @@ test('bl new --from rolls back partial moves when one story fails mid-rename', (
     );
 
     // (b) Tempdir is removed.
-    const stale = readdirSync(dir).filter((e) => e.startsWith('.bl-new-'));
-    assert.deepEqual(stale, [], 'expected no .bl-new-* tempdirs to linger');
+    const staging = join(dir, '.bl', 'tmp');
+    const stale = existsSync(staging) ? readdirSync(staging).filter((e) => e.startsWith('new-')) : [];
+    assert.deepEqual(stale, [], 'expected no .bl/tmp/new-* tempdirs to linger');
   } finally {
     cleanup();
   }

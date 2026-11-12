@@ -18,6 +18,7 @@ import { FrontmatterError, FrontmatterListError } from '../../src/config.js';
 import { FlowError, loadFlow } from '../../src/flow.js';
 import { legacyLog } from '../../src/transition.js';
 import { updateSpecFile } from '../../src/spec-file.js';
+import { withLock } from '../../src/lock.js';
 import { BLOCKERS_FILE, BlockersError, formatBlockers } from '../../src/blockers.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
@@ -119,10 +120,13 @@ test('every story, feature and task reads the same status, round and log migrate
   for (const kind of ['story', 'feature', 'task']) {
     for (const u of g.list(kind)) {
       const change = kind === 'task' ? null : u.change().change;
-      await updateSpecFile(root, u.file, (fm) => {
-        fm.transitions = legacyLog(kind, fm, change).map((e) => ({ at: '2026-11-01T00:00:00Z', ...e }));
-        delete fm.status;
-      });
+      const write = () =>
+        updateSpecFile(root, u.file, (fm) => {
+          fm.transitions = legacyLog(kind, fm, change).map((e) => ({ at: '2026-11-01T00:00:00Z', ...e }));
+          delete fm.status;
+        });
+      // A task's covering lock is the backlog lock (F-126).
+      await (kind === 'task' ? withLock(root, write) : write());
     }
   }
   const after = loadBacklog(config);

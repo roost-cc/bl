@@ -18,6 +18,13 @@ import { ClaudeProvider, pathToProjectSlug } from '../../src/agents/claude.js';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
+/** A story spec path in the backlog `dir`, its directory made: its covering lock is its spec lock (F-126). */
+function specPath(dir) {
+  const path = join(dir, 'stories', 'S1-t', 'index.md');
+  mkdirSync(dirname(path), { recursive: true });
+  return path;
+}
+
 test('transcriptDirs lists the unit directory, then each worktree, once each', async () => {
   const { transcriptDirs } = await import('../../src/tokens.js');
   assert.deepEqual(
@@ -293,7 +300,7 @@ test('a usage of nothing creates no tokens_by_step entry', () => {
 
 test('accumulateTokensOnFile reads a CRLF file, writes the map, and keeps the body', async () => {
   const dir = mkTempDir('bl-tok-');
-  const p = join(dir, 'index.md');
+  const p = specPath(dir);
   writeFileSync(p, '---\r\nstory_id: S-1\r\ntitle: T\r\n---\r\n\r\n# T\r\n\r\nBody line.\r\n');
   assert.equal(await accumulateTokensOnFile(dir, p, use(3, 4), 'implement'), true);
   const out = readFileSync(p, 'utf8');
@@ -307,7 +314,7 @@ test('accumulateTokensOnFile reads a CRLF file, writes the map, and keeps the bo
 
 test('accumulateTokensOnFile and accumulateStepTokensOnFile leave a file with no frontmatter untouched', async () => {
   const dir = mkTempDir('bl-tok-');
-  const p = join(dir, 'index.md');
+  const p = specPath(dir);
   const content = '# No frontmatter\n\nJust a body.\n';
   writeFileSync(p, content);
   assert.equal(await accumulateTokensOnFile(dir, p, use(1), 'implement'), false);
@@ -317,7 +324,7 @@ test('accumulateTokensOnFile and accumulateStepTokensOnFile leave a file with no
 
 test('accumulateStepTokensOnFile writes the map and the totals, and nothing for no usage', async () => {
   const dir = mkTempDir('bl-tok-');
-  const p = join(dir, 'index.md');
+  const p = specPath(dir);
   const content = '---\nstory_id: S-1\ntokens_input: 7\n---\n\n# T\n';
   writeFileSync(p, content);
   assert.equal(await accumulateStepTokensOnFile(dir, p, 'implement', null), false);
@@ -450,7 +457,7 @@ test('step-usage-rejects-nonfinite-and-fractional-counts-consistently', async ()
     assert.equal(entry(fm.tokens_by_step), want, `${label}: map`);
     assert.deepEqual(tokensByStepProblems(fm.tokens_by_step ?? {}), [], `${label}: the map validates`);
     // Interactive: the map and the totals on file, from a transcript difference.
-    const path = join(dir, 'index.md');
+    const path = specPath(dir);
     writeFileSync(path, '---\ntokens_input: 0\n---\n\nBody\n');
     await accumulateStepTokensOnFile(dir, path, 'implement', usageDelta(null, usage));
     const onFile = parseFrontmatter(readFileSync(path, 'utf8')).fm;
@@ -469,7 +476,7 @@ test('overlapping_token_writers_preserve_committed_steps', async () => {
   const { holderOf } = await import('../../src/kernel-lock.js');
   const { holdLock } = await import('../helpers/hold-lock.js');
   const dir = mkTempDir('bl-tokens-race-');
-  const path = join(dir, 'index.md');
+  const path = specPath(dir);
   writeFileSync(path, '---\nstory_id: S-1\n---\n\nBody\n');
   const tokensUrl = new URL('../../src/tokens.js', import.meta.url).href;
   // Each writer adds one input token per call: headless under its own step
@@ -550,10 +557,11 @@ test('valid_large_counts_survive_merge_and_repeated_accumulation', async () => {
     [
       'interactive difference adds onto large stored totals and entry',
       async () => {
-        const path = join(mkTempDir('bl-tokens-big-'), 'index.md');
+        const root = mkTempDir('bl-tokens-big-');
+        const path = specPath(root);
         writeFileSync(path, `---\nstory_id: S-1\ntokens_input: "${big}"\n---\n\nBody\n`);
-        await accumulateStepTokensOnFile(dirname(path), path, 'implement', use(MAX));
-        await accumulateStepTokensOnFile(dirname(path), path, 'implement', use(MAX));
+        await accumulateStepTokensOnFile(root, path, 'implement', use(MAX));
+        await accumulateStepTokensOnFile(root, path, 'implement', use(MAX));
         const { fm } = parseFrontmatter(readFileSync(path, 'utf8'));
         assert.equal(fm.tokens_by_step.implement.input, String(2n * BigInt(MAX)), 'map');
         return fm.tokens_input;
@@ -621,7 +629,7 @@ test('reconciliation_snapshot_and_commit_share_token_lock', async () => {
 
 test('token writers stay best-effort when the lock cannot be created', async () => {
   const dir = mkTempDir('bl-tokens-nolock-');
-  const path = join(dir, 'index.md');
+  const path = specPath(dir);
   const before = '---\nstory_id: S-1\n---\n\nBody\n';
   writeFileSync(path, before);
   const use = { input: 1, output: 0, cache_creation: 0, cache_read: 0 };

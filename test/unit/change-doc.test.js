@@ -19,12 +19,18 @@ import {
   readChange,
   addGateLine,
   recordMerge,
+  restoreChange,
   serializeChange,
   setRepo,
   unitChange,
   unitIdOfDir,
-  writeChange,
+  updateChange,
+  updateChangeHeld,
 } from '../../src/change-doc.js';
+import { holds } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
+import { specLockPath, withSpecLock } from '../../src/spec-file.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
 import { extractSection, featureRepoOrder } from '../../src/feature.js';
 import { deployableRepos, mainCommits, tagRepos } from '../../src/release.js';
 import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
@@ -43,9 +49,9 @@ function unitDir(name = 'F42-hub') {
   return { root, dir };
 }
 
-test('a new change document: change_of, status open, no review fields (F-69 D5), one entry per repo, the four sections in order', () => {
+test('a new change document: change_of, status open, no review fields (F-69 D5), one entry per repo, the four sections in order', async () => {
   const { root, dir } = unitDir();
-  const res = ensureChange(root, dir, {
+  const res = await ensureChange(root, dir, {
     changeOf: 'F-42',
     title: 'Hub',
     repos: [
@@ -97,13 +103,13 @@ test('a new change document: change_of, status open, no review fields (F-69 D5),
   );
 });
 
-test('ensureChange reuses the open document, adds missing repos, fills an empty branch, and writes only on a change', () => {
+test('ensureChange reuses the open document, adds missing repos, fills an empty branch, and writes only on a change', async () => {
   const { root, dir } = unitDir();
-  const first = ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: '' }] });
-  const again = ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: '' }] });
+  const first = await ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: '' }] });
+  const again = await ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: '' }] });
   assert.equal(again.changed, false);
   assert.equal(again.path, first.path);
-  const more = ensureChange(root, dir, {
+  const more = await ensureChange(root, dir, {
     changeOf: 'F-42',
     repos: [
       { repo: 'bl', branch: 'f42-hub' },
@@ -120,7 +126,7 @@ test('ensureChange reuses the open document, adds missing repos, fills an empty 
     ],
   );
   // A branch already recorded is kept.
-  ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'other' }] });
+  await ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'other' }] });
   assert.equal(readChange(first.path).repos[0].branch, 'f42-hub');
 });
 
@@ -132,11 +138,11 @@ test('changeStatus: unset reads open, and the old closed reads dropped (F-69 D6)
   assert.equal(changeStatus({ status: 'shipped' }), 'shipped');
 });
 
-test('a unit whose change is merged gets change-2.md, and bl reads the highest-numbered open one', () => {
+test('a unit whose change is merged gets change-2.md, and bl reads the highest-numbered open one', async () => {
   const { root, dir } = unitDir();
-  ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
-  recordMerge(root, dir, { commits: { bl: 'abc1234' }, date: '2026-10-18' });
-  const second = ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
+  await ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
+  await recordMerge(root, dir, { commits: { bl: 'abc1234' }, date: '2026-10-18' });
+  const second = await ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
   assert.equal(second.path, join(dir, 'change-2.md'));
   assert.equal(second.created, true);
   assert.deepEqual(
@@ -160,7 +166,7 @@ test('a unit whose change is merged gets change-2.md, and bl reads the highest-n
   assert.equal(changeName('F-42', 2), 'F-42.2');
 });
 
-test("unitChange reads the primary repo's branch and PR and the body; empty without a document", () => {
+test("unitChange reads the primary repo's branch and PR and the body; empty without a document", async () => {
   const { root, dir } = unitDir();
   assert.deepEqual(unitChange(dir, 'bl'), {
     changePath: null,
@@ -171,7 +177,7 @@ test("unitChange reads the primary repo's branch and PR and the body; empty with
     prUrl: '',
     changeBody: '',
   });
-  const { path } = ensureChange(root, dir, {
+  const { path } = await ensureChange(root, dir, {
     changeOf: 'F-42',
     repos: [
       { repo: 'tools', branch: 'f42-hub' },
@@ -180,7 +186,7 @@ test("unitChange reads the primary repo's branch and PR and the body; empty with
   });
   const doc = readChange(path);
   setRepo(doc, 'bl', { pr: 12, url: 'https://x/pull/12' });
-  writeChange(root, path, doc);
+  writeFileSync(path, serializeChange(doc));
   const u = unitChange(dir, 'bl');
   assert.equal(u.branch, 'f42-hub');
   assert.equal(u.pr, '12');
@@ -219,7 +225,7 @@ test('appendSection creates a missing section in its place among the four, or at
   assert.equal(appendSection('', 'Description', 'D'), '## Description\n\nD\n');
 });
 
-test('a CRLF change document reads like an LF one and is written back as CRLF', () => {
+test('a CRLF change document reads like an LF one and is written back as CRLF', async () => {
   const { root, dir } = unitDir();
   const lf =
     '---\nchange_of: F-42\nstatus: open\nreview_round: 2\nreview_status: fixed\nrepos:\n  - repo: bl\n    branch: f42-hub\n    pr: 9\n    url:\n    merged:\n---\n\n# F-42\n\n## Gate\n\n- g1\n\n## Review Log\n\n### Session 2026-10-01 (PR #9)\n';
@@ -230,8 +236,7 @@ test('a CRLF change document reads like an LF one and is written back as CRLF', 
   assert.deepEqual(doc.fm, parseChange(lf).fm);
   assert.deepEqual(doc.repos, [{ repo: 'bl', branch: 'f42-hub', pr: '9', url: '', merged: '' }]);
   assert.equal(unitChange(dir, 'bl').change.fm.review_status, 'fixed', 'an old document keeps its fields');
-  doc.body = appendSection(doc.body, 'Gate', '- g2');
-  writeChange(root, path, doc);
+  await updateChange(root, path, (d) => void (d.body = appendSection(d.body, 'Gate', '- g2')));
   const raw = readFileSync(path, 'utf8');
   assert.ok(!/[^\r]\n/.test(raw), 'every line ends CRLF');
   assert.match(raw, /- g1\r\n- g2\r\n/);
@@ -254,21 +259,25 @@ test('parse and serialize round-trip several repos, quoted values and unknown ke
   assert.deepEqual(parseChange('no frontmatter\n').repos, []);
 });
 
-test("recordMerge sets each repo's merged commit, appends ## Merge and marks the change merged", () => {
+test("recordMerge sets each repo's merged commit, appends ## Merge and marks the change merged", async () => {
   const { root, dir } = unitDir('S890-x');
   assert.equal(
-    recordMerge(root, dir, { commits: { bl: 'a' }, date: '2026-10-18' }),
+    await recordMerge(root, dir, { commits: { bl: 'a' }, date: '2026-10-18' }),
     null,
     'no document, nothing written',
   );
-  ensureChange(root, dir, {
+  await ensureChange(root, dir, {
     changeOf: 'S-890',
     repos: [
       { repo: 'bl', branch: 's890-x' },
       { repo: 'tools', branch: 's890-x' },
     ],
   });
-  recordMerge(root, dir, { commits: { bl: 'abc1234', tools: 'def5678' }, date: '2026-10-18', extra: ['- Tag: `F-1`'] });
+  await recordMerge(root, dir, {
+    commits: { bl: 'abc1234', tools: 'def5678' },
+    date: '2026-10-18',
+    extra: ['- Tag: `F-1`'],
+  });
   const doc = readChange(changePath(dir));
   assert.equal(doc.fm.status, 'merged');
   assert.deepEqual(
@@ -583,7 +592,7 @@ test('tagRepos_rollback_does_not_delete_a_concurrent_publishers_tag', () => {
   assert.equal(mine(repos[1].repoPath).status, 1);
 });
 
-test('feature_lead_is_used_when_existing_change_repos_have_another_order', () => {
+test('feature_lead_is_used_when_existing_change_repos_have_another_order', async () => {
   // F-52 D3: whatever order a document recorded, preparing it in the order
   // derived now puts the lead first, so unitChange reads the lead's PR.
   const cases = [
@@ -624,16 +633,16 @@ test('feature_lead_is_used_when_existing_change_repos_have_another_order', () =>
   for (const c of cases) {
     const { root, dir } = unitDir();
     if (c.recorded) {
-      const first = ensureChange(root, dir, {
+      const first = await ensureChange(root, dir, {
         changeOf: 'F-42',
         repos: c.recorded.map((repo) => ({ repo, branch: 'f42-hub' })),
       });
       const doc = readChange(first.path);
       for (const repo of c.recorded) setRepo(doc, repo, { pr: `pr-${repo}` });
-      writeChange(root, first.path, doc);
+      writeFileSync(first.path, serializeChange(doc));
     }
     const names = featureRepoOrder(c.stories);
-    const res = ensureChange(root, dir, {
+    const res = await ensureChange(root, dir, {
       changeOf: 'F-42',
       repos: names.map((repo) => ({ repo, branch: 'f42-hub' })),
     });
@@ -714,7 +723,7 @@ test('applyFixOutcome: fixed records in_review by fix and commits the unit file;
   // The old shape (F-69 D4): the change document's pending review places the unit in fixing.
   const doc = newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
   Object.assign(doc.fm, { review_round: '1', review_status: 'pending' });
-  writeChange(root, path, doc);
+  writeFileSync(path, serializeChange(doc));
   const unit = fixUnit(root, dir);
   const git = (...args) => gitIn(root, ...args);
   git('init', '-q', '-b', 'main');
@@ -818,6 +827,89 @@ test('gateLine writes the one ## Gate shape, with the detail and the commit only
     gateLine({ ...base, verdict: 'fail', detail: 'attempt 1', commit: sha }),
     `- 2026-11-10 · code · \`npm test\` · fail (attempt 1) · commit ${sha}`,
   );
+});
+
+/** Whether `promise` is still pending after `ms`. */
+const pendingAfter = async (promise, ms) => {
+  let settled = false;
+  promise.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  await new Promise((r) => setTimeout(r, ms));
+  return !settled;
+};
+
+test('updateChangeHeld throws without the spec lock and writes inside withSpecLock', async () => {
+  const { root, dir } = unitDir();
+  const { path } = await ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
+  const before = readFileSync(path, 'utf8');
+  const gate = (d) => void (d.body = appendSection(d.body, 'Gate', '- g1'));
+  assert.throws(
+    () => updateChangeHeld(root, path, gate),
+    /updateChangeHeld\(.*\): this process does not hold the spec lock/,
+  );
+  assert.equal(readFileSync(path, 'utf8'), before, 'nothing written');
+  await withSpecLock(path, () => updateChangeHeld(root, path, gate));
+  assert.equal(extractSection(readChange(path).body, 'Gate'), '\n- g1\n\n');
+  // A mutate that returns false writes nothing.
+  await updateChange(root, path, (d) => ((d.fm.status = 'merged'), false));
+  assert.equal(readChange(path).fm.status, 'open');
+});
+
+test("addGateLine waits while another process holds the document's spec lock, and keeps that process's write", async () => {
+  const { root, dir } = unitDir();
+  const { path } = await ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
+  const holder = await holdLockInChild(specLockPath(path));
+  let adding;
+  try {
+    adding = addGateLine(root, dir, '- mine', 'chore: x');
+    assert.equal(await pendingAfter(adding, 200), true, 'the write waits for the lock');
+    // The holder writes meanwhile; the waiting writer reads it again under the lock.
+    writeFileSync(path, readFileSync(path, 'utf8').replace('## Gate\n', '## Gate\n\n- theirs\n'));
+  } finally {
+    await holder.kill();
+  }
+  assert.deepEqual(await adding, { path });
+  assert.equal(extractSection(readChange(path).body, 'Gate'), '\n- theirs\n- mine\n\n');
+});
+
+test('ensureChange creates a new document under the backlog lock, and updates an existing one without it', async () => {
+  const { root, dir } = unitDir();
+  const backlogLock = join(root, LOCK_FILE);
+  const holder = await holdLockInChild(backlogLock);
+  try {
+    const creating = ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
+    assert.equal(await pendingAfter(creating, 300), true, 'a new document waits for the backlog lock');
+    assert.equal(listChanges(dir).length, 0, 'nothing written yet');
+    await holder.kill();
+    const res = await creating;
+    assert.equal(res.created, true);
+    assert.equal(holds(backlogLock), false, 'the backlog lock is released');
+  } finally {
+    await holder.kill();
+  }
+  const again = await holdLockInChild(backlogLock);
+  try {
+    const res = await ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'tools', branch: 'f42-hub' }] });
+    assert.deepEqual([res.created, res.changed], [false, true], 'an existing document takes its spec lock alone');
+  } finally {
+    await again.kill();
+  }
+});
+
+test('restoreChange removes a document that was not there, and puts back the bytes of one that was', async () => {
+  const { root, dir } = unitDir();
+  const { path } = await ensureChange(root, dir, { changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
+  const before = readFileSync(path, 'utf8');
+  await restoreChange(root, path, null);
+  assert.deepEqual(listChanges(dir), [], 'removed');
+  await restoreChange(root, path, before);
+  assert.equal(readFileSync(path, 'utf8'), before, 'recreated');
+  await updateChange(root, path, (d) => void (d.fm.status = 'merged'));
+  await restoreChange(root, path, Buffer.from(before));
+  assert.equal(readFileSync(path, 'utf8'), before, 'restored');
+  assert.equal(holds(specLockPath(path)) || holds(join(root, LOCK_FILE)), false, 'no lock left held');
 });
 
 test('addGateLine returns null, and writes nothing, for a unit with no change document', async () => {

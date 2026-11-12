@@ -14,11 +14,11 @@
 // `EXEMPT` names the modules that may write anyway, each with its reason.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { parse } from 'acorn';
 import { full } from 'acorn-walk';
+import { jsFiles, parseSource } from '../helpers/source-ast.js';
 import { FLOW_TYPES, LEGACY_STATUSES, loadFlow } from '../../src/flow.js';
 import { parseFrontmatter } from '../../src/config.js';
 
@@ -71,7 +71,7 @@ function stringOf(node) {
  * @param {string} source
  */
 function statusWrites(source) {
-  const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
+  const ast = parseSource(source);
   const found = [];
   const add = (node, what) => found.push({ line: node.loc.start.line, what });
   full(ast, (node) => {
@@ -92,14 +92,6 @@ function statusWrites(source) {
     if (text !== null && LINE_RE.test(text)) add(node, 'writes a status: line');
   });
   return found;
-}
-
-function jsFiles(dir) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) return jsFiles(p);
-    return e.name.endsWith('.js') ? [p] : [];
-  });
 }
 
 test('no module but transition.js (and the exempt updates modules) writes a work unit status', () => {

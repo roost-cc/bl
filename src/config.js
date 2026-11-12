@@ -1660,12 +1660,15 @@ export function enumeratePlugins(config) {
  * Returns `{ ok, status, missing? }`. Missing-binary case (`shell` exits
  * 127) yields `{ ok: false, status: 127, missing: true }` so callers can
  * distinguish "tool not installed" from a normal non-zero plugin exit:
- *   - implicit callers (`bl sync`'s .md format pass, `installDeps`) treat
- *     `missing: true` as a soft skip — warn already emitted, outer command
- *     continues.
- *   - explicit callers (`bl format` / `bl lint` via `applyStageInWorktree`)
+ *   - implicit callers (`bl sync`'s .md format pass, `bl report`'s page
+ *     format pass, `installDeps`) treat `missing: true` as a soft skip — warn
+ *     already emitted, outer command continues.
+ *   - explicit callers (`bl format` / `bl lint` via `applyStageInDirectory`)
  *     fold the 127 into `worstStatus` so CI fails when configured tooling
  *     is absent.
+ *
+ * On backlog files, `runPluginLocked` (`spec-file.js`) calls this with one
+ * path at a time, inside the file's covering lock (F-126 D4).
  *
  * `shell: true` swallows ENOENT (the leader is found by the shell, not by
  * spawn), so status 127 is the canonical missing-binary signal.

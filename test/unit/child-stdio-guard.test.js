@@ -20,24 +20,17 @@
 // src/ file that still imports them, with the names it imports.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { parse } from 'acorn';
 import { ancestor, simple } from 'acorn-walk';
+import { calleeName, jsFiles, parseSource } from '../helpers/source-ast.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const EXEMPT = new Set(['src/child-stdio.js']);
 const SYNC_CALLS = new Set(['spawnSync', 'execFileSync', 'execSync']);
 const CALLS = new Set([...SYNC_CALLS, 'spawn', 'execFile', 'exec']);
 const NODE_IDS = new Set(['BL_BIN', 'BL_PATH']);
-
-/** The name a call's callee ends in: `spawnSync` for `spawnSync(…)` and `cp.spawnSync(…)`. */
-function calleeName(callee) {
-  if (callee.type === 'Identifier') return callee.name;
-  if (callee.type === 'MemberExpression' && !callee.computed) return callee.property.name;
-  return null;
-}
 
 /**
  * Whether a command argument names a Node child. `aliases` holds the names a
@@ -272,7 +265,7 @@ function stdinPipes(value, bindings) {
  * @param {string} source
  */
 export function childStdioViolations(source) {
-  const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
+  const ast = parseSource(source);
   const aliases = nodeAliases(ast);
   const declared = declaredSyncAliases(ast);
   const bindings = bindingsOf(ast);
@@ -311,14 +304,6 @@ export function childStdioViolations(source) {
     },
   });
   return out;
-}
-
-function jsFiles(dir) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) return e.name === 'node_modules' ? [] : jsFiles(p);
-    return e.name.endsWith('.js') ? [p] : [];
-  });
 }
 
 test('no input:, no piped Node child and no piped synchronous stdin in src/ or test/ outside src/child-stdio.js', () => {
@@ -618,7 +603,7 @@ const ALLOWED = new Map([
  * @param {string} rel  the file's path from the bl root (`src/agents/claude.js`)
  */
 export function childImports(source, rel) {
-  const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
+  const ast = parseSource(source);
   const moduleOf = (spec) => {
     if (typeof spec !== 'string') return null;
     if (spec === 'child_process' || spec === 'node:child_process') return 'child_process';

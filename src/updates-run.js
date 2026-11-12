@@ -51,7 +51,8 @@ import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { checkCriteria, extractSection, replaceSection, sectionHasContent } from './feature.js';
 import { RUN_DIR, ensureRunDir, shellMerged } from './feature-run.js';
 import { acquireRunLock, releaseRunLock, updatesLockRefusal } from './run-lock.js';
-import { updateSpecFile } from './spec-file.js';
+import { updateSpecFile, withSpecLock } from './spec-file.js';
+import { withLock } from './lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { syncAndCommit } from './sync.js';
 import { UPDATE_REQUESTS, updateRequestProblem } from './validate.js';
@@ -476,14 +477,15 @@ function runReportSections(at, outcomes) {
 
 /**
  * Append a section to the day's report, creating the file (with its title)
- * and the directory when needed. Returns the backlog-relative path.
+ * and the directory when needed. Returns the backlog-relative path. The
+ * caller holds the backlog lock, the report's covering lock (F-126).
  */
 export function appendReport(config, date, text) {
   const path = reportPath(config, date);
   mkdirSync(join(config.backlogRoot, REPORT_DIR), { recursive: true });
   const existing = existsSync(path) ? readFileSync(path, 'utf8') : null;
   const head = existing == null ? `# Dependency updates · ${date}\n\n` : `${existing.replace(/\s+$/, '')}\n\n`;
-  writeFileSync(path, `${head}${text.replace(/\s+$/, '')}\n`);
+  atomicWriteFile(config.backlogRoot, path, `${head}${text.replace(/\s+$/, '')}\n`);
   return relative(config.backlogRoot, path);
 }
 
@@ -501,7 +503,8 @@ export function appendReport(config, date, text) {
  * this block) may write the same `## Run <at>` or answer heading. A section
  * is the run's only when its whole text is what the run wrote; a foreign
  * section with the same text is indistinguishable from the run's, so
- * whichever copy is taken, the file keeps one of each.
+ * whichever copy is taken, the file keeps one of each. The caller holds the
+ * backlog lock (F-126).
  *
  * @param {object} config
  * @param {string} date
@@ -531,7 +534,7 @@ export function writeRunReport(config, date, previous, text) {
     .map((s) => lines.slice(s.from, s.to).join('\n'))
     .join('\n')
     .replace(/\s+$/, '');
-  writeFileSync(path, `${before}\n\n${text.replace(/\s+$/, '')}\n${after ? `\n${after}\n` : ''}`);
+  atomicWriteFile(config.backlogRoot, path, `${before}\n\n${text.replace(/\s+$/, '')}\n${after ? `\n${after}\n` : ''}`);
   return relative(config.backlogRoot, path);
 }
 
@@ -1247,7 +1250,7 @@ async function dropStory(ctx, s) {
       : null;
   if (failed) {
     try {
-      atomicWriteFile(ctx.config.backlogRoot, s.indexPath, text);
+      await withSpecLock(s.indexPath, () => atomicWriteFile(ctx.config.backlogRoot, s.indexPath, text));
     } catch (e) {
       return held(
         `${failed}; and the story could not be put back (${e.message}): it reads superseded while PR #${pr} is open`,
@@ -1417,10 +1420,12 @@ export async function runUpdates(config, opts = {}) {
       runner.log('updates run: no open update stories');
       if (opts.dryRun) return result;
       // The heartbeat: a run with nothing to do still says it ran.
-      result.report = appendReport(config, today, `## Run ${at}\n\nNo open update stories.\n`);
-      result.commit = await syncAndCommit(config, {
-        message: 'chore: updates run: nothing open',
-        extraPaths: [result.report],
+      await withLock(config.backlogRoot, async () => {
+        result.report = appendReport(config, today, `## Run ${at}\n\nNo open update stories.\n`);
+        result.commit = await syncAndCommit(config, {
+          message: 'chore: updates run: nothing open',
+          extraPaths: [result.report],
+        });
       });
       throwIfUncommitted(result.commit);
       return result;
@@ -1451,13 +1456,15 @@ export async function runUpdates(config, opts = {}) {
     let pending = [];
     const commitRun = async (message) => {
       const block = runReportSections(at, result.outcomes).join('\n');
-      result.report = writeRunReport(config, today, previous, block);
-      previous = block;
       const n = result.outcomes.length;
-      result.commit = await syncAndCommit(config, {
-        message,
-        storyIds: changed,
-        extraPaths: [...new Set([result.report, ...pending])],
+      await withLock(config.backlogRoot, async () => {
+        result.report = writeRunReport(config, today, previous, block);
+        previous = block;
+        result.commit = await syncAndCommit(config, {
+          message,
+          storyIds: changed,
+          extraPaths: [...new Set([result.report, ...pending])],
+        });
       });
       // A failed commit leaves the outcomes pending: the next one carries them.
       if (result.commit.error) {

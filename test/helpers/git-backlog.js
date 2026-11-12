@@ -35,11 +35,14 @@ export function git(cwd, ...args) {
  * `git init -b main` the backlog at `dir`, sync it once and commit the result
  * as the base, so a test starts from a clean tree. Its `.gitignore` holds
  * bl's runtime directory `.bl/`, where every lock file lives, as every
- * backlog's does.
+ * backlog's does. The repo has the `GIT_ENV` identity in its config, so bl
+ * code in the test process (`commitPaths`) commits there too.
  */
 export function initGitBacklog(dir) {
   writeFileSync(join(dir, '.gitignore'), '.bl/\n');
   git(dir, 'init', '-q', '-b', 'main');
+  git(dir, 'config', 'user.name', GIT_ENV.GIT_AUTHOR_NAME);
+  git(dir, 'config', 'user.email', GIT_ENV.GIT_AUTHOR_EMAIL);
   const r = runBl(['sync'], { cwd: dir });
   if (r.status !== 0) throw new Error(`seed sync failed: ${r.stderr}`);
   git(dir, 'add', '.');

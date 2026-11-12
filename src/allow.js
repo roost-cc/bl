@@ -86,7 +86,7 @@ Options:
   const localExtra = loadLocalTools(config.backlogRoot).extra;
   // ensureAllowedTools regenerates lazily; we need a fresh file before
   // computing existingPatterns so we don't duplicate config-derived rows.
-  const toolDefs = ensureAllowedTools(config.backlogRoot, config);
+  const toolDefs = await ensureAllowedTools(config.backlogRoot, config);
   // Patterns already granted = generated/config-derived (templated leaders
   // in both their committed and their resolved form) ∪ local additions, so
   // `bl allow` never re-suggests something already in the local file.

@@ -9,8 +9,8 @@
  *     an interrupted `bl new --feature`, regenerate `allowed-tools.json` after
  *     a pull, and push a `main` still ahead.
  *   - `syncAndCommit`: under the backlog lock, format the changed Markdown
- *     files among the paths it is given, then commit exactly those paths and
- *     push.
+ *     files among the paths it is given, each under its spec lock, then
+ *     commit exactly those paths and push.
  *   - `bl sync` with no `--commit` pulls and pushes (`bl.js` runs
  *     `pullBeforeCommand` for it) and writes nothing.
  */
@@ -51,35 +51,37 @@ import {
   saveFailedCommit,
 } from './backlog-commit.js';
 import { ensureAllowedTools } from './allowed-tools.js';
+import { runPluginLocked } from './spec-file.js';
 import { findStoryDir } from './story.js';
 import { FEATURES_DIR } from './feature.js';
 import { describeExit, git } from './child.js';
 
 /**
- * Run the configured `format` plugin over the Markdown files in
- * `touchedMarkdown` (absolute paths). Backlog-scoped (no story context). The
- * plugin registered for `.md` under `language_dispatch.format` runs; absence
- * is a silent skip (a fresh `bl init` may not have picked a Markdown
- * formatter).
+ * The `format` plugin runs for the Markdown files in `touchedMarkdown`
+ * (absolute paths), as plugin name → paths. Backlog-scoped (no story
+ * context). The plugin registered for `.md` under `language_dispatch.format`
+ * runs; absence is a silent skip (a fresh `bl init` may not have picked a
+ * Markdown formatter).
  *
  * The backlog-root cascade is consulted purely for opt-out: a top-level
  * `plugins-format: -md` in `<backlogRoot>/index.md` suppresses the pass.
  * Defaults run otherwise — gating on the cascade as an *include* list (the
  * earlier model) made the pass dead in any setup that didn't redundantly
  * declare `plugins-format: md`.
+ * @returns {Map<string, string[]>}
  */
-export function formatBacklogMarkdown(config, touchedMarkdown) {
+function markdownFormatBuckets(config, touchedMarkdown) {
   const dispatch = config.languageDispatch ?? {};
   const formatMap = dispatch.format ?? {};
   const mdPlugins = formatMap['.md'];
-  if (!mdPlugins) return;
+  if (!mdPlugins) return new Map();
   const pluginNames = Array.isArray(mdPlugins) ? mdPlugins : [mdPlugins];
 
   const { removes } = parsePluginCascade('format', {
     backlogRoot: config.backlogRoot,
   });
   const activePluginNames = pluginNames.filter((name) => !removes.includes(name) && config.plugins[name]?.format);
-  if (activePluginNames.length === 0) return;
+  if (activePluginNames.length === 0) return new Map();
 
   // A file in the backlog goes by its backlog-relative path; one outside it
   // (a `bl report --out` page) by its absolute path, so it is formatted too.
@@ -89,13 +91,42 @@ export function formatBacklogMarkdown(config, touchedMarkdown) {
       const rel = relative(config.backlogRoot, path);
       return rel.startsWith('..') || isAbsolute(rel) ? path : rel;
     });
-  if (files.length === 0) return;
+  if (files.length === 0) return new Map();
 
   // Bucket by plugin so the pass uses the same dispatch semantics as
   // bl format / bl lint, but only over the files it was given.
-  const buckets = bucketByPlugin(files, 'format', { format: { '.md': activePluginNames } }, config.plugins);
-  for (const [name, paths] of buckets) {
+  return bucketByPlugin(files, 'format', { format: { '.md': activePluginNames } }, config.plugins);
+}
+
+/**
+ * Run the `.md` format plugin over `touchedMarkdown` in one batch per plugin,
+ * with no lock (`markdownFormatBuckets`). Only for `bl report`'s pages, which
+ * lie outside the backlog or under its ignored `reports/`, so no other `bl`
+ * writes them. A backlog file goes through `formatBacklogFiles`.
+ */
+export function formatBacklogMarkdown(config, touchedMarkdown) {
+  for (const [name, paths] of markdownFormatBuckets(config, touchedMarkdown)) {
     runPluginBatch(name, config.plugins[name].format, paths, { roostDir: config.roostDir }, config.backlogRoot);
+  }
+}
+
+/**
+ * Run the `.md` format plugin over the backlog files in `touchedMarkdown`,
+ * one file per process, each inside its covering lock (`runPluginLocked`,
+ * F-126 D4), so the plugin never rewrites a file that another writer holds.
+ * A missing plugin binary is a warning, and the pass goes on.
+ */
+export async function formatBacklogFiles(config, touchedMarkdown) {
+  for (const [name, paths] of markdownFormatBuckets(config, touchedMarkdown)) {
+    const { backlogRoot } = config;
+    await runPluginLocked(
+      name,
+      config.plugins[name].format,
+      paths,
+      { roostDir: config.roostDir },
+      backlogRoot,
+      backlogRoot,
+    );
   }
 }
 
@@ -243,7 +274,7 @@ async function regenerateAfterPull(root, config, pendingPath) {
       config.repoName,
     );
     // A no-op when the file is current for the pulled configuration.
-    ensureAllowedTools(root, fresh);
+    await ensureAllowedTools(root, fresh);
   } catch (err) {
     return { problem: err.message };
   }
@@ -262,8 +293,9 @@ async function regenerateAfterPull(root, config, pendingPath) {
 
 /**
  * `bl sync --commit`: under one lock hold, format the changed Markdown files
- * among (each story's directory) ∪ `extraPaths` (`formatBacklogMarkdown`),
- * then commit exactly those paths and push. Never stages the whole backlog,
+ * among (each story's directory) ∪ `extraPaths` one at a time, each under
+ * its spec lock (`formatBacklogFiles`), then commit exactly those paths and
+ * push. Never stages the whole backlog,
  * so an unrelated dirty story file, including one another agent edits while
  * this holds the lock, stays out of the commit. `bl done`, `bl new` and
  * `bl merge` commit through this too, holding the lock across their own
@@ -302,7 +334,9 @@ export async function syncAndCommit(config, { message, storyIds = [], extraPaths
     if (status.stdout === '') return { committed: false, paths };
     // A deleted file is not on disk, so the format pass skips it.
     const changed = parsePorcelainZ(status.stdout).filter((p) => p.endsWith('.md'));
-    formatBacklogMarkdown(config, new Set(changed.map((p) => join(root, p))));
+    // Each file's spec lock inside the backlog lock (F-67 D4: the backlog
+    // lock first).
+    await formatBacklogFiles(config, new Set(changed.map((p) => join(root, p))));
     return await commitPaths(root, paths, message);
   } finally {
     releaseLock(root);
