@@ -44,7 +44,7 @@
 │   7   F-16   draft       -           Inspection quick condition assessment                             ││     ⢠⣤⣼⣿⡇     ⢸⣿⣧⣤⡄       ⢸⣿⣿⣿⣧⣤⣤          ⣤⣤⣿⣿⣿⣿      ⣤⣤⣿⣿⣿⣿ │
 │   8   F-13   draft       -           Maintenance requests                                              ││   ⢰⣶⣾⣿⣿⣿⣧⣤⡄   ⢸⣿⣿⣿⣇⣀⡀   ⢰⣶⣾⣿⣿⣿⣿⣿⣿  ⣤⣤⣶⣶    ⣿⣿⣿⣿⣿⣿⣤⣤  ⣶⣶⣿⣿⣿⣿⣿⣿ │
 │                                                                                                        ││   Oct 12                      Oct 26                   Nov 09 │
-│ bl next → F-81 (running) · 185 work units not ranked                                                   ││                                                               │
+│ bl next → F-81 (running)                                                                               ││                                                               │
 │                                                                                                        ││ 18:16  F-81    implement S-1310  ✓ 3m    claude opus low      │
 │                                                                                                        ││ 18:12  F-81    implement S-1277  ✓ 27m   claude opus high     │
 │                                                                                                        ││ 18:05  S-1330  review:verify     ✓ 9m    codex gpt-6-sol      │

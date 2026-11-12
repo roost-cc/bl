@@ -142,13 +142,11 @@ type Item struct {
 	Actions []Action `json:"actions"`
 }
 
-// Next is the `next` section: `bl next`'s pick and the first ranked units.
+// Next is the `next` section: `bl next`'s pick and the ranked units.
 type Next struct {
 	Section
-	Pick          *Pick    `json:"pick"`
-	Ranked        []Ranked `json:"ranked"`
-	RankedCount   int      `json:"rankedCount"`
-	UnrankedCount int      `json:"unrankedCount"`
+	Pick   *Pick    `json:"pick"`
+	Ranked []Ranked `json:"ranked"`
 }
 
 // Pick is the unit `bl next` picks, and the unit its walk started at.

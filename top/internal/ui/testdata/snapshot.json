@@ -1006,8 +1006,9 @@
         ]
       }
     ],
-    "rankedCount": 6,
-    "unrankedCount": 185
+    "unranked": [],
+    "staged": null,
+    "conflict": null
   },
   "capacity": {
     "read_at": "2026-11-09T23:14:31.000Z",

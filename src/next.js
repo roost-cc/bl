@@ -171,18 +171,19 @@ function placeOf(entry) {
 
 /**
  * The walk `bl next` prints (F-87 D1): the open units that match `filter`
- * in priority order, split into the ranked ones (each with `holds`, the
- * words of everything that holds it from `bl run`, and `heldBy`, the ids of
- * those holders) and the unranked tail,
- * and the pick. `pick.from` is the unit the walk started at, which the pick
- * unblocks when it is another; `pick.path` the hold words that led to it.
- * `waits` is each unit found held with no free blocker, and what holds it.
- * Throws when `priority.yaml` is not YAML.
+ * in priority order, split into the ranked ones and the unranked tail (each
+ * with `holds`, the words of everything that holds it from `bl run`, and
+ * `heldBy`, the ids of those holders), and the pick. `pick.from` is the unit
+ * the walk started at, which the pick unblocks when it is another;
+ * `pick.path` the hold words that led to it. `waits` is each unit found held
+ * with no free blocker, and what holds it. `graph` is the backlog graph the
+ * walk read. Throws when `priority.yaml` is not YAML.
  *
  * @param {object} config  `loadConfig()`
  * @param {{ theme: string|null, epic: string|null }} filter  `parseFilter`'s, or all null
  * @param {{ ctx?: object, flow?: object }} [opts]  the filter context and flow, when the caller has read them
- * @returns {{ problems: object[], ranked: Array<PlanEntry & { holds: string[], heldBy: string[] }>, unranked: PlanEntry[],
+ * @returns {{ problems: object[], graph: any, ranked: Array<PlanEntry & { holds: string[], heldBy: string[] }>,
+ *   unranked: Array<PlanEntry & { holds: string[], heldBy: string[] }>,
  *   pick: { unit: any, from: PlanEntry, path: string[] } | null,
  *   waits: Array<{ entry: PlanEntry, why: string[] }> }}
  */
@@ -203,14 +204,13 @@ export function nextPlan(config, filter, { ctx = filterContext(config), flow = l
       position: e?.position ?? null,
     };
   };
+  const withHolds = (u) => {
+    const { runnable, waits, ids } = holdsOf(state, u);
+    return { ...entry(u), holds: [...runnable.map((r) => r.why), ...waits], heldBy: ids };
+  };
   const order = graph.priority.filter((u) => matches(state, u, filter));
-  const ranked = order
-    .filter((u) => rankedEntry.has(u))
-    .map((u) => {
-      const { runnable, waits, ids } = holdsOf(state, u);
-      return { ...entry(u), holds: [...runnable.map((r) => r.why), ...waits], heldBy: ids };
-    });
-  const unranked = order.filter((u) => !rankedEntry.has(u)).map(entry);
+  const ranked = order.filter((u) => rankedEntry.has(u)).map(withHolds);
+  const unranked = order.filter((u) => !rankedEntry.has(u)).map(withHolds);
 
   let pick = null;
   for (const u of order) {
@@ -224,7 +224,7 @@ export function nextPlan(config, filter, { ctx = filterContext(config), flow = l
   const waits = [...state.waits]
     .filter(([held]) => held !== pick?.from.unit)
     .map(([held, why]) => ({ entry: entry(held), why }));
-  return { problems: graph.problems, ranked, unranked, pick, waits };
+  return { problems: graph.problems, graph, ranked, unranked, pick, waits };
 }
 
 export async function main(argv) {

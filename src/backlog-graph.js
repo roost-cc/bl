@@ -362,7 +362,7 @@ const memos = new Map();
  */
 
 /** `mtimeNs:size:ino`, or null when `path` is not a file. */
-function statKey(path) {
+export function statKey(path) {
   const st = statSync(path, { bigint: true, throwIfNoEntry: false });
   return st && st.isFile() ? `${st.mtimeNs}:${st.size}:${st.ino}` : null;
 }

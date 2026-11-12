@@ -27,7 +27,7 @@ func (m Model) drawNext(w, h int) []string {
 }
 
 // pickLine is box ³'s line under the list: the unit `bl next` picks and its status, the ranked
-// unit it unblocks when that is another, and how many units are not ranked.
+// unit it unblocks when that is another.
 func pickLine(n stream.Next) string {
 	if n.Pick == nil {
 		return "bl next → nothing can run"
@@ -35,9 +35,6 @@ func pickLine(n stream.Next) string {
 	line := fmt.Sprintf("bl next → %s (%s)", n.Pick.ID, n.Pick.Status)
 	if n.Pick.From != "" && n.Pick.From != n.Pick.ID {
 		line += " · it unblocks " + n.Pick.From
-	}
-	if n.UnrankedCount > 0 {
-		line += fmt.Sprintf(" · %d work units not ranked", n.UnrankedCount)
 	}
 	return line
 }

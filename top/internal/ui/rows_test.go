@@ -199,7 +199,7 @@ func TestNextBoxShowsRankedUnitsAndThePick(t *testing.T) {
 		"  3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a change, an…│",
 		"  4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the guest",
 		"  6   F-86   draft       -           AGENTS.md in plain English",
-		"bl next → F-81 (running) · 185 work units not ranked",
+		"bl next → F-81 (running)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("box ³ has no %q:\n%s", want, out)
