@@ -31,7 +31,7 @@ import { flowForHelp, loadFlow } from './flow.js';
 import { assertFrom, requireBranch, statusOf, transition } from './transition.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
-import { takeUnitLocks } from './unit-lock.js';
+import { takeUnitLocksOrExit } from './unit-lock.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
@@ -182,7 +182,7 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
  * `bl refine S-n`, the batch and `bl refine F-n` (`feature-cmd.js`
  * `cmdRefine`) all end here.
  *
- * First it takes the work unit locks of `units` (`takeUnitLocks`, F-122 D2):
+ * First it takes the work unit locks of `units` (`takeUnitLocksOrExit`, F-122 D2):
  * a lock another process holds refuses the refine with exit 1, before it
  * writes anything. The commit holds only the paths under the units'
  * directories (`scope()`, read at the end, so a story the session made for
@@ -198,11 +198,7 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
 export async function refineAndCommit(units, opts, message, apply) {
   const ids = units.map((u) => u.id);
   const owner = `refine ${ids.join(', ')}`;
-  const lock = takeUnitLocks(opts.config, units, owner);
-  if (lock.refused != null) {
-    console.error(`Error: ${lock.refused}`);
-    process.exit(1);
-  }
+  const lock = takeUnitLocksOrExit(opts.config, units, owner);
   let exitCode;
   try {
     const before = dirtySnapshot(opts.backlogRoot);
