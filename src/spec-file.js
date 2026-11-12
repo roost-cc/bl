@@ -23,7 +23,7 @@ import { existsSync, readFileSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { createHash } from 'crypto';
-import { FrontmatterError, info, parseFrontmatterOf, serializeFrontmatter } from './config.js';
+import { FrontmatterError, info, parseFrontmatterOf, runPluginBatch, serializeFrontmatter } from './config.js';
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
 import { assertHeld, release, tryLock } from './kernel-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
@@ -128,6 +128,33 @@ export async function withSpecLock(indexPath, fn, { waitMs = LOCK_WAIT_MS } = {}
 export async function withSpecFileLock(backlogRoot, path, fn) {
   if (existsSync(path)) return withSpecLock(path, fn);
   return withLock(backlogRoot, async () => withSpecLock(path, fn));
+}
+
+/**
+ * Run a format or lint plugin (`runPluginBatch`, `config.js`) on `paths`, one
+ * file per process, each inside that file's spec lock (F-126 D4). A plugin
+ * rewrites a file in place, so a batch run could overwrite a token writer's
+ * write to any file in it. A file whose lock another process holds is waited
+ * for, and the wait is said once on stderr (`withSpecLock`). The cost is about
+ * 100 ms per file. Lock order (F-67 D4): a caller may hold the backlog lock
+ * (`bl sync --commit`) but no spec lock, and each run holds one spec lock.
+ * A missing binary (exit 127) stops the run after the first file, with its
+ * one warning; any other non-zero exit does not stop the other files.
+ * @param {string} name  the plugin's name
+ * @param {string} command  the plugin's command for the stage
+ * @param {string[]} paths  relative to `cwd`, or absolute
+ * @param {Record<string, string>} vars
+ * @param {string} cwd
+ * @returns {Promise<{ ok: boolean, status: number, missing?: true }>} the worst status
+ */
+export async function runPluginLocked(name, command, paths, vars, cwd) {
+  let status = 0;
+  for (const path of paths) {
+    const r = await withSpecLock(resolve(cwd, path), () => runPluginBatch(name, command, [path], vars, cwd));
+    if (r.missing) return r;
+    if (r.status > status) status = r.status;
+  }
+  return { ok: status === 0, status };
 }
 
 /**

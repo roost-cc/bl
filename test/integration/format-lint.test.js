@@ -57,7 +57,10 @@ function addFeature(backlog, storyPath) {
   mkdirSync(fDir, { recursive: true });
   const featurePath = join(fDir, 'index.md');
   writeFileSync(featurePath, `---\nfeature_id: F-1\ntitle: Feat\nstatus: running\nprimary_repo: code\n---\n\n# F-1\n`);
-  writeFileSync(storyPath, readFileSync(storyPath, 'utf8').replace('status: refined\n', 'status: refined\nfeature: F-1\n'));
+  writeFileSync(
+    storyPath,
+    readFileSync(storyPath, 'utf8').replace('status: refined\n', 'status: refined\nfeature: F-1\n'),
+  );
   return featurePath;
 }
 
@@ -237,6 +240,62 @@ test('bl format scoped invocation drops paths outside the backlog repo', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /backlog: 1 files via 1 plugin\(s\)/);
   assert.doesNotMatch(r.stderr, /definitely-outside/);
+});
+
+/** A story backlog whose `.md` format plugin appends its arguments as one JSON line to `marker`. */
+function recordingBacklog() {
+  const rec = mkTempDir('bl-fmt-rec-');
+  const marker = join(rec, 'formatted.jsonl');
+  const recorder = join(rec, 'record.mjs');
+  writeFileSync(
+    recorder,
+    "import { writeFileSync } from 'fs';\n" +
+      "writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3)) + '\\n', { flag: 'a' });\n",
+  );
+  const built = buildBacklogStory({
+    pluginsConfig: {
+      plugins: { md: { format: `node ${recorder} ${marker} {{path}}` } },
+      language_dispatch: { format: { '.md': 'md' } },
+    },
+  });
+  const lines = () =>
+    readFileSync(marker, 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+  return { ...built, lines };
+}
+
+test('bl format --story runs the plugin on one backlog file at a time (F-126 D4)', () => {
+  const { backlog, storyPath, lines } = recordingBacklog();
+  const notes = join(storyPath, '..', 'notes.md');
+  writeFileSync(notes, '# Notes\n');
+  const r = runBl(['format', '--story', 'S-1', storyPath, notes], { cwd: backlog });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(lines(), [['stories/S1-test/index.md'], ['stories/S1-test/notes.md']]);
+  assert.match(r.stderr, /backlog: 2 files via 1 plugin\(s\) — exit 0/);
+});
+
+test('bl format --no-story runs the plugin once on the files outside the backlog', () => {
+  const { backlog, tmp, lines } = recordingBacklog();
+  const code = join(tmp, 'code');
+  for (const f of ['a.md', 'b.md']) writeFileSync(join(code, f), `# ${f}\n`);
+  const r = runBl(['format', '--no-story', 'a.md', 'b.md'], { cwd: code, env: { BL_BACKLOG_DIR: backlog } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(lines(), [['a.md', 'b.md']]);
+});
+
+test('bl format --no-story runs a backlog file on its own, however its path is written', () => {
+  const { backlog, storyPath, tmp, lines } = recordingBacklog();
+  const code = join(tmp, 'code');
+  for (const f of ['a.md', 'b.md']) writeFileSync(join(code, f), `# ${f}\n`);
+  const relStory = '../backlog/stories/S1-test/index.md';
+  const r = runBl(['format', '--no-story', 'a.md', storyPath, 'b.md', relStory], {
+    cwd: code,
+    env: { BL_BACKLOG_DIR: backlog },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(lines(), [['a.md', 'b.md'], [storyPath], [relStory]]);
 });
 
 test('bl format exits non-zero when explicit story paths are outside backlog', () => {

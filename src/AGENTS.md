@@ -430,8 +430,8 @@ backlog lock and need `atomicWriteFile` only.
   other writer lets the error propagate, so a write that could not happen fails the command
   instead of being lost.
 - **Lock order.** The backlog lock (`lock.js`) is the outer lock, a spec lock the inner one:
-  `bl merge`, `bl new --feature … S-n`, `bl attach` and `persistLandedCommits` take the spec lock per file inside the
-  backlog lock. Nothing takes the backlog lock while holding a spec lock, and nothing holds two
+  `bl merge`, `bl new --feature … S-n`, `bl attach`, `persistLandedCommits` and `bl sync --commit`'s format pass
+  (`formatBacklogFiles`) take the spec lock per file inside the backlog lock. Nothing takes the backlog lock while holding a spec lock, and nothing holds two
   spec locks at once. A caller that adds a spec lock says so in a comment at the call.
 - **Who is on it.** The token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
   `recordStoryTokens`) write through `updateSpecFile`, and `recordFeatureTokens` holds
@@ -461,6 +461,12 @@ backlog lock and need `atomicWriteFile` only.
   `ensureAllowedTools` reads, regenerates and writes in `withSpecFileLock`. `withSpecFileLock`
   (`spec-file.js`) is the spec lock for an existing file, and the backlog lock with the spec lock
   inside it for a file it creates, as for a new spec file.
+  A format or lint plugin rewrites a backlog file in place, so it runs on one backlog file per
+  process, inside that file's spec lock (`runPluginLocked`, `spec-file.js`, F-126 D4):
+  `bl sync --commit`'s format pass and `bl format` / `bl lint`. A file that is not a spec (a
+  `notes.md`) gets a spec lock keyed by its own path, which no other writer takes. Only
+  `bl report`'s pages, outside the backlog or under its ignored `reports/`, are formatted in one
+  batch with no lock (`formatBacklogMarkdown`).
 - **A restore keeps the session's tokens.** When a review-verify session fails, the loop puts
   back the unit file it snapshotted before the session with `restoreKeepingTokens`
   (`feature-run.js`): the snapshot's frontmatter and body, under the spec lock and through
@@ -4143,8 +4149,10 @@ only when no older `bl` runs (task T-76).
 The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
 caller awaits it (`test/unit/awaited-calls.test.js`).
 
-Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogMarkdown`) over
-the Markdown files among its paths that git reports changed. Then it stages exactly each
+Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogFiles`) over
+the Markdown files among its paths that git reports changed. It runs the plugin on one file per
+process, inside that file's spec lock (F-126 D4), so it waits for a token writer that holds the
+file. The cost is about 100 ms per file, so about 3 s for a merge's sync. Then it stages exactly each
 `--story` directory and each `--path` (a backlog-relative path you wrote or moved yourself,
 such as both ends of a `git mv`; repeatable), and commits them with `git commit --only`
 (`backlog-commit.js` `commitPaths`), so another person's dirty story file stays out. A `--path`
@@ -5882,7 +5890,13 @@ prettier wrapper) in `bl sync` and to `pnpm install` in `bl implement`.
   any story scope. A feature ID (`--story F-5`, what feature sessions pass)
   covers the feature's `index.md` and the `index.md` of every story it
   lists, each under its own plugin cascade (the feature file under the
-  backlog root's); explicit paths narrow it to those files.
+  backlog root's); explicit paths narrow it to those files. A plugin runs
+  on one backlog file per process, inside that file's spec lock
+  (`runPluginLocked`, F-126 D4). With `--no-story`, the paths outside
+  the backlog go to each plugin in one batch, and a path inside it (by
+  its real location, however it is written) runs on its own. A missing
+  binary stops a plugin after its first file, with one warning; the
+  command exits with the worst status.
 
 #### `language_dispatch` shape
 
