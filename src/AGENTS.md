@@ -3594,7 +3594,8 @@ to its bl would be handled only after the run ends. `bl stop` never sends one:
    and the run stops when its current session ends.
 4. The loop checks the request (`checkStop()` in `src/feature-run.js`) at each step start
    (`setStep`) and after each spawn in `newScope(ctx)` returns (the session in `runSession`,
-   each test-gate command in `runTestGateInner`), before it reads the result. So the stopped
+   each test-gate command in `runTestGateInner`), before it reads the result, and in each
+   one-second slice of a usage-limit wait, which has no scope to stop. So the stopped
    session is not an attempt and does not escalate, and its tokens are lost, as for a killed
    bl (**Tokens per step**). With the request there, the loop records a `{ step: "stopped" }`
    history entry, writes `status: stopped` and `stoppedAt` (`markStopped`), deletes the

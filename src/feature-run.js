@@ -846,9 +846,10 @@ export function markStopped(state, note) {
 
 /**
  * Stop the run when `bl stop` has written its stop request (F-87 D7a):
- * called at each step start (`setStep`) and after each spawn in
- * `newScope(ctx)` returns, before the loop reads its result, so the stopped
- * session is not an attempt and does not escalate. Marks the state stopped
+ * called at each step start (`setStep`), in each slice of a usage-limit wait,
+ * and after each spawn in `newScope(ctx)` returns, before the loop reads its
+ * result, so the stopped session is not an attempt and does not escalate.
+ * Marks the state stopped
  * (`markStopped`), saves it, deletes the request and throws a
  * StopRequestError, which unwinds the step's cleanups to `runFeature`. The
  * locks go with it, and `bl run` exits 130. The unit's `status:` does not
@@ -2116,8 +2117,11 @@ async function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUnti
   // Slices of at most a second, re-reading the clock each time: a machine
   // suspended through the deadline sees that it has passed instead of
   // sleeping the whole stretch again. The wait awaits a timer, so Ctrl-C ends it.
+  // A wait has no scope for `bl stop` to stop, so each slice checks its stop
+  // request: the run stops within a second, not after a session past the wait.
   const sleep = typeof runner.sleep === 'function' ? async (ms) => runner.sleep(ms) : delay;
   for (;;) {
+    checkStop(ctx);
     const t = runnerNow(runner).getTime();
     if (t >= until) break;
     await sleep(Math.min(1000, until - t));

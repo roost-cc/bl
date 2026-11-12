@@ -1838,6 +1838,37 @@ test('stop_check_session: a session that returns while a stop request exists sto
   }
 });
 
+test('stop_check_wait: a stop request during a usage-limit wait stops the run within a slice, before the rerun', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const request = stopRequestPath(config, 'F-1');
+    let hits = 0;
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        limit: (o) =>
+          o.promptName === 'feature-story' && o.vars.storyId === 'S-1' && hits++ === 0 ? spendLimit(runner) : null,
+      },
+    });
+    // `bl stop` writes its request during the first slice of the wait.
+    const sleep = runner.sleep;
+    runner.sleep = (ms) => {
+      writeFileSync(request, '{}\n');
+      return sleep(ms);
+    };
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'stopped');
+    assert.equal(state.step, 'implement');
+    assert.equal(state.history.at(-1).step, 'stopped');
+    assert.equal(runner.calls.filter((c) => c.type === 'sleep').length, 1, 'one slice, not the whole wait');
+    assert.equal(runner.calls.filter((c) => c.type === 'session').length, 1, 'only the refused spawn: no rerun');
+    assert.equal(existsSync(request), false);
+  } finally {
+    cleanup();
+  }
+});
+
 test('stop_check_step_start: a stop request found at a step start stops the run before the step does anything', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
