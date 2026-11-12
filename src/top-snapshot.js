@@ -18,6 +18,7 @@ import { join } from 'path';
 import { RUN_DIR, loadRunState, planSteps, runLockPath } from './feature-run.js';
 import { loadBacklog } from './backlog-graph.js';
 import { holderOf } from './kernel-lock.js';
+import { runStatus } from './run-lock.js';
 import { collectInbox } from './inbox.js';
 import { changeNextVerb } from './change-doc.js';
 import { nextPlan } from './next.js';
@@ -323,7 +324,7 @@ function runRow(config, graph, state, now) {
   const pid = holderOf(runLockPath(config, state.feature));
   // The newest entry that names an agent: a round's summary entry names none.
   const session = state.history.findLast((h) => h.agent) ?? {};
-  const status = state.status === 'running' && pid == null ? 'stale' : str(state.status);
+  const status = str(runStatus(state, pid));
   const pr = prOf(state.pr);
   return {
     id: state.feature,

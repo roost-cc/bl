@@ -21,6 +21,7 @@ import { oneLine } from './agents/follow.js';
 import { loadConfig } from './config.js';
 import { loadRunState, runLockPath, runStatePath } from './feature-run.js';
 import { holderOf } from './kernel-lock.js';
+import { runStatus } from './run-lock.js';
 import { runArgs } from './run-arg.js';
 
 /** How often `watch` reads the run state again, in ms: at most 5 s (S-1272). */
@@ -63,8 +64,8 @@ export function cutLine(line, width) {
 
 /** How the run ended: its status, `stale` for a `running` one no bl holds, or null while it runs. */
 function endStatus(config, state) {
-  if (state.status !== 'running') return String(state.status ?? 'unknown');
-  return holderOf(runLockPath(config, state.feature)) == null ? 'stale' : null;
+  const status = runStatus(state, holderOf(runLockPath(config, state.feature)));
+  return status === 'running' ? null : String(status ?? 'unknown');
 }
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

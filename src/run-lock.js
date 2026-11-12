@@ -29,6 +29,15 @@ export function stopRequestPath(config, featureId) {
   return join(config.backlogRoot, RUN_DIR, `${featureId}.stop`);
 }
 
+/**
+ * A run state's status as `bl top` and `bl watch` show it: `stale` for one
+ * that says `running` while no process holds its run lock (its bl died).
+ * `holder` is the lock's holder (`holderOf(runLockPath())`), or null.
+ */
+export function runStatus(state, holder) {
+  return state.status === 'running' && holder == null ? 'stale' : state.status;
+}
+
 export function ensureRunDir(config) {
   const dir = join(config.backlogRoot, RUN_DIR);
   mkdirSync(dir, { recursive: true });
