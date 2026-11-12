@@ -40,10 +40,11 @@ test('edit_spawn_failure_and_signal_exit_nonzero', async (t) => {
   });
 
   await t.test('an editor killed by a signal, with no shell in between', () => {
-    // `exec` replaces the shell, so the signal reaches bl as the child's own.
+    // `exec` replaces the shell, so the signal reaches bl as the child's own,
+    // and `src/child.js` raises it (F-114 D2).
     const r = edit(`exec ${killed}`);
     assert.equal(r.status, 143, r.stderr);
-    assert.match(r.stderr, /^bl: exec \S+killed was killed by SIGTERM$/m);
+    assert.match(r.stderr, /^bl: exec \S+killed .* was ended by SIGTERM$/m);
   });
 
   await t.test("an editor's own exit status is passed on", () => {
