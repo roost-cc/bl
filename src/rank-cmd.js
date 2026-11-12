@@ -684,13 +684,27 @@ async function commitStaged(root, config) {
     if (yes) return { done: await commitPlan(root, now), closed: now.closed };
     // The marked copy already holds main's changes: main becomes the base, so
     // the next --commit does not apply them twice. The two copies describe
-    // one merge round, so a failed write puts the staged copy back.
+    // one merge round, so a failed base write puts the staged copy back; if
+    // that fails too, the error says how to finish the pair: main is
+    // priority.yaml as it is now (`mergeStaged` refused uncommitted edits).
+    let marked = false;
     try {
       atomicWriteFile(root, join(root, STAGED_FILE), now.markers);
+      marked = true;
       atomicWriteFile(root, join(root, BASE_FILE), now.mainText);
     } catch (err) {
-      atomicWriteFile(root, join(root, STAGED_FILE), now.stagedText);
-      return { refused: `could not write the conflict (${err.message}); both copies are as they were.` };
+      const failed = `could not write the conflict (${err.message})`;
+      try {
+        if (marked) atomicWriteFile(root, join(root, STAGED_FILE), now.stagedText);
+      } catch (back) {
+        return {
+          refused:
+            `${failed}, and could not put ${STAGED_FILE} back (${back.message}): it holds git's conflict ` +
+            `markers, but ${BASE_FILE} is the old base. Finish the pair with ` +
+            `cp "${join(root, PRIORITY_FILE)}" "${join(root, BASE_FILE)}", or drop the staged edits with bl rank --reset.`,
+        };
+      }
+      return { refused: `${failed}; both copies are as they were.` };
     }
     return { marked: true };
   });

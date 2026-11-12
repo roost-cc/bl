@@ -30,6 +30,12 @@ const ON_QUESTION = {
   NODE_OPTIONS: `--import=${fileURLToPath(new URL('../helpers/on-question.js', import.meta.url))}`,
 };
 
+/** The env under which the listed renames fail (`fail-renames.js`), stdin a terminal. */
+const FAIL_RENAMES = (...fails) => ({
+  NODE_OPTIONS: `${TTY.NODE_OPTIONS} --import=${fileURLToPath(new URL('../helpers/fail-renames.js', import.meta.url))}`,
+  BL_TEST_FAIL_RENAMES: fails.join(','),
+});
+
 /** Stage `S-2` between S-1 and F-2 while main puts F-1 there: the two edits conflict. */
 function conflicted() {
   const dir = backlog(list('S-1', 'F-2'));
@@ -265,28 +271,50 @@ test("a conflict answered n writes git's markers into the staged copy and main a
   assert.equal(staged(dir), null);
 });
 
-test('rank declined conflict keeps the staged and base copies together', () => {
+test('rank declined conflict reports failed restore and keeps a recoverable merge pair', () => {
   const dir = conflicted();
   // Pull main first (no terminal: a conflict changes nothing), so the pull's
   // own writes do not count below.
   assert.equal(bl(['rank', '--commit'], dir).status, 1);
   const pair = () => [staged(dir), base(dir)];
   const before = pair();
-  // Write 1 is the marked staged copy, write 2 the base copy.
-  for (const fail of ['1', '2']) {
-    const r = bl(['rank', '--commit'], dir, { ...TTY, BL_INTERNAL_TEST_FAIL_ON_RENAME: fail }, 'n\n');
+  // The marked staged copy's write fails; the base copy's write fails and
+  // the staged copy is put back. Either way both copies are as they were.
+  for (const fail of ['priority.staged.yaml:1', 'priority.base.yaml:1']) {
+    const r = bl(['rank', '--commit'], dir, FAIL_RENAMES(fail), 'n\n');
     assert.equal(r.status, 1, r.stderr);
     assert.match(
       r.stderr,
-      /could not write the conflict \(.*BL_INTERNAL_TEST_FAIL_ON_RENAME.*\); both copies are as they were\./,
+      /could not write the conflict \(injected failure .*\); both copies are as they were\./,
+      fail,
     );
-    assert.deepEqual(pair(), before, `write ${fail} failed`);
+    assert.doesNotMatch(r.stderr, /could not put/, fail);
+    assert.deepEqual(pair(), before, `${fail} failed`);
   }
-  // With no failure, the pair moves together: markers, and main as the base.
-  const r = bl(['rank', '--commit'], dir, TTY, 'n\n');
+
+  // The base copy's write fails, then putting the staged copy back fails:
+  // the error names both failures and the command that finishes the pair.
+  let r = bl(['rank', '--commit'], dir, FAIL_RENAMES('priority.base.yaml:1', 'priority.staged.yaml:2'), 'n\n');
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /could not write the conflict \(injected failure of rename 1 onto priority\.base\.yaml\)/);
+  assert.match(r.stderr, /could not put \.bl\/priority\.staged\.yaml back \(injected failure of rename 2 onto/);
+  const finish = r.stderr.match(
+    /Finish the pair with cp "(.*)" "(.*)", or drop the staged edits with bl rank --reset\./,
+  );
+  assert.ok(finish, r.stderr);
+  assert.match(staged(dir), /^<<<<<<< staged$/m);
+  assert.equal(base(dir), before[1], 'the old base');
+  writeFileSync(finish[2], readFileSync(finish[1], 'utf8'));
+  const marked = pair();
+
+  // With no failure, the pair moves together the same way: markers, and main as the base.
+  writeFileSync(join(dir, STAGED_FILE), before[0]);
+  writeFileSync(finish[2], before[1]);
+  r = bl(['rank', '--commit'], dir, TTY, 'n\n');
   assert.equal(r.status, 1, r.stderr);
   assert.match(staged(dir), /^<<<<<<< staged$/m);
   assert.equal(base(dir), read(dir));
+  assert.deepEqual(pair(), marked, 'the finished pair is the pair a declined conflict writes');
 });
 
 test('--commit refuses while priority.yaml has uncommitted edits; a failed commit keeps the copies for a retry', () => {
@@ -345,12 +373,6 @@ test('rank commit reports success only after the commit', () => {
   assert.match(r.stderr, /took out F-5, S-9 \(done\)\.\nWrote the staged order to priority\.yaml\./);
   assert.doesNotMatch(r.stderr, /Committed/);
   assert.equal(read(dir), list('F-1', 'S-1', 'F-2'));
-});
-
-/** The env under which the listed renames fail (`fail-renames.js`), stdin a terminal. */
-const FAIL_RENAMES = (...fails) => ({
-  NODE_OPTIONS: `${TTY.NODE_OPTIONS} --import=${fileURLToPath(new URL('../helpers/fail-renames.js', import.meta.url))}`,
-  BL_TEST_FAIL_RENAMES: fails.join(','),
 });
 
 /** A directory whose `git` fails the subcommand `sub` and runs the real git otherwise. */
