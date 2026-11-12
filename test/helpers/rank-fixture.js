@@ -1,23 +1,29 @@
 /**
- * The fixtures that test/integration/rank-{edit,cleanup,retry}.test.js share.
+ * The fixtures that test/integration/rank-{edit,commit}.test.js share.
  *
- * Integration tests for `bl rank` (F-78 D3, F-113 D1) against a git backlog
- * with an origin: each form moves or removes its id, pulls first, commits
- * priority.yaml alone and pushes; the refusals; the listing; and BL_HEADLESS,
- * under which neither `bl rank` nor a backlog commit of priority.yaml goes
- * through.
+ * Integration tests for `bl rank` (F-78 D3, F-113 D1, D3) against a git
+ * backlog with an origin: each edit writes only the staged copy; `--commit`
+ * pulls, merges, takes closed units out, commits priority.yaml alone and
+ * pushes; `--reset`; the refusals; the listing with its markers; and
+ * BL_HEADLESS, under which neither a `bl rank` change nor a backlog commit of
+ * priority.yaml goes through.
  */
 
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { PRIORITY_FILE } from '../../src/priority.js';
-import { mkTempBacklog } from './tempdir.js';
+import { fileURLToPath } from 'url';
+import { BASE_FILE, PRIORITY_FILE, STAGED_FILE } from '../../src/priority.js';
+import { mkTempBacklog, mkTempDir } from './tempdir.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog } from './git-backlog.js';
 import { runBl } from './run-bl.js';
 
-export const bl = (args, cwd, env = {}) => runBl(args, { cwd, env: { ...GIT_ENV, ...env } });
+/** `bl <args>` in `cwd`; `input` is its stdin. */
+export const bl = (args, cwd, env = {}, input) => runBl(args, { cwd, env: { ...GIT_ENV, ...env }, input });
 
-/** A hand-written priority.yaml: comments that a bl rank edit does not keep. */
+/** The env under which `bl` takes its stdin for a terminal (`stdin-tty.js`). */
+export const TTY = { NODE_OPTIONS: `--import=${fileURLToPath(new URL('./stdin-tty.js', import.meta.url))}` };
+
+/** A hand-written priority.yaml: comments that a bl rank --commit does not keep. */
 export const HAND = `# Ranked by hand.
 - S-1
 - F-2 # the big one
@@ -53,8 +59,26 @@ export function backlog(priority = HAND) {
   return dir;
 }
 
-/** HAND with the closed F-5 and S-9 ranked too: the order bl rank's cleanup takes out. */
+/** HAND with the closed F-5 and S-9 ranked too: the units bl rank --commit takes out. */
 export const CLOSED = `# Ranked by hand.\n- S-1\n- F-5\n- F-2 # the big one\n- S-9\n`;
 
 export const read = (dir) => readFileSync(join(dir, PRIORITY_FILE), 'utf8');
+/** The staged copy's text, or null when there is none. */
+export const staged = (dir) =>
+  existsSync(join(dir, STAGED_FILE)) ? readFileSync(join(dir, STAGED_FILE), 'utf8') : null;
+/** The base copy's text, or null when there is none. */
+export const base = (dir) => (existsSync(join(dir, BASE_FILE)) ? readFileSync(join(dir, BASE_FILE), 'utf8') : null);
 export const originHead = (dir) => git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main');
+
+/**
+ * Commit `text` as priority.yaml on origin's main from a clone of its own,
+ * as another workstation would: the change `--commit` merges with.
+ */
+export function pushPriority(dir, text) {
+  const other = mkTempDir('bl-rank-other-');
+  git(other, 'clone', '-q', git(dir, 'remote', 'get-url', 'origin'), 'c');
+  const clone = join(other, 'c');
+  writeFileSync(join(clone, PRIORITY_FILE), text);
+  git(clone, 'commit', '-q', '-m', 'other: rank', '--', PRIORITY_FILE);
+  git(clone, 'push', '-q', 'origin', 'main');
+}

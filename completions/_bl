@@ -316,6 +316,8 @@ _bl() {
         '(--top --bottom --after --remove)--before[Just before a ranked unit]:unit:(${units})' \
         '(--top --bottom --before --remove)--after[Just after a ranked unit]:unit:(${units})' \
         '(--top --bottom --before --after)--remove[Take the unit out of the list]' \
+        '(- 1)--commit[Merge and commit the staged edits]' \
+        '(- 1)--reset[Drop the staged edits]' \
         '1:feature or loose story id:(${units})'
       ;;
     what-next)

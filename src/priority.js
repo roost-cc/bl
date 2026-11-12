@@ -20,14 +20,42 @@
  *
  * The order is a preference, never a dependency: the readers that pick work
  * let hard dependencies override it.
+ *
+ * `bl rank` stages every edit (F-113 D3): it writes the staged copy
+ * `.bl/priority.staged.yaml` and, on the first edit, the base copy
+ * `.bl/priority.base.yaml` (`priority.yaml` as that edit found it), and only
+ * `bl rank --commit` writes `priority.yaml`. Every reader that picks work
+ * reads `priority.yaml` alone. `bl rank` and the `bl top` snapshot share the
+ * paths, the reader of the staged copy (`readStaged`) and the markers
+ * (`marks`) from here (F-113 D8).
  */
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { parseDocument } from 'yaml';
 import { listValue, normalizeId } from './config.js';
 import { normalizeFeatureId } from './feature.js';
 import { normalizeTaskId } from './task.js';
 
 /** The file's name, at the backlog root. */
 export const PRIORITY_FILE = 'priority.yaml';
+
+/** The staged copy every `bl rank` edit writes, from the backlog root (F-113 D3). */
+export const STAGED_FILE = join('.bl', 'priority.staged.yaml');
+
+/** The base copy: `priority.yaml` as the first staged edit found it, the merge base of `bl rank --commit`. */
+export const BASE_FILE = join('.bl', 'priority.base.yaml');
+
+/** What every `bl rank` command but `--reset` says while the staged copy is in conflict (F-113 Decision A3). */
+export const STAGED_CONFLICT = `merge conflict in ${STAGED_FILE}: edit it, then bl rank --commit; or bl rank --reset`;
+
+/** A staged copy that is not a YAML list of ids: in conflict (F-113 Decision A3). */
+export class StagedConflictError extends Error {
+  constructor() {
+    super(STAGED_CONFLICT);
+    this.name = 'StagedConflictError';
+  }
+}
 
 /**
  * A priority file that is not YAML, or not a list of non-empty id strings.
@@ -59,6 +87,52 @@ export function parseRanked(raw, file = PRIORITY_FILE) {
     }
     return { unit: id.trim(), position: i + 1 };
   });
+}
+
+/** The unit id an entry names (`F-3`, `S-4`), or its trimmed text. */
+export function canonicalId(raw) {
+  const s = String(raw ?? '').trim();
+  return normalizeFeatureId(s)?.id ?? normalizeId(s)?.id ?? s;
+}
+
+/**
+ * The unit ids the text of a priority file lists, in order, each as
+ * `canonicalId` spells it. Throws `PriorityError` naming `file` when the text
+ * is not YAML or not a list of ids (`parseRanked`).
+ * @param {string} content
+ * @param {string} [file]
+ * @returns {string[]}
+ */
+export function listIds(content, file = PRIORITY_FILE) {
+  const doc = parseDocument(content);
+  if (doc.errors.length > 0) {
+    throw new PriorityError(`the file is not YAML (${doc.errors[0].message.split('\n')[0]})`, file);
+  }
+  return parseRanked(doc.toJS(), file).map((e) => canonicalId(e.unit));
+}
+
+/**
+ * The ids of the staged copy (`STAGED_FILE`) under the backlog `root`, or
+ * null when there is none. Throws `StagedConflictError` when the copy is not
+ * a YAML list of ids, which is normally git's conflict markers that
+ * `bl rank --commit` wrote into it.
+ * @param {string} root
+ * @returns {string[] | null}
+ */
+export function readStaged(root) {
+  let text;
+  try {
+    text = readFileSync(join(root, STAGED_FILE), 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+  try {
+    return listIds(text, STAGED_FILE);
+  } catch (e) {
+    if (e instanceof PriorityError) throw new StagedConflictError();
+    throw e;
+  }
 }
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
@@ -209,4 +283,69 @@ export function byRank(rankOf) {
  */
 export function rankedAs(unit) {
   return unit.kind === 'story' && str(unit.fm.feature) ? unit.feature : unit;
+}
+
+/**
+ * The order a list of ids gives: `ranked`, its open units in list order (each
+ * valid entry once, `resolveRanked`), and `unranked`, every other open unit
+ * `byAdded` (`priorityOrder`). For a list that is not `priority.yaml`'s, such
+ * as the staged copy (`readStaged`).
+ * @param {string[]} ids
+ * @param {{ features: ReadonlyMap<string, any>, stories: ReadonlyMap<string, any> }} maps
+ * @returns {{ ranked: any[], unranked: any[] }}
+ */
+export function orderOf(ids, maps) {
+  const { entries } = resolveRanked(
+    ids.map((unit, i) => ({ unit, position: i + 1 })),
+    maps,
+  );
+  const order = priorityOrder(entries, maps);
+  const ranked = new Set(entries.map((e) => e.unit));
+  return { ranked: order.filter((u) => ranked.has(u)), unranked: order.filter((u) => !ranked.has(u)) };
+}
+
+/**
+ * The ids of the longest common subsequence of `a` and `b`, two lists of
+ * distinct ids. On a tie it keeps `b`'s earlier id.
+ * @param {string[]} a
+ * @param {string[]} b
+ * @returns {Set<string>}
+ */
+function commonOrder(a, b) {
+  const len = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      len[i][j] = a[i] === b[j] ? len[i + 1][j + 1] + 1 : Math.max(len[i + 1][j], len[i][j + 1]);
+    }
+  }
+  const out = new Set();
+  for (let i = 0, j = 0; i < a.length && j < b.length;) {
+    if (a[i] === b[j]) {
+      out.add(a[i]);
+      i++;
+      j++;
+    } else if (len[i + 1][j] >= len[i][j + 1]) i++;
+    else j++;
+  }
+  return out;
+}
+
+/**
+ * The marker of each work unit in the staged order against the committed one
+ * (F-113 D4): `+` newly ranked, `~` ranked in both lists and moved, `-` taken
+ * out of the ranked list, `''` unchanged. A unit is `~` when it is not in the
+ * longest common subsequence of the two lists, so a move marks only the unit
+ * that moved, not the rows it passed. Ids in neither list have no entry.
+ * @param {string[]} committed  the committed ranked ids, distinct
+ * @param {string[]} staged  the staged ranked ids, distinct
+ * @returns {Map<string, '+' | '~' | '-' | ''>}
+ */
+export function marks(committed, staged) {
+  const kept = commonOrder(committed, staged);
+  const was = new Set(committed);
+  const now = new Set(staged);
+  const out = new Map();
+  for (const id of staged) out.set(id, !was.has(id) ? '+' : kept.has(id) ? '' : '~');
+  for (const id of committed) if (!now.has(id)) out.set(id, '-');
+  return out;
 }

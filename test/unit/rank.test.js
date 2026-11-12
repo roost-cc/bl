@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { applyRank, checkUnit, rankedIds, removeClosed, RankFileError } from '../../src/rank-cmd.js';
+import { applyRank, checkUnit, proposal, rankedIds, RankFileError } from '../../src/rank-cmd.js';
 import { HEADLESS_ENV, agentEnv, isHeadless } from '../../src/agents/provider.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
 import { CodexProvider } from '../../src/agents/codex.js';
@@ -25,9 +25,6 @@ const HAND = `# Ranked by hand.
 - F-3
 `;
 
-/** The list `ids` as bl rank writes it. */
-const list = (...ids) => ids.map((id) => `- ${id}\n`).join('');
-
 /** Run `fn` with `process.env.BL_HEADLESS` set to `value` (undefined: unset), then put it back. */
 async function withMarker(value, fn) {
   const saved = process.env[HEADLESS_ENV];
@@ -41,45 +38,53 @@ async function withMarker(value, fn) {
   }
 }
 
-test('applyRank moves an id and writes the whole list with stringify', () => {
-  assert.equal(applyRank(HAND, { id: 'F-3', where: 'top' }), list('F-3', 'S-1', 'F-2'));
-  assert.equal(applyRank(HAND, { id: 'S-1', where: { after: 'F-2' } }), list('F-2', 'S-1', 'F-3'));
-  assert.equal(applyRank(HAND, { id: 'S-1', where: 'bottom' }), list('F-2', 'F-3', 'S-1'));
-  assert.equal(applyRank(HAND, { id: 'F-3', where: { before: 'F-2' } }), list('S-1', 'F-3', 'F-2'));
-  // Where it already is: nothing changes, not even the comment.
-  assert.equal(applyRank(HAND, { id: 'S-1', where: 'top' }), HAND);
-  assert.equal(applyRank(HAND, { id: 'F-2', where: { after: 'S-1' } }), HAND);
+const IDS = ['S-1', 'F-2', 'F-3'];
+
+test('applyRank moves an id in the list', () => {
+  assert.deepEqual(applyRank(IDS, { id: 'F-3', where: 'top' }), ['F-3', 'S-1', 'F-2']);
+  assert.deepEqual(applyRank(IDS, { id: 'S-1', where: { after: 'F-2' } }), ['F-2', 'S-1', 'F-3']);
+  assert.deepEqual(applyRank(IDS, { id: 'S-1', where: 'bottom' }), ['F-2', 'F-3', 'S-1']);
+  assert.deepEqual(applyRank(IDS, { id: 'F-3', where: { before: 'F-2' } }), ['S-1', 'F-3', 'F-2']);
+  // Where it already is: the same order.
+  assert.deepEqual(applyRank(IDS, { id: 'S-1', where: 'top' }), IDS);
+  assert.deepEqual(applyRank(IDS, { id: 'F-2', where: { after: 'S-1' } }), IDS);
 });
 
 test('applyRank adds a new id; into an empty list too', () => {
-  assert.equal(applyRank(HAND, { id: 'S-9', where: { before: 'F-2' } }), list('S-1', 'S-9', 'F-2', 'F-3'));
-  assert.equal(applyRank(HAND, { id: 'F-4', where: 'bottom' }), list('S-1', 'F-2', 'F-3', 'F-4'));
-  for (const empty of ['[]\n', '', '# nothing yet\n']) {
-    assert.equal(applyRank(empty, { id: 'F-1', where: 'top' }), list('F-1'), JSON.stringify(empty));
-  }
-  assert.throws(() => applyRank(HAND, { id: 'F-4', where: { after: 'F-9' } }), /F-9 is not ranked/);
+  assert.deepEqual(applyRank(IDS, { id: 'S-9', where: { before: 'F-2' } }), ['S-1', 'S-9', 'F-2', 'F-3']);
+  assert.deepEqual(applyRank(IDS, { id: 'F-4', where: 'bottom' }), ['S-1', 'F-2', 'F-3', 'F-4']);
+  assert.deepEqual(applyRank([], { id: 'F-1', where: 'top' }), ['F-1']);
+  assert.throws(() => applyRank(IDS, { id: 'F-4', where: { after: 'F-9' } }), /F-9 is not ranked/);
 });
 
-test('applyRank removes an id; the last one leaves []', () => {
-  assert.equal(applyRank(HAND, { id: 'F-2', remove: true }), list('S-1', 'F-3'));
-  assert.equal(applyRank(list('F-1'), { id: 'F-1', remove: true }), '[]\n');
-  assert.throws(() => applyRank(HAND, { id: 'F-9', remove: true }), /F-9 is not ranked/);
+test('applyRank removes an id; the last one leaves an empty list', () => {
+  assert.deepEqual(applyRank(IDS, { id: 'F-2', remove: true }), ['S-1', 'F-3']);
+  assert.deepEqual(applyRank(['F-1'], { id: 'F-1', remove: true }), []);
+  assert.throws(() => applyRank(IDS, { id: 'F-9', remove: true }), /F-9 is not ranked/);
 });
 
-test('removeClosed takes out every entry of the ids given; none listed leaves the text as it is', () => {
-  assert.equal(removeClosed(HAND, ['F-2', 'S-1']), list('F-3'));
-  assert.equal(removeClosed(`${HAND}- S-1\n`, ['S-1']), list('F-2', 'F-3'));
-  assert.equal(removeClosed(HAND, ['S-1', 'F-2', 'F-3']), '[]\n');
-  assert.equal(removeClosed(HAND, []), HAND);
-  assert.equal(removeClosed(HAND, ['F-9']), HAND);
+test('proposal: the staged order, less what main took out since the base, plus what main added at the end', () => {
+  const base = ['F-1', 'F-2', 'F-3'];
+  // Staged: F-3 to the top, S-4 in. Main: F-2 out, S-5 and S-4 in.
+  assert.deepEqual(proposal(['F-3', 'S-4', 'F-1', 'F-2'], base, ['F-1', 'F-3', 'S-5', 'S-4']), [
+    'F-3',
+    'S-4',
+    'F-1',
+    'S-5',
+  ]);
+  // Nothing changed on main: the staged order.
+  assert.deepEqual(proposal(['F-2', 'F-1'], base, base), ['F-2', 'F-1']);
+  // A unit the staged order took out stays out, even though main kept it.
+  assert.deepEqual(proposal(['F-1'], base, [...base, 'F-9']), ['F-1', 'F-9']);
 });
 
 test('rankedIds reads the ids as written, canonical; a file bl rank cannot edit is a RankFileError', () => {
   assert.deepEqual(rankedIds(HAND), ['S-1', 'F-2', 'F-3']);
   assert.deepEqual(rankedIds('[f3, s1]\n'), ['F-3', 'S-1']);
   assert.deepEqual(rankedIds(''), []);
+  assert.deepEqual(rankedIds('# nothing yet\n'), []);
   for (const [bad, reason] of [
-    ['- [\n', /priority\.yaml is not YAML/],
+    ['- [\n', /priority\.yaml: the file is not YAML/],
     ['ranked: x\n', /the file is not a YAML list of work unit ids/],
     ['- unit: F-1\n  why: x\n', /entry 1 is not a work unit id/],
     ['- F-1\n- 7\n', /entry 2 is not a work unit id/],
@@ -89,12 +94,6 @@ test('rankedIds reads the ids as written, canonical; a file bl rank cannot edit 
       (e) => e instanceof RankFileError && reason.test(e.message),
       bad,
     );
-    for (const op of [
-      { id: 'F-1', where: 'top' },
-      { id: 'F-1', remove: true },
-    ]) {
-      assert.throws(() => applyRank(bad, op), RankFileError, `${JSON.stringify(op)}: ${bad}`);
-    }
   }
 });
 
@@ -187,12 +186,13 @@ test('headlessPriorityRefusal names priority.yaml, by path or by a directory tha
   assert.equal(headlessPriorityRefusal('/b', ['priority.yaml'], {}), null);
 });
 
-test('an interactive bl rank pulls the backlog first, listing or edit; help and a headless run do not', () => {
-  assert.equal(commandPullsBacklog('rank', ['F-1', '--top'], {}), true);
-  assert.equal(commandPullsBacklog('rank', [], {}), true);
-  assert.equal(commandPullsBacklog('rank', ['--help'], {}), false);
-  assert.equal(commandPullsBacklog('rank', ['F-1', '--top'], { BL_HEADLESS: '1' }), false);
-  assert.equal(commandPullsBacklog('rank', [], { BL_HEADLESS: '1' }), false);
+test('only an interactive bl rank --commit pulls the backlog first; a staged edit, the listing and --reset do not', () => {
+  assert.equal(commandPullsBacklog('rank', ['--commit'], {}), true);
+  assert.equal(commandPullsBacklog('rank', ['F-1', '--top'], {}), false);
+  assert.equal(commandPullsBacklog('rank', [], {}), false);
+  assert.equal(commandPullsBacklog('rank', ['--reset'], {}), false);
+  assert.equal(commandPullsBacklog('rank', ['--commit', '--help'], {}), false);
+  assert.equal(commandPullsBacklog('rank', ['--commit'], { BL_HEADLESS: '1' }), false);
 });
 
 test('commitPaths refuses priority.yaml under BL_HEADLESS, commits it without', async () => {

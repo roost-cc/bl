@@ -247,7 +247,7 @@ _roost_bl() {
       ;;
     rank)
       if [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "--top --bottom --before --after --remove --help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--top --bottom --before --after --remove --commit --reset --help" -- "$cur") )
       else
         COMPREPLY=( $(compgen -W "$(_roost_feature_ids) $(_roost_story_ids)" -- "$cur") )
       fi

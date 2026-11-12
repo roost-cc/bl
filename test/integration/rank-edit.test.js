@@ -1,192 +1,95 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { writeFileSync } from 'fs';
+import { join } from 'path';
+import { STAGED_CONFLICT, STAGED_FILE } from '../../src/priority.js';
 import { git } from '../helpers/git-backlog.js';
-import { HAND, backlog, bl, list, originHead, read } from '../helpers/rank-fixture.js';
+import {
+  CLOSED,
+  HAND,
+  backlog,
+  base,
+  bl,
+  list,
+  originHead,
+  pushPriority,
+  read,
+  staged,
+} from '../helpers/rank-fixture.js';
 
-test('bl rank places a new unit, pulls first, commits priority.yaml alone and pushes it', () => {
+const LISTING = [
+  'Ranked:',
+  '  1. S-1  Story S-1',
+  '  2. F-2  Two',
+  'Not yet ranked, oldest first:',
+  '  F-1  One  (added 2026-01-01)',
+  '  S-2  Story S-2  (added 2026-01-03)',
+  '',
+].join('\n');
+
+test('an edit writes only the staged copy and, on the first edit, the base copy; it never writes, commits or pulls priority.yaml', () => {
   const dir = backlog();
-  // Someone else pushes a commit first: bl rank must pull it before committing.
-  const other = mkTempDir('bl-rank-other-');
-  git(other, 'clone', '-q', git(dir, 'remote', 'get-url', 'origin'), 'c');
-  const clone = join(other, 'c');
-  writeFileSync(join(clone, 'note.txt'), 'from the other clone\n');
-  git(clone, 'add', 'note.txt');
-  git(clone, 'commit', '-q', '-m', 'other: note');
-  git(clone, 'push', '-q', 'origin', 'main');
+  const head = git(dir, 'rev-parse', 'HEAD');
+  // Someone else pushes a ranking: an edit does not pull it.
+  pushPriority(dir, list('F-2', 'S-1'));
+  const origin = originHead(dir);
 
-  const r = bl(['rank', 'F-1', '--before', 'F-2'], dir);
+  let r = bl(['rank', 'F-1', '--before', 'F-2'], dir);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(read(dir), list('S-1', 'F-1', 'F-2'));
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-1 ranked before F-2 in priority.yaml');
-  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'priority.yaml');
-  // The pull came first.
-  assert.ok(git(dir, 'log', '--format=%s', 'HEAD~1').split('\n').includes('other: note'), 'pulled before committing');
-  assert.equal(originHead(dir), git(dir, 'rev-parse', 'HEAD'), 'pushed');
+  assert.match(r.stderr, /F-1 ranked before F-2 \(staged; bl rank --commit commits it\)\./);
+  assert.equal(staged(dir), list('S-1', 'F-1', 'F-2'));
+  assert.equal(base(dir), HAND, 'the base copy is priority.yaml as the first edit found it');
+
+  r = bl(['rank', 'S-2', '--top'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(staged(dir), list('S-2', 'S-1', 'F-1', 'F-2'));
+  assert.equal(base(dir), HAND, 'a later edit leaves the base copy');
+
+  assert.equal(read(dir), HAND, 'priority.yaml is as it was');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'nothing committed, nothing pulled');
+  assert.equal(originHead(dir), origin, 'nothing pushed');
+  assert.equal(git(dir, 'status', '--porcelain'), '', 'the copies live in the ignored .bl/');
 });
 
-test('each bl rank form moves or removes its id; a no-op commits nothing', () => {
+test('each bl rank form moves or removes its id in the staged copy; a no-op writes nothing', () => {
   const dir = backlog();
 
-  let r = bl(['rank', 'F-2', '--top'], dir);
+  // A no-op with nothing staged starts no staged copy.
+  let r = bl(['rank', 'S-1', '--top'], dir);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(read(dir), list('F-2', 'S-1'));
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-2 ranked first in priority.yaml');
+  assert.match(r.stderr, /S-1 is already there; nothing staged changed/);
+  assert.equal(staged(dir), null);
+  assert.equal(base(dir), null);
+
+  r = bl(['rank', 'F-2', '--top'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(staged(dir), list('F-2', 'S-1'));
 
   r = bl(['rank', 'F-2', '--bottom'], dir);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(read(dir), list('S-1', 'F-2'));
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-2 ranked last in priority.yaml');
+  assert.equal(staged(dir), list('S-1', 'F-2'));
 
   r = bl(['rank', 'S-1', '--after', 'F-2'], dir);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(read(dir), list('F-2', 'S-1'));
+  assert.equal(staged(dir), list('F-2', 'S-1'));
 
   r = bl(['rank', 'S-1', '--remove'], dir);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(read(dir), list('F-2'));
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: S-1 unranked in priority.yaml');
+  assert.match(r.stderr, /S-1 unranked \(staged/);
+  assert.equal(staged(dir), list('F-2'));
 
-  const before = git(dir, 'rev-parse', 'HEAD');
-  r = bl(['rank', 'F-2', '--top'], dir);
+  r = bl(['rank', 'F-2', '--remove'], dir);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stderr, /F-2 is already there; priority\.yaml is unchanged/);
-  assert.equal(git(dir, 'rev-parse', 'HEAD'), before, 'nothing committed');
-  assert.equal(originHead(dir), before, 'every commit pushed');
-  assert.equal(git(dir, 'status', '--porcelain'), '');
+  assert.equal(staged(dir), '[]\n', 'the last entry removed leaves []');
+
+  // --before and --after name a unit ranked in the staged order.
+  r = bl(['rank', 'F-1', '--after', 'S-1'], dir);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /S-1 is not ranked; rank it first/);
+  assert.equal(read(dir), HAND);
 });
 
-test('rank_failed_commit_retry_finishes_or_reports_pending_change', () => {
-  const dir = backlog();
-  const head = git(dir, 'rev-parse', 'HEAD');
-  const hook = join(dir, '.git', 'hooks', 'pre-commit');
-  mkdirSync(dirname(hook), { recursive: true });
-  writeFileSync(hook, '#!/bin/sh\necho injected-commit-failure >&2\nexit 1\n');
-  chmodSync(hook, 0o755);
-  const args = ['rank', 'F-1', '--top'];
-
-  // The commit fails after the write: reported, nothing committed.
-  let r = bl(args, dir);
-  assert.equal(r.status, 1, r.stderr);
-  assert.match(r.stderr, /backlog commit failed: injected-commit-failure/);
-  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
-  const written = read(dir);
-  assert.equal(written, list('F-1', 'S-1', 'F-2'));
-
-  // A retry that still cannot commit says so again; it never reports success.
-  r = bl(args, dir);
-  assert.equal(r.status, 1, r.stderr);
-  assert.match(r.stderr, /not committed; committing it[\s\S]*backlog commit failed/);
-  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
-
-  // Once the commit can go through, the retry commits the requested ranking.
-  unlinkSync(hook);
-  r = bl(args, dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(read(dir), written);
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: F-1 ranked first in priority.yaml');
-  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'priority.yaml');
-  assert.equal(git(dir, 'status', '--porcelain'), '');
-  assert.equal(originHead(dir), git(dir, 'rev-parse', 'HEAD'), 'pushed');
-
-  // With nothing pending, the same command is a no-op again.
-  const done = git(dir, 'rev-parse', 'HEAD');
-  r = bl(args, dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stderr, /F-1 is already there; priority\.yaml is unchanged/);
-  assert.equal(git(dir, 'rev-parse', 'HEAD'), done);
-});
-
-test('rank_noop_preserves_unrelated_dirty_priority', () => {
-  // Each case: someone else's uncommitted edit to priority.yaml, then a bl
-  // rank that is a no-op (noop) or would change the file (change). Neither
-  // commits the edit; a change is refused with nothing written.
-  const note = (t) => `${t}# Operator note.\n`;
-  const added = (t) => t.replace('- F-2', '- F-1\n- F-2');
-  const cases = [
-    { name: 'unstaged comment', edit: note },
-    { name: 'staged comment', edit: note, stage: true },
-    { name: 'another id added', edit: added },
-    { name: 'another id added, staged', edit: added, stage: true },
-  ];
-  const ops = [
-    { kind: 'noop', args: ['rank', 'S-1', '--top'] },
-    { kind: 'noop', args: ['rank', 'F-2', '--bottom'] },
-    { kind: 'change', args: ['rank', 'F-2', '--top'] },
-    { kind: 'change', args: ['rank', 'F-1', '--bottom'] },
-  ];
-  // Staged edits under a work tree that matches HEAD, or that holds the very
-  // write the op makes: the commit's add would overwrite the staged edit.
-  const rankF1 = ['rank', 'F-1', '--top'];
-  const stagedOnly = [
-    { name: 'staged comment, work tree as HEAD', staged: note, args: ['rank', 'S-1', '--top'] },
-    {
-      name: "staged other edit under the op's write",
-      staged: note,
-      work: () => list('F-1', 'S-1', 'F-2'),
-      args: rankF1,
-    },
-  ];
-  for (const c of stagedOnly) {
-    const label = c.name;
-    const dir = backlog();
-    const head = git(dir, 'rev-parse', 'HEAD');
-    const original = read(dir);
-    writeFileSync(join(dir, 'priority.yaml'), c.staged(original));
-    git(dir, 'add', 'priority.yaml');
-    const edited = c.work ? c.work(original) : original;
-    writeFileSync(join(dir, 'priority.yaml'), edited);
-    const status = git(dir, 'status', '--porcelain');
-    const index = git(dir, 'show', ':priority.yaml');
-    const r = bl(c.args, dir);
-    assert.equal(r.status, 0, `${label}: ${r.stderr}`);
-    assert.match(r.stderr, /other uncommitted edits, left uncommitted/, label);
-    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, `${label}: nothing committed`);
-    assert.equal(read(dir), edited, `${label}: the work tree is as it was`);
-    assert.equal(git(dir, 'show', ':priority.yaml'), index, `${label}: the staged edit is as it was`);
-    assert.equal(git(dir, 'status', '--porcelain'), status, label);
-  }
-
-  for (const c of cases) {
-    for (const op of ops) {
-      const label = `${c.name} / ${op.args.join(' ')}`;
-      const dir = backlog();
-      const head = git(dir, 'rev-parse', 'HEAD');
-      const edited = c.edit(read(dir));
-      writeFileSync(join(dir, 'priority.yaml'), edited);
-      if (c.stage) git(dir, 'add', 'priority.yaml');
-      const status = git(dir, 'status', '--porcelain');
-      const r = bl(op.args, dir);
-      assert.equal(r.status, op.kind === 'noop' ? 0 : 1, `${label}: ${r.stderr}`);
-      if (op.kind === 'noop') assert.match(r.stderr, /other uncommitted edits, left uncommitted/, label);
-      else assert.match(r.stderr, /has uncommitted edits; commit or discard them first/, label);
-      assert.equal(git(dir, 'rev-parse', 'HEAD'), head, `${label}: nothing committed`);
-      assert.equal(originHead(dir), head, `${label}: nothing pushed`);
-      assert.equal(read(dir), edited, `${label}: the edit is as it was`);
-      assert.equal(git(dir, 'status', '--porcelain'), status, `${label}: staged state as it was`);
-    }
-  }
-
-  // An operator edit on top of a failed rank commit's write: the retry
-  // leaves both uncommitted rather than commit the operator's edit.
-  const dir = backlog();
-  const head = git(dir, 'rev-parse', 'HEAD');
-  const hook = join(dir, '.git', 'hooks', 'pre-commit');
-  mkdirSync(dirname(hook), { recursive: true });
-  writeFileSync(hook, '#!/bin/sh\nexit 1\n');
-  chmodSync(hook, 0o755);
-  assert.equal(bl(rankF1, dir).status, 1);
-  unlinkSync(hook);
-  writeFileSync(join(dir, 'priority.yaml'), note(read(dir)));
-  const r = bl(rankF1, dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stderr, /other uncommitted edits, left uncommitted/);
-  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
-});
-
-test('bl rank refuses what is not an open unit, a bad target and --why, writing nothing', () => {
+test('bl rank refuses what is not an open unit, a bad target, --why and a mixed --commit or --reset, writing nothing', () => {
   const dir = backlog();
   const cases = [
     [['S-11', '--top'], /S-11 is a story inside F-1; the feature is the unit: rank F-1/],
@@ -202,6 +105,9 @@ test('bl rank refuses what is not an open unit, a bad target and --why, writing 
     // F-113 D2: the file holds no reasons, so there is no --why.
     [['S-1', '--why', 'x'], /Unknown option '--why'/],
     [['S-2', '--top', '--why', 'x'], /Unknown option '--why'/],
+    [['F-1', '--commit'], /--commit takes no unit, position or other option/],
+    [['--commit', '--reset'], /--commit takes no unit, position or other option/],
+    [['--reset', '--top'], /--reset takes no unit, position or other option/],
   ];
   const head = git(dir, 'rev-parse', 'HEAD');
   for (const [args, message] of cases) {
@@ -209,6 +115,155 @@ test('bl rank refuses what is not an open unit, a bad target and --why, writing 
     assert.equal(r.status, 1, `${args.join(' ')}: ${r.stdout}`);
     assert.match(r.stderr, message, args.join(' '));
     assert.equal(read(dir), HAND, args.join(' '));
+    assert.equal(staged(dir), null, args.join(' '));
   }
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+});
+
+test('bl rank with no arguments prints the committed order; a closed unit is not listed and nothing is written', () => {
+  let dir = backlog();
+  let r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, LISTING);
+
+  dir = backlog(CLOSED);
+  const head = git(dir, 'rev-parse', 'HEAD');
+  r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, LISTING);
+  assert.equal(read(dir), CLOSED, 'a plain bl rank takes no closed unit out');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'and commits nothing');
+  assert.doesNotMatch(r.stderr, /took out/);
+});
+
+test('bl rank with no arguments prints the staged order with +, ~ and - while edits are staged', () => {
+  const dir = backlog(list('S-1', 'F-2', 'S-2'));
+  for (const args of [
+    ['F-1', '--top'], // newly ranked: +
+    ['S-2', '--after', 'F-1'], // moved past S-1 and F-2: only S-2 is ~
+  ]) {
+    const r = bl(['rank', ...args], dir);
+    assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}`);
+  }
+  let r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(
+    r.stdout,
+    [
+      'Ranked (staged; bl rank --commit commits it, --reset drops it):',
+      '+ 1. F-1  One',
+      '~ 2. S-2  Story S-2',
+      '  3. S-1  Story S-1',
+      '  4. F-2  Two',
+      '',
+    ].join('\n'),
+  );
+
+  // Taken out: - in the unranked group.
+  assert.equal(bl(['rank', 'F-2', '--remove'], dir).status, 0);
+  r = bl(['rank'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^\+ 1\. F-1 {2}One$/m);
+  assert.match(r.stdout, /Not yet ranked, oldest first:\n- F-2 {2}Two {2}\(added 2026-01-04\)\n$/);
+});
+
+test('a priority.yaml bl rank cannot read: the listing names its problem, an edit refuses with one line', () => {
+  // Every shape the graph loads. (A file that is not YAML stops loadBacklog
+  // before bl rank runs.)
+  const shapes = {
+    'a mapping': 'ranked: nope\n',
+    'a scalar': 'F-2\n',
+    'an entry that is a mapping': '- unit: F-2\n  why: Next\n',
+    'an entry that is a number': '- F-2\n- 7\n',
+  };
+  for (const [shape, text] of Object.entries(shapes)) {
+    const dir = backlog(text);
+    let r = bl(['rank'], dir);
+    assert.equal(r.status, 0, `${shape}: ${r.stderr}`);
+    assert.match(r.stderr, /^bl rank: .*\(run bl validate\)$/m, shape);
+    r = bl(['rank', 'F-1', '--top'], dir);
+    assert.equal(r.status, 1, `${shape}: ${r.stderr}`);
+    const lines = r.stderr.trim().split('\n');
+    assert.equal(lines.length, 1, `${shape}: ${r.stderr}`);
+    assert.match(lines[0], /^bl rank: priority\.yaml: /, shape);
+    assert.equal(read(dir), text, shape);
+    assert.equal(staged(dir), null, shape);
+  }
+});
+
+test('bl rank --reset deletes both copies; without a staged copy it says so', () => {
+  const dir = backlog();
+  assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
+  let r = bl(['rank', '--reset'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /Dropped the staged edits/);
+  assert.equal(staged(dir), null);
+  assert.equal(base(dir), null);
+  assert.equal(bl(['rank'], dir).stdout, LISTING);
+
+  r = bl(['rank', '--reset'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /No staged edits/);
+});
+
+test('a staged copy in conflict blocks every bl rank command but --reset (Decision A3)', () => {
+  const dir = backlog();
+  assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
+  const conflicted = '<<<<<<< staged\n- F-1\n- S-1\n=======\n- S-2\n- S-1\n>>>>>>> main\n- F-2\n';
+  writeFileSync(join(dir, STAGED_FILE), conflicted);
+  const head = git(dir, 'rev-parse', 'HEAD');
+  for (const args of [[], ['F-1', '--bottom'], ['S-1', '--remove'], ['--commit']]) {
+    const r = bl(['rank', ...args], dir);
+    assert.equal(r.status, 1, `${args.join(' ')}: ${r.stderr}`);
+    assert.equal(r.stderr.trim(), `bl rank: ${STAGED_CONFLICT}`, args.join(' '));
+    assert.equal(staged(dir), conflicted, args.join(' '));
+  }
+  // A headless listing is blocked the same way.
+  assert.equal(bl(['rank'], dir, { BL_HEADLESS: '1' }).status, 1);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  // bl next reads only priority.yaml and is not blocked.
+  assert.equal(bl(['next'], dir).status, 0);
+
+  const r = bl(['rank', '--reset'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(staged(dir), null);
+  assert.equal(bl(['rank'], dir).status, 0);
+});
+
+test('under BL_HEADLESS an edit, --commit and --reset are refused with nothing written, and so is a backlog commit of priority.yaml', () => {
+  const dir = backlog();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const headless = { BL_HEADLESS: '1' };
+  for (const args of [['F-1', '--top'], ['--commit'], ['--reset']]) {
+    const r = bl(['rank', ...args], dir, headless);
+    assert.equal(r.status, 1, args.join(' '));
+    assert.match(
+      r.stderr,
+      /BL_HEADLESS is set: .*only the operator or an interactive session ranks work\. Nothing was written/,
+      args.join(' '),
+    );
+    assert.equal(staged(dir), null, args.join(' '));
+  }
+  // --reset leaves a staged copy the operator made.
+  assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
+  assert.equal(bl(['rank', '--reset'], dir, headless).status, 1);
+  assert.equal(staged(dir), list('F-1', 'S-1', 'F-2'));
+  assert.equal(bl(['rank', '--commit'], dir, headless).status, 1);
+  assert.equal(read(dir), HAND);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+
+  // Reading the order is allowed.
+  assert.equal(bl(['rank'], dir, headless).status, 0);
+
+  // A hand edit cannot be committed through bl sync --commit either.
+  writeFileSync(join(dir, 'priority.yaml'), `${HAND}- F-1\n`);
+  let r = bl(['sync', '--commit', '-m', 'chore: rank by hand', '--path', 'priority.yaml'], dir, headless);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /refusing to commit priority\.yaml .*BL_HEADLESS is set/);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+
+  // The operator, without the marker, can.
+  r = bl(['sync', '--commit', '-m', 'chore: rank by hand', '--path', 'priority.yaml'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'priority.yaml');
 });

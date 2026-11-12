@@ -128,9 +128,12 @@ Commands:
                <unit> --top|--bottom|--before <unit>|--after <unit>
                                     Place a unit
                <unit> --remove      Take it out of the list
-               With no arguments, print the order
-               An interactive run first pulls and takes closed units out of
-               the list, in a commit of its own
+               With no arguments, print the order (the staged order with
+               markers while edits are staged)
+               Every edit is staged in .bl/priority.staged.yaml
+               --commit             Pull, merge the staged edits, take closed
+                                    units out, commit and push the file
+               --reset              Drop the staged edits
   what-next  Suggest the next story to start by walking the dep graph
                [story-id|component-id]  Story → reference point; component →
                                    pick next startable story inside it

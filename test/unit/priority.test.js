@@ -1,7 +1,8 @@
 /**
  * priority.test.js — `priority.yaml` and the order the graph gives from it
  * (F-78 D1, F-113 D1, S-1261): `backlog.priority`, `backlog.rankOf` and the
- * `priority-file` and `priority-unit` problems `bl validate` reports.
+ * `priority-file` and `priority-unit` problems `bl validate` reports; the
+ * staged copy `bl rank` writes and its markers (F-113 D3, D4).
  */
 
 import { test } from 'node:test';
@@ -11,7 +12,18 @@ import { join } from 'path';
 import { loadBacklog } from '../../src/backlog-graph.js';
 import { stringify } from 'yaml';
 import { serializeFrontmatter } from '../../src/config.js';
-import { PriorityError, isUpdateStory, parseRanked } from '../../src/priority.js';
+import {
+  PriorityError,
+  STAGED_CONFLICT,
+  STAGED_FILE,
+  StagedConflictError,
+  isUpdateStory,
+  listIds,
+  marks,
+  orderOf,
+  parseRanked,
+  readStaged,
+} from '../../src/priority.js';
 import { findPriorityFindings } from '../../src/validate.js';
 import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
 
@@ -314,5 +326,84 @@ test('bl validate reports the priority problems as errors at priority.yaml', () 
     );
   } finally {
     none.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The staged copy and its markers (F-113 D3, D4)
+// ---------------------------------------------------------------------------
+
+/** `marks` as `<id><mark>` strings, in the map's order. */
+const marked = (committed, staged) => [...marks(committed, staged)].map(([id, m]) => `${id}${m}`);
+
+test('marks: + newly ranked, - taken out, unchanged rows unmarked', () => {
+  assert.deepEqual(marked(['F-1', 'F-2'], ['F-1', 'S-3', 'F-2']), ['F-1', 'S-3+', 'F-2']);
+  assert.deepEqual(marked(['F-1', 'F-2', 'F-3'], ['F-1', 'F-3']), ['F-1', 'F-3', 'F-2-']);
+  assert.deepEqual(marked(['F-1'], ['F-1']), ['F-1']);
+  assert.deepEqual(marked([], []), []);
+});
+
+test('marks: one move marks only the unit that moved, not the rows it passed', () => {
+  // F-1 moves from first to last, past three rows.
+  assert.deepEqual(marked(['F-1', 'F-2', 'F-3', 'F-4'], ['F-2', 'F-3', 'F-4', 'F-1']), ['F-2', 'F-3', 'F-4', 'F-1~']);
+  // F-4 moves from last to second.
+  assert.deepEqual(marked(['F-1', 'F-2', 'F-3', 'F-4'], ['F-1', 'F-4', 'F-2', 'F-3']), ['F-1', 'F-4~', 'F-2', 'F-3']);
+  // A move, an add and a removal together: F-4 to the top, S-9 in, F-3 out.
+  assert.deepEqual(marked(['F-1', 'F-2', 'F-3', 'F-4', 'F-5'], ['F-4', 'F-1', 'F-2', 'S-9', 'F-5']), [
+    'F-4~',
+    'F-1',
+    'F-2',
+    'S-9+',
+    'F-5',
+    'F-3-',
+  ]);
+});
+
+test('listIds reads the ids as written, canonical; anything else is a PriorityError naming the file', () => {
+  assert.deepEqual(listIds('# x\n- S-1\n- f2\n'), ['S-1', 'F-2']);
+  assert.deepEqual(listIds('[f3, s1]\n'), ['F-3', 'S-1']);
+  assert.deepEqual(listIds(''), []);
+  for (const bad of ['- [\n', 'ranked: x\n', '- unit: F-1\n', '- F-1\n- 7\n']) {
+    assert.throws(
+      () => listIds(bad, STAGED_FILE),
+      (e) => e instanceof PriorityError && e.message.startsWith(`${STAGED_FILE}: `),
+      bad,
+    );
+  }
+});
+
+test('readStaged: null with no copy, the ids of a list, a StagedConflictError for anything else', () => {
+  const root = mkTempDir('bl-staged-');
+  assert.equal(readStaged(root), null);
+  mkdirSync(join(root, '.bl'), { recursive: true });
+  writeFileSync(join(root, STAGED_FILE), '- F-1\n- s2\n');
+  assert.deepEqual(readStaged(root), ['F-1', 'S-2']);
+  // git's conflict markers, as bl rank --commit writes them on n.
+  const middle = '- F-1\n<<<<<<< staged\n- F-2\n=======\n- F-3\n>>>>>>> main\n- F-4\n';
+  const first = '<<<<<<< staged\n- F-2\n=======\n- F-3\n>>>>>>> main\n';
+  for (const bad of [middle, first, 'x: 1\n']) {
+    writeFileSync(join(root, STAGED_FILE), bad);
+    assert.throws(
+      () => readStaged(root),
+      (e) => e instanceof StagedConflictError && e.message === STAGED_CONFLICT,
+      bad,
+    );
+  }
+  assert.equal(
+    STAGED_CONFLICT,
+    'merge conflict in .bl/priority.staged.yaml: edit it, then bl rank --commit; or bl rank --reset',
+  );
+});
+
+test('orderOf: the open units a list ranks, in its order, then every other open unit by added:', () => {
+  const b = backlog(ranked('F-1'));
+  try {
+    const g = loadBacklog(b.config);
+    // F-2 and S-6 are done, S-1 is inside F-1, S-7 is an update story, F-9 is unknown: none is ranked.
+    const o = orderOf(['S-3', 'F-2', 'S-1', 'F-9', 'S-7', 'F-1', 'S-6', 'S-3'], g);
+    assert.deepEqual(ids(o.ranked), ['S-3', 'F-1']);
+    assert.deepEqual(ids(o.unranked), ['F-4', 'S-2', 'S-4', 'F-3', 'S-5']);
+  } finally {
+    b.cleanup();
   }
 });

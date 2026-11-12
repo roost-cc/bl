@@ -687,8 +687,9 @@ The order is the operator's preference: `bl next` and `bl run` pick the first op
 nothing holds, ranked units first. The file holds no reason for the order; git history keeps the
 reasons (F-113 D2). bl reads it with the `yaml` package (`parseRanked` takes the list), and
 `bl rank` writes the whole list with its `stringify`, so comments in the file are not kept.
-Only a person ranks: nothing automated writes the file (F-78 D3). An interactive `bl rank` also
-takes every closed unit out of the list, in a commit of its own (S-1364):
+Only a person ranks: nothing automated writes the file (F-78 D3). `bl rank` stages every edit
+and `bl rank --commit` writes the file, taking every closed unit out of the list in the same
+commit (F-113 D3, see `bl rank`):
 
 ```yaml
 - S-1
@@ -3863,61 +3864,66 @@ bl rank                               # the order: ranked units, then the unrank
 bl rank F-12 --top                    # rank a unit (or --bottom, --before, --after)
 bl rank S-40 --before F-12            # move a ranked unit
 bl rank S-40 --remove                 # back into the dated tail
+bl rank --commit                      # commit the staged edits in one commit
+bl rank --reset                       # drop the staged edits
 ```
 
-- With no arguments, stdout lists the ranked units (entry number, id, title) and then
-  every other open unit oldest `added:` first, from `backlog.priority`.
-- Every interactive run, with or without arguments, pulls the backlog first
-  (`commandPullsBacklog`) and then, under the backlog lock, takes each closed unit out of
-  the list (`removeClosed`: every entry of each unit `graph.ranked` resolves whose unit is done,
-  a unit listed twice losing both; an entry that names no unit stays a `priority-unit` finding).
-  It commits `priority.yaml` alone, `chore: F-79, F-85 unranked (done) in priority.yaml` (ids in
-  list order), and says `bl rank: took out F-79, F-85 (done).` on stderr, before it prints
-  the order or applies the edit. A failed commit exits 1 and the edit does not run. With
-  uncommitted edits to `priority.yaml` it leaves the closed units and says which; the one exception
-  is a file that holds exactly an earlier cleanup's write whose commit failed (`pendingIsOurs`).
-  It redoes that cleanup on HEAD with the units closed now, and commits it: a unit closed since
-  goes too, and a unit open again gets its entry back, with a line that names it. If every unit
-  that write took out is open again, the write stays uncommitted: a failed `--remove` edit or a
-  hand edit leaves the same text. A file bl rank cannot edit (not YAML, or not a list of ids) skips the
-  cleanup with one line, and an edit on it refuses with that line.
-  `bl rank <closed unit> --remove` exits 0 once the cleanup took that unit out. Usage errors and
-  `checkUnit` refusals exit before the cleanup.
+**Every edit is staged** (F-113 D3). `src/priority.js` holds what `bl rank` and the `bl top`
+snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FILE`
+(`.bl/priority.base.yaml`), `readStaged` and `marks`.
+
+- An edit writes only the staged copy, under the backlog lock. The first edit copies
+  `priority.yaml` to the base copy (the merge base of `--commit`) and starts the staged copy from
+  it. Every session on the backlog checkout shares the copies. An edit never writes or commits
+  `priority.yaml` and pulls nothing, so `bl next` and `bl run` pick by the committed order.
 - `<unit>` must be an open feature or loose story (`checkUnit`): a story inside a feature
   ("the feature is the unit: rank F-n"), an update story, a task, a closed unit and an unknown
   id are refused, naming why. `--remove` takes whatever the list names, so a closed or deleted
-  unit can be dropped. `--before`/`--after` name a unit already ranked.
-- An edit reads the list (`rankedIds`), moves or removes the id, and writes the whole list with
-  `yaml`'s `stringify` (`applyRank`), so ids are written as `canonical` spells them and comments
-  are not kept. A move that leaves the order as it is changes nothing and commits nothing. The
-  last entry removed leaves `[]`. `--why` is no option: the file holds no reasons (F-113 D2).
-- An edit pulls the backlog first (`commandPullsBacklog`), writes the file under the backlog
-  lock and commits `priority.yaml` alone (`commitPaths`, which pushes):
-  `chore: <unit> ranked first|last|before <u>|after <u> | unranked in priority.yaml`.
-- Uncommitted edits to `priority.yaml` are never swept into a rank commit. An edit that would
-  change the file while it differs from HEAD is refused, nothing written. A no-op commits the
-  pending file only when it is exactly this edit applied to HEAD's version (`pendingIsOurs` takes
-  the change as a function of HEAD's text, the edit's or the cleanup's) and the index holds
-  that or HEAD's version (`pendingIsOurs`: an earlier run's write whose commit failed); any other
-  uncommitted edit, staged or not, is left uncommitted.
+  unit can be dropped. `--before`/`--after` name a unit already ranked in the staged order.
+- An edit moves or removes the id (`applyRank`) and writes the whole list with `yaml`'s
+  `stringify`, so ids are written as `canonicalId` spells them and comments are not kept. A move
+  that leaves the order as it is writes nothing. `--why` is no option (F-113 D2).
+- With no arguments, stdout lists the ranked units (position, id, title) and then every other
+  open unit oldest `added:` first. While a staged copy exists it lists the staged order
+  (`orderOf`), each row marked against the committed order by `marks`: `+` newly ranked, `~`
+  moved (a ranked unit outside the longest common subsequence of the two lists, so a move marks
+  only the unit that moved), `-` taken out of the ranked list. Closed units are not listed.
+- `--commit` pulls first (`commandPullsBacklog`). Under the lock it refuses while `priority.yaml`
+  has uncommitted edits, then runs `git merge-file -p -L staged -L base -L main` on the staged
+  copy, the base copy and `priority.yaml`. A clean merge loses its closed units (and a second
+  entry of a unit) and is committed alone (`commitPaths`, which pushes),
+  `chore: commit the staged order of priority.yaml[; F-5 out (done)]`; both copies are then
+  deleted. An order that is already `priority.yaml`'s commits nothing and deletes the copies. A
+  failed commit puts `priority.yaml` back as HEAD has it and keeps the copies.
+- On a conflict `--commit` proposes a list (`proposal`): the staged order without the units main
+  took out since the base, with the units main added at the end, closed units out. With stdin
+  not a terminal it changes nothing and exits 1, its last stderr line `NO_TERMINAL`
+  (`conflict: run bl rank --commit in a terminal`). Otherwise it prints the proposal with its
+  markers and asks y/n on stderr with the lock let go; the answer is acted on under the lock only
+  if the three files are as they were. y commits the proposal. n writes git's conflict markers
+  into the staged copy, copies `priority.yaml` to the base copy (the marked copy already holds
+  main's changes) and exits 1.
+- A staged copy that is not a YAML list of ids is in conflict (`StagedConflictError`, Decision
+  A3): every `bl rank` command but `--reset` exits 1 with `STAGED_CONFLICT`. `bl next` and
+  `bl run` read only `priority.yaml` and are not blocked.
+- `--commit` with no staged copy exits 0 and prints nothing. `--reset` deletes both copies.
 
 **`BL_HEADLESS`.** Every agent bl starts headless has `BL_HEADLESS=1` in its environment: each
 adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it
 when `headless` is set (`runHeadlessSession` passes `headless: true`); an interactive spawn adds
 no marker (it still gets `BL_TAB_TITLE=''`, see "Tab titles"). With `BL_HEADLESS` set, a
-`bl rank` edit exits 1 before it pulls or writes anything, and
+`bl rank` edit, `--commit` and `--reset` exit 1 before they pull or write anything, and
 `commitPaths`, the one commit path every bl command uses, refuses any commit whose paths, taken
 as one Git pathspec set (an exclusion such as `:!priority.yaml` counts), select `priority.yaml`
 (`headlessPriorityRefusal`), so a hand edit cannot be
-committed through `bl sync --commit --path` either. Printing the order is allowed; it neither
-pulls nor takes closed units out, and says nothing about them, since the order skips them. The marker is
+committed through `bl sync --commit --path` either. Printing the order is allowed. The marker is
 a guard against an agent changing a person's decision by mistake, not a security boundary.
 The test helper `runBl` drops an inherited `BL_HEADLESS` (`personEnv`), so the suite runs the
 same inside a headless session; a test that wants the marker passes it.
 
 **Nothing automated writes `priority.yaml`** (F-78 D3). `bl sync` and `bl merge` never touch it: a
-merged feature leaves the order because it is closed, not by an edit, and the next interactive
-`bl rank` (a person's command) takes its entry out. Its merge date is in
+merged feature leaves the order because it is closed, not by an edit, and the next
+`bl rank --commit` (a person's command) takes its entry out. Its merge date is in
 the backlog's git history (its `bl merge` commit) and `bl history --json`. `bl side` does not
 count it among the files it owns.
 
@@ -4308,7 +4314,7 @@ on its head line as `found by: <id>`.
 problems), both errors at `priority.yaml`: the first when the file is missing, is not YAML, or
 is not a list of non-empty id strings; the second when an entry names no feature or story, a
 story inside a feature, an update story or a task, or a unit already ranked. A closed unit left
-in the list is no finding: the order skips it, and the next interactive `bl rank` removes it.
+in the list is no finding: the order skips it, and the next `bl rank --commit` removes it.
 Only a `priority.yaml` that is not YAML stops other commands (a strict `loadBacklog` throws it);
 a missing or malformed one is an empty order, so every open unit is in the dated tail (see
 **Priority**). They replace the two
@@ -4668,7 +4674,7 @@ After the merge the branch's open PR, if any, is closed through
 
 `bl merge F-<n>` leaves `priority.yaml` as it is (F-78 D3): the merged feature drops out of the
 order because it is closed, and an entry still naming it is skipped until the next
-interactive `bl rank` removes it. In the lock hold that marks the feature done, `recordThemeState` (`theme.js`, F-53 D4)
+`bl rank --commit` removes it. In the lock hold that marks the feature done, `recordThemeState` (`theme.js`, F-53 D4)
 appends `- <date>: F-<n> done (<title>).` to the `## State` of the feature's theme, creating the section at the end when
 absent and writing the frontmatter back byte for byte; the commit takes the theme file too. A
 feature whose theme is missing or unreadable only warns.
