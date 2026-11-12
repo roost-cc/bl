@@ -3,6 +3,7 @@
  */
 
 import { spawnSync } from 'child_process';
+import { randomUUID } from 'crypto';
 import { join, dirname } from 'path';
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { homedir } from 'os';
@@ -16,6 +17,7 @@ import { runCapacityHelper } from './capacity-helper.js';
 import { CLAUDE_CAPACITY_TIMEOUT_MS } from './claude-capacity.js';
 import { checkLocalConfiguration, localServerCapacity, localSpawnEnv } from './local.js';
 import { outcomeFor, withExitFault } from '../outcome.js';
+import { followJsonl, oneLine } from './follow.js';
 
 // The script that asks Claude Code's OAuth usage endpoint (see its JSDoc).
 const CAPACITY_HELPER = fileURLToPath(new URL('./claude-capacity.js', import.meta.url));
@@ -121,6 +123,9 @@ export function claudeScopeRules({ read = [], write = [] } = {}) {
  * `effort` (an effort level, F-85 D3) becomes `--effort`; null passes none,
  * so the CLI uses its own setting. A headless `schema` (F-68 D1) becomes
  * `--json-schema`, and the result's `structured_output` holds the object.
+ * A headless `newSessionId` (a follow handle's id, S-1272) becomes
+ * `--session-id`, so the transcript's name is known before the session
+ * starts; a resume keeps its own id.
  */
 export function buildClaudeArgs({
   name,
@@ -128,6 +133,7 @@ export function buildClaudeArgs({
   permissions = [],
   disallowed = [],
   sessionId,
+  newSessionId = null,
   scopes = {},
   args = [],
   headless = false,
@@ -145,6 +151,7 @@ export function buildClaudeArgs({
     // makes the loop unattended.
     claudeArgs.push('-p', '--output-format', 'json');
     if (sessionId) claudeArgs.push('--resume', sessionId);
+    else if (newSessionId) claudeArgs.push('--session-id', newSessionId);
     // Claude Code's --json-schema check does not know draft 2020-12 and
     // rejects a schema whose `$schema` names it, before the session starts
     // (T-60). bl's own check (outcome.js) keeps the draft; claude gets the
@@ -327,6 +334,39 @@ export function parseClaudeJsonResult(stdout, schema = null) {
     parsed: true,
     ...outcomeFor(schema, obj.structured_output),
   };
+}
+
+// The tool input fields a tool call's summary is taken from, in this order
+// (S-1272): Bash has a description and a command, the file tools a path, the
+// search tools a pattern (and the directory they search, which says less).
+const SUMMARY_FIELDS = ['description', 'command', 'file_path', 'pattern', 'path'];
+
+/**
+ * The events one Claude transcript record holds (S-1272), as provider.js
+ * `followSession` names them: a text block of an assistant message is a
+ * `text` event, a `tool_use` block a `tool` event. Thinking blocks, tool
+ * results (user records), a subagent's records (`isSidechain`) and every
+ * other record type hold none. `at` is the record's `timestamp`.
+ *
+ * @param {any} record
+ * @returns {object[]}
+ */
+export function claudeTranscriptEvents(record) {
+  if (record?.type !== 'assistant' || record.isSidechain === true) return [];
+  const content = record.message?.content;
+  if (!Array.isArray(content)) return [];
+  const at = typeof record.timestamp === 'string' ? record.timestamp : undefined;
+  const events = [];
+  for (const block of content) {
+    if (block?.type === 'text' && oneLine(block.text)) {
+      events.push({ kind: 'text', at, text: String(block.text) });
+    } else if (block?.type === 'tool_use') {
+      const input = block.input && typeof block.input === 'object' ? block.input : {};
+      const field = SUMMARY_FIELDS.find((k) => oneLine(input[k]));
+      events.push({ kind: 'tool', at, tool: String(block.name ?? ''), summary: field ? oneLine(input[field]) : '' });
+    }
+  }
+  return events;
 }
 
 function formatDenial(d) {
@@ -725,6 +765,7 @@ export class ClaudeProvider extends AgentProvider {
     backlogRoot = null,
     topLevel = null,
     schema = null,
+    follow = null,
     run = spawnSync,
   }) {
     const env = this.spawnEnv({ headless, backlogRoot, model, topLevel });
@@ -736,6 +777,7 @@ export class ClaudeProvider extends AgentProvider {
       // shape as allow tokens, so the same translation applies.
       disallowed: this.translatePermissions(denied),
       sessionId,
+      newSessionId: headless ? (follow?.id ?? null) : null,
       scopes,
       args,
       headless,
@@ -766,6 +808,20 @@ export class ClaudeProvider extends AgentProvider {
       cwd,
       env,
     });
+  }
+
+  /**
+   * A headless `claude -p` session writes the same transcript an interactive
+   * one does, `<config dir>/projects/<slug of cwd>/<session id>.jsonl`. The
+   * id is new (spawn passes it as `--session-id`), or the resumed session's.
+   */
+  followHandle({ cwd, sessionId = null }) {
+    const id = sessionId ?? randomUUID();
+    return { id, path: join(claudeConfigDir(), 'projects', pathToProjectSlug(cwd), `${id}.jsonl`) };
+  }
+
+  followSession(handle, opts = {}) {
+    return followJsonl(handle.path, claudeTranscriptEvents, opts);
   }
 
   parseLogs(sessionId) {

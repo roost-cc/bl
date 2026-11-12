@@ -1,0 +1,63 @@
+╭─┐¹runs┌────────────────────────────────────────────────────────────────────────┐18:17:31┌─┐- 2000ms +┌─╮╭─┐²attention┌──────────────────────────────────────────────────╮
+│ Id      State   Step            Story   Round  Elapsed  Out tok  Agent              Pull request       ││ Kind  Id            For     Line                              │
+│ F-81    ● run   implement       S-1277  -      1h02m    412k     claude opus high   -                  ││ RUN   updates:run   updates no update run since 14:02 (9 h)   │
+│ S-1330  ● run   review          -       1/2    38m      109k     codex gpt-6-sol    bl#15              ││ ESC   F-83:esc      F-83    round cap: 2 open review items    │
+│ F-85    ✓ done  merged          -       2/2    5h14m    257k     claude opus        bl#14              ││ TASK  T-52          F-81    Renovate image: 8 advisories      │
+│ F-83    ✗ esc   closing-review  -       2/2    2h05m    151k     codex gpt-6-sol    bl#12              ││ TASK  T-2           F-54    re-mint the Apple sign-in key     │
+│ F-79    ◌ stale a step name lo… S-1201  -      3h00m    950      claude sonnet low  -                  ││ CHG   F-81:change   F-81    4 repos · 11 commits · not merged │
+│                                                                                                        ││ CHG   S-1330:change S-1330  bl · 3 commits · not merged       │
+│ 2 running · 0 stopped · 1 stale · done today (UTC): 1 stories, 10 points                               ││ UPD   tools:renova… tools   eslint 9.39.1 · red · notes: none │
+│                                                                                                        ││ UPD   bl:renovate/… bl      ws 8.19.0 · red · notes: 1 adviso…│
+│                                                                                                        ││ UPD   logr:renovat… logr    x/net 0.47.0 · red · notes: none  │
+│                                                                                                        ││ next: check the update job where it runs (its journal or log) │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────╯
+╭─┐⁶detail┌─────────────────────────────────────────────────────────────────────────────────────┐S-1330┌─╮╭─┐⁴tokens┌────────────────────────────────────────────────┐2h┌─╮
+│ S-1330 · Every bl verb that writes the backlog commits and pushes what it changed                      ││ output tokens / min · ended sessions                peak 8.7k │
+│ branch s1330-every-bl-verb-tha… · lead worktree …-the-backlog-commits/bl · PR bl#15 · started 17:39    ││                                                   ⢀⡇ ⢀⡇ ⢀     │
+│                                                                                                        ││                                                   ⣼⡇ ⣼⡇ ⣼     │
+│ setup  implement  fix-tests      self-review  review r1  fix r1  review r2  fix r2  closing            ││                                                  ⢠⣿⡇⢰⣿⡇⢰⣿     │
+│ ✓ 10s  ✓ 23m      ✓ 6m (2 att.)  ✓ 4m         ● 4m       ·       ·          ·       ·                  ││              ⢠   ⡄  ⡀                            ⣾⣿⡇⣿⣿⣇⣿⣿     │
+│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅          ││             ⢀⣾  ⣼⡇ ⢰⡇ ⢀                         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│ denied tools: 1 (implement: Bash(cd /home/robert/work/roo…)   test attempts: 2                         ││            ⢀⣾⣿ ⣸⣿⡇⢠⣿⡇⢀⣾                         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│ step tokens: in 94k · out 12k · cache r 2.0M · w 0                                                     ││            ⣼⣿⣿⣰⣿⣿⣧⣿⣿⡇⣾⣿         ⢠   ⣰           ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│                                                                                                        ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢠⣴⣿ ⢠⣾⣿ ⡄         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│ 20:17:35  tool  Read  /w/backlog/stories/S1-first/index.md                                             ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣴⣿⣿⣿⣾⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│ 20:17:40  tool  Grep  followSession                                                                    ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│ 20:17:50  tool  Bash  Run the unit tests                                                               ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│ 20:18:25  say   Done. All unit tests pass.                                                             ││  ⢀ ⡆      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│ ── live: review:correctness · codex gpt-6-sol ─────────────────────────────────────────────────────────││  ⣼⡄⡇⢀     ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│ 20:42:27  tool  exec_command  bash -lc 'rg -n followSession src'                                       ││       16:30          17:00          17:30          18:00  now │
+│ 20:42:27  say   The adapter has no follow method yet.                                                  ││                                                               │
+│ 20:42:27  tool  apply_patch  /w/f1-feat/bl/src/agents/provider.js /w/f1-feat/bl/src/watch.js           ││ claude   unknown: claude cannot report capacity               │
+│ 20:42:27  tool  docs.search                                                                            ││ codex 5h ■■■■■■■■■■■■■■■■■■■■■■■■······  80% 19:52            │
+│ 20:42:27  tool  web_search  codex exec json events                                                     ││ codex 7d ■■■■··························  13% Nov 12           │
+│ 20:42:27  say   Done: - the review found nothing.                                                      ││                                                               │
+│ ── run ended: escalated ───────────────────────────────────────────────────────────────────────────────││ today  in 1.2M · out 640k · cache r 51M · w 2.3M              │
+│ follow on · f stops it · w opens bl watch in a tmux window                                             ││ capacity read 18:14 · c reads it now                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────╯
+╭─┐³next┌──────────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮╭─┐⁵activity┌─────────────────────────────────────────────┐30d┌─╮
+│ Rank  Id     Status    Pts  Held by  Title                                                             ││ points done / UTC day · 30 days                last 7 days 41 │
+│   3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a change, an…││                             ⢸⣿⡇                               │
+│   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the guest     ││                             ⢸⣿⡇                               │
+│   5   F-80   refined    13  F-84     Dependency updates are one job: Renovate applies, the gate tests,…││               ⢰⣶⡆           ⢸⣿⡇                ⣶⣶             │
+│   6   F-86   draft       -           AGENTS.md in plain English: rewrite bl's reference in about 80% o…││       ⢀⣀⡀     ⢸⣿⡇         ⢀⣀⣸⣿⡇              ⣀⣀⣿⣿        ⣀⣀⣶⣶ │
+│   7   F-16   draft       -           Inspection quick condition assessment                             ││     ⢠⣤⣼⣿⡇     ⢸⣿⣧⣤⡄       ⢸⣿⣿⣿⣧⣤⣤          ⣤⣤⣿⣿⣿⣿      ⣤⣤⣿⣿⣿⣿ │
+│   8   F-13   draft       -           Maintenance requests                                              ││   ⢰⣶⣾⣿⣿⣿⣧⣤⡄   ⢸⣿⣿⣿⣇⣀⡀   ⢰⣶⣾⣿⣿⣿⣿⣿⣿  ⣤⣤⣶⣶    ⣿⣿⣿⣿⣿⣿⣤⣤  ⣶⣶⣿⣿⣿⣿⣿⣿ │
+│                                                                                                        ││   Oct 12                      Oct 26                   Nov 09 │
+│ bl next → F-81 (running) · 185 work units not ranked                                                   ││                                                               │
+│                                                                                                        ││ 18:16  F-81    implement S-1310  ✓ 3m    claude opus low      │
+│                                                                                                        ││ 18:12  F-81    implement S-1277  ✓ 27m   claude opus high     │
+│                                                                                                        ││ 18:05  S-1330  review:verify     ✓ 9m    codex gpt-6-sol      │
+│                                                                                                        ││ 18:01  S-1330  review:round r1   ✓       round 1 reviewed by …│
+│                                                                                                        ││ 17:56  S-1330  fix-tests         ✓ 6m    claude opus high     │
+│                                                                                                        ││ 17:50  S-1330  self-review       ✓ 4m    claude opus high     │
+│                                                                                                        ││ 17:45  F-81    implement S-1309  ✗ 11m   denied: Bash(cd /hom…│
+│                                                                                                        ││ 17:34  F-81    setup             ✓       resumed              │
+│                                                                                                        ││ 17:26  S-1330  implement         ✓ 24m   claude opus high     │
+│                                                                                                        ││ 17:24  S-1330  setup             ✓                            │
+│                                                                                                        ││ 17:07  F-85    test              ✗       bl · test exited 1 —…│
+│                                                                                                        ││ 16:42  F-85    pr                ✓       https://example.inva…│
+│                                                                                                        ││                                                               │
+│                                                                                                        ││                                                               │
+│                                                                                                        ││                                                               │
+╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└──────────────────────────────────────────────────────────────────────────────╯

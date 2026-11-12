@@ -17,6 +17,7 @@ import {
   scopeProcesses,
   stopScope,
   staleScopes,
+  scopesOf,
   scopeActive,
 } from '../../src/process-scope.js';
 
@@ -193,7 +194,7 @@ exit 1
   }
 });
 
-test("staleScopes finds a dead bl's scope of the unit, not this bl's", { skip }, () => {
+test("staleScopes finds a dead bl's scope of the unit, not this bl's; scopesOf finds a bl's own", { skip }, () => {
   // Above any pid_max (at most 2^22), so no process has it.
   const dead = scopeUnitName(UNIT, 3, 4_999_999);
   const mine = scopeUnitName(UNIT, 4);
@@ -204,6 +205,10 @@ test("staleScopes finds a dead bl's scope of the unit, not this bl's", { skip },
     }
     assert.deepEqual(staleScopes(UNIT), [dead]);
     assert.deepEqual(staleScopes(`${UNIT}-other`), [], 'another unit has none');
+    // The same listing, filtered by the bl pid: what `bl stop` stops (S-1335).
+    assert.deepEqual(scopesOf(UNIT, process.pid), [mine], "this bl's scopes, the live holder's");
+    assert.deepEqual(scopesOf(UNIT, 4_999_999), [dead]);
+    assert.deepEqual(scopesOf(`${UNIT}-other`, process.pid), [], 'another unit has none');
   } finally {
     assert.deepEqual(stopScope(dead), { ok: true });
     assert.deepEqual(stopScope(mine), { ok: true });

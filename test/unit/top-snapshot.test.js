@@ -11,8 +11,13 @@ import { holdLock } from '../helpers/hold-lock.js';
 import { loadConfig } from '../../src/config.js';
 import { TOKEN_KEYS } from '../../src/tokens.js';
 import {
+  deniedOf,
+  itemActions,
+  runActions,
+  RESUMED_STATUSES,
   readActivity,
   readSection,
+  runTimeline,
   readTokens,
   runsReader,
   sectionReaders,
@@ -70,7 +75,7 @@ function runsBacklog() {
       }),
     ),
   );
-  holdLock(join(run, 'F-1.lock'));
+  holdLock(join(run, 'F-1.lock'), 'bl run F-1');
   // Says running, but its bl is gone: its lock file names a dead pid, and
   // nobody holds it. Stale.
   put('F-2.json', JSON.stringify(runState('F-2', { status: 'running', updatedAt: old })));
@@ -86,6 +91,28 @@ function runsBacklog() {
   put('F-6-spec.json', '{}');
   return { dir, run, config: loadConfig({ backlogRoot: dir }) };
 }
+
+test('stopped_by: a stopped row names the bl stop pids of its run state; any other row, or a bad value, has none', () => {
+  const { dir } = mkTempBacklog();
+  const run = join(dir, '.bl', 'run');
+  mkdirSync(run, { recursive: true });
+  const recent = new Date(NOW - HOUR).toISOString();
+  const cases = [
+    ['S-1', { status: 'stopped', stoppedBy: [10, 11] }, [10, 11]],
+    ['S-2', { status: 'stopped', stoppedBy: ['10', 12, 1.5, null] }, [12]],
+    ['S-3', { status: 'stopped', stoppedBy: 12 }, []],
+    ['S-4', { status: 'stopped' }, []],
+    ['S-5', { status: 'escalated', stoppedBy: [10] }, []],
+  ];
+  for (const [id, more] of cases) {
+    writeFileSync(join(run, `${id}.json`), JSON.stringify(runState(id, { updatedAt: recent, ...more })));
+  }
+  const { rows } = runsReader(loadConfig({ backlogRoot: dir }))(NOW);
+  assert.deepEqual(
+    Object.fromEntries(rows.map((r) => [r.id, r.stoppedBy])),
+    Object.fromEntries(cases.map(([id, , want]) => [id, want])),
+  );
+});
 
 test('runs: running or stopped, or updated in the last 24 h; running with no holder is stale', () => {
   const { config } = runsBacklog();
@@ -113,7 +140,9 @@ test('runs: running or stopped, or updated in the last 24 h; running with no hol
       agent: f1.agent,
       model: f1.model,
       effort: f1.effort,
-      history: f1.history.length,
+      title: f1.title,
+      denied: f1.denied,
+      timeline: f1.timeline.map((s) => `${s.step}${s.round ? ` r${s.round}` : ''} ${s.state}`),
     },
     {
       step: 'implement',
@@ -128,7 +157,22 @@ test('runs: running or stopped, or updated in the last 24 h; running with no hol
       agent: 'claude',
       model: 'opus',
       effort: 'high',
-      history: 2,
+      // No unit F-1 in the backlog: no title.
+      title: null,
+      denied: { count: 0, step: null, tool: null },
+      // The review:round entry puts the timeline at round 1, so the run's step (implement, an
+      // earlier stage) is round 1, which never goes back.
+      timeline: [
+        'setup pending',
+        'implement done',
+        'fix-tests pending',
+        'self-review pending',
+        'review r1 current',
+        'fix r1 pending',
+        'review r2 pending',
+        'fix r2 pending',
+        'closing pending',
+      ],
     },
   );
   assert.match(f1.startedAt, /Z$/);
@@ -319,7 +363,11 @@ const GO_RUN = {
   agent: S,
   model: S,
   effort: S,
+  title: S,
+  testAttempts: 'int',
 };
+const GO_STAGE = { step: S, round: 'int', state: S, durationMs: 'int', tests: 'int', usage: 'usage' };
+const GO_DENIED = { count: 'int', step: S, tool: S };
 const GO_EVENT = {
   at: 'time',
   unit: S,
@@ -345,6 +393,7 @@ test('runs, activity, tokens: a run state with round "2" (and every other mistyp
   const mistyped = {
     ...runState('F-1', { status: 'running', updatedAt: recent }),
     round: '2',
+    testAttempts: '2',
     maxRounds: 2.5,
     step: 5,
     story: { id: 'S-7' },
@@ -366,7 +415,10 @@ test('runs, activity, tokens: a run state with round "2" (and every other mistyp
         startedAt: 5,
         at: recent,
         usage: { output: 2.5, input: 'x' },
+        denials: [3, 'Bash(cd /x)'],
       },
+      // A step of the timeline with mistyped fields.
+      { step: 'implement', at: 7, usage: 'many', denials: 'Bash' },
       // A date with no time: Go's time.Time refuses it, so the snapshot gives a full ISO time.
       { step: 'test', ok: true, at: '2026-11-07' },
     ],
@@ -375,8 +427,14 @@ test('runs, activity, tokens: a run state with round "2" (and every other mistyp
   writeFileSync(join(run, 'S-9.json'), JSON.stringify({ ...mistyped, feature: 'S-9', pr: 'bl#15', usage: 'many' }));
   const readers = sectionReaders(config);
   const { rows } = readers.runs(NOW);
-  for (const row of rows) assert.deepEqual(undecodable(row, GO_RUN), [], row.id);
+  for (const row of rows) {
+    assert.deepEqual(undecodable(row, GO_RUN), [], row.id);
+    assert.deepEqual(undecodable(row.denied, GO_DENIED), [], row.id);
+    for (const s of row.timeline) assert.deepEqual(undecodable(s, GO_STAGE), [], `${row.id} ${s.step}`);
+  }
   const f1 = rows.find((r) => r.id === 'F-1');
+  // The string among the denials counts; the number does not.
+  assert.deepEqual(f1.denied, { count: 1, step: null, tool: 'Bash(cd /x)' });
   assert.deepEqual(
     [f1.round, f1.maxRounds, f1.step, f1.pr, f1.usage],
     // A count that is not a whole non-negative number (a string, a fraction, too large, null) is 0.
@@ -602,4 +660,233 @@ test('activity: the newest 50 history entries of all run states, newest first, w
     effort: null,
     note: 'round 1 reviewed',
   });
+});
+
+/** A timeline stage as `<step>[ r<round>] <state> <minutes>m[ <tests>t]`. */
+const stageLine = (s) =>
+  `${s.step}${s.round ? ` r${s.round}` : ''} ${s.state}` +
+  `${s.durationMs == null ? '' : ` ${s.durationMs / MIN}m`}${s.tests ? ` ${s.tests}t` : ''}`;
+
+test('timeline (S-1334): every stage of planSteps, done with its duration, the current one with its elapsed time, the rest pending', () => {
+  const t0 = NOW - 60 * MIN;
+  const state = {
+    feature: 'S-1330',
+    startedAt: at(t0),
+    status: 'running',
+    step: 'review',
+    round: 1,
+    maxRounds: 2,
+    history: [
+      { step: 'setup', ok: true, at: at(t0 + MIN) },
+      { step: 'implement', story: 'S-1', startedAt: at(t0 + MIN), at: at(t0 + 20 * MIN), usage: usage(100, 1) },
+      { step: 'implement', story: 'S-2', startedAt: at(t0 + 20 * MIN), at: at(t0 + 25 * MIN), usage: usage(50, 1) },
+      { step: 'test', ok: false, at: at(t0 + 27 * MIN) },
+      { step: 'fix-tests', startedAt: at(t0 + 27 * MIN), at: at(t0 + 30 * MIN) },
+      { step: 'test', ok: true, at: at(t0 + 31 * MIN) },
+      { step: 'self-review', startedAt: at(t0 + 31 * MIN), at: at(t0 + 35 * MIN) },
+      // Outside the timeline: left out, so review r1 starts where self-review ends.
+      { step: 'pr', ok: true, at: at(t0 + 36 * MIN) },
+      { step: 'review:security', startedAt: at(t0 + 36 * MIN), at: at(t0 + 40 * MIN), usage: usage(7, 3) },
+    ],
+  };
+  const timeline = runTimeline(state, 'running', NOW);
+  assert.deepEqual(timeline.map(stageLine), [
+    'setup done 1m',
+    'implement done 24m',
+    'fix-tests done 6m 2t',
+    'self-review done 4m',
+    'review r1 current 25m',
+    'fix r1 pending',
+    'review r2 pending',
+    'fix r2 pending',
+    'closing pending',
+  ]);
+  assert.deepEqual(timeline[1].usage, { input: 2, output: 150, cache_creation: 2, cache_read: 2 });
+  assert.deepEqual(timeline[4].usage, usage(7, 3));
+  assert.equal(timeline[5].usage, null);
+  // Stale (no bl holds it) or ended: no stage is current.
+  for (const status of ['stale', 'escalated']) {
+    assert.equal(runTimeline(state, status, NOW)[4].state, 'done', status);
+  }
+});
+
+test('timeline (S-1334): rounds follow the review:round entries; a test after a fix and a resumed setup stay in the fix round', () => {
+  const t0 = NOW - 100 * MIN;
+  const e = (step, min, more = {}) => ({ step, at: at(t0 + min * MIN), ...more });
+  const history = [
+    e('setup', 1),
+    e('implement', 10),
+    e('test', 11),
+    e('self-review', 12),
+    e('review:correctness', 20),
+    e('review:verify', 22),
+    e('review:round', 23, { round: 1 }),
+    e('fix', 30),
+    e('fix-self-review', 32),
+    // The test gate after the fix, then a stop and `--resume` (setup again): fix r1 still.
+    e('test', 33),
+    e('setup', 40),
+    e('review:correctness', 50),
+    e('review:round', 52, { round: 2 }),
+    e('fix', 60),
+    e('review:verify', 70),
+    e('review:round', 71, { round: 3 }),
+  ];
+  const timeline = runTimeline({ startedAt: at(t0), maxRounds: 2, step: 'closing-review', history }, 'clean', NOW);
+  assert.deepEqual(timeline.map(stageLine), [
+    'setup done 1m',
+    'implement done 9m',
+    'fix-tests done 1m 1t',
+    'self-review done 1m',
+    'review r1 done 11m',
+    'fix r1 done 17m 1t',
+    'review r2 done 12m',
+    'fix r2 done 8m',
+    'closing done 11m',
+  ]);
+  // A run of 1 round: review r1, the closing fix r1, the closing review.
+  assert.deepEqual(
+    runTimeline({ maxRounds: 1, history: [] }, 'running', NOW).map((s) => stageLine(s).replace(/ pending$/, '')),
+    ['setup', 'implement', 'fix-tests', 'self-review', 'review r1', 'fix r1', 'closing'],
+  );
+});
+
+test('deniedOf (S-1334): the count of all denied tools, and the step and tool of the first', () => {
+  assert.deepEqual(
+    deniedOf([
+      { step: 'implement', ok: true },
+      { step: 'implement', denials: ['Bash(cd /wt/x)', 'Bash(rm -rf x)'] },
+      { step: 'review:verify', denials: ['WebFetch'] },
+    ]),
+    { count: 3, step: 'implement', tool: 'Bash(cd /wt/x)' },
+  );
+  assert.deepEqual(deniedOf([]), { count: 0, step: null, tool: null });
+});
+
+test("runs (S-1334): a row's title is its work unit's, from the backlog; no title for a unit not in it", () => {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [{ id: 'S-4', component: 'C01', title: 'Every verb commits' }],
+  });
+  const run = join(dir, '.bl', 'run');
+  mkdirSync(run, { recursive: true });
+  const recent = at(NOW - HOUR);
+  writeFileSync(join(run, 'S-4.json'), JSON.stringify(runState('S-4', { status: 'clean', updatedAt: recent })));
+  writeFileSync(join(run, 'S-5.json'), JSON.stringify(runState('S-5', { status: 'clean', updatedAt: recent })));
+  const { rows } = runsReader(loadConfig({ backlogRoot: dir }))(NOW);
+  assert.deepEqual(
+    rows.map((r) => [r.id, r.title]),
+    [
+      ['S-4', 'Every verb commits'],
+      ['S-5', null],
+    ],
+  );
+});
+
+/** An action as `key: command [input] (window)`, for one-line checks. */
+const shown = (a) =>
+  `${a.key}: ${a.argv ? a.argv.join(' ') : a.url}${a.input ? ` [${a.input}]` : ''}${a.window ? ` (${a.window})` : ''}`;
+
+test('actions (S-1336): each inbox item kind gets the verbs of F-87 D7, then bl agent', () => {
+  const item = (kind, id, unit, more = {}) => itemActions({ kind, id, unit, line: '', next: '', path: '', ...more });
+  assert.deepEqual(item('escalation', 'F-83:esc', 'F-83').map(shown), [
+    'e: bl status F-83 (F-83 status)',
+    'o: bl view F-83 (F-83 view)',
+    'g: bl agent (agent)',
+  ]);
+  assert.deepEqual(item('task', 'T-52', 'F-81').map(shown), [
+    'd: bl task done T-52 [note]',
+    'o: bl view T-52 (T-52 view)',
+    'g: bl agent (agent)',
+  ]);
+  // A change's verb is changeNextVerb's: merge once ready_for_merge, else run.
+  assert.deepEqual(item('change', 'F-81:change', 'F-81', { status: 'ready_for_merge' }).map(shown), [
+    'm: bl merge F-81',
+    'o: bl view F-81 (F-81 view)',
+    'g: bl agent (agent)',
+  ]);
+  assert.deepEqual(item('change', 'S-1330:change', 'S-1330', { status: 'in_review' }).map(shown), [
+    'r: bl run S-1330 (S-1330 run)',
+    'o: bl view S-1330 (S-1330 view)',
+    'g: bl agent (agent)',
+  ]);
+  // The runner line and an update are no work unit: bl agent only.
+  assert.deepEqual(item('runner', 'updates:run', 'updates').map(shown), ['g: bl agent (agent)']);
+  assert.deepEqual(item('update', 'bl:renovate/ws-8.x', 'bl').map(shown), ['g: bl agent (agent)']);
+  const [done] = item('task', 'T-52', 'F-81');
+  assert.deepEqual(done, {
+    key: 'd',
+    label: 'close the task',
+    argv: ['bl', 'task', 'done', 'T-52'],
+    input: 'note',
+    window: null,
+    url: null,
+    about: [],
+    stops: null,
+  });
+});
+
+test('actions (S-1336): a live run stops; any other run starts, or resumes when stopped, stale, escalated or failed', () => {
+  const pr = { number: '15', url: 'https://example.invalid/pull/15' };
+  const live = runActions({ id: 'S-1330', status: 'running', pr, stoppable: true });
+  assert.deepEqual(live.map(shown), [
+    's: bl stop S-1330',
+    'o: bl view S-1330 (S-1330 view)',
+    'p: https://example.invalid/pull/15',
+    'g: bl agent (agent)',
+  ]);
+  assert.equal(live[0].stops, 'S-1330');
+  assert.deepEqual(live[0].about, [
+    'bl stop ends the agent session and the run.',
+    'The work so far stays on the branch.',
+    'Resume it later with: bl run S-1330 --resume',
+  ]);
+  // A review or a merge that holds a state a dead bl left running: no stop, and no start either.
+  assert.deepEqual(
+    runActions({ id: 'S-1330', status: 'running', pr, stoppable: false }).map(shown),
+    live.slice(1).map(shown),
+  );
+  for (const status of RESUMED_STATUSES) {
+    assert.equal(shown(runActions({ id: 'F-83', status, pr: null })[0]), 'r: bl run F-83 --resume (F-83 run)', status);
+  }
+  for (const status of ['clean', 'reviewed', 'no-change', null]) {
+    const actions = runActions({ id: 'F-85', status, pr: null });
+    assert.equal(shown(actions[0]), 'r: bl run F-85 (F-85 run)', String(status));
+    assert.ok(!actions.some((a) => a.key === 'p'), 'no pull request, no p');
+  }
+});
+
+test('actions (S-1336): the runs rows, attention items and ranked units of a snapshot carry them', () => {
+  const { config } = runsBacklog();
+  const { rows } = runsReader(config)(NOW);
+  assert.deepEqual(
+    rows.map((r) => [r.id, r.actions[0].argv.join(' ')]),
+    [
+      ['F-1', 'bl stop F-1'],
+      ['S-4', 'bl run S-4 --resume'],
+      ['F-2', 'bl run F-2 --resume'],
+      ['S-5', 'bl run S-5 --resume'],
+    ],
+  );
+  // A bl review holds F-2, whose state a dead bl left running: the row offers no stop.
+  const reviewed = runsBacklog();
+  holdLock(join(reviewed.run, 'F-2.lock'), 'bl review F-2');
+  const f2 = runsReader(reviewed.config)(NOW).rows.find((r) => r.id === 'F-2');
+  assert.equal(f2.status, 'running');
+  assert.deepEqual(
+    f2.actions.map((a) => a.key),
+    ['o', 'g'],
+  );
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [{ id: 'S-4', component: 'C01', title: 'Every verb commits', status: 'approved' }],
+    priority: [{ unit: 'S-4', why: 'first' }],
+  });
+  const readers = sectionReaders(loadConfig({ backlogRoot: dir }));
+  const { ranked } = readers.next(NOW);
+  assert.ok(ranked.length > 0, 'a ranked unit');
+  for (const r of ranked) {
+    assert.deepEqual(r.actions.map(shown), [`o: bl view ${r.id} (${r.id} view)`, 'g: bl agent (agent)']);
+  }
+  for (const item of readers.attention(NOW).items) assert.equal(item.actions.at(-1).key, 'g', item.id);
 });

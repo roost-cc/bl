@@ -91,6 +91,74 @@ func TestRunThatEndsCleanNotifies(t *testing.T) {
 	}
 }
 
+// by is s with the stop pids of run id set (stream.Run.StoppedBy).
+func by(s *stream.Snapshot, id string, pids ...int) *stream.Snapshot {
+	for i := range s.Runs.Rows {
+		if s.Runs.Rows[i].ID == id {
+			s.Runs.Rows[i].StoppedBy = pids
+		}
+	}
+	return s
+}
+
+func TestARunThisBlTopStoppedDoesNotNotify(t *testing.T) {
+	var d Differ
+	d.Diff(snap(nil, []string{"F-81:running", "S-1:running"}))
+	d.Quiet("F-81", 100)
+	// The stop takes a few snapshots; F-81 is quiet, S-1 (stopped from another shell) notifies.
+	d.Diff(snap(nil, []string{"F-81:running", "S-1:running"}))
+	both := by(by(snap(nil, []string{"F-81:stopped", "S-1:stopped"}), "F-81", 100), "S-1", 200)
+	if got := titles(d.Diff(both)); !slices.Equal(got, []string{"S-1 stopped"}) {
+		t.Errorf("F-81 stopped by this bl top, S-1 by another shell: %q", got)
+	}
+	// The mark went with the end: a later stop of F-81 from another shell notifies.
+	d.Diff(snap(nil, []string{"F-81:running"}))
+	if got := titles(d.Diff(by(snap(nil, []string{"F-81:stopped"}), "F-81", 200))); !slices.Equal(got, []string{"F-81 stopped"}) {
+		t.Errorf("a later stop from another shell: %q", got)
+	}
+	// A stop that did not take: the run's other end notifies, and clears the mark.
+	d.Diff(snap(nil, []string{"F-81:running"}))
+	d.Quiet("F-81", 100)
+	if got := titles(d.Diff(snap(nil, []string{"F-81:escalated"}))); !slices.Equal(got, []string{"F-81 escalated"}) {
+		t.Errorf("a quiet run that escalated: %q", got)
+	}
+	d.Diff(snap(nil, []string{"F-81:running"}))
+	if got := titles(d.Diff(by(snap(nil, []string{"F-81:stopped"}), "F-81", 100))); !slices.Equal(got, []string{"F-81 stopped"}) {
+		t.Errorf("a stop after the mark went: %q", got)
+	}
+}
+
+// TestAStoppedEndIsQuietOnlyByThisBlTopsStops: with bl stops 100 and 101 of this bl top marked
+// (Quiet), a `stopped` end is quiet when one of them is among the stops that stopped the run, and
+// notifies otherwise: another shell's stop, no named stop (an older bl), or another run's mark.
+func TestAStoppedEndIsQuietOnlyByThisBlTopsStops(t *testing.T) {
+	for _, c := range []struct {
+		what   string
+		run    string
+		by     []int
+		notify bool
+	}{
+		{"by this bl top's first stop", "F-81", []int{100}, false},
+		{"by its second stop", "F-81", []int{101}, false},
+		{"by both", "F-81", []int{100, 101}, false},
+		{"by one of them and another shell's", "F-81", []int{200, 101}, false},
+		{"by another shell's stop", "F-81", []int{200}, true},
+		{"by no named stop", "F-81", nil, true},
+		{"another run, by a pid marked for F-81", "S-1", []int{100}, true},
+	} {
+		var d Differ
+		d.Diff(snap(nil, []string{"F-81:running", "S-1:running"}))
+		d.Quiet("F-81", 100)
+		d.Quiet("F-81", 101)
+		status := map[string]string{"F-81": "running", "S-1": "running"}
+		status[c.run] = "stopped"
+		end := by(snap(nil, []string{"F-81:" + status["F-81"], "S-1:" + status["S-1"]}), c.run, c.by...)
+		if got := len(d.Diff(end)) == 1; got != c.notify {
+			t.Errorf("%s: notifies %v, want %v", c.what, got, c.notify)
+		}
+	}
+}
+
 // skip is snap with ids in Runs.Skipped and the section's error set, as a read that could not read
 // those run states gives it.
 func skip(runs []string, ids ...string) *stream.Snapshot {

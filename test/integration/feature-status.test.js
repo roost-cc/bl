@@ -504,6 +504,32 @@ test('bl status prints the latest outcome of each step under the run line (F-68 
   }
 });
 
+test('bl status shows a run that bl stop stopped as stopped at <step> (<local time>) (S-1335)', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    repos: REPOS,
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'in_progress', branch: 'f1-feat' }],
+  });
+  try {
+    mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
+    writeFileSync(
+      join(dir, '.bl', 'run', 'F-1.json'),
+      JSON.stringify({
+        feature: 'F-1',
+        status: 'stopped',
+        step: 'implement',
+        stoppedAt: '2026-11-11T12:00:00Z',
+        updatedAt: '2026-11-11T12:00:00Z',
+        history: [{ step: 'stopped', ok: true, note: 'stopped by bl stop at implement' }],
+      }),
+    );
+    const r = runBl(['status', 'F-1'], { cwd: dir, env: { TZ: 'UTC' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /\nrun: stopped at implement \(2026-11-11 12:00 UTC\)\n/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("bl status reports the last run's state from .bl/run", () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,

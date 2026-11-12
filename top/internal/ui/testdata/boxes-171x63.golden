@@ -10,41 +10,41 @@
 │                                                                                                        ││ UPD   bl:renovate/… bl      ws 8.19.0 · red · notes: 1 adviso…│
 │                                                                                                        ││ UPD   logr:renovat… logr    x/net 0.47.0 · red · notes: none  │
 │                                                                                                        ││ next: bl run S-1330                                           │
-│                                                                                                        │╰───────────────────────────────────────────────────────────────╯
-│                                                                                                        │╭─┐⁴tokens┌────────────────────────────────────────────────┐2h┌─╮
-│                                                                                                        ││ output tokens / min · ended sessions                peak 8.7k │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────╯
+╭─┐⁶detail┌──────────────────────────────────────────────────────────────────────────────────────────────╮╭─┐⁴tokens┌────────────────────────────────────────────────┐2h┌─╮
+│ select a run (↑↓ in ¹, then ↵)                                                                         ││ output tokens / min · ended sessions                peak 8.7k │
 │                                                                                                        ││                                                   ⢀⡇ ⢀⡇ ⢀     │
 │                                                                                                        ││                                                   ⣼⡇ ⣼⡇ ⣼     │
 │                                                                                                        ││                                                  ⢠⣿⡇⢰⣿⡇⢰⣿     │
 │                                                                                                        ││              ⢠   ⡄  ⡀                            ⣾⣿⡇⣿⣿⣇⣿⣿     │
 │                                                                                                        ││             ⢀⣾  ⣼⡇ ⢰⡇ ⢀                         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯│            ⢀⣾⣿ ⣸⣿⡇⢠⣿⡇⢀⣾                         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
-╭─┐³next┌──────────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮│            ⣼⣿⣿⣰⣿⣿⣧⣿⣿⡇⣾⣿         ⢠   ⣰           ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
-│ Rank  Id     Status    Pts  Held by  Title                                                             ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢠⣴⣿ ⢠⣾⣿ ⡄         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
-│   3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a change, an…││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣴⣿⣿⣿⣾⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
-│   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the guest     ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
-│   5   F-80   refined    13  F-84     Dependency updates are one job: Renovate applies, the gate tests,…││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
-│   6   F-86   draft       -           AGENTS.md in plain English: rewrite bl's reference in about 80% o…││  ⢀ ⡆      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
-│   7   F-16   draft       -           Inspection quick condition assessment                             ││  ⣼⡄⡇⢀     ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
-│   8   F-13   draft       -           Maintenance requests                                              ││       16:30          17:00          17:30          18:00  now │
+│                                                                                                        ││            ⢀⣾⣿ ⣸⣿⡇⢠⣿⡇⢀⣾                         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│                                                                                                        ││            ⣼⣿⣿⣰⣿⣿⣧⣿⣿⡇⣾⣿         ⢠   ⣰           ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│                                                                                                        ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢠⣴⣿ ⢠⣾⣿ ⡄         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│                                                                                                        ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣴⣿⣿⣿⣾⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│                                                                                                        ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│                                                                                                        ││           ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│                                                                                                        ││  ⢀ ⡆      ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│                                                                                                        ││  ⣼⡄⡇⢀     ⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿       ⢸⣿⣿⣿⣿⣿⣿⣿⡇         ⢸⣿⣿⣿⣿⣿⣿⣿⣿     │
+│                                                                                                        ││       16:30          17:00          17:30          18:00  now │
 │                                                                                                        ││                                                               │
-│ bl next → F-81 (running) · 185 work units not ranked                                                   ││ claude   unknown: claude cannot report capacity               │
+│                                                                                                        ││ claude   unknown: claude cannot report capacity               │
 │                                                                                                        ││ codex 5h ■■■■■■■■■■■■■■■■■■■■■■■■······  80% 19:52            │
 │                                                                                                        ││ codex 7d ■■■■··························  13% Nov 12           │
 │                                                                                                        ││                                                               │
 │                                                                                                        ││ today  in 1.2M · out 640k · cache r 51M · w 2.3M              │
 │                                                                                                        ││ capacity read 18:14 · c reads it now                          │
-│                                                                                                        │╰───────────────────────────────────────────────────────────────╯
-│                                                                                                        │╭─┐⁵activity┌─────────────────────────────────────────────┐30d┌─╮
-│                                                                                                        ││ points done / UTC day · 30 days                last 7 days 41 │
-│                                                                                                        ││                             ⢸⣿⡇                               │
-│                                                                                                        ││                             ⢸⣿⡇                               │
-│                                                                                                        ││               ⢰⣶⡆           ⢸⣿⡇                ⣶⣶             │
-│                                                                                                        ││       ⢀⣀⡀     ⢸⣿⡇         ⢀⣀⣸⣿⡇              ⣀⣀⣿⣿        ⣀⣀⣶⣶ │
-│                                                                                                        ││     ⢠⣤⣼⣿⡇     ⢸⣿⣧⣤⡄       ⢸⣿⣿⣿⣧⣤⣤          ⣤⣤⣿⣿⣿⣿      ⣤⣤⣿⣿⣿⣿ │
-│                                                                                                        ││   ⢰⣶⣾⣿⣿⣿⣧⣤⡄   ⢸⣿⣿⣿⣇⣀⡀   ⢰⣶⣾⣿⣿⣿⣿⣿⣿  ⣤⣤⣶⣶    ⣿⣿⣿⣿⣿⣿⣤⣤  ⣶⣶⣿⣿⣿⣿⣿⣿ │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────╯
+╭─┐³next┌──────────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮╭─┐⁵activity┌─────────────────────────────────────────────┐30d┌─╮
+│ Rank  Id     Status    Pts  Held by  Title                                                             ││ points done / UTC day · 30 days                last 7 days 41 │
+│   3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a change, an…││                             ⢸⣿⡇                               │
+│   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the guest     ││                             ⢸⣿⡇                               │
+│   5   F-80   refined    13  F-84     Dependency updates are one job: Renovate applies, the gate tests,…││               ⢰⣶⡆           ⢸⣿⡇                ⣶⣶             │
+│   6   F-86   draft       -           AGENTS.md in plain English: rewrite bl's reference in about 80% o…││       ⢀⣀⡀     ⢸⣿⡇         ⢀⣀⣸⣿⡇              ⣀⣀⣿⣿        ⣀⣀⣶⣶ │
+│   7   F-16   draft       -           Inspection quick condition assessment                             ││     ⢠⣤⣼⣿⡇     ⢸⣿⣧⣤⡄       ⢸⣿⣿⣿⣧⣤⣤          ⣤⣤⣿⣿⣿⣿      ⣤⣤⣿⣿⣿⣿ │
+│   8   F-13   draft       -           Maintenance requests                                              ││   ⢰⣶⣾⣿⣿⣿⣧⣤⡄   ⢸⣿⣿⣿⣇⣀⡀   ⢰⣶⣾⣿⣿⣿⣿⣿⣿  ⣤⣤⣶⣶    ⣿⣿⣿⣿⣿⣿⣤⣤  ⣶⣶⣿⣿⣿⣿⣿⣿ │
 │                                                                                                        ││   Oct 12                      Oct 26                   Nov 09 │
-│                                                                                                        ││                                                               │
+│ bl next → F-81 (running) · 185 work units not ranked                                                   ││                                                               │
 │                                                                                                        ││ 18:16  F-81    implement S-1310  ✓ 3m    claude opus low      │
 │                                                                                                        ││ 18:12  F-81    implement S-1277  ✓ 27m   claude opus high     │
 │                                                                                                        ││ 18:05  S-1330  review:verify     ✓ 9m    codex gpt-6-sol      │
@@ -60,4 +60,4 @@
 │                                                                                                        ││                                                               │
 │                                                                                                        ││                                                               │
 │                                                                                                        ││                                                               │
-╰┘↑↓ select└┘tab box└┘+- interval└┘h help└┘q quit└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└──────────────────────────────────────────────────────────────────────────────╯

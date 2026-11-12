@@ -83,6 +83,9 @@ Per-command stdout contracts:
 | `bl top --json`      | one JSON object (schema `bl-top-json/v1`)                 |
 | `bl top --stream`    | one JSON object per line until stdin closes               |
 | `bl top`             | the view (a terminal UI); `--version`: one line           |
+| `bl watch`           | one line per header or event, then the end line           |
+| `bl watch --json`    | one JSON object per line, the last `{kind: "end"}`        |
+| `bl stop`            | nothing (`stopped <id> at <step>; …` → stderr)            |
 | `bl help`            | help text                                                 |
 | `bl <cmd> --help`    | help text                                                 |
 
@@ -1403,12 +1406,26 @@ review` prints the prompt-guidance note for one that does not (Codex).
   **Codex native approvals**), the others do nothing.
 - The headless result's outcome, `structured` and `structuredError` (see
   **Session outcomes** below).
-
-Nothing under `src/` outside `src/agents/` imports an adapter file or compares
-a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
-`test/unit/agent-boundary.test.js` fails on either and names its one
-exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
-a name as a literal (a default argument, a prompt variant) is allowed.
+- `followHandle({ cwd, eventsPath, sessionId })` → `{ id, path }` or null, and
+  `followSession(handle, { fromStart, signal })` → an async iterator of events (S-1272, see
+  `bl watch`). The handle says, before the spawn, where a headless session's events will be:
+  `path` is a JSON Lines file, `id` the session id when known. `spawn({ follow })` makes the
+  session write there. Claude: a new id passed as `--session-id` (a resume keeps its own), and
+  `path` the transcript, `<config dir>/projects/<slug of cwd>/<id>.jsonl`, which headless
+  `claude -p` sessions also write. Codex: `id` null and `path` the `eventsPath` the caller
+  gives (`.bl/run/<id>.<n>.<step>.events.jsonl`, `n` the run history's length); spawn gives
+  `codex exec --json` that file as its stdout, and reads the stream back from it when codex
+  exits. The base (Gemini) returns null and throws `<agent> cannot follow a session`. The
+  events are `{ kind: "text", at, text }` and `{ kind: "tool", at, tool, summary }`, `summary`
+  being the description, command, path or pattern on one line: a Claude text or `tool_use`
+  block of an assistant record (`claudeTranscriptEvents`), a Codex `agent_message`, command,
+  file change, MCP tool call or web search item (`codexStreamEvents`). Both adapters read
+  their file through `followJsonl` (`src/agents/follow.js`): the last 30 events first unless
+  `fromStart`, then every 500 ms, and once more when `signal` aborts. `src/agents/` imports an adapter file or compares
+  a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
+  `test/unit/agent-boundary.test.js` fails on either and names its one
+  exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
+  a name as a literal (a default argument, a prompt variant) is allowed.
 
 #### Session outcomes (F-68 D1, D5)
 
@@ -1566,7 +1583,10 @@ sessions of one key add up.
   (the four kinds, as numbers) on the history entry it records in
   `.bl/run/<id>.json`, when the result has usage. An entry written before
   F-87, or for a session with no usage, has no `usage` key and counts 0.
-  `bl top`'s `tokens` section reads it.
+  `bl top`'s `tokens` section reads it. The entry of a session with denied
+  tools also lists them in `denials` (strings, as its note's `denied:` part),
+  for `bl top`'s detail box (F-88 S-1334); an entry written before S-1334 has
+  none.
 - A session with no usage writes no entry; a `bl` killed mid-session records
   nothing for it, so the map may sum to less than the totals, never more.
   The writers read CRLF files and leave a file with no `---` block alone.
@@ -3223,8 +3243,9 @@ refused, `unknown` otherwise; the message names the URL.
 
 ### `bl top`
 
-`bl top` is a live view of bl (F-87): the runs, what waits on the operator, what `bl next`
-picks, token use and agent capacity, the stories done per day, and the newest run events. It has two halves. The JSON half,
+`bl top` is a live view of bl (F-87, F-88): the runs, what waits on the operator, what `bl next`
+picks, token use and agent capacity, the stories done per day, the newest run events, and the
+selected run's step timeline and live agent feed. It has two halves. The JSON half,
 `--json` and `--stream` (`src/top.js`), reads the backlog. The view, a terminal UI in Go
 (`top/`), draws the stream's snapshots and never reads a backlog file.
 
@@ -3256,8 +3277,9 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   snapshot kills that group and ends the stream. When the stream ends, the view exits 1 with
   `bl top: the snapshot stream ended: <its last stderr line>`.
 - **Boxes and layout** (D4, `top/internal/ui/layout.go`). Box ¹ runs, ² attention, ³ next,
-  ⁴ tokens (sections `tokens` and `capacity`) and ⁵ activity (sections `activity` and
-  `history`). Each box's drawer is in the `boxes` table. Box ⁶ comes with F-88. At
+  ⁴ tokens (sections `tokens` and `capacity`), ⁵ activity (sections `activity` and
+  `history`) and ⁶ detail (section `runs`, and `bl watch`). Each box's drawer is in the `boxes`
+  table. At
   171×50 or larger the view draws the two columns of Mockup A; from 80×24 up to that it stacks
   the boxes as in Mockup B; below 80×24 it prints `bl top needs at least 80x24`. Each node of a
   layout takes its weight's share of its parent; a hidden box's share goes to the boxes left in
@@ -3306,18 +3328,84 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `activity` events, newest first, as many as fit: local time, work unit, step with its story or
   round, `✓` or `✗` and the duration, then the agent, model and effort, or the note for a failed
   session or an event with no agent.
+- **Box ⁶ detail** (`detail.go`, F-88 S-1334). `↵` on a run row in ¹, or on a row of ² or ³
+  whose unit (an item's `unit`, a ranked unit's id) has a `runs` row, makes ⁶ show that run; its
+  id is in the box's top border. With no run shown, ⁶ says `select a run (↑↓ in ¹, then ↵)`.
+  From an inner height of 12 (Mockup A): the run's id and title; its branch, lead worktree,
+  pull request and local start time; the `timeline` as columns, `✓` done with its duration
+  (and `(n att.)` for two or more test entries), `●` current with its elapsed time, `·` not
+  started, over a bar; the denied tools (the count, and the step and tool of the first), the
+  run's test attempts, and the tokens of the current stage's ended sessions (else the last done
+  stage's). Below 12 (Mockup B): one line with the id, story and step, elapsed time and agent,
+  and the timeline on one line. Then the live feed, and the keys on the last line.
+- **The feed** (`top/internal/watch`). Showing a run starts `bl watch <id> --json` (through
+  `--bl-argv`) in a process group of its own; the view stops it (SIGTERM to the group) when
+  another run is shown or the view quits, and drops the messages of a watch it replaced. When
+  the watch of the run shown has ended, and a later snapshot shows that run not running and then
+  running again (a `--resume`), the view starts a new watch of it; the feed keeps its lines
+  (`resumeWatch`). After a watch that exited 0, the first snapshot read after the end that shows
+  the run running does the same: that watch ends only when no bl holds the run. Each line is a
+  feed line, cut to the box:
+
+  | `bl watch --json` line | Feed line                                                       |
+  | ---------------------- | --------------------------------------------------------------- |
+  | `step`                 | `── live: <step> [<story>] · <agent> <model> · session <id> ──` |
+  | `text`                 | `<local time>  say   <text>`, on one line                       |
+  | `tool`                 | `<local time>  tool  <tool>  <summary>`, on one line            |
+  | `end`                  | `── run ended: <status> ──`                                     |
+
+  A stderr line of `bl watch`, and why it failed when it exits other than 0, show dim. The
+  feed keeps its newest 1000 lines. With follow on (the default) it shows its newest lines; with
+  follow off, `↑` and `↓` in ⁶ scroll it, and a new line leaves the lines on screen where they
+  are.
+
 - Below an inner height of 12 lines, boxes ⁴ and ⁵ leave out their axis and blank lines (Mockup
   B).
-- **Keys** (D6, `top/internal/ui/model.go`): `1`–`5` hide or show a box; `tab` and `⇧tab` move
-  the focus to the next or previous shown box; `↑` and `↓` select a row; `↵` opens or closes
-  the grouped update row; `c` writes `capacity` to the stream's stdin, so
+- **Keys** (D6, `top/internal/ui/model.go`): `1`–`6` hide or show a box; `tab` and `⇧tab` move
+  the focus to the next or previous shown box; `↑` and `↓` select a row, and in ⁶ with follow
+  off scroll the feed; `↵` shows the selected row's run in ⁶, or on the grouped update row opens
+  or closes it; `f` turns follow on or off; `w` opens `bl watch <id>` of ⁶'s run in a new tmux
+  window, in bl top's directory, named `<id> watch` (D7's `tmux new-window`, then
+  `exec ${SHELL:-sh}`, so the window stays open after `bl watch` exits), and outside tmux
+  (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
+  opens the action menu of the selected row, and `r`, `s`, `o`, `p` and `g` pick its action
+  with that key (below); `c` writes `capacity` to the
+  stream's stdin, so
   the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
   help, and any key closes it; `q` or `ctrl+c` quits.
+- **Actions** (D7, F-88 S-1336; `top/internal/ui/dialog.go`, `top/internal/actions`). The
+  selected row of the box with the focus (in ⁶, the run it shows) has the `actions` of its
+  snapshot row (below). `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's
+  key, pick one, and `esc` cancels. Keys `r`, `s`, `o`, `p` and `g` pick the action with that
+  key directly; a row without one says `<key>: <id> has no such action (a lists its actions)`
+  in the bottom border. An action with `input` asks for its text first: `note` is optional,
+  `reason` refuses an empty one. Then the view shows the exact command (`runs: …`) and asks
+  y/n. After `y`:
+  - an action with `window` opens a new tmux window of that name, in bl top's directory (the
+    backlog root: `src/top.js` runs the view there), running the command and then
+    `exec ${SHELL:-sh}` (`actions.TmuxArgs`, which `w` uses too). Outside tmux the action says
+    `<key> needs tmux` before it asks, and does nothing. A tmux that fails says why in the
+    bottom border.
+  - any other action runs as a child with no stdin and stdout: a bl command through
+    `--bl-argv`, a `url` through `xdg-open` (`open` on macOS). A box says it runs (`esc` hides
+    it: `bl stop` takes up to 30 s, and the screen keeps its redraws), then a result box shows
+    the command, `exit <code>` and its last stderr line, until any key. The next snapshot shows
+    the change. A result replaces only its own running box (each action has a number,
+    `dialog.seq`) or shows when no dialog is open; over a newer dialog it shows in the bottom
+    border instead.
+  - an action with `stops` marks its run with the pid of its `bl stop` child (D8,
+    `Differ.Quiet`). The view starts the child before it reads the next snapshot
+    (`actions.Start`), so the mark is there first. The run's `stopped` end does not notify when
+    that pid is one of the run's `stoppedBy`, the pids of the `bl stop`s whose requests stopped
+    it (`markStopped`). So a stop of this view that timed out and stops the run later stays quiet,
+    and another shell's stop notifies, also while this view's stop runs or after it failed. The
+    marks go when the run ends with any status.
 - **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
   before. A new `escalation` or `task` item (by item id) and a run that gets an end status
   (every status but `running`, `stale` and none: `clean`, `no-change`, `reviewed`, `escalated`,
-  `failed`, `stopped`; `stream.Ended`; by run id and status) each make a note
+  `failed`, `stopped`; `stream.Ended`; by run id and status), except a `stopped` end by a
+  `bl stop` that this view started, each make a note
   `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)` (`ended` for a run
   with no step). The first read of a
   section only sets its baseline, so an item notifies once, and again only after it left the
@@ -3350,12 +3438,17 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   non-empty strings. Otherwise `bl top` exits 1 with an error that names `backlog.json "top"`
   and the key.
 - **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
-  `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, the
+  `top/internal/ui/testdata/*.golden` hold Mockup C's four dialog boxes (`actions.golden`), the
+  empty frame at 171×63, 100×40 and 79×23, the
   frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
   exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
   `testdata/snapshot.json` (Mockup A's data) in a fixed zone (UTC−5), without colors, with a row
-  selected in boxes ¹ to ³;
-  `go test ./internal/ui -update` writes them again.
+  selected in boxes ¹ to ³, and the same screen with S-1330 shown in box ⁶ and the recorded
+  `bl watch --json` lines of the S-1272 fixtures (`top/internal/watch/testdata/watch.jsonl`) as
+  its feed (`detail-*.golden`);
+  `go test ./internal/ui -update` writes them again. `top/internal/watch`'s tests run a fake
+  `bl` that prints those lines. The action tests put a fake `bl`, `tmux`, `xdg-open` and `open`
+  on `PATH`, each of which writes its arguments to a file.
   `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
   then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
   and `--no-push`.
@@ -3369,19 +3462,55 @@ read. A section whose read throws keeps its last good value and carries `error`,
 the next good read drops `error`. Each section comes from bl's own reader, in the same process
 (`src/top-snapshot.js`), so nothing else parses a backlog file:
 
-| Section     | Holds                                                                                                                                                                                                                                                                                                    | Read (`--stream`)                                        |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), and `agent`, `model`, `effort` of its newest session entry                                                          | every snapshot                                           |
-| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                    | when the backlog changes, and at least every 30 s        |
-| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                     | as `attention`                                           |
-| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                   | every 5 min, and at the snapshot after a `capacity` line |
-| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                    | every 5 min                                              |
-| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                              | every snapshot                                           |
-| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date | every snapshot                                           |
+| Section     | Holds                                                                                                                                                                                                                                                                                                                                                                                       | Read (`--stream`)                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), `agent`, `model`, `effort` of its newest session entry, `title` (its unit's), `testAttempts`, `stoppedBy` (the `bl stop` pids that stopped it; `[]` unless `stopped`), `timeline` and `denied` (below) | every snapshot                                           |
+| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                                                                                                       | when the backlog changes, and at least every 30 s        |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                                                                                                        | as `attention`                                           |
+| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                                                                                                      | every 5 min, and at the snapshot after a `capacity` line |
+| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                                                                                                       | every 5 min                                              |
+| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                                                                                                                 | every snapshot                                           |
+| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date                                                                                    | every snapshot                                           |
 
 - `activity` and `tokens` read the run states' history entries (F-87 D3b, D3c). A session that
   is still running counts only when it ends: its run state holds no usage until then. The
   `runs`, `activity` and `tokens` readers share one parse cache (`runStatesReader`).
+- A `runs` row carries no `history` (F-88 S-1334); box ⁶ reads what it needs from it:
+  - `timeline` (`runTimeline`): the stages of `planSteps()` (`src/feature-run.js`): setup,
+    one implement stage for all stories, `fix-tests` (with the test gate), self-review, then
+    `review` and `fix` (with its self-review) of each round, and `closing`. Each is
+    `{ step, round, state, durationMs, tests, usage }`. The history entries go to stages in
+    order: a review pass to the round after the last `review:round` entry, a fix to that
+    entry's round. A stage never goes back, so an entry of an earlier stage (the test gate after
+    a fix, the setup of `--resume`) goes to the latest stage so far; an entry outside the
+    timeline (`pr`, hygiene) is left out. A stage with an entry is `done`; the stage of the
+    run's `step` is `current` while the row is `running`; any other is `pending`. A stage lasts
+    from the end of the stage before it (the run's start for the first) to its last entry, or
+    to the snapshot while current. `tests` counts its `test` entries; `usage` sums its entries'
+    usage, or is null.
+  - `denied` (`deniedOf`): `{ count, step, tool }`, the denied tools of the history entries'
+    `denials`, and the step and tool of the first.
+  - `title` comes from `loadBacklog()`, which reuses its graph while the backlog's files are
+    unchanged; null for a unit the backlog does not hold, or when it cannot be loaded.
+- `actions` (F-87 D7, F-88 S-1336): each `runs` row, each `attention` item and each ranked unit
+  of `next` carries a list of `{ key, label, argv, input, window, url, about, stops }`, which
+  `src/top-snapshot.js` builds (`runActions`, `itemActions`), so the view holds no backlog
+  logic. `argv` is a bl command (`["bl", …]`) or null for `url` (a page the view opens);
+  `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
+  word; `window` names the tmux window the command opens in, or is null for a child with a
+  result box; `about` are lines the y/n question shows; `stops` is the run the action stops.
+
+  | Row                       | Actions (key: command)                                                                                                           |
+  | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+  | `runs`, live (`running`)  | `s`: `bl stop <id>`, with Mockup C's lines and `stops`                                                                           |
+  | `runs`, not live          | `r`: `bl run <id>` in window `<id> run`, with `--resume` when `stopped`, `stale`, `escalated` or `failed` (`RESUMED_STATUSES`)   |
+  | `runs`, every row         | then `o`: `bl view <id>` (window `<id> view`); `p`: the pull request's URL, when the run has one                                 |
+  | escalation                | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which a result box does not show); `o`: `bl view <unit>` |
+  | task                      | `d`: `bl task done <T-n>`, input `note`; `o`: `bl view <T-n>`                                                                    |
+  | change                    | `m`: `bl merge <unit>`, or `r`: `bl run <unit>` in window `<unit> run`, by `changeNextVerb`; `o`: `bl view <unit>`               |
+  | ranked unit               | `o`: `bl view <id>`                                                                                                              |
+  | runner, update; every row | last, `g`: `bl agent` in window `agent`                                                                                          |
+
 - Each run state is read on its own. A file that cannot be read (not JSON, not a run state, or
   gone since the listing; a read can race `saveRunState`, which truncates the file first) keeps
   its last good parse, or is left out when it has none, and `runs`, `activity` and `tokens`
@@ -3413,6 +3542,100 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 - stdout carries only the JSON. A section that could not be read
   (`bl top: <section> not read: <message>`) and each inbox warning (`warning: …`) go to stderr,
   in `--stream` once when they first appear.
+
+### `bl watch`
+
+`bl watch <F-id|S-id> [--from-start] [--json]` (`src/watch.js`, S-1272) follows the live agent
+session of a headless `bl run`, `bl review` or `bl merge` integration: one line per agent
+message or tool call. When the run moves to its next step's session (implement, self-review,
+review, fix), it prints a new header and follows that session. `bl top`'s detail box (S-1334)
+reads its `--json` stream.
+
+1. Before each spawn, `runSession` (`recordSession` in `src/feature-run.js`) asks the step's
+   adapter for a follow handle (`followHandle()`, see **The adapter interface**), writes the
+   run state's `session` (`{ step, story, agent, model, id, path, startedAt }`) and saves the
+   run state. It passes the handle to the spawn (`runner.session({ follow })`, then
+   `runHeadlessSession({ follow })`, then `provider.spawn({ follow })`). An interactive session
+   and an adapter that cannot follow one have `id` and `path` null.
+2. `bl watch` reads `.bl/run/<id>.json` every 2 s. When its `session` names another file
+   than the one it follows, it prints the header and asks that agent's adapter for the events
+   (`followSession()`). A session with the same file is the same session: the outcome retry
+   resumes a Claude session in its own transcript. A read that races `saveRunState` is tried
+   again at the next poll.
+3. When no bl holds the run lock any more (a `bl run`, a standalone `bl review` or a
+   `bl merge` integration, whatever the saved `status` says while it works), it reads the
+   session's last events, prints the end line with the run state's `status` (`stale` for one
+   that says `running`, as in `bl top`) and exits 0. With no run state for the id, it says so on
+   stderr and exits 1.
+
+The first session starts with its last 30 events (`--from-start`: all of them); every later
+session is new, so `watch` prints it from its start. `watch` takes no lock and writes nothing
+to the backlog. It never reads an agent's files itself: the adapter knows where they are.
+
+| Line (text)                                          | `--json`                                             |
+| ---------------------------------------------------- | ---------------------------------------------------- |
+| `── <step> [<story>] · <agent> · <session> ──`       | `{kind: "step", step, story, agent, model, session}` |
+| `💬 <text>`                                          | `{kind: "text", at, text}`                           |
+| `🔧 <tool>  <description, command, path or pattern>` | `{kind: "tool", at, tool, summary}`                  |
+| `── <id> · <status> ──`                              | `{kind: "end", status}`, the last line               |
+
+A text line is on one line and cut to the terminal width (80 when stdout is not a terminal).
+The header's session is the session id, or the events file's name when the adapter knows no
+id before the spawn (Codex); `--json`'s `session` is the id or null. `at` is an ISO time:
+the transcript record's time for Claude, the time `watch` read the event for Codex. No
+thinking and no tool output is printed. A session with no live feed (interactive, or Gemini,
+which has no headless mode) gets its header and one stderr line that says so.
+
+### `bl stop`
+
+`bl stop <F-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly, so
+that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s stop action
+runs it. The run loop is synchronous (agent sessions start through `spawnSync`), so a signal
+to its bl would be handled only after the run ends. `bl stop` never sends one:
+
+1. It reads the run state. With none, or one that is not `running`, it exits 1 with
+   `no running run for <id>`, whoever holds the run lock: a live holder is then a `bl review`
+   or a `bl merge`, which take the run lock too. Then it reads the holder of the run lock
+   (`runHolder()` in `src/run-lock.js`). With no holder (the run's bl died), it takes the run
+   lock, reads the run state again, marks it stopped itself (`markStopped`) and releases the
+   lock (`markDead`). So a `bl run` that took the run after the check is never marked. It
+   prints `stopped <id> at <step> (no live bl held the run); resume: …` and exits 0. A holder
+   that is not a `bl run` (the run lock's info line, `bl review <id>` or `bl merge <id>`,
+   which `takeRunLocks` writes) holds a state that a dead bl left `running`: `bl stop` exits 1
+   and writes no request. `bl top` offers no stop action for it either. A holder whose lock
+   file names no pid yet gets exit 1 and `try again`.
+2. It writes its stop request, a new file of its own in `.bl/run/<id>.stop/`
+   (`writeStopRequest()` in `src/run-lock.js`): one JSON object, `{ pid, at, holder }`: its
+   own pid, the time and the pid of the run it stops. So two `bl stop`s never write or delete
+   each other's request, and a write that fails deletes only its own file and exits 1. The
+   loop honours only a request whose `holder` is its own pid.
+3. It stops each process scope of the holder (`scopesOf()` in `src/process-scope.js`, the scopes
+   named `bl-<unit>-<holder pid>-<n>`) with `stopScope()`. That ends the current agent session
+   or test-gate command, and the loop's spawn returns. Without user systemd there is no scope,
+   and the run stops when its current session ends.
+4. The loop checks the request (`checkStop()` in `src/feature-run.js`) at each step start
+   (`setStep`) and after each spawn in `newScope(ctx)` returns (the session in `runSession`,
+   each test-gate command in `runTestGateInner`), before it reads the result, and in each
+   one-second slice of a usage-limit wait, which has no scope to stop. So the stopped
+   session is not an attempt and does not escalate, and its tokens are lost, as for a killed
+   bl (**Tokens per step**). With the request there, the loop records a `{ step: "stopped" }`
+   history entry, writes `status: stopped`, `stoppedAt` and `stoppedBy` (the pids of the
+   `bl stop`s whose requests it read; `markStopped`), deletes the
+   requests for its own pid and throws a `StopRequestError`. Its step cleanups run, `runFeature` releases the
+   run lock and the work unit locks, and `bl run` exits 130.
+5. `bl stop` waits up to 30 s for that holder to let the run lock go, then prints
+   `stopped <id> at <step>; resume: bl run <id> --resume` on stderr and exits 0. If the lock is
+   still held, it exits 1 with `stop requested: <id> (pid <n>) stops at its next check`
+   and the request stays. A run that ended on its own before it read the request gets a line
+   that says so, and `bl stop` deletes its own request file.
+
+The work unit's `status:` does not change: `--resume` continues any run state (`driveFeature`
+sets it back to `running` and drops `stoppedAt` and `stoppedBy`). `takeRunLocks` deletes each leftover stop
+request once it holds the locks: one for another pid, or one written before it took the run
+lock. So a request never stops a later run, `bl review` or `bl merge`, and a request for the
+new holder stays. `bl stop` is a short command (F-122 D2): it neither takes nor checks work unit
+locks, since the run it stops holds them. `bl status <id>` shows a stopped run as
+`run: stopped at <step> (<local time>)`.
 
 ### `bl list`
 

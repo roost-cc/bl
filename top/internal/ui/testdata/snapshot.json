@@ -15,10 +15,134 @@
         "startedAt": "2026-11-09T22:15:31.000Z",
         "updatedAt": "2026-11-09T23:16:31.000Z",
         "pr": null,
-        "usage": { "input": 94000, "output": 412000, "cache_creation": 0, "cache_read": 0 },
+        "usage": {
+          "input": 94000,
+          "output": 412000,
+          "cache_creation": 0,
+          "cache_read": 0
+        },
         "agent": "claude",
         "model": "opus",
-        "effort": "high"
+        "effort": "high",
+        "title": "Every repo's pre-push gate runs the tests that prove a change",
+        "testAttempts": 0,
+        "timeline": [
+          {
+            "step": "setup",
+            "round": null,
+            "state": "done",
+            "tests": 0,
+            "usage": null,
+            "durationMs": 20000
+          },
+          {
+            "step": "implement",
+            "round": null,
+            "state": "current",
+            "tests": 0,
+            "usage": null,
+            "durationMs": 3700000
+          },
+          {
+            "step": "fix-tests",
+            "round": null,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          },
+          {
+            "step": "self-review",
+            "round": null,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          },
+          {
+            "step": "review",
+            "round": 1,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          },
+          {
+            "step": "fix",
+            "round": 1,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          },
+          {
+            "step": "review",
+            "round": 2,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          },
+          {
+            "step": "fix",
+            "round": 2,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          },
+          {
+            "step": "closing",
+            "round": null,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          }
+        ],
+        "denied": {
+          "count": 0,
+          "step": null,
+          "tool": null
+        },
+        "branch": "f81-every-repo-s-pre-push-gate",
+        "worktreePath": "/home/robert/work/roost/worktrees/f81-every-repo-s-pre-push-gate/app.roost.cc",
+        "actions": [
+          {
+            "key": "s",
+            "label": "stop the run",
+            "argv": ["bl", "stop", "F-81"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [
+              "bl stop ends the agent session and the run.",
+              "The work so far stays on the branch.",
+              "Resume it later with: bl run F-81 --resume"
+            ],
+            "stops": "F-81"
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-81"],
+            "input": null,
+            "window": "F-81 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "id": "S-1330",
@@ -30,11 +154,163 @@
         "story": null,
         "startedAt": "2026-11-09T22:39:31.000Z",
         "updatedAt": "2026-11-09T23:05:31.000Z",
-        "pr": { "number": "15", "url": "https://example.invalid/roost-cc/bl/pull/15" },
-        "usage": { "input": 0, "output": 109000, "cache_creation": 0, "cache_read": 0 },
+        "pr": {
+          "number": "15",
+          "url": "https://example.invalid/roost-cc/bl/pull/15"
+        },
+        "usage": {
+          "input": 0,
+          "output": 109000,
+          "cache_creation": 0,
+          "cache_read": 0
+        },
         "agent": "codex",
         "model": "gpt-6-sol",
-        "effort": null
+        "effort": null,
+        "title": "Every bl verb that writes the backlog commits and pushes what it changed",
+        "testAttempts": 2,
+        "timeline": [
+          {
+            "step": "setup",
+            "round": null,
+            "state": "done",
+            "tests": 0,
+            "usage": null,
+            "durationMs": 10000
+          },
+          {
+            "step": "implement",
+            "round": null,
+            "state": "done",
+            "tests": 0,
+            "usage": {
+              "input": 52000,
+              "output": 31000,
+              "cache_creation": 180000,
+              "cache_read": 4100000
+            },
+            "durationMs": 1430000
+          },
+          {
+            "step": "fix-tests",
+            "round": null,
+            "state": "done",
+            "tests": 2,
+            "usage": {
+              "input": 9000,
+              "output": 4000,
+              "cache_creation": 0,
+              "cache_read": 0
+            },
+            "durationMs": 360000
+          },
+          {
+            "step": "self-review",
+            "round": null,
+            "state": "done",
+            "tests": 0,
+            "usage": null,
+            "durationMs": 240000
+          },
+          {
+            "step": "review",
+            "round": 1,
+            "state": "current",
+            "tests": 0,
+            "usage": {
+              "input": 94000,
+              "output": 12000,
+              "cache_creation": 0,
+              "cache_read": 2000000
+            },
+            "durationMs": 240000
+          },
+          {
+            "step": "fix",
+            "round": 1,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          },
+          {
+            "step": "review",
+            "round": 2,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          },
+          {
+            "step": "fix",
+            "round": 2,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          },
+          {
+            "step": "closing",
+            "round": null,
+            "state": "pending",
+            "tests": 0,
+            "usage": null,
+            "durationMs": null
+          }
+        ],
+        "denied": {
+          "count": 1,
+          "step": "implement",
+          "tool": "Bash(cd /home/robert/work/roost/worktrees/s1330-every-bl-verb/bl && git status)"
+        },
+        "branch": "s1330-every-bl-verb-that-writes-the-backlog-commits",
+        "worktreePath": "/home/robert/work/roost/worktrees/s1330-every-bl-verb-that-writes-the-backlog-commits/bl",
+        "actions": [
+          {
+            "key": "s",
+            "label": "stop the run",
+            "argv": ["bl", "stop", "S-1330"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [
+              "bl stop ends the agent session and the run.",
+              "The work so far stays on the branch.",
+              "Resume it later with: bl run S-1330 --resume"
+            ],
+            "stops": "S-1330"
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "S-1330"],
+            "input": null,
+            "window": "S-1330 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "p",
+            "label": "open the pull request",
+            "argv": null,
+            "input": null,
+            "window": null,
+            "url": "https://example.invalid/roost-cc/bl/pull/15",
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "id": "F-85",
@@ -46,11 +322,69 @@
         "story": null,
         "startedAt": "2026-11-09T16:53:31.000Z",
         "updatedAt": "2026-11-09T22:07:31.000Z",
-        "pr": { "number": "14", "url": "https://example.invalid/roost-cc/bl/pull/14" },
-        "usage": { "input": 0, "output": 257000, "cache_creation": 0, "cache_read": 0 },
+        "pr": {
+          "number": "14",
+          "url": "https://example.invalid/roost-cc/bl/pull/14"
+        },
+        "usage": {
+          "input": 0,
+          "output": 257000,
+          "cache_creation": 0,
+          "cache_read": 0
+        },
         "agent": "claude",
         "model": "opus",
-        "effort": null
+        "effort": null,
+        "title": null,
+        "testAttempts": null,
+        "timeline": [],
+        "denied": {
+          "count": 0,
+          "step": null,
+          "tool": null
+        },
+        "actions": [
+          {
+            "key": "r",
+            "label": "start the run",
+            "argv": ["bl", "run", "F-85"],
+            "input": null,
+            "window": "F-85 run",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-85"],
+            "input": null,
+            "window": "F-85 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "p",
+            "label": "open the pull request",
+            "argv": null,
+            "input": null,
+            "window": null,
+            "url": "https://example.invalid/roost-cc/bl/pull/14",
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "id": "F-83",
@@ -62,11 +396,69 @@
         "story": null,
         "startedAt": "2026-11-09T19:00:31.000Z",
         "updatedAt": "2026-11-09T21:05:31.000Z",
-        "pr": { "number": "12", "url": "https://example.invalid/roost-cc/bl/pull/12" },
-        "usage": { "input": 0, "output": 151000, "cache_creation": 0, "cache_read": 0 },
+        "pr": {
+          "number": "12",
+          "url": "https://example.invalid/roost-cc/bl/pull/12"
+        },
+        "usage": {
+          "input": 0,
+          "output": 151000,
+          "cache_creation": 0,
+          "cache_read": 0
+        },
         "agent": "codex",
         "model": "gpt-6-sol",
-        "effort": null
+        "effort": null,
+        "title": null,
+        "testAttempts": null,
+        "timeline": [],
+        "denied": {
+          "count": 0,
+          "step": null,
+          "tool": null
+        },
+        "actions": [
+          {
+            "key": "r",
+            "label": "resume the run",
+            "argv": ["bl", "run", "F-83", "--resume"],
+            "input": null,
+            "window": "F-83 run",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-83"],
+            "input": null,
+            "window": "F-83 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "p",
+            "label": "open the pull request",
+            "argv": null,
+            "input": null,
+            "window": null,
+            "url": "https://example.invalid/roost-cc/bl/pull/12",
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "id": "F-79",
@@ -79,10 +471,55 @@
         "startedAt": "2026-11-09T20:17:31.000Z",
         "updatedAt": "2026-11-09T20:30:31.000Z",
         "pr": null,
-        "usage": { "input": 0, "output": 950, "cache_creation": 0, "cache_read": 0 },
+        "usage": {
+          "input": 0,
+          "output": 950,
+          "cache_creation": 0,
+          "cache_read": 0
+        },
         "agent": "claude",
         "model": "sonnet",
-        "effort": "low"
+        "effort": "low",
+        "title": null,
+        "testAttempts": null,
+        "timeline": [],
+        "denied": {
+          "count": 0,
+          "step": null,
+          "tool": null
+        },
+        "actions": [
+          {
+            "key": "r",
+            "label": "resume the run",
+            "argv": ["bl", "run", "F-79", "--resume"],
+            "input": null,
+            "window": "F-79 run",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-79"],
+            "input": null,
+            "window": "F-79 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       }
     ]
   },
@@ -95,7 +532,19 @@
         "unit": "updates",
         "line": "no update run since 14:02 (9 h)",
         "next": "check the update job where it runs (its journal or log)",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "escalation",
@@ -103,7 +552,39 @@
         "unit": "F-83",
         "line": "round cap: 2 open review items",
         "next": "bl status F-83",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "e",
+            "label": "read the escalation",
+            "argv": ["bl", "status", "F-83"],
+            "input": null,
+            "window": "F-83 status",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-83"],
+            "input": null,
+            "window": "F-83 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "task",
@@ -111,7 +592,39 @@
         "unit": "F-81",
         "line": "Renovate image: 8 advisories",
         "next": "bl task done T-52",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "d",
+            "label": "close the task",
+            "argv": ["bl", "task", "done", "T-52"],
+            "input": "note",
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the task page",
+            "argv": ["bl", "view", "T-52"],
+            "input": null,
+            "window": "T-52 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "task",
@@ -119,7 +632,39 @@
         "unit": "F-54",
         "line": "re-mint the Apple sign-in key",
         "next": "bl task done T-2",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "d",
+            "label": "close the task",
+            "argv": ["bl", "task", "done", "T-2"],
+            "input": "note",
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the task page",
+            "argv": ["bl", "view", "T-2"],
+            "input": null,
+            "window": "T-2 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "change",
@@ -127,7 +672,39 @@
         "unit": "F-81",
         "line": "4 repos · 11 commits · not merged",
         "next": "bl merge F-81",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "m",
+            "label": "merge it",
+            "argv": ["bl", "merge", "F-81"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-81"],
+            "input": null,
+            "window": "F-81 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "change",
@@ -135,7 +712,39 @@
         "unit": "S-1330",
         "line": "bl · 3 commits · not merged",
         "next": "bl run S-1330",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "r",
+            "label": "run it",
+            "argv": ["bl", "run", "S-1330"],
+            "input": null,
+            "window": "S-1330 run",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "S-1330"],
+            "input": null,
+            "window": "S-1330 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "update",
@@ -143,7 +752,19 @@
         "unit": "tools",
         "line": "eslint 9.39.1 · red · notes: none",
         "next": "read the gate log .bl/updates/tools.log; the next update run tests it again",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "update",
@@ -151,7 +772,19 @@
         "unit": "bl",
         "line": "ws 8.19.0 · red · notes: 1 advisory",
         "next": "read the gate log .bl/updates/bl.log; the next update run tests it again",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "update",
@@ -159,14 +792,32 @@
         "unit": "logr",
         "line": "x/net 0.47.0 · red · notes: none",
         "next": "read the gate log .bl/updates/logr.log; the next update run tests it again",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       }
     ],
     "warnings": []
   },
   "next": {
     "read_at": "2026-11-09T23:17:31.000Z",
-    "pick": { "id": "F-81", "title": "Every repo's pre-push gate", "status": "running", "from": "F-81", "path": [] },
+    "pick": {
+      "id": "F-81",
+      "title": "Every repo's pre-push gate",
+      "status": "running",
+      "from": "F-81",
+      "path": []
+    },
     "ranked": [
       {
         "position": 3,
@@ -176,7 +827,29 @@
         "points": 21,
         "why": "",
         "holds": [],
-        "heldBy": []
+        "heldBy": [],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-81"],
+            "input": null,
+            "window": "F-81 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 4,
@@ -186,7 +859,29 @@
         "points": 8,
         "why": "",
         "holds": ["S-1350 depends on S-1310 (in_progress)"],
-        "heldBy": ["F-81"]
+        "heldBy": ["F-81"],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-84"],
+            "input": null,
+            "window": "F-84 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 5,
@@ -196,7 +891,29 @@
         "points": 13,
         "why": "",
         "holds": ["S-1360 depends on S-1351 (backlog)"],
-        "heldBy": ["F-84"]
+        "heldBy": ["F-84"],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-80"],
+            "input": null,
+            "window": "F-80 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 6,
@@ -206,7 +923,29 @@
         "points": 0,
         "why": "",
         "holds": [],
-        "heldBy": []
+        "heldBy": [],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-86"],
+            "input": null,
+            "window": "F-86 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 7,
@@ -216,7 +955,29 @@
         "points": 0,
         "why": "",
         "holds": [],
-        "heldBy": []
+        "heldBy": [],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-16"],
+            "input": null,
+            "window": "F-16 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 8,
@@ -226,7 +987,29 @@
         "points": 0,
         "why": "",
         "holds": [],
-        "heldBy": []
+        "heldBy": [],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-13"],
+            "input": null,
+            "window": "F-13 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       }
     ],
     "rankedCount": 6,
@@ -263,8 +1046,16 @@
         "scope": "account",
         "until": null,
         "windows": [
-          { "name": "codex 5h", "remainingPercent": 80, "resetsAt": "2026-11-10T00:52:00.000Z" },
-          { "name": "codex 7d", "remainingPercent": 13, "resetsAt": "2026-11-12T15:04:17.000Z" }
+          {
+            "name": "codex 5h",
+            "remainingPercent": 80,
+            "resetsAt": "2026-11-10T00:52:00.000Z"
+          },
+          {
+            "name": "codex 7d",
+            "remainingPercent": 13,
+            "resetsAt": "2026-11-12T15:04:17.000Z"
+          }
         ],
         "message": ""
       },
@@ -276,8 +1067,16 @@
         "scope": "account",
         "until": null,
         "windows": [
-          { "name": "codex 5h", "remainingPercent": 80, "resetsAt": "2026-11-10T00:52:00.000Z" },
-          { "name": "codex 7d", "remainingPercent": 13, "resetsAt": "2026-11-12T15:04:17.000Z" }
+          {
+            "name": "codex 5h",
+            "remainingPercent": 80,
+            "resetsAt": "2026-11-10T00:52:00.000Z"
+          },
+          {
+            "name": "codex 7d",
+            "remainingPercent": 13,
+            "resetsAt": "2026-11-12T15:04:17.000Z"
+          }
         ],
         "message": ""
       },
@@ -296,36 +1095,156 @@
   "history": {
     "read_at": "2026-11-09T23:14:31.000Z",
     "days": [
-      { "date": "2026-10-11", "stories": [], "points": 0 },
-      { "date": "2026-10-12", "stories": ["S-1001"], "points": 3 },
-      { "date": "2026-10-13", "stories": ["S-1002"], "points": 5 },
-      { "date": "2026-10-14", "stories": ["S-1003"], "points": 8 },
-      { "date": "2026-10-15", "stories": ["S-1004"], "points": 2 },
-      { "date": "2026-10-16", "stories": [], "points": 0 },
-      { "date": "2026-10-17", "stories": [], "points": 0 },
-      { "date": "2026-10-18", "stories": ["S-1007"], "points": 13 },
-      { "date": "2026-10-19", "stories": ["S-1008"], "points": 5 },
-      { "date": "2026-10-20", "stories": ["S-1009"], "points": 1 },
-      { "date": "2026-10-21", "stories": [], "points": 0 },
-      { "date": "2026-10-22", "stories": [], "points": 0 },
-      { "date": "2026-10-23", "stories": ["S-1012"], "points": 3 },
-      { "date": "2026-10-24", "stories": ["S-1013"], "points": 8 },
-      { "date": "2026-10-25", "stories": ["S-1014"], "points": 21 },
-      { "date": "2026-10-26", "stories": ["S-1015"], "points": 5 },
-      { "date": "2026-10-27", "stories": [], "points": 0 },
-      { "date": "2026-10-28", "stories": ["S-1017"], "points": 2 },
-      { "date": "2026-10-29", "stories": ["S-1018"], "points": 3 },
-      { "date": "2026-10-30", "stories": [], "points": 0 },
-      { "date": "2026-10-31", "stories": [], "points": 0 },
-      { "date": "2026-11-01", "stories": ["S-1021"], "points": 5 },
-      { "date": "2026-11-02", "stories": ["S-1022"], "points": 8 },
-      { "date": "2026-11-03", "stories": ["S-1023"], "points": 13 },
-      { "date": "2026-11-04", "stories": ["S-1024"], "points": 2 },
-      { "date": "2026-11-05", "stories": [], "points": 0 },
-      { "date": "2026-11-06", "stories": ["S-1026"], "points": 3 },
-      { "date": "2026-11-07", "stories": ["S-1027"], "points": 5 },
-      { "date": "2026-11-08", "stories": ["S-1028"], "points": 8 },
-      { "date": "2026-11-09", "stories": ["S-1029"], "points": 10 }
+      {
+        "date": "2026-10-11",
+        "stories": [],
+        "points": 0
+      },
+      {
+        "date": "2026-10-12",
+        "stories": ["S-1001"],
+        "points": 3
+      },
+      {
+        "date": "2026-10-13",
+        "stories": ["S-1002"],
+        "points": 5
+      },
+      {
+        "date": "2026-10-14",
+        "stories": ["S-1003"],
+        "points": 8
+      },
+      {
+        "date": "2026-10-15",
+        "stories": ["S-1004"],
+        "points": 2
+      },
+      {
+        "date": "2026-10-16",
+        "stories": [],
+        "points": 0
+      },
+      {
+        "date": "2026-10-17",
+        "stories": [],
+        "points": 0
+      },
+      {
+        "date": "2026-10-18",
+        "stories": ["S-1007"],
+        "points": 13
+      },
+      {
+        "date": "2026-10-19",
+        "stories": ["S-1008"],
+        "points": 5
+      },
+      {
+        "date": "2026-10-20",
+        "stories": ["S-1009"],
+        "points": 1
+      },
+      {
+        "date": "2026-10-21",
+        "stories": [],
+        "points": 0
+      },
+      {
+        "date": "2026-10-22",
+        "stories": [],
+        "points": 0
+      },
+      {
+        "date": "2026-10-23",
+        "stories": ["S-1012"],
+        "points": 3
+      },
+      {
+        "date": "2026-10-24",
+        "stories": ["S-1013"],
+        "points": 8
+      },
+      {
+        "date": "2026-10-25",
+        "stories": ["S-1014"],
+        "points": 21
+      },
+      {
+        "date": "2026-10-26",
+        "stories": ["S-1015"],
+        "points": 5
+      },
+      {
+        "date": "2026-10-27",
+        "stories": [],
+        "points": 0
+      },
+      {
+        "date": "2026-10-28",
+        "stories": ["S-1017"],
+        "points": 2
+      },
+      {
+        "date": "2026-10-29",
+        "stories": ["S-1018"],
+        "points": 3
+      },
+      {
+        "date": "2026-10-30",
+        "stories": [],
+        "points": 0
+      },
+      {
+        "date": "2026-10-31",
+        "stories": [],
+        "points": 0
+      },
+      {
+        "date": "2026-11-01",
+        "stories": ["S-1021"],
+        "points": 5
+      },
+      {
+        "date": "2026-11-02",
+        "stories": ["S-1022"],
+        "points": 8
+      },
+      {
+        "date": "2026-11-03",
+        "stories": ["S-1023"],
+        "points": 13
+      },
+      {
+        "date": "2026-11-04",
+        "stories": ["S-1024"],
+        "points": 2
+      },
+      {
+        "date": "2026-11-05",
+        "stories": [],
+        "points": 0
+      },
+      {
+        "date": "2026-11-06",
+        "stories": ["S-1026"],
+        "points": 3
+      },
+      {
+        "date": "2026-11-07",
+        "stories": ["S-1027"],
+        "points": 5
+      },
+      {
+        "date": "2026-11-08",
+        "stories": ["S-1028"],
+        "points": 8
+      },
+      {
+        "date": "2026-11-09",
+        "stories": ["S-1029"],
+        "points": 10
+      }
     ]
   },
   "activity": {
@@ -499,6 +1418,11 @@
       3192, 3403, 3614, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6085, 6608, 7131, 7654, 8177, 8700,
       6123, 6646, 7169, 7692, 8215, 8738, 6161, 6684, 7207, 7730, 8253, 0, 0, 0, 0, 0, 0, 0, 0
     ],
-    "today": { "input": 1200000, "output": 640000, "cache_creation": 2300000, "cache_read": 51000000 }
+    "today": {
+      "input": 1200000,
+      "output": 640000,
+      "cache_creation": 2300000,
+      "cache_read": 51000000
+    }
   }
 }

@@ -45,9 +45,22 @@ export function holdLock(path, info = 'held by the test') {
   }
 }
 
+// A probe (`holderOf`, the parent's poll below or bl code) is a try-lock that
+// holds the lock for an instant, so a take in that instant fails with EAGAIN.
+// The child tries again for up to CHILD_TRY_MS before it gives up.
+const CHILD_TRY_MS = 2000;
 const CHILD = `
 import { holdLock } from ${JSON.stringify(import.meta.url)};
-holdLock(process.argv[1], 'held by a test child');
+const end = Date.now() + ${CHILD_TRY_MS};
+for (;;) {
+  try {
+    holdLock(process.argv[1], process.argv[2]);
+    break;
+  } catch (e) {
+    if (e.code !== 'EAGAIN' || Date.now() >= end) throw e;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
 setInterval(() => {}, 1 << 30);
 `;
 
@@ -58,11 +71,11 @@ setInterval(() => {}, 1 << 30);
  * gone.
  *
  * @param {string} path
- * @param {{ timeoutMs?: number }} [opts]
+ * @param {{ timeoutMs?: number, info?: string }} [opts]  `info`: the lock file's info line
  * @returns {Promise<{ pid: number, kill: (signal?: NodeJS.Signals) => Promise<void> }>}
  */
-export async function holdLockInChild(path, { timeoutMs = 10_000 } = {}) {
-  const run = spawnToFiles(process.execPath, ['--input-type=module', '-e', CHILD, path]);
+export async function holdLockInChild(path, { timeoutMs = 10_000, info = 'held by a test child' } = {}) {
+  const run = spawnToFiles(process.execPath, ['--input-type=module', '-e', CHILD, path, info]);
   const { child } = run;
   const kill = async (signal = 'SIGKILL') => {
     child.kill(signal);

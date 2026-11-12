@@ -28,8 +28,33 @@ var notifyKinds = map[string]bool{"escalation": true, "task": true}
 // Differ compares each snapshot with the one before. Its zero value has no baseline: the first
 // snapshot that read a section only sets that section's baseline.
 type Differ struct {
-	items map[string]bool   // the attention item ids; nil until the section was read
-	runs  map[string]string // the status of each run id; nil until the section was read
+	items map[string]bool         // the attention item ids; nil until the section was read
+	runs  map[string]string       // the status of each run id; nil until the section was read
+	quiet map[string]map[int]bool // the pids of the bl stops this bl top started, per run, until it ends (Quiet)
+}
+
+// Quiet marks pid, a `bl stop` that this bl top started for run id (F-87 D8, F-88): a `stopped`
+// end of the run does not notify when that bl stop is one of the stops that stopped it
+// (stream.Run.StoppedBy). Another stop's end notifies, whether this bl top's stop failed, timed out
+// or is still running. The marks of a run go when it ends with any status.
+func (d *Differ) Quiet(id string, pid int) {
+	if d.quiet == nil {
+		d.quiet = map[string]map[int]bool{}
+	}
+	if d.quiet[id] == nil {
+		d.quiet[id] = map[int]bool{}
+	}
+	d.quiet[id][pid] = true
+}
+
+// stoppedHere says whether a bl stop of this bl top (Quiet) is one of the stops that stopped r.
+func (d *Differ) stoppedHere(r stream.Run) bool {
+	for _, pid := range r.StoppedBy {
+		if d.quiet[r.ID][pid] {
+			return true
+		}
+	}
+	return false
 }
 
 // unknownStatus is the status of a run that a read skipped before the view saw it: no run status
@@ -39,7 +64,8 @@ const unknownStatus = "\x00unknown"
 // Diff returns the notes of s against the snapshot before, and keeps s as the new baseline. An
 // inbox item notifies when its id was not in the snapshot before, so it notifies once, and again
 // only after it left the inbox and came back. A run notifies when it has an end status
-// (stream.Ended) that it did not have before. A section that was never read (no read_at) changes
+// (stream.Ended) that it did not have before, except a `stopped` end by a bl stop that Quiet marked. A
+// section that was never read (no read_at) changes
 // nothing. A run that the read skipped (Runs.Skipped) and that has no row keeps the status it had;
 // with none, its status is unknown, and the read that sees it again only sets its baseline.
 func (d *Differ) Diff(s *stream.Snapshot) []Note {
@@ -58,8 +84,12 @@ func (d *Differ) Diff(s *stream.Snapshot) []Note {
 		runs := map[string]string{}
 		for _, r := range s.Runs.Rows {
 			runs[r.ID] = r.Status
-			if old := d.runs[r.ID]; d.runs != nil && old != unknownStatus && old != r.Status && stream.Ended(r.Status) {
+			if old := d.runs[r.ID]; d.runs != nil && old != unknownStatus && old != r.Status && stream.Ended(r.Status) &&
+				!(r.Status == "stopped" && d.stoppedHere(r)) {
 				notes = append(notes, Note{ID: r.ID, Kind: r.Status, Line: runLine(r)})
+			}
+			if stream.Ended(r.Status) {
+				delete(d.quiet, r.ID)
 			}
 		}
 		for _, id := range s.Runs.Skipped {

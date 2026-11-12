@@ -47,14 +47,28 @@ const HELP = `Usage: bl top [--interval <ms>] [--no-bell] [--no-desktop] [--no-p
        bl top --stream [--interval <ms>]
 
 A live view of bl: the runs, what waits on you, what bl next picks, agent
-capacity and the stories done per day.
+capacity, the stories done per day, and the selected run's step timeline and
+live agent feed.
 
 With no --json or --stream, bl top runs the view, a terminal UI in btop's
 style. It builds the view with go build (top/ in bl) when top/bin/bl-top is
-missing or older than a file under top/; that build needs Go. Keys: 1-5 hide
+missing or older than a file under top/; that build needs Go. Keys: 1-6 hide
 or show a box, tab and shift+tab move the focus, up and down select a row,
-enter opens or closes the grouped update row, c reads capacity now, + and -
-change the refresh interval, h shows the help, q quits.
+enter shows the selected run in box 6 (from the runs box, or an attention or
+next row whose unit has a run) or opens or closes the grouped update row, f
+turns follow of box 6's feed on or off (with follow off, up and down in box 6
+scroll it), w opens bl watch <id> of box 6's run in a new tmux window, c reads
+capacity now, + and - change the refresh interval, h shows the help, q quits.
+Box 6 follows the run's agent session through bl watch <id> --json.
+
+Actions: a opens the action menu of the selected row; r starts or resumes the
+selected run, s stops it (bl stop), o opens the row's page (bl view), p opens
+the run's pull request (xdg-open, or open on macOS), g opens bl agent. Each
+shows the exact command and asks y/n first; bl task done asks for an optional
+note. A verb that runs here ends in a result box with its exit code and last
+stderr line. bl run, bl view, bl status and bl agent open a new tmux window in
+the backlog root instead, which stays open after the command exits; outside
+tmux they say "needs tmux". A run that this view stopped does not notify.
 
 The view notifies for a new escalation, a new task, and a run that ends
 (clean, no-change, reviewed, escalated, failed or stopped: every status but
@@ -87,11 +101,12 @@ section carries read_at (an ISO time), and error when its last read failed;
 it then keeps its last good value.
   runs        each run state that is running or stopped, or was updated in
               the last 24 h; status "stale" when it says running and its
-              run lock has no live holder (every snapshot)
-  attention   bl inbox's items, in its order (when the backlog changes, and
-              at least every ${s(ATTENTION_MAX_AGE_MS)})
+              run lock has no live holder; its unit's title, its step
+              timeline, its denied tools and its actions (every snapshot)
+  attention   bl inbox's items, in its order, each with its actions (when the
+              backlog changes, and at least every ${s(ATTENTION_MAX_AGE_MS)})
   next        bl next's pick and the first ${NEXT_SHOWN} ranked units with status,
-              points and holds (as attention)
+              points, holds and actions (as attention)
   capacity    bl capacity --json's configurations (every ${s(CAPACITY_EVERY_MS)})
   history     per day over the last ${HISTORY_DAYS} days, the stories that first reached
               done and their points (every ${s(HISTORY_EVERY_MS)})
@@ -205,18 +220,24 @@ export function tuiArgs(opts, interval, push) {
  * first when it needs a build. The phone push command comes from
  * backlog.json's `top` block (D8a), read before the build: a bad block exits
  * 1. `--no-push` passes no command. `--version` reads no backlog, so it
- * works outside one.
+ * works outside one. The view runs in the backlog root, so the verbs of its
+ * actions and their tmux windows run there (F-87 D7).
  */
 function runTui(opts, interval) {
   let push = null;
+  let cwd;
   try {
-    if (!opts.version) push = topSettings(loadConfig());
+    if (!opts.version) {
+      const config = loadConfig();
+      push = topSettings(config);
+      cwd = config.backlogRoot;
+    }
   } catch (e) {
     console.error(`bl top: ${e.message}`);
     process.exit(1);
   }
   if (tuiNeedsBuild()) buildTui();
-  const r = spawnSync(TOP_BIN, tuiArgs(opts, interval, push), { stdio: 'inherit' });
+  const r = spawnSync(TOP_BIN, tuiArgs(opts, interval, push), { stdio: 'inherit', cwd });
   if (r.error) console.error(`bl top: cannot run ${TOP_BIN}: ${r.error.message}`);
   process.exit(r.status ?? 1);
 }

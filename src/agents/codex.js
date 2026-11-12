@@ -3,7 +3,17 @@
  */
 
 import { spawnSync } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -14,6 +24,7 @@ import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv, windowsCapacity } from './provider.js';
 import { outcomeFor, withExitFault } from '../outcome.js';
+import { followJsonl, oneLine } from './follow.js';
 
 // The script that holds the `codex app-server` conversation (see its JSDoc).
 const CAPACITY_HELPER = fileURLToPath(new URL('./codex-capacity.js', import.meta.url));
@@ -581,6 +592,59 @@ export function parseCodexJsonEvents(stdout) {
   return { usage: any ? usage : null, isError, refusal, sessionId };
 }
 
+/** A `codex exec --json` item as a `tool` event (S-1272), or null for an item that is no tool call. */
+function codexToolEvent(item) {
+  const tool = (name, summary) => ({ kind: 'tool', tool: name, summary: oneLine(summary) });
+  switch (item.type) {
+    case 'command_execution':
+      return tool('exec_command', item.command);
+    case 'file_change':
+      return tool(
+        'apply_patch',
+        (Array.isArray(item.changes) ? item.changes : [])
+          .map((c) => c?.path)
+          .filter(Boolean)
+          .join(' '),
+      );
+    case 'mcp_tool_call':
+      return tool([item.server, item.tool].filter(Boolean).join('.'), '');
+    case 'web_search':
+      return tool('web_search', item.query);
+    default:
+      return null;
+  }
+}
+
+/**
+ * A reader of the `codex exec --json` event stream (S-1272): a function that
+ * returns the events one stream record holds, as provider.js `followSession`
+ * names them. A completed `agent_message` item is a `text` event; a command,
+ * a file change, an MCP tool call or a web search is a `tool` event when it
+ * starts, or when it completes if its start was not seen. Reasoning items
+ * (thinking), command output and every other record hold none. It keeps the
+ * ids of the items it saw start, so each stream gets a reader of its own.
+ *
+ * @returns {(record: any) => object[]}
+ */
+export function codexStreamEvents() {
+  const started = new Set();
+  return (record) => {
+    const type = record?.type;
+    const item = record?.item;
+    if ((type !== 'item.started' && type !== 'item.completed') || !item || typeof item !== 'object') return [];
+    if (item.type === 'agent_message') {
+      return type === 'item.completed' && oneLine(item.text) ? [{ kind: 'text', text: String(item.text) }] : [];
+    }
+    const ev = codexToolEvent(item);
+    if (!ev) return [];
+    if (type === 'item.started') {
+      started.add(item.id);
+      return [ev];
+    }
+    return started.has(item.id) ? [] : [ev];
+  };
+}
+
 /** A quota window's length as Codex's own usage view names it: 5h, 7d. */
 function windowLabel(minutes, key) {
   if (!Number.isFinite(minutes) || minutes <= 0) return key;
@@ -780,6 +844,19 @@ export class CodexProvider extends AgentProvider {
     return firstWord ? `${firstWord}:*` : '*:*';
   }
 
+  /**
+   * Codex has no transcript bl can name before the spawn: its thread id is in
+   * the stream's first event. So spawn writes the `--json` event stream to
+   * `eventsPath`, and followSession reads it there.
+   */
+  followHandle({ eventsPath }) {
+    return { id: null, path: eventsPath };
+  }
+
+  followSession(handle, opts = {}) {
+    return followJsonl(handle.path, codexStreamEvents(), opts);
+  }
+
   getToolHints() {
     return {
       readTool: 'rg/sed via exec_command',
@@ -808,6 +885,7 @@ export class CodexProvider extends AgentProvider {
     model = null,
     effort = null,
     schema = null,
+    follow = null,
   }) {
     const translated = Array.isArray(permissions)
       ? translateCodexPermissions(permissions, {
@@ -854,6 +932,10 @@ export class CodexProvider extends AgentProvider {
     if (headless) {
       let r;
       let output = '';
+      let stdout = '';
+      // With a follow handle (S-1272), the event stream goes to its file as
+      // codex writes it, and is read back from there when codex exits.
+      const eventsFd = follow ? openSync(follow.path, 'w') : null;
       try {
         if (schemaFile) writeFileSync(schemaFile, JSON.stringify(schema));
         r = run('codex', codexArgs, {
@@ -863,16 +945,18 @@ export class CodexProvider extends AgentProvider {
           encoding: 'utf8',
           // stderr is captured, copied to bl's stderr when codex exits, and
           // names the exit in a missing outcome's fault (S-1398).
-          stdio: ['ignore', 'pipe', 'pipe'],
+          stdio: ['ignore', eventsFd ?? 'pipe', 'pipe'],
           maxBuffer: 256 * 1024 * 1024,
         });
         if (r.stderr) process.stderr.write(r.stderr);
+        stdout = follow ? readFileSync(follow.path, 'utf8') : String(r.stdout ?? '');
         try {
           if (!r.error && existsSync(outputFile)) output = readFileSync(outputFile, 'utf8');
         } catch {
           // best-effort
         }
       } finally {
+        if (eventsFd != null) closeSync(eventsFd);
         // Every path, the spawn error one included, removes the temp files.
         for (const file of [outputFile, schemaFile]) {
           try {
@@ -883,13 +967,14 @@ export class CodexProvider extends AgentProvider {
         }
       }
       if (r.error) return r;
-      const events = parseCodexJsonEvents(r.stdout);
+      const events = parseCodexJsonEvents(stdout);
       // A codex killed by a signal has `status: null`: 128 + n, a failure.
       const status = exitStatus(r);
       return {
         ...r,
+        stdout,
         status,
-        output: output.trim() || String(r.stdout ?? '').trim(),
+        output: output.trim() || stdout.trim(),
         usage: events.usage,
         isError: status !== 0 || events.isError,
         refusal: events.refusal,

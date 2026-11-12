@@ -11,6 +11,7 @@ import (
 
 	"github.com/roost-cc/bl/top/internal/notify"
 	"github.com/roost-cc/bl/top/internal/stream"
+	"github.com/roost-cc/bl/top/internal/watch"
 )
 
 // The refresh interval's bounds and step for `+` and `-`, in ms (D6). src/top.js refuses an
@@ -25,17 +26,25 @@ const (
 // with the new interval, so that a run of presses starts one stream, not one per press.
 const restartDelay = 400 * time.Millisecond
 
-// keyMap holds the keys of D6 that F-87 has. The help overlay lists them.
+// keyMap holds the keys of D6 that bl top has. The help overlay lists them.
 type keyMap struct {
-	boxes, next, prev, move, open, capacity, longer, shorter, help, quit key.Binding
+	boxes, next, prev, move, open, act, run, stop, page, pr, agent, follow, watch, capacity, longer, shorter, help, quit key.Binding
 }
 
 var keys = keyMap{
-	boxes:    key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "hide or show a box")),
+	boxes:    key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6"), key.WithHelp("1-6", "hide or show a box")),
 	next:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "move the focus to the next box")),
 	prev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "move the focus to the previous box")),
-	move:     key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "select a row in the box with the focus")),
-	open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "open or close the grouped update row")),
+	move:     key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "select a row; in ⁶ with follow off, scroll the feed")),
+	open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "show the selected run in ⁶; open the update group")),
+	act:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "open the action menu of the selected row")),
+	run:      key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "start or resume the selected run (bl run, in a tmux window)")),
+	stop:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stop the selected run (bl stop)")),
+	page:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open the selected row's page (bl view, in a tmux window)")),
+	pr:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "open the selected run's pull request")),
+	agent:    key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "open bl agent in a tmux window")),
+	follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed of ⁶ on or off")),
+	watch:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "open bl watch of ⁶'s run in a tmux window")),
 	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
 	longer:   key.NewBinding(key.WithKeys("+"), key.WithHelp("+", fmt.Sprintf("refresh interval up (to %d s)", maxInterval/1000))),
 	shorter:  key.NewBinding(key.WithKeys("-"), key.WithHelp("-", fmt.Sprintf("refresh interval down (to %d ms)", minInterval))),
@@ -54,11 +63,23 @@ type Model struct {
 	blArgv        []string
 	interval      int
 	width, height int
-	hidden        [6]bool      // by box number, 1 to 5
+	hidden        [7]bool      // by box number, 1 to 6
 	focus         int          // a box number; 0 when every box is hidden
-	sel           [6]selection // by box number: the selected row of boxes 1 to 3
+	sel           [7]selection // by box number: the selected row of boxes 1 to 3
 	updatesOpen   bool         // whether box ²'s grouped update row is open
+	detail        string       // the id of the run box ⁶ shows; empty for none
+	watcher       *watch.Watch // the `bl watch` of that run, while it runs
+	watchGen      int          // the generation of the watch the model reads
+	watchDone     bool         // whether that watch ended (resumeWatch)
+	watchEnd      time.Time    // when that watch ended with no reason (bl watch exited 0); else zero
+	rewatch       bool         // whether a snapshot after its end showed the run not running
+	feed          []watch.Event
+	follow        bool   // whether box ⁶'s feed shows its newest lines
+	feedBack      int    // with follow off: how many lines the feed is scrolled back
+	note          string // a red line in the bottom border until the next key (`w needs tmux`)
 	help          bool
+	dialog        *dialog // the action dialog (D7), while it is open
+	actionSeq     int     // how many actions ran as a child: the number of the last (dialog.seq)
 	snap          *stream.Snapshot
 	stream        *stream.Stream
 	gen           int // the generation of the stream the model reads
@@ -74,7 +95,7 @@ type Model struct {
 // bl) every interval ms. For each new note (D8) it rings the bell when bell is true, and runs each
 // sender.
 func New(blArgv []string, interval int, bell bool, senders []notify.Sender) Model {
-	return Model{blArgv: blArgv, interval: interval, focus: 1, gen: 1, bell: bell, senders: senders}
+	return Model{blArgv: blArgv, interval: interval, focus: 1, gen: 1, follow: true, bell: bell, senders: senders}
 }
 
 // Ended is why the stream ended, when it ended while bl top ran: its last stderr line.
@@ -155,17 +176,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.gen++
 			return m, m.start()
 		}
+	case watchStartedMsg, watch.EventMsg, watch.EndMsg:
+		return m.watchMsg(msg)
+	case tmuxDoneMsg:
+		// A window that opened leaves the note line as it is: a newer note stays.
+		if msg.Err != "" {
+			m.note = msg.Err
+		}
+	case actionDoneMsg:
+		return m.actionDone(msg), nil
 	}
 	return m, nil
 }
 
-// snapshot keeps s as the snapshot to draw, and returns the commands of its notes against the
+// snapshot keeps s as the snapshot to draw, restarts the watch of box ⁶ when its run resumed
+// (resumeWatch), and returns the commands of that and of its notes against the
 // snapshot before (D8): one bell for them all, and each sender for each note it wants.
 func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	m.snap = &s
 	m.keepSelection()
 	notes := m.differ.Diff(m.snap)
 	var cmds []tea.Cmd
+	m, resumed := m.resumeWatch()
+	if resumed != nil {
+		cmds = append(cmds, resumed)
+	}
 	if m.bell && len(notes) > 0 {
 		cmds = append(cmds, notify.Bell())
 	}
@@ -179,10 +214,14 @@ func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	return m, cmds
 }
 
-// warnings are the bottom border's red warnings: `<sender> failed: <why>` for each sender whose
-// last command failed, in the senders' order.
+// warnings are the bottom border's red warnings: the note of the last key (`w needs tmux`) until
+// the next key, then `<sender> failed: <why>` for each sender whose last command failed, in the
+// senders' order.
 func (m Model) warnings() []string {
 	var out []string
+	if m.note != "" {
+		out = append(out, m.note)
+	}
 	for _, s := range m.senders {
 		if why, ok := m.failed[s.Name]; ok {
 			out = append(out, s.Name+" failed: "+why)
@@ -191,16 +230,22 @@ func (m Model) warnings() []string {
 	return out
 }
 
-// key handles a key of D6. With the help open, any key but quit closes it.
+// key handles a key of D6. With the action dialog open, the dialog takes it; with the help open,
+// any key but quit closes it.
 func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.dialog != nil {
+		return m.dialogKey(msg)
+	}
 	if key.Matches(msg, keys.quit) {
 		m.stop()
+		m.stopWatch()
 		return m, tea.Quit
 	}
 	if m.help {
 		m.help = false
 		return m, nil
 	}
+	m.note = ""
 	switch {
 	case key.Matches(msg, keys.boxes):
 		n := int(msg.String()[0] - '0')
@@ -217,14 +262,30 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == "up" {
 			dir = -1
 		}
-		m.move(dir)
+		if m.focus == 6 {
+			m.scroll(dir)
+		} else {
+			m.move(dir)
+		}
 	case key.Matches(msg, keys.open):
 		if m.focus == 2 && m.snap != nil {
 			if i := m.selected(2); i >= 0 && m.attentionRows()[i].item == nil {
 				m.updatesOpen = !m.updatesOpen
 				m.keepSelection()
+				return m, nil
 			}
 		}
+		if id := m.selectedUnit(m.focus); id != "" && m.run(id) != nil {
+			return m.showRun(id)
+		}
+	case key.Matches(msg, keys.act):
+		return m.openMenu()
+	case key.Matches(msg, keys.run, keys.stop, keys.page, keys.pr, keys.agent):
+		return m.actKey(msg.String())
+	case key.Matches(msg, keys.follow):
+		m.toggleFollow()
+	case key.Matches(msg, keys.watch):
+		return m.openWatch()
 	case key.Matches(msg, keys.capacity):
 		if s := m.stream; s != nil {
 			return m, func() tea.Msg {
@@ -276,13 +337,18 @@ func (m Model) View() tea.View {
 
 // helpBox draws the help overlay: each key of keyMap and what it does.
 func helpBox() []string {
-	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
+	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.act, keys.run, keys.stop, keys.page,
+		keys.pr, keys.agent, keys.follow, keys.watch, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
 	lines := []string{""}
 	for _, b := range bindings {
 		lines = append(lines, fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc)))
 	}
 	lines = append(lines, "", styleText.Render("  any key closes this help"))
-	return drawBox(0, "help", nil, true, lines, 52, len(lines)+2)
+	w := 52
+	for _, l := range lines {
+		w = max(w, lipgloss.Width(l)+3)
+	}
+	return drawBox(0, "help", nil, true, lines, w, len(lines)+2)
 }
 
 // overlay draws box over the middle of lines.

@@ -15,9 +15,11 @@
 
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { RUN_DIR, loadRunState, runLockPath } from './feature-run.js';
-import { holderOf } from './kernel-lock.js';
+import { RUN_DIR, loadRunState, planSteps } from './feature-run.js';
+import { loadBacklog } from './backlog-graph.js';
+import { runHolder, runStatus } from './run-lock.js';
 import { collectInbox } from './inbox.js';
+import { changeNextVerb } from './change-doc.js';
 import { nextPlan } from './next.js';
 import { parseFilter } from './filter.js';
 import { capacityJson, capacityRows } from './capacity.js';
@@ -93,22 +95,244 @@ export function readSection(prev, read, now) {
   }
 }
 
+/** The sum of two `usageOf` values; null when both are. */
+const addUsage = (a, b) => (a && b ? Object.fromEntries(TOKEN_KEYS.map((k) => [k, a[k] + b[k]])) : (a ?? b));
+
+/**
+ * The stage of a run's timeline (box ⁶, F-88 S-1334) that a step of
+ * `planSteps` falls in: `{ step, round }`, or null for a step outside the
+ * timeline (`pr`, `stop`). The test gate goes with `fix-tests`, a fix's
+ * self-review with its fix, and a review round past `maxRounds` is the
+ * closing review.
+ */
+function stageOf(step, round, maxRounds) {
+  switch (step) {
+    case 'setup':
+    case 'implement':
+    case 'self-review':
+      return { step, round: null };
+    case 'test':
+    case 'fix-tests':
+      return { step: 'fix-tests', round: null };
+    case 'review':
+    case 're-review':
+    case 'closing-review':
+      return round > maxRounds ? { step: 'closing', round: null } : { step: 'review', round };
+    case 'fix':
+    case 'fix-self-review':
+      return { step: 'fix', round };
+  }
+  return null;
+}
+
+/**
+ * A run's step timeline for box ⁶ (F-88 S-1334): its stages in the order of
+ * `planSteps` (`src/feature-run.js`), one implement stage for all stories,
+ * each `{ step, round, state, durationMs, tests, usage }`.
+ *
+ * The history entries go to stages in order. A review session
+ * (`review:<pass>`) goes to the round after the last `review:round` entry,
+ * and a fix to the round of that entry. A stage never goes back: an entry of
+ * an earlier stage (the test gate after a fix, the setup of `--resume`) goes
+ * to the latest stage so far. An entry of a step outside the timeline is
+ * left out. A stage with an entry is `done`; the stage of the run's `step`
+ * is `current` while the run is `running`; any other is `pending`. A stage
+ * lasts from the end of the stage before it (the run's start for the first)
+ * to its last entry, or to `now` while it is current. `tests` counts its
+ * `test` entries, and `usage` sums its entries' usage (null with none).
+ * @param {object} state  a run state
+ * @param {string | null} status  the row's status (`stale` for a run no bl holds)
+ * @param {number} now
+ */
+export function runTimeline(state, status, now) {
+  const maxRounds = Math.max(int(state.maxRounds) ?? 1, 1);
+  const stages = [];
+  const index = new Map();
+  const indexOf = (step, round) => {
+    const s = stageOf(step, round, maxRounds);
+    return s ? (index.get(`${s.step} ${s.round}`) ?? null) : null;
+  };
+  for (const p of planSteps([{ id: null }], maxRounds)) {
+    const s = stageOf(p.step, p.round ?? null, maxRounds);
+    if (!s || indexOf(p.step, p.round ?? null) != null) continue;
+    index.set(`${s.step} ${s.round}`, stages.length);
+    stages.push({ ...s, state: 'pending', startMs: NaN, endMs: NaN, tests: 0, usage: null });
+  }
+  let cursor = 0;
+  let rounds = 0;
+  let lastMs = ms(state.startedAt);
+  for (const h of state.history) {
+    const step = str(h.step) ?? '';
+    let i;
+    if (step === 'review:round') {
+      rounds = int(h.round) ?? rounds;
+      i = indexOf('review', rounds);
+    } else if (step.startsWith('review:')) i = indexOf('review', rounds + 1);
+    else if (step === 'fix' || step === 'fix-self-review') i = indexOf('fix', rounds);
+    else i = indexOf(step, null);
+    if (i == null) continue;
+    cursor = Math.max(cursor, i);
+    const stage = stages[cursor];
+    if (stage.state === 'pending') {
+      stage.state = 'done';
+      stage.startMs = lastMs;
+    }
+    const at = ms(h.at);
+    if (Number.isFinite(at)) stage.endMs = lastMs = at;
+    if (step === 'test') stage.tests++;
+    stage.usage = addUsage(stage.usage, usageOf(h.usage));
+  }
+  const current = status === 'running' ? indexOf(str(state.step), int(state.round)) : null;
+  if (current != null) {
+    const stage = stages[Math.max(current, cursor)];
+    if (stage.state === 'pending') stage.startMs = lastMs;
+    stage.state = 'current';
+    stage.endMs = now;
+  }
+  return stages.map(({ startMs, endMs, ...s }) => {
+    const took = endMs - startMs;
+    return { ...s, durationMs: took >= 0 ? took : null };
+  });
+}
+
+/**
+ * A run's denied tools (F-88 S-1334): how many its sessions' history entries
+ * list in `denials`, and the step and tool of the first. An entry written
+ * before S-1334 has no `denials`, and counts 0.
+ */
+export function deniedOf(history) {
+  let count = 0;
+  let first = null;
+  for (const h of history) {
+    const list = Array.isArray(h.denials) ? h.denials.filter((d) => typeof d === 'string') : [];
+    if (list.length && !first) first = { step: str(h.step), tool: list[0] };
+    count += list.length;
+  }
+  return { count, step: first?.step ?? null, tool: first?.tool ?? null };
+}
+
+/**
+ * The run statuses that `bl top` resumes with `bl run <id> --resume`
+ * (F-87 D7); any other run that is not live starts again with `bl run <id>`.
+ */
+export const RESUMED_STATUSES = ['stopped', 'stale', 'escalated', 'failed'];
+
+/**
+ * One action of a `bl top` row (F-87 D7): a key, a label, and what it runs.
+ * `argv` is a bl command (`["bl", …]`), which the view runs through its own
+ * bl; null for `url`, a page the view opens (`xdg-open`, `open`). `input` is
+ * null, `"note"` (optional text, added as the last word) or `"reason"`
+ * (needed text). `window` names the tmux window the command opens in; null
+ * runs it as a child, and the view shows its result. `about` are lines the
+ * y/n question shows, and `stops` is the run the action stops, whose
+ * `stopped` end the view does not notify (D8).
+ */
+const action = (key, label, argv, { input = null, window = null, url = null, about = [], stops = null } = {}) => ({
+  key,
+  label,
+  argv,
+  input,
+  window,
+  url,
+  about,
+  stops,
+});
+
+/** Every row's last action: an agent session in a new tmux window. */
+const agentAction = () => action('g', 'talk it through', ['bl', 'agent'], { window: 'agent' });
+
+/** A work unit row's (or a task's) page, in a new tmux window. */
+const viewAction = (id, label = 'open the page') => action('o', label, ['bl', 'view', id], { window: `${id} view` });
+
+/**
+ * The actions of an inbox item (D7): an escalation is read with `bl status`
+ * (in a tmux window: it prints the escalation to stdout, which a result box
+ * does not show), a task closed with `bl task done`, and a change answered
+ * by the verb of its `next:` (`changeNextVerb`). An item of a work unit also
+ * opens its page (a task its own); the runner line and an update item have
+ * only `bl agent`.
+ */
+export function itemActions(item) {
+  const { kind, id, unit } = item;
+  const out = [];
+  if (kind === 'escalation') {
+    out.push(
+      action('e', 'read the escalation', ['bl', 'status', unit], { window: `${unit} status` }),
+      viewAction(unit),
+    );
+  } else if (kind === 'task') {
+    out.push(
+      action('d', 'close the task', ['bl', 'task', 'done', id], { input: 'note' }),
+      viewAction(id, 'open the task page'),
+    );
+  } else if (kind === 'change') {
+    out.push(
+      changeNextVerb(item.status) === 'merge'
+        ? action('m', 'merge it', ['bl', 'merge', unit])
+        : action('r', 'run it', ['bl', 'run', unit], { window: `${unit} run` }),
+      viewAction(unit),
+    );
+  }
+  return [...out, agentAction()];
+}
+
+/**
+ * The actions of a `runs` row (D7): a live run (`running`, with a holder)
+ * stops with `bl stop` when its holder is a `bl run` (`stoppable`, from
+ * `runHolder`), and has no start or stop action when it is not; any other
+ * starts with `bl run`, with `--resume` for RESUMED_STATUSES, in a tmux
+ * window. Then its page, its pull request when it has one, and `bl agent`.
+ */
+export function runActions(row) {
+  const { id, status } = row;
+  const out = [];
+  if (status === 'running') {
+    // Only a bl run stops: not a review or a merge of a state a dead bl left running.
+    if (row.stoppable)
+      out.push(
+        action('s', 'stop the run', ['bl', 'stop', id], {
+          about: [
+            'bl stop ends the agent session and the run.',
+            'The work so far stays on the branch.',
+            `Resume it later with: bl run ${id} --resume`,
+          ],
+          stops: id,
+        }),
+      );
+  } else {
+    const resume = RESUMED_STATUSES.includes(status);
+    out.push(
+      action('r', resume ? 'resume the run' : 'start the run', ['bl', 'run', id, ...(resume ? ['--resume'] : [])], {
+        window: `${id} run`,
+      }),
+    );
+  }
+  out.push(viewAction(id));
+  if (row.pr?.url) out.push(action('p', 'open the pull request', null, { url: row.pr.url }));
+  return [...out, agentAction()];
+}
+
 /**
  * A run state as a `runs` row, or null when it is left out: not running or
  * stopped, and not updated in the last RUN_WINDOW_MS. A run state that says
  * `running` while nobody holds its run lock is `stale`. A holder whose PID the
- * lock file does not name yet ('unknown') shows as `pid: null`.
+ * lock file does not name yet ('unknown') shows as `pid: null`. `title` is
+ * its work unit's title, from `graph` (null without one).
  */
-function runRow(config, state, now) {
+function runRow(config, graph, state, now) {
   const updated = Date.parse(state.updatedAt ?? state.startedAt ?? '');
   const open = state.status === 'running' || state.status === 'stopped';
   if (!open && !(updated >= now - RUN_WINDOW_MS)) return null;
-  const pid = holderOf(runLockPath(config, state.feature));
+  const holder = runHolder(config, state.feature);
+  const pid = holder?.pid ?? null;
   // The newest entry that names an agent: a round's summary entry names none.
   const session = state.history.findLast((h) => h.agent) ?? {};
+  const status = str(runStatus(state, pid));
+  const pr = prOf(state.pr);
   return {
     id: state.feature,
-    status: state.status === 'running' && pid == null ? 'stale' : str(state.status),
+    title: str(graph?.get(state.feature)?.title),
+    status,
     pid: int(pid),
     step: str(state.step),
     round: int(state.round),
@@ -116,14 +340,20 @@ function runRow(config, state, now) {
     story: str(state.story),
     startedAt: str(state.startedAt),
     updatedAt: str(state.updatedAt),
-    pr: prOf(state.pr),
+    // The pids of the bl stops that stopped it: bl top's quiet mark (D8) matches its own.
+    stoppedBy:
+      status === 'stopped' && Array.isArray(state.stoppedBy) ? state.stoppedBy.filter(Number.isSafeInteger) : [],
+    pr,
     usage: usageOf(state.usage),
     branch: str(state.branch),
     worktreePath: str(state.worktreePath),
     agent: str(session.agent),
     model: str(session.model),
     effort: str(session.effort),
-    history: state.history,
+    testAttempts: int(state.testAttempts),
+    timeline: runTimeline(state, status, now),
+    denied: deniedOf(state.history),
+    actions: runActions({ id: state.feature, status, pr, stoppable: holder?.run === true }),
   };
 }
 
@@ -196,12 +426,20 @@ function overRunStates(states, read) {
 
 /**
  * The `runs` reader: a row for each run state that `runRow` lists, newest
- * first.
+ * first. The titles come from `loadBacklog()`, which reuses its graph while
+ * the backlog's files are unchanged; a backlog that cannot be loaded gives
+ * no titles, and the rows stay.
  * @returns {(now: number) => { rows: object[], error?: string }}
  */
 export function runsReader(config, states = runStatesReader(config)) {
   return overRunStates(states, (list, now) => {
-    const rows = list.map((state) => runRow(config, state, now)).filter(Boolean);
+    let graph = null;
+    try {
+      graph = loadBacklog(config);
+    } catch {
+      // `attention` and `next` report the backlog's error.
+    }
+    const rows = list.map((state) => runRow(config, graph, state, now)).filter(Boolean);
     rows.sort((a, b) => String(b.updatedAt ?? b.startedAt).localeCompare(String(a.updatedAt ?? a.startedAt)));
     return { rows };
   });
@@ -288,17 +526,18 @@ export function readTokens(states, now) {
   return { from: iso(from), minutes: minutes.map(Math.round), today };
 }
 
-/** `attention`: the inbox items in `KINDS` order, and the sources it could not read. */
+/** `attention`: the inbox items in `KINDS` order, each with its `actions`, and the sources it could not read. */
 function readAttention(config, now) {
   const { items, warnings } = collectInbox(config, { now });
-  return { items, warnings };
+  return { items: items.map((item) => ({ ...item, actions: itemActions(item) })), warnings };
 }
 
 /** `next`: `bl next`'s pick, the first NEXT_SHOWN ranked units, and how many are unranked. */
 function readNext(config) {
   // `parseFilter` with no flags: the filter that matches every unit.
   const plan = nextPlan(config, parseFilter({}));
-  const fields = ({ unit, ...e }) => e;
+  // A ranked unit is a work unit row: its page and `bl agent` (D7).
+  const fields = ({ unit, ...e }) => ({ ...e, actions: [viewAction(e.id), agentAction()] });
   return {
     pick: plan.pick && {
       id: plan.pick.unit.id,

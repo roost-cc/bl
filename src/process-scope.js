@@ -21,7 +21,8 @@
  *   the worktree.
  * - Unit names are `bl-<unit id, lowercased>-<bl pid>-<n>`, sanitized to
  *   `[a-z0-9-]`, so a later bl can find a crashed bl's scopes by unit and see
- *   that their pid is dead (`staleScopes`).
+ *   that their pid is dead (`staleScopes`), and `bl stop` can find the scopes
+ *   of the bl that holds the unit's run lock (`scopesOf`).
  * - Names are passed and returned without the `.scope` suffix.
  */
 import { spawnSync } from 'child_process';
@@ -235,14 +236,14 @@ export function stopScope(unit) {
 }
 
 /**
- * The scopes of `unitId` whose bl is no longer running: leftovers of a bl that
- * crashed or was killed before it could stop them. The run's lock means no
- * live bl other than this one owns a scope of the unit. Throws when systemctl
- * cannot list them: an unknown list is not an empty one.
+ * Every scope of `unitId` that systemd has loaded, with the pid of the bl
+ * that started it (from its name, `scopeUnitName`): `[{ unit, pid }]`. The
+ * one listing `staleScopes` and `bl stop` (`stop.js`) filter. Throws when
+ * systemctl cannot list them: an unknown list is not an empty one.
  *
- * @returns {string[]}
+ * @returns {{ unit: string, pid: number }[]}
  */
-export function staleScopes(unitId) {
+export function unitScopes(unitId) {
   const prefix = `bl-${unitSlug(unitId)}-`;
   const r = systemctl(['show', '-p', 'Id', '--value', `${prefix}*.scope`]);
   if (r.error || r.status !== 0) throw new Error(`could not list ${prefix}*.scope: ${failureText(r)}`);
@@ -252,10 +253,32 @@ export function staleScopes(unitId) {
     const name = line.trim();
     if (!name.startsWith(prefix)) continue;
     const m = re.exec(name.slice(prefix.length));
-    if (!m) continue;
-    const pid = Number(m[1]);
-    if (pid === process.pid || isPidAlive(pid)) continue;
-    out.push(name.slice(0, -'.scope'.length));
+    if (m) out.push({ unit: name.slice(0, -'.scope'.length), pid: Number(m[1]) });
   }
   return out;
+}
+
+/**
+ * The scopes of `unitId` whose bl is no longer running: leftovers of a bl that
+ * crashed or was killed before it could stop them. The run's lock means no
+ * live bl other than this one owns a scope of the unit. Throws as `unitScopes`.
+ *
+ * @returns {string[]}
+ */
+export function staleScopes(unitId) {
+  return unitScopes(unitId)
+    .filter((s) => s.pid !== process.pid && !isPidAlive(s.pid))
+    .map((s) => s.unit);
+}
+
+/**
+ * The scopes of `unitId` that bl process `pid` started: the ones `bl stop`
+ * stops, `pid` the holder of the unit's run lock. Throws as `unitScopes`.
+ *
+ * @returns {string[]}
+ */
+export function scopesOf(unitId, pid) {
+  return unitScopes(unitId)
+    .filter((s) => s.pid === pid)
+    .map((s) => s.unit);
 }

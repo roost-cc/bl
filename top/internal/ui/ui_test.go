@@ -147,10 +147,10 @@ func TestFullLayoutFrom171x50(t *testing.T) {
 }
 
 func TestHiddenBoxGivesItsSpace(t *testing.T) {
-	m, _ := press(t, sized(t, 171, 63), text("3"))
+	m, _ := press(t, sized(t, 171, 63), text("3"), text("6"))
 	lines := strings.Split(screen(t, m), "\n")
-	if s := strings.Join(lines, "\n"); strings.Contains(s, "³next") {
-		t.Fatal("box ³ is drawn while hidden")
+	if s := strings.Join(lines, "\n"); strings.Contains(s, "³next") || strings.Contains(s, "⁶detail") {
+		t.Fatal("box ³ or ⁶ is drawn while hidden")
 	}
 	// Box ¹ takes the whole left column: its side runs to the line above the key bar.
 	if !strings.HasPrefix(lines[61], "│") || !strings.HasPrefix(lines[62], "╰┘↑↓ select└┘tab box└") {
@@ -206,12 +206,17 @@ func TestBoxColorsAreD5s(t *testing.T) {
 }
 
 func TestKeyBarFitsItsWidth(t *testing.T) {
-	for _, w := range []int{80, 100, 171} {
-		if got := ansi.Strip(keyBar(w, nil)); lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘↑↓ select└┘tab box└┘+- interval└┘h help└┘q quit└─") {
+	for _, w := range []int{100, 171} {
+		if got := ansi.Strip(keyBar(w, nil)); lipgloss.Width(got) != w ||
+			!strings.HasPrefix(got, "╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└─") {
 			t.Errorf("keyBar(%d) = %q", w, got)
 		}
 	}
-	if got := ansi.Strip(keyBar(20, nil)); got != "╰┘↑↓└┘tab└┘+-└┘h└──╯" {
+	// At 80 the labels do not fit: the keys alone.
+	if got := ansi.Strip(keyBar(80, nil)); lipgloss.Width(got) != 80 || !strings.HasPrefix(got, "╰┘↑↓└┘tab└┘↵└┘a└┘r└┘s└┘o└┘p└┘g└┘h└┘q└─") {
+		t.Errorf("keyBar(80) = %q", got)
+	}
+	if got := ansi.Strip(keyBar(20, nil)); got != "╰┘↑↓└┘tab└┘↵└┘a└───╯" {
 		t.Errorf("keyBar(20) = %q, want the keys alone, as many as fit", got)
 	}
 }
@@ -223,20 +228,20 @@ func TestTabMovesTheFocusOverShownBoxes(t *testing.T) {
 		m, _ = press(t, m, tab)
 		seen = append(seen, m.focus)
 	}
-	if want := []int{2, 3, 4, 5, 1, 2}; !slices.Equal(seen, want) {
+	if want := []int{2, 3, 4, 5, 6, 1}; !slices.Equal(seen, want) {
 		t.Errorf("tab: %v, want %v", seen, want)
 	}
 	m, _ = press(t, m, shiftTab, shiftTab)
 	if m.focus != 5 {
-		t.Errorf("⇧tab twice from 2: %d, want 5", m.focus)
+		t.Errorf("⇧tab twice from 1: %d, want 5", m.focus)
 	}
 	m, _ = press(t, m, text("1"), shiftTab)
 	if m.focus != 4 {
 		t.Errorf("⇧tab from 5 with ¹ hidden: %d, want 4", m.focus)
 	}
-	m, _ = press(t, m, tab, tab)
+	m, _ = press(t, m, tab, tab, tab)
 	if m.focus != 2 {
-		t.Errorf("tab twice from 4 with ¹ hidden: %d, want 2", m.focus)
+		t.Errorf("tab three times from 4 with ¹ hidden: %d, want 2", m.focus)
 	}
 	m, _ = press(t, m, text("2"))
 	if m.focus != 3 {

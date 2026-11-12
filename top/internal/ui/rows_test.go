@@ -154,6 +154,8 @@ func TestAttentionBoxShowsKindsAndTheSelectedItemsNext(t *testing.T) {
 
 func TestStackedAttentionFoldsTheUpdatesAndEnterOpensThem(t *testing.T) {
 	m, _ := update(t, sized(t, 100, 40), snapshot(t))
+	// Without box ⁶, box ² has room for every row.
+	m, _ = press(t, m, text("6"))
 	out := screen(t, m)
 	if !strings.Contains(out, "UPD   3 red updates") || strings.Contains(out, "tools:renova") {
 		t.Fatalf("the updates are not one row:\n%s", out)

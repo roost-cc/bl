@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import fs, { existsSync, readFileSync, readdirSync, writeFileSync } from 'fs';
+import { syncBuiltinESMExports } from 'module';
 import { dirname, join } from 'path';
 import { REPO_ROOT } from '../helpers/run-bl.js';
 import { holdLock } from '../helpers/hold-lock.js';
@@ -10,6 +11,8 @@ import * as backlogCommit from '../../src/backlog-commit.js';
 import * as featureRun from '../../src/feature-run.js';
 import * as updates from '../../src/updates.js';
 import { holderOf } from '../../src/kernel-lock.js';
+
+const realRead = fs.readFileSync;
 
 /** A backlog root of its own for one test. */
 const backlog = () => ({ backlogRoot: mkTempDir('bl-run-lock-') });
@@ -71,6 +74,46 @@ test('releaseRunLock frees the run lock and keeps its file (F-104 D3)', () => {
   runLock.releaseRunLock(lock.taken);
   assert.equal(holderOf(path), null);
   assert.ok(existsSync(path), 'the lock file stays');
+});
+
+test('run_holder_reads_one_holder: the pid and the info line come from one read, never from two holders', () => {
+  const review = `${process.pid}\n2026-11-11T00:00:00Z\nbl review F-1\n`;
+  const run = '999999\n2026-11-11T00:00:01Z\nbl run F-1\n';
+  const cases = [
+    { first: review, then: run, want: { pid: process.pid, run: false } },
+    { first: run, then: review, want: { pid: 999999, run: true } },
+    { first: run, then: '', want: { pid: 999999, run: true } },
+    { first: '', then: run, want: { pid: 'unknown', run: false } },
+  ];
+  for (const own of [false, true]) {
+    for (const { first, then, want } of cases) {
+      const config = backlog();
+      runLock.ensureRunDir(config);
+      const path = runLock.runLockPath(config, 'F-1');
+      const lock = own ? runLock.acquireRunLock(config, 'F-1') : null;
+      const other = own ? null : holdLock(path);
+      writeFileSync(path, first);
+      let reads = 0;
+      fs.readFileSync = (name, ...args) => {
+        const value = realRead(name, ...args);
+        // Another holder writes its own lines just after the first read.
+        if (name === path && ++reads === 1) writeFileSync(path, then);
+        return value;
+      };
+      syncBuiltinESMExports();
+      try {
+        const got = runLock.runHolder(config, 'F-1');
+        const label = `${own ? 'own' : 'other'} ${JSON.stringify(first)} then ${JSON.stringify(then)}`;
+        assert.deepEqual(got, own ? { ...want, pid: process.pid } : want, label);
+        assert.equal(reads, 1, `${label}: one read`);
+      } finally {
+        fs.readFileSync = realRead;
+        syncBuiltinESMExports();
+        if (lock) runLock.releaseRunLock(lock.taken);
+        other?.release();
+      }
+    }
+  }
 });
 
 test('updatesLockRefusal names the holder and the updates lock', () => {
