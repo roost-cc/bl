@@ -78,13 +78,25 @@ func (m Model) barKeys() []barKey {
 	return out
 }
 
-// keyBar draws the bottom border of the screen, w cells wide, with the warnings, styled strings
-// (Model.warnings), at its right (`┐desktop failed: …┌─╯`, D8), and the key bar of keys in the room
-// they leave (`╰┘tab box└┘h help└──╯`). The warnings come first: they share the bar (share), and a
-// warning longer than its share is cut with `…`. When the labels do not fit, the bar shows the keys
-// alone; when those do not fit either, it leaves out the keys at the end.
-func keyBar(w int, keys []barKey, warnings []string) string {
+// keyBar draws the bottom border of the screen, w cells wide, with the notes and the sender
+// warnings, styled strings (Model.warnings), at its right (`┐desktop failed: …┌─╯`, D8), and the key
+// bar of keys in the room they leave (`╰┘tab box└┘h help└──╯`). The notes and the warnings come
+// first: they share the bar (share), and one longer than its share is cut with `…`. A note clears
+// when its job ends or at the next key, so the notes may take the whole bar. A sender warning stays
+// until its sender succeeds, so with no note the sender warnings share only the room that every key
+// without its label leaves: `h` and `q`, at the end, always show. When the labels do not fit, the
+// bar shows the keys alone; when those do not fit either, it leaves out the keys at the end.
+func keyBar(w int, keys []barKey, notes, senders []string) string {
 	// `╰`, the entries, at least one `─`, the warnings, `╯`.
+	room := w - 3
+	if len(notes) == 0 {
+		_, _, left := keyEntries(keys, w, false)
+		room -= w - left
+	}
+	warnings := slices.Clone(notes)
+	for i, n := range share(senders, room) {
+		warnings = append(warnings, ansi.Truncate(senders[i], max(n, 0), "…"))
+	}
 	right := ""
 	for i, n := range share(warnings, w-3) {
 		warn := warnings[i]

@@ -270,24 +270,24 @@ func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	return m, cmds
 }
 
-// warnings are the bottom border's note line, styled: the command of the action that runs, in the
-// text color (F-127 Decision 2); then in red the note of the last key or of a failed action
-// (`w needs tmux`) until the next key, and `<sender> failed: <why>` for each sender whose last
-// command failed, in the senders' order.
-func (m Model) warnings() []string {
-	var out []string
+// warnings are the bottom border's note line, styled, in two parts. The notes clear when the job
+// ends or at the next key: the command of the action that runs, in the text color (F-127
+// Decision 2), then in red the note of the last key or of a failed action (`w needs tmux`). The
+// senders are in red `<sender> failed: <why>` for each sender whose last command failed, in the
+// senders' order; each stays until that sender succeeds.
+func (m Model) warnings() (notes, senders []string) {
 	if len(m.jobs) > 0 {
-		out = append(out, styleText.Render(m.jobs[0].show))
+		notes = append(notes, styleText.Render(m.jobs[0].show))
 	}
 	if m.note != "" {
-		out = append(out, styleError.Render(m.note))
+		notes = append(notes, styleError.Render(m.note))
 	}
 	for _, s := range m.senders {
 		if why, ok := m.failed[s.Name]; ok {
-			out = append(out, styleError.Render(s.Name+" failed: "+why))
+			senders = append(senders, styleError.Render(s.Name+" failed: "+why))
 		}
 	}
-	return out
+	return notes, senders
 }
 
 // key handles a key of D6. Each key clears the note. With the action dialog open, the dialog takes

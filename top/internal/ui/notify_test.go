@@ -136,20 +136,57 @@ func TestAFailedPushWarnsInTheBottomBorder(t *testing.T) {
 	}
 }
 
-// TestALongWarningFitsTheBottomBorder: the warnings come before the keys. A long one takes the
-// whole bar and is cut with `…`; a short one leaves the keys the rest.
+// TestALongWarningFitsTheBottomBorder: the notes and the sender warnings come before the keys, and
+// one longer than its room is cut with `…`. A long note takes the whole bar; a long sender warning
+// leaves the keys without labels; a short one leaves the keys the rest.
 func TestALongWarningFitsTheBottomBorder(t *testing.T) {
-	long := "desktop failed: " + strings.Repeat("x", 200)
+	long := strings.Repeat("x", 200)
 	keys := atRow(t, runsBox, "S-1330").barKeys()
 	for _, w := range []int{80, 171} {
-		got := ansi.Strip(keyBar(w, keys, []string{long}))
-		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰─┐desktop failed: x") || !strings.HasSuffix(got, "x…┌─╯") {
-			t.Errorf("keyBar(%d) with a long warning = %q", w, got)
+		got := ansi.Strip(keyBar(w, keys, []string{"exit 1: " + long}, nil))
+		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰─┐exit 1: x") || !strings.HasSuffix(got, "x…┌─╯") {
+			t.Errorf("keyBar(%d) with a long note = %q", w, got)
+		}
+		got = ansi.Strip(keyBar(w, keys, nil, []string{"desktop failed: " + long}))
+		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘s└┘o└┘p└┘g└┘tab└┘↑↓└┘↵└┘a└┘h└┘q└─┐desktop failed: x") || !strings.HasSuffix(got, "x…┌─╯") {
+			t.Errorf("keyBar(%d) with a long sender warning = %q", w, got)
 		}
 	}
-	short := ansi.Strip(keyBar(171, keys, []string{"desktop failed: timeout"}))
+	short := ansi.Strip(keyBar(171, keys, nil, []string{"desktop failed: timeout"}))
 	if !strings.HasPrefix(short, "╰┘s stop└┘o page└┘p PR└┘g agent└"+globalBar+"─") || !strings.HasSuffix(short, "─┐desktop failed: timeout┌─╯") {
 		t.Errorf("keyBar(171) with a short warning = %q", short)
+	}
+}
+
+// TestALongSenderWarningLeavesTheGlobalKeys: a sender warning stays until its sender succeeds, so
+// at 80 columns, with the focus in each box and one or two 200-character sender failures, the bar
+// still shows `h` and `q` beside the warnings.
+func TestALongSenderWarningLeavesTheGlobalKeys(t *testing.T) {
+	base := atRow(t, runsBox, "S-1330")
+	models := map[string]Model{"runs, S-1330": base, "attention, T-52": atRow(t, attentionBox, "T-52"),
+		"next, F-84": atRow(t, nextBox, "F-84"), "detail": focused(t, base, detailBox),
+		"tokens": focused(t, base, tokensBox), "activity": focused(t, base, activityBox)}
+	why := strings.Repeat("x", 200)
+	for name, m := range models {
+		m.width, m.height = minWidth, minHeight
+		for _, senders := range [][]string{{"desktop"}, {"desktop", "push"}} {
+			m := m
+			m.senders, m.failed = nil, map[string]string{}
+			for _, s := range senders {
+				m.senders = append(m.senders, notify.Sender{Name: s})
+				m.failed[s] = why
+			}
+			line := noteLine(t, m)
+			want := []string{"┘h", "┘q"}
+			for _, s := range senders {
+				want = append(want, "┐"+s+" ")
+			}
+			for _, w := range want {
+				if lipgloss.Width(line) != minWidth || !strings.Contains(line, w) {
+					t.Errorf("%s, %d sender(s): no %q in %q", name, len(senders), w, line)
+				}
+			}
+		}
 	}
 }
 

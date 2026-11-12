@@ -424,7 +424,7 @@ func TestBoxGolden(t *testing.T) {
 func TestBoxColorsAreD5s(t *testing.T) {
 	plain := strings.Join(drawBox(1, "runs", nil, false, nil, 30, 3), "\n")
 	focus := strings.Join(drawBox(1, "runs", nil, true, nil, 30, 3), "\n")
-	bar := keyBar(80, sized(t, 80, 24).barKeys(), nil)
+	bar := keyBar(80, sized(t, 80, 24).barKeys(), nil, nil)
 	for _, c := range []struct {
 		what, out, color string
 	}{
@@ -446,16 +446,16 @@ const globalBar = "┘tab box└┘↑↓ select└┘↵ detail└┘a act└�
 func TestKeyBarFitsItsWidth(t *testing.T) {
 	keys := atRow(t, runsBox, "S-1330").barKeys()
 	for _, w := range []int{100, 171} {
-		if got := ansi.Strip(keyBar(w, keys, nil)); lipgloss.Width(got) != w ||
+		if got := ansi.Strip(keyBar(w, keys, nil, nil)); lipgloss.Width(got) != w ||
 			!strings.HasPrefix(got, "╰┘s stop└┘o page└┘p PR└┘g agent└"+globalBar+"─") {
 			t.Errorf("keyBar(%d) = %q", w, got)
 		}
 	}
 	// At 80 the labels do not fit: the keys alone.
-	if got := ansi.Strip(keyBar(80, keys, nil)); lipgloss.Width(got) != 80 || !strings.HasPrefix(got, "╰┘s└┘o└┘p└┘g└┘tab└┘↑↓└┘↵└┘a└┘h└┘q└─") {
+	if got := ansi.Strip(keyBar(80, keys, nil, nil)); lipgloss.Width(got) != 80 || !strings.HasPrefix(got, "╰┘s└┘o└┘p└┘g└┘tab└┘↑↓└┘↵└┘a└┘h└┘q└─") {
 		t.Errorf("keyBar(80) = %q", got)
 	}
-	if got := ansi.Strip(keyBar(20, keys, nil)); got != "╰┘s└┘o└┘p└┘g└┘tab└─╯" {
+	if got := ansi.Strip(keyBar(20, keys, nil, nil)); got != "╰┘s└┘o└┘p└┘g└┘tab└─╯" {
 		t.Errorf("keyBar(20) = %q, want the keys alone, as many as fit", got)
 	}
 }
@@ -463,7 +463,7 @@ func TestKeyBarFitsItsWidth(t *testing.T) {
 // TestTheKeyBarFollowsTheFocusedBoxAndTheSelectedRow: the bar shows the focused box's box keys,
 // then the selected row's action keys, then the global keys (F-127 Decision 5).
 func TestTheKeyBarFollowsTheFocusedBoxAndTheSelectedRow(t *testing.T) {
-	bar := func(m Model) string { return ansi.Strip(keyBar(171, m.barKeys(), nil)) }
+	bar := func(m Model) string { return ansi.Strip(keyBar(171, m.barKeys(), nil, nil)) }
 	// A runs row: its actions by their short labels.
 	if got := bar(atRow(t, runsBox, "F-83")); !strings.HasPrefix(got, "╰┘r resume└┘o page└┘p PR└┘g agent└"+globalBar+"─") {
 		t.Errorf("runs, F-83: %q", got)

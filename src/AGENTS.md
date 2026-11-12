@@ -3393,8 +3393,12 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `h help`, `q quit` (the global keys that have a word in `helpGroups`). The tokens and the
   activity box have no rows, so they show the global keys alone. The note line (below) comes
   first: its notes share the bar, a note longer than its share is cut with `…`, and the keys take
-  the room the notes leave. When the labels do not fit, the bar shows the keys alone; when those
-  do not fit either, it leaves out the keys at its end.
+  the room the notes leave. The command that runs and the note of the last key or failed action
+  clear when the job ends or at the next key, so they may take the whole bar. A sender warning
+  stays until its sender succeeds, so with neither of those the sender warnings share only the
+  room that every key without its label leaves, and `h` and `q` always show. When the labels do
+  not fit, the bar shows the keys alone; when those do not fit either, it leaves out the keys at
+  its end.
 - **Keys** (D6, F-127 Decision 3, `top/internal/ui/model.go`): key `n` (`1`–`6`) hides or shows
   the box at position `n` of the drawn layout; every box of the layout counts, hidden or not, so
   a second press shows the box again. The view keeps the hidden boxes by name (`hidden`), so a
