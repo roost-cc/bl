@@ -459,7 +459,8 @@ export function isNonFastForwardRejection(stderr) {
  * origin's `main` moved (`isNonFastForwardRejection`) is rebased onto
  * `origin/main` with the pull's own rebase (`pullLocked`, which settles
  * generated paths and puts everything back when it cannot finish), and on
- * `pulled` pushed once more. Any other rejection is not retried. The caller
+ * `pulled` pushed once more. Any other rejection, and a push that a signal
+ * ended, is not retried. The caller
  * holds the main sync lock (`withMainSyncLock`), so no commit lands
  * mid-rebase. When the rebase settled generated paths, their regeneration is
  * left pending for the next command that pulls (`leaveRegenerationPending`,
@@ -478,7 +479,9 @@ export function pushBacklog(root) {
   const error = describeExit(r, 'git push');
   const branch = git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).stdout?.trim() ?? '';
   // The rebase moves the checked-out branch: only retry when that is `main`.
-  if (!isNonFastForwardRejection(r.stderr) || branch !== 'main') return { pushed: false, error };
+  // git exits 1 when it refuses a push. A push that a signal ended has no
+  // exit status: it failed, whatever it wrote, and is not retried.
+  if (r.status !== 1 || !isNonFastForwardRejection(r.stderr) || branch !== 'main') return { pushed: false, error };
   // The marker goes down before the rebase: a rebase that settles generated
   // paths is only ever pushed with their regeneration recorded, and a marker
   // that cannot be written stops the retry before anything moves.

@@ -26,7 +26,8 @@ const SIGNAL_EXIT = new URL('../../src/signal-exit.js', import.meta.url).href;
 // `KILL_ON`: the argument that ends the shim with `KILL_SIG`. `STOP_REBASE`:
 // `git rebase --autostash` runs for real with `-x false`, so it stops with a
 // rebase in progress and the autostash held, and then the shim ends itself
-// with SIGINT.
+// with SIGINT. `REJECT_PUSH_LOG`: each `git push` adds a line to that file,
+// writes git's non-fast-forward rejection, and ends itself with `KILL_SIG`.
 const shimDir = mkTempDir('bl-bc-signal-shim-');
 writeFileSync(
   join(shimDir, 'git'),
@@ -35,6 +36,11 @@ if [ -n "$STOP_REBASE" ] && [ "$1 $2" = "rebase --autostash" ]; then
   shift
   "${REAL_GIT}" rebase -x false "$@"
   kill -INT $$
+fi
+if [ -n "$REJECT_PUSH_LOG" ] && [ "$1" = push ]; then
+  echo push >> "$REJECT_PUSH_LOG"
+  echo ' ! [rejected]        main -> main (fetch first)' >&2
+  kill -$KILL_SIG $$
 fi
 if [ -n "$KILL_ON" ]; then
   for a in "$@"; do
@@ -124,6 +130,34 @@ for (const c of CALLERS) {
       }
     });
   }
+}
+
+for (const signal of ['SIGKILL', 'SIGHUP', 'SIGUSR1']) {
+  test(`pushBacklog does not rebase or push again after a push that ${signal} ended`, () => {
+    const { tmp, alice, bob } = twoClones({ 'a.md': '1\n' });
+    try {
+      writeFileSync(join(alice, 'a.md'), 'alice\n');
+      g(alice, 'commit', '-q', '-am', 'alice');
+      bobPushes(bob, { 'b.md': 'bob\n' });
+      const head = g(alice, 'rev-parse', 'HEAD');
+      const remote = g(bob, 'ls-remote', 'origin', 'refs/heads/main');
+      const log = join(tmp, 'pushes');
+      const r = runScript(`console.log(JSON.stringify(bc.pushBacklog(${JSON.stringify(alice)})));`, {
+        REJECT_PUSH_LOG: log,
+        KILL_SIG: signal.slice(3),
+      });
+      assert.equal(r.status, 0, r.stderr);
+      const res = JSON.parse(r.stdout.split('\n')[0]);
+      assert.equal(res.pushed, false);
+      assert.equal(res.retry, undefined);
+      assert.match(res.error, new RegExp(`^git push was ended by ${signal}: ! \\[rejected\\]`));
+      assert.equal(readFileSync(log, 'utf8'), 'push\n');
+      assert.equal(g(alice, 'rev-parse', 'HEAD'), head);
+      assert.equal(g(bob, 'ls-remote', 'origin', 'refs/heads/main'), remote);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 }
 
 test('SIGINT that ends the rebase of a backlog pull: the backlog is put back, then bl exits 130 (D2a)', () => {
