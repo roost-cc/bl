@@ -20,9 +20,9 @@
  * theirs is a damaged file, not an empty graph, so it is a conflict too.
  */
 
-import { spawnSync } from 'child_process';
 import { readFileSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { git } from './child.js';
 
 /** The driver's name in `.gitattributes` and git config. */
 export const MERGE_DRIVER = 'bl-blockers';
@@ -40,14 +40,8 @@ const SCRIPT = fileURLToPath(import.meta.url);
 export function configureMergeDriver(root) {
   const quote = (s) => `'${s.replaceAll("'", `'\\''`)}'`;
   const driver = `${quote(process.execPath)} ${quote(SCRIPT)} %O %A %B`;
-  spawnSync('git', ['config', `merge.${MERGE_DRIVER}.name`, 'bl blockers.json, merged by edge'], {
-    cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  spawnSync('git', ['config', `merge.${MERGE_DRIVER}.driver`, driver], {
-    cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  git(root, ['config', `merge.${MERGE_DRIVER}.name`, 'bl blockers.json, merged by edge']);
+  git(root, ['config', `merge.${MERGE_DRIVER}.driver`, driver]);
 }
 
 async function main([basePath, oursPath, theirsPath]) {
@@ -67,9 +61,7 @@ async function main([basePath, oursPath, theirsPath]) {
     writeFileSync(oursPath, formatBlockers(merged));
     return 0;
   }
-  spawnSync('git', ['merge-file', '-L', 'ours', '-L', 'base', '-L', 'theirs', oursPath, basePath, theirsPath], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  git(undefined, ['merge-file', '-L', 'ours', '-L', 'base', '-L', 'theirs', oursPath, basePath, theirsPath]);
   return 1;
 }
 

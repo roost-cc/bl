@@ -139,7 +139,7 @@ const ALLOWED = new Map([
   ['cleanup.js git git ?', `the throwaway merge worktree's and the branch's git: ${CODE_REPO}`],
   ['cleanup.js cleanupOneRepo git push', `pushes a code repo's main: ${CODE_REPO}`],
   ['cleanup.js checkedMerge git push', `pushes a code repo's main: ${CODE_REPO}`],
-  ['feature-cmd.js git git ?', `reads a story worktree's branch: ${CODE_REPO}`],
+  ['feature-cmd.js openMissingPRs git push', `pushes a unit's branch to open its PR: ${CODE_REPO}`],
   ['feature-run.js pushBranch git push', `pushes the feature branch: ${CODE_REPO}`],
   ['feature-run.js integrateLocked git merge', `merges main into the feature branch: ${CODE_REPO}`],
   ['feature-run.js pushIntegrated git push', `pushes the integrated branch: ${CODE_REPO}`],
@@ -151,6 +151,9 @@ const ALLOWED = new Map([
   ['regenerate.js regenerateConflicts git checkout', `resolves a regenerated file's conflict: ${CODE_REPO}`],
   ['regenerate.js regenerateConflicts git add', `stages regenerated files: ${CODE_REPO}`],
   ['release.js git git ?', `tags and reads the deployable repos: ${CODE_REPO}`],
+  ['review.js syncBranchWithMain git fetch', `fetches main into a story worktree: ${CODE_REPO}`],
+  ['review.js syncBranchWithMain git merge', `merges main into a story branch, or aborts it: ${CODE_REPO}`],
+  ['review.js syncBranchWithMain git push', `pushes a story branch: ${CODE_REPO}`],
   ['scripted.js runImplementPlugin git add', `commits a scripted implement step: ${CODE_REPO}`],
   ['scripted.js runImplementPlugin git commit', `commits a scripted implement step: ${CODE_REPO}`],
   ['session.js ensureWorktree git worktree', `adds a story worktree: ${CODE_REPO}`],
@@ -790,9 +793,10 @@ test('guard: a raw blockers.json write in src/block.js fails the test, naming th
 });
 
 test('guard: a raw git commit from ./child.js in src/rank-cmd.js fails the test, naming the file, function and call', () => {
+  // rank-cmd.js imports `git` from ./child.js itself (F-124 S-1521).
   const found = findingsWith(
     'src/rank-cmd.js',
-    `import { git } from './child.js';\nfunction commitRaw(root) {\n  git(root, ['commit', '-m', 'rank']);\n}`,
+    `function commitRaw(root) {\n  git(root, ['commit', '-m', 'rank']);\n}`,
   );
   assert.equal(found.length, 1, found.join('\n'));
   assert.match(found[0], /^src\/rank-cmd\.js:\d+: rank-cmd\.js commitRaw git commit /);

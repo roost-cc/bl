@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { dirname, relative } from 'path';
-import { execSync } from 'child_process';
+import { gitOut } from './child.js';
 import {
   loadConfig,
   parseArgs,
@@ -40,20 +40,13 @@ function resolveCommitHash(config, primaryRepoName, rawCommit) {
   const repoPath = primaryRepoName ? config.reposByName[primaryRepoName] : null;
   if (repoPath && existsSync(repoPath)) {
     try {
-      return execSync('git rev-parse --short HEAD', {
-        cwd: repoPath,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim();
+      return gitOut(repoPath, ['rev-parse', '--short', 'HEAD']);
     } catch {
       // fall through
     }
   }
   try {
-    return execSync('git rev-parse --short HEAD', {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
+    return gitOut(undefined, ['rev-parse', '--short', 'HEAD']);
   } catch {
     return null;
   }

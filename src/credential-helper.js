@@ -1,4 +1,4 @@
-import { spawnSync } from 'child_process';
+import { git } from './child.js';
 
 const HELPER_KEY_RE = /^credential(?:\..*)?\.helper$/;
 const GH_HELPER_RE = /(?:^|\/)gh\s+auth\s+git-credential(?:\s|$)/;
@@ -39,10 +39,7 @@ export function formatGhCredentialHelperAdvisory(detection) {
 }
 
 function defaultRun() {
-  return spawnSync('git', ['config', '--get-regexp', '^credential(\\..*)?\\.helper$'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  return git(undefined, ['config', '--get-regexp', '^credential(\\..*)?\\.helper$']);
 }
 
 function parseConfigLine(rawLine) {

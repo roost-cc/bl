@@ -25,7 +25,7 @@
 
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { basename, join, relative, dirname } from 'path';
-import { execFileSync, execSync } from 'child_process';
+import { gitOut } from './child.js';
 import {
   configForRepo,
   configurationLabel,
@@ -1378,17 +1378,15 @@ function openMissingPRs(config, unit, found, branchName, ordered) {
     if (s.hasPR || s.reason || merged.has(s.repoName)) continue;
     const wt = findExistingWorktree(s.repoPath, branchName);
     if (!wt) continue;
-    const git = (gitArgs) =>
-      execFileSync('git', gitArgs, { cwd: wt.path, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     let ahead = '0';
     try {
-      ahead = git(['rev-list', '--count', 'main..HEAD']);
+      ahead = gitOut(wt.path, ['rev-list', '--count', 'main..HEAD']);
     } catch {
       continue;
     }
     if (ahead === '0') continue;
     try {
-      git(['push', '-u', 'origin', branchName]);
+      gitOut(wt.path, ['push', '-u', 'origin', branchName]);
     } catch (e) {
       console.error(
         `${s.repoName}: could not push ${branchName} to open its PR: ${String(e.stderr || e.message)

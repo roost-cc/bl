@@ -107,7 +107,7 @@ export function runBl(entry, args = [], opts = {}) {
 /**
  * Run `git …args` in `cwd`: utf8 output, stdin ignored, stdout and stderr
  * captured, unless `opts` says otherwise.
- * @param {string} cwd
+ * @param {string | undefined} cwd  undefined runs it in `process.cwd()`
  * @param {readonly string[]} args
  * @param {ChildOptions} [opts]
  * @returns {import('child_process').SpawnSyncReturns<string>}
