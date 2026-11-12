@@ -57,11 +57,15 @@ function declaredName(fn, parent) {
   return null;
 }
 
-/** The names of the async functions a source declares. */
+/**
+ * The names of the async functions a source declares. An async generator
+ * (`async function*`) is not one: a call returns its iterator at once, and
+ * the caller iterates it with `for await`, never awaits the call.
+ */
 function asyncNamesOf(ast) {
   const names = new Set();
   fullAncestor(ast, (n, _state, ancestors) => {
-    if (!isFunction(n) || !n.async) return;
+    if (!isFunction(n) || !n.async || n.generator) return;
     const name = declaredName(n, ancestors[ancestors.length - 2]);
     if (name) names.add(name);
   });
@@ -201,6 +205,6 @@ test('awaited calls: what counts as awaited', () => {
 
 test('awaited calls: async names come from declarations, expressions and methods', () => {
   const src =
-    'async function a() {} const b = async () => {}; const o = { async c() {} }; class K { async d() {} } function e() {}';
+    'async function a() {} const b = async () => {}; const o = { async c() {} }; class K { async d() {} } function e() {} async function* g() {}';
   assert.deepEqual([...asyncNamesOf(parseJs(src))].sort(), ['a', 'b', 'c', 'd']);
 });
