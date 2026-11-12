@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, writeSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
+import stringWidth from 'string-width';
 import { getProvider } from '../../src/agents/index.js';
 import { buildClaudeArgs, pathToProjectSlug } from '../../src/agents/claude.js';
 import { FOLLOW_LAST } from '../../src/agents/follow.js';
@@ -190,9 +191,30 @@ test('Gemini cannot follow a session', () => {
   assert.throws(() => gemini.followSession({ id: null, path: '/e' }), /gemini cannot follow a session/);
 });
 
-test('cutLine keeps a line within the width', () => {
-  assert.equal(cutLine('short', 80), 'short');
-  assert.equal(cutLine('💬 abcdefghij', 8), '💬 abcd…');
+test('watch_text_fits_terminal_cells: cutLine keeps every line within the width in cells', () => {
+  const cases = [
+    // [line, width, cut]
+    ['short', 80, 'short'],
+    ['💬 abcdefghij', 8, '💬 abcd…'],
+    ['界界', 3, '界…'],
+    ['💬💬', 3, '💬…'],
+    ['界界', 4, '界界'],
+    ['x', 1, 'x'],
+    ['xy', 1, '…'],
+    ['界', 1, '…'],
+    ['💬 a', 1, '…'],
+    ['xy', 0, ''],
+    // A header and a tool line, as watchRun builds them.
+    ['── implement S-1 · claude · 界界界界 ──', 20, '── implement S-1 · …'],
+    ['🔧 Read  /w/界/💬/x', 12, '🔧 Read  /w…'],
+    // One grapheme of several code points is never split.
+    ['👩‍👩‍👧 family', 3, '👩‍👩‍👧…'],
+  ];
+  for (const [line, width, cut] of cases) {
+    const got = cutLine(line, width);
+    assert.equal(got, cut, `${JSON.stringify(line)} at ${width}`);
+    assert.ok(stringWidth(got) <= width, `${JSON.stringify(got)} fits ${width} cells`);
+  }
 });
 
 /** A backlog with a run state for F-1 whose session is `session`, its run lock held by this process. */

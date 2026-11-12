@@ -16,6 +16,7 @@
  */
 
 import { basename } from 'path';
+import stringWidth from 'string-width';
 import { getProvider, hasProvider } from './agents/index.js';
 import { FOLLOW_LAST, oneLine } from './agents/follow.js';
 import { loadConfig } from './config.js';
@@ -56,10 +57,23 @@ Exit codes:
   0   The run ended.
   1   No run state for the id, or a bad argument.`;
 
-/** `line` cut to `width` columns: at most width - 1 characters, since an emoji takes two. */
+const graphemes = new Intl.Segmenter();
+
+/**
+ * `line` cut to at most `width` terminal cells, measured by `string-width`
+ * (a wide character or an emoji takes two): whole graphemes, then `…`.
+ */
 export function cutLine(line, width) {
-  const chars = [...line];
-  return chars.length <= width - 1 ? line : `${chars.slice(0, Math.max(1, width - 2)).join('')}…`;
+  if (stringWidth(line) <= width) return line;
+  let out = '';
+  let used = 0;
+  for (const { segment } of graphemes.segment(line)) {
+    const w = stringWidth(segment);
+    if (used + w > width - 1) break;
+    out += segment;
+    used += w;
+  }
+  return width >= 1 ? `${out}…` : '';
 }
 
 /** How the run ended: its status, `stale` for a `running` one no bl holds, or null while it runs. */
