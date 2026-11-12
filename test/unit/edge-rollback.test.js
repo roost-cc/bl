@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
+import { underLock } from '../helpers/covering-lock.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { _hooks, atomicWriteFile } from '../../src/atomic-write.js';
 import { addEdge, allOrNothing, fixOrder, orderJoinedEdges, removeEdge } from '../../src/block.js';
@@ -59,21 +60,23 @@ for (const [ending, end] of ENDINGS) {
       let res = null;
       let error = null;
       try {
-        res = allOrNothing(dir, () => {
-          atomicWriteFile(dir, join(dir, 'blockers.json'), 'changed blockers\n');
-          atomicWriteFile(dir, join(dir, '.gitattributes'), 'changed attributes\n');
-          // Only the put-backs run from here on.
-          _hooks.beforeRename = (tmp) => {
-            const text = readFileSync(tmp, 'utf8');
-            if (
-              (failing === 'blockers.json' && text === BLOCKERS) ||
-              (failing === '.gitattributes' && text === ATTRIBUTES)
-            ) {
-              throw new Error('injected put-back failure');
-            }
-          };
-          return end();
-        });
+        res = underLock(dir, () =>
+          allOrNothing(dir, () => {
+            atomicWriteFile(dir, join(dir, 'blockers.json'), 'changed blockers\n');
+            atomicWriteFile(dir, join(dir, '.gitattributes'), 'changed attributes\n');
+            // Only the put-backs run from here on.
+            _hooks.beforeRename = (tmp) => {
+              const text = readFileSync(tmp, 'utf8');
+              if (
+                (failing === 'blockers.json' && text === BLOCKERS) ||
+                (failing === '.gitattributes' && text === ATTRIBUTES)
+              ) {
+                throw new Error('injected put-back failure');
+              }
+            };
+            return end();
+          }),
+        );
       } catch (e) {
         error = e;
       } finally {
@@ -115,13 +118,15 @@ for (const [ending, end] of ENDINGS) {
     let res = null;
     let error = null;
     try {
-      res = allOrNothing(dir, () => {
-        atomicWriteFile(dir, join(dir, 'blockers.json'), 'changed blockers\n');
-        _hooks.beforeRename = (tmp) => {
-          if (readFileSync(tmp, 'utf8') === ATTRIBUTES) throw new Error('injected put-back failure');
-        };
-        return end();
-      });
+      res = underLock(dir, () =>
+        allOrNothing(dir, () => {
+          atomicWriteFile(dir, join(dir, 'blockers.json'), 'changed blockers\n');
+          _hooks.beforeRename = (tmp) => {
+            if (readFileSync(tmp, 'utf8') === ATTRIBUTES) throw new Error('injected put-back failure');
+          };
+          return end();
+        }),
+      );
     } catch (e) {
       error = e;
     } finally {
@@ -233,7 +238,12 @@ const WRITERS = [
   ['bl block add', BLOCKERS, (config) => addEdge(config, { blocker: 'S-3', gate: 'run', unit: 'S-2', until: 'done' })],
   ['bl block remove', BLOCKERS, (config) => removeEdge(config, { blocker: 'S-1', gate: 'run', unit: 'S-2' })],
   ['bl block list --fix', UNSORTED, (config) => fixOrder(config)],
-  ['a story that joins a feature (orderJoinedEdges)', BLOCKERS, async (config) => orderJoinedEdges(config, ['S-2'])],
+  // Its callers (`bl new --feature`, `bl attach`) hold the backlog lock.
+  [
+    'a story that joins a feature (orderJoinedEdges)',
+    BLOCKERS,
+    async (config) => underLock(config.backlogRoot, () => orderJoinedEdges(config, ['S-2'])),
+  ],
 ];
 
 for (const [name, graph, write] of WRITERS) {

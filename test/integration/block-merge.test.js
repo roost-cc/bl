@@ -5,7 +5,8 @@ import { readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
-import { BLOCKERS_FILE, formatBlockers, readBlockers, writeBlockers } from '../../src/blockers.js';
+import { BLOCKERS_FILE, formatBlockers, readBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { backlog, bl } from '../helpers/block-fixture.js';
 
 test("bl block add and remove on two clones merge without a conflict wherever the edges land, by git merge and by bl's pull", () => {
@@ -50,7 +51,7 @@ test("bl block add and remove on two clones merge without a conflict wherever th
       const tmp = mkTempDir('bl-block-clones-');
       try {
         initGitBacklog(alice);
-        writeBlockers(alice, c.seed.map(on));
+        writeBlockersLocked(alice, c.seed.map(on));
         git(alice, 'add', BLOCKERS_FILE);
         git(alice, 'commit', '-q', '-m', 'seed edges');
         const origin = join(tmp, 'origin.git');

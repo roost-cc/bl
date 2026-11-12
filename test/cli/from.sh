@@ -213,7 +213,7 @@ case $(cat "$STORIES/S1-bootstrap-shared-config/index.md") in
 esac
 
 # No stale tempdir left behind.
-if compgen -G "$TMPDIR_ROOT/.bl-new-*" >/dev/null; then
+if compgen -G "$TMPDIR_ROOT/.bl/tmp/new-*" >/dev/null; then
   fail "stale tempdir present after apply"
 else
   pass
@@ -605,7 +605,7 @@ if [[ -d "$TMPDIR_2/stories" ]] && compgen -G "$TMPDIR_2/stories/S*" >/dev/null;
 else
   pass
 fi
-if compgen -G "$TMPDIR_2/.bl-new-*" >/dev/null; then
+if compgen -G "$TMPDIR_2/.bl/tmp/new-*" >/dev/null; then
   fail "atomicity: stale tempdir present"
 else
   pass

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -269,7 +269,9 @@ async function launchWithTokens(getTokens, extra = {}, spawnResult = () => ({ st
   try {
     const cfg = loadConfig({ backlogRoot: dir });
     const wt = mkTempDir('bl-wt-');
-    const indexPath = join(dir, 'index.md');
+    // A story's spec: the token writer holds its spec lock, its covering lock (F-126).
+    const indexPath = join(dir, 'stories', 'S1-t', 'index.md');
+    mkdirSync(dirname(indexPath), { recursive: true });
     writeFileSync(indexPath, '---\nstory_id: S-1\ntitle: T\ntokens_input: 100\n---\n\n# T\n');
     const calls = [];
     const provider = new (class extends AgentProvider {

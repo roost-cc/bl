@@ -175,6 +175,44 @@ test('a failed markSideStory write leaves the previous story file and no staging
   assert.equal(
     readFileSync(join(dir, 'features', 'F1-run', 'index.md'), 'utf8'),
     featureBefore,
-    'the feature is put back',
+    'the feature is as it was',
+  );
+});
+
+// F-126 Decision A1: bl side never writes the feature index.md (F-79 D1), so
+// its undo never restores it: a restore could only revert another session's
+// write.
+test('a failed bl side keeps a feature index.md that another session changed after the snapshot', () => {
+  const { dir } = build();
+  const featurePath = join(dir, 'features', 'F1-run', 'index.md');
+  const changePath = join(dir, 'features', 'F1-run', 'change.md');
+  const featureBefore = readFileSync(featurePath, 'utf8');
+  const changeBefore = readFileSync(changePath, 'utf8');
+  const r = sideWithFaults(dir, 'F-1', 'change,edit-feature');
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(readFileSync(featurePath, 'utf8'), `${featureBefore}\nAnother session's edit.\n`, 'the edit is kept');
+  assert.equal(readFileSync(changePath, 'utf8'), changeBefore, 'the change document is as it was');
+  assert.equal(
+    storyDirs(dir).find((d) => d.startsWith('S4-')),
+    undefined,
+    'the new story is gone',
+  );
+});
+
+// F-126 Decision A1: the undo runs in a synchronous exit listener, so it
+// takes each change document's spec lock with one try. A lock another
+// process holds leaves that document, and the error names it.
+test('a failed bl side leaves a change document whose spec lock another process holds, and names it', () => {
+  const { dir } = build();
+  const r = sideWithFaults(dir, 'F-1', 'hold-change');
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(
+    r.stderr,
+    /bl side: the new story and the feature's files could not be undone \(features\/F1-run\/change\.md is left as it is \(.*the spec lock .* is held by pid \d+\)\)/,
+  );
+  assert.equal(
+    storyDirs(dir).find((d) => d.startsWith('S4-')),
+    undefined,
+    'the new story is still removed',
   );
 });

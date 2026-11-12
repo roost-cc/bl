@@ -23,11 +23,27 @@ import {
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { _hooks, STAGING_ATTEMPTS, STAGING_DIR, atomicWriteFile } from '../../src/atomic-write.js';
+import {
+  _hooks,
+  STAGING_ATTEMPTS,
+  STAGING_DIR,
+  atomicWriteFile,
+  moveIntoBacklog,
+  removeBacklogPath,
+  snapshot,
+} from '../../src/atomic-write.js';
+import { LOCK_FILE } from '../../src/lock.js';
+import { specLockPath } from '../../src/spec-file.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { underLock } from '../helpers/covering-lock.js';
+import { holdLock } from '../helpers/hold-lock.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 
 const MODULE_URL = pathToFileURL(join(import.meta.dirname, '../../src/atomic-write.js')).href;
+const LOCK_URL = pathToFileURL(join(import.meta.dirname, '../helpers/covering-lock.js')).href;
+
+/** `atomicWriteFile` under the backlog lock, the covering lock of every target here (F-126). */
+const lockedWrite = (root, path, text, opts) => underLock(root, () => atomicWriteFile(root, path, text, opts));
 
 /** A backlog root with one story file; returns the root and the target. */
 function backlog() {
@@ -89,7 +105,7 @@ test('atomicWriteFile stages in <backlog>/.bl/tmp and replaces the target', () =
     assert.ok(existsSync(tmp), 'staging file exists before the rename');
   };
   try {
-    atomicWriteFile(root, target, 'replacement\n');
+    lockedWrite(root, target, 'replacement\n');
     assert.equal(staged.length, 1);
     assert.equal(dirname(staged[0]), join(root, '.bl', 'tmp'));
     assert.equal(dirname(staged[0]), staging);
@@ -105,7 +121,7 @@ test('atomicWriteFile stages in <backlog>/.bl/tmp and replaces the target', () =
 test('atomicWriteFile leaves nothing new in git status but the target', () => {
   const { root, target } = gitBacklog();
   try {
-    atomicWriteFile(root, target, 'replacement\n');
+    lockedWrite(root, target, 'replacement\n');
     assert.equal(git(root, 'status', '--porcelain'), ' M story/index.md\n');
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -118,7 +134,7 @@ test('atomicWriteFile: a write stopped between staging and rename keeps the old 
     throw new Error('killed');
   };
   try {
-    assert.throws(() => atomicWriteFile(root, target, 'replacement\n'), {
+    assert.throws(() => lockedWrite(root, target, 'replacement\n'), {
       message: 'killed',
     });
     assert.equal(readFileSync(target, 'utf8'), 'initial\n', 'target intact');
@@ -136,8 +152,9 @@ test('atomicWriteFile: a process killed between staging and rename leaves its st
   // runs, which is what a real crash looks like.
   const script = `
     import { _hooks, atomicWriteFile } from ${JSON.stringify(MODULE_URL)};
+    import { underLock } from ${JSON.stringify(LOCK_URL)};
     _hooks.beforeRename = () => process.kill(process.pid, "SIGKILL");
-    atomicWriteFile(${JSON.stringify(root)}, ${JSON.stringify(target)}, "replacement\\n");
+    underLock(${JSON.stringify(root)}, () => atomicWriteFile(${JSON.stringify(root)}, ${JSON.stringify(target)}, "replacement\\n"));
   `;
   try {
     const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
@@ -157,7 +174,7 @@ test('atomicWriteFile does not create a missing backlog root', () => {
   const parent = mkTempDir('bl-atomic-');
   const root = join(parent, 'missing');
   try {
-    assert.throws(() => atomicWriteFile(root, join(root, 'allowed-tools.json'), 'x\n'), { code: 'ENOENT' });
+    assert.throws(() => lockedWrite(root, join(root, 'allowed-tools.json'), 'x\n'), { code: 'ENOENT' });
     assert.deepEqual(readdirSync(parent), []);
   } finally {
     rmSync(parent, { recursive: true, force: true });
@@ -175,7 +192,7 @@ test('atomicWriteFile names the staging directory and the target on EXDEV', (t) 
     symlinkSync(other, join(root, '.bl'));
     const staging = join(root, STAGING_DIR);
     assert.throws(
-      () => atomicWriteFile(root, target, 'replacement\n'),
+      () => lockedWrite(root, target, 'replacement\n'),
       (err) => err.code === 'EXDEV' && err.message.includes(staging) && err.message.includes(target),
     );
     assert.equal(readFileSync(target, 'utf8'), 'initial\n', 'target intact');
@@ -199,10 +216,10 @@ test('atomicWriteFile isolates staging files across concurrent callers', () => {
       staged.push(t);
       for (const s of staged) assert.ok(existsSync(s), `${s} staged`);
     };
-    atomicWriteFile(root, target, 'second\n');
+    lockedWrite(root, target, 'second\n');
   };
   try {
-    atomicWriteFile(root, target, 'first\n');
+    lockedWrite(root, target, 'first\n');
     assert.equal(staged.length, 2, 'both callers reached the rename');
     assert.notEqual(staged[0], staged[1], 'staging paths differ');
     for (const tmp of staged) assert.equal(dirname(tmp), staging);
@@ -230,7 +247,7 @@ test('atomicWriteFile removes its staging file when the rename fails', () => {
   };
   try {
     assert.throws(
-      () => atomicWriteFile(root, target, 'replacement\n'),
+      () => lockedWrite(root, target, 'replacement\n'),
       (err) => err.code !== undefined,
       'the rename error propagates',
     );
@@ -248,7 +265,7 @@ test('atomicWriteFile: a rename that fails for a missing target directory leaves
   const target = join(root, 'missing', 'index.md');
   const { err, lines } = captureStderr(() => {
     try {
-      atomicWriteFile(root, target, 'x\n');
+      lockedWrite(root, target, 'x\n');
       return null;
     } catch (e) {
       return e;
@@ -279,7 +296,7 @@ test('atomicWriteFile reports a staging file it could not remove', () => {
   try {
     const { err, lines } = captureStderr(() => {
       try {
-        atomicWriteFile(root, target, 'replacement\n');
+        lockedWrite(root, target, 'replacement\n');
         return null;
       } catch (e) {
         return e;
@@ -330,14 +347,14 @@ test('atomicWriteFile retries exclusive staging creation when a generated name c
         outerStagedText = readFileSync(staged[0], 'utf8');
       };
       try {
-        atomicWriteFile(root, target, 'second\n');
+        lockedWrite(root, target, 'second\n');
       } catch (e) {
         nestedError = e;
       }
       outerStagedText ??= readFileSync(staged[0], 'utf8');
     };
     try {
-      atomicWriteFile(root, target, 'first\n');
+      lockedWrite(root, target, 'first\n');
       const outer = join(staging, `index.md.${process.pid}.9.tmp`);
       if (retried) {
         assert.equal(nestedError, null, `${name}: nested call succeeds`);
@@ -386,7 +403,7 @@ for (const collisions of [1, STAGING_ATTEMPTS - 1]) {
       staged.push(tmp);
       _hooks.beforeRename = (t) => staged.push(t);
       try {
-        atomicWriteFile(root, target, 'second\n');
+        lockedWrite(root, target, 'second\n');
       } catch (e) {
         nestedError = e;
       }
@@ -394,7 +411,7 @@ for (const collisions of [1, STAGING_ATTEMPTS - 1]) {
       outerStagedText = readFileSync(staged[0], 'utf8');
     };
     try {
-      atomicWriteFile(root, target, 'first\n');
+      lockedWrite(root, target, 'first\n');
       assert.equal(nestedError?.message, DRAW_FAILURE, 'nested call fails with the draw error');
       assert.equal(drawn, 2 + collisions, 'the failing draw was the last');
       assert.deepEqual(staged, [join(staging, `index.md.${process.pid}.9.tmp`)], 'the nested call never staged');
@@ -408,3 +425,90 @@ for (const collisions of [1, STAGING_ATTEMPTS - 1]) {
     }
   });
 }
+
+// F-126 D6: each write chokepoint throws, before it changes anything, when
+// this process does not hold the target's covering lock, and names the path
+// and the lock.
+test('each write chokepoint throws without the covering lock, names the path and the lock, and changes nothing', () => {
+  const { root, target, staging } = gitBacklog();
+  const lock = join(root, LOCK_FILE);
+  const refused = (rel) => ({
+    message: `${rel}: bl writes it without its covering lock (backlog lock ${lock})`,
+  });
+  try {
+    mkdirSync(staging, { recursive: true });
+    const staged = join(staging, 'new.md');
+    writeFileSync(staged, 'staged\n');
+    const moved = join(root, 'story', 'new.md');
+
+    assert.throws(() => atomicWriteFile(root, target, 'replacement\n'), refused('story/index.md'));
+    assert.throws(() => removeBacklogPath(root, target), refused('story/index.md'));
+    assert.throws(() => moveIntoBacklog(root, staged, moved), refused('story/new.md'));
+    assert.equal(readFileSync(target, 'utf8'), 'initial\n', 'the target is as it was');
+    assert.equal(existsSync(moved), false, 'nothing moved');
+    assert.equal(git(root, 'status', '--porcelain'), '');
+
+    underLock(root, () => {
+      atomicWriteFile(root, target, 'replacement\n');
+      moveIntoBacklog(root, staged, moved);
+      removeBacklogPath(root, target);
+    });
+    assert.equal(existsSync(target), false, 'removed under the lock');
+    assert.equal(readFileSync(moved, 'utf8'), 'staged\n', 'moved under the lock');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a write needs no lock for a path git ignores, a path in .bl/ or a path outside the backlog', () => {
+  const { root } = gitBacklog();
+  const outside = mkTempDir('bl-atomic-outside-');
+  try {
+    writeFileSync(join(root, '.gitignore'), '.bl/\nreports/\n');
+    mkdirSync(join(root, 'reports'));
+    atomicWriteFile(root, join(root, 'reports', 'r.md'), 'report\n');
+    mkdirSync(join(root, '.bl', 'run'), { recursive: true });
+    atomicWriteFile(root, join(root, '.bl', 'run', 'state.json'), '{}\n');
+    atomicWriteFile(root, join(outside, 'x.md'), 'outside\n');
+    assert.equal(readFileSync(join(root, 'reports', 'r.md'), 'utf8'), 'report\n');
+    assert.equal(readFileSync(join(outside, 'x.md'), 'utf8'), 'outside\n');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+// F-126 D7: `snapshot`'s undo puts a spec file back inside its spec lock,
+// taken with one try. A lock another process holds leaves the file, named.
+test('snapshot undo leaves a spec file whose lock another process holds, and names it', () => {
+  const root = mkTempDir('bl-atomic-');
+  const story = join(root, 'stories', 'S1-one', 'index.md');
+  const blockers = join(root, 'blockers.json');
+  mkdirSync(dirname(story), { recursive: true });
+  writeFileSync(story, '---\nstory_id: S-1\n---\n');
+  writeFileSync(blockers, '{}\n');
+  try {
+    const undo = snapshot(root, [story, blockers]);
+    underLock(root, () => atomicWriteFile(root, blockers, 'changed\n'), [story]);
+    underLock(root, () => atomicWriteFile(root, story, 'changed\n'), [story]);
+    const held = holdLock(specLockPath(story));
+    let err;
+    try {
+      err = underLock(root, () => undo(new Error('first')));
+    } finally {
+      held.release();
+    }
+    assert.equal(readFileSync(blockers, 'utf8'), '{}\n', 'the file under the backlog lock is put back');
+    assert.equal(readFileSync(story, 'utf8'), 'changed\n', 'the spec file is left');
+    assert.deepEqual(
+      err.unrecovered.map((u) => u.path),
+      [story],
+    );
+    assert.match(err.message, /^first; and could not undo the write: stories\/S1-one\/index\.md \(.*held by pid/);
+
+    underLock(root, () => undo(new Error('again')));
+    assert.equal(readFileSync(story, 'utf8'), '---\nstory_id: S-1\n---\n', 'a free lock puts it back');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

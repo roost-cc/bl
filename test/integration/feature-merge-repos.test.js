@@ -10,7 +10,7 @@ import { extractSection } from '../../src/feature.js';
 import { loadConfig } from '../../src/config.js';
 import { HOME, REPOS, fm, initFeatureRepo } from '../helpers/feature-fixture.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
-import { writeBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 
 /** Land an unrelated commit on origin's main and leave the clone behind it. */
 function advanceOriginMain(g, repo) {
@@ -194,7 +194,7 @@ async function mergeFixture(repos, { deps = {}, extraRepos = [], edges = [] } = 
   const built = {};
   for (const r of all) built[r] = initFeatureRepo(g, dir, r, { branch: 'f1-feat' });
   writeFileSync(join(dir, '.gitignore'), `${all.map((r) => `${r}/\n${r}-origin.git/\n`).join('')}.bl/\n`);
-  if (edges.length > 0) writeBlockers(dir, edges);
+  if (edges.length > 0) writeBlockersLocked(dir, edges);
   g(dir, 'init', '-q', '-b', 'main');
   g(dir, 'add', '.');
   g(dir, 'commit', '-q', '-m', 'backlog');

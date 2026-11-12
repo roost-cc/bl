@@ -40,7 +40,7 @@ import { commitPaths, textAt } from './backlog-commit.js';
 import { worktreeRoot } from './config.js';
 import { BL_DIR_LINE, withGitignoreLines } from './init.js';
 import { otherHolder, release, tryLockOnce } from './kernel-lock.js';
-import { canonical } from './lock.js';
+import { canonical, withLock } from './lock.js';
 import { allActiveWorktrees, removeUnitDirIfEmpty } from './story.js';
 
 /** The lock files bl kept outside `.bl/` before S-1495; `.gitignore` listed each. */
@@ -115,13 +115,16 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   const verb = (done, would) => (dryRun ? would : done);
   const gitignorePath = join(root, '.gitignore');
   const before = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
-  const write = (next) => dryRun || atomicWriteFile(root, gitignorePath, next);
+  // `.gitignore`'s covering lock is the backlog lock (F-126).
+  const writeGitignore = async (next) => {
+    if (!dryRun) await withLock(root, () => atomicWriteFile(root, gitignorePath, next));
+  };
 
   // 1. `.bl/` first, written before any delete, so no lock file is ever
   // outside what git ignores and a step that fails leaves it for a rerun.
   let text = migrated(before, false);
   if (text !== before) {
-    write(text);
+    await writeGitignore(text);
     log(`${verb('added', 'would add')} ${BL_DIR_LINE} to .gitignore`);
   }
 
@@ -151,7 +154,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
   const dropOld = left.length === 0;
   if (dropOld && migrated(text, true) !== text) {
     text = migrated(text, true);
-    write(text);
+    await writeGitignore(text);
     log(`${verb('removed', 'would remove')} the old lock lines from .gitignore`);
   }
 

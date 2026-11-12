@@ -124,6 +124,9 @@ import { withSpecFileLock } from './spec-file.js';
 // allowed through `bl:*`.
 export const GENERATOR_VERSION = 15;
 
+/** The generated tool grants, at the backlog root (backlog-relative). */
+export const ALLOWED_TOOLS_FILE = 'allowed-tools.json';
+
 // ---------------------------------------------------------------------------
 // Hashing — canonical JSON of the relevant config slice
 // ---------------------------------------------------------------------------
@@ -516,7 +519,7 @@ export function regenReason(existing, { hash, version }) {
  * unexpected rewrite gets traced.
  */
 export async function ensureAllowedTools(backlogRoot, config) {
-  const path = join(backlogRoot, 'allowed-tools.json');
+  const path = join(backlogRoot, ALLOWED_TOOLS_FILE);
   const input = allowlistInput(config);
   return withSpecFileLock(backlogRoot, path, () => {
     let current = null;

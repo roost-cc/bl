@@ -31,8 +31,8 @@ import {
   unitIndex,
   unmetEdges,
   wouldCycle,
-  writeBlockers,
 } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { GUARDS } from '../../src/guards.js';
@@ -105,14 +105,14 @@ test('formatBlockers sorts by unit, blocker, gate, one edge per line, and round-
 test('readBlockers: a missing file is an empty graph; writeBlockers writes it sorted and a read-write is byte-identical', () => {
   const dir = mkTempDir('bl-blockers-');
   assert.deepEqual(readBlockers(dir), { edges: [], text: null, path: join(dir, BLOCKERS_FILE), schema: null });
-  writeBlockers(dir, [edge('S-y', 'run', 'S-x'), edge('S-b', 'run', 'F-1')]);
+  writeBlockersLocked(dir, [edge('S-y', 'run', 'S-x'), edge('S-b', 'run', 'F-1')]);
   const first = readFileSync(join(dir, BLOCKERS_FILE), 'utf8');
   const read = readBlockers(dir);
   assert.deepEqual(
     read.edges.map((e) => e.unit),
     ['F-1', 'S-x'],
   );
-  writeBlockers(dir, read.edges);
+  writeBlockersLocked(dir, read.edges);
   assert.equal(readFileSync(join(dir, BLOCKERS_FILE), 'utf8'), first);
   // Staged under .bl/tmp, nothing left beside the file.
   assert.ok(!existsSync(join(dir, `${BLOCKERS_FILE}.tmp`)));
@@ -329,7 +329,7 @@ function heldBacklog(edges, { s3 = 'in_progress' } = {}) {
     ],
     features: [{ id: 'F-1', title: 'Feat', status: 'running', stories: ['S-2'] }],
   });
-  if (edges) writeBlockers(dir, edges);
+  if (edges) writeBlockersLocked(dir, edges);
   return { backlogRoot: dir };
 }
 
@@ -368,7 +368,7 @@ test('heldBy: no blockers.json holds nothing and needs no flow.json; with edges 
   const config = heldBacklog(null);
   rmSync(join(config.backlogRoot, 'flow.json'));
   assert.deepEqual(heldBy(config, 'S-1', 'run'), []);
-  writeBlockers(config.backlogRoot, [edge('S-3', 'run', 'S-1')]);
+  writeBlockersLocked(config.backlogRoot, [edge('S-3', 'run', 'S-1')]);
   assert.throws(() => heldBy(config, 'S-1', 'run'), /flow\.json: missing/);
 });
 
@@ -423,7 +423,7 @@ test("heldBy, heldLines: a feature honours each story's gates with the story typ
         ],
         features: [{ id: 'F-1', title: 'Feat', status: 'running', stories: ['S-2'] }],
       });
-      writeBlockers(dir, [edge('S-3', c.gate, unit)]);
+      writeBlockersLocked(dir, [edge('S-3', c.gate, unit)]);
       const config = { backlogRoot: dir };
       const at = `${c.name}, unit ${unit}`;
       assert.deepEqual(
@@ -440,7 +440,7 @@ test("heldBy, heldLines: a feature honours each story's gates with the story typ
 test('blockers.json that is there but unreadable is a BlockersError and a blockers-json finding, never an empty graph', () => {
   const cases = [
     { kind: 'missing', make: () => {}, codes: [] },
-    { kind: 'valid', make: (dir) => writeBlockers(dir, []), codes: [] },
+    { kind: 'valid', make: (dir) => writeBlockersLocked(dir, []), codes: [] },
     { kind: 'malformed', make: (_, path) => writeFileSync(path, '{bad'), codes: ['blockers-json'] },
     { kind: 'directory', make: (_, path) => mkdirSync(path), codes: ['blockers-json'] },
     { kind: 'dangling symlink', make: (dir, path) => symlinkSync(join(dir, 'absent'), path), codes: ['blockers-json'] },
@@ -450,7 +450,7 @@ test('blockers.json that is there but unreadable is a BlockersError and a blocke
       : [
           {
             kind: 'no permission',
-            make: (dir, path) => (writeBlockers(dir, []), chmodSync(path, 0)),
+            make: (dir, path) => (writeBlockersLocked(dir, []), chmodSync(path, 0)),
             codes: ['blockers-json'],
           },
         ]),
@@ -676,7 +676,7 @@ test('a merge edge is inside its feature: no holdGraph arc, never a hold', () =>
     ],
     features: [{ id: 'F-1', title: 'Feat', status: 'running', stories: ['S-2', 'S-4'] }],
   });
-  writeBlockers(dir, [e]);
+  writeBlockersLocked(dir, [e]);
   const config = { backlogRoot: dir };
   for (const verb of ['run', 'implement', 'merge']) assert.deepEqual(heldBy(config, 'F-1', verb), [], verb);
   assert.deepEqual(heldAt(config, 'F-1', 'merge'), []);
@@ -697,9 +697,9 @@ test("wouldCycle and blockers-cycle: a cycle among one feature's merge edges", (
   );
 
   const dir = mkTempDir('bl-blockers-');
-  writeBlockers(dir, [forward]);
+  writeBlockersLocked(dir, [forward]);
   assert.deepEqual(findBlockersFindings({ backlogRoot: dir }, u, flow), []);
-  writeBlockers(dir, [forward, mergeEdge('F-1:bl', 'F-1:ci-cd')]);
+  writeBlockersLocked(dir, [forward, mergeEdge('F-1:bl', 'F-1:ci-cd')]);
   assert.deepEqual(
     findBlockersFindings({ backlogRoot: dir }, u, flow).map((f) => [f.code, f.message]),
     [
@@ -800,7 +800,7 @@ test("readEdges: the file's edges and the depends_on: keys'; an edge in the file
   });
   const config = { backlogRoot: dir };
   // S-1's key and this edge share an identity: the file's until wins.
-  writeBlockers(dir, [edge('S-3', 'run', 'S-1', 'in_progress')]);
+  writeBlockersLocked(dir, [edge('S-3', 'run', 'S-1', 'in_progress')]);
   assert.deepEqual(readEdges(config), [
     edge('S-3', 'run', 'S-1', 'in_progress'),
     edge('S-3', 'run', 'S-2'),

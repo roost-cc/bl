@@ -31,7 +31,7 @@
 
 import { spawnSync } from 'child_process';
 import { spawnSyncFiles } from './child-stdio.js';
-import { existsSync, readFileSync, readdirSync, rmSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -67,9 +67,9 @@ import { prepareFeatureRepo } from './feature-cmd.js';
 import { prepareStoryRepo } from './workon.js';
 import { newWorktreeGuards } from './session.js';
 import { hasFrontmatter } from './body.js';
-import { atomicWriteFile } from './atomic-write.js';
+import { removeBacklogPath, writeBacklogPathNow } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
-import { ensureChange } from './change-doc.js';
+import { ensureChange, isChangeFile } from './change-doc.js';
 import { unitFiles } from './backlog-graph.js';
 import { insertAfter } from './template.js';
 import { LOCK_FD_ENV, withLock } from './lock.js';
@@ -345,13 +345,14 @@ function worktreeUndo(repoPath, branch, unitDir, adopted = () => false) {
 
 /**
  * The files `bl side` may write besides new story directories: the feature
- * directory's top-level files (its change document). It writes no index
- * (F-79 D1).
+ * directory's change documents (`isChangeFile`). It writes no index (F-79
+ * D1), so the undo never restores the feature `index.md`: a restore could
+ * only revert another session's write (F-126 Decision A1).
  */
 function ownedFiles(featureDir) {
   if (!featureDir) return [];
   return readdirSync(featureDir)
-    .filter((f) => f.endsWith('.md'))
+    .filter((f) => isChangeFile(f) != null)
     .map((f) => join(featureDir, f));
 }
 
@@ -364,8 +365,13 @@ function storyEntries(root) {
  * Undo for the backlog files `bl side` writes: new story directories go, and
  * every file in `ownedFiles` is put back as it was when the undo was made
  * (under the backlog lock), uncommitted edits made before then included; a
- * feature file that was not there is removed. Nothing is touched once a new
- * story is tracked by git: someone committed it, and it is theirs to keep.
+ * change document that was not there is removed. Nothing is touched once a
+ * new story is tracked by git: someone committed it, and it is theirs to keep.
+ *
+ * The undo runs in a synchronous `exit` listener, so each change document is
+ * put back inside its spec lock taken with one try (`writeBacklogPathNow`, F-126
+ * Decision A1). A document whose lock another process holds is left as it
+ * is, the others are still put back, and the thrown error names it.
  */
 function backlogUndo(root, featureDir) {
   const storiesDir = join(root, 'stories');
@@ -380,13 +386,18 @@ function backlogUndo(root, featureDir) {
         `${tracked.join(', ')} is committed, so it is left as it is; check it with bl validate and bl status`,
       );
     }
+    const left = [];
     for (const p of new Set([...files.keys(), ...ownedFiles(featureDir)])) {
       const was = files.get(p) ?? null;
       if (read(p) === was) continue;
-      if (was == null) rmSync(p, { force: true });
-      else atomicWriteFile(root, p, was);
+      try {
+        writeBacklogPathNow(root, p, was);
+      } catch (e) {
+        left.push(`${relative(root, p)} is left as it is (${e.message})`);
+      }
     }
-    for (const d of added) rmSync(join(storiesDir, d), { recursive: true, force: true });
+    for (const d of added) removeBacklogPath(root, join(storiesDir, d));
+    if (left.length > 0) throw new Error(left.join('; '));
   };
 }
 

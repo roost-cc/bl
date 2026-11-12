@@ -35,7 +35,7 @@ import { findExistingWorktree, isSessionRunning, reposForStory } from './story.j
 import { canonical, takeDirLock } from './lock.js';
 import { unitLockPath } from './unit-lock.js';
 import { reassertTabTitle, unitTitleFields, updateTabTitle } from './tab-title.js';
-import { ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
+import { ALLOWED_TOOLS_FILE, ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
 import { resolvePermissionScopes, loadLocalTools } from './permissions.js';
 import { getProvider } from './agents/index.js';
 import {
@@ -87,7 +87,7 @@ export async function getAllowedTools(mode, { backlogRoot, roostDir, worktreePat
   if (config) {
     toolDefs = await ensureAllowedTools(backlogRoot, config);
   } else {
-    const path = join(backlogRoot, 'allowed-tools.json');
+    const path = join(backlogRoot, ALLOWED_TOOLS_FILE);
     if (!existsSync(path)) {
       throw new Error(`Missing ${path}. Run 'bl init' to copy the template from bl/templates/allowed-tools.json.`);
     }
@@ -124,7 +124,7 @@ export async function getDeniedTools(mode, { backlogRoot, config } = {}) {
   if (config) {
     toolDefs = await ensureAllowedTools(backlogRoot, config);
   } else {
-    const path = join(backlogRoot, 'allowed-tools.json');
+    const path = join(backlogRoot, ALLOWED_TOOLS_FILE);
     if (!existsSync(path)) return [];
     toolDefs = JSON.parse(readFileSync(path, 'utf8'));
   }

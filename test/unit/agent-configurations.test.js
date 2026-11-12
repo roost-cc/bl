@@ -16,6 +16,7 @@ import { migrateAgentConfigurations, main as migrate } from '../../scripts/migra
 import { ensureReposBlock, initConfigurationLists } from '../../src/init.js';
 import { _hooks } from '../../src/atomic-write.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { underLock } from '../helpers/covering-lock.js';
 
 test('D4 equality: the same agent and model, an absent model equal only to an absent model', () => {
   assert.equal(sameConfiguration({ agent: 'claude', model: 'opus' }, { agent: 'claude', model: 'opus' }), true);
@@ -274,7 +275,7 @@ test('migration_partial_write_preserves_original_and_retry_succeeds', () => {
     },
     'bl init': {
       text: JSON.stringify({ backlog: 'backlog' }),
-      run: (dir) => ensureReposBlock(dir),
+      run: (dir) => underLock(dir, () => ensureReposBlock(dir)),
       done: (j) => Object.hasOwn(j, 'repos'),
     },
   };
@@ -390,7 +391,7 @@ test('migration_preserves_destination_identity_and_mode', () => {
 test('init_preserves_destination_identity_and_mode', () => {
   assertPreservesDestination('bl init', {
     text: JSON.stringify({ backlog: 'backlog' }),
-    run: (dir) => ensureReposBlock(dir),
+    run: (dir) => underLock(dir, () => ensureReposBlock(dir)),
     done: (j) => Object.hasOwn(j, 'repos'),
   });
 });
@@ -523,7 +524,7 @@ test("bl init -A local --model writes -A's entry with its model", () => {
   const dir = mkTempDir('bl-init-local-');
   const path = join(dir, 'backlog.json');
   writeFileSync(path, JSON.stringify({ backlog: 'backlog', local: LOCAL_KEY }));
-  ensureReposBlock(dir, 'local', 'qwen3.8-27b');
+  underLock(dir, () => ensureReposBlock(dir, 'local', 'qwen3.8-27b'));
   assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).agent, [LOCAL_QWEN]);
 });
 

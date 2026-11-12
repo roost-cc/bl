@@ -15,7 +15,7 @@ import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
 import { rendered } from '../helpers/rendered.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
-import { writeBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { createTask, markTaskDone } from '../../src/task.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
 
@@ -379,7 +379,7 @@ test("an edge bl task cannot file refuses with bl block add's message and leaves
   assert.equal(git(dir, 'status', '--porcelain'), '');
 
   // A duplicate of an edge already filed by hand: refused, the file as it was.
-  writeBlockers(dir, [{ blocker: 'T-1', gate: 'merge', unit: 'F-1', until: 'done' }]);
+  writeBlockersLocked(dir, [{ blocker: 'T-1', gate: 'merge', unit: 'F-1', until: 'done' }]);
   const graph = read(dir, 'blockers.json');
   const dup = await createTask(config, { unit: { id: 'F-1', indexPath }, title: 'Twice', gate: 'merge' });
   assert.deepEqual(dup.refused, ['F-1 at merge by T-1 is already an edge (see bl block list F-1)']);
@@ -475,7 +475,7 @@ test('task_rollback_attempts_every_restore_and_reports_unrecovered_holds', async
     const dir = backlog();
     const config = loadConfig({ backlogRoot: dir });
     const blockers = join(dir, 'blockers.json');
-    writeBlockers(dir, [{ blocker: 'S-2', gate: 'merge', unit: 'S-1', until: 'done' }]);
+    writeBlockersLocked(dir, [{ blocker: 'S-2', gate: 'merge', unit: 'S-1', until: 'done' }]);
     const graphBefore = read(dir, 'blockers.json');
     let hits = 0;
     const err = await withFsFaults(

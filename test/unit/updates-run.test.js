@@ -15,7 +15,7 @@ import {
   DEFAULT_MAX_MERGES,
   RUN_LOCK_ID,
   answerDecision,
-  appendReport,
+  appendReport as appendReportHeld,
   checkCriteria,
   gateRecordLine,
   gateSteps,
@@ -34,7 +34,7 @@ import {
   storyPackages,
   storyTestPlugins,
   tail,
-  writeRunReport,
+  writeRunReport as writeRunReportHeld,
 } from '../../src/updates-run.js';
 import { GIT_ENV, addOrigin, git as backlogGit, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import {
@@ -60,6 +60,11 @@ import {
   shellCalls,
 } from '../helpers/updates-run-fixture.js';
 import { loadFlow } from '../../src/flow.js';
+import { underLock } from '../helpers/covering-lock.js';
+
+/** The report writers under the backlog lock, as `runUpdates` calls them (F-126). */
+const appendReport = (config, ...a) => underLock(config.backlogRoot, () => appendReportHeld(config, ...a));
+const writeRunReport = (config, ...a) => underLock(config.backlogRoot, () => writeRunReportHeld(config, ...a));
 
 const flow = loadFlow(dirname(FLOW_TEMPLATE));
 

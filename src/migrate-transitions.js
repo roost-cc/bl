@@ -52,6 +52,8 @@ import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChangeHeld
 import { FLOW_FILE, FLOW_TYPES, LEGACY_LOG, flowPath, fromLegacy, migratedFlowText } from './flow.js';
 import { liveSessionLocks } from './migration-txn.js';
 import { otherHolder } from './kernel-lock.js';
+import { withLock } from './lock.js';
+import { lockFor } from './write-lock.js';
 import { isUpdateStory } from './priority.js';
 import { extractReviewLog, sessionDates } from './review-log.js';
 import { RUN_DIR } from './run-lock.js';
@@ -324,13 +326,17 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
         const rel = relative(root, unit.file);
         let planned = null;
         try {
-          await updateSpecFile(root, unit.file, (fm) => {
-            const change = kind === 'task' ? null : (currentChange(unit.dir)?.doc ?? null);
-            planned = planUnit(root, rel, kind, fm, change);
-            if (!planned || planned.skip || dryRun) return false;
-            setLog(fm, planned.log);
-            if (planned.entries > 0) setDates(kind, fm, planned.log);
-          });
+          const convert = async () => {
+            await updateSpecFile(root, unit.file, (fm) => {
+              const change = kind === 'task' ? null : (currentChange(unit.dir)?.doc ?? null);
+              planned = planUnit(root, rel, kind, fm, change);
+              if (!planned || planned.skip || dryRun) return false;
+              setLog(fm, planned.log);
+              if (planned.entries > 0) setDates(kind, fm, planned.log);
+            });
+          };
+          // A task's covering lock is the backlog lock (F-126): taken first, then its spec lock.
+          await (lockFor(root, unit.file)?.kind === 'backlog' ? withLock(root, convert) : convert());
         } catch (e) {
           if (!(e instanceof SpecLockError)) throw new Error(`${rel}: ${e.message}`, { cause: e });
           skipped.push(`${unit.id}: ${e.message}; a rerun converts it`);
@@ -356,7 +362,7 @@ export async function migrate(config, { dryRun = false, log = console.log } = {}
     }
     const flowText = migratedFlowText(root);
     if (flowText != null) {
-      if (!dryRun) atomicWriteFile(root, flowPath(root), flowText);
+      if (!dryRun) await withLock(root, () => atomicWriteFile(root, flowPath(root), flowText));
       counts.flow = true;
       paths.push(FLOW_FILE);
     }

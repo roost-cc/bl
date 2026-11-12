@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'child_process';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { FrontmatterError, parseFrontmatter } from '../../src/config.js';
 import { holderOf, holds } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
@@ -23,10 +23,11 @@ import { mkTempDir } from '../helpers/tempdir.js';
 
 const SPEC = '---\nstory_id: S-1\nstatus: backlog\n---\n\n# T\n\nBody.\n';
 
-/** A backlog-like dir holding one spec: `{ dir, path }`. */
+/** A backlog-like dir holding one story spec, whose covering lock is its spec lock: `{ dir, path }`. */
 function spec(content = SPEC) {
   const dir = mkTempDir('bl-spec-file-');
-  const path = join(dir, 'index.md');
+  const path = join(dir, 'stories', 'S1-t', 'index.md');
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content);
   return { dir, path };
 }

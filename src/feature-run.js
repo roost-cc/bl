@@ -81,7 +81,7 @@ import { runHeadlessSession, launchSession, loadPrompt, loadSchema, takeSessionL
 import { cleanStderrLine } from './outcome.js';
 import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
-import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
+import { readSpecText, specText, updateSpecFile, withSpecFileLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { readComponents, sessionLockPath } from './story.js';
 import { finalTabTitle, updateTabTitle } from './tab-title.js';
@@ -335,14 +335,16 @@ const isTokenKey = (key) => key.startsWith('tokens_');
  * line end. A current file the session deleted, emptied or left without a
  * readable `---` block has no usage to keep: the snapshot goes back as it
  * was. A snapshot that is not a spec is refused with a `FrontmatterError`,
- * the current file left alone. Under the spec lock, so a token write that
- * lands meanwhile waits for it, and through `atomicWriteFile`, so a failed
- * write leaves the current file whole.
+ * the current file left alone. Under the file's covering lock
+ * (`withSpecFileLock`: its spec lock, and the backlog lock first when the
+ * session deleted it), so a token write that lands meanwhile waits for it,
+ * and through `atomicWriteFile`, so a failed write leaves the current file
+ * whole.
  */
 export async function restoreKeepingTokens(backlogRoot, indexPath, before) {
   const { content, crlf: snapCrlf } = readSpecText(before, indexPath);
   const { fm: snap, body } = parseFrontmatterOf(content, indexPath);
-  return withSpecLock(indexPath, () => {
+  return withSpecFileLock(backlogRoot, indexPath, () => {
     let raw;
     let current;
     let crlf = snapCrlf;

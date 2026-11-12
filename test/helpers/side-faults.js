@@ -7,6 +7,11 @@
  * - `mark`: the side story's frontmatter write (`stories/S…/index.md`) throws, in
  *   place or as the rename into place of an atomic write (`updateSpecFile`).
  * - `change`: the change document's rename into place throws.
+ * - `edit-feature`: with `change`, another session appends a line to the
+ *   feature `index.md` just before the change document's rename throws.
+ * - `hold-change`: the change document's rename into place succeeds and then
+ *   throws; its spec lock is then held on a descriptor of its own, so the
+ *   undo's one try finds another holder (F-126 Decision A1).
  * - `undo`: removing a story directory throws, so the undo itself fails.
  * - `undo-lock`: removing a story directory writes, to `BL_SIDE_FAULT_OUT`,
  *   whether `bl side` still holds the backlog lock, then removes it as usual.
@@ -26,12 +31,14 @@
  */
 
 import fs from 'fs';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { syncBuiltinESMExports } from 'module';
 import { spawnSync } from 'child_process';
+import fsExt from 'fs-ext';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
+import { specLockPath } from '../../src/spec-file.js';
 
 const faults = new Set(
   String(process.env.BL_SIDE_FAULT ?? '')
@@ -78,6 +85,44 @@ if (side && faults.has('change')) {
   fs.renameSync = (from, to, ...rest) => {
     if (/\/change(-\d+)?\.md$/.test(String(to))) throw new Error('injected change write failure');
     return rename(from, to, ...rest);
+  };
+}
+// After `change` (whose throw it runs before): another session's write to the
+// feature `index.md` lands while `bl side` writes the change document.
+if (side && faults.has('edit-feature')) {
+  const inner = fs.renameSync;
+  fs.renameSync = (from, to, ...rest) => {
+    if (/\/features\/F\d+-[^/]+\/change(-\d+)?\.md$/.test(String(to))) {
+      fs.appendFileSync(join(dirname(String(to)), 'index.md'), "\nAnother session's edit.\n");
+    }
+    return inner(from, to, ...rest);
+  };
+}
+// The change document's write lands and then throws; the next open of its
+// spec lock file (the undo's one try) finds it held by another descriptor, as
+// another process's would be.
+if (side && faults.has('hold-change')) {
+  const innerRename = fs.renameSync;
+  let failed = null;
+  fs.renameSync = (from, to, ...rest) => {
+    const out = innerRename(from, to, ...rest);
+    if (/\/change(-\d+)?\.md$/.test(String(to))) {
+      failed = specLockPath(String(to));
+      throw new Error('injected failure after the change write');
+    }
+    return out;
+  };
+  const innerOpen = fs.openSync;
+  let held = false;
+  fs.openSync = (path, ...rest) => {
+    if (failed && !held && String(path) === failed) {
+      held = true;
+      const fd = innerOpen(path, fs.constants.O_RDWR | fs.constants.O_CREAT, 0o644);
+      fsExt.flockSync(fd, 'exnb');
+      fs.ftruncateSync(fd, 0);
+      fs.writeSync(fd, `${process.pid}\n`, 0);
+    }
+    return innerOpen(path, ...rest);
   };
 }
 if (side && faults.has('undo')) {

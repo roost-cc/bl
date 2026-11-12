@@ -23,7 +23,7 @@
  * review step.
  */
 
-import { existsSync, readFileSync, mkdirSync, rmSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { basename, join, relative, dirname } from 'path';
 import { execFileSync, execSync } from 'child_process';
 import {
@@ -101,7 +101,7 @@ import {
   transcriptDirs,
 } from './tokens.js';
 import { updateSpecFile, updateSpecFileHeld, withSpecLock } from './spec-file.js';
-import { atomicWriteFile } from './atomic-write.js';
+import { atomicWriteFile, removeBacklogPath } from './atomic-write.js';
 import { tok, tokenFields } from './report.js';
 import { acquireLock, releaseLock, withLock } from './lock.js';
 import { holderOf } from './kernel-lock.js';
@@ -544,7 +544,7 @@ export async function cmdNew(args, config, { beforeCreate = null, afterCreate = 
       process.exit(1);
     }
     // The directory is this invocation's: it did not exist above.
-    rmSync(dir, { recursive: true, force: true });
+    removeBacklogPath(config.backlogRoot, dir);
     console.error(`bl new --feature: ${err.message}. Rolled back: ${id} was not created.`);
     process.exit(1);
   }
@@ -1899,14 +1899,16 @@ export async function cmdMerge(args, config, feature) {
     );
     process.exit(1);
   }
-  const manifestRel = writeReleaseManifest(config.backlogRoot, {
-    name: release,
-    feature: feature.id,
-    title: feature.title,
-    date: stamp,
-    change: changeRel,
-    repos: mains.commits,
-  });
+  const manifestRel = await withLock(config.backlogRoot, () =>
+    writeReleaseManifest(config.backlogRoot, {
+      name: release,
+      feature: feature.id,
+      title: feature.title,
+      date: stamp,
+      change: changeRel,
+      repos: mains.commits,
+    }),
+  );
   info(`Release manifest: ${manifestRel}`);
   releaseLines.push(
     `- Release manifest: [${manifestRel}](${relative(changeHome, join(config.backlogRoot, manifestRel))})`,

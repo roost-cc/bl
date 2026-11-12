@@ -16,8 +16,8 @@ import {
   holdGraph,
   unitIndex,
   wouldCycle,
-  writeBlockers,
 } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import {
   DECISION_PREFIX,
   decisionGateProblem,
@@ -315,7 +315,7 @@ test("heldBy: an open task's edge holds its unit until the task is done", () => 
   });
   mkdirSync(join(dir, 'tasks'));
   writeFileSync(join(dir, 'tasks', 'T1-migrate.md'), fm('draft'));
-  writeBlockers(dir, [edge('T-1', 'merge', 'F-1')]);
+  writeBlockersLocked(dir, [edge('T-1', 'merge', 'F-1')]);
   assert.deepEqual(
     heldBy({ backlogRoot: dir }, 'F-1', 'merge').map((h) => h.line),
     ['F-1 is held at merge by T-1 (draft, needs done)'],

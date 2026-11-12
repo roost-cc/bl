@@ -33,11 +33,11 @@
  * log.
  */
 
-import { existsSync, readFileSync, readdirSync, rmSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { basename, dirname, join, relative } from 'path';
 import { FrontmatterError, listMembers, parseFrontmatter, serializeFrontmatter, warn } from './config.js';
 import { extractSection, replaceSection } from './feature.js';
-import { atomicWriteFile } from './atomic-write.js';
+import { atomicWriteFile, removeBacklogPath } from './atomic-write.js';
 import { assertHeld } from './kernel-lock.js';
 import { specLockPath, withSpecFileLock, withSpecLock } from './spec-file.js';
 import { commitPaths } from './backlog-commit.js';
@@ -82,6 +82,17 @@ export function changePath(unitDir, n = 1) {
   return join(unitDir, n > 1 ? `change-${n}.md` : CHANGE_FILE);
 }
 
+/**
+ * The change document `name` names, `{ n }` (`change.md` is 1, `change-<n>.md`
+ * is n), or null when `name` is no change document's file name.
+ * @param {string} name  a file name, no directory
+ * @returns {{ n: number } | null}
+ */
+export function isChangeFile(name) {
+  const m = name.match(/^change(?:-([2-9]|[1-9]\d+))?\.md$/);
+  return m ? { n: m[1] ? parseInt(m[1], 10) : 1 } : null;
+}
+
 /** Every change document of a unit, `[{ n, path }]`, lowest number first. */
 export function listChanges(unitDir) {
   let names;
@@ -92,8 +103,8 @@ export function listChanges(unitDir) {
   }
   const out = [];
   for (const name of names) {
-    const m = name.match(/^change(?:-([2-9]|[1-9]\d+))?\.md$/);
-    if (m) out.push({ n: m[1] ? parseInt(m[1], 10) : 1, path: join(unitDir, name) });
+    const m = isChangeFile(name);
+    if (m) out.push({ n: m.n, path: join(unitDir, name) });
   }
   return out.sort((a, b) => a.n - b.n);
 }
@@ -228,7 +239,7 @@ export function updateChangeHeld(backlogRoot, path, mutate) {
  */
 export async function restoreChange(backlogRoot, path, before) {
   await withSpecFileLock(backlogRoot, path, () => {
-    if (before == null) rmSync(path, { force: true });
+    if (before == null) removeBacklogPath(backlogRoot, path);
     else atomicWriteFile(backlogRoot, path, before);
   });
 }

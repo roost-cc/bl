@@ -440,7 +440,9 @@ test('addUsageToFrontmatter accumulates across steps and accumulateTokensOnFile 
   assert.equal(fm.tokens_cache_read, '8');
   assert.match(fm.tokens_updated, /^\d{4}-\d{2}-\d{2}$/);
   const dir = mkTempDir('bl-tok-');
-  const p = join(dir, 'index.md');
+  // A feature's spec: the token writer holds its spec lock, its covering lock (F-126).
+  const p = join(dir, 'features', 'F1-t', 'index.md');
+  mkdirSync(join(dir, 'features', 'F1-t'), { recursive: true });
   writeFileSync(p, '---\nfeature_id: F-1\ntitle: T\n---\n\n# T\n');
   assert.equal(await accumulateTokensOnFile(dir, p, { input: 9, output: 1, cache_creation: 0, cache_read: 0 }), true);
   assert.match(readFileSync(p, 'utf8'), /tokens_input: 9/);
@@ -536,7 +538,8 @@ test('runHeadlessSession holds the worktree lock during spawn, logs, passes head
   try {
     const cfg = loadConfig({ backlogRoot: dir });
     const wt = mkTempDir('bl-wt-');
-    const featurePath = join(dir, 'feature.md');
+    const featurePath = join(dir, 'features', 'F1-t', 'index.md');
+    mkdirSync(join(dir, 'features', 'F1-t'), { recursive: true });
     writeFileSync(featurePath, '---\nfeature_id: F-1\ntitle: T\ntokens_output: 10\n---\n\n# T\n');
     let seen = null;
     const fake = new (class extends AgentProvider {
@@ -1343,7 +1346,8 @@ test('runHeadlessSession with usageStep adds the usage to tokens_by_step; withou
   try {
     const cfg = loadConfig({ backlogRoot: dir });
     const wt = mkTempDir('bl-wt-');
-    const featurePath = join(dir, 'feature.md');
+    const featurePath = join(dir, 'features', 'F1-t', 'index.md');
+    mkdirSync(join(dir, 'features', 'F1-t'), { recursive: true });
     writeFileSync(featurePath, '---\nfeature_id: F-1\ntitle: T\n---\n\n# T\n');
     const fake = new (class extends AgentProvider {
       supportsHeadless() {

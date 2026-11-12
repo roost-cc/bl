@@ -14,7 +14,8 @@ import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
 import { rendered } from '../helpers/rendered.js';
 import { parseFrontmatter } from '../../src/config.js';
-import { BLOCKERS_FILE, readBlockers, writeBlockers } from '../../src/blockers.js';
+import { BLOCKERS_FILE, readBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 
 /** demo-repo's home C00, and other-repo's home C02. */
 const COMPONENTS = [
@@ -121,7 +122,7 @@ test('attach on a story already in the feature still turns its run edges into or
   ];
   for (const [name, feature, paths] of cases) {
     const dir = backlog({ story: { feature } });
-    writeBlockers(dir, [{ blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done' }]);
+    writeBlockersLocked(dir, [{ blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done' }]);
     initGitBacklog(dir);
     if (feature) {
       const v = JSON.parse(bl(['validate', '--json'], dir).stdout).findings.filter((f) => f.code === 'blockers-cycle');
@@ -157,7 +158,7 @@ test('attach_already_in_feature_non_repo_reports_turned_edges', () => {
   ];
   for (const [name, inGit, extra, said] of cases) {
     const dir = backlog({ story: { feature: 'F-1' } });
-    writeBlockers(dir, [{ blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done' }]);
+    writeBlockersLocked(dir, [{ blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done' }]);
     if (inGit) initGitBacklog(dir);
     const r = bl(['attach', 'S-2', 'F-1', ...extra], dir);
     assert.equal(r.status, 0, r.stderr);
@@ -185,7 +186,7 @@ test('attach_keeps_or_refuses_a_run_edge_with_active_when: a story already in th
     until: 'done',
     active_when: { unit: 'S-1', status: 'refined' },
   };
-  writeBlockers(dir, [edge]);
+  writeBlockersLocked(dir, [edge]);
   initGitBacklog(dir);
   const head = git(dir, 'rev-parse', 'HEAD');
   const v = JSON.parse(bl(['validate', '--json'], dir).stdout).findings.filter((f) => f.code === 'blockers-cycle');

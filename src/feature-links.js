@@ -21,7 +21,6 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
-  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -31,7 +30,8 @@ import { basename, join, normalize, relative, sep } from 'path';
 import { findBacklogRoot, parseFrontmatter } from './config.js';
 import { withLock } from './lock.js';
 import { RUN_DIR } from './run-lock.js';
-import { atomicWriteFile } from './atomic-write.js';
+import { atomicWriteFile, removeBacklogPath } from './atomic-write.js';
+import { withSpecLock } from './spec-file.js';
 
 const SUFFIX = '.links.json';
 
@@ -108,14 +108,15 @@ export function writeRecord(backlogRoot, record) {
 }
 
 /**
- * Settle one record; the caller holds the backlog lock. Throws, before
+ * Settle one record; the caller holds the backlog lock. Each story is
+ * restored under its spec lock (its covering lock, F-126). Rejects, before
  * anything is written, on a record `checkRecord` refuses.
  *
- * @returns {{ state: "complete" | "rolled back" | "kept", left: string[] }}
+ * @returns {Promise<{ state: "complete" | "rolled back" | "kept", left: string[] }>}
  *   `kept`: the stories in `left` could not be restored, so they still name
  *   the feature, which is kept, and so is the record.
  */
-export function settle(backlogRoot, path) {
+export async function settleRecord(backlogRoot, path) {
   const record = JSON.parse(readFileSync(path, 'utf8'));
   checkRecord(backlogRoot, record, basename(path).slice(0, -SUFFIX.length));
   const featurePath = join(backlogRoot, record.dir, 'index.md');
@@ -141,15 +142,16 @@ export function settle(backlogRoot, path) {
 
   const left = [];
   for (const s of named) {
+    const storyPath = join(backlogRoot, s.path);
     try {
       failPoint(`restore:${s.id}`);
-      atomicWriteFile(backlogRoot, join(backlogRoot, s.path), s.before);
+      await withSpecLock(storyPath, () => atomicWriteFile(backlogRoot, storyPath, s.before));
     } catch {
       left.push(s.id);
     }
   }
   if (left.length === 0) {
-    rmSync(join(backlogRoot, record.dir), { recursive: true, force: true });
+    removeBacklogPath(backlogRoot, join(backlogRoot, record.dir));
     unlinkSync(path);
     return { state: 'rolled back', left };
   }
@@ -175,13 +177,13 @@ export async function settlePending(backlogRoot) {
   const pending = () => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(SUFFIX)) : []);
   if (pending().length === 0) return;
   // A `bl new --feature` still running holds the lock and removes its record.
-  const failed = await withLock(backlogRoot, () => {
+  const failed = await withLock(backlogRoot, async () => {
     const out = [];
     for (const f of pending()) {
       const feature = f.slice(0, -SUFFIX.length);
       let state, left;
       try {
-        ({ state, left } = settle(backlogRoot, join(dir, f)));
+        ({ state, left } = await settleRecord(backlogRoot, join(dir, f)));
       } catch (err) {
         out.push(
           `bl: could not settle ${join(RUN_DIR, f)}: ${err.message}. Check ${feature} and its stories by hand, then delete the record.`,

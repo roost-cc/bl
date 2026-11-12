@@ -27,6 +27,7 @@ import { info, warn } from './config.js';
 import { HEADLESS_ENV, isHeadless } from './agents/provider.js';
 import { PRIORITY_FILE } from './priority.js';
 import { atomicWriteFile } from './atomic-write.js';
+import { ALLOWED_TOOLS_FILE } from './allowed-tools.js';
 import { MAIN_REFSPEC, assertMainSyncLock, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
 import { RUN_DIR, ensureRunDir } from './run-lock.js';
@@ -794,7 +795,7 @@ export function commandPullsBacklog(command, argv) {
  * conflict in it is a real one.
  */
 export function isGeneratedPath(rel) {
-  return rel === 'allowed-tools.json';
+  return rel === ALLOWED_TOOLS_FILE;
 }
 
 function rebaseInProgress(root) {

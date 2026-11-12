@@ -17,9 +17,9 @@
  */
 
 import { spawnSync } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import { dirname, join, relative, resolve } from 'path';
-import { atomicWriteFile } from './atomic-write.js';
+import { moveIntoBacklog, removeBacklogPath, writeBacklogPathNow } from './atomic-write.js';
 import { discardChanges } from './backlog-commit.js';
 import { MAIN_REFSPEC, mainSyncLockPath } from './main-sync.js';
 import { otherHolder, release, tryLockOnce } from './kernel-lock.js';
@@ -84,25 +84,31 @@ export async function applyMigration(config, { apply, message, commit, commitCon
   process.prependListener('SIGINT', onSignal);
   process.prependListener('SIGTERM', onSignal);
 
+  // The caller holds the backlog lock. `apply` is synchronous, so a spec file
+  // is written inside its spec lock taken with one try (F-126 D7): a lock
+  // another process holds fails the migration, which then restores.
   const paths = new Set();
   const ensureDir = (dir) => mkdirSync(dir, { recursive: true });
   const write = (path, text) => {
     ensureDir(dirname(path));
-    atomicWriteFile(root, path, text);
+    writeBacklogPathNow(root, path, text);
     paths.add(rel(path));
   };
   const move = (from, to) => {
     ensureDir(dirname(to));
-    renameSync(from, to);
+    moveIntoBacklog(root, from, to);
     paths.add(rel(from));
     paths.add(rel(to));
   };
   const remove = (path) => {
-    rmSync(path, { recursive: true });
+    removeBacklogPath(root, path);
     paths.add(rel(path));
   };
   const rmdir = (dir) => {
-    rmdirSync(dir);
+    if (readdirSync(dir).length > 0) {
+      throw Object.assign(new Error(`ENOTEMPTY: directory not empty, ${dir}`), { code: 'ENOTEMPTY' });
+    }
+    removeBacklogPath(root, dir);
     paths.add(rel(dir));
   };
 
