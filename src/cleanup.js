@@ -265,19 +265,26 @@ export async function runBacklogSync(config, runner, { message, storyIds = [] },
     return syncAndCommit(config, { message, storyIds });
   }
   const args = syncChildArgs(runner.blEntry, { message, storyIds });
-  const r = exec(args[0], args.slice(1), {
-    cwd: config.backlogRoot,
-    stdio: ['inherit', process.stderr, process.stderr],
-    env: process.env,
-  });
-  if (r.status === 0) return { committed: false, paths: [], child: true };
-  return {
+  const failed = (error) => ({
     committed: false,
     paths: [],
     child: true,
     command: ['node', ...args].map(displayArg).join(' '),
-    error: describeExit(r, 'child bl sync'),
-  };
+    error,
+  });
+  let r;
+  try {
+    r = exec(args[0], args.slice(1), {
+      cwd: config.backlogRoot,
+      stdio: ['inherit', process.stderr, process.stderr],
+      env: process.env,
+    });
+  } catch (err) {
+    // A runner that throws (the capture files cannot be made) failed too.
+    return failed(err.message);
+  }
+  if (r.status === 0) return { committed: false, paths: [], child: true };
+  return failed(describeExit(r, 'child bl sync'));
 }
 
 /**

@@ -237,3 +237,33 @@ test('runBacklogSync: a child that could not start reports the spawn error', asy
   assert.equal(res.error, 'spawn ENOENT');
   assert.match(res.command, /^node \/r\/bl\/src\/bl\.js sync /);
 });
+
+// Every way the child runner fails returns the command to re-run by hand.
+for (const [name, exec, error] of [
+  ['exits non-zero', () => ({ status: 2, signal: null, stdout: null, stderr: null }), 'child bl sync exited 2'],
+  ['is ended by a signal', () => ({ status: null, signal: 'SIGKILL' }), 'child bl sync was ended by SIGKILL'],
+  ['could not start', () => ({ status: null, signal: null, error: new Error('spawn EACCES') }), 'spawn EACCES'],
+  [
+    'throws',
+    () => {
+      throw new Error('injected EACCES');
+    },
+    'injected EACCES',
+  ],
+]) {
+  test(`runBacklogSync: a child runner that ${name} keeps the recovery command`, async () => {
+    const res = await runBacklogSync(
+      { backlogRoot: '/b' },
+      { kind: 'child', blEntry: '/r/bl/src/bl.js' },
+      { message: 'test', storyIds: ['S-1'] },
+      exec,
+    );
+    assert.deepEqual(res, {
+      committed: false,
+      paths: [],
+      child: true,
+      command: 'node /r/bl/src/bl.js sync --commit -m test --story S-1',
+      error,
+    });
+  });
+}
