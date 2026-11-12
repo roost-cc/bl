@@ -290,10 +290,11 @@ function watchedModule(spec, rel) {
 /**
  * The local names a module binds to a watched module's exports: local name →
  * the export's name, `*` for a namespace or default import. A name
- * destructured from a namespace (`const { writeFileSync: put } = fs`, or from
- * `fs.promises`) is bound to the property it takes.
+ * destructured from a watched value (`const { writeFileSync: put } = fs`, from
+ * `fs.promises`, from an imported `promises`, or from an alias of one) is
+ * bound to the property it takes.
  */
-function childBindings(ast, rel) {
+function childBindings(ast, rel, values) {
   const out = new Map();
   simple(ast, {
     ImportDeclaration(n) {
@@ -305,8 +306,7 @@ function childBindings(ast, rel) {
   });
   simple(ast, {
     VariableDeclarator(d) {
-      const from = d.init?.type === 'MemberExpression' ? d.init.object : d.init;
-      if (d.id.type !== 'ObjectPattern' || from?.type !== 'Identifier' || out.get(from.name) !== '*') return;
+      if (d.id.type !== 'ObjectPattern' || !d.init || !resolvedCallee(d.init, out, values).watched) return;
       for (const p of d.id.properties) {
         if (p.type === 'Property' && !p.computed && p.value.type === 'Identifier') out.set(p.value.name, p.key.name);
       }
@@ -437,8 +437,8 @@ function writesFlag(node) {
  */
 export function backlogWriteCalls(source, rel) {
   const ast = parseSource(source);
-  const bindings = childBindings(ast, rel);
   const values = valuesOf(ast);
+  const bindings = childBindings(ast, rel, values);
   const out = [];
   ancestor(ast, {
     CallExpression(call, _state, ancestors) {
@@ -622,6 +622,19 @@ const ALIAS_CASES = [
     imports: FS,
     keys: ['link', 'cp'],
   },
+  {
+    name: 'a name destructured from an alias of fs.promises',
+    src: 'const fsp = fs.promises; const { link } = fsp;\nlink(p, q);',
+    imports: FS,
+    keys: ['link'],
+  },
+  {
+    name: 'a name destructured from an imported promises',
+    src: 'const { symlink: s } = promises;\ns(p, q);',
+    imports: `import { promises } from 'fs';`,
+    keys: ['symlink'],
+  },
+  { name: 'a name destructured from an unrelated value', src: 'const { link } = graph;\nlink(p, q);', keys: [] },
   {
     name: 'an alias of fs.promises.open with a writing flag',
     src: `const o = fs.promises.open;\no(p, 'w'); o(p, 'r');`,
