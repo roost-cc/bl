@@ -364,7 +364,7 @@ export async function main(argv, env = process.env) {
     // With nothing staged, --commit is a no-op: it pulls nothing (F-113 D3).
     if (!staged) return;
     if ((await pullBeforeCommand(config)).state === 'unsafe') process.exit(1);
-    await commitStaged(root, loadBacklog(config));
+    await commitStaged(root, config);
     return;
   }
   const graph = loadBacklog(config);
@@ -462,9 +462,11 @@ async function reset(root) {
  * conflict; or `{ conflict, ids, markers }` with the proposed list and
  * `git merge-file`'s output. `ids` has no closed unit (`closed` names them)
  * and each id once. `inputs` is the three files' text, so a caller can tell
- * whether they changed since.
+ * whether they changed since. The units are loaded here, under the lock, so
+ * a unit closed during a lock wait or a question is taken out; `graph` is
+ * that load.
  */
-function mergeStaged(root, graph) {
+function mergeStaged(root, config) {
   let staged;
   try {
     staged = readStaged(root);
@@ -506,10 +508,20 @@ function mergeStaged(root, graph) {
     }
   }
   const list = merged ?? proposal(staged, base, main);
+  const graph = loadBacklog(config);
   const closed = closedIn(graph, list);
   const ids = [...new Set(list.filter((id) => !closed.includes(id)))];
   const inputs = [read(STAGED_FILE), read(BASE_FILE), mainText].join('\0');
-  return { repo, main, mainText, ids, closed, inputs, ...(merged ? { clean: true } : { markers: merge.stdout }) };
+  return {
+    repo,
+    main,
+    mainText,
+    graph,
+    ids,
+    closed,
+    inputs,
+    ...(merged ? { clean: true } : { markers: merge.stdout }),
+  };
 }
 
 /**
@@ -567,9 +579,9 @@ function reportCommit(res, closed) {
  * y/n with the lock let go; the answer is acted on under the lock again,
  * only when the three files are as they were when it was asked.
  */
-async function commitStaged(root, graph) {
+async function commitStaged(root, config) {
   const first = await withLock(root, async () => {
-    const plan = mergeStaged(root, graph);
+    const plan = mergeStaged(root, config);
     if (!plan.clean) return plan;
     return { plan, done: await commitPlan(root, plan) };
   });
@@ -585,17 +597,17 @@ async function commitStaged(root, graph) {
     console.error(NO_TERMINAL);
     process.exit(1);
   }
-  printOrder(graph, plan.ids, 'Proposed order (the staged order, less what main took out, plus what main added):');
+  printOrder(plan.graph, plan.ids, 'Proposed order (the staged order, less what main took out, plus what main added):');
   const yes = await askYes(`Commit this order to ${PRIORITY_FILE}? [y/n] `);
   const res = await withLock(root, async () => {
-    const now = mergeStaged(root, graph);
+    const now = mergeStaged(root, config);
     if (now.refused) return now;
     if (now.inputs !== plan.inputs) {
       return {
         refused: `${STAGED_FILE} or ${PRIORITY_FILE} changed while you answered; nothing was written. Run bl rank --commit again.`,
       };
     }
-    if (yes) return { done: await commitPlan(root, now) };
+    if (yes) return { done: await commitPlan(root, now), closed: now.closed };
     // The marked copy already holds main's changes: main becomes the base, so
     // the next --commit does not apply them twice.
     atomicWriteFile(root, join(root, STAGED_FILE), now.markers);
@@ -604,5 +616,5 @@ async function commitStaged(root, graph) {
   });
   if (res.refused) refuse(res.refused);
   if (res.marked) refuse(`wrote git's conflict markers into ${STAGED_FILE}; ${new StagedConflictError().message}`);
-  reportCommit(res.done, plan.closed);
+  reportCommit(res.done, res.closed);
 }

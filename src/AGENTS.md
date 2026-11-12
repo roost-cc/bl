@@ -3928,7 +3928,9 @@ snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FIL
   entry of a unit) and is committed alone (`commitPaths`, which pushes),
   `chore: commit the staged order of priority.yaml[; F-5 out (done)]`; both copies are then
   deleted. An order that is already `priority.yaml`'s commits nothing and deletes the copies. A
-  failed commit puts `priority.yaml` back as HEAD has it and keeps the copies.
+  failed commit puts `priority.yaml` back as HEAD has it and keeps the copies. Each lock hold
+  loads the units again (`mergeStaged`), so a unit closed during a lock wait or the y/n question
+  is taken out too.
 - On a conflict `--commit` proposes a list (`proposal`): the staged order without the units main
   took out since the base, with the units main added at the end, closed units out. With stdin
   not a terminal it changes nothing and exits 1, its last stderr line `NO_TERMINAL`

@@ -1,10 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, unlinkSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+import { acquireLock, releaseLock } from '../../src/lock.js';
 import { STAGED_CONFLICT, STAGED_FILE } from '../../src/priority.js';
 import { NO_TERMINAL } from '../../src/rank-cmd.js';
-import { git } from '../helpers/git-backlog.js';
+import { GIT_ENV, git } from '../helpers/git-backlog.js';
+import { startBlBehindLock } from '../helpers/run-bl.js';
 import {
   CLOSED,
   HAND,
@@ -20,6 +23,11 @@ import {
 } from '../helpers/rank-fixture.js';
 
 const SUBJECT = 'chore: commit the staged order of priority.yaml';
+
+/** The env under which bl asks in a terminal and a file changes at the question (`on-question.js`). */
+const ON_QUESTION = {
+  NODE_OPTIONS: `--import=${fileURLToPath(new URL('../helpers/on-question.js', import.meta.url))}`,
+};
 
 /** Stage `S-2` between S-1 and F-2 while main puts F-1 there: the two edits conflict. */
 function conflicted() {
@@ -75,6 +83,46 @@ test('rank commit with no staged copy skips pull', () => {
   assert.equal(r.stderr, '');
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'origin moved, nothing pulled');
   assert.equal(read(dir), CLOSED);
+});
+
+test('rank commit reloads work units after lock and answer', async () => {
+  const s2 = (dir) => join(dir, 'stories', 'S2', 'index.md');
+  const closedText = (dir) => readFileSync(s2(dir), 'utf8').replace(/^status: .*$/m, 'status: done');
+
+  // A clean merge: S-2 closes while --commit waits for the backlog lock. No
+  // origin, so the wait is the merge's own, not the pull's.
+  let dir = backlog(list('S-1', 'F-2'));
+  assert.equal(bl(['rank', 'S-2', '--after', 'S-1'], dir).status, 0);
+  assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
+  git(dir, 'remote', 'remove', 'origin');
+  await acquireLock(dir);
+  let run;
+  try {
+    run = startBlBehindLock(['rank', '--commit'], { cwd: dir, env: GIT_ENV });
+    await run.blocked;
+    writeFileSync(s2(dir), closedText(dir));
+  } finally {
+    releaseLock(dir);
+  }
+  const waited = await run.closed;
+  assert.equal(waited.status, 0, waited.stderr);
+  assert.match(waited.stderr, /took out S-2 \(done\)/);
+  assert.equal(read(dir), list('F-1', 'S-1', 'F-2'), 'lock wait: S-2 out');
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), `${SUBJECT}; S-2 out (done)`);
+
+  // A conflict: S-2 closes while the operator answers y.
+  dir = conflicted();
+  const r = bl(
+    ['rank', '--commit'],
+    dir,
+    { ...ON_QUESTION, BL_TEST_ON_QUESTION_FILE: s2(dir), BL_TEST_ON_QUESTION_TEXT: closedText(dir) },
+    'y\n',
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /S-2/, 'S-2 was open when the proposal was shown');
+  assert.match(r.stderr, /took out S-2 \(done\)/);
+  assert.equal(read(dir), list('S-1', 'F-2', 'F-1'), 'answer: S-2 out');
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), `${SUBJECT}; S-2 out (done)`);
 });
 
 test('--commit pulls first and merges a change on main cleanly', () => {
