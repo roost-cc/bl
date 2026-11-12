@@ -69,8 +69,8 @@ type Run struct {
 // runs through its own bl; nil for URL, a page the view opens. Each argv element is a
 // text/template (F-113 D7), which actions.Render renders. Input is "", "note" (optional text)
 // or "reason" (needed text), added as the command's last word. Window names the tmux window the
-// command opens in; "" runs it as a child, with a result box. About are lines the y/n question
-// shows; Stops is the run whose `stopped` end does not notify (D8).
+// command opens in; "" runs it as a child, which reports on the note line. Stops is the run whose
+// `stopped` end does not notify (D8).
 type Action struct {
 	Key    string   `json:"key"`
 	Label  string   `json:"label"`
@@ -78,7 +78,6 @@ type Action struct {
 	Input  string   `json:"input"`
 	Window string   `json:"window"`
 	URL    string   `json:"url"`
-	About  []string `json:"about"`
 	Stops  string   `json:"stops"`
 }
 

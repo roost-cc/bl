@@ -108,10 +108,10 @@ type Model struct {
 	feed        []watch.Event
 	follow      bool   // whether the detail box's feed shows its newest lines
 	feedBack    int    // with follow off: how many lines the feed is scrolled back
-	note        string // a red line in the bottom border until the next key (`w needs tmux`)
+	note        string // a red line in the bottom border until the next key (`w needs tmux`, a failed action)
 	help        bool
 	dialog      *dialog // the action dialog (D7), while it is open
-	actionSeq   int     // how many actions ran as a child: the number of the last (dialog.seq)
+	jobs        []job   // the action queue (F-127 Decision 4): the first runs, the rest wait
 	snap        *stream.Snapshot
 	stream      *stream.Stream
 	gen         int // the generation of the stream the model reads
@@ -210,13 +210,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case watchStartedMsg, watch.EventMsg, watch.EndMsg:
 		return m.watchMsg(msg)
-	case tmuxDoneMsg:
-		// A window that opened leaves the note line as it is: a newer note stays.
-		if msg.Err != "" {
-			m.note = msg.Err
-		}
-	case actionDoneMsg:
-		return m.actionDone(msg), nil
+	case jobDoneMsg:
+		return m.jobDone(msg)
 	}
 	return m, nil
 }
@@ -246,25 +241,30 @@ func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	return m, cmds
 }
 
-// warnings are the bottom border's red warnings: the note of the last key (`w needs tmux`) until
-// the next key, then `<sender> failed: <why>` for each sender whose last command failed, in the
-// senders' order.
+// warnings are the bottom border's note line, styled: the command of the action that runs, in the
+// text color (F-127 Decision 2); then in red the note of the last key or of a failed action
+// (`w needs tmux`) until the next key, and `<sender> failed: <why>` for each sender whose last
+// command failed, in the senders' order.
 func (m Model) warnings() []string {
 	var out []string
+	if len(m.jobs) > 0 {
+		out = append(out, styleText.Render(m.jobs[0].show))
+	}
 	if m.note != "" {
-		out = append(out, m.note)
+		out = append(out, styleError.Render(m.note))
 	}
 	for _, s := range m.senders {
 		if why, ok := m.failed[s.Name]; ok {
-			out = append(out, s.Name+" failed: "+why)
+			out = append(out, styleError.Render(s.Name+" failed: "+why))
 		}
 	}
 	return out
 }
 
-// key handles a key of D6. With the action dialog open, the dialog takes it; with the help open,
-// any key but quit closes it.
+// key handles a key of D6. Each key clears the note. With the action dialog open, the dialog takes
+// it; with the help open, any key but quit closes it. Quit leaves an action that runs to go on.
 func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.note = ""
 	if m.dialog != nil {
 		return m.dialogKey(msg)
 	}
@@ -277,7 +277,6 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.help = false
 		return m, nil
 	}
-	m.note = ""
 	switch {
 	case m.focus == nextBox && key.Matches(msg, keys.yank, keys.after, keys.before, keys.unrank, keys.cancel, keys.commit, keys.reset):
 		return m.rankKey(msg.String())

@@ -43,53 +43,35 @@ func selectIn(t *testing.T, m Model, id string) Model {
 	return m
 }
 
-// answer presses y on the open question and returns the model after the child's end.
-func answer(t *testing.T, m Model) Model {
-	t.Helper()
-	m, cmd := press(t, m, text("y"))
-	if cmd == nil {
-		t.Fatalf("y: no command:\n%s", dialogText(m))
-	}
-	m, _ = update(t, m, cmd())
-	return m
-}
-
-func TestYankThenPutRunsTheRenderedRankCommandAfterYN(t *testing.T) {
+func TestYankThenPutRunsTheRenderedRankCommandAtOnce(t *testing.T) {
 	for _, c := range []struct{ key, where string }{{"p", "--after"}, {"P", "--before"}} {
 		dir := fakeTools(t, true, "staged: S-1400 "+c.where+" F-84", 0)
 		m, _ := press(t, atRow(t, nextBox, "S-1400"), text("y"))
 		if m.yanked != "S-1400" {
 			t.Fatalf("y on S-1400: yanked %q", m.yanked)
 		}
-		m, _ = press(t, selectIn(t, m, "F-84"), text(c.key))
-		if m.dialog == nil || m.dialog.stage != stageAsk || !strings.Contains(dialogText(m), "runs: bl rank S-1400 "+c.where+" F-84") {
-			t.Fatalf("%s on F-84 did not ask for the rendered command: %+v", c.key, m.dialog)
+		// The put renders its argv with the yanked id at the key press, and the yank ends then.
+		m, cmd := press(t, selectIn(t, m, "F-84"), text(c.key))
+		if m.dialog != nil || cmd == nil || m.yanked != "" || !strings.Contains(noteLine(t, m), "┐bl rank S-1400 "+c.where+" F-84┌") {
+			t.Fatalf("%s on F-84: dialog %+v, yanked %q, the note line %q", c.key, m.dialog, m.yanked, noteLine(t, m))
 		}
-		// n keeps the yank.
-		if m, _ = press(t, m, text("n")); m.dialog != nil || m.yanked != "S-1400" {
-			t.Fatalf("n: dialog %v, yanked %q", m.dialog, m.yanked)
-		}
-		m, _ = press(t, m, text(c.key))
-		m = answer(t, m)
+		m = settle(t, m, cmd)
 		if got := argsOf(t, dir, "bl"); !slices.Equal(got, []string{"rank", "S-1400", c.where, "F-84"}) {
 			t.Errorf("%s: bl got %q", c.key, got)
 		}
-		if out := dialogText(m); !strings.Contains(out, "exit 0") || !strings.Contains(out, "stderr: staged: S-1400") {
-			t.Errorf("%s: the result box:\n%s", c.key, out)
-		}
-		if m.yanked != "" {
-			t.Errorf("%s: the put left the yank %q", c.key, m.yanked)
+		if m.dialog != nil || m.note != "" {
+			t.Errorf("%s: dialog %+v, note %q", c.key, m.dialog, m.note)
 		}
 	}
 }
 
 func TestXUnranksTheSelectedRankedRow(t *testing.T) {
 	dir := fakeTools(t, true, "", 0)
-	m, _ := press(t, atRow(t, nextBox, "F-80"), text("x"))
-	if !strings.Contains(dialogText(m), "runs: bl rank F-80 --remove") {
-		t.Fatalf("x on F-80:\n%s", dialogText(m))
+	m, cmd := press(t, atRow(t, nextBox, "F-80"), text("x"))
+	if m.dialog != nil || !strings.Contains(noteLine(t, m), "┐bl rank F-80 --remove┌") {
+		t.Fatalf("x on F-80: dialog %+v, the note line %q", m.dialog, noteLine(t, m))
 	}
-	answer(t, m)
+	settle(t, m, cmd)
 	if got := argsOf(t, dir, "bl"); !slices.Equal(got, []string{"rank", "F-80", "--remove"}) {
 		t.Errorf("bl got %q", got)
 	}
@@ -138,23 +120,23 @@ func TestEscCancelsTheYankAndTheNextBoxMarksIt(t *testing.T) {
 	}
 }
 
-func TestCAndRRunCommitAndResetAfterYN(t *testing.T) {
+func TestCAndRRunCommitAndResetAtOnce(t *testing.T) {
 	const noTerminal = "conflict: run bl rank --commit in a terminal"
 	dir := fakeTools(t, true, noTerminal, 1)
-	m, _ := press(t, staged(atRow(t, nextBox, "F-84")), text("C"))
-	if out := dialogText(m); !strings.Contains(out, "runs: bl rank --commit") || strings.Contains(out, "F-84 · approved") {
-		t.Fatalf("C: the question is about the box, not the row:\n%s", out)
+	m, cmd := press(t, staged(atRow(t, nextBox, "F-84")), text("C"))
+	if m.dialog != nil || cmd == nil || !strings.Contains(noteLine(t, m), "┐bl rank --commit┌") {
+		t.Fatalf("C: dialog %+v, the note line %q", m.dialog, noteLine(t, m))
 	}
-	m = answer(t, m)
+	m = settle(t, m, cmd)
 	if got := argsOf(t, dir, "bl"); !slices.Equal(got, []string{"rank", "--commit"}) {
 		t.Errorf("C: bl got %q", got)
 	}
-	if out := dialogText(m); !strings.Contains(out, "exit 1") || !strings.Contains(out, "stderr: "+noTerminal) {
-		t.Errorf("C on a conflict: the result box:\n%s", out)
+	if want := "bl rank --commit: exit 1 · " + noTerminal; m.note != want {
+		t.Errorf("C on a conflict: the note %q, want %q", m.note, want)
 	}
 	dir = fakeTools(t, true, "", 0)
-	m, _ = press(t, staged(atRow(t, nextBox, "S-1400")), text("R"))
-	answer(t, m)
+	m, cmd = press(t, staged(atRow(t, nextBox, "S-1400")), text("R"))
+	settle(t, m, cmd)
 	if got := argsOf(t, dir, "bl"); !slices.Equal(got, []string{"rank", "--reset"}) {
 		t.Errorf("R: bl got %q", got)
 	}
@@ -177,27 +159,33 @@ func TestAConflictRefusesEveryRankingKeyButR(t *testing.T) {
 			t.Errorf("%s in conflict: dialog %v, note %q, yanked %q", k, got.dialog, got.note, got.yanked)
 		}
 	}
-	if m, _ = press(t, m, text("R")); !strings.Contains(dialogText(m), "runs: bl rank --reset") {
-		t.Errorf("R in conflict:\n%s", dialogText(m))
+	m, cmd := press(t, m, text("R"))
+	if cmd == nil || len(m.jobs) != 1 || m.jobs[0].show != "bl rank --reset" {
+		t.Errorf("R in conflict: %+v", m.jobs)
 	}
+	settle(t, m, cmd)
 }
 
 func TestOtherBoxesKeepTheirKeys(t *testing.T) {
 	fakeTools(t, true, "", 0)
 	// In the runs box, p opens the pull request (F-88); y, x, C and R are no keys there.
 	m := staged(atRow(t, runsBox, "S-1330"))
-	if got, _ := press(t, m, text("p")); !strings.Contains(dialogText(got), "runs: xdg-open https://example.invalid/roost-cc/bl/pull/15") {
-		t.Errorf("p in the runs box:\n%s", dialogText(got))
+	got, cmd := press(t, m, text("p"))
+	if len(got.jobs) != 1 || got.jobs[0].show != "xdg-open https://example.invalid/roost-cc/bl/pull/15" {
+		t.Errorf("p in the runs box: %+v", got.jobs)
 	}
+	settle(t, got, cmd)
 	for _, k := range []string{"y", "x", "C", "R"} {
 		if got, cmd := press(t, m, text(k)); got.dialog != nil || cmd != nil || got.yanked != "" {
 			t.Errorf("%s in the runs box: dialog %v, yanked %q", k, got.dialog, got.yanked)
 		}
 	}
 	// In the runs box, r starts the run, as before.
-	if got, _ := press(t, atRow(t, runsBox, "F-85"), text("r")); got.dialog == nil || !strings.Contains(dialogText(got), "runs: bl run F-85") {
-		t.Errorf("r in the runs box: %+v", got.dialog)
+	got, cmd = press(t, atRow(t, runsBox, "F-85"), text("r"))
+	if len(got.jobs) != 1 || got.jobs[0].show != "bl run F-85  (new tmux window)" {
+		t.Errorf("r in the runs box: %+v", got.jobs)
 	}
+	settle(t, got, cmd)
 }
 
 func TestHelpListsEachBoxsKeysUnderThatBox(t *testing.T) {

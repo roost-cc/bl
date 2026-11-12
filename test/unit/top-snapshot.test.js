@@ -822,7 +822,6 @@ test('actions (S-1336): each inbox item kind gets the verbs of F-87 D7, then bl 
     input: 'note',
     window: null,
     url: null,
-    about: [],
     stops: null,
   });
 });
@@ -837,11 +836,6 @@ test('actions (S-1336): a live run stops; any other run starts, or resumes when 
     'g: bl agent (agent)',
   ]);
   assert.equal(live[0].stops, 'S-1330');
-  assert.deepEqual(live[0].about, [
-    'bl stop ends the agent session and the run.',
-    'The work so far stays on the branch.',
-    'Resume it later with: bl run S-1330 --resume',
-  ]);
   // A review or a merge that holds a state a dead bl left running: no stop, and no start either.
   assert.deepEqual(
     runActions({ id: 'S-1330', status: 'running', pr, stoppable: false }).map(shown),

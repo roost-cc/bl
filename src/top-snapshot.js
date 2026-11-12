@@ -21,7 +21,7 @@ import { runHolder, runStatus } from './run-lock.js';
 import { collectInbox } from './inbox.js';
 import { changeNextVerb } from './change-doc.js';
 import { nextPlan } from './next.js';
-import { PRIORITY_FILE, STAGED_CONFLICT, StagedConflictError, marks, orderOf, readStaged } from './priority.js';
+import { STAGED_CONFLICT, StagedConflictError, marks, orderOf, readStaged } from './priority.js';
 import { parseFilter } from './filter.js';
 import { capacityJson, capacityRows } from './capacity.js';
 import { addDays, buildHistory } from './history.js';
@@ -221,18 +221,17 @@ export const RESUMED_STATUSES = ['stopped', 'stale', 'escalated', 'failed'];
  * bl; null for `url`, a page the view opens (`xdg-open`, `open`). `input` is
  * null, `"note"` (optional text, added as the last word) or `"reason"`
  * (needed text). `window` names the tmux window the command opens in; null
- * runs it as a child, and the view shows its result. `about` are lines the
- * y/n question shows, and `stops` is the run the action stops, whose
- * `stopped` end the view does not notify (D8).
+ * runs it as a child, which reports on the view's note line (F-127 D2).
+ * `stops` is the run the action stops, whose `stopped` end the view does not
+ * notify (D8).
  */
-const action = (key, label, argv, { input = null, window = null, url = null, about = [], stops = null } = {}) => ({
+const action = (key, label, argv, { input = null, window = null, url = null, stops = null } = {}) => ({
   key,
   label,
   argv,
   input,
   window,
   url,
-  about,
   stops,
 });
 
@@ -258,17 +257,13 @@ const rankedRow = (row) => ({ ...row, actions: [...RANK_ACTIONS, ...row.actions]
 
 /** The next box's actions while a staged copy exists (F-113 D7): commit it or reset it. */
 const STAGED_ACTIONS = [
-  action('C', 'commit the staged order', ['bl', 'rank', '--commit'], {
-    about: [`bl rank --commit merges the staged order into ${PRIORITY_FILE}, then commits and pushes it.`],
-  }),
-  action('R', 'drop the staged edits', ['bl', 'rank', '--reset'], {
-    about: ['bl rank --reset deletes the staged copy. Every staged edit is lost.'],
-  }),
+  action('C', 'commit the staged order', ['bl', 'rank', '--commit']),
+  action('R', 'drop the staged edits', ['bl', 'rank', '--reset']),
 ];
 
 /**
  * The actions of an inbox item (D7): an escalation is read with `bl status`
- * (in a tmux window: it prints the escalation to stdout, which a result box
+ * (in a tmux window: it prints the escalation to stdout, which the note line
  * does not show), a task closed with `bl task done`, and a change answered
  * by the verb of its `next:` (`changeNextVerb`). An item of a work unit also
  * opens its page (a task its own); the runner line and an update item have
@@ -310,17 +305,7 @@ export function runActions(row) {
   const out = [];
   if (status === 'running') {
     // Only a bl run stops: not a review or a merge of a state a dead bl left running.
-    if (row.stoppable)
-      out.push(
-        action('s', 'stop the run', ['bl', 'stop', id], {
-          about: [
-            'bl stop ends the agent session and the run.',
-            'The work so far stays on the branch.',
-            `Resume it later with: bl run ${id} --resume`,
-          ],
-          stops: id,
-        }),
-      );
+    if (row.stoppable) out.push(action('s', 'stop the run', ['bl', 'stop', id], { stops: id }));
   } else {
     const resume = RESUMED_STATUSES.includes(status);
     out.push(

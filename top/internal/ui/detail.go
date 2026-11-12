@@ -10,7 +10,6 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/roost-cc/bl/top/internal/actions"
 	"github.com/roost-cc/bl/top/internal/stream"
 	"github.com/roost-cc/bl/top/internal/watch"
 )
@@ -35,9 +34,6 @@ const noRun = "select a run (↑↓ in runs, then ↵)"
 
 // watchStartedMsg carries a watch that has started.
 type watchStartedMsg struct{ w *watch.Watch }
-
-// tmuxDoneMsg is the end of a `tmux new-window`: Err is why it failed, or empty.
-type tmuxDoneMsg struct{ Err string }
 
 // selectedUnit is the work unit of the selected row of box b: the run's id in the runs box, the
 // item's unit in the attention box, the unit in the next box; empty when the box has no selected
@@ -191,26 +187,14 @@ func (m *Model) toggleFollow() {
 // getenv reads the environment; a test replaces it.
 var getenv = os.Getenv
 
-// openWatch opens `bl watch <id>` of the run the detail box shows in a new tmux window (key w).
+// openWatch opens `bl watch <id>` of the run the detail box shows in a new tmux window (key w), as
+// an action of the queue (F-127 Decision 4), with the `w needs tmux` refusal of every window action.
 func (m Model) openWatch() (Model, tea.Cmd) {
-	switch {
-	case m.detail == "":
+	if m.detail == "" {
 		m.note = "w: " + noRun
 		return m, nil
-	case getenv("TMUX") == "":
-		m.note = "w needs tmux"
-		return m, nil
 	}
-	return m, tmuxWindow(m.detail+" watch", append(append([]string{}, m.blArgv...), "watch", m.detail))
-}
-
-// tmuxWindow opens a tmux window named name in bl top's directory (the backlog root) that runs
-// argv, then the operator's shell, so the window stays open after the command exits (F-87 D7).
-func tmuxWindow(name string, argv []string) tea.Cmd {
-	dir, _ := os.Getwd()
-	return func() tea.Msg {
-		return tmuxDoneMsg{Err: actions.Window(name, dir, argv)}
-	}
+	return m.pick(stream.Action{Key: "w", Argv: []string{"bl", "watch", m.detail}, Window: m.detail + " watch"}, m.detail)
 }
 
 // drawDetail draws the detail box (D4, Mockups A and B) in w×h inner cells: the selected run's

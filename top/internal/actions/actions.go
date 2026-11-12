@@ -99,18 +99,11 @@ func TmuxArgs(name, dir string, argv []string) []string {
 	return []string{"new-window", "-n", name, "-c", dir, strings.Join(words, " ") + "; exec ${SHELL:-sh}"}
 }
 
-// Window opens the tmux window of TmuxArgs. It returns why it failed (`tmux: <its output>`), or ""
-// when it opened.
-func Window(name, dir string, argv []string) string {
-	out, err := exec.Command("tmux", TmuxArgs(name, dir, argv)...).CombinedOutput()
-	if err == nil {
-		return ""
-	}
-	why := strings.TrimSpace(string(out))
-	if why == "" {
-		why = err.Error()
-	}
-	return "tmux: " + why
+// Window opens the tmux window of TmuxArgs and returns the end of `tmux new-window`, as Start's
+// wait does: tmux's exit code and last stderr line, or -1 and why when it did not start.
+func Window(name, dir string, argv []string) Result {
+	_, wait := Start(append([]string{"tmux"}, TmuxArgs(name, dir, argv)...))
+	return wait()
 }
 
 // Result is the end of a command: its exit code, or -1 when it did not start or was killed; and

@@ -297,11 +297,15 @@ func TestWOpensBlWatchInANewTmuxWindow(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	m.blArgv = []string{"node", "/opt/bl's/src/bl.js"}
 	m, cmd = press(t, m, text("w"))
-	if cmd == nil {
-		t.Fatal("w in tmux returned no command")
+	if cmd == nil || !strings.Contains(screen(t, m), "┐bl watch S-1330  (new tmux window)┌") {
+		t.Fatalf("w in tmux: no command, or no command on the note line:\n%s", screen(t, m))
 	}
-	if msg := cmd(); msg != (tmuxDoneMsg{}) {
+	msg := cmd()
+	if msg != (jobDoneMsg{}) {
 		t.Fatalf("tmux: %#v", msg)
+	}
+	if m, cmd = update(t, m, msg); len(m.jobs) != 0 || cmd != nil {
+		t.Fatalf("after the window opened: %d jobs", len(m.jobs))
 	}
 	data, err := os.ReadFile(args)
 	if err != nil {
@@ -312,13 +316,13 @@ func TestWOpensBlWatchInANewTmuxWindow(t *testing.T) {
 	if got := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n"); !slices.Equal(got, want) {
 		t.Errorf("tmux args %q, want %q", got, want)
 	}
-	// A tmux that fails shows why on the note line.
+	// A tmux that fails reports like any other failed action.
 	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte("#!/bin/sh\necho 'no server running' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, cmd = press(t, m, text("w"))
+	m, cmd = press(t, m, text("w"))
 	m, _ = update(t, m, cmd())
-	if !strings.Contains(screen(t, m), "tmux: no server running") {
+	if !strings.Contains(screen(t, m), "bl watch S-1330  (new tmux window): exit 1 · no server running") {
 		t.Errorf("a failed tmux:\n%s", screen(t, m))
 	}
 }

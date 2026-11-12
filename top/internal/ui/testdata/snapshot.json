@@ -115,11 +115,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [
-              "bl stop ends the agent session and the run.",
-              "The work so far stays on the branch.",
-              "Resume it later with: bl run F-81 --resume"
-            ],
             "stops": "F-81"
           },
           {
@@ -129,7 +124,6 @@
             "input": null,
             "window": "F-81 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -139,7 +133,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -273,11 +266,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [
-              "bl stop ends the agent session and the run.",
-              "The work so far stays on the branch.",
-              "Resume it later with: bl run S-1330 --resume"
-            ],
             "stops": "S-1330"
           },
           {
@@ -287,7 +275,6 @@
             "input": null,
             "window": "S-1330 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -297,7 +284,6 @@
             "input": null,
             "window": null,
             "url": "https://example.invalid/roost-cc/bl/pull/15",
-            "about": [],
             "stops": null
           },
           {
@@ -307,7 +293,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -351,7 +336,6 @@
             "input": null,
             "window": "F-85 run",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -361,7 +345,6 @@
             "input": null,
             "window": "F-85 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -371,7 +354,6 @@
             "input": null,
             "window": null,
             "url": "https://example.invalid/roost-cc/bl/pull/14",
-            "about": [],
             "stops": null
           },
           {
@@ -381,7 +363,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -425,7 +406,6 @@
             "input": null,
             "window": "F-83 run",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -435,7 +415,6 @@
             "input": null,
             "window": "F-83 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -445,7 +424,6 @@
             "input": null,
             "window": null,
             "url": "https://example.invalid/roost-cc/bl/pull/12",
-            "about": [],
             "stops": null
           },
           {
@@ -455,7 +433,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -496,7 +473,6 @@
             "input": null,
             "window": "F-79 run",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -506,7 +482,6 @@
             "input": null,
             "window": "F-79 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -516,7 +491,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -541,7 +515,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -561,7 +534,6 @@
             "input": null,
             "window": "F-83 status",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -571,7 +543,6 @@
             "input": null,
             "window": "F-83 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -581,7 +552,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -601,7 +571,6 @@
             "input": "note",
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -611,7 +580,6 @@
             "input": null,
             "window": "T-52 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -621,7 +589,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -641,7 +608,6 @@
             "input": "note",
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -651,7 +617,6 @@
             "input": null,
             "window": "T-2 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -661,7 +626,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -681,7 +645,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -691,7 +654,6 @@
             "input": null,
             "window": "F-81 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -701,7 +663,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -721,7 +682,6 @@
             "input": null,
             "window": "S-1330 run",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -731,7 +691,6 @@
             "input": null,
             "window": "S-1330 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -741,7 +700,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -761,7 +719,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -781,7 +738,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -801,7 +757,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -835,7 +790,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -845,7 +799,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -855,7 +808,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -865,7 +817,6 @@
             "input": null,
             "window": "F-81 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -875,7 +826,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -896,7 +846,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -906,7 +855,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -916,7 +864,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -926,7 +873,6 @@
             "input": null,
             "window": "F-84 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -936,7 +882,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -957,7 +902,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -967,7 +911,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -977,7 +920,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -987,7 +929,6 @@
             "input": null,
             "window": "F-80 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -997,7 +938,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -1018,7 +958,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1028,7 +967,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1038,7 +976,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1048,7 +985,6 @@
             "input": null,
             "window": "F-86 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1058,7 +994,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -1079,7 +1014,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1089,7 +1023,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1099,7 +1032,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1109,7 +1041,6 @@
             "input": null,
             "window": "F-16 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1119,7 +1050,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -1140,7 +1070,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1150,7 +1079,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1160,7 +1088,6 @@
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1170,7 +1097,6 @@
             "input": null,
             "window": "F-13 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
@@ -1180,7 +1106,6 @@
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]

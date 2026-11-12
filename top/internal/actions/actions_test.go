@@ -126,7 +126,7 @@ func TestStartGivesThePidTheExitCodeAndTheLastStderrLine(t *testing.T) {
 	}
 }
 
-func TestWindowRunsTmuxAndSaysWhyItFailed(t *testing.T) {
+func TestWindowRunsTmuxAndReturnsItsResult(t *testing.T) {
 	dir := t.TempDir()
 	args := filepath.Join(dir, "args")
 	tmux := filepath.Join(dir, "tmux")
@@ -134,8 +134,8 @@ func TestWindowRunsTmuxAndSaysWhyItFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if why := Window("agent", "/w/backlog", []string{"bl", "agent"}); why != "" {
-		t.Fatalf("tmux: %q", why)
+	if got := Window("agent", "/w/backlog", []string{"bl", "agent"}); got != (Result{}) {
+		t.Fatalf("tmux: %#v", got)
 	}
 	data, _ := os.ReadFile(args)
 	if got := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n"); !slices.Equal(got, TmuxArgs("agent", "/w/backlog", []string{"bl", "agent"})) {
@@ -144,8 +144,12 @@ func TestWindowRunsTmuxAndSaysWhyItFailed(t *testing.T) {
 	if err := os.WriteFile(tmux, []byte("#!/bin/sh\necho 'no server running' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if why := Window("agent", "/w", []string{"bl", "agent"}); why != "tmux: no server running" {
-		t.Errorf("a failed tmux: %q", why)
+	if got := Window("agent", "/w", []string{"bl", "agent"}); got != (Result{Code: 1, Last: "no server running"}) {
+		t.Errorf("a failed tmux: %#v", got)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if got := Window("agent", "/w", []string{"bl", "agent"}); got.Code != -1 || !strings.Contains(got.Last, "not found") {
+		t.Errorf("no tmux: %#v", got)
 	}
 }
 
