@@ -103,6 +103,33 @@ func TestAFailureDropsTheQueuedActions(t *testing.T) {
 	}
 }
 
+// TestAMenuPickAndANoteWaitInTheQueueToo: an action picked in the a menu, and one whose note is
+// typed, while another action runs, wait behind it as a key press does.
+func TestAMenuPickAndANoteWaitInTheQueueToo(t *testing.T) {
+	dir := fakeTools(t, true, "", 0)
+	m, first := press(t, atRow(t, nextBox, "F-84"), text("x"))
+	m, _ = press(t, m, down, text("a"))
+	m, pick := press(t, m, text("x"))
+	m = focused(t, m, attentionBox)
+	for range 20 {
+		if i := m.selected(attentionBox); i >= 0 && m.rowIDs(attentionBox)[i] == "T-52" {
+			break
+		}
+		m, _ = press(t, m, down)
+	}
+	m, _ = press(t, m, text("d"))
+	m, note := press(t, m, append(typed("ok"), enter)...)
+	if first == nil || pick != nil || note != nil || m.dialog != nil || len(m.jobs) != 3 {
+		t.Fatalf("x, a x, d ok: first %v, pick %v, note %v, dialog %+v, %d jobs",
+			first != nil, pick != nil, note != nil, m.dialog, len(m.jobs))
+	}
+	settle(t, m, first)
+	want := []string{"rank F-84 --remove", "rank F-80 --remove", "task done T-52 ok"}
+	if got := logOf(t, dir, "bl"); !slices.Equal(got, want) {
+		t.Errorf("bl ran %q, want %q", got, want)
+	}
+}
+
 // TestAWindowHoldsTheQueueOnlyForItsTmuxCall: g opens a tmux window; x, pressed while tmux runs,
 // starts when tmux ends, not when the command in the window ends. w queues the same way.
 func TestAWindowHoldsTheQueueOnlyForItsTmuxCall(t *testing.T) {
