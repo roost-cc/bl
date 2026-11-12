@@ -3920,7 +3920,9 @@ snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FIL
   (`orderOf`), each row marked against the committed order by `marks`: `+` newly ranked, `~`
   moved (a ranked unit outside the longest common subsequence of the two lists, so a move marks
   only the unit that moved), `-` taken out of the ranked list. Closed units are not listed.
-- `--commit` pulls first (`commandPullsBacklog`). Under the lock it refuses while `priority.yaml`
+- `--commit` with a staged copy pulls first (`pullBeforeCommand`, called by `rank-cmd.js` itself
+  after it finds the copy; `commandPullsBacklog` names no `bl rank`). Under the lock it refuses
+  while `priority.yaml`
   has uncommitted edits, then runs `git merge-file -p -L staged -L base -L main` on the staged
   copy, the base copy and `priority.yaml`. A clean merge loses its closed units (and a second
   entry of a unit) and is committed alone (`commitPaths`, which pushes),
@@ -3938,7 +3940,8 @@ snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FIL
 - A staged copy that is not a YAML list of ids is in conflict (`StagedConflictError`, Decision
   A3): every `bl rank` command but `--reset` exits 1 with `STAGED_CONFLICT`. `bl next` and
   `bl run` read only `priority.yaml` and are not blocked.
-- `--commit` with no staged copy exits 0 and prints nothing. `--reset` deletes both copies.
+- `--commit` with no staged copy exits 0, prints nothing and pulls nothing. `--reset` deletes
+  both copies.
 
 **`BL_HEADLESS`.** Every agent bl starts headless has `BL_HEADLESS=1` in its environment: each
 adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it

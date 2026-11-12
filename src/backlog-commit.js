@@ -776,19 +776,16 @@ export function leaveRegenerationPending(root) {
  * `side`, `attach`, `move`, `run`, `implement`, `merge`, `done`, `refine`,
  * `approve`, `init`, `updates`, `sync --commit`,
  * `block add`, `block remove`, `block list --fix`, `task`,
- * `task done`, `rank --commit` (interactive; it merges the staged edits with
- * `priority.yaml` on main, F-113 D3)), a bare `bl sync`, whose whole job is
- * the pull and push (F-79 D1), and the
+ * `task done`), a bare `bl sync`, whose whole job is the pull and push
+ * (F-79 D1), and the
  * readers of update state, `bl inbox` and
- * `bl updates status`. Help output never pulls, and neither does a `bl rank`
- * under `BL_HEADLESS`, which writes nothing (F-78 D3), nor any other `bl rank`,
- * which writes only the staged copy.
+ * `bl updates status`. Help output never pulls. `bl rank` never pulls here:
+ * an edit writes only the staged copy, and `bl rank --commit` pulls itself,
+ * only when a staged copy exists (`rank-cmd.js`, F-113 D3).
  */
-export function commandPullsBacklog(command, argv, env = process.env) {
+export function commandPullsBacklog(command, argv) {
   if (argv.includes('-h') || argv.includes('--help')) return false;
   switch (command) {
-    case 'rank':
-      return !isHeadless(env) && argv.includes('--commit');
     case 'new':
     case 'side':
     case 'attach':

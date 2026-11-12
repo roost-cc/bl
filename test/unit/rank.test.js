@@ -187,13 +187,10 @@ test('headlessPriorityRefusal names priority.yaml, by path or by a directory tha
   assert.equal(headlessPriorityRefusal('/b', ['priority.yaml'], {}), null);
 });
 
-test('only an interactive bl rank --commit pulls the backlog first; a staged edit, the listing and --reset do not', () => {
-  assert.equal(commandPullsBacklog('rank', ['--commit'], {}), true);
-  assert.equal(commandPullsBacklog('rank', ['F-1', '--top'], {}), false);
-  assert.equal(commandPullsBacklog('rank', [], {}), false);
-  assert.equal(commandPullsBacklog('rank', ['--reset'], {}), false);
-  assert.equal(commandPullsBacklog('rank', ['--commit', '--help'], {}), false);
-  assert.equal(commandPullsBacklog('rank', ['--commit'], { BL_HEADLESS: '1' }), false);
+test('bl.js never pulls before bl rank: --commit pulls itself, only with a staged copy', () => {
+  for (const argv of [['--commit'], ['F-1', '--top'], [], ['--reset'], ['--commit', '--help']]) {
+    assert.equal(commandPullsBacklog('rank', argv), false, argv.join(' '));
+  }
 });
 
 test('commitPaths refuses priority.yaml under BL_HEADLESS, commits it without', async () => {

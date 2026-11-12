@@ -16,7 +16,8 @@
  * never writes or commits `priority.yaml`, so `bl next` and `bl run` pick by
  * the committed order until `--commit`.
  *
- * `--commit` (after `bl.js` pulled the backlog, `commandPullsBacklog`) merges
+ * `--commit` with no staged copy does nothing. With one, it pulls the backlog
+ * (`pullBeforeCommand`, which `bl.js` runs for other committing commands), then merges
  * the staged copy and `priority.yaml` with `git merge-file`, base copy as the
  * merge base. It takes every closed unit out of the result, commits
  * `priority.yaml` alone (`commitPaths`, which pushes) and deletes both
@@ -40,7 +41,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { info, loadConfig, normalizeId } from './config.js';
 import { commitPaths } from './backlog-commit.js';
 import { withLock } from './lock.js';
-import { reportBacklogCommit } from './sync.js';
+import { pullBeforeCommand, reportBacklogCommit } from './sync.js';
 import { loadBacklog } from './backlog-graph.js';
 import { normalizeFeatureId } from './feature.js';
 import { normalizeTaskId } from './task.js';
@@ -359,11 +360,14 @@ export async function main(argv, env = process.env) {
     return;
   }
   const staged = stagedOrRefuse(root);
-  const graph = loadBacklog(config);
   if (values.commit) {
-    if (staged) await commitStaged(root, graph);
+    // With nothing staged, --commit is a no-op: it pulls nothing (F-113 D3).
+    if (!staged) return;
+    if ((await pullBeforeCommand(config)).state === 'unsafe') process.exit(1);
+    await commitStaged(root, loadBacklog(config));
     return;
   }
+  const graph = loadBacklog(config);
   if (!editing) {
     printOrder(graph, staged, staged ? 'Ranked (staged; bl rank --commit commits it, --reset drops it):' : undefined);
     return;

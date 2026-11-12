@@ -65,6 +65,18 @@ test('--commit with no staged copy exits 0 and prints nothing', () => {
   assert.equal(read(dir), CLOSED, 'nothing staged: no closed unit taken out either');
 });
 
+test('rank commit with no staged copy skips pull', () => {
+  const dir = backlog(CLOSED);
+  const head = git(dir, 'rev-parse', 'HEAD');
+  pushPriority(dir, list('F-1', 'S-1', 'F-2'));
+  const r = bl(['rank', '--commit'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, '');
+  assert.equal(r.stderr, '');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'origin moved, nothing pulled');
+  assert.equal(read(dir), CLOSED);
+});
+
 test('--commit pulls first and merges a change on main cleanly', () => {
   const dir = backlog(list('S-1', 'F-2'));
   assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
