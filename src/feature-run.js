@@ -162,7 +162,8 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
  * or `{ refused: null, release }`, where `release()` gives back both. If the
  * take throws (the stories cannot be read), it holds neither either. With
  * both held, a stop request left by `bl stop` for an earlier holder is
- * deleted (F-87 D7a): it was not for this run.
+ * deleted (F-87 D7a): it was not for this run. If that delete throws, it
+ * releases both and throws.
  *
  * @param {object} config
  * @param {import('./unit-lock.js').WorkUnit} unit
@@ -184,14 +185,17 @@ function takeRunLocks(config, unit, owner) {
     releaseRunLock(run.taken);
     return { refused: units.refused };
   }
-  rmSync(stopRequestPath(config, unit.id), { force: true });
-  return {
-    refused: null,
-    release: () => {
-      units.release();
-      releaseRunLock(run.taken);
-    },
+  const release = () => {
+    units.release();
+    releaseRunLock(run.taken);
   };
+  try {
+    rmSync(stopRequestPath(config, unit.id), { force: true });
+  } catch (e) {
+    release();
+    throw e;
+  }
+  return { refused: null, release };
 }
 
 // ---------------------------------------------------------------------------

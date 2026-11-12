@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { parseFrontmatter } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
 import { resolveFeatureStories, extractSection } from '../../src/feature.js';
@@ -13,6 +13,7 @@ import {
   runStatePath,
   runLockPath,
   reviewFeature,
+  integrateUnit,
   RUN_DIR,
   localTime,
   hasHeadlessConfiguration,
@@ -21,6 +22,7 @@ import {
 import { mkTempDir } from '../helpers/tempdir.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { stopRequestPath } from '../../src/run-lock.js';
+import { unitLockPath } from '../../src/unit-lock.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
 import { accumulateTokensOnFile } from '../../src/tokens.js';
 import {
@@ -1953,5 +1955,28 @@ test('stop_check_holder: a stop request for another holder (an earlier run) does
     assert.ok(!state.history.some((h) => h.step === 'stopped'));
   } finally {
     cleanup();
+  }
+});
+
+test('take_run_locks_releases_on_request_cleanup_failure: bl run, review and merge hold no lock after the delete throws', async () => {
+  const takes = {
+    run: (o) => runFeature({ ...o, opts: { maxRounds: 2 } }),
+    review: (o) => reviewFeature({ ...o, pr: { number: '7', url: 'u' }, maxRounds: 2 }),
+    merge: ({ feature, ...o }) => integrateUnit({ unit: feature, ...o }),
+  };
+  for (const [name, take] of Object.entries(takes)) {
+    const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
+    try {
+      // A directory where the stop request goes: rmSync with force alone cannot delete it.
+      const request = stopRequestPath(config, 'F-1');
+      mkdirSync(join(request, 'x'), { recursive: true });
+      const runner = fakeRunner({ dir, feature });
+      await assert.rejects(take({ feature, config, prep, runner }), /EISDIR|directory/i, name);
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, `${name}: the run lock is released`);
+      assert.equal(holderOf(unitLockPath(dir, dirname(feature.indexPath))), null, `${name}: the unit lock is released`);
+      assert.equal(runner.calls.filter((c) => c.type === 'session').length, 0, `${name}: no session`);
+    } finally {
+      cleanup();
+    }
   }
 });
