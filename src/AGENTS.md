@@ -4697,7 +4697,8 @@ once: `src/child.js` prints `bl: <child> was ended by <signal>`, and `bl`
 exits 130 or 143. There is no `## Gate` line, no second run and no push. The
 `exit` listener removes the worktree. Its removal runs in `raiseAfter`
 (F-114 D2a), so an interrupt that ends one of its steps is raised after the
-last one. A check ended by any other signal (SIGABRT, SIGKILL) is a failed
+last one. A step that throws (a git that cannot start) is a warning, and the
+next step runs. A check ended by any other signal (SIGABRT, SIGKILL) is a failed
 run, and a git command ended by one is a failed command. Every `## Gate` line
 (this one, the test gate's `recordGateLine` and a scripted story's) comes from
 `gateLine` in `src/change-doc.js`.

@@ -841,10 +841,12 @@ export async function pullBacklog(root, opts = {}) {
 /**
  * The pull under the lock (`pullBacklog`, `pushBacklog`'s retry). SIGINT or
  * SIGTERM that ends one of its git children ends `bl` only once the pull
- * returns (`raiseAfter`, F-114 D2a): the rebase is aborted and the index and
- * the stash are put back first. If that undo leaves the checkout `unsafe`, the
- * pull reports it (`reportBacklogPull`) before the raise, because no caller
- * sees the result after it.
+ * returns (`raiseAfter`, F-114 D2a). First the checkout goes back as the pull
+ * found it: an interrupt before the rebase stops the pull there, one during
+ * it aborts the rebase, and one after it puts `main` back at its starting
+ * commit; the index and the stash are put back. If that undo leaves the
+ * checkout `unsafe`, the pull reports it (`reportBacklogPull`) before the
+ * raise, because no caller sees the result after it.
  * @param {string} root
  * @returns {BacklogPull}
  */
