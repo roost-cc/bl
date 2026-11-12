@@ -1,36 +1,30 @@
 /**
  * The fixtures that test/integration/rank-{edit,cleanup,retry}.test.js share.
  *
- * Integration tests for `bl rank` (F-78 D3) against a git backlog with an
- * origin: each form edits only its entry, pulls first, commits priority.md
- * alone and pushes; the refusals; the listing; and BL_HEADLESS, under which
- * neither `bl rank` nor a backlog commit of priority.md goes through.
+ * Integration tests for `bl rank` (F-78 D3, F-113 D1) against a git backlog
+ * with an origin: each form moves or removes its id, pulls first, commits
+ * priority.yaml alone and pushes; the refusals; the listing; and BL_HEADLESS,
+ * under which neither `bl rank` nor a backlog commit of priority.yaml goes
+ * through.
  */
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { PRIORITY_FILE } from '../../src/priority.js';
 import { mkTempBacklog } from './tempdir.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog } from './git-backlog.js';
 import { runBl } from './run-bl.js';
 
 export const bl = (args, cwd, env = {}) => runBl(args, { cwd, env: { ...GIT_ENV, ...env } });
 
-/** A hand-written priority.md: comments, a wrapped reason, a body. */
-export const HAND = `---
-# Ranked by hand.
-ranked:
-  # The deploy blocker first.
-  - unit: S-1
-    why: Blocks every deploy,
-      wrapped by hand.
-  - unit: F-2 # the big one
-    why: "Users see it next"
----
-
-# Priority
-
-Hand-written body.
+/** A hand-written priority.yaml: comments that a bl rank edit does not keep. */
+export const HAND = `# Ranked by hand.
+- S-1
+- F-2 # the big one
 `;
+
+/** The list `ids` as bl rank writes it (`stringify`). */
+export const list = (...ids) => ids.map((id) => `- ${id}\n`).join('');
 
 /**
  * F-1 and F-2 open (S-11 inside F-1), F-5 done, loose S-1 and S-2 open, S-9
@@ -60,10 +54,7 @@ export function backlog(priority = HAND) {
 }
 
 /** HAND with the closed F-5 and S-9 ranked too: the order bl rank's cleanup takes out. */
-export const CLOSED = HAND.replace('  - unit: F-2', '  - unit: F-5\n    why: Done now\n  - unit: F-2').replace(
-  '---\n\n# Priority',
-  '  - unit: S-9\n    why: Done too\n---\n\n# Priority',
-);
+export const CLOSED = `# Ranked by hand.\n- S-1\n- F-5\n- F-2 # the big one\n- S-9\n`;
 
-export const read = (dir) => readFileSync(join(dir, 'priority.md'), 'utf8');
+export const read = (dir) => readFileSync(join(dir, PRIORITY_FILE), 'utf8');
 export const originHead = (dir) => git(git(dir, 'remote', 'get-url', 'origin'), 'rev-parse', 'main');

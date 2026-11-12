@@ -82,12 +82,8 @@ transitions:
 added: 2026-01-01
 ---
 MD
-  # The priority (F-78 D1): an empty `ranked:` is a clean one.
-  cat > "$root/priority.md" <<'MD'
----
-ranked: []
----
-MD
+  # The priority (F-78 D1, F-113 D1): an empty list is a clean one.
+  echo '[]' > "$root/priority.yaml"
   # The roadmap (F-53 D2): no entries and no sections is a clean one.
   cat > "$root/roadmap.md" <<'MD'
 ---

@@ -503,27 +503,14 @@ test('feature_merge_refuses_any_story_without_component_repo_before_mutation', a
   }
 });
 
-// F-78 D3: nothing automated writes priority.md. A merged feature leaves the
+// F-78 D3: nothing automated writes priority.yaml. A merged feature leaves the
 // order because it is closed, so `bl merge` (and the sync it runs) leaves the
 // file byte-identical, the merged feature's own entry included.
-test('bl merge F-n leaves priority.md byte-identical and out of its backlog commit', async () => {
+test('bl merge F-n leaves priority.yaml byte-identical and out of its backlog commit', async () => {
   const { spawnSync } = await import('child_process');
-  const priority = `---
-ranked:
-  # The operator's comment.
-  - unit: F-1
-    why: Lands first.
-  - unit: F-2
-    why: After F-1.
----
-
-# Priority
-
-Prose bl never writes.
-
-## History
-
-- 2026-01-01: F-0 done (Before the fixture).
+  const priority = `# The operator's comment.
+- F-1 # lands first
+- F-2
 `;
   const { dir, cleanup } = mkTempBacklog({
     repos: { code: { path: './code', deployable: true } },
@@ -579,8 +566,8 @@ Prose bl never writes.
     assert.equal(g(dir, 'status', '--porcelain'), '', 'the merge commits everything it wrote');
     const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n');
     assert.ok(files.includes('features/F1-feat/index.md'), 'one commit with the feature marked done');
-    assert.ok(!files.includes('priority.md'), files.join('\n'));
-    assert.equal(readFileSync(join(dir, 'priority.md'), 'utf8'), priority);
+    assert.ok(!files.includes('priority.yaml'), files.join('\n'));
+    assert.equal(readFileSync(join(dir, 'priority.yaml'), 'utf8'), priority);
     // Its theme's `## State` records it in the same commit (F-53 D4).
     assert.ok(files.includes('themes/demo/index.md'), files.join('\n'));
     const themeText = g(dir, 'show', 'HEAD:themes/demo/index.md');

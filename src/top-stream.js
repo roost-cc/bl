@@ -9,7 +9,7 @@
  *   activity   every tick
  *   tokens     every tick
  *   attention  when the backlog changes (D3a: git HEAD moves, or a unit file,
- *   next       change document or priority.md changes: `backlogStamp`), and
+ *   next       change document or priority.yaml changes: `backlogStamp`), and
  *              at least every ATTENTION_MAX_AGE_MS
  *   capacity   every CAPACITY_EVERY_MS, and at the tick after a `capacity`
  *              line on stdin
@@ -46,7 +46,7 @@ const NO_STAMP = Symbol('no stamp');
 
 /**
  * What says the backlog changed (D3a): git's `HEAD`, and the stat signature
- * of every unit file, change document and `priority.md` (`backlogSignature`,
+ * of every unit file, change document and `priority.yaml` (`backlogSignature`,
  * the one `loadBacklog` compares). Equal stamps mean no change.
  * @param {{ backlogRoot: string }} config
  * @returns {string}

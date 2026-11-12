@@ -1,15 +1,15 @@
 /**
- * priority.js — the backlog's one ranked list of units (F-78 D1).
+ * priority.js — the backlog's one ranked list of units (F-78 D1, F-113 D1).
  *
- * `backlog/priority.md` holds the operator's order in its YAML frontmatter:
+ * `backlog/priority.yaml` is the operator's order: a YAML list of work unit
+ * ids, one per line, and nothing else:
  *
- *   ranked:
- *     - unit: S-1
- *       why: Blocks every deploy.
- *     - unit: F-2
- *       why: The next thing users see.
+ *   - S-1
+ *   - F-2
  *
- * Its body is prose bl never writes. A **unit** is a feature or a **loose
+ * bl reads it with the `yaml` package and `bl rank` writes the whole list
+ * with its `stringify`. The reasons for the order are in git history, not in
+ * the file. A **unit** is a feature or a **loose
  * story** (a story with no `feature:` and no `update_repo:`); stories inside a
  * feature, update stories and tasks are never ranked. `loadBacklog()` reads the
  * file and exposes the order it gives as `backlog.priority` and
@@ -27,11 +27,11 @@ import { normalizeFeatureId } from './feature.js';
 import { normalizeTaskId } from './task.js';
 
 /** The file's name, at the backlog root. */
-export const PRIORITY_FILE = 'priority.md';
+export const PRIORITY_FILE = 'priority.yaml';
 
 /**
- * A `ranked:` value that is not a list of mappings each with a non-empty
- * `unit` and `why`. `bl validate` reports it as `priority-file`.
+ * A priority file that is not YAML, or not a list of non-empty id strings.
+ * `bl validate` reports it as `priority-file`.
  */
 export class PriorityError extends Error {
   constructor(reason, file = PRIORITY_FILE) {
@@ -42,30 +42,22 @@ export class PriorityError extends Error {
 }
 
 /**
- * `ranked:` as entries `{ [key], why, position }`: `key` (`unit`, or
- * `feature` for the old order file `src/migrate-priority.js` reads) as
- * written, trimmed, and `position` from 1. An absent or
- * empty `ranked:` is an empty order. Throws `PriorityError` on any other
- * shape.
- * @param {unknown} raw  the frontmatter's `ranked:` value
- * @param {string} [key]
+ * The priority file's list as entries `{ unit, position }`: each id as
+ * written, trimmed, and `position` from 1. An empty file (YAML `null`) is an
+ * empty order. Throws `PriorityError` on anything that is not a list of
+ * non-empty strings.
+ * @param {unknown} raw  the file's parsed YAML
  * @param {string} [file]  the file named in the error
- * @returns {Array<{ why: string, position: number } & Record<string, string>>}
+ * @returns {Array<{ unit: string, position: number }>}
  */
-export function parseRanked(raw, key = 'unit', file = PRIORITY_FILE) {
+export function parseRanked(raw, file = PRIORITY_FILE) {
   const list = listValue(raw);
-  if (list == null) throw new PriorityError(`"ranked:" is not a list`, file);
-  return list.map((entry, i) => {
-    const at = `"ranked:" entry ${i + 1}`;
-    if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new PriorityError(`${at} is not a mapping with "${key}" and "why"`, file);
+  if (list == null) throw new PriorityError('the file is not a YAML list of work unit ids', file);
+  return list.map((id, i) => {
+    if (typeof id !== 'string' || id.trim() === '') {
+      throw new PriorityError(`entry ${i + 1} is not a work unit id`, file);
     }
-    for (const k of [key, 'why']) {
-      if (typeof entry[k] !== 'string' || entry[k].trim() === '') {
-        throw new PriorityError(`${at} has no "${k}"`, file);
-      }
-    }
-    return { [key]: entry[key].trim(), why: entry.why.trim(), position: i + 1 };
+    return { unit: id.trim(), position: i + 1 };
   });
 }
 
@@ -89,15 +81,15 @@ export function isLooseStory(s) {
 }
 
 /**
- * Resolve `ranked:` against the graph's units: each valid entry once, as
- * `{ unit, why, position }` with `unit` the feature or story unit, and a
+ * Resolve the list against the graph's units: each valid entry once, as
+ * `{ unit, position }` with `unit` the feature or story unit, and a
  * `priority-unit` problem for every other entry: one that names no feature or
  * story (a task included), one ranked twice (the first stays), a story inside
  * a feature, and an update story. A closed unit is resolved like an open one:
  * it is skipped by the order, never a problem.
  * @param {ReturnType<typeof parseRanked>} ranked
  * @param {{ features: ReadonlyMap<string, any>, stories: ReadonlyMap<string, any> }} maps
- * @returns {{ entries: Array<{ unit: any, why: string, position: number }>,
+ * @returns {{ entries: Array<{ unit: any, position: number }>,
  *   problems: Array<{ ref: string, message: string }> }}
  */
 export function resolveRanked(ranked, { features, stories }) {
@@ -105,7 +97,7 @@ export function resolveRanked(ranked, { features, stories }) {
   const problems = [];
   const first = new Map();
   for (const entry of ranked) {
-    const at = `"ranked:" entry ${entry.position} (${entry.unit})`;
+    const at = `entry ${entry.position} (${entry.unit})`;
     const bad = (message) => problems.push({ ref: entry.unit, message: `${at} ${message}` });
     const fid = normalizeFeatureId(entry.unit)?.id;
     const sid = normalizeId(entry.unit)?.id;
@@ -130,7 +122,7 @@ export function resolveRanked(ranked, { features, stories }) {
       continue;
     }
     first.set(unit.id, entry.position);
-    entries.push({ unit, why: entry.why, position: entry.position });
+    entries.push({ unit, position: entry.position });
   }
   return { entries, problems };
 }

@@ -18,7 +18,7 @@
  * document a tolerant load parsed at its current stat key. Links are objects, built in a second
  * pass, and every inverse is computed, never read from a stored key: a
  * feature's `stories`, `points` and `components`, an epic's `features` and
- * `status`, and a story's `requiredFor` (F-77 D3). The root `priority.md` is
+ * `status`, and a story's `requiredFor` (F-77 D3). The root `priority.yaml` is
  * read with the units, and its order is the graph's `priority` and
  * `rankOf` (F-78 D1, `src/priority.js`). The root `blockers.json` is read
  * too: its edges, with the edges the stories' `depends_on:` keys stand for
@@ -56,6 +56,7 @@
 
 import { lstatSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, relative, resolve, sep } from 'path';
+import { parseDocument } from 'yaml';
 import {
   COMPONENTS_DIR,
   EPICS_DIR,
@@ -216,12 +217,12 @@ import {
  * finding code that reports it: `frontmatter-yaml`, `frontmatter-list`,
  * `duplicate-id` (a task's: `task-field`), `dangling-dep`,
  * `dangling-feature`, `component-unknown`, `feature-theme`, `feature-epic`,
- * `epic-theme`, `task-unit`, and `priority.md`'s `priority-file` and
+ * `epic-theme`, `task-unit`, and `priority.yaml`'s `priority-file` and
  * `priority-unit` (F-78 D1).
  * @typedef {object} Problem
  * @property {string} code
  * @property {UnitKind | null} kind  the kind of the unit at fault (null for the root `index.md` and
- *           `priority.md`), so a
+ *           `priority.yaml`), so a
  *           reader need not resolve `unit` or `ref`, which a malformed id does not
  * @property {string | null} unit  the unit's id (from its directory name when its frontmatter is unread)
  * @property {string} file         backlog-relative path of the file at fault
@@ -253,8 +254,8 @@ import {
  *           listed, readable or not, in `bl validate`'s order: each unit's file, then (a
  *           tolerant load) its change documents, after the root `index.md`; `unitIndex` is
  *           the file of the unit it belongs to (null for the root `index.md`)
- * @property {ReadonlyArray<{ unit: FeatureUnit | StoryUnit, why: string, position: number }>} ranked
- *           `priority.md`'s `ranked:` resolved (F-78 D1): each feature or loose story it
+ * @property {ReadonlyArray<{ unit: FeatureUnit | StoryUnit, position: number }>} ranked
+ *           `priority.yaml`'s list resolved (F-78 D1, F-113 D1): each feature or loose story it
  *           names once, open or closed, `position` its entry's place from 1; empty when the
  *           file is missing or malformed (a `priority-file` problem)
  * @property {ReadonlyArray<FeatureUnit | StoryUnit>} priority  the open units in priority
@@ -445,7 +446,7 @@ export function unitFiles(config, kind) {
 
 /**
  * The signature `loadBacklog` compares to reuse a graph, from a tolerant
- * listing: every unit file, change document, `priority.md` and
+ * listing: every unit file, change document, `priority.yaml` and
  * `blockers.json`, each with its stat key, listed and never read. Equal signatures mean no such file
  * changed. `bl top`'s stream reads the inbox and `bl next` again when it
  * changes (F-87 D3a).
@@ -458,7 +459,7 @@ export function backlogSignature(config) {
 
 /**
  * List the backlog: every unit file with its stat key (a tolerant listing:
- * the root `index.md` and every change document too), `priority.md`'s and
+ * the root `index.md` and every change document too), `priority.yaml`'s and
  * `blockers.json`'s (null when it is no file), and the highest number per
  * kind among the directory and file names.
  * @returns {{ slots: Slot[], priority: { path: string, key: string } | null,
@@ -649,6 +650,21 @@ function recordOf(files, path, key, opts) {
   const hit = files.get(path);
   if (hit?.key === key) return hit;
   const rec = parseFile(path, key, opts);
+  files.set(path, rec);
+  return rec;
+}
+
+/**
+ * The memo's record for a root file with no frontmatter (`blockers.json`,
+ * `priority.yaml`): its text only, read again only when the key moved
+ * (`settleRacy` covers a rewrite that keeps the key). Throws when the file
+ * cannot be read.
+ */
+function textRecordOf(files, path, key) {
+  const hit = files.get(path);
+  if (hit?.key === key) return hit;
+  loadStats.parses++;
+  const rec = { key, ...readText(path, key), fm: null, bodyStart: 0, faults: [] };
   files.set(path, rec);
   return rec;
 }
@@ -1011,40 +1027,37 @@ function buildGraph(root, flow, flowError, listing, files, tolerant, blockers) {
 }
 
 /**
- * `priority.md`'s `ranked:` resolved against the units (F-78 D1), its
+ * `priority.yaml`'s list resolved against the units (F-78 D1, F-113 D1), its
  * problems pushed: `priority-file` when the file is missing, is not YAML
- * (with the parse error, which a strict load throws) or `ranked:` has the
- * wrong shape, each leaving the order empty; `priority-unit` for each entry
- * that names no feature or loose story, or one ranked twice.
- * @returns {Array<{ unit: FeatureUnit | StoryUnit, why: string, position: number }>}
+ * (with the parse error, which a strict load throws) or is not a list of ids,
+ * each leaving the order empty; `priority-unit` for each entry that names no
+ * feature or loose story, or one ranked twice.
+ * @returns {Array<{ unit: FeatureUnit | StoryUnit, position: number }>}
  */
 function readPriority(root, slot, files, maps, problem) {
   const at = { kind: null, unit: null, file: PRIORITY_FILE };
   if (!slot) {
-    problem({
-      ...at,
-      code: 'priority-file',
-      message: `${PRIORITY_FILE} is missing; the backlog's priority lives in its "ranked:" frontmatter`,
-    });
+    problem({ ...at, code: 'priority-file', message: `${PRIORITY_FILE} is missing; bl init writes an empty one` });
     return [];
   }
-  const rec = recordOf(files, slot.path, slot.key);
-  if (!rec.fm) {
-    const fault = rec.faults[0];
-    problem({ ...at, code: 'priority-file', line: fault.line, message: fault.message, error: fault.error });
+  const doc = parseDocument(textRecordOf(files, slot.path, slot.key).text);
+  if (doc.errors.length > 0) {
+    const e = doc.errors[0];
+    const line = e.linePos?.[0]?.line ?? 0;
+    const reason = `line ${line}: the file is not YAML (${e.message.split('\n')[0].replace(/ at line \d+, column \d+:?$/, '')})`;
+    problem({ ...at, code: 'priority-file', line, message: reason, error: new PriorityError(reason) });
     return [];
   }
-  const line = frontmatterKeyLine(rec.text, 'ranked');
   let raw;
   try {
-    raw = parseRanked(rec.fm.ranked);
+    raw = parseRanked(doc.toJS());
   } catch (e) {
     if (!(e instanceof PriorityError)) throw e;
-    problem({ ...at, code: 'priority-file', field: 'ranked', line, message: e.reason });
+    problem({ ...at, code: 'priority-file', message: e.reason });
     return [];
   }
   const { entries, problems } = resolveRanked(raw, { features: maps.feature, stories: maps.story });
-  for (const p of problems) problem({ ...at, code: 'priority-unit', field: 'ranked', line, ...p });
+  for (const p of problems) problem({ ...at, code: 'priority-unit', ...p });
   return entries;
 }
 
@@ -1240,18 +1253,12 @@ function blockersOf(root, slot, files) {
       if (!lstatSync(path, { throwIfNoEntry: false })) return { edges: [], error: null };
       return { edges: readBlockers(root).edges, error: null };
     }
-    let rec = files.get(path);
-    if (rec?.key !== slot.key) {
-      loadStats.parses++;
-      let read;
-      try {
-        read = readText(path, slot.key);
-      } catch {
-        // No permission, or gone since the listing: `readBlockers` names why.
-        return { edges: readBlockers(root).edges, error: null };
-      }
-      rec = { key: slot.key, ...read, fm: null, bodyStart: 0, faults: [] };
-      files.set(path, rec);
+    let rec;
+    try {
+      rec = textRecordOf(files, path, slot.key);
+    } catch {
+      // No permission, or gone since the listing: `readBlockers` names why.
+      return { edges: readBlockers(root).edges, error: null };
     }
     return { edges: parseBlockers(rec.text, path), error: null };
   } catch (e) {

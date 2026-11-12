@@ -167,7 +167,7 @@ export function failedCommitRecord(owner) {
  * `pathsChangedSince` returns, through `commitPaths`. A path that was dirty
  * before and that the command did not change stays out, and is named. With
  * `session` (an agent session made the change: refine, the merge's triage),
- * `priority.md` stays out too, with one line: only a person ranks (F-78 D3).
+ * `priority.yaml` stays out too, with one line: only a person ranks (F-78 D3).
  * Nothing changed, or a backlog that is not a git repo of its own (no `.git`
  * in `root`, even inside a parent checkout), prints nothing. In a repo, a
  * snapshot that `git status` could not take, before or after, is a failure.
@@ -177,7 +177,7 @@ export function failedCommitRecord(owner) {
  * retry, which finds them dirty before it begins, does not lose them. A path
  * edited since is the operator's and stays out. A call that does not fail
  * removes its owner's record; other owners' records stay. No failure loses a
- * recorded path without saying so: a carried `priority.md` that a session
+ * recorded path without saying so: a carried `priority.yaml` that a session
  * holds stays recorded; a record that cannot be read or written fails the
  * call; a failed snapshot after leaves the record as it was; and a failed
  * snapshot before records every dirty path as `unsure`, which the next call
@@ -261,7 +261,7 @@ export async function commitChangedSince(root, before, message, { session = fals
       console.error(`  backlog commit failed: ${res.error}\n  Commit these paths yourself: ${touched.join(' ')}`);
     }
   }
-  // A carried priority.md that this session held, and a carried path outside
+  // A carried priority.yaml that this session held, and a carried path outside
   // the scope, stay pending.
   const keep = [
     ...(commitFailed ? touched : []),
@@ -274,7 +274,7 @@ export async function commitChangedSince(root, before, message, { session = fals
   failed ||= commitFailed;
   if (outside.length > 0) info(`Left uncommitted, outside ${owner}'s work units: ${outside.join(' ')}`);
   // Still dirty: a path the session committed itself was not left alone. A
-  // held priority.md and a path outside the scope have their own lines.
+  // held priority.yaml and a path outside the scope have their own lines.
   const leftAlone = [...before.keys()].filter(
     (p) => after.has(p) && !touched.includes(p) && !outside.includes(p) && !(held && p === PRIORITY_FILE),
   );
@@ -370,7 +370,7 @@ function addablePaths(root, paths) {
  * puts the stash back before it lets go. Callers that do not hold the
  * backlog lock (`change-doc.js` `openUnitChange`) rely on this.
  * Inside an agent bl started headless (`BL_HEADLESS`, F-78 D3) a commit
- * whose paths select `priority.md`, by name, directory or Git pathspec, is
+ * whose paths select `priority.yaml`, by name, directory or Git pathspec, is
  * refused before anything is staged: only a person ranks
  * (`headlessPriorityRefusal`).
  * @returns {Promise<{ committed: boolean, paths: string[], error?: string,
@@ -422,10 +422,10 @@ async function commitPathsUnsignalled(root, paths, message, seen) {
 
 /**
  * Why a backlog commit of `paths` is refused under `BL_HEADLESS` (F-78 D3),
- * or null: when the marker is set and a path selects `priority.md`, by name,
+ * or null: when the marker is set and a path selects `priority.yaml`, by name,
  * by a directory that holds it (`.` included), or as a Git pathspec
- * (`:(top)priority.md`, `*.md`, `priority*`): Git itself is asked which files
- * the whole set `paths` selects (so `['*.md', ':!priority.md']` is allowed),
+ * (`:(top)priority.yaml`, `*.yaml`, `priority*`): Git itself is asked which files
+ * the whole set `paths` selects (so `['*.yaml', ':!priority.yaml']` is allowed),
  * in the index, the work tree (untracked, not ignored) and staged deletions,
  * the files `commitLocked`'s add and commit would take.
  * The priority is a person's preference; an agent bl started headless never
@@ -438,7 +438,7 @@ async function commitPathsUnsignalled(root, paths, message, seen) {
 export function headlessPriorityRefusal(root, paths, env = process.env) {
   if (!isHeadless(env)) return null;
   // Git is asked about the whole set at once, as add and commit apply it, so
-  // an exclusion (`:!priority.md`) counts. Only when Git cannot answer does
+  // an exclusion (`:!priority.yaml`) counts. Only when Git cannot answer does
   // the guard fall back to spelling: a path that is, or holds, the file.
   const file = resolve(root, PRIORITY_FILE);
   const spelled = (p) => {
@@ -777,7 +777,7 @@ export function leaveRegenerationPending(root) {
  * `approve`, `init`, `updates`, `sync --commit`,
  * `block add`, `block remove`, `block list --fix`, `task`,
  * `task done`, `rank` (interactive, which takes closed units out of
- * `priority.md` first, S-1364)), a bare `bl sync`, whose whole job is the
+ * `priority.yaml` first, S-1364)), a bare `bl sync`, whose whole job is the
  * pull and push (F-79 D1), and the
  * readers of update state, `bl inbox` and
  * `bl updates status`. Help output never pulls, and neither does a `bl rank`

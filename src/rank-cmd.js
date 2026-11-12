@@ -1,28 +1,27 @@
 /**
- * rank-cmd.js — `bl rank`: how a person changes `priority.md` (F-78 D3).
+ * rank-cmd.js — `bl rank`: how a person changes `priority.yaml` (F-78 D3,
+ * F-113 D1).
  *
  *   bl rank                                   print the order
  *   bl rank <unit> --top|--bottom             put a unit first or last
  *   bl rank <unit> --before|--after <unit>    put it beside a ranked unit
- *   bl rank <unit> --why <text>               rewrite a ranked unit's reason
  *   bl rank <unit> --remove                   take it out of the list
  *
- * A unit is a feature or a loose story (`priority.js`); a unit not yet ranked
- * needs `--why`. The edit changes only the entry it names: the file's
- * frontmatter is read with the `yaml` package's `parseDocument`, and the
- * entry's text is cut and spliced at the node's source range, so every other
- * entry, every comment and the body stay byte for byte as written. The file
- * is written under the backlog lock and committed alone (`commitPaths`, which
- * pushes); `bl.js` pulls the backlog first (`commandPullsBacklog`).
+ * A unit is a feature or a loose story (`priority.js`). The file is a YAML
+ * list of unit ids and nothing else, so an edit reads the list with the
+ * `yaml` package, moves or removes the id, and writes the whole list with
+ * its `stringify`. The file is written under the backlog lock and committed
+ * alone (`commitPaths`, which pushes); `bl.js` pulls the backlog first
+ * (`commandPullsBacklog`).
  *
  * Every interactive run, with or without arguments, first takes each closed
- * unit out of `ranked:` (`removeClosed`) and commits that alone, before it
+ * unit out of the list (`removeClosed`) and commits that alone, before it
  * prints the order or applies the edit (S-1364). `bl merge` and `bl sync`
  * still never touch the file.
  *
  * Only a person ranks: inside an agent bl started headless (`BL_HEADLESS`,
  * set by each adapter's spawn) an edit is refused before anything is pulled
- * or written, and `commitPaths` refuses any commit of `priority.md` there
+ * or written, and `commitPaths` refuses any commit of `priority.yaml` there
  * too. Printing the order is allowed everywhere; under `BL_HEADLESS` it
  * writes nothing and takes no closed unit out.
  */
@@ -31,7 +30,7 @@ import { spawnSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { parseArgs } from 'node:util';
-import { isMap, isScalar, isSeq, parseDocument, stringify } from 'yaml';
+import { parseDocument, stringify } from 'yaml';
 import { atomicWriteFile } from './atomic-write.js';
 import { info, loadConfig, normalizeId } from './config.js';
 import { commitPaths } from './backlog-commit.js';
@@ -44,28 +43,30 @@ import { HEADLESS_ENV, isHeadless } from './agents/provider.js';
 import { PRIORITY_FILE, PriorityError, isLooseStory, parseRanked } from './priority.js';
 
 const HELP = `Usage: bl rank
-       bl rank <unit> (--top | --bottom | --before <unit> | --after <unit>) [--why <text>]
-       bl rank <unit> --why <text>
+       bl rank <unit> (--top | --bottom | --before <unit> | --after <unit>)
        bl rank <unit> --remove
 
 Change ${PRIORITY_FILE}, the backlog's one ranked list of units: features (F-<n>)
-and loose stories (S-<n>, a story in no feature and not an update story). The
-order is the operator's preference; hard dependencies still come first (bl next).
+and loose stories (S-<n>, a story in no feature and not an update story).
+
+${PRIORITY_FILE} is a YAML list of unit ids, one per line ("- F-93"), and
+nothing else. Its order is the operator's preference: bl next and bl run pick
+the first open unit that nothing holds, ranked units first, then every other
+open unit, oldest "added:" first. Hard dependencies still come first (bl
+next). The file holds no reasons; git history keeps them.
 
 With no arguments, take closed units out (below), then print the order: the
-ranked units (position, id, title, why), then every other open unit, oldest
+ranked units (position, id, title), then every other open unit, oldest
 "added:" first.
 
   --top, --bottom     Put <unit> first or last in the list
   --before <unit>     Put <unit> just before a ranked unit
   --after <unit>      Put <unit> just after a ranked unit
-  --why <text>        The reason: required for a unit not yet ranked; given
-                      alone, it rewrites a ranked unit's reason
   --remove            Take <unit> out of the list; it falls back into the
                       dated tail
 
-Only the entry named changes; the rest of the file is kept byte for byte. The
-file is committed alone and pushed, after the usual pull.
+bl rank writes the whole list again, so comments in the file are not kept.
+The file is committed alone and pushed, after the usual pull.
 
 An interactive run, with or without arguments, first takes every closed unit
 out of the list, in a commit of its own, and names them on stderr. Under
@@ -73,185 +74,49 @@ ${HEADLESS_ENV} (every agent bl starts headless) an edit is refused and the
 listing writes nothing: only the operator or an interactive session ranks.`;
 
 // ---------------------------------------------------------------------------
-// The text edit
+// The list edit
 // ---------------------------------------------------------------------------
 
-/** A `priority.md` whose frontmatter bl rank cannot edit. */
+/** A `priority.yaml` that bl rank cannot edit. */
 export class RankFileError extends Error {}
 
-const FENCE = /^---\n([\s\S]*?\n)?---(?:\n|$)/;
-
-/** The unit id an entry's `unit:` names (`F-3`, `S-4`), or its trimmed text. */
+/** The unit id an entry names (`F-3`, `S-4`), or its trimmed text. */
 function canonical(raw) {
   const s = String(raw ?? '').trim();
   return normalizeFeatureId(s)?.id ?? normalizeId(s)?.id ?? s;
 }
 
 /**
- * Where everything bl rank edits sits in `content`: the frontmatter block
- * (offset `base`), its parsed document, the `ranked:` pair, and each entry
- * as `{ id, node, start, end, why }` with `start`/`end` the block offsets of
- * its whole lines (from its `-` line to the end of its last line).
+ * The unit ids `content` lists, in order: each entry as `canonical` spells
+ * it. Throws `RankFileError` when `content` is not YAML or not a list of ids
+ * (`parseRanked`), so an edit never reports success on a file bl validate
+ * rejects.
+ * @param {string} content  priority.yaml
+ * @returns {string[]}
  */
-function scan(content) {
-  const m = FENCE.exec(content);
-  if (!m) throw new RankFileError(`${PRIORITY_FILE} has no frontmatter block`);
-  const block = m[1] ?? '';
-  const base = 4;
-  const doc = parseDocument(block, { schema: 'failsafe' });
+export function rankedIds(content) {
+  const doc = parseDocument(content);
   if (doc.errors.length > 0) {
-    throw new RankFileError(`${PRIORITY_FILE}: frontmatter is not YAML: ${doc.errors[0].message.split('\n')[0]}`);
+    throw new RankFileError(`${PRIORITY_FILE} is not YAML: ${doc.errors[0].message.split('\n')[0]}`);
   }
-  if (doc.contents != null && !isMap(doc.contents)) {
-    throw new RankFileError(`${PRIORITY_FILE}: frontmatter is not a mapping`);
-  }
-  const pair = doc.contents?.items.find((p) => isScalar(p.key) && p.key.value === 'ranked') ?? null;
-  const value = pair?.value ?? null;
-  if (value != null && !isSeq(value) && !(isScalar(value) && String(value.value ?? '') === '')) {
-    throw new RankFileError(`${PRIORITY_FILE}: "ranked:" is not a list; run bl validate`);
-  }
-  // Every entry must be one the priority reader takes: a mapping with a
-  // non-empty scalar `unit` and `why` (`parseRanked`), so an edit never
-  // reports success on a list bl validate rejects.
   try {
-    parseRanked(doc.toJS()?.ranked);
+    return parseRanked(doc.toJS()).map((e) => canonical(e.unit));
   } catch (err) {
     if (err instanceof PriorityError) throw new RankFileError(err.message);
     throw err;
   }
-  const seq = isSeq(value) ? value : null;
-  if (seq?.flow && seq.items.length > 0) {
-    throw new RankFileError(
-      `${PRIORITY_FILE}: "ranked:" is a flow list ([...]); write it as a block list to use bl rank`,
-    );
-  }
-  const lineStart = (at) => block.lastIndexOf('\n', at - 1) + 1;
-  const lineEnd = (at) => {
-    if (at > 0 && block[at - 1] === '\n') return at;
-    const nl = block.indexOf('\n', at);
-    return nl < 0 ? block.length : nl + 1;
-  };
-  const entries = (seq?.items ?? []).map((node, i) => {
-    if (!isMap(node)) throw new RankFileError(`${PRIORITY_FILE}: "ranked:" entry ${i + 1} is not a mapping`);
-    const unit = node.items.find((p) => isScalar(p.key) && p.key.value === 'unit');
-    const why = node.items.find((p) => isScalar(p.key) && p.key.value === 'why') ?? null;
-    return {
-      id: canonical(isScalar(unit?.value) ? unit.value.value : ''),
-      node,
-      start: lineStart(node.range[0]),
-      end: lineEnd(node.range[1]),
-      why,
-    };
-  });
-  return { block, base, pair, seq, entries, lineEnd };
-}
-
-/** `why` as a one-line YAML scalar, quoted only where YAML needs it. */
-function scalarText(why) {
-  return stringify(why, { lineWidth: 0 }).replace(/\n$/, '');
-}
-
-/** The indentation entries are written at: the first entry's, else two spaces. */
-function indentOf(s) {
-  const first = s.entries[0];
-  if (!first) return { dash: '  ', key: '    ' };
-  const prefix = s.block.slice(first.start, first.node.range[0]);
-  return { dash: prefix.slice(0, prefix.indexOf('-')), key: ' '.repeat(prefix.length) };
-}
-
-/** A new entry's lines. */
-function entryText(s, id, why) {
-  const { dash, key } = indentOf(s);
-  return `${dash}- unit: ${id}\n${key}why: ${scalarText(why)}\n`;
-}
-
-function splice(content, s, from, to, text) {
-  return content.slice(0, s.base + from) + text + content.slice(s.base + to);
-}
-
-/** The block offset just after `ranked:`'s colon, or null with no `ranked:` key. */
-function afterColon(s) {
-  if (!s.pair) return null;
-  return s.block.indexOf(':', s.pair.key.range[1]) + 1;
-}
-
-/** `content` with entry `id`'s reason set to `why` (the entry must exist). */
-export function setWhy(content, id, why) {
-  const s = scan(content);
-  const e = s.entries.find((x) => x.id === id);
-  if (!e) throw new RankFileError(`${id} is not ranked`);
-  // `scan` took only entries whose `why` is a non-empty scalar.
-  const [from, to] = e.why.value.range;
-  // A block scalar (`why: >- # note`) ends with its last line's newline,
-  // and its header may hold a comment; keep both.
-  const nl = s.block[to - 1] === '\n' ? '\n' : '';
-  const note = nl ? (/[ \t]+#.*$/.exec(s.block.slice(from, s.block.indexOf('\n', from)))?.[0] ?? '') : '';
-  return splice(content, s, from, to, scalarText(why) + note + nl);
-}
-
-/** `content` without entry `id`; the last entry leaves `ranked: []`. */
-export function removeEntry(content, id) {
-  const s = scan(content);
-  const e = s.entries.find((x) => x.id === id);
-  if (!e) throw new RankFileError(`${id} is not ranked`);
-  const cut = splice(content, s, e.start, e.end, '');
-  if (s.entries.length > 1) return cut;
-  // The last one: `ranked: []`, keeping any comment on the `ranked:` line.
-  const at = s.base + afterColon(s);
-  return `${cut.slice(0, at)} []${cut.slice(at)}`;
 }
 
 /**
- * `content` with `text` (whole entry lines) placed at `where`: `top`,
- * `bottom`, or `{ before: id }` / `{ after: id }` of a ranked entry.
- */
-export function insertEntry(content, text, where) {
-  const s = scan(content);
-  if (s.entries.length === 0) {
-    if (!s.pair) return splice(content, s, s.block.length, s.block.length, `ranked:\n${text}`);
-    // Drop the empty value (`[]`, `''`) and nothing else: a comment after it
-    // stays on the `ranked:` line, and the entry goes on the next one.
-    const colon = afterColon(s);
-    const v = s.pair.value;
-    const end = v?.range && v.range[1] > v.range[0] ? v.range[1] : colon;
-    const eol = s.lineEnd(end);
-    return splice(content, s, colon, eol, `${s.block.slice(end, eol)}${text}`);
-  }
-  let at;
-  if (where === 'top') at = s.entries[0].start;
-  else if (where === 'bottom') at = s.entries.at(-1).end;
-  else {
-    const target = s.entries.find((x) => x.id === (where.before ?? where.after));
-    if (!target) throw new RankFileError(`${where.before ?? where.after} is not ranked`);
-    at = where.before ? target.start : target.end;
-  }
-  return splice(content, s, at, at, text);
-}
-
-/** Entry `id`'s whole lines as written. */
-function entryLines(content, id) {
-  const s = scan(content);
-  const e = s.entries.find((x) => x.id === id);
-  return e ? s.block.slice(e.start, e.end) : null;
-}
-
-/** The unit ids `content`'s `ranked:` lists, in order, as written. */
-export function rankedIds(content) {
-  return scan(content).entries.map((e) => e.id);
-}
-
-/**
- * `content` without any entry for the units `ids`; a unit listed twice loses
- * both entries. Every other byte stays as written (`removeEntry`).
- * @param {string} content  priority.md, LF line ends
+ * `content` without the units `ids`, each entry of them; `content` itself
+ * when it lists none of them.
+ * @param {string} content  priority.yaml
  * @param {string[]} ids
  */
 export function removeClosed(content, ids) {
-  let text = content;
-  for (const id of ids) {
-    while (rankedIds(text).includes(id)) text = removeEntry(text, id);
-  }
-  return text;
+  const listed = rankedIds(content);
+  const kept = listed.filter((x) => !ids.includes(x));
+  return kept.length === listed.length ? content : stringify(kept);
 }
 
 /** `ids` with `id` moved to `where` (`applyRank`'s `where`). */
@@ -260,28 +125,24 @@ function moved(ids, id, where) {
   if (where === 'top') return [id, ...rest];
   if (where === 'bottom') return [...rest, id];
   const at = rest.indexOf(where.before ?? where.after);
+  if (at < 0) throw new RankFileError(`${where.before ?? where.after} is not ranked`);
   return [...rest.slice(0, where.before ? at : at + 1), id, ...rest.slice(where.before ? at : at + 1)];
 }
 
 const sameOrder = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /**
- * Apply one `bl rank` edit to `content` and return the new text.
- * @param {string} content  priority.md, LF line ends
+ * Apply one `bl rank` edit to `content` and return the new text; `content`
+ * itself when the order stays as it is.
+ * @param {string} content  priority.yaml
  * @param {{ id: string, where?: 'top'|'bottom'|{before: string}|{after: string},
- *   why?: string, remove?: boolean }} op
+ *   remove?: boolean }} op
  */
 export function applyRank(content, op) {
-  if (op.remove) return removeEntry(content, op.id);
   const ids = rankedIds(content);
-  const listed = ids.includes(op.id);
-  let text = content;
-  if (listed && op.why != null) text = setWhy(text, op.id, op.why);
-  // A move that leaves the order as it is touches nothing.
-  if (!op.where || (listed && sameOrder(ids, moved(ids, op.id, op.where)))) return text;
-  const lines = listed ? entryLines(text, op.id) : entryText(scan(text), op.id, op.why);
-  if (listed) text = removeEntry(text, op.id);
-  return insertEntry(text, lines, op.where);
+  if (op.remove && !ids.includes(op.id)) throw new RankFileError(`${op.id} is not ranked`);
+  const next = op.remove ? ids.filter((x) => x !== op.id) : moved(ids, op.id, op.where);
+  return sameOrder(ids, next) ? content : stringify(next);
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +213,7 @@ function printOrder(graph, fileReported = false) {
   const out = [];
   if (ranked.length > 0) {
     out.push('Ranked:');
-    for (const u of ranked) out.push(`  ${entryOf.get(u).position}. ${describe(u)} — ${entryOf.get(u).why}`);
+    for (const u of ranked) out.push(`  ${entryOf.get(u).position}. ${describe(u)}`);
   }
   if (tail.length > 0) {
     out.push('Not yet ranked, oldest first:');
@@ -372,7 +233,7 @@ function inRepo(root) {
   return r.status === 0 && r.stdout.trim() === 'true';
 }
 
-/** Whether `priority.md` differs from HEAD, in the index or the work tree. */
+/** Whether `priority.yaml` differs from HEAD, in the index or the work tree. */
 function uncommitted(root) {
   const r = spawnSync('git', ['status', '--porcelain', '--', PRIORITY_FILE], {
     cwd: root,
@@ -383,13 +244,13 @@ function uncommitted(root) {
 }
 
 /**
- * Whether the uncommitted `content` of `priority.md` is exactly what
+ * Whether the uncommitted `content` of `priority.yaml` is exactly what
  * `change` (a function from HEAD's text to the new text: an edit, or the
  * cleanup of closed units) makes of HEAD's version: the write of an earlier
- * run whose commit failed, and nothing else (no prose, no other entry's
- * edit). The index must hold HEAD's version or that write (its `git add` may
- * or may not have run), never a staged edit of someone else's, which the
- * commit's add would overwrite.
+ * run whose commit failed, and nothing else (no other entry's edit). The
+ * index must hold HEAD's version or that write (its `git add` may or may not
+ * have run), never a staged edit of someone else's, which the commit's add
+ * would overwrite.
  * @param {string} root
  * @param {string} content
  * @param {(head: string) => string} change
@@ -401,7 +262,7 @@ function pendingIsOurs(root, content, change) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    return r.status === 0 ? r.stdout.replace(/\r\n/g, '\n') : null;
+    return r.status === 0 ? r.stdout : null;
   };
   const head = show('HEAD');
   const staged = show('');
@@ -418,29 +279,16 @@ function pendingIsOurs(root, content, change) {
 /** The op's words for the commit subject and the report. */
 function opWords(op) {
   if (op.remove) return 'unranked';
-  if (!op.where) return 'reason rewritten';
   if (op.where === 'top') return 'ranked first';
   if (op.where === 'bottom') return 'ranked last';
   return op.where.before ? `ranked before ${op.where.before}` : `ranked after ${op.where.after}`;
 }
 
-/** `priority.md` as LF text, and whether it was written with CRLF. */
-function readPriority(path) {
-  const original = readFileSync(path, 'utf8');
-  const crlf = original.includes('\r\n');
-  return { content: crlf ? original.replace(/\r\n/g, '\n') : original, crlf };
-}
-
-/** Write `text` (LF) to `priority.md` with the line ends it had. */
-function writePriority(root, path, text, crlf) {
-  atomicWriteFile(root, path, crlf ? text.replace(/\n/g, '\r\n') : text);
-}
-
 /**
- * The closed units `text`'s `ranked:` lists, once each, in list order: the
- * entries `loadBacklog` resolves (`graph.ranked`: a feature or a loose story)
- * whose unit is done. An entry that names no unit is never one of them.
- * Throws `RankFileError` on a file bl rank cannot edit.
+ * The closed units `text` lists, once each, in list order: the entries
+ * `loadBacklog` resolves (`graph.ranked`: a feature or a loose story) whose
+ * unit is done. An entry that names no unit is never one of them. Throws
+ * `RankFileError` on a file bl rank cannot edit.
  */
 function closedIn(graph, text) {
   const ids = rankedIds(text).filter((id) => {
@@ -451,15 +299,15 @@ function closedIn(graph, text) {
 }
 
 /**
- * Take every closed unit out of `ranked:` and commit `priority.md` alone, under
- * the caller's lock. A file with someone else's uncommitted edits is left as
- * it is; a file that holds exactly an earlier cleanup's write whose commit
- * failed is redone on HEAD with today's closed units and committed
+ * Take every closed unit out of the list and commit `priority.yaml` alone,
+ * under the caller's lock. A file with someone else's uncommitted edits is
+ * left as it is; a file that holds exactly an earlier cleanup's write whose
+ * commit failed is redone on HEAD with today's closed units and committed
  * (`pendingIsOurs`); `reopened` names the units it put back.
  * @returns {Promise<{ removed: string[], reopened?: string[], commit?: object } | { skipped: string, fileError?: boolean }>}
  */
 async function cleanup(root, path, graph) {
-  const { content, crlf } = readPriority(path);
+  const content = readFileSync(path, 'utf8');
   let ids;
   try {
     ids = closedIn(graph, content);
@@ -487,14 +335,14 @@ async function cleanup(root, path, graph) {
     if (ours && gone(head).some((id) => removed.includes(id))) {
       const reopened = gone(head).filter((id) => !removed.includes(id));
       const next = removeClosed(head, removed);
-      if (next !== content) writePriority(root, path, next, crlf);
+      if (next !== content) atomicWriteFile(root, path, next);
       return { removed, reopened, commit: await commitPaths(root, [PRIORITY_FILE], message(removed)) };
     }
     if (ids.length === 0) return { removed: [] };
-    return { skipped: `${PRIORITY_FILE} has uncommitted edits; left ${ids.join(', ')} in ranked:` };
+    return { skipped: `${PRIORITY_FILE} has uncommitted edits; left ${ids.join(', ')} in the list` };
   }
   if (ids.length === 0) return { removed: [] };
-  writePriority(root, path, removeClosed(content, ids), crlf);
+  atomicWriteFile(root, path, removeClosed(content, ids));
   if (!inRepo(root)) return { removed: ids, commit: { committed: false, paths: [PRIORITY_FILE], notRepo: true } };
   return { removed: ids, commit: await commitPaths(root, [PRIORITY_FILE], message(ids)) };
 }
@@ -509,7 +357,6 @@ export async function main(argv, env = process.env) {
         bottom: { type: 'boolean' },
         before: { type: 'string' },
         after: { type: 'string' },
-        why: { type: 'string' },
         remove: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
@@ -550,7 +397,7 @@ export async function main(argv, env = process.env) {
       info(`bl rank: ${res.skipped}`);
       fileReported = Boolean(res.fileError);
     } else {
-      if (res.reopened?.length > 0) info(`bl rank: ${res.reopened.join(', ')} open again; put back in ranked:`);
+      if (res.reopened?.length > 0) info(`bl rank: ${res.reopened.join(', ')} open again; put back in the list`);
       if (res.removed.length > 0) {
         info(`bl rank: took out ${res.removed.join(', ')} (done).`);
         reportBacklogCommit(res.commit, 'bl rank');
@@ -575,12 +422,9 @@ function editOp(graph, path, values, positionals) {
   if (positionals.length !== 1) usage(positionals.length === 0 ? 'name the unit to rank' : 'name one unit');
   const positions = ['top', 'bottom', 'before', 'after'].filter((k) => values[k] != null && values[k] !== false);
   if (positions.length > 1) usage(`--${positions.join(', --')} are alternatives; give one`);
-  if (values.remove && (positions.length > 0 || values.why != null)) usage('--remove takes no position and no --why');
-  if (!values.remove && positions.length === 0 && values.why == null) {
-    usage('give a position (--top, --bottom, --before, --after), --why or --remove');
-  }
-  const why = values.why == null ? undefined : values.why.replace(/\s+/g, ' ').trim();
-  if (why === '') usage('--why needs a reason');
+  if (values.remove && positions.length > 0) usage('--remove takes no position');
+  if (!values.remove && positions.length === 0)
+    usage('give a position (--top, --bottom, --before, --after) or --remove');
 
   if (!existsSync(path)) refuse(`${PRIORITY_FILE} is missing; bl init writes an empty one`);
 
@@ -598,14 +442,14 @@ function editOp(graph, path, values, positionals) {
   const pos = positions[0];
   const where = pos === 'top' || pos === 'bottom' ? pos : pos ? { [pos]: canonical(values[pos]) } : undefined;
   if (where?.before === id || where?.after === id) refuse(`${id} cannot be ranked beside itself`);
-  return { id, where, why, remove: Boolean(values.remove) };
+  return { id, where, remove: Boolean(values.remove) };
 }
 
-/** Apply `op` to `priority.md` under the lock, commit it alone and report. */
+/** Apply `op` to `priority.yaml` under the lock, commit it alone and report. */
 async function applyEdit(root, path, op) {
   const { id } = op;
   const res = await withLock(root, async () => {
-    const { content, crlf } = readPriority(path);
+    const content = readFileSync(path, 'utf8');
     let ids;
     try {
       ids = rankedIds(content);
@@ -613,26 +457,15 @@ async function applyEdit(root, path, op) {
       if (err instanceof RankFileError) return { refused: err.message };
       throw err;
     }
-    const listed = ids.includes(id);
-    if (op.remove && !listed) return { refused: `${id} is not ranked` };
-    if (!op.remove && !listed && !op.where) {
-      return { refused: `${id} is not ranked; give a position (--top, --bottom, --before, --after) with --why` };
-    }
-    if (!op.remove && !listed && op.why == null) return { refused: `${id} is not ranked yet; give --why <reason>` };
+    if (op.remove && !ids.includes(id)) return { refused: `${id} is not ranked` };
     const target = op.where?.before ?? op.where?.after;
     if (target && !ids.includes(target))
       return { refused: `${target} is not ranked; rank it first, or use --top or --bottom` };
-    let next;
-    try {
-      next = applyRank(content, op);
-    } catch (err) {
-      if (err instanceof RankFileError) return { refused: err.message };
-      throw err;
-    }
+    const next = applyRank(content, op);
     const commit = async () => commitPaths(root, [PRIORITY_FILE], `chore: ${id} ${opWords(op)} in ${PRIORITY_FILE}`);
-    // Uncommitted edits to priority.md are committed only when they are this
-    // command's own earlier write whose commit failed (a hook, git add, the
-    // sync lock); anyone else's edits are never swept into a rank commit.
+    // Uncommitted edits to priority.yaml are committed only when they are
+    // this command's own earlier write whose commit failed (a hook, git add,
+    // the sync lock); anyone else's edits are never swept into a rank commit.
     const dirty = inRepo(root) && uncommitted(root);
     if (next === content) {
       if (!dirty) return { unchanged: true };
@@ -644,7 +477,7 @@ async function applyEdit(root, path, op) {
         refused: `${PRIORITY_FILE} has uncommitted edits; commit or discard them first. Nothing was written.`,
       };
     }
-    writePriority(root, path, next, crlf);
+    atomicWriteFile(root, path, next);
     if (!inRepo(root)) return { commit: { committed: false, paths: [PRIORITY_FILE], notRepo: true } };
     return { commit: await commit() };
   });

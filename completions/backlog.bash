@@ -246,10 +246,8 @@ _roost_bl() {
       COMPREPLY=( $(compgen -W "--theme --epic" -- "$cur") )
       ;;
     rank)
-      if [[ "$prev" == --why ]]; then
-        return
-      elif [[ "$cur" == -* ]]; then
-        COMPREPLY=( $(compgen -W "--top --bottom --before --after --why --remove --help" -- "$cur") )
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--top --bottom --before --after --remove --help" -- "$cur") )
       else
         COMPREPLY=( $(compgen -W "$(_roost_feature_ids) $(_roost_story_ids)" -- "$cur") )
       fi

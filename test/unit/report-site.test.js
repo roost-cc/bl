@@ -86,7 +86,7 @@ test('writeSite renders the root and every page of a kind with generated section
 test('writeSite copies the published set with its timestamps, and nothing else', () => {
   const dir = siteBacklog();
   const { graph, site } = build(dir);
-  for (const rel of ['tasks/T1-do-it.md', 'docs/guide.md', 'roadmap.md', 'priority.md', graph.get('S-2').relPath]) {
+  for (const rel of ['tasks/T1-do-it.md', 'docs/guide.md', 'roadmap.md', 'priority.yaml', graph.get('S-2').relPath]) {
     assert.equal(readFileSync(join(site, rel), 'utf8'), readFileSync(join(dir, rel), 'utf8'), rel);
   }
   // Copied and rendered files alike keep the committed file's time.

@@ -25,12 +25,12 @@ const STORIES = [
 ].map((s) => ({ ...s, component: 'C00', title: `Story ${s.id}` }));
 
 /**
- * The fixture's `priority.md` (F-78 D1): `ranked` first, in that order. The
+ * The fixture's `priority.yaml` (F-78 D1): `ranked` first, in that order. The
  * root index's Backlog table lists them the other way round, and no reader
  * takes its order from there (F-78 D2).
  */
 function writeRanks(dir, ranked) {
-  writeFileSync(join(dir, 'priority.md'), PRIORITY_TEMPLATE(ranked.map((unit) => ({ unit, why: 'x' }))));
+  writeFileSync(join(dir, 'priority.yaml'), PRIORITY_TEMPLATE(ranked));
   const rows = [...ranked]
     .reverse()
     .map((id) => `| ${id} | x |`)

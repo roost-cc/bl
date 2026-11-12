@@ -126,7 +126,7 @@ assert_eq "bl top completes its flags" "--json --stream --interval --version --n
 assert_eq "bl watch completes feature and story ids" "F-1 S-1" "$(complete_bash watch "")"
 assert_eq "bl watch completes its flags" "--from-start --json --help" "$(complete_bash watch "-")"
 assert_eq "bl rank completes feature and story ids" "F-1 S-1" "$(complete_bash rank "")"
-assert_eq "bl rank completes its flags" "--top --bottom --before --after --why --remove --help" "$(complete_bash rank "-")"
+assert_eq "bl rank completes its flags" "--top --bottom --before --after --remove --help" "$(complete_bash rank "-")"
 
 if (( FAIL > 0 )); then
   echo "FAIL: $FAIL test(s) failed; $PASS passed" >&2

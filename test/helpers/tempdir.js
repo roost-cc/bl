@@ -12,6 +12,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs'
 import { basename, dirname, join } from 'path';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
+import { stringify } from 'yaml';
 import { serializeFrontmatter } from '../../src/config.js';
 
 /** The flow.json `bl init` writes, and every fixture backlog gets. */
@@ -152,15 +153,8 @@ ${f.deferred ?? 'None.'}
 ${f.escalation ?? 'None.'}
 `;
 
-/**
- * The backlog's `priority.md` (F-78 D1): `ranked` is its `ranked:` list,
- * each `{ unit, why }`; the body is prose bl never writes.
- */
-export const PRIORITY_TEMPLATE = (ranked = []) => `${serializeFrontmatter({ ranked })}
-# Priority
-
-The order the operator prefers units to run in.
-`;
+/** The backlog's `priority.yaml` (F-113 D1): `ranked`, a list of work unit ids. */
+export const PRIORITY_TEMPLATE = (ranked = []) => stringify(ranked);
 
 /**
  * The backlog's `roadmap.md` (F-53 D2): `entries` is its `entries:` list,
@@ -280,8 +274,8 @@ ${story.body ?? ''}
  *           theme?: string | null }>} [valueEpics]
  *           Written under epics/E<nn>-<dirSuffix>/; `theme` defaults to `demo`.
  *           Its features and status are derived (F-77 D3), never written.
- * @property {Array<{ unit: string, why: string }> | string | null} [priority]
- *           `priority.md`: a `ranked:` list (PRIORITY_TEMPLATE, `[]` by
+ * @property {string[] | string | null} [priority]
+ *           `priority.yaml`: a list of work unit ids (PRIORITY_TEMPLATE, `[]` by
  *           default), the file's whole text, or null for no file.
  * @property {Array<{ title: string, added: string, status: string }> | string | null} [roadmap]
  *           `roadmap.md`: an `entries:` list (ROADMAP_TEMPLATE, `[]` by
@@ -423,7 +417,7 @@ export function mkTempBacklog(fixture = {}, { keep = false } = {}) {
 
   if (fixture.priority !== null) {
     writeFileSync(
-      join(dir, 'priority.md'),
+      join(dir, 'priority.yaml'),
       typeof fixture.priority === 'string' ? fixture.priority : PRIORITY_TEMPLATE(fixture.priority),
     );
   }

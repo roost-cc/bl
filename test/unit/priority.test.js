@@ -1,6 +1,6 @@
 /**
- * priority.test.js — `priority.md` and the order the graph gives from it
- * (F-78 D1, S-1261): `backlog.priority`, `backlog.rankOf` and the
+ * priority.test.js — `priority.yaml` and the order the graph gives from it
+ * (F-78 D1, F-113 D1, S-1261): `backlog.priority`, `backlog.rankOf` and the
  * `priority-file` and `priority-unit` problems `bl validate` reports.
  */
 
@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadBacklog } from '../../src/backlog-graph.js';
-import { FrontmatterError, serializeFrontmatter } from '../../src/config.js';
+import { stringify } from 'yaml';
+import { serializeFrontmatter } from '../../src/config.js';
 import { PriorityError, isUpdateStory, parseRanked } from '../../src/priority.js';
 import { findPriorityFindings } from '../../src/validate.js';
 import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
@@ -27,7 +28,7 @@ function write(path, fm, body = '') {
  *   F-3 draft 2026-02-01   S-3 loose 2026-02-01 S-7 update story 2026-01-01
  *   F-4 draft, no added    S-4 loose 2026-01-15 T-1 a task
  *
- * `priority` is `priority.md`'s whole text, or null for none.
+ * `priority` is `priority.yaml`'s whole text, or null for none.
  */
 function backlog(priority) {
   const root = join(mkTempDir('bl-priority-'), 'backlog');
@@ -64,12 +65,11 @@ function backlog(priority) {
     });
   }
   write(join(root, 'tasks', 'T1-x.md'), { task_id: 'T-1', title: 'A task', unit: 'F-1', status: 'open' });
-  if (priority != null) writeFileSync(join(root, 'priority.md'), priority);
+  if (priority != null) writeFileSync(join(root, 'priority.yaml'), priority);
   return { root, config: { backlogRoot: root }, cleanup: () => rmSync(join(root, '..'), { recursive: true }) };
 }
 
-const ranked = (...entries) =>
-  `${serializeFrontmatter({ ranked: entries.map(([unit, why = 'Because.']) => ({ unit, why })) })}\n# Priority\n`;
+const ranked = (...ids) => stringify(ids);
 
 const ids = (units) => units.map((u) => u.id);
 const problems = (g) => g.problems.filter((p) => p.code.startsWith('priority')).map((p) => `${p.code}: ${p.message}`);
@@ -78,27 +78,28 @@ const problems = (g) => g.problems.filter((p) => p.code.startsWith('priority')).
 // parseRanked
 // ---------------------------------------------------------------------------
 
-test('parseRanked reads a list of {unit, why}; an empty or absent ranked: is an empty order', () => {
-  assert.deepEqual(parseRanked([{ unit: ' S-1 ', why: ' x ' }]), [{ unit: 'S-1', why: 'x', position: 1 }]);
-  assert.deepEqual(parseRanked(''), []);
-  assert.deepEqual(parseRanked(undefined), []);
+test('parseRanked reads a list of ids; an empty file is an empty order', () => {
+  assert.deepEqual(parseRanked([' S-1 ', 'F-2']), [
+    { unit: 'S-1', position: 1 },
+    { unit: 'F-2', position: 2 },
+  ]);
+  assert.deepEqual(parseRanked(null), []);
   assert.deepEqual(parseRanked([]), []);
 });
 
 test('parseRanked refuses every other shape', () => {
   for (const [raw, reason] of [
-    ['F-1', /"ranked:" is not a list/],
-    [{ unit: 'F-1' }, /"ranked:" is not a list/],
-    [['F-1'], /entry 1 is not a mapping with "unit" and "why"/],
-    [[{ unit: 'F-1', why: 'x' }, ['F-2']], /entry 2 is not a mapping/],
-    [[{ why: 'x' }], /entry 1 has no "unit"/],
-    [[{ unit: 'F-1' }], /entry 1 has no "why"/],
-    [[{ unit: 'F-1', why: '  ' }], /entry 1 has no "why"/],
-    [[{ unit: ['F-1'], why: 'x' }], /entry 1 has no "unit"/],
+    ['F-1', /the file is not a YAML list of work unit ids/],
+    [{ unit: 'F-1' }, /the file is not a YAML list of work unit ids/],
+    [[{ unit: 'F-1', why: 'x' }], /entry 1 is not a work unit id/],
+    [['F-1', ['F-2']], /entry 2 is not a work unit id/],
+    [['F-1', '  '], /entry 2 is not a work unit id/],
+    [[12], /entry 1 is not a work unit id/],
+    [[null], /entry 1 is not a work unit id/],
   ]) {
     assert.throws(
       () => parseRanked(raw),
-      (e) => e instanceof PriorityError && reason.test(e.message) && e.message.startsWith('priority.md: '),
+      (e) => e instanceof PriorityError && reason.test(e.message) && e.message.startsWith('priority.yaml: '),
       JSON.stringify(raw),
     );
   }
@@ -115,7 +116,7 @@ test('isUpdateStory: a non-blank update_repo: names an update story', () => {
 // ---------------------------------------------------------------------------
 
 test('priority: open ranked units in list order, then open unranked units by added:, undated first', () => {
-  const b = backlog(ranked(['S-5'], ['F-3']));
+  const b = backlog(ranked('S-5', 'F-3'));
   try {
     const g = loadBacklog(b.config);
     // Tail: F-4 and S-2 are undated (feature first), then S-4 (01-15),
@@ -125,8 +126,8 @@ test('priority: open ranked units in list order, then open unranked units by add
     assert.ok(Object.isFrozen(g.priority));
     assert.equal(g.priority, g.priority, 'computed once');
     assert.deepEqual(
-      g.ranked.map((e) => `${e.position}:${e.unit.id}:${e.why}`),
-      ['1:S-5:Because.', '2:F-3:Because.'],
+      g.ranked.map((e) => `${e.position}:${e.unit.id}`),
+      ['1:S-5', '2:F-3'],
     );
   } finally {
     b.cleanup();
@@ -144,7 +145,7 @@ test('priority: on an added: tie features come first, then by number', () => {
 });
 
 test('priority: closed units, stories inside a feature, update stories and tasks are never in it', () => {
-  const b = backlog(ranked(['F-2'], ['S-6'], ['F-1']));
+  const b = backlog(ranked('F-2', 'S-6', 'F-1'));
   try {
     const g = loadBacklog(b.config);
     // F-2 and S-6 are closed: skipped, and no problem.
@@ -156,8 +157,8 @@ test('priority: closed units, stories inside a feature, update stories and tasks
   }
 });
 
-test('priority: a new unranked story lands in the dated tail with no edit to priority.md', () => {
-  const b = backlog(ranked(['S-2']));
+test('priority: a new unranked story lands in the dated tail with no edit to priority.yaml', () => {
+  const b = backlog(ranked('S-2'));
   try {
     write(join(b.root, 'stories', 'S8-x', 'index.md'), {
       story_id: 'S-8',
@@ -174,7 +175,7 @@ test('priority: a new unranked story lands in the dated tail with no edit to pri
 });
 
 test('rankOf: a unit its place, a story inside a feature its feature place, the rest Infinity', () => {
-  const b = backlog(ranked(['S-5'], ['F-1']));
+  const b = backlog(ranked('S-5', 'F-1'));
   try {
     const g = loadBacklog(b.config);
     assert.equal(g.rankOf('S-5'), 0);
@@ -192,16 +193,16 @@ test('rankOf: a unit its place, a story inside a feature its feature place, the 
   }
 });
 
-test('the order follows priority.md as it changes (revalidated by stat)', () => {
-  const b = backlog(ranked(['S-5']));
+test('the order follows priority.yaml as it changes (revalidated by stat)', () => {
+  const b = backlog(ranked('S-5'));
   try {
     assert.equal(loadBacklog(b.config).priority[0].id, 'S-5');
-    writeFileSync(join(b.root, 'priority.md.new'), ranked(['F-3'], ['S-5']));
-    rmSync(join(b.root, 'priority.md'));
-    copyFileSync(join(b.root, 'priority.md.new'), join(b.root, 'priority.md'));
-    rmSync(join(b.root, 'priority.md.new'));
+    writeFileSync(join(b.root, 'priority.yaml.new'), ranked('F-3', 'S-5'));
+    rmSync(join(b.root, 'priority.yaml'));
+    copyFileSync(join(b.root, 'priority.yaml.new'), join(b.root, 'priority.yaml'));
+    rmSync(join(b.root, 'priority.yaml.new'));
     assert.deepEqual(ids(loadBacklog(b.config).priority).slice(0, 2), ['F-3', 'S-5']);
-    rmSync(join(b.root, 'priority.md'));
+    rmSync(join(b.root, 'priority.yaml'));
     const g = loadBacklog(b.config);
     assert.equal(g.ranked.length, 0);
     assert.deepEqual(
@@ -221,9 +222,7 @@ test('priority-file: a missing file is a problem, never thrown, and an empty ord
   const b = backlog(null);
   try {
     const g = loadBacklog(b.config);
-    assert.deepEqual(problems(g), [
-      `priority-file: priority.md is missing; the backlog's priority lives in its "ranked:" frontmatter`,
-    ]);
+    assert.deepEqual(problems(g), ['priority-file: priority.yaml is missing; bl init writes an empty one']);
     assert.deepEqual(g.ranked, []);
     assert.equal(g.priority[0].id, 'F-4', 'the dated tail alone');
   } finally {
@@ -232,29 +231,30 @@ test('priority-file: a missing file is a problem, never thrown, and an empty ord
 });
 
 test('priority-file: a non-YAML file throws on a strict load and is a problem on a tolerant one', () => {
-  const b = backlog('---\nranked: [\n---\n');
+  const b = backlog('- F-1\n- a: b: c\n');
   try {
     assert.throws(
       () => loadBacklog(b.config),
-      (e) => e instanceof FrontmatterError && /priority\.md: frontmatter is not YAML/.test(e.message),
+      (e) => e instanceof PriorityError && /^priority\.yaml: line 2: the file is not YAML \(/.test(e.message),
     );
     const g = loadBacklog(b.config, { tolerant: true });
     const [p] = g.problems.filter((x) => x.code === 'priority-file');
-    assert.equal(p.file, 'priority.md');
-    assert.match(p.message, /the frontmatter is not YAML/);
+    assert.equal(p.file, 'priority.yaml');
+    assert.equal(p.line, 2);
+    assert.match(p.message, /the file is not YAML/);
     assert.deepEqual(g.ranked, []);
   } finally {
     b.cleanup();
   }
 });
 
-test('priority-file: a malformed ranked: is a problem, not thrown, and an empty order', () => {
+test('priority-file: a file that is not a list of ids is a problem, not thrown, and an empty order', () => {
   for (const [text, message] of [
-    ['---\nranked: F-1\n---\n', '"ranked:" is not a list'],
-    ['---\nranked:\n  - F-1\n---\n', '"ranked:" entry 1 is not a mapping with "unit" and "why"'],
-    ['---\nranked:\n  - why: x\n---\n', '"ranked:" entry 1 has no "unit"'],
-    ['---\nranked:\n  - unit: F-1\n---\n', '"ranked:" entry 1 has no "why"'],
-    ['---\nranked:\n  - feature: F-1\n    why: x\n---\n', '"ranked:" entry 1 has no "unit"'],
+    ['F-1\n', 'the file is not a YAML list of work unit ids'],
+    ['ranked:\n  - F-1\n', 'the file is not a YAML list of work unit ids'],
+    ['- unit: F-1\n  why: x\n', 'entry 1 is not a work unit id'],
+    ['- F-1\n- 7\n', 'entry 2 is not a work unit id'],
+    ['- F-1\n-\n', 'entry 2 is not a work unit id'],
   ]) {
     const b = backlog(text);
     try {
@@ -268,17 +268,17 @@ test('priority-file: a malformed ranked: is a problem, not thrown, and an empty 
 });
 
 test('priority-unit: unknown unit, duplicate, story inside a feature, update story, task', () => {
-  const b = backlog(ranked(['F-99'], ['S-99'], ['nonsense'], ['S-5'], ['s5'], ['S-1'], ['S-7'], ['T-1'], ['F-2']));
+  const b = backlog(ranked('F-99', 'S-99', 'nonsense', 'S-5', 's5', 'S-1', 'S-7', 'T-1', 'F-2'));
   try {
     const g = loadBacklog(b.config);
     assert.deepEqual(problems(g), [
-      'priority-unit: "ranked:" entry 1 (F-99) names no feature under features/',
-      'priority-unit: "ranked:" entry 2 (S-99) names no story under stories/',
-      'priority-unit: "ranked:" entry 3 (nonsense) is not a feature (F-<n>) or story (S-<n>) id',
-      'priority-unit: "ranked:" entry 5 (s5) is ranked twice (first at entry 4)',
-      'priority-unit: "ranked:" entry 6 (S-1) is a story inside F-1; rank its feature instead',
-      'priority-unit: "ranked:" entry 7 (S-7) is an update story; update stories are never ranked',
-      'priority-unit: "ranked:" entry 8 (T-1) names a task; only features and loose stories are ranked',
+      'priority-unit: entry 1 (F-99) names no feature under features/',
+      'priority-unit: entry 2 (S-99) names no story under stories/',
+      'priority-unit: entry 3 (nonsense) is not a feature (F-<n>) or story (S-<n>) id',
+      'priority-unit: entry 5 (s5) is ranked twice (first at entry 4)',
+      'priority-unit: entry 6 (S-1) is a story inside F-1; rank its feature instead',
+      'priority-unit: entry 7 (S-7) is an update story; update stories are never ranked',
+      'priority-unit: entry 8 (T-1) names a task; only features and loose stories are ranked',
     ]);
     // The valid entries still order: S-5 first; F-2 (closed) is skipped silently.
     assert.equal(g.priority[0].id, 'S-5');
@@ -291,16 +291,16 @@ test('priority-unit: unknown unit, duplicate, story inside a feature, update sto
   }
 });
 
-test('bl validate reports the priority problems as errors at priority.md', () => {
-  const b = backlog(ranked(['F-99'], ['F-2']));
+test('bl validate reports the priority problems as errors at priority.yaml', () => {
+  const b = backlog(ranked('F-99', 'F-2'));
   try {
     const findings = findPriorityFindings(loadBacklog(b.config, { tolerant: true }));
     assert.deepEqual(findings, [
       {
         severity: 'error',
         code: 'priority-unit',
-        message: '"ranked:" entry 1 (F-99) names no feature under features/',
-        location: 'priority.md',
+        message: 'entry 1 (F-99) names no feature under features/',
+        location: 'priority.yaml',
       },
     ]);
   } finally {

@@ -1925,7 +1925,7 @@ export async function cmdMerge(args, config, feature) {
       date: stamp,
       extra: [...releaseLines, ...noReviewLines(gates.unreviewed, stamp)],
     });
-    // `priority.md` is not touched (F-78 D3): a merged feature leaves the
+    // `priority.yaml` is not touched (F-78 D3): a merged feature leaves the
     // order because it is closed, and its date is in this merge's commit.
     // Its theme's `## State` records it too (F-53 D4), in the same hold.
     themeFile = recordThemeState(config, feature, stamp);

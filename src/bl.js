@@ -119,15 +119,14 @@ Commands:
                --since <date>  Only history from YYYY-MM-DD
                --charts <name> The chart adapter (default vega-lite)
                --json          Print data.json and write nothing
-  next       Print the next unit (feature or loose story) by priority.md,
+  next       Print the next unit (feature or loose story) by priority.yaml,
                hard dependencies first
                --theme <slug>, --epic <E-id>  The first free unit they
                                    match; the matching order goes to stderr
-  rank       Change priority.md, the one ranked list of units (operator or an
+  rank       Change priority.yaml, the one ranked list of units (operator or an
                interactive session only; an edit is refused under BL_HEADLESS)
                <unit> --top|--bottom|--before <unit>|--after <unit>
-                 [--why <text>]  Place a unit (a new one needs --why)
-               <unit> --why <text>  Rewrite a ranked unit's reason
+                                    Place a unit
                <unit> --remove      Take it out of the list
                With no arguments, print the order
                An interactive run first pulls and takes closed units out of

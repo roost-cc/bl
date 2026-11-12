@@ -20,13 +20,12 @@ const story = (id, status, extra = {}) => ({
 });
 
 /**
- * The stories, `ranked` first in `priority.md` (F-78 D1). The root index's
+ * The stories, `ranked` first in `priority.yaml` (F-78 D1). The root index's
  * Backlog table lists them the other way round: no reader takes its order
  * from there (F-78 D2).
  */
 function fixture(stories, ranked = [], extra = {}) {
-  const priority = ranked.map((unit) => ({ unit, why: 'x' }));
-  const { dir } = mkTempBacklog({ components: [{ id: 'C00', title: 'Work' }], stories, priority, ...extra });
+  const { dir } = mkTempBacklog({ components: [{ id: 'C00', title: 'Work' }], stories, priority: ranked, ...extra });
   const rows = [...stories]
     .reverse()
     .map((s) => `| ${s.id} | x |`)

@@ -880,7 +880,7 @@ test('actions (S-1336): the runs rows, attention items and ranked units of a sna
   const { dir } = mkTempBacklog({
     components: [{ id: 'C01', title: 'Work' }],
     stories: [{ id: 'S-4', component: 'C01', title: 'Every verb commits', status: 'approved' }],
-    priority: [{ unit: 'S-4', why: 'first' }],
+    priority: ['S-4'],
   });
   const readers = sectionReaders(loadConfig({ backlogRoot: dir }));
   const { ranked } = readers.next(NOW);

@@ -44,7 +44,7 @@ test('bl init commits and pushes the files it wrote with "chore: bl init"; an ed
     'coding-dictionary.yaml',
     'flow.json',
     'index.md',
-    'priority.md',
+    'priority.yaml',
     'roadmap.md',
   ]);
   assert.deepEqual(statusLines(dir), ['?? notes.md']);
@@ -150,7 +150,7 @@ const INIT_FILES = [
   'coding-dictionary.yaml',
   'flow.json',
   'index.md',
-  'priority.md',
+  'priority.yaml',
   'roadmap.md',
 ];
 const brokenSeed = (file) => [

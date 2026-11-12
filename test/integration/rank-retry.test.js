@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { git } from '../helpers/git-backlog.js';
-import { CLOSED, HAND, backlog, bl, read } from '../helpers/rank-fixture.js';
+import { CLOSED, backlog, bl, list, read } from '../helpers/rank-fixture.js';
 
 test('rank_retry_reconciles_closed_work_units_before_edit', () => {
-  // A failed cleanup commit leaves HAND (F-5 and S-9 taken out). Before the
+  // A failed cleanup commit leaves S-1 and F-2 (F-5 and S-9 taken out). Before the
   // retry, closed states change; the retry redoes the cleanup on HEAD with
   // today's closed units, then lists or edits, with every index state.
   const setStatus = (dir, file, from, to) => {
@@ -28,7 +28,7 @@ test('rank_retry_reconciles_closed_work_units_before_edit', () => {
       back: ['F-5'],
     },
   };
-  const modes = { bare: [], edit: ['S-2', '--top', '--why', 'x'], remove: ['F-2', '--remove'] };
+  const modes = { bare: [], edit: ['S-2', '--top'], remove: ['F-2', '--remove'] };
   for (const [change, c] of Object.entries(changes)) {
     for (const [mode, args] of Object.entries(modes)) {
       for (const staged of [true, false]) {
@@ -40,7 +40,7 @@ test('rank_retry_reconciles_closed_work_units_before_edit', () => {
         chmodSync(hook, 0o755);
         assert.equal(bl(['rank'], dir).status, 1, label);
         unlinkSync(hook);
-        if (!staged) git(dir, 'reset', '-q', '--', 'priority.md');
+        if (!staged) git(dir, 'reset', '-q', '--', 'priority.yaml');
         c.apply(dir);
         const before = git(dir, 'rev-parse', 'HEAD');
 
@@ -48,14 +48,14 @@ test('rank_retry_reconciles_closed_work_units_before_edit', () => {
         assert.equal(r.status, 0, `${label}: ${r.stderr}`);
         assert.doesNotMatch(r.stderr, /uncommitted|left/, label);
         const file = read(dir);
-        for (const id of c.removed) assert.doesNotMatch(file, new RegExp(`unit: ${id}\\b`), `${label}: ${id} out`);
-        for (const id of c.back) assert.match(file, new RegExp(`unit: ${id}\\b`), `${label}: ${id} back`);
+        for (const id of c.removed) assert.doesNotMatch(file, new RegExp(`^- ${id}$`, 'm'), `${label}: ${id} out`);
+        for (const id of c.back) assert.match(file, new RegExp(`^- ${id}$`, 'm'), `${label}: ${id} back`);
         if (c.back.length > 0) assert.match(r.stderr, new RegExp(`${c.back.join(', ')} open again`), label);
         const subjects = git(dir, 'log', '--format=%s', `${before}..HEAD`).split('\n').filter(Boolean);
-        const cleaned = c.removed.length > 0 ? [`chore: ${c.removed.join(', ')} unranked (done) in priority.md`] : [];
+        const cleaned = c.removed.length > 0 ? [`chore: ${c.removed.join(', ')} unranked (done) in priority.yaml`] : [];
         const removedByCleanup = mode === 'remove' && c.removed.includes('F-2');
-        const edits = { bare: [], edit: ['chore: S-2 ranked first in priority.md'], remove: [] };
-        edits.remove = removedByCleanup ? [] : ['chore: F-2 unranked in priority.md'];
+        const edits = { bare: [], edit: ['chore: S-2 ranked first in priority.yaml'], remove: [] };
+        edits.remove = removedByCleanup ? [] : ['chore: F-2 unranked in priority.yaml'];
         assert.deepEqual(subjects, [...edits[mode], ...cleaned], label);
         assert.equal(git(dir, 'status', '--porcelain'), '', label);
         if (mode === 'bare')
@@ -81,7 +81,7 @@ test('rank_retry_reconciles_closed_work_units_before_edit', () => {
     const r = bl(['rank', ...args], dir);
     assert.equal(r.status, mode === 'bare' ? 0 : 1, `all reopen / ${mode}: ${r.stderr}`);
     if (mode !== 'bare') assert.match(r.stderr, /commit or discard them first/, mode);
-    assert.equal(read(dir), HAND, `all reopen / ${mode}: the pending write stays`);
+    assert.equal(read(dir), list('S-1', 'F-2'), `all reopen / ${mode}: the pending write stays`);
     assert.equal(git(dir, 'rev-parse', 'HEAD'), before, mode);
   }
 });

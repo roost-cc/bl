@@ -60,7 +60,7 @@ Options:
 
 Registers the backlog repo in your global agent settings so agents can
 commit and push backlog changes from any cwd, and creates allowed-tools.json,
-flow.json (the statuses, verbs and gates per type), roadmap.md, priority.md
+flow.json (the statuses, verbs and gates per type), roadmap.md, priority.yaml
 and coding-dictionary.yaml (bl's seed of software-engineering terms) from
 their templates, and the root index.md (the "title" and a heading of it),
 when the backlog has none; an existing one is left as it is. A new
@@ -131,7 +131,7 @@ export function ensureFlowFile(backlogRoot) {
 
 /**
  * Give a new backlog the two hand-edited documents `bl validate` requires,
- * `roadmap.md` (F-53 D2) and `priority.md` (F-78 D1), each from its
+ * `roadmap.md` (F-53 D2) and `priority.yaml` (F-78 D1, F-113 D1), each from its
  * template with an empty list (S-581), and the coding dictionary seed
  * (F-82 D2), which the project then curates. An existing one is left alone.
  */

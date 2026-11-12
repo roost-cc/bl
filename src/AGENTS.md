@@ -129,9 +129,9 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
 ```
 <backlog>/
   index.md                      ← overview, hand-written; its tables are rendered when read
-  priority.md                   ← the one ranked list of features and loose
-                                  stories: `ranked:` by `bl rank` or by hand,
-                                  never by automation (F-78 D1, D3)
+  priority.yaml                 ← the one ranked list of features and loose
+                                  stories: a YAML list of ids, by `bl rank` or
+                                  by hand, never by automation (F-78 D3, F-113 D1)
   roadmap.md                    ← the road map: `entries:` and one section
                                   each, all by hand (F-53 D2)
   coding-dictionary.yaml        ← the coding dictionary: bl init's copy of
@@ -671,36 +671,33 @@ file. `bl validate` checks its shape only (`roadmap.js` `findRoadmapFindings`), 
   section names no entry.
 
 A backlog with no `roadmap.md` reports `roadmap-file`, and a theme with no `brief:`
-`theme-brief`. `bl init` writes `templates/roadmap.md` and `templates/priority.md`
-(empty `entries:` and `ranked:`) into a backlog that has neither, and leaves an existing one
-alone (S-581, F-78 D1). It does the same with the coding dictionary seed (see
+`theme-brief`. `bl init` writes `templates/roadmap.md` (empty `entries:`) and
+`templates/priority.yaml` (`[]`) into a backlog that has neither, and leaves an existing one
+alone (S-581, F-78 D1, F-113 D1). It does the same with the coding dictionary seed (see
 **Dictionaries**). (F-53's one-off migration that wrote them for the first backlog has run;
 S-581 removed it, and it is in git history.)
 
-### Priority (F-78 D1)
+### Priority (F-78 D1, F-113 D1)
 
-`<backlog>/priority.md` is the backlog's one ranked list of **units**. A unit is a feature or
-a **loose story**, a story with no `feature:` and no `update_repo:` (`isLooseStory`,
-`src/priority.js`); stories inside a feature, update stories and tasks are never units. Its YAML
-frontmatter holds `ranked:`, a list of `{ unit, why }` (`unit` an `F-<n>` or `S-<n>`, `why` the
-operator's reason, both required); its body is prose bl never writes. Only a person ranks:
-`bl rank` (below) edits one entry at a time, and nothing automated writes the file (F-78 D3).
-An interactive `bl rank` also takes every closed unit out of `ranked:`, in a commit of its own
-(S-1364):
+`<backlog>/priority.yaml` (`PRIORITY_FILE`, `src/priority.js`) is the backlog's one ranked list
+of **units**. A unit is a feature or a **loose story**, a story with no `feature:` and no
+`update_repo:` (`isLooseStory`); stories inside a feature, update stories and tasks are never
+units. The file is a YAML list of unit ids (`F-<n>` or `S-<n>`), one per line, and nothing else.
+The order is the operator's preference: `bl next` and `bl run` pick the first open unit that
+nothing holds, ranked units first. The file holds no reason for the order; git history keeps the
+reasons (F-113 D2). bl reads it with the `yaml` package (`parseRanked` takes the list), and
+`bl rank` writes the whole list with its `stringify`, so comments in the file are not kept.
+Only a person ranks: nothing automated writes the file (F-78 D3). An interactive `bl rank` also
+takes every closed unit out of the list, in a commit of its own (S-1364):
 
 ```yaml
----
-ranked:
-  - unit: S-1
-    why: Blocks every deploy.
-  - unit: F-2
-    why: The next thing users see.
----
+- S-1
+- F-2
 ```
 
 `loadBacklog()` reads it with the units (stat-revalidated like them) and exposes:
 
-- `backlog.ranked`: each valid entry resolved, `{ unit, why, position }`, open or closed;
+- `backlog.ranked`: each valid entry resolved, `{ unit, position }`, open or closed;
 - `backlog.priority`: the open ranked units in list order, then every other open unit,
   features and loose stories alike, by `added:` (`byAdded`): undated first (they predate the
   field), then features before stories on a tie, then by number. A unit needs no entry: a new
@@ -710,15 +707,15 @@ ranked:
   its feature's place, so a listing sorts a feature's stories together at its rank; a closed
   unit, an update story, a task or an unknown id is `Infinity`, after every placed one.
 
-A missing or malformed file is a `priority-file` problem and an empty `ranked:`; one that is not
-YAML is thrown by a strict load. Entries that name no unit are `priority-unit` problems and are
+A missing file, or one that is not a list of non-empty id strings, is a `priority-file` problem
+and an empty order; one that is not YAML is thrown by a strict load (a `PriorityError`). Entries that name no unit are `priority-unit` problems and are
 skipped (see `bl validate`). The order is a preference, never a dependency.
 
 Every reader that orders work reads it (F-78 D2): `bl next` walks `priority` with hard
 dependencies first (see `bl next`), and `bl list`, the bare `bl status`, `bl grep`,
 `bl what-next`'s filtered pick and the component Stories tables `renderPage` renders sort stories
 by `byRank` (`src/priority.js`: `rankOf`, then the id's number). `bl list` shows a `Rank`
-column after Status: the unit's entry number in `ranked:`, or `-` for an unranked row. No code
+column after Status: the unit's entry number in `priority.yaml`, or `-` for an unranked row. No code
 reads an order out of the root `index.md`.
 
 The graph derives each epic's features and status (above), and `renderPage` renders the theme
@@ -2405,7 +2402,7 @@ A session leaves behind three different things, and each has its own place (F-65
   F-82 (a feature has no such finding). The message names `scripts/migrate-deferred-heading.js`,
   which renames it to `## Deferred` in every story file of the backlog, open or closed, in one
   commit, and merges it into a `## Deferred` the file already has (on the shape of
-  `migrate-priority.js`: clean at origin/main first, inside `migration-txn.js`; a second run
+  `migrate-depends-on.js`: clean at origin/main first, inside `migration-txn.js`; a second run
   plans nothing).
 
 A closed unit's section is history: its notes, done operator items and old heading stay as
@@ -3466,7 +3463,7 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), `agent`, `model`, `effort` of its newest session entry, `title` (its unit's), `testAttempts`, `stoppedBy` (the `bl stop` pids that stopped it; `[]` unless `stopped`), `timeline` and `denied` (below) | every snapshot                                           |
 | `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                                                                                                       | when the backlog changes, and at least every 30 s        |
-| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                                                                                                        | as `attention`                                           |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                                                                                                               | as `attention`                                           |
 | `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                                                                                                      | every 5 min, and at the snapshot after a `capacity` line |
 | `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                                                                                                       | every 5 min                                              |
 | `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                                                                                                                 | every snapshot                                           |
@@ -3530,7 +3527,7 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   (`.bl/run/<id>.lock`, checked with a try-lock) has `status: "stale"`: its bl was killed. The
   stream parses a run state again only when the file's mtime changes.
 - "The backlog changes" means git `HEAD` moves, or a unit file, change document or
-  `priority.md` changes: `backlogStamp()` (`src/top-stream.js`) compares `HEAD` and
+  `priority.yaml` changes: `backlogStamp()` (`src/top-stream.js`) compares `HEAD` and
   `backlogSignature()`, the stat signature `loadBacklog()` compares (`src/backlog-graph.js`).
 - The first `--stream` snapshot reads every section. `attention` and `next` have a schedule
   each. When the read of `attention`, `next`, `capacity` or `history` throws, the section is
@@ -3739,7 +3736,7 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
 - **Documentation root** (F-79 D4, `src/report-site.js` `writeSite`). The same staged run
   also writes `reports/site/`, the backlog's complete root, which a documentation site copies
   as it is. It holds `PUBLISHED` (`stories/`, `themes/`, `epics/`, `components/`, `features/`,
-  `tasks/`, `docs/`, `roadmap.md`, `priority.md`) copied with their timestamps; the root
+  `tasks/`, `docs/`, `roadmap.md`, `priority.yaml`) copied with their timestamps; the root
   `index.md` and every page of a `GENERATED_SECTIONS` kind rendered by `renderPage` and
   formatted, each with its committed file's timestamp (a page with nothing generated stays a
   copy); and the report's own files under `site/reports/`, so the report's `../` links resolve
@@ -3846,59 +3843,58 @@ story outside the feature).
 - A unit held only by a task (an operator action), a missing story or an update story is passed
   over, and stderr names the holder (`Passed over …`). With every unit held so, stdout is empty.
 
-stderr also lists the matching ranked units (entry number in `ranked:`, id, title, theme and
-epic or component, why) and the unranked tail's first five, oldest first. `--theme` and
+stderr also lists the matching ranked units (entry number in `priority.yaml`, id, title, theme
+and epic or component) and the unranked tail's first five, oldest first. `--theme` and
 `--epic` filter units (`src/filter.js`): a feature by its own theme and epic, a loose story by
 its component's repo's themes and no epic. An unknown or malformed theme or epic exits 1, as do
-`--feature`, `--component` or a positional argument. With no `priority.md`, or a `ranked:` of
-the wrong shape, stderr says so and every unit is unranked; a `priority.md` that is not YAML
+`--feature`, `--component` or a positional argument. With no `priority.yaml`, or one that is not
+a list of ids, stderr says so and every unit is unranked; a `priority.yaml` that is not YAML
 exits 1. The order is a preference: hard dependencies override it, and `bl next` never reads
 the roadmap. The walk is `nextPlan(config, filter)`, which `bl top`'s `next` section reads too.
 
 ### `bl rank`
 
-How a person changes `priority.md` (F-78 D3, `src/rank-cmd.js`). The operator or an
-interactive session ranks; an agent bl starts headless cannot.
+How a person changes `priority.yaml` (F-78 D3, F-113 D1, `src/rank-cmd.js`). The operator or
+an interactive session ranks; an agent bl starts headless cannot. `bl rank --help` says what the
+file means (see **Priority**).
 
 ```bash
 bl rank                               # the order: ranked units, then the unranked tail
-bl rank F-12 --top --why "Blocks go-live"   # a new unit needs --why
-bl rank S-40 --before F-12            # move a ranked unit (or --after, --top, --bottom)
-bl rank F-12 --why "Blocks go-live and billing"   # rewrite a ranked unit's reason
+bl rank F-12 --top                    # rank a unit (or --bottom, --before, --after)
+bl rank S-40 --before F-12            # move a ranked unit
 bl rank S-40 --remove                 # back into the dated tail
 ```
 
-- With no arguments, stdout lists the ranked units (entry number, id, title, why) and then
+- With no arguments, stdout lists the ranked units (entry number, id, title) and then
   every other open unit oldest `added:` first, from `backlog.priority`.
 - Every interactive run, with or without arguments, pulls the backlog first
   (`commandPullsBacklog`) and then, under the backlog lock, takes each closed unit out of
-  `ranked:` (`removeClosed`: every entry of each unit `graph.ranked` resolves whose unit is done,
+  the list (`removeClosed`: every entry of each unit `graph.ranked` resolves whose unit is done,
   a unit listed twice losing both; an entry that names no unit stays a `priority-unit` finding).
-  It commits `priority.md` alone, `chore: F-79, F-85 unranked (done) in priority.md` (ids in
-  `ranked:` order), and says `bl rank: took out F-79, F-85 (done).` on stderr, before it prints
+  It commits `priority.yaml` alone, `chore: F-79, F-85 unranked (done) in priority.yaml` (ids in
+  list order), and says `bl rank: took out F-79, F-85 (done).` on stderr, before it prints
   the order or applies the edit. A failed commit exits 1 and the edit does not run. With
-  uncommitted edits to `priority.md` it leaves the closed units and says which; the one exception
+  uncommitted edits to `priority.yaml` it leaves the closed units and says which; the one exception
   is a file that holds exactly an earlier cleanup's write whose commit failed (`pendingIsOurs`).
   It redoes that cleanup on HEAD with the units closed now, and commits it: a unit closed since
   goes too, and a unit open again gets its entry back, with a line that names it. If every unit
   that write took out is open again, the write stays uncommitted: a failed `--remove` edit or a
-  hand edit leaves the same text. A file bl rank cannot edit (a flow list) skips the cleanup with
-  one line, and an edit on it refuses with that line.
+  hand edit leaves the same text. A file bl rank cannot edit (not YAML, or not a list of ids) skips the
+  cleanup with one line, and an edit on it refuses with that line.
   `bl rank <closed unit> --remove` exits 0 once the cleanup took that unit out. Usage errors and
   `checkUnit` refusals exit before the cleanup.
 - `<unit>` must be an open feature or loose story (`checkUnit`): a story inside a feature
   ("the feature is the unit: rank F-n"), an update story, a task, a closed unit and an unknown
-  id are refused, naming why. `--remove` takes whatever `ranked:` lists, so a closed or deleted
+  id are refused, naming why. `--remove` takes whatever the list names, so a closed or deleted
   unit can be dropped. `--before`/`--after` name a unit already ranked.
-- The edit changes only the entry named. The frontmatter is parsed with `yaml`'s
-  `parseDocument` and the entry's lines are cut and spliced at the node's source range, so every
-  other entry, comment, blank line and the body stay byte for byte; a new entry takes the list's
-  indentation and its `why` is quoted only where YAML needs it. A move that leaves the order as
-  it is changes nothing and commits nothing. The last entry removed leaves `ranked: []`.
+- An edit reads the list (`rankedIds`), moves or removes the id, and writes the whole list with
+  `yaml`'s `stringify` (`applyRank`), so ids are written as `canonical` spells them and comments
+  are not kept. A move that leaves the order as it is changes nothing and commits nothing. The
+  last entry removed leaves `[]`. `--why` is no option: the file holds no reasons (F-113 D2).
 - An edit pulls the backlog first (`commandPullsBacklog`), writes the file under the backlog
-  lock and commits `priority.md` alone (`commitPaths`, which pushes):
-  `chore: <unit> ranked first|last|before <u>|after <u> | reason rewritten | unranked in priority.md`.
-- Uncommitted edits to `priority.md` are never swept into a rank commit. An edit that would
+  lock and commits `priority.yaml` alone (`commitPaths`, which pushes):
+  `chore: <unit> ranked first|last|before <u>|after <u> | unranked in priority.yaml`.
+- Uncommitted edits to `priority.yaml` are never swept into a rank commit. An edit that would
   change the file while it differs from HEAD is refused, nothing written. A no-op commits the
   pending file only when it is exactly this edit applied to HEAD's version (`pendingIsOurs` takes
   the change as a function of HEAD's text, the edit's or the cleanup's) and the index holds
@@ -3911,7 +3907,7 @@ when `headless` is set (`runHeadlessSession` passes `headless: true`); an intera
 no marker (it still gets `BL_TAB_TITLE=''`, see "Tab titles"). With `BL_HEADLESS` set, a
 `bl rank` edit exits 1 before it pulls or writes anything, and
 `commitPaths`, the one commit path every bl command uses, refuses any commit whose paths, taken
-as one Git pathspec set (an exclusion such as `:!priority.md` counts), select `priority.md`
+as one Git pathspec set (an exclusion such as `:!priority.yaml` counts), select `priority.yaml`
 (`headlessPriorityRefusal`), so a hand edit cannot be
 committed through `bl sync --commit --path` either. Printing the order is allowed; it neither
 pulls nor takes closed units out, and says nothing about them, since the order skips them. The marker is
@@ -3919,23 +3915,20 @@ a guard against an agent changing a person's decision by mistake, not a security
 The test helper `runBl` drops an inherited `BL_HEADLESS` (`personEnv`), so the suite runs the
 same inside a headless session; a test that wants the marker passes it.
 
-**Nothing automated writes `priority.md`** (F-78 D3). `bl sync` and `bl merge` never touch it: a
+**Nothing automated writes `priority.yaml`** (F-78 D3). `bl sync` and `bl merge` never touch it: a
 merged feature leaves the order because it is closed, not by an edit, and the next interactive
 `bl rank` (a person's command) takes its entry out. Its merge date is in
 the backlog's git history (its `bl merge` commit) and `bl history --json`. `bl side` does not
-count it among the files it owns. The body may keep a hand-written `## History`.
+count it among the files it owns.
 
-**The migration** (F-78 D5). Before F-78 the feature order was the `ranked:` of a file of its own
-at the backlog root (`OLD_FILE`, `src/migrate-priority.js`, the one place that still names it).
-`node scripts/migrate-priority.js [--dry-run] [--backlog <dir>]` (logic in
-`src/migrate-priority.js`, through `src/migration-txn.js`) turns it into `priority.md` in one
-backlog commit: the open ranked features, in order, as `{ unit, why }` (a closed, unknown or
-repeated one is dropped and named); a body of the template's intro, the old intro's own
-paragraphs less the ones about the old mechanism, and the old `## History` with a line for the
-migration; the old generated tables dropped and the old file removed. `--dry-run` prints the
-entries kept and dropped and writes nothing; with no old file a run does nothing, and one beside
-an existing `priority.md` is refused. It commits `priority.md`, so it runs outside any headless
-session. The operator runs it from the merged bl right after `bl merge F-78`.
+**The conversion** (F-113 D1a). Before F-113 the order was the `ranked:` frontmatter of the
+backlog's old priority markdown file, a list of `{ unit, why }`.
+`node scripts/priority-to-yaml.js [--dry-run] [--backlog <dir>]` reads that list and writes
+`priority.yaml`: the open ranked units, once each, in order, without `why`. It deletes nothing
+and commits nothing. It and its test are the only files that name the old file
+(`test/unit/old-order-file-guard.test.js`). A cleanup story after F-113 deletes the script, its
+test, the guard's exceptions and the backlog's old file. F-78's migration from the feature order
+file before it is done and deleted; it is in git history.
 
 ### `bl edit` / `bl view`
 
@@ -4151,7 +4144,7 @@ link pointing into `stories/`, `components/`, `features/`, `epics/` or `themes/`
 - the root `index.md`: a "Total backlog" line (open stories, their points, the components),
   `## Themes` (theme, title, epic count, open features), `## Components` (id, title, repo,
   home, open and done story counts; a component has no points) and `## Priority`: the open
-  units in `priority.md`'s order (F-78 D1), ranked first, the unranked tail marked.
+  units in `priority.yaml`'s order (F-78 D1), ranked first, the unranked tail marked.
 - each `epics/E<nn>-*/index.md`: `## Features` (id, title, status, stories done/total,
   points done/total) after `## Outcome`, from the graph's derived features.
 - each `themes/<slug>/index.md`: `## Epics` (id, title, status, features done/total), then
@@ -4312,13 +4305,13 @@ on its head line as `found by: <id>`.
 **Dictionaries**).
 
 `priority-file` and `priority-unit` (F-78 D1, `findPriorityFindings`, from the graph's
-problems), both errors at `priority.md`: the first when the file is missing, its frontmatter is
-not YAML, or `ranked:` is not a list of mappings each with a non-empty `unit` and `why`; the
-second when an entry names no feature or story, a story inside a feature, an update story or a
-task, or a unit already ranked. A closed unit left in `ranked:` is no finding: the order skips
-it, and the next interactive `bl rank` removes it. Only a `priority.md` that is not YAML stops
-other commands (a strict `loadBacklog` throws it); a missing or malformed one is an empty
-`ranked:`, so every open unit is in the dated tail (see **Priority**). They replace the two
+problems), both errors at `priority.yaml`: the first when the file is missing, is not YAML, or
+is not a list of non-empty id strings; the second when an entry names no feature or story, a
+story inside a feature, an update story or a task, or a unit already ranked. A closed unit left
+in the list is no finding: the order skips it, and the next interactive `bl rank` removes it.
+Only a `priority.yaml` that is not YAML stops other commands (a strict `loadBacklog` throws it);
+a missing or malformed one is an empty order, so every open unit is in the dated tail (see
+**Priority**). They replace the two
 findings of the old feature order file (F-53 D1), which bl no longer reads.
 
 `generated-section` (F-79 D3, `findGeneratedSectionFindings`, error at the page) is a committed
@@ -4673,7 +4666,7 @@ its git commands after the report.
 After the merge the branch's open PR, if any, is closed through
 `change.find` and `change.close`.
 
-`bl merge F-<n>` leaves `priority.md` as it is (F-78 D3): the merged feature drops out of the
+`bl merge F-<n>` leaves `priority.yaml` as it is (F-78 D3): the merged feature drops out of the
 order because it is closed, and an entry still naming it is skipped until the next
 interactive `bl rank` removes it. In the lock hold that marks the feature done, `recordThemeState` (`theme.js`, F-53 D4)
 appends `- <date>: F-<n> done (<title>).` to the `## State` of the feature's theme, creating the section at the end when
@@ -5434,7 +5427,7 @@ project's business domain may have its own, which the project writes; bl ships n
   in prose and does not rename bl's CLI verbs, frontmatter keys or section headings. It names
   no project. `test/unit/coding-dictionary.test.js` holds that shape in place.
 - **`bl init`** copies the seed to the backlog root as `coding-dictionary.yaml`
-  (`ensureBacklogDocs`, beside `roadmap.md` and `priority.md`) when the backlog has none, and
+  (`ensureBacklogDocs`, beside `roadmap.md` and `priority.yaml`) when the backlog has none, and
   writes `"dictionaries": ["coding-dictionary.yaml"]` into a new `backlog.json` (one with no
   `repos`, `ensureReposBlock`, which copies the seed first, so a failed copy leaves
   `backlog.json` as it was and a rerun tries again). Every seed `bl init` copies is staged in

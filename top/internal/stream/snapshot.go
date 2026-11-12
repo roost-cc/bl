@@ -167,7 +167,6 @@ type Ranked struct {
 	Title    string   `json:"title"`
 	Status   string   `json:"status"`
 	Points   float64  `json:"points"`
-	Why      string   `json:"why"`
 	Holds    []string `json:"holds"`
 	HeldBy   []string `json:"heldBy"`
 	Actions  []Action `json:"actions"`

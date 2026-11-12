@@ -190,7 +190,7 @@ Options:
   --help               Show this help
 
 With no id it lists the open stories, furthest along first as flow.json has it
-(in_progress then refined then backlog by default), by priority.md's order
+(in_progress then refined then backlog by default), by priority.yaml's order
 within each, in the table bl list prints.`,
   approve: `Usage: bl approve <id...> [options]
 

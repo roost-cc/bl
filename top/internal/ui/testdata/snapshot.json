@@ -825,7 +825,6 @@
         "title": "Every repo's pre-push gate runs the tests that prove a change, and nothing else runs them twice",
         "status": "running",
         "points": 21,
-        "why": "",
         "holds": [],
         "heldBy": [],
         "actions": [
@@ -857,7 +856,6 @@
         "title": "Every repo's gate passes in a throwaway worktree on the guest",
         "status": "approved",
         "points": 8,
-        "why": "",
         "holds": ["S-1350 depends on S-1310 (in_progress)"],
         "heldBy": ["F-81"],
         "actions": [
@@ -889,7 +887,6 @@
         "title": "Dependency updates are one job: Renovate applies, the gate tests, the job merges",
         "status": "refined",
         "points": 13,
-        "why": "",
         "holds": ["S-1360 depends on S-1351 (backlog)"],
         "heldBy": ["F-84"],
         "actions": [
@@ -921,7 +918,6 @@
         "title": "AGENTS.md in plain English: rewrite bl's reference in about 80% of ASD-STE100",
         "status": "draft",
         "points": 0,
-        "why": "",
         "holds": [],
         "heldBy": [],
         "actions": [
@@ -953,7 +949,6 @@
         "title": "Inspection quick condition assessment",
         "status": "draft",
         "points": 0,
-        "why": "",
         "holds": [],
         "heldBy": [],
         "actions": [
@@ -985,7 +980,6 @@
         "title": "Maintenance requests",
         "status": "draft",
         "points": 0,
-        "why": "",
         "holds": [],
         "heldBy": [],
         "actions": [

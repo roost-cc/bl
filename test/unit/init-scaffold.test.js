@@ -41,27 +41,27 @@ test('bl init keeps a display name the backlog already sets', () => {
   assert.equal(initOn({ title: 'Acme Web Backlog' }).title, 'Acme Web Backlog');
 });
 
-test('bl init gives a new backlog an empty roadmap.md and priority.md and the coding dictionary seed, and keeps existing ones', () => {
+test('bl init gives a new backlog an empty roadmap.md and priority.yaml and the coding dictionary seed, and keeps existing ones', () => {
   const fresh = mkTempDir('bl-init-docs-');
   quietly(() => ensureBacklogDocs(fresh));
   assert.match(readFileSync(join(fresh, 'roadmap.md'), 'utf8'), /^---\nentries: \[\]\n---\n/);
-  assert.match(readFileSync(join(fresh, 'priority.md'), 'utf8'), /^---\nranked: \[\]\n---\n\n# Priority\n/);
+  assert.equal(readFileSync(join(fresh, 'priority.yaml'), 'utf8'), '[]\n');
   assert.equal(readFileSync(join(fresh, 'coding-dictionary.yaml'), 'utf8'), readFileSync(SEED, 'utf8'));
   // .bl/ holds the staging files (ignored in every backlog).
   assert.deepEqual(
     readdirSync(fresh)
       .filter((f) => f !== '.bl')
       .sort(),
-    ['coding-dictionary.yaml', 'priority.md', 'roadmap.md'],
+    ['coding-dictionary.yaml', 'priority.yaml', 'roadmap.md'],
   );
 
   const kept = mkTempDir('bl-init-docs-');
   writeFileSync(join(kept, 'roadmap.md'), 'kept\n');
-  writeFileSync(join(kept, 'priority.md'), 'kept too\n');
+  writeFileSync(join(kept, 'priority.yaml'), 'kept too\n');
   writeFileSync(join(kept, 'coding-dictionary.yaml'), 'entries: [] # curated\n');
   quietly(() => ensureBacklogDocs(kept));
   assert.equal(readFileSync(join(kept, 'roadmap.md'), 'utf8'), 'kept\n');
-  assert.equal(readFileSync(join(kept, 'priority.md'), 'utf8'), 'kept too\n');
+  assert.equal(readFileSync(join(kept, 'priority.yaml'), 'utf8'), 'kept too\n');
   assert.equal(readFileSync(join(kept, 'coding-dictionary.yaml'), 'utf8'), 'entries: [] # curated\n');
 });
 
@@ -77,7 +77,7 @@ test('bl init writes a missing root index.md with the title and its heading only
 });
 
 test('init_seed_copy_failure_keeps_config_consistent:a failed seed copy leaves no listed file missing, and a rerun finishes', () => {
-  const DOCS = ['roadmap.md', 'priority.md', 'coding-dictionary.yaml'];
+  const DOCS = ['roadmap.md', 'priority.yaml', 'coding-dictionary.yaml'];
   /** bl init's two steps, in its order; the error code, or null. */
   const init = (dir) => {
     try {
@@ -111,7 +111,7 @@ test('init_seed_copy_failure_and_concurrent_create_preserve_dictionary: a seed i
     { file: 'coding-dictionary.yaml', run: (dir) => ensureReposBlock(dir, 'claude') },
     { file: 'coding-dictionary.yaml', run: ensureBacklogDocs },
     { file: 'roadmap.md', run: ensureBacklogDocs },
-    { file: 'priority.md', run: ensureBacklogDocs },
+    { file: 'priority.yaml', run: ensureBacklogDocs },
     { file: 'flow.json', run: ensureFlowFile },
   ];
   const template = (file) => readFileSync(new URL(`../../templates/${file}`, import.meta.url), 'utf8');

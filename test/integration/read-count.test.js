@@ -18,7 +18,7 @@ import { REPO_ROOT, runBl } from '../helpers/run-bl.js';
 
 const COUNTER = pathToFileURL(join(REPO_ROOT, 'test', 'helpers', 'count-reads.js')).href;
 
-/** A backlog with every kind of unit, its files' and `priority.md`'s mtimes an hour back (no racy rereads). */
+/** A backlog with every kind of unit, its files' and `priority.yaml`'s mtimes an hour back (no racy rereads). */
 function fixture() {
   const { dir } = mkTempBacklog({
     repos: ['../bl'],
@@ -40,7 +40,7 @@ function fixture() {
     '---\ntask_id: T-1\ntitle: Check\nunit: F-1\nowner: operator\nstatus: open\nadded: 2026-11-05\n---\n\n# T-1 · Check\n',
   );
   const old = new Date(Date.now() - 3600_000);
-  for (const file of [...unitFiles(dir), join(dir, 'priority.md')]) utimesSync(file, old, old);
+  for (const file of [...unitFiles(dir), join(dir, 'priority.yaml')]) utimesSync(file, old, old);
   return dir;
 }
 
