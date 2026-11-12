@@ -4,7 +4,8 @@
  * removed both once they had run).
  *
  * The guarantee comes from git, not from bookkeeping (F-51 decision R2).
- * `applyMigration` refuses to start unless, after `git fetch`, the backlog's
+ * `applyMigration` refuses to start unless, after `git fetch` (`main-sync.js`
+ * `fetchMainNow`, under the main sync lock taken with one try), the backlog's
  * HEAD is `origin/main`, its work tree is clean (no change, staged or not,
  * and no untracked file) and no `bl` run or session is active. Its steps are
  * then plain writes, moves and removals, and it commits the backlog once
@@ -21,8 +22,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import { dirname, join, relative, resolve } from 'path';
 import { moveIntoBacklog, removeBacklogPath, writeBacklogPathNow } from './atomic-write.js';
 import { discardChanges } from './backlog-commit.js';
-import { MAIN_REFSPEC, mainSyncLockPath } from './main-sync.js';
-import { otherHolder, release, tryLockOnce } from './kernel-lock.js';
+import { fetchMainNow, withMainSyncLockNow } from './main-sync.js';
+import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR } from './run-lock.js';
 import { allActiveWorktrees, sessionLockPath } from './story.js';
 
@@ -62,17 +63,12 @@ export async function applyMigration(config, { apply, message, commit, commitCon
     const manual = `run git -C "${root}" reset --hard HEAD && git -C "${root}" clean -fd`;
     // A signal listener calls this, so it cannot wait: one try for the main
     // sync lock (F-126 D7), and a busy lock leaves the restore to the operator.
-    const lock = tryLockOnce(mainSyncLockPath(root), `bl migration restore ${root}`);
-    if (!('taken' in lock)) {
-      return `; could not restore the backlog (PID ${lock.holder} holds the main sync lock): ${manual}`;
+    const held = withMainSyncLockNow(root, () => (headOf() !== startHead ? LANDED : discardChanges(root)));
+    if ('holder' in held) {
+      return `; could not restore the backlog (PID ${held.holder} holds the main sync lock): ${manual}`;
     }
-    let failed;
-    try {
-      if (headOf() !== startHead) return '; the commit landed, so a rerun plans nothing';
-      failed = discardChanges(root);
-    } finally {
-      release(lock.taken);
-    }
+    if (held.value === LANDED) return '; the commit landed, so a rerun plans nothing';
+    const failed = held.value;
     if (failed) return `; could not restore the backlog (${firstLine(failed)}): ${manual}`;
     return '; backlog restored; fix the cause and rerun';
   };
@@ -128,16 +124,20 @@ export async function applyMigration(config, { apply, message, commit, commitCon
   return result;
 }
 
-/** A git runner in `root` that never prompts and never reads stdin. */
+/** The options of every git call here: it never prompts and never reads stdin. */
+const GIT_OPTIONS = {
+  encoding: 'utf8',
+  maxBuffer: 64 * 1024 * 1024,
+  env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  stdio: ['ignore', 'pipe', 'pipe'],
+};
+
+/** What the restore finds when the migration's commit has landed. */
+const LANDED = Symbol('landed');
+
+/** A git runner in `root` for the reads (`rev-parse`, `status`). */
 function gitIn(root) {
-  return (...args) =>
-    spawnSync('git', args, {
-      cwd: root,
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+  return (...args) => spawnSync('git', args, { ...GIT_OPTIONS, cwd: root });
 }
 
 /**
@@ -155,7 +155,11 @@ export function assertMigrationCanStart(config) {
 /** Why the migration must not start, with what to do, or null. */
 function refuse(config, git) {
   const root = config.backlogRoot;
-  const fetch = git('fetch', '-q', 'origin', MAIN_REFSPEC);
+  const fetched = fetchMainNow(root, GIT_OPTIONS);
+  if ('holder' in fetched) {
+    return `PID ${fetched.holder} holds the backlog's main sync lock (a pull, commit or fetch): let it finish, then rerun`;
+  }
+  const fetch = fetched.value;
   if (fetch.status !== 0) {
     return `git fetch origin main failed (${firstLine(fetch)}): give the backlog an origin remote it can fetch, then rerun`;
   }

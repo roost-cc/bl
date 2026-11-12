@@ -80,6 +80,12 @@ test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', as
     ],
     ['no origin remote', (d) => git(d, 'remote', 'remove', 'origin'), /^git fetch origin main failed/],
     [
+      // The fetch writes origin/main, so it holds the main sync lock (F-126 D1).
+      'another process holding the main sync lock',
+      (d) => holdLockInChild(mainSyncLockPath(d)),
+      (holder) => new RegExp(`^PID ${holder.pid} holds the backlog's main sync lock`),
+    ],
+    [
       'an active bl run',
       // A child holds the run lock (a kernel lock, F-104): the check ignores this process.
       async (d) => {

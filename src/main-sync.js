@@ -184,6 +184,40 @@ export async function withMainSyncLock(repoPath, fn, opts = {}) {
 }
 
 /**
+ * Run the synchronous `fn` holding `repoPath`'s main sync lock, taken with one
+ * try (F-126 D7): code that cannot await a lock wait, such as a signal
+ * listener, uses it. Returns `{ value }`, what `fn` returned, or `{ holder }`
+ * when another process holds the lock and `fn` did not run.
+ *
+ * @template T
+ * @param {string} repoPath
+ * @param {() => T} fn
+ * @returns {{ value: T } | { holder: number | string }}
+ */
+export function withMainSyncLockNow(repoPath, fn) {
+  const lock = tryLockOnce(mainSyncLockPath(repoPath), `bl main sync ${repoPath}`);
+  if (!('taken' in lock)) return { holder: lock.holder };
+  try {
+    return { value: fn() };
+  } finally {
+    release(lock.taken);
+  }
+}
+
+/**
+ * `git fetch origin main` into `repoPath`'s `origin/main`, from synchronous
+ * code: under the main sync lock taken with one try (`withMainSyncLockNow`),
+ * so the fetch never meets a pull or a commit of the same checkout (F-126 D1).
+ *
+ * @param {string} repoPath
+ * @param {import('./child.js').ChildOptions} [opts]
+ * @returns {{ value: import('child_process').SpawnSyncReturns<string> } | { holder: number | string }}
+ */
+export function fetchMainNow(repoPath, opts = {}) {
+  return withMainSyncLockNow(repoPath, () => git(repoPath, ['fetch', '-q', 'origin', MAIN_REFSPEC], opts));
+}
+
+/**
  * Print a `syncMain` result for `label` (a repo path or name) and say whether
  * the caller may go on. `updated` and `no-remote` are notes; `fetch-failed` is
  * a warning that names the local `main` commit used instead; `ahead`,
