@@ -15,11 +15,11 @@
 // has one status per line, which a line scan misses.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { parse } from 'acorn';
 import { full } from 'acorn-walk';
+import { jsFiles, parseSource } from '../helpers/source-ast.js';
 import { loadFlow } from '../../src/flow.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -145,7 +145,7 @@ function statusesNamed(nodes) {
  * @returns {{ line: number, statuses: string[] }[]}
  */
 function restatedStatusSets(source) {
-  const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
+  const ast = parseSource(source);
   const sets = [];
   full(ast, (node) => {
     const parts = setParts(node);
@@ -157,14 +157,6 @@ function restatedStatusSets(source) {
   return sets
     .filter((s, i) => !sets.slice(0, i).some((outer) => s.parts.every((q) => inside(q, outer))))
     .map((s) => ({ line: s.node.loc.start.line, statuses: [...s.named] }));
-}
-
-function jsFiles(dir) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) return jsFiles(p);
-    return e.name.endsWith('.js') ? [p] : [];
-  });
 }
 
 /** Finding count per file, in `src/` outside `EXEMPT`. */
