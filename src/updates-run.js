@@ -35,7 +35,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, dirname, join, relative } from 'path';
-import { git as runGit, interruptKept, raiseAfter } from './child.js';
+import { exitStatus, git as runGit, interruptKept, raiseAfter } from './child.js';
 import {
   parsePluginList,
   parsePluginCascade,
@@ -560,7 +560,7 @@ export function defaultUpdatesRunner() {
     git(args, cwd) {
       const r = runGit(cwd, args);
       return {
-        status: r.error ? 127 : (r.status ?? 1),
+        status: exitStatus(r),
         stdout: r.stdout ?? '',
         stderr: r.error ? r.error.message : (r.stderr ?? ''),
       };

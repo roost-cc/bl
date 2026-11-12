@@ -24,7 +24,7 @@
 import { mkdirSync } from 'fs';
 import { join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
-import { git as runGit } from './child.js';
+import { exitStatus, git as runGit } from './child.js';
 
 export const RELEASES_DIR = 'releases';
 
@@ -32,7 +32,7 @@ export const RELEASES_DIR = 'releases';
 export function git(cwd, args) {
   const r = runGit(cwd, args);
   return {
-    status: r.error ? 127 : (r.status ?? 1),
+    status: exitStatus(r),
     stdout: String(r.stdout ?? ''),
     stderr: String(r.stderr ?? r.error?.message ?? ''),
   };
