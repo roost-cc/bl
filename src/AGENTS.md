@@ -433,6 +433,26 @@ backlog lock and need `atomicWriteFile` only.
   `bl merge`, `bl new --feature … S-n`, `bl attach`, `persistLandedCommits` and `bl sync --commit`'s format pass
   (`formatBacklogFiles`) take the spec lock per file inside the backlog lock. Nothing takes the backlog lock while holding a spec lock, and nothing holds two
   spec locks at once. A caller that adds a spec lock says so in a comment at the call.
+- **The covering lock (F-126).** Every bl write to a backlog path that git does not ignore
+  holds that path's covering lock. `lockFor(backlogRoot, path)` (`write-lock.js`) is the one
+  statement of the rule: the spec lock (`specLockPath`) of an existing story or feature
+  `index.md`, change document (`isChangeFile`) or `allowed-tools.json`; the backlog lock to
+  create one of those, and for every other path (`blockers.json`, `priority.yaml`,
+  `releases/`, `themes/`, `tasks/`, `updates/`, `.gitignore`, `flow.json`, a removed unit
+  directory, …); none for a path outside the backlog or in `.bl/`. The three write
+  chokepoints in `atomic-write.js` call `assertCovered` before they change anything:
+  `atomicWriteFile`, `removeBacklogPath` (a file or tree) and `moveIntoBacklog` (a rename,
+  both ends checked). Without the lock, and unless `git check-ignore` says git ignores the
+  path, they throw `<path>: bl writes it without its covering lock (<kind> lock <lock path>)`.
+  The check runs in production. Synchronous code, which cannot await a lock wait, takes a spec
+  lock with one try: `withSpecLockNow(path, fn)` (`spec-file.js`, F-126 D7) throws
+  `SpecLockError` naming the holder when another process holds it, and the caller decides
+  what that means. `writeBacklogPathNow` (`atomic-write.js`) writes or removes a path that way,
+  under the caller's backlog lock: `snapshot`'s undo and `bl side`'s exit-time undo leave a
+  busy file and name it, and a migration's `write` op fails and restores. A git call that
+  changes the backlog's index, working tree or refs holds the main sync lock instead
+  (`main-sync.js`, F-126 D1). A test that calls a writer directly holds the covering lock
+  around it (`test/helpers/covering-lock.js`).
 - **Who is on it.** The token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
   `recordStoryTokens`) write through `updateSpecFile`, and `recordFeatureTokens` holds
   `withSpecLock` across its transcript read and nests `updateSpecFileHeld` in that hold. `feature-cmd.js` `updateFeature` (approve, the run's status, the totals re-read),
@@ -447,13 +467,15 @@ backlog lock and need `atomicWriteFile` only.
   with `atomicWriteFile`. The run loop's writers (`writeEscalation`, `recordStoryRunFields`) and
   `bl updates`' (`recordMerge`, `recordOutcome`, `dropStory`, the request write in
   `requestUpdate`, and `syncUpdates`' refresh and close, which apply their change to the spec
-  read under the lock, inside the backlog lock) write through it too; a new update story, and
-  `dropStory`'s restore after a failed PR close, are written with `atomicWriteFile`. `bl new`'s
+  read under the lock, inside the backlog lock) write through it too; a new update story is
+  written with `atomicWriteFile`, and `dropStory`'s restore after a failed PR close with
+  `atomicWriteFile` inside the story's spec lock. `bl new`'s
   feature links (each story's `feature:` in `bl new --feature`), `bl attach`'s and `bl side`'s
   `markSideStory` write through it too, each inside the backlog lock; `bl new`'s new story, component, theme and
-  epic files, and the snapshot restores of `bl side`, `bl task` and `settle`, are written with
-  `atomicWriteFile`. No spec in `src/` is written in place any more (`bl new --from` stages its
-  stories in a temp directory and renames it into place; `bl migrate-*` is out of scope).
+  epic files, and the snapshot restores of `bl side`, `bl task` and `settleRecord`, are written
+  with `atomicWriteFile`, each under its covering lock. No spec in `src/` is written in place any
+  more (`bl new --from` stages its stories in `.bl/tmp/new-<pid>/` and moves them into place
+  with `moveIntoBacklog`).
   A change document and `allowed-tools.json` take a spec lock of their own too (F-126 D2, D3).
   Every change document write is in `change-doc.js`: `updateChange` (async, through
   `withSpecLock`), `updateChangeHeld` for a caller already in that hold, and `ensureChange`,
@@ -469,8 +491,8 @@ backlog lock and need `atomicWriteFile` only.
   batch with no lock (`formatBacklogMarkdown`).
 - **A restore keeps the session's tokens.** When a review-verify session fails, the loop puts
   back the unit file it snapshotted before the session with `restoreKeepingTokens`
-  (`feature-run.js`): the snapshot's frontmatter and body, under the spec lock and through
-  `atomicWriteFile`, with the current file's `tokens_*` keys (`tokens_headless_*`,
+  (`feature-run.js`): the snapshot's frontmatter and body, under the file's covering lock
+  (`withSpecFileLock`) and through `atomicWriteFile`, with the current file's `tokens_*` keys (`tokens_headless_*`,
   `tokens_updated`, `tokens_by_step`) and line end kept, since the failed session already
   recorded its usage on that file. A current file the session deleted, emptied or left without a
   readable `---` block gets the snapshot back whole; a snapshot that is not a spec is refused and
@@ -1312,6 +1334,12 @@ lock (`updateChange`, or `updateChangeHeld` inside a hold), and a write that
 creates the document holds the backlog lock first (`ensureChange` and
 `restoreChange` through `withSpecFileLock`). So a `## Gate` line from
 `bl merge S-n` and a run loop's write to the same document take turns.
+`bl side`'s undo (`backlogUndo`) runs in a synchronous `exit` listener under
+the backlog lock. It puts back only the change documents of the feature
+directory, never its `index.md`, which `bl side` does not write (F-79 D1), so a
+restore could only revert another session's write (F-126 Decision A1). It takes
+each document's spec lock with one try (`writeBacklogPathNow`); a document
+whose lock another process holds is left, and the undo's error names it.
 
 A unit that needs a second change (its last one `merged` or `dropped`) gets
 `change-2.md`; bl reads the highest-numbered open one, and `bl status` prints
@@ -2582,9 +2610,9 @@ Highlights:
   errors exit 1.
 - `--from` rejects single-story flags (`--title`, `--component`, `--body-file`,
   etc.) — the spec is the source of truth.
-- Atomic: every file is staged in `<backlogRoot>/.bl-new-<pid>/` and
-  `renameSync`'d into place at the end. On any error mid-write nothing
-  partial remains.
+- Atomic: every file is staged in the ignored `<backlogRoot>/.bl/tmp/new-<pid>/`
+  and moved into place at the end (`moveIntoBacklog`, under the backlog lock).
+  On any error mid-write nothing partial remains.
 - JSON output schema is `bl-new-batch-json/v2` (a `component` object in
   place of v1's `epic`, and each story's `component`).
 
