@@ -15,10 +15,9 @@
 
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { RUN_DIR, loadRunState, planSteps, runLockPath } from './feature-run.js';
+import { RUN_DIR, loadRunState, planSteps } from './feature-run.js';
 import { loadBacklog } from './backlog-graph.js';
-import { holderOf } from './kernel-lock.js';
-import { runStatus } from './run-lock.js';
+import { runHolder, runStatus } from './run-lock.js';
 import { collectInbox } from './inbox.js';
 import { changeNextVerb } from './change-doc.js';
 import { nextPlan } from './next.js';
@@ -279,24 +278,27 @@ export function itemActions(item) {
 
 /**
  * The actions of a `runs` row (D7): a live run (`running`, with a holder)
- * stops with `bl stop`; any other starts with `bl run`, with `--resume` for
- * RESUMED_STATUSES, in a tmux window. Then its page, its pull request when it
- * has one, and `bl agent`.
+ * stops with `bl stop` when its holder is a `bl run` (`stoppable`, from
+ * `runHolder`), and has no start or stop action when it is not; any other
+ * starts with `bl run`, with `--resume` for RESUMED_STATUSES, in a tmux
+ * window. Then its page, its pull request when it has one, and `bl agent`.
  */
 export function runActions(row) {
   const { id, status } = row;
   const out = [];
   if (status === 'running') {
-    out.push(
-      action('s', 'stop the run', ['bl', 'stop', id], {
-        about: [
-          'bl stop ends the agent session and the run.',
-          'The work so far stays on the branch.',
-          `Resume it later with: bl run ${id} --resume`,
-        ],
-        stops: id,
-      }),
-    );
+    // Only a bl run stops: not a review or a merge of a state a dead bl left running.
+    if (row.stoppable)
+      out.push(
+        action('s', 'stop the run', ['bl', 'stop', id], {
+          about: [
+            'bl stop ends the agent session and the run.',
+            'The work so far stays on the branch.',
+            `Resume it later with: bl run ${id} --resume`,
+          ],
+          stops: id,
+        }),
+      );
   } else {
     const resume = RESUMED_STATUSES.includes(status);
     out.push(
@@ -321,7 +323,8 @@ function runRow(config, graph, state, now) {
   const updated = Date.parse(state.updatedAt ?? state.startedAt ?? '');
   const open = state.status === 'running' || state.status === 'stopped';
   if (!open && !(updated >= now - RUN_WINDOW_MS)) return null;
-  const pid = holderOf(runLockPath(config, state.feature));
+  const holder = runHolder(config, state.feature);
+  const pid = holder?.pid ?? null;
   // The newest entry that names an agent: a round's summary entry names none.
   const session = state.history.findLast((h) => h.agent) ?? {};
   const status = str(runStatus(state, pid));
@@ -347,7 +350,7 @@ function runRow(config, graph, state, now) {
     testAttempts: int(state.testAttempts),
     timeline: runTimeline(state, status, now),
     denied: deniedOf(state.history),
-    actions: runActions({ id: state.feature, status, pr }),
+    actions: runActions({ id: state.feature, status, pr, stoppable: holder?.run === true }),
   };
 }
 

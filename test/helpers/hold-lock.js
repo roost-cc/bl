@@ -47,7 +47,7 @@ export function holdLock(path, info = 'held by the test') {
 
 const CHILD = `
 import { holdLock } from ${JSON.stringify(import.meta.url)};
-holdLock(process.argv[1], 'held by a test child');
+holdLock(process.argv[1], process.argv[2]);
 setInterval(() => {}, 1 << 30);
 `;
 
@@ -58,11 +58,11 @@ setInterval(() => {}, 1 << 30);
  * gone.
  *
  * @param {string} path
- * @param {{ timeoutMs?: number }} [opts]
+ * @param {{ timeoutMs?: number, info?: string }} [opts]  `info`: the lock file's info line
  * @returns {Promise<{ pid: number, kill: (signal?: NodeJS.Signals) => Promise<void> }>}
  */
-export async function holdLockInChild(path, { timeoutMs = 10_000 } = {}) {
-  const run = spawnToFiles(process.execPath, ['--input-type=module', '-e', CHILD, path]);
+export async function holdLockInChild(path, { timeoutMs = 10_000, info = 'held by a test child' } = {}) {
+  const run = spawnToFiles(process.execPath, ['--input-type=module', '-e', CHILD, path, info]);
   const { child } = run;
   const kill = async (signal = 'SIGKILL') => {
     child.kill(signal);

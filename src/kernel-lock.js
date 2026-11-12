@@ -56,6 +56,21 @@ function pidIn(path) {
 }
 
 /**
+ * The info line of the lock file at `path` (its third line, `tryLock`'s
+ * `info`), or null when it holds none. Information only, as the PID (D4).
+ *
+ * @param {string} path
+ * @returns {string | null}
+ */
+export function infoOf(path) {
+  try {
+    return readFileSync(resolve(path), 'utf8').split('\n')[2] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * One try-lock on `path`, created if missing and never truncated before the
  * lock is taken. Taken: truncate, write `${pid}\n${iso}\n` and `info` as one
  * more line when given (D4), and return `{ taken: handle }`. Held by another

@@ -11,13 +11,17 @@ import { setTimeout as delay } from 'timers/promises';
 import { loadConfig } from '../../src/config.js';
 import { loadRunState, newRunState, saveRunState, markStopped } from '../../src/feature-run.js';
 import { runLockPath, stopRequestPath } from '../../src/run-lock.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { unitLockPath } from '../../src/unit-lock.js';
-import { stopRun } from '../../src/stop.js';
+import { markDead, stopRun } from '../../src/stop.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 import { BL_BIN, personEnv } from '../helpers/run-bl.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
+
+/** The info line a `bl run F-1` writes in its run lock (`takeRunLocks`). */
+const RUN = { info: 'bl run F-1' };
 
 function fixture() {
   const { dir, cleanup } = mkTempBacklog({
@@ -81,7 +85,7 @@ test('stop_nothing_running: no run state, or one that is not running, with no ho
 
 test('stop_not_a_run: a live holder whose run state is not running (bl review, bl merge): exit 1, no request', async () => {
   const { cleanup, config } = fixture();
-  const holder = await holdLockInChild(runLockPath(config, 'F-1'));
+  const holder = await holdLockInChild(runLockPath(config, 'F-1'), RUN);
   try {
     saveState(config, 'reviewed', 'review');
     assert.deepEqual(await stop(config), { code: 1, lines: ['no running run for F-1'] });
@@ -95,7 +99,7 @@ test('stop_not_a_run: a live holder whose run state is not running (bl review, b
 
 test('stop_live_holder: bl stop writes the request and waits; the run stops and frees its lock: exit 0', async () => {
   const { cleanup, config } = fixture();
-  const holder = await holdLockInChild(runLockPath(config, 'F-1'));
+  const holder = await holdLockInChild(runLockPath(config, 'F-1'), RUN);
   try {
     const state = saveState(config, 'running');
     const request = stopRequestPath(config, 'F-1');
@@ -103,6 +107,7 @@ test('stop_live_holder: bl stop writes the request and waits; the run stops and 
     await until(request);
     const written = JSON.parse(readFileSync(request, 'utf8'));
     assert.equal(written.pid, process.pid, "the request names bl stop's own pid");
+    assert.equal(written.holder, holder.pid, 'and the run it stops');
     assert.ok(Number.isFinite(Date.parse(written.at)));
     // What the loop does at its check: mark stopped, save, delete the request, exit.
     markStopped(state, 'stopped by bl stop at implement');
@@ -117,7 +122,7 @@ test('stop_live_holder: bl stop writes the request and waits; the run stops and 
 
 test('stop_timeout: a run that still holds its lock after the wait: exit 1, the request stays, no signal', async () => {
   const { cleanup, config } = fixture();
-  const holder = await holdLockInChild(runLockPath(config, 'F-1'));
+  const holder = await holdLockInChild(runLockPath(config, 'F-1'), RUN);
   try {
     saveState(config, 'running');
     const { code, lines } = await stop(config, { waitMs: 200 });
@@ -131,7 +136,7 @@ test('stop_timeout: a run that still holds its lock after the wait: exit 1, the 
   }
 });
 
-test('stop_unknown_holder: a lock file that names no pid yet says pid unknown', async () => {
+test('stop_unknown_holder: a lock file that names no pid yet gets no request: exit 1, try again', async () => {
   const { cleanup, config } = fixture();
   const lock = runLockPath(config, 'F-1');
   const held = holdLock(lock);
@@ -140,7 +145,8 @@ test('stop_unknown_holder: a lock file that names no pid yet says pid unknown', 
     saveState(config, 'running');
     const { code, lines } = await stop(config, { waitMs: 100 });
     assert.equal(code, 1);
-    assert.deepEqual(lines, ['stop requested: F-1 (pid unknown) stops at its next check']);
+    assert.deepEqual(lines, ['bl stop: the bl that holds F-1 has not written its pid yet; try again']);
+    assert.equal(existsSync(stopRequestPath(config, 'F-1')), false);
   } finally {
     held.release();
     cleanup();
@@ -149,7 +155,7 @@ test('stop_unknown_holder: a lock file that names no pid yet says pid unknown', 
 
 test('stop_ended_on_its_own: a run that ends before it reads the request: exit 0, the line says so, the request goes', async () => {
   const { cleanup, config } = fixture();
-  const holder = await holdLockInChild(runLockPath(config, 'F-1'));
+  const holder = await holdLockInChild(runLockPath(config, 'F-1'), RUN);
   try {
     const state = saveState(config, 'running', 'pr');
     const request = stopRequestPath(config, 'F-1');
@@ -172,7 +178,7 @@ test('stop_ended_on_its_own: a run that ends before it reads the request: exit 0
 test('stop_short_command: bl stop goes ahead while another process holds the work unit lock and the run lock', async () => {
   const { dir, cleanup, config } = fixture();
   const unitLock = holdLock(unitLockPath(dir, join(dir, 'features', 'F1-feat')));
-  const holder = await holdLockInChild(runLockPath(config, 'F-1'));
+  const holder = await holdLockInChild(runLockPath(config, 'F-1'), RUN);
   try {
     const state = saveState(config, 'running');
     const request = stopRequestPath(config, 'F-1');
@@ -191,5 +197,85 @@ test('stop_short_command: bl stop goes ahead while another process holds the wor
     await holder.kill();
     unitLock.release();
     cleanup();
+  }
+});
+
+test('stop_targets_the_observed_run_and_rechecks_before_stale_mark', async () => {
+  // A live holder that is not a bl run, of a state a dead bl left running: no request, nothing marked.
+  for (const info of ['bl review F-1', 'bl merge F-1', 'held by a test child']) {
+    const { cleanup, config } = fixture();
+    const holder = await holdLockInChild(runLockPath(config, 'F-1'), { info });
+    try {
+      saveState(config, 'running', 'review');
+      assert.deepEqual(
+        await stop(config, { waitMs: 100 }),
+        { code: 1, lines: [`no running run for F-1: another bl (pid ${holder.pid}) holds it, not a bl run`] },
+        info,
+      );
+      assert.equal(existsSync(stopRequestPath(config, 'F-1')), false, `${info}: no request`);
+      assert.equal(loadRunState(config, 'F-1').status, 'running', `${info}: left as it is`);
+    } finally {
+      await holder.kill();
+      cleanup();
+    }
+  }
+
+  // The dead-holder mark takes the run lock first: a bl run that took the run after the check is not marked.
+  {
+    const { cleanup, config } = fixture();
+    const holder = await holdLockInChild(runLockPath(config, 'F-1'), RUN);
+    try {
+      saveState(config, 'running');
+      const lines = [];
+      assert.equal(
+        markDead(config, 'F-1', (l) => lines.push(l)),
+        1,
+      );
+      assert.deepEqual(lines, [`bl stop: another bl (pid ${holder.pid}) took F-1 just now; nothing stopped`]);
+      assert.equal(loadRunState(config, 'F-1').status, 'running');
+    } finally {
+      await holder.kill();
+      cleanup();
+    }
+  }
+
+  // Under the lock it reads the state again: one that ended after the check is left as it is.
+  {
+    const { cleanup, config } = fixture();
+    try {
+      saveState(config, 'clean');
+      const lines = [];
+      assert.equal(
+        markDead(config, 'F-1', (l) => lines.push(l)),
+        1,
+      );
+      assert.deepEqual(lines, ['no running run for F-1']);
+      assert.equal(loadRunState(config, 'F-1').status, 'clean');
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the run lock is free again');
+    } finally {
+      cleanup();
+    }
+  }
+
+  // A newer request (another bl stop's) is not deleted by a bl stop whose run ended on its own.
+  {
+    const { cleanup, config } = fixture();
+    const holder = await holdLockInChild(runLockPath(config, 'F-1'), RUN);
+    try {
+      const state = saveState(config, 'running', 'pr');
+      const request = stopRequestPath(config, 'F-1');
+      const stopping = stop(config);
+      await until(request);
+      const newer = `${JSON.stringify({ pid: 1, at: new Date().toISOString(), holder: 2 })}\n`;
+      writeFileSync(request, newer);
+      state.status = 'escalated';
+      saveRunState(config, state);
+      await holder.kill();
+      assert.equal((await stopping).code, 0);
+      assert.equal(readFileSync(request, 'utf8'), newer, 'the newer request stays');
+    } finally {
+      await holder.kill();
+      cleanup();
+    }
   }
 });

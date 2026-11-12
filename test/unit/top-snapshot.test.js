@@ -75,7 +75,7 @@ function runsBacklog() {
       }),
     ),
   );
-  holdLock(join(run, 'F-1.lock'));
+  holdLock(join(run, 'F-1.lock'), 'bl run F-1');
   // Says running, but its bl is gone: its lock file names a dead pid, and
   // nobody holds it. Stale.
   put('F-2.json', JSON.stringify(runState('F-2', { status: 'running', updatedAt: old })));
@@ -806,7 +806,7 @@ test('actions (S-1336): each inbox item kind gets the verbs of F-87 D7, then bl 
 
 test('actions (S-1336): a live run stops; any other run starts, or resumes when stopped, stale, escalated or failed', () => {
   const pr = { number: '15', url: 'https://example.invalid/pull/15' };
-  const live = runActions({ id: 'S-1330', status: 'running', pr });
+  const live = runActions({ id: 'S-1330', status: 'running', pr, stoppable: true });
   assert.deepEqual(live.map(shown), [
     's: bl stop S-1330',
     'o: bl view S-1330 (S-1330 view)',
@@ -819,6 +819,11 @@ test('actions (S-1336): a live run stops; any other run starts, or resumes when 
     'The work so far stays on the branch.',
     'Resume it later with: bl run S-1330 --resume',
   ]);
+  // A review or a merge that holds a state a dead bl left running: no stop, and no start either.
+  assert.deepEqual(
+    runActions({ id: 'S-1330', status: 'running', pr, stoppable: false }).map(shown),
+    live.slice(1).map(shown),
+  );
   for (const status of RESUMED_STATUSES) {
     assert.equal(shown(runActions({ id: 'F-83', status, pr: null })[0]), 'r: bl run F-83 --resume (F-83 run)', status);
   }
@@ -840,6 +845,15 @@ test('actions (S-1336): the runs rows, attention items and ranked units of a sna
       ['F-2', 'bl run F-2 --resume'],
       ['S-5', 'bl run S-5 --resume'],
     ],
+  );
+  // A bl review holds F-2, whose state a dead bl left running: the row offers no stop.
+  const reviewed = runsBacklog();
+  holdLock(join(reviewed.run, 'F-2.lock'), 'bl review F-2');
+  const f2 = runsReader(reviewed.config)(NOW).rows.find((r) => r.id === 'F-2');
+  assert.equal(f2.status, 'running');
+  assert.deepEqual(
+    f2.actions.map((a) => a.key),
+    ['o', 'g'],
   );
   const { dir } = mkTempBacklog({
     components: [{ id: 'C01', title: 'Work' }],

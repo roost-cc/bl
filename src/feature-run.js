@@ -118,7 +118,15 @@ import {
   writeChange,
 } from './change-doc.js';
 import { otherHolder } from './kernel-lock.js';
-import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock, stopRequestPath } from './run-lock.js';
+import {
+  RUN_DIR,
+  runLockPath,
+  ensureRunDir,
+  acquireRunLock,
+  releaseRunLock,
+  readStopRequest,
+  stopRequestPath,
+} from './run-lock.js';
 import { takeUnitLocks } from './unit-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
@@ -162,7 +170,8 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
  * @returns {{ refused: string } | { refused: null, release: () => void }}
  */
 function takeRunLocks(config, unit, owner) {
-  const run = acquireRunLock(config, unit.id);
+  // The lock's info line names the owner, so `bl stop` stops only a `bl run` (`runHolder`).
+  const run = acquireRunLock(config, unit.id, `bl ${owner}`);
   if (run.holder != null) return { refused: `a bl run (pid ${run.holder}) is running ${unit.id}` };
   let units;
   try {
@@ -853,11 +862,12 @@ export function markStopped(state, note) {
  * (`markStopped`), saves it, deletes the request and throws a
  * StopRequestError, which unwinds the step's cleanups to `runFeature`. The
  * locks go with it, and `bl run` exits 130. The unit's `status:` does not
- * change.
+ * change. Only a request for this process counts (its `holder`, the run lock
+ * holder `bl stop` saw): a request for an earlier holder is not for this run.
  */
 function checkStop(ctx) {
   const request = stopRequestPath(ctx.config, ctx.feature.id);
-  if (!existsSync(request)) return;
+  if (readStopRequest(ctx.config, ctx.feature.id)?.holder !== process.pid) return;
   const { state } = ctx;
   const reason = `stopped by bl stop at ${state.step}`;
   markStopped(state, reason);

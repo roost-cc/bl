@@ -1788,6 +1788,9 @@ test("each headless step's session is in the run state before it spawns, with th
 /** The unit's status from its log, read now. */
 const unitStatusNow = (feature) => logStatusOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm);
 
+/** A stop request of `bl stop` (pid 1) for the run in this process, as `bl stop` writes it. */
+const stopRequest = (holder = process.pid) => `${JSON.stringify({ pid: 1, at: '2026-11-11T00:00:00Z', holder })}\n`;
+
 /** Whether the unit's `## Escalation` is still `None.`. */
 const noEscalation = (feature) =>
   /^\s*None\.\s*$/.test(extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation'));
@@ -1805,7 +1808,7 @@ test('stop_check_session: a session that returns while a stop request exists sto
         story: (o) => {
           if (o.vars.storyId !== 'S-1') return checkAll(o.vars.storyAbsPath);
           statusAtStop = unitStatusNow(feature);
-          writeFileSync(request, '{"pid":1,"at":"2026-11-11T00:00:00Z"}\n');
+          writeFileSync(request, stopRequest());
         },
       },
     });
@@ -1854,7 +1857,7 @@ test('stop_check_wait: a stop request during a usage-limit wait stops the run wi
     // `bl stop` writes its request during the first slice of the wait.
     const sleep = runner.sleep;
     runner.sleep = (ms) => {
-      writeFileSync(request, '{}\n');
+      writeFileSync(request, stopRequest());
       return sleep(ms);
     };
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -1877,7 +1880,7 @@ test('stop_check_step_start: a stop request found at a step start stops the run 
     const title = runner.title;
     runner.title = (fields, opts) => {
       // setStep sets the title, then checks the request.
-      if (fields.status === 'test' && !opts?.final) writeFileSync(request, '{}\n');
+      if (fields.status === 'test' && !opts?.final) writeFileSync(request, stopRequest());
       title(fields, opts);
     };
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -1900,7 +1903,7 @@ test('stop_check_test_gate: a test-gate command that returns while a stop reques
       behaviour: {
         shell: (cmd) => {
           if (cmd !== 'npm test') return null;
-          writeFileSync(request, '{}\n');
+          writeFileSync(request, stopRequest());
           return { status: 143, output: 'Terminated\n' };
         },
       },
@@ -1926,6 +1929,28 @@ test('stop_leftover: bl run deletes a stop request left from an earlier run when
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'clean');
     assert.equal(existsSync(request), false);
+  } finally {
+    cleanup();
+  }
+});
+
+test('stop_check_holder: a stop request for another holder (an earlier run) does not stop this run', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const request = stopRequestPath(config, 'F-1');
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        story: (o) => {
+          writeFileSync(request, stopRequest(process.pid + 1));
+          checkAll(o.vars.storyAbsPath);
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    assert.ok(!state.history.some((h) => h.step === 'stopped'));
   } finally {
     cleanup();
   }

@@ -8,15 +8,17 @@
  * 1. reads the run state. With none, or one that is not `running`, there is
  *    nothing to stop: a live holder of the run lock is then a `bl review` or
  *    a `bl merge`. Then it reads the holder of the run lock
- *    `.bl/run/<id>.lock`. With none, the run's bl died: `bl stop` writes
- *    `status: stopped` itself.
+ *    `.bl/run/<id>.lock` (`runHolder`). With none, the run's bl died: `bl
+ *    stop` takes the run lock, reads the state again and writes `status:
+ *    stopped` itself (`markDead`). A holder that is not a `bl run` (a review
+ *    or a merge of a state a dead bl left `running`) gets no request.
  * 2. writes the stop request `.bl/run/<id>.stop` (`stopRequestPath`): JSON
- *    with its own pid and the time.
+ *    with its own pid, the time and `holder`, the pid of the run it stops.
  * 3. stops each process scope of the holder (`scopesOf`), which ends the
  *    current session or test-gate command. The loop's spawn returns, and the
  *    loop finds the request (`checkStop` in feature-run.js), records
  *    `stopped`, releases its locks and exits 130.
- * 4. waits up to STOP_WAIT_MS for the run lock to go.
+ * 4. waits up to STOP_WAIT_MS for that holder to let the run lock go.
  *
  * It never sends a signal to the bl process. Without user systemd there is no
  * scope to stop, and the run stops at its next check. `bl stop` is a short
@@ -31,7 +33,15 @@ import { loadRunState, markStopped, saveRunState } from './feature-run.js';
 import { otherHolder } from './kernel-lock.js';
 import { scopeAvailable, scopesOf, stopScope } from './process-scope.js';
 import { runArgs } from './run-arg.js';
-import { ensureRunDir, runLockPath, stopRequestPath } from './run-lock.js';
+import {
+  acquireRunLock,
+  ensureRunDir,
+  readStopRequest,
+  releaseRunLock,
+  runHolder,
+  runLockPath,
+  stopRequestPath,
+} from './run-lock.js';
 
 /** How long `bl stop` waits for the run lock to go, in ms (F-87 D7a). */
 export const STOP_WAIT_MS = 30_000;
@@ -58,13 +68,41 @@ Output (stderr; stdout stays empty):
 
 Exit codes:
   0   The run stopped.
-  1   No running run for the id, a bad argument, or the run still holds its
+  1   No running run for the id (a bl review or bl merge holds it), a bad
+      argument, a holder that has not written its pid yet, or the run still holds its
       lock after ${STOP_WAIT_MS / 1000} s: "stop requested: <id> (pid <n>) stops at its
       next check". The request stays, and the run stops at its next check.`;
 
 /** The line `bl stop` ends with when the run stopped. */
 function stoppedLine(id, step, why = '') {
   return `stopped ${id} at ${step}${why}; resume: bl run ${id} --resume`;
+}
+
+/**
+ * Mark the `running` run state of `id`, which no bl holds, stopped. `bl stop`
+ * holds the run lock while it reads and saves the state again, so a `bl run`
+ * that takes the run after the check is never marked: it is refused, or it
+ * finds the lock free after the save. Returns the exit code.
+ */
+export function markDead(config, id, err) {
+  const lock = acquireRunLock(config, id, `bl stop ${id}`);
+  if (lock.holder != null) {
+    err(`bl stop: another bl (pid ${lock.holder}) took ${id} just now; nothing stopped`);
+    return 1;
+  }
+  try {
+    const state = loadRunState(config, id);
+    if (state?.status !== 'running') {
+      err(`no running run for ${id}`);
+      return 1;
+    }
+    markStopped(state, 'stopped by bl stop: no live bl held the run');
+    saveRunState(config, state);
+    err(stoppedLine(id, state.step, ' (no live bl held the run)'));
+    return 0;
+  } finally {
+    releaseRunLock(lock.taken);
+  }
 }
 
 /**
@@ -89,19 +127,24 @@ export async function stopRun({ config, id, err, waitMs = STOP_WAIT_MS, pollMs =
     return 1;
   }
   const lock = runLockPath(config, id);
-  const holder = otherHolder(lock);
-  if (holder == null) {
-    markStopped(state, 'stopped by bl stop: no live bl held the run');
-    saveRunState(config, state);
-    err(stoppedLine(id, state.step, ' (no live bl held the run)'));
-    return 0;
+  const seen = runHolder(config, id);
+  if (seen == null) return markDead(config, id, err);
+  const holder = seen.pid;
+  // A request names the run it stops; a holder that has not written its lock file yet cannot be named.
+  if (holder === 'unknown') {
+    err(`bl stop: the bl that holds ${id} has not written its pid yet; try again`);
+    return 1;
+  }
+  // A review or a merge of a run state left `running` by a bl that died.
+  if (!seen.run) {
+    err(`no running run for ${id}: another bl (pid ${holder}) holds it, not a bl run`);
+    return 1;
   }
 
   const request = stopRequestPath(config, id);
   ensureRunDir(config);
-  writeFileSync(request, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`);
-  // A holder the lock file does not name yet has no scopes to find.
-  if (holder !== 'unknown' && scopeAvailable().ok) {
+  writeFileSync(request, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString(), holder })}\n`);
+  if (scopeAvailable().ok) {
     let scopes = [];
     try {
       scopes = scopesOf(id, holder);
@@ -115,7 +158,8 @@ export async function stopRun({ config, id, err, waitMs = STOP_WAIT_MS, pollMs =
   }
 
   const end = Date.now() + waitMs;
-  while (otherHolder(lock) != null) {
+  // Until the run it saw lets go: a later holder is another run, which the request does not stop.
+  while (otherHolder(lock) === holder) {
     if (Date.now() >= end) {
       err(`stop requested: ${id} (pid ${holder}) stops at its next check`);
       return 1;
@@ -132,8 +176,10 @@ export async function stopRun({ config, id, err, waitMs = STOP_WAIT_MS, pollMs =
     err(stoppedLine(id, after.step));
     return 0;
   }
-  // The run ended on its own before it read the request, which nobody reads now.
-  rmSync(request, { force: true });
+  // The run ended on its own before it read the request, which nobody reads
+  // now. A newer request (another bl stop's, for a later run) stays.
+  const left = readStopRequest(config, id);
+  if (left?.pid === process.pid && left.holder === holder) rmSync(request, { force: true });
   err(`${id} ended ${after?.status ?? 'with no run state'} at ${after?.step ?? '?'} before it read the stop request`);
   return 0;
 }
