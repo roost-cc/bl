@@ -631,7 +631,8 @@ export function requireBranch(flow, kind, verb, outcome, ctx) {
  * `new`; an `added` or `completed` (a task's `done`) that disagrees with the
  * log, or a story's or feature's that is missing (no `added`, or no
  * `completed` on a log that ends terminal; a task's are `task-field`'s). Warnings (`legacy-status`): `status:` with no log,
- * and `status:` beside a log.
+ * and `status:` beside a log; neither for a closed unit (its status in its type's `terminal` list):
+ * a custom flow.json edge that moves it goes through `applyTransition`, which turns `status:` into a log first.
  * @param {import("./flow.js").Flow} flow
  * @param {"story" | "feature" | "task"} kind
  * @param {object} fm
@@ -643,7 +644,9 @@ export function findTransitionFindings(flow, kind, fm, location) {
   const error = (message) => findings.push({ severity: 'error', code: 'transition-log', message, location });
   const legacy = (message) => findings.push({ severity: 'warning', code: 'legacy-status', message, location });
   const raw = fm.transitions;
-  const hasStatus = str(fm.status) !== '';
+  // A closed unit (its status terminal in flow.json) keeps its old shape: the default flow moves no
+  // closed unit, and a custom edge that does (say done → superseded) goes through applyTransition, which writes the log.
+  const hasStatus = str(fm.status) !== '' && !flow.typeOf(kind).terminal.includes(statusOf(kind, fm));
   if (logShape(fm) === 'none') {
     if (hasStatus) {
       legacy(`status: "${fm.status}" and no transitions: log; node bl/scripts/migrate-transitions.js writes the log`);

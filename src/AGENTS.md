@@ -4271,8 +4271,11 @@ terminal status; for a story or a feature, also a missing `added`, or a missing 
 a log that ends terminal (a task's are `task-field`'s). The migration sets both from the log
 for a unit that has neither. `legacy-status` (warning) is a
 `status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
-a log, which bl does not read. An update story keeps this warning until the updates flow moves
-onto the transition log: the migration leaves it in the old shape. A unit with a log needs no
+a log, which bl does not read. A closed unit, one whose status (`statusOf`) is in its type's
+`terminal` list in `flow.json`, gets neither warning. The default `flow.json` moves no closed unit (`supersede`'s `from: "*"` leaves out terminal statuses), but a
+custom edge can, for example a story from `done` to `superseded`. That move goes through `applyTransition`, which turns `status:` into a log
+first, so the old shape does no harm. This covers the closed update stories, which the migration leaves in the old shape; an open
+update story keeps the warning until the updates flow moves onto the transition log. A unit with a log needs no
 `status:` (`missing-required-key`).
 
 `derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's

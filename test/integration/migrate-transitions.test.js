@@ -511,7 +511,7 @@ test('the migration leaves an update story in the old shape, and a rerun prints 
   assert.equal(Object.hasOwn(fm(dir, rel.s1), 'status'), false);
   assert.equal(Array.isArray(fm(dir, rel.s1).transitions), true);
   assert.deepEqual(errors(dir), []);
-  assert.deepEqual(legacyWarnings(dir), [rel.s2, rel.s3]);
+  assert.deepEqual(legacyWarnings(dir), [rel.s3]);
   const after = head(dir);
   const rerun = script(dir);
   assert.equal(rerun.status, 0, rerun.stderr);
