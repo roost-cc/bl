@@ -25,7 +25,7 @@ import { join, resolve } from 'path';
 import { createHash } from 'crypto';
 import { FrontmatterError, info, parseFrontmatterOf, serializeFrontmatter } from './config.js';
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
-import { holds, release, tryLock } from './kernel-lock.js';
+import { assertHeld, release, tryLock } from './kernel-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 
 /** The spec lock could not be taken: held by a live process past the wait, or not creatable. */
@@ -157,16 +157,14 @@ export async function updateSpecFile(backlogRoot, indexPath, mutate) {
 /**
  * `updateSpecFile` for a caller inside `withSpecLock(indexPath, …)`, whose
  * `fn` is synchronous and so cannot await it. Returns whether it wrote.
- * Throws a TypeError when this process does not hold the spec lock.
+ * Throws when this process does not hold the spec lock (`assertHeld`).
  * @param {string} backlogRoot
  * @param {string} indexPath
  * @param {(fm: object, body: string) => string | undefined | false} mutate
  * @returns {boolean}
  */
 export function updateSpecFileHeld(backlogRoot, indexPath, mutate) {
-  if (!holds(specLockPath(indexPath))) {
-    throw new TypeError(`updateSpecFileHeld(${indexPath}): the spec lock is not held; use updateSpecFile`);
-  }
+  assertHeld(specLockPath(indexPath), 'the spec lock', `updateSpecFileHeld(${indexPath})`);
   const raw = readFileSync(indexPath, 'utf8');
   const { content, crlf } = readSpecText(raw, indexPath);
   const { fm, body } = parseFrontmatterOf(content, indexPath);

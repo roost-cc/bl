@@ -113,7 +113,7 @@ test('withSpecLock is re-entrant within a process and releases on the way out', 
 
 test('updateSpecFileHeld refuses a spec whose lock this process does not hold', () => {
   const { dir, path } = spec();
-  assert.throws(() => updateSpecFileHeld(dir, path, (fm) => void (fm.status = 'done')), TypeError);
+  assert.throws(() => updateSpecFileHeld(dir, path, (fm) => void (fm.status = 'done')), /does not hold the spec lock/);
   assert.equal(readFileSync(path, 'utf8'), SPEC);
 });
 

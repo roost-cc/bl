@@ -4,7 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync
 import { join } from 'node:path';
 import fsExt from 'fs-ext';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
-import { adopt, holderOf, release, tryLock, tryLockOnce } from '../../src/kernel-lock.js';
+import { adopt, assertHeld, holderOf, release, tryLock, tryLockOnce } from '../../src/kernel-lock.js';
 import { git } from '../helpers/git-backlog.js';
 import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -105,6 +105,26 @@ test('tryLockOnce refuses a lock this process holds with its own PID, and takes 
   const other = holdLock(path);
   try {
     assert.deepEqual(tryLockOnce(path), { holder: process.pid }, 'another descriptor in this process');
+  } finally {
+    other.release();
+  }
+});
+
+test('assertHeld returns while this process holds the lock and throws naming the lock otherwise', () => {
+  const path = join(mkTempDir('bl-kernel-lock-'), 'x.lock');
+  assert.throws(
+    () => assertHeld(path, 'the x lock', 'ctx'),
+    (e) => e.message === `ctx: this process does not hold the x lock ${path}`,
+  );
+  const a = tryLock(path);
+  try {
+    assert.doesNotThrow(() => assertHeld(path, 'the x lock', 'ctx'));
+  } finally {
+    release(a.taken);
+  }
+  const other = holdLock(path);
+  try {
+    assert.throws(() => assertHeld(path, 'the x lock', 'ctx'), /does not hold the x lock/, 'another descriptor');
   } finally {
     other.release();
   }

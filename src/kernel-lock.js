@@ -187,6 +187,20 @@ export function holds(path) {
 }
 
 /**
+ * Throw unless this process holds the lock on `path` (`holds`). Every "this
+ * process must hold this lock" check in bl goes through it (F-126):
+ * `${context}: this process does not hold ${lockName} ${path}`.
+ *
+ * @param {string} path
+ * @param {string} lockName  the lock, as the message names it ("the spec lock")
+ * @param {string} context  who checks, first in the message
+ */
+export function assertHeld(path, lockName, context) {
+  if (holds(path)) return;
+  throw new Error(`${context}: this process does not hold ${lockName} ${path}`);
+}
+
+/**
  * Who else holds the lock on `path`: null when it is free, missing, or held
  * by this process (`holds`); else the PID in the file, or 'unknown'. A
  * foreign holder whose file names this process still counts as another

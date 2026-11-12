@@ -49,7 +49,7 @@ import { renderToolGuide, renderFragment } from './tool-guide.js';
 import { renderSessionStack, sessionStackOf } from './session-stack.js';
 import { resolveLocale, fragmentCandidates } from './locale.js';
 import { awaitLock } from './lock-wait.js';
-import { holds, release, tryLockOnce } from './kernel-lock.js';
+import { assertHeld, release, tryLockOnce } from './kernel-lock.js';
 import { syncMain, reportMainSync } from './main-sync.js';
 import { outcomePath, readOutcomeFile } from './outcome.js';
 
@@ -721,7 +721,7 @@ function sessionLock(backlogRoot, cwd, units, info) {
   if (!units?.length) throw new Error(`${info}: a session in the backlog root needs its work units' locks (units)`);
   for (const unit of units) {
     const path = unitLockPath(backlogRoot, dirname(unit.indexPath));
-    if (!holds(path)) throw new Error(`${info}: this process does not hold ${unit.id}'s work unit lock ${path}`);
+    assertHeld(path, `${unit.id}'s work unit lock`, info);
   }
   return { refused: null, path: backlogRoot, release: () => {} };
 }
