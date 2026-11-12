@@ -211,6 +211,28 @@ test('a raiseAfter whose fn throws raises the kept interrupt', () => {
   assertRaised(r, 143, 'sh -c kill -TERM $$', 'SIGTERM');
 });
 
+test('an interrupt that ends a child of an exit listener keeps the exit code and the later listeners', () => {
+  // The first raise ends bl 143; the exit listener's removal step (as
+  // `checkedMerge`'s throwaway removal does) is then ended by SIGINT.
+  const r = runScript(
+    [
+      `process.on('exit', () => {`,
+      `  raiseAfter(() => {`,
+      `    runChild('sh', ['-c', 'kill -INT $$']);`,
+      `    process.stderr.write('undo ran\\n');`,
+      `  });`,
+      `  runChild('sh', ['-c', 'kill -INT $$']);`,
+      `});`,
+      `process.on('exit', (code) => process.stderr.write('later listener ' + code + '\\n'));`,
+      `runChild('sh', ['-c', 'kill -TERM $$']);`,
+    ].join('\n'),
+  );
+  assertRaised(r, 143, 'sh -c kill -TERM $$', 'SIGTERM');
+  assert.equal(r.stderr.match(/bl: sh -c kill -INT \$\$ was ended by SIGINT\n/g).length, 2, r.stderr);
+  assert.ok(r.stderr.includes('undo ran\n'), r.stderr);
+  assert.ok(r.stderr.includes('later listener 143\n'), r.stderr);
+});
+
 test('a raiseAfter with no interrupt returns what fn returns', () => {
   const r = runScript(`console.log(raiseAfter(() => runChild('sh', ['-c', 'exit 2']).status));`);
   assert.equal(r.status, 0, r.stderr);

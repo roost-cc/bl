@@ -5289,7 +5289,9 @@ them.
   signals too. A child that Node killed past its `timeout` is a failure, not an interrupt. A caller
   that must undo a step after an interrupted child (a rebase abort) runs the step in `raiseAfter(fn)`
   (D2a): the child's result returns to it, and the interrupt is raised when the outermost
-  `raiseAfter` ends. `describeExit(r, what)` words a failed child. A caller never reads a child's
+  `raiseAfter` ends. While `bl` exits, an interrupt that ends a child of an `exit` listener is
+  printed, not raised, so `bl` keeps its exit code and the other listeners run.
+  `describeExit(r, what)` words a failed child. A caller never reads a child's
   `signal`. `test/unit/child-stdio-guard.test.js` fails on a `src/` import of `child_process` or
   `child-stdio.js` outside `src/child.js` (and `child-stdio.js`'s own import of `child_process`),
   except the files its `ALLOWED` list names. F-124 moves those files and empties the list.

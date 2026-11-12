@@ -24,7 +24,9 @@
  * SIGINT and exit 143 as SIGTERM too: a shell turns a signal that ends its
  * child into 128 + n, and a `bl` child exits 130 or 143 on its own interrupt.
  * A child that Node itself killed (`ETIMEDOUT` past `timeout`, `r.error` set)
- * is a failed child, not an interrupt (`interruptOf`).
+ * is a failed child, not an interrupt (`interruptOf`). While `bl` exits, an
+ * interrupt that ends a child of an `exit` listener is printed, not raised:
+ * `bl` keeps its exit code and the other listeners run.
  *
  * **`raiseAfter(fn)` keeps an undo (D2a).** Inside it, an interrupted child
  * returns to its caller as a failed child, so the caller's undo (a rebase
@@ -46,6 +48,16 @@ const EXIT_CODES = Object.freeze(
 /** How many `raiseAfter` calls are running, and the first interrupt one of them kept. */
 let depth = 0;
 let kept = null;
+
+/**
+ * True once `bl` exits. An interrupt that ends a child of an `exit` listener
+ * (the throwaway removal of `bl merge`) is not raised again: a raise there
+ * would change the exit code and skip the listeners after it.
+ */
+let exiting = false;
+process.on('exit', () => {
+  exiting = true;
+});
 
 /**
  * @typedef {import('child_process').SpawnSyncOptions} ChildOptions
@@ -142,7 +154,8 @@ export function describeExit(r, what) {
 
 /**
  * Return `r`, unless an interrupt ended the child: then print the D2 line and
- * raise the interrupt, or keep it inside a `raiseAfter` and return `r`.
+ * raise the interrupt, or keep it inside a `raiseAfter` and return `r`. While
+ * `bl` exits (`exiting`), print the line and return `r`.
  * `codes` reads exit 130 and 143 (`EXIT_CODES`) as SIGINT and SIGTERM.
  * @param {ChildResult} r
  * @param {string} child  the argv joined by spaces, or the command line
@@ -153,6 +166,7 @@ function settle(r, child, { codes = false } = {}) {
   const signal = interruptOf(r) ?? (codes && !r.error ? signalOfCode(r.status) : null);
   if (!signal) return r;
   process.stderr.write(`bl: ${child} was ended by ${signal}\n`);
+  if (exiting) return r;
   if (depth > 0) {
     kept ??= signal;
     return r;
