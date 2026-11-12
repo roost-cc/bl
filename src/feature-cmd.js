@@ -1536,12 +1536,12 @@ async function reviewUnitPRs(
   // Every repo's PR goes on its `repos:` entry in the change document. A
   // feature's entries keep its whole derived order (`--repo` reviews one), so
   // the lead stays first.
-  const change = ensureChange(config.backlogRoot, dirname(unit.indexPath), {
+  const change = await ensureChange(config.backlogRoot, dirname(unit.indexPath), {
     changeOf: unit.id,
     title: unit.title,
     repos: (repoOrder ?? targets.map((p) => p.repoName)).map((repo) => ({ repo, branch: branchName })),
   });
-  updateChange(config.backlogRoot, change.path, (doc) => {
+  await updateChange(config.backlogRoot, change.path, (doc) => {
     for (const p of targets)
       setRepo(doc, p.repoName, { branch: branchName, pr: String(p.prNumber), url: p.prUrl ?? '' });
   });
@@ -1920,7 +1920,7 @@ export async function cmdMerge(args, config, feature) {
     const union = unionLandedCommits(recorded, landed, tips);
     const decided = commitFmShape(union);
     await markFeatureMerged(config, feature, stories, { decided });
-    recordMerge(config.backlogRoot, feature.featureDir, {
+    await recordMerge(config.backlogRoot, feature.featureDir, {
       commits: union,
       date: stamp,
       extra: [...releaseLines, ...noReviewLines(gates.unreviewed, stamp)],

@@ -4,9 +4,17 @@ import { spawn } from 'child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { FrontmatterError, parseFrontmatter } from '../../src/config.js';
-import { holderOf } from '../../src/kernel-lock.js';
+import { holderOf, holds } from '../../src/kernel-lock.js';
+import { LOCK_FILE } from '../../src/lock.js';
 import { waitingForLock } from '../../src/lock-wait.js';
-import { SpecLockError, specLockPath, updateSpecFile, updateSpecFileHeld, withSpecLock } from '../../src/spec-file.js';
+import {
+  SpecLockError,
+  specLockPath,
+  updateSpecFile,
+  updateSpecFileHeld,
+  withSpecFileLock,
+  withSpecLock,
+} from '../../src/spec-file.js';
 import { accumulateTokensOnFile } from '../../src/tokens.js';
 import { holdLock } from '../helpers/hold-lock.js';
 import { withPartialWrites } from '../helpers/partial-write.js';
@@ -115,6 +123,17 @@ test('updateSpecFileHeld refuses a spec whose lock this process does not hold', 
   const { dir, path } = spec();
   assert.throws(() => updateSpecFileHeld(dir, path, (fm) => void (fm.status = 'done')), /does not hold the spec lock/);
   assert.equal(readFileSync(path, 'utf8'), SPEC);
+});
+
+test('withSpecFileLock holds the spec lock alone on an existing file, and the backlog lock too on a missing one', async () => {
+  const { dir, path } = spec();
+  const backlogLock = join(dir, LOCK_FILE);
+  const seen = await withSpecFileLock(dir, path, () => [holds(specLockPath(path)), holds(backlogLock)]);
+  assert.deepEqual(seen, [true, false], 'an existing file: the spec lock, not the backlog lock');
+  const fresh = join(dir, 'change.md');
+  const seenNew = await withSpecFileLock(dir, fresh, () => [holds(specLockPath(fresh)), holds(backlogLock)]);
+  assert.deepEqual(seenNew, [true, true], 'a missing file: both');
+  assert.equal(holds(specLockPath(fresh)) || holds(backlogLock), false, 'both released');
 });
 
 test('withSpecLock waits for a live holder, says so once, and takes the lock when it ends', async () => {

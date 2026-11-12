@@ -1247,7 +1247,7 @@ the main checkout as it was.`);
         // The change document records each repo's merge commit; a story
         // merged alone gets no tag and no release manifest.
         if (doneWrite.written) {
-          recordMerge(config.backlogRoot, dirname(indexPath), {
+          await recordMerge(config.backlogRoot, dirname(indexPath), {
             commits: doneWrite.commitMap,
             date: today,
             extra: [

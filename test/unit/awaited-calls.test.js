@@ -24,8 +24,6 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const EXCEPTIONS = new Map([
   ['bl.js run', 'the entry point: `run().catch(…)` handles the rejection'],
   ['blockers-merge.js main', 'the script entry: `main(…).then(…)` handles the result'],
-  ['cleanup.js recordMerge', "change-doc.js's synchronous `recordMerge`, not updates-run.js's"],
-  ['feature-cmd.js recordMerge', "change-doc.js's synchronous `recordMerge`, not updates-run.js's"],
   ['credential-helper.js run', "a local synchronous `run`, not bl.js's"],
   ['release.js run', "a local synchronous `run`, not bl.js's"],
   ['report.js scoped', "a local synchronous `scoped`, not feature-run.js's"],

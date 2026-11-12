@@ -48,7 +48,7 @@ import {
   saveFailedCommit,
 } from './backlog-commit.js';
 import { loadBacklog } from './backlog-graph.js';
-import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChange } from './change-doc.js';
+import { currentChange, listChanges, readChange, REVIEW_FIELDS, updateChangeHeld } from './change-doc.js';
 import { FLOW_FILE, FLOW_TYPES, LEGACY_LOG, flowPath, fromLegacy, migratedFlowText } from './flow.js';
 import { liveSessionLocks } from './migration-txn.js';
 import { otherHolder } from './kernel-lock.js';
@@ -176,7 +176,7 @@ function planUnit(root, rel, kind, fm, change) {
 
 /**
  * The unit's change documents that hold a review field, each with them
- * removed (`updateChange`, under its lock) unless `dryRun`. `onPath` gets
+ * removed (`updateChangeHeld`, under its lock) unless `dryRun`. `onPath` gets
  * each one's path as it is written, so a later throw does not lose it.
  */
 async function stripChanges(root, unitDir, dryRun, onPath) {
@@ -185,7 +185,7 @@ async function stripChanges(root, unitDir, dryRun, onPath) {
       const doc = readChange(path);
       if (!doc || !REVIEW_FIELDS.some((k) => Object.hasOwn(doc.fm, k))) return;
       if (!dryRun) {
-        updateChange(root, path, (d) => {
+        updateChangeHeld(root, path, (d) => {
           for (const k of REVIEW_FIELDS) delete d.fm[k];
         });
       }

@@ -487,17 +487,21 @@ export async function main(argv) {
         const current = findFeature(normalizeFeatureId(feature.id), cfg);
         const { stories } = resolveFeatureStories(current, cfg);
         const names = featureRepoOrder(stories);
-        changePath = ensureChange(cfg.backlogRoot, current.featureDir, {
-          changeOf: current.id,
-          title: current.title,
-          repos: names.map((r) => ({ repo: r, branch })),
-        }).path;
+        changePath = (
+          await ensureChange(cfg.backlogRoot, current.featureDir, {
+            changeOf: current.id,
+            title: current.title,
+            repos: names.map((r) => ({ repo: r, branch })),
+          })
+        ).path;
       } else {
-        changePath = ensureChange(cfg.backlogRoot, found.storyDir, {
-          changeOf: storyId,
-          title: title.trim(),
-          repos: [{ repo, branch }],
-        }).path;
+        changePath = (
+          await ensureChange(cfg.backlogRoot, found.storyDir, {
+            changeOf: storyId,
+            title: title.trim(),
+            repos: [{ repo, branch }],
+          })
+        ).path;
       }
       const res = await syncAndCommit(cfg, {
         message: `chore: add ${storyId} (bl side, found by ${fromId})`,

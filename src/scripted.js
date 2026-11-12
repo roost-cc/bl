@@ -15,8 +15,7 @@
 
 import { createHash } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
-import { atomicWriteFile } from './atomic-write.js';
-import { appendSection, gateLine, updateChange } from './change-doc.js';
+import { appendSection, gateLine, restoreChange, updateChange } from './change-doc.js';
 import { parsePluginList, warn } from './config.js';
 import { appendSectionLine, checkCriteria, extractSection, replaceSection } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
@@ -280,7 +279,7 @@ export async function recordScriptedRun({ backlogRoot, indexPath, changePath, id
   const flow = loadFlow(backlogRoot);
   const change = changePath && existsSync(changePath) ? readFileSync(changePath, 'utf8') : null;
   if (changePath) {
-    updateChange(backlogRoot, changePath, (doc) => {
+    await updateChange(backlogRoot, changePath, (doc) => {
       doc.body = appendSection(doc.body, 'Gate', scriptedGateEntry(date, repo, id, result));
     });
   }
@@ -302,7 +301,7 @@ export async function recordScriptedRun({ backlogRoot, indexPath, changePath, id
   } catch (e) {
     if (change != null) {
       try {
-        atomicWriteFile(backlogRoot, changePath, change);
+        await restoreChange(backlogRoot, changePath, change);
       } catch (restore) {
         warn(`${id}: ${changePath} keeps a ## Gate line for a run not yet recorded: ${restore.message}`);
       }

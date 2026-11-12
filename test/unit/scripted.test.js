@@ -24,7 +24,7 @@ import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { git, GIT_ENV, initGitBacklog } from '../helpers/git-backlog.js';
 import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
-import { newChange, writeChange } from '../../src/change-doc.js';
+import { newChange, serializeChange } from '../../src/change-doc.js';
 import { defaultOutcome } from '../helpers/outcomes.js';
 import { statusOf } from '../../src/transition.js';
 
@@ -142,7 +142,7 @@ test('recordScriptedRun preserves paired story and change state when the second 
 
     // The story cannot be written: the change document reads as it did.
     const changePath = join(root, 'change.md');
-    writeChange(root, changePath, newChange({ changeOf: 'S-1' }));
+    writeFileSync(changePath, serializeChange(newChange({ changeOf: 'S-1' })));
     const change = readFileSync(changePath, 'utf8');
     writeFileSync(join(root, 'index.md'), 'no frontmatter\n');
     await assert.rejects(async () => record(root, changePath, kind), /frontmatter|---/, kind);
@@ -184,7 +184,7 @@ test('record-scripted-run-rollback-failure-preserves-recovery-state', async () =
     // The story fails, then so does putting the change document back.
     const root = backlogDir();
     const changePath = join(root, 'change.md');
-    writeChange(root, changePath, newChange({ changeOf: 'S-1' }));
+    writeFileSync(changePath, serializeChange(newChange({ changeOf: 'S-1' })));
     writeFileSync(join(root, 'index.md'), 'no frontmatter\n');
     const both = await record(root, changePath, kind, 2);
     assert.match(both.stdout, /THROWN .*(frontmatter|---)/, `${kind}: the story's error, not the restore's`);

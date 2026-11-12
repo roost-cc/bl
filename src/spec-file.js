@@ -19,7 +19,7 @@
  * spec lock, and nothing holds two spec locks at once.
  */
 
-import { readFileSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { createHash } from 'crypto';
@@ -27,6 +27,7 @@ import { FrontmatterError, info, parseFrontmatterOf, serializeFrontmatter } from
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
 import { assertHeld, release, tryLock } from './kernel-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
+import { withLock } from './lock.js';
 
 /** The spec lock could not be taken: held by a live process past the wait, or not creatable. */
 export class SpecLockError extends Error {
@@ -108,6 +109,25 @@ export async function withSpecLock(indexPath, fn, { waitMs = LOCK_WAIT_MS } = {}
   } finally {
     release(handle);
   }
+}
+
+/**
+ * Run `fn` holding the covering lock of the spec file at `path` (F-126 D2,
+ * D3): a story or feature `index.md`, a change document, or
+ * `allowed-tools.json`. An existing file takes its spec lock alone. A file
+ * that does not exist yet is created under the backlog lock, as a new spec
+ * file is, with its spec lock inside it (F-67 D4: the backlog lock first).
+ * `fn` is synchronous, as for `withSpecLock`, and its result resolves. A
+ * caller already in a spec lock cannot call this: its `fn` is synchronous.
+ * @template T
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @param {() => T} fn
+ * @returns {Promise<T>}
+ */
+export async function withSpecFileLock(backlogRoot, path, fn) {
+  if (existsSync(path)) return withSpecLock(path, fn);
+  return withLock(backlogRoot, async () => withSpecLock(path, fn));
 }
 
 /**
