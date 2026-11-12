@@ -27,6 +27,7 @@ import {
 import { spawnSync } from 'child_process';
 import { featureReviewGate, summarizeLatestReviewSession } from '../../src/review-log.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
 import { holderOf, holds } from '../../src/kernel-lock.js';
 import { unitLockDirs, unitLockPath } from '../../src/unit-lock.js';
@@ -280,6 +281,7 @@ test('uncheckedCriteria counts *, +, and numbered checkboxes', () => {
 test('happy path: stories, gate, self-review, PR, review → fix → re-review → clean', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
+    initGitBacklog(dir);
     const runner = fakeRunner({ dir, feature });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'clean');
@@ -356,7 +358,7 @@ test('happy path: stories, gate, self-review, PR, review → fix → re-review �
       next: '→ bl merge',
       final: true,
     });
-    assert.ok(runner.calls.some((c) => c.type === 'shell' && /git commit .*PR opened/.test(c.cmd)));
+    assert.match(git(dir, 'log', '--format=%s'), /PR opened/);
     assert.equal(state.usage.input, 11, 'one unit per session, including the fix self-review');
     // test gate ran: after stories, and after the fix round
     assert.equal(runner.calls.filter((c) => c.cmd === 'npm test').length, 2);
@@ -1642,14 +1644,9 @@ test('writeEscalation fills an Escalation heading with trailing whitespace', asy
 test('a backlog commit that fails is recorded at the escalation and the pr: write', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
-    const runner = fakeRunner({
-      dir,
-      feature,
-      testResults: [0, 1, 1],
-      behaviour: {
-        shell: (cmd) => (cmd.startsWith('git commit') ? { status: 1, output: 'index.lock exists\n' } : null),
-      },
-    });
+    initGitBacklog(dir);
+    writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const runner = fakeRunner({ dir, feature, testResults: [0, 1, 1] });
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'escalated');
     const failed = state.history.filter((h) => h.ok === false && /backlog commit failed/.test(h.note ?? ''));

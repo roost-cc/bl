@@ -21,7 +21,7 @@
 import { resolve } from 'path';
 import { info } from './config.js';
 import { awaitLock, LockWaitTimeout } from './lock-wait.js';
-import { release, tryLockOnce } from './kernel-lock.js';
+import { assertHeld, release, tryLockOnce } from './kernel-lock.js';
 import { describeExit, git } from './child.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
@@ -77,6 +77,18 @@ export function mainSyncLockPath(repoPath) {
     throw new Error(`${repoPath} is not a git repository: ${describeExit(r, 'git rev-parse')}`);
   }
   return resolve(repoPath, r.stdout.trim(), MAIN_SYNC_LOCK);
+}
+
+/**
+ * Throw unless this process holds `repoPath`'s main sync lock (`assertHeld`).
+ * Every bl git call that changes the backlog's index, working tree or refs
+ * makes this check first (F-126 D1): `backlog-commit.js` `commitLocked`,
+ * `pushBacklog`, `pullLocked`, `resetPaths` and `discardChanges`.
+ *
+ * @param {string} repoPath
+ */
+export function assertMainSyncLock(repoPath) {
+  assertHeld(mainSyncLockPath(repoPath), 'the main sync lock', repoPath);
 }
 
 function shortMain(repoPath) {

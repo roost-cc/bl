@@ -239,14 +239,14 @@ export async function applyFixOutcome(
 
 /**
  * Commit the change document at `path` (or the files at `path`, a list) in
- * the backlog, skipped when the backlog is not a git repository; a failed
- * commit is a warning.
+ * the backlog, skipped when the backlog is not a git repository of its own
+ * (`commitPaths`' `notRepo`); a failed commit is a warning.
  */
 async function commitChangeDoc(backlogRoot, path, message) {
-  if (!existsSync(join(backlogRoot, '.git'))) return;
   const rels = [path].flat().map((p) => relative(backlogRoot, p));
   const c = await commitPaths(backlogRoot, rels, message);
-  if (!c.committed) warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
+  if (!c.committed && !c.notRepo)
+    warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
 }
 
 /**

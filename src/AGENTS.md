@@ -4140,9 +4140,11 @@ Nothing to commit exits 0; `--commit` without `-m` or `--story`, `--path` withou
 `--commit`, or a `--path` that is neither on disk nor tracked by git, is a usage error.
 
 **Pull before, push after (F-50 D4).** The backlog is shared through its `origin` remote, so
-every clone (the operator's, the update runner's) sees the others' work. Every commit
-`commitPaths` makes, and each step commit of `bl run`'s loop (`feature-run.js`
-`commitBacklog`), is followed by `git push origin main` (`backlog-commit.js` `pushBacklog`).
+every clone (the operator's, the update runner's) sees the others' work. `commitPaths` is the
+only backlog add, commit and push in bl: each step commit of `bl run`'s loop goes through it too
+(`feature-run.js` `commitUnitPaths`). Every commit it makes is followed by `git push origin main`
+(`backlog-commit.js` `pushBacklog`). A backlog with no repo of its own (`hasOwnRepo`) runs no git
+there: `commitPaths` returns `notRepo`, and its callers take that as nothing to do.
 A push rejected because `origin` moved on (git's `[rejected] … (fetch first)` or
 `(non-fast-forward)`, `isNonFastForwardRejection`) is rebased onto `origin/main` with the pull's
 own rebase (`pullLocked`, below, which settles generated paths and puts everything back when it
@@ -4157,10 +4159,18 @@ written stops the retry before anything moves, and a push never publishes settle
 it. A push that still fails (a
 conflict outside the generated paths, a hook, auth, offline: the last three get no rebase) is
 one warning (`pushWarning`) naming the conflicting paths, if any, and the command to retry, and
-the command exits as it would have. With an `origin` remote the
-commit and its push hold the main sync lock the pull holds, so a commit from a process without
-the backlog lock (`openUnitChange`, the loop) never lands mid-rebase or loses its file to a
-pull's autostash. Every command that commits the
+the command exits as it would have. Every backlog commit holds the main sync lock the pull
+holds, with or without an `origin` remote (F-126 D1), so a commit from a process without the
+backlog lock (`openUnitChange`, the loop) never lands mid-rebase or loses its file to a pull's
+autostash. Every bl git call that changes the backlog's index, working tree or refs lives in
+`backlog-commit.js` or `main-sync.js`, and each chokepoint (`commitLocked`, `pushBacklog`,
+`pullLocked`, `resetPaths`, `discardChanges`) throws first when this process does not hold the
+main sync lock (`assertMainSyncLock`, through `kernel-lock.js` `assertHeld`, which makes every
+"this process must hold this lock" check). `bl rank --commit`'s rollback of a failed commit
+unstages `priority.yaml` with `resetPaths` under the lock. The migration restore
+(`migration-txn.js`) runs in a signal listener and cannot wait: it takes the lock with one try
+(`tryLockOnce`), and when another process holds it, it leaves the backlog and prints the manual
+`git reset --hard HEAD && git clean -fd`. Every command that commits the
 backlog (`new`, `side`, `run`, `implement`, `merge`, `done`, `updates`, `sync --commit`,
 `block add`, `block remove`, `block list --fix`, `task`, `task done`), plus `bl inbox` and `bl updates status`, first rebases onto `origin/main` with
 `--autostash` (`backlog-commit.js` `pullBacklog`, under the backlog lock and the main sync

@@ -121,7 +121,7 @@ import {
 import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock, stopRequests } from './run-lock.js';
 import { takeUnitLocks } from './unit-lock.js';
-import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
+import { commitPaths } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
 import * as processScope from './process-scope.js';
@@ -890,35 +890,16 @@ function checkStop(ctx) {
 }
 
 /**
- * Commit `paths` in the backlog and, with an `origin` remote, push (F-50
- * D4), holding the main sync lock a backlog pull takes (see
- * `backlog-commit.js` `commitPaths`); a push rejected because origin moved
- * is rebased and retried (`pushBacklog`). A failed push is a log line: the
- * next bl command that pulls pushes the commit.
+ * Commit `paths` in the backlog through `commitPaths` (`backlog-commit.js`,
+ * F-126 D1): under the main sync lock, pushed to an `origin` remote (F-50
+ * D4), and a failed push is its warning. A backlog with no repo of its own
+ * commits nothing and is no failure. A backlog commit that did not land is a
+ * failed event, not a silent one.
  */
-async function commitBacklog(ctx, paths, message) {
-  const root = ctx.config.backlogRoot;
-  const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
-  const commit = () => {
-    const add = ctx.runner.shell(`git add -- ${paths.map(q).join(' ')}`, root);
-    if (add.status !== 0) return false;
-    const c = ctx.runner.shell(`git commit -q -m ${q(message)} -- ${paths.map(q).join(' ')}`, root);
-    return c.status === 0;
-  };
-  if (!hasOriginRemote(root)) return commit();
-  const done = await withMainSyncLock(root, () => {
-    if (!commit()) return false;
-    const p = pushBacklog(root);
-    if (!p.pushed) ctx.runner.log(`  (${pushWarning(root, p)})`);
-    return true;
-  });
-  return done === true;
-}
-
-/** A backlog commit that did not land is a failed event, not a silent one. */
 async function commitUnitPaths(ctx, step, paths, message) {
-  if (await commitBacklog(ctx, paths, message)) return true;
-  const note = `backlog commit failed: "${message}" — ${paths.join(', ')} ${paths.length === 1 ? 'is' : 'are'} written but uncommitted`;
+  const c = await commitPaths(ctx.config.backlogRoot, paths, message);
+  if (c.committed || c.notRepo) return true;
+  const note = `backlog commit failed: "${message}" — ${paths.join(', ')} ${paths.length === 1 ? 'is' : 'are'} written but uncommitted${c.error ? ` (${c.error})` : ''}`;
   record(ctx, { step, ok: false, note });
   ctx.runner.log(`  (${note})`);
   return false;

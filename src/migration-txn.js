@@ -11,15 +11,18 @@
  * through the `commit` it is given (`syncAndCommit`). On any failure, or a
  * SIGINT or SIGTERM, before HEAD moves, `git reset --hard HEAD` and
  * `git clean -fd` put the backlog back as it was, since nothing else was in
- * it. Once HEAD has moved the commit has landed, and a rerun plans nothing.
+ * it (`backlog-commit.js` `discardChanges`, under the main sync lock, taken
+ * with one try: F-126 D7). Once HEAD has moved the commit has landed, and a
+ * rerun plans nothing.
  */
 
 import { spawnSync } from 'child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from 'fs';
 import { dirname, join, relative, resolve } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
-import { MAIN_REFSPEC } from './main-sync.js';
-import { otherHolder } from './kernel-lock.js';
+import { discardChanges } from './backlog-commit.js';
+import { MAIN_REFSPEC, mainSyncLockPath } from './main-sync.js';
+import { otherHolder, release, tryLockOnce } from './kernel-lock.js';
 import { RUN_DIR } from './run-lock.js';
 import { allActiveWorktrees, sessionLockPath } from './story.js';
 
@@ -56,11 +59,21 @@ export async function applyMigration(config, { apply, message, commit, commitCon
   const restore = () => {
     if (restored) return '';
     restored = true;
-    if (headOf() !== startHead) return '; the commit landed, so a rerun plans nothing';
-    const failed = [git('reset', '-q', '--hard', 'HEAD'), git('clean', '-q', '-fd')].find((r) => r.status !== 0);
-    if (failed) {
-      return `; could not restore the backlog (${firstLine(failed)}): run git -C "${root}" reset --hard HEAD && git -C "${root}" clean -fd`;
+    const manual = `run git -C "${root}" reset --hard HEAD && git -C "${root}" clean -fd`;
+    // A signal listener calls this, so it cannot wait: one try for the main
+    // sync lock (F-126 D7), and a busy lock leaves the restore to the operator.
+    const lock = tryLockOnce(mainSyncLockPath(root), `bl migration restore ${root}`);
+    if (!('taken' in lock)) {
+      return `; could not restore the backlog (PID ${lock.holder} holds the main sync lock): ${manual}`;
     }
+    let failed;
+    try {
+      if (headOf() !== startHead) return '; the commit landed, so a rerun plans nothing';
+      failed = discardChanges(root);
+    } finally {
+      release(lock.taken);
+    }
+    if (failed) return `; could not restore the backlog (${firstLine(failed)}): ${manual}`;
     return '; backlog restored; fix the cause and rerun';
   };
 

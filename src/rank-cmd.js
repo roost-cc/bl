@@ -39,7 +39,9 @@ import { parseArgs } from 'node:util';
 import { stringify } from 'yaml';
 import { atomicWriteFile } from './atomic-write.js';
 import { info, loadConfig, normalizeId } from './config.js';
-import { commitPaths, hasOriginRemote, textAt } from './backlog-commit.js';
+import { commitPaths, hasOriginRemote, resetPaths, textAt } from './backlog-commit.js';
+import { describeExit } from './child.js';
+import { withMainSyncLock } from './main-sync.js';
 import { withLock } from './lock.js';
 import { pullBeforeCommand, reportBacklogCommit } from './sync.js';
 import { loadBacklog } from './backlog-graph.js';
@@ -580,12 +582,12 @@ async function commitPlan(root, plan) {
     return { same: true };
   }
   atomicWriteFile(root, join(root, PRIORITY_FILE), stringify(plan.ids));
-  if (!plan.repo) {
-    drop();
-    return { commit: { committed: false, paths: [PRIORITY_FILE], notRepo: true } };
-  }
   const out = plan.closed.length > 0 ? `; ${plan.closed.join(', ')} out (done)` : '';
   const commit = await commitPaths(root, [PRIORITY_FILE], `chore: commit the staged order of ${PRIORITY_FILE}${out}`);
+  if (commit.notRepo) {
+    drop();
+    return { commit };
+  }
   if (commit.committed) {
     if (commit.pushed !== false) drop();
     return { commit };
@@ -595,12 +597,9 @@ async function commitPlan(root, plan) {
   let why = null;
   try {
     atomicWriteFile(root, join(root, PRIORITY_FILE), plan.mainText);
-    const reset = spawnSync('git', ['reset', '-q', '--', PRIORITY_FILE], {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    if (reset.status !== 0) why = (reset.stderr || '').trim() || `git reset exited ${reset.status}`;
+    const reset = await withMainSyncLock(root, () => resetPaths(root, [PRIORITY_FILE]));
+    if (reset?.state === 'lock-timeout') why = `timed out waiting for ${reset.lockPath} (PID ${reset.holder})`;
+    else if (reset) why = describeExit(reset, 'git reset');
   } catch (err) {
     why = err.message;
   }

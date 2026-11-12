@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { applyMigration } from '../../src/migration-txn.js';
+import { mainSyncLockPath } from '../../src/main-sync.js';
 import { sessionLockPath } from '../../src/story.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
@@ -206,6 +207,28 @@ test('applyMigration_failure_before_HEAD_moves_leaves_git_status_clean_and_HEAD_
       assert.equal(readFileSync(join(dir, rel), 'utf8'), text, `${moment}: ${rel}`);
     for (const rel of ['b.md', 'new', 'made', 'gen']) assert.ok(!existsSync(join(dir, rel)), `${moment}: ${rel}`);
   }
+});
+
+test('applyMigration_restore_leaves_the_backlog_when_another_process_holds_the_main_sync_lock (F-126 D7)', async () => {
+  const dir = backlog();
+  let holder;
+  const result = await applyMigration(
+    { backlogRoot: dir },
+    {
+      message: 'm',
+      apply: steps(dir),
+      commit: async () => {
+        holder = await holdLockInChild(mainSyncLockPath(dir));
+        return { committed: false, paths: [], error: 'injected' };
+      },
+    },
+  ).finally(() => holder?.kill());
+  assert.equal(
+    result.error,
+    `injected; could not restore the backlog (PID ${holder.pid} holds the main sync lock): ` +
+      `run git -C "${dir}" reset --hard HEAD && git -C "${dir}" clean -fd`,
+  );
+  assert.equal(readFileSync(join(dir, 'a.md'), 'utf8'), 'migration\n', 'the restore ran no git');
 });
 
 test('applyMigration_reports_a_commit_that_landed_and_does_not_reset_it', async () => {
