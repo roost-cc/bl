@@ -283,6 +283,59 @@ func TestAnotherLayoutTreeRenumbersTheBoxesAndTheTabOrder(t *testing.T) {
 	}
 }
 
+// TestTheNumbersFollowTheScreenWithAndWithoutTheConflictLine: in each layout, with and without the
+// conflict line (F-113 Decision A3), the boxes on screen, left to right and then top to bottom,
+// carry the numbers 1, 2, 3 …; Tab visits them in that order; key n hides the n-th of them; and
+// the help heads each box's keys with the number in its border.
+func TestTheNumbersFollowTheScreenWithAndWithoutTheConflictLine(t *testing.T) {
+	saved := fullLayout
+	t.Cleanup(func() { fullLayout = saved })
+	// At 171×50 the tokens box starts on line 24 and the detail box on line 25; on the 49 lines
+	// under the conflict line, both start on line 24, so the detail box comes first.
+	shifted := node{across: true, children: []node{
+		{weight: 1, children: []node{{box: runsBox, weight: 49}, {box: detailBox, weight: 51}}},
+		{weight: 1, children: []node{{box: attentionBox, weight: 48}, {box: tokensBox, weight: 52}}},
+	}}
+	for _, c := range []struct {
+		name   string
+		layout node
+		w, h   int
+	}{{"full", saved, 171, 63}, {"stacked", saved, 100, 40}, {"shifted", shifted, 171, 50}} {
+		for _, conflict := range []string{"", "staged copy in conflict"} {
+			fullLayout = c.layout
+			m := sized(t, c.w, c.h)
+			m.snap = &stream.Snapshot{Next: stream.Next{Conflict: conflict}}
+			var drawn []boxName
+			for i, b := range borders(t, m) {
+				name := boxName(strings.TrimLeft(b, strings.Join(superscript, "")))
+				if !strings.HasPrefix(b, superscript[i+1]) || m.number(name) != i+1 {
+					t.Errorf("%s, conflict %q: border %d is %q, number(%s) = %d", c.name, conflict, i+1, b, name, m.number(name))
+				}
+				drawn = append(drawn, name)
+			}
+			from := slices.Index(drawn, m.focus)
+			var want []boxName
+			for i := range len(boxes) {
+				want = append(want, drawn[(from+1+i)%len(drawn)])
+			}
+			if got := tabOrder(t, m, 1); !slices.Equal(got, want) {
+				t.Errorf("%s, conflict %q: tab %v, want %v", c.name, conflict, got, want)
+			}
+			for i, b := range drawn {
+				if hidden, _ := press(t, m, text(fmt.Sprint(i+1))); !hidden.hidden[b] {
+					t.Errorf("%s, conflict %q: key %d hides %v, want %s", c.name, conflict, i+1, hidden.hidden, b)
+				}
+			}
+			help := ansi.Strip(strings.Join(m.helpBox(m.width, m.height), "\n"))
+			for i, b := range drawn {
+				if groupKeys(b) != nil && !strings.Contains(help, superscript[i+1]+string(b)) {
+					t.Errorf("%s, conflict %q: the help has no heading %s%s:\n%s", c.name, conflict, superscript[i+1], b, help)
+				}
+			}
+		}
+	}
+}
+
 // TestNumberKeysToggleTheBoxAtThatPosition: key n hides and shows the box at position n of the
 // drawn layout, and a hidden box stays hidden when a resize gives it another number (F-127
 // Decision 3).

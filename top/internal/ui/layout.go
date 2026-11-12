@@ -90,9 +90,20 @@ func (m Model) layout() node {
 	return fullLayout
 }
 
+// conflictLine is the red line at the top of the screen while the staged copy is in conflict
+// (F-113 Decision A3), or no line. The layout is drawn under it, so render and order both take
+// their height from it.
+func (m Model) conflictLine() []string {
+	if m.snap == nil || m.snap.Next.Conflict == "" {
+		return nil
+	}
+	return []string{styleError.Render(fit(" ! "+m.snap.Next.Conflict, m.width))}
+}
+
 // order is the boxes of the drawn layout left to right, then top to bottom: each box's top-left
-// cell at the screen's size, as if no box were hidden, sorted by its row and then its column. It
-// gives each box its number and the Tab order (F-127 Decisions 1 and 3).
+// cell in the cells the layout is drawn in (under the conflict line), as if no box were hidden,
+// sorted by its row and then its column. It gives each box its number and the Tab order (F-127
+// Decisions 1 and 3).
 func (m Model) order() []boxName {
 	type place struct {
 		box      boxName
@@ -123,7 +134,7 @@ func (m Model) order() []boxName {
 			}
 		}
 	}
-	walk(m.layout(), 0, 0, m.width, m.height)
+	walk(m.layout(), 0, 0, m.width, m.height-len(m.conflictLine()))
 	slices.SortStableFunc(places, func(a, b place) int {
 		return cmp.Or(cmp.Compare(a.row, b.row), cmp.Compare(a.col, b.col))
 	})
@@ -264,10 +275,7 @@ func (m Model) render() string {
 		return sizeMessage
 	}
 	layout := m.layout()
-	var top []string
-	if m.snap != nil && m.snap.Next.Conflict != "" {
-		top = []string{styleError.Render(fit(" ! "+m.snap.Next.Conflict, m.width))}
-	}
+	top := m.conflictLine()
 	h := m.height - len(top)
 	lines := blank(m.width, h)
 	if m.shown(layout) {
