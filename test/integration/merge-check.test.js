@@ -652,6 +652,48 @@ for (const c of GIT_KILL_CASES) {
   });
 }
 
+test('a git that cannot start in the throwaway removal is a warning: the removal goes on and bl exits 143', () => {
+  const fx = fixture({ verdicts: ['pass'] });
+  try {
+    // Once bl exits, TMPDIR names no directory, so `src/child.js` cannot make
+    // its output files and every git of the removal throws. A listener added
+    // after the removal's says whether the later listeners run.
+    const fault = join(fx.dir, '.bl', 'exit-fault.mjs');
+    mkdirSync(dirname(fault), { recursive: true });
+    writeFileSync(
+      fault,
+      [
+        `process.on('exit', () => { process.env.TMPDIR = ${JSON.stringify(join(fx.dir, 'no-such-dir'))}; });`,
+        `const once = process.once.bind(process);`,
+        `process.once = (event, fn) => {`,
+        `  const r = once(event, fn);`,
+        `  if (event === 'exit' && fn.name === 'removeThrowaway')`,
+        `    process.on('exit', (code) => process.stderr.write('later listener ' + code + '\\n'));`,
+        `  return r;`,
+        `};`,
+      ].join('\n'),
+    );
+    const env = {
+      ...ENV,
+      PATH: killingGit(fx.dir),
+      KILL_GIT: 'worktree add *',
+      KILL_IN: '*',
+      NODE_OPTIONS: `--import=${fault}`,
+    };
+    const r = runBl(['merge', UNITS[0].id], { cwd: fx.dir, env });
+    const why = `${r.stdout}\n${r.stderr}`;
+    assert.equal(r.status, 143, why);
+    const wt = r.stderr.match(/^bl: git worktree add --detach (\S+) origin\/main was ended by SIGTERM$/m)?.[1];
+    assert.ok(wt, why);
+    assert.match(r.stderr, /^code: warning: could not run git worktree remove: .*ENOENT/m);
+    assert.match(r.stderr, /^code: warning: could not run git worktree prune: .*ENOENT/m);
+    assert.ok(!existsSync(dirname(wt)), `the throwaway directory is removed: ${why}`);
+    assert.match(r.stderr, /^later listener 143$/m);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('a check killed by SIGABRT counts as a failed attempt', () => {
   // Only SIGINT and SIGTERM interrupt bl; SIGABRT (or the out-of-memory
   // killer's SIGKILL) is a failed run, recorded and run once more.

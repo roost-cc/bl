@@ -784,19 +784,24 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
   // (`awaitLock` waits, and the SIGINT handler in `signal-exit.js` exits 130).
   // An interrupt that ends one of its own steps is raised after the last
   // step (`raiseAfter`, F-114 D2a), so the other steps still run.
+  // A step that throws (a git that cannot start) is a warning, and the steps
+  // after it still run. A throw out of the `exit` listener would end bl 1 and
+  // skip the listeners after it.
   let removed = false;
+  const step = (what, fn) => {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`${repoName}: warning: could not ${what}: ${err.message}`);
+    }
+  };
   const removeThrowaway = () => {
     if (removed) return;
     removed = true;
     raiseAfter(() => {
-      git(['worktree', 'remove', '--force', wt], repoPath);
-      // A removal that throws is a warning: the prune still follows.
-      try {
-        rmSync(tmp, { recursive: true, force: true });
-      } catch (err) {
-        console.error(`${repoName}: warning: could not remove the throwaway worktree ${tmp}: ${err.message}`);
-      }
-      git(['worktree', 'prune'], repoPath);
+      step('run git worktree remove', () => git(['worktree', 'remove', '--force', wt], repoPath));
+      step(`remove the throwaway worktree ${tmp}`, () => rmSync(tmp, { recursive: true, force: true }));
+      step('run git worktree prune', () => git(['worktree', 'prune'], repoPath));
     });
   };
   process.once('exit', removeThrowaway);
