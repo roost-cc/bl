@@ -9,7 +9,9 @@ import { storyUnit } from '../../src/unit.js';
 import { mergePrep } from '../../src/merge-integrate.js';
 import { integrateUnit } from '../../src/feature-run.js';
 import { acquireRunLock, releaseRunLock, runLockPath } from '../../src/run-lock.js';
-import { holderOf } from '../../src/kernel-lock.js';
+import { holderOf, holds } from '../../src/kernel-lock.js';
+import { unitLockDirs, unitLockPath } from '../../src/unit-lock.js';
+import { holdLock } from '../helpers/hold-lock.js';
 import {
   RESOLVED,
   REVIEW_SESSIONS,
@@ -225,6 +227,35 @@ test("integration is refused while a bl run holds the unit's run lock", async ()
     } finally {
       releaseRunLock(lock.taken);
     }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("integration is refused while another process holds a story's work unit lock, and holds the locks while it runs (F-122 D9)", async () => {
+  const fx = fixture();
+  try {
+    const { config, unit, prep } = featureCtx(fx);
+    const story = unitLockPath(fx.dir, join(fx.dir, 'stories', 'S2-in-feature'));
+    const head = g(fx.wts['f1-feat'], 'rev-parse', 'HEAD');
+    const held = holdLock(story);
+    try {
+      const { runner, calls } = stubRunner('true');
+      const res = await integrateUnit({ unit, config, prep, runner });
+      assert.equal(res.ok, false);
+      assert.equal(res.refused, true);
+      assert.equal(res.reason, `S-2 is locked by a live bl process (pid ${process.pid}): ${story}`);
+      assert.equal(calls.gates, 0);
+      assert.equal(g(fx.wts['f1-feat'], 'rev-parse', 'HEAD'), head);
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the run lock is given back');
+    } finally {
+      held.release();
+    }
+    // Free: the integration runs under the locks and gives them back.
+    const { runner } = stubRunner('true');
+    const res = await integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.ok, true, res.reason);
+    for (const d of unitLockDirs(config, unit)) assert.equal(holds(unitLockPath(fx.dir, d)), false, d);
   } finally {
     fx.cleanup();
   }

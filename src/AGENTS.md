@@ -3823,8 +3823,21 @@ takes it (`refineAndCommit`, F-122 D4) and holds it in place of a session lock o
 `bl merge F-n` (`cmdMerge`) takes the work unit locks of the feature and its stories after its
 merge gates and before `integrateForMerge`, so a held lock refuses the merge before any repo is
 touched, and holds them to the end of the merge. `bl merge S-n` takes the merged story's work unit
-lock for its triage session only (`cleanup.js`), before the triage's `dirtySnapshot`. If another
-process holds it, bl skips the triage with one line that names the holder, and the merge stands.
+lock for its integration (`integrateUnit`, below) and again for its triage session (`cleanup.js`),
+before the triage's `dirtySnapshot`. If another process holds it at the triage, bl skips the
+triage with one line that names the holder, and the merge stands. `bl run`, `bl review` and
+`bl implement` hold the work unit locks of their work unit and its stories for the whole run
+(F-122 D4, D9). `runFeature`, `reviewFeature` and `integrateUnit` (`feature-run.js`) take them
+through one helper, `takeRunLocks`: the run lock first, then the work unit locks; a refusal of
+either gives back what it took, and their `finally` releases both. The run lock refusal is
+`a bl run (pid <n>) is running <id>`. The commands take the work unit locks earlier too, before
+they write anything, with `takeUnitLocksOrExit` (`unit-lock.js`: print the refusal as
+`Error: <refusal>` and exit 1): `bl run` (`runUnit`) before its prep, `bl review` (`cmdReview`,
+`cmdReviewStory`) before it opens a PR or writes the change document, `bl implement F-n`
+(`cmdWorkon`) before its prep, and `bl implement S-n` (`workonOne`, `workon.js`) before its prep
+and `enterVerb`. The loop's own take then goes one depth deeper. The commit scope of these verbs
+is unchanged: the loop commits by path (`commitUnitPaths`). A unit with no `kind` (a
+`findFeature` record) is a feature to `takeUnitLocks`, as `isStory` reads it.
 `bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
 [--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
 before S-1495. It writes `.bl/` to `.gitignore` before it deletes anything. It deletes each old
@@ -4284,6 +4297,8 @@ there is nothing to integrate) and runs `integrateUnit` (`src/feature-run.js`,
 beside `reviewFeature`):
 
 - It takes the unit's run lock (refused while a `bl run` of the unit holds it)
+  and the work unit locks of the unit and its stories (`takeRunLocks`, F-122
+  D9; `bl merge F-n` already holds them, so its take goes one depth deeper),
   and refuses when any worktree has uncommitted changes, before any merge.
 - Per repo, in merge order: `git fetch origin` with `MAIN_REFSPEC` under the
   repo's main sync lock (a failed fetch is a warning and the last fetched

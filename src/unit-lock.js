@@ -16,7 +16,12 @@ import { dirname, relative } from 'path';
 import { dirLockPath, takeDirLock } from './lock.js';
 import { resolveFeatureStories } from './feature.js';
 
-/** @typedef {{ id: string, kind: 'story' | 'feature', indexPath: string }} WorkUnit */
+/**
+ * A unit with no `kind` is a feature, as the run loop reads one (a
+ * `findFeature` record carries none; `isStory`, `feature-run.js`).
+ *
+ * @typedef {{ id: string, kind?: 'story' | 'feature', indexPath: string }} WorkUnit
+ */
 
 /**
  * The work unit lock file of the work unit directory `dir`.
@@ -39,7 +44,7 @@ export function unitLockPath(backlogRoot, dir) {
  */
 function lockTargets(config, unit) {
   const own = { id: unit.id, dir: dirname(unit.indexPath) };
-  if (unit.kind !== 'feature') return [own];
+  if (unit.kind === 'story') return [own];
   const { stories } = resolveFeatureStories(unit, config);
   return [own, ...stories.map((s) => ({ id: s.id, dir: dirname(s.indexPath) }))];
 }
@@ -95,4 +100,21 @@ export function takeUnitLocks(config, units, info) {
     ...new Set(units.flatMap((u) => unitLockDirs(config, u)).map((d) => relative(config.backlogRoot, d))),
   ];
   return { refused: null, release, scope };
+}
+
+/**
+ * `takeUnitLocks` for a command, before it writes anything: on a refusal,
+ * print it and exit 1. The process's exit drops the locks, so a command that
+ * holds them to its end needs no release.
+ *
+ * @param {{ backlogRoot: string }} config
+ * @param {WorkUnit[]} units
+ * @param {string} info  one line that names the holder
+ * @returns {{ refused: null, release: () => void, scope: () => string[] }}
+ */
+export function takeUnitLocksOrExit(config, units, info) {
+  const lock = takeUnitLocks(config, units, info);
+  if (lock.refused == null) return lock;
+  console.error(`Error: ${lock.refused}`);
+  process.exit(1);
 }

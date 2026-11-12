@@ -35,7 +35,6 @@ import { statusOf as logStatusOf } from '../../src/transition.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { unitLockPath } from '../../src/unit-lock.js';
-import { holdLock } from '../helpers/hold-lock.js';
 
 const GIT_ENV = '-c user.email=t@t -c user.name=t';
 
@@ -729,21 +728,38 @@ test("bl merge commits and pushes what the triage agent left in the story's dire
 });
 
 test("the triage is skipped with one line naming the holder while another process holds the story's lock (F-122 D4)", async () => {
-  const { backlog, storyIndexPath } = buildStoryBacklog({ repoNames: ['bl'], initBacklogGit: true });
+  // Another process takes the story's lock after the merge's integration,
+  // which holds it itself (F-122 D9): a pre-push hook on main's push starts
+  // a child that holds it and writes its PID.
+  const holder = (tmp) => join(tmp, 'holder.pid');
+  const { tmp, backlog, storyIndexPath } = buildStoryBacklog({
+    repoNames: ['bl'],
+    initBacklogGit: true,
+    prePushHook: (name, { tmp: t, backlog: b }) => {
+      const script = join(t, 'hold.mjs');
+      writeFileSync(
+        script,
+        `import { writeFileSync } from 'fs';\nimport { holdLock } from ${JSON.stringify(new URL('../helpers/hold-lock.js', import.meta.url).href)};\nholdLock(process.argv[2], 'held by a test child');\nwriteFileSync(process.argv[3], String(process.pid));\nsetInterval(() => {}, 1 << 30);\n`,
+      );
+      const lock = unitLockPath(b, join(b, 'stories', 'S99-test-cleanup'));
+      const pid = holder(t);
+      return `#!/bin/sh\nwhile read l ls r rs; do\n  if [ "$r" = refs/heads/main ] && [ ! -e "${pid}" ]; then\n    "${process.execPath}" "${script}" "${lock}" "${pid}" >/dev/null 2>&1 </dev/null &\n    while [ ! -s "${pid}" ]; do sleep 0.05; done\n  fi\ndone\nexit 0\n`;
+    },
+  });
   const newStory = join(backlog, 'stories', 'S100-new', 'index.md');
   const bin = triageSetup(backlog, storyIndexPath, newStory);
-  const held = holdLock(unitLockPath(backlog, dirname(storyIndexPath)));
   let out;
   try {
     out = await mergeWithStub(backlog, bin);
   } finally {
-    held.release();
+    if (existsSync(holder(tmp))) process.kill(Number(readFileSync(holder(tmp), 'utf8')), 'SIGKILL');
   }
   assert.equal(out.result.exit, null, out.stderr);
+  const pid = readFileSync(holder(tmp), 'utf8');
   assert.match(
     out.stderr,
     new RegExp(
-      `\\nTriage of S-99's ## Deferred skipped: S-99 is locked by a live bl process \\(pid ${process.pid}\\): .*/\\.bl/lock/unit-S99-test-cleanup-`,
+      `\\nTriage of S-99's ## Deferred skipped: S-99 is locked by a live bl process \\(pid ${pid}\\): .*/\\.bl/lock/unit-S99-test-cleanup-`,
     ),
   );
   assert.doesNotMatch(out.stderr, /launching triage agent/);

@@ -47,6 +47,7 @@ import { tokensStepKey } from './tokens.js';
 import { loadFlow } from './flow.js';
 import { enterVerb, implementVerbOf, nowAt, roundOf, startOf } from './transition.js';
 import { acquireLock, releaseLock } from './lock.js';
+import { takeUnitLocksOrExit } from './unit-lock.js';
 import { syncAndCommit } from './sync.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import {
@@ -447,6 +448,9 @@ async function workonOne(parsed, baseConfig, { additionalPrompt } = {}) {
   }
   // The story's repo's overrides and plugin layer apply (F-51 D4).
   const config = configForRepo(baseConfig, found.unitRepo);
+  // The story's work unit lock, held to the end of the session (F-122 D4),
+  // before prep or `enterVerb` writes anything.
+  takeUnitLocksOrExit(config, [{ id: parsed.id, kind: 'story', indexPath: found.indexPath }], `implement ${parsed.id}`);
 
   const prep = await prepareStoryWorktree(parsed, found, config);
 

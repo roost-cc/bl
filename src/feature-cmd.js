@@ -113,7 +113,7 @@ import { commitChangedSince, dirtySnapshot, failedCommitPending, failedCommitRec
 import { loadBacklog } from './backlog-graph.js';
 import { commitAndRecord, reportBacklogCommit } from './sync.js';
 import { applyRefineStatus, refineAndCommit } from './refine.js';
-import { takeUnitLocks } from './unit-lock.js';
+import { takeUnitLocksOrExit } from './unit-lock.js';
 import {
   applyFixOutcome,
   changeName,
@@ -1222,6 +1222,9 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
 }
 
 export async function cmdWorkon(args, config, feature) {
+  // The work unit locks of the feature and its stories, held to the end of
+  // the session (F-122 D4), before prep records the start.
+  takeUnitLocksOrExit(config, [feature], `implement ${feature.id}`);
   const prep = await prepareFeatureWorktree(config, feature, 'implement');
   const { cfg, parsed, reviewPending } = prep;
   const promptName = reviewPending ? 'feature-workon-review' : 'feature-workon';
@@ -1315,6 +1318,9 @@ export async function cmdReview(args, config, feature, opts = {}) {
     process.exit(1);
   }
   reviewAgentOrExit(config);
+  // Held to the end of the round, before any PR or change document is written
+  // (F-122 D9); `reviewFeature` takes them again, one depth deeper.
+  takeUnitLocksOrExit(config, [feature], `review ${feature.id}`);
 
   const branchName = feature.branch;
   const all = readAllStories(config);
@@ -1441,6 +1447,8 @@ export async function cmdReviewStory(args, baseConfig, story, opts = {}) {
     process.exit(1);
   }
   reviewAgentOrExit(config);
+  // As `cmdReview`: held to the end of the round, taken before any write.
+  takeUnitLocksOrExit(config, [unit], `review ${unit.id}`);
   const branchName = unit.branch || unit.featureEntry.toLowerCase();
   const ordered = [storyAsOrdered(unit)];
   const found = findUnitPRs(config, { ...unit, branch: branchName });
@@ -1695,6 +1703,10 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
     console.error(`Another bl run (pid ${holder}) is running ${unit.id}.`);
     process.exit(1);
   }
+  // The work unit locks of the unit and its stories, held to the end of the
+  // run (F-122 D4) and taken before prep writes anything; `runFeature` takes
+  // them again, one depth deeper.
+  takeUnitLocksOrExit(config, [unit], `run ${unit.id}`);
   const prep = await prepare();
   const runner = defaultRunner({ interactive });
   const state = await runFeature({
@@ -1778,11 +1790,7 @@ export async function cmdMerge(args, config, feature) {
   // before any repo is touched. An early exit ends the process, which drops
   // them.
   const owner = `merge ${feature.id}`;
-  const lock = takeUnitLocks(config, [unit], owner);
-  if (lock.refused != null) {
-    console.error(`Error: ${lock.refused}`);
-    process.exit(1);
-  }
+  const lock = takeUnitLocksOrExit(config, [unit], owner);
 
   info(`Feature : ${feature.id} — ${feature.title}`);
   info(`Branch  : ${branchName}`);
