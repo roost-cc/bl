@@ -11,8 +11,10 @@
 // A write call is a callee named `writeFileSync`, `rmSync` and the others in
 // `WRITE_CALLS`, or an `openSync` or `open` (`fs.promises.open`) with a
 // writing flag (`w`, `a`, `+`). An fs export is followed under any local name:
-// an import alias (`writeFileSync as put`), a destructured name, or a plain
-// `const put = fs.writeFileSync`. A git call is found by
+// an import alias (`writeFileSync as put`), a destructured name, or a chain of
+// plain aliases (`const a = fs.promises.link; const b = a`). A name bl's own
+// functions also use (`link`, `open`) counts only when it comes from an fs
+// import. A git call is found by
 // import binding (F-126 A2): `git` from src/child.js under any local name; a
 // `runChild`, `spawnSyncFiles` or `child_process` call whose command is
 // `'git'`; or a `runCommandLine`, `execSync`, `exec` or runner `shell` call
@@ -55,13 +57,12 @@ const WRITE_CALLS = new Set([
 
 /**
  * The promise forms of fs writes whose names bl's own functions also use
- * (`link`): a write only when the callee is an fs import or a member call
- * (`fs.promises.link`).
+ * (`link`): a write only when the callee comes from an fs import
+ * (`fs.promises.link`, or an alias of it). `open` is one too, and
+ * `openSync` counts under any name: each is a write when its flag (the second
+ * argument) writes (`writesFlag`).
  */
 const FS_ONLY_WRITE_CALLS = new Set(['rmdir', 'copyFile', 'cp', 'symlink', 'link', 'truncate']);
-
-/** The callees that open a file: a write when their flag (the second argument) writes (`writesFlag`). */
-const OPEN_CALLS = new Set(['openSync', 'open']);
 
 /** The git subcommands that change a repository's index, working tree, refs or config. */
 const GIT_STATE = new Set([
@@ -315,27 +316,28 @@ function childBindings(ast, rel) {
 }
 
 /**
- * What a callee stands for: the watched export it is bound to (`git` for
- * `runGit` when `git as runGit` is imported, `writeFileSync` for `put` when
- * `writeFileSync as put` is, `spawnSync` for `cp.spawnSync`), what a name
- * holds when it is a plain alias (`const put = fs.writeFileSync`), `shell`
- * for a runner's `shell`, or its own name for any other.
+ * What a callee stands for: `name` is the watched export it is bound to
+ * (`git` for `runGit` when `git as runGit` is imported, `writeFileSync` for
+ * `put` when `writeFileSync as put` is, `spawnSync` for `cp.spawnSync`), what
+ * a chain of plain aliases holds (`const a = fs.writeFileSync; const b = a`),
+ * `shell` for a runner's `shell`, or its own name for any other. `imported`
+ * says the callee is a watched export or a member of one (`fs.promises.link`);
+ * `watched` says the value comes from a watched import at all, a namespace too.
+ * @returns {{ name: string | null, imported: boolean, watched: boolean }}
  */
-function resolvedCallee(callee, bindings, values = new Map()) {
+function resolvedCallee(callee, bindings, values = new Map(), seen = new Set()) {
   if (callee.type === 'Identifier') {
     const bound = bindings.get(callee.name);
     const alias = values.get(callee.name);
-    if (bound === undefined && alias?.length === 1 && /^(Identifier|MemberExpression)$/.test(alias[0].type)) {
-      return resolvedCallee(alias[0], bindings);
+    const plain = alias?.length === 1 && /^(Identifier|MemberExpression)$/.test(alias[0].type);
+    if (bound === undefined && plain && !seen.has(callee.name)) {
+      return resolvedCallee(alias[0], bindings, values, new Set(seen).add(callee.name));
     }
-    return { name: bound && bound !== '*' ? bound : callee.name, imported: bound !== undefined && bound !== '*' };
+    const imported = bound !== undefined && bound !== '*';
+    return { name: imported ? bound : callee.name, imported, watched: bound !== undefined };
   }
-  const name = calleeName(callee);
-  const ns =
-    callee.type === 'MemberExpression' &&
-    callee.object.type === 'Identifier' &&
-    bindings.get(callee.object.name) === '*';
-  return { name, imported: ns };
+  const watched = callee.type === 'MemberExpression' && resolvedCallee(callee.object, bindings, values, seen).watched;
+  return { name: calleeName(callee), imported: watched, watched };
 }
 
 /** The text of a string or a template's first part, and whether that is the whole value. */
@@ -443,8 +445,9 @@ export function backlogWriteCalls(source, rel) {
       const { name, imported } = resolvedCallee(call.callee, bindings, values);
       const args = call.arguments;
       let what = null;
-      const fsOnly = FS_ONLY_WRITE_CALLS.has(name) && (imported || call.callee.type === 'MemberExpression');
-      if (WRITE_CALLS.has(name) || fsOnly || (OPEN_CALLS.has(name) && writesFlag(args[1]))) what = name;
+      const fsOnly = imported && FS_ONLY_WRITE_CALLS.has(name);
+      const opens = name === 'openSync' || (imported && name === 'open');
+      if (WRITE_CALLS.has(name) || fsOnly || (opens && writesFlag(args[1]))) what = name;
       else if (imported && name === 'git') what = gitCall(argvWords(args[1], values));
       else if (imported && ARGV_CALLS.has(name) && leadingText(args[0])?.text === 'git') {
         what = gitCall(argvWords(args[1], values));
@@ -600,6 +603,37 @@ const ALIAS_CASES = [
     keys: ['cp', 'truncate', 'truncateSync'],
   },
   { name: 'a local function named link', src: 'link(x);', keys: [] },
+  // guard_rejects_chained_and_promise_method_aliases
+  {
+    name: 'a chain of plain aliases of an fs import',
+    src: 'const a = writeFileSync; const b = a;\nb(p, x);',
+    imports: `import { writeFileSync } from 'fs';`,
+    keys: ['writeFileSync'],
+  },
+  ...['rmdir', 'copyFile', 'cp', 'symlink', 'link', 'truncate'].map((m) => ({
+    name: `an alias of fs.promises.${m}`,
+    src: `const a = fs.promises.${m};\na(p, q);`,
+    imports: FS,
+    keys: [m],
+  })),
+  {
+    name: 'an alias of fs.promises, then of its member',
+    src: 'const fsp = fs.promises; const l = fsp.link;\nl(p, q); fsp.cp(p, q);',
+    imports: FS,
+    keys: ['link', 'cp'],
+  },
+  {
+    name: 'an alias of fs.promises.open with a writing flag',
+    src: `const o = fs.promises.open;\no(p, 'w'); o(p, 'r');`,
+    imports: FS,
+    keys: ['open'],
+  },
+  // guard_resolves_fs_member_aliases_without_unrelated_calls
+  { name: 'an unrelated member named link', src: 'const graph = {};\ngraph.link(p, q);', keys: [] },
+  { name: 'an alias of an unrelated member', src: 'const l = graph.link;\nl(p, q); graph.cp(p, q);', keys: [] },
+  { name: 'a local function named open', src: `function open(p, flags) {}\nopen(p, 'w');`, keys: [] },
+  { name: 'an unrelated member named open', src: `db.open(p, 'w');`, keys: [] },
+  { name: 'aliases that name each other', src: 'a = b; b = a;\na(p, q);', keys: [] },
 ];
 
 test('guard: a raw write through an alias and every writable open form is reported', () => {
@@ -665,6 +699,12 @@ const GIT_CASES = [
   { name: 'a shell line cut inside the subcommand', src: 'shell(`git re${x}`, wt);', keys: ['git ?'] },
   { name: 'a shell line of another command', src: `shell('npm test', wt);`, keys: [] },
   { name: 'a local function named git', src: `git(root, ['commit']);`, keys: [] },
+  {
+    name: 'a chain of plain aliases of git',
+    src: `const a = git; const b = a;\nb(root, ['commit']);`,
+    imports: CHILD,
+    keys: ['git commit'],
+  },
   {
     name: 'spawnSync that the file does not import',
     src: `spawnSync('git', ['commit']);`,
