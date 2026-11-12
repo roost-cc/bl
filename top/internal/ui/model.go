@@ -28,7 +28,7 @@ const restartDelay = 400 * time.Millisecond
 
 // keyMap holds the keys of D6 that bl top has. The help overlay lists them.
 type keyMap struct {
-	boxes, next, prev, move, open, follow, watch, capacity, longer, shorter, help, quit key.Binding
+	boxes, next, prev, move, open, act, run, stop, page, pr, agent, follow, watch, capacity, longer, shorter, help, quit key.Binding
 }
 
 var keys = keyMap{
@@ -37,6 +37,12 @@ var keys = keyMap{
 	prev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "move the focus to the previous box")),
 	move:     key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "select a row; in ⁶ with follow off, scroll the feed")),
 	open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "show the selected run in ⁶; open the update group")),
+	act:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "open the action menu of the selected row")),
+	run:      key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "start or resume the selected run (bl run, in a tmux window)")),
+	stop:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stop the selected run (bl stop)")),
+	page:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open the selected row's page (bl view, in a tmux window)")),
+	pr:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "open the selected run's pull request")),
+	agent:    key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "open bl agent in a tmux window")),
 	follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed of ⁶ on or off")),
 	watch:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "open bl watch of ⁶'s run in a tmux window")),
 	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
@@ -67,8 +73,9 @@ type Model struct {
 	feed          []watch.Event
 	follow        bool   // whether box ⁶'s feed shows its newest lines
 	feedBack      int    // with follow off: how many lines the feed is scrolled back
-	note          string // a red line in box ⁶ until the next key (`w needs tmux`)
+	note          string // a red line in the bottom border until the next key (`w needs tmux`)
 	help          bool
+	dialog        *dialog // the action dialog (D7), while it is open
 	snap          *stream.Snapshot
 	stream        *stream.Stream
 	gen           int // the generation of the stream the model reads
@@ -169,6 +176,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.watchMsg(msg)
 	case tmuxDoneMsg:
 		m.note = msg.Err
+	case actionDoneMsg:
+		return m.actionDone(msg), nil
 	}
 	return m, nil
 }
@@ -193,10 +202,14 @@ func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	return m, cmds
 }
 
-// warnings are the bottom border's red warnings: `<sender> failed: <why>` for each sender whose
-// last command failed, in the senders' order.
+// warnings are the bottom border's red warnings: the note of the last key (`w needs tmux`) until
+// the next key, then `<sender> failed: <why>` for each sender whose last command failed, in the
+// senders' order.
 func (m Model) warnings() []string {
 	var out []string
+	if m.note != "" {
+		out = append(out, m.note)
+	}
 	for _, s := range m.senders {
 		if why, ok := m.failed[s.Name]; ok {
 			out = append(out, s.Name+" failed: "+why)
@@ -205,8 +218,12 @@ func (m Model) warnings() []string {
 	return out
 }
 
-// key handles a key of D6. With the help open, any key but quit closes it.
+// key handles a key of D6. With the action dialog open, the dialog takes it; with the help open,
+// any key but quit closes it.
 func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.dialog != nil {
+		return m.dialogKey(msg)
+	}
 	if key.Matches(msg, keys.quit) {
 		m.stop()
 		m.stopWatch()
@@ -249,6 +266,10 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if id := m.selectedUnit(m.focus); id != "" && m.run(id) != nil {
 			return m.showRun(id)
 		}
+	case key.Matches(msg, keys.act):
+		return m.openMenu()
+	case key.Matches(msg, keys.run, keys.stop, keys.page, keys.pr, keys.agent):
+		return m.actKey(msg.String())
 	case key.Matches(msg, keys.follow):
 		m.toggleFollow()
 	case key.Matches(msg, keys.watch):
@@ -304,8 +325,8 @@ func (m Model) View() tea.View {
 
 // helpBox draws the help overlay: each key of keyMap and what it does.
 func helpBox() []string {
-	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.follow, keys.watch, keys.capacity,
-		keys.longer, keys.shorter, keys.help, keys.quit}
+	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.act, keys.run, keys.stop, keys.page,
+		keys.pr, keys.agent, keys.follow, keys.watch, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
 	lines := []string{""}
 	for _, b := range bindings {
 		lines = append(lines, fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc)))

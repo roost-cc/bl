@@ -91,6 +91,32 @@ func TestRunThatEndsCleanNotifies(t *testing.T) {
 	}
 }
 
+func TestARunThisBlTopStoppedDoesNotNotify(t *testing.T) {
+	var d Differ
+	d.Diff(snap(nil, []string{"F-81:running", "S-1:running"}))
+	d.Quiet("F-81")
+	// The stop takes a few snapshots; F-81 is quiet, S-1 (stopped from another shell) notifies.
+	d.Diff(snap(nil, []string{"F-81:running", "S-1:running"}))
+	if got := titles(d.Diff(snap(nil, []string{"F-81:stopped", "S-1:stopped"}))); !slices.Equal(got, []string{"S-1 stopped"}) {
+		t.Errorf("F-81 stopped by this bl top, S-1 by another shell: %q", got)
+	}
+	// The mark went with the end: a later stop of F-81 from another shell notifies.
+	d.Diff(snap(nil, []string{"F-81:running"}))
+	if got := titles(d.Diff(snap(nil, []string{"F-81:stopped"}))); !slices.Equal(got, []string{"F-81 stopped"}) {
+		t.Errorf("a later stop from another shell: %q", got)
+	}
+	// A stop that did not take: the run's other end notifies, and clears the mark.
+	d.Diff(snap(nil, []string{"F-81:running"}))
+	d.Quiet("F-81")
+	if got := titles(d.Diff(snap(nil, []string{"F-81:escalated"}))); !slices.Equal(got, []string{"F-81 escalated"}) {
+		t.Errorf("a quiet run that escalated: %q", got)
+	}
+	d.Diff(snap(nil, []string{"F-81:running"}))
+	if got := titles(d.Diff(snap(nil, []string{"F-81:stopped"}))); !slices.Equal(got, []string{"F-81 stopped"}) {
+		t.Errorf("a stop after the mark went: %q", got)
+	}
+}
+
 // skip is snap with ids in Runs.Skipped and the section's error set, as a read that could not read
 // those run states gives it.
 func skip(runs []string, ids ...string) *stream.Snapshot {

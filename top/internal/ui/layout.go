@@ -192,6 +192,9 @@ func (m Model) render() string {
 		lines = m.draw(layout, m.width, m.height)
 	}
 	lines[len(lines)-1] = keyBar(m.width, m.warnings())
+	if m.dialog != nil {
+		lines = overlay(lines, m.dialogBox(m.width))
+	}
 	if m.help {
 		lines = overlay(lines, helpBox())
 	}

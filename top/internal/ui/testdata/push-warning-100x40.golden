@@ -37,4 +37,4 @@
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
-╰┘↑↓ select└┘tab box└┘↵ detail└┘+- interval└┘h help└┘q quit└────┐push failed: ntfy: 403 forbidden┌─╯
+╰┘↑↓└┘tab└┘↵└┘a└┘r└┘s└┘o└┘p└┘g└┘h└┘q└───────────────────────────┐push failed: ntfy: 403 forbidden┌─╯

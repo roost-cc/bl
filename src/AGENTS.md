@@ -3363,15 +3363,38 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   or closes it; `f` turns follow on or off; `w` opens `bl watch <id>` of ⁶'s run in a new tmux
   window, in bl top's directory, named `<id> watch` (D7's `tmux new-window`, then
   `exec ${SHELL:-sh}`, so the window stays open after `bl watch` exits), and outside tmux
-  (`$TMUX` unset) says `w needs tmux` in ⁶ until the next key; `c` writes `capacity` to the
+  (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
+  opens the action menu of the selected row, and `r`, `s`, `o`, `p` and `g` pick its action
+  with that key (below); `c` writes `capacity` to the
   stream's stdin, so
   the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
   help, and any key closes it; `q` or `ctrl+c` quits.
+- **Actions** (D7, F-88 S-1336; `top/internal/ui/dialog.go`, `top/internal/actions`). The
+  selected row of the box with the focus (in ⁶, the run it shows) has the `actions` of its
+  snapshot row (below). `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's
+  key, pick one, and `esc` cancels. Keys `r`, `s`, `o`, `p` and `g` pick the action with that
+  key directly; a row without one says `<key>: <id> has no such action (a lists its actions)`
+  in the bottom border. An action with `input` asks for its text first: `note` is optional,
+  `reason` refuses an empty one. Then the view shows the exact command (`runs: …`) and asks
+  y/n. After `y`:
+  - an action with `window` opens a new tmux window of that name, in bl top's directory (the
+    backlog root: `src/top.js` runs the view there), running the command and then
+    `exec ${SHELL:-sh}` (`actions.TmuxArgs`, which `w` uses too). Outside tmux the action says
+    `<key> needs tmux` before it asks, and does nothing. A tmux that fails says why in the
+    bottom border.
+  - any other action runs as a child with no stdin and stdout: a bl command through
+    `--bl-argv`, a `url` through `xdg-open` (`open` on macOS). A box says it runs (`esc` hides
+    it: `bl stop` takes up to 30 s, and the screen keeps its redraws), then a result box shows
+    the command, `exit <code>` and its last stderr line, until any key. The next snapshot shows
+    the change.
+  - an action with `stops` marks its run: the run's `stopped` end does not notify (D8,
+    `Differ.Quiet`). The mark goes when the run ends with any status.
 - **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
   before. A new `escalation` or `task` item (by item id) and a run that gets an end status
   (every status but `running`, `stale` and none: `clean`, `no-change`, `reviewed`, `escalated`,
-  `failed`, `stopped`; `stream.Ended`; by run id and status) each make a note
+  `failed`, `stopped`; `stream.Ended`; by run id and status), except a `stopped` end of a run
+  that this view stopped, each make a note
   `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)` (`ended` for a run
   with no step). The first read of a
   section only sets its baseline, so an item notifies once, and again only after it left the
@@ -3404,7 +3427,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   non-empty strings. Otherwise `bl top` exits 1 with an error that names `backlog.json "top"`
   and the key.
 - **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
-  `top/internal/ui/testdata/*.golden` hold the empty frame at 171×63, 100×40 and 79×23, the
+  `top/internal/ui/testdata/*.golden` hold Mockup C's four dialog boxes (`actions.golden`), the
+  empty frame at 171×63, 100×40 and 79×23, the
   frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
   exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
   `testdata/snapshot.json` (Mockup A's data) in a fixed zone (UTC−5), without colors, with a row
@@ -3412,7 +3436,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `bl watch --json` lines of the S-1272 fixtures (`top/internal/watch/testdata/watch.jsonl`) as
   its feed (`detail-*.golden`);
   `go test ./internal/ui -update` writes them again. `top/internal/watch`'s tests run a fake
-  `bl` that prints those lines.
+  `bl` that prints those lines. The action tests put a fake `bl`, `tmux`, `xdg-open` and `open`
+  on `PATH`, each of which writes its arguments to a file.
   `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
   then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
   and `--no-push`.
@@ -3456,6 +3481,25 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
     `denials`, and the step and tool of the first.
   - `title` comes from `loadBacklog()`, which reuses its graph while the backlog's files are
     unchanged; null for a unit the backlog does not hold, or when it cannot be loaded.
+- `actions` (F-87 D7, F-88 S-1336): each `runs` row, each `attention` item and each ranked unit
+  of `next` carries a list of `{ key, label, argv, input, window, url, about, stops }`, which
+  `src/top-snapshot.js` builds (`runActions`, `itemActions`), so the view holds no backlog
+  logic. `argv` is a bl command (`["bl", …]`) or null for `url` (a page the view opens);
+  `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
+  word; `window` names the tmux window the command opens in, or is null for a child with a
+  result box; `about` are lines the y/n question shows; `stops` is the run the action stops.
+
+  | Row                       | Actions (key: command)                                                                                                           |
+  | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+  | `runs`, live (`running`)  | `s`: `bl stop <id>`, with Mockup C's lines and `stops`                                                                           |
+  | `runs`, not live          | `r`: `bl run <id>` in window `<id> run`, with `--resume` when `stopped`, `stale`, `escalated` or `failed` (`RESUMED_STATUSES`)   |
+  | `runs`, every row         | then `o`: `bl view <id>` (window `<id> view`); `p`: the pull request's URL, when the run has one                                 |
+  | escalation                | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which a result box does not show); `o`: `bl view <unit>` |
+  | task                      | `d`: `bl task done <T-n>`, input `note`; `o`: `bl view <T-n>`                                                                    |
+  | change                    | `m`: `bl merge <unit>`, or `r`: `bl run <unit>` in window `<unit> run`, by `changeNextVerb`; `o`: `bl view <unit>`               |
+  | ranked unit               | `o`: `bl view <id>`                                                                                                              |
+  | runner, update; every row | last, `g`: `bl agent` in window `agent`                                                                                          |
+
 - Each run state is read on its own. A file that cannot be read (not JSON, not a run state, or
   gone since the listing; a read can race `saveRunState`, which truncates the file first) keeps
   its last good parse, or is left out when it has none, and `runs`, `activity` and `tokens`

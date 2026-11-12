@@ -106,7 +106,43 @@
           "tool": null
         },
         "branch": "f81-every-repo-s-pre-push-gate",
-        "worktreePath": "/home/robert/work/roost/worktrees/f81-every-repo-s-pre-push-gate/app.roost.cc"
+        "worktreePath": "/home/robert/work/roost/worktrees/f81-every-repo-s-pre-push-gate/app.roost.cc",
+        "actions": [
+          {
+            "key": "s",
+            "label": "stop the run",
+            "argv": ["bl", "stop", "F-81"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [
+              "bl stop ends the agent session and the run.",
+              "The work so far stays on the branch.",
+              "Resume it later with: bl run F-81 --resume"
+            ],
+            "stops": "F-81"
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-81"],
+            "input": null,
+            "window": "F-81 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "id": "S-1330",
@@ -228,7 +264,53 @@
           "tool": "Bash(cd /home/robert/work/roost/worktrees/s1330-every-bl-verb/bl && git status)"
         },
         "branch": "s1330-every-bl-verb-that-writes-the-backlog-commits",
-        "worktreePath": "/home/robert/work/roost/worktrees/s1330-every-bl-verb-that-writes-the-backlog-commits/bl"
+        "worktreePath": "/home/robert/work/roost/worktrees/s1330-every-bl-verb-that-writes-the-backlog-commits/bl",
+        "actions": [
+          {
+            "key": "s",
+            "label": "stop the run",
+            "argv": ["bl", "stop", "S-1330"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [
+              "bl stop ends the agent session and the run.",
+              "The work so far stays on the branch.",
+              "Resume it later with: bl run S-1330 --resume"
+            ],
+            "stops": "S-1330"
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "S-1330"],
+            "input": null,
+            "window": "S-1330 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "p",
+            "label": "open the pull request",
+            "argv": null,
+            "input": null,
+            "window": null,
+            "url": "https://example.invalid/roost-cc/bl/pull/15",
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "id": "F-85",
@@ -260,7 +342,49 @@
           "count": 0,
           "step": null,
           "tool": null
-        }
+        },
+        "actions": [
+          {
+            "key": "r",
+            "label": "start the run",
+            "argv": ["bl", "run", "F-85"],
+            "input": null,
+            "window": "F-85 run",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-85"],
+            "input": null,
+            "window": "F-85 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "p",
+            "label": "open the pull request",
+            "argv": null,
+            "input": null,
+            "window": null,
+            "url": "https://example.invalid/roost-cc/bl/pull/14",
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "id": "F-83",
@@ -292,7 +416,49 @@
           "count": 0,
           "step": null,
           "tool": null
-        }
+        },
+        "actions": [
+          {
+            "key": "r",
+            "label": "resume the run",
+            "argv": ["bl", "run", "F-83", "--resume"],
+            "input": null,
+            "window": "F-83 run",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-83"],
+            "input": null,
+            "window": "F-83 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "p",
+            "label": "open the pull request",
+            "argv": null,
+            "input": null,
+            "window": null,
+            "url": "https://example.invalid/roost-cc/bl/pull/12",
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "id": "F-79",
@@ -321,7 +487,39 @@
           "count": 0,
           "step": null,
           "tool": null
-        }
+        },
+        "actions": [
+          {
+            "key": "r",
+            "label": "resume the run",
+            "argv": ["bl", "run", "F-79", "--resume"],
+            "input": null,
+            "window": "F-79 run",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-79"],
+            "input": null,
+            "window": "F-79 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       }
     ]
   },
@@ -334,7 +532,19 @@
         "unit": "updates",
         "line": "no update run since 14:02 (9 h)",
         "next": "check the update job where it runs (its journal or log)",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "escalation",
@@ -342,7 +552,39 @@
         "unit": "F-83",
         "line": "round cap: 2 open review items",
         "next": "bl status F-83",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "e",
+            "label": "read the escalation",
+            "argv": ["bl", "status", "F-83"],
+            "input": null,
+            "window": "F-83 status",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-83"],
+            "input": null,
+            "window": "F-83 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "task",
@@ -350,7 +592,39 @@
         "unit": "F-81",
         "line": "Renovate image: 8 advisories",
         "next": "bl task done T-52",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "d",
+            "label": "close the task",
+            "argv": ["bl", "task", "done", "T-52"],
+            "input": "note",
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the task page",
+            "argv": ["bl", "view", "T-52"],
+            "input": null,
+            "window": "T-52 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "task",
@@ -358,7 +632,39 @@
         "unit": "F-54",
         "line": "re-mint the Apple sign-in key",
         "next": "bl task done T-2",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "d",
+            "label": "close the task",
+            "argv": ["bl", "task", "done", "T-2"],
+            "input": "note",
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the task page",
+            "argv": ["bl", "view", "T-2"],
+            "input": null,
+            "window": "T-2 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "change",
@@ -366,7 +672,39 @@
         "unit": "F-81",
         "line": "4 repos · 11 commits · not merged",
         "next": "bl merge F-81",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "m",
+            "label": "merge it",
+            "argv": ["bl", "merge", "F-81"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-81"],
+            "input": null,
+            "window": "F-81 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "change",
@@ -374,7 +712,39 @@
         "unit": "S-1330",
         "line": "bl · 3 commits · not merged",
         "next": "bl run S-1330",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "r",
+            "label": "run it",
+            "argv": ["bl", "run", "S-1330"],
+            "input": null,
+            "window": "S-1330 run",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "S-1330"],
+            "input": null,
+            "window": "S-1330 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "update",
@@ -382,7 +752,19 @@
         "unit": "tools",
         "line": "eslint 9.39.1 · red · notes: none",
         "next": "read the gate log .bl/updates/tools.log; the next update run tests it again",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "update",
@@ -390,7 +772,19 @@
         "unit": "bl",
         "line": "ws 8.19.0 · red · notes: 1 advisory",
         "next": "read the gate log .bl/updates/bl.log; the next update run tests it again",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "kind": "update",
@@ -398,7 +792,19 @@
         "unit": "logr",
         "line": "x/net 0.47.0 · red · notes: none",
         "next": "read the gate log .bl/updates/logr.log; the next update run tests it again",
-        "path": null
+        "path": null,
+        "actions": [
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       }
     ],
     "warnings": []
@@ -421,7 +827,29 @@
         "points": 21,
         "why": "",
         "holds": [],
-        "heldBy": []
+        "heldBy": [],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-81"],
+            "input": null,
+            "window": "F-81 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 4,
@@ -431,7 +859,29 @@
         "points": 8,
         "why": "",
         "holds": ["S-1350 depends on S-1310 (in_progress)"],
-        "heldBy": ["F-81"]
+        "heldBy": ["F-81"],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-84"],
+            "input": null,
+            "window": "F-84 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 5,
@@ -441,7 +891,29 @@
         "points": 13,
         "why": "",
         "holds": ["S-1360 depends on S-1351 (backlog)"],
-        "heldBy": ["F-84"]
+        "heldBy": ["F-84"],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-80"],
+            "input": null,
+            "window": "F-80 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 6,
@@ -451,7 +923,29 @@
         "points": 0,
         "why": "",
         "holds": [],
-        "heldBy": []
+        "heldBy": [],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-86"],
+            "input": null,
+            "window": "F-86 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 7,
@@ -461,7 +955,29 @@
         "points": 0,
         "why": "",
         "holds": [],
-        "heldBy": []
+        "heldBy": [],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-16"],
+            "input": null,
+            "window": "F-16 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       },
       {
         "position": 8,
@@ -471,7 +987,29 @@
         "points": 0,
         "why": "",
         "holds": [],
-        "heldBy": []
+        "heldBy": [],
+        "actions": [
+          {
+            "key": "o",
+            "label": "open the page",
+            "argv": ["bl", "view", "F-13"],
+            "input": null,
+            "window": "F-13 view",
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "g",
+            "label": "talk it through",
+            "argv": ["bl", "agent"],
+            "input": null,
+            "window": "agent",
+            "url": null,
+            "about": [],
+            "stops": null
+          }
+        ]
       }
     ],
     "rankedCount": 6,

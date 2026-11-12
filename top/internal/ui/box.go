@@ -53,7 +53,8 @@ func drawBox(num int, name string, options []string, focus bool, content []strin
 type barKey struct{ key, label string }
 
 // barKeys are the keys the key bar shows. The help overlay lists every key.
-var barKeys = []barKey{{"↑↓", "select"}, {"tab", "box"}, {"↵", "detail"}, {"+-", "interval"}, {"h", "help"}, {"q", "quit"}}
+var barKeys = []barKey{{"↑↓", "select"}, {"tab", "box"}, {"↵", "detail"}, {"a", "act"}, {"r", "run"}, {"s", "stop"},
+	{"o", "open"}, {"p", "PR"}, {"g", "agent"}, {"h", "help"}, {"q", "quit"}}
 
 // keyBar draws the bottom border of the screen, w cells wide, with the key bar in it
 // (`╰┘tab box└┘h help└──╯`), and the red warnings at its right (`┐desktop failed: …┌─╯`, D8).

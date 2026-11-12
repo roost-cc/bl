@@ -206,12 +206,17 @@ func TestBoxColorsAreD5s(t *testing.T) {
 }
 
 func TestKeyBarFitsItsWidth(t *testing.T) {
-	for _, w := range []int{80, 100, 171} {
-		if got := ansi.Strip(keyBar(w, nil)); lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘↑↓ select└┘tab box└┘↵ detail└┘+- interval└┘h help└┘q quit└─") {
+	for _, w := range []int{100, 171} {
+		if got := ansi.Strip(keyBar(w, nil)); lipgloss.Width(got) != w ||
+			!strings.HasPrefix(got, "╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└─") {
 			t.Errorf("keyBar(%d) = %q", w, got)
 		}
 	}
-	if got := ansi.Strip(keyBar(20, nil)); got != "╰┘↑↓└┘tab└┘↵└┘+-└──╯" {
+	// At 80 the labels do not fit: the keys alone.
+	if got := ansi.Strip(keyBar(80, nil)); lipgloss.Width(got) != 80 || !strings.HasPrefix(got, "╰┘↑↓└┘tab└┘↵└┘a└┘r└┘s└┘o└┘p└┘g└┘h└┘q└─") {
+		t.Errorf("keyBar(80) = %q", got)
+	}
+	if got := ansi.Strip(keyBar(20, nil)); got != "╰┘↑↓└┘tab└┘↵└┘a└───╯" {
 		t.Errorf("keyBar(20) = %q, want the keys alone, as many as fit", got)
 	}
 }

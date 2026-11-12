@@ -1,0 +1,44 @@
+╭─┐act on T-52┌─────────────────────────────────────────────╮
+│                                                           │
+│  T-52 · F-81 · Renovate image: 8 advisories               │
+│                                                           │
+│  ▶ d  close the task      bl task done T-52 [note]        │
+│    o  open the task page  bl view T-52  (new tmux window) │
+│    g  talk it through     bl agent  (new tmux window)     │
+│                                                           │
+│  ↑↓ ↵  pick     esc  cancel                               │
+│                                                           │
+╰───────────────────────────────────────────────────────────╯
+
+╭─┐bl task done T-52┌───────────────────────────────────────────────────╮
+│                                                                       │
+│  note (optional, enter to skip):                                      │
+│  > image rebuilt on 44.140, 0 high advisories_                        │
+│                                                                       │
+│  runs: bl task done T-52 "image rebuilt on 44.140, 0 high advisories" │
+│                                                                       │
+│  enter  go on     esc  cancel                                         │
+│                                                                       │
+╰───────────────────────────────────────────────────────────────────────╯
+
+╭─┐bl stop S-1330┌─────────────────────────────────────────╮
+│                                                          │
+│  S-1330 is in review r1 (codex gpt-6-sol), 4m in.        │
+│  bl stop ends the agent session and the run.             │
+│  The work so far stays on the branch.                    │
+│  Resume it later with: bl run S-1330 --resume            │
+│                                                          │
+│  runs: bl stop S-1330                                    │
+│                                                          │
+│  y  stop the run     n  cancel                           │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+
+╭─┐done┌────────────────────────────────────────────────────────╮
+│                                                               │
+│  ✓ bl task done T-52   exit 0                                 │
+│  stderr: committed tasks/T52-renovate-image (backlog 4f1c2a9) │
+│                                                               │
+│  any key to close                                             │
+│                                                               │
+╰───────────────────────────────────────────────────────────────╯

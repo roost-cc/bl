@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/roost-cc/bl/top/internal/actions"
 	"github.com/roost-cc/bl/top/internal/stream"
 	"github.com/roost-cc/bl/top/internal/watch"
 )
@@ -177,31 +177,13 @@ func (m Model) openWatch() (Model, tea.Cmd) {
 	return m, tmuxWindow(m.detail+" watch", append(append([]string{}, m.blArgv...), "watch", m.detail))
 }
 
-// tmuxWindow opens a tmux window named name in bl top's directory that runs argv, then the
-// operator's shell, so the window stays open after the command exits (F-87 D7).
+// tmuxWindow opens a tmux window named name in bl top's directory (the backlog root) that runs
+// argv, then the operator's shell, so the window stays open after the command exits (F-87 D7).
 func tmuxWindow(name string, argv []string) tea.Cmd {
 	dir, _ := os.Getwd()
 	return func() tea.Msg {
-		out, err := exec.Command("tmux", tmuxArgs(name, dir, argv)...).CombinedOutput()
-		if err != nil {
-			why := strings.TrimSpace(string(out))
-			if why == "" {
-				why = err.Error()
-			}
-			return tmuxDoneMsg{Err: "tmux: " + why}
-		}
-		return tmuxDoneMsg{}
+		return tmuxDoneMsg{Err: actions.Window(name, dir, argv)}
 	}
-}
-
-// tmuxArgs are the arguments of `tmux new-window` for tmuxWindow: the shell command is argv, each
-// word quoted for sh, then `exec ${SHELL:-sh}`.
-func tmuxArgs(name, dir string, argv []string) []string {
-	words := make([]string, len(argv))
-	for i, a := range argv {
-		words[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
-	}
-	return []string{"new-window", "-n", name, "-c", dir, strings.Join(words, " ") + "; exec ${SHELL:-sh}"}
 }
 
 // drawDetail draws box ⁶ (D4, Mockups A and B) in w×h inner cells: the selected run's header, its
@@ -209,9 +191,6 @@ func tmuxArgs(name, dir string, argv []string) []string {
 // line. With no run selected it says how to select one.
 func (m Model) drawDetail(w, h int) []string {
 	foot := ""
-	if m.note != "" {
-		foot = styleError.Render(m.note)
-	}
 	var lines []string
 	if m.detail == "" {
 		lines = []string{styleDim.Render(noRun)}
@@ -226,9 +205,7 @@ func (m Model) drawDetail(w, h int) []string {
 				lines = append(lines, inlineTimeline(r.Timeline))
 			}
 		}
-		if foot == "" {
-			foot = styleDim.Render(m.feedKeys(h >= detailFullHeight))
-		}
+		foot = styleDim.Render(m.feedKeys(h >= detailFullHeight))
 		lines = append(lines, m.feedLines(max(h-len(lines)-1, 0), cw)...)
 	}
 	for len(lines) < h-1 {
