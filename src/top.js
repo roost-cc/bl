@@ -72,15 +72,15 @@ opens its pull request (xdg-open, or open on macOS), g opens bl agent. An
 attention item adds e (read the escalation), d (close the task) or m (merge).
 
 Each action runs at once, with no y/n question; bl task done first asks for
-an optional note. Actions run one at a time, in the order of the key presses: one pressed
-while another runs waits in a queue. The bottom border's note line shows the
-command that runs. On success the line clears; on a failure it shows the
-command, its exit code and its last stderr line until the next key, and the
-actions that waited are dropped, with their count. bl run, bl view, bl status
-and bl agent open a new tmux window in the backlog root instead, which stays
-open after the command exits; they hold the queue only while tmux opens the
-window. Outside tmux they say "needs tmux". A run that this view stopped does
-not notify.
+an optional note. Actions run one at a time, in the order of the key
+presses: one pressed while another runs waits in a queue. The bottom
+border's note line shows the command that runs. On success the line clears;
+on a failure it shows the command, its exit code and its last stderr line
+until the next key, and the actions that waited are dropped, with their
+count. bl run, bl view, bl status and bl agent open a new tmux window in the
+backlog root instead, which stays open after the command exits; they hold
+the queue only while tmux opens the window. Outside tmux they say "needs
+tmux". A run that this view stopped does not notify.
 
 The view notifies for a new escalation, a new task, and a run that ends
 (clean, no-change, reviewed, escalated, failed or stopped: every status but

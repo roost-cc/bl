@@ -3295,8 +3295,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   superscript number and the name in the top border and the options at its right; the key bar
   is the screen's bottom border. Colors are Catppuccin Mocha with logr's names: border surface2,
   number and name mauve, key letters peach, the screen's background base. The box with the
-  focus has a mauve border. The runs box's options are the time of the last snapshot and the interval
-  (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data, and its
+  focus has a mauve border. The runs box's options are the time of the last snapshot and the
+  interval (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data, and its
   box's top border shows a red `! <error>`.
 - **Graphs and meters** (`top/internal/ui/braille.go`, `meter.go`). A graph is a braille area
   graph: two samples per cell, four dot rows per cell, the highest sample at full height. A
@@ -3332,8 +3332,7 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   row, kept by its id (`sel`, by box name): after a new snapshot the same row stays selected
   while its id is there, else the row at its place. `↑` and `↓` move the selection of the box
   with the focus, and the box scrolls to keep it on screen. The next box's divider is no row:
-  `↑` and `↓` pass over it. The selected row has the surface0
-  background. A cell that does not fit is cut with `…`.
+  `↑` and `↓` pass over it. The selected row has the surface0 background. A cell that does not fit is cut with `…`.
 - **The tokens box** (`tokens.go`). The graph of output tokens per minute over 2 h, labelled
   `ended sessions` (D3b), with its peak and an axis of the local half hours and `now`. Then
   one meter per quota window of `bl capacity`, with the percent left and the reset (local
@@ -3401,19 +3400,15 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   to the next or previous shown box in the drawn order; `↑` and `↓` select a row, and in the
   detail box with follow off scroll the feed; `↵` shows the selected row's run in the detail box,
   or on the grouped update row opens or closes it; in the detail box, `f` turns follow on or
-  off and `w` opens
-  `bl watch <id>` of the detail box's run in a new tmux
-  window, in bl top's directory, named `<id> watch` (D7's `tmux new-window`, then
-  `exec ${SHELL:-sh}`, so the window stays open after `bl watch` exits), as an action of the
-  queue (below), and outside tmux
-  (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
+  off and `w` opens `bl watch <id>` of the detail box's run in a new tmux window, in bl top's
+  directory, named `<id> watch` (D7's `tmux new-window`, then `exec ${SHELL:-sh}`, so the
+  window stays open after `bl watch` exits), as an action of the queue (below), and outside
+  tmux (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
   opens the action menu of the selected row, and a row action key picks its action with that
   key (below); `d` in the next box shows the unranked units newest or oldest first
   (`bl top` starts oldest first, and the choice lasts until it exits); in the next box, the
-  ranking keys (below);
-  `c` writes `capacity` to the
-  stream's stdin, so
-  the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
+  ranking keys (below); `c` writes `capacity` to the stream's stdin, so the next snapshot
+  reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
   help, and any key closes it; `q` or `ctrl+c` quits. The help lists the global keys, then
   each box's box keys under its current number and name (`helpGroups`, by box name), then the
@@ -3422,11 +3417,10 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
 - **Ranking keys** (F-113 D6, D7; `rankKey`, `top/internal/ui/dialog.go`). They act only while
   the next box has the focus, so `p` keeps F-88's meaning in the other boxes. `y` yanks the
   selected unit, ranked or not, and the next box marks it with a peach `↕` after its rank until a
-  put or `esc`.
-  `p`, `P` and `x` pick the selected row's action of that key; `C` and `R` pick the box's
-  (`next.actions`), which belong to no row. Each runs at once, as every action does (below). A
-  key with no such action does nothing: an
-  unranked row has no `p`, `P` or `x`, and with no staged copy there is no `C` or `R`. While
+  put or `esc`. `p`, `P` and `x` pick the selected row's action of that key; `C` and `R` pick
+  the box's (`next.actions`), which belong to no row. Each runs at once, as every action does
+  (below). A key with no such action does nothing: an unranked row has no `p`, `P` or `x`, and
+  with no staged copy there is no `C` or `R`. While
   `next.conflict` is set, every ranking key but `R` refuses with its text in the bottom border.
   Each pick renders the action's argv (`actions.Render`, below) with `Selected` (the selected
   row's id) and `Yanked` (only while a unit is yanked): a put with nothing yanked refuses with
@@ -3435,12 +3429,12 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   stdin, so a merge conflict ends it with `conflict: run bl rank --commit in a terminal`, which
   the note line shows.
 - **Actions** (D7, F-88 S-1336, F-127 Decisions 2 and 4; `top/internal/ui/dialog.go`,
-  `top/internal/ui/queue.go`, `top/internal/actions`). The
-  selected row of the box with the focus (in the detail box, the run it shows) has the `actions` of its
-  snapshot row (below). `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's
-  key, pick one, and `esc` cancels. A row action key picks the action with that key directly;
-  a key that the row's actions do not have does nothing. No action asks y/n: a pick runs at once (`pick`). An action with
-  `input` first opens its text box: `note` is optional, `reason` refuses an empty one; `enter`
+  `top/internal/ui/queue.go`, `top/internal/actions`). The selected row of the box with the
+  focus (in the detail box, the run it shows) has the `actions` of its snapshot row (below).
+  `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's key, pick one, and
+  `esc` cancels. A row action key picks the action with that key directly; a key that the
+  row's actions do not have does nothing. No action asks y/n: a pick runs at once (`pick`). An
+  action with `input` first opens its text box: `note` is optional, `reason` refuses an empty one; `enter`
   runs it, and `esc` cancels it. The menu and the text box are the only action dialogs.
   - **The queue.** bl top has at most one action child process (`Model.jobs`, a `job` each). An
     action picked while another runs waits, and the queue runs in the order of the key presses
@@ -3462,8 +3456,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   - an action with `stops` marks its run with the pid of its `bl stop` child (D8,
     `Differ.Quiet`), when the child starts. The view starts the child before it reads the next
     snapshot (`actions.Start`), so the mark is there first. A stop that the queue drops never
-    starts and marks nothing. The run's `stopped` end does not notify when
-    that pid is one of the run's `stoppedBy`, the pids of the `bl stop`s whose requests stopped
+    starts and marks nothing. The run's `stopped` end does not notify when that pid is one of
+    the run's `stoppedBy`, the pids of the `bl stop`s whose requests stopped
     it (`markStopped`). So a stop of this view that timed out and stops the run later stays quiet,
     and another shell's stop notifies, also while this view's stop runs or after it failed. The
     marks go when the run ends with any status.
@@ -3565,9 +3559,8 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   `next` carries a list of `{ key, label, short, argv, input, window, url, stops }`, which
   `src/top-snapshot.js` builds (`runActions`, `itemActions`), so the view holds no backlog
   logic. `label` is what the `a` menu shows; `short` is the action's word on the key bar
-  (F-127 Decision 5: `run`, `resume`, `stop`, `page`, `PR`, `agent`, `escalation`, `done`,
-  `merge`, `put`, `put before`, `unrank`, `commit`, `reset`). `argv` is a bl command (`["bl", …]`) or null for `url` (a page the view opens);
-  `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
+  (F-127 Decision 5, for example `resume`, `page` or `PR`). `argv` is a bl command
+  (`["bl", …]`) or null for `url` (a page the view opens); `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
   word; `window` names the tmux window the command opens in, or is null for a child that
   reports on the note line; `stops` is the run the action stops.
   Each `argv` element is a Go `text/template` (F-113 D7, Decision A4): the view renders it with
