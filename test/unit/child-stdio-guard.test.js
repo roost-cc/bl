@@ -610,9 +610,10 @@ const ALLOWED = new Map([
 ]);
 
 /**
- * The imports of `child_process` and src/child-stdio.js in the src/ file
- * `rel`: `[{ line, module, names }]`. A default import is `default`; a
- * namespace import or an `import()` is `*`.
+ * The imports and re-exports of `child_process` and src/child-stdio.js in the
+ * src/ file `rel`: `[{ line, module, names }]`. A default import is `default`;
+ * a namespace import, a bare import, an `import()` and an `export *` are `*`;
+ * a re-export is the name it takes from the module.
  * @param {string} source
  * @param {string} rel  the file's path from the bl root (`src/agents/claude.js`)
  */
@@ -630,10 +631,22 @@ export function childImports(source, rel) {
         ? 'default'
         : '*';
   const out = [];
+  const add = (n, names) => {
+    const module = n.source ? moduleOf(n.source.value) : null;
+    if (module) out.push({ line: n.loc.start.line, module, names: names.length > 0 ? names : ['*'] });
+  };
   simple(ast, {
     ImportDeclaration(n) {
-      const module = moduleOf(n.source.value);
-      if (module) out.push({ line: n.loc.start.line, module, names: n.specifiers.map(specName) });
+      add(n, n.specifiers.map(specName));
+    },
+    ExportNamedDeclaration(n) {
+      add(
+        n,
+        n.specifiers.map((s) => s.local.name ?? s.local.value),
+      );
+    },
+    ExportAllDeclaration(n) {
+      add(n, ['*']);
     },
     ImportExpression(n) {
       const module = n.source.type === 'Literal' ? moduleOf(n.source.value) : null;
@@ -717,6 +730,31 @@ const IMPORT_CASES = [
   { name: 'src/child-stdio.js', rel: 'src/child-stdio.js', src: `import { spawnSync } from 'child_process';`, hits: 0 },
   { name: "src/child.js's entry points", rel: 'src/x.js', src: `import { git, runChild } from './child.js';`, hits: 0 },
   { name: 'another child-stdio.js', rel: 'src/agents/x.js', src: `import { y } from './child-stdio.js';`, hits: 0 },
+  { name: 'a bare import', rel: 'src/x.js', src: `import 'child_process';`, hits: 1 },
+  { name: 'a bare import of child-stdio.js', rel: 'src/x.js', src: `import './child-stdio.js';`, hits: 1 },
+  { name: 'a named re-export', rel: 'src/x.js', src: `export { spawnSync } from 'child_process';`, hits: 1 },
+  {
+    name: 'a renamed re-export',
+    rel: 'src/x.js',
+    src: `export { spawnSync as run } from 'node:child_process';`,
+    hits: 1,
+  },
+  { name: 'an empty re-export', rel: 'src/x.js', src: `export {} from 'child_process';`, hits: 1 },
+  { name: 'an export *', rel: 'src/x.js', src: `export * from 'node:child_process';`, hits: 1 },
+  { name: 'an export * as', rel: 'src/x.js', src: `export * as cp from 'child_process';`, hits: 1 },
+  {
+    name: 'a re-export of child-stdio.js',
+    rel: 'src/agents/x.js',
+    src: `export { spawnSyncFiles } from '../child-stdio.js';`,
+    hits: 1,
+  },
+  {
+    name: 'a listed file re-exporting a listed name',
+    rel: 'src/done.js',
+    src: `export { execSync } from 'child_process';`,
+    hits: 0,
+  },
+  { name: 'a local export', rel: 'src/x.js', src: `const spawnSync = 1;\nexport { spawnSync };`, hits: 0 },
 ];
 
 for (const c of IMPORT_CASES) {
