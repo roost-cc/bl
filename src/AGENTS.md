@@ -3973,14 +3973,11 @@ merged feature leaves the order because it is closed, not by an edit, and the ne
 the backlog's git history (its `bl merge` commit) and `bl history --json`. `bl side` does not
 count it among the files it owns.
 
-**The conversion** (F-113 D1a). Before F-113 the order was the `ranked:` frontmatter of the
-backlog's old priority markdown file, a list of `{ unit, why }`.
-`node scripts/priority-to-yaml.js [--dry-run] [--backlog <dir>]` reads that list and writes
-`priority.yaml`: the open ranked units, once each, in order, without `why`. It deletes nothing
-and commits nothing. It and its test are the only files that name the old file
-(`test/integration/old-order-file-guard.test.js`). A cleanup story after F-113 deletes the script, its
-test, the guard's exceptions and the backlog's old file. F-78's migration from the feature order
-file before it is done and deleted; it is in git history.
+**The old file** (F-113 D1a). Before F-113 the order was the `ranked:` frontmatter of the
+backlog's old priority markdown file. F-113 converted it to `priority.yaml`, and S-1466 deleted
+the old file and the conversion script. No tracked file in `bl` names the old file
+(`test/integration/old-order-file-guard.test.js`). F-78's migration and F-113's conversion are
+in git history.
 
 ### `bl edit` / `bl view`
 
