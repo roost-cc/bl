@@ -173,6 +173,26 @@ test('runBl reads a bl child exit 143 as SIGTERM: bl exits 143', () => {
   assertRaised(r, 143, `${process.execPath} ${entry} sync`, 'SIGTERM');
 });
 
+test('the D2 line is one line when the child name holds a control character', () => {
+  const blDir = mkTempDir('bl-child-bl-');
+  const entry = join(blDir, 'bl.js');
+  writeFileSync(entry, 'process.exit(130);\n');
+  const { dir } = shim('git', 'kill -INT $$');
+  const env = { ...process.env, PATH: `${dir}:${process.env.PATH}` };
+  const rows = [
+    ['runCommandLine', `runCommandLine('exit 130\\nprintf after');`, 'exit 130\\nprintf after'],
+    ['runChild', `runChild('sh', ['-c', 'kill -INT $$\\r\\n']);`, 'sh -c kill -INT $$\\r\\n'],
+    ['runBl', `runBl(${JSON.stringify(entry)}, ['a\\nb']);`, `${process.execPath} ${entry} a\\nb`],
+    ['git', `git(process.cwd(), ['log', '--grep=a\\nb\\u001b']);`, 'git log --grep=a\\nb\\u001b'],
+  ];
+  for (const [name, body, child] of rows) {
+    const r = runScript(body, { env });
+    assertRaised(r, 130, child, 'SIGINT');
+    const lines = r.stderr.split('\n').filter((l) => l !== '' && !l.startsWith('exit listener'));
+    assert.deepEqual(lines, [`bl: ${child} was ended by SIGINT`], name);
+  }
+});
+
 // (e) A child that Node kills after its timeout is a failure, not an interrupt.
 test('a child that Node kills after its timeout returns ETIMEDOUT and raises nothing', () => {
   const r = runScript(`const r = runChild('sleep', ['5'], { timeout: 200 });\nconsole.log(r.error.code, r.signal);`);

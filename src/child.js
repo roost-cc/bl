@@ -167,7 +167,9 @@ export function describeExit(r, what) {
 function settle(r, child, { codes = false } = {}) {
   const signal = interruptOf(r) ?? (codes && !r.error ? signalOfCode(r.status) : null);
   if (!signal) return r;
-  process.stderr.write(`bl: ${child} was ended by ${signal}\n`);
+  // One line: a control character (a newline in a command line) is escaped as JSON escapes it.
+  const name = child.replace(/\p{Cc}/gu, (c) => JSON.stringify(c).slice(1, -1));
+  process.stderr.write(`bl: ${name} was ended by ${signal}\n`);
   if (exiting) return r;
   if (depth > 0) {
     kept ??= signal;
