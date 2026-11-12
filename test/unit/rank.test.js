@@ -1,13 +1,14 @@
 /**
- * Unit tests for F-78 D3: `bl rank`'s text edit (`src/rank-cmd.js`), the
- * BL_HEADLESS marker every headless agent spawn carries (`agentEnv`, each
- * adapter's `spawn`), and `commitPaths`' refusal of `priority.md` under it.
+ * Unit tests for F-78 D3 and F-113 D1: `bl rank`'s list edit
+ * (`src/rank-cmd.js`), the BL_HEADLESS marker every headless agent spawn
+ * carries (`agentEnv`, each adapter's `spawn`), and `commitPaths`' refusal of
+ * `priority.yaml` under it.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { applyRank, checkUnit, rankedIds, removeClosed, RankFileError } from '../../src/rank-cmd.js';
+import { applyRank, checkUnit, proposal, rankedIds, RankFileError } from '../../src/rank-cmd.js';
 import { HEADLESS_ENV, agentEnv, isHeadless } from '../../src/agents/provider.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
 import { CodexProvider } from '../../src/agents/codex.js';
@@ -17,34 +18,12 @@ import { loadBacklog } from '../../src/backlog-graph.js';
 import { STORY_INDEX_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
 
-/** A priority.md written by hand: comments, a wrapped reason, a blank line, a body. */
-const HAND = `---
-# Hand-written comment at the top.
-ranked:
-  # The deploy blocker comes first.
-  - unit: S-1
-    why: Blocks every deploy,
-      wrapped by hand.
-  - unit: F-2 # the big one
-    why: "Users see it next"
-
-  - unit: F-3
-    why: Third
----
-
-# Priority
-
-Hand-written body, never touched.
+/** A priority.yaml written by hand: a comment, a lower-case id, a flow-free block list. */
+const HAND = `# Ranked by hand.
+- S-1
+- f2 # the big one
+- F-3
 `;
-
-/** The entry lines of HAND, by unit, as written. */
-const LINES = {
-  'S-1': '  - unit: S-1\n    why: Blocks every deploy,\n      wrapped by hand.\n',
-  'F-2': '  - unit: F-2 # the big one\n    why: "Users see it next"\n',
-  'F-3': '  - unit: F-3\n    why: Third\n',
-};
-const HEAD = '---\n# Hand-written comment at the top.\nranked:\n  # The deploy blocker comes first.\n';
-const TAIL = '---\n\n# Priority\n\nHand-written body, never touched.\n';
 
 /** Run `fn` with `process.env.BL_HEADLESS` set to `value` (undefined: unset), then put it back. */
 async function withMarker(value, fn) {
@@ -59,191 +38,63 @@ async function withMarker(value, fn) {
   }
 }
 
-test('applyRank moves an entry and keeps every other byte as written', () => {
-  assert.equal(
-    applyRank(HAND, { id: 'F-3', where: 'top' }),
-    `${HEAD}${LINES['F-3']}${LINES['S-1']}${LINES['F-2']}\n${TAIL}`,
-  );
-  assert.equal(applyRank(HAND, { id: 'F-3', where: 'top' }).endsWith(TAIL), true);
-  assert.equal(
-    applyRank(HAND, { id: 'S-1', where: { after: 'F-2' } }),
-    `${HEAD}${LINES['F-2']}${LINES['S-1']}\n${LINES['F-3']}${TAIL}`,
-  );
-  assert.equal(
-    applyRank(HAND, { id: 'S-1', where: 'bottom' }),
-    `${HEAD}${LINES['F-2']}\n${LINES['F-3']}${LINES['S-1']}${TAIL}`,
-  );
-  assert.equal(
-    applyRank(HAND, { id: 'F-3', where: { before: 'F-2' } }),
-    `${HEAD}${LINES['S-1']}${LINES['F-3']}${LINES['F-2']}\n${TAIL}`,
-  );
-  // Where it already is: nothing changes.
-  assert.equal(applyRank(HAND, { id: 'S-1', where: 'top' }), HAND);
-  assert.equal(applyRank(HAND, { id: 'F-2', where: { after: 'S-1' } }), HAND);
+const IDS = ['S-1', 'F-2', 'F-3'];
+
+test('applyRank moves an id in the list', () => {
+  assert.deepEqual(applyRank(IDS, { id: 'F-3', where: 'top' }), ['F-3', 'S-1', 'F-2']);
+  assert.deepEqual(applyRank(IDS, { id: 'S-1', where: { after: 'F-2' } }), ['F-2', 'S-1', 'F-3']);
+  assert.deepEqual(applyRank(IDS, { id: 'S-1', where: 'bottom' }), ['F-2', 'F-3', 'S-1']);
+  assert.deepEqual(applyRank(IDS, { id: 'F-3', where: { before: 'F-2' } }), ['S-1', 'F-3', 'F-2']);
+  // Where it already is: the same order.
+  assert.deepEqual(applyRank(IDS, { id: 'S-1', where: 'top' }), IDS);
+  assert.deepEqual(applyRank(IDS, { id: 'F-2', where: { after: 'S-1' } }), IDS);
 });
 
-test('applyRank adds a new entry at the list indentation, quoting its reason only where YAML needs it', () => {
-  assert.equal(
-    applyRank(HAND, { id: 'S-9', where: { before: 'F-2' }, why: 'Needed: first' }),
-    `${HEAD}${LINES['S-1']}  - unit: S-9\n    why: "Needed: first"\n${LINES['F-2']}\n${LINES['F-3']}${TAIL}`,
-  );
-  assert.equal(
-    applyRank(HAND, { id: 'F-4', where: 'bottom', why: 'Plain words' }),
-    `${HEAD}${LINES['S-1']}${LINES['F-2']}\n${LINES['F-3']}  - unit: F-4\n    why: Plain words\n${TAIL}`,
-  );
-  // Into an empty list, in flow style or bare.
-  for (const ranked of ['ranked: []', 'ranked:']) {
-    const one = applyRank(`---\n${ranked}\n---\n\nBody.\n`, { id: 'F-1', where: 'top', why: 'One' });
-    assert.equal(one, '---\nranked:\n  - unit: F-1\n    why: One\n---\n\nBody.\n', ranked);
-  }
-  // With no ranked: key at all, it is added at the end of the block.
-  assert.equal(
-    applyRank('---\nnote: x\n---\nBody.\n', { id: 'S-2', where: 'top', why: 'Two' }),
-    '---\nnote: x\nranked:\n  - unit: S-2\n    why: Two\n---\nBody.\n',
-  );
+test('applyRank adds a new id; into an empty list too', () => {
+  assert.deepEqual(applyRank(IDS, { id: 'S-9', where: { before: 'F-2' } }), ['S-1', 'S-9', 'F-2', 'F-3']);
+  assert.deepEqual(applyRank(IDS, { id: 'F-4', where: 'bottom' }), ['S-1', 'F-2', 'F-3', 'F-4']);
+  assert.deepEqual(applyRank([], { id: 'F-1', where: 'top' }), ['F-1']);
+  assert.throws(() => applyRank(IDS, { id: 'F-4', where: { after: 'F-9' } }), /F-9 is not ranked/);
 });
 
-test('applyRank rewrites only the reason with --why alone, and with a move moves the rewritten entry', () => {
-  assert.equal(
-    applyRank(HAND, { id: 'F-2', why: 'A new reason' }),
-    `${HEAD}${LINES['S-1']}  - unit: F-2 # the big one\n    why: A new reason\n\n${LINES['F-3']}${TAIL}`,
-  );
-  assert.equal(
-    applyRank(HAND, { id: 'S-1', why: 'Shorter', where: 'bottom' }),
-    `${HEAD}${LINES['F-2']}\n${LINES['F-3']}  - unit: S-1\n    why: Shorter\n${TAIL}`,
-  );
-  // A block-scalar reason keeps the line break that ends it.
-  const folded =
-    '---\nranked:\n  - unit: F-1\n    why: >-\n      folded\n      text\n  - unit: F-2\n    why: Two\n---\n';
-  assert.equal(
-    applyRank(folded, { id: 'F-1', why: 'New' }),
-    '---\nranked:\n  - unit: F-1\n    why: New\n  - unit: F-2\n    why: Two\n---\n',
-  );
-  const last = '---\nranked:\n  - unit: F-1\n    why: |\n      literal\n---\n';
-  assert.equal(applyRank(last, { id: 'F-1', why: 'New' }), '---\nranked:\n  - unit: F-1\n    why: New\n---\n');
+test('applyRank removes an id; the last one leaves an empty list', () => {
+  assert.deepEqual(applyRank(IDS, { id: 'F-2', remove: true }), ['S-1', 'F-3']);
+  assert.deepEqual(applyRank(['F-1'], { id: 'F-1', remove: true }), []);
+  assert.throws(() => applyRank(IDS, { id: 'F-9', remove: true }), /F-9 is not ranked/);
 });
 
-test('applyRank removes an entry; the last one leaves ranked: []', () => {
-  assert.equal(applyRank(HAND, { id: 'F-2', remove: true }), `${HEAD}${LINES['S-1']}\n${LINES['F-3']}${TAIL}`);
-  const one = '---\nranked:\n  - unit: F-1\n    why: One\n---\n\nBody.\n';
-  assert.equal(applyRank(one, { id: 'F-1', remove: true }), '---\nranked: []\n---\n\nBody.\n');
-});
-
-test('removeClosed takes out every entry of the ids given and keeps every other byte', () => {
-  assert.equal(removeClosed(HAND, ['F-2', 'S-1']), `${HEAD}\n${LINES['F-3']}${TAIL}`);
-  const twice = HAND.replace(LINES['F-3'], `${LINES['F-3']}${LINES['S-1']}`);
-  assert.equal(removeClosed(twice, ['S-1']), `${HEAD}${LINES['F-2']}\n${LINES['F-3']}${TAIL}`);
-  assert.equal(
-    removeClosed(HAND, ['S-1', 'F-2', 'F-3']),
-    '---\n# Hand-written comment at the top.\nranked: []\n  # The deploy blocker comes first.\n\n' + TAIL,
-  );
-  assert.equal(removeClosed(HAND, []), HAND);
-});
-
-test('rank_insert_into_empty_list_preserves_inline_comment_and_body', () => {
-  const fm = (block) => `---\n${block}---\n\nBody.\n`;
-  const entry = '  - unit: F-1\n    why: One\n';
-  for (const [name, before, op, after] of [
-    [
-      'insert, flow list + comment',
-      'ranked: [] # operator note\n',
-      { where: 'top', why: 'One' },
-      `ranked: # operator note\n${entry}`,
-    ],
-    [
-      'insert, bare + comment',
-      'ranked: # operator note\n',
-      { where: 'top', why: 'One' },
-      `ranked: # operator note\n${entry}`,
-    ],
-    [
-      'insert, empty string + comment',
-      "ranked: '' # operator note\n",
-      { where: 'top', why: 'One' },
-      `ranked: # operator note\n${entry}`,
-    ],
-    ['insert, empty string', 'ranked: ""\n', { where: 'top', why: 'One' }, `ranked:\n${entry}`],
-    [
-      'insert, bare + comment line after',
-      'ranked:\n# later note\nother: x\n',
-      { where: 'bottom', why: 'One' },
-      `ranked:\n${entry}# later note\nother: x\n`,
-    ],
-    [
-      'remove last, comment on ranked:',
-      `ranked: # operator note\n${entry}`,
-      { remove: true },
-      'ranked: [] # operator note\n',
-    ],
-    [
-      'remove last, comment line after',
-      `ranked:\n${entry}  # trailing note\nother: x\n`,
-      { remove: true },
-      'ranked: []\n  # trailing note\nother: x\n',
-    ],
-    [
-      'remove last, comment line before',
-      `ranked:\n  # head note\n${entry}`,
-      { remove: true },
-      'ranked: []\n  # head note\n',
-    ],
-    [
-      'why, inline comment',
-      'ranked:\n  - unit: F-1\n    why: One # note\n',
-      { why: 'Two' },
-      'ranked:\n  - unit: F-1\n    why: Two # note\n',
-    ],
-    [
-      'why, block header comment',
-      'ranked:\n  - unit: F-1\n    why: >- # note\n      long\n      text\n# after\n',
-      { why: 'Two' },
-      'ranked:\n  - unit: F-1\n    why: Two # note\n# after\n',
-    ],
-  ]) {
-    const out = applyRank(fm(before), { id: 'F-1', ...op });
-    assert.equal(out, fm(after), name);
-    assert.deepEqual(rankedIds(out), op.remove ? [] : ['F-1'], `${name}: still YAML bl rank reads`);
-  }
-});
-
-test('rank_rejects_invalid_existing_ranked_entries', () => {
-  const good = '  - unit: F-1\n    why: One\n';
-  const invalid = {
-    'missing why': '  - unit: F-2\n',
-    'empty why': '  - unit: F-2\n    why: ""\n',
-    'null why': '  - unit: F-2\n    why:\n',
-    'mapping why': '  - unit: F-2\n    why:\n      a: b\n',
-    'list why': '  - unit: F-2\n    why:\n      - a\n',
-    'missing unit': '  - why: Two\n',
-    'empty unit': '  - unit: ""\n    why: Two\n',
-    'mapping unit': '  - unit:\n      a: b\n    why: Two\n',
-    'list unit': '  - unit: [F-2]\n    why: Two\n',
-  };
-  const ops = {
-    insert: { id: 'S-3', where: 'top', why: 'Three' },
-    move: { id: 'F-1', where: 'bottom' },
-    why: { id: 'F-1', why: 'New' },
-    remove: { id: 'F-1', remove: true },
-  };
-  for (const [name, bad] of Object.entries(invalid)) {
-    const content = `---\nranked:\n${good}${bad}---\n`;
-    assert.throws(() => rankedIds(content), RankFileError, `rankedIds: ${name}`);
-    for (const [kind, op] of Object.entries(ops)) {
-      assert.throws(() => applyRank(content, op), /"ranked:" entry 2 has no "(unit|why)"/, `${kind}: ${name}`);
-    }
-  }
+test('proposal: the staged order, less what main took out since the base, plus what main added at the end', () => {
+  const base = ['F-1', 'F-2', 'F-3'];
+  // Staged: F-3 to the top, S-4 in. Main: F-2 out, S-5 and S-4 in.
+  assert.deepEqual(proposal(['F-3', 'S-4', 'F-1', 'F-2'], base, ['F-1', 'F-3', 'S-5', 'S-4']), [
+    'F-3',
+    'S-4',
+    'F-1',
+    'S-5',
+  ]);
+  // Nothing changed on main: the staged order.
+  assert.deepEqual(proposal(['F-2', 'F-1'], base, base), ['F-2', 'F-1']);
+  // A unit the staged order took out stays out, even though main kept it.
+  assert.deepEqual(proposal(['F-1'], base, [...base, 'F-9']), ['F-1', 'F-9']);
 });
 
 test('rankedIds reads the ids as written, canonical; a file bl rank cannot edit is a RankFileError', () => {
   assert.deepEqual(rankedIds(HAND), ['S-1', 'F-2', 'F-3']);
-  assert.deepEqual(rankedIds('---\nranked:\n  - unit: f3\n    why: x\n---\n'), ['F-3']);
-  for (const bad of [
-    'no block',
-    '---\nranked: [\n---\n',
-    '---\nranked: x\n---\n',
-    '---\nranked: [{unit: F-1, why: x}]\n---\n',
+  assert.deepEqual(rankedIds('[f3, s1]\n'), ['F-3', 'S-1']);
+  assert.deepEqual(rankedIds('[]\n'), []);
+  for (const [bad, reason] of [
+    ['', /the file is not a YAML list of work unit ids/],
+    ['# nothing yet\n', /the file is not a YAML list of work unit ids/],
+    ['- [\n', /priority\.yaml: the file is not YAML/],
+    ['ranked: x\n', /the file is not a YAML list of work unit ids/],
+    ['- unit: F-1\n  why: x\n', /entry 1 is not a work unit id/],
+    ['- F-1\n- 7\n', /entry 2 is not a work unit id/],
   ]) {
-    assert.throws(() => rankedIds(bad), RankFileError, bad);
+    assert.throws(
+      () => rankedIds(bad),
+      (e) => e instanceof RankFileError && reason.test(e.message),
+      bad,
+    );
   }
 });
 
@@ -325,78 +176,76 @@ test('every adapter gives a headless spawn BL_HEADLESS=1 and an interactive spaw
   });
 });
 
-test('headlessPriorityRefusal names priority.md, by path or by a directory that holds it, only under BL_HEADLESS', () => {
+test('headlessPriorityRefusal names priority.yaml, by path or by a directory that holds it, only under BL_HEADLESS', () => {
   const on = { BL_HEADLESS: '1' };
-  for (const paths of [['priority.md'], ['./priority.md'], ['.'], [''], ['/b/priority.md'], ['/b']]) {
-    assert.match(headlessPriorityRefusal('/b', paths, on) ?? '', /refusing to commit priority\.md/, paths.join());
+  for (const paths of [['priority.yaml'], ['./priority.yaml'], ['.'], [''], ['/b/priority.yaml'], ['/b']]) {
+    assert.match(headlessPriorityRefusal('/b', paths, on) ?? '', /refusing to commit priority\.yaml/, paths.join());
   }
-  for (const paths of [['stories/S1-x'], ['priority.md.bak'], ['features'], ['/elsewhere']]) {
+  for (const paths of [['stories/S1-x'], ['priority.yaml.bak'], ['features'], ['/elsewhere']]) {
     assert.equal(headlessPriorityRefusal('/b', paths, on), null, paths.join());
   }
-  assert.equal(headlessPriorityRefusal('/b', ['priority.md'], {}), null);
+  assert.equal(headlessPriorityRefusal('/b', ['priority.yaml'], {}), null);
 });
 
-test('an interactive bl rank pulls the backlog first, listing or edit; help and a headless run do not', () => {
-  assert.equal(commandPullsBacklog('rank', ['F-1', '--top'], {}), true);
-  assert.equal(commandPullsBacklog('rank', [], {}), true);
-  assert.equal(commandPullsBacklog('rank', ['--help'], {}), false);
-  assert.equal(commandPullsBacklog('rank', ['F-1', '--top'], { BL_HEADLESS: '1' }), false);
-  assert.equal(commandPullsBacklog('rank', [], { BL_HEADLESS: '1' }), false);
+test('bl.js never pulls before bl rank: --commit pulls itself, only with a staged copy', () => {
+  for (const argv of [['--commit'], ['F-1', '--top'], [], ['--reset'], ['--commit', '--help']]) {
+    assert.equal(commandPullsBacklog('rank', argv), false, argv.join(' '));
+  }
 });
 
-test('commitPaths refuses priority.md under BL_HEADLESS, commits it without', async () => {
-  const { dir } = mkTempBacklog({ priority: [{ unit: 'F-1', why: 'x' }] });
+test('commitPaths refuses priority.yaml under BL_HEADLESS, commits it without', async () => {
+  const { dir } = mkTempBacklog({ priority: ['F-1'] });
   initGitBacklog(dir);
-  const path = join(dir, 'priority.md');
-  writeFileSync(path, readFileSync(path, 'utf8').replace('why: x', 'why: y'));
+  const path = join(dir, 'priority.yaml');
+  writeFileSync(path, `${readFileSync(path, 'utf8')}- F-2\n`);
   const head = git(dir, 'rev-parse', 'HEAD');
-  const refused = await withMarker('1', () => commitPaths(dir, ['priority.md'], 'chore: rank'));
+  const refused = await withMarker('1', () => commitPaths(dir, ['priority.yaml'], 'chore: rank'));
   assert.equal(refused.committed, false);
-  assert.match(refused.error, /refusing to commit priority\.md .*BL_HEADLESS is set/);
+  assert.match(refused.error, /refusing to commit priority\.yaml .*BL_HEADLESS is set/);
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'nothing committed');
   assert.equal(git(dir, 'diff', '--cached', '--name-only'), '', 'nothing staged');
   // Another path commits as before under the marker.
   writeFileSync(join(dir, 'note.txt'), 'n\n');
   assert.equal((await withMarker('1', () => commitPaths(dir, ['note.txt'], 'chore: note'))).committed, true);
-  const ok = await withMarker(undefined, () => commitPaths(dir, ['priority.md'], 'chore: rank'));
+  const ok = await withMarker(undefined, () => commitPaths(dir, ['priority.yaml'], 'chore: rank'));
   assert.equal(ok.committed, true, ok.error);
-  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'priority.md');
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'priority.yaml');
 });
 
-test('commitPaths_headless_refuses_every_pathspec_selecting_priority_md', async () => {
-  const { dir } = mkTempBacklog({ priority: [{ unit: 'F-1', why: 'x' }] });
+test('commitPaths_headless_refuses_every_pathspec_selecting_priority_yaml', async () => {
+  const { dir } = mkTempBacklog({ priority: ['F-1'] });
   initGitBacklog(dir);
-  const path = join(dir, 'priority.md');
+  const path = join(dir, 'priority.yaml');
   const head = git(dir, 'rev-parse', 'HEAD');
   // Modified, staged deletion, untracked: each state git's add and commit would take.
   const states = {
-    modified: () => writeFileSync(path, readFileSync(path, 'utf8').replace('why: x', 'why: y')),
-    deleted: () => git(dir, 'rm', '-q', '--cached', 'priority.md'),
+    modified: () => writeFileSync(path, `${readFileSync(path, 'utf8')}- F-2\n`),
+    deleted: () => git(dir, 'rm', '-q', '--cached', 'priority.yaml'),
   };
   const specs = [
-    'priority.md',
-    './priority.md',
+    'priority.yaml',
+    './priority.yaml',
     '.',
-    ':(top)priority.md',
-    ':/priority.md',
-    '*.md',
+    ':(top)priority.yaml',
+    ':/priority.yaml',
+    '*.yaml',
     'priority*',
-    ':(glob)*.md',
-    ':(icase)PRIORITY.MD',
-    ':(literal)priority.md',
+    ':(glob)*.yaml',
+    ':(icase)PRIORITY.YAML',
+    ':(literal)priority.yaml',
   ];
   for (const [state, make] of Object.entries(states)) {
     make();
     for (const spec of specs) {
       const r = await withMarker('1', () => commitPaths(dir, [spec], 'chore: rank'));
       assert.equal(r.committed, false, `${state} ${spec}`);
-      assert.match(r.error ?? '', /refusing to commit priority\.md/, `${state} ${spec}`);
+      assert.match(r.error ?? '', /refusing to commit priority\.yaml/, `${state} ${spec}`);
       assert.equal(git(dir, 'rev-parse', 'HEAD'), head, `${state} ${spec}: nothing committed`);
     }
     git(dir, 'reset', '-q', '--hard');
   }
   // A pathspec that does not select it is not refused.
-  writeFileSync(path, readFileSync(path, 'utf8').replace('why: x', 'why: y'));
+  writeFileSync(path, `${readFileSync(path, 'utf8')}- F-2\n`);
   writeFileSync(join(dir, 'note.txt'), 'n\n');
   for (const spec of ['*.txt', ':(glob)note*', 'stories']) {
     assert.equal(headlessPriorityRefusal(dir, [spec], { BL_HEADLESS: '1' }), null, spec);
@@ -404,33 +253,33 @@ test('commitPaths_headless_refuses_every_pathspec_selecting_priority_md', async 
 });
 
 test('commitPaths_headless_honors_excluded_priority_pathspec', async () => {
-  const { dir } = mkTempBacklog({ priority: [{ unit: 'F-1', why: 'x' }] });
+  const { dir } = mkTempBacklog({ priority: ['F-1'] });
   initGitBacklog(dir);
-  const path = join(dir, 'priority.md');
-  writeFileSync(path, readFileSync(path, 'utf8').replace('why: x', 'why: y'));
-  writeFileSync(join(dir, 'note.md'), 'n\n');
-  // Mixed sets: Git applies them whole, so an exclusion removes priority.md.
+  const path = join(dir, 'priority.yaml');
+  writeFileSync(path, `${readFileSync(path, 'utf8')}- F-2\n`);
+  writeFileSync(join(dir, 'note.yaml'), 'n\n');
+  // Mixed sets: Git applies them whole, so an exclusion removes priority.yaml.
   const excluded = [
-    ['*.md', ':!priority.md'],
-    ['.', ':(exclude)priority.md'],
-    [':!priority.md', 'note.md'],
-    ['note.md', 'priority.md', ':^priority.md'],
-    [':(glob)*.md', ':(top,exclude)priority.md'],
+    ['*.yaml', ':!priority.yaml'],
+    ['.', ':(exclude)priority.yaml'],
+    [':!priority.yaml', 'note.yaml'],
+    ['note.yaml', 'priority.yaml', ':^priority.yaml'],
+    [':(glob)*.yaml', ':(top,exclude)priority.yaml'],
   ];
-  const selecting = [['note.md', 'priority.md'], ['*.md', ':!note.md'], ['.', ':!stories'], [':!note.md']];
+  const selecting = [['note.yaml', 'priority.yaml'], ['*.yaml', ':!note.yaml'], ['.', ':!stories'], [':!note.yaml']];
   for (const specs of selecting) {
     assert.match(
       headlessPriorityRefusal(dir, specs, { BL_HEADLESS: '1' }) ?? '',
-      /refusing to commit priority\.md/,
+      /refusing to commit priority\.yaml/,
       specs.join(),
     );
   }
   for (const specs of excluded) {
     assert.equal(headlessPriorityRefusal(dir, specs, { BL_HEADLESS: '1' }), null, specs.join());
   }
-  // And through commitPaths: the note commits, priority.md stays modified.
-  const r = await withMarker('1', () => commitPaths(dir, ['*.md', ':!priority.md'], 'chore: note'));
+  // And through commitPaths: the note commits, priority.yaml stays modified.
+  const r = await withMarker('1', () => commitPaths(dir, ['*.yaml', ':!priority.yaml'], 'chore: note'));
   assert.equal(r.committed, true, r.error);
-  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'note.md');
-  assert.equal(git(dir, 'status', '--porcelain'), 'M priority.md');
+  assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'note.yaml');
+  assert.equal(git(dir, 'status', '--porcelain'), 'M priority.yaml');
 });

@@ -44,6 +44,18 @@ func TestDecodeRecordedLines(t *testing.T) {
 	if first.Next.Pick == nil || first.Next.Pick.ID != "F-9" || first.Next.Ranked[1].Holds[0] != "F-9" {
 		t.Errorf("next = %+v", first.Next)
 	}
+	if n := first.Next; len(n.Unranked) != 1 || n.Unranked[0].Position != 0 || n.Staged == nil || n.Staged.Ranked[0].Mark != "+" ||
+		n.Staged.Unranked[0].ID != "F-10" || n.Staged.Unranked[0].Mark != "-" || n.Conflict != "" {
+		t.Errorf("next's unranked, staged and conflict = %+v", n)
+	}
+	// F-113 D7: a ranked row's ranking actions are templates; the box's own actions are commit and reset.
+	if n := first.Next; !reflect.DeepEqual(n.Staged.Ranked[0].Actions[0].Argv, []string{"bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"}) ||
+		len(n.Actions) != 2 || n.Actions[0].Key != "C" || n.Actions[1].Key != "R" || !reflect.DeepEqual(n.Actions[1].Argv, []string{"bl", "rank", "--reset"}) {
+		t.Errorf("next's actions = %+v; the first staged row's = %+v", n.Actions, n.Staged.Ranked[0].Actions)
+	}
+	if second, err := Decode(lines[1]); err != nil || second.Next.Staged != nil || second.Next.Conflict == "" || len(second.Next.Actions) != 2 {
+		t.Errorf("second next = %+v, %v", second.Next, err)
+	}
 	if w := first.Capacity.Configurations[0].Windows[0]; w.Name != "codex 5h" || w.RemainingPercent != 80 {
 		t.Errorf("capacity window = %+v", w)
 	}

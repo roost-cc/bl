@@ -1372,14 +1372,14 @@ export function findDanglingFindings(graph) {
 
 /**
  * The priority findings, from the graph's problems (F-78 D1), each an error
- * at `priority.md`:
+ * at `priority.yaml`:
  *
- *   - `priority-file`: the file is missing, its frontmatter is not YAML, or
- *     `ranked:` is not a list of mappings each with `unit` and `why`;
+ *   - `priority-file`: the file is missing, is not YAML, or is not a list of
+ *     work unit ids;
  *   - `priority-unit`: an entry that names no feature or story, names one
  *     twice, or names a story inside a feature, an update story or a task.
  *
- * A closed unit left in `ranked:` is no finding: the order skips it.
+ * A closed unit left in the list is no finding: the order skips it.
  * @param {import("./backlog-graph.js").BacklogGraph} graph
  * @returns {Finding[]}
  */
@@ -1571,7 +1571,7 @@ export function runAll(config, opts = {}) {
     ...valueAxisFindings,
   );
 
-  // 4a. The priority (F-78 D1): `priority.md`'s `ranked:`, the graph's
+  // 4a. The priority (F-78 D1): `priority.yaml`'s list, the graph's
   //     problems. The roadmap's shape (F-53 D2) and the themes' briefs (D4).
   // The edges in blockers.json (F-66 D5), against the flow and every unit,
   // and the cycles among every edge bl reads, the depends_on: keys' too

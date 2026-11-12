@@ -42,7 +42,7 @@
  * A headless spawn's child runs with `BL_HEADLESS=1` (`HEADLESS_ENV`, F-78
  * D3): each adapter builds the child's environment with `agentEnv`, so every
  * agent bl starts headless is marked and the `bl` it calls can refuse what
- * only a person may do (`bl rank`, a backlog commit of `priority.md`). An
+ * only a person may do (`bl rank`, a backlog commit of `priority.yaml`). An
  * interactive spawn has no headless marker.
  *
  * Every spawn, headless or not, runs with `BL_TAB_TITLE=''` (`TAB_TITLE_ENV`,

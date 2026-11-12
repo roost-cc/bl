@@ -10,6 +10,7 @@ import { mkTempBacklog } from '../helpers/tempdir.js';
 import { holdLock } from '../helpers/hold-lock.js';
 import { loadConfig } from '../../src/config.js';
 import { TOKEN_KEYS } from '../../src/tokens.js';
+import { STAGED_CONFLICT, STAGED_FILE } from '../../src/priority.js';
 import {
   deniedOf,
   itemActions,
@@ -880,13 +881,126 @@ test('actions (S-1336): the runs rows, attention items and ranked units of a sna
   const { dir } = mkTempBacklog({
     components: [{ id: 'C01', title: 'Work' }],
     stories: [{ id: 'S-4', component: 'C01', title: 'Every verb commits', status: 'approved' }],
-    priority: [{ unit: 'S-4', why: 'first' }],
+    priority: ['S-4'],
   });
   const readers = sectionReaders(loadConfig({ backlogRoot: dir }));
   const { ranked } = readers.next(NOW);
   assert.ok(ranked.length > 0, 'a ranked unit');
   for (const r of ranked) {
-    assert.deepEqual(r.actions.map(shown), [`o: bl view ${r.id} (${r.id} view)`, 'g: bl agent (agent)']);
+    assert.deepEqual(r.actions.map(shown).slice(-2), [`o: bl view ${r.id} (${r.id} view)`, 'g: bl agent (agent)']);
   }
   for (const item of readers.attention(NOW).items) assert.equal(item.actions.at(-1).key, 'g', item.id);
+});
+
+/** A backlog of 14 loose stories, S-1 to S-14 (added in that order); `ranked` names the ranked ones. */
+function nextBacklog(ranked) {
+  const stories = Array.from({ length: 14 }, (_, i) => ({
+    id: `S-${i + 1}`,
+    component: 'C01',
+    title: `Story ${i + 1}`,
+    status: 'approved',
+    added: `2026-10-${String(i + 1).padStart(2, '0')}`,
+  }));
+  const { dir } = mkTempBacklog({ components: [{ id: 'C01', title: 'Work' }], stories, priority: ranked });
+  return { dir, next: () => sectionReaders(loadConfig({ backlogRoot: dir })).next(NOW) };
+}
+
+const ids = (rows) => rows.map((r) => r.id);
+const writeStaged = (dir, text) => {
+  mkdirSync(join(dir, '.bl'), { recursive: true });
+  writeFileSync(join(dir, STAGED_FILE), text);
+};
+
+test('next (F-113 D5): every ranked unit and every other open unit oldest first; no counts; no staged copy, no staged order', () => {
+  const ranked = ['S-12', 'S-1', 'S-2', 'S-3', 'S-4', 'S-5', 'S-6', 'S-7', 'S-8', 'S-9', 'S-10'];
+  const { next } = nextBacklog(ranked);
+  const section = next();
+  assert.deepEqual(ids(section.ranked), ranked, 'more than ten, in the committed order');
+  assert.deepEqual(ids(section.unranked), ['S-11', 'S-13', 'S-14'], 'oldest added: first');
+  for (const r of [...section.ranked, ...section.unranked]) {
+    assert.deepEqual(Object.keys(r).sort(), [
+      'actions',
+      'heldBy',
+      'holds',
+      'id',
+      'points',
+      'position',
+      'status',
+      'title',
+    ]);
+  }
+  assert.equal(section.unranked[0].position, null);
+  assert.equal('rankedCount' in section, false);
+  assert.equal('unrankedCount' in section, false);
+  assert.equal(section.staged, null);
+  assert.equal(section.conflict, null);
+});
+
+test('next (F-113 D5): the staged order, each row with its mark: a move, a new rank and an unrank', () => {
+  const { dir, next } = nextBacklog(['S-1', 'S-2', 'S-3', 'S-4']);
+  // S-4 moves to the top, S-2 is taken out, S-6 is newly ranked.
+  writeStaged(dir, '- S-4\n- S-1\n- S-3\n- S-6\n');
+  const section = next();
+  assert.deepEqual(ids(section.ranked), ['S-1', 'S-2', 'S-3', 'S-4'], 'ranked stays the committed order');
+  assert.equal(section.conflict, null);
+  const row = (r) => [r.id, r.position, r.mark];
+  assert.deepEqual(section.staged.ranked.map(row), [
+    ['S-4', 1, '~'],
+    ['S-1', 2, ''],
+    ['S-3', 3, ''],
+    ['S-6', 4, '+'],
+  ]);
+  assert.deepEqual(
+    section.staged.unranked.slice(0, 3).map(row),
+    [
+      ['S-2', null, '-'],
+      ['S-5', null, ''],
+      ['S-7', null, ''],
+    ],
+    'the unranked group in added: order, with the unranked unit marked',
+  );
+  assert.equal(section.staged.unranked.length, 14 - 4);
+  // Each row carries the plan's fields of its unit.
+  const s6 = section.staged.ranked[3];
+  const plain = section.unranked.find((r) => r.id === 'S-6');
+  assert.deepEqual(
+    { ...s6, position: null, mark: undefined, actions: s6.actions.slice(3) },
+    { ...plain, mark: undefined },
+  );
+});
+
+const RANK_KEYS = [
+  'p: bl rank {{.Yanked}} --after {{.Selected}}',
+  'P: bl rank {{.Yanked}} --before {{.Selected}}',
+  'x: bl rank {{.Selected}} --remove',
+];
+
+test('next (F-113 D7): ranked rows carry the x, p and P templates, unranked rows none; C and R only with a staged copy', () => {
+  const { dir, next } = nextBacklog(['S-1', 'S-2']);
+  const keys = (r) => r.actions.map(shown).filter((a) => /^[pPx]: /.test(a));
+  let section = next();
+  for (const r of section.ranked) assert.deepEqual(keys(r), RANK_KEYS, r.id);
+  for (const r of section.unranked) assert.deepEqual(keys(r), [], r.id);
+  assert.deepEqual(section.actions, [], 'no staged copy: no C and R');
+  // A staged copy: S-2 out, S-3 in. The staged order's ranked rows carry them, its unranked rows not.
+  writeStaged(dir, '- S-1\n- S-3\n');
+  section = next();
+  assert.deepEqual(ids(section.staged.ranked), ['S-1', 'S-3']);
+  for (const r of section.staged.ranked) assert.deepEqual(keys(r), RANK_KEYS, r.id);
+  for (const r of section.staged.unranked) assert.deepEqual(keys(r), [], r.id);
+  assert.deepEqual(section.actions.map(shown), ['C: bl rank --commit', 'R: bl rank --reset']);
+  // In conflict, the staged copy still exists: C and R stay (the view refuses C itself).
+  writeStaged(dir, '<<<<<<< staged\n- S-2\n=======\n- S-1\n>>>>>>> main\n');
+  assert.deepEqual(next().actions.map(shown), ['C: bl rank --commit', 'R: bl rank --reset']);
+});
+
+test('next (F-113 Decision A3): a staged copy in conflict sends the committed lists, staged null and the conflict message', () => {
+  const { dir, next } = nextBacklog(['S-1', 'S-2']);
+  writeStaged(dir, '<<<<<<< staged\n- S-2\n- S-1\n=======\n- S-1\n- S-2\n>>>>>>> main\n');
+  const section = next();
+  assert.deepEqual(ids(section.ranked), ['S-1', 'S-2']);
+  assert.equal(section.unranked.length, 12);
+  assert.equal(section.staged, null);
+  assert.equal(section.conflict, STAGED_CONFLICT);
+  assert.equal(section.error, undefined);
 });

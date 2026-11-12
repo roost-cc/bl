@@ -825,10 +825,39 @@
         "title": "Every repo's pre-push gate runs the tests that prove a change, and nothing else runs them twice",
         "status": "running",
         "points": 21,
-        "why": "",
         "holds": [],
         "heldBy": [],
         "actions": [
+          {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
           {
             "key": "o",
             "label": "open the page",
@@ -857,10 +886,39 @@
         "title": "Every repo's gate passes in a throwaway worktree on the guest",
         "status": "approved",
         "points": 8,
-        "why": "",
         "holds": ["S-1350 depends on S-1310 (in_progress)"],
         "heldBy": ["F-81"],
         "actions": [
+          {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
           {
             "key": "o",
             "label": "open the page",
@@ -889,10 +947,39 @@
         "title": "Dependency updates are one job: Renovate applies, the gate tests, the job merges",
         "status": "refined",
         "points": 13,
-        "why": "",
         "holds": ["S-1360 depends on S-1351 (backlog)"],
         "heldBy": ["F-84"],
         "actions": [
+          {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
           {
             "key": "o",
             "label": "open the page",
@@ -921,10 +1008,39 @@
         "title": "AGENTS.md in plain English: rewrite bl's reference in about 80% of ASD-STE100",
         "status": "draft",
         "points": 0,
-        "why": "",
         "holds": [],
         "heldBy": [],
         "actions": [
+          {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
           {
             "key": "o",
             "label": "open the page",
@@ -953,10 +1069,39 @@
         "title": "Inspection quick condition assessment",
         "status": "draft",
         "points": 0,
-        "why": "",
         "holds": [],
         "heldBy": [],
         "actions": [
+          {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
           {
             "key": "o",
             "label": "open the page",
@@ -985,10 +1130,39 @@
         "title": "Maintenance requests",
         "status": "draft",
         "points": 0,
-        "why": "",
         "holds": [],
         "heldBy": [],
         "actions": [
+          {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
           {
             "key": "o",
             "label": "open the page",
@@ -1012,8 +1186,31 @@
         ]
       }
     ],
-    "rankedCount": 6,
-    "unrankedCount": 185
+    "unranked": [
+      {
+        "position": null,
+        "id": "S-1400",
+        "title": "Loose story, the oldest",
+        "status": "backlog",
+        "points": 2,
+        "holds": [],
+        "heldBy": [],
+        "actions": []
+      },
+      {
+        "position": null,
+        "id": "F-99",
+        "title": "Feature, the newest",
+        "status": "draft",
+        "points": 0,
+        "holds": [],
+        "heldBy": [],
+        "actions": []
+      }
+    ],
+    "staged": null,
+    "conflict": null,
+    "actions": []
   },
   "capacity": {
     "read_at": "2026-11-09T23:14:31.000Z",

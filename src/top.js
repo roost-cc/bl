@@ -18,15 +18,7 @@ import { join, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { parseArgs } from 'util';
 import { loadConfig, topSettings } from './config.js';
-import {
-  ACTIVITY_SHOWN,
-  HISTORY_DAYS,
-  NEXT_SHOWN,
-  problemLines,
-  TOKEN_MINUTES,
-  TOP_SCHEMA,
-  topSnapshot,
-} from './top-snapshot.js';
+import { ACTIVITY_SHOWN, HISTORY_DAYS, problemLines, TOKEN_MINUTES, TOP_SCHEMA, topSnapshot } from './top-snapshot.js';
 import { ATTENTION_MAX_AGE_MS, CAPACITY_EVERY_MS, HISTORY_EVERY_MS, runStream } from './top-stream.js';
 
 export const DEFAULT_INTERVAL_MS = 2000;
@@ -105,8 +97,11 @@ it then keeps its last good value.
               timeline, its denied tools and its actions (every snapshot)
   attention   bl inbox's items, in its order, each with its actions (when the
               backlog changes, and at least every ${s(ATTENTION_MAX_AGE_MS)})
-  next        bl next's pick and the first ${NEXT_SHOWN} ranked units with status,
-              points, holds and actions (as attention)
+  next        bl next's pick, every ranked unit, every other open unit (oldest
+              added: first), each with status, points, holds and actions, the
+              staged order of bl rank with a mark per row, and the staged
+              copy's merge conflict (as attention, and when the staged copy
+              changes)
   capacity    bl capacity --json's configurations (every ${s(CAPACITY_EVERY_MS)})
   history     per day over the last ${HISTORY_DAYS} days, the stories that first reached
               done and their points (every ${s(HISTORY_EVERY_MS)})

@@ -21,6 +21,7 @@ import { runHolder, runStatus } from './run-lock.js';
 import { collectInbox } from './inbox.js';
 import { changeNextVerb } from './change-doc.js';
 import { nextPlan } from './next.js';
+import { PRIORITY_FILE, STAGED_CONFLICT, StagedConflictError, marks, orderOf, readStaged } from './priority.js';
 import { parseFilter } from './filter.js';
 import { capacityJson, capacityRows } from './capacity.js';
 import { addDays, buildHistory } from './history.js';
@@ -35,9 +36,6 @@ export const SECTIONS = ['runs', 'attention', 'next', 'capacity', 'history', 'ac
 
 /** A run state that is not running or stopped is listed for this long after its last update. */
 export const RUN_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-/** How many ranked units `next` holds. */
-export const NEXT_SHOWN = 10;
 
 /** How many days `history` holds, today included. */
 export const HISTORY_DAYS = 30;
@@ -243,6 +241,30 @@ const agentAction = () => action('g', 'talk it through', ['bl', 'agent'], { wind
 
 /** A work unit row's (or a task's) page, in a new tmux window. */
 const viewAction = (id, label = 'open the page') => action('o', label, ['bl', 'view', id], { window: `${id} view` });
+
+/**
+ * The ranking actions of a ranked row of box ³ (F-113 D6, D7). Each argv
+ * element is a Go `text/template` that the view renders with the selected
+ * row's id (`Selected`) and the yanked unit's id (`Yanked`).
+ */
+const RANK_ACTIONS = [
+  action('p', 'put the yanked unit after it', ['bl', 'rank', '{{.Yanked}}', '--after', '{{.Selected}}']),
+  action('P', 'put the yanked unit before it', ['bl', 'rank', '{{.Yanked}}', '--before', '{{.Selected}}']),
+  action('x', 'unrank it', ['bl', 'rank', '{{.Selected}}', '--remove']),
+];
+
+/** A ranked row of box ³: its ranking actions, then the row's own. */
+const rankedRow = (row) => ({ ...row, actions: [...RANK_ACTIONS, ...row.actions] });
+
+/** Box ³'s actions while a staged copy exists (F-113 D7): commit it or reset it. */
+const STAGED_ACTIONS = [
+  action('C', 'commit the staged order', ['bl', 'rank', '--commit'], {
+    about: [`bl rank --commit merges the staged order into ${PRIORITY_FILE}, then commits and pushes it.`],
+  }),
+  action('R', 'drop the staged edits', ['bl', 'rank', '--reset'], {
+    about: ['bl rank --reset deletes the staged copy. Every staged edit is lost.'],
+  }),
+];
 
 /**
  * The actions of an inbox item (D7): an escalation is read with `bl status`
@@ -532,12 +554,51 @@ function readAttention(config, now) {
   return { items: items.map((item) => ({ ...item, actions: itemActions(item) })), warnings };
 }
 
-/** `next`: `bl next`'s pick, the first NEXT_SHOWN ranked units, and how many are unranked. */
+/**
+ * The staged order (F-113 D5): null with no staged copy, else its `ranked`
+ * and `unranked` rows, each the plan's row of that unit (`rows`, by id) with
+ * `position` its place in the staged ranked list (null when unranked) and
+ * `mark` against the committed order (`marks`). `conflict` is Decision A3's
+ * message when the staged copy is in conflict, else null.
+ * @param {Map<string, object>} rows
+ */
+function readStagedOrder(config, plan, rows) {
+  let ids;
+  try {
+    ids = readStaged(config.backlogRoot);
+  } catch (err) {
+    if (err instanceof StagedConflictError) return { staged: null, conflict: STAGED_CONFLICT };
+    throw err;
+  }
+  if (!ids) return { staged: null, conflict: null };
+  const order = orderOf(ids, plan.graph);
+  const mark = marks(
+    plan.ranked.map((e) => e.id),
+    order.ranked.map((u) => u.id),
+  );
+  const row = (u, position) => ({ ...rows.get(u.id), position, mark: mark.get(u.id) ?? '' });
+  return {
+    staged: {
+      ranked: order.ranked.map((u, i) => rankedRow(row(u, i + 1))),
+      unranked: order.unranked.map((u) => row(u, null)),
+    },
+    conflict: null,
+  };
+}
+
+/**
+ * `next`: `bl next`'s pick, every committed ranked unit, every other open
+ * unit `byAdded`, and the staged order with its markers (F-113 D5). A ranked
+ * row carries the ranking actions, and `actions` carries commit and reset
+ * while a staged copy exists, in conflict or not (F-113 D7).
+ */
 function readNext(config) {
   // `parseFilter` with no flags: the filter that matches every unit.
   const plan = nextPlan(config, parseFilter({}));
-  // A ranked unit is a work unit row: its page and `bl agent` (D7).
+  // A unit is a work unit row: its page and `bl agent` (D7).
   const fields = ({ unit, ...e }) => ({ ...e, actions: [viewAction(e.id), agentAction()] });
+  const rows = new Map([...plan.ranked, ...plan.unranked].map((e) => [e.id, fields(e)]));
+  const { staged, conflict } = readStagedOrder(config, plan, rows);
   return {
     pick: plan.pick && {
       id: plan.pick.unit.id,
@@ -546,9 +607,11 @@ function readNext(config) {
       from: plan.pick.from.id,
       path: plan.pick.path,
     },
-    ranked: plan.ranked.slice(0, NEXT_SHOWN).map(fields),
-    rankedCount: plan.ranked.length,
-    unrankedCount: plan.unranked.length,
+    ranked: plan.ranked.map((e) => rankedRow(rows.get(e.id))),
+    unranked: plan.unranked.map((e) => rows.get(e.id)),
+    staged,
+    conflict,
+    actions: staged || conflict ? STAGED_ACTIONS : [],
   };
 }
 

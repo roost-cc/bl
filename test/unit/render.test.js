@@ -101,7 +101,7 @@ function flatBacklog() {
       { id: 'F-1', title: 'Web flow', dirSuffix: 'web-flow', status: 'running', added: '2026-01-03' },
       { id: 'F-2', title: 'Ops flow', dirSuffix: 'ops-flow', status: 'done' },
     ],
-    priority: [{ unit: 'S-6', why: 'The orphan first.' }],
+    priority: ['S-6'],
   });
   writeFileSync(join(t.dir, 'index.md'), '---\ntitle: Acme Backlog\n---\n\n# Acme Backlog\n\nHand-written intro.\n');
   return t;
@@ -211,7 +211,7 @@ test('the root renders the Total backlog line, Themes, Components and Priority, 
     ]);
     assert.deepEqual(rowIn(top, 'Themes', 'demo'), ['[demo](themes/demo/index.md)', 'Demo', '0', '1']);
 
-    // Priority: the open units in priority.md's order (F-78 D1): S-6 ranked,
+    // Priority: the open units in priority.yaml's order (F-78 D1): S-6 ranked,
     // then the unranked tail by added:; F-2 is done, S-1..S-4 are in features.
     assert.deepEqual(sectionIds(top, 'Priority'), ['S-6', 'S-7', 'F-1']);
     assert.deepEqual(rowIn(top, 'Priority', 'S-6'), [

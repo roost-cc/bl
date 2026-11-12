@@ -110,8 +110,8 @@ _roost_bl() {
     'tree:Show dependency trees'
     'history:Daily backlog snapshots from git: weeks by points per status'
     'report:Write the backlog progress report to reports/'
-    'next:Print the next unit by priority.md, hard dependencies first'
-    'rank:Change priority.md, the one ranked list of units (operator only)'
+    'next:Print the next unit by priority.yaml, hard dependencies first'
+    'rank:Change priority.yaml, the one ranked list of units (operator only)'
     'what-next:Suggest the next story to start by walking the dep graph'
     'done:Mark a story as done'
     'inbox:Everything waiting on you: escalations, tasks, changes, red updates'
@@ -319,8 +319,9 @@ _roost_bl() {
         '(--top --before --after --remove)--bottom[Rank the unit last]' \
         '(--top --bottom --after --remove)--before[Just before a ranked unit]:unit:(${units})' \
         '(--top --bottom --before --remove)--after[Just after a ranked unit]:unit:(${units})' \
-        '(--remove)--why[The reason (needed for a new unit)]:why:' \
-        '(--top --bottom --before --after --why)--remove[Take the unit out of the list]' \
+        '(--top --bottom --before --after)--remove[Take the unit out of the list]' \
+        '(- 1)--commit[Merge and commit the staged edits]' \
+        '(- 1)--reset[Drop the staged edits]' \
         '1:feature or loose story id:(${units})'
       ;;
     what-next)

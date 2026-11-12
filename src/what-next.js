@@ -189,7 +189,7 @@ Suggests the next story to start by walking the dependency graph:
   - If no story depends on the reference story, it was a root — there is
     nothing to chain to.
   - With a component ID, picks the startable story inside the component
-    whose unit comes first in the backlog's priority (priority.md, then the
+    whose unit comes first in the backlog's priority (priority.yaml, then the
     unranked units by date; a story sorts at its feature's place); if none
     has a place, falls back to the lowest-id startable story.
   - The filters pick the same way among the stories they match:

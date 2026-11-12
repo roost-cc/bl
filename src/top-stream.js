@@ -9,7 +9,8 @@
  *   activity   every tick
  *   tokens     every tick
  *   attention  when the backlog changes (D3a: git HEAD moves, or a unit file,
- *   next       change document or priority.md changes: `backlogStamp`), and
+ *   next       change document, priority.yaml or the staged copy changes:
+ *              `backlogStamp`), and
  *              at least every ATTENTION_MAX_AGE_MS
  *   capacity   every CAPACITY_EVERY_MS, and at the tick after a `capacity`
  *              line on stdin
@@ -24,8 +25,10 @@
  */
 
 import { spawnSync } from 'child_process';
+import { join } from 'path';
 import { createInterface } from 'readline';
-import { backlogSignature } from './backlog-graph.js';
+import { backlogSignature, statKey } from './backlog-graph.js';
+import { STAGED_FILE } from './priority.js';
 import { problemLines, readSection, sectionReaders, snapshotOf } from './top-snapshot.js';
 
 export const ATTENTION_MAX_AGE_MS = 30 * 1000;
@@ -46,8 +49,10 @@ const NO_STAMP = Symbol('no stamp');
 
 /**
  * What says the backlog changed (D3a): git's `HEAD`, and the stat signature
- * of every unit file, change document and `priority.md` (`backlogSignature`,
- * the one `loadBacklog` compares). Equal stamps mean no change.
+ * of every unit file, change document and `priority.yaml` (`backlogSignature`,
+ * the one `loadBacklog` compares), and the stat of the staged copy
+ * (`STAGED_FILE`, F-113 D5), which no commit records. Equal stamps mean no
+ * change.
  * @param {{ backlogRoot: string }} config
  * @returns {string}
  */
@@ -57,7 +62,8 @@ export function backlogStamp(config) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  return `${head.status === 0 ? head.stdout.trim() : ''}\n${backlogSignature(config)}`;
+  const staged = statKey(join(config.backlogRoot, STAGED_FILE)) ?? '';
+  return `${head.status === 0 ? head.stdout.trim() : ''}\n${backlogSignature(config)}\n${staged}`;
 }
 
 /**

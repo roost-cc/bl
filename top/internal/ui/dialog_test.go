@@ -164,7 +164,9 @@ func TestAOpensTheMenuOfTheSelectedRowsActions(t *testing.T) {
 		{2, "F-83:esc", []string{"e  read the escalation", "bl status F-83  (new tmux window)"}},
 		{2, "F-81:change", []string{"m  merge it", "bl merge F-81"}},
 		{2, "updates:run", []string{"▶ g  talk it through"}},
-		{3, "F-84", []string{"▶ o  open the page", "bl view F-84  (new tmux window)"}},
+		// A ranked unit: its put templates wait for a yank; x renders with the selected id (F-113 D7).
+		{3, "F-84", []string{"▶ p  put the yanked unit after it   yank a work unit first (y)", "x  unrank it", "bl rank F-84 --remove",
+			"o  open the page", "bl view F-84  (new tmux window)"}},
 	} {
 		m, _ := press(t, atRow(t, c.box, c.id), text("a"))
 		out := dialogText(m)

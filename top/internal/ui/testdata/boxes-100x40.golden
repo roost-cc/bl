@@ -20,7 +20,7 @@
 │   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the gue…│
 │   5   F-80   refined    13  F-84     Dependency updates are one job: Renovate applies, the gate …│
 │   6   F-86   draft       -           AGENTS.md in plain English: rewrite bl's reference in about…│
-│ bl next → F-81 (running) · 185 work units not ranked                                             │
+│ bl next → F-81 (running)                                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─┐⁴tokens┌───────────────────────────────┐2h┌─╮╭─┐⁵activity┌────────────────────────────────┐30d┌─╮
 │ out tok / min · ended sessions     peak 8.7k ││ points done / UTC day · 30 days   last 7 days 41 │

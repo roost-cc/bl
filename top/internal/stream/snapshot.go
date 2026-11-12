@@ -64,9 +64,10 @@ type Run struct {
 	Actions      []Action `json:"actions"`
 }
 
-// Action is one action of a row (F-87 D7, S-1336): `itemActions`, `runActions` and the ranked
-// units' actions in src/top-snapshot.js build them. Argv is a bl command (`bl …`), which the view
-// runs through its own bl; nil for URL, a page the view opens. Input is "", "note" (optional text)
+// Action is one action of a row (F-87 D7, S-1336): `itemActions`, `runActions` and the units'
+// actions in src/top-snapshot.js build them. Argv is a bl command (`bl …`), which the view
+// runs through its own bl; nil for URL, a page the view opens. Each argv element is a
+// text/template (F-113 D7), which actions.Render renders. Input is "", "note" (optional text)
 // or "reason" (needed text), added as the command's last word. Window names the tmux window the
 // command opens in; "" runs it as a child, with a result box. About are lines the y/n question
 // shows; Stops is the run whose `stopped` end does not notify (D8).
@@ -142,13 +143,23 @@ type Item struct {
 	Actions []Action `json:"actions"`
 }
 
-// Next is the `next` section: `bl next`'s pick and the first ranked units.
+// Next is the `next` section (F-113 D5): `bl next`'s pick, the committed order, the staged order
+// (nil with no staged copy), Decision A3's message while the staged copy is in conflict, and the
+// box's own actions (commit and reset) while a staged copy exists (F-113 D7).
 type Next struct {
 	Section
-	Pick          *Pick    `json:"pick"`
-	Ranked        []Ranked `json:"ranked"`
-	RankedCount   int      `json:"rankedCount"`
-	UnrankedCount int      `json:"unrankedCount"`
+	Order
+	Pick     *Pick    `json:"pick"`
+	Staged   *Order   `json:"staged"`
+	Conflict string   `json:"conflict"`
+	Actions  []Action `json:"actions"`
+}
+
+// Order is an order of the open units: every ranked unit in its rank, then every other open unit,
+// oldest `added:` first.
+type Order struct {
+	Ranked   []Unit `json:"ranked"`
+	Unranked []Unit `json:"unranked"`
 }
 
 // Pick is the unit `bl next` picks, and the unit its walk started at.
@@ -160,14 +171,16 @@ type Pick struct {
 	Path   []string `json:"path"`
 }
 
-// Ranked is one ranked unit, what holds it from `bl run`, and the ids of those holders.
-type Ranked struct {
+// Unit is one open unit of an order, what holds it from `bl run`, and the ids of those holders.
+// Position is 0 for an unranked unit. Mark is set in the staged order only: `+` newly ranked, `~`
+// moved, `-` taken out of the ranked list, or "".
+type Unit struct {
 	Position int      `json:"position"`
+	Mark     string   `json:"mark"`
 	ID       string   `json:"id"`
 	Title    string   `json:"title"`
 	Status   string   `json:"status"`
 	Points   float64  `json:"points"`
-	Why      string   `json:"why"`
 	Holds    []string `json:"holds"`
 	HeldBy   []string `json:"heldBy"`
 	Actions  []Action `json:"actions"`

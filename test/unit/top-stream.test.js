@@ -4,9 +4,10 @@
 // minutes at the default 2000 ms interval.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { STAGED_FILE } from '../../src/priority.js';
 import { RETRY_FIRST_MS, backlogStamp, createStream } from '../../src/top-stream.js';
 import { SECTIONS } from '../../src/top-snapshot.js';
 
@@ -159,7 +160,7 @@ test('a section that keeps failing is not read at every tick', () => {
   }
 });
 
-test('backlogStamp changes when a unit file, a change document or a new task changes the backlog', () => {
+test('backlogStamp changes when a unit file, a change document, a new task or the staged copy changes the backlog', () => {
   const dir = mkTempDir('bl-top-stamp-');
   const config = { backlogRoot: dir };
   const unit = join(dir, 'stories', 'S1-one');
@@ -177,6 +178,15 @@ test('backlogStamp changes when a unit file, a change document or a new task cha
         writeFileSync(join(dir, 'tasks', 'T1-do.md'), 'task\n');
       },
     ],
+    [
+      'a staged copy written (F-113 D5)',
+      () => {
+        mkdirSync(join(dir, '.bl'));
+        writeFileSync(join(dir, STAGED_FILE), '- F-1\n');
+      },
+    ],
+    ['a staged edit', () => writeFileSync(join(dir, STAGED_FILE), '- F-2\n- F-1\n')],
+    ['the staged copy deleted', () => rmSync(join(dir, STAGED_FILE))],
   ]) {
     change();
     assert.notEqual(backlogStamp(config), before, what);

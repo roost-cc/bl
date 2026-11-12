@@ -39,8 +39,8 @@ export function byOpenStatus(rankOf, openStatuses) {
 }
 
 /**
- * The Rank cell of each story: its unit's entry number in `priority.md`'s
- * `ranked:` (a story inside a feature: its feature's), `-` for an unranked
+ * The Rank cell of each story: its unit's entry number in `priority.yaml`
+ * (a story inside a feature: its feature's), `-` for an unranked
  * one, which sorts in the dated tail.
  * @param {import('./backlog-graph.js').BacklogGraph} graph
  * @returns {(id: string) => string}
@@ -165,7 +165,7 @@ export function listByStatus() {
 /**
  * The one story table: stdout, through the pager, with its summary line. `filtered`
  * is already sorted. An empty list or a pattern matching nothing says so on stderr.
- * The Rank column, after Status, is `rank(id)`: the unit's `ranked:` entry, or
+ * The Rank column, after Status, is `rank(id)`: the unit's priority entry, or
  * `-` for an unranked one.
  *
  * @param {object[]} filtered

@@ -327,8 +327,14 @@ func TestSnapshotRedrawsAndASectionErrorShowsInItsBorder(t *testing.T) {
 	if !strings.Contains(out, styleError.Render("! codex app-server timed out")) {
 		t.Errorf("box ⁴'s border has no red ! with the capacity error:\n%s", ansi.Strip(out))
 	}
+	// The recorded line's staged copy is in conflict: its message is the first line, the boxes
+	// start under it.
+	lines := strings.Split(ansi.Strip(out), "\n")
+	if !strings.HasPrefix(lines[0], " ! merge conflict in .bl/priority.staged.yaml") {
+		t.Errorf("the first line is not the conflict: %q", lines[0])
+	}
 	clock := m.snap.At.Local().Format("15:04:05")
-	if !strings.Contains(strings.Split(ansi.Strip(out), "\n")[0], "┐"+clock+"┌─┐- 2000ms +┌─╮") {
+	if !strings.Contains(lines[1], "┐"+clock+"┌─┐- 2000ms +┌─╮") {
 		t.Errorf("¹ border has no clock %s", clock)
 	}
 }

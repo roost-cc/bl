@@ -161,7 +161,7 @@ test('commitPaths reports a commit that fails without output as an error', async
 // commitChangedSince: what bl merge, refine, triage and init commit (S-1330)
 // ---------------------------------------------------------------------------
 
-/** A repo with `x.md`, `y.md` and `priority.md` committed, and an identity. */
+/** A repo with `x.md`, `y.md` and `priority.yaml` committed, and an identity. */
 function changedSinceRepo() {
   const dir = mkTempDir('bl-bc-since-');
   g(dir, 'init', '-q', '-b', 'main');
@@ -241,14 +241,14 @@ test('commitChangedSince: a path dirty before stays out and is named unless the 
   assert.equal(g(dir, 'status', '--porcelain'), 'M x.md');
 });
 
-test('commitChangedSince: priority.md is held for an agent session, with one line, and committed otherwise', async () => {
+test('commitChangedSince: priority.yaml is held for an agent session, with one line, and committed otherwise', async () => {
   for (const session of [true, false]) {
     const dir = changedSinceRepo();
     const before = dirtySnapshot(dir);
     writeFileSync(join(dir, PRIORITY_FILE), 'reranked\n');
     writeFileSync(join(dir, 'x.md'), 'refined\n');
     // As a person: under the headless marker `commitPaths` refuses
-    // `priority.md` by itself (F-78 D3), session or not.
+    // `priority.yaml` by itself (F-78 D3), session or not.
     const marker = process.env[HEADLESS_ENV];
     delete process.env[HEADLESS_ENV];
     let failed, err;
@@ -282,7 +282,7 @@ test('commitChangedSince: a path dirty before that the session committed itself 
   assert.equal(g(dir, 'log', '-1', '--format=%s'), 'the session commits it');
 });
 
-test('commitChangedSince: priority.md dirty before and changed by the session gets only the hold line', async () => {
+test('commitChangedSince: priority.yaml dirty before and changed by the session gets only the hold line', async () => {
   const dir = changedSinceRepo();
   writeFileSync(join(dir, PRIORITY_FILE), 'operator\n');
   const before = dirtySnapshot(dir);
@@ -572,7 +572,7 @@ for (const [first, next, carries] of [
 // Each way a failure can drop the record of a failed commit's paths: every
 // path either stays recorded until a retry commits it, or a call reports the
 // failure and names it. `call` runs `commitChangedSince` as a person (the
-// headless marker refuses `priority.md` on its own, F-78 D3).
+// headless marker refuses `priority.yaml` on its own, F-78 D3).
 {
   const MESSAGE = 'chore: o';
   const call = async (dir, before, opts = {}) => {
@@ -609,12 +609,12 @@ for (const [first, next, carries] of [
   const subject = (dir) => g(dir, 'log', '-1', '--format=%s');
   for (const [label, run] of [
     [
-      'a carried priority.md that a session holds stays recorded, and the next call commits it',
+      'a carried priority.yaml that a session holds stays recorded, and the next call commits it',
       async (dir) => {
         await failFirst(dir, PRIORITY_FILE);
         const [held, err] = await call(dir, dirtySnapshot(dir), { session: true });
         assert.equal(held, false, err);
-        assert.match(err, /Left priority\.md uncommitted/);
+        assert.match(err, new RegExp(`Left ${PRIORITY_FILE} uncommitted`));
         assert.equal(subject(dir), 'base');
         assert.ok(existsSync(record(dir)), 'still recorded');
         const [failed, err2] = await call(dir, dirtySnapshot(dir));

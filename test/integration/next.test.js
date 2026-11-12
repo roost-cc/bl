@@ -8,16 +8,11 @@ import { writeBlockers } from '../../src/blockers.js';
 import { loadConfig } from '../../src/config.js';
 import { nextPlan } from '../../src/next.js';
 
-// F-78 D2: `bl next` walks `backlog.priority` (priority.md's ranked units,
+// F-78 D2: `bl next` walks `backlog.priority` (priority.yaml's ranked units,
 // then the unranked ones by `added:`) and prints the first unit nothing
 // holds, a blocker's unit first.
 
-const RANKED = [
-  { unit: 'F-3', why: 'Unblocks | the rest.' },
-  { unit: 'S-10', why: 'A quick fix.' },
-  { unit: 'F-1', why: 'Then the accounts work.' },
-  { unit: 'F-2', why: 'Already done.' },
-];
+const RANKED = ['F-3', 'S-10', 'F-1', 'F-2'];
 
 /**
  * Themes `backlog` (repo bl, epic E50) and `accounts` (repo app, epic E51).
@@ -83,9 +78,9 @@ test('bl next prints the first open ranked unit; stderr lists the ranked units, 
     new RegExp(
       [
         'Ranked:',
-        '  1\\. F-3  Unit order  \\[backlog, E50\\] — Unblocks \\| the rest\\.',
-        '  2\\. S-10  Loose tool  \\[C01\\] — A quick fix\\.',
-        '  3\\. F-1  Sign in  \\[accounts, E51\\] — Then the accounts work\\.',
+        '  1\\. F-3  Unit order  \\[backlog, E50\\]',
+        '  2\\. S-10  Loose tool  \\[C01\\]',
+        '  3\\. F-1  Sign in  \\[accounts, E51\\]',
         'Not yet ranked, oldest first:',
         '  S-11  Old loose app  \\[C02\\]',
         '  F-4  Unranked backlog  \\[backlog\\]',
@@ -95,14 +90,15 @@ test('bl next prints the first open ranked unit; stderr lists the ranked units, 
     ),
   );
   assert.doesNotMatch(r.stderr, /F-2|S-12/, 'a closed unit is never listed');
+  assert.doesNotMatch(r.stderr, / — /, 'no reason is printed (F-113 D2)');
 });
 
-test('unranked units follow by added:, undated first; a new story lands at the end with no edit to priority.md', () => {
+test('unranked units follow by added:, undated first; a new story lands at the end with no edit to priority.yaml', () => {
   const { dir } = unitBacklog({
     priority: [],
     stories: [{ id: 'S-13', component: 'C01', title: 'Brand new', added: '2026-02-01' }],
   });
-  const before = readFileSync(join(dir, 'priority.md'), 'utf8');
+  const before = readFileSync(join(dir, 'priority.yaml'), 'utf8');
   const r = next(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'S-11\n');
@@ -115,7 +111,7 @@ test('unranked units follow by added:, undated first; a new story lands at the e
   assert.equal(list.status, 0, list.stderr);
   const ids = [...list.stdout.matchAll(/\b(S-\d+)\b/g)].map((m) => m[1]);
   assert.deepEqual(ids, ['S-11', 'S-4', 'S-1', 'S-5', 'S-3', 'S-10', 'S-13']);
-  assert.equal(readFileSync(join(dir, 'priority.md'), 'utf8'), before);
+  assert.equal(readFileSync(join(dir, 'priority.yaml'), 'utf8'), before);
 });
 
 test('bl list sorts by priority and marks unranked rows', () => {
@@ -140,7 +136,7 @@ test('bl list sorts by priority and marks unranked rows', () => {
 });
 
 test('a ranked loose story held by another loose story gives way to it, naming the unit it unblocks', () => {
-  const { dir } = unitBacklog({ priority: [{ unit: 'S-10', why: 'First.' }], deps: { 'S-10': 'S-11' } });
+  const { dir } = unitBacklog({ priority: ['S-10'], deps: { 'S-10': 'S-11' } });
   const r = next(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'S-11\n');
@@ -265,7 +261,7 @@ test('bl next --theme and --epic filter units; a loose story is in its component
   assert.equal(next(dir, '--theme', 'backlog', '--epic', 'e-50').stdout, 'F-3\n');
   assert.equal(next(dir, '--epic', 'E51').stdout, 'F-1\n');
 
-  const { dir: loose } = unitBacklog({ priority: [{ unit: 'S-10', why: 'Tools first.' }, ...RANKED.slice(2)] });
+  const { dir: loose } = unitBacklog({ priority: ['S-10', ...RANKED.slice(2)] });
   r = next(loose, '--theme', 'backlog');
   assert.equal(r.stdout, 'S-10\n');
   r = next(loose, '--theme', 'accounts', '--epic', 'E50');
@@ -290,24 +286,24 @@ test('bl next exits 1 on an unknown theme or epic, a malformed one, or a story f
   }
 });
 
-test('with no priority.md, or a ranked: of the wrong shape, every unit is unranked; one that is not YAML exits 1', () => {
+test('with no priority.yaml, or one that is not a list of ids, every unit is unranked; one that is not YAML exits 1', () => {
   let { dir } = unitBacklog({ priority: null });
   let r = next(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'S-11\n');
-  assert.match(r.stderr, /bl next: priority\.md is missing.*every unit is unranked/);
+  assert.match(r.stderr, /bl next: priority\.yaml is missing.*every unit is unranked/);
 
-  ({ dir } = unitBacklog({ priority: '---\nranked: F-1\n---\n' }));
+  ({ dir } = unitBacklog({ priority: 'F-1\n' }));
   r = next(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'S-11\n');
-  assert.match(r.stderr, /"ranked:" is not a list.*run bl validate/);
+  assert.match(r.stderr, /the file is not a YAML list of work unit ids.*run bl validate/);
 
-  ({ dir } = unitBacklog({ priority: '---\nranked: [\n---\n' }));
+  ({ dir } = unitBacklog({ priority: '- F-1\n- a: b: c\n' }));
   r = next(dir);
   assert.equal(r.status, 1);
   assert.equal(r.stdout, '');
-  assert.match(r.stderr, /priority\.md: frontmatter is not YAML/);
+  assert.match(r.stderr, /priority\.yaml: line 2: the file is not YAML/);
 });
 
 test('bl next never reads roadmap.md (B2)', () => {
@@ -330,34 +326,21 @@ test('bl next never reads roadmap.md (B2)', () => {
 test('bl help lists next as the unit picker, and next is no alias of what-next', () => {
   const { dir } = unitBacklog();
   const r = runBl(['help'], { cwd: dir });
-  assert.match(r.stdout, /\n {2}next {7}Print the next unit \(feature or loose story\) by priority\.md,\n/);
+  assert.match(r.stdout, /\n {2}next {7}Print the next unit \(feature or loose story\) by priority\.yaml,\n/);
   assert.doesNotMatch(r.stdout, /next=what-next/);
   const h = next(dir, '--help');
   assert.equal(h.status, 0);
   assert.match(h.stdout, /^Usage: bl next \[--theme <slug>\] \[--epic <E-id>\]/);
 });
 
-// F-78 D3: nothing automated writes priority.md, so `bl sync` leaves it, comments
-// and layout included, byte for byte.
+// F-78 D3: nothing automated writes priority.yaml, so `bl sync` leaves it,
+// comments and layout included, byte for byte.
 
-const PRIORITY = `---
-ranked:
-  # Comments and layout here are the operator's.
-  - unit: F-3
-    why: Unblocks | the rest.
-  - unit: F-1
-    why: Then the accounts work.
-  - unit: F-2
-    why: Already done.
----
+const PRIORITY = `# Comments and layout here are the operator's.
+- F-3
 
-# Priority
-
-The order the operator prefers work to run in.
-
-## History
-
-- 2026-01-01: F-0 done (Zero).
+- F-1 # accounts
+- F-2
 `;
 
 function orderBacklog(priority = PRIORITY) {
@@ -381,37 +364,33 @@ function orderBacklog(priority = PRIORITY) {
   });
 }
 
-test('bl sync leaves priority.md byte-identical, and writes no other order file', () => {
+test('bl sync leaves priority.yaml byte-identical, and writes no other order file', () => {
   const { dir } = orderBacklog();
   for (let i = 0; i < 2; i++) {
     const r = runBl(['sync'], { cwd: dir });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(readFileSync(join(dir, 'priority.md'), 'utf8'), PRIORITY);
+    assert.equal(readFileSync(join(dir, 'priority.yaml'), 'utf8'), PRIORITY);
   }
   // The sync adds no file at the backlog root, its index included (F-79 D1).
-  const root = readdirSync(dir).filter((f) => f.endsWith('.md'));
-  assert.deepEqual(root.sort(), ['priority.md', 'roadmap.md']);
+  const root = readdirSync(dir).filter((f) => /\.(md|yaml)$/.test(f));
+  assert.deepEqual(root.sort(), ['priority.yaml', 'roadmap.md']);
 });
 
-test('bl sync with no priority.md writes none', () => {
+test('bl sync with no priority.yaml writes none', () => {
   const { dir } = orderBacklog(null);
   const r = runBl(['sync'], { cwd: dir });
   assert.equal(r.status, 0, r.stderr);
-  assert.ok(!existsSync(join(dir, 'priority.md')));
+  assert.ok(!existsSync(join(dir, 'priority.yaml')));
 });
 
-test("bl validate reports priority.md's findings", () => {
-  // F-78 D1: a closed unit in ranked: (F-2) is no finding; an unknown one is.
-  const { dir } = orderBacklog([
-    { unit: 'F-3', why: 'First.' },
-    { unit: 'F-2', why: 'Done already.' },
-    { unit: 'F-99', why: 'Gone.' },
-  ]);
+test("bl validate reports priority.yaml's findings", () => {
+  // F-78 D1: a closed unit in the list (F-2) is no finding; an unknown one is.
+  const { dir } = orderBacklog(['F-3', 'F-2', 'F-99']);
   let r = runBl(['validate', '--json'], { cwd: dir });
   let codes = JSON.parse(r.stdout).findings.map((f) => `${f.code} ${f.location}: ${f.message}`);
   assert.deepEqual(
     codes.filter((c) => c.startsWith('priority')),
-    ['priority-unit priority.md: "ranked:" entry 3 (F-99) names no feature under features/'],
+    ['priority-unit priority.yaml: entry 3 (F-99) names no feature under features/'],
   );
   const { dir: none } = orderBacklog(null);
   r = runBl(['validate', '--json'], { cwd: none });

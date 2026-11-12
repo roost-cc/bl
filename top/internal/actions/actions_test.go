@@ -40,6 +40,36 @@ func TestWordsAndShow(t *testing.T) {
 	}
 }
 
+// TestRenderFillsTheTemplates: F-113 D7's templates take the selected and the yanked ids; a plain
+// element (every F-88 command) renders as itself; a missing Yanked is an error.
+func TestRenderFillsTheTemplates(t *testing.T) {
+	put := []string{"bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"}
+	both := map[string]string{"Selected": "F-84", "Yanked": "S-1400"}
+	for _, c := range []struct {
+		what string
+		argv []string
+		vars map[string]string
+		want []string
+	}{
+		{"a plain element", []string{"bl", "task", "done", "T-52"}, map[string]string{"Selected": "T-52"}, []string{"bl", "task", "done", "T-52"}},
+		{"both fields", put, both, []string{"bl", "rank", "S-1400", "--after", "F-84"}},
+		{"the selected id alone", []string{"bl", "rank", "{{.Selected}}", "--remove"}, map[string]string{"Selected": "F-84"}, []string{"bl", "rank", "F-84", "--remove"}},
+		{"no argv (a URL)", nil, both, nil},
+	} {
+		got, err := Render(c.argv, c.vars)
+		if err != nil || !slices.Equal(got, c.want) || (c.want == nil) != (got == nil) {
+			t.Errorf("%s: %q, %v; want %q", c.what, got, err, c.want)
+		}
+	}
+	if got, err := Render(put, map[string]string{"Selected": "F-84"}); err == nil {
+		t.Errorf("a missing Yanked rendered: %q", got)
+	}
+	// Render does not change the action's argv.
+	if put[2] != "{{.Yanked}}" {
+		t.Errorf("Render changed the argv: %q", put)
+	}
+}
+
 func TestArgvRunsBlThroughBlArgv(t *testing.T) {
 	bl := []string{"node", "/opt/bl/src/bl.js"}
 	if got := Argv([]string{"bl", "stop", "S-1330"}, bl); !slices.Equal(got, []string{"node", "/opt/bl/src/bl.js", "stop", "S-1330"}) {

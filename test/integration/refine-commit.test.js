@@ -51,15 +51,15 @@ test('a path dirty before the session stays out and is named; one the session ch
   assert.match(r.stderr, new RegExp(`Left your uncommitted backlog edits alone: .*${S2}`));
 });
 
-test('priority.md the session wrote stays uncommitted, named once as outside the work units', () => {
+test('priority.yaml the session wrote stays uncommitted, named once as outside the work units', () => {
   const dir = gitBacklog();
   const r = refine(dir, ['S-1'], { write: [S1, PRIORITY_FILE] });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(git(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [S1]);
   assert.deepEqual(statusLines(dir), [` M ${PRIORITY_FILE}`]);
   // Outside the refine's scope (F-122 D3), so the outside line names it, not the ranking line.
-  assert.equal(r.stderr.match(/Left uncommitted, outside refine S-1's work units: priority\.md/g)?.length, 1);
-  assert.doesNotMatch(r.stderr, /Left priority\.md uncommitted/);
+  assert.equal(r.stderr.match(/Left uncommitted, outside refine S-1's work units: priority\.yaml/g)?.length, 1);
+  assert.doesNotMatch(r.stderr, /Left priority\.yaml uncommitted/);
 });
 
 test('a session that writes nothing makes no commit and prints nothing about committing', () => {

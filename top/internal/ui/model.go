@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -26,9 +28,12 @@ const (
 // with the new interval, so that a run of presses starts one stream, not one per press.
 const restartDelay = 400 * time.Millisecond
 
-// keyMap holds the keys of D6 that bl top has. The help overlay lists them.
+// keyMap holds the keys of D6 that bl top has, and box ³'s ranking keys (F-113 D6). The help
+// overlay lists them.
 type keyMap struct {
-	boxes, next, prev, move, open, act, run, stop, page, pr, agent, follow, watch, capacity, longer, shorter, help, quit key.Binding
+	boxes, next, prev, move, open, act, run, stop, page, pr, agent, follow, watch, order, capacity, longer, shorter, help, quit key.Binding
+
+	yank, after, before, unrank, cancel, commit, reset key.Binding
 }
 
 var keys = keyMap{
@@ -45,11 +50,31 @@ var keys = keyMap{
 	agent:    key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "open bl agent in a tmux window")),
 	follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed of ⁶ on or off")),
 	watch:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "open bl watch of ⁶'s run in a tmux window")),
+	order:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "show the unranked units newest or oldest first")),
 	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
 	longer:   key.NewBinding(key.WithKeys("+"), key.WithHelp("+", fmt.Sprintf("refresh interval up (to %d s)", maxInterval/1000))),
 	shorter:  key.NewBinding(key.WithKeys("-"), key.WithHelp("-", fmt.Sprintf("refresh interval down (to %d ms)", minInterval))),
 	help:     key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "show or hide this help")),
 	quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	yank:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yank the selected unit")),
+	after:    key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "put the yanked unit after the selected ranked unit")),
+	before:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "put the yanked unit before the selected ranked unit")),
+	unrank:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "unrank the selected ranked unit")),
+	cancel:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel the yank")),
+	commit:   key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "commit the staged edits (bl rank --commit)")),
+	reset:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "drop the staged edits (bl rank --reset)")),
+}
+
+// helpGroups are the help overlay's keys: the keys of every box (box 0), then each box's own keys
+// under that box.
+var helpGroups = []struct {
+	box  int
+	keys []key.Binding
+}{
+	{0, []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.act, keys.run, keys.stop, keys.page, keys.pr,
+		keys.agent, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}},
+	{3, []key.Binding{keys.yank, keys.after, keys.before, keys.unrank, keys.cancel, keys.commit, keys.reset, keys.order}},
+	{6, []key.Binding{keys.follow, keys.watch}},
 }
 
 // startedMsg carries a stream that has started.
@@ -67,6 +92,8 @@ type Model struct {
 	focus         int          // a box number; 0 when every box is hidden
 	sel           [7]selection // by box number: the selected row of boxes 1 to 3
 	updatesOpen   bool         // whether box ²'s grouped update row is open
+	newestFirst   bool         // whether box ³ shows the unranked units newest `added:` first (d)
+	yanked        string       // the id of the unit yanked in box ³ (y), until a put or esc; empty for none
 	detail        string       // the id of the run box ⁶ shows; empty for none
 	watcher       *watch.Watch // the `bl watch` of that run, while it runs
 	watchGen      int          // the generation of the watch the model reads
@@ -247,6 +274,8 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	m.note = ""
 	switch {
+	case m.focus == 3 && key.Matches(msg, keys.yank, keys.after, keys.before, keys.unrank, keys.cancel, keys.commit, keys.reset):
+		return m.rankKey(msg.String())
 	case key.Matches(msg, keys.boxes):
 		n := int(msg.String()[0] - '0')
 		m.hidden[n] = !m.hidden[n]
@@ -286,6 +315,8 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.toggleFollow()
 	case key.Matches(msg, keys.watch):
 		return m.openWatch()
+	case m.focus == 3 && key.Matches(msg, keys.order):
+		m.newestFirst = !m.newestFirst
 	case key.Matches(msg, keys.capacity):
 		if s := m.stream; s != nil {
 			return m, func() tea.Msg {
@@ -335,20 +366,57 @@ func (m Model) View() tea.View {
 	return v
 }
 
-// helpBox draws the help overlay: each key of keyMap and what it does.
-func helpBox() []string {
-	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.act, keys.run, keys.stop, keys.page,
-		keys.pr, keys.agent, keys.follow, keys.watch, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
-	lines := []string{""}
-	for _, b := range bindings {
-		lines = append(lines, fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc)))
+// helpBox draws the help overlay for a w×h screen: each key of keyMap and what it does, a box's own
+// keys under the box's number and name (helpGroups). When one column is taller than the screen and
+// two fit its width, the boxes' own keys go in a second column.
+func helpBox(w, h int) []string {
+	var every, own []string
+	for _, g := range helpGroups {
+		if g.box > 0 {
+			own = append(own, "", "  "+styleName.Render(superscript[g.box]+boxes[g.box].name))
+		}
+		for _, b := range g.keys {
+			line := fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc))
+			if g.box > 0 {
+				own = append(own, line)
+			} else {
+				every = append(every, line)
+			}
+		}
 	}
-	lines = append(lines, "", styleText.Render("  any key closes this help"))
+	foot := []string{"", styleText.Render("  any key closes this help")}
+	lines := slices.Concat([]string{""}, every, own, foot)
+	if len(lines)+2 > h {
+		// own starts with a blank line, which the second column leaves out.
+		cw := 0
+		for _, l := range every {
+			cw = max(cw, lipgloss.Width(l)+2)
+		}
+		cols := []string{""}
+		for i := range max(len(every), len(own)-1) {
+			left, right := "", ""
+			if i < len(every) {
+				left = every[i]
+			}
+			if i+1 < len(own) {
+				right = own[i+1]
+			}
+			cols = append(cols, left+strings.Repeat(" ", cw-lipgloss.Width(left))+right)
+		}
+		if two := append(cols, foot...); helpWidth(two) <= w {
+			lines = two
+		}
+	}
+	return drawBox(0, "help", nil, true, lines, helpWidth(lines), len(lines)+2)
+}
+
+// helpWidth is the width of the help box of lines: its widest line and the margin, at least 52.
+func helpWidth(lines []string) int {
 	w := 52
 	for _, l := range lines {
 		w = max(w, lipgloss.Width(l)+3)
 	}
-	return drawBox(0, "help", nil, true, lines, w, len(lines)+2)
+	return w
 }
 
 // overlay draws box over the middle of lines.

@@ -236,7 +236,7 @@ export const SECTIONS = Object.freeze({
           return [ref(c, fromRoot), c.title, c.repo, c.home ? 'yes' : '', open, c.stories.length - open];
         }),
       ),
-      // The open units in `priority.md`'s order (F-78 D1): ranked first, by
+      // The open units in `priority.yaml`'s order (F-78 D1): ranked first, by
       // their entry's position, then the unranked tail, marked.
       Priority: formatTable(
         generatedColumns('root', 'Priority'),

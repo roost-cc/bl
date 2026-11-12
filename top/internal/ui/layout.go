@@ -152,11 +152,16 @@ func (m Model) boxLines(num, w, h int) []string {
 	if num == 6 && m.detail != "" {
 		options = append(options, styleText.Render(m.detail))
 	}
+	name := b.name
+	if num == 3 && m.snap != nil && m.snap.Next.Staged != nil {
+		// F-113 D4: the operator sees that staged edits exist, also without the focus.
+		name += " · staged edits"
+	}
 	var content []string
 	if m.snap != nil && b.draw != nil {
 		content = b.draw(m, w-2, h-2)
 	}
-	return drawBox(num, b.name, options, m.focus == num, content, w, h)
+	return drawBox(num, name, options, m.focus == num, content, w, h)
 }
 
 // blank is h lines of w spaces.
@@ -174,8 +179,9 @@ func (m Model) stacked() bool {
 	return m.width < fullWidth || m.height < fullHeight
 }
 
-// render draws the screen: the size message on a small terminal; else the layout for its size,
-// the key bar in its bottom line, and the help over it when it is open.
+// render draws the screen: the size message on a small terminal; else the conflict line while the
+// staged copy is in conflict (F-113 Decision A3), the layout for its size under it, the key bar in
+// its bottom line, and the help over it when it is open.
 func (m Model) render() string {
 	if m.width == 0 {
 		return ""
@@ -187,16 +193,22 @@ func (m Model) render() string {
 	if m.stacked() {
 		layout = stackedLayout
 	}
-	lines := blank(m.width, m.height)
-	if m.shown(layout) {
-		lines = m.draw(layout, m.width, m.height)
+	var top []string
+	if m.snap != nil && m.snap.Next.Conflict != "" {
+		top = []string{styleError.Render(fit(" ! "+m.snap.Next.Conflict, m.width))}
 	}
+	h := m.height - len(top)
+	lines := blank(m.width, h)
+	if m.shown(layout) {
+		lines = m.draw(layout, m.width, h)
+	}
+	lines = append(top, lines...)
 	lines[len(lines)-1] = keyBar(m.width, m.warnings())
 	if m.dialog != nil {
 		lines = overlay(lines, m.dialogBox(m.width))
 	}
 	if m.help {
-		lines = overlay(lines, helpBox())
+		lines = overlay(lines, helpBox(m.width, m.height))
 	}
 	return strings.Join(lines, "\n")
 }
