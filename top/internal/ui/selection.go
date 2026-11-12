@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -25,23 +26,24 @@ func (s selection) in(ids []string) int {
 	return min(s.index, len(ids)-1)
 }
 
-// rowIDs are the ids of box num's rows, top to bottom, as the box draws them. Only boxes ¹ to ³
-// have rows. Box ³'s divider is no row, so ↑ and ↓ pass over it.
-func (m Model) rowIDs(num int) []string {
+// rowIDs are the ids of box b's rows, top to bottom, as the box draws them. Only the runs, the
+// attention and the next box have rows. The next box's divider is no row, so ↑ and ↓ pass over
+// it.
+func (m Model) rowIDs(b boxName) []string {
 	if m.snap == nil {
 		return nil
 	}
 	var ids []string
-	switch num {
-	case 1:
+	switch b {
+	case runsBox:
 		for _, r := range m.snap.Runs.Rows {
 			ids = append(ids, r.ID)
 		}
-	case 2:
+	case attentionBox:
 		for _, r := range m.attentionRows() {
 			ids = append(ids, r.id())
 		}
-	case 3:
+	case nextBox:
 		for _, r := range m.nextUnits() {
 			ids = append(ids, r.ID)
 		}
@@ -49,31 +51,39 @@ func (m Model) rowIDs(num int) []string {
 	return ids
 }
 
-// selected is the index of the selected row of box num, or -1.
-func (m Model) selected(num int) int {
-	return m.sel[num].in(m.rowIDs(num))
+// selected is the index of the selected row of box b, or -1.
+func (m Model) selected(b boxName) int {
+	return m.sel[b].in(m.rowIDs(b))
 }
 
 // keepSelection makes each box's selection the row it falls on now, after a new snapshot or a
-// change of the rows: the same row while its id is still there.
+// change of the rows: the same row while its id is still there. It writes a new map, as Update
+// copies the model.
 func (m *Model) keepSelection() {
-	for num := range m.sel {
-		ids := m.rowIDs(num)
-		if i := m.sel[num].in(ids); i >= 0 {
-			m.sel[num] = selection{ids[i], i}
+	sel := map[boxName]selection{}
+	maps.Copy(sel, m.sel)
+	for b := range boxes {
+		ids := m.rowIDs(b)
+		if i := sel[b].in(ids); i >= 0 {
+			sel[b] = selection{ids[i], i}
 		}
 	}
+	m.sel = sel
 }
 
 // move selects the row dir rows below (dir 1) or above (dir -1) the selected row of the box with
-// the focus, and stops at the first and the last row.
+// the focus, and stops at the first and the last row. It writes a new map, as Update copies the
+// model.
 func (m *Model) move(dir int) {
 	ids := m.rowIDs(m.focus)
 	if len(ids) == 0 {
 		return
 	}
 	i := min(max(m.sel[m.focus].in(ids)+dir, 0), len(ids)-1)
-	m.sel[m.focus] = selection{ids[i], i}
+	sel := map[boxName]selection{}
+	maps.Copy(sel, m.sel)
+	sel[m.focus] = selection{ids[i], i}
+	m.sel = sel
 }
 
 // window is the index of the first of n rows to draw in room lines, so that row sel shows.

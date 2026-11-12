@@ -8,12 +8,12 @@ import (
 	"github.com/roost-cc/bl/top/internal/stream"
 )
 
-// weekDays is how many of the newest days the `last 7 days` total of box ⁵ adds.
+// weekDays is how many of the newest days the `last 7 days` total of the activity box adds.
 const weekDays = 7
 
-// drawActivity draws box ⁵ (D4) in w×h inner cells: the braille graph of points done per UTC day
-// (section `history`) with the last 7 days' total and a date axis, then the newest run events
-// (section `activity`, D3c) in local time, as many as fit.
+// drawActivity draws the activity box (D4) in w×h inner cells: the braille graph of points done per
+// UTC day (section `history`) with the last 7 days' total and a date axis, then the newest run
+// events (section `activity`, D3c) in local time, as many as fit.
 func drawActivity(s *stream.Snapshot, w, h int) []string {
 	cw := w - 2
 	compact := h < compactHeight
@@ -43,8 +43,8 @@ func drawActivity(s *stream.Snapshot, w, h int) []string {
 	return margin(lines)
 }
 
-// dayAxis is the date axis of box ⁵'s graph, w cells wide: today's date and every 14th day
-// before it.
+// dayAxis is the date axis of the activity box's graph, w cells wide: today's date and every 14th
+// day before it.
 func dayAxis(days []stream.Day, w int) string {
 	var marks []mark
 	for i, d := range days {
@@ -58,9 +58,9 @@ func dayAxis(days []stream.Day, w int) string {
 	return axis(marks, w)
 }
 
-// eventLine is one run event of box ⁵: its local time, work unit, step with its story or round,
-// ✓ or ✗ and its duration, then the agent, model and effort of a session that did not fail, or
-// else the note.
+// eventLine is one run event of the activity box: its local time, work unit, step with its story or
+// round, ✓ or ✗ and its duration, then the agent, model and effort of a session that did not fail,
+// or else the note.
 func eventLine(e stream.Event) string {
 	step := e.Step
 	if e.Story != "" {

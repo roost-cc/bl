@@ -11,18 +11,19 @@ import (
 	"github.com/roost-cc/bl/top/internal/stream"
 )
 
-// compactHeight is the inner height below which boxes ⁴ and ⁵ leave out their time axis and
-// their blank lines, as in Mockup B.
+// compactHeight is the inner height below which the tokens and the activity box leave out their
+// time axis and their blank lines, as in Mockup B.
 const compactHeight = 12
 
-// capacityNameWidth is the width of the name column of box ⁴'s capacity lines (`codex 5h`).
+// capacityNameWidth is the width of the name column of the tokens box's capacity lines
+// (`codex 5h`).
 const capacityNameWidth = 9
 
 // maxMeterWidth is the most cells a quota window's meter takes.
 const maxMeterWidth = 30
 
-// drawTokens draws box ⁴ (D4) in w×h inner cells: the braille graph of output tokens per minute
-// of ended sessions (D3b) with its peak and time axis, one meter per quota window of `bl
+// drawTokens draws the tokens box (D4) in w×h inner cells: the braille graph of output tokens per
+// minute of ended sessions (D3b) with its peak and time axis, one meter per quota window of `bl
 // capacity`, today's totals, and when capacity was last read.
 func drawTokens(s *stream.Snapshot, w, h int) []string {
 	cw := w - 2
@@ -64,8 +65,8 @@ func drawTokens(s *stream.Snapshot, w, h int) []string {
 	return margin(lines)
 }
 
-// tokenAxis is the time axis of box ⁴'s graph, w cells wide: the local time of each half hour,
-// and `now` at the right end.
+// tokenAxis is the time axis of the tokens box's graph, w cells wide: the local time of each half
+// hour, and `now` at the right end.
 func tokenAxis(t stream.Tokens, w int) string {
 	n := len(t.Minutes)
 	const now = "now"
@@ -80,11 +81,11 @@ func tokenAxis(t stream.Tokens, w int) string {
 	return axis(append(marks, mark{w, now}), w)
 }
 
-// capacityLines are box ⁴'s lines for the `capacity` section, w cells wide: one meter per quota
-// window, with its percent left and its reset, and `<agent>  <state>: <message>` for a
+// capacityLines are the tokens box's lines for the `capacity` section, w cells wide: one meter per
+// quota window, with its percent left and its reset, and `<agent>  <state>: <message>` for a
 // configuration that reads no window (an agent that cannot report capacity says `unknown`). A
-// window or line that an earlier configuration showed is not shown again: an agent whose quota
-// is the account's reports the same windows for every model.
+// window or line that an earlier configuration showed is not shown again: an agent whose quota is
+// the account's reports the same windows for every model.
 func capacityLines(s *stream.Snapshot, w int) []string {
 	seen := map[string]bool{}
 	var lines []string

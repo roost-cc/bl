@@ -15,13 +15,10 @@ import (
 	"github.com/roost-cc/bl/top/internal/stream"
 )
 
-// The stages of the action dialog (F-87 D7, Mockup C).
+// The stages of the action dialog (F-87 D7, Mockup C), its only two (F-127 Decision 2).
 const (
-	stageMenu    = iota // the row's actions; a key or ↵ picks one
-	stageInput          // the text of an action with input
-	stageAsk            // the exact command, and y/n
-	stageRunning        // the child runs
-	stageResult         // its exit code and last stderr line
+	stageMenu  = iota // the row's actions; a key or ↵ picks one
+	stageInput        // the text of an action with input
 )
 
 // dialogWidth is the dialog's width, as in Mockup C, when the screen and its lines allow.
@@ -38,30 +35,20 @@ type dialog struct {
 	line    string          // a line about the row
 	actions []stream.Action // the row's actions (the menu)
 	cursor  int             // the menu's selected action
-	action  stream.Action   // the action picked
+	action  stream.Action   // the action picked, its argv rendered
 	text    string          // the typed note or reason
 	refused bool            // whether ↵ refused an empty reason
-	words   []string        // the command that runs or ran
 	puts    bool            // whether the action puts the yanked unit (its argv takes Yanked)
-	seq     int             // the action's number (Model.actionSeq), from its y
-	result  actions.Result
-}
-
-// actionDoneMsg is the end of an action's child command.
-type actionDoneMsg struct {
-	words  []string
-	seq    int
-	result actions.Result
 }
 
 // target is the selected row of the box with the focus, for an action: its id, a line about it,
-// and its actions; box ⁶'s row is the run it shows. ok is false when there is no such row (the
-// grouped update row is none).
+// and its actions; the detail box's row is the run it shows. ok is false when there is no such row
+// (the grouped update row is none).
 func (m Model) target() (id, line string, list []stream.Action, ok bool) {
 	if m.snap == nil {
 		return "", "", nil, false
 	}
-	if m.focus == 6 {
+	if m.focus == detailBox {
 		if r := m.run(m.detail); r != nil {
 			return r.ID, runLine(*r, m.snap.At), r.Actions, true
 		}
@@ -72,14 +59,14 @@ func (m Model) target() (id, line string, list []stream.Action, ok bool) {
 		return "", "", nil, false
 	}
 	switch m.focus {
-	case 1:
+	case runsBox:
 		r := m.snap.Runs.Rows[i]
 		return r.ID, runLine(r, m.snap.At), r.Actions, true
-	case 2:
+	case attentionBox:
 		if it := m.attentionRows()[i].item; it != nil {
 			return it.ID, strings.Join([]string{it.ID, it.Unit, it.Line}, " · "), it.Actions, true
 		}
-	case 3:
+	case nextBox:
 		r := m.nextUnits()[i]
 		return r.ID, strings.Join([]string{r.ID, r.Status, r.Title}, " · "), r.Actions, true
 	}
@@ -123,20 +110,13 @@ func (m Model) openMenu() (Model, tea.Cmd) {
 	return m, nil
 }
 
-// actKey picks the action with key k of the selected row (keys r, s, o, p, g), as the menu does.
+// actKey picks the action with key k of the selected row, as the menu does (F-127, "Three kinds of
+// keys"). A key that none of the row's actions has does nothing: the key bar shows the row's keys.
 func (m Model) actKey(k string) (Model, tea.Cmd) {
-	id, line, list, ok := m.target()
-	if !ok {
-		m.note = k + ": select a row first"
-		return m, nil
+	id, _, list, _ := m.target()
+	if i := slices.IndexFunc(list, func(a stream.Action) bool { return a.Key == k }); i >= 0 {
+		return m.pick(list[i], id)
 	}
-	for _, a := range list {
-		if a.Key == k {
-			m.dialog = &dialog{row: id, line: line, actions: list}
-			return m.pick(a)
-		}
-	}
-	m.note = k + ": " + id + " has no such action (a lists its actions)"
 	return m, nil
 }
 
@@ -163,10 +143,10 @@ func (m Model) renderAction(a stream.Action, selected string) (out stream.Action
 	return a, puts, nil
 }
 
-// rankKey handles a ranking key of box ³ (F-113 D6): y yanks the selected unit and esc cancels the
-// yank; p, P, x, C and R pick the action of that key, the selected row's or else the box's
-// (next.actions). A key with no such action does nothing. While the staged copy is in conflict,
-// every key but R refuses with the conflict's text (Decision A3).
+// rankKey handles a ranking key of the next box (F-113 D6): y yanks the selected unit and esc
+// cancels the yank; p, P, x, C and R pick the action of that key, the selected row's or else the
+// box's (next.actions). A key with no such action does nothing. While the staged copy is in
+// conflict, every key but R refuses with the conflict's text (Decision A3).
 func (m Model) rankKey(k string) (Model, tea.Cmd) {
 	if m.snap == nil {
 		return m, nil
@@ -177,7 +157,7 @@ func (m Model) rankKey(k string) (Model, tea.Cmd) {
 	}
 	switch k {
 	case "y":
-		if id := m.selectedUnit(3); id != "" {
+		if id := m.selectedUnit(nextBox); id != "" {
 			m.yanked = id
 		}
 		return m, nil
@@ -185,45 +165,50 @@ func (m Model) rankKey(k string) (Model, tea.Cmd) {
 		m.yanked = ""
 		return m, nil
 	}
-	id, line, list, _ := m.target()
+	id, _, list, _ := m.target()
 	if i := slices.IndexFunc(list, func(a stream.Action) bool { return a.Key == k }); i >= 0 {
-		m.dialog = &dialog{row: id, line: line, actions: list}
-		return m.pick(list[i])
+		return m.pick(list[i], id)
 	}
 	// The box's own actions are about no row.
 	if i := slices.IndexFunc(m.snap.Next.Actions, func(a stream.Action) bool { return a.Key == k }); i >= 0 {
-		m.dialog = &dialog{}
-		return m.pick(m.snap.Next.Actions[i])
+		return m.pick(m.snap.Next.Actions[i], "")
 	}
 	return m, nil
 }
 
-// pick goes on with action a, its argv rendered (renderAction): to its text, else to the y/n question.
-// An argv that does not render closes the dialog and says why. Outside tmux an action that opens a
-// tmux window does nothing and says `<key> needs tmux`.
-func (m Model) pick(a stream.Action) (Model, tea.Cmd) {
+// pick runs action a of row at once (F-127 Decision 2), its argv rendered (renderAction): a menu
+// pick, a row action key and a ranking key all come here. It closes the dialog. An action with
+// input opens its text box first. An argv that does not render says why on the note line. Outside
+// tmux an action that opens a tmux window does nothing and says `<key> needs tmux`.
+func (m Model) pick(a stream.Action, row string) (Model, tea.Cmd) {
+	m.dialog = nil
 	if a.Window != "" && getenv("TMUX") == "" {
-		m.dialog = nil
 		m.note = a.Key + " needs tmux"
 		return m, nil
 	}
-	d := *m.dialog
-	a, puts, err := m.renderAction(a, d.row)
+	a, puts, err := m.renderAction(a, row)
 	if err != nil {
-		m.dialog = nil
 		m.note = err.Error()
 		return m, nil
 	}
-	d.action, d.stage, d.puts = a, stageAsk, puts
 	if a.Input != "" {
-		d.stage = stageInput
+		m.dialog = &dialog{stage: stageInput, action: a, puts: puts}
+		return m, nil
 	}
-	m.dialog = &d
-	return m, nil
+	return m.act(a, "", puts)
 }
 
-// dialogKey handles a key while the dialog is open: ctrl+c quits, esc cancels (or hides a running
-// command's box), and each stage takes its keys.
+// act queues action a, its argv rendered, with text as its last word (enqueue). A put ends the yank
+// at once: the put took the yanked id when it was rendered.
+func (m Model) act(a stream.Action, text string, puts bool) (Model, tea.Cmd) {
+	if puts {
+		m.yanked = ""
+	}
+	return m.enqueue(m.jobOf(a, text))
+}
+
+// dialogKey handles a key while the dialog is open: ctrl+c quits, esc cancels, and each stage takes
+// its keys.
 func (m Model) dialogKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	if k == "ctrl+c" {
@@ -231,7 +216,7 @@ func (m Model) dialogKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.key(msg)
 	}
 	d := *m.dialog
-	if k == "esc" && d.stage != stageResult {
+	if k == "esc" {
 		m.dialog = nil
 		return m, nil
 	}
@@ -243,22 +228,22 @@ func (m Model) dialogKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "down":
 			d.cursor = min(d.cursor+1, len(d.actions)-1)
 		case "enter":
-			return m.pick(d.actions[d.cursor])
+			return m.pick(d.actions[d.cursor], d.row)
 		default:
 			for _, a := range d.actions {
 				if a.Key == k {
-					return m.pick(a)
+					return m.pick(a, d.row)
 				}
 			}
 		}
 	case stageInput:
 		switch {
 		case k == "enter":
-			if d.action.Input == "reason" && strings.TrimSpace(d.text) == "" {
-				d.refused = true
-			} else {
-				d.text, d.stage = strings.TrimSpace(d.text), stageAsk
+			if d.action.Input != "reason" || strings.TrimSpace(d.text) != "" {
+				m.dialog = nil
+				return m.act(d.action, strings.TrimSpace(d.text), d.puts)
 			}
+			d.refused = true
 		case k == "backspace":
 			if r := []rune(d.text); len(r) > 0 {
 				d.text = string(r[:len(r)-1])
@@ -266,65 +251,14 @@ func (m Model) dialogKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case msg.Text != "":
 			d.text += msg.Text
 		}
-	case stageAsk:
-		switch k {
-		case "y":
-			return m.runAction(d)
-		case "n":
-			m.dialog = nil
-			return m, nil
-		}
-	case stageResult:
-		m.dialog = nil
-		return m, nil
 	}
 	m.dialog = &d
 	return m, nil
 }
 
-// runAction runs the action of d after its y: in a new tmux window, or as a child whose result box
-// follows. The child starts here, before the next snapshot is read. A stop marks its run with the
-// child's pid, so the run's `stopped` end by that bl stop does not notify (D8); an end by another
-// stop does. A put ends the yank.
-func (m Model) runAction(d dialog) (Model, tea.Cmd) {
-	if d.puts {
-		m.yanked = ""
-	}
-	words := actions.Words(d.action, d.text, goos)
-	argv := actions.Argv(words, m.blArgv)
-	if d.action.Window != "" {
-		m.dialog = nil
-		return m, tmuxWindow(d.action.Window, argv)
-	}
-	pid, wait := actions.Start(argv)
-	if d.action.Stops != "" && pid > 0 {
-		m.differ.Quiet(d.action.Stops, pid)
-	}
-	m.actionSeq++
-	d.stage, d.words, d.seq = stageRunning, words, m.actionSeq
-	m.dialog = &d
-	seq := d.seq
-	return m, func() tea.Msg { return actionDoneMsg{words: words, seq: seq, result: wait()} }
-}
-
-// actionDone shows the result box of a child that ended: in place of its own running box, or when
-// no dialog is open (esc hid the box). A newer dialog (a menu, a text, a question, another result or
-// another action's running box) stays, and the result shows as the note line instead.
-func (m Model) actionDone(msg actionDoneMsg) Model {
-	if d := m.dialog; d == nil || (d.stage == stageRunning && d.seq == msg.seq) {
-		m.dialog = &dialog{stage: stageResult, words: msg.words, seq: msg.seq, result: msg.result}
-		return m
-	}
-	m.note = fmt.Sprintf("%s: exit %d", actions.Show(msg.words), msg.result.Code)
-	if msg.result.Last != "" {
-		m.note += " · " + msg.result.Last
-	}
-	return m
-}
-
-// command is the command of action a as the menu and the questions show it: its words with the
-// text, and `(new tmux window)` for a window. The menu, before there is text, shows `[note]` or
-// `<reason>` in its place.
+// command is the command of action a as the menu, the input box and the note line show it: its
+// words with the text, and `(new tmux window)` for a window. The menu, before there is text, shows
+// `[note]` or `<reason>` in its place.
 func command(a stream.Action, text string, menu bool) string {
 	s := actions.Show(actions.Words(a, text, goos))
 	if menu {
@@ -386,31 +320,7 @@ func (m Model) dialogBox(w int) []string {
 		if d.refused {
 			lines = append(lines, styleError.Render(pad("a reason is needed")))
 		}
-		lines = append(lines, "", text("runs: "+command(d.action, d.text, false)), "", keys("enter", "go on", "esc", "cancel"))
-	case stageAsk:
-		title = actions.Show(actions.Words(d.action, "", goos))
-		if d.line != "" {
-			lines = append(lines, text(d.line))
-		}
-		for _, l := range d.action.About {
-			lines = append(lines, text(l))
-		}
-		lines = append(lines, "", text("runs: "+command(d.action, d.text, false)), "", keys("y", d.action.Label, "n", "cancel"))
-	case stageRunning:
-		title = "running"
-		lines = append(lines, text(actions.Show(d.words)), styleDim.Render(pad("running · esc hides this box; its result shows when it ends")))
-	case stageResult:
-		title = "done"
-		mark, style := "✓", styleOK
-		if d.result.Code != 0 {
-			title, mark, style = "failed", "✗", styleError
-		}
-		last := d.result.Last
-		if last == "" {
-			last = "(none)"
-		}
-		lines = append(lines, style.Render(pad(mark+" "))+styleText.Render(actions.Show(d.words)+fmt.Sprintf("   exit %d", d.result.Code)),
-			text("stderr: "+last), "", styleDim.Render(pad("any key to close")))
+		lines = append(lines, "", text("runs: "+command(d.action, d.text, false)), "", keys("enter", "run", "esc", "cancel"))
 	}
 	lines = append(lines, "")
 	bw := dialogWidth

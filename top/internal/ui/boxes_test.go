@@ -109,7 +109,7 @@ func snapshot(t *testing.T) stream.SnapshotMsg {
 }
 
 // TestBoxesGolden draws the recorded snapshot (Mockup A's data) in every box, with a row selected
-// in boxes ¹ to ³: S-1330 in ¹, S-1330:change in ², F-84 in ³.
+// in the boxes with rows: S-1330 in runs, S-1330:change in attention, F-84 in next.
 func TestBoxesGolden(t *testing.T) {
 	msg := snapshot(t)
 	for _, size := range []struct {
@@ -117,12 +117,13 @@ func TestBoxesGolden(t *testing.T) {
 		w, h int
 	}{{"boxes-171x63", 171, 63}, {"boxes-100x40", 100, 40}} {
 		m, _ := update(t, sized(t, size.w, size.h), msg)
-		m, _ = press(t, m, down, tab, down, down, down, down, down, tab, down)
+		m, _ = press(t, m, down, tab, down, down, down, down, down)
+		m, _ = press(t, focused(t, m, nextBox), down)
 		golden(t, size.name, screen(t, m))
 	}
 }
 
-func TestBoxFourShowsGraphMetersAndTotals(t *testing.T) {
+func TestTokensBoxShowsGraphMetersAndTotals(t *testing.T) {
 	m, _ := update(t, sized(t, 171, 63), snapshot(t))
 	out := screen(t, m)
 	for _, want := range []string{
@@ -140,13 +141,13 @@ func TestBoxFourShowsGraphMetersAndTotals(t *testing.T) {
 		"capacity read 18:14",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("box ⁴ has no %q:\n%s", want, out)
+			t.Errorf("the tokens box has no %q:\n%s", want, out)
 		}
 	}
-	// In the stacked layout's narrow box ⁴, the short label leaves room for the peak.
+	// In the stacked layout's narrow tokens box, the short label leaves room for the peak.
 	m, _ = update(t, sized(t, 100, 40), snapshot(t))
 	if narrow := screen(t, m); !strings.Contains(narrow, "out tok / min · ended sessions") || !strings.Contains(narrow, "peak 8.7k") {
-		t.Errorf("box ⁴ at 100x40 has no short label and peak:\n%s", narrow)
+		t.Errorf("the tokens box at 100x40 has no short label and peak:\n%s", narrow)
 	}
 	if n := strings.Count(out, "codex 5h"); n != 1 {
 		t.Errorf("codex 5h shown %d times", n)
@@ -156,7 +157,7 @@ func TestBoxFourShowsGraphMetersAndTotals(t *testing.T) {
 	}
 }
 
-func TestBoxFiveShowsPointsAndEventsInLocalTime(t *testing.T) {
+func TestActivityBoxShowsPointsAndEventsInLocalTime(t *testing.T) {
 	m, _ := update(t, sized(t, 171, 63), snapshot(t))
 	out := screen(t, m)
 	for _, want := range []string{
@@ -172,7 +173,7 @@ func TestBoxFiveShowsPointsAndEventsInLocalTime(t *testing.T) {
 		"18:05  S-1330  review:verify     ✓ 9m    codex gpt-6-sol",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("box ⁵ has no %q:\n%s", want, out)
+			t.Errorf("the activity box has no %q:\n%s", want, out)
 		}
 	}
 	// Newest first.

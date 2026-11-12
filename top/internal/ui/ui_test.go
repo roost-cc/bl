@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -63,6 +64,22 @@ func press(t *testing.T, m Model, keys ...tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 func text(s string) tea.KeyPressMsg { return tea.KeyPressMsg{Code: []rune(s)[0], Text: s} }
+
+// numberKey is the number key that hides or shows box b: its number in m's drawn layout.
+func numberKey(m Model, b boxName) tea.KeyPressMsg { return text(fmt.Sprint(m.number(b))) }
+
+// focused is m after Tab moved the focus to box b.
+func focused(t *testing.T, m Model, b boxName) Model {
+	t.Helper()
+	for range boxes {
+		if m.focus == b {
+			return m
+		}
+		m, _ = press(t, m, tab)
+	}
+	t.Fatalf("tab does not reach the %s box", b)
+	return m
+}
 
 var (
 	tab      = tea.KeyPressMsg{Code: tea.KeyTab}
@@ -147,26 +164,244 @@ func TestFullLayoutFrom171x50(t *testing.T) {
 }
 
 func TestHiddenBoxGivesItsSpace(t *testing.T) {
-	m, _ := press(t, sized(t, 171, 63), text("3"), text("6"))
+	m := sized(t, 171, 63)
+	m, _ = press(t, m, numberKey(m, nextBox), numberKey(m, detailBox))
 	lines := strings.Split(screen(t, m), "\n")
-	if s := strings.Join(lines, "\n"); strings.Contains(s, "³next") || strings.Contains(s, "⁶detail") {
-		t.Fatal("box ³ or ⁶ is drawn while hidden")
+	if s := strings.Join(lines, "\n"); strings.Contains(s, "next┌") || strings.Contains(s, "detail┌") {
+		t.Fatal("the next or the detail box is drawn while hidden")
 	}
-	// Box ¹ takes the whole left column: its side runs to the line above the key bar.
-	if !strings.HasPrefix(lines[61], "│") || !strings.HasPrefix(lines[62], "╰┘↑↓ select└┘tab box└") {
+	// The runs box takes the whole left column: its side runs to the line above the key bar.
+	if !strings.HasPrefix(lines[61], "│") || !strings.HasPrefix(lines[62], "╰"+globalBar) {
 		t.Errorf("left column ends: %q / %q", lines[61], lines[62])
 	}
-	// Hide the right column too: box ¹ takes the whole width.
-	m, _ = press(t, m, text("2"), text("4"), text("5"))
+	// Hide the right column too: the runs box takes the whole width.
+	m, _ = press(t, m, numberKey(m, attentionBox), numberKey(m, tokensBox), numberKey(m, activityBox))
 	lines = strings.Split(screen(t, m), "\n")
 	if !strings.HasSuffix(lines[0], "┌─╮") || strings.Count(lines[0], "╮") != 1 {
-		t.Errorf("box ¹ alone: %q", lines[0])
+		t.Errorf("the runs box alone: %q", lines[0])
 	}
 	// Hide every box: the key bar stays.
-	m, _ = press(t, m, text("1"))
+	m, _ = press(t, m, numberKey(m, runsBox))
 	lines = strings.Split(screen(t, m), "\n")
-	if strings.TrimSpace(lines[0]) != "" || !strings.HasPrefix(lines[62], "╰┘↑↓ select└┘tab box└") || m.focus != 0 {
-		t.Errorf("no box: %q / %q, focus %d", lines[0], lines[62], m.focus)
+	if strings.TrimSpace(lines[0]) != "" || !strings.HasPrefix(lines[62], "╰"+globalBar) || m.focus != "" {
+		t.Errorf("no box: %q / %q, focus %q", lines[0], lines[62], m.focus)
+	}
+}
+
+// borders are the boxes' number and name in their top borders, in the order the screen shows them:
+// left to right, then top to bottom.
+func borders(t *testing.T, m Model) []string {
+	t.Helper()
+	var out []string
+	for _, l := range strings.Split(screen(t, m), "\n") {
+		for _, part := range strings.Split(l, "╭─┐")[1:] {
+			out = append(out, part[:strings.Index(part, "┌")])
+		}
+	}
+	return out
+}
+
+// tabOrder is the boxes that Tab (dir 1) or Shift+Tab (dir -1) visits from m's focus, one press
+// per box, until it is back where it started.
+func tabOrder(t *testing.T, m Model, dir int) []boxName {
+	t.Helper()
+	k := tab
+	if dir < 0 {
+		k = shiftTab
+	}
+	var seen []boxName
+	for range boxes {
+		m, _ = press(t, m, k)
+		seen = append(seen, m.focus)
+	}
+	return seen
+}
+
+// TestTheDrawnLayoutNumbersTheBoxesAndDrivesTab: the number in each box's border and the Tab order
+// follow the layout on screen, left to right and then top to bottom (F-127 Decision 1).
+func TestTheDrawnLayoutNumbersTheBoxesAndDrivesTab(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		w, h    int
+		borders []string
+		order   []boxName
+	}{
+		{"full", 171, 63, []string{"¹runs", "²attention", "³detail", "⁴tokens", "⁵next", "⁶activity"},
+			[]boxName{runsBox, attentionBox, detailBox, tokensBox, nextBox, activityBox}},
+		{"stacked", 100, 40, []string{"¹runs", "²attention", "³detail", "⁴tokens", "⁵activity", "⁶next"},
+			[]boxName{runsBox, attentionBox, detailBox, tokensBox, activityBox, nextBox}},
+	} {
+		m := sized(t, c.w, c.h)
+		if got := borders(t, m); !slices.Equal(got, c.borders) {
+			t.Errorf("%s: borders %q, want %q", c.name, got, c.borders)
+		}
+		// Tab from runs visits the others in order and wraps to runs; Shift+Tab goes back.
+		want := append(slices.Clone(c.order[1:]), runsBox)
+		if got := tabOrder(t, m, 1); !slices.Equal(got, want) {
+			t.Errorf("%s: tab %v, want %v", c.name, got, want)
+		}
+		back := slices.Clone(c.order)
+		slices.Reverse(back)
+		if got := tabOrder(t, m, -1); !slices.Equal(got, back) {
+			t.Errorf("%s: ⇧tab %v, want %v", c.name, got, back)
+		}
+		// Tab and Shift+Tab skip a hidden box.
+		hidden, _ := press(t, m, numberKey(m, c.order[2]))
+		skip := slices.DeleteFunc(slices.Clone(want), func(b boxName) bool { return b == c.order[2] })
+		if got := tabOrder(t, hidden, 1)[:len(skip)]; !slices.Equal(got, skip) {
+			t.Errorf("%s: tab with %s hidden %v, want %v", c.name, c.order[2], got, skip)
+		}
+		skipBack := slices.DeleteFunc(slices.Clone(back), func(b boxName) bool { return b == c.order[2] })
+		if got := tabOrder(t, hidden, -1)[:len(skipBack)]; !slices.Equal(got, skipBack) {
+			t.Errorf("%s: ⇧tab with %s hidden %v, want %v", c.name, c.order[2], got, skipBack)
+		}
+	}
+}
+
+// TestAnotherLayoutTreeRenumbersTheBoxesAndTheTabOrder: a third layout with the same boxes gives
+// its own numbers and Tab order, with no other change.
+func TestAnotherLayoutTreeRenumbersTheBoxesAndTheTabOrder(t *testing.T) {
+	saved := fullLayout
+	t.Cleanup(func() { fullLayout = saved })
+	// Three columns of two boxes.
+	fullLayout = node{across: true, children: []node{
+		{weight: 1, children: []node{{box: nextBox, weight: 1}, {box: tokensBox, weight: 1}}},
+		{weight: 1, children: []node{{box: detailBox, weight: 1}, {box: runsBox, weight: 1}}},
+		{weight: 1, children: []node{{box: activityBox, weight: 1}, {box: attentionBox, weight: 1}}},
+	}}
+	m := sized(t, 171, 63)
+	want := []boxName{nextBox, detailBox, activityBox, tokensBox, runsBox, attentionBox}
+	if got := m.order(); !slices.Equal(got, want) {
+		t.Fatalf("order %v, want %v", got, want)
+	}
+	if got := borders(t, m); !slices.Equal(got, []string{"¹next", "²detail", "³activity", "⁴tokens", "⁵runs", "⁶attention"}) {
+		t.Errorf("borders %q", got)
+	}
+	// Tab from runs (the start's focus) goes on to attention, then wraps to next.
+	if got := tabOrder(t, m, 1); !slices.Equal(got, []boxName{attentionBox, nextBox, detailBox, activityBox, tokensBox, runsBox}) {
+		t.Errorf("tab %v", got)
+	}
+}
+
+// TestTheNumbersFollowTheScreenWithAndWithoutTheConflictLine: in each layout, with and without the
+// conflict line (F-113 Decision A3), the boxes on screen, left to right and then top to bottom,
+// carry the numbers 1, 2, 3 …; Tab visits them in that order; key n hides the n-th of them; and
+// the help heads each box's keys with the number in its border.
+func TestTheNumbersFollowTheScreenWithAndWithoutTheConflictLine(t *testing.T) {
+	saved := fullLayout
+	t.Cleanup(func() { fullLayout = saved })
+	// At 171×50 the tokens box starts on line 24 and the detail box on line 25; on the 49 lines
+	// under the conflict line, both start on line 24, so the detail box comes first.
+	shifted := node{across: true, children: []node{
+		{weight: 1, children: []node{{box: runsBox, weight: 49}, {box: detailBox, weight: 51}}},
+		{weight: 1, children: []node{{box: attentionBox, weight: 48}, {box: tokensBox, weight: 52}}},
+	}}
+	for _, c := range []struct {
+		name   string
+		layout node
+		w, h   int
+	}{{"full", saved, 171, 63}, {"stacked", saved, 100, 40}, {"shifted", shifted, 171, 50}} {
+		for _, conflict := range []string{"", "staged copy in conflict"} {
+			fullLayout = c.layout
+			m := sized(t, c.w, c.h)
+			m.snap = &stream.Snapshot{Next: stream.Next{Conflict: conflict}}
+			var drawn []boxName
+			for i, b := range borders(t, m) {
+				name := boxName(strings.TrimLeft(b, strings.Join(superscript, "")))
+				if !strings.HasPrefix(b, superscript[i+1]) || m.number(name) != i+1 {
+					t.Errorf("%s, conflict %q: border %d is %q, number(%s) = %d", c.name, conflict, i+1, b, name, m.number(name))
+				}
+				drawn = append(drawn, name)
+			}
+			from := slices.Index(drawn, m.focus)
+			var want []boxName
+			for i := range len(boxes) {
+				want = append(want, drawn[(from+1+i)%len(drawn)])
+			}
+			if got := tabOrder(t, m, 1); !slices.Equal(got, want) {
+				t.Errorf("%s, conflict %q: tab %v, want %v", c.name, conflict, got, want)
+			}
+			for i, b := range drawn {
+				if hidden, _ := press(t, m, text(fmt.Sprint(i+1))); !hidden.hidden[b] {
+					t.Errorf("%s, conflict %q: key %d hides %v, want %s", c.name, conflict, i+1, hidden.hidden, b)
+				}
+			}
+			help := ansi.Strip(strings.Join(m.helpBox(m.height), "\n"))
+			for i, b := range drawn {
+				if groupKeys(b) != nil && !strings.Contains(help, superscript[i+1]+string(b)) {
+					t.Errorf("%s, conflict %q: the help has no heading %s%s:\n%s", c.name, conflict, superscript[i+1], b, help)
+				}
+			}
+		}
+	}
+}
+
+// TestNumberKeysToggleTheBoxAtThatPosition: key n hides and shows the box at position n of the
+// drawn layout, and a hidden box stays hidden when a resize gives it another number (F-127
+// Decision 3).
+func TestNumberKeysToggleTheBoxAtThatPosition(t *testing.T) {
+	m, _ := press(t, sized(t, 171, 63), text("5"))
+	if !m.hidden[nextBox] || strings.Contains(screen(t, m), "next┌") {
+		t.Fatalf("5 at 171x63 did not hide the next box: %v", m.hidden)
+	}
+	if again, _ := press(t, m, text("5")); again.hidden[nextBox] || !strings.Contains(screen(t, again), "⁵next") {
+		t.Errorf("5 twice did not show the next box again: %v", again.hidden)
+	}
+	// The first press is not undone by a press on a copy of the model (Update copies it).
+	if !m.hidden[nextBox] {
+		t.Error("a press on a copy changed the model it was copied from")
+	}
+	m, _ = update(t, m, tea.WindowSizeMsg{Width: 100, Height: 40})
+	if out := screen(t, m); strings.Contains(out, "next┌") || !strings.Contains(out, "⁵activity") {
+		t.Errorf("after the resize to 100x40, the next box is not hidden:\n%s", out)
+	}
+	m, _ = press(t, m, text("6"))
+	if m.hidden[nextBox] || !strings.Contains(screen(t, m), "⁶next") {
+		t.Errorf("6 at 100x40 did not show the next box: %v", m.hidden)
+	}
+}
+
+// TestTheHelpHeadingsTakeTheBoxesCurrentNumbers: the next box's keys are under ⁵next in the full
+// layout and under ⁶next in the stacked one.
+func TestTheHelpHeadingsTakeTheBoxesCurrentNumbers(t *testing.T) {
+	for _, c := range []struct {
+		w, h int
+		want string
+	}{{171, 63, "⁵next"}, {100, 40, "⁶next"}} {
+		m, _ := press(t, sized(t, c.w, c.h), text("h"))
+		if out := screen(t, m); !strings.Contains(out, "│  "+c.want) && !strings.Contains(out, c.want+" ") {
+			t.Errorf("%dx%d: the help has no heading %s:\n%s", c.w, c.h, c.want, out)
+		}
+	}
+}
+
+// TestTheHelpFitsEveryScreen: from the smallest screen up, the help box fits the screen and shows
+// every key and what it does, each box's heading, the line about the row actions and how to close
+// it.
+func TestTheHelpFitsEveryScreen(t *testing.T) {
+	for _, w := range []int{minWidth, 100, 120, fullWidth} {
+		for _, h := range []int{minHeight, 30, fullHeight, 63} {
+			m, _ := press(t, sized(t, w, h), text("h"))
+			box := m.helpBox(m.height)
+			if len(box) > h || lipgloss.Width(box[0]) > w {
+				t.Errorf("%dx%d: the help is %dx%d", w, h, lipgloss.Width(box[0]), len(box))
+			}
+			out := screen(t, m)
+			want := []string{"the selected row's actions; a lists them", "any key closes this help"}
+			for _, g := range helpGroups {
+				if g.box != "" {
+					want = append(want, superscript[m.number(g.box)]+string(g.box))
+				}
+				for _, k := range g.keys {
+					want = append(want, fmt.Sprintf("%-6s %s", k.Help().Key, k.Help().Desc))
+				}
+			}
+			for _, s := range want {
+				if !strings.Contains(out, s) {
+					t.Errorf("%dx%d: the help has no %q:\n%s", w, h, s, out)
+				}
+			}
+		}
 	}
 }
 
@@ -189,7 +424,7 @@ func TestBoxGolden(t *testing.T) {
 func TestBoxColorsAreD5s(t *testing.T) {
 	plain := strings.Join(drawBox(1, "runs", nil, false, nil, 30, 3), "\n")
 	focus := strings.Join(drawBox(1, "runs", nil, true, nil, 30, 3), "\n")
-	bar := keyBar(80, nil)
+	bar := keyBar(80, sized(t, 80, 24).barKeys(), nil, nil)
 	for _, c := range []struct {
 		what, out, color string
 	}{
@@ -205,47 +440,61 @@ func TestBoxColorsAreD5s(t *testing.T) {
 	}
 }
 
+// globalBar is the key bar's global keys, in its order (F-127 Decision 5).
+const globalBar = "┘tab box└┘↑↓ select└┘↵ detail└┘a act└┘h help└┘q quit└"
+
 func TestKeyBarFitsItsWidth(t *testing.T) {
+	keys := atRow(t, runsBox, "S-1330").barKeys()
 	for _, w := range []int{100, 171} {
-		if got := ansi.Strip(keyBar(w, nil)); lipgloss.Width(got) != w ||
-			!strings.HasPrefix(got, "╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└─") {
+		if got := ansi.Strip(keyBar(w, keys, nil, nil)); lipgloss.Width(got) != w ||
+			!strings.HasPrefix(got, "╰┘s stop└┘o page└┘p PR└┘g agent└"+globalBar+"─") {
 			t.Errorf("keyBar(%d) = %q", w, got)
 		}
 	}
 	// At 80 the labels do not fit: the keys alone.
-	if got := ansi.Strip(keyBar(80, nil)); lipgloss.Width(got) != 80 || !strings.HasPrefix(got, "╰┘↑↓└┘tab└┘↵└┘a└┘r└┘s└┘o└┘p└┘g└┘h└┘q└─") {
+	if got := ansi.Strip(keyBar(80, keys, nil, nil)); lipgloss.Width(got) != 80 || !strings.HasPrefix(got, "╰┘s└┘o└┘p└┘g└┘tab└┘↑↓└┘↵└┘a└┘h└┘q└─") {
 		t.Errorf("keyBar(80) = %q", got)
 	}
-	if got := ansi.Strip(keyBar(20, nil)); got != "╰┘↑↓└┘tab└┘↵└┘a└───╯" {
+	if got := ansi.Strip(keyBar(20, keys, nil, nil)); got != "╰┘s└┘o└┘p└┘g└┘tab└─╯" {
 		t.Errorf("keyBar(20) = %q, want the keys alone, as many as fit", got)
 	}
 }
 
-func TestTabMovesTheFocusOverShownBoxes(t *testing.T) {
-	m := sized(t, 171, 63)
-	var seen []int
-	for range 6 {
-		m, _ = press(t, m, tab)
-		seen = append(seen, m.focus)
+// TestTheKeyBarFollowsTheFocusedBoxAndTheSelectedRow: the bar shows the focused box's box keys,
+// then the selected row's action keys, then the global keys (F-127 Decision 5).
+func TestTheKeyBarFollowsTheFocusedBoxAndTheSelectedRow(t *testing.T) {
+	bar := func(m Model) string { return ansi.Strip(keyBar(171, m.barKeys(), nil, nil)) }
+	// A runs row: its actions by their short labels.
+	if got := bar(atRow(t, runsBox, "F-83")); !strings.HasPrefix(got, "╰┘r resume└┘o page└┘p PR└┘g agent└"+globalBar+"─") {
+		t.Errorf("runs, F-83: %q", got)
 	}
-	if want := []int{2, 3, 4, 5, 6, 1}; !slices.Equal(seen, want) {
-		t.Errorf("tab: %v, want %v", seen, want)
+	// The next box: its box keys, then the row's keys that are no box key; p puts, so no p PR.
+	got := bar(atRow(t, nextBox, "F-84"))
+	if !strings.HasPrefix(got, "╰┘y yank└┘p put└┘P put before└┘x unrank└┘esc cancel└┘C commit└┘R reset└┘d order└┘o page└┘g agent└"+globalBar+"─") ||
+		strings.Contains(got, "p PR") {
+		t.Errorf("next, F-84: %q", got)
 	}
-	m, _ = press(t, m, shiftTab, shiftTab)
-	if m.focus != 5 {
-		t.Errorf("⇧tab twice from 1: %d, want 5", m.focus)
+	// An attention item: its own keys, e and m among them.
+	if got := bar(atRow(t, attentionBox, "F-81:change")); !strings.HasPrefix(got, "╰┘m merge└┘o page└┘g agent└"+globalBar) {
+		t.Errorf("attention, F-81:change: %q", got)
 	}
-	m, _ = press(t, m, text("1"), shiftTab)
-	if m.focus != 4 {
-		t.Errorf("⇧tab from 5 with ¹ hidden: %d, want 4", m.focus)
+	// The detail box: f and w, then the shown run's actions.
+	if got := bar(focused(t, showing(t, 171, 63), detailBox)); !strings.HasPrefix(got, "╰┘f follow└┘w watch└┘s stop└┘o page└┘p PR└┘g agent└"+globalBar) {
+		t.Errorf("detail: %q", got)
 	}
-	m, _ = press(t, m, tab, tab, tab)
-	if m.focus != 2 {
-		t.Errorf("tab three times from 4 with ¹ hidden: %d, want 2", m.focus)
+	// Tokens and activity have no box keys and no rows: the global keys alone.
+	m, _ := update(t, sized(t, 171, 63), snapshot(t))
+	for _, b := range []boxName{tokensBox, activityBox} {
+		if got := bar(focused(t, m, b)); !strings.HasPrefix(got, "╰"+globalBar+"─") {
+			t.Errorf("%s: %q", b, got)
+		}
 	}
-	m, _ = press(t, m, text("2"))
-	if m.focus != 3 {
-		t.Errorf("hiding the focused ²: focus %d, want 3", m.focus)
+}
+
+func TestHidingTheFocusedBoxMovesTheFocusOn(t *testing.T) {
+	m := focused(t, sized(t, 171, 63), attentionBox)
+	if m, _ = press(t, m, numberKey(m, attentionBox)); m.focus != detailBox {
+		t.Errorf("hiding the focused attention box: focus %q, want detail", m.focus)
 	}
 }
 
@@ -256,7 +505,7 @@ func TestPlusAndMinusRestartTheStreamWithTheNewInterval(t *testing.T) {
 		t.Fatalf("interval %d after + +, cmd %v", m.interval, cmd)
 	}
 	if !strings.Contains(strings.Split(screen(t, m), "\n")[0], "┐- 3000ms +┌─╮") {
-		t.Errorf("¹ border does not show 3000ms")
+		t.Errorf("the runs box's border does not show 3000ms")
 	}
 	// The first press's timer finds a newer press, and starts nothing.
 	m, cmd = update(t, m, restartMsg{press: 1})
@@ -303,8 +552,8 @@ func TestHelpOpensAndAnyKeyClosesIt(t *testing.T) {
 		t.Fatal("h did not open the help")
 	}
 	m, _ = press(t, m, text("3"))
-	if m.help || m.hidden[3] {
-		t.Errorf("a key with the help open: help %v, ³ hidden %v; want the help closed and nothing else", m.help, m.hidden[3])
+	if m.help || len(m.hidden) > 0 {
+		t.Errorf("a key with the help open: help %v, hidden %v; want the help closed and nothing else", m.help, m.hidden)
 	}
 }
 
@@ -325,7 +574,7 @@ func TestSnapshotRedrawsAndASectionErrorShowsInItsBorder(t *testing.T) {
 	}
 	out := m.render()
 	if !strings.Contains(out, styleError.Render("! codex app-server timed out")) {
-		t.Errorf("box ⁴'s border has no red ! with the capacity error:\n%s", ansi.Strip(out))
+		t.Errorf("the tokens box's border has no red ! with the capacity error:\n%s", ansi.Strip(out))
 	}
 	// The recorded line's staged copy is in conflict: its message is the first line, the boxes
 	// start under it.
@@ -335,7 +584,7 @@ func TestSnapshotRedrawsAndASectionErrorShowsInItsBorder(t *testing.T) {
 	}
 	clock := m.snap.At.Local().Format("15:04:05")
 	if !strings.Contains(lines[1], "┐"+clock+"┌─┐- 2000ms +┌─╮") {
-		t.Errorf("¹ border has no clock %s", clock)
+		t.Errorf("the runs box's border has no clock %s", clock)
 	}
 }
 

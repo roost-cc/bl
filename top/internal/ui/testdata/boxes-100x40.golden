@@ -14,13 +14,12 @@
 │ CHG   S-1330:change S-1330  bl · 3 commits · not merged                                          │
 │ next: bl run S-1330                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─┐³next┌────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮
-│ Rank  Id     Status    Pts  Held by  Title                                                       │
-│   3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a chan…│
-│   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the gue…│
-│   5   F-80   refined    13  F-84     Dependency updates are one job: Renovate applies, the gate …│
-│   6   F-86   draft       -           AGENTS.md in plain English: rewrite bl's reference in about…│
-│ bl next → F-81 (running)                                                                         │
+╭─┐³detail┌────────────────────────────────────────────────────────────────────────────────────────╮
+│ select a run (↑↓ in runs, then ↵)                                                                │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─┐⁴tokens┌───────────────────────────────┐2h┌─╮╭─┐⁵activity┌────────────────────────────────┐30d┌─╮
 │ out tok / min · ended sessions     peak 8.7k ││ points done / UTC day · 30 days   last 7 days 41 │
@@ -31,10 +30,11 @@
 │ today  in 1.2M · out 640k · cache r 51M · w …││ 18:05  S-1330  review:verify     ✓ 9m    codex g…│
 │ capacity read 18:14 · c reads it now         ││ 18:01  S-1330  review:round r1   ✓       round 1…│
 ╰──────────────────────────────────────────────╯╰──────────────────────────────────────────────────╯
-╭─┐⁶detail┌────────────────────────────────────────────────────────────────────────────────────────╮
-│ select a run (↑↓ in ¹, then ↵)                                                                   │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└───────╯
+╭─┐⁶next┌────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮
+│ Rank  Id     Status    Pts  Held by  Title                                                       │
+│   3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a chan…│
+│   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the gue…│
+│   5   F-80   refined    13  F-84     Dependency updates are one job: Renovate applies, the gate …│
+│   6   F-86   draft       -           AGENTS.md in plain English: rewrite bl's reference in about…│
+│ bl next → F-81 (running)                                                                         │
+╰┘y└┘p└┘P└┘x└┘esc└┘C└┘R└┘d└┘o└┘g└┘tab└┘↑↓└┘↵└┘a└┘h└┘q└─────────────────────────────────────────────╯

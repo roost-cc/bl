@@ -12,7 +12,8 @@ import (
 // no item has this id.
 const updateGroup = "update:*"
 
-// kindTags are box ²'s tag and color of each inbox kind (D5), by the kind `bl inbox` writes.
+// kindTags are the attention box's tag and color of each inbox kind (D5), by the kind `bl inbox`
+// writes.
 var kindTags = map[string]struct {
 	tag   string
 	style lipgloss.Style
@@ -24,7 +25,7 @@ var kindTags = map[string]struct {
 	"update":     {"UPD", styleWarn},
 }
 
-// attentionRow is a row of box ²: an inbox item, or the grouped row of updates.
+// attentionRow is a row of the attention box: an inbox item, or the grouped row of updates.
 type attentionRow struct {
 	item    *stream.Item
 	updates int // for the grouped row: how many update items it holds
@@ -38,9 +39,9 @@ func (r attentionRow) id() string {
 	return r.item.ID
 }
 
-// attentionRows are box ²'s rows: the inbox items in their order. In the stacked layout (Mockup B)
-// two or more update items fold into one grouped row, and the items follow it while the group is
-// open.
+// attentionRows are the attention box's rows: the inbox items in their order. In the stacked layout
+// (Mockup B) two or more update items fold into one grouped row, and the items follow it while the
+// group is open.
 func (m Model) attentionRows() []attentionRow {
 	items := m.snap.Attention.Items
 	var rows, updates []attentionRow
@@ -62,11 +63,11 @@ func (m Model) attentionRows() []attentionRow {
 	return rows
 }
 
-// drawAttention draws box ² (D4, Mockups A and B) in w×h inner cells: a row per item with its
-// kind tag, id, unit and line, and the selected item's `next:` on the last line.
+// drawAttention draws the attention box (D4, Mockups A and B) in w×h inner cells: a row per item
+// with its kind tag, id, unit and line, and the selected item's `next:` on the last line.
 func (m Model) drawAttention(w, h int) []string {
 	rows := m.attentionRows()
-	sel := m.selected(2)
+	sel := m.selected(attentionBox)
 	draw := func(i int) string {
 		r := rows[i]
 		if r.item == nil {

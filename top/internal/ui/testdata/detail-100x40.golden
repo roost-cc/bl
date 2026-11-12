@@ -14,13 +14,12 @@
 │ CHG   F-81:change   F-81    4 repos · 11 commits · not merged                                    │
 │ next: check the update job where it runs (its journal or log)                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭─┐³next┌────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮
-│ Rank  Id     Status    Pts  Held by  Title                                                       │
-│   3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a chan…│
-│   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the gue…│
-│   5   F-80   refined    13  F-84     Dependency updates are one job: Renovate applies, the gate …│
-│   6   F-86   draft       -           AGENTS.md in plain English: rewrite bl's reference in about…│
-│ bl next → F-81 (running)                                                                         │
+╭─┐³detail┌───────────────────────────────────────────────────────────────────────────────┐S-1330┌─╮
+│ S-1330 · review · 38m · codex gpt-6-sol                                                          │
+│ setup ✓ ─ implement ✓ ─ fix-tests ✓ ─ self-review ✓ ─ review r1 ● 4m ─ fix r1 · ─ review r2 · ─ …│
+│ 20:42:27  say   Done: - the review found nothing.                                                │
+│ ── run ended: escalated ─────────────────────────────────────────────────────────────────────────│
+│ follow on · f stops it · w bl watch · 3 hides it                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─┐⁴tokens┌───────────────────────────────┐2h┌─╮╭─┐⁵activity┌────────────────────────────────┐30d┌─╮
 │ out tok / min · ended sessions     peak 8.7k ││ points done / UTC day · 30 days   last 7 days 41 │
@@ -31,10 +30,11 @@
 │ today  in 1.2M · out 640k · cache r 51M · w …││ 18:05  S-1330  review:verify     ✓ 9m    codex g…│
 │ capacity read 18:14 · c reads it now         ││ 18:01  S-1330  review:round r1   ✓       round 1…│
 ╰──────────────────────────────────────────────╯╰──────────────────────────────────────────────────╯
-╭─┐⁶detail┌───────────────────────────────────────────────────────────────────────────────┐S-1330┌─╮
-│ S-1330 · review · 38m · codex gpt-6-sol                                                          │
-│ setup ✓ ─ implement ✓ ─ fix-tests ✓ ─ self-review ✓ ─ review r1 ● 4m ─ fix r1 · ─ review r2 · ─ …│
-│ 20:42:27  say   Done: - the review found nothing.                                                │
-│ ── run ended: escalated ─────────────────────────────────────────────────────────────────────────│
-│ follow on · f stops it · w bl watch · 6 hides ⁶                                                  │
-╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└───────╯
+╭─┐⁶next┌────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮
+│ Rank  Id     Status    Pts  Held by  Title                                                       │
+│   3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a chan…│
+│   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the gue…│
+│   5   F-80   refined    13  F-84     Dependency updates are one job: Renovate applies, the gate …│
+│   6   F-86   draft       -           AGENTS.md in plain English: rewrite bl's reference in about…│
+│ bl next → F-81 (running)                                                                         │
+╰┘s stop└┘o page└┘p PR└┘g agent└┘tab box└┘↑↓ select└┘↵ detail└┘a act└┘h help└┘q quit└──────────────╯
