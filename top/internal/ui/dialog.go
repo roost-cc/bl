@@ -55,13 +55,13 @@ type actionDoneMsg struct {
 }
 
 // target is the selected row of the box with the focus, for an action: its id, a line about it,
-// and its actions; box ⁶'s row is the run it shows. ok is false when there is no such row (the
-// grouped update row is none).
+// and its actions; the detail box's row is the run it shows. ok is false when there is no such row
+// (the grouped update row is none).
 func (m Model) target() (id, line string, list []stream.Action, ok bool) {
 	if m.snap == nil {
 		return "", "", nil, false
 	}
-	if m.focus == 6 {
+	if m.focus == detailBox {
 		if r := m.run(m.detail); r != nil {
 			return r.ID, runLine(*r, m.snap.At), r.Actions, true
 		}
@@ -72,14 +72,14 @@ func (m Model) target() (id, line string, list []stream.Action, ok bool) {
 		return "", "", nil, false
 	}
 	switch m.focus {
-	case 1:
+	case runsBox:
 		r := m.snap.Runs.Rows[i]
 		return r.ID, runLine(r, m.snap.At), r.Actions, true
-	case 2:
+	case attentionBox:
 		if it := m.attentionRows()[i].item; it != nil {
 			return it.ID, strings.Join([]string{it.ID, it.Unit, it.Line}, " · "), it.Actions, true
 		}
-	case 3:
+	case nextBox:
 		r := m.nextUnits()[i]
 		return r.ID, strings.Join([]string{r.ID, r.Status, r.Title}, " · "), r.Actions, true
 	}
@@ -163,10 +163,10 @@ func (m Model) renderAction(a stream.Action, selected string) (out stream.Action
 	return a, puts, nil
 }
 
-// rankKey handles a ranking key of box ³ (F-113 D6): y yanks the selected unit and esc cancels the
-// yank; p, P, x, C and R pick the action of that key, the selected row's or else the box's
-// (next.actions). A key with no such action does nothing. While the staged copy is in conflict,
-// every key but R refuses with the conflict's text (Decision A3).
+// rankKey handles a ranking key of the next box (F-113 D6): y yanks the selected unit and esc
+// cancels the yank; p, P, x, C and R pick the action of that key, the selected row's or else the
+// box's (next.actions). A key with no such action does nothing. While the staged copy is in
+// conflict, every key but R refuses with the conflict's text (Decision A3).
 func (m Model) rankKey(k string) (Model, tea.Cmd) {
 	if m.snap == nil {
 		return m, nil
@@ -177,7 +177,7 @@ func (m Model) rankKey(k string) (Model, tea.Cmd) {
 	}
 	switch k {
 	case "y":
-		if id := m.selectedUnit(3); id != "" {
+		if id := m.selectedUnit(nextBox); id != "" {
 			m.yanked = id
 		}
 		return m, nil

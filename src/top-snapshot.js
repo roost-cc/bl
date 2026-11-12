@@ -97,7 +97,7 @@ export function readSection(prev, read, now) {
 const addUsage = (a, b) => (a && b ? Object.fromEntries(TOKEN_KEYS.map((k) => [k, a[k] + b[k]])) : (a ?? b));
 
 /**
- * The stage of a run's timeline (box ⁶, F-88 S-1334) that a step of
+ * The stage of a run's timeline (the detail box, F-88 S-1334) that a step of
  * `planSteps` falls in: `{ step, round }`, or null for a step outside the
  * timeline (`pr`, `stop`). The test gate goes with `fix-tests`, a fix's
  * self-review with its fix, and a review round past `maxRounds` is the
@@ -124,7 +124,7 @@ function stageOf(step, round, maxRounds) {
 }
 
 /**
- * A run's step timeline for box ⁶ (F-88 S-1334): its stages in the order of
+ * A run's step timeline for the detail box (F-88 S-1334): its stages in the order of
  * `planSteps` (`src/feature-run.js`), one implement stage for all stories,
  * each `{ step, round, state, durationMs, tests, usage }`.
  *
@@ -243,7 +243,7 @@ const agentAction = () => action('g', 'talk it through', ['bl', 'agent'], { wind
 const viewAction = (id, label = 'open the page') => action('o', label, ['bl', 'view', id], { window: `${id} view` });
 
 /**
- * The ranking actions of a ranked row of box ³ (F-113 D6, D7). Each argv
+ * The ranking actions of a ranked row of the next box (F-113 D6, D7). Each argv
  * element is a Go `text/template` that the view renders with the selected
  * row's id (`Selected`) and the yanked unit's id (`Yanked`).
  */
@@ -253,10 +253,10 @@ const RANK_ACTIONS = [
   action('x', 'unrank it', ['bl', 'rank', '{{.Selected}}', '--remove']),
 ];
 
-/** A ranked row of box ³: its ranking actions, then the row's own. */
+/** A ranked row of the next box: its ranking actions, then the row's own. */
 const rankedRow = (row) => ({ ...row, actions: [...RANK_ACTIONS, ...row.actions] });
 
-/** Box ³'s actions while a staged copy exists (F-113 D7): commit it or reset it. */
+/** The next box's actions while a staged copy exists (F-113 D7): commit it or reset it. */
 const STAGED_ACTIONS = [
   action('C', 'commit the staged order', ['bl', 'rank', '--commit'], {
     about: [`bl rank --commit merges the staged order into ${PRIORITY_FILE}, then commits and pushes it.`],

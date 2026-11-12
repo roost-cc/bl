@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -15,36 +17,48 @@ const (
 	sizeMessage = "bl top needs at least 80x24"
 )
 
-// box is one of D4's boxes: its number and name, the snapshot sections it draws, the option at
-// the right of its top border, and the drawer of its content in its inner w×h cells, which runs
-// once there is a snapshot. A section whose last read failed puts a red `!` and its error in the
-// box's top border.
+// boxName is a box's name, which is its identity (F-127 Decision 1). Its number is its position
+// in the layout that is drawn (Model.number).
+type boxName string
+
+// The boxes of D4, by purpose.
+const (
+	runsBox      boxName = "runs"
+	attentionBox boxName = "attention"
+	nextBox      boxName = "next"
+	tokensBox    boxName = "tokens"
+	activityBox  boxName = "activity"
+	detailBox    boxName = "detail"
+)
+
+// box is one of D4's boxes: the snapshot sections it draws, the option at the right of its top
+// border, and the drawer of its content in its inner w×h cells, which runs once there is a
+// snapshot. A section whose last read failed puts a red `!` and its error in the box's top border.
 type box struct {
-	name     string
 	sections []string
 	option   string
 	draw     func(m Model, w, h int) []string
 }
 
-// boxes are D4's boxes by number. Box ⁶'s option is the id of the run it shows (boxLines).
-var boxes = map[int]box{
-	1: {name: "runs", sections: []string{"runs"}, draw: Model.drawRuns},
-	2: {name: "attention", sections: []string{"attention"}, draw: Model.drawAttention},
-	3: {name: "next", sections: []string{"next"}, option: "bl next", draw: Model.drawNext},
-	4: {name: "tokens", sections: []string{"tokens", "capacity"}, option: "2h", draw: func(m Model, w, h int) []string {
+// boxes are D4's boxes by name. The detail box's option is the id of the run it shows (boxLines).
+var boxes = map[boxName]box{
+	runsBox:      {sections: []string{"runs"}, draw: Model.drawRuns},
+	attentionBox: {sections: []string{"attention"}, draw: Model.drawAttention},
+	nextBox:      {sections: []string{"next"}, option: "bl next", draw: Model.drawNext},
+	tokensBox: {sections: []string{"tokens", "capacity"}, option: "2h", draw: func(m Model, w, h int) []string {
 		return drawTokens(m.snap, w, h)
 	}},
-	5: {name: "activity", sections: []string{"activity", "history"}, option: "30d", draw: func(m Model, w, h int) []string {
+	activityBox: {sections: []string{"activity", "history"}, option: "30d", draw: func(m Model, w, h int) []string {
 		return drawActivity(m.snap, w, h)
 	}},
-	6: {name: "detail", sections: []string{"runs"}, draw: Model.drawDetail},
+	detailBox: {sections: []string{"runs"}, draw: Model.drawDetail},
 }
 
-// node is a box (box > 0), or a split of nodes side by side (across) or stacked. Each node takes
-// its weight's share of its parent's width (across) or height. A hidden box takes none: its share
-// goes to the nodes left in its split.
+// node is a box (box not empty), or a split of nodes side by side (across) or stacked. Each node
+// takes its weight's share of its parent's width (across) or height. A hidden box takes none: its
+// share goes to the nodes left in its split.
 type node struct {
-	box      int
+	box      boxName
 	weight   int
 	across   bool
 	children []node
@@ -52,22 +66,82 @@ type node struct {
 
 // fullLayout is Mockup A: the weights are the mockup's widths and heights at 171×63.
 var fullLayout = node{across: true, children: []node{
-	{weight: 106, children: []node{{box: 1, weight: 13}, {box: 6, weight: 24}, {box: 3, weight: 26}}},
-	{weight: 65, children: []node{{box: 2, weight: 13}, {box: 4, weight: 24}, {box: 5, weight: 26}}},
+	{weight: 106, children: []node{{box: runsBox, weight: 13}, {box: detailBox, weight: 24}, {box: nextBox, weight: 26}}},
+	{weight: 65, children: []node{{box: attentionBox, weight: 13}, {box: tokensBox, weight: 24}, {box: activityBox, weight: 26}}},
 }}
 
-// stackedLayout is Mockup B: the weights are the mockup's heights and widths at 100×40.
+// stackedLayout is Mockup B, with the detail box under the attention box and the next box at the
+// bottom (F-127 Decision 1): each box keeps the mockup's height at 100×40, and the tokens and
+// activity boxes their widths.
 var stackedLayout = node{children: []node{
-	{box: 1, weight: 7},
-	{box: 2, weight: 9},
-	{box: 3, weight: 8},
-	{weight: 9, across: true, children: []node{{box: 4, weight: 48}, {box: 5, weight: 52}}},
-	{box: 6, weight: 7},
+	{box: runsBox, weight: 7},
+	{box: attentionBox, weight: 9},
+	{box: detailBox, weight: 7},
+	{weight: 9, across: true, children: []node{{box: tokensBox, weight: 48}, {box: activityBox, weight: 52}}},
+	{box: nextBox, weight: 8},
 }}
+
+// layout is the layout tree that is drawn: the full layout, or the stacked one on a smaller
+// screen.
+func (m Model) layout() node {
+	if m.stacked() {
+		return stackedLayout
+	}
+	return fullLayout
+}
+
+// order is the boxes of the drawn layout left to right, then top to bottom: each box's top-left
+// cell at the screen's size, as if no box were hidden, sorted by its row and then its column. It
+// gives each box its number and the Tab order (F-127 Decisions 1 and 3).
+func (m Model) order() []boxName {
+	type place struct {
+		box      boxName
+		row, col int
+	}
+	var places []place
+	var walk func(n node, row, col, w, h int)
+	walk = func(n node, row, col, w, h int) {
+		if n.box != "" {
+			places = append(places, place{n.box, row, col})
+			return
+		}
+		weights := make([]int, len(n.children))
+		for i, c := range n.children {
+			weights[i] = c.weight
+		}
+		total := h
+		if n.across {
+			total = w
+		}
+		for i, size := range split(total, weights) {
+			if n.across {
+				walk(n.children[i], row, col, size, h)
+				col += size
+			} else {
+				walk(n.children[i], row, col, w, size)
+				row += size
+			}
+		}
+	}
+	walk(m.layout(), 0, 0, m.width, m.height)
+	slices.SortStableFunc(places, func(a, b place) int {
+		return cmp.Or(cmp.Compare(a.row, b.row), cmp.Compare(a.col, b.col))
+	})
+	out := make([]boxName, len(places))
+	for i, p := range places {
+		out[i] = p.box
+	}
+	return out
+}
+
+// number is box b's number: its position in the drawn layout (order), from 1.
+func (m Model) number(b boxName) int {
+	return slices.Index(m.order(), b) + 1
+}
 
 // shown reports whether n holds a box that is not hidden.
 func (m Model) shown(n node) bool {
-	if n.box > 0 {
+	if n.box != "" {
 		return !m.hidden[n.box]
 	}
 	for _, c := range n.children {
@@ -97,7 +171,7 @@ func split(total int, weights []int) []int {
 
 // draw draws n in w×h cells as h lines.
 func (m Model) draw(n node, w, h int) []string {
-	if n.box > 0 {
+	if n.box != "" {
 		return m.boxLines(n.box, w, h)
 	}
 	var kids []node
@@ -127,10 +201,10 @@ func (m Model) draw(n node, w, h int) []string {
 	return lines
 }
 
-// boxLines draws box num: the error of its first section that failed, then its options, and its
-// content once there is a snapshot.
-func (m Model) boxLines(num, w, h int) []string {
-	b := boxes[num]
+// boxLines draws box name with its number: the error of its first section that failed, then its
+// options, and its content once there is a snapshot.
+func (m Model) boxLines(name boxName, w, h int) []string {
+	b := boxes[name]
 	var options []string
 	if m.snap != nil {
 		for _, name := range b.sections {
@@ -140,7 +214,7 @@ func (m Model) boxLines(num, w, h int) []string {
 			}
 		}
 	}
-	if num == 1 {
+	if name == runsBox {
 		if m.snap != nil {
 			options = append(options, styleText.Render(m.snap.At.Local().Format("15:04:05")))
 		}
@@ -149,19 +223,19 @@ func (m Model) boxLines(num, w, h int) []string {
 	if b.option != "" {
 		options = append(options, styleText.Render(b.option))
 	}
-	if num == 6 && m.detail != "" {
+	if name == detailBox && m.detail != "" {
 		options = append(options, styleText.Render(m.detail))
 	}
-	name := b.name
-	if num == 3 && m.snap != nil && m.snap.Next.Staged != nil {
+	title := string(name)
+	if name == nextBox && m.snap != nil && m.snap.Next.Staged != nil {
 		// F-113 D4: the operator sees that staged edits exist, also without the focus.
-		name += " · staged edits"
+		title += " · staged edits"
 	}
 	var content []string
 	if m.snap != nil && b.draw != nil {
 		content = b.draw(m, w-2, h-2)
 	}
-	return drawBox(num, name, options, m.focus == num, content, w, h)
+	return drawBox(m.number(name), title, options, m.focus == name, content, w, h)
 }
 
 // blank is h lines of w spaces.
@@ -189,10 +263,7 @@ func (m Model) render() string {
 	if m.width < minWidth || m.height < minHeight {
 		return sizeMessage
 	}
-	layout := fullLayout
-	if m.stacked() {
-		layout = stackedLayout
-	}
+	layout := m.layout()
 	var top []string
 	if m.snap != nil && m.snap.Next.Conflict != "" {
 		top = []string{styleError.Render(fit(" ! "+m.snap.Next.Conflict, m.width))}
@@ -208,7 +279,7 @@ func (m Model) render() string {
 		lines = overlay(lines, m.dialogBox(m.width))
 	}
 	if m.help {
-		lines = overlay(lines, helpBox(m.width, m.height))
+		lines = overlay(lines, m.helpBox(m.width, m.height))
 	}
 	return strings.Join(lines, "\n")
 }

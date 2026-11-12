@@ -298,7 +298,7 @@ test('a run state that fails to read keeps its last good row, and the section er
   }
 });
 
-test('history: the last day is the UTC date of now, in any zone (box ¹ and ⁵ label it UTC)', () => {
+test('history: the last day is the UTC date of now, in any zone (the runs and activity boxes label it UTC)', () => {
   const { dir } = mkTempBacklog();
   const git = (...args) =>
     spawnSync('git', ['-C', dir, ...args], {

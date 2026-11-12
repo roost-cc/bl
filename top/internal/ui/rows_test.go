@@ -37,32 +37,32 @@ func lineWith(t *testing.T, m Model, want string) string {
 func TestSelectionStaysOnItsRowAcrossSnapshots(t *testing.T) {
 	m, _ := update(t, sized(t, 171, 63), runsMsg("F-1", "F-2", "F-3"))
 	m, _ = press(t, m, down)
-	if got := m.sel[1]; got != (selection{"F-2", 1}) {
+	if got := m.sel[runsBox]; got != (selection{"F-2", 1}) {
 		t.Fatalf("↓ from the first row: %+v", got)
 	}
 	// A new run comes first: F-2 moves down one place, and stays selected.
 	m, _ = update(t, m, runsMsg("F-9", "F-1", "F-2", "F-3"))
-	if got := m.sel[1]; got != (selection{"F-2", 2}) {
+	if got := m.sel[runsBox]; got != (selection{"F-2", 2}) {
 		t.Errorf("after F-2 moved down: %+v, want F-2 at 2", got)
 	}
 	// F-2 leaves: the row at its place is selected.
 	m, _ = update(t, m, runsMsg("F-9", "F-1", "F-3"))
-	if got := m.sel[1]; got != (selection{"F-3", 2}) {
+	if got := m.sel[runsBox]; got != (selection{"F-3", 2}) {
 		t.Errorf("after F-2 left: %+v, want F-3 at 2", got)
 	}
 	// ↑ and ↓ stop at the first and the last row.
 	m, _ = press(t, m, down, down)
-	if got := m.sel[1]; got != (selection{"F-3", 2}) {
+	if got := m.sel[runsBox]; got != (selection{"F-3", 2}) {
 		t.Errorf("↓ past the last row: %+v", got)
 	}
 	m, _ = press(t, m, up, up, up, up)
-	if got := m.sel[1]; got != (selection{"F-9", 0}) {
+	if got := m.sel[runsBox]; got != (selection{"F-9", 0}) {
 		t.Errorf("↑ past the first row: %+v", got)
 	}
 	// ↓ moves the selection of the box with the focus only.
 	m, _ = press(t, m, tab, down)
-	if m.sel[1].id != "F-9" {
-		t.Errorf("↓ in box ² moved box ¹'s selection: %+v", m.sel[1])
+	if m.sel[runsBox].id != "F-9" {
+		t.Errorf("↓ in the attention box moved the runs box's selection: %+v", m.sel[runsBox])
 	}
 }
 
@@ -91,13 +91,13 @@ func TestRunsBoxShowsStatesSummaryAndColumns(t *testing.T) {
 		"2 running · 0 stopped · 1 stale · done today (UTC): 1 stories, 10 points",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("box ¹ has no %q:\n%s", want, out)
+			t.Errorf("the runs box has no %q:\n%s", want, out)
 		}
 	}
-	// Mockup B's narrow box ¹ has no Agent column.
+	// Mockup B's narrow runs box has no Agent column.
 	m, _ = update(t, sized(t, 100, 40), snapshot(t))
 	if out := screen(t, m); strings.Contains(out, "Agent") || !strings.Contains(out, "S-1330  ● run   review          -       1/2    38m      109k     bl#15") {
-		t.Errorf("box ¹ at 100x40:\n%s", out)
+		t.Errorf("the runs box at 100x40:\n%s", out)
 	}
 }
 
@@ -143,7 +143,7 @@ func TestAttentionBoxShowsKindsAndTheSelectedItemsNext(t *testing.T) {
 		"next: bl run S-1330",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("box ² has no %q:\n%s", want, out)
+			t.Errorf("the attention box has no %q:\n%s", want, out)
 		}
 	}
 	for tag, color := range map[string]string{"RUN": sgr(colorTeal), "ESC": sgr(colorRed), "TASK": sgr(colorYellow), "CHG": sgr(colorBlue), "UPD": sgr(colorPeach)} {
@@ -155,8 +155,8 @@ func TestAttentionBoxShowsKindsAndTheSelectedItemsNext(t *testing.T) {
 
 func TestStackedAttentionFoldsTheUpdatesAndEnterOpensThem(t *testing.T) {
 	m, _ := update(t, sized(t, 100, 40), snapshot(t))
-	// Without box ⁶, box ² has room for every row.
-	m, _ = press(t, m, text("6"))
+	// Without the detail box, the attention box has room for every row.
+	m, _ = press(t, m, numberKey(m, detailBox))
 	out := screen(t, m)
 	if !strings.Contains(out, "UPD   3 red updates") || strings.Contains(out, "tools:renova") {
 		t.Fatalf("the updates are not one row:\n%s", out)
@@ -177,8 +177,8 @@ func TestStackedAttentionFoldsTheUpdatesAndEnterOpensThem(t *testing.T) {
 	}
 	// The group row stays selected, and ↓ goes into it: the box scrolls to show the update.
 	m, _ = press(t, m, down)
-	if m.sel[2].id != "tools:renovate/eslint-9.x" || !strings.Contains(screen(t, m), "UPD   tools:renova") {
-		t.Errorf("↓ from the open group: %+v\n%s", m.sel[2], screen(t, m))
+	if m.sel[attentionBox].id != "tools:renovate/eslint-9.x" || !strings.Contains(screen(t, m), "UPD   tools:renova") {
+		t.Errorf("↓ from the open group: %+v\n%s", m.sel[attentionBox], screen(t, m))
 	}
 	m, _ = press(t, m, up, enter)
 	if m.updatesOpen || strings.Contains(screen(t, m), "tools:renova") {
@@ -207,7 +207,7 @@ func TestNextBoxShowsRankedUnitsAndThePick(t *testing.T) {
 		"bl next → F-81 (running)",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("box ³ has no %q:\n%s", want, out)
+			t.Errorf("the next box has no %q:\n%s", want, out)
 		}
 	}
 	// The narrow box cuts it shorter.
@@ -252,31 +252,31 @@ func TestNextBoxScrollsPastItsHeightAndSkipsTheDivider(t *testing.T) {
 		unranked = append(unranked, fmt.Sprintf("S-%d", 200+i))
 	}
 	msg := withNext(t, stream.Order{Ranked: units(true, ranked...), Unranked: units(false, unranked...)}, nil, "")
-	// At 100x40 box ³ holds a few rows only.
+	// At 100x40 the next box holds a few rows only.
 	m, _ := update(t, sized(t, 100, 40), msg)
-	m, _ = press(t, m, tab, tab)
+	m = focused(t, m, nextBox)
 	for range 11 {
 		m, _ = press(t, m, down)
 	}
-	if m.sel[3].id != "F-111" {
-		t.Fatalf("after 11 ↓: %+v", m.sel[3])
+	if m.sel[nextBox].id != "F-111" {
+		t.Fatalf("after 11 ↓: %+v", m.sel[nextBox])
 	}
 	// The next ↓ passes over the divider to the first unranked unit, which the box scrolls to.
 	m, _ = press(t, m, down)
 	out := screen(t, m)
-	if m.sel[3].id != "S-200" || !strings.Contains(out, "S-200") || !strings.Contains(out, "── not ranked · oldest first") ||
+	if m.sel[nextBox].id != "S-200" || !strings.Contains(out, "S-200") || !strings.Contains(out, "── not ranked · oldest first") ||
 		strings.Contains(out, "F-100") {
-		t.Errorf("↓ past the last ranked row: %+v\n%s", m.sel[3], out)
+		t.Errorf("↓ past the last ranked row: %+v\n%s", m.sel[nextBox], out)
 	}
 	for range 20 {
 		m, _ = press(t, m, down)
 	}
-	if out := screen(t, m); m.sel[3].id != "S-211" || !strings.Contains(out, "S-211") {
-		t.Errorf("↓ to the end: %+v\n%s", m.sel[3], out)
+	if out := screen(t, m); m.sel[nextBox].id != "S-211" || !strings.Contains(out, "S-211") {
+		t.Errorf("↓ to the end: %+v\n%s", m.sel[nextBox], out)
 	}
 	m, _ = press(t, m, up)
-	if m.sel[3].id != "S-210" {
-		t.Errorf("↑ from the end: %+v", m.sel[3])
+	if m.sel[nextBox].id != "S-210" {
+		t.Errorf("↑ from the end: %+v", m.sel[nextBox])
 	}
 }
 
@@ -290,19 +290,19 @@ func TestNextBoxShowsTheCommittedOrderWithoutFocusAndTheStagedWithIt(t *testing.
 	m, _ := update(t, sized(t, 171, 63), withNext(t, committed, &staged, ""))
 	out := screen(t, m)
 	for _, want := range []string{
-		"³next · staged edits┌",
+		"⁵next · staged edits┌",
 		"│ Rank  Id     Status    Pts  Held by  Title",
 		"│   1   F-1    draft       -           title of F-1",
 		"│       S-9    draft       -           title of S-9",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("box ³ without the focus has no %q:\n%s", want, out)
+			t.Errorf("the next box without the focus has no %q:\n%s", want, out)
 		}
 	}
-	m, _ = press(t, m, tab, tab)
+	m = focused(t, m, nextBox)
 	out = screen(t, m)
 	for _, want := range []string{
-		"³next · staged edits┌",
+		"⁵next · staged edits┌",
 		"│   Rank  Id     Status    Pts  Held by  Title",
 		"│ +   1   S-9    draft       -           title of S-9",
 		"│ ~   2   F-3    draft       -           title of F-3",
@@ -310,13 +310,13 @@ func TestNextBoxShowsTheCommittedOrderWithoutFocusAndTheStagedWithIt(t *testing.
 		"│ -       F-2    draft       -           title of F-2",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("box ³ with the focus has no %q:\n%s", want, out)
+			t.Errorf("the next box with the focus has no %q:\n%s", want, out)
 		}
 	}
 	// The selection kept its unit, F-1, which has no marker: a selected row's marker would carry the
 	// surface0 background too.
-	if m.sel[3].id != "F-1" {
-		t.Errorf("the focus moved the selection off F-1: %+v", m.sel[3])
+	if m.sel[nextBox].id != "F-1" {
+		t.Errorf("the focus moved the selection off F-1: %+v", m.sel[nextBox])
 	}
 	for mark, color := range map[string]string{"+": sgr(colorGreen), "~": sgr(colorPeach), "-": sgr(colorRed)} {
 		if l := lineWith(t, m, "│ "+mark+"   "); !strings.Contains(l, color+mark) {
@@ -334,7 +334,7 @@ func TestDTogglesTheUnrankedOrderInBothViews(t *testing.T) {
 	committed := stream.Order{Ranked: units(true, "F-1"), Unranked: units(false, "S-1", "S-2", "S-3")}
 	staged := stream.Order{Ranked: units(true, "F-1", "S-1"), Unranked: units(false, "S-2", "S-3")}
 	m, _ := update(t, sized(t, 171, 63), withNext(t, committed, &staged, ""))
-	// first is the first unranked unit box ³ draws: the id on the line after the divider.
+	// first is the first unranked unit the next box draws: the id on the line after the divider.
 	first := func(m Model, order string) string {
 		t.Helper()
 		lines := strings.Split(screen(t, m), "\n")
@@ -349,12 +349,12 @@ func TestDTogglesTheUnrankedOrderInBothViews(t *testing.T) {
 	if got := first(m, "oldest first"); got != "S-1" {
 		t.Errorf("bl top starts oldest first: %s", got)
 	}
-	// d outside box ³ does nothing.
+	// d outside the next box does nothing.
 	m, _ = press(t, m, text("d"))
 	if m.newestFirst {
-		t.Error("d in box ¹ toggled the order")
+		t.Error("d in the runs box toggled the order")
 	}
-	m, _ = press(t, m, tab, tab, text("d"))
+	m, _ = press(t, focused(t, m, nextBox), text("d"))
 	if got := first(m, "newest first"); got != "S-3" {
 		t.Errorf("staged view, newest first: %s", got)
 	}
@@ -375,11 +375,11 @@ func TestAConflictIsARedLineAboveTheBoxes(t *testing.T) {
 	for _, hide := range []bool{false, true} {
 		m, _ := update(t, sized(t, 171, 63), msg)
 		if hide {
-			m, _ = press(t, m, text("3"))
+			m, _ = press(t, m, numberKey(m, nextBox))
 		}
 		lines := strings.Split(screen(t, m), "\n")
 		if lines[0] != fit(" ! "+conflict, 171) || !strings.HasPrefix(lines[1], "╭─┐¹runs┌") {
-			t.Errorf("box ³ hidden %v: %q / %q", hide, lines[0], lines[1])
+			t.Errorf("the next box hidden %v: %q / %q", hide, lines[0], lines[1])
 		}
 		if raw := strings.Split(m.render(), "\n")[0]; !strings.Contains(raw, sgr(colorRed)) {
 			t.Errorf("the conflict line is not red: %q", raw)

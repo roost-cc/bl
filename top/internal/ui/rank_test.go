@@ -11,7 +11,7 @@ import (
 	"github.com/roost-cc/bl/top/internal/stream"
 )
 
-// The recorded snapshot's box ³: F-81, F-84, F-80, F-86, F-16 and F-13 are ranked; S-1400 and F-99
+// The recorded snapshot's next box: F-81, F-84, F-80, F-86, F-16 and F-13 are ranked; S-1400 and F-99
 // are not.
 
 // conflictText is F-113 Decision A3's message.
@@ -27,19 +27,19 @@ func staged(m Model) Model {
 	return m
 }
 
-// selectIn selects row id of box ³, which has the focus.
+// selectIn selects row id of the next box, which has the focus.
 func selectIn(t *testing.T, m Model, id string) Model {
 	t.Helper()
 	for range 20 {
 		m, _ = press(t, m, up)
 	}
 	for range 20 {
-		if m.selectedUnit(3) == id {
+		if m.selectedUnit(nextBox) == id {
 			return m
 		}
 		m, _ = press(t, m, down)
 	}
-	t.Fatalf("no row %s in box ³", id)
+	t.Fatalf("no row %s in the next box", id)
 	return m
 }
 
@@ -57,7 +57,7 @@ func answer(t *testing.T, m Model) Model {
 func TestYankThenPutRunsTheRenderedRankCommandAfterYN(t *testing.T) {
 	for _, c := range []struct{ key, where string }{{"p", "--after"}, {"P", "--before"}} {
 		dir := fakeTools(t, true, "staged: S-1400 "+c.where+" F-84", 0)
-		m, _ := press(t, atRow(t, 3, "S-1400"), text("y"))
+		m, _ := press(t, atRow(t, nextBox, "S-1400"), text("y"))
 		if m.yanked != "S-1400" {
 			t.Fatalf("y on S-1400: yanked %q", m.yanked)
 		}
@@ -85,7 +85,7 @@ func TestYankThenPutRunsTheRenderedRankCommandAfterYN(t *testing.T) {
 
 func TestXUnranksTheSelectedRankedRow(t *testing.T) {
 	dir := fakeTools(t, true, "", 0)
-	m, _ := press(t, atRow(t, 3, "F-80"), text("x"))
+	m, _ := press(t, atRow(t, nextBox, "F-80"), text("x"))
 	if !strings.Contains(dialogText(m), "runs: bl rank F-80 --remove") {
 		t.Fatalf("x on F-80:\n%s", dialogText(m))
 	}
@@ -98,7 +98,7 @@ func TestXUnranksTheSelectedRankedRow(t *testing.T) {
 func TestAPutWithNothingYankedRefuses(t *testing.T) {
 	dir := fakeTools(t, true, "", 0)
 	for _, k := range []string{"p", "P"} {
-		m, cmd := press(t, atRow(t, 3, "F-84"), text(k))
+		m, cmd := press(t, atRow(t, nextBox, "F-84"), text(k))
 		if m.dialog != nil || cmd != nil || m.note != yankFirst || !strings.Contains(screen(t, m), yankFirst) {
 			t.Errorf("%s with nothing yanked: dialog %v, note %q", k, m.dialog, m.note)
 		}
@@ -109,7 +109,7 @@ func TestAPutWithNothingYankedRefuses(t *testing.T) {
 }
 
 func TestRankKeysOnAnUnrankedRowDoNothing(t *testing.T) {
-	m, _ := press(t, atRow(t, 3, "F-84"), text("y"))
+	m, _ := press(t, atRow(t, nextBox, "F-84"), text("y"))
 	m = selectIn(t, m, "F-99")
 	for _, k := range []string{"p", "P", "x"} {
 		got, cmd := press(t, m, text(k))
@@ -119,8 +119,8 @@ func TestRankKeysOnAnUnrankedRowDoNothing(t *testing.T) {
 	}
 }
 
-func TestEscCancelsTheYankAndBoxThreeMarksIt(t *testing.T) {
-	m, _ := press(t, atRow(t, 3, "F-84"), text("y"))
+func TestEscCancelsTheYankAndTheNextBoxMarksIt(t *testing.T) {
+	m, _ := press(t, atRow(t, nextBox, "F-84"), text("y"))
 	// The yanked row has a peach ↕ after its rank; the others none.
 	if l := lineWith(t, m, "↕ F-84"); !strings.Contains(ansi.Strip(l), "  4 ↕ F-84") || !strings.Contains(l, strings.TrimSuffix(sgr(colorPeach), "m")) {
 		t.Errorf("the yanked row: %q", l)
@@ -141,7 +141,7 @@ func TestEscCancelsTheYankAndBoxThreeMarksIt(t *testing.T) {
 func TestCAndRRunCommitAndResetAfterYN(t *testing.T) {
 	const noTerminal = "conflict: run bl rank --commit in a terminal"
 	dir := fakeTools(t, true, noTerminal, 1)
-	m, _ := press(t, staged(atRow(t, 3, "F-84")), text("C"))
+	m, _ := press(t, staged(atRow(t, nextBox, "F-84")), text("C"))
 	if out := dialogText(m); !strings.Contains(out, "runs: bl rank --commit") || strings.Contains(out, "F-84 · approved") {
 		t.Fatalf("C: the question is about the box, not the row:\n%s", out)
 	}
@@ -153,14 +153,14 @@ func TestCAndRRunCommitAndResetAfterYN(t *testing.T) {
 		t.Errorf("C on a conflict: the result box:\n%s", out)
 	}
 	dir = fakeTools(t, true, "", 0)
-	m, _ = press(t, staged(atRow(t, 3, "S-1400")), text("R"))
+	m, _ = press(t, staged(atRow(t, nextBox, "S-1400")), text("R"))
 	answer(t, m)
 	if got := argsOf(t, dir, "bl"); !slices.Equal(got, []string{"rank", "--reset"}) {
 		t.Errorf("R: bl got %q", got)
 	}
 	// No staged copy: no C and R.
 	for _, k := range []string{"C", "R"} {
-		if m, cmd := press(t, atRow(t, 3, "F-84"), text(k)); m.dialog != nil || cmd != nil {
+		if m, cmd := press(t, atRow(t, nextBox, "F-84"), text(k)); m.dialog != nil || cmd != nil {
 			t.Errorf("%s with no staged copy asked", k)
 		}
 	}
@@ -168,7 +168,7 @@ func TestCAndRRunCommitAndResetAfterYN(t *testing.T) {
 
 func TestAConflictRefusesEveryRankingKeyButR(t *testing.T) {
 	fakeTools(t, true, "", 0)
-	m := staged(atRow(t, 3, "F-84"))
+	m := staged(atRow(t, nextBox, "F-84"))
 	m.yanked = "S-1400"
 	m.snap.Next.Conflict = conflictText
 	for _, k := range []tea.KeyPressMsg{text("y"), text("p"), text("P"), text("x"), esc, text("C")} {
@@ -184,29 +184,30 @@ func TestAConflictRefusesEveryRankingKeyButR(t *testing.T) {
 
 func TestOtherBoxesKeepTheirKeys(t *testing.T) {
 	fakeTools(t, true, "", 0)
-	// In ¹, p opens the pull request (F-88); y, x, C and R are no keys there.
-	m := staged(atRow(t, 1, "S-1330"))
+	// In the runs box, p opens the pull request (F-88); y, x, C and R are no keys there.
+	m := staged(atRow(t, runsBox, "S-1330"))
 	if got, _ := press(t, m, text("p")); !strings.Contains(dialogText(got), "runs: xdg-open https://example.invalid/roost-cc/bl/pull/15") {
-		t.Errorf("p in ¹:\n%s", dialogText(got))
+		t.Errorf("p in the runs box:\n%s", dialogText(got))
 	}
 	for _, k := range []string{"y", "x", "C", "R"} {
 		if got, cmd := press(t, m, text(k)); got.dialog != nil || cmd != nil || got.yanked != "" {
-			t.Errorf("%s in ¹: dialog %v, yanked %q", k, got.dialog, got.yanked)
+			t.Errorf("%s in the runs box: dialog %v, yanked %q", k, got.dialog, got.yanked)
 		}
 	}
-	// In ¹, r starts the run, as before.
-	if got, _ := press(t, atRow(t, 1, "F-85"), text("r")); got.dialog == nil || !strings.Contains(dialogText(got), "runs: bl run F-85") {
-		t.Errorf("r in ¹: %+v", got.dialog)
+	// In the runs box, r starts the run, as before.
+	if got, _ := press(t, atRow(t, runsBox, "F-85"), text("r")); got.dialog == nil || !strings.Contains(dialogText(got), "runs: bl run F-85") {
+		t.Errorf("r in the runs box: %+v", got.dialog)
 	}
 }
 
 func TestHelpListsEachBoxsKeysUnderThatBox(t *testing.T) {
-	// The headings follow the help's border, not a box's.
-	order := []string{"open the selected run's pull request", "read capacity now", "│  ³next", "yank the selected unit",
+	// The headings follow the help's border, not a box's. Each heading is the box's number in the
+	// layout that is drawn (F-127 Decision 1): ⁵next and ³detail in the full layout.
+	order := []string{"open the selected run's pull request", "read capacity now", "│  ⁵next", "yank the selected unit",
 		"put the yanked unit after the selected ranked unit", "put the yanked unit before the selected ranked unit",
 		"unrank the selected ranked unit", "cancel the yank", "commit the staged edits (bl rank --commit)",
-		"drop the staged edits (bl rank --reset)", "show the unranked units newest or oldest first", "│  ⁶detail",
-		"follow the feed of ⁶ on or off", "any key closes this help"}
+		"drop the staged edits (bl rank --reset)", "show the unranked units newest or oldest first", "│  ³detail",
+		"follow the feed on or off", "any key closes this help"}
 	// One column where it fits.
 	m, _ := press(t, sized(t, 171, 63), text("h"))
 	out := screen(t, m)
@@ -219,15 +220,16 @@ func TestHelpListsEachBoxsKeysUnderThatBox(t *testing.T) {
 		at = i
 	}
 	// Where one column does not fit, the boxes' keys go beside the others: each heading on the line
-	// of a key of every box.
+	// of a key of every box. 171×24 is the stacked layout, where the next box is ⁶.
 	m, _ = press(t, sized(t, 171, 24), text("h"))
 	out = screen(t, m)
 	for _, want := range order {
-		if !strings.Contains(out, strings.TrimPrefix(want, "│  ")) {
+		want = strings.ReplaceAll(strings.TrimPrefix(want, "│  "), "⁵next", "⁶next")
+		if !strings.Contains(out, want) {
 			t.Errorf("two columns: the help has no %q:\n%s", want, out)
 		}
 	}
-	for key, heading := range map[string]string{"hide or show a box": "³next", "open bl agent in a tmux window": "⁶detail"} {
+	for key, heading := range map[string]string{"hide or show the box at that position": "⁶next", "open bl agent in a tmux window": "³detail"} {
 		if l := ansi.Strip(lineWith(t, m, key)); !strings.Contains(l, heading) {
 			t.Errorf("two columns: %q is not beside %q: %q", heading, key, l)
 		}

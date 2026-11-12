@@ -109,20 +109,18 @@ var (
 	backspace = tea.KeyPressMsg{Code: tea.KeyBackspace}
 )
 
-// atRow is the recorded snapshot at 171×63, with row id selected in box num and the focus there.
-func atRow(t *testing.T, num int, id string) Model {
+// atRow is the recorded snapshot at 171×63, with row id selected in box b and the focus there.
+func atRow(t *testing.T, b boxName, id string) Model {
 	t.Helper()
 	m, _ := update(t, sized(t, 171, 63), snapshot(t))
-	for m.focus != num {
-		m, _ = press(t, m, tab)
-	}
+	m = focused(t, m, b)
 	for range 20 {
-		if i := m.selected(num); i >= 0 && m.rowIDs(num)[i] == id {
+		if i := m.selected(b); i >= 0 && m.rowIDs(b)[i] == id {
 			return m
 		}
 		m, _ = press(t, m, down)
 	}
-	t.Fatalf("no row %s in box %d", id, num)
+	t.Fatalf("no row %s in the %s box", id, b)
 	return m
 }
 
@@ -136,11 +134,11 @@ func dialogText(m Model) string {
 func TestActionDialogsGolden(t *testing.T) {
 	fakeTools(t, true, "", 0)
 	var out []string
-	m, _ := press(t, atRow(t, 2, "T-52"), text("a"))
+	m, _ := press(t, atRow(t, attentionBox, "T-52"), text("a"))
 	out = append(out, dialogText(m))
 	m, _ = press(t, m, append([]tea.KeyPressMsg{text("d")}, typed("image rebuilt on 44.140, 0 high advisories")...)...)
 	out = append(out, dialogText(m))
-	m, _ = press(t, atRow(t, 1, "S-1330"), text("s"))
+	m, _ = press(t, atRow(t, runsBox, "S-1330"), text("s"))
 	out = append(out, dialogText(m))
 	// The result of an action whose box esc hid: it shows with no dialog open.
 	m.dialog = nil
@@ -155,17 +153,17 @@ func TestActionDialogsGolden(t *testing.T) {
 func TestAOpensTheMenuOfTheSelectedRowsActions(t *testing.T) {
 	fakeTools(t, true, "", 0)
 	for _, c := range []struct {
-		box  int
+		box  boxName
 		id   string
 		want []string
 	}{
-		{1, "F-83", []string{"r  resume the run", "bl run F-83 --resume  (new tmux window)", "o  open the page", "p  open the pull request",
+		{runsBox, "F-83", []string{"r  resume the run", "bl run F-83 --resume  (new tmux window)", "o  open the page", "p  open the pull request",
 			"xdg-open https://example.invalid/roost-cc/bl/pull/12", "g  talk it through", "bl agent  (new tmux window)"}},
-		{2, "F-83:esc", []string{"e  read the escalation", "bl status F-83  (new tmux window)"}},
-		{2, "F-81:change", []string{"m  merge it", "bl merge F-81"}},
-		{2, "updates:run", []string{"▶ g  talk it through"}},
+		{attentionBox, "F-83:esc", []string{"e  read the escalation", "bl status F-83  (new tmux window)"}},
+		{attentionBox, "F-81:change", []string{"m  merge it", "bl merge F-81"}},
+		{attentionBox, "updates:run", []string{"▶ g  talk it through"}},
 		// A ranked unit: its put templates wait for a yank; x renders with the selected id (F-113 D7).
-		{3, "F-84", []string{"▶ p  put the yanked unit after it   yank a work unit first (y)", "x  unrank it", "bl rank F-84 --remove",
+		{nextBox, "F-84", []string{"▶ p  put the yanked unit after it   yank a work unit first (y)", "x  unrank it", "bl rank F-84 --remove",
 			"o  open the page", "bl view F-84  (new tmux window)"}},
 	} {
 		m, _ := press(t, atRow(t, c.box, c.id), text("a"))
@@ -189,7 +187,7 @@ func TestAOpensTheMenuOfTheSelectedRowsActions(t *testing.T) {
 	// The grouped update row (stacked layout) has no actions.
 	m, _ := update(t, sized(t, 100, 40), snapshot(t))
 	m, _ = press(t, m, tab)
-	for m.attentionRows()[m.selected(2)].item != nil {
+	for m.attentionRows()[m.selected(attentionBox)].item != nil {
 		m, _ = press(t, m, down)
 	}
 	if m, _ = press(t, m, text("a")); m.dialog != nil || !strings.Contains(screen(t, m), "a: select a row first") {
@@ -199,7 +197,7 @@ func TestAOpensTheMenuOfTheSelectedRowsActions(t *testing.T) {
 
 func TestTaskDoneRunsAfterYWithTheNoteAndShowsTheResult(t *testing.T) {
 	dir := fakeTools(t, true, "committed tasks/T52-renovate-image (backlog 4f1c2a9)", 0)
-	m, _ := press(t, atRow(t, 2, "T-52"), text("a"), down, up, up, enter)
+	m, _ := press(t, atRow(t, attentionBox, "T-52"), text("a"), down, up, up, enter)
 	if m.dialog == nil || m.dialog.stage != stageInput {
 		t.Fatal("↵ on close the task did not ask for its note")
 	}
@@ -227,7 +225,7 @@ func TestTaskDoneRunsAfterYWithTheNoteAndShowsTheResult(t *testing.T) {
 		t.Error("a key did not close the result box")
 	}
 	// An empty note runs the verb without one; n cancels.
-	m, _ = press(t, atRow(t, 2, "T-52"), text("a"), text("d"), enter)
+	m, _ = press(t, atRow(t, attentionBox, "T-52"), text("a"), text("d"), enter)
 	if out := dialogText(m); !strings.Contains(out, "runs: bl task done T-52 ") || strings.Contains(out, "[note]") {
 		t.Errorf("an empty note:\n%s", out)
 	}
@@ -235,7 +233,7 @@ func TestTaskDoneRunsAfterYWithTheNoteAndShowsTheResult(t *testing.T) {
 	if m, _ = update(t, m, cmd()); !slices.Equal(argsOf(t, dir, "bl"), []string{"task", "done", "T-52"}) {
 		t.Errorf("an empty note: bl got %q", argsOf(t, dir, "bl"))
 	}
-	m, _ = press(t, atRow(t, 2, "T-52"), text("a"), text("d"), enter)
+	m, _ = press(t, atRow(t, attentionBox, "T-52"), text("a"), text("d"), enter)
 	if m, cmd = press(t, m, text("n")); m.dialog != nil || cmd != nil {
 		t.Error("n did not cancel")
 	}
@@ -243,7 +241,7 @@ func TestTaskDoneRunsAfterYWithTheNoteAndShowsTheResult(t *testing.T) {
 
 func TestAFailedVerbShowsItsExitCodeAndLastStderrLine(t *testing.T) {
 	fakeTools(t, true, "bl merge: F-81 is not ready_for_merge", 1)
-	m, _ := press(t, atRow(t, 2, "F-81:change"), text("a"), text("m"))
+	m, _ := press(t, atRow(t, attentionBox, "F-81:change"), text("a"), text("m"))
 	if !strings.Contains(dialogText(m), "runs: bl merge F-81") {
 		t.Fatalf("the question:\n%s", dialogText(m))
 	}
@@ -257,7 +255,7 @@ func TestAFailedVerbShowsItsExitCodeAndLastStderrLine(t *testing.T) {
 
 func TestAReasonIsNeeded(t *testing.T) {
 	fakeTools(t, true, "", 0)
-	m := atRow(t, 2, "T-52")
+	m := atRow(t, attentionBox, "T-52")
 	m.snap.Attention.Items[2].Actions = []stream.Action{{Key: "x", Label: "drop it", Argv: []string{"bl", "task", "drop", "T-52"}, Input: "reason"}}
 	m, _ = press(t, m, text("a"), text("x"), enter)
 	if m.dialog.stage != stageInput || !strings.Contains(dialogText(m), "a reason is needed") {
@@ -282,7 +280,7 @@ func TestRStartsOrResumesARunInANewTmuxWindow(t *testing.T) {
 		{"F-85", "'bl' 'run' 'F-85'"},            // clean
 	} {
 		dir := fakeTools(t, true, "", 0)
-		m, _ := press(t, atRow(t, 1, c.id), text("r"))
+		m, _ := press(t, atRow(t, runsBox, c.id), text("r"))
 		if m.dialog == nil || m.dialog.stage != stageAsk || !strings.Contains(dialogText(m), "(new tmux window)") {
 			t.Fatalf("r on %s did not ask first", c.id)
 		}
@@ -303,7 +301,7 @@ func TestRStartsOrResumesARunInANewTmuxWindow(t *testing.T) {
 	}
 	// A live run has no r.
 	fakeTools(t, true, "", 0)
-	m, cmd := press(t, atRow(t, 1, "F-81"), text("r"))
+	m, cmd := press(t, atRow(t, runsBox, "F-81"), text("r"))
 	if m.dialog != nil || cmd != nil || !strings.Contains(screen(t, m), "r: F-81 has no such action (a lists its actions)") {
 		t.Errorf("r on a live run:\n%s", screen(t, m))
 	}
@@ -311,7 +309,7 @@ func TestRStartsOrResumesARunInANewTmuxWindow(t *testing.T) {
 
 func TestSStopsALiveRunAfterMockupCsQuestionAndDoesNotNotify(t *testing.T) {
 	dir := fakeTools(t, true, "stopped S-1330 at review; resume: bl run S-1330 --resume", 0)
-	m, _ := press(t, atRow(t, 1, "S-1330"), text("s"))
+	m, _ := press(t, atRow(t, runsBox, "S-1330"), text("s"))
 	out := dialogText(m)
 	for _, want := range []string{
 		"bl stop S-1330┌",
@@ -340,7 +338,7 @@ func TestSStopsALiveRunAfterMockupCsQuestionAndDoesNotNotify(t *testing.T) {
 		t.Errorf("notes after the stop: %v, want F-81's only", notes)
 	}
 	// A run that is not live has no s.
-	m, cmd = press(t, atRow(t, 1, "F-85"), text("s"))
+	m, cmd = press(t, atRow(t, runsBox, "F-85"), text("s"))
 	if m.dialog != nil || cmd != nil {
 		t.Error("s on a run that is not live asked")
 	}
@@ -374,7 +372,7 @@ func TestAFailedStopLeavesALaterStopLoud(t *testing.T) {
 				continue // no child, no pid of its own
 			}
 			dir := fakeTools(t, true, "stop requested: S-1330 (pid 4242) stops at its next check", c.code)
-			m := atRow(t, 1, "S-1330")
+			m := atRow(t, runsBox, "S-1330")
 			if c.noBl {
 				m.blArgv = []string{filepath.Join(t.TempDir(), "no-bl")}
 			}
@@ -397,7 +395,7 @@ func TestAFailedStopLeavesALaterStopLoud(t *testing.T) {
 // stop still runs, and that bl stop then fails. The end notifies once, when the snapshot shows it.
 func TestExternalStopDuringFailedActionNotifies(t *testing.T) {
 	fakeTools(t, true, "bl stop: cannot write the stop request: ENOSPC; nothing stopped", 1)
-	m, _ := press(t, atRow(t, 1, "S-1330"), text("s"))
+	m, _ := press(t, atRow(t, runsBox, "S-1330"), text("s"))
 	m, cmd := press(t, m, text("y"))
 	stopped := ended(m, map[string][]int{"S-1330": {external}})
 	first := m.differ.Diff(stopped)
@@ -413,7 +411,7 @@ func TestExternalStopDuringFailedActionNotifies(t *testing.T) {
 // the mark is gone: a later stop from another shell notifies.
 func TestTimedOutStopLaterCompletesQuietly(t *testing.T) {
 	dir := fakeTools(t, true, "stop requested: S-1330 (pid 4242) stops at its next check", 1)
-	m, _ := press(t, atRow(t, 1, "S-1330"), text("s"))
+	m, _ := press(t, atRow(t, runsBox, "S-1330"), text("s"))
 	m, cmd := press(t, m, text("y"))
 	m, _ = update(t, m, cmd())
 	running := m.snap
@@ -450,7 +448,7 @@ func TestOverlappingStopActionsKeepSuccessQuiet(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "bl"), []byte(body), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		m, _ := press(t, atRow(t, 1, "S-1330"), text("s"))
+		m, _ := press(t, atRow(t, runsBox, "S-1330"), text("s"))
 		m, first := press(t, m, text("y"))
 		m, _ = press(t, m, esc, text("s"))
 		m, second := press(t, m, text("y"))
@@ -481,7 +479,7 @@ func TestALateResultKeepsTheNewerDialog(t *testing.T) {
 	fakeTools(t, true, "stopped S-1330 at review; resume: bl run S-1330 --resume", 0)
 	// started runs bl stop S-1330 after its y, hides its box, and returns its end.
 	started := func() (Model, tea.Msg) {
-		m, _ := press(t, atRow(t, 1, "S-1330"), text("s"))
+		m, _ := press(t, atRow(t, runsBox, "S-1330"), text("s"))
 		m, cmd := press(t, m, text("y"))
 		m, _ = press(t, m, esc)
 		return m, cmd()
@@ -533,19 +531,19 @@ func TestALateResultKeepsTheNewerDialog(t *testing.T) {
 func TestOGAndPOpenThePageAgentAndPullRequest(t *testing.T) {
 	cwd, _ := os.Getwd()
 	dir := fakeTools(t, true, "", 0)
-	m, cmd := press(t, atRow(t, 2, "T-52"), text("o"), text("y"))
+	m, cmd := press(t, atRow(t, attentionBox, "T-52"), text("o"), text("y"))
 	cmd()
 	if got := argsOf(t, dir, "tmux"); !slices.Equal(got, []string{"new-window", "-n", "T-52 view", "-c", cwd, "'bl' 'view' 'T-52'; exec ${SHELL:-sh}"}) {
 		t.Errorf("o: tmux %q", got)
 	}
-	m, cmd = press(t, atRow(t, 3, "F-84"), text("g"), text("y"))
+	m, cmd = press(t, atRow(t, nextBox, "F-84"), text("g"), text("y"))
 	cmd()
 	if got := argsOf(t, dir, "tmux"); !slices.Equal(got, []string{"new-window", "-n", "agent", "-c", cwd, "'bl' 'agent'; exec ${SHELL:-sh}"}) {
 		t.Errorf("g: tmux %q", got)
 	}
 	for _, c := range []struct{ goos, opener string }{{"linux", "xdg-open"}, {"darwin", "open"}} {
 		goos = c.goos
-		m, _ = press(t, atRow(t, 1, "S-1330"), text("p"))
+		m, _ = press(t, atRow(t, runsBox, "S-1330"), text("p"))
 		if !strings.Contains(dialogText(m), "runs: "+c.opener+" https://example.invalid/roost-cc/bl/pull/15") {
 			t.Errorf("p on %s:\n%s", c.goos, dialogText(m))
 		}
@@ -560,7 +558,7 @@ func TestOGAndPOpenThePageAgentAndPullRequest(t *testing.T) {
 	}
 	goos = "linux"
 	// A run with no pull request has no p.
-	if m, _ = press(t, atRow(t, 1, "F-81"), text("p")); m.dialog != nil {
+	if m, _ = press(t, atRow(t, runsBox, "F-81"), text("p")); m.dialog != nil {
 		t.Error("p on a run with no pull request asked")
 	}
 }
@@ -568,7 +566,7 @@ func TestOGAndPOpenThePageAgentAndPullRequest(t *testing.T) {
 func TestOutsideTmuxTheWindowActionsSayNeedsTmux(t *testing.T) {
 	dir := fakeTools(t, false, "", 0)
 	for _, keys := range [][]tea.KeyPressMsg{{text("r")}, {text("a"), text("o")}, {text("g")}} {
-		m, cmd := press(t, atRow(t, 1, "F-83"), keys...)
+		m, cmd := press(t, atRow(t, runsBox, "F-83"), keys...)
 		if m.dialog != nil || cmd != nil {
 			t.Errorf("%v outside tmux: dialog %v", keys, m.dialog)
 		}
@@ -580,7 +578,7 @@ func TestOutsideTmuxTheWindowActionsSayNeedsTmux(t *testing.T) {
 		t.Error("tmux ran outside tmux")
 	}
 	// A child verb needs no tmux.
-	if m, _ := press(t, atRow(t, 1, "S-1330"), text("s")); m.dialog == nil {
+	if m, _ := press(t, atRow(t, runsBox, "S-1330"), text("s")); m.dialog == nil {
 		t.Error("s outside tmux did not ask")
 	}
 }

@@ -82,7 +82,7 @@ type Action struct {
 	Stops  string   `json:"stops"`
 }
 
-// Stage is one stage of a run's step timeline (box ⁶, S-1334): `runTimeline` in
+// Stage is one stage of a run's step timeline (the detail box, S-1334): `runTimeline` in
 // src/top-snapshot.js builds it from the run state's history. State is `done`, `current` or
 // `pending`; DurationMs is nil when a time is missing; Tests counts its test-gate entries; Usage is
 // nil when no session of it reported usage.

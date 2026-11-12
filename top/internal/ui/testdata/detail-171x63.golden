@@ -11,7 +11,7 @@
 │                                                                                                        ││ UPD   logr:renovat… logr    x/net 0.47.0 · red · notes: none  │
 │                                                                                                        ││ next: check the update job where it runs (its journal or log) │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────╯
-╭─┐⁶detail┌─────────────────────────────────────────────────────────────────────────────────────┐S-1330┌─╮╭─┐⁴tokens┌────────────────────────────────────────────────┐2h┌─╮
+╭─┐³detail┌─────────────────────────────────────────────────────────────────────────────────────┐S-1330┌─╮╭─┐⁴tokens┌────────────────────────────────────────────────┐2h┌─╮
 │ S-1330 · Every bl verb that writes the backlog commits and pushes what it changed                      ││ output tokens / min · ended sessions                peak 8.7k │
 │ branch s1330-every-bl-verb-tha… · lead worktree …-the-backlog-commits/bl · PR bl#15 · started 17:39    ││                                                   ⢀⡇ ⢀⡇ ⢀     │
 │                                                                                                        ││                                                   ⣼⡇ ⣼⡇ ⣼     │
@@ -35,7 +35,7 @@
 │ ── run ended: escalated ───────────────────────────────────────────────────────────────────────────────││ today  in 1.2M · out 640k · cache r 51M · w 2.3M              │
 │ follow on · f stops it · w opens bl watch in a tmux window                                             ││ capacity read 18:14 · c reads it now                          │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰───────────────────────────────────────────────────────────────╯
-╭─┐³next┌──────────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮╭─┐⁵activity┌─────────────────────────────────────────────┐30d┌─╮
+╭─┐⁵next┌──────────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮╭─┐⁶activity┌─────────────────────────────────────────────┐30d┌─╮
 │ Rank  Id     Status    Pts  Held by  Title                                                             ││ points done / UTC day · 30 days                last 7 days 41 │
 │   3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a change, an…││                             ⢸⣿⡇                               │
 │   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the guest     ││                             ⢸⣿⡇                               │

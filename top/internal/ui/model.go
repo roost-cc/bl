@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -28,8 +29,8 @@ const (
 // with the new interval, so that a run of presses starts one stream, not one per press.
 const restartDelay = 400 * time.Millisecond
 
-// keyMap holds the keys of D6 that bl top has, and box ³'s ranking keys (F-113 D6). The help
-// overlay lists them.
+// keyMap holds the keys of D6 that bl top has, and the next box's ranking keys (F-113 D6). The
+// help overlay lists them.
 type keyMap struct {
 	boxes, next, prev, move, open, act, run, stop, page, pr, agent, follow, watch, order, capacity, longer, shorter, help, quit key.Binding
 
@@ -37,19 +38,21 @@ type keyMap struct {
 }
 
 var keys = keyMap{
-	boxes:    key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6"), key.WithHelp("1-6", "hide or show a box")),
-	next:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "move the focus to the next box")),
-	prev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "move the focus to the previous box")),
-	move:     key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "select a row; in ⁶ with follow off, scroll the feed")),
-	open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "show the selected run in ⁶; open the update group")),
+	boxes: key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6"), key.WithHelp("1-6", "hide or show the box at that position")),
+	next:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "move the focus to the next box")),
+	prev:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "move the focus to the previous box")),
+	move: key.NewBinding(key.WithKeys("up", "down"),
+		key.WithHelp("↑↓", "select a row; in the detail box with follow off, scroll the feed")),
+	open: key.NewBinding(key.WithKeys("enter"),
+		key.WithHelp("↵", "show the selected run in the detail box; open the update group")),
 	act:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "open the action menu of the selected row")),
 	run:      key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "start or resume the selected run (bl run, in a tmux window)")),
 	stop:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stop the selected run (bl stop)")),
 	page:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open the selected row's page (bl view, in a tmux window)")),
 	pr:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "open the selected run's pull request")),
 	agent:    key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "open bl agent in a tmux window")),
-	follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed of ⁶ on or off")),
-	watch:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "open bl watch of ⁶'s run in a tmux window")),
+	follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed on or off")),
+	watch:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "open bl watch of the run in a tmux window")),
 	order:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "show the unranked units newest or oldest first")),
 	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
 	longer:   key.NewBinding(key.WithKeys("+"), key.WithHelp("+", fmt.Sprintf("refresh interval up (to %d s)", maxInterval/1000))),
@@ -65,16 +68,16 @@ var keys = keyMap{
 	reset:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "drop the staged edits (bl rank --reset)")),
 }
 
-// helpGroups are the help overlay's keys: the keys of every box (box 0), then each box's own keys
-// under that box.
+// helpGroups are the help overlay's keys: the keys of every box (no box name), then each box's
+// own keys under that box.
 var helpGroups = []struct {
-	box  int
+	box  boxName
 	keys []key.Binding
 }{
-	{0, []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.act, keys.run, keys.stop, keys.page, keys.pr,
+	{"", []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.act, keys.run, keys.stop, keys.page, keys.pr,
 		keys.agent, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}},
-	{3, []key.Binding{keys.yank, keys.after, keys.before, keys.unrank, keys.cancel, keys.commit, keys.reset, keys.order}},
-	{6, []key.Binding{keys.follow, keys.watch}},
+	{nextBox, []key.Binding{keys.yank, keys.after, keys.before, keys.unrank, keys.cancel, keys.commit, keys.reset, keys.order}},
+	{detailBox, []key.Binding{keys.follow, keys.watch}},
 }
 
 // startedMsg carries a stream that has started.
@@ -88,41 +91,43 @@ type Model struct {
 	blArgv        []string
 	interval      int
 	width, height int
-	hidden        [7]bool      // by box number, 1 to 6
-	focus         int          // a box number; 0 when every box is hidden
-	sel           [7]selection // by box number: the selected row of boxes 1 to 3
-	updatesOpen   bool         // whether box ²'s grouped update row is open
-	newestFirst   bool         // whether box ³ shows the unranked units newest `added:` first (d)
-	yanked        string       // the id of the unit yanked in box ³ (y), until a put or esc; empty for none
-	detail        string       // the id of the run box ⁶ shows; empty for none
-	watcher       *watch.Watch // the `bl watch` of that run, while it runs
-	watchGen      int          // the generation of the watch the model reads
-	watchDone     bool         // whether that watch ended (resumeWatch)
-	watchEnd      time.Time    // when that watch ended with no reason (bl watch exited 0); else zero
-	rewatch       bool         // whether a snapshot after its end showed the run not running
-	feed          []watch.Event
-	follow        bool   // whether box ⁶'s feed shows its newest lines
-	feedBack      int    // with follow off: how many lines the feed is scrolled back
-	note          string // a red line in the bottom border until the next key (`w needs tmux`)
-	help          bool
-	dialog        *dialog // the action dialog (D7), while it is open
-	actionSeq     int     // how many actions ran as a child: the number of the last (dialog.seq)
-	snap          *stream.Snapshot
-	stream        *stream.Stream
-	gen           int // the generation of the stream the model reads
-	presses       int // how many times `+` or `-` was pressed
-	ended         string
-	bell          bool
-	senders       []notify.Sender
-	differ        notify.Differ
-	failed        map[string]string // by sender name: why its last command failed
+	// hidden holds the hidden boxes, and sel the selected row of the runs, attention and next
+	// boxes. Update copies Model, so a change to either writes a new map.
+	hidden      map[boxName]bool
+	sel         map[boxName]selection
+	focus       boxName      // the box with the focus; empty when every box is hidden
+	updatesOpen bool         // whether the attention box's grouped update row is open
+	newestFirst bool         // whether the next box shows the unranked units newest `added:` first (d)
+	yanked      string       // the id of the unit yanked in the next box (y), until a put or esc; or empty
+	detail      string       // the id of the run the detail box shows; empty for none
+	watcher     *watch.Watch // the `bl watch` of that run, while it runs
+	watchGen    int          // the generation of the watch the model reads
+	watchDone   bool         // whether that watch ended (resumeWatch)
+	watchEnd    time.Time    // when that watch ended with no reason (bl watch exited 0); else zero
+	rewatch     bool         // whether a snapshot after its end showed the run not running
+	feed        []watch.Event
+	follow      bool   // whether the detail box's feed shows its newest lines
+	feedBack    int    // with follow off: how many lines the feed is scrolled back
+	note        string // a red line in the bottom border until the next key (`w needs tmux`)
+	help        bool
+	dialog      *dialog // the action dialog (D7), while it is open
+	actionSeq   int     // how many actions ran as a child: the number of the last (dialog.seq)
+	snap        *stream.Snapshot
+	stream      *stream.Stream
+	gen         int // the generation of the stream the model reads
+	presses     int // how many times `+` or `-` was pressed
+	ended       string
+	bell        bool
+	senders     []notify.Sender
+	differ      notify.Differ
+	failed      map[string]string // by sender name: why its last command failed
 }
 
 // New is the model of a screen that reads `bl top --stream` through blArgv (the command that runs
 // bl) every interval ms. For each new note (D8) it rings the bell when bell is true, and runs each
 // sender.
 func New(blArgv []string, interval int, bell bool, senders []notify.Sender) Model {
-	return Model{blArgv: blArgv, interval: interval, focus: 1, gen: 1, follow: true, bell: bell, senders: senders}
+	return Model{blArgv: blArgv, interval: interval, focus: runsBox, gen: 1, follow: true, bell: bell, senders: senders}
 }
 
 // Ended is why the stream ended, when it ended while bl top ran: its last stderr line.
@@ -216,9 +221,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// snapshot keeps s as the snapshot to draw, restarts the watch of box ⁶ when its run resumed
-// (resumeWatch), and returns the commands of that and of its notes against the
-// snapshot before (D8): one bell for them all, and each sender for each note it wants.
+// snapshot keeps s as the snapshot to draw, restarts the watch of the detail box when its run
+// resumed (resumeWatch), and returns the commands of that and of its notes against the snapshot
+// before (D8): one bell for them all, and each sender for each note it wants.
 func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	m.snap = &s
 	m.keepSelection()
@@ -274,13 +279,22 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	m.note = ""
 	switch {
-	case m.focus == 3 && key.Matches(msg, keys.yank, keys.after, keys.before, keys.unrank, keys.cancel, keys.commit, keys.reset):
+	case m.focus == nextBox && key.Matches(msg, keys.yank, keys.after, keys.before, keys.unrank, keys.cancel, keys.commit, keys.reset):
 		return m.rankKey(msg.String())
 	case key.Matches(msg, keys.boxes):
+		// Key n toggles the box at position n of the drawn layout (F-127 Decision 3).
+		order := m.order()
 		n := int(msg.String()[0] - '0')
-		m.hidden[n] = !m.hidden[n]
-		if m.focus == 0 || m.hidden[m.focus] {
-			m.focus = m.nextFocus(n, 1)
+		if n > len(order) {
+			return m, nil
+		}
+		b := order[n-1]
+		hidden := map[boxName]bool{}
+		maps.Copy(hidden, m.hidden)
+		hidden[b] = !hidden[b]
+		m.hidden = hidden
+		if m.focus == "" || m.hidden[m.focus] {
+			m.focus = m.nextFocus(b, 1)
 		}
 	case key.Matches(msg, keys.next):
 		m.focus = m.nextFocus(m.focus, 1)
@@ -291,14 +305,14 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == "up" {
 			dir = -1
 		}
-		if m.focus == 6 {
+		if m.focus == detailBox {
 			m.scroll(dir)
 		} else {
 			m.move(dir)
 		}
 	case key.Matches(msg, keys.open):
-		if m.focus == 2 && m.snap != nil {
-			if i := m.selected(2); i >= 0 && m.attentionRows()[i].item == nil {
+		if m.focus == attentionBox && m.snap != nil {
+			if i := m.selected(attentionBox); i >= 0 && m.attentionRows()[i].item == nil {
 				m.updatesOpen = !m.updatesOpen
 				m.keepSelection()
 				return m, nil
@@ -315,7 +329,7 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.toggleFollow()
 	case key.Matches(msg, keys.watch):
 		return m.openWatch()
-	case m.focus == 3 && key.Matches(msg, keys.order):
+	case m.focus == nextBox && key.Matches(msg, keys.order):
 		m.newestFirst = !m.newestFirst
 	case key.Matches(msg, keys.capacity):
 		if s := m.stream; s != nil {
@@ -344,17 +358,18 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// nextFocus is the first box after from (dir 1) or before it (dir -1), in number order and round
-// the end, that is not hidden; from itself when it is the only one; 0 when every box is hidden.
-func (m Model) nextFocus(from, dir int) int {
-	n := len(boxes)
+// nextFocus is the first box after from (dir 1) or before it (dir -1) in the drawn layout's order
+// (F-127 Decision 1), round the end, that is not hidden; from itself when it is the only one; empty
+// when every box is hidden. With no from, dir 1 starts at the first box.
+func (m Model) nextFocus(from boxName, dir int) boxName {
+	order := m.order()
+	n, at := len(order), slices.Index(order, from)
 	for i := 1; i <= n; i++ {
-		b := ((from-1+dir*i)%n+n)%n + 1
-		if !m.hidden[b] {
+		if b := order[((at+dir*i)%n+n)%n]; !m.hidden[b] {
 			return b
 		}
 	}
-	return 0
+	return ""
 }
 
 // View draws the screen on the alternate screen, on D5's base background. Bubble Tea redraws only
@@ -367,17 +382,17 @@ func (m Model) View() tea.View {
 }
 
 // helpBox draws the help overlay for a w×h screen: each key of keyMap and what it does, a box's own
-// keys under the box's number and name (helpGroups). When one column is taller than the screen and
-// two fit its width, the boxes' own keys go in a second column.
-func helpBox(w, h int) []string {
+// keys under the box's current number and name (helpGroups). When one column is taller than the
+// screen and two fit its width, the boxes' own keys go in a second column.
+func (m Model) helpBox(w, h int) []string {
 	var every, own []string
 	for _, g := range helpGroups {
-		if g.box > 0 {
-			own = append(own, "", "  "+styleName.Render(superscript[g.box]+boxes[g.box].name))
+		if g.box != "" {
+			own = append(own, "", "  "+styleName.Render(superscript[m.number(g.box)]+string(g.box)))
 		}
 		for _, b := range g.keys {
 			line := fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc))
-			if g.box > 0 {
+			if g.box != "" {
 				own = append(own, line)
 			} else {
 				every = append(every, line)

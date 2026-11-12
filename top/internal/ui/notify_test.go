@@ -32,7 +32,7 @@ func fakeNotifySend(t *testing.T, body string) notify.Sender {
 }
 
 // notifying is a model of a 100×40 terminal with that bell and those senders, with the local zone
-// fixed for the test (fixedLocal), so box ¹'s clock does not depend on the machine.
+// fixed for the test (fixedLocal), so the runs box's clock does not depend on the machine.
 func notifying(t *testing.T, bell bool, senders []notify.Sender) Model {
 	t.Helper()
 	fixedLocal(t)
@@ -150,10 +150,10 @@ func TestALongWarningFitsTheBottomBorder(t *testing.T) {
 	}
 }
 
-// TestBoxOneAndTheNotesAgreeOnTheEndOfARun: for every status a runs row can have (those
-// src/feature-run.js writes, stale, and none), box ¹ shows a run that ended (✓ done, ■ stop, ✗)
-// exactly when a change to that status makes a note, and stream.Ended says the same.
-func TestBoxOneAndTheNotesAgreeOnTheEndOfARun(t *testing.T) {
+// TestTheRunsBoxAndTheNotesAgreeOnTheEndOfARun: for every status a runs row can have (those
+// src/feature-run.js writes, stale, and none), the runs box shows a run that ended (✓ done, ■ stop,
+// ✗) exactly when a change to that status makes a note, and stream.Ended says the same.
+func TestTheRunsBoxAndTheNotesAgreeOnTheEndOfARun(t *testing.T) {
 	read := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	runs := func(status string) *stream.Snapshot {
 		s := &stream.Snapshot{}
@@ -167,7 +167,7 @@ func TestBoxOneAndTheNotesAgreeOnTheEndOfARun(t *testing.T) {
 		var d notify.Differ
 		d.Diff(runs("running"))
 		if notes := d.Diff(runs(status)); goesOn != (len(notes) == 0) || goesOn == stream.Ended(status) {
-			t.Errorf("%s: box ¹ shows %q, %d notes, Ended %v", status, glyph, len(notes), stream.Ended(status))
+			t.Errorf("%s: the runs box shows %q, %d notes, Ended %v", status, glyph, len(notes), stream.Ended(status))
 		}
 	}
 }

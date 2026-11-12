@@ -32,19 +32,20 @@ func watched(t *testing.T, m Model) Model {
 	return m
 }
 
-// showing is the model of a w×h terminal with the recorded snapshot, S-1330 selected in box ¹ and
-// shown in box ⁶ (↵), and the recorded feed.
+// showing is the model of a w×h terminal with the recorded snapshot, S-1330 selected in the runs
+// box and shown in the detail box (↵), and the recorded feed.
 func showing(t *testing.T, w, h int) Model {
 	t.Helper()
 	m, _ := update(t, sized(t, w, h), snapshot(t))
 	m, cmd := press(t, m, down, enter)
 	if m.detail != "S-1330" || cmd == nil {
-		t.Fatalf("↵ on S-1330 in ¹: detail %q, cmd %v", m.detail, cmd)
+		t.Fatalf("↵ on S-1330 in the runs box: detail %q, cmd %v", m.detail, cmd)
 	}
 	return watched(t, m)
 }
 
-// TestDetailBoxGolden draws box ⁶ with S-1330's header, timeline and recorded feed in both layouts.
+// TestDetailBoxGolden draws the detail box with S-1330's header, timeline and recorded feed in both
+// layouts.
 func TestDetailBoxGolden(t *testing.T) {
 	for _, size := range []struct {
 		name string
@@ -57,7 +58,7 @@ func TestDetailBoxGolden(t *testing.T) {
 func TestDetailBoxShowsTheRunTimelineAndFeed(t *testing.T) {
 	out := screen(t, showing(t, 171, 63))
 	for _, want := range []string{
-		"⁶detail┌", "┐S-1330┌",
+		"³detail┌", "┐S-1330┌",
 		"S-1330 · Every bl verb that writes the backlog commits and pushes what it changed",
 		// The branch's start and the worktree's end; 22:39 UTC is 17:39 in the test's zone.
 		"branch s1330-every-bl-verb-tha… · lead worktree …-the-backlog-commits/bl · PR bl#15 · started 17:39",
@@ -76,14 +77,14 @@ func TestDetailBoxShowsTheRunTimelineAndFeed(t *testing.T) {
 		"follow on · f stops it · w opens bl watch in a tmux window",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("box ⁶ has no %q:\n%s", want, out)
+			t.Errorf("the detail box has no %q:\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "I'll read the story first.") {
 		t.Errorf("follow on shows a line older than those that fit:\n%s", out)
 	}
 	// The session's header, as the feed's first line once ↑ reaches it (follow off).
-	m, _ := press(t, showing(t, 171, 63), tab, tab, tab, tab, tab, text("f"), up, up)
+	m, _ := press(t, focused(t, showing(t, 171, 63), detailBox), text("f"), up, up)
 	if out := screen(t, m); !strings.Contains(out, "── live: implement S-1277 · claude opus · session 7f3c2a1… ─") ||
 		!strings.Contains(out, "20:17:34  say   I'll read the story first.") {
 		t.Errorf("the feed's first lines:\n%s", out)
@@ -95,10 +96,10 @@ func TestDetailBoxShowsTheRunTimelineAndFeed(t *testing.T) {
 		"setup ✓ ─ implement ✓ ─ fix-tests ✓ ─ self-review ✓ ─ review r1 ● 4m ─ fix r1 · ─",
 		"20:42:27  say   Done: - the review found nothing.",
 		"── run ended: escalated ─",
-		"follow on · f stops it · w bl watch · 6 hides ⁶",
+		"follow on · f stops it · w bl watch · 3 hides it",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("box ⁶ at 100x40 has no %q:\n%s", want, out)
+			t.Errorf("the detail box at 100x40 has no %q:\n%s", want, out)
 		}
 	}
 }
@@ -106,52 +107,52 @@ func TestDetailBoxShowsTheRunTimelineAndFeed(t *testing.T) {
 func TestDetailBoxSaysHowToSelectARun(t *testing.T) {
 	for _, size := range [][2]int{{171, 63}, {100, 40}} {
 		m, _ := update(t, sized(t, size[0], size[1]), snapshot(t))
-		if out := screen(t, m); !strings.Contains(out, "│ select a run (↑↓ in ¹, then ↵)") {
-			t.Errorf("%v: no hint in box ⁶:\n%s", size, out)
+		if out := screen(t, m); !strings.Contains(out, "│ select a run (↑↓ in runs, then ↵)") {
+			t.Errorf("%v: no hint in the detail box:\n%s", size, out)
 		}
 	}
 }
 
-func TestSixHidesAndShowsTheDetailBox(t *testing.T) {
+func TestItsNumberKeyHidesAndShowsTheDetailBox(t *testing.T) {
 	for _, size := range [][2]int{{171, 63}, {100, 40}} {
 		m := showing(t, size[0], size[1])
-		m, _ = press(t, m, text("6"))
-		if out := screen(t, m); strings.Contains(out, "⁶detail") {
-			t.Errorf("%v: box ⁶ drawn while hidden", size)
+		m, _ = press(t, m, text("3"))
+		if out := screen(t, m); strings.Contains(out, "³detail") {
+			t.Errorf("%v: the detail box drawn while hidden", size)
 		}
-		m, _ = press(t, m, text("6"))
-		if out := screen(t, m); !strings.Contains(out, "⁶detail") || !strings.Contains(out, "say   Done:") {
-			t.Errorf("%v: box ⁶ not drawn again with its feed:\n%s", size, out)
+		m, _ = press(t, m, text("3"))
+		if out := screen(t, m); !strings.Contains(out, "³detail") || !strings.Contains(out, "say   Done:") {
+			t.Errorf("%v: the detail box not drawn again with its feed:\n%s", size, out)
 		}
 	}
 }
 
 func TestEnterShowsTheRunOfTheSelectedRowInEachBox(t *testing.T) {
 	m, _ := update(t, sized(t, 171, 63), snapshot(t))
-	// ¹: the selected run.
+	// The runs box: the selected run.
 	m, _ = press(t, m, enter)
 	if m.detail != "F-81" {
-		t.Errorf("↵ in ¹: %q, want F-81", m.detail)
+		t.Errorf("↵ in the runs box: %q, want F-81", m.detail)
 	}
-	// ²: the item S-1330:change is of S-1330, which has a run.
+	// The attention box: the item S-1330:change is of S-1330, which has a run.
 	m, _ = press(t, m, tab, down, down, down, down, down, enter)
 	if m.detail != "S-1330" {
-		t.Errorf("↵ on S-1330:change in ²: %q, want S-1330", m.detail)
+		t.Errorf("↵ on S-1330:change in the attention box: %q, want S-1330", m.detail)
 	}
 	// An update item's unit is a repo, with no run: nothing changes.
 	m, _ = press(t, m, down, enter)
 	if m.detail != "S-1330" {
 		t.Errorf("↵ on an update item: %q, want S-1330 still", m.detail)
 	}
-	// ³: F-81 has a run; F-84 has none.
-	m, _ = press(t, m, tab, enter)
+	// The next box: F-81 has a run; F-84 has none.
+	m, _ = press(t, focused(t, m, nextBox), enter)
 	if m.detail != "F-81" {
-		t.Errorf("↵ on F-81 in ³: %q", m.detail)
+		t.Errorf("↵ on F-81 in the next box: %q", m.detail)
 	}
 	gen := m.watchGen
 	m, cmd := press(t, m, down, enter)
 	if m.detail != "F-81" || m.watchGen != gen || cmd != nil {
-		t.Errorf("↵ on F-84 (no run) in ³: %q, gen %d → %d", m.detail, gen, m.watchGen)
+		t.Errorf("↵ on F-84 (no run) in the next box: %q, gen %d → %d", m.detail, gen, m.watchGen)
 	}
 }
 
@@ -224,10 +225,7 @@ func TestAWatchThatEndsKeepsItsFeedAndShowsWhy(t *testing.T) {
 
 func TestFollowOffLetsArrowsScrollTheFeed(t *testing.T) {
 	m := showing(t, 171, 63)
-	m, _ = press(t, m, tab, tab, tab, tab, tab)
-	if m.focus != 6 {
-		t.Fatalf("focus %d, want 6", m.focus)
-	}
+	m = focused(t, m, detailBox)
 	for i := range 40 {
 		m, _ = update(t, m, watch.EventMsg{Gen: m.watchGen, Event: watch.Event{Kind: "text", Text: "line " + string(rune('A'+i%26)) + string(rune('0'+i/26))}})
 	}
@@ -276,7 +274,7 @@ func TestWOpensBlWatchInANewTmuxWindow(t *testing.T) {
 	t.Cleanup(func() { getenv = os.Getenv })
 	m, _ := update(t, sized(t, 171, 63), snapshot(t))
 	m, _ = press(t, m, text("w"))
-	if !strings.Contains(screen(t, m), "w: select a run (↑↓ in ¹, then ↵)") {
+	if !strings.Contains(screen(t, m), "w: select a run (↑↓ in runs, then ↵)") {
 		t.Errorf("w with no run:\n%s", screen(t, m))
 	}
 	m = showing(t, 171, 63)
@@ -314,7 +312,7 @@ func TestWOpensBlWatchInANewTmuxWindow(t *testing.T) {
 	if got := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n"); !slices.Equal(got, want) {
 		t.Errorf("tmux args %q, want %q", got, want)
 	}
-	// A tmux that fails shows why in box ⁶.
+	// A tmux that fails shows why on the note line.
 	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte("#!/bin/sh\necho 'no server running' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -325,22 +323,23 @@ func TestWOpensBlWatchInANewTmuxWindow(t *testing.T) {
 	}
 }
 
-func TestHelpListsTheKeysOfBoxSix(t *testing.T) {
+func TestHelpListsTheKeysOfTheDetailBox(t *testing.T) {
 	m, _ := press(t, sized(t, 100, 40), text("h"))
 	out := screen(t, m)
-	for _, want := range []string{"1-6", "show the selected run in ⁶", "follow the feed of ⁶ on or off", "open bl watch of ⁶'s run in a tmux window"} {
+	for _, want := range []string{"1-6", "show the selected run in the detail box", "³detail", "follow the feed on or off",
+		"open bl watch of the run in a tmux window"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the help has no %q:\n%s", want, out)
 		}
 	}
 }
 
-// TestTheFeedFollowsARunThatResumesAfterItsWatchEnded: once the watch of the run box ⁶ shows has
-// ended, a snapshot that shows the run not running (stopped, escalated, clean, stale, failed), then
-// one that shows it running again, starts a new watch; the feed stays. So does a first snapshot
-// read after a watch that exited 0 that shows the run running (a resume between two snapshots). A
-// watch that has not ended, a snapshot read before the end, a watch that ended with a reason, and
-// another run shown start none.
+// TestTheFeedFollowsARunThatResumesAfterItsWatchEnded: once the watch of the run the detail box
+// shows has ended, a snapshot that shows the run not running (stopped, escalated, clean, stale,
+// failed), then one that shows it running again, starts a new watch; the feed stays. So does a
+// first snapshot read after a watch that exited 0 that shows the run running (a resume between two
+// snapshots). A watch that has not ended, a snapshot read before the end, a watch that ended with a
+// reason, and another run shown start none.
 func TestTheFeedFollowsARunThatResumesAfterItsWatchEnded(t *testing.T) {
 	// readAt is the time the snapshots of at are read; restarted says whether one started a new watch.
 	readAt := time.Now()
