@@ -74,8 +74,8 @@ let renameCallCount = 0;
  * propagates; when that removal fails for any reason other than the file
  * already being gone, the failure and the staging path are reported on
  * stderr so the orphan is not left unnoticed.
- * `BL_INTERNAL_TEST_FAIL_ON_RENAME=<n>` makes the n-th call in this process
- * fail before its rename (tests only).
+ * `BL_INTERNAL_TEST_FAIL_ON_RENAME=<n>[,<n>...]` makes each listed n-th call
+ * in this process fail before its rename (tests only).
  *
  * With `{ preserve: true }` an existing target keeps what it was: a symlink
  * stays a symlink and the file it resolves to is the one replaced, and the
@@ -136,8 +136,8 @@ export function atomicWriteFile(
       }
     }
     renameCallCount += 1;
-    const failOn = parseInt(process.env.BL_INTERNAL_TEST_FAIL_ON_RENAME ?? '', 10);
-    if (Number.isInteger(failOn) && failOn === renameCallCount) {
+    const failOn = String(process.env.BL_INTERNAL_TEST_FAIL_ON_RENAME ?? '').split(',');
+    if (failOn.includes(String(renameCallCount))) {
       throw new Error(`BL_INTERNAL_TEST_FAIL_ON_RENAME triggered (call #${renameCallCount})`);
     }
     if (st) {

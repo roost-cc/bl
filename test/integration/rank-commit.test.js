@@ -30,12 +30,6 @@ const ON_QUESTION = {
   NODE_OPTIONS: `--import=${fileURLToPath(new URL('../helpers/on-question.js', import.meta.url))}`,
 };
 
-/** The env under which the listed renames fail (`fail-renames.js`), stdin a terminal. */
-const FAIL_RENAMES = (...fails) => ({
-  NODE_OPTIONS: `${TTY.NODE_OPTIONS} --import=${fileURLToPath(new URL('../helpers/fail-renames.js', import.meta.url))}`,
-  BL_TEST_FAIL_RENAMES: fails.join(','),
-});
-
 /** Stage `S-2` between S-1 and F-2 while main puts F-1 there: the two edits conflict. */
 function conflicted() {
   const dir = backlog(list('S-1', 'F-2'));
@@ -274,30 +268,34 @@ test("a conflict answered n writes git's markers into the staged copy and main a
 test('rank declined conflict reports failed restore and keeps a recoverable merge pair', () => {
   const dir = conflicted();
   // Pull main first (no terminal: a conflict changes nothing), so the pull's
-  // own writes do not count below.
+  // own writes do not count below: write 1 is the marked staged copy, write 2
+  // the base copy, write 3 the staged copy put back.
   assert.equal(bl(['rank', '--commit'], dir).status, 1);
   const pair = () => [staged(dir), base(dir)];
   const before = pair();
   // The marked staged copy's write fails; the base copy's write fails and
   // the staged copy is put back. Either way both copies are as they were.
-  for (const fail of ['priority.staged.yaml:1', 'priority.base.yaml:1']) {
-    const r = bl(['rank', '--commit'], dir, FAIL_RENAMES(fail), 'n\n');
+  for (const fail of ['1', '2']) {
+    const r = bl(['rank', '--commit'], dir, { ...TTY, BL_INTERNAL_TEST_FAIL_ON_RENAME: fail }, 'n\n');
     assert.equal(r.status, 1, r.stderr);
     assert.match(
       r.stderr,
-      /could not write the conflict \(injected failure .*\); both copies are as they were\./,
+      /could not write the conflict \(BL_INTERNAL_TEST_FAIL_ON_RENAME triggered .*\); both copies are as they were\./,
       fail,
     );
     assert.doesNotMatch(r.stderr, /could not put/, fail);
-    assert.deepEqual(pair(), before, `${fail} failed`);
+    assert.deepEqual(pair(), before, `write ${fail} failed`);
   }
 
   // The base copy's write fails, then putting the staged copy back fails:
   // the error names both failures and the command that finishes the pair.
-  let r = bl(['rank', '--commit'], dir, FAIL_RENAMES('priority.base.yaml:1', 'priority.staged.yaml:2'), 'n\n');
+  let r = bl(['rank', '--commit'], dir, { ...TTY, BL_INTERNAL_TEST_FAIL_ON_RENAME: '2,3' }, 'n\n');
   assert.equal(r.status, 1, r.stderr);
-  assert.match(r.stderr, /could not write the conflict \(injected failure of rename 1 onto priority\.base\.yaml\)/);
-  assert.match(r.stderr, /could not put \.bl\/priority\.staged\.yaml back \(injected failure of rename 2 onto/);
+  assert.match(r.stderr, /could not write the conflict \(BL_INTERNAL_TEST_FAIL_ON_RENAME triggered \(call #2\)\)/);
+  assert.match(
+    r.stderr,
+    /could not put \.bl\/priority\.staged\.yaml back \(BL_INTERNAL_TEST_FAIL_ON_RENAME triggered \(call #3\)\)/,
+  );
   const finish = r.stderr.match(
     /Finish the pair with cp "(.*)" "(.*)", or drop the staged edits with bl rank --reset\./,
   );
@@ -435,12 +433,16 @@ test('rank commit retains staged copies across repeated push failures and report
   assert.equal(git(dir, 'status', '--porcelain', '--', 'priority.yaml'), '', 'not dirty');
   assert.equal(staged(dir), list('F-1', 'S-1', 'F-2'));
 
-  // The restore fails: the work-tree write (rename 2 onto priority.yaml; 1
-  // is the commit's write) or the index reset. The error names both
-  // failures and the command that puts the file back; the copies stay, and
-  // after that command a retry commits.
+  // The restore fails: the work-tree write (write 2; 1 is the commit's
+  // write) or the index reset. The error names both failures and the
+  // command that puts the file back; the copies stay, and after that
+  // command a retry commits.
   for (const [env, why, tree] of [
-    [FAIL_RENAMES('priority.yaml:2'), /injected failure of rename 2 onto priority\.yaml/, list('F-1', 'S-1', 'F-2')],
+    [
+      { BL_INTERNAL_TEST_FAIL_ON_RENAME: '2' },
+      /BL_INTERNAL_TEST_FAIL_ON_RENAME triggered \(call #2\)/,
+      list('F-1', 'S-1', 'F-2'),
+    ],
     [gitFailing('reset'), /reset denied/, list('S-1', 'F-2')],
   ]) {
     r = bl(['rank', '--commit'], dir, env);
