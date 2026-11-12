@@ -47,8 +47,21 @@ function isSpecFile(parts) {
 }
 
 /**
+ * `path` relative to `backlogRoot`, both compared as `canonical` paths, or
+ * null when `path` is the backlog root or not inside it. A name that only
+ * starts with `..` (`..notes.md`) is inside.
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @returns {string | null}
+ */
+export function insideBacklog(backlogRoot, path) {
+  const rel = relative(canonical(backlogRoot), canonical(path));
+  return rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel) ? null : rel;
+}
+
+/**
  * The covering lock of `path`: null when `path` is not inside `backlogRoot`
- * (compared as `canonical` paths) or is inside `.bl/`, bl's runtime
+ * (`insideBacklog`) or is inside `.bl/`, bl's runtime
  * directory, which `bl init` adds to every backlog's `.gitignore`
  * (`BL_DIR_LINE`); the spec lock (`specLockPath`) of an existing spec file
  * (`isSpecFile`); else the backlog lock (`LOCK_FILE`). It does not ask git
@@ -59,8 +72,8 @@ function isSpecFile(parts) {
  * @returns {CoveringLock | null}
  */
 export function lockFor(backlogRoot, path) {
-  const rel = relative(canonical(backlogRoot), canonical(path));
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null;
+  const rel = insideBacklog(backlogRoot, path);
+  if (rel == null) return null;
   const parts = rel.split(sep);
   if (parts[0] === dirname(STAGING_DIR)) return null;
   if (isSpecFile(parts) && existsSync(path)) return { kind: 'spec', path: specLockPath(path) };

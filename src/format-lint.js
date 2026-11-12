@@ -34,8 +34,8 @@ import { resolve, relative, isAbsolute, basename } from 'path';
 import { loadConfig, parseArgs, parsePluginCascade, runPluginBatch, info, warn } from './config.js';
 import { findStoryDir, normalizeId } from './story.js';
 import { normalizeFeatureId, findFeature } from './feature.js';
-import { canonical } from './lock.js';
 import { runPluginLocked } from './spec-file.js';
+import { insideBacklog } from './write-lock.js';
 
 /**
  * Build the effective ext → Set<pluginName> map for a stage.
@@ -136,12 +136,6 @@ function extensionSummary(paths) {
   return [...exts].sort();
 }
 
-/** Whether `path` (relative to `rootPath`, or absolute) lies inside the backlog, its links resolved. */
-function inBacklog(rootPath, path, config) {
-  const rel = relative(canonical(config.backlogRoot), canonical(resolve(rootPath, path)));
-  return !rel.startsWith('..') && !isAbsolute(rel);
-}
-
 /**
  * Run each plugin of `stage` over the `paths` it dispatches to. A backlog
  * file goes through `runPluginLocked`, one file per process under its spec
@@ -168,7 +162,8 @@ async function applyStageInDirectory(stage, rootPath, paths, config, ctx) {
     const command = config.plugins[name][stage];
     const inside = [];
     const outside = [];
-    for (const p of bucketPaths) (inBacklog(rootPath, p, config) ? inside : outside).push(p);
+    for (const p of bucketPaths)
+      (insideBacklog(config.backlogRoot, resolve(rootPath, p)) != null ? inside : outside).push(p);
     const results = [];
     if (outside.length > 0) results.push(runPluginBatch(name, command, outside, ctx.vars ?? {}, rootPath));
     // After a missing binary, the backlog files would only warn again.

@@ -63,6 +63,7 @@ test('lockFor gives each path of the Design table its covering lock', () => {
     ['a unit directory', join(b.dir, 'stories', 'S1-one'), backlogLock],
     ['a file in a unit directory that is no spec', b.put('stories/S1-one/notes.md'), backlogLock],
     ['.gitignore', join(b.dir, '.gitignore'), backlogLock],
+    ['a root file whose name starts with ..', join(b.dir, '..notes.md'), backlogLock],
     ['a path in .bl/', join(b.dir, '.bl', 'run', 'x.json'), null],
     ['a path outside the backlog', join(outside, 'x.md'), null],
     ['the backlog root', b.dir, null],
