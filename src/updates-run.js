@@ -35,7 +35,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, dirname, join, relative } from 'path';
-import { spawnSync } from 'child_process';
+import { git as runGit, interruptKept, raiseAfter } from './child.js';
 import {
   parsePluginList,
   parsePluginCascade,
@@ -558,12 +558,7 @@ export function defaultUpdatesRunner() {
   return {
     /** `git <args>` without a shell: branch names may hold `$` and backticks. */
     git(args, cwd) {
-      const r = spawnSync('git', args, {
-        cwd,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        maxBuffer: 64 * 1024 * 1024,
-      });
+      const r = runGit(cwd, args);
       return {
         status: r.error ? 127 : (r.status ?? 1),
         stdout: r.stdout ?? '',
@@ -622,6 +617,24 @@ function firstLine(text) {
 function rollback(g, args) {
   const r = g(args);
   return r.status === 0 ? null : `\`git ${args.join(' ')}\` failed: ${firstLine(r.stderr) || `exit ${r.status}`}`;
+}
+
+/**
+ * Run `fn`, a git step and its rollback, in one `raiseAfter` (F-124 D3): if
+ * an interrupt ends the step, the rollback still runs, and the interrupt is
+ * raised after it. `fn` returns `left`, what a failed rollback left in the
+ * checkout, or null; it goes to stderr before the raise, since no caller
+ * sees the result then.
+ * @template {{ left: string | null }} T
+ * @param {() => T} fn
+ * @returns {T}
+ */
+function undoable(fn) {
+  return raiseAfter(() => {
+    const res = fn();
+    if (res.left && interruptKept()) process.stderr.write(`bl: ${res.left}\n`);
+    return res;
+  });
 }
 
 /**
@@ -920,14 +933,15 @@ async function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
       };
     }
   }
-  const merge = g(['merge', '--no-ff', finalSha, '-m', mergeMessage(s, branch)]);
+  const { merge, left } = undoable(() => {
+    const merge = g(['merge', '--no-ff', finalSha, '-m', mergeMessage(s, branch)]);
+    const back = merge.status === 0 ? null : rollback(g, ['merge', '--abort']);
+    return { merge, left: back && `${back}: the main checkout ${repoPath} is left mid-merge` };
+  });
   if (merge.status !== 0) {
-    const back = rollback(g, ['merge', '--abort']);
     return {
       ok: false,
-      reason: `merge into main failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}${
-        back ? `; ${back}: the main checkout ${repoPath} is left mid-merge` : ''
-      }`,
+      reason: `merge into main failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}${left ? `; ${left}` : ''}`,
     };
   }
   const readyError = branch ? markReady(ctx, s, repoPath) : null;
@@ -1042,9 +1056,12 @@ async function processStory(ctx, s) {
     });
   const w = gitIn(runner, worktreePath);
   try {
-    const rebase = w(['rebase', 'origin/main']);
+    const { rebase, back } = undoable(() => {
+      const rebase = w(['rebase', 'origin/main']);
+      const back = rebase.status === 0 ? null : rollback(w, ['rebase', '--abort']);
+      return { rebase, back, left: back && `${back}: the worktree ${worktreePath} is left mid-rebase` };
+    });
     if (rebase.status !== 0) {
-      const back = rollback(w, ['rebase', '--abort']);
       const line = gateRecordLine({
         verdict: 'Conflict',
         at,

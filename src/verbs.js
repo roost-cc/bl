@@ -18,7 +18,7 @@
 import { spawn, spawnSync } from 'child_process';
 import { closeSync, openSync } from 'fs';
 import { dirname, join, relative } from 'path';
-import { fileURLToPath } from 'url';
+import { BL_PATH } from './child.js';
 import { loadConfig, parseArgs, info, openTmuxWindow } from './config.js';
 import { renderTabTitle, TAB_TITLE_ENV, unitTitleFields } from './tab-title.js';
 import { readAllStories } from './story.js';
@@ -30,8 +30,6 @@ import { RUN_DIR, ensureRunDir, escalationOpen, loadRunState, readFm, reviewEnd 
 import { reviewOf } from './transition.js';
 import { currentChange } from './change-doc.js';
 import { featureUnit, storyUnit } from './unit.js';
-
-const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 
 /**
  * What each verb does with each kind of target. A cell starting `./` names

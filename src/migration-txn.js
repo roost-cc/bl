@@ -17,11 +17,11 @@
  * rerun plans nothing.
  */
 
-import { spawnSync } from 'child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs';
 import { dirname, join, relative, resolve } from 'path';
 import { moveIntoBacklog, removeBacklogPath, writeBacklogPathNow } from './atomic-write.js';
 import { discardChanges } from './backlog-commit.js';
+import { git as runGit } from './child.js';
 import { fetchMainNow, withMainSyncLockNow } from './main-sync.js';
 import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR } from './run-lock.js';
@@ -124,20 +124,15 @@ export async function applyMigration(config, { apply, message, commit, commitCon
   return result;
 }
 
-/** The options of every git call here: it never prompts and never reads stdin. */
-const GIT_OPTIONS = {
-  encoding: 'utf8',
-  maxBuffer: 64 * 1024 * 1024,
-  env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-  stdio: ['ignore', 'pipe', 'pipe'],
-};
+/** The options of every git call here: it never prompts (`git()` never gives it stdin). */
+const GIT_OPTIONS = { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } };
 
 /** What the restore finds when the migration's commit has landed. */
 const LANDED = Symbol('landed');
 
 /** A git runner in `root` for the reads (`rev-parse`, `status`). */
 function gitIn(root) {
-  return (...args) => spawnSync('git', args, { ...GIT_OPTIONS, cwd: root });
+  return (...args) => runGit(root, args, GIT_OPTIONS);
 }
 
 /**

@@ -572,7 +572,7 @@ test('collectInbox: a heartbeat that cannot be fetched or read is one warning; t
   };
   try {
     // No heartbeat pushed yet: git fetch fails.
-    expectOneWarning(/^update job heartbeat not read: git fetch: .*updates-heartbeat/);
+    expectOneWarning(/^update job heartbeat not read: .*updates-heartbeat/);
     t.beat('not json');
     expectOneWarning(/not a roost-update-heartbeat\/v1 heartbeat: /);
     t.beat(heartbeat({ schema: 'other/v2' }));

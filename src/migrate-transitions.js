@@ -35,10 +35,10 @@
  * tolerant reader (`legacyLog`) reads it.
  */
 
-import { spawnSync } from 'child_process';
 import { existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
+import { gitOut } from './child.js';
 import {
   commitPaths,
   dirtySnapshot,
@@ -63,14 +63,12 @@ import { COMPLETED_KEY, DATE_RE, ENTRY_FIELDS, isoAt, legacyLog, logShape, reads
 const str = (v) => (typeof v === 'string' ? v : '');
 
 /** `git <args>` in `root`: its trimmed stdout, or `''` when it fails. */
-function gitOut(root, args) {
-  const r = spawnSync('git', args, {
-    cwd: root,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  return r.status === 0 ? r.stdout.trim() : '';
+function gitOutOrEmpty(root, args) {
+  try {
+    return gitOut(root, args);
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -87,10 +85,12 @@ function gitOut(root, args) {
 export function gitDates(root, rel, kind, fm) {
   const word = fromLegacy(kind, str(fm.status));
   const dated = word && word !== 'draft' && !LEGACY_LOG.terminal.includes(word);
-  const set = dated ? gitOut(root, ['log', '-1', '--follow', '--format=%cI', `-Sstatus: ${fm.status}`, '--', rel]) : '';
+  const set = dated
+    ? gitOutOrEmpty(root, ['log', '-1', '--follow', '--format=%cI', `-Sstatus: ${fm.status}`, '--', rel])
+    : '';
   const first = DATE_RE.test(str(fm.added))
     ? ''
-    : (gitOut(root, ['log', '--follow', '--format=%cI', '--', rel]).split('\n').at(-1) ?? '');
+    : (gitOutOrEmpty(root, ['log', '--follow', '--format=%cI', '--', rel]).split('\n').at(-1) ?? '');
   return { setAt: set ? isoAt(set) : null, firstAt: first ? isoAt(first) : null };
 }
 

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { parseFrontmatter, serializeFrontmatter, worktreeRoot } from '../../src/config.js';
@@ -2781,3 +2782,72 @@ test('an empty run whose heartbeat commit fails fails the run, the report left o
     t.cleanup();
   }
 });
+
+// F-124 D3: if SIGINT ends the merge into main or the rebase in the throwaway
+// worktree, the abort runs, then bl exits 130. Each row runs the update job
+// in a Node child that calls `exitOnSignal()` (as bl.js does). The fake
+// runner's `git` for the step runs a child that SIGINT ends (`runChild`, so
+// src/child.js sees the interrupt) and returns a failed result; its `git`
+// for the abort writes `abort ran` and fails when the row says so.
+const INTERRUPTED_STEPS = [
+  {
+    name: 'the merge into main',
+    step: ['merge', '--no-ff'],
+    abort: ['merge', '--abort'],
+    left: /^bl: `git merge --abort` failed: injected: the main checkout .*\/repos\/bl is left mid-merge$/m,
+  },
+  {
+    name: 'the rebase in the throwaway worktree',
+    step: ['rebase', 'origin/main'],
+    abort: ['rebase', '--abort'],
+    left: /^bl: `git rebase --abort` failed: injected: the worktree .*\/worktrees\/.* is left mid-rebase$/m,
+  },
+];
+
+function runInterrupted(c, abortFails) {
+  const url = (p) => JSON.stringify(new URL(p, import.meta.url).href);
+  const script = [
+    `import { exitOnSignal } from ${url('../../src/signal-exit.js')};`,
+    `import { runChild } from ${url('../../src/child.js')};`,
+    `import { BRANCHES, fakeRunner, mkReport, run, setup } from ${url('../helpers/updates-run-fixture.js')};`,
+    'exitOnSignal();',
+    `const t = await setup(mkReport({ 'roost-cc/bl': [BRANCHES.vitest] }));`,
+    `process.on('exit', () => t.cleanup());`,
+    'const runner = fakeRunner({ gate: [0] });',
+    'const fake = runner.git;',
+    'runner.git = (args, cwd) => {',
+    `  const is = (want) => args[0] === want[0] && args[1] === want[1];`,
+    `  if (is(${JSON.stringify(c.step)})) {`,
+    `    runChild('sh', ['-c', 'kill -INT $$']);`,
+    `    return { status: 1, stdout: '', stderr: 'interrupted' };`,
+    '  }',
+    `  if (is(${JSON.stringify(c.abort)})) {`,
+    `    process.stderr.write('abort ran\\n');`,
+    `    if (${abortFails}) return { status: 1, stdout: '', stderr: 'injected' };`,
+    '  }',
+    '  return fake(args, cwd);',
+    '};',
+    'await run(t, runner);',
+    `console.log('after');`,
+  ].join('\n');
+  return spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+for (const c of INTERRUPTED_STEPS) {
+  for (const abortFails of [false, true]) {
+    test(`SIGINT that ends ${c.name} runs the abort, then bl exits 130${abortFails ? ' (abort fails)' : ''}`, () => {
+      const r = runInterrupted(c, abortFails);
+      const why = `status ${r.status} signal ${r.signal}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+      assert.equal(r.status, 130, why);
+      assert.ok(!r.stdout.includes('after'), why);
+      const d2 = r.stderr.indexOf('bl: sh -c kill -INT $$ was ended by SIGINT\n');
+      const abort = r.stderr.indexOf('abort ran\n');
+      assert.ok(d2 >= 0 && abort > d2, `the D2 line, then the abort: ${why}`);
+      if (abortFails) assert.match(r.stderr, c.left, why);
+      else assert.doesNotMatch(r.stderr, /is left mid-/, why);
+    });
+  }
+}

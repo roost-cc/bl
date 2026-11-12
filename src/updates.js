@@ -15,8 +15,8 @@
 
 import { existsSync, readFileSync, mkdirSync, realpathSync } from 'fs';
 import { join, dirname, resolve, isAbsolute } from 'path';
-import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { git } from './child.js';
 import {
   loadConfig,
   parseArgs,
@@ -300,11 +300,7 @@ export function foreignCheckout(config, blRoot = resolve(__dirname, '..')) {
  */
 export function gitListHeads(repoPath) {
   if (!repoPath || !existsSync(repoPath)) return null;
-  const r = spawnSync('git', ['ls-remote', '--heads', 'origin'], {
-    cwd: repoPath,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const r = git(repoPath, ['ls-remote', '--heads', 'origin']);
   if (r.error || r.status !== 0) return null;
   const heads = new Map();
   for (const line of r.stdout.split('\n')) {

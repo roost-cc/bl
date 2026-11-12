@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { execSync } from 'child_process';
+import { gitOut } from './child.js';
 import { loadConfig, info } from './config.js';
 import { normalizeId } from './story.js';
 import { allActiveWorktrees } from './story.js';
@@ -17,10 +17,7 @@ const LOG_FILE = 'activity.log';
 
 function getGitRoot() {
   try {
-    return execSync('git rev-parse --show-toplevel', {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
+    return gitOut(undefined, ['rev-parse', '--show-toplevel']);
   } catch {
     return null;
   }
@@ -28,14 +25,8 @@ function getGitRoot() {
 
 function isWorktree() {
   try {
-    const commonDir = execSync('git rev-parse --git-common-dir', {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-    const gitDir = execSync('git rev-parse --git-dir', {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
+    const commonDir = gitOut(undefined, ['rev-parse', '--git-common-dir']);
+    const gitDir = gitOut(undefined, ['rev-parse', '--git-dir']);
     return commonDir !== gitDir;
   } catch {
     return false;
@@ -44,11 +35,7 @@ function isWorktree() {
 
 function getBranch(cwd) {
   try {
-    return execSync('git rev-parse --abbrev-ref HEAD', {
-      cwd,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
+    return gitOut(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
   } catch {
     return 'unknown';
   }
