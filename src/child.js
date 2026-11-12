@@ -15,6 +15,11 @@
  *   says otherwise. It sets `cwd`, not `git -C`, so the argv stays what the
  *   tests' git shims match.
  *
+ * `gitOut(cwd, args, opts)` is `git()` for a git command that must succeed
+ * (F-124 D2): it returns the trimmed stdout, and throws `describeExit`'s
+ * message when the child failed. `BL_PATH` is this process's own `bl.js`
+ * (F-124 D5), the `entry` for a `runBl` of this `bl`.
+ *
  * **An interrupt is raised at once (D2).** If SIGINT or SIGTERM
  * (`INTERRUPT_SIGNALS`) ends a child, the module prints
  * `bl: <child> was ended by <signal>` on stderr and raises the signal
@@ -38,8 +43,12 @@
  * `describeExit(r, what)` words a failed child for every caller.
  */
 
+import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from './child-stdio.js';
 import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal } from './signal-exit.js';
+
+/** The path of this process's own `bl.js`. */
+export const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 
 /** How many `raiseAfter` calls are running, and the first interrupt one of them kept. */
 let depth = 0;
@@ -107,6 +116,21 @@ export function git(cwd, args, opts = {}) {
   return /** @type {import('child_process').SpawnSyncReturns<string>} */ (
     runChild('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts, cwd })
   );
+}
+
+/**
+ * Run `git …args` in `cwd` as `git()` does, for a command that must succeed:
+ * return its trimmed stdout (`''` when `opts.stdio` does not capture it), or
+ * throw an `Error` with `describeExit`'s message when the child failed.
+ * @param {string | undefined} cwd  undefined runs it in `process.cwd()`
+ * @param {readonly string[]} args
+ * @param {ChildOptions} [opts]
+ * @returns {string}
+ */
+export function gitOut(cwd, args, opts = {}) {
+  const r = git(cwd, args, opts);
+  if (r.error || r.status !== 0) throw new Error(describeExit(r, `git ${args.join(' ')}`));
+  return String(r.stdout ?? '').trim();
 }
 
 /**
