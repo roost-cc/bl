@@ -5281,8 +5281,8 @@ them.
   `fs.writeSync(1)` in the child. `test/unit/child-stdio-guard.test.js` parses `src/` and
   `test/` with `acorn` and fails on each of these shapes at a `child_process` call.
 - **A synchronous child runs through `src/child.js`** (F-114 D1): `runChild(command, args)` for an
-  argv command, `runCommandLine(line)` for a configured command line (through a shell), `runBl(entry,
-args)` for a `bl` child, and `git(cwd, args)`. Each runs its child through `spawnSyncFiles` and
+  argv command, `runCommandLine(line)` for a configured command line (through a shell),
+  `runBl(entry, args)` for a `bl` child, and `git(cwd, args)`. Each runs its child through `spawnSyncFiles` and
   returns the `spawnSync` result. If SIGINT or SIGTERM ends the child, the module prints
   `bl: <child> was ended by <signal>` and raises the signal (D2), so `bl` exits 130 or 143 and the
   caller's next statement never runs. `runCommandLine` and `runBl` read exit 130 and 143 as those
@@ -5292,8 +5292,7 @@ args)` for a `bl` child, and `git(cwd, args)`. Each runs its child through `spaw
   `raiseAfter` ends. `describeExit(r, what)` words a failed child. A caller never reads a child's
   `signal`. `test/unit/child-stdio-guard.test.js` fails on a `src/` import of `child_process` or
   `child-stdio.js` outside `src/child.js` (and `child-stdio.js`'s own import of `child_process`),
-  except the files its `ALLOWED` list names; S-1473, S-1474 and F-124 move those files and empty
-  the list.
+  except the files its `ALLOWED` list names. F-124 moves those files and empties the list.
 - A call in `src/` to an async function of `src/` is awaited: it is the operand of `await`, or
   the value an async function returns outside a `try`. A missing `await` is silent, so
   `test/unit/awaited-calls.test.js` parses `src/` with `acorn` and checks this by name (F-105
