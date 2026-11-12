@@ -453,6 +453,19 @@ backlog lock and need `atomicWriteFile` only.
   changes the backlog's index, working tree or refs holds the main sync lock instead
   (`main-sync.js`, F-126 D1). A test that calls a writer directly holds the covering lock
   around it (`test/helpers/covering-lock.js`).
+- **The static guard (F-126 D6).** `test/unit/backlog-write-guard.test.js` parses every module
+  in `src/` except the chokepoints (`atomic-write.js`, `backlog-commit.js`, `main-sync.js`,
+  `child.js`). It fails on each raw write call (`writeFileSync`, `rmSync`, `renameSync`, a
+  writing `openSync`, …) and each git call that changes state (`commit`, `reset`, `fetch`, …,
+  or a subcommand it cannot read) that its `ALLOWED` map does not name. It finds git calls by
+  import binding: `git` from `child.js` under any local name, `runChild`, `spawnSyncFiles`
+  and the `child_process` calls with the command `'git'`, and command lines that start with
+  `git ` (`runCommandLine`, `execSync`, a runner's `shell`). A finding names the file, the
+  enclosing function and the call, for example `block.js addEdge writeFileSync`. Write to a
+  tracked backlog path through a chokepoint instead. Add an `ALLOWED` entry only for a call
+  that writes outside the backlog or to a path git ignores, or runs git in a code repository:
+  the key is `"<file under src/> <function> <call>"` and the value is that reason. An entry
+  that matches no call fails the test, so a story that removes a call removes its entry.
 - **Who is on it.** The token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
   `recordStoryTokens`) write through `updateSpecFile`, and `recordFeatureTokens` holds
   `withSpecLock` across its transcript read and nests `updateSpecFileHeld` in that hold. `feature-cmd.js` `updateFeature` (approve, the run's status, the totals re-read),
