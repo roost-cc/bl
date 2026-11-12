@@ -45,7 +45,7 @@ export function holdLock(path, info = 'held by the test') {
   }
 }
 
-// A probe (\`holderOf\`, the parent's poll below or bl code) is a try-lock that
+// A probe (`holderOf`, the parent's poll below or bl code) is a try-lock that
 // holds the lock for an instant, so a take in that instant fails with EAGAIN.
 // The child tries again for up to CHILD_TRY_MS before it gives up.
 const CHILD_TRY_MS = 2000;
