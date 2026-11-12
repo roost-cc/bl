@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { acquireLock, releaseLock } from '../../src/lock.js';
@@ -319,6 +319,32 @@ test('--commit refuses while priority.yaml has uncommitted edits; a failed commi
   assert.equal(read(dir), list('F-1', 'S-1', 'F-2'));
   assert.equal(git(dir, 'log', '-1', '--format=%s'), SUBJECT);
   assert.equal(staged(dir), null);
+});
+
+test('rank commit reports success only after the commit', () => {
+  const success = /Committed the staged order|took out/;
+  // A failed local commit: only the failure is reported.
+  let dir = backlog(CLOSED);
+  assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  mkdirSync(dirname(hook), { recursive: true });
+  writeFileSync(hook, '#!/bin/sh\necho injected-commit-failure >&2\nexit 1\n');
+  chmodSync(hook, 0o755);
+  let r = bl(['rank', '--commit'], dir);
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /backlog commit failed: injected-commit-failure/);
+  assert.doesNotMatch(r.stderr, success);
+
+  // No git repo: the file is written, and nothing says it was committed.
+  dir = backlog(CLOSED);
+  assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
+  rmSync(join(dir, '.git'), { recursive: true });
+  r = bl(['rank', '--commit'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /Backlog is not a git repository; skipping commit\./);
+  assert.match(r.stderr, /took out F-5, S-9 \(done\)\.\nWrote the staged order to priority\.yaml\./);
+  assert.doesNotMatch(r.stderr, /Committed/);
+  assert.equal(read(dir), list('F-1', 'S-1', 'F-2'));
 });
 
 /** A directory whose `git` fails the subcommand `sub` and runs the real git otherwise. */

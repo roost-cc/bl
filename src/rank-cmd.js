@@ -600,15 +600,19 @@ async function askYes(question) {
   return /^\s*y(es)?\s*$/i.test(answer);
 }
 
-/** Report a `commitPlan` result. */
+/**
+ * Report a `commitPlan` result. A failed commit exits 1 (`reportBacklogCommit`)
+ * before any line says what was committed.
+ */
 function reportCommit(res, closed) {
-  if (closed.length > 0) info(`bl rank: took out ${closed.join(', ')} (done).`);
   if (res.same) {
     info(`The staged order is ${PRIORITY_FILE}'s already; dropped the staged edits.`);
     return;
   }
-  info(`Committed the staged order of ${PRIORITY_FILE}.`);
   reportBacklogCommit(res.commit, 'bl rank');
+  if (closed.length > 0) info(`bl rank: took out ${closed.join(', ')} (done).`);
+  if (res.commit.notRepo) info(`Wrote the staged order to ${PRIORITY_FILE}.`);
+  else info(`Committed the staged order of ${PRIORITY_FILE}.`);
   if (res.commit.pushed === false) info('bl rank: kept the staged edits; bl rank --commit pushes the commit again.');
 }
 
