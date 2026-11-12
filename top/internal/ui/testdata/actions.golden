@@ -15,7 +15,7 @@
 │  note (optional, enter to skip):                                      │
 │  > image rebuilt on 44.140, 0 high advisories_                        │
 │                                                                       │
-│  runs: bl task done T-52 "image rebuilt on 44.140, 0 high advisories" │
+│  runs: bl task done T-52 'image rebuilt on 44.140, 0 high advisories' │
 │                                                                       │
 │  enter  go on     esc  cancel                                         │
 │                                                                       │

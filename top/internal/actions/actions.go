@@ -35,16 +35,24 @@ func Words(a stream.Action, text, goos string) []string {
 	return words
 }
 
-// Show is words as one line: a word that is empty or holds a space or a quote is in double quotes.
+// Show is words as one line that sh runs as the same words: a word that is empty or holds a
+// character sh treats as special is quoted for sh (shQuote), so a dollar sign or a backtick in a
+// typed note stays literal.
 func Show(words []string) string {
 	out := make([]string, len(words))
 	for i, w := range words {
-		if w == "" || strings.ContainsAny(w, " \t\"'\\$`") {
-			w = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(w) + `"`
+		if w == "" || strings.ContainsAny(w, " \t\n\"'\\$`;&|<>()*?[]#~!{}") {
+			w = shQuote(w)
 		}
 		out[i] = w
 	}
 	return strings.Join(out, " ")
+}
+
+// shQuote is w in single quotes for sh: each single quote in w ends the quotes, is escaped with a
+// backslash, and starts them again.
+func shQuote(w string) string {
+	return "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
 }
 
 // Argv is the argv that runs words: a bl command (first word `bl`) runs through blArgv, the
@@ -62,7 +70,7 @@ func Argv(words, blArgv []string) []string {
 func TmuxArgs(name, dir string, argv []string) []string {
 	words := make([]string, len(argv))
 	for i, a := range argv {
-		words[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		words[i] = shQuote(a)
 	}
 	return []string{"new-window", "-n", name, "-c", dir, strings.Join(words, " ") + "; exec ${SHELL:-sh}"}
 }

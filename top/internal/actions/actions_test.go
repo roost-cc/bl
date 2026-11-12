@@ -2,6 +2,7 @@ package actions
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,7 +24,7 @@ func TestWordsAndShow(t *testing.T) {
 	}{
 		{"no text", Words(done, "", "linux"), "bl task done T-52"},
 		{"the text is the last word, quoted", Words(done, `image "rebuilt" on 44.140`, "linux"),
-			`bl task done T-52 "image \"rebuilt\" on 44.140"`},
+			`bl task done T-52 'image "rebuilt" on 44.140'`},
 		{"a URL on Linux", Words(pr, "", "linux"), "xdg-open https://example.invalid/pull/15"},
 		{"a URL on macOS", Words(pr, "", "darwin"), "open https://example.invalid/pull/15"},
 	} {
@@ -102,5 +103,27 @@ func TestWindowRunsTmuxAndSaysWhyItFailed(t *testing.T) {
 	}
 	if why := Window("agent", "/w", []string{"bl", "agent"}); why != "tmux: no server running" {
 		t.Errorf("a failed tmux: %q", why)
+	}
+}
+
+// TestShownCommandRunsAsTheSameWords: the line Show draws, run by sh, passes each word unchanged,
+// for every character class sh treats as special.
+func TestShownCommandRunsAsTheSameWords(t *testing.T) {
+	notes := []string{
+		"", "plain", "two words", "tab\there", "line\nbreak",
+		"$HOME", "${HOME}", "$(echo x)", "`echo x`", `back\slash`, `"double"`, "it's", "'",
+		"a;b", "a&b", "a|b", "<in>", "(sub)", "*", "?", "[ab]", "#hash", "~", "!bang", "{a,b}",
+	}
+	for _, note := range notes {
+		words := []string{"printf", "[%s]\n", note}
+		shown := Show(words)
+		out, err := exec.Command("sh", "-c", shown).Output()
+		if err != nil {
+			t.Errorf("%q: sh -c %q: %v", note, shown, err)
+			continue
+		}
+		if string(out) != "["+note+"]\n" {
+			t.Errorf("%q: sh -c %q printed %q", note, shown, out)
+		}
 	}
 }

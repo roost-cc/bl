@@ -161,7 +161,7 @@ func TestTaskDoneRunsAfterYWithTheNoteAndShowsTheResult(t *testing.T) {
 	m, _ = press(t, m, typed("image rebuilt!")...)
 	m, _ = press(t, m, backspace, enter)
 	out := dialogText(m)
-	if !strings.Contains(out, `runs: bl task done T-52 "image rebuilt"`) || !strings.Contains(out, "y  close the task     n  cancel") {
+	if !strings.Contains(out, `runs: bl task done T-52 'image rebuilt'`) || !strings.Contains(out, "y  close the task     n  cancel") {
 		t.Fatalf("the question:\n%s", out)
 	}
 	m, cmd := press(t, m, text("y"))
@@ -173,7 +173,7 @@ func TestTaskDoneRunsAfterYWithTheNoteAndShowsTheResult(t *testing.T) {
 		t.Errorf("bl got %q", got)
 	}
 	out = screen(t, m)
-	for _, want := range []string{"done┌", `✓ bl task done T-52 "image rebuilt"   exit 0`, "stderr: committed tasks/T52-renovate-image (backlog 4f1c2a9)", "any key to close"} {
+	for _, want := range []string{"done┌", `✓ bl task done T-52 'image rebuilt'   exit 0`, "stderr: committed tasks/T52-renovate-image (backlog 4f1c2a9)", "any key to close"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the result box has no %q:\n%s", want, out)
 		}
