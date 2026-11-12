@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, writeSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
+import { setTimeout as delay } from 'timers/promises';
 import stringWidth from 'string-width';
 import { getProvider } from '../../src/agents/index.js';
 import { buildClaudeArgs, pathToProjectSlug } from '../../src/agents/claude.js';
@@ -276,6 +277,8 @@ test('watchRun follows the step session, moves to the next one, and ends when th
     await until(() => out.filter((o) => o.kind === 'text').length === 4);
     state.status = 'escalated';
     save();
+    // The run's bl lets the run go after it saves its end.
+    release(lock);
     assert.equal(await done, 0);
     assert.deepEqual(err, []);
     assert.deepEqual(
@@ -373,4 +376,46 @@ test('watchRun: no run state is an error on stderr and exit 1; a session with no
   );
   assert.deepEqual(out2, ['── implement S-1 · gemini · - ──', '── F-1 · clean ──']);
   assert.match(err2[0], /this gemini session has no live feed/);
+});
+
+test('watch_standalone_session_until_holder_exits: a review or merge session is followed until its bl lets the run go', async () => {
+  // The saved status before a standalone bl review or bl merge, which leaves it as it is while it works.
+  for (const status of ['reviewed', 'clean', 'escalated', 'stopped', 'running']) {
+    const { dir, state, save, config, lock } = runFixture(null);
+    const claude = join(dir, 'claude.jsonl');
+    copyFileSync(CLAUDE_FIXTURE, claude);
+    Object.assign(state, {
+      status,
+      session: {
+        step: 'review:correctness',
+        story: null,
+        agent: 'claude',
+        model: null,
+        id: 's',
+        path: claude,
+        startedAt: 'a',
+      },
+    });
+    save();
+    try {
+      const out = [];
+      const done = watchRun({
+        config,
+        id: 'F-1',
+        json: true,
+        out: (l) => out.push(JSON.parse(l)),
+        err: () => {},
+        pollMs: 10,
+      });
+      for (let i = 0; i < 500 && out.filter((o) => o.kind === 'text').length < 2; i++) await delay(10);
+      // Several polls with the holder alive: no end.
+      await delay(100);
+      assert.ok(!out.some((o) => o.kind === 'end'), `${status}: no end while a bl holds the run`);
+      release(lock);
+      assert.equal(await done, 0);
+      assert.deepEqual(out.at(-1), { kind: 'end', status: status === 'running' ? 'stale' : status }, status);
+    } finally {
+      release(lock);
+    }
+  }
 });

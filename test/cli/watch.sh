@@ -71,6 +71,9 @@ for _ in $(seq 100); do (( $(lines) >= 7 )) && break; sleep 0.1; done
 cp "$FIXTURES/codex-events.jsonl" "$TMPDIR_ROOT/codex.jsonl"
 for _ in $(seq 100); do (( $(lines) >= 13 )) && break; sleep 0.1; done
 set_state escalated codex "$TMPDIR_ROOT/codex.jsonl" review:correctness ""
+# The run's bl lets the run go after it saves its end; watch ends when no bl holds the run.
+kill "$HOLDER" 2>/dev/null || true
+wait "$HOLDER" 2>/dev/null || true
 set +e
 wait "$WATCH"; CODE=$?
 set -e
@@ -82,8 +85,6 @@ assert_eq "--json: the Claude step, its events, the Codex step, its events, the 
     console.log(lines.map((o) => o.kind === "step" ? `step:${o.step}:${o.story ?? ""}:${o.agent}:${o.session ?? ""}` : o.kind === "end" ? `end:${o.status}` : o.kind).join(" "));
   ' "$OUT")"
 assert_empty "bl watch --json stderr" "$(cat "$ERR")"
-kill "$HOLDER" 2>/dev/null || true
-wait "$HOLDER" 2>/dev/null || true
 
 # A run that has ended, in text: the session from its start, then the end line.
 set_state clean claude "$TMPDIR_ROOT/claude.jsonl" self-review ""

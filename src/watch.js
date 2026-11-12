@@ -10,9 +10,10 @@
  * handle; `watch` asks that agent's adapter for the session's events
  * (`followSession()`, provider.js) and never reads an agent's files itself.
  * When the run starts another session, `watch` prints a new header and
- * follows that one. When the run is no longer `running`, or says `running`
- * while no bl holds its run lock (`stale`), it prints the final status and
- * exits 0. Read-only: it takes no lock and writes nothing.
+ * follows that one. When no bl holds its run lock any more (a run, a
+ * standalone `bl review` or a `bl merge`), it prints the final status
+ * (`stale` for one that says `running`) and exits 0. Read-only: it takes no
+ * lock and writes nothing.
  */
 
 import { basename } from 'path';
@@ -35,9 +36,9 @@ message or tool call. When the run moves to its next step (implement,
 self-review, review, fix), watch prints a new header and follows that step's
 session. It works for every agent bl runs headless (Claude, Codex).
 
-It reads .bl/run/<id>.json every ${WATCH_POLL_MS / 1000} s. When the run is no longer
-running (done, escalated, stopped, or stale: no bl holds the run), watch
-prints the final status and exits 0. It takes no lock and writes nothing.
+It reads .bl/run/<id>.json every ${WATCH_POLL_MS / 1000} s. When no bl holds the run
+any more (a bl run, review or merge), watch prints the final status (done,
+escalated, stopped, or stale: a run whose bl died) and exits 0. It takes no lock and writes nothing.
 
 Lines (each cut to the terminal width):
   ── <step> [<story>] · <agent> · <session> ──   a step's session starts
@@ -76,10 +77,14 @@ export function cutLine(line, width) {
   return width >= 1 ? `${out}…` : '';
 }
 
-/** How the run ended: its status, `stale` for a `running` one no bl holds, or null while it runs. */
+/**
+ * How the run ended, or null while a bl (a run, a standalone `bl review` or a
+ * `bl merge` integration) holds its run lock, whatever its saved status says:
+ * then its status, `stale` for a `running` one.
+ */
 function endStatus(config, state) {
-  const status = runStatus(state, holderOf(runLockPath(config, state.feature)));
-  return status === 'running' ? null : String(status ?? 'unknown');
+  const holder = holderOf(runLockPath(config, state.feature));
+  return holder == null ? String(runStatus(state, holder) ?? 'unknown') : null;
 }
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

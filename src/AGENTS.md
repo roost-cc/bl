@@ -3551,9 +3551,10 @@ reads its `--json` stream.
    (`followSession()`). A session with the same file is the same session: the outcome retry
    resumes a Claude session in its own transcript. A read that races `saveRunState` is tried
    again at the next poll.
-3. When the run state's `status` is no longer `running`, or says `running` while no bl holds
-   the run lock (`stale`, as in `bl top`), it reads the session's last events, prints the end
-   line and exits 0. With no run state for the id, it says so on stderr and exits 1.
+3. When no bl holds the run lock any more (a `bl run`, a standalone `bl review` or a
+   `bl merge` integration, whatever the saved `status` says while it works), it reads the
+   session's last events, prints the end line with the run state's `status` (`stale` for one
+   that says `running`, as in `bl top`) and exits 0. With no run state for the id, it says so on stderr and exits 1.
 
 The first session starts with its last 30 events (`--from-start`: all of them); every later
 session is new, so `watch` prints it from its start. `watch` takes no lock and writes nothing
