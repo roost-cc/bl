@@ -94,9 +94,13 @@ taken out of the ranked list.
   --after <unit>      Put <unit> just after a ranked unit
   --remove            Take <unit> out of the list; it falls back into the
                       dated tail
-  --commit            Pull, merge the staged edits with ${PRIORITY_FILE} on
-                      main, take closed units out, and commit and push the
-                      file alone. On a conflict, propose the staged order
+  --commit            With nothing staged, do nothing. Otherwise pull, merge
+                      the staged edits with ${PRIORITY_FILE} on main, take
+                      closed units out, and commit and push the file alone.
+                      A merged order that names anything but a feature or
+                      loose story is refused. If the push fails, the staged
+                      edits stay: the next --commit pushes the commit.
+                      On a conflict, propose the staged order
                       without the units main took out and with the units main
                       added at the end, and ask y/n. On n, write git's
                       conflict markers into ${STAGED_FILE} and exit 1:
