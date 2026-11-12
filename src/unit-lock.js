@@ -71,8 +71,9 @@ export function unitLockDirs(config, unit) {
  * run loop's take under its own.
  *
  * On success, `release()` gives back every lock this call took, and `scope()`
- * reads `unitLockDirs` again and returns the backlog-relative directories, so
- * a story tagged to a feature after the take is in it (D3).
+ * returns the backlog-relative directories it locked, and those of
+ * `unitLockDirs` read again: a story tagged to a feature after the take is in
+ * it (D3), and so is a locked story the session took out of its feature.
  *
  * @param {{ backlogRoot: string }} config
  * @param {WorkUnit[]} units
@@ -82,6 +83,8 @@ export function unitLockDirs(config, unit) {
 export function takeUnitLocks(config, units, info) {
   /** @type {(() => void)[]} */
   const taken = [];
+  /** @type {string[]} */
+  const locked = [];
   const release = () => {
     for (const give of taken.splice(0).reverse()) give();
   };
@@ -94,10 +97,13 @@ export function takeUnitLocks(config, units, info) {
         return { refused: `${id} is locked by a live bl process (pid ${got.holder}): ${got.path}` };
       }
       taken.push(got.release);
+      locked.push(dir);
     }
   }
   const scope = () => [
-    ...new Set(units.flatMap((u) => unitLockDirs(config, u)).map((d) => relative(config.backlogRoot, d))),
+    ...new Set(
+      [...locked, ...units.flatMap((u) => unitLockDirs(config, u))].map((d) => relative(config.backlogRoot, d)),
+    ),
   ];
   return { refused: null, release, scope };
 }

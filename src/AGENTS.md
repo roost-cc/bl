@@ -1447,7 +1447,7 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   `feature-refine.json` (`{ summary, premise_holds, refined, reason? }`) to
   `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
   before its backlog commit. `refineAndCommit(units, opts, message, apply)`
-  first takes the work unit locks of `units` (`takeUnitLocks`: the story,
+  first takes the work unit locks of `units` (`takeUnitLocksOrExit`: the story,
   each story of a batch, or the feature and its stories). If another process
   holds one, the refine prints the refusal and exits 1 before its
   `dirtySnapshot`: no outcome file, no status, no commit. It passes `units`
@@ -3811,8 +3811,9 @@ lock of each unit's directory and, for a feature, of each of its stories' direct
 `takeDirLock`. It never waits. If another process holds one, it releases what it took and
 refuses with `<id> is locked by a live bl process (pid <n>): <lock path>`. A lock this process
 holds is taken again, one depth deeper. On success it returns `release` and `scope`; `scope()`
-reads `unitLockDirs` again and returns the backlog-relative directories, so a story tagged to the
-feature after the take is in the verb's commit scope (F-122 D3). The work unit lock sits beside
+returns the backlog-relative directories it locked and those of `unitLockDirs` read again, so a
+story tagged to the feature after the take is in the verb's commit scope (F-122 D3), and so is a
+locked story that the session took out of the feature. The work unit lock sits beside
 the spec lock and does not replace it: the spec lock guards one write and waits up to 60 s, and
 the work unit lock is held for a whole session. Lock order: a verb takes its work unit locks
 first, and the backlog lock and the spec lock inside them, one write at a time. A work unit lock

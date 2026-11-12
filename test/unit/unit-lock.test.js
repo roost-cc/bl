@@ -104,3 +104,19 @@ test('scope() reads the feature again: a story tagged to it after the take is in
     cleanup();
   }
 });
+
+test('scope() keeps a locked story that the session took out of the feature', () => {
+  const { config, cleanup, unitDir, feature } = fixture();
+  try {
+    const got = takeUnitLocks(config, [feature], 'bl refine F-1');
+    writeFileSync(
+      join(unitDir('stories/S2-two'), 'index.md'),
+      STORY_INDEX_TEMPLATE({ id: 'S-2', component: 'C00', title: 'Two' }),
+    );
+    assert.deepEqual(unitLockDirs(config, feature), ['features/F1-feat', 'stories/S1-one'].map(unitDir));
+    assert.deepEqual(got.scope(), FEATURE_DIRS, 'its edit is in the commit');
+    got.release();
+  } finally {
+    cleanup();
+  }
+});
