@@ -15,6 +15,7 @@
 import { dirname, relative } from 'path';
 import { dirLockPath, takeDirLock } from './lock.js';
 import { resolveFeatureStories } from './feature.js';
+import { readAllStories } from './story.js';
 
 /**
  * A unit with no `kind` is a feature, as the run loop reads one (a
@@ -72,8 +73,10 @@ export function unitLockDirs(config, unit) {
  *
  * On success, `release()` gives back every lock this call took, and `scope()`
  * returns the backlog-relative directories it locked, and those of
- * `unitLockDirs` read again: a story tagged to a feature after the take is in
- * it (D3), and so is a locked story the session took out of its feature.
+ * `unitLockDirs` read again that did not exist at the take: a story the
+ * session created for a feature is in it (D3), and so is a locked story the
+ * session took out of its feature. An existing story tagged to the feature
+ * after the take is not: this call does not hold its lock.
  *
  * @param {{ backlogRoot: string }} config
  * @param {WorkUnit[]} units
@@ -85,6 +88,8 @@ export function takeUnitLocks(config, units, info) {
   const taken = [];
   /** @type {string[]} */
   const locked = [];
+  /** @type {Set<string>} */
+  const existing = new Set();
   const release = () => {
     for (const give of taken.splice(0).reverse()) give();
   };
@@ -101,16 +106,17 @@ export function takeUnitLocks(config, units, info) {
         locked.push(dir);
       }
     }
+    // The stories that exist now: of those, only a locked one joins scope().
+    if (units.some((u) => u.kind !== 'story')) {
+      for (const s of readAllStories(config)) existing.add(dirname(s.indexPath));
+    }
   } catch (e) {
     // A later unit's read threw (`resolveFeatureStories`): keep none.
     release();
     throw e;
   }
-  const scope = () => [
-    ...new Set(
-      [...locked, ...units.flatMap((u) => unitLockDirs(config, u))].map((d) => relative(config.backlogRoot, d)),
-    ),
-  ];
+  const created = () => units.flatMap((u) => unitLockDirs(config, u)).filter((d) => !existing.has(d));
+  const scope = () => [...new Set([...locked, ...created()].map((d) => relative(config.backlogRoot, d)))];
   return { refused: null, release, scope };
 }
 

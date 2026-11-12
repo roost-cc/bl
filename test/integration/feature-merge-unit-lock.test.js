@@ -91,33 +91,47 @@ test("feature_merge_unit_lock_refuses: a merge refuses before any repo is touche
   }
 });
 
-test('feature_merge_unit_lock_scope: the commit holds the work units, the manifest and the theme file, and leaves a path another process changed during the merge', () => {
-  const { dir, cleanup, code } = mergeFixture();
-  try {
-    // Another process, during the merge: a pre-push hook on main's push (after
-    // the merge's backlog snapshot) changes a story and a shared file outside F-1.
-    const other = join(dir, 'stories', 'S2-b', 'index.md');
-    writeFileSync(
-      join(code, '.git', 'hooks', 'pre-push'),
-      `#!/bin/sh\nwhile read l ls r rs; do\n  if [ "$r" = refs/heads/main ]; then\n    echo during >> "${other}"\n    echo during >> "${join(dir, 'roadmap.md')}"\n  fi\ndone\nexit 0\n`,
-    );
-    chmodSync(join(code, '.git', 'hooks', 'pre-push'), 0o755);
+// The second row also links the existing story S-2 to F-1 during the merge
+// (`feature_scope_excludes_newly_attached_locked_existing_story`): the merge
+// did not lock S-2, so S-2 stays out all the same.
+for (const [name, relink] of [
+  ['feature_merge_unit_lock_scope', ''],
+  ['feature_scope_excludes_newly_attached_locked_existing_story: merge', 's/^story_id: S-2$/&\\nfeature: F-1/'],
+])
+  test(`${name}: the commit holds the work units, the manifest and the theme file, and leaves a path another process changed during the merge`, () => {
+    const { dir, cleanup, code } = mergeFixture();
+    try {
+      // Another process, during the merge: a pre-push hook on main's push (after
+      // the merge's backlog snapshot) changes a story and a shared file outside F-1.
+      const other = join(dir, 'stories', 'S2-b', 'index.md');
+      const link = relink ? `    sed -i '${relink}' "${other}"\n` : '';
+      writeFileSync(
+        join(code, '.git', 'hooks', 'pre-push'),
+        `#!/bin/sh\nwhile read l ls r rs; do\n  if [ "$r" = refs/heads/main ]; then\n${link}    echo during >> "${other}"\n    echo during >> "${join(dir, 'roadmap.md')}"\n  fi\ndone\nexit 0\n`,
+      );
+      chmodSync(join(code, '.git', 'hooks', 'pre-push'), 0o755);
 
-    const r = runBl(['merge', 'F-1'], { cwd: dir, env: ENV });
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'done');
-    assert.equal(g(dir, 'log', '-1', '--format=%s'), 'chore: merge F-1, mark stories done');
-    const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort();
-    for (const f of files) {
-      assert.match(f, /^(features\/F1-feat\/|stories\/S1-a\/|releases\/F-1\.json$|themes\/demo\/index\.md$)/, f);
+      const r = runBl(['merge', 'F-1'], { cwd: dir, env: ENV });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'done');
+      assert.equal(g(dir, 'log', '-1', '--format=%s'), 'chore: merge F-1, mark stories done');
+      const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort();
+      for (const f of files) {
+        assert.match(f, /^(features\/F1-feat\/|stories\/S1-a\/|releases\/F-1\.json$|themes\/demo\/index\.md$)/, f);
+      }
+      for (const f of [
+        'features/F1-feat/index.md',
+        'stories/S1-a/index.md',
+        'releases/F-1.json',
+        'themes/demo/index.md',
+      ])
+        assert.ok(files.includes(f), `${f} is committed:\n${files.join('\n')}`);
+      assert.deepEqual(g(dir, 'diff', '--name-only').split('\n'), ['roadmap.md', 'stories/S2-b/index.md']);
+      assert.equal(g(dir, 'ls-files', '--others', '--exclude-standard'), '', 'nothing else is left');
+      assert.match(readFileSync(other, 'utf8'), /during/);
+      if (relink) assert.match(readFileSync(other, 'utf8'), /^feature: F-1$/m, 'the hook linked S-2');
+      assert.match(r.stderr, /Left uncommitted, outside merge F-1's work units: roadmap\.md stories\/S2-b\/index\.md/);
+    } finally {
+      cleanup();
     }
-    for (const f of ['features/F1-feat/index.md', 'stories/S1-a/index.md', 'releases/F-1.json', 'themes/demo/index.md'])
-      assert.ok(files.includes(f), `${f} is committed:\n${files.join('\n')}`);
-    assert.deepEqual(g(dir, 'diff', '--name-only').split('\n'), ['roadmap.md', 'stories/S2-b/index.md']);
-    assert.equal(g(dir, 'ls-files', '--others', '--exclude-standard'), '', 'nothing else is left');
-    assert.match(readFileSync(other, 'utf8'), /during/);
-    assert.match(r.stderr, /Left uncommitted, outside merge F-1's work units: roadmap\.md stories\/S2-b\/index\.md/);
-  } finally {
-    cleanup();
-  }
-});
+  });

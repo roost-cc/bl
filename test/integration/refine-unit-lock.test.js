@@ -13,6 +13,8 @@ import { join } from 'path';
 import { ensureAllowedTools } from '../../src/allowed-tools.js';
 import { loadConfig } from '../../src/config.js';
 import { outcomePath } from '../../src/outcome.js';
+import { unitLockPath } from '../../src/unit-lock.js';
+import { holdLock } from '../helpers/hold-lock.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { addOrigin, git, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import { F1, S1, S2, originMain, refine, startRefine } from '../helpers/refine-session.js';
@@ -108,6 +110,31 @@ test('refine_unit_lock_scope: a file another process changed during the refine s
   assert.deepEqual(statusLines(dir), [` M ${S2}`]);
   assert.match(r.stderr, new RegExp(`Left uncommitted, outside refine S-1's work units: ${S2}`));
 });
+
+// An existing story that is linked to the feature during the session is not
+// the refine's: it did not lock it, so its edit stays out of the commit,
+// whether another process holds its lock or nobody does.
+for (const [label, holdS2] of [
+  ['another process holds its lock', true],
+  ['nobody holds its lock', false],
+]) {
+  test(`feature_scope_excludes_newly_attached_locked_existing_story: refine, ${label}`, async () => {
+    const dir = twoFeatures();
+    const held = holdS2 ? holdLock(unitLockPath(dir, join(dir, 'stories', 'S2-two'))) : null;
+    try {
+      const first = await startRefine(dir, ['F-1'], { write: [F1] });
+      writeFileSync(join(dir, S2), readFileSync(join(dir, S2), 'utf8').replace('feature: F-2', 'feature: F-1'));
+      first.go();
+      const r = await first.closed;
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(committed(dir), [F1]);
+      assert.deepEqual(statusLines(dir), [` M ${S2}`]);
+      assert.match(r.stderr, new RegExp(`Left uncommitted, outside refine F-1's work units: ${S2}`));
+    } finally {
+      held?.release();
+    }
+  });
+}
 
 test('refine_unit_lock_scope: a feature refine commits a story tagged to the feature during the session', async () => {
   const dir = twoFeatures();
