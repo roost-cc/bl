@@ -376,28 +376,33 @@ test('an untracked file the merge does not touch does not stop the push', () => 
   }
 });
 
-test('a check killed by a signal writes no ## Gate line, is not retried and pushes nothing', () => {
-  // The first run fails and is then killed: a run that read as a failure would be retried.
-  const fx = fixture({ verdicts: ['fail', 'pass'], check: `${CHECK_COMMAND}; kill -INT $$` });
-  const u = UNITS[0];
-  try {
-    const before = g(fx.origin, 'rev-parse', 'main');
-    const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
-    assert.equal(r.status, 130, `${r.stdout}\n${r.stderr}`);
-    const runs = calls(fx);
-    assert.equal(runs.length, 1, 'one plugin call');
-    assert.match(
-      r.stderr,
-      new RegExp(`^code: the check of ${runs[0][0]} was ended by SIGINT; rerun \`bl merge S-1\`\\.$`, 'm'),
-    );
-    assert.equal(gateOf(fx, u), '', 'no ## Gate line');
-    assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
-    assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
-    assertNoThrowaway(fx);
-  } finally {
-    fx.cleanup();
-  }
-});
+// A check ended by SIGINT, or one that exits 143 as a shell does when SIGTERM
+// ends its child (`runCommandLine`, F-114 D2).
+for (const { end, signal, status } of [
+  { end: 'kill -INT $$', signal: 'SIGINT', status: 130 },
+  { end: 'exit 143', signal: 'SIGTERM', status: 143 },
+]) {
+  test(`a check that ends with \`${end}\` writes no ## Gate line, is not retried, pushes nothing and exits ${status}`, () => {
+    // The first run fails and is then ended: a run that read as a failure would be retried.
+    const fx = fixture({ verdicts: ['fail', 'pass'], check: `${CHECK_COMMAND}; ${end}` });
+    const u = UNITS[0];
+    try {
+      const before = g(fx.origin, 'rev-parse', 'main');
+      const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
+      assert.equal(r.status, status, `${r.stdout}\n${r.stderr}`);
+      const runs = calls(fx);
+      assert.equal(runs.length, 1, 'one plugin call');
+      const line = `bl: node \\S+ \\S+ ${runs[0][0]} \\S+; ${end.replace('$$', '\\$\\$')} was ended by ${signal}`;
+      assert.match(r.stderr, new RegExp(`^${line}$`, 'm'));
+      assert.equal(gateOf(fx, u), '', 'no ## Gate line');
+      assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
+      assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
+      assertNoThrowaway(fx);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
 
 // A SIGINT that ends the backlog commit of the first ## Gate line: the
 // backlog's pre-commit hook kills its parent, `git commit`, as a Ctrl+C would.
@@ -419,10 +424,8 @@ for (const verdicts of [['pass'], ['fail', 'pass']]) {
       const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
       assert.equal(r.status, 130, `${r.stdout}\n${r.stderr}`);
       assert.equal(calls(fx).length, 1, 'one check run');
-      assert.match(
-        r.stderr,
-        /^code: the backlog commit of the gate line was ended by SIGINT; rerun `bl merge S-1`\.$/m,
-      );
+      // `src/child.js` prints its line in place of bl merge's "rerun" line (F-114 D2).
+      assert.match(r.stderr, /^bl: git commit .*\(attempt 1\) --only -- \S+ was ended by SIGINT$/m);
       assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
       assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
       assertNoThrowaway(fx);
@@ -461,7 +464,11 @@ test('a SIGINT that ends the rebase fetch of the gate-line push stops the merge'
     assert.ok(existsSync(marker), `the gate-line push was rejected: ${r.stderr}`);
     assert.equal(r.status, 130, `${r.stdout}\n${r.stderr}`);
     assert.equal(calls(fx).length, 1, 'one check run');
-    assert.match(r.stderr, /^code: the backlog commit of the gate line was ended by SIGINT; rerun `bl merge S-1`\.$/m);
+    // The pull of the retry raises once it has put the backlog back (F-114 D2a).
+    assert.match(
+      r.stderr,
+      /^bl: git fetch -q origin \+refs\/heads\/main:refs\/remotes\/origin\/main was ended by SIGINT$/m,
+    );
     assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
     assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
     assertNoThrowaway(fx);
@@ -562,32 +569,49 @@ function killingGit(dir) {
 }
 
 /**
- * Each git step of `checkedMerge` that a signal can end: `step` is how the
- * message names it, `checks` how many times the check ran first, and
- * `pushed` whether origin's main is the merge commit when it stops.
+ * Each git step of `checkedMerge` that a signal can end: `step` matches the
+ * argv that `src/child.js` names in its line (F-114 D2), `checks` is how many
+ * times the check ran first, and `pushed` whether origin's main is the merge
+ * commit when it stops.
  */
 const GIT_KILL_CASES = [
-  { args: 'worktree add *', at: '*', step: 'git worktree add', checks: 0, pushed: false },
-  { args: 'merge --no-ff *', at: '*/bl-merge-*', step: 'git merge', checks: 0, pushed: false },
-  { args: 'rev-parse HEAD', at: '*/bl-merge-*', step: 'git rev-parse', checks: 0, pushed: false },
-  { args: 'read-tree *', at: '*', step: 'the fast-forward dry run', checks: 1, pushed: false },
-  { args: 'push origin *:refs/heads/main', at: '*', step: 'the push of [0-9a-f]{40}', checks: 1, pushed: false },
+  { args: 'worktree add *', at: '*', step: 'git worktree add --detach \\S+ origin/main', checks: 0, pushed: false },
+  { args: 'merge --no-ff *', at: '*/bl-merge-*', step: 'git merge --no-ff .+', checks: 0, pushed: false },
+  { args: 'rev-parse HEAD', at: '*/bl-merge-*', step: 'git rev-parse HEAD', checks: 0, pushed: false },
   {
-    args: 'merge --ff-only [0-9a-f]*',
+    args: 'read-tree *',
     at: '*',
-    step: 'the fast-forward of the main checkout',
+    step: 'git read-tree -n -m -u HEAD [0-9a-f]{40}',
     checks: 1,
-    pushed: true,
+    pushed: false,
   },
+  {
+    args: 'push origin *:refs/heads/main',
+    at: '*',
+    step: 'git push origin [0-9a-f]{40}:refs/heads/main',
+    checks: 1,
+    pushed: false,
+  },
+  { args: 'merge --ff-only [0-9a-f]*', at: '*', step: 'git merge --ff-only [0-9a-f]{40}', checks: 1, pushed: true },
   {
     // The push fails, then the fetch that looks for why ends on SIGTERM.
     args: 'fetch origin *',
     fails: 'push origin *:refs/heads/main',
     at: '*/bl-merge-*',
-    step: 'the look-up of why the push of [0-9a-f]{40} was refused',
+    step: 'git fetch origin \\S+',
     checks: 1,
     pushed: false,
   },
+  // The throwaway's removal after the push (S-1470): its other steps still
+  // run before the raise (`raiseAfter`), so no throwaway is left.
+  {
+    args: 'worktree remove --force *bl-merge-*',
+    at: '*',
+    step: 'git worktree remove --force \\S+',
+    checks: 1,
+    pushed: true,
+  },
+  { args: 'worktree prune', at: '*', step: 'git worktree prune', checks: 1, pushed: true },
 ];
 
 test('a git rev-parse that gives no commit ID runs no check and pushes nothing', () => {
@@ -616,7 +640,7 @@ for (const c of GIT_KILL_CASES) {
       const env = { ...ENV, PATH: killingGit(fx.dir), KILL_GIT: c.args, FAIL_GIT: c.fails, KILL_IN: c.at };
       const r = runBl(['merge', u.id], { cwd: fx.dir, env });
       assert.equal(r.status, 143, `${r.stdout}\n${r.stderr}`);
-      assert.match(r.stderr, new RegExp(`^code: ${c.step} was ended by SIGTERM; rerun \`bl merge S-1\`\\.$`, 'm'));
+      assert.match(r.stderr, new RegExp(`^bl: ${c.step} was ended by SIGTERM$`, 'm'));
       const runs = calls(fx);
       assert.equal(runs.length, c.checks, 'check runs');
       assert.equal(g(fx.origin, 'rev-parse', 'main'), c.pushed ? runs[0][0] : before, "origin's main");
@@ -627,6 +651,48 @@ for (const c of GIT_KILL_CASES) {
     }
   });
 }
+
+test('a git that cannot start in the throwaway removal is a warning: the removal goes on and bl exits 143', () => {
+  const fx = fixture({ verdicts: ['pass'] });
+  try {
+    // Once bl exits, TMPDIR names no directory, so `src/child.js` cannot make
+    // its output files and every git of the removal throws. A listener added
+    // after the removal's says whether the later listeners run.
+    const fault = join(fx.dir, '.bl', 'exit-fault.mjs');
+    mkdirSync(dirname(fault), { recursive: true });
+    writeFileSync(
+      fault,
+      [
+        `process.on('exit', () => { process.env.TMPDIR = ${JSON.stringify(join(fx.dir, 'no-such-dir'))}; });`,
+        `const once = process.once.bind(process);`,
+        `process.once = (event, fn) => {`,
+        `  const r = once(event, fn);`,
+        `  if (event === 'exit' && fn.name === 'removeThrowaway')`,
+        `    process.on('exit', (code) => process.stderr.write('later listener ' + code + '\\n'));`,
+        `  return r;`,
+        `};`,
+      ].join('\n'),
+    );
+    const env = {
+      ...ENV,
+      PATH: killingGit(fx.dir),
+      KILL_GIT: 'worktree add *',
+      KILL_IN: '*',
+      NODE_OPTIONS: `--import=${fault}`,
+    };
+    const r = runBl(['merge', UNITS[0].id], { cwd: fx.dir, env });
+    const why = `${r.stdout}\n${r.stderr}`;
+    assert.equal(r.status, 143, why);
+    const wt = r.stderr.match(/^bl: git worktree add --detach (\S+) origin\/main was ended by SIGTERM$/m)?.[1];
+    assert.ok(wt, why);
+    assert.match(r.stderr, /^code: warning: could not run git worktree remove: .*ENOENT/m);
+    assert.match(r.stderr, /^code: warning: could not run git worktree prune: .*ENOENT/m);
+    assert.ok(!existsSync(dirname(wt)), `the throwaway directory is removed: ${why}`);
+    assert.match(r.stderr, /^later listener 143$/m);
+  } finally {
+    fx.cleanup();
+  }
+});
 
 test('a check killed by SIGABRT counts as a failed attempt', () => {
   // Only SIGINT and SIGTERM interrupt bl; SIGABRT (or the out-of-memory

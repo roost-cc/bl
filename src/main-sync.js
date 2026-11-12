@@ -18,12 +18,11 @@
  * local `main` commit that is used instead; no `origin` remote is a note.
  */
 
-import { spawnSync } from 'child_process';
 import { resolve } from 'path';
 import { info } from './config.js';
 import { awaitLock, LockWaitTimeout } from './lock-wait.js';
 import { release, tryLockOnce } from './kernel-lock.js';
-import { interruptOf, raiseSignal } from './signal-exit.js';
+import { describeExit, git } from './child.js';
 
 export const MAIN_SYNC_LOCK = 'bl-main-sync.lock';
 /**
@@ -67,74 +66,49 @@ const LOCK_POLL_MS = 200;
  * @property {number} [pollMs=200] how often to retry the lock while held.
  */
 
-/**
- * Run git with an argument vector, capturing both streams. A git ended by
- * SIGINT or SIGTERM (`INTERRUPT_SIGNALS`) raises that signal again
- * (`raiseSignal`): it is not a failed fetch to go on from.
- */
-function git(cwd, args) {
-  const r = spawnSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  // A raise inside `withMainSyncLock` ends this process, and the kernel frees
-  // its lock with it.
-  raiseSignal(interruptOf(r));
-  return {
-    ok: r.status === 0,
-    status: r.status,
-    stdout: (r.stdout ?? '').trim(),
-    stderr: (r.stderr ?? '').trim(),
-    error: r.error,
-  };
-}
-
-/** What git had to say about a failed command. */
-function gitMessage(r) {
-  if (r.error) return r.error.message;
-  return r.stderr || r.stdout || `git exited with status ${r.status}`;
-}
+// SIGINT or SIGTERM that ends one of these git children ends `bl`
+// (`src/child.js`, F-114 D2): it is not a failed fetch to go on from. A raise
+// inside `withMainSyncLock` ends this process, and the kernel frees its lock.
 
 /** The lock file for `repoPath`, in its git common dir. */
 export function mainSyncLockPath(repoPath) {
   const r = git(repoPath, ['rev-parse', '--git-common-dir']);
-  if (!r.ok) {
-    throw new Error(`${repoPath} is not a git repository: ${gitMessage(r)}`);
+  if (r.status !== 0) {
+    throw new Error(`${repoPath} is not a git repository: ${describeExit(r, 'git rev-parse')}`);
   }
-  return resolve(repoPath, r.stdout, MAIN_SYNC_LOCK);
+  return resolve(repoPath, r.stdout.trim(), MAIN_SYNC_LOCK);
 }
 
 function shortMain(repoPath) {
   const r = git(repoPath, ['rev-parse', '--short', 'main']);
-  return r.ok ? r.stdout : 'unknown';
+  return r.status === 0 ? r.stdout.trim() : 'unknown';
 }
 
 function syncLocked(repoPath, { checkAhead, prune }) {
-  if (!git(repoPath, ['remote', 'get-url', 'origin']).ok) {
+  if (git(repoPath, ['remote', 'get-url', 'origin']).status !== 0) {
     return { state: 'no-remote' };
   }
   let fetch = prune ? git(repoPath, ['fetch', '--prune', 'origin']) : null;
-  if (fetch == null || fetch.ok) {
+  if (fetch == null || fetch.status === 0) {
     fetch = git(repoPath, ['fetch', 'origin', MAIN_REFSPEC]);
   }
-  if (!fetch.ok) {
+  if (fetch.status !== 0) {
     return {
       state: 'fetch-failed',
-      message: gitMessage(fetch),
+      message: describeExit(fetch, 'git fetch'),
       head: shortMain(repoPath),
     };
   }
   if (checkAhead) {
     const count = git(repoPath, ['rev-list', 'origin/main..main', '--count']);
-    const ahead = count.ok ? parseInt(count.stdout, 10) : 0;
+    const ahead = count.status === 0 ? parseInt(count.stdout, 10) : 0;
     if (ahead > 0) return { state: 'ahead', ahead, head: shortMain(repoPath) };
   }
   const ff = git(repoPath, ['merge', '--ff-only', 'origin/main']);
-  if (!ff.ok) {
+  if (ff.status !== 0) {
     return {
       state: 'ff-failed',
-      message: gitMessage(ff),
+      message: describeExit(ff, 'git merge'),
       head: shortMain(repoPath),
     };
   }
@@ -145,8 +119,8 @@ function syncLocked(repoPath, { checkAhead, prune }) {
  * Fetch `origin/main` and fast-forward the checked-out `main` of `repoPath` to
  * it, under the per-repo lock. The checkout must be on `main`; callers guard
  * that. Never throws for git failures: they come back as states. A git
- * command ended by SIGINT or SIGTERM is not a state: that signal is raised
- * again (`raiseSignal`). Throws when
+ * command ended by SIGINT or SIGTERM is not a state: it ends `bl`
+ * (`src/child.js`). Throws when
  * `repoPath` is not a git repository or the lock file cannot be written.
  *
  * @param {string} repoPath
@@ -202,8 +176,7 @@ export async function withMainSyncLock(repoPath, fn, opts = {}) {
  * the caller may go on. `updated` and `no-remote` are notes; `fetch-failed` is
  * a warning that names the local `main` commit used instead; `ahead`,
  * `ff-failed` and `lock-timeout` are errors and return false. A git command
- * ended by SIGINT or SIGTERM gives no result to report: `syncMain` raises that
- * signal again.
+ * ended by SIGINT or SIGTERM gives no result to report: it ends `bl`.
  *
  * @param {MainSyncResult} result
  * @param {string} label

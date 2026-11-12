@@ -2,10 +2,10 @@
  * signal-exit.js — end the process on SIGINT or SIGTERM through `process.exit`.
  *
  * Node's default action for SIGINT and SIGTERM ends the process without the
- * `exit` event. `exitOnSignal` replaces it with `process.exit(130)` (SIGINT)
- * or `process.exit(143)` (SIGTERM), so the `exit` listeners run and see the
- * code. `bl.js` calls it when `bl` starts, so every command exits 130 or 143
- * and runs its `exit` listeners (the throwaway worktree of `bl merge`, a
+ * `exit` event. `exitOnSignal` replaces it with `process.exit` and the
+ * signal's `EXIT_CODES` code (130 for SIGINT, 143 for SIGTERM), so the `exit`
+ * listeners run and see the code. `bl.js` calls it when `bl` starts, so every
+ * command exits 130 or 143 and runs its `exit` listeners (the throwaway worktree of `bl merge`, a
  * session's lock file). `tab-title.js` calls it on the first title too (to
  * end the title as `interrupted`, S-1393). The backlog lock needs none: the
  * kernel frees it when the process ends (F-104). The handlers are registered
@@ -13,14 +13,14 @@
  *
  * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
  * `raiseSignal` raises one of them again after a synchronous child ended on
- * it (`checkedMerge`, the push of main and the install in `cleanupOneRepo`,
- * `landedMergeCommit` and `removeWorktreeAndBranch` in `cleanup.js`,
- * `main-sync.js`'s git commands, and `reportBacklogCommit` in `sync.js`).
- * Those callers read the signal of their own git children through
- * `interruptOf(r)`, which is null when Node itself killed the child (`r.error`
- * set, such as `ENOBUFS`), so that kill is not raised. The signal that
- * `commitPaths` returns is not read through `interruptOf` yet.
+ * it. `src/child.js` (F-114 D2) is the one place that calls it for a child:
+ * at once, or when the outermost `raiseAfter` ends (D2a). It reads the
+ * child's signal through `interruptOf(r)`, which is null when Node itself
+ * killed the child (`r.error` set, such as `ETIMEDOUT`), so that kill is not
+ * raised.
  */
+
+import { constants } from 'os';
 
 let registered = false;
 
@@ -31,6 +31,15 @@ let registered = false;
  * failed, as one with a non-zero exit code has.
  */
 export const INTERRUPT_SIGNALS = Object.freeze(['SIGINT', 'SIGTERM']);
+
+/**
+ * The exit code of each interrupt: 128 + its number (130 for SIGINT, 143 for
+ * SIGTERM), as a shell gives for a child it ended. `exitOnSignal` exits with
+ * it, and `src/child.js` reads it back from a shell or a `bl` child.
+ */
+export const EXIT_CODES = Object.freeze(
+  Object.fromEntries(INTERRUPT_SIGNALS.map((signal) => [signal, 128 + constants.signals[signal]])),
+);
 
 /**
  * Whether `signal` is one of `INTERRUPT_SIGNALS`.
@@ -74,6 +83,5 @@ export function raiseSignal(signal) {
 export function exitOnSignal() {
   if (registered) return;
   registered = true;
-  process.on('SIGINT', () => process.exit(130));
-  process.on('SIGTERM', () => process.exit(143));
+  for (const signal of INTERRUPT_SIGNALS) process.on(signal, () => process.exit(EXIT_CODES[signal]));
 }

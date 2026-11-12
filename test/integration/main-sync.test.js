@@ -147,10 +147,11 @@ test("origin at a missing path → fetch-failed with git's message and local mai
   }
 });
 
-// Node kills a child past spawnSync's 1 MiB maxBuffer with SIGTERM and sets
-// `r.error` (ENOBUFS): a failed fetch, not an interrupt to raise.
+// S-1469: spawnSync's 1 MiB maxBuffer once had Node kill such a fetch with
+// SIGTERM (ENOBUFS). `src/child.js` captures output in files, with no buffer
+// to overflow (F-114 D2), so the fetch goes through.
 for (const prune of [false, true]) {
-  test(`a fetch Node kills for output over 1 MiB (prune: ${prune}) → fetch-failed, no SIGTERM raised`, async () => {
+  test(`a fetch with output over 1 MiB (prune: ${prune}) is not cut off → updated`, async () => {
     const { root, repo } = makeClone();
     try {
       const real = execFileSync('sh', ['-c', 'command -v git'], {
@@ -165,8 +166,7 @@ for (const prune of [false, true]) {
       );
       chmodSync(join(bin, 'git'), 0o755);
       const r = await syncInChild(repo, { prune }, { PATH: `${bin}:${process.env.PATH}` });
-      assert.equal(r.state, 'fetch-failed', JSON.stringify(r).slice(0, 200));
-      assert.match(r.message, /ENOBUFS/);
+      assert.equal(r.state, 'updated', JSON.stringify(r).slice(0, 200));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -174,8 +174,9 @@ for (const prune of [false, true]) {
 }
 
 // Every git command of `syncMain`, ended by SIGINT or SIGTERM, raises that
-// signal again: the child process ends on it (no listener), with no state
-// returned and main where it was (S-1463).
+// signal again (`src/child.js`): the child process prints the F-114 D2 line
+// and ends on it (no listener), with no state returned and main where it was
+// (S-1463).
 for (const [command, pattern] of [
   ['git rev-parse --git-common-dir', `'rev-parse --git-common-dir'`],
   ['git remote get-url origin', `'remote get-url origin'`],
@@ -203,6 +204,7 @@ for (const [command, pattern] of [
         chmodSync(join(bin, 'git'), 0o755);
         const r = await syncChild(repo, { checkAhead: true, prune: true }, { PATH: `${bin}:${process.env.PATH}` });
         assert.equal(r.signal, signal, `status ${r.status}\n${r.stdout}\n${r.stderr}`);
+        assert.match(r.stderr, new RegExp(`^bl: git .* was ended by ${signal}$`, 'm'));
         assert.equal(r.stdout, '');
         assert.equal(git(repo, 'rev-parse', 'main'), before);
       } finally {

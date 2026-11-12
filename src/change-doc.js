@@ -240,16 +240,13 @@ export async function applyFixOutcome(
 /**
  * Commit the change document at `path` (or the files at `path`, a list) in
  * the backlog, skipped when the backlog is not a git repository; a failed
- * commit is a warning. Returns the signal that ended a git command of the
- * commit or its push, or null.
- * @returns {Promise<string | null>}
+ * commit is a warning.
  */
 async function commitChangeDoc(backlogRoot, path, message) {
-  if (!existsSync(join(backlogRoot, '.git'))) return null;
+  if (!existsSync(join(backlogRoot, '.git'))) return;
   const rels = [path].flat().map((p) => relative(backlogRoot, p));
   const c = await commitPaths(backlogRoot, rels, message);
   if (!c.committed) warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
-  return c.signal ?? null;
 }
 
 /**
@@ -387,23 +384,21 @@ export function gateLine({ date, repo, command, verdict, detail = '', commit = '
 
 /**
  * Add `line` to `## Gate` in the unit's current change document and commit
- * it, as `message`. Returns the path written and `signal`, the signal that
- * ended a git command of the commit (or null), so the caller can stop as it
- * says. Returns null when the unit has no change document. A failed commit
- * is a warning.
+ * it, as `message`. Returns the path written, or null when the unit has no
+ * change document. A failed commit is a warning.
  * @param {string} backlogRoot
  * @param {string | null} unitDir
  * @param {string} line
  * @param {string} message
- * @returns {Promise<{ path: string, signal: string | null } | null>}
+ * @returns {Promise<{ path: string } | null>}
  */
 export async function addGateLine(backlogRoot, unitDir, line, message) {
   const cur = currentChange(unitDir);
   if (!cur?.doc) return null;
   cur.doc.body = appendSection(cur.doc.body, 'Gate', line);
   writeChange(backlogRoot, cur.path, cur.doc);
-  const signal = await commitChangeDoc(backlogRoot, cur.path, message);
-  return { path: cur.path, signal };
+  await commitChangeDoc(backlogRoot, cur.path, message);
+  return { path: cur.path };
 }
 
 /**

@@ -187,38 +187,28 @@ test('syncChildArgs: no story id is a caller bug, refused before the child would
   );
 });
 
-test('runBacklogSync: the child runs node on the bl entry from the backlog root', async () => {
+test('runBacklogSync: the child runs the bl entry from the backlog root', async () => {
   const calls = [];
-  const exec = (file, args, opts) => {
-    calls.push({ file, args, opts });
+  const run = (entry, args, opts) => {
+    calls.push({ entry, args, opts });
+    return { status: 0, signal: null };
   };
   const res = await runBacklogSync(
     { backlogRoot: '/b' },
     { kind: 'child', blEntry: '/r/bl/src/bl.js' },
     { message: 'chore: mark S-9 done, sync backlog', storyIds: ['S-9'] },
-    exec,
+    run,
   );
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].file, process.execPath);
-  assert.deepEqual(calls[0].args, [
-    '/r/bl/src/bl.js',
-    'sync',
-    '--commit',
-    '-m',
-    'chore: mark S-9 done, sync backlog',
-    '--story',
-    'S-9',
-  ]);
+  assert.equal(calls[0].entry, '/r/bl/src/bl.js');
+  assert.deepEqual(calls[0].args, ['sync', '--commit', '-m', 'chore: mark S-9 done, sync backlog', '--story', 'S-9']);
   assert.equal(calls[0].opts.cwd, '/b');
   assert.equal(calls[0].opts.env, process.env);
   assert.equal(calls[0].opts.stdio[0], 'inherit');
   assert.deepEqual(res, { committed: false, paths: [], child: true });
 });
 
-test('runBacklogSync: a failing child reports its exit status instead of throwing', async () => {
-  const exec = () => {
-    throw Object.assign(new Error('Command failed'), { status: 1 });
-  };
+test('runBacklogSync: a failing child reports its exit status', async () => {
   const res = await runBacklogSync(
     { backlogRoot: '/b' },
     { kind: 'child', blEntry: '/r/bl/src/bl.js' },
@@ -226,7 +216,7 @@ test('runBacklogSync: a failing child reports its exit status instead of throwin
       message: 'chore: sync backlog after merging bl (S-9)',
       storyIds: ['S-9'],
     },
-    exec,
+    () => ({ status: 1, signal: null, stdout: null, stderr: null }),
   );
   assert.equal(res.committed, false);
   assert.deepEqual(res.paths, []);
@@ -238,15 +228,42 @@ test('runBacklogSync: a failing child reports its exit status instead of throwin
 });
 
 test('runBacklogSync: a child that could not start reports the spawn error', async () => {
-  const exec = () => {
-    throw new Error('spawn ENOENT');
-  };
   const res = await runBacklogSync(
     { backlogRoot: '/b' },
     { kind: 'child', blEntry: '/r/bl/src/bl.js' },
     { message: 'm', storyIds: ['S-9'] },
-    exec,
+    () => ({ status: null, signal: null, error: new Error('spawn ENOENT') }),
   );
-  assert.equal(res.error, 'child bl sync failed: spawn ENOENT');
+  assert.equal(res.error, 'spawn ENOENT');
   assert.match(res.command, /^node \/r\/bl\/src\/bl\.js sync /);
 });
+
+// Every way the child runner fails returns the command to re-run by hand.
+for (const [name, exec, error] of [
+  ['exits non-zero', () => ({ status: 2, signal: null, stdout: null, stderr: null }), 'child bl sync exited 2'],
+  ['is ended by a signal', () => ({ status: null, signal: 'SIGKILL' }), 'child bl sync was ended by SIGKILL'],
+  ['could not start', () => ({ status: null, signal: null, error: new Error('spawn EACCES') }), 'spawn EACCES'],
+  [
+    'throws',
+    () => {
+      throw new Error('injected EACCES');
+    },
+    'injected EACCES',
+  ],
+]) {
+  test(`runBacklogSync: a child runner that ${name} keeps the recovery command`, async () => {
+    const res = await runBacklogSync(
+      { backlogRoot: '/b' },
+      { kind: 'child', blEntry: '/r/bl/src/bl.js' },
+      { message: 'test', storyIds: ['S-1'] },
+      exec,
+    );
+    assert.deepEqual(res, {
+      committed: false,
+      paths: [],
+      child: true,
+      command: 'node /r/bl/src/bl.js sync --commit -m test --story S-1',
+      error,
+    });
+  });
+}

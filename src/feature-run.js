@@ -50,6 +50,7 @@ import {
 import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
 import { spawnSync } from 'child_process';
+import { runCommandLine } from './child.js';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -1442,23 +1443,25 @@ async function reapStaleScopes(ctx) {
 }
 
 /**
- * `spawnSync` of shell command `cmd`; with `scope`, as `sh -c <cmd>` inside
- * that user systemd scope (F-70 D4). stdin is 'ignore'; `stdout` and
- * `stderr` are the other two streams.
+ * Run the shell command `cmd`: through `runCommandLine` (`src/child.js`),
+ * which raises the SIGINT or SIGTERM that ends it, or its exit 130 or 143
+ * (F-114 D2); with `scope`, as `sh -c <cmd>` inside that user systemd scope
+ * (F-70 D4). stdin is 'ignore'; `stdout` and `stderr` are the other two
+ * streams.
  */
 function spawnShell(cmd, scope, { stdout, stderr, ...options }) {
-  if (!scope) return spawnSync(cmd, { ...options, shell: true, stdio: ['ignore', stdout, stderr] });
+  const stdio = ['ignore', stdout, stderr];
+  if (!scope) return runCommandLine(cmd, { ...options, stdio });
   // Through the scope's files, so a leftover holding stdout cannot hang it.
-  return processScope.scopedSpawn(scope)('sh', ['-c', cmd], { ...options, stdio: ['ignore', stdout, stderr] });
+  return processScope.scopedSpawn(scope)('sh', ['-c', cmd], { ...options, stdio });
 }
 
 /**
  * Run `cmd` with stdout and stderr on one file descriptor, so the output
  * keeps the order the command printed it: a pipe per stream would put every
  * stderr line after all of stdout, and a runner's error would land below its
- * teardown noise in the gate log. Returns the runner's `{ status, output }`,
- * and `signal`: the signal that ended the command, or null. A command ended
- * by a signal has `status` 1.
+ * teardown noise in the gate log. Returns the runner's `{ status, output }`.
+ * A command ended by a signal that does not stop `bl` has `status` 1.
  */
 export function shellMerged(cmd, cwd, { scope = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'bl-gate-'));
@@ -1472,7 +1475,6 @@ export function shellMerged(cmd, cwd, { scope = null } = {}) {
     const output = readFileSync(file, 'utf8');
     return {
       status: r.error ? 127 : (r.status ?? 1),
-      signal: r.signal ?? null,
       output: r.error ? `${output}${output && !output.endsWith('\n') ? '\n' : ''}${r.error.message}\n` : output,
     };
   } finally {

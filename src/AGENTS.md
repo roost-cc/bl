@@ -4689,11 +4689,16 @@ unmerged commits; it never merges in the main checkout:
 A conflict, a refused push or a `main` that moved leaves the main checkout as
 it was. A conflict, or a push git refuses because `main` moved, prints "main
 moved; rerun `bl merge <id>`" and pushes nothing. A check that fails twice pushes
-nothing and prints the last lines of its output. A check or git command ended
-by SIGINT or SIGTERM (`INTERRUPT_SIGNALS` in `src/signal-exit.js`) stops the
-merge at once: no `## Gate` line, no second run, no push. After the worktree
-is removed, that signal is raised again (`raiseSignal`), so `bl` exits
-130 or 143. A check ended by any other signal (SIGABRT, SIGKILL) is a failed
+nothing and prints the last lines of its output. Every child runs through
+`src/child.js`, the one place that raises a child's interrupt (F-114 D2). A
+check or git command ended by SIGINT or SIGTERM (`INTERRUPT_SIGNALS` in
+`src/signal-exit.js`), or a check that exits 130 or 143, stops the merge at
+once: `src/child.js` prints `bl: <child> was ended by <signal>`, and `bl`
+exits 130 or 143. There is no `## Gate` line, no second run and no push. The
+`exit` listener removes the worktree. Its removal runs in `raiseAfter`
+(F-114 D2a), so an interrupt that ends one of its steps is raised after the
+last one. A step that throws (a git that cannot start) is a warning, and the
+next step runs. A check ended by any other signal (SIGABRT, SIGKILL) is a failed
 run, and a git command ended by one is a failed command. Every `## Gate` line
 (this one, the test gate's `recordGateLine` and a scripted story's) comes from
 `gateLine` in `src/change-doc.js`.
@@ -4702,18 +4707,16 @@ run, and a git command ended by one is a failed command. Every `## Gate` line
 After the push, `cleanupOneRepo` runs the command that `installCommand` gives
 (`npm ci` or `pnpm install --frozen-lockfile`) in the main checkout, because
 `bl` and other repos' sessions run from it. A failed install stops `bl merge`
-with the command to run by hand, and the rerun installs again. An install, the
-`git push origin main` of a branch that was merged before this run, a git
-command of `landedMergeCommit`, a git command of the worktree and branch
-removal (`removeWorktreeAndBranch`, which stops before any fallback), or a git
-command of the main sync (`syncMain`, and the `git rev-parse --git-common-dir`
-of `mainSyncLockPath`), ended by SIGINT or SIGTERM raises that signal again
-(`raiseSignal`), so `bl` exits 130 or 143. The other `withMainSyncLock`
-callers run their own git commands, which do not raise yet (S-1467).
-A child that Node itself killed (`r.error` set, such as `ENOBUFS`) is a
-failed command, not an interrupt (`interruptOf`). A backlog commit that
-`bl merge` reports (`reportBacklogCommit`) raises the signal that ended one of
-its git commands after the report.
+with the command to run by hand, and the rerun installs again. Every child of
+`cleanupOneRepo` runs through `src/child.js` with no shell: git through
+`git()`, the install through `runChild`, and the child `bl sync --commit` of a
+merged `bl` repo through `runBl`. `src/child.js` is the one place that raises
+a child's interrupt (F-114 D2): if SIGINT or SIGTERM ends a child, or the
+child `bl sync` exits 130 or 143, `bl` prints `bl: <child> was ended by
+<signal>` and exits 130 or 143. That covers the install, the push of main, the
+worktree and branch removal, the main sync and the backlog commit. A child
+that Node itself killed (`r.error` set, such as `ETIMEDOUT`) is a failed
+command, not an interrupt (`interruptOf`).
 
 After the merge the branch's open PR, if any, is closed through
 `change.find` and `change.close`.
@@ -5278,6 +5281,21 @@ them.
   protocol with a Node child (the fake `codex app-server`) uses `fs.readSync(0)` and
   `fs.writeSync(1)` in the child. `test/unit/child-stdio-guard.test.js` parses `src/` and
   `test/` with `acorn` and fails on each of these shapes at a `child_process` call.
+- **A synchronous child runs through `src/child.js`** (F-114 D1): `runChild(command, args)` for an
+  argv command, `runCommandLine(line)` for a configured command line (through a shell),
+  `runBl(entry, args)` for a `bl` child, and `git(cwd, args)`. Each runs its child through `spawnSyncFiles` and
+  returns the `spawnSync` result. If SIGINT or SIGTERM ends the child, the module prints
+  `bl: <child> was ended by <signal>` and raises the signal (D2), so `bl` exits 130 or 143 and the
+  caller's next statement never runs. `runCommandLine` and `runBl` read exit 130 and 143 as those
+  signals too. A child that Node killed past its `timeout` is a failure, not an interrupt. A caller
+  that must undo a step after an interrupted child (a rebase abort) runs the step in `raiseAfter(fn)`
+  (D2a): the child's result returns to it, and the interrupt is raised when the outermost
+  `raiseAfter` ends. While `bl` exits, an interrupt that ends a child of an `exit` listener is
+  printed, not raised, so `bl` keeps its exit code and the other listeners run.
+  `describeExit(r, what)` words a failed child. A caller never reads a child's
+  `signal`. `test/unit/child-stdio-guard.test.js` fails on a `src/` import of `child_process` or
+  `child-stdio.js` outside `src/child.js` (and `child-stdio.js`'s own import of `child_process`),
+  except the files its `ALLOWED` list names. F-124 moves those files and empties the list.
 - A call in `src/` to an async function of `src/` is awaited: it is the operand of `await`, or
   the value an async function returns outside a `try`. A missing `await` is silent, so
   `test/unit/awaited-calls.test.js` parses `src/` with `acorn` and checks this by name (F-105

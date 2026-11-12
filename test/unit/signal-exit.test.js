@@ -6,9 +6,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
-import { INTERRUPT_SIGNALS, interruptOf, isInterrupt, raiseSignal } from '../../src/signal-exit.js';
+import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, isInterrupt, raiseSignal } from '../../src/signal-exit.js';
 
 const SIGNAL_EXIT = fileURLToPath(new URL('../../src/signal-exit.js', import.meta.url));
 
@@ -49,7 +50,34 @@ test('raiseSignal raises nothing for a signal that is not an interrupt', () => {
   }
 });
 
+test('the interrupt exit codes have one definition, EXIT_CODES, in signal-exit.js', () => {
+  assert.deepEqual(EXIT_CODES, { SIGINT: 130, SIGTERM: 143 });
+  // Code only: the comments may name 130 and 143.
+  const code = (file) =>
+    readFileSync(fileURLToPath(new URL(`../../src/${file}`, import.meta.url)), 'utf8').replace(
+      /\/\*[\s\S]*?\*\/|\/\/.*$/gm,
+      '',
+    );
+  assert.doesNotMatch(code('child.js'), /\b130\b|\b143\b|128 \+/);
+  assert.doesNotMatch(code('signal-exit.js'), /\b130\b|\b143\b/);
+  assert.equal(code('signal-exit.js').match(/128 \+/g).length, 1);
+});
+
 for (const signal of INTERRUPT_SIGNALS) {
+  test(`exitOnSignal exits with EXIT_CODES.${signal} on ${signal}`, () => {
+    const script = [
+      `import { exitOnSignal } from ${JSON.stringify(SIGNAL_EXIT)};`,
+      'exitOnSignal();',
+      `process.kill(process.pid, '${signal}');`,
+      `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
+    ].join('\n');
+    const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(r.status, EXIT_CODES[signal], `signal ${r.signal}, stdout ${r.stdout}: ${r.stderr}`);
+  });
+
   test(`raiseSignal runs the ${signal} listeners when there are some`, () => {
     const seen = [];
     const listener = (s) => seen.push(s);
