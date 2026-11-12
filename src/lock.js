@@ -11,7 +11,7 @@
  *
  * Every lock file bl keeps in a backlog lives under `.bl/` (S-1495), which
  * the backlog's `.gitignore` ignores, so git never sees one: the backlog
- * lock, the session locks and the report locks in `.bl/lock/` (`LOCK_DIR`,
+ * lock, the session locks, the work unit locks and the report locks in `.bl/lock/` (`LOCK_DIR`,
  * `dirLockPath`), and the run locks in `.bl/run/` (`run-lock.js`).
  *
  * It is a kernel lock (`kernel-lock.js`, F-104 K1): the kernel frees it when
@@ -68,7 +68,7 @@ export function canonical(path) {
  * `git worktree list` gives).
  *
  * @param {string} backlogRoot
- * @param {string} kind  `session` or `report`
+ * @param {string} kind  `session`, `unit` or `report`
  * @param {string} dir
  */
 export function dirLockPath(backlogRoot, kind, dir) {
@@ -92,6 +92,37 @@ export function ensureLockDir(backlogRoot) {
       if (e.code !== 'EEXIST') throw e;
     }
   }
+}
+
+/**
+ * Take the lock of `kind` for the directory `dir` (`dirLockPath`) with one
+ * try-lock (`kernel-lock.js`), never waiting. The session lock
+ * (`takeSessionLock`) and the work unit lock (`unit-lock.js`, F-122 D6) take
+ * through it. A lock this process already holds is reused, one depth deeper.
+ * A lock another process holds refuses with that process's PID in `holder`.
+ * A lock file that cannot be opened refuses too, with `holder` null. `release`
+ * gives back what this call took.
+ *
+ * @param {string} backlogRoot
+ * @param {string} kind  `session` or `unit`
+ * @param {string} dir
+ * @param {string} info  one line that names the holder
+ * @returns {{ refused: string, path: string, holder: number | 'unknown' | null }
+ *   | { refused: null, path: string, release: () => void }}
+ */
+export function takeDirLock(backlogRoot, kind, dir, info) {
+  const path = dirLockPath(backlogRoot, kind, dir);
+  let got;
+  try {
+    ensureLockDir(backlogRoot);
+    got = tryLock(path, info);
+  } catch (e) {
+    return { refused: `${path} could not be opened: ${e.message}`, path, holder: null };
+  }
+  if (got.holder != null) {
+    return { refused: `a live ${kind} (pid ${got.holder}) holds ${path}`, path, holder: got.holder };
+  }
+  return { refused: null, path, release: () => release(got.taken) };
 }
 
 /** The environment variable that names the descriptor a bl parent passed down locked (D5). */

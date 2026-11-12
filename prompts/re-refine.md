@@ -42,8 +42,9 @@ Backlog repo : {{backlogDir}}
    section below gives the exact command. Use **relative paths** from cwd.
 
 7. Commit your re-refinement by following **Backlog commits** below. When this session ends,
-   `bl` commits and pushes what you left uncommitted with `chore: re-refine {{storyId}}`, but your
-   own commit says why. Use the message `chore: re-refine {{storyId}}`, and put why the plan changed
+   `bl` commits and pushes what you left uncommitted in the story's directory with
+   `chore: re-refine {{storyId}}`, and leaves every other path uncommitted, but your own commit
+   says why. Use the message `chore: re-refine {{storyId}}`, and put why the plan changed
    in its body. Pass `--story {{storyId}}`, plus one `--story` for each child story you created
    with `bl new`. The backlog workflow commits to its `main` branch directly; do NOT branch
    first.

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { parseFrontmatter, runForgeOp } from '../../src/config.js';
 import { extractSection, replaceSection, resolveFeaturePluginsReport } from '../../src/feature.js';
 import {
@@ -15,6 +15,7 @@ import {
   acquireRunLock,
   releaseRunLock,
   reviewFeature,
+  integrateUnit,
   parseMaxRounds,
   RUN_DIR,
   looksFlaky,
@@ -27,7 +28,8 @@ import { spawnSync } from 'child_process';
 import { featureReviewGate, summarizeLatestReviewSession } from '../../src/review-log.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
-import { holderOf } from '../../src/kernel-lock.js';
+import { holderOf, holds } from '../../src/kernel-lock.js';
+import { unitLockDirs, unitLockPath } from '../../src/unit-lock.js';
 import { sessionLockPath } from '../../src/story.js';
 import { parseChange, serializeChange } from '../../src/change-doc.js';
 import {
@@ -1473,7 +1475,7 @@ test('second bl run on the same feature refuses while the first is alive', async
       const second = await inner;
       assert.equal(second.status, 'failed');
       assert.equal(second.refused, true);
-      assert.match(second.lastError, /another bl run \(pid \d+\) is running F-1/);
+      assert.match(second.lastError, /a bl run \(pid \d+\) is running F-1/);
       assert.equal(outer.status, 'clean', 'the first run is unaffected');
       assert.equal(loadRunState(config, 'F-1').status, 'clean', 'the refusal did not overwrite run state');
       assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the lock is released when the run ends');
@@ -1528,6 +1530,81 @@ test('second bl run on the same feature refuses while the first is alive', async
     }
   }
 });
+
+test('run_unit_locks: a run and a review hold the work unit locks of the feature and its stories, and refuse while another process holds one (F-122 D9)', async () => {
+  // Held for the whole run, and given back with the run lock at its end.
+  {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const dirs = unitLockDirs(config, feature);
+      assert.equal(dirs.length, 3, 'the feature and its two stories');
+      const seen = [];
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          story: (o) => {
+            seen.push(dirs.every((d) => holds(unitLockPath(dir, d))));
+            checkAll(o.vars.storyAbsPath);
+          },
+        },
+      });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'clean');
+      assert.deepEqual(seen, [true, true], 'every session ran under the locks');
+      for (const d of dirs) assert.equal(holds(unitLockPath(dir, d)), false, `${d} released`);
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'run lock released');
+    } finally {
+      cleanup();
+    }
+  }
+  // Another process holds a story's lock: the run and the review refuse
+  // before any session, name it, and leave the run lock free.
+  {
+    const { dir, cleanup, config, feature, prep } = setup();
+    const story = unitLockPath(dir, join(dir, 'stories', 'S2-second'));
+    const child = await holdLockInChild(story);
+    try {
+      const want = new RegExp(`^S-2 is locked by a live bl process \\(pid ${child.pid}\\): ${story}$`);
+      const runner = fakeRunner({ dir, feature });
+      const run = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(run.refused, true);
+      assert.match(run.lastError, want);
+      const review = await reviewFeature({ feature, config, prep, runner, maxRounds: 2 });
+      assert.equal(review.refused, true);
+      assert.match(review.lastError, want);
+      assert.equal(runner.calls.filter((c) => c.type === 'session').length, 0);
+      assert.equal(existsSync(runStatePath(config, 'F-1')), false, 'no run state');
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'run lock released');
+      assert.equal(holds(unitLockPath(dir, dirname(feature.indexPath))), false, 'the feature lock released');
+    } finally {
+      await child.kill();
+      cleanup();
+    }
+  }
+});
+
+// The feature's stories cannot be read (a malformed blockers.json): each
+// caller of the run lock take throws, and keeps neither the run lock nor a
+// work unit lock.
+for (const [caller, call] of [
+  ['runFeature', (a) => runFeature({ ...a, opts: { maxRounds: 2 } })],
+  ['reviewFeature', (a) => reviewFeature({ ...a, maxRounds: 2 })],
+  ['integrateUnit', (a) => integrateUnit({ ...a, unit: a.feature })],
+]) {
+  test(`take_run_locks_releases_run_lock_on_target_read_error: ${caller}`, async () => {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      writeFileSync(join(dir, 'blockers.json'), '{bad');
+      const runner = fakeRunner({ dir, feature });
+      await assert.rejects(() => call({ feature, config, prep, runner }));
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'run lock released');
+      assert.equal(holds(unitLockPath(dir, dirname(feature.indexPath))), false, 'no work unit lock kept');
+    } finally {
+      cleanup();
+    }
+  });
+}
 
 test('writeEscalation fills an Escalation heading with trailing whitespace', async () => {
   // Heading shapes extractSection accepts; the diagnosis must land in each.

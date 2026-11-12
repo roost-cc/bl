@@ -99,6 +99,23 @@ same way, with the task file and `blockers.json` among the paths.
 After a failed commit, a rerun of `bl done` or `bl approve` commits the file that the failed run
 left, if its content is the same (`commitAndRecord` and `failedCommitPending`, S-1347).
 
+Feature `bl merge`, story `bl merge`'s triage, `bl refine` and `bl init` commit what changed in
+the backlog since they started instead (`commitChangedSince`, `src/backlog-commit.js`, S-1330):
+a `dirtySnapshot` taken before they write, compared with one taken at the end. With the `scope`
+option (a function that returns backlog-relative directories or files, F-122 D8), only a changed
+path equal to or under an entry is committed. `commitChangedSince` calls it after the command
+wrote; if it throws, nothing is committed and every changed path goes to the owner's record, as
+for a failed commit (`recordChangedSince`). A record that cannot be read stays as it is and is
+named, and bl says it recorded the paths only after it wrote the record. Each changed path
+outside the scope stays uncommitted and is named in one line,
+`Left uncommitted, outside <owner>'s work units: <paths>`. A path carried from a failed commit's
+record (`readFailedCommit`) and outside the scope stays in the record. Without `scope`
+(`bl init`), every changed path is committed. Feature `bl merge`'s scope is its work units'
+directories (`scope()`), its release manifest (`writeReleaseManifest`) and its theme's `index.md`
+(`recordThemeState`), with the owner `merge F-n`. The triage's scope is the merged story's
+directory, with the owner `triage S-n`, so the agent commits the stories it creates itself
+(`prompts/cleanup-triage.md`). `bl refine`'s scope is its work units' directories.
+
 When adding a new command, ask: "what is the one piece of information
 the caller needs?" That goes on stdout. Everything else goes through
 the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
@@ -285,7 +302,15 @@ worktree).
   holder ends, and its file stays. `runHeadlessSession` and `launchSession`
   take it with one try-lock (`session.js` `takeSessionLock`): a lock this
   process holds is reused, and a lock another process holds refuses the
-  session with that process's PID, the interactive launch included. A review
+  session with that process's PID, the interactive launch included. The
+  session lock and the work unit lock (`unit-lock.js`, F-122 D2, below) take
+  through one helper, `lock.js` `takeDirLock` (F-122 D6). A session in the
+  backlog root (a refine) takes no session lock (`session.js` `sessionLock`,
+  F-122 D7): its verb took the work unit locks of its targets first, and the
+  launch needs them as `units` and checks with `holds` that this process
+  holds each one's lock. A missing or empty `units`, or a lock this process
+  does not hold, throws before the session starts. So two refines of
+  different work units run at once. A review
   round's `holdReviewLocks` takes it the same way (the unit directory, plus
   any reviewed worktree outside it). Every other check asks `holderOf` (D6):
   `isSessionRunning(backlogRoot, unitDir)` and `bl merge`'s cleanup. A check that leaves
@@ -1425,7 +1450,14 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   (`{ summary, stories: { "S-n": { refined, reason? } } }`) or
   `feature-refine.json` (`{ summary, premise_holds, refined, reason? }`) to
   `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
-  before its backlog commit. `refined: true` records the `refine` row's
+  before its backlog commit. `refineAndCommit(units, opts, message, apply)`
+  first takes the work unit locks of `units` (`takeUnitLocksOrExit`: the story,
+  each story of a batch, or the feature and its stories). If another process
+  holds one, the refine prints the refusal and exits 1 before its
+  `dirtySnapshot`: no outcome file, no status, no commit. It passes `units`
+  to `launchSession`, and `scope` to `commitChangedSince`, so the commit
+  holds only the units' directories, a story made for the feature during the
+  session included (F-122 D3). `refined: true` records the `refine` row's
   success, `refined`; `premise_holds: false` records its failure, a feature's
   `draft`; otherwise the status stays and `reason` is printed
   (`applyRefineStatus`, through `transition`, with `reason` as the entry's
@@ -2792,7 +2824,9 @@ Launches an agent session **on main** to refine and plan a story:
 - Can create child stories via `bl new` if the story should be split
 - Ends by writing its outcome file (F-68 D1); when the session ends, `bl refine` sets the
   status from it (see **Refine outcomes** under **Session outcomes**), then commits and pushes
-  what the session left uncommitted
+  what the session left uncommitted in its work units' directories
+- Takes the work unit locks of its targets first; a target another bl process holds refuses the
+  refine (F-122 D4)
 
 ```bash
 bl refine S34
@@ -3767,10 +3801,51 @@ which deletes retired lock files. The lock files stay and collect: one per spec 
 each repo's git common dir one main sync lock and one `bl-prepare-<branch>.lock` per branch. No lock
 wait sleeps synchronously. Every lock file bl keeps in a backlog lives under `.bl/` (S-1495),
 which the backlog's `.gitignore` ignores, so git never sees one and bl never asks git to ignore a
-lock file: the backlog lock, one session lock per unit directory and one report lock per output
-directory in `.bl/lock/` (`lock.js` `LOCK_DIR`, `dirLockPath`), and the run locks in `.bl/run/`.
-`dirLockPath` names a directory's lock file from a hash of its path with links resolved
-(`canonical`), so a unit directory reached through a link has the same lock as its real path.
+lock file: the backlog lock, one session lock per unit directory, one work unit lock per work
+unit directory and one report lock per output directory in `.bl/lock/` (`lock.js` `LOCK_DIR`,
+`dirLockPath`), and the run locks in `.bl/run/`. `dirLockPath` names a directory's lock file from
+a hash of its path with links resolved (`canonical`), so a unit directory reached through a link
+has the same lock as its real path.
+
+The work unit lock (`src/unit-lock.js`, F-122 D2) is one kernel lock per work unit directory
+(`stories/S<n>-…/`, `features/F<n>-…/`), `unit-<dir>-<hash>.lock` (`unitLockPath`). A verb that
+holds a session on a work unit takes it at start with `takeUnitLocks(config, units, info)`: the
+lock of each unit's directory and, for a feature, of each of its stories' directories
+(`unitLockDirs`, read fresh from disk), all or nothing, with one try-lock each through
+`takeDirLock`. It never waits. If another process holds one, it releases what it took and
+refuses with `<id> is locked by a live bl process (pid <n>): <lock path>`. If a read throws, it
+releases what it took and throws again. A lock this process holds is taken again, one depth
+deeper. On success it returns `release` and `scope`. `scope()` reads `unitLockDirs` again, takes
+the lock of each directory there that did not exist at the take, and returns the backlog-relative
+directories the verb holds. So a story created for the feature during the session is in the
+verb's commit scope (F-122 D3), and so is a locked story that the session took out of the feature.
+A created story whose lock another process holds is not, and neither is an existing story linked
+to the feature after the take: the verb does not hold their locks. The work unit lock sits beside
+the spec lock and does not replace it: the spec lock guards one write and waits up to 60 s, and
+the work unit lock is held for a whole session. Lock order: a verb takes its work unit locks
+first, and the backlog lock and the spec lock inside them, one write at a time. A work unit lock
+never waits, so it cannot wait in a cycle with them. Short commands (`bl new`, `bl sync --commit`,
+`bl block`, `bl done`, `bl approve`, `bl task`) neither take nor check it, because a session's
+agent runs them as children, and a check would find the parent's lock. Every `bl refine`
+takes it (`refineAndCommit`, F-122 D4) and holds it in place of a session lock of the backlog root.
+`bl merge F-n` (`cmdMerge`) takes the work unit locks of the feature and its stories after its
+merge gates and before `integrateForMerge`, so a held lock refuses the merge before any repo is
+touched, and holds them to the end of the merge. `bl merge S-n` takes the merged story's work unit
+lock for its integration (`integrateUnit`, below) and again for its triage session (`cleanup.js`),
+before the triage's `dirtySnapshot`. If another process holds it at the triage, bl skips the
+triage with one line that names the holder, and the merge stands. `bl run`, `bl review` and
+`bl implement` hold the work unit locks of their work unit and its stories for the whole run
+(F-122 D4, D9). `runFeature`, `reviewFeature` and `integrateUnit` (`feature-run.js`) take them
+through one helper, `takeRunLocks`: the run lock first, then the work unit locks; a refusal of
+either, or a take that throws, gives back what it took, and their `finally` releases both. The
+run lock refusal is `a bl run (pid <n>) is running <id>`. The commands take the work unit locks
+earlier too, before they write anything, with `takeUnitLocksOrExit` (`unit-lock.js`: print the refusal as
+`Error: <refusal>` and exit 1): `bl run` (`runUnit`) before its prep, `bl review` (`cmdReview`,
+`cmdReviewStory`) before it opens a PR or writes the change document, `bl implement F-n`
+(`cmdWorkon`) before its prep, and `bl implement S-n` (`workonOne`, `workon.js`) before its prep
+and `enterVerb`. The loop's own take then goes one depth deeper. The commit scope of these verbs
+is unchanged: the loop commits by path (`commitUnitPaths`). A unit with no `kind` (a
+`findFeature` record) is a feature to `takeUnitLocks`, as `isStory` reads it.
 `bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
 [--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
 before S-1495. It writes `.bl/` to `.gitignore` before it deletes anything. It deletes each old
@@ -4230,6 +4305,8 @@ there is nothing to integrate) and runs `integrateUnit` (`src/feature-run.js`,
 beside `reviewFeature`):
 
 - It takes the unit's run lock (refused while a `bl run` of the unit holds it)
+  and the work unit locks of the unit and its stories (`takeRunLocks`, F-122
+  D9; `bl merge F-n` already holds them, so its take goes one depth deeper),
   and refuses when any worktree has uncommitted changes, before any merge.
 - Per repo, in merge order: `git fetch origin` with `MAIN_REFSPEC` under the
   repo's main sync lock (a failed fetch is a warning and the last fetched

@@ -113,6 +113,7 @@ import { commitChangedSince, dirtySnapshot, failedCommitPending, failedCommitRec
 import { loadBacklog } from './backlog-graph.js';
 import { commitAndRecord, reportBacklogCommit } from './sync.js';
 import { applyRefineStatus, refineAndCommit } from './refine.js';
+import { takeUnitLocksOrExit } from './unit-lock.js';
 import {
   applyFixOutcome,
   changeName,
@@ -594,7 +595,9 @@ export async function cmdRefine(args, config, feature) {
     agent: config.agent,
     config,
   });
+  const unit = { ...feature, kind: 'feature' };
   return refineAndCommit(
+    [unit],
     {
       mode: 'refine',
       parsed: parsedFor(feature),
@@ -614,15 +617,9 @@ export async function cmdRefine(args, config, feature) {
       schema: loadSchema('feature-refine'),
     },
     `chore: refine ${feature.id}`,
-    [feature.id],
     // A premise that does not hold puts the feature back to draft (F-68 D2).
     async ({ premise_holds, refined, reason }) =>
-      applyRefineStatus(
-        config.backlogRoot,
-        { ...feature, kind: 'feature' },
-        !premise_holds ? 'failure' : refined ? 'success' : null,
-        reason,
-      ),
+      applyRefineStatus(config.backlogRoot, unit, !premise_holds ? 'failure' : refined ? 'success' : null, reason),
   );
 }
 
@@ -1225,6 +1222,9 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
 }
 
 export async function cmdWorkon(args, config, feature) {
+  // The work unit locks of the feature and its stories, held to the end of
+  // the session (F-122 D4), before prep records the start.
+  takeUnitLocksOrExit(config, [feature], `implement ${feature.id}`);
   const prep = await prepareFeatureWorktree(config, feature, 'implement');
   const { cfg, parsed, reviewPending } = prep;
   const promptName = reviewPending ? 'feature-workon-review' : 'feature-workon';
@@ -1318,6 +1318,9 @@ export async function cmdReview(args, config, feature, opts = {}) {
     process.exit(1);
   }
   reviewAgentOrExit(config);
+  // Held to the end of the round, before any PR or change document is written
+  // (F-122 D9); `reviewFeature` takes them again, one depth deeper.
+  takeUnitLocksOrExit(config, [feature], `review ${feature.id}`);
 
   const branchName = feature.branch;
   const all = readAllStories(config);
@@ -1444,6 +1447,8 @@ export async function cmdReviewStory(args, baseConfig, story, opts = {}) {
     process.exit(1);
   }
   reviewAgentOrExit(config);
+  // As `cmdReview`: held to the end of the round, taken before any write.
+  takeUnitLocksOrExit(config, [unit], `review ${unit.id}`);
   const branchName = unit.branch || unit.featureEntry.toLowerCase();
   const ordered = [storyAsOrdered(unit)];
   const found = findUnitPRs(config, { ...unit, branch: branchName });
@@ -1698,6 +1703,10 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
     console.error(`Another bl run (pid ${holder}) is running ${unit.id}.`);
     process.exit(1);
   }
+  // The work unit locks of the unit and its stories, held to the end of the
+  // run (F-122 D4) and taken before prep writes anything; `runFeature` takes
+  // them again, one depth deeper.
+  takeUnitLocksOrExit(config, [unit], `run ${unit.id}`);
   const prep = await prepare();
   const runner = defaultRunner({ interactive });
   const state = await runFeature({
@@ -1774,6 +1783,14 @@ export async function cmdMerge(args, config, feature) {
   const unit = featureUnit(feature);
   const gates = mergeGates(unit, { config, args, repos: names });
   if (reportMergeGates(gates)) process.exit(1);
+
+  // The work unit locks of the feature and its stories, held to the end of
+  // the merge (F-122 D2, D4): a refine, a run or another merge of them
+  // refuses meanwhile, and a lock another process holds refuses this merge
+  // before any repo is touched. An early exit ends the process, which drops
+  // them.
+  const owner = `merge ${feature.id}`;
+  const lock = takeUnitLocksOrExit(config, [unit], owner);
 
   info(`Feature : ${feature.id} — ${feature.title}`);
   info(`Branch  : ${branchName}`);
@@ -1893,6 +1910,7 @@ export async function cmdMerge(args, config, feature) {
   // The keep-or-replace decision for a tip is made from the feature file
   // re-read under the backlog lock, in the same hold as the story and feature
   // writes, so an exact SHA another merge records meanwhile is never replaced.
+  let themeFile = null;
   const shape = await withLock(config.backlogRoot, async () => {
     const recorded = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm.commit;
     const union = unionLandedCommits(recorded, landed, tips);
@@ -1906,7 +1924,7 @@ export async function cmdMerge(args, config, feature) {
     // `priority.md` is not touched (F-78 D3): a merged feature leaves the
     // order because it is closed, and its date is in this merge's commit.
     // Its theme's `## State` records it too (F-53 D4), in the same hold.
-    const themeFile = recordThemeState(config, feature, stamp);
+    themeFile = recordThemeState(config, feature, stamp);
     if (themeFile) info(`Recorded ${feature.id} in ${themeFile} (## State).`);
     return decided;
   });
@@ -1924,10 +1942,13 @@ export async function cmdMerge(args, config, feature) {
     }, completed=${stamp}`,
   );
 
+  // Only the work units' directories (read again, D3), and the two files bl
+  // wrote for this merge: another session's change stays out and is named.
   const commitFailed = await commitChangedSince(
     config.backlogRoot,
     backlogBefore,
     `chore: merge ${feature.id}, mark stories done`,
+    { owner, scope: () => [...lock.scope(), manifestRel, ...(themeFile ? [themeFile] : [])] },
   );
 
   runFeatureStagePlugins(
@@ -1947,6 +1968,7 @@ export async function cmdMerge(args, config, feature) {
     },
     primary.repoPath,
   );
+  lock.release();
 
   const deferred = extractSection(feature.body, 'Deferred');
   if (sectionHasContent(deferred)) {

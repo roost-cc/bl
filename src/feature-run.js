@@ -119,6 +119,7 @@ import {
 } from './change-doc.js';
 import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock } from './run-lock.js';
+import { takeUnitLocks } from './unit-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
@@ -141,6 +142,45 @@ import {
 // run-lock.js; re-exported for the loop's callers.
 export { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock };
 export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
+
+/**
+ * Take the run lock of `unit` (`acquireRunLock`), then the work unit locks of
+ * the unit and its stories (`takeUnitLocks`, F-122 D9), for `owner` (`run
+ * F-1`). `runFeature`, `reviewFeature` and `integrateUnit` hold both to their
+ * end. A work unit lock this process already holds (`bl merge F-n` took them
+ * before its integration, `bl run` before its prep) is taken one depth deeper.
+ *
+ * Returns `{ refused }`, which names the other holder, with neither lock held;
+ * or `{ refused: null, release }`, where `release()` gives back both. If the
+ * take throws (the stories cannot be read), it holds neither either.
+ *
+ * @param {object} config
+ * @param {import('./unit-lock.js').WorkUnit} unit
+ * @param {string} owner
+ * @returns {{ refused: string } | { refused: null, release: () => void }}
+ */
+function takeRunLocks(config, unit, owner) {
+  const run = acquireRunLock(config, unit.id);
+  if (run.holder != null) return { refused: `a bl run (pid ${run.holder}) is running ${unit.id}` };
+  let units;
+  try {
+    units = takeUnitLocks(config, [unit], owner);
+  } catch (e) {
+    releaseRunLock(run.taken);
+    throw e;
+  }
+  if (units.refused != null) {
+    releaseRunLock(run.taken);
+    return { refused: units.refused };
+  }
+  return {
+    refused: null,
+    release: () => {
+      units.release();
+      releaseRunLock(run.taken);
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Run state
@@ -3819,10 +3859,8 @@ function wrapItem(claim, width = 100) {
  *   resolved?: string[] }> }} — `resolved`: the files the agent resolved
  */
 export async function integrateUnit({ unit, config, prep, runner }) {
-  const lock = acquireRunLock(config, unit.id);
-  if (lock.holder != null) {
-    return { ok: false, refused: true, reason: `a bl run (pid ${lock.holder}) is running ${unit.id}`, repos: [] };
-  }
+  const lock = takeRunLocks(config, unit, `merge ${unit.id}`);
+  if (lock.refused != null) return { ok: false, refused: true, reason: lock.refused, repos: [] };
   try {
     let state;
     try {
@@ -3844,7 +3882,7 @@ export async function integrateUnit({ unit, config, prep, runner }) {
       return await integrationThrew(ctx, e);
     }
   } finally {
-    releaseRunLock(lock.taken);
+    lock.release();
   }
 }
 
@@ -4497,10 +4535,8 @@ export async function reviewFeature({
   maxRounds,
 }) {
   const prep = { ...basePrep, otherRepos };
-  const lock = acquireRunLock(config, feature.id);
-  if (lock.holder != null) {
-    return refuse(runner, feature, `a bl run (pid ${lock.holder}) is running ${feature.id}`);
-  }
+  const lock = takeRunLocks(config, feature, `review ${feature.id}`);
+  if (lock.refused != null) return refuse(runner, feature, lock.refused);
   try {
     let state;
     try {
@@ -4562,7 +4598,7 @@ export async function reviewFeature({
       error,
     };
   } finally {
-    releaseRunLock(lock.taken);
+    lock.release();
   }
 }
 
@@ -4623,9 +4659,10 @@ function refuse(runner, feature, reason) {
  * `prepareFeatureWorktree` in feature-cmd.js), `runner` the side-effect
  * boundary. Returns the final run state.
  *
- * One run per feature: the run holds `.bl/run/<id>.lock` for its whole
- * length, and does not start while another live process holds the unit
- * directory's session lock (`sessionLockPath`).
+ * One run per feature: the run holds `.bl/run/<id>.lock` and the work unit
+ * locks of the unit and its stories (`takeRunLocks`) for its whole length,
+ * and does not start while another live process holds the unit directory's
+ * session lock (`sessionLockPath`).
  */
 export async function runFeature({ feature, config, prep, runner, opts = {} }) {
   const sessionLock = sessionLockPath(config.backlogRoot, prepUnitDir(prep));
@@ -4633,10 +4670,8 @@ export async function runFeature({ feature, config, prep, runner, opts = {} }) {
   if (wtHolder != null) {
     return refuse(runner, feature, `a live session (pid ${wtHolder}) holds ${sessionLock}`);
   }
-  const lock = acquireRunLock(config, feature.id);
-  if (lock.holder != null) {
-    return refuse(runner, feature, `another bl run (pid ${lock.holder}) is running ${feature.id}`);
-  }
+  const lock = takeRunLocks(config, feature, `run ${feature.id}`);
+  if (lock.refused != null) return refuse(runner, feature, lock.refused);
   try {
     return await driveFeature({ feature, config, prep, runner, opts });
   } catch (e) {
@@ -4644,7 +4679,7 @@ export async function runFeature({ feature, config, prep, runner, opts = {} }) {
     if (e instanceof RunStoppedError) return e.state;
     throw e;
   } finally {
-    releaseRunLock(lock.taken);
+    lock.release();
   }
 }
 

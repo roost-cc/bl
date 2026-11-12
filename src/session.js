@@ -31,8 +31,9 @@ import {
   unitDirOf,
   dictionariesOf,
 } from './config.js';
-import { findExistingWorktree, isSessionRunning, reposForStory, sessionLockPath } from './story.js';
-import { ensureLockDir } from './lock.js';
+import { findExistingWorktree, isSessionRunning, reposForStory } from './story.js';
+import { canonical, takeDirLock } from './lock.js';
+import { unitLockPath } from './unit-lock.js';
 import { reassertTabTitle, unitTitleFields, updateTabTitle } from './tab-title.js';
 import { ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
 import { resolvePermissionScopes, loadLocalTools } from './permissions.js';
@@ -48,7 +49,7 @@ import { renderToolGuide, renderFragment } from './tool-guide.js';
 import { renderSessionStack, sessionStackOf } from './session-stack.js';
 import { resolveLocale, fragmentCandidates } from './locale.js';
 import { awaitLock } from './lock-wait.js';
-import { release, tryLock, tryLockOnce } from './kernel-lock.js';
+import { holds, release, tryLockOnce } from './kernel-lock.js';
 import { syncMain, reportMainSync } from './main-sync.js';
 import { outcomePath, readOutcomeFile } from './outcome.js';
 
@@ -685,7 +686,7 @@ export function runStagePlugins(
 
 /**
  * Take the session lock of `dir` (`sessionLockPath`: one per unit directory,
- * F-60 D3, in the backlog's `.bl/lock/`) with one try-lock (`kernel-lock.js`).
+ * F-60 D3, in the backlog's `.bl/lock/`) through `takeDirLock` (`lock.js`).
  * A lock this process already holds (a review round holds every unit
  * directory's for the whole round) is reused, one depth deeper. A lock another process holds refuses the session
  * with that process's PID. A lock file that cannot be opened refuses the
@@ -695,19 +696,34 @@ export function runStagePlugins(
  * @param {string} backlogRoot
  * @param {string} dir
  * @param {string} info  one line that names the session
- * @returns {{ refused: string } | { refused: null, release: () => void }}
+ * @returns {ReturnType<typeof takeDirLock>}
  */
 export function takeSessionLock(backlogRoot, dir, info) {
-  const path = sessionLockPath(backlogRoot, dir);
-  let got;
-  try {
-    ensureLockDir(backlogRoot);
-    got = tryLock(path, info);
-  } catch (e) {
-    return { refused: `${path} could not be opened: ${e.message}` };
+  return takeDirLock(backlogRoot, 'session', dir, info);
+}
+
+/**
+ * The lock a session in `cwd` runs under (F-122 D7). In a unit directory, it
+ * takes that directory's session lock (`takeSessionLock`). In the backlog root
+ * it takes none: the verb took the work unit locks of `units` before it wrote
+ * anything (`takeUnitLocks`, `unit-lock.js`), and this checks that this
+ * process holds the lock of each one's directory. A missing or empty `units`,
+ * or a lock this process does not hold, throws before the session starts.
+ *
+ * @param {string} backlogRoot
+ * @param {string} cwd
+ * @param {import('./unit-lock.js').WorkUnit[] | null | undefined} units
+ * @param {string} info  one line that names the session
+ * @returns {ReturnType<typeof takeDirLock>}
+ */
+function sessionLock(backlogRoot, cwd, units, info) {
+  if (canonical(cwd) !== canonical(backlogRoot)) return takeSessionLock(backlogRoot, cwd, info);
+  if (!units?.length) throw new Error(`${info}: a session in the backlog root needs its work units' locks (units)`);
+  for (const unit of units) {
+    const path = unitLockPath(backlogRoot, dirname(unit.indexPath));
+    if (!holds(path)) throw new Error(`${info}: this process does not hold ${unit.id}'s work unit lock ${path}`);
   }
-  if (got.holder != null) return { refused: `a live session (pid ${got.holder}) holds ${path}` };
-  return { refused: null, release: () => release(got.taken) };
+  return { refused: null, path: backlogRoot, release: () => {} };
 }
 
 /**
@@ -763,7 +779,9 @@ function sessionModel(model, agent, config) {
  * The agent starts in `unitDir`, the unit directory (F-60 D3), which is also
  * its write root and holds the session lock; `worktreePath` is the lead
  * repo's worktree, for the activity log. Without `unitDir` (a caller with no
- * unit) both are `worktreePath`.
+ * unit) both are `worktreePath`. A session in the backlog root takes no
+ * session lock: it needs `units`, the work units whose locks the caller holds
+ * (`sessionLock`, F-122 D7).
  *
  * With `schema` (F-68 D1), the adapter returns the final message validated
  * against it as `structured`, or null with `structuredError`; a session that
@@ -798,6 +816,7 @@ export async function runHeadlessSession({
   schema = null,
   sessionId = null,
   run = undefined,
+  units = null,
   provider: providerOverride = null,
 }) {
   // A session that did not run: its reason is the error, and the outcome's fault.
@@ -822,8 +841,8 @@ export async function runHeadlessSession({
     return notRun(`agent provider '${agent}' has no headless mode`);
   }
 
-  // Never start beside a live session in the same unit directory.
-  const lock = takeSessionLock(backlogRoot, cwd, `${label ?? parsed.id} (headless)`);
+  // Never start beside a live session in the same unit directory (`sessionLock`).
+  const lock = sessionLock(backlogRoot, cwd, units, `${label ?? parsed.id} (headless)`);
   if (lock.refused) return notRun(lock.refused);
 
   let result;
@@ -921,7 +940,9 @@ export async function runHeadlessSession({
  * or threw: a re-read cannot say which session a transcript line belongs to.
  *
  * As in `runHeadlessSession`, the agent starts in `unitDir` when given, its
- * write root and lock directory, and its transcripts are found there.
+ * write root and lock directory, and its transcripts are found there; a
+ * session in the backlog root (a refine) needs `units` instead of a session
+ * lock (`sessionLock`, F-122 D7).
  *
  * With `schema` (F-68 D1), the session's outcome comes back through a file:
  * `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`), which the prompt
@@ -954,6 +975,7 @@ export async function launchSession({
   model = undefined,
   effort = null,
   schema = null,
+  units = null,
   provider: providerOverride = null,
 }) {
   // Without `returnOnExit` the process exits after the session, and the
@@ -967,8 +989,9 @@ export async function launchSession({
   const cwd = unitDir ?? worktreePath;
 
   // Never start beside a live session in the same unit directory, before
-  // anything the session would change (its outcome file, the tab title).
-  const lock = takeSessionLock(backlogRoot, cwd, sessionName);
+  // anything the session would change (its outcome file, the tab title). In
+  // the backlog root, the caller's work unit locks stand in (`sessionLock`).
+  const lock = sessionLock(backlogRoot, cwd, units, sessionName);
   if (lock.refused) {
     console.error(`Error: ${lock.refused}.`);
     if (!returnOnExit) process.exit(1);

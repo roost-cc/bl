@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'fs';
-import { join } from 'path';
+import { chmodSync, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, statSync } from 'fs';
+import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 import {
   parsePorcelainZ,
@@ -303,6 +303,178 @@ test('commitChangedSince: a failed commit returns true and names the paths', asy
   assert.equal(failed, true);
   assert.match(err, /backlog commit failed: git commit exited 1\n {2}Commit these paths yourself: x\.md/);
 });
+
+// `scope` (F-122 D8): a directory entry takes the paths under it, a file
+// entry itself; a sibling that only shares the prefix is outside. Without
+// `scope`, every changed path is committed and no path is named.
+const SCOPED = ['stories/S1-a/index.md', 'stories/S1-a/notes/n.md', 'roadmap.md'];
+const OUTSIDE = ['stories/S1-ab/index.md', 'x.md'];
+for (const scope of [undefined, ['stories/S1-a', 'roadmap.md']]) {
+  test(`commit_changed_since_scope: ${scope ? 'commits only the scope and names the rest' : 'no scope commits every changed path'}`, async () => {
+    const dir = changedSinceRepo();
+    writeFileSync(join(dir, 'y.md'), 'operator\n');
+    const before = dirtySnapshot(dir);
+    for (const p of [...SCOPED, ...OUTSIDE]) {
+      mkdirSync(join(dir, p, '..'), { recursive: true });
+      writeFileSync(join(dir, p), 'the command\n');
+    }
+    const [failed, err] = await captureStderr(() =>
+      commitChangedSince(dir, before, 'chore: refine S-1', { owner: 'refine S-1', scope: scope && (() => scope) }),
+    );
+    assert.equal(failed, false, err);
+    const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort();
+    assert.match(err, /Left your uncommitted backlog edits alone: y\.md\n/);
+    if (scope) {
+      assert.deepEqual(files, [...SCOPED].sort());
+      assert.equal(
+        err.match(/Left uncommitted, outside .*/g)?.join('\n'),
+        "Left uncommitted, outside refine S-1's work units: stories/S1-ab/index.md x.md",
+      );
+      assert.deepEqual(
+        g(dir, 'status', '--porcelain', '-uall')
+          .split('\n')
+          .map((l) => l.trim())
+          .sort(),
+        ['?? stories/S1-ab/index.md', 'M x.md', 'M y.md'],
+      );
+    } else {
+      assert.deepEqual(files, [...SCOPED, ...OUTSIDE].sort());
+      assert.doesNotMatch(err, /Left uncommitted, outside/);
+      assert.equal(g(dir, 'status', '--porcelain'), 'M y.md');
+    }
+  });
+}
+
+test('commit_changed_since_scope_keeps_carried_paths_outside_it: a scoped retry commits the scope, the record keeps the rest', async () => {
+  const dir = changedSinceRepo();
+  const hook = join(dir, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const opts = { owner: 'refine S-1', scope: () => ['stories/S1-a'] };
+  const first = dirtySnapshot(dir);
+  mkdirSync(join(dir, 'stories', 'S1-a'), { recursive: true });
+  writeFileSync(join(dir, 'stories', 'S1-a', 'index.md'), 'the command\n');
+  writeFileSync(join(dir, 'x.md'), 'the command\n');
+  // An unscoped call of the same owner fails and records both paths.
+  assert.equal((await captureStderr(() => commitChangedSince(dir, first, 'chore: r', { owner: opts.owner })))[0], true);
+  rmSync(hook);
+
+  const [failed, err] = await captureStderr(() => commitChangedSince(dir, dirtySnapshot(dir), 'chore: r', opts));
+  assert.equal(failed, false, err);
+  assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['stories/S1-a/index.md']);
+  assert.match(err, /Left uncommitted, outside refine S-1's work units: x\.md\n/);
+  assert.doesNotMatch(err, /Left your uncommitted backlog edits alone/);
+  const record = JSON.parse(readFileSync(join(dir, failedCommitRecord(opts.owner)), 'utf8'));
+  assert.deepEqual(
+    record.commit.map(([p]) => p),
+    ['x.md'],
+  );
+
+  // The next call of the owner whose scope holds it commits it.
+  const [again, err2] = await captureStderr(() =>
+    commitChangedSince(dir, dirtySnapshot(dir), 'chore: r', { owner: opts.owner }),
+  );
+  assert.equal(again, false, err2);
+  assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['x.md']);
+  assert.equal(existsSync(join(dir, failedCommitRecord(opts.owner))), false);
+});
+
+// The scope read throws after the command wrote (a malformed blockers.json in
+// `scope()`): nothing is committed, and every changed path, a carried one
+// included, is recorded, so the retry of the same owner commits its own.
+for (const carried of [false, true]) {
+  test(`refine_scope_read_failure_records_dirty_paths: ${carried ? 'a carried path and a new one' : 'a new path'}`, async () => {
+    const dir = changedSinceRepo();
+    const head = g(dir, 'rev-parse', 'HEAD');
+    const owner = 'refine S-1';
+    const scope = () => ['stories/S1-a'];
+    const S1 = 'stories/S1-a/index.md';
+    mkdirSync(join(dir, 'stories', 'S1-a'), { recursive: true });
+    if (carried) {
+      const hook = join(dir, '.git', 'hooks', 'pre-commit');
+      writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      const first = dirtySnapshot(dir);
+      writeFileSync(join(dir, 'z.md'), 'the first call\n');
+      assert.equal((await captureStderr(() => commitChangedSince(dir, first, 'chore: r', { owner })))[0], true);
+      rmSync(hook);
+    }
+    const before = dirtySnapshot(dir);
+    writeFileSync(join(dir, S1), 'the command\n');
+    writeFileSync(join(dir, 'x.md'), 'another session\n');
+    const throws = () => {
+      throw new Error('blockers.json is malformed');
+    };
+    const [failed, err] = await captureStderr(() =>
+      commitChangedSince(dir, before, 'chore: r', { owner, scope: throws }),
+    );
+    assert.equal(failed, true);
+    assert.match(err, /backlog commit failed: cannot read refine S-1's work units \(blockers\.json is malformed\)/);
+    assert.equal(g(dir, 'rev-parse', 'HEAD'), head, 'nothing committed');
+    const record = JSON.parse(readFileSync(join(dir, failedCommitRecord(owner)), 'utf8'));
+    assert.deepEqual(record.commit.map(([p]) => p).sort(), [S1, 'x.md', ...(carried ? ['z.md'] : [])].sort());
+
+    // The retry commits the scope's path; the rest stays recorded.
+    const [again, err2] = await captureStderr(() =>
+      commitChangedSince(dir, dirtySnapshot(dir), 'chore: r', { owner, scope }),
+    );
+    assert.equal(again, false, err2);
+    assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [S1]);
+  });
+}
+
+// The two recovery paths that record instead of committing (a scope that
+// throws, a snapshot before that failed), over each state of the record: an
+// unreadable record stays byte for byte, and bl claims a record only once it
+// wrote one.
+const RECORD_STATES = [
+  ['unreadable', (rec) => writeFileSync(rec, '{"commit":[["previous.md","truncated'), false],
+  ['a directory', (rec) => mkdirSync(rec), false],
+  ['not writable', (rec) => chmodSync(dirname(rec), 0o555), false],
+  ['absent', () => {}, true],
+];
+for (const [path, call] of [
+  [
+    'scope throws',
+    (dir, before, owner) =>
+      commitChangedSince(dir, before, 'chore: r', {
+        owner,
+        scope: () => {
+          throw new Error('bad');
+        },
+      }),
+  ],
+  ['snapshot before failed', (dir, _before, owner) => commitChangedSince(dir, null, 'chore: r', { owner })],
+]) {
+  for (const [state, setUp, recorded] of RECORD_STATES) {
+    const name =
+      state === 'unreadable'
+        ? 'commit_changed_since_scope_error_preserves_unreadable_record'
+        : 'commit_changed_since_scope_error_reports_failed_record_write';
+    test(`${name}: ${path}, the record ${state}`, async () => {
+      const dir = changedSinceRepo();
+      const owner = 'refine S-1';
+      const rec = join(dir, failedCommitRecord(owner));
+      mkdirSync(dirname(rec), { recursive: true });
+      setUp(rec);
+      const old = state === 'unreadable' ? readFileSync(rec, 'utf8') : null;
+      try {
+        const before = dirtySnapshot(dir);
+        writeFileSync(join(dir, 'x.md'), 'the command\n');
+        const [failed, err] = await captureStderr(() => call(dir, before, owner));
+        assert.equal(failed, true);
+        assert.equal(/bl recorded what changed/.test(err), recorded && path === 'scope throws', err);
+        if (state === 'unreadable') assert.equal(readFileSync(rec, 'utf8'), old, 'the unreadable record stays');
+        if (state === 'a directory') assert.ok(statSync(rec).isDirectory());
+        if (state === 'not writable') {
+          assert.match(err, /cannot write .* so no later bl run commits these paths: .*x\.md/);
+          assert.equal(existsSync(rec), false);
+        }
+        if (recorded) assert.ok(readFileSync(rec, 'utf8').includes('x.md'));
+      } finally {
+        chmodSync(dirname(rec), 0o755);
+      }
+    });
+  }
+}
 
 // A failed commit, then a retry that writes nothing new (its snapshot finds
 // the failed paths dirty already): each path class after the failure.
