@@ -635,6 +635,20 @@ test('legacy-status: status: with no log, and status: beside a log (warnings)', 
   );
 });
 
+test('legacy-status: a closed unit (status terminal in flow.json) has no warning', () => {
+  assert.deepEqual(findings('story', { status: 'done', added: '2026-10-01', completed: '2026-10-05' }), []);
+  assert.deepEqual(findings('story', { status: 'superseded', added: '2026-10-01' }), []);
+  assert.deepEqual(
+    findings('story', {
+      status: 'refined',
+      added: '2026-11-01',
+      completed: '2026-11-02',
+      transitions: [entry(T0, 'draft', 'new'), entry('2026-11-02T00:00:00Z', 'done', 'done')],
+    }),
+    [],
+  );
+});
+
 test('logShape decides "has a log" for every reader and writer: storedLog, setLog and bl validate agree', () => {
   const good = [entry(T0, 'draft', 'new')];
   // [transitions:, shape]
