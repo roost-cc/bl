@@ -243,6 +243,30 @@ const agentAction = () => action('g', 'talk it through', ['bl', 'agent'], { wind
 const viewAction = (id, label = 'open the page') => action('o', label, ['bl', 'view', id], { window: `${id} view` });
 
 /**
+ * The ranking actions of a ranked row of box ³ (F-113 D6, D7). Each argv
+ * element is a Go `text/template` that the view renders with the selected
+ * row's id (`Selected`) and the yanked unit's id (`Yanked`).
+ */
+const RANK_ACTIONS = [
+  action('p', 'put the yanked unit after it', ['bl', 'rank', '{{.Yanked}}', '--after', '{{.Selected}}']),
+  action('P', 'put the yanked unit before it', ['bl', 'rank', '{{.Yanked}}', '--before', '{{.Selected}}']),
+  action('x', 'unrank it', ['bl', 'rank', '{{.Selected}}', '--remove']),
+];
+
+/** A ranked row of box ³: its ranking actions, then the row's own. */
+const rankedRow = (row) => ({ ...row, actions: [...RANK_ACTIONS, ...row.actions] });
+
+/** Box ³'s actions while a staged copy exists (F-113 D7): commit it or reset it. */
+const STAGED_ACTIONS = [
+  action('C', 'commit the staged order', ['bl', 'rank', '--commit'], {
+    about: ['bl rank --commit merges the staged order into priority.yaml, then commits and pushes it.'],
+  }),
+  action('R', 'drop the staged edits', ['bl', 'rank', '--reset'], {
+    about: ['bl rank --reset deletes the staged copy. Every staged edit is lost.'],
+  }),
+];
+
+/**
  * The actions of an inbox item (D7): an escalation is read with `bl status`
  * (in a tmux window: it prints the escalation to stdout, which a result box
  * does not show), a task closed with `bl task done`, and a change answered
@@ -554,14 +578,19 @@ function readStagedOrder(config, plan, rows) {
   );
   const row = (u, position) => ({ ...rows.get(u.id), position, mark: mark.get(u.id) ?? '' });
   return {
-    staged: { ranked: order.ranked.map((u, i) => row(u, i + 1)), unranked: order.unranked.map((u) => row(u, null)) },
+    staged: {
+      ranked: order.ranked.map((u, i) => rankedRow(row(u, i + 1))),
+      unranked: order.unranked.map((u) => row(u, null)),
+    },
     conflict: null,
   };
 }
 
 /**
  * `next`: `bl next`'s pick, every committed ranked unit, every other open
- * unit `byAdded`, and the staged order with its markers (F-113 D5).
+ * unit `byAdded`, and the staged order with its markers (F-113 D5). A ranked
+ * row carries the ranking actions, and `actions` carries commit and reset
+ * while a staged copy exists, in conflict or not (F-113 D7).
  */
 function readNext(config) {
   // `parseFilter` with no flags: the filter that matches every unit.
@@ -569,6 +598,7 @@ function readNext(config) {
   // A unit is a work unit row: its page and `bl agent` (D7).
   const fields = ({ unit, ...e }) => ({ ...e, actions: [viewAction(e.id), agentAction()] });
   const rows = new Map([...plan.ranked, ...plan.unranked].map((e) => [e.id, fields(e)]));
+  const { staged, conflict } = readStagedOrder(config, plan, rows);
   return {
     pick: plan.pick && {
       id: plan.pick.unit.id,
@@ -577,9 +607,11 @@ function readNext(config) {
       from: plan.pick.from.id,
       path: plan.pick.path,
     },
-    ranked: plan.ranked.map((e) => rows.get(e.id)),
+    ranked: plan.ranked.map((e) => rankedRow(rows.get(e.id))),
     unranked: plan.unranked.map((e) => rows.get(e.id)),
-    ...readStagedOrder(config, plan, rows),
+    staged,
+    conflict,
+    actions: staged || conflict ? STAGED_ACTIONS : [],
   };
 }
 

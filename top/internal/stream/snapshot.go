@@ -64,9 +64,10 @@ type Run struct {
 	Actions      []Action `json:"actions"`
 }
 
-// Action is one action of a row (F-87 D7, S-1336): `itemActions`, `runActions` and the ranked
-// units' actions in src/top-snapshot.js build them. Argv is a bl command (`bl …`), which the view
-// runs through its own bl; nil for URL, a page the view opens. Input is "", "note" (optional text)
+// Action is one action of a row (F-87 D7, S-1336): `itemActions`, `runActions` and the units'
+// actions in src/top-snapshot.js build them. Argv is a bl command (`bl …`), which the view
+// runs through its own bl; nil for URL, a page the view opens. Each argv element is a
+// text/template (F-113 D7), which actions.Render renders. Input is "", "note" (optional text)
 // or "reason" (needed text), added as the command's last word. Window names the tmux window the
 // command opens in; "" runs it as a child, with a result box. About are lines the y/n question
 // shows; Stops is the run whose `stopped` end does not notify (D8).
@@ -143,13 +144,15 @@ type Item struct {
 }
 
 // Next is the `next` section (F-113 D5): `bl next`'s pick, the committed order, the staged order
-// (nil with no staged copy), and Decision A3's message while the staged copy is in conflict.
+// (nil with no staged copy), Decision A3's message while the staged copy is in conflict, and the
+// box's own actions (commit and reset) while a staged copy exists (F-113 D7).
 type Next struct {
 	Section
 	Order
-	Pick     *Pick  `json:"pick"`
-	Staged   *Order `json:"staged"`
-	Conflict string `json:"conflict"`
+	Pick     *Pick    `json:"pick"`
+	Staged   *Order   `json:"staged"`
+	Conflict string   `json:"conflict"`
+	Actions  []Action `json:"actions"`
 }
 
 // Order is an order of the open units: every ranked unit in its rank, then every other open unit,

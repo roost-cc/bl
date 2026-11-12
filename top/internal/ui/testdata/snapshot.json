@@ -829,6 +829,36 @@
         "heldBy": [],
         "actions": [
           {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
             "key": "o",
             "label": "open the page",
             "argv": ["bl", "view", "F-81"],
@@ -859,6 +889,36 @@
         "holds": ["S-1350 depends on S-1310 (in_progress)"],
         "heldBy": ["F-81"],
         "actions": [
+          {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
           {
             "key": "o",
             "label": "open the page",
@@ -891,6 +951,36 @@
         "heldBy": ["F-84"],
         "actions": [
           {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
             "key": "o",
             "label": "open the page",
             "argv": ["bl", "view", "F-80"],
@@ -921,6 +1011,36 @@
         "holds": [],
         "heldBy": [],
         "actions": [
+          {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
           {
             "key": "o",
             "label": "open the page",
@@ -953,6 +1073,36 @@
         "heldBy": [],
         "actions": [
           {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
             "key": "o",
             "label": "open the page",
             "argv": ["bl", "view", "F-16"],
@@ -983,6 +1133,36 @@
         "holds": [],
         "heldBy": [],
         "actions": [
+          {
+            "key": "p",
+            "label": "put the yanked unit after it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "P",
+            "label": "put the yanked unit before it",
+            "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
+          {
+            "key": "x",
+            "label": "unrank it",
+            "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
+            "input": null,
+            "window": null,
+            "url": null,
+            "about": [],
+            "stops": null
+          },
           {
             "key": "o",
             "label": "open the page",
@@ -1029,7 +1209,8 @@
       }
     ],
     "staged": null,
-    "conflict": null
+    "conflict": null,
+    "actions": []
   },
   "capacity": {
     "read_at": "2026-11-09T23:14:31.000Z",

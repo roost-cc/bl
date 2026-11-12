@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"os/exec"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/roost-cc/bl/top/internal/stream"
@@ -20,6 +21,29 @@ func Opener(goos string) string {
 		return "open"
 	}
 	return "xdg-open"
+}
+
+// Render renders each element of argv as a text/template against vars (F-113 D7, Decision A4):
+// `Selected`, the selected row's id, and `Yanked`, the yanked unit's id, only while one is yanked.
+// A key that vars does not hold is an error (missingkey=error), so a command that needs the yanked
+// unit fails while none is yanked. An element without `{{ }}` renders as itself; nil stays nil.
+func Render(argv []string, vars map[string]string) ([]string, error) {
+	if argv == nil {
+		return nil, nil
+	}
+	out := make([]string, len(argv))
+	for i, el := range argv {
+		t, err := template.New("argv").Option("missingkey=error").Parse(el)
+		if err != nil {
+			return nil, err
+		}
+		var b strings.Builder
+		if err := t.Execute(&b, vars); err != nil {
+			return nil, err
+		}
+		out[i] = b.String()
+	}
+	return out, nil
 }
 
 // Words are the command of action a as the operator reads it: its argv, with text as the last word

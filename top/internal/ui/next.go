@@ -42,8 +42,8 @@ var markStyles = map[string]lipgloss.Style{"+": styleOK, "~": styleWarn, "-": st
 
 // drawNext draws box ³ (D4, Mockups A and B; F-113 D4, D5) in w×h inner cells: every ranked unit
 // with its rank, id, status, points, holders and title, the divider, every unranked unit, then the
-// pick line. While staging, a marker column comes first. The rows scroll to keep the selected one
-// shown.
+// pick line. While staging, a marker column comes first. The yanked unit has a peach `↕` after its
+// rank (F-113 D6). The rows scroll to keep the selected one shown.
 func (m Model) drawNext(w, h int) []string {
 	o := m.nextOrder()
 	units := slices.Concat(o.Ranked, o.Unranked)
@@ -66,15 +66,19 @@ func (m Model) drawNext(w, h int) []string {
 		if staging {
 			cells = append(cells, cell{fmt.Sprintf("%-2s", u.Mark), markStyles[u.Mark]})
 		}
-		rank := strings.Repeat(" ", 6)
+		rank := "   "
 		if u.Position > 0 {
-			rank = fmt.Sprintf("%3d   ", u.Position)
+			rank = fmt.Sprintf("%3d", u.Position)
+		}
+		yank := "   "
+		if u.ID == m.yanked {
+			yank = " ↕ "
 		}
 		points := "-"
 		if u.Points > 0 {
 			points = fmt.Sprintf("%g", u.Points)
 		}
-		cells = append(cells, cell{rank + fit(u.ID, 6) + " " + fit(u.Status, 9) + " " +
+		cells = append(cells, cell{rank, styleText}, cell{yank, styleKey}, cell{fit(u.ID, 6) + " " + fit(u.Status, 9) + " " +
 			fmt.Sprintf("%3s", points) + "  " + fit(strings.Join(u.HeldBy, ","), 7) + "  " + u.Title, styleText})
 		return row(w, i == sel, cells...)
 	}

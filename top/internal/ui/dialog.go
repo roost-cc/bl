@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,6 +42,7 @@ type dialog struct {
 	text    string          // the typed note or reason
 	refused bool            // whether ↵ refused an empty reason
 	words   []string        // the command that runs or ran
+	puts    bool            // whether the action puts the yanked unit (its argv takes Yanked)
 	seq     int             // the action's number (Model.actionSeq), from its y
 	result  actions.Result
 }
@@ -137,8 +140,67 @@ func (m Model) actKey(k string) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// pick goes on with action a: to its text, else to the y/n question. Outside tmux an action that
-// opens a tmux window does nothing and says `<key> needs tmux`.
+// yankFirst is the refusal of an action that puts the yanked unit while none is yanked (F-113 D7).
+const yankFirst = "yank a work unit first (y)"
+
+// renderAction is action a with its argv templates rendered for the row selected (F-113 D7): with its id,
+// and the yanked unit's id while one is yanked. puts says whether the argv took the yanked unit. A
+// template that needs the yanked unit while none is yanked fails with yankFirst.
+func (m Model) renderAction(a stream.Action, selected string) (out stream.Action, puts bool, err error) {
+	vars := map[string]string{"Selected": selected}
+	argv, err := actions.Render(a.Argv, vars)
+	if err != nil && m.yanked == "" {
+		return a, false, errors.New(yankFirst)
+	}
+	if err != nil {
+		vars["Yanked"] = m.yanked
+		if argv, err = actions.Render(a.Argv, vars); err != nil {
+			return a, false, err
+		}
+		puts = true
+	}
+	a.Argv = argv
+	return a, puts, nil
+}
+
+// rankKey handles a ranking key of box ³ (F-113 D6): y yanks the selected unit and esc cancels the
+// yank; p, P, x, C and R pick the action of that key, the selected row's or else the box's
+// (next.actions). A key with no such action does nothing. While the staged copy is in conflict,
+// every key but R refuses with the conflict's text (Decision A3).
+func (m Model) rankKey(k string) (Model, tea.Cmd) {
+	if m.snap == nil {
+		return m, nil
+	}
+	if c := m.snap.Next.Conflict; c != "" && k != "R" {
+		m.note = c
+		return m, nil
+	}
+	switch k {
+	case "y":
+		if id := m.selectedUnit(3); id != "" {
+			m.yanked = id
+		}
+		return m, nil
+	case "esc":
+		m.yanked = ""
+		return m, nil
+	}
+	id, line, list, _ := m.target()
+	if i := slices.IndexFunc(list, func(a stream.Action) bool { return a.Key == k }); i >= 0 {
+		m.dialog = &dialog{row: id, line: line, actions: list}
+		return m.pick(list[i])
+	}
+	// The box's own actions are about no row.
+	if i := slices.IndexFunc(m.snap.Next.Actions, func(a stream.Action) bool { return a.Key == k }); i >= 0 {
+		m.dialog = &dialog{}
+		return m.pick(m.snap.Next.Actions[i])
+	}
+	return m, nil
+}
+
+// pick goes on with action a, its argv rendered (renderAction): to its text, else to the y/n question.
+// An argv that does not render closes the dialog and says why. Outside tmux an action that opens a
+// tmux window does nothing and says `<key> needs tmux`.
 func (m Model) pick(a stream.Action) (Model, tea.Cmd) {
 	if a.Window != "" && getenv("TMUX") == "" {
 		m.dialog = nil
@@ -146,7 +208,13 @@ func (m Model) pick(a stream.Action) (Model, tea.Cmd) {
 		return m, nil
 	}
 	d := *m.dialog
-	d.action, d.stage = a, stageAsk
+	a, puts, err := m.renderAction(a, d.row)
+	if err != nil {
+		m.dialog = nil
+		m.note = err.Error()
+		return m, nil
+	}
+	d.action, d.stage, d.puts = a, stageAsk, puts
 	if a.Input != "" {
 		d.stage = stageInput
 	}
@@ -217,8 +285,11 @@ func (m Model) dialogKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // runAction runs the action of d after its y: in a new tmux window, or as a child whose result box
 // follows. The child starts here, before the next snapshot is read. A stop marks its run with the
 // child's pid, so the run's `stopped` end by that bl stop does not notify (D8); an end by another
-// stop does.
+// stop does. A put ends the yank.
 func (m Model) runAction(d dialog) (Model, tea.Cmd) {
+	if d.puts {
+		m.yanked = ""
+	}
 	words := actions.Words(d.action, d.text, goos)
 	argv := actions.Argv(words, m.blArgv)
 	if d.action.Window != "" {
@@ -297,7 +368,12 @@ func (m Model) dialogBox(w int) []string {
 			if i == d.cursor {
 				mark = "▶ "
 			}
-			lines = append(lines, styleText.Render(pad(mark))+styleKey.Render(a.Key)+styleText.Render("  "+fit(a.Label, lw)+"  "+command(a, "", true)))
+			// An action that cannot render yet (a put with nothing yanked) shows why in place of its command.
+			cmd := yankFirst
+			if r, _, err := m.renderAction(a, d.row); err == nil {
+				cmd = command(r, "", true)
+			}
+			lines = append(lines, styleText.Render(pad(mark))+styleKey.Render(a.Key)+styleText.Render("  "+fit(a.Label, lw)+"  "+cmd))
 		}
 		lines = append(lines, "", keys("↑↓ ↵", "pick", "esc", "cancel"))
 	case stageInput:
@@ -313,7 +389,9 @@ func (m Model) dialogBox(w int) []string {
 		lines = append(lines, "", text("runs: "+command(d.action, d.text, false)), "", keys("enter", "go on", "esc", "cancel"))
 	case stageAsk:
 		title = actions.Show(actions.Words(d.action, "", goos))
-		lines = append(lines, text(d.line))
+		if d.line != "" {
+			lines = append(lines, text(d.line))
+		}
 		for _, l := range d.action.About {
 			lines = append(lines, text(l))
 		}
