@@ -18,10 +18,10 @@
 import { basename } from 'path';
 import { getProvider, hasProvider } from './agents/index.js';
 import { oneLine } from './agents/follow.js';
-import { loadConfig, normalizeId, parseArgs } from './config.js';
-import { normalizeFeatureId } from './feature.js';
+import { loadConfig } from './config.js';
 import { loadRunState, runLockPath, runStatePath } from './feature-run.js';
 import { holderOf } from './kernel-lock.js';
+import { runArgs } from './run-arg.js';
 
 /** How often `watch` reads the run state again, in ms: at most 5 s (S-1272). */
 export const WATCH_POLL_MS = 2000;
@@ -182,26 +182,9 @@ export async function watchRun({
 }
 
 export async function main(argv) {
-  const args = parseArgs(argv);
-  if (args.help) {
-    console.log(HELP);
-    return;
-  }
-  const unknown = Object.keys(args).filter((k) => !['positional', 'json', 'from-start'].includes(k));
-  if (unknown.length > 0) {
-    console.error(`bl watch: unknown option --${unknown[0]}`);
-    process.exit(1);
-  }
-  if (args.positional.length !== 1) {
-    console.error('bl watch: name one run: bl watch <F-id|S-id>');
-    process.exit(1);
-  }
-  const raw = args.positional[0];
-  const id = normalizeFeatureId(raw)?.id ?? normalizeId(raw)?.id;
-  if (!id) {
-    console.error(`bl watch: ${raw} is not a feature or story id`);
-    process.exit(1);
-  }
+  const parsed = runArgs('watch', argv, { help: HELP, flags: ['json', 'from-start'] });
+  if (!parsed) return;
+  const { id, args } = parsed;
   // A reader that closes the pipe (`bl watch F-1 | head`) ends the watch.
   process.stdout.on('error', (e) => {
     if (e.code === 'EPIPE') process.exit(0);
