@@ -44,14 +44,17 @@ live agent feed.
 
 With no --json or --stream, bl top runs the view, a terminal UI in btop's
 style. It builds the view with go build (top/ in bl) when top/bin/bl-top is
-missing or older than a file under top/; that build needs Go. Keys: 1-6 hide
-or show a box, tab and shift+tab move the focus, up and down select a row,
-enter shows the selected run in box 6 (from the runs box, or an attention or
-next row whose unit has a run) or opens or closes the grouped update row, f
-turns follow of box 6's feed on or off (with follow off, up and down in box 6
-scroll it), w opens bl watch <id> of box 6's run in a new tmux window, c reads
-capacity now, + and - change the refresh interval, h shows the help, q quits.
-Box 6 follows the run's agent session through bl watch <id> --json.
+missing or older than a file under top/; that build needs Go. Each box has a
+number in its border: its position on screen, left to right, then top to
+bottom. Keys: 1-6 hide or show the box at that position, tab and shift+tab
+move the focus in the same order, up and down select a row, enter shows the
+selected run in the detail box (from the runs box, or an attention or next
+row whose unit has a run) or opens or closes the grouped update row, f turns
+follow of the detail box's feed on or off (with follow off, up and down in the
+detail box scroll it), w opens bl watch <id> of the detail box's run in a new
+tmux window, c reads capacity now, + and - change the refresh interval, h
+shows the help, q quits. The detail box follows the run's agent session
+through bl watch <id> --json.
 
 Actions: a opens the action menu of the selected row; r starts or resumes the
 selected run, s stops it (bl stop), o opens the row's page (bl view), p opens
