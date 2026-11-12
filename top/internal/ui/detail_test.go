@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/roost-cc/bl/top/internal/stream"
 	"github.com/roost-cc/bl/top/internal/watch"
 )
 
@@ -331,5 +332,66 @@ func TestHelpListsTheKeysOfBoxSix(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the help has no %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestTheFeedFollowsARunThatResumesAfterItsWatchEnded: once the watch of the run box ⁶ shows has
+// ended, a snapshot that shows the run not running (stopped, escalated, clean, stale, failed), then
+// one that shows it running again, starts a new watch; the feed stays. A watch that has not ended,
+// a run still running at the end, and another run shown start none.
+func TestTheFeedFollowsARunThatResumesAfterItsWatchEnded(t *testing.T) {
+	// at is the model after a snapshot in which F-1 has status; restarted says whether it started
+	// a new watch.
+	at := func(m Model, status string) (Model, bool) {
+		s := stream.Snapshot{Schema: stream.Schema}
+		s.Runs.ReadAt = time.Now()
+		s.Runs.Rows = []stream.Run{{ID: "F-1", Status: status}, {ID: "F-2", Status: "running"}}
+		gen := m.watchGen
+		m, cmds := m.snapshot(s)
+		if (m.watchGen != gen) != (len(cmds) == 1) {
+			t.Fatalf("generation %d to %d with %d commands", gen, m.watchGen, len(cmds))
+		}
+		return m, m.watchGen != gen
+	}
+	// shown is a model that shows F-1 with a feed, its watch of generation 3 running; ended, its end.
+	shown := func(ended bool) Model {
+		m := New([]string{"bl"}, 2000, false, nil)
+		m.detail, m.watchGen = "F-1", 3
+		m.feed = []watch.Event{{Kind: "text", Text: "before"}}
+		if ended {
+			m, _ = m.watchMsg(watch.EndMsg{Gen: 3})
+		}
+		return m
+	}
+	for _, status := range []string{"stopped", "escalated", "clean", "stale", "failed"} {
+		m, restarted := at(shown(true), "running")
+		if restarted {
+			t.Errorf("%s: a run still running when its watch ended restarted it", status)
+		}
+		if m, restarted = at(m, status); restarted {
+			t.Errorf("%s: a run that is not running restarted its watch", status)
+		}
+		m, restarted = at(m, "running")
+		if !restarted {
+			t.Errorf("%s: the resumed run got no new watch", status)
+		}
+		if len(m.feed) != 1 || m.feed[0].Text != "before" {
+			t.Errorf("%s: the feed %v", status, m.feed)
+		}
+		if _, again := at(m, "running"); again {
+			t.Errorf("%s: the new watch was started twice", status)
+		}
+	}
+	// A watch that has not ended keeps following through a stop and a resume.
+	m, _ := at(shown(false), "stopped")
+	if _, restarted := at(m, "running"); restarted {
+		t.Error("a watch that had not ended was restarted")
+	}
+	// Another run shown (↵ on F-2) starts its own watch, and F-1's resume starts none.
+	m, _ = at(shown(true), "stopped")
+	m.snap.Runs.Rows[1].Status = "running"
+	m, _ = m.showRun("F-2")
+	if _, restarted := at(m, "running"); restarted {
+		t.Error("a resume of a run no longer shown restarted a watch")
 	}
 }

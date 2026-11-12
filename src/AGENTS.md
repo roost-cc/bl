@@ -3340,8 +3340,10 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   and the timeline on one line. Then the live feed, and the keys on the last line.
 - **The feed** (`top/internal/watch`). Showing a run starts `bl watch <id> --json` (through
   `--bl-argv`) in a process group of its own; the view stops it (SIGTERM to the group) when
-  another run is shown or the view quits, and drops the messages of a watch it replaced. Each
-  line is a feed line, cut to the box:
+  another run is shown or the view quits, and drops the messages of a watch it replaced. When
+  the watch of the run shown has ended, and a later snapshot shows that run not running and then
+  running again (a `--resume`), the view starts a new watch of it; the feed keeps its lines
+  (`resumeWatch`). Each line is a feed line, cut to the box:
 
   | `bl watch --json` line | Feed line                                                       |
   | ---------------------- | --------------------------------------------------------------- |

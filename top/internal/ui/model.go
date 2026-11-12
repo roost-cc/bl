@@ -70,6 +70,8 @@ type Model struct {
 	detail        string       // the id of the run box ⁶ shows; empty for none
 	watcher       *watch.Watch // the `bl watch` of that run, while it runs
 	watchGen      int          // the generation of the watch the model reads
+	watchDone     bool         // whether that watch ended (resumeWatch)
+	rewatch       bool         // whether a snapshot after its end showed the run not running
 	feed          []watch.Event
 	follow        bool   // whether box ⁶'s feed shows its newest lines
 	feedBack      int    // with follow off: how many lines the feed is scrolled back
@@ -186,13 +188,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// snapshot keeps s as the snapshot to draw, and returns the commands of its notes against the
+// snapshot keeps s as the snapshot to draw, restarts the watch of box ⁶ when its run resumed
+// (resumeWatch), and returns the commands of that and of its notes against the
 // snapshot before (D8): one bell for them all, and each sender for each note it wants.
 func (m Model) snapshot(s stream.Snapshot) (Model, []tea.Cmd) {
 	m.snap = &s
 	m.keepSelection()
 	notes := m.differ.Diff(m.snap)
 	var cmds []tea.Cmd
+	m, resumed := m.resumeWatch()
+	if resumed != nil {
+		cmds = append(cmds, resumed)
+	}
 	if m.bell && len(notes) > 0 {
 		cmds = append(cmds, notify.Bell())
 	}
