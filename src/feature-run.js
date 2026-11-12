@@ -1843,6 +1843,8 @@ export async function runSession(
       ok: r.ok && denials.length === 0 && !noOutcome,
       ...(outcome != null ? { outcome } : {}),
       note: notes.filter(Boolean).join(' — '),
+      // The denied tools as a list, for bl top's detail box (F-88 S-1334).
+      ...(denials.length ? { denials } : {}),
       // The session's own tokens, for bl top's graph (F-87 D3b).
       ...(r.usage ? { usage: r.usage } : {}),
     });

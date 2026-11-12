@@ -15,7 +15,8 @@
 
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { RUN_DIR, loadRunState, runLockPath } from './feature-run.js';
+import { RUN_DIR, loadRunState, planSteps, runLockPath } from './feature-run.js';
+import { loadBacklog } from './backlog-graph.js';
 import { holderOf } from './kernel-lock.js';
 import { collectInbox } from './inbox.js';
 import { nextPlan } from './next.js';
@@ -93,22 +94,141 @@ export function readSection(prev, read, now) {
   }
 }
 
+/** The sum of two `usageOf` values; null when both are. */
+const addUsage = (a, b) => (a && b ? Object.fromEntries(TOKEN_KEYS.map((k) => [k, a[k] + b[k]])) : (a ?? b));
+
+/**
+ * The stage of a run's timeline (box ⁶, F-88 S-1334) that a step of
+ * `planSteps` falls in: `{ step, round }`, or null for a step outside the
+ * timeline (`pr`, `stop`). The test gate goes with `fix-tests`, a fix's
+ * self-review with its fix, and a review round past `maxRounds` is the
+ * closing review.
+ */
+function stageOf(step, round, maxRounds) {
+  switch (step) {
+    case 'setup':
+    case 'implement':
+    case 'self-review':
+      return { step, round: null };
+    case 'test':
+    case 'fix-tests':
+      return { step: 'fix-tests', round: null };
+    case 'review':
+    case 're-review':
+    case 'closing-review':
+      return round > maxRounds ? { step: 'closing', round: null } : { step: 'review', round };
+    case 'fix':
+    case 'fix-self-review':
+      return { step: 'fix', round };
+  }
+  return null;
+}
+
+/**
+ * A run's step timeline for box ⁶ (F-88 S-1334): its stages in the order of
+ * `planSteps` (`src/feature-run.js`), one implement stage for all stories,
+ * each `{ step, round, state, durationMs, tests, usage }`.
+ *
+ * The history entries go to stages in order. A review session
+ * (`review:<pass>`) goes to the round after the last `review:round` entry,
+ * and a fix to the round of that entry. A stage never goes back: an entry of
+ * an earlier stage (the test gate after a fix, the setup of `--resume`) goes
+ * to the latest stage so far. An entry of a step outside the timeline is
+ * left out. A stage with an entry is `done`; the stage of the run's `step`
+ * is `current` while the run is `running`; any other is `pending`. A stage
+ * lasts from the end of the stage before it (the run's start for the first)
+ * to its last entry, or to `now` while it is current. `tests` counts its
+ * `test` entries, and `usage` sums its entries' usage (null with none).
+ * @param {object} state  a run state
+ * @param {string | null} status  the row's status (`stale` for a run no bl holds)
+ * @param {number} now
+ */
+export function runTimeline(state, status, now) {
+  const maxRounds = Math.max(int(state.maxRounds) ?? 1, 1);
+  const stages = [];
+  const index = new Map();
+  const indexOf = (step, round) => {
+    const s = stageOf(step, round, maxRounds);
+    return s ? (index.get(`${s.step} ${s.round}`) ?? null) : null;
+  };
+  for (const p of planSteps([{ id: null }], maxRounds)) {
+    const s = stageOf(p.step, p.round ?? null, maxRounds);
+    if (!s || indexOf(p.step, p.round ?? null) != null) continue;
+    index.set(`${s.step} ${s.round}`, stages.length);
+    stages.push({ ...s, state: 'pending', startMs: NaN, endMs: NaN, tests: 0, usage: null });
+  }
+  let cursor = 0;
+  let rounds = 0;
+  let lastMs = ms(state.startedAt);
+  for (const h of state.history) {
+    const step = str(h.step) ?? '';
+    let i;
+    if (step === 'review:round') {
+      rounds = int(h.round) ?? rounds;
+      i = indexOf('review', rounds);
+    } else if (step.startsWith('review:')) i = indexOf('review', rounds + 1);
+    else if (step === 'fix' || step === 'fix-self-review') i = indexOf('fix', rounds);
+    else i = indexOf(step, null);
+    if (i == null) continue;
+    cursor = Math.max(cursor, i);
+    const stage = stages[cursor];
+    if (stage.state === 'pending') {
+      stage.state = 'done';
+      stage.startMs = lastMs;
+    }
+    const at = ms(h.at);
+    if (Number.isFinite(at)) stage.endMs = lastMs = at;
+    if (step === 'test') stage.tests++;
+    stage.usage = addUsage(stage.usage, usageOf(h.usage));
+  }
+  const current = status === 'running' ? indexOf(str(state.step), int(state.round)) : null;
+  if (current != null) {
+    const stage = stages[Math.max(current, cursor)];
+    if (stage.state === 'pending') stage.startMs = lastMs;
+    stage.state = 'current';
+    stage.endMs = now;
+  }
+  return stages.map(({ startMs, endMs, ...s }) => {
+    const took = endMs - startMs;
+    return { ...s, durationMs: took >= 0 ? took : null };
+  });
+}
+
+/**
+ * A run's denied tools (F-88 S-1334): how many its sessions' history entries
+ * list in `denials`, and the step and tool of the first. An entry written
+ * before S-1334 has no `denials`, and counts 0.
+ */
+export function deniedOf(history) {
+  let count = 0;
+  let first = null;
+  for (const h of history) {
+    const list = Array.isArray(h.denials) ? h.denials.filter((d) => typeof d === 'string') : [];
+    if (list.length && !first) first = { step: str(h.step), tool: list[0] };
+    count += list.length;
+  }
+  return { count, step: first?.step ?? null, tool: first?.tool ?? null };
+}
+
 /**
  * A run state as a `runs` row, or null when it is left out: not running or
  * stopped, and not updated in the last RUN_WINDOW_MS. A run state that says
  * `running` while nobody holds its run lock is `stale`. A holder whose PID the
- * lock file does not name yet ('unknown') shows as `pid: null`.
+ * lock file does not name yet ('unknown') shows as `pid: null`. `title` is
+ * its work unit's title, from `graph` (null without one).
  */
-function runRow(config, state, now) {
+function runRow(config, graph, state, now) {
   const updated = Date.parse(state.updatedAt ?? state.startedAt ?? '');
   const open = state.status === 'running' || state.status === 'stopped';
   if (!open && !(updated >= now - RUN_WINDOW_MS)) return null;
   const pid = holderOf(runLockPath(config, state.feature));
   // The newest entry that names an agent: a round's summary entry names none.
   const session = state.history.findLast((h) => h.agent) ?? {};
+  const status = state.status === 'running' && pid == null ? 'stale' : str(state.status);
   return {
     id: state.feature,
-    status: state.status === 'running' && pid == null ? 'stale' : str(state.status),
+    title: str(graph?.get(state.feature)?.title),
+    status,
     pid: int(pid),
     step: str(state.step),
     round: int(state.round),
@@ -123,7 +243,9 @@ function runRow(config, state, now) {
     agent: str(session.agent),
     model: str(session.model),
     effort: str(session.effort),
-    history: state.history,
+    testAttempts: int(state.testAttempts),
+    timeline: runTimeline(state, status, now),
+    denied: deniedOf(state.history),
   };
 }
 
@@ -196,12 +318,20 @@ function overRunStates(states, read) {
 
 /**
  * The `runs` reader: a row for each run state that `runRow` lists, newest
- * first.
+ * first. The titles come from `loadBacklog()`, which reuses its graph while
+ * the backlog's files are unchanged; a backlog that cannot be loaded gives
+ * no titles, and the rows stay.
  * @returns {(now: number) => { rows: object[], error?: string }}
  */
 export function runsReader(config, states = runStatesReader(config)) {
   return overRunStates(states, (list, now) => {
-    const rows = list.map((state) => runRow(config, state, now)).filter(Boolean);
+    let graph = null;
+    try {
+      graph = loadBacklog(config);
+    } catch {
+      // `attention` and `next` report the backlog's error.
+    }
+    const rows = list.map((state) => runRow(config, graph, state, now)).filter(Boolean);
     rows.sort((a, b) => String(b.updatedAt ?? b.startedAt).localeCompare(String(a.updatedAt ?? a.startedAt)));
     return { rows };
   });

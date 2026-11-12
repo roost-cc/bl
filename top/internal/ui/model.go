@@ -11,6 +11,7 @@ import (
 
 	"github.com/roost-cc/bl/top/internal/notify"
 	"github.com/roost-cc/bl/top/internal/stream"
+	"github.com/roost-cc/bl/top/internal/watch"
 )
 
 // The refresh interval's bounds and step for `+` and `-`, in ms (D6). src/top.js refuses an
@@ -25,17 +26,19 @@ const (
 // with the new interval, so that a run of presses starts one stream, not one per press.
 const restartDelay = 400 * time.Millisecond
 
-// keyMap holds the keys of D6 that F-87 has. The help overlay lists them.
+// keyMap holds the keys of D6 that bl top has. The help overlay lists them.
 type keyMap struct {
-	boxes, next, prev, move, open, capacity, longer, shorter, help, quit key.Binding
+	boxes, next, prev, move, open, follow, watch, capacity, longer, shorter, help, quit key.Binding
 }
 
 var keys = keyMap{
-	boxes:    key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "hide or show a box")),
+	boxes:    key.NewBinding(key.WithKeys("1", "2", "3", "4", "5", "6"), key.WithHelp("1-6", "hide or show a box")),
 	next:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "move the focus to the next box")),
 	prev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "move the focus to the previous box")),
-	move:     key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "select a row in the box with the focus")),
-	open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "open or close the grouped update row")),
+	move:     key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "select a row; in ⁶ with follow off, scroll the feed")),
+	open:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "show the selected run in ⁶; open the update group")),
+	follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed of ⁶ on or off")),
+	watch:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "open bl watch of ⁶'s run in a tmux window")),
 	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
 	longer:   key.NewBinding(key.WithKeys("+"), key.WithHelp("+", fmt.Sprintf("refresh interval up (to %d s)", maxInterval/1000))),
 	shorter:  key.NewBinding(key.WithKeys("-"), key.WithHelp("-", fmt.Sprintf("refresh interval down (to %d ms)", minInterval))),
@@ -54,10 +57,17 @@ type Model struct {
 	blArgv        []string
 	interval      int
 	width, height int
-	hidden        [6]bool      // by box number, 1 to 5
+	hidden        [7]bool      // by box number, 1 to 6
 	focus         int          // a box number; 0 when every box is hidden
-	sel           [6]selection // by box number: the selected row of boxes 1 to 3
+	sel           [7]selection // by box number: the selected row of boxes 1 to 3
 	updatesOpen   bool         // whether box ²'s grouped update row is open
+	detail        string       // the id of the run box ⁶ shows; empty for none
+	watcher       *watch.Watch // the `bl watch` of that run, while it runs
+	watchGen      int          // the generation of the watch the model reads
+	feed          []watch.Event
+	follow        bool   // whether box ⁶'s feed shows its newest lines
+	feedBack      int    // with follow off: how many lines the feed is scrolled back
+	note          string // a red line in box ⁶ until the next key (`w needs tmux`)
 	help          bool
 	snap          *stream.Snapshot
 	stream        *stream.Stream
@@ -74,7 +84,7 @@ type Model struct {
 // bl) every interval ms. For each new note (D8) it rings the bell when bell is true, and runs each
 // sender.
 func New(blArgv []string, interval int, bell bool, senders []notify.Sender) Model {
-	return Model{blArgv: blArgv, interval: interval, focus: 1, gen: 1, bell: bell, senders: senders}
+	return Model{blArgv: blArgv, interval: interval, focus: 1, gen: 1, follow: true, bell: bell, senders: senders}
 }
 
 // Ended is why the stream ended, when it ended while bl top ran: its last stderr line.
@@ -155,6 +165,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.gen++
 			return m, m.start()
 		}
+	case watchStartedMsg, watch.EventMsg, watch.EndMsg:
+		return m.watchMsg(msg)
+	case tmuxDoneMsg:
+		m.note = msg.Err
 	}
 	return m, nil
 }
@@ -195,12 +209,14 @@ func (m Model) warnings() []string {
 func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, keys.quit) {
 		m.stop()
+		m.stopWatch()
 		return m, tea.Quit
 	}
 	if m.help {
 		m.help = false
 		return m, nil
 	}
+	m.note = ""
 	switch {
 	case key.Matches(msg, keys.boxes):
 		n := int(msg.String()[0] - '0')
@@ -217,14 +233,26 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == "up" {
 			dir = -1
 		}
-		m.move(dir)
+		if m.focus == 6 {
+			m.scroll(dir)
+		} else {
+			m.move(dir)
+		}
 	case key.Matches(msg, keys.open):
 		if m.focus == 2 && m.snap != nil {
 			if i := m.selected(2); i >= 0 && m.attentionRows()[i].item == nil {
 				m.updatesOpen = !m.updatesOpen
 				m.keepSelection()
+				return m, nil
 			}
 		}
+		if id := m.selectedUnit(m.focus); id != "" && m.run(id) != nil {
+			return m.showRun(id)
+		}
+	case key.Matches(msg, keys.follow):
+		m.toggleFollow()
+	case key.Matches(msg, keys.watch):
+		return m.openWatch()
 	case key.Matches(msg, keys.capacity):
 		if s := m.stream; s != nil {
 			return m, func() tea.Msg {
@@ -276,13 +304,18 @@ func (m Model) View() tea.View {
 
 // helpBox draws the help overlay: each key of keyMap and what it does.
 func helpBox() []string {
-	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
+	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.follow, keys.watch, keys.capacity,
+		keys.longer, keys.shorter, keys.help, keys.quit}
 	lines := []string{""}
 	for _, b := range bindings {
 		lines = append(lines, fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc)))
 	}
 	lines = append(lines, "", styleText.Render("  any key closes this help"))
-	return drawBox(0, "help", nil, true, lines, 52, len(lines)+2)
+	w := 52
+	for _, l := range lines {
+		w = max(w, lipgloss.Width(l)+3)
+	}
+	return drawBox(0, "help", nil, true, lines, w, len(lines)+2)
 }
 
 // overlay draws box over the middle of lines.

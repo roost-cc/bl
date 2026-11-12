@@ -40,22 +40,46 @@ type Runs struct {
 
 // Run is one run state. Its times are ISO strings, as the run state holds them.
 type Run struct {
-	ID           string `json:"id"`
-	Status       string `json:"status"`
-	PID          int    `json:"pid"`
-	Step         string `json:"step"`
-	Round        int    `json:"round"`
-	MaxRounds    int    `json:"maxRounds"`
-	Story        string `json:"story"`
-	StartedAt    string `json:"startedAt"`
-	UpdatedAt    string `json:"updatedAt"`
-	PR           *PR    `json:"pr"`
-	Usage        Usage  `json:"usage"`
-	Branch       string `json:"branch"`
-	WorktreePath string `json:"worktreePath"`
-	Agent        string `json:"agent"`
-	Model        string `json:"model"`
-	Effort       string `json:"effort"`
+	ID           string  `json:"id"`
+	Status       string  `json:"status"`
+	PID          int     `json:"pid"`
+	Step         string  `json:"step"`
+	Round        int     `json:"round"`
+	MaxRounds    int     `json:"maxRounds"`
+	Story        string  `json:"story"`
+	StartedAt    string  `json:"startedAt"`
+	UpdatedAt    string  `json:"updatedAt"`
+	PR           *PR     `json:"pr"`
+	Usage        Usage   `json:"usage"`
+	Branch       string  `json:"branch"`
+	WorktreePath string  `json:"worktreePath"`
+	Agent        string  `json:"agent"`
+	Model        string  `json:"model"`
+	Effort       string  `json:"effort"`
+	Title        string  `json:"title"`
+	TestAttempts int     `json:"testAttempts"`
+	Timeline     []Stage `json:"timeline"`
+	Denied       Denied  `json:"denied"`
+}
+
+// Stage is one stage of a run's step timeline (box ⁶, S-1334): `runTimeline` in
+// src/top-snapshot.js builds it from the run state's history. State is `done`, `current` or
+// `pending`; DurationMs is nil when a time is missing; Tests counts its test-gate entries; Usage is
+// nil when no session of it reported usage.
+type Stage struct {
+	Step       string `json:"step"`
+	Round      int    `json:"round"`
+	State      string `json:"state"`
+	DurationMs *int64 `json:"durationMs"`
+	Tests      int    `json:"tests"`
+	Usage      *Usage `json:"usage"`
+}
+
+// Denied is a run's denied tools: how many, and the step and tool of the first.
+type Denied struct {
+	Count int    `json:"count"`
+	Step  string `json:"step"`
+	Tool  string `json:"tool"`
 }
 
 // Ended says whether a run status is the end of a run: every status but `running`, `stale` and

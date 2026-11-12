@@ -26,7 +26,7 @@ type box struct {
 	draw     func(m Model, w, h int) []string
 }
 
-// boxes are D4's boxes by number. Box ⁶ (detail) is F-88's, and has no entry until then.
+// boxes are D4's boxes by number. Box ⁶'s option is the id of the run it shows (boxLines).
 var boxes = map[int]box{
 	1: {name: "runs", sections: []string{"runs"}, draw: Model.drawRuns},
 	2: {name: "attention", sections: []string{"attention"}, draw: Model.drawAttention},
@@ -37,6 +37,7 @@ var boxes = map[int]box{
 	5: {name: "activity", sections: []string{"activity", "history"}, option: "30d", draw: func(m Model, w, h int) []string {
 		return drawActivity(m.snap, w, h)
 	}},
+	6: {name: "detail", sections: []string{"runs"}, draw: Model.drawDetail},
 }
 
 // node is a box (box > 0), or a split of nodes side by side (across) or stacked. Each node takes
@@ -49,19 +50,19 @@ type node struct {
 	children []node
 }
 
-// fullLayout is Mockup A without box ⁶: the weights are the mockup's widths and heights at 171×63.
+// fullLayout is Mockup A: the weights are the mockup's widths and heights at 171×63.
 var fullLayout = node{across: true, children: []node{
-	{weight: 106, children: []node{{box: 1, weight: 13}, {box: 3, weight: 26}}},
+	{weight: 106, children: []node{{box: 1, weight: 13}, {box: 6, weight: 24}, {box: 3, weight: 26}}},
 	{weight: 65, children: []node{{box: 2, weight: 13}, {box: 4, weight: 24}, {box: 5, weight: 26}}},
 }}
 
-// stackedLayout is Mockup B without box ⁶: the weights are the mockup's heights and widths at
-// 100×40.
+// stackedLayout is Mockup B: the weights are the mockup's heights and widths at 100×40.
 var stackedLayout = node{children: []node{
 	{box: 1, weight: 7},
 	{box: 2, weight: 9},
 	{box: 3, weight: 8},
 	{weight: 9, across: true, children: []node{{box: 4, weight: 48}, {box: 5, weight: 52}}},
+	{box: 6, weight: 7},
 }}
 
 // shown reports whether n holds a box that is not hidden.
@@ -147,6 +148,9 @@ func (m Model) boxLines(num, w, h int) []string {
 	}
 	if b.option != "" {
 		options = append(options, styleText.Render(b.option))
+	}
+	if num == 6 && m.detail != "" {
+		options = append(options, styleText.Render(m.detail))
 	}
 	var content []string
 	if m.snap != nil && b.draw != nil {

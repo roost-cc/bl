@@ -1582,7 +1582,10 @@ sessions of one key add up.
   (the four kinds, as numbers) on the history entry it records in
   `.bl/run/<id>.json`, when the result has usage. An entry written before
   F-87, or for a session with no usage, has no `usage` key and counts 0.
-  `bl top`'s `tokens` section reads it.
+  `bl top`'s `tokens` section reads it. The entry of a session with denied
+  tools also lists them in `denials` (strings, as its note's `denied:` part),
+  for `bl top`'s detail box (F-88 S-1334); an entry written before S-1334 has
+  none.
 - A session with no usage writes no entry; a `bl` killed mid-session records
   nothing for it, so the map may sum to less than the totals, never more.
   The writers read CRLF files and leave a file with no `---` block alone.
@@ -3239,8 +3242,9 @@ refused, `unknown` otherwise; the message names the URL.
 
 ### `bl top`
 
-`bl top` is a live view of bl (F-87): the runs, what waits on the operator, what `bl next`
-picks, token use and agent capacity, the stories done per day, and the newest run events. It has two halves. The JSON half,
+`bl top` is a live view of bl (F-87, F-88): the runs, what waits on the operator, what `bl next`
+picks, token use and agent capacity, the stories done per day, the newest run events, and the
+selected run's step timeline and live agent feed. It has two halves. The JSON half,
 `--json` and `--stream` (`src/top.js`), reads the backlog. The view, a terminal UI in Go
 (`top/`), draws the stream's snapshots and never reads a backlog file.
 
@@ -3272,8 +3276,9 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   snapshot kills that group and ends the stream. When the stream ends, the view exits 1 with
   `bl top: the snapshot stream ended: <its last stderr line>`.
 - **Boxes and layout** (D4, `top/internal/ui/layout.go`). Box ¹ runs, ² attention, ³ next,
-  ⁴ tokens (sections `tokens` and `capacity`) and ⁵ activity (sections `activity` and
-  `history`). Each box's drawer is in the `boxes` table. Box ⁶ comes with F-88. At
+  ⁴ tokens (sections `tokens` and `capacity`), ⁵ activity (sections `activity` and
+  `history`) and ⁶ detail (section `runs`, and `bl watch`). Each box's drawer is in the `boxes`
+  table. At
   171×50 or larger the view draws the two columns of Mockup A; from 80×24 up to that it stacks
   the boxes as in Mockup B; below 80×24 it prints `bl top needs at least 80x24`. Each node of a
   layout takes its weight's share of its parent; a hidden box's share goes to the boxes left in
@@ -3322,11 +3327,43 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `activity` events, newest first, as many as fit: local time, work unit, step with its story or
   round, `✓` or `✗` and the duration, then the agent, model and effort, or the note for a failed
   session or an event with no agent.
+- **Box ⁶ detail** (`detail.go`, F-88 S-1334). `↵` on a run row in ¹, or on a row of ² or ³
+  whose unit (an item's `unit`, a ranked unit's id) has a `runs` row, makes ⁶ show that run; its
+  id is in the box's top border. With no run shown, ⁶ says `select a run (↑↓ in ¹, then ↵)`.
+  From an inner height of 12 (Mockup A): the run's id and title; its branch, lead worktree,
+  pull request and local start time; the `timeline` as columns, `✓` done with its duration
+  (and `(n att.)` for two or more test entries), `●` current with its elapsed time, `·` not
+  started, over a bar; the denied tools (the count, and the step and tool of the first), the
+  run's test attempts, and the tokens of the current stage's ended sessions (else the last done
+  stage's). Below 12 (Mockup B): one line with the id, story and step, elapsed time and agent,
+  and the timeline on one line. Then the live feed, and the keys on the last line.
+- **The feed** (`top/internal/watch`). Showing a run starts `bl watch <id> --json` (through
+  `--bl-argv`) in a process group of its own; the view stops it (SIGTERM to the group) when
+  another run is shown or the view quits, and drops the messages of a watch it replaced. Each
+  line is a feed line, cut to the box:
+
+  | `bl watch --json` line | Feed line                                                       |
+  | ---------------------- | --------------------------------------------------------------- |
+  | `step`                 | `── live: <step> [<story>] · <agent> <model> · session <id> ──` |
+  | `text`                 | `<local time>  say   <text>`, on one line                       |
+  | `tool`                 | `<local time>  tool  <tool>  <summary>`, on one line            |
+  | `end`                  | `── run ended: <status> ──`                                     |
+
+  A stderr line of `bl watch`, and why it failed when it exits other than 0, show dim. The
+  feed keeps its newest 1000 lines. With follow on (the default) it shows its newest lines; with
+  follow off, `↑` and `↓` in ⁶ scroll it, and a new line leaves the lines on screen where they
+  are.
+
 - Below an inner height of 12 lines, boxes ⁴ and ⁵ leave out their axis and blank lines (Mockup
   B).
-- **Keys** (D6, `top/internal/ui/model.go`): `1`–`5` hide or show a box; `tab` and `⇧tab` move
-  the focus to the next or previous shown box; `↑` and `↓` select a row; `↵` opens or closes
-  the grouped update row; `c` writes `capacity` to the stream's stdin, so
+- **Keys** (D6, `top/internal/ui/model.go`): `1`–`6` hide or show a box; `tab` and `⇧tab` move
+  the focus to the next or previous shown box; `↑` and `↓` select a row, and in ⁶ with follow
+  off scroll the feed; `↵` shows the selected row's run in ⁶, or on the grouped update row opens
+  or closes it; `f` turns follow on or off; `w` opens `bl watch <id>` of ⁶'s run in a new tmux
+  window, in bl top's directory, named `<id> watch` (D7's `tmux new-window`, then
+  `exec ${SHELL:-sh}`, so the window stays open after `bl watch` exits), and outside tmux
+  (`$TMUX` unset) says `w needs tmux` in ⁶ until the next key; `c` writes `capacity` to the
+  stream's stdin, so
   the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
   help, and any key closes it; `q` or `ctrl+c` quits.
@@ -3370,8 +3407,11 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
   exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
   `testdata/snapshot.json` (Mockup A's data) in a fixed zone (UTC−5), without colors, with a row
-  selected in boxes ¹ to ³;
-  `go test ./internal/ui -update` writes them again.
+  selected in boxes ¹ to ³, and the same screen with S-1330 shown in box ⁶ and the recorded
+  `bl watch --json` lines of the S-1272 fixtures (`top/internal/watch/testdata/watch.jsonl`) as
+  its feed (`detail-*.golden`);
+  `go test ./internal/ui -update` writes them again. `top/internal/watch`'s tests run a fake
+  `bl` that prints those lines.
   `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
   then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
   and `--no-push`.
@@ -3385,19 +3425,36 @@ read. A section whose read throws keeps its last good value and carries `error`,
 the next good read drops `error`. Each section comes from bl's own reader, in the same process
 (`src/top-snapshot.js`), so nothing else parses a backlog file:
 
-| Section     | Holds                                                                                                                                                                                                                                                                                                    | Read (`--stream`)                                        |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), and `agent`, `model`, `effort` of its newest session entry                                                          | every snapshot                                           |
-| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                    | when the backlog changes, and at least every 30 s        |
-| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                     | as `attention`                                           |
-| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                   | every 5 min, and at the snapshot after a `capacity` line |
-| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                    | every 5 min                                              |
-| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                              | every snapshot                                           |
-| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date | every snapshot                                           |
+| Section     | Holds                                                                                                                                                                                                                                                                                                              | Read (`--stream`)                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), `agent`, `model`, `effort` of its newest session entry, `title` (its unit's), `testAttempts`, `timeline` and `denied` (below) | every snapshot                                           |
+| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                              | when the backlog changes, and at least every 30 s        |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                               | as `attention`                                           |
+| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                             | every 5 min, and at the snapshot after a `capacity` line |
+| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                              | every 5 min                                              |
+| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                                        | every snapshot                                           |
+| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date           | every snapshot                                           |
 
 - `activity` and `tokens` read the run states' history entries (F-87 D3b, D3c). A session that
   is still running counts only when it ends: its run state holds no usage until then. The
   `runs`, `activity` and `tokens` readers share one parse cache (`runStatesReader`).
+- A `runs` row carries no `history` (F-88 S-1334); box ⁶ reads what it needs from it:
+  - `timeline` (`runTimeline`): the stages of `planSteps()` (`src/feature-run.js`): setup,
+    one implement stage for all stories, `fix-tests` (with the test gate), self-review, then
+    `review` and `fix` (with its self-review) of each round, and `closing`. Each is
+    `{ step, round, state, durationMs, tests, usage }`. The history entries go to stages in
+    order: a review pass to the round after the last `review:round` entry, a fix to that
+    entry's round. A stage never goes back, so an entry of an earlier stage (the test gate after
+    a fix, the setup of `--resume`) goes to the latest stage so far; an entry outside the
+    timeline (`pr`, hygiene) is left out. A stage with an entry is `done`; the stage of the
+    run's `step` is `current` while the row is `running`; any other is `pending`. A stage lasts
+    from the end of the stage before it (the run's start for the first) to its last entry, or
+    to the snapshot while current. `tests` counts its `test` entries; `usage` sums its entries'
+    usage, or is null.
+  - `denied` (`deniedOf`): `{ count, step, tool }`, the denied tools of the history entries'
+    `denials`, and the step and tool of the first.
+  - `title` comes from `loadBacklog()`, which reuses its graph while the backlog's files are
+    unchanged; null for a unit the backlog does not hold, or when it cannot be loaded.
 - Each run state is read on its own. A file that cannot be read (not JSON, not a run state, or
   gone since the listing; a read can race `saveRunState`, which truncates the file first) keeps
   its last good parse, or is left out when it has none, and `runs`, `activity` and `tokens`

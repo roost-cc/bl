@@ -953,6 +953,8 @@ test('a fix self-review with permission denials but a good result continues to t
     );
     const ev = state.history.find((h) => h.step === 'fix-self-review');
     assert.match(ev.note, /denied: Bash\(cd \/wt && rg foo\); Bash\(cp a \/tmp\/a\)/, 'still visible in the history');
+    // As a list too, for bl top's detail box (S-1334).
+    assert.deepEqual(ev.denials, ['Bash(cd /wt && rg foo)', 'Bash(cp a /tmp/a)']);
   } finally {
     cleanup();
   }

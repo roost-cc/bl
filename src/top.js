@@ -47,14 +47,19 @@ const HELP = `Usage: bl top [--interval <ms>] [--no-bell] [--no-desktop] [--no-p
        bl top --stream [--interval <ms>]
 
 A live view of bl: the runs, what waits on you, what bl next picks, agent
-capacity and the stories done per day.
+capacity, the stories done per day, and the selected run's step timeline and
+live agent feed.
 
 With no --json or --stream, bl top runs the view, a terminal UI in btop's
 style. It builds the view with go build (top/ in bl) when top/bin/bl-top is
-missing or older than a file under top/; that build needs Go. Keys: 1-5 hide
+missing or older than a file under top/; that build needs Go. Keys: 1-6 hide
 or show a box, tab and shift+tab move the focus, up and down select a row,
-enter opens or closes the grouped update row, c reads capacity now, + and -
-change the refresh interval, h shows the help, q quits.
+enter shows the selected run in box 6 (from the runs box, or an attention or
+next row whose unit has a run) or opens or closes the grouped update row, f
+turns follow of box 6's feed on or off (with follow off, up and down in box 6
+scroll it), w opens bl watch <id> of box 6's run in a new tmux window, c reads
+capacity now, + and - change the refresh interval, h shows the help, q quits.
+Box 6 follows the run's agent session through bl watch <id> --json.
 
 The view notifies for a new escalation, a new task, and a run that ends
 (clean, no-change, reviewed, escalated, failed or stopped: every status but
@@ -87,7 +92,8 @@ section carries read_at (an ISO time), and error when its last read failed;
 it then keeps its last good value.
   runs        each run state that is running or stopped, or was updated in
               the last 24 h; status "stale" when it says running and its
-              run lock has no live holder (every snapshot)
+              run lock has no live holder; its unit's title, its step
+              timeline and its denied tools (every snapshot)
   attention   bl inbox's items, in its order (when the backlog changes, and
               at least every ${s(ATTENTION_MAX_AGE_MS)})
   next        bl next's pick and the first ${NEXT_SHOWN} ranked units with status,

@@ -3,18 +3,15 @@
 │ F-81    ● run   implement       S-1277  -      1h02m    412k     -                               │
 │ S-1330  ● run   review          -       1/2    38m      109k     bl#15                           │
 │ F-85    ✓ done  merged          -       2/2    5h14m    257k     bl#14                           │
-│ F-83    ✗ esc   closing-review  -       2/2    2h05m    151k     bl#12                           │
 │ 2 running · 0 stopped · 1 stale · done today (UTC): 1 stories, 10 points                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─┐²attention┌─────────────────────────────────────────────────────────────────────────────────────╮
 │ Kind  Id            For     Line                                                                 │
-│ RUN   updates:run   updates no update run since 14:02 (9 h)                                      │
 │ ESC   F-83:esc      F-83    round cap: 2 open review items                                       │
 │ TASK  T-52          F-81    Renovate image: 8 advisories                                         │
 │ TASK  T-2           F-54    re-mint the Apple sign-in key                                        │
 │ CHG   F-81:change   F-81    4 repos · 11 commits · not merged                                    │
 │ CHG   S-1330:change S-1330  bl · 3 commits · not merged                                          │
-│ UPD   3 red updates                                                                        ↵ open│
 │ next: bl run S-1330                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─┐³next┌────────────────────────────────────────────────────────────────────────────────┐bl next┌─╮
@@ -23,18 +20,21 @@
 │   4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the gue…│
 │   5   F-80   refined    13  F-84     Dependency updates are one job: Renovate applies, the gate …│
 │   6   F-86   draft       -           AGENTS.md in plain English: rewrite bl's reference in about…│
-│   7   F-16   draft       -           Inspection quick condition assessment                       │
-│   8   F-13   draft       -           Maintenance requests                                        │
 │ bl next → F-81 (running) · 185 work units not ranked                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─┐⁴tokens┌───────────────────────────────┐2h┌─╮╭─┐⁵activity┌────────────────────────────────┐30d┌─╮
 │ out tok / min · ended sessions     peak 8.7k ││ points done / UTC day · 30 days   last 7 days 41 │
-│          ⢀  ⡀ ⢀                    ⢠⣶⣇⣶⣇⣴⡆   ││            ⢀⣀         ⢸⣿             ⣀⡀          │
-│        ⢠⣶⣿⣴⣾⣧⣴⣿⣴⡇     ⣀⡄⢀⣠⡄⡀       ⣿⣿⣿⣿⣿⣿⡇   ││   ⣀⣠⣤⣶⣆⣀   ⢸⣿⣤⣄⣀   ⢀⣀⣶⣾⣿⣤⣤ ⢀⣀⣀⡀   ⣤⣴⣶⣿⣇⣀  ⣀⣠⣤⣶⣾⣿ │
-│ ⢀⡀⡄⡀   ⢸⣿⣿⣿⣿⣿⣿⣿⣿⡇     ⣿⣿⣿⣿⣿⡇       ⣿⣿⣿⣿⣿⣿⡇   ││ 18:16  F-81    implement S-1310  ✓ 3m    claude …│
-│ claude   unknown: claude cannot report capac…││ 18:12  F-81    implement S-1277  ✓ 27m   claude …│
-│ codex 5h ■■■■■■■■■■■■■■■■■■■·····  80% 19:52 ││ 18:05  S-1330  review:verify     ✓ 9m    codex g…│
-│ codex 7d ■■■····················  13% Nov 12 ││ 18:01  S-1330  review:round r1   ✓       round 1…│
-│ today  in 1.2M · out 640k · cache r 51M · w …││ 17:56  S-1330  fix-tests         ✓ 6m    claude …│
-│ capacity read 18:14 · c reads it now         ││ 17:50  S-1330  self-review       ✓ 4m    claude …│
-╰┘↑↓ select└┘tab box└┘+- interval└┘h help└┘q quit└─────────────────────────────────────────────────╯
+│ ⢀⡀⡀⡀   ⢠⣤⣶⣤⣴⣦⣤⣶⣤⡆     ⣤⣄⣠⣤⣄⡄       ⣶⣿⣷⣿⣷⣾⡇   ││            ⢀⣀         ⢸⣿             ⣀⡀          │
+│ claude   unknown: claude cannot report capac…││   ⣀⣠⣤⣶⣆⣀   ⢸⣿⣤⣄⣀   ⢀⣀⣶⣾⣿⣤⣤ ⢀⣀⣀⡀   ⣤⣴⣶⣿⣇⣀  ⣀⣠⣤⣶⣾⣿ │
+│ codex 5h ■■■■■■■■■■■■■■■■■■■·····  80% 19:52 ││ 18:16  F-81    implement S-1310  ✓ 3m    claude …│
+│ codex 7d ■■■····················  13% Nov 12 ││ 18:12  F-81    implement S-1277  ✓ 27m   claude …│
+│ today  in 1.2M · out 640k · cache r 51M · w …││ 18:05  S-1330  review:verify     ✓ 9m    codex g…│
+│ capacity read 18:14 · c reads it now         ││ 18:01  S-1330  review:round r1   ✓       round 1…│
+╰──────────────────────────────────────────────╯╰──────────────────────────────────────────────────╯
+╭─┐⁶detail┌────────────────────────────────────────────────────────────────────────────────────────╮
+│ select a run (↑↓ in ¹, then ↵)                                                                   │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰┘↑↓ select└┘tab box└┘↵ detail└┘+- interval└┘h help└┘q quit└───────────────────────────────────────╯
