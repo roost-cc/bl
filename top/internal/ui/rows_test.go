@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -199,6 +200,10 @@ func TestNextBoxShowsRankedUnitsAndThePick(t *testing.T) {
 		"  3   F-81   running    21           Every repo's pre-push gate runs the tests that prove a change, an…│",
 		"  4   F-84   approved    8  F-81     Every repo's gate passes in a throwaway worktree on the guest",
 		"  6   F-86   draft       -           AGENTS.md in plain English",
+		"  8   F-13   draft       -           Maintenance requests",
+		"── not ranked · oldest first ───",
+		"      S-1400 backlog     2           Loose story, the oldest",
+		"      F-99   draft       -           Feature, the newest",
 		"bl next → F-81 (running)",
 	} {
 		if !strings.Contains(out, want) {
@@ -216,5 +221,173 @@ func TestNextBoxShowsRankedUnitsAndThePick(t *testing.T) {
 	}
 	if got := pickLine(stream.Next{}); got != "bl next → nothing can run" {
 		t.Errorf("pickLine with no pick = %q", got)
+	}
+}
+
+// units are open units with these ids, ranked 1, 2, 3 when ranked is true, else unranked.
+func units(ranked bool, ids ...string) []stream.Unit {
+	var out []stream.Unit
+	for i, id := range ids {
+		u := stream.Unit{ID: id, Status: "draft", Title: "title of " + id}
+		if ranked {
+			u.Position = i + 1
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
+// withNext is the recorded snapshot with its `next` section's orders and conflict replaced.
+func withNext(t *testing.T, committed stream.Order, staged *stream.Order, conflict string) stream.SnapshotMsg {
+	t.Helper()
+	msg := snapshot(t)
+	msg.Snapshot.Next.Order, msg.Snapshot.Next.Staged, msg.Snapshot.Next.Conflict = committed, staged, conflict
+	return msg
+}
+
+func TestNextBoxScrollsPastItsHeightAndSkipsTheDivider(t *testing.T) {
+	var ranked, unranked []string
+	for i := range 12 {
+		ranked = append(ranked, fmt.Sprintf("F-%d", 100+i))
+		unranked = append(unranked, fmt.Sprintf("S-%d", 200+i))
+	}
+	msg := withNext(t, stream.Order{Ranked: units(true, ranked...), Unranked: units(false, unranked...)}, nil, "")
+	// At 100x40 box ³ holds a few rows only.
+	m, _ := update(t, sized(t, 100, 40), msg)
+	m, _ = press(t, m, tab, tab)
+	for range 11 {
+		m, _ = press(t, m, down)
+	}
+	if m.sel[3].id != "F-111" {
+		t.Fatalf("after 11 ↓: %+v", m.sel[3])
+	}
+	// The next ↓ passes over the divider to the first unranked unit, which the box scrolls to.
+	m, _ = press(t, m, down)
+	out := screen(t, m)
+	if m.sel[3].id != "S-200" || !strings.Contains(out, "S-200") || !strings.Contains(out, "── not ranked · oldest first") ||
+		strings.Contains(out, "F-100") {
+		t.Errorf("↓ past the last ranked row: %+v\n%s", m.sel[3], out)
+	}
+	for range 20 {
+		m, _ = press(t, m, down)
+	}
+	if out := screen(t, m); m.sel[3].id != "S-211" || !strings.Contains(out, "S-211") {
+		t.Errorf("↓ to the end: %+v\n%s", m.sel[3], out)
+	}
+	m, _ = press(t, m, up)
+	if m.sel[3].id != "S-210" {
+		t.Errorf("↑ from the end: %+v", m.sel[3])
+	}
+}
+
+func TestNextBoxShowsTheCommittedOrderWithoutFocusAndTheStagedWithIt(t *testing.T) {
+	committed := stream.Order{Ranked: units(true, "F-1", "F-2", "F-3"), Unranked: units(false, "S-9")}
+	staged := stream.Order{Ranked: units(true, "S-9", "F-3", "F-1"), Unranked: units(false, "F-2")}
+	for i, mark := range []string{"+", "~", ""} {
+		staged.Ranked[i].Mark = mark
+	}
+	staged.Unranked[0].Mark = "-"
+	m, _ := update(t, sized(t, 171, 63), withNext(t, committed, &staged, ""))
+	out := screen(t, m)
+	for _, want := range []string{
+		"³next · staged edits┌",
+		"│ Rank  Id     Status    Pts  Held by  Title",
+		"│   1   F-1    draft       -           title of F-1",
+		"│       S-9    draft       -           title of S-9",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("box ³ without the focus has no %q:\n%s", want, out)
+		}
+	}
+	m, _ = press(t, m, tab, tab)
+	out = screen(t, m)
+	for _, want := range []string{
+		"³next · staged edits┌",
+		"│   Rank  Id     Status    Pts  Held by  Title",
+		"│ +   1   S-9    draft       -           title of S-9",
+		"│ ~   2   F-3    draft       -           title of F-3",
+		"│     3   F-1    draft       -           title of F-1",
+		"│ -       F-2    draft       -           title of F-2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("box ³ with the focus has no %q:\n%s", want, out)
+		}
+	}
+	// The selection kept its unit, F-1, which has no marker: a selected row's marker would carry the
+	// surface0 background too.
+	if m.sel[3].id != "F-1" {
+		t.Errorf("the focus moved the selection off F-1: %+v", m.sel[3])
+	}
+	for mark, color := range map[string]string{"+": sgr(colorGreen), "~": sgr(colorPeach), "-": sgr(colorRed)} {
+		if l := lineWith(t, m, "│ "+mark+"   "); !strings.Contains(l, color+mark) {
+			t.Errorf("the %s marker is not %s: %q", mark, color, l)
+		}
+	}
+	// With no staged copy, the title has no staged edits and the rows no marker column.
+	m, _ = update(t, m, withNext(t, committed, nil, ""))
+	if out := screen(t, m); strings.Contains(out, "staged edits") || !strings.Contains(out, "│   1   F-1    draft") {
+		t.Errorf("no staged copy:\n%s", out)
+	}
+}
+
+func TestDTogglesTheUnrankedOrderInBothViews(t *testing.T) {
+	committed := stream.Order{Ranked: units(true, "F-1"), Unranked: units(false, "S-1", "S-2", "S-3")}
+	staged := stream.Order{Ranked: units(true, "F-1", "S-1"), Unranked: units(false, "S-2", "S-3")}
+	m, _ := update(t, sized(t, 171, 63), withNext(t, committed, &staged, ""))
+	// first is the first unranked unit box ³ draws: the id on the line after the divider.
+	first := func(m Model, order string) string {
+		t.Helper()
+		lines := strings.Split(screen(t, m), "\n")
+		for i, l := range lines {
+			if j := strings.Index(l, "── not ranked · "+order); j >= 0 {
+				return strings.Fields(lines[i+1][j:])[0]
+			}
+		}
+		t.Fatalf("no divider says %q:\n%s", order, strings.Join(lines, "\n"))
+		return ""
+	}
+	if got := first(m, "oldest first"); got != "S-1" {
+		t.Errorf("bl top starts oldest first: %s", got)
+	}
+	// d outside box ³ does nothing.
+	m, _ = press(t, m, text("d"))
+	if m.newestFirst {
+		t.Error("d in box ¹ toggled the order")
+	}
+	m, _ = press(t, m, tab, tab, text("d"))
+	if got := first(m, "newest first"); got != "S-3" {
+		t.Errorf("staged view, newest first: %s", got)
+	}
+	// The committed view takes the same order.
+	m, _ = press(t, m, tab)
+	if got := first(m, "newest first"); got != "S-3" {
+		t.Errorf("committed view, newest first: %s", got)
+	}
+	m, _ = press(t, m, shiftTab, text("d"))
+	if got := first(m, "oldest first"); got != "S-2" {
+		t.Errorf("staged view, oldest first again: %s", got)
+	}
+}
+
+func TestAConflictIsARedLineAboveTheBoxes(t *testing.T) {
+	const conflict = "merge conflict in .bl/priority.staged.yaml: edit it, then bl rank --commit; or bl rank --reset"
+	msg := withNext(t, stream.Order{Ranked: units(true, "F-1")}, nil, conflict)
+	for _, hide := range []bool{false, true} {
+		m, _ := update(t, sized(t, 171, 63), msg)
+		if hide {
+			m, _ = press(t, m, text("3"))
+		}
+		lines := strings.Split(screen(t, m), "\n")
+		if lines[0] != fit(" ! "+conflict, 171) || !strings.HasPrefix(lines[1], "╭─┐¹runs┌") {
+			t.Errorf("box ³ hidden %v: %q / %q", hide, lines[0], lines[1])
+		}
+		if raw := strings.Split(m.render(), "\n")[0]; !strings.Contains(raw, sgr(colorRed)) {
+			t.Errorf("the conflict line is not red: %q", raw)
+		}
+	}
+	// Without a conflict, the boxes start on the first line.
+	m, _ := update(t, sized(t, 171, 63), withNext(t, stream.Order{}, nil, ""))
+	if lines := strings.Split(screen(t, m), "\n"); !strings.HasPrefix(lines[0], "╭─┐¹runs┌") {
+		t.Errorf("no conflict: %q", lines[0])
 	}
 }

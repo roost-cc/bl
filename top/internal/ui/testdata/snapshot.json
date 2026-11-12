@@ -1006,7 +1006,28 @@
         ]
       }
     ],
-    "unranked": [],
+    "unranked": [
+      {
+        "position": null,
+        "id": "S-1400",
+        "title": "Loose story, the oldest",
+        "status": "backlog",
+        "points": 2,
+        "holds": [],
+        "heldBy": [],
+        "actions": []
+      },
+      {
+        "position": null,
+        "id": "F-99",
+        "title": "Feature, the newest",
+        "status": "draft",
+        "points": 0,
+        "holds": [],
+        "heldBy": [],
+        "actions": []
+      }
+    ],
     "staged": null,
     "conflict": null
   },

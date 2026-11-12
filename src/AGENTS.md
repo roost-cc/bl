@@ -3307,13 +3307,23 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   red, `TASK` yellow, `CHG` blue, `UPD` peach), id, unit and line. The last line is
   `next: <the selected item's next>`. In the stacked layout two or more update items fold into
   one row, `UPD   <n> red updates`; `↵` on it opens the group (the items follow it) or closes it.
-- **Box ³ next** (`next.go`). The `next` section's ranked units: rank, id, status, points (`-`
-  for none), held by (`heldBy`) and title. The line under them is the pick, the ranked unit it
+- **Box ³ next** (`next.go`, F-113 D4, D5). Every ranked unit, a divider line, then every
+  unranked unit: rank (none for an unranked unit), id, status, points (`-` for none), held by
+  (`heldBy`) and title. The divider names the unranked units' order, `not ranked · oldest first`
+  (the snapshot's order, by `added:`) or `not ranked · newest first` after `d`. Without the
+  focus the box shows the committed order (`ranked`, `unranked`). With the focus and a staged
+  copy (`staged` set), it shows the staged order with a marker column before the rank: `+` (green)
+  newly ranked, `~` (peach) moved, `-` (red) taken out of the ranked list. While `staged` is set,
+  the box's name is `next · staged edits`. The line under the list is the pick, the ranked unit it
   unblocks when that is another.
+- **Conflict line** (`layout.go`, F-113 Decision A3). While the `next` section's `conflict` is
+  set, the screen's first line is `! <conflict>` in red across the full width, also when box ³ is
+  hidden, and the boxes take the lines under it.
 - **Selection** (`selection.go`). Each of boxes ¹ to ³ has a selected row, kept by its id: after
   a new snapshot the same row stays selected while its id is there, else the row at its place.
   `↑` and `↓` move the selection of the box with the focus, and the box scrolls to keep it on
-  screen. The selected row has the surface0 background. A cell that does not fit is cut with `…`.
+  screen. Box ³'s divider is no row: `↑` and `↓` pass over it. The selected row has the surface0
+  background. A cell that does not fit is cut with `…`.
 - **Box ⁴ tokens** (`tokens.go`). The graph of output tokens per minute over 2 h, labelled
   `ended sessions` (D3b), with its peak and an axis of the local half hours and `now`. Then
   one meter per quota window of `bl capacity`, with the percent left and the reset (local
@@ -3327,7 +3337,7 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   round, `✓` or `✗` and the duration, then the agent, model and effort, or the note for a failed
   session or an event with no agent.
 - **Box ⁶ detail** (`detail.go`, F-88 S-1334). `↵` on a run row in ¹, or on a row of ² or ³
-  whose unit (an item's `unit`, a ranked unit's id) has a `runs` row, makes ⁶ show that run; its
+  whose unit (an item's `unit`, a unit's id in ³) has a `runs` row, makes ⁶ show that run; its
   id is in the box's top border. With no run shown, ⁶ says `select a run (↑↓ in ¹, then ↵)`.
   From an inner height of 12 (Mockup A): the run's id and title; its branch, lead worktree,
   pull request and local start time; the `timeline` as columns, `✓` done with its duration
@@ -3367,7 +3377,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `exec ${SHELL:-sh}`, so the window stays open after `bl watch` exits), and outside tmux
   (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
   opens the action menu of the selected row, and `r`, `s`, `o`, `p` and `g` pick its action
-  with that key (below); `c` writes `capacity` to the
+  with that key (below); `d` in ³ shows the unranked units newest or oldest first (`bl top`
+  starts oldest first, and the choice lasts until it exits); `c` writes `capacity` to the
   stream's stdin, so
   the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the

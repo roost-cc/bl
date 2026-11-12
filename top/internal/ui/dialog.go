@@ -77,7 +77,7 @@ func (m Model) target() (id, line string, list []stream.Action, ok bool) {
 			return it.ID, strings.Join([]string{it.ID, it.Unit, it.Line}, " · "), it.Actions, true
 		}
 	case 3:
-		r := m.snap.Next.Ranked[i]
+		r := m.nextUnits()[i]
 		return r.ID, strings.Join([]string{r.ID, r.Status, r.Title}, " · "), r.Actions, true
 	}
 	return "", "", nil, false

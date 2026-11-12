@@ -40,7 +40,7 @@ type watchStartedMsg struct{ w *watch.Watch }
 type tmuxDoneMsg struct{ Err string }
 
 // selectedUnit is the work unit of the selected row of box num: the run's id in ¹, the item's
-// unit in ², the ranked unit in ³; empty when the box has no selected row.
+// unit in ², the unit in ³; empty when the box has no selected row.
 func (m Model) selectedUnit(num int) string {
 	if m.snap == nil {
 		return ""
@@ -57,7 +57,7 @@ func (m Model) selectedUnit(num int) string {
 			return r.item.Unit
 		}
 	case 3:
-		return m.snap.Next.Ranked[i].ID
+		return m.nextUnits()[i].ID
 	}
 	return ""
 }

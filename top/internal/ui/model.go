@@ -28,7 +28,7 @@ const restartDelay = 400 * time.Millisecond
 
 // keyMap holds the keys of D6 that bl top has. The help overlay lists them.
 type keyMap struct {
-	boxes, next, prev, move, open, act, run, stop, page, pr, agent, follow, watch, capacity, longer, shorter, help, quit key.Binding
+	boxes, next, prev, move, open, act, run, stop, page, pr, agent, follow, watch, order, capacity, longer, shorter, help, quit key.Binding
 }
 
 var keys = keyMap{
@@ -45,6 +45,7 @@ var keys = keyMap{
 	agent:    key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "open bl agent in a tmux window")),
 	follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed of ⁶ on or off")),
 	watch:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "open bl watch of ⁶'s run in a tmux window")),
+	order:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "in ³, show the unranked units newest or oldest first")),
 	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
 	longer:   key.NewBinding(key.WithKeys("+"), key.WithHelp("+", fmt.Sprintf("refresh interval up (to %d s)", maxInterval/1000))),
 	shorter:  key.NewBinding(key.WithKeys("-"), key.WithHelp("-", fmt.Sprintf("refresh interval down (to %d ms)", minInterval))),
@@ -67,6 +68,7 @@ type Model struct {
 	focus         int          // a box number; 0 when every box is hidden
 	sel           [7]selection // by box number: the selected row of boxes 1 to 3
 	updatesOpen   bool         // whether box ²'s grouped update row is open
+	newestFirst   bool         // whether box ³ shows the unranked units newest `added:` first (d)
 	detail        string       // the id of the run box ⁶ shows; empty for none
 	watcher       *watch.Watch // the `bl watch` of that run, while it runs
 	watchGen      int          // the generation of the watch the model reads
@@ -286,6 +288,10 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.toggleFollow()
 	case key.Matches(msg, keys.watch):
 		return m.openWatch()
+	case key.Matches(msg, keys.order):
+		if m.focus == 3 {
+			m.newestFirst = !m.newestFirst
+		}
 	case key.Matches(msg, keys.capacity):
 		if s := m.stream; s != nil {
 			return m, func() tea.Msg {
@@ -338,7 +344,7 @@ func (m Model) View() tea.View {
 // helpBox draws the help overlay: each key of keyMap and what it does.
 func helpBox() []string {
 	bindings := []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.act, keys.run, keys.stop, keys.page,
-		keys.pr, keys.agent, keys.follow, keys.watch, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
+		keys.pr, keys.agent, keys.follow, keys.watch, keys.order, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}
 	lines := []string{""}
 	for _, b := range bindings {
 		lines = append(lines, fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc)))

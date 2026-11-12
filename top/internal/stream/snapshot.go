@@ -142,11 +142,21 @@ type Item struct {
 	Actions []Action `json:"actions"`
 }
 
-// Next is the `next` section: `bl next`'s pick and the ranked units.
+// Next is the `next` section (F-113 D5): `bl next`'s pick, the committed order, the staged order
+// (nil with no staged copy), and Decision A3's message while the staged copy is in conflict.
 type Next struct {
 	Section
-	Pick   *Pick    `json:"pick"`
-	Ranked []Ranked `json:"ranked"`
+	Order
+	Pick     *Pick  `json:"pick"`
+	Staged   *Order `json:"staged"`
+	Conflict string `json:"conflict"`
+}
+
+// Order is an order of the open units: every ranked unit in its rank, then every other open unit,
+// oldest `added:` first.
+type Order struct {
+	Ranked   []Unit `json:"ranked"`
+	Unranked []Unit `json:"unranked"`
 }
 
 // Pick is the unit `bl next` picks, and the unit its walk started at.
@@ -158,9 +168,12 @@ type Pick struct {
 	Path   []string `json:"path"`
 }
 
-// Ranked is one ranked unit, what holds it from `bl run`, and the ids of those holders.
-type Ranked struct {
+// Unit is one open unit of an order, what holds it from `bl run`, and the ids of those holders.
+// Position is 0 for an unranked unit. Mark is set in the staged order only: `+` newly ranked, `~`
+// moved, `-` taken out of the ranked list, or "".
+type Unit struct {
 	Position int      `json:"position"`
+	Mark     string   `json:"mark"`
 	ID       string   `json:"id"`
 	Title    string   `json:"title"`
 	Status   string   `json:"status"`

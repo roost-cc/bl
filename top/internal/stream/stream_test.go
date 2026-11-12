@@ -44,6 +44,13 @@ func TestDecodeRecordedLines(t *testing.T) {
 	if first.Next.Pick == nil || first.Next.Pick.ID != "F-9" || first.Next.Ranked[1].Holds[0] != "F-9" {
 		t.Errorf("next = %+v", first.Next)
 	}
+	if n := first.Next; len(n.Unranked) != 1 || n.Unranked[0].Position != 0 || n.Staged == nil || n.Staged.Ranked[0].Mark != "+" ||
+		n.Staged.Unranked[0].ID != "F-10" || n.Staged.Unranked[0].Mark != "-" || n.Conflict != "" {
+		t.Errorf("next's unranked, staged and conflict = %+v", n)
+	}
+	if second, err := Decode(lines[1]); err != nil || second.Next.Staged != nil || second.Next.Conflict == "" {
+		t.Errorf("second next = %+v, %v", second.Next, err)
+	}
 	if w := first.Capacity.Configurations[0].Windows[0]; w.Name != "codex 5h" || w.RemainingPercent != 80 {
 		t.Errorf("capacity window = %+v", w)
 	}

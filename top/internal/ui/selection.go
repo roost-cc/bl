@@ -26,7 +26,7 @@ func (s selection) in(ids []string) int {
 }
 
 // rowIDs are the ids of box num's rows, top to bottom, as the box draws them. Only boxes ¹ to ³
-// have rows.
+// have rows. Box ³'s divider is no row, so ↑ and ↓ pass over it.
 func (m Model) rowIDs(num int) []string {
 	if m.snap == nil {
 		return nil
@@ -42,7 +42,7 @@ func (m Model) rowIDs(num int) []string {
 			ids = append(ids, r.id())
 		}
 	case 3:
-		for _, r := range m.snap.Next.Ranked {
+		for _, r := range m.nextUnits() {
 			ids = append(ids, r.ID)
 		}
 	}
