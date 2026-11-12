@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/roost-cc/bl/top/internal/actions"
+	"github.com/roost-cc/bl/top/internal/notify"
 	"github.com/roost-cc/bl/top/internal/stream"
 )
 
@@ -304,6 +305,48 @@ func TestSStopsALiveRunAfterMockupCsQuestionAndDoesNotNotify(t *testing.T) {
 	m, cmd = press(t, atRow(t, 1, "F-85"), text("s"))
 	if m.dialog != nil || cmd != nil {
 		t.Error("s on a run that is not live asked")
+	}
+}
+
+// TestAFailedStopLeavesALaterStopLoud: a stop from this view that failed (it did not start, exited
+// 1, or timed out with exit 1), with its result box shown or hidden, does not hide S-1330's later
+// `stopped` end, which then comes from another shell. A stop that worked does.
+func TestAFailedStopLeavesALaterStopLoud(t *testing.T) {
+	for _, c := range []struct {
+		what   string
+		code   int
+		noBl   bool // the command does not start
+		hidden bool // esc hides the running box before the result
+		notify bool
+	}{
+		{what: "the command did not start", noBl: true, notify: true},
+		{what: "exit 1", code: 1, notify: true},
+		{what: "exit 1 after the wait (stop requested)", code: 1, hidden: true, notify: true},
+		{what: "exit 0, hidden", code: 0, hidden: true, notify: false},
+		{what: "exit 0", code: 0, notify: false},
+	} {
+		fakeTools(t, true, "stop requested: S-1330 (pid 4242) stops at its next check", c.code)
+		m := atRow(t, 1, "S-1330")
+		if c.noBl {
+			m.blArgv = []string{filepath.Join(t.TempDir(), "no-bl")}
+		}
+		m, _ = press(t, m, text("s"))
+		m, cmd := press(t, m, text("y"))
+		if c.hidden {
+			m, _ = press(t, m, esc)
+		}
+		m, _ = update(t, m, cmd())
+		next := *m.snap
+		next.Runs.Rows = slices.Clone(next.Runs.Rows)
+		for i, r := range next.Runs.Rows {
+			if r.ID == "S-1330" {
+				next.Runs.Rows[i].Status = "stopped"
+			}
+		}
+		notes := m.differ.Diff(&next)
+		if got := slices.ContainsFunc(notes, func(n notify.Note) bool { return n.ID == "S-1330" }); got != c.notify {
+			t.Errorf("%s: S-1330's stopped end notifies: %v, want %v", c.what, got, c.notify)
+		}
 	}
 }
 

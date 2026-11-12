@@ -43,6 +43,12 @@ func (d *Differ) Quiet(id string) {
 	d.quiet[id] = true
 }
 
+// Unquiet takes the mark of Quiet off run id: the stop failed, so a later `stopped` end comes
+// from another stop and notifies.
+func (d *Differ) Unquiet(id string) {
+	delete(d.quiet, id)
+}
+
 // unknownStatus is the status of a run that a read skipped before the view saw it: no run status
 // starts with a NUL, so it never equals one.
 const unknownStatus = "\x00unknown"

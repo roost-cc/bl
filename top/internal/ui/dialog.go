@@ -43,9 +43,11 @@ type dialog struct {
 	result  actions.Result
 }
 
-// actionDoneMsg is the end of an action's child command.
+// actionDoneMsg is the end of an action's child command; stops is the run the action stops, or
+// empty.
 type actionDoneMsg struct {
 	words  []string
+	stops  string
 	result actions.Result
 }
 
@@ -226,11 +228,17 @@ func (m Model) runAction(d dialog) (Model, tea.Cmd) {
 	}
 	d.stage, d.words = stageRunning, words
 	m.dialog = &d
-	return m, func() tea.Msg { return actionDoneMsg{words: words, result: actions.Run(argv)} }
+	stops := d.action.Stops
+	return m, func() tea.Msg { return actionDoneMsg{words: words, stops: stops, result: actions.Run(argv)} }
 }
 
-// actionDone shows the result box of a child that ended, over any dialog.
+// actionDone shows the result box of a child that ended, over any dialog. A stop that failed (it did
+// not start, exited other than 0, or timed out) takes its run's mark off, so that a later stop from
+// another shell notifies.
 func (m Model) actionDone(msg actionDoneMsg) Model {
+	if msg.stops != "" && msg.result.Code != 0 {
+		m.differ.Unquiet(msg.stops)
+	}
 	m.dialog = &dialog{stage: stageResult, words: msg.words, result: msg.result}
 	return m
 }
