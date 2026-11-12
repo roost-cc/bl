@@ -525,11 +525,13 @@ function mergeStaged(root, config) {
         `Fix ${STAGED_FILE} (bl rank <unit> --remove) or run bl rank --reset. Nothing was committed.`,
     };
   }
-  const inputs = [read(STAGED_FILE), read(BASE_FILE), mainText].join('\0');
+  const stagedText = read(STAGED_FILE);
+  const inputs = [stagedText, read(BASE_FILE), mainText].join('\0');
   return {
     repo,
     main,
     mainText,
+    stagedText,
     graph,
     ids,
     closed,
@@ -646,9 +648,15 @@ async function commitStaged(root, config) {
     }
     if (yes) return { done: await commitPlan(root, now), closed: now.closed };
     // The marked copy already holds main's changes: main becomes the base, so
-    // the next --commit does not apply them twice.
-    atomicWriteFile(root, join(root, STAGED_FILE), now.markers);
-    atomicWriteFile(root, join(root, BASE_FILE), now.mainText);
+    // the next --commit does not apply them twice. The two copies describe
+    // one merge round, so a failed write puts the staged copy back.
+    try {
+      atomicWriteFile(root, join(root, STAGED_FILE), now.markers);
+      atomicWriteFile(root, join(root, BASE_FILE), now.mainText);
+    } catch (err) {
+      atomicWriteFile(root, join(root, STAGED_FILE), now.stagedText);
+      return { refused: `could not write the conflict (${err.message}); both copies are as they were.` };
+    }
     return { marked: true };
   });
   if (res.refused) refuse(res.refused);

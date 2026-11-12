@@ -3943,7 +3943,8 @@ snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FIL
   markers and asks y/n on stderr with the lock let go; the answer is acted on under the lock only
   if the three files are as they were. y commits the proposal. n writes git's conflict markers
   into the staged copy, copies `priority.yaml` to the base copy (the marked copy already holds
-  main's changes) and exits 1.
+  main's changes) and exits 1. If either write fails, the staged copy is written back as it was,
+  so the two copies always describe one merge round.
 - A staged copy that is not a YAML list of ids is in conflict (`StagedConflictError`, Decision
   A3): every `bl rank` command but `--reset` exits 1 with `STAGED_CONFLICT`. `bl next` and
   `bl run` read only `priority.yaml` and are not blocked.

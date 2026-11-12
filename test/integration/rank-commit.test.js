@@ -265,6 +265,30 @@ test("a conflict answered n writes git's markers into the staged copy and main a
   assert.equal(staged(dir), null);
 });
 
+test('rank declined conflict keeps the staged and base copies together', () => {
+  const dir = conflicted();
+  // Pull main first (no terminal: a conflict changes nothing), so the pull's
+  // own writes do not count below.
+  assert.equal(bl(['rank', '--commit'], dir).status, 1);
+  const pair = () => [staged(dir), base(dir)];
+  const before = pair();
+  // Write 1 is the marked staged copy, write 2 the base copy.
+  for (const fail of ['1', '2']) {
+    const r = bl(['rank', '--commit'], dir, { ...TTY, BL_INTERNAL_TEST_FAIL_ON_RENAME: fail }, 'n\n');
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(
+      r.stderr,
+      /could not write the conflict \(.*BL_INTERNAL_TEST_FAIL_ON_RENAME.*\); both copies are as they were\./,
+    );
+    assert.deepEqual(pair(), before, `write ${fail} failed`);
+  }
+  // With no failure, the pair moves together: markers, and main as the base.
+  const r = bl(['rank', '--commit'], dir, TTY, 'n\n');
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(staged(dir), /^<<<<<<< staged$/m);
+  assert.equal(base(dir), read(dir));
+});
+
 test('--commit refuses while priority.yaml has uncommitted edits; a failed commit keeps the copies for a retry', () => {
   const dir = backlog();
   assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
