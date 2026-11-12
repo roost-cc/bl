@@ -173,8 +173,13 @@ export function describeExit(r, what) {
 function settle(r, child, { codes = false } = {}) {
   const signal = interruptOf(r) ?? (codes && !r.error ? signalOfCode(r.status) : null);
   if (!signal) return r;
-  // One line: a control character (a newline in a command line) is escaped as JSON escapes it.
-  const name = child.replace(/\p{Cc}/gu, (c) => JSON.stringify(c).slice(1, -1));
+  // One line: a control character (a newline in a command line) or a Unicode
+  // line separator is escaped as JSON escapes it, and as `\uXXXX` where JSON
+  // leaves it as it is (DEL, the C1 controls such as NEL, U+2028, U+2029).
+  const name = child.replace(/[\p{Cc}\u2028\u2029]/gu, (c) => {
+    const json = JSON.stringify(c).slice(1, -1);
+    return json !== c ? json : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`;
+  });
   process.stderr.write(`bl: ${name} was ended by ${signal}\n`);
   if (exiting) return r;
   if (depth > 0) {

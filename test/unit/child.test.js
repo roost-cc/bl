@@ -182,6 +182,11 @@ test('the D2 line is one line when the child name holds a control character', ()
   const rows = [
     ['runCommandLine', `runCommandLine('exit 130\\nprintf after');`, 'exit 130\\nprintf after'],
     ['runChild', `runChild('sh', ['-c', 'kill -INT $$\\r\\n']);`, 'sh -c kill -INT $$\\r\\n'],
+    [
+      'runChild, characters JSON leaves as they are',
+      `runChild('sh', ['-c', 'kill -INT $$', 'a\\u007fb\\u0085c\\u009bd\\u2028e\\u2029f']);`,
+      'sh -c kill -INT $$ a\\u007fb\\u0085c\\u009bd\\u2028e\\u2029f',
+    ],
     ['runBl', `runBl(${JSON.stringify(entry)}, ['a\\nb']);`, `${process.execPath} ${entry} a\\nb`],
     ['git', `git(process.cwd(), ['log', '--grep=a\\nb\\u001b']);`, 'git log --grep=a\\nb\\u001b'],
   ];

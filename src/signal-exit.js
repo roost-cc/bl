@@ -4,8 +4,8 @@
  * Node's default action for SIGINT and SIGTERM ends the process without the
  * `exit` event. `exitOnSignal` replaces it with `process.exit` and the
  * signal's `EXIT_CODES` code (130 for SIGINT, 143 for SIGTERM), so the `exit`
- * listeners run and see the code. `bl.js` calls it when `bl` starts, so every command exits 130 or 143
- * and runs its `exit` listeners (the throwaway worktree of `bl merge`, a
+ * listeners run and see the code. `bl.js` calls it when `bl` starts, so every
+ * command exits 130 or 143 and runs its `exit` listeners (the throwaway worktree of `bl merge`, a
  * session's lock file). `tab-title.js` calls it on the first title too (to
  * end the title as `interrupted`, S-1393). The backlog lock needs none: the
  * kernel frees it when the process ends (F-104). The handlers are registered
