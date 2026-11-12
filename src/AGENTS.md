@@ -3411,9 +3411,10 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
   help, and any key closes it; `q` or `ctrl+c` quits. The help lists the global keys, then
-  each box's box keys under its current number and name (`helpGroups`, by box name), then the
-  line `the selected row's actions; a lists them`; when that one column is taller than the
-  screen and two fit its width, the box keys and that line go in a second column.
+  each box's box keys with its current number and name beside the first of them (`helpGroups`,
+  by box name), then the line `the selected row's actions; a lists them`. Its top border says
+  `any key closes this help`. Blank lines part the groups when the help fits the screen with
+  them; without them it fits from 80×24.
 - **Ranking keys** (F-113 D6, D7; `rankKey`, `top/internal/ui/dialog.go`). They act only while
   the next box has the focus, so `p` keeps F-88's meaning in the other boxes. `y` yanks the
   selected unit, ranked or not, and the next box marks it with a peach `↕` after its rank until a

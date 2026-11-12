@@ -197,31 +197,28 @@ func TestHelpListsEachBoxsKeysUnderThatBox(t *testing.T) {
 		"put the yanked unit after the selected ranked unit", "put the yanked unit before the selected ranked unit",
 		"unrank the selected ranked unit", "cancel the yank", "commit the staged edits (bl rank --commit)",
 		"drop the staged edits (bl rank --reset)", "show the unranked units newest or oldest first", "│  ³detail",
-		"follow the feed on or off", "the selected row's actions; a lists them", "any key closes this help"}
-	// One column where it fits.
-	m, _ := press(t, sized(t, 171, 63), text("h"))
-	out := screen(t, m)
-	at := -1
-	for _, want := range order {
-		i := strings.Index(out, want)
-		if i < at {
-			t.Errorf("the help has no %q after the key before it:\n%s", want, out)
+		"follow the feed on or off", "the selected row's actions; a lists them"}
+	// The same order on a large screen and on the smallest; 80×24 is the stacked layout, where the
+	// next box is ⁶. Each heading is beside its box's first key.
+	for _, c := range []struct {
+		w, h int
+		next string
+	}{{171, 63, "⁵next"}, {80, 24, "⁶next"}} {
+		m, _ := press(t, sized(t, c.w, c.h), text("h"))
+		out := screen(t, m)
+		at := -1
+		for _, want := range order {
+			want = strings.ReplaceAll(want, "⁵next", c.next)
+			i := strings.Index(out, want)
+			if i < at {
+				t.Errorf("%dx%d: the help has no %q after the key before it:\n%s", c.w, c.h, want, out)
+			}
+			at = i
 		}
-		at = i
-	}
-	// Where one column does not fit, the boxes' keys go beside the others: each heading on the line
-	// of a key of every box. 171×24 is the stacked layout, where the next box is ⁶.
-	m, _ = press(t, sized(t, 171, 24), text("h"))
-	out = screen(t, m)
-	for _, want := range order {
-		want = strings.ReplaceAll(strings.TrimPrefix(want, "│  "), "⁵next", "⁶next")
-		if !strings.Contains(out, want) {
-			t.Errorf("two columns: the help has no %q:\n%s", want, out)
-		}
-	}
-	for key, heading := range map[string]string{"hide or show the box at that position": "⁶next", "q      quit": "³detail"} {
-		if l := ansi.Strip(lineWith(t, m, key)); !strings.Contains(l, heading) {
-			t.Errorf("two columns: %q is not beside %q: %q", heading, key, l)
+		for key, heading := range map[string]string{"yank the selected unit": c.next, "follow the feed on or off": "³detail"} {
+			if l := ansi.Strip(lineWith(t, m, key)); !strings.Contains(l, heading) {
+				t.Errorf("%dx%d: %q is not beside %q: %q", c.w, c.h, heading, key, l)
+			}
 		}
 	}
 }

@@ -287,7 +287,7 @@ func (m Model) render() string {
 		lines = overlay(lines, m.dialogBox(m.width))
 	}
 	if m.help {
-		lines = overlay(lines, m.helpBox(m.width, m.height))
+		lines = overlay(lines, m.helpBox(m.height))
 	}
 	return strings.Join(lines, "\n")
 }

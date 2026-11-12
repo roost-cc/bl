@@ -326,7 +326,7 @@ func TestTheNumbersFollowTheScreenWithAndWithoutTheConflictLine(t *testing.T) {
 					t.Errorf("%s, conflict %q: key %d hides %v, want %s", c.name, conflict, i+1, hidden.hidden, b)
 				}
 			}
-			help := ansi.Strip(strings.Join(m.helpBox(m.width, m.height), "\n"))
+			help := ansi.Strip(strings.Join(m.helpBox(m.height), "\n"))
 			for i, b := range drawn {
 				if groupKeys(b) != nil && !strings.Contains(help, superscript[i+1]+string(b)) {
 					t.Errorf("%s, conflict %q: the help has no heading %s%s:\n%s", c.name, conflict, superscript[i+1], b, help)
@@ -371,6 +371,36 @@ func TestTheHelpHeadingsTakeTheBoxesCurrentNumbers(t *testing.T) {
 		m, _ := press(t, sized(t, c.w, c.h), text("h"))
 		if out := screen(t, m); !strings.Contains(out, "│  "+c.want) && !strings.Contains(out, c.want+" ") {
 			t.Errorf("%dx%d: the help has no heading %s:\n%s", c.w, c.h, c.want, out)
+		}
+	}
+}
+
+// TestTheHelpFitsEveryScreen: from the smallest screen up, the help box fits the screen and shows
+// every key and what it does, each box's heading, the line about the row actions and how to close
+// it.
+func TestTheHelpFitsEveryScreen(t *testing.T) {
+	for _, w := range []int{minWidth, 100, 120, fullWidth} {
+		for _, h := range []int{minHeight, 30, fullHeight, 63} {
+			m, _ := press(t, sized(t, w, h), text("h"))
+			box := m.helpBox(m.height)
+			if len(box) > h || lipgloss.Width(box[0]) > w {
+				t.Errorf("%dx%d: the help is %dx%d", w, h, lipgloss.Width(box[0]), len(box))
+			}
+			out := screen(t, m)
+			want := []string{"the selected row's actions; a lists them", "any key closes this help"}
+			for _, g := range helpGroups {
+				if g.box != "" {
+					want = append(want, superscript[m.number(g.box)]+string(g.box))
+				}
+				for _, k := range g.keys {
+					want = append(want, fmt.Sprintf("%-6s %s", k.Help().Key, k.Help().Desc))
+				}
+			}
+			for _, s := range want {
+				if !strings.Contains(out, s) {
+					t.Errorf("%dx%d: the help has no %q:\n%s", w, h, s, out)
+				}
+			}
 		}
 	}
 }

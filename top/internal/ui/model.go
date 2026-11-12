@@ -420,50 +420,43 @@ func (m Model) View() tea.View {
 	return v
 }
 
-// helpBox draws the help overlay for a w×h screen (F-127 Decision 5): the global keys and what
-// they do, each box's box keys under the box's current number and name (helpGroups), then a line
-// about the row action keys. When one column is taller than the screen and two fit its width, the
-// box keys and that line go in a second column.
-func (m Model) helpBox(w, h int) []string {
-	var every, own []string
+// helpBox draws the help overlay for a screen h lines high (F-127 Decision 5): the global keys and
+// what they do, each box's box keys with the box's current number and name beside the first of
+// them (helpGroups), then a line about the row action keys. `any key closes this help` is in its
+// top border. Blank lines part these groups when the box fits the screen with them; without them it
+// fits from minWidth×minHeight.
+func (m Model) helpBox(h int) []string {
+	head := map[boxName]string{}
+	headWidth := 0
 	for _, g := range helpGroups {
 		if g.box != "" {
-			own = append(own, "", "  "+styleName.Render(superscript[m.number(g.box)]+string(g.box)))
+			head[g.box] = superscript[m.number(g.box)] + string(g.box)
+			headWidth = max(headWidth, lipgloss.Width(head[g.box])+2)
 		}
-		for _, b := range g.keys {
-			line := fmt.Sprintf("  %s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc))
+	}
+	lines := []string{""}
+	for _, g := range helpGroups {
+		if g.box != "" {
+			lines = append(lines, "")
+		}
+		for i, b := range g.keys {
+			line := "  "
 			if g.box != "" {
-				own = append(own, line)
-			} else {
-				every = append(every, line)
+				name := ""
+				if i == 0 {
+					name = head[g.box]
+				}
+				line += styleName.Render(name) + strings.Repeat(" ", headWidth-lipgloss.Width(name))
 			}
+			line += fmt.Sprintf("%s %s", styleKey.Render(fmt.Sprintf("%-6s", b.Help().Key)), styleText.Render(b.Help().Desc))
+			lines = append(lines, line)
 		}
 	}
-	own = append(own, "", styleText.Render("  the selected row's actions; a lists them"))
-	foot := []string{"", styleText.Render("  any key closes this help")}
-	lines := slices.Concat([]string{""}, every, own, foot)
+	lines = append(lines, "", styleText.Render("  the selected row's actions; a lists them"), "")
 	if len(lines)+2 > h {
-		// own starts with a blank line, which the second column leaves out.
-		cw := 0
-		for _, l := range every {
-			cw = max(cw, lipgloss.Width(l)+2)
-		}
-		cols := []string{""}
-		for i := range max(len(every), len(own)-1) {
-			left, right := "", ""
-			if i < len(every) {
-				left = every[i]
-			}
-			if i+1 < len(own) {
-				right = own[i+1]
-			}
-			cols = append(cols, left+strings.Repeat(" ", cw-lipgloss.Width(left))+right)
-		}
-		if two := append(cols, foot...); helpWidth(two) <= w {
-			lines = two
-		}
+		lines = slices.DeleteFunc(lines, func(l string) bool { return l == "" })
 	}
-	return drawBox(0, "help", nil, true, lines, helpWidth(lines), len(lines)+2)
+	return drawBox(0, "help", []string{styleText.Render("any key closes this help")}, true, lines, helpWidth(lines), len(lines)+2)
 }
 
 // helpWidth is the width of the help box of lines: its widest line and the margin, at least 52.
