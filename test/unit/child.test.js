@@ -274,6 +274,46 @@ test('an interrupt that ends a child of an exit listener keeps the exit code and
   assert.ok(r.stderr.includes('later listener 143\n'), r.stderr);
 });
 
+test('a D2 line that cannot be written still raises or keeps the interrupt, and the exit listeners run', () => {
+  // Writing the D2 line throws, as a write to a closed stderr can.
+  const failWrite = [
+    `const write = process.stderr.write.bind(process.stderr);`,
+    `process.stderr.write = (s, ...a) => {`,
+    `  if (String(s).startsWith('bl: ')) throw new Error('injected EIO');`,
+    `  return write(s, ...a);`,
+    `};`,
+  ].join('\n');
+  const blDir = mkTempDir('bl-child-bl-');
+  const entry = join(blDir, 'bl.js');
+  writeFileSync(entry, 'process.exit(143);\n');
+  const { dir } = shim('git', 'kill -TERM $$');
+  const env = { ...process.env, PATH: `${dir}:${process.env.PATH}` };
+  const rows = [
+    ['runChild', `runChild('sh', ['-c', 'kill -TERM $$']);`],
+    ['runCommandLine', `runCommandLine('exit 143');`],
+    ['runBl', `runBl(${JSON.stringify(entry)}, ['sync']);`],
+    ['git', `git(process.cwd(), ['status']);`],
+    ['a kept interrupt', `raiseAfter(() => runChild('sh', ['-c', 'kill -TERM $$']));`],
+    [
+      'a child of an exit listener',
+      [
+        `process.on('exit', () => runChild('sh', ['-c', 'kill -INT $$']));`,
+        `process.on('exit', (code) => process.stderr.write('later listener ' + code + '\\n'));`,
+        `runChild('sh', ['-c', 'kill -TERM $$']);`,
+      ].join('\n'),
+    ],
+  ];
+  for (const [name, body] of rows) {
+    const r = runScript(`${failWrite}\n${body}`, { env });
+    const why = `${name}: status ${r.status}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+    assert.equal(r.status, 143, why);
+    assert.ok(r.stderr.includes('exit listener 143\n'), why);
+    assert.ok(!r.stderr.includes('bl: ') && !r.stderr.includes('injected EIO'), why);
+    assert.ok(!r.stdout.includes('after'), why);
+    if (name === 'a child of an exit listener') assert.ok(r.stderr.includes('later listener 143\n'), why);
+  }
+});
+
 test('a raiseAfter with no interrupt returns what fn returns', () => {
   const r = runScript(`console.log(raiseAfter(() => runChild('sh', ['-c', 'exit 2']).status));`);
   assert.equal(r.status, 0, r.stderr);

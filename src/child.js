@@ -180,7 +180,12 @@ function settle(r, child, { codes = false } = {}) {
     const json = JSON.stringify(c).slice(1, -1);
     return json !== c ? json : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`;
   });
-  process.stderr.write(`bl: ${name} was ended by ${signal}\n`);
+  try {
+    process.stderr.write(`bl: ${name} was ended by ${signal}\n`);
+  } catch {
+    // A line that cannot be written is lost; the interrupt is still raised or
+    // kept, and an `exit` listener still returns.
+  }
   if (exiting) return r;
   if (depth > 0) {
     kept ??= signal;
