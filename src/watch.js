@@ -17,7 +17,7 @@
 
 import { basename } from 'path';
 import { getProvider, hasProvider } from './agents/index.js';
-import { oneLine } from './agents/follow.js';
+import { FOLLOW_LAST, oneLine } from './agents/follow.js';
 import { loadConfig } from './config.js';
 import { loadRunState, runLockPath, runStatePath } from './feature-run.js';
 import { holderOf } from './kernel-lock.js';
@@ -47,7 +47,7 @@ Thinking and tool output are never printed.
 
 Options:
   --from-start  Print the current session from its beginning (default: its
-                last 30 events)
+                last ${FOLLOW_LAST} events)
   --json        One JSON object per line instead: {kind: "step", step, story,
                 agent, model, session}, {kind: "text", at, text},
                 {kind: "tool", at, tool, summary} and, last, {kind: "end", status}

@@ -355,7 +355,7 @@ export class AgentProvider {
    * description, command, path or pattern on one line, or ''). `at` is an
    * ISO time. Thinking and tool output are never events.
    *
-   * It starts with the last 30 events, or every event with `fromStart`, then
+   * It starts with the last FOLLOW_LAST events (follow.js), or every event with `fromStart`, then
    * waits for new ones. When `signal` aborts, it reads what the session wrote
    * since and ends.
    *
