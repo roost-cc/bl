@@ -1,7 +1,8 @@
-// `bl stop <id>` (S-1335, F-87 D7a): the run lock's holder decides what it
-// does. No holder: a `running` state is marked stopped, anything else is
-// refused. A live holder gets the stop request, and `bl stop` waits for the
-// lock to go. It takes no work unit lock (F-122 D2).
+// `bl stop <id>` (S-1335, F-87 D7a): a run state that is not `running` is
+// refused. For a `running` one, the run lock's holder decides what it does.
+// No holder: the state is marked stopped. A live holder gets the stop
+// request, and `bl stop` waits for the lock to go. It takes no work unit lock
+// (F-122 D2).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
@@ -74,6 +75,20 @@ test('stop_nothing_running: no run state, or one that is not running, with no ho
       assert.equal(loadRunState(config, 'F-1').status, status, 'left as it is');
     }
   } finally {
+    cleanup();
+  }
+});
+
+test('stop_not_a_run: a live holder whose run state is not running (bl review, bl merge): exit 1, no request', async () => {
+  const { cleanup, config } = fixture();
+  const holder = await holdLockInChild(runLockPath(config, 'F-1'));
+  try {
+    saveState(config, 'reviewed', 'review');
+    assert.deepEqual(await stop(config), { code: 1, lines: ['no running run for F-1'] });
+    assert.equal(existsSync(stopRequestPath(config, 'F-1')), false, 'the review gets no stop request');
+    assert.equal(loadRunState(config, 'F-1').status, 'reviewed', 'left as it is');
+  } finally {
+    await holder.kill();
     cleanup();
   }
 });

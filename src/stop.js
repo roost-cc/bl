@@ -5,10 +5,11 @@
  * The run loop is synchronous (agents start through `spawnSync`), so a signal
  * to its bl would be handled only after the run ends. Instead `bl stop`:
  *
- * 1. reads the holder of the run lock `.bl/run/<id>.lock`. With none, a run
- *    state that says `running` is a run whose bl died: `bl stop` writes
- *    `status: stopped` itself. With no run state, or one that is not
- *    `running`, there is nothing to stop.
+ * 1. reads the run state. With none, or one that is not `running`, there is
+ *    nothing to stop: a live holder of the run lock is then a `bl review` or
+ *    a `bl merge`. Then it reads the holder of the run lock
+ *    `.bl/run/<id>.lock`. With none, the run's bl died: `bl stop` writes
+ *    `status: stopped` itself.
  * 2. writes the stop request `.bl/run/<id>.stop` (`stopRequestPath`): JSON
  *    with its own pid and the time.
  * 3. stops each process scope of the holder (`scopesOf`), which ends the
@@ -81,13 +82,15 @@ export async function stopRun({ config, id, err, waitMs = STOP_WAIT_MS, pollMs =
     err(`bl stop: ${e.message}`);
     return 1;
   }
+  // A run lock held for a state that is not `running` is a `bl review` or a
+  // `bl merge` (they take it too), which `bl stop` leaves alone.
+  if (state?.status !== 'running') {
+    err(`no running run for ${id}`);
+    return 1;
+  }
   const lock = runLockPath(config, id);
   const holder = otherHolder(lock);
   if (holder == null) {
-    if (state?.status !== 'running') {
-      err(`no running run for ${id}`);
-      return 1;
-    }
     markStopped(state, 'stopped by bl stop: no live bl held the run');
     saveRunState(config, state);
     err(stoppedLine(id, state.step, ' (no live bl held the run)'));

@@ -3580,11 +3580,12 @@ that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s
 runs it. The run loop is synchronous (agent sessions start through `spawnSync`), so a signal
 to its bl would be handled only after the run ends. `bl stop` never sends one:
 
-1. It reads the holder of the run lock (`otherHolder(runLockPath())`). With no holder and a run
-   state that says `running` (its bl died), it marks the run state stopped itself
-   (`markStopped`), prints `stopped <id> at <step> (no live bl held the run); resume: …` and
-   exits 0. With no run state, or one that is not `running`, it exits 1 with
-   `no running run for <id>`.
+1. It reads the run state. With none, or one that is not `running`, it exits 1 with
+   `no running run for <id>`, whoever holds the run lock: a live holder is then a `bl review`
+   or a `bl merge`, which take the run lock too. Then it reads the holder of the run lock
+   (`otherHolder(runLockPath())`). With no holder (the run's bl died), it marks the run state
+   stopped itself (`markStopped`), prints
+   `stopped <id> at <step> (no live bl held the run); resume: …` and exits 0.
 2. It writes the stop request `.bl/run/<id>.stop` (`stopRequestPath()` in `src/run-lock.js`):
    one JSON object, `{ pid, at }`, its own pid and the time.
 3. It stops each process scope of the holder (`scopesOf()` in `src/process-scope.js`, the scopes
