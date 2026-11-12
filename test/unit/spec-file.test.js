@@ -240,7 +240,7 @@ test('runPluginLocked runs the plugin on one file at a time, each inside its spe
   );
   const holders = join(dir, 'holders.jsonl');
   const both = `${command} && ${JSON.stringify(process.execPath)} ${probe} ${holders} {{path}}`;
-  const r = await runPluginLocked('md', both, ['a.md', 'b.md'], {}, dir);
+  const r = await runPluginLocked('md', both, ['a.md', 'b.md'], {}, dir, dir);
   assert.deepEqual(r, { ok: true, status: 0 });
   assert.deepEqual(lines(marker), [['a.md'], ['b.md']]);
   assert.deepEqual(lines(holders), [[process.pid], [process.pid]], 'each run inside its spec lock');
@@ -260,7 +260,7 @@ test('runPluginLocked waits for a held spec lock, says so once, and runs the fil
       freed = true;
       holder.release();
     }, 100);
-    const r = await runPluginLocked('md', command, ['a.md', 'b.md'], {}, dir);
+    const r = await runPluginLocked('md', command, ['a.md', 'b.md'], {}, dir, dir);
     assert.equal(r.status, 0);
     assert.equal(freed, true, 'the helper finished after the lock was freed');
   } finally {
@@ -278,7 +278,7 @@ test('runPluginLocked stops after the first file when the plugin binary is missi
   process.stderr.write = (chunk, ...rest) => (said.push(String(chunk)), write.call(process.stderr, chunk, ...rest));
   let r;
   try {
-    r = await runPluginLocked('md', 'this-binary-does-not-exist-1527 {{path}}', ['a.md', 'b.md'], {}, dir);
+    r = await runPluginLocked('md', 'this-binary-does-not-exist-1527 {{path}}', ['a.md', 'b.md'], {}, dir, dir);
   } finally {
     process.stderr.write = write;
   }
@@ -289,10 +289,48 @@ test('runPluginLocked stops after the first file when the plugin binary is missi
 
 test('runPluginLocked runs every file after a failing one and returns the worst status', async () => {
   const { dir, marker, command } = recorded();
-  const r = await runPluginLocked('md', `${command} && false`, ['a.md', 'b.md'], {}, dir);
+  const r = await runPluginLocked('md', `${command} && false`, ['a.md', 'b.md'], {}, dir, dir);
   assert.deepEqual(r, { ok: false, status: 1 });
   assert.deepEqual(lines(marker), [['a.md'], ['b.md']]);
 });
+
+// format_waits_for_covering_lock_by_path_class: each path class waits for its
+// covering lock (`lockFor`), held by another holder, before the plugin writes.
+for (const [rel, exists, held] of [
+  ['tasks/T1-x.md', true, 'backlog'],
+  ['themes/T1/index.md', true, 'backlog'],
+  ['stories/S1-x/index.md', true, 'spec'],
+  ['features/F1-x/change.md', true, 'spec'],
+  ['allowed-tools.json', true, 'spec'],
+  ['stories/S1-x/change.md', false, 'backlog'],
+  ['stories/S2-demo/index.md', false, 'backlog'],
+  ['tasks/T2-y.md', false, 'backlog'],
+  ['.bl/x.md', true, null],
+]) {
+  test(`runPluginLocked waits for the covering lock of ${exists ? 'an existing' : 'a missing'} ${rel}`, async () => {
+    const dir = mkTempDir('bl-plugin-covering-');
+    const path = join(dir, rel);
+    mkdirSync(dirname(path), { recursive: true });
+    if (exists) writeFileSync(path, 'before');
+    const writer = join(dir, 'writer.mjs');
+    writeFileSync(writer, "import { writeFileSync } from 'fs';\nwriteFileSync(process.argv[2], 'plugin');\n");
+    const lock = held === 'spec' ? specLockPath(path) : join(dir, LOCK_FILE);
+    const holder = holdLock(lock, 'another writer');
+    let freed = false;
+    const timer = setTimeout(() => {
+      freed = true;
+      holder.release();
+    }, 100);
+    try {
+      await runPluginLocked('md', `${JSON.stringify(process.execPath)} ${writer} {{path}}`, [rel], {}, dir, dir);
+      assert.equal(freed, held != null, held ? `waited for the ${held} lock` : 'no covering lock to wait for');
+      assert.equal(readFileSync(path, 'utf8'), 'plugin');
+    } finally {
+      clearTimeout(timer);
+      holder.release();
+    }
+  });
+}
 
 test('withSpecLock refuses an async fn and still releases the lock', async () => {
   const { path } = spec();

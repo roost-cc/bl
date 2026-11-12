@@ -28,6 +28,7 @@ import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
 import { assertHeld, release, tryLock } from './kernel-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { withLock } from './lock.js';
+import { withCoveringLock } from './write-lock.js';
 
 /** The spec lock could not be taken: held by a live process past the wait, or not creatable. */
 export class SpecLockError extends Error {
@@ -169,12 +170,12 @@ export async function withSpecFileLock(backlogRoot, path, fn) {
 
 /**
  * Run a format or lint plugin (`runPluginBatch`, `config.js`) on `paths`, one
- * file per process, each inside that file's spec lock (F-126 D4). A plugin
- * rewrites a file in place, so a batch run could overwrite a token writer's
- * write to any file in it. A file whose lock another process holds is waited
- * for, and the wait is said once on stderr (`withSpecLock`). The cost is about
- * 100 ms per file. Lock order (F-67 D4): a caller may hold the backlog lock
- * (`bl sync --commit`) but no spec lock, and each run holds one spec lock.
+ * file per process, each inside that file's covering lock (`withCoveringLock`,
+ * `write-lock.js`; F-126 D4). A plugin rewrites a file in place, so a batch
+ * run could overwrite another writer's write to any file in it. A file whose
+ * lock another process holds is waited for, and the wait is said once on
+ * stderr. The cost is about 100 ms per file. Lock order (F-67 D4): a caller
+ * may hold the backlog lock (`bl sync --commit`) but no spec lock.
  * A missing binary (exit 127) stops the run after the first file, with its
  * one warning; any other non-zero exit does not stop the other files.
  * @param {string} name  the plugin's name
@@ -182,12 +183,14 @@ export async function withSpecFileLock(backlogRoot, path, fn) {
  * @param {string[]} paths  relative to `cwd`, or absolute
  * @param {Record<string, string>} vars
  * @param {string} cwd
+ * @param {string} backlogRoot
  * @returns {Promise<{ ok: boolean, status: number, missing?: true }>} the worst status
  */
-export async function runPluginLocked(name, command, paths, vars, cwd) {
+export async function runPluginLocked(name, command, paths, vars, cwd, backlogRoot) {
   let status = 0;
   for (const path of paths) {
-    const r = await withSpecLock(resolve(cwd, path), () => runPluginBatch(name, command, [path], vars, cwd));
+    const run = () => runPluginBatch(name, command, [path], vars, cwd);
+    const r = await withCoveringLock(backlogRoot, resolve(cwd, path), run);
     if (r.missing) return r;
     if (r.status > status) status = r.status;
   }

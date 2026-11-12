@@ -112,13 +112,21 @@ export function formatBacklogMarkdown(config, touchedMarkdown) {
 
 /**
  * Run the `.md` format plugin over the backlog files in `touchedMarkdown`,
- * one file per process, each inside its spec lock (`runPluginLocked`,
- * F-126 D4), so the plugin never rewrites a file that a token writer holds.
+ * one file per process, each inside its covering lock (`runPluginLocked`,
+ * F-126 D4), so the plugin never rewrites a file that another writer holds.
  * A missing plugin binary is a warning, and the pass goes on.
  */
 export async function formatBacklogFiles(config, touchedMarkdown) {
   for (const [name, paths] of markdownFormatBuckets(config, touchedMarkdown)) {
-    await runPluginLocked(name, config.plugins[name].format, paths, { roostDir: config.roostDir }, config.backlogRoot);
+    const { backlogRoot } = config;
+    await runPluginLocked(
+      name,
+      config.plugins[name].format,
+      paths,
+      { roostDir: config.roostDir },
+      backlogRoot,
+      backlogRoot,
+    );
   }
 }
 

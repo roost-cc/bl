@@ -497,9 +497,11 @@ backlog lock and need `atomicWriteFile` only.
   (`spec-file.js`) is the spec lock for an existing file, and the backlog lock with the spec lock
   inside it for a file it creates, as for a new spec file.
   A format or lint plugin rewrites a backlog file in place, so it runs on one backlog file per
-  process, inside that file's spec lock (`runPluginLocked`, `spec-file.js`, F-126 D4):
-  `bl sync --commit`'s format pass and `bl format` / `bl lint`. A file that is not a spec (a
-  `notes.md`) gets a spec lock keyed by its own path, which no other writer takes. Only
+  process, inside that file's covering lock (`runPluginLocked`, `spec-file.js`, through
+  `withCoveringLock`, `write-lock.js`, F-126 D4): `bl sync --commit`'s format pass and
+  `bl format` / `bl lint`. An existing spec file takes its spec lock. Any other file (a
+  `tasks/T1-x.md`, a spec file that does not exist yet) takes the backlog lock and then the
+  spec lock keyed by its own path. Only
   `bl report`'s pages, outside the backlog or under its ignored `reports/`, are formatted in one
   batch with no lock (`formatBacklogMarkdown`).
 - **A restore keeps the session's tokens.** When a review-verify session fails, the loop puts
@@ -5932,7 +5934,7 @@ prettier wrapper) in `bl sync` and to `pnpm install` in `bl implement`.
   covers the feature's `index.md` and the `index.md` of every story it
   lists, each under its own plugin cascade (the feature file under the
   backlog root's); explicit paths narrow it to those files. A plugin runs
-  on one backlog file per process, inside that file's spec lock
+  on one backlog file per process, inside that file's covering lock
   (`runPluginLocked`, F-126 D4). With `--no-story`, the paths outside
   the backlog go to each plugin in one batch, and a path inside it (by
   its real location, however it is written) runs on its own. A missing

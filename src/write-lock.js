@@ -29,8 +29,8 @@ import { git } from './child.js';
 import { STORIES_DIR } from './config.js';
 import { FEATURES_DIR } from './feature.js';
 import { holds } from './kernel-lock.js';
-import { canonical, LOCK_FILE } from './lock.js';
-import { specLockPath } from './spec-file.js';
+import { canonical, LOCK_FILE, withLock } from './lock.js';
+import { specLockPath, withSpecFileLock, withSpecLock } from './spec-file.js';
 
 /** @typedef {{ kind: 'spec' | 'backlog', path: string }} CoveringLock */
 
@@ -78,6 +78,27 @@ export function lockFor(backlogRoot, path) {
   if (parts[0] === dirname(STAGING_DIR)) return null;
   if (isSpecFile(parts) && existsSync(path)) return { kind: 'spec', path: specLockPath(path) };
   return { kind: 'backlog', path: join(backlogRoot, LOCK_FILE) };
+}
+
+/**
+ * Run the synchronous `fn` holding the covering lock of `path` (`lockFor`),
+ * and resolve its result. A path with no covering lock runs `fn` with none.
+ * An existing spec file takes its spec lock (`withSpecFileLock`). Every other
+ * path takes the backlog lock, and then its spec lock too: a missing spec
+ * file that another process creates before the backlog lock frees is covered
+ * by its spec lock once it exists. Lock order (F-67 D4): the caller holds no
+ * spec lock.
+ * @template T
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @param {() => T} fn
+ * @returns {Promise<T>}
+ */
+export async function withCoveringLock(backlogRoot, path, fn) {
+  const lock = lockFor(backlogRoot, path);
+  if (lock == null) return fn();
+  if (lock.kind === 'spec') return withSpecFileLock(backlogRoot, path, fn);
+  return withLock(backlogRoot, async () => withSpecLock(path, fn));
 }
 
 /**

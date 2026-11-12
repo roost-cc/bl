@@ -138,8 +138,8 @@ function extensionSummary(paths) {
 
 /**
  * Run each plugin of `stage` over the `paths` it dispatches to. A backlog
- * file goes through `runPluginLocked`, one file per process under its spec
- * lock (F-126 D4); the other files of a plugin go in one batch.
+ * file goes through `runPluginLocked`, one file per process under its
+ * covering lock (F-126 D4); the other files of a plugin go in one batch.
  */
 async function applyStageInDirectory(stage, rootPath, paths, config, ctx) {
   const effective = buildEffectiveDispatch(stage, config, ctx);
@@ -168,7 +168,7 @@ async function applyStageInDirectory(stage, rootPath, paths, config, ctx) {
     if (outside.length > 0) results.push(runPluginBatch(name, command, outside, ctx.vars ?? {}, rootPath));
     // After a missing binary, the backlog files would only warn again.
     if (inside.length > 0 && !results[0]?.missing) {
-      results.push(await runPluginLocked(name, command, inside, ctx.vars ?? {}, rootPath));
+      results.push(await runPluginLocked(name, command, inside, ctx.vars ?? {}, rootPath, config.backlogRoot));
     }
     // Missing-binary (`status: 127, missing: true`) is a non-zero outcome in
     // the explicit-invocation context: CI must not green-light an unformatted
