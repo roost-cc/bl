@@ -2,9 +2,9 @@
  * signal-exit.js — end the process on SIGINT or SIGTERM through `process.exit`.
  *
  * Node's default action for SIGINT and SIGTERM ends the process without the
- * `exit` event. `exitOnSignal` replaces it with `process.exit(130)` (SIGINT)
- * or `process.exit(143)` (SIGTERM), so the `exit` listeners run and see the
- * code. `bl.js` calls it when `bl` starts, so every command exits 130 or 143
+ * `exit` event. `exitOnSignal` replaces it with `process.exit` and the
+ * signal's `EXIT_CODES` code (130 for SIGINT, 143 for SIGTERM), so the `exit`
+ * listeners run and see the code. `bl.js` calls it when `bl` starts, so every command exits 130 or 143
  * and runs its `exit` listeners (the throwaway worktree of `bl merge`, a
  * session's lock file). `tab-title.js` calls it on the first title too (to
  * end the title as `interrupted`, S-1393). The backlog lock needs none: the
@@ -20,6 +20,8 @@
  * raised.
  */
 
+import { constants } from 'os';
+
 let registered = false;
 
 /**
@@ -29,6 +31,15 @@ let registered = false;
  * failed, as one with a non-zero exit code has.
  */
 export const INTERRUPT_SIGNALS = Object.freeze(['SIGINT', 'SIGTERM']);
+
+/**
+ * The exit code of each interrupt: 128 + its number (130 for SIGINT, 143 for
+ * SIGTERM), as a shell gives for a child it ended. `exitOnSignal` exits with
+ * it, and `src/child.js` reads it back from a shell or a `bl` child.
+ */
+export const EXIT_CODES = Object.freeze(
+  Object.fromEntries(INTERRUPT_SIGNALS.map((signal) => [signal, 128 + constants.signals[signal]])),
+);
 
 /**
  * Whether `signal` is one of `INTERRUPT_SIGNALS`.
@@ -72,6 +83,5 @@ export function raiseSignal(signal) {
 export function exitOnSignal() {
   if (registered) return;
   registered = true;
-  process.on('SIGINT', () => process.exit(130));
-  process.on('SIGTERM', () => process.exit(143));
+  for (const signal of INTERRUPT_SIGNALS) process.on(signal, () => process.exit(EXIT_CODES[signal]));
 }

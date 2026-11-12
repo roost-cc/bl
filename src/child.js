@@ -38,14 +38,8 @@
  * `describeExit(r, what)` words a failed child for every caller.
  */
 
-import { constants } from 'os';
 import { spawnSyncFiles } from './child-stdio.js';
-import { INTERRUPT_SIGNALS, interruptOf, raiseSignal } from './signal-exit.js';
-
-/** The exit code a shell or a `bl` child gives for each interrupt: 128 + its number. */
-const EXIT_CODES = Object.freeze(
-  Object.fromEntries(INTERRUPT_SIGNALS.map((signal) => [signal, 128 + constants.signals[signal]])),
-);
+import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal } from './signal-exit.js';
 
 /** How many `raiseAfter` calls are running, and the first interrupt one of them kept. */
 let depth = 0;
