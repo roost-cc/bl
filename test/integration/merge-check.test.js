@@ -419,10 +419,8 @@ for (const verdicts of [['pass'], ['fail', 'pass']]) {
       const r = runBl(['merge', u.id], { cwd: fx.dir, env: ENV });
       assert.equal(r.status, 130, `${r.stdout}\n${r.stderr}`);
       assert.equal(calls(fx).length, 1, 'one check run');
-      assert.match(
-        r.stderr,
-        /^code: the backlog commit of the gate line was ended by SIGINT; rerun `bl merge S-1`\.$/m,
-      );
+      // `src/child.js` prints its line in place of bl merge's "rerun" line (F-114 D2).
+      assert.match(r.stderr, /^bl: git commit .*\(attempt 1\) --only -- \S+ was ended by SIGINT$/m);
       assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
       assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
       assertNoThrowaway(fx);
@@ -461,7 +459,11 @@ test('a SIGINT that ends the rebase fetch of the gate-line push stops the merge'
     assert.ok(existsSync(marker), `the gate-line push was rejected: ${r.stderr}`);
     assert.equal(r.status, 130, `${r.stdout}\n${r.stderr}`);
     assert.equal(calls(fx).length, 1, 'one check run');
-    assert.match(r.stderr, /^code: the backlog commit of the gate line was ended by SIGINT; rerun `bl merge S-1`\.$/m);
+    // The pull of the retry raises once it has put the backlog back (F-114 D2a).
+    assert.match(
+      r.stderr,
+      /^bl: git fetch -q origin \+refs\/heads\/main:refs\/remotes\/origin\/main was ended by SIGINT$/m,
+    );
     assert.equal(g(fx.origin, 'rev-parse', 'main'), before, "origin's main is unchanged");
     assert.ok(!existsSync(join(fx.dir, 'pushes')), 'no push was tried');
     assertNoThrowaway(fx);

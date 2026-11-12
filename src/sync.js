@@ -17,7 +17,6 @@
 
 import { existsSync, rmSync, statSync } from 'fs';
 import { isAbsolute, join, relative } from 'path';
-import { spawnSync } from 'child_process';
 import {
   loadConfig,
   configForRepo,
@@ -54,7 +53,7 @@ import {
 import { ensureAllowedTools } from './allowed-tools.js';
 import { findStoryDir } from './story.js';
 import { FEATURES_DIR } from './feature.js';
-import { raiseSignal } from './signal-exit.js';
+import { describeExit, git } from './child.js';
 
 /**
  * Run the configured `format` plugin over the Markdown files in
@@ -111,11 +110,7 @@ export function formatBacklogMarkdown(config, touchedMarkdown) {
 function stageablePaths(root, paths) {
   return paths.filter((p) => {
     if (existsSync(join(root, p))) return true;
-    const r = spawnSync('git', ['ls-files', '--with-tree=HEAD', '--', p], {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const r = git(root, ['ls-files', '--with-tree=HEAD', '--', p]);
     return r.status === 0 && r.stdout.trim() !== '';
   });
 }
@@ -296,28 +291,14 @@ export async function syncAndCommit(config, { message, storyIds = [], extraPaths
       return relative(root, found.storyDir);
     });
     const named = [...new Set([...storyDirs, ...extraPaths])];
-    const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const inRepo = git(root, ['rev-parse', '--is-inside-work-tree']);
     if (!hasOwnRepo(root) || inRepo.status !== 0 || inRepo.stdout.trim() !== 'true') {
       return { committed: false, paths: named.sort(), notRepo: true };
     }
     const paths = stageablePaths(root, named).sort();
     if (paths.length === 0) return { committed: false, paths };
-    const status = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all', '--', ...paths], {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    if (status.status !== 0) {
-      return {
-        committed: false,
-        paths,
-        error: (status.stderr || '').trim() || 'git status failed',
-      };
-    }
+    const status = git(root, ['status', '--porcelain', '-z', '--untracked-files=all', '--', ...paths]);
+    if (status.status !== 0) return { committed: false, paths, error: describeExit(status, 'git status') };
     if (status.stdout === '') return { committed: false, paths };
     // A deleted file is not on disk, so the format pass skips it.
     const changed = parsePorcelainZ(status.stdout).filter((p) => p.endsWith('.md'));
@@ -350,12 +331,10 @@ export async function commitAndRecord(config, owner, rel, opts) {
  * Report a `syncAndCommit` result for a command that commits its own backlog
  * changes (`bl done`, `bl new`, `bl merge`). Everything goes to stderr, so
  * a command's stdout contract is untouched. A failed commit exits 1 and names
- * the paths to commit by hand; the on-disk changes stay in place. When SIGINT
- * or SIGTERM ended one of the commit's git commands (`signal`, from
- * `commitPaths`), that signal is raised again (`raiseSignal`) after the report.
+ * the paths to commit by hand; the on-disk changes stay in place.
  *
  * @param {{ committed: boolean, paths: string[], error?: string,
- *   notRepo?: boolean, signal?: string }} res
+ *   notRepo?: boolean }} res
  * @param {string} command  e.g. "bl done", for the error prefix
  * @param {{ nothing?: string }} [opts]  line to print when nothing changed
  */
@@ -368,11 +347,9 @@ export function reportBacklogCommit(res, command, { nothing = 'Nothing to commit
     console.error(`${command}: backlog commit failed: ${res.error}`);
     console.error('Commit these backlog paths by hand:');
     for (const p of res.paths) console.error(`  ${p}`);
-    raiseSignal(res.signal);
     process.exit(1);
   }
   info(res.committed ? `Committed ${res.paths.length} backlog path(s).` : nothing);
-  raiseSignal(res.signal);
 }
 
 /** Print a `syncAndCommit` error the way `bl sync` does, then exit 1. */

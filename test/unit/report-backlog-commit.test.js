@@ -1,13 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { reportBacklogCommit } from '../../src/sync.js';
-import { exitOnSignal } from '../../src/signal-exit.js';
 
-// S-1463: `reportBacklogCommit` raises the signal that ended one of the
-// commit's git commands (`res.signal`) again, after its report. With
-// `exitOnSignal`'s listeners, as in `bl merge`, that ends the process 130 or
-// 143, and a failed commit does not reach its own exit 1.
-exitOnSignal();
+// `reportBacklogCommit` reports a commit result. An interrupt never reaches
+// it: SIGINT or SIGTERM that ends a git child of the commit ends `bl` in
+// `src/child.js` (F-114 D2; `backlog-commit-signal.test.js`).
 
 /** Run `reportBacklogCommit(res, 'bl merge')` and return its stderr lines and exits in order. */
 function report(t, res) {
@@ -30,22 +27,15 @@ function report(t, res) {
   return events;
 }
 
-test('a committed result raises its signal after the report', (t) => {
-  assert.deepEqual(report(t, { committed: true, paths: ['a.md'], signal: 'SIGTERM' }), [
-    'Committed 1 backlog path(s).',
-    'exit 143',
-  ]);
+test('a committed result names its paths and does not exit', (t) => {
+  assert.deepEqual(report(t, { committed: true, paths: ['a.md'] }), ['Committed 1 backlog path(s).']);
 });
 
-test('a failed commit raises its signal after the paths, before its exit 1', (t) => {
-  assert.deepEqual(report(t, { committed: false, paths: ['a.md'], error: 'push ended', signal: 'SIGINT' }), [
-    'bl merge: backlog commit failed: push ended',
+test('a failed commit names the paths to commit by hand and exits 1', (t) => {
+  assert.deepEqual(report(t, { committed: false, paths: ['a.md'], error: 'git commit exited 1' }), [
+    'bl merge: backlog commit failed: git commit exited 1',
     'Commit these backlog paths by hand:',
     '  a.md',
-    'exit 130',
+    'exit 1',
   ]);
-});
-
-test('a result with no signal raises nothing', (t) => {
-  assert.deepEqual(report(t, { committed: true, paths: ['a.md'] }), ['Committed 1 backlog path(s).']);
 });

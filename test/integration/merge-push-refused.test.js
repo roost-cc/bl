@@ -347,14 +347,15 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     after: (fx, r) => assert.doesNotMatch(r.stderr, /Could not delete branch/),
   })),
   // Only the push of the commit that marks S-1 done: the integrate step
-  // pushes the backlog earlier, and S-1467 covers that push.
+  // pushes the backlog earlier, and S-1467 covers that push. `src/child.js`
+  // prints its line in place of the commit's report (F-114 D2).
   ...SIGNALS.map((signal) => ({
     child: 'the push of the backlog',
     signal,
     fail: false,
     npm: 'exit 0',
     git: `case "$*" in 'push -q origin main') '${REAL_GIT}' log -1 --format=%s | grep -q 'mark S-1 done' && kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"`,
-    message: /Committed \d+ backlog path\(s\)\./,
+    message: new RegExp(`^bl: git push -q origin main was ended by ${signal}$`, 'm'),
     setup: backlogOrigin,
     after: (fx) => assert.equal(g(fx.dir, 'log', '-1', '--format=%s'), 'chore: mark S-1 done, sync backlog'),
   })),

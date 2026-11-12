@@ -935,15 +935,9 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
         );
         if (written == null) {
           console.error(`${repoName}: could not write the gate line (the unit has no change document): ${line}`);
-        } else if (isInterrupt(written.signal)) {
-          signal ??= written.signal;
         }
       } catch (err) {
         console.error(`${repoName}: could not write the gate line (${err.message}): ${line}`);
-      }
-      if (signal) {
-        interrupted('the backlog commit of the gate line');
-        return false;
       }
       if (!passed && run < CHECK_RUNS) info(`${repoName}: the check of ${commit} failed; running it once more.`);
     }

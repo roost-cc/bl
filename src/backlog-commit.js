@@ -23,7 +23,6 @@
 import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { dirname, join, resolve, sep } from 'path';
-import { spawnSync } from 'child_process';
 import { info, warn } from './config.js';
 import { HEADLESS_ENV, isHeadless } from './agents/provider.js';
 import { PRIORITY_FILE } from './priority.js';
@@ -31,35 +30,14 @@ import { atomicWriteFile } from './atomic-write.js';
 import { MAIN_REFSPEC, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
 import { RUN_DIR, ensureRunDir } from './run-lock.js';
-import { isInterrupt } from './signal-exit.js';
+import { describeExit, git as runGit, raiseAfter } from './child.js';
 
 // Never wait on a credential prompt; `GIT_EDITOR=true` keeps
 // `git rebase --continue` from opening an editor for the message.
 const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_EDITOR: 'true' };
 
-// The first interrupt (`isInterrupt`) that ended a `git` child in the
-// synchronous stretch `noteInterrupts` runs. `commitPaths` reports it as
-// `signal`: any of its git calls, the rebase of a push retry (`pullLocked`)
-// included.
-let interruptSeen = null;
-
-function git(root, args) {
-  const r = spawnSync('git', args, {
-    cwd: root,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-    env: GIT_ENV,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (isInterrupt(r.signal)) interruptSeen ??= r.signal;
-  return r;
-}
-
-/** What git had to say, or a fallback naming the exit status. */
-function gitMessage(r, what) {
-  if (r.error) return r.error.message;
-  return (r.stderr || r.stdout || '').trim() || `${what} exited ${r.status}`;
-}
+// SIGINT or SIGTERM that ends one of these git children ends `bl` (`src/child.js`, F-114 D2).
+const git = (root, args) => runGit(root, args, { env: GIT_ENV });
 
 /**
  * Whether the backlog at `root` is a git repo of its own: `root` holds a
@@ -360,9 +338,9 @@ function addablePaths(root, paths) {
  * `pushError` are present only when the backlog has an `origin` remote;
  * `pushConflicts` names the paths a retry's rebase conflicted in, and
  * `pushResolved` the generated paths it settled (left pending regeneration).
- * `signal` is present when SIGINT or SIGTERM (`INTERRUPT_SIGNALS`) ended a
- * git command of the commit or its push, the rebase of a push retry
- * included, so a caller can stop as the signal says (`checkedMerge`).
+ * SIGINT or SIGTERM that ends a git command of the commit or its push ends
+ * `bl` (`src/child.js`); the rebase of a push retry puts the checkout back
+ * first (`pullLocked`).
  *
  * With an `origin` remote the commit and push hold the main sync lock that
  * `pullBacklog` takes, so a commit never lands mid-rebase and a pull's
@@ -375,42 +353,14 @@ function addablePaths(root, paths) {
  * (`headlessPriorityRefusal`).
  * @returns {Promise<{ committed: boolean, paths: string[], error?: string,
  *   pushed?: boolean, pushError?: string, pushConflicts?: string[],
- *   pushResolved?: string[], signal?: string }>}
+ *   pushResolved?: string[] }>}
  */
 export async function commitPaths(root, paths, message) {
-  const seen = { signal: null };
-  const res = await commitPathsUnsignalled(root, paths, message, seen);
-  return seen.signal ? { ...res, signal: seen.signal } : res;
-}
-
-/**
- * Run the synchronous `fn` and keep in `seen.signal` the first interrupt
- * that ended one of its git children. `commitPaths` wraps each synchronous
- * stretch in it, never the lock wait: while that wait is awaited, another
- * caller's git commands may run, and their interrupts are not this commit's.
- * @template T
- * @param {{ signal: string | null }} seen
- * @param {() => T} fn
- * @returns {T}
- */
-function noteInterrupts(seen, fn) {
-  interruptSeen = null;
-  try {
-    return fn();
-  } finally {
-    seen.signal ??= interruptSeen;
-    interruptSeen = null;
-  }
-}
-
-async function commitPathsUnsignalled(root, paths, message, seen) {
   if (paths.length === 0) return { committed: false, paths };
-  const refused = noteInterrupts(seen, () => headlessPriorityRefusal(root, paths));
+  const refused = headlessPriorityRefusal(root, paths);
   if (refused) return { committed: false, paths, error: refused };
-  if (!noteInterrupts(seen, () => hasOriginRemote(root))) {
-    return noteInterrupts(seen, () => commitLocked(root, paths, message, false));
-  }
-  const res = await withMainSyncLock(root, () => noteInterrupts(seen, () => commitLocked(root, paths, message, true)));
+  if (!hasOriginRemote(root)) return commitLocked(root, paths, message, false);
+  const res = await withMainSyncLock(root, () => commitLocked(root, paths, message, true));
   if (res.state === 'lock-timeout') {
     return { committed: false, paths, error: `timed out waiting for ${res.lockPath} (PID ${res.holder})` };
   }
@@ -465,18 +415,10 @@ function commitLocked(root, paths, message, push) {
   // when nothing is addable (every path is a `git mv` source) skip the add.
   const addable = addablePaths(root, paths);
   const add = addable.length === 0 ? { status: 0 } : git(root, ['add', '-A', '--', ...addable]);
-  if (add.status !== 0) {
-    return { committed: false, paths, error: (add.stderr || '').trim() || 'git add failed' };
-  }
+  if (add.status !== 0) return { committed: false, paths, error: describeExit(add, 'git add') };
   const c = git(root, ['commit', '-q', '-m', message, '--only', '--', ...paths]);
   // A failure with no output (a silent hook) still has to read as an error.
-  if (c.status !== 0) {
-    return {
-      committed: false,
-      paths,
-      error: (c.stderr || c.stdout || '').trim() || `git commit exited ${c.status}`,
-    };
-  }
+  if (c.status !== 0) return { committed: false, paths, error: describeExit(c, 'git commit') };
   if (!push) return { committed: true, paths };
   const p = pushBacklog(root);
   return {
@@ -510,8 +452,6 @@ export function isNonFastForwardRejection(stderr) {
  * @property {string[]} [paths] the paths that rebase conflicted in (`conflict`).
  * @property {string[]} [resolved] generated paths that rebase settled by
  *   taking a side; their regeneration is left pending (`PULL_REGEN_PENDING`).
- * @property {string} [signal] the signal that ended a `git push`; that push
- *   is not retried.
  */
 
 /**
@@ -535,9 +475,7 @@ export function pushBacklog(root) {
   if (!hasOriginRemote(root)) return { pushed: false, skipped: true };
   const r = git(root, ['push', '-q', 'origin', 'main']);
   if (r.status === 0) return { pushed: true };
-  const error = gitMessage(r, 'git push');
-  // A push ended by a signal is not retried: the caller decides whether to go on.
-  if (r.signal) return { pushed: false, error, signal: r.signal };
+  const error = describeExit(r, 'git push');
   const branch = git(root, ['symbolic-ref', '--short', '-q', 'HEAD']).stdout?.trim() ?? '';
   // The rebase moves the checked-out branch: only retry when that is `main`.
   if (!isNonFastForwardRejection(r.stderr) || branch !== 'main') return { pushed: false, error };
@@ -578,13 +516,7 @@ export function pushBacklog(root) {
   const again = git(root, ['push', '-q', 'origin', 'main']);
   return again.status === 0
     ? { pushed: true, retry: 'pulled', resolved }
-    : {
-        pushed: false,
-        error: gitMessage(again, 'git push'),
-        retry: 'pulled',
-        resolved,
-        ...(again.signal ? { signal: again.signal } : {}),
-      };
+    : { pushed: false, error: describeExit(again, 'git push'), retry: 'pulled', resolved };
 }
 
 /**
@@ -606,7 +538,7 @@ export async function pushIfAhead(root, opts = {}) {
       const count = String(ahead.stdout ?? '').trim();
       // A query that fails or answers something else is not "nothing ahead".
       if (ahead.status !== 0 || !/^\d+$/.test(count)) {
-        const why = ahead.status !== 0 ? gitMessage(ahead, 'git rev-list') : `git rev-list answered '${count}'`;
+        const why = ahead.status !== 0 ? describeExit(ahead, 'git rev-list') : `git rev-list answered '${count}'`;
         // One line: `pushWarning` would otherwise pick git's `fatal:` line alone.
         return {
           pushed: false,
@@ -848,10 +780,10 @@ function takeReplayedSide(root, paths) {
   for (const p of paths) {
     const has = git(root, ['cat-file', '-e', `:3:${p}`]).status === 0;
     const r = has ? git(root, ['checkout', '--theirs', '--', p]) : git(root, ['rm', '-q', '--', p]);
-    if (r.status !== 0) return gitMessage(r, `resolving ${p}`);
+    if (r.status !== 0) return describeExit(r, `resolving ${p}`);
     if (has) {
       const a = git(root, ['add', '--', p]);
-      if (a.status !== 0) return gitMessage(a, `git add ${p}`);
+      if (a.status !== 0) return describeExit(a, `git add ${p}`);
     }
   }
   return null;
@@ -903,9 +835,21 @@ export async function pullBacklog(root, opts = {}) {
   return withMainSyncLock(root, () => pullLocked(root), opts);
 }
 
+/**
+ * The pull under the lock (`pullBacklog`, `pushBacklog`'s retry). SIGINT or
+ * SIGTERM that ends one of its git children ends `bl` only once the pull
+ * returns (`raiseAfter`, F-114 D2a): the rebase is aborted and the index and
+ * the stash are put back first.
+ * @param {string} root
+ * @returns {BacklogPull}
+ */
 function pullLocked(root) {
+  return raiseAfter(() => pullUndoable(root));
+}
+
+function pullUndoable(root) {
   const fetch = git(root, ['fetch', '-q', 'origin', MAIN_REFSPEC]);
-  if (fetch.status !== 0) return { state: 'fetch-failed', message: gitMessage(fetch, 'git fetch') };
+  if (fetch.status !== 0) return { state: 'fetch-failed', message: describeExit(fetch, 'git fetch') };
   const behind = git(root, ['rev-list', '--count', 'HEAD..origin/main']);
   if (behind.status === 0 && parseInt(behind.stdout, 10) === 0) return { state: 'current' };
   const before = git(root, ['rev-parse', 'HEAD']).stdout.trim();
@@ -925,15 +869,15 @@ function pullLocked(root) {
   configureMergeDriver(root);
   let r = git(root, ['rebase', '--autostash', 'origin/main']);
   while (r.status !== 0) {
-    if (!rebaseInProgress(root)) return back({ state: 'failed', message: gitMessage(r, 'git rebase') });
+    if (!rebaseInProgress(root)) return back({ state: 'failed', message: describeExit(r, 'git rebase') });
     const conflicts = conflictedPaths(root);
     const human = conflicts.filter((p) => !isGeneratedPath(p));
     const settleError = conflicts.length > 0 && human.length === 0 ? takeReplayedSide(root, conflicts) : null;
     if (conflicts.length === 0 || human.length > 0 || settleError) {
-      const message = settleError ?? gitMessage(r, 'git rebase');
+      const message = settleError ?? describeExit(r, 'git rebase');
       const abort = git(root, ['rebase', '--abort']);
       const aborted =
-        abort.status === 0 ? '' : `\n(git rebase --abort also failed: ${gitMessage(abort, 'git rebase --abort')})`;
+        abort.status === 0 ? '' : `\n(git rebase --abort also failed: ${describeExit(abort, 'git rebase --abort')})`;
       return back(
         conflicts.length === 0 || settleError
           ? { state: 'failed', message: message + aborted }
@@ -956,7 +900,7 @@ function pullLocked(root) {
       message:
         pop.status === 0
           ? 'your uncommitted backlog edits conflict with what was pulled'
-          : gitMessage(pop, 'git stash pop'),
+          : describeExit(pop, 'git stash pop'),
     });
   }
   const head = git(root, ['rev-parse', 'HEAD']).stdout.trim();

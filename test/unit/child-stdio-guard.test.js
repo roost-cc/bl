@@ -567,9 +567,9 @@ const IMPORTERS = {
 
 // The src/ files not yet moved to src/child.js, with the names each imports.
 // A story that moves a file removes its entry; the test fails on an entry the
-// file no longer imports. S-1473 moves backlog-commit.js, main-sync.js and
-// sync.js; S-1474 cleanup.js and feature-run.js; F-124 the rest, and ends the
-// list with the asynchronous children (codex-capacity.js, verbs.js's `spawn`).
+// file no longer imports. S-1474 moves cleanup.js and feature-run.js; F-124
+// the rest, and ends the list with the asynchronous children
+// (codex-capacity.js, verbs.js's `spawn`).
 const ALLOWED = new Map([
   ['src/agent-run.js', ['spawnSync']],
   ['src/agents/capacity-helper.js', ['spawnSyncFiles']],
@@ -577,7 +577,6 @@ const ALLOWED = new Map([
   ['src/agents/codex-capacity.js', ['spawn']],
   ['src/agents/codex.js', ['spawnSync']],
   ['src/agents/gemini.js', ['spawnSync']],
-  ['src/backlog-commit.js', ['spawnSync']],
   ['src/block.js', ['spawnSync']],
   ['src/blockers-merge.js', ['spawnSync']],
   ['src/cleanup.js', ['execFileSync', 'execSync', 'spawnSync']],
@@ -589,7 +588,6 @@ const ALLOWED = new Map([
   ['src/history.js', ['spawnSyncFiles']],
   ['src/inbox.js', ['spawnSync']],
   ['src/log.js', ['execSync']],
-  ['src/main-sync.js', ['spawnSync']],
   ['src/migrate-transitions.js', ['spawnSync']],
   ['src/migrate-worktree-layout.js', ['spawnSync']],
   ['src/migration-script.js', ['spawnSync']],
@@ -603,7 +601,6 @@ const ALLOWED = new Map([
   ['src/session.js', ['execSync', 'spawnSync']],
   ['src/side.js', ['spawnSync', 'spawnSyncFiles']],
   ['src/story.js', ['execSync']],
-  ['src/sync.js', ['spawnSync']],
   ['src/tab-title.js', ['spawnSync']],
   ['src/top-stream.js', ['spawnSync']],
   ['src/top.js', ['spawnSync']],
