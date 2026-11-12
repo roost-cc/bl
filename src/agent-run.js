@@ -36,7 +36,7 @@ Aliases: claude`);
   const config = loadConfig({ agent: args.agent, model: args.model });
   const { backlogRoot, roostDir, agent } = config;
   const provider = getProvider(agent);
-  const allowedTools = getAllowedTools(agent, {
+  const allowedTools = await getAllowedTools(agent, {
     backlogRoot,
     roostDir,
     config,

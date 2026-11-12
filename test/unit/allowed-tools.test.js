@@ -12,6 +12,8 @@ import {
   GENERATOR_VERSION,
 } from '../../src/allowed-tools.js';
 import { _hooks } from '../../src/atomic-write.js';
+import { specLockPath } from '../../src/spec-file.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 function fakeConfig(extra = {}) {
@@ -29,7 +31,7 @@ function fakeConfig(extra = {}) {
  * captured lines. `info` writes through `process.stderr.write` at call time,
  * so the regen log line lands here.
  */
-function captureStderr(fn) {
+async function captureStderr(fn) {
   const lines = [];
   const orig = process.stderr.write;
   process.stderr.write = (chunk) => {
@@ -37,23 +39,23 @@ function captureStderr(fn) {
     return true;
   };
   try {
-    return { result: fn(), lines };
+    return { result: await fn(), lines };
   } finally {
     process.stderr.write = orig;
   }
 }
 
 /** `ensureAllowedTools` with the regen line captured instead of printed. */
-function ensure(dir, cfg) {
-  return captureStderr(() => ensureAllowedTools(dir, cfg));
+async function ensure(dir, cfg) {
+  return captureStderr(async () => ensureAllowedTools(dir, cfg));
 }
 
 /** Like `ensure`, but returns the thrown error (`err`) instead of propagating it. */
-function ensureFailing(dir, cfg) {
+async function ensureFailing(dir, cfg) {
   let err = null;
-  const { lines } = captureStderr(() => {
+  const { lines } = await captureStderr(async () => {
     try {
-      ensureAllowedTools(dir, cfg);
+      await ensureAllowedTools(dir, cfg);
     } catch (e) {
       err = e;
     }
@@ -259,7 +261,7 @@ test('configHash differs when plugin command changes', () => {
 // Repo-independent input (S-829)
 // ---------------------------------------------------------------------------
 
-test('allowlistInput: same hash and bytes from any repo of one backlog', () => {
+test('allowlistInput: same hash and bytes from any repo of one backlog', async () => {
   const root = mkTempDir('bl-allow-');
   const repos = { 'app.acme.com': SESSION_PLUGIN, bl: null };
   const inApp = repoConfig(root, repos, 'app.acme.com');
@@ -271,10 +273,10 @@ test('allowlistInput: same hash and bytes from any repo of one backlog', () => {
   assert.equal(configHash(allowlistInput(inApp)), configHash(allowlistInput(inInfra)));
 
   const path = join(root, 'allowed-tools.json');
-  ensure(root, inApp);
+  await ensure(root, inApp);
   const bytesA = readFileSync(path, 'utf8');
   const mtimeA = statSync(path).mtimeMs;
-  const { lines } = ensure(root, inInfra);
+  const { lines } = await ensure(root, inInfra);
   const bytesB = readFileSync(path, 'utf8');
   assert.equal(bytesB, bytesA, 'a repo switch must not rewrite the file');
   assert.equal(statSync(path).mtimeMs, mtimeA, 'mtime must not change');
@@ -371,7 +373,7 @@ test('allowlistInput rejects malformed top-level and repo override plugin maps a
   assert.deepEqual(Object.keys(ok.raw.plugins), ['md']);
 });
 
-test('ensureAllowedTools: a legacy absolute-path leader regenerates to the templated token', () => {
+test('ensureAllowedTools: a legacy absolute-path leader regenerates to the templated token', async () => {
   // A checkout whose file was written by the v7–v9 generators holds this
   // machine's absolute prettier path in `base`. The version bump
   // regenerates it; the absolute form is config-derived (the TOP_LEVEL
@@ -392,7 +394,7 @@ test('ensureAllowedTools: a legacy absolute-path leader regenerates to the templ
       extra: [],
     }) + '\n',
   );
-  const { result: out, lines } = ensure(root, cfg);
+  const { result: out, lines } = await ensure(root, cfg);
   assert.deepEqual(lines, [`allowed-tools.json regenerated: generator version 9→${GENERATOR_VERSION}\n`]);
   assert.ok(out.base.includes('{{roostDir}}/tools/bin/prettier:*'));
   assert.ok(!out.base.includes('/roost/tools/bin/prettier:*'));
@@ -408,10 +410,10 @@ test('ensureAllowedTools: a legacy absolute-path leader regenerates to the templ
       extra: ['/roost/tools/bin/prettier:*', 'my-tool:*'],
     }) + '\n',
   );
-  assert.deepEqual(ensure(root, cfg).result.extra, ['my-tool:*']);
+  assert.deepEqual((await ensure(root, cfg)).result.extra, ['my-tool:*']);
 });
 
-test("ensureAllowedTools: a repo override's leader lands in base, not extra", () => {
+test("ensureAllowedTools: a repo override's leader lands in base, not extra", async () => {
   const root = mkTempDir('bl-allow-');
   const path = join(root, 'allowed-tools.json');
   const leader = '{{roostDir}}/containers/scripts/session:*';
@@ -429,63 +431,72 @@ test("ensureAllowedTools: a repo override's leader lands in base, not extra", ()
     }) + '\n',
   );
   const cfg = repoConfig(root, { 'app.acme.com': SESSION_PLUGIN, bl: null }, 'bl');
-  const { result: out } = ensure(root, cfg);
+  const { result: out } = await ensure(root, cfg);
   assert.ok(out.base.includes(leader), 'generated leader must be in base');
   assert.ok(!out.extra.includes(leader), 'generated leader must leave extra');
   assert.ok(out.base.includes('my-tool:*'), 'user addition stays in base');
   assert.deepEqual(out.extra, ['my-tool:*'], 'user addition stays in extra');
 });
 
-test('ensureAllowedTools: two regenerations produce identical bytes', () => {
+test('ensureAllowedTools: two regenerations produce identical bytes', async () => {
   const cfg = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
-  const dirs = [1, 2].map(() => mkTempDir('bl-allow-'));
-  const [a, b] = dirs.map((dir) => {
-    ensure(dir, cfg);
-    return readFileSync(join(dir, 'allowed-tools.json'), 'utf8');
-  });
-  assert.equal(a, b);
+  const texts = [];
+  for (const dir of [1, 2].map(() => mkTempDir('bl-allow-'))) {
+    await ensure(dir, cfg);
+    texts.push(readFileSync(join(dir, 'allowed-tools.json'), 'utf8'));
+  }
+  assert.equal(texts[0], texts[1]);
 });
 
-test("ensureAllowedTools: concurrent regenerations do not consume each other's staging file", () => {
+test('ensureAllowedTools: a regeneration started during another one waits for it and writes nothing', async () => {
   const dir = mkTempDir('bl-allow-');
   const cfg = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
   const staged = [];
   let second = null;
-  // The first caller, between its write and its rename, runs the second
-  // caller to completion; the second's own hook call only records its path.
+  // The first caller, between its write and its rename, starts the second.
   _hooks.beforeRename = (tmp) => {
     staged.push(tmp);
-    _hooks.beforeRename = (t) => staged.push(t);
     second = ensure(dir, cfg);
   };
   try {
-    const first = ensure(dir, cfg);
-    assert.equal(staged.length, 2, 'both callers reached the rename');
-    assert.notEqual(staged[0], staged[1], 'staging paths differ');
-    for (const tmp of staged) {
-      assert.equal(dirname(tmp), join(dir, '.bl', 'tmp'), 'staged in .bl/tmp');
-      assert.match(basename(tmp), new RegExp(`^allowed-tools\\.json\\.${process.pid}\\.[a-z0-9]+\\.tmp$`));
-    }
+    const first = await ensure(dir, cfg);
+    const after = await second;
+    assert.equal(staged.length, 1, 'only the first caller staged a file');
+    assert.equal(dirname(staged[0]), join(dir, '.bl', 'tmp'), 'staged in .bl/tmp');
+    assert.match(basename(staged[0]), new RegExp(`^allowed-tools\\.json\\.${process.pid}\\.[a-z0-9]+\\.tmp$`));
     const text = readFileSync(join(dir, 'allowed-tools.json'), 'utf8');
-    assert.ok(JSON.parse(text));
-    const texts = [first, second].map((r) => JSON.stringify(r.result, null, 2) + '\n');
-    assert.ok(texts.includes(text), "final file is one caller's output");
-    assert.deepEqual(
-      readdirSync(dir).filter((f) => f.endsWith('.tmp')),
-      [],
-    );
+    assert.equal(text, JSON.stringify(first.result, null, 2) + '\n', "the file is the first caller's");
+    assert.deepEqual(after.result, first.result, "the second reads the first's file");
     assert.deepEqual(readdirSync(join(dir, '.bl', 'tmp')), []);
   } finally {
     _hooks.beforeRename = null;
   }
 });
 
-test('ensureAllowedTools: a failed rename leaves no staging file', () => {
+test('ensureAllowedTools waits while another process holds the spec lock of allowed-tools.json', async () => {
+  const dir = mkTempDir('bl-allow-');
+  const path = join(dir, 'allowed-tools.json');
+  const cfg = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
+  writeFileSync(path, '{}\n');
+  const holder = await holdLockInChild(specLockPath(path));
+  let regenerating;
+  try {
+    regenerating = ensure(dir, cfg);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(readFileSync(path, 'utf8'), '{}\n', 'nothing written while the lock is held');
+  } finally {
+    await holder.kill();
+  }
+  const { result } = await regenerating;
+  assert.equal(readFileSync(path, 'utf8'), JSON.stringify(result, null, 2) + '\n', 'regenerated once it is free');
+});
+
+test('ensureAllowedTools: a failed rename leaves no staging file', async () => {
   const dir = mkTempDir('bl-allow-');
   const cfg = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
   _hooks.beforeRename = (tmp) => unlinkSync(tmp);
   try {
-    const { err, lines } = ensureFailing(dir, cfg);
+    const { err, lines } = await ensureFailing(dir, cfg);
     assert.equal(err?.code, 'ENOENT');
     assert.deepEqual(
       readdirSync(dir).filter((f) => f.endsWith('.tmp')),
@@ -499,28 +510,28 @@ test('ensureAllowedTools: a failed rename leaves no staging file', () => {
   }
 });
 
-test('ensureAllowedTools: a failed write propagates and leaves no staging file', () => {
+test('ensureAllowedTools: a failed write propagates and leaves no staging file', async () => {
   const parent = mkTempDir('bl-allow-');
   const dir = join(parent, 'missing');
   const cfg = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
   // The backlog root does not exist, so creating .bl/tmp in it throws and
   // nothing is created.
-  const { err, lines } = ensureFailing(dir, cfg);
+  const { err, lines } = await ensureFailing(dir, cfg);
   assert.equal(err?.code, 'ENOENT');
   assert.deepEqual(readdirSync(parent), []);
   assert.deepEqual(lines, [], 'nothing left behind, nothing reported');
 });
 
-test('ensureAllowedTools: old-style file with generated_at is left alone', () => {
+test('ensureAllowedTools: old-style file with generated_at is left alone', async () => {
   const dir = mkTempDir('bl-allow-');
   const path = join(dir, 'allowed-tools.json');
   const cfg = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
-  ensure(dir, cfg);
+  await ensure(dir, cfg);
   const onDisk = JSON.parse(readFileSync(path, 'utf8'));
   onDisk._generated.generated_at = '2020-01-01T00:00:00.000Z';
   const oldStyle = JSON.stringify(onDisk, null, 2) + '\n';
   writeFileSync(path, oldStyle);
-  const { result, lines } = ensure(dir, cfg);
+  const { result, lines } = await ensure(dir, cfg);
   assert.equal(readFileSync(path, 'utf8'), oldStyle, 'must not rewrite');
   assert.deepEqual(lines, []);
   assert.equal(result._generated.generated_at, '2020-01-01T00:00:00.000Z');
@@ -565,10 +576,10 @@ test('regenReason: null for a current file, the trigger string otherwise', () =>
 // Lazy regeneration
 // ---------------------------------------------------------------------------
 
-test('ensureAllowedTools regenerates on missing file', () => {
+test('ensureAllowedTools regenerates on missing file', async () => {
   const dir = mkTempDir('bl-allow-');
   const cfg = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
-  const { result: out, lines } = ensure(dir, cfg);
+  const { result: out, lines } = await ensure(dir, cfg);
   const path = join(dir, 'allowed-tools.json');
   assert.ok(existsSync(path));
   const onDisk = JSON.parse(readFileSync(path, 'utf8'));
@@ -577,7 +588,7 @@ test('ensureAllowedTools regenerates on missing file', () => {
   assert.deepEqual(lines, ['allowed-tools.json regenerated: missing\n']);
 });
 
-test('ensureAllowedTools regenerates on hash mismatch', () => {
+test('ensureAllowedTools regenerates on hash mismatch', async () => {
   const dir = mkTempDir('bl-allow-');
   const path = join(dir, 'allowed-tools.json');
   // Seed with a stale-hash file.
@@ -592,54 +603,54 @@ test('ensureAllowedTools regenerates on hash mismatch', () => {
     }) + '\n',
   );
   const cfg = fakeConfig({ plugins: { x: { format: 'freshcmd' } } });
-  const { result: out, lines } = ensure(dir, cfg);
+  const { result: out, lines } = await ensure(dir, cfg);
   assert.notEqual(out._generated.config_hash, 'deadbeef');
   assert.ok(out.base.includes('freshcmd:*'));
   const fresh8 = out._generated.config_hash.slice(0, 8);
   assert.deepEqual(lines, [`allowed-tools.json regenerated: config hash deadbeef→${fresh8}\n`]);
 });
 
-test('ensureAllowedTools is a no-op when hash and version match', () => {
+test('ensureAllowedTools is a no-op when hash and version match', async () => {
   const dir = mkTempDir('bl-allow-');
   const cfg = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
-  ensure(dir, cfg);
+  await ensure(dir, cfg);
   const path = join(dir, 'allowed-tools.json');
   const before = readFileSync(path, 'utf8');
   const mtime = statSync(path).mtimeMs;
-  const { lines } = ensure(dir, cfg);
+  const { lines } = await ensure(dir, cfg);
   const after = readFileSync(path, 'utf8');
   assert.equal(before, after, 'second call must not rewrite the file');
   assert.equal(statSync(path).mtimeMs, mtime, 'second call must not write');
   assert.deepEqual(lines, []);
 });
 
-test('ensureAllowedTools regenerates on JSON parse failure', () => {
+test('ensureAllowedTools regenerates on JSON parse failure', async () => {
   const dir = mkTempDir('bl-allow-');
   const path = join(dir, 'allowed-tools.json');
   writeFileSync(path, 'not json{');
   const cfg = fakeConfig();
-  const { result: out, lines } = ensure(dir, cfg);
+  const { result: out, lines } = await ensure(dir, cfg);
   assert.ok(Array.isArray(out.base));
   assert.deepEqual(lines, ['allowed-tools.json regenerated: unparseable\n']);
 });
 
-test('ensureAllowedTools treats a non-object document as unparseable', () => {
+test('ensureAllowedTools treats a non-object document as unparseable', async () => {
   const dir = mkTempDir('bl-allow-');
   const path = join(dir, 'allowed-tools.json');
   // Valid JSON, but an array has no header and no allowlist to recover.
   writeFileSync(path, '[]\n');
-  const { result: out, lines } = ensure(dir, fakeConfig());
+  const { result: out, lines } = await ensure(dir, fakeConfig());
   assert.ok(Array.isArray(out.base));
   assert.deepEqual(lines, ['allowed-tools.json regenerated: unparseable\n']);
   assert.ok(JSON.parse(readFileSync(path, 'utf8'))._generated);
 });
 
-test('ensureAllowedTools preserves user-added `extra` entries across regen', () => {
+test('ensureAllowedTools preserves user-added `extra` entries across regen', async () => {
   const dir = mkTempDir('bl-allow-');
   const path = join(dir, 'allowed-tools.json');
   // Initial generation against config A.
   const cfgA = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
-  ensure(dir, cfgA);
+  await ensure(dir, cfgA);
   // Simulate a user pattern added to `extra`.
   const onDisk = JSON.parse(readFileSync(path, 'utf8'));
   onDisk.extra = [...(onDisk.extra ?? []), 'my-custom-tool:*'];
@@ -652,13 +663,13 @@ test('ensureAllowedTools preserves user-added `extra` entries across regen', () 
       py: { format: 'ruff {{path}}' },
     },
   });
-  const { result: out } = ensure(dir, cfgB);
+  const { result: out } = await ensure(dir, cfgB);
   assert.ok(out.base.includes('my-custom-tool:*'), 'user pattern must survive in base');
   assert.ok(out.extra.includes('my-custom-tool:*'), 'user pattern must survive in extra');
   assert.ok(out.base.includes('ruff:*'), 'new plugin leader still added');
 });
 
-test('ensureAllowedTools recovers legacy user additions found only in base', () => {
+test('ensureAllowedTools recovers legacy user additions found only in base', async () => {
   // A backlog from before the `extra` field existed: `bl allow` wrote
   // straight into `base`. The first regen after upgrading bl must rescue
   // those patterns rather than nuke them.
@@ -675,12 +686,12 @@ test('ensureAllowedTools recovers legacy user additions found only in base', () 
     }) + '\n',
   );
   const cfg = fakeConfig({ plugins: { md: { format: 'prettier {{path}}' } } });
-  const { result: out } = ensure(dir, cfg);
+  const { result: out } = await ensure(dir, cfg);
   assert.ok(out.base.includes('legacy-tool:*'));
   assert.ok(out.extra.includes('legacy-tool:*'));
 });
 
-test('ensureAllowedTools regenerates on generator version mismatch', () => {
+test('ensureAllowedTools regenerates on generator version mismatch', async () => {
   const dir = mkTempDir('bl-allow-');
   const path = join(dir, 'allowed-tools.json');
   const cfg = fakeConfig();
@@ -698,7 +709,7 @@ test('ensureAllowedTools regenerates on generator version mismatch', () => {
       base: ['old:*'],
     }) + '\n',
   );
-  const { result: out, lines } = ensure(dir, cfg);
+  const { result: out, lines } = await ensure(dir, cfg);
   assert.equal(out._generated.generator_version, GENERATOR_VERSION);
   assert.ok(!('generated_at' in out._generated));
   assert.deepEqual(lines, [
@@ -790,7 +801,7 @@ test('generateAllowedTools: the forge plugin grants no mode anything, whatever i
   }
 });
 
-test('ensureAllowedTools preserves same-suffix user grants outside the configured roots in base and extra', () => {
+test('ensureAllowedTools preserves same-suffix user grants outside the configured roots in base and extra', async () => {
   // A declared token is dropped only when it is an exact generated token or
   // a generated templated leader resolved with the input's configured
   // `roostDir` / `backlogRoot` (the absolute form a pre-v10 generator wrote
@@ -833,7 +844,7 @@ test('ensureAllowedTools preserves same-suffix user grants outside the configure
         extra: section === 'extra' ? [...generated, ...userGrants] : [],
       }) + '\n',
     );
-    const { result: out } = ensure(root, cfg);
+    const { result: out } = await ensure(root, cfg);
     assert.deepEqual(out.extra, [...userGrants].sort(), `${section}: every user grant preserved, nothing else`);
     for (const tok of [
       '{{roostDir}}/tools/bin/prettier:*',

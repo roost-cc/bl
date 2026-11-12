@@ -9,8 +9,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
-import { parse } from 'acorn';
 import { simple } from 'acorn-walk';
+import { parseSource } from '../helpers/source-ast.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { fakePagers, withEnv } from '../helpers/fake-pagers.js';
 import { showText, exitStatus } from '../../src/config.js';
@@ -162,7 +162,7 @@ test('showText returns the more fallback status, and a failed fallback is 127 wi
 // nor imports child_process (F-70 review r1).
 test('config_paging_process_tests_follow_test_layer_rule', () => {
   const file = new URL('../unit/config.test.js', import.meta.url);
-  const ast = parse(readFileSync(file, 'utf8'), { ecmaVersion: 'latest', sourceType: 'module' });
+  const ast = parseSource(readFileSync(file, 'utf8'));
   const found = [];
   simple(ast, {
     ImportDeclaration(d) {

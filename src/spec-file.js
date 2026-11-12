@@ -19,14 +19,16 @@
  * spec lock, and nothing holds two spec locks at once.
  */
 
-import { readFileSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { isAbsolute, join, relative, resolve } from 'path';
 import { createHash } from 'crypto';
-import { FrontmatterError, info, parseFrontmatterOf, serializeFrontmatter } from './config.js';
+import { FrontmatterError, info, parseFrontmatterOf, runPluginBatch, serializeFrontmatter } from './config.js';
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
-import { holds, release, tryLock } from './kernel-lock.js';
+import { assertHeld, release, tryLock } from './kernel-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
+import { canonical, withLock } from './lock.js';
+import { withCoveringLock } from './write-lock.js';
 
 /** The spec lock could not be taken: held by a live process past the wait, or not creatable. */
 export class SpecLockError extends Error {
@@ -54,6 +56,18 @@ export function specLockPath(indexPath) {
   return join(tmpdir(), `bl-tokens-${createHash('sha1').update(path).digest('hex').slice(0, 16)}.lock`);
 }
 
+/** One `tryLock` of `indexPath`'s spec lock at `lockPath`; a lock that cannot be created throws `SpecLockError`. */
+function takeSpecLock(indexPath, lockPath) {
+  try {
+    return tryLock(lockPath, `spec ${indexPath}`);
+  } catch (e) {
+    throw new SpecLockError(`${indexPath}: cannot take the spec lock ${lockPath}: ${e.message}`, {
+      indexPath,
+      cause: e,
+    });
+  }
+}
+
 /** `fn()`, refusing a promise: the lock is released when `fn` returns, not when it settles. */
 function runSync(fn, indexPath) {
   const out = fn();
@@ -79,16 +93,7 @@ function runSync(fn, indexPath) {
  */
 export async function withSpecLock(indexPath, fn, { waitMs = LOCK_WAIT_MS } = {}) {
   const lockPath = specLockPath(indexPath);
-  const take = () => {
-    try {
-      return tryLock(lockPath, `spec ${indexPath}`);
-    } catch (e) {
-      throw new SpecLockError(`${indexPath}: cannot take the spec lock ${lockPath}: ${e.message}`, {
-        indexPath,
-        cause: e,
-      });
-    }
-  };
+  const take = () => takeSpecLock(indexPath, lockPath);
   let handle;
   try {
     ({ taken: handle } = await awaitLock(lockPath, take, { deadlineMs: waitMs, pollMs: 10, announce: info }));
@@ -108,6 +113,91 @@ export async function withSpecLock(indexPath, fn, { waitMs = LOCK_WAIT_MS } = {}
   } finally {
     release(handle);
   }
+}
+
+/**
+ * `withSpecLock` for synchronous code, which cannot await a wait (F-126 D7):
+ * one `tryLock` of `indexPath`'s spec lock, then `fn`, then the release.
+ * Throws `SpecLockError` naming the holder when another process holds the
+ * lock, and `fn` does not run. The caller decides what a busy lock means:
+ * `bl side`'s and `snapshot`'s undos leave the file and name it, and a
+ * migration fails and restores. `fn` is synchronous. Returns `fn`'s result.
+ * @template T
+ * @param {string} indexPath
+ * @param {() => T} fn
+ * @returns {T}
+ */
+export function withSpecLockNow(indexPath, fn) {
+  const lockPath = specLockPath(indexPath);
+  const got = takeSpecLock(indexPath, lockPath);
+  if (!('taken' in got)) {
+    throw new SpecLockError(`${indexPath}: the spec lock ${lockPath} is held by pid ${got.holder}`, {
+      indexPath,
+      holder: got.holder,
+    });
+  }
+  try {
+    return runSync(fn, indexPath);
+  } finally {
+    release(got.taken);
+  }
+}
+
+/**
+ * Run `fn` holding the covering lock of the spec file at `path` (F-126 D2,
+ * D3): a story or feature `index.md`, a change document, or
+ * `allowed-tools.json`. An existing file takes its spec lock alone. A file
+ * that does not exist yet is created under the backlog lock, as a new spec
+ * file is, with its spec lock inside it (F-67 D4: the backlog lock first).
+ * When another process removes the file between the check and the spec lock,
+ * the spec lock is given back and the backlog lock taken first, so a write
+ * that creates the file again holds its covering lock. `fn` is synchronous,
+ * as for `withSpecLock`, and its result resolves. A caller already in a spec
+ * lock cannot call this: its `fn` is synchronous.
+ * @template T
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @param {() => T} fn
+ * @returns {Promise<T>}
+ */
+export async function withSpecFileLock(backlogRoot, path, fn) {
+  if (existsSync(path)) {
+    const out = await withSpecLock(path, () => (existsSync(path) ? { result: fn() } : null));
+    if (out) return out.result;
+  }
+  return withLock(backlogRoot, async () => withSpecLock(path, fn));
+}
+
+/**
+ * Run a format or lint plugin (`runPluginBatch`, `config.js`) on `paths`, one
+ * file per process, each inside that file's covering lock (`withCoveringLock`,
+ * `write-lock.js`; F-126 D4). A plugin rewrites a file in place, so a batch
+ * run could overwrite another writer's write to any file in it. A file whose
+ * lock another process holds is waited for, and the wait is said once on
+ * stderr. The cost is about 100 ms per file. Lock order (F-67 D4): a caller
+ * may hold the backlog lock (`bl sync --commit`) but no spec lock.
+ * A missing binary (exit 127) stops the run after the first file, with its
+ * one warning; any other non-zero exit does not stop the other files.
+ * @param {string} name  the plugin's name
+ * @param {string} command  the plugin's command for the stage
+ * @param {string[]} paths  relative to `cwd`, or absolute
+ * @param {Record<string, string>} vars
+ * @param {string} cwd
+ * @param {string} backlogRoot
+ * @returns {Promise<{ ok: boolean, status: number, missing?: true }>} the worst status
+ */
+export async function runPluginLocked(name, command, paths, vars, cwd, backlogRoot) {
+  let status = 0;
+  for (const path of paths) {
+    // The plugin gets the file whose lock is held, not a link to it, written
+    // as `path` is: absolute, or relative to `cwd`.
+    const run = (target) =>
+      runPluginBatch(name, command, [isAbsolute(path) ? target : relative(canonical(cwd), target)], vars, cwd);
+    const r = await withCoveringLock(backlogRoot, resolve(cwd, path), run);
+    if (r.missing) return r;
+    if (r.status > status) status = r.status;
+  }
+  return { ok: status === 0, status };
 }
 
 /**
@@ -157,16 +247,14 @@ export async function updateSpecFile(backlogRoot, indexPath, mutate) {
 /**
  * `updateSpecFile` for a caller inside `withSpecLock(indexPath, …)`, whose
  * `fn` is synchronous and so cannot await it. Returns whether it wrote.
- * Throws a TypeError when this process does not hold the spec lock.
+ * Throws when this process does not hold the spec lock (`assertHeld`).
  * @param {string} backlogRoot
  * @param {string} indexPath
  * @param {(fm: object, body: string) => string | undefined | false} mutate
  * @returns {boolean}
  */
 export function updateSpecFileHeld(backlogRoot, indexPath, mutate) {
-  if (!holds(specLockPath(indexPath))) {
-    throw new TypeError(`updateSpecFileHeld(${indexPath}): the spec lock is not held; use updateSpecFile`);
-  }
+  assertHeld(specLockPath(indexPath), 'the spec lock', `updateSpecFileHeld(${indexPath})`);
   const raw = readFileSync(indexPath, 'utf8');
   const { content, crlf } = readSpecText(raw, indexPath);
   const { fm, body } = parseFrontmatterOf(content, indexPath);

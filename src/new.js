@@ -20,7 +20,7 @@
  * edges between them it turned into order edges.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync } from 'fs';
 import { join, dirname, relative, isAbsolute, resolve } from 'path';
 import * as readline from 'readline';
 import {
@@ -62,8 +62,8 @@ import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { prepareBody } from './body.js';
 import { validateSpec, SpecError } from './spec.js';
 import { resolveTargets } from './targets.js';
-import { failPoint, settle, writeRecord } from './feature-links.js';
-import { atomicWriteFile } from './atomic-write.js';
+import { failPoint, settleRecord, writeRecord } from './feature-links.js';
+import { atomicWriteFile, moveIntoBacklog, removeBacklogPath, STAGING_DIR } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { BLOCKERS_FILE, dependencyEdge, edgeKey, edgeLabel, readUnits } from './blockers.js';
 import { joinRefusal, orderJoinedEdges, writeEdges } from './block.js';
@@ -478,7 +478,7 @@ async function newFeature(args, stories) {
       } catch (err) {
         let state, left;
         try {
-          ({ state, left } = settle(root, record));
+          ({ state, left } = await settleRecord(root, record));
         } catch (settleErr) {
           // Unsettled: the feature and the record stay for the next command.
           err.keepFeature = true;
@@ -920,7 +920,7 @@ function writeNewEdges(cfg, edges, created) {
   } else {
     for (const dir of created) {
       try {
-        rmSync(dir, { recursive: true, force: true });
+        removeBacklogPath(cfg.backlogRoot, dir);
       } catch (e) {
         left.push(`${relative(cfg.backlogRoot, dir)} is still there (${e.message})`);
       }
@@ -1743,10 +1743,11 @@ async function runBatchMode(args, jsonMode) {
   }
 
   // --- Stage to tempdir ---
-  // PID-suffixed name; collision means a stale dir from a prior crashed
+  // In the ignored `.bl/tmp/` (`STAGING_DIR`), so a crash leaves nothing git
+  // sees. PID-suffixed name; collision means a stale dir from a prior crashed
   // batch with the same PID. Warn before reclaiming it so the user has a
   // breadcrumb if something else is using the path.
-  const tempRoot = join(cfg.backlogRoot, `.bl-new-${process.pid}`);
+  const tempRoot = join(cfg.backlogRoot, STAGING_DIR, `new-${process.pid}`);
   if (existsSync(tempRoot)) {
     console.error(
       `warning: removing stale tempdir ${relative(cfg.backlogRoot, tempRoot)} (likely from a previous crashed bl new)`,
@@ -1782,11 +1783,11 @@ async function runBatchMode(args, jsonMode) {
   }
 
   // --- Atomic move into place ---
-  const moved = []; // [{from, to}]
+  const moved = []; // the directories moved into the backlog
   const unwind = () => {
-    for (const m of [...moved].reverse()) {
+    for (const dir of [...moved].reverse()) {
       try {
-        renameSync(m.to, m.from);
+        removeBacklogPath(cfg.backlogRoot, dir);
       } catch {
         // best-effort
       }
@@ -1797,8 +1798,8 @@ async function runBatchMode(args, jsonMode) {
   try {
     if (creatingNewComponent) {
       mkdirSync(dirname(componentAbsDir), { recursive: true });
-      renameSync(tempComponentDir, componentAbsDir);
-      moved.push({ from: tempComponentDir, to: componentAbsDir });
+      moveIntoBacklog(cfg.backlogRoot, tempComponentDir, componentAbsDir);
+      moved.push(componentAbsDir);
     }
     mkdirSync(storiesDir, { recursive: true });
     for (const r of renderedStories) {
@@ -1810,8 +1811,8 @@ async function runBatchMode(args, jsonMode) {
       if (process.env.BL_INTERNAL_TEST_FAIL_ON_MOVE != null && r.id === process.env.BL_INTERNAL_TEST_FAIL_ON_MOVE) {
         throw new Error(`injected mid-move failure (BL_INTERNAL_TEST_FAIL_ON_MOVE=${r.id})`);
       }
-      renameSync(tempStoryDir, r.finalDir);
-      moved.push({ from: tempStoryDir, to: r.finalDir });
+      moveIntoBacklog(cfg.backlogRoot, tempStoryDir, r.finalDir);
+      moved.push(r.finalDir);
     }
   } catch (err) {
     console.error(`Move failed: ${err.message}; unwinding.`);

@@ -4,6 +4,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { spawnSync } from 'child_process';
 import { applyMigration } from '../../src/migration-txn.js';
+import { withLock } from '../../src/lock.js';
+import { mainSyncLockPath } from '../../src/main-sync.js';
+import { specLockPath } from '../../src/spec-file.js';
 import { sessionLockPath } from '../../src/story.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
@@ -43,6 +46,9 @@ const steps =
     write(join(dir, 'made/deep/c.md'), 'c\n');
   };
 
+/** `applyMigration` as every migration runs it: under the backlog lock (F-126). */
+const migrateLocked = (config, opts) => withLock(config.backlogRoot, () => applyMigration(config, opts));
+
 const stage = (dir, extraPaths) => git(dir, 'add', '-A', '--', ...extraPaths);
 
 /** A pid no process holds: a child's, after it exits. */
@@ -73,6 +79,12 @@ test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', as
       /^the backlog's HEAD \(\w{7}\) is not origin\/main/,
     ],
     ['no origin remote', (d) => git(d, 'remote', 'remove', 'origin'), /^git fetch origin main failed/],
+    [
+      // The fetch writes origin/main, so it holds the main sync lock (F-126 D1).
+      'another process holding the main sync lock',
+      (d) => holdLockInChild(mainSyncLockPath(d)),
+      (holder) => new RegExp(`^PID ${holder.pid} holds the backlog's main sync lock`),
+    ],
     [
       'an active bl run',
       // A child holds the run lock (a kernel lock, F-104): the check ignores this process.
@@ -107,7 +119,7 @@ test('applyMigration_refuses_unless_clean_at_origin_main_with_no_active_run', as
     const made = await arrange(dir, config);
     const head = git(dir, 'rev-parse', 'HEAD');
     const status = statusLines(dir);
-    const message = await applyMigration(config, {
+    const message = await migrateLocked(config, {
       message: 'm',
       apply: () => assert.fail(`${name}: apply reached`),
       commit: async () => assert.fail(`${name}: commit reached`),
@@ -144,7 +156,7 @@ test('applyMigration_runs_past_a_run_state_or_session_lock_whose_process_is_gone
   const holder = await holdLockInChild(sessionLockPath(dir, wt));
   await holder.kill();
   const head = git(dir, 'rev-parse', 'HEAD');
-  const result = await applyMigration(
+  const result = await migrateLocked(
     { backlogRoot: dir, repos: { r: { name: 'r', path: repo } } },
     {
       message: 'm',
@@ -173,7 +185,7 @@ test('applyMigration_failure_before_HEAD_moves_leaves_git_status_clean_and_HEAD_
     const errors = [];
     const consoleError = console.error;
     console.error = (m) => errors.push(m);
-    const outcome = await applyMigration(
+    const outcome = await migrateLocked(
       { backlogRoot: dir },
       {
         message: 'm',
@@ -208,10 +220,65 @@ test('applyMigration_failure_before_HEAD_moves_leaves_git_status_clean_and_HEAD_
   }
 });
 
+test('applyMigration_restore_leaves_the_backlog_when_another_process_holds_the_main_sync_lock (F-126 D7)', async () => {
+  const dir = backlog();
+  let holder;
+  const result = await migrateLocked(
+    { backlogRoot: dir },
+    {
+      message: 'm',
+      apply: steps(dir),
+      commit: async () => {
+        holder = await holdLockInChild(mainSyncLockPath(dir));
+        return { committed: false, paths: [], error: 'injected' };
+      },
+    },
+  ).finally(() => holder?.kill());
+  assert.equal(
+    result.error,
+    `injected; could not restore the backlog (PID ${holder.pid} holds the main sync lock): ` +
+      `run git -C "${dir}" reset --hard HEAD && git -C "${dir}" clean -fd`,
+  );
+  assert.equal(readFileSync(join(dir, 'a.md'), 'utf8'), 'migration\n', 'the restore ran no git');
+});
+
+test('applyMigration_write_of_a_spec_whose_lock_another_process_holds_fails_and_restores (F-126 D7)', async () => {
+  const dir = backlog();
+  const story = join(dir, 'stories/S1-one/index.md');
+  put(dir, 'stories/S1-one/index.md', 'one\n');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-q', '-m', 'story');
+  git(dir, 'push', '-q', 'origin', 'main');
+  const holder = await holdLockInChild(specLockPath(story));
+  let message = null;
+  try {
+    await migrateLocked(
+      { backlogRoot: dir },
+      {
+        message: 'm',
+        apply: ({ write }) => {
+          write(join(dir, 'a.md'), 'migration\n');
+          write(story, 'two\n');
+        },
+        commit: async () => assert.fail('commit reached'),
+      },
+    );
+  } catch (e) {
+    message = e.message;
+  } finally {
+    await holder.kill();
+  }
+  assert.ok(message?.startsWith(`migration failed: ${story}: the spec lock `), message);
+  assert.ok(message.includes(`is held by pid ${holder.pid}; backlog restored`), message);
+  assert.equal(readFileSync(story, 'utf8'), 'one\n', 'the spec is as it was');
+  assert.equal(readFileSync(join(dir, 'a.md'), 'utf8'), 'before\n', 'the write before it is undone');
+  assert.deepEqual(statusLines(dir), []);
+});
+
 test('applyMigration_reports_a_commit_that_landed_and_does_not_reset_it', async () => {
   const dir = backlog();
   const head = git(dir, 'rev-parse', 'HEAD');
-  const result = await applyMigration(
+  const result = await migrateLocked(
     { backlogRoot: dir },
     {
       message: 'm',

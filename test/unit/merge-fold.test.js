@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import { FrontmatterError, parseFrontmatter } from '../../src/config.js';
 import { markFeatureMerged, updateFeature } from '../../src/feature-cmd.js';
 import { accumulateStepTokensOnFile } from '../../src/tokens.js';
@@ -24,18 +24,20 @@ function backlog({
 } = {}) {
   const dir = mkTempDir('bl-merge-fold-');
   copyFileSync(FLOW_TEMPLATE, join(dir, 'flow.json'));
-  const file = (name, text) => {
-    const path = join(dir, `${name}.md`);
+  // Real unit paths: a spec's covering lock is its spec lock (F-126).
+  const file = (unitDir, text) => {
+    const path = join(dir, unitDir, 'index.md');
+    mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, text);
     return path;
   };
   return {
     dir,
     config: { backlogRoot: dir },
-    feature: { id: 'F-1', indexPath: file('feature', feature) },
+    feature: { id: 'F-1', indexPath: file('features/F1-f', feature) },
     stories: [
-      { id: 'S-1', indexPath: file('s1', a) },
-      { id: 'S-2', indexPath: file('s2', b) },
+      { id: 'S-1', indexPath: file('stories/S1-a', a) },
+      { id: 'S-2', indexPath: file('stories/S2-b', b) },
     ],
   };
 }

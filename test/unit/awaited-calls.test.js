@@ -15,8 +15,8 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
-import { parse } from 'acorn';
 import { fullAncestor } from 'acorn-walk';
+import { calleeName, declaredName, parseSource } from '../helpers/source-ast.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -24,8 +24,6 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const EXCEPTIONS = new Map([
   ['bl.js run', 'the entry point: `run().catch(…)` handles the rejection'],
   ['blockers-merge.js main', 'the script entry: `main(…).then(…)` handles the result'],
-  ['cleanup.js recordMerge', "change-doc.js's synchronous `recordMerge`, not updates-run.js's"],
-  ['feature-cmd.js recordMerge', "change-doc.js's synchronous `recordMerge`, not updates-run.js's"],
   ['credential-helper.js run', "a local synchronous `run`, not bl.js's"],
   ['release.js run', "a local synchronous `run`, not bl.js's"],
   ['report.js scoped', "a local synchronous `scoped`, not feature-run.js's"],
@@ -38,23 +36,7 @@ const EXCEPTIONS = new Map([
   ['what-next.js addEdge', "a local synchronous `addEdge`, not block.js's"],
 ]);
 
-const parseJs = (source) =>
-  parse(source, {
-    ecmaVersion: 'latest',
-    sourceType: 'module',
-    locations: true,
-    allowHashBang: true,
-  });
 const isFunction = (n) => /Function/.test(n.type);
-
-/** The name a function is declared under: `function f`, `const f = …`, `{ f() {} }`, `class { f() {} }`. */
-function declaredName(fn, parent) {
-  if (fn.id) return fn.id.name;
-  if (parent?.type === 'VariableDeclarator' && parent.id.type === 'Identifier') return parent.id.name;
-  if ((parent?.type === 'Property' || parent?.type === 'MethodDefinition') && !parent.computed)
-    return parent.key.name ?? parent.key.value;
-  return null;
-}
 
 /**
  * The names of the async functions a source declares. An async generator
@@ -69,13 +51,6 @@ function asyncNamesOf(ast) {
     if (name) names.add(name);
   });
   return names;
-}
-
-/** The name a call's callee ends in: `f` for `f(…)` and `a.b.f(…)`. */
-function calleeName(callee) {
-  if (callee.type === 'Identifier') return callee.name;
-  if (callee.type === 'MemberExpression' && !callee.computed) return callee.property.name;
-  return null;
 }
 
 /**
@@ -108,7 +83,7 @@ function isAwaited(ancestors) {
 /** Calls in `source` to one of `asyncNames` that are not awaited: `[{ line, name }]`. */
 function unawaitedCalls(source, asyncNames) {
   const found = [];
-  fullAncestor(parseJs(source), (n, _state, ancestors) => {
+  fullAncestor(parseSource(source), (n, _state, ancestors) => {
     if (n.type !== 'CallExpression') return;
     const name = calleeName(n.callee);
     if (name && asyncNames.has(name) && !isAwaited(ancestors)) found.push({ line: n.loc.start.line, name });
@@ -129,7 +104,7 @@ function srcFiles() {
 test('every call in src/ to an async function of src/ is awaited, apart from EXCEPTIONS', () => {
   const files = srcFiles();
   const names = new Set();
-  for (const { source } of files) for (const n of asyncNamesOf(parseJs(source))) names.add(n);
+  for (const { source } of files) for (const n of asyncNamesOf(parseSource(source))) names.add(n);
   const findings = [];
   const used = new Set();
   for (const { file, source } of files) {
@@ -205,5 +180,5 @@ test('awaited calls: what counts as awaited', () => {
 test('awaited calls: async names come from declarations, expressions and methods', () => {
   const src =
     'async function a() {} const b = async () => {}; const o = { async c() {} }; class K { async d() {} } function e() {} async function* g() {}';
-  assert.deepEqual([...asyncNamesOf(parseJs(src))].sort(), ['a', 'b', 'c', 'd']);
+  assert.deepEqual([...asyncNamesOf(parseSource(src))].sort(), ['a', 'b', 'c', 'd']);
 });

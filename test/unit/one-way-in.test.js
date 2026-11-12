@@ -14,9 +14,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
+import { jsFiles } from '../helpers/source-ast.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src');
 const GRAPH = 'backlog-graph.js';
@@ -80,17 +81,6 @@ export function unitRootListings(src) {
     hits.push({ line: lineOf(m.index), text: m[0] });
   }
   return hits;
-}
-
-/** Every `.js` file under `dir`. */
-function jsFiles(dir) {
-  const out = [];
-  for (const ent of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, ent.name);
-    if (ent.isDirectory()) out.push(...jsFiles(path));
-    else if (ent.name.endsWith('.js')) out.push(path);
-  }
-  return out;
 }
 
 test('the detector finds a unit root listed directly, through variables and through a loop, and nothing else', () => {

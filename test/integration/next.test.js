@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
-import { writeBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { loadConfig } from '../../src/config.js';
 import { nextPlan } from '../../src/next.js';
 
@@ -179,13 +179,13 @@ test('a unit held only by a task is passed over and the task named; a story bloc
     join(dir, 'tasks', 'T1-approve.md'),
     '---\ntask_id: T-1\ntitle: Approve\nunit: F-3\nowner: operator\nstatus: open\nadded: 2026-01-01\n---\n\n# T-1 · Approve\n',
   );
-  writeBlockers(dir, [{ blocker: 'T-1', gate: 'run', unit: 'F-3', until: 'done' }]);
+  writeBlockersLocked(dir, [{ blocker: 'T-1', gate: 'run', unit: 'F-3', until: 'done' }]);
   let r = next(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'S-10\n');
   assert.match(r.stderr, /Passed over F-3 \(ranked 1\): F-3 is held at run by T-1 \(draft, needs done\)\./);
 
-  writeBlockers(dir, [
+  writeBlockersLocked(dir, [
     { blocker: 'T-1', gate: 'run', unit: 'F-3', until: 'done' },
     { blocker: 'S-11', gate: 'run', unit: 'S-10', until: 'done' },
   ]);
@@ -197,7 +197,7 @@ test('a unit held only by a task is passed over and the task named; a story bloc
   );
 
   // Every unit held by a task: nothing on stdout.
-  writeBlockers(dir, [{ blocker: 'T-1', gate: 'run', unit: '*', until: 'done' }]);
+  writeBlockersLocked(dir, [{ blocker: 'T-1', gate: 'run', unit: '*', until: 'done' }]);
   r = next(dir);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '');

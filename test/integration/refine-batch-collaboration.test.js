@@ -15,8 +15,8 @@ import { gitBacklog, refine } from '../helpers/refine-session.js';
 const RULE_ONE = '**A question is a question.**';
 const count = (text, s) => text.split(s).length - 1;
 
-test('a batch refine has the rules once in the orchestrator prompt and none in the spilled files', () => {
-  const dir = gitBacklog();
+test('a batch refine has the rules once in the orchestrator prompt and none in the spilled files', async () => {
+  const dir = await gitBacklog();
   const argvLog = join(mkTempDir('bl-refine-argv-'), 'argv');
   // S-1 and S-2 are in backlog (refine.md); S-3 is refined (re-refine.md).
   const ids = ['S-1', 'S-2', 'S-3'];

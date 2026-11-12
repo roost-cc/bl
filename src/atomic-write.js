@@ -18,6 +18,11 @@
  * (`persistLandedCommits` in `cleanup.js`) all write through here. Old files
  * in `.bl/tmp/` are never swept: they are ignored and harmless, and a sweep
  * could delete a live caller's staging file.
+ *
+ * `atomicWriteFile`, `removeBacklogPath` and `moveIntoBacklog` are bl's three
+ * write chokepoints for the backlog (F-126 D6): each throws before it changes
+ * anything when this process does not hold the target's covering lock
+ * (`assertCovered`, `write-lock.js`).
  */
 
 import {
@@ -36,6 +41,8 @@ import {
 } from 'fs';
 import { basename, join, relative } from 'path';
 import { warn } from './config.js';
+import { withSpecLockNow } from './spec-file.js';
+import { assertCovered, lockFor } from './write-lock.js';
 
 /** Staging directory under the backlog root. */
 export const STAGING_DIR = join('.bl', 'tmp');
@@ -66,16 +73,22 @@ let renameCallCount = 0;
  * throws. After `STAGING_ATTEMPTS` collisions the EEXIST propagates and
  * nothing is removed, since the file at that name is not ours.
  *
- * The per-process name matters because concurrent `bl` processes write
- * some targets outside the backlog lock (`allowed-tools.json`): with a fixed
- * name, one process's rename consumed the other's staging file, which then
- * failed with ENOENT or left a failed caller's partial bytes live. If the
+ * The per-process name matters because two writers of different targets
+ * hold different locks (a spec lock each, F-126) and so may stage at the
+ * same time: with a fixed name, one process's rename could consume the
+ * other's staging file, which then failed with ENOENT or left a failed
+ * caller's partial bytes live. If the
  * write or the rename throws, the staging file is removed before the error
  * propagates; when that removal fails for any reason other than the file
  * already being gone, the failure and the staging path are reported on
  * stderr so the orphan is not left unnoticed.
  * `BL_INTERNAL_TEST_FAIL_ON_RENAME=<n>[,<n>...]` makes each listed n-th call
  * in this process fail before its rename (tests only).
+ *
+ * The write throws before it starts when the file it replaces (the link's
+ * target with `preserve`, else `path`) is a backlog path that git does not
+ * ignore and this process does not hold its covering lock (`assertCovered`,
+ * `write-lock.js`, F-126 D6).
  *
  * With `{ preserve: true }` an existing target keeps what it was: a symlink
  * stays a symlink and the file it resolves to is the one replaced, and the
@@ -113,6 +126,9 @@ export function atomicWriteFile(
       if (e.code !== 'ENOENT') throw e;
     }
   }
+  // After `preserve` resolves a link: the check is of the file replaced, and
+  // the write goes to the path checked, not through a link retargeted since.
+  path = assertCovered(backlogRoot, path);
   const dir = join(backlogRoot, STAGING_DIR);
   try {
     mkdirSync(join(backlogRoot, '.bl'));
@@ -194,6 +210,30 @@ export function atomicWriteFile(
 }
 
 /**
+ * Remove the file or tree at `path` (nothing when it is not there), after the
+ * covering-lock check `atomicWriteFile` makes (`assertCovered`, F-126 D6).
+ * Every bl removal of a backlog path goes through it.
+ * @param {string} backlogRoot
+ * @param {string} path
+ */
+export function removeBacklogPath(backlogRoot, path) {
+  rmSync(assertCovered(backlogRoot, path), { recursive: true, force: true });
+}
+
+/**
+ * Rename `from` to `to`, after the covering-lock check of both
+ * (`assertCovered`, F-126 D6): a file or directory staged in ignored space
+ * (`.bl/tmp/`) moves into the backlog whole. Every bl move into or inside a
+ * backlog goes through it.
+ * @param {string} backlogRoot
+ * @param {string} from
+ * @param {string} to
+ */
+export function moveIntoBacklog(backlogRoot, from, to) {
+  renameSync(assertCovered(backlogRoot, from), assertCovered(backlogRoot, to));
+}
+
+/**
  * Undo for the files a write touched, run when the commit could not be
  * reached: each path is put back as it was (removed when it was not there),
  * and a path that is as it was is left alone. Every path is tried, whatever
@@ -201,6 +241,11 @@ export function atomicWriteFile(
  * with what to do; its `unrecovered` holds each such path's text before
  * (`null`: it was not there). `bl task` (`task.js`), the edge writes
  * (`allOrNothing` in `block.js`) and `bl attach` share it.
+ *
+ * The caller holds the backlog lock. A path whose covering lock is a spec
+ * lock (`lockFor`) is put back inside it, taken with one try
+ * (`withSpecLockNow`, F-126 D7): the undo is synchronous. When another
+ * process holds that lock, the path is left and named in the error.
  * @param {string} root  the backlog root, for the paths the error names
  * @param {string[]} paths
  * @param {string} [left]  what a path left changed means, for the error
@@ -213,8 +258,7 @@ export function snapshot(root, paths, left = '') {
       try {
         // A path the write never touched is not rewritten, so it cannot fail.
         if ((existsSync(p) ? readFileSync(p, 'utf8') : null) === text) continue;
-        if (text == null) rmSync(p, { force: true });
-        else atomicWriteFile(root, p, text);
+        writeBacklogPathNow(root, p, text);
       } catch (e) {
         unrecovered.push({ path: p, text, error: e.message });
       }
@@ -228,4 +272,21 @@ export function snapshot(root, paths, left = '') {
     err.unrecovered = unrecovered;
     return err;
   };
+}
+
+/**
+ * Write `text` to the backlog path `path`, or remove it when `text` is null,
+ * from synchronous code that holds the backlog lock: inside the path's spec
+ * lock when that is its covering lock (`lockFor`), taken with one try
+ * (`withSpecLockNow`, F-126 D7). Throws `SpecLockError` naming the holder
+ * when another process holds it, and leaves the path. `snapshot`'s undo,
+ * `bl side`'s exit-time undo and the migration's `write` op write through it.
+ * @param {string} root  the backlog root
+ * @param {string} path
+ * @param {string | Buffer | null} text
+ */
+export function writeBacklogPathNow(root, path, text) {
+  const put = () => (text == null ? removeBacklogPath(root, path) : atomicWriteFile(root, path, text));
+  if (lockFor(root, path)?.kind === 'spec') withSpecLockNow(path, put);
+  else put();
 }

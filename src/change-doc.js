@@ -37,7 +37,9 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { basename, dirname, join, relative } from 'path';
 import { FrontmatterError, listMembers, parseFrontmatter, serializeFrontmatter, warn } from './config.js';
 import { extractSection, replaceSection } from './feature.js';
-import { atomicWriteFile } from './atomic-write.js';
+import { atomicWriteFile, removeBacklogPath } from './atomic-write.js';
+import { assertHeld } from './kernel-lock.js';
+import { specLockPath, withSpecFileLock, withSpecLock } from './spec-file.js';
 import { commitPaths } from './backlog-commit.js';
 import { substituteVars, templatePath } from './template.js';
 import { FlowError } from './flow.js';
@@ -80,6 +82,17 @@ export function changePath(unitDir, n = 1) {
   return join(unitDir, n > 1 ? `change-${n}.md` : CHANGE_FILE);
 }
 
+/**
+ * The change document `name` names, `{ n }` (`change.md` is 1, `change-<n>.md`
+ * is n), or null when `name` is no change document's file name.
+ * @param {string} name  a file name, no directory
+ * @returns {{ n: number } | null}
+ */
+export function isChangeFile(name) {
+  const m = name.match(/^change(?:-([2-9]|[1-9]\d+))?\.md$/);
+  return m ? { n: m[1] ? parseInt(m[1], 10) : 1 } : null;
+}
+
 /** Every change document of a unit, `[{ n, path }]`, lowest number first. */
 export function listChanges(unitDir) {
   let names;
@@ -90,8 +103,8 @@ export function listChanges(unitDir) {
   }
   const out = [];
   for (const name of names) {
-    const m = name.match(/^change(?:-([2-9]|[1-9]\d+))?\.md$/);
-    if (m) out.push({ n: m[1] ? parseInt(m[1], 10) : 1, path: join(unitDir, name) });
+    const m = isChangeFile(name);
+    if (m) out.push({ n: m.n, path: join(unitDir, name) });
   }
   return out.sort((a, b) => a.n - b.n);
 }
@@ -174,18 +187,61 @@ export function readChange(path) {
   }
 }
 
-/** Write `doc` to `path` atomically, staging under the backlog's `.bl/tmp/`. */
-export function writeChange(backlogRoot, path, doc) {
+/**
+ * Write `doc` to `path` atomically, staging under the backlog's `.bl/tmp/`.
+ * Every write of a change document goes through it, under the file's spec
+ * lock (F-126 D2): its callers here hold it.
+ */
+function writeChange(backlogRoot, path, doc) {
   atomicWriteFile(backlogRoot, path, serializeChange(doc));
 }
 
-/** Read, change through `mutate(doc)`, and write back. Returns the document. */
-export function updateChange(backlogRoot, path, mutate) {
+/**
+ * Read the change document at `path`, change it through `mutate(doc)`, and
+ * write it back, under its spec lock (F-126 D2). A `mutate` that returns
+ * `false` writes nothing. Resolves the document. A missing document, the lock
+ * and the write reject.
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @param {(doc: object) => void | false} mutate  synchronous
+ * @returns {Promise<object>}
+ */
+export async function updateChange(backlogRoot, path, mutate) {
+  return withSpecLock(path, () => updateChangeHeld(backlogRoot, path, mutate));
+}
+
+/**
+ * `updateChange` for a caller inside `withSpecLock(path, …)`, whose `fn` is
+ * synchronous and so cannot await it. Throws when this process does not hold
+ * the spec lock (`assertHeld`). Returns the document.
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @param {(doc: object) => void | false} mutate
+ * @returns {object}
+ */
+export function updateChangeHeld(backlogRoot, path, mutate) {
+  assertHeld(specLockPath(path), 'the spec lock', `updateChangeHeld(${path})`);
   const doc = readChange(path);
   if (!doc) throw new Error(`no change document at ${path}`);
-  mutate(doc);
-  writeChange(backlogRoot, path, doc);
+  if (mutate(doc) !== false) writeChange(backlogRoot, path, doc);
   return doc;
+}
+
+/**
+ * Put the change document at `path` back to `before`, the bytes a caller read
+ * earlier, or remove it when `before` is null (there was none). Runs under
+ * the file's covering lock (`withSpecFileLock`): a restore after a failed or
+ * stopped session.
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @param {string | Buffer | null} before
+ * @returns {Promise<void>}
+ */
+export async function restoreChange(backlogRoot, path, before) {
+  await withSpecFileLock(backlogRoot, path, () => {
+    if (before == null) removeBacklogPath(backlogRoot, path);
+    else atomicWriteFile(backlogRoot, path, before);
+  });
 }
 
 /**
@@ -239,14 +295,14 @@ export async function applyFixOutcome(
 
 /**
  * Commit the change document at `path` (or the files at `path`, a list) in
- * the backlog, skipped when the backlog is not a git repository; a failed
- * commit is a warning.
+ * the backlog, skipped when the backlog is not a git repository of its own
+ * (`commitPaths`' `notRepo`); a failed commit is a warning.
  */
 async function commitChangeDoc(backlogRoot, path, message) {
-  if (!existsSync(join(backlogRoot, '.git'))) return;
   const rels = [path].flat().map((p) => relative(backlogRoot, p));
   const c = await commitPaths(backlogRoot, rels, message);
-  if (!c.committed) warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
+  if (!c.committed && !c.notRepo)
+    warn(`${rels.join(', ')} is written but not committed (${c.error ?? 'nothing to commit'})`);
 }
 
 /**
@@ -284,21 +340,33 @@ export function setRepo(doc, repo, fields = {}) {
  * D3); an entry `repos` does not name keeps its place after them. Writes
  * only when something changed.
  *
- * @returns {{ path: string, doc: object, created: boolean, changed: boolean }}
+ * The path is picked first; the document is read again, changed and written
+ * under its covering lock (`withSpecFileLock`: the spec lock, and the backlog
+ * lock when the file is new, F-126 D2). `created` says whether the file was
+ * missing inside that hold.
+ *
+ * @returns {Promise<{ path: string, doc: object, created: boolean, changed: boolean }>}
  */
-export function ensureChange(backlogRoot, unitDir, { changeOf, title = '', repos = [] }) {
+export async function ensureChange(backlogRoot, unitDir, { changeOf, title = '', repos = [] }) {
   const cur = currentChange(unitDir);
-  let path;
-  let doc;
-  let created = false;
-  if (cur && isOpenChange(cur.doc)) {
-    ({ path, doc } = cur);
-  } else {
-    path = changePath(unitDir, cur ? cur.n + 1 : 1);
-    doc = newChange({ changeOf, title });
-    created = true;
-  }
-  let changed = created;
+  const path = cur && isOpenChange(cur.doc) ? cur.path : changePath(unitDir, cur ? cur.n + 1 : 1);
+  return withSpecFileLock(backlogRoot, path, () => {
+    const found = readChange(path);
+    const doc = found ?? newChange({ changeOf, title });
+    const created = !found;
+    const changed = mergeRepos(doc, repos) || created;
+    if (changed) writeChange(backlogRoot, path, doc);
+    return { path, doc, created, changed };
+  });
+}
+
+/**
+ * `ensureChange`'s change to `doc`: the entries of `repos` it lacks, a branch
+ * for an entry without one, and the entries in `repos` order. Returns whether
+ * it changed `doc`.
+ */
+function mergeRepos(doc, repos) {
+  let changed = false;
   for (const r of repos) {
     const entry = doc.repos.find((e) => e.repo === r.repo);
     if (!entry) {
@@ -319,8 +387,7 @@ export function ensureChange(backlogRoot, unitDir, { changeOf, title = '', repos
     doc.repos = ordered;
     changed = true;
   }
-  if (changed) writeChange(backlogRoot, path, doc);
-  return { path, doc, created, changed };
+  return changed;
 }
 
 /**
@@ -331,7 +398,7 @@ export function ensureChange(backlogRoot, unitDir, { changeOf, title = '', repos
  */
 export async function openUnitChange(backlogRoot, { id, title, indexPath }, branch, repoNames) {
   const names = repoNames.filter((r, i) => r && repoNames.indexOf(r) === i);
-  const res = ensureChange(backlogRoot, dirname(indexPath), {
+  const res = await ensureChange(backlogRoot, dirname(indexPath), {
     changeOf: id,
     title,
     repos: names.map((repo) => ({ repo, branch })),
@@ -349,22 +416,24 @@ export async function openUnitChange(backlogRoot, { id, title, indexPath }, bran
 /**
  * Record a merge in the unit's current change document: each repo's
  * `merged:` commit (`commits` is `{ <repo>: <sha> }`), one `## Merge` line per
- * repo then the `extra` lines, and `status: merged`. Returns the path
- * written, or null when the unit has no change document.
+ * repo then the `extra` lines, and `status: merged`, under its spec lock
+ * (`updateChange`). Resolves the path written, or null when the unit has no
+ * change document.
+ * @returns {Promise<string | null>}
  */
-export function recordMerge(backlogRoot, unitDir, { commits, date, extra = [] }) {
+export async function recordMerge(backlogRoot, unitDir, { commits, date, extra = [] }) {
   const cur = currentChange(unitDir);
   if (!cur?.doc) return null;
-  const { doc } = cur;
-  const lines = [];
-  for (const [repo, sha] of Object.entries(commits)) {
-    setRepo(doc, repo, { merged: sha });
-    lines.push(`- ${date} · ${repo} · merged ${sha}`);
-  }
-  lines.push(...extra);
-  doc.fm.status = 'merged';
-  if (lines.length > 0) doc.body = appendSection(doc.body, 'Merge', lines.join('\n'));
-  writeChange(backlogRoot, cur.path, doc);
+  await updateChange(backlogRoot, cur.path, (doc) => {
+    const lines = [];
+    for (const [repo, sha] of Object.entries(commits)) {
+      setRepo(doc, repo, { merged: sha });
+      lines.push(`- ${date} · ${repo} · merged ${sha}`);
+    }
+    lines.push(...extra);
+    doc.fm.status = 'merged';
+    if (lines.length > 0) doc.body = appendSection(doc.body, 'Merge', lines.join('\n'));
+  });
   return cur.path;
 }
 
@@ -383,9 +452,10 @@ export function gateLine({ date, repo, command, verdict, detail = '', commit = '
 }
 
 /**
- * Add `line` to `## Gate` in the unit's current change document and commit
- * it, as `message`. Returns the path written, or null when the unit has no
- * change document. A failed commit is a warning.
+ * Add `line` to `## Gate` in the unit's current change document, under its
+ * spec lock (`updateChange`), and commit it, as `message`. Returns the path
+ * written, or null when the unit has no change document. A failed commit is
+ * a warning.
  * @param {string} backlogRoot
  * @param {string | null} unitDir
  * @param {string} line
@@ -395,8 +465,7 @@ export function gateLine({ date, repo, command, verdict, detail = '', commit = '
 export async function addGateLine(backlogRoot, unitDir, line, message) {
   const cur = currentChange(unitDir);
   if (!cur?.doc) return null;
-  cur.doc.body = appendSection(cur.doc.body, 'Gate', line);
-  writeChange(backlogRoot, cur.path, cur.doc);
+  await updateChange(backlogRoot, cur.path, (doc) => void (doc.body = appendSection(doc.body, 'Gate', line)));
   await commitChangeDoc(backlogRoot, cur.path, message);
   return { path: cur.path };
 }

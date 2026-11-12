@@ -35,7 +35,7 @@ import { findExistingWorktree, isSessionRunning, reposForStory } from './story.j
 import { canonical, takeDirLock } from './lock.js';
 import { unitLockPath } from './unit-lock.js';
 import { reassertTabTitle, unitTitleFields, updateTabTitle } from './tab-title.js';
-import { ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
+import { ALLOWED_TOOLS_FILE, ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
 import { resolvePermissionScopes, loadLocalTools } from './permissions.js';
 import { getProvider } from './agents/index.js';
 import {
@@ -49,7 +49,7 @@ import { renderToolGuide, renderFragment } from './tool-guide.js';
 import { renderSessionStack, sessionStackOf } from './session-stack.js';
 import { resolveLocale, fragmentCandidates } from './locale.js';
 import { awaitLock } from './lock-wait.js';
-import { holds, release, tryLockOnce } from './kernel-lock.js';
+import { assertHeld, release, tryLockOnce } from './kernel-lock.js';
 import { syncMain, reportMainSync } from './main-sync.js';
 import { outcomePath, readOutcomeFile } from './outcome.js';
 
@@ -79,15 +79,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * are never written to the file. The worktree's `Bash(rm <worktree>/*)` rule
  * is appended last.
  */
-export function getAllowedTools(mode, { backlogRoot, roostDir, worktreePath, config } = {}) {
+export async function getAllowedTools(mode, { backlogRoot, roostDir, worktreePath, config } = {}) {
   if (!backlogRoot) {
     throw new Error('getAllowedTools: backlogRoot is required');
   }
   let toolDefs;
   if (config) {
-    toolDefs = ensureAllowedTools(backlogRoot, config);
+    toolDefs = await ensureAllowedTools(backlogRoot, config);
   } else {
-    const path = join(backlogRoot, 'allowed-tools.json');
+    const path = join(backlogRoot, ALLOWED_TOOLS_FILE);
     if (!existsSync(path)) {
       throw new Error(`Missing ${path}. Run 'bl init' to copy the template from bl/templates/allowed-tools.json.`);
     }
@@ -116,15 +116,15 @@ export function getAllowedTools(mode, { backlogRoot, roostDir, worktreePath, con
  * rules, Codex prompt guidance). Denials override the allowlist — see
  * MODE_DENY in allowed-tools.js for what's denied and why.
  */
-export function getDeniedTools(mode, { backlogRoot, config } = {}) {
+export async function getDeniedTools(mode, { backlogRoot, config } = {}) {
   if (!backlogRoot) {
     throw new Error('getDeniedTools: backlogRoot is required');
   }
   let toolDefs;
   if (config) {
-    toolDefs = ensureAllowedTools(backlogRoot, config);
+    toolDefs = await ensureAllowedTools(backlogRoot, config);
   } else {
-    const path = join(backlogRoot, 'allowed-tools.json');
+    const path = join(backlogRoot, ALLOWED_TOOLS_FILE);
     if (!existsSync(path)) return [];
     toolDefs = JSON.parse(readFileSync(path, 'utf8'));
   }
@@ -721,7 +721,7 @@ function sessionLock(backlogRoot, cwd, units, info) {
   if (!units?.length) throw new Error(`${info}: a session in the backlog root needs its work units' locks (units)`);
   for (const unit of units) {
     const path = unitLockPath(backlogRoot, dirname(unit.indexPath));
-    if (!holds(path)) throw new Error(`${info}: this process does not hold ${unit.id}'s work unit lock ${path}`);
+    assertHeld(path, `${unit.id}'s work unit lock`, info);
   }
   return { refused: null, path: backlogRoot, release: () => {} };
 }
@@ -856,13 +856,13 @@ export async function runHeadlessSession({
       // logging is non-fatal
     }
 
-    const allowedTools = getAllowedTools(mode, {
+    const allowedTools = await getAllowedTools(mode, {
       backlogRoot,
       roostDir,
       worktreePath: cwd,
       config,
     });
-    const deniedTools = getDeniedTools(mode, { backlogRoot, config });
+    const deniedTools = await getDeniedTools(mode, { backlogRoot, config });
     const translatedPermissions = provider.translatePermissions(allowedTools, {
       mode,
       roostDir,
@@ -1022,7 +1022,7 @@ export async function launchSession({
     const blCommand = isRefine ? 'refine' : 'workon';
     logAppendTo(worktreePath, blCommand, [parsed.id]);
 
-    const allowedTools = getAllowedTools(mode, {
+    const allowedTools = await getAllowedTools(mode, {
       backlogRoot,
       roostDir,
       worktreePath: cwd,
@@ -1031,7 +1031,7 @@ export async function launchSession({
     // Generic deny tokens ride along untranslated — each provider renders them
     // into its own refusal mechanism inside spawn (codex's translatePermissions
     // returns an object, so a shared pre-translation here can't work).
-    const deniedTools = getDeniedTools(mode, { backlogRoot, config });
+    const deniedTools = await getDeniedTools(mode, { backlogRoot, config });
 
     const translatedPermissions = provider.translatePermissions(allowedTools, {
       mode,

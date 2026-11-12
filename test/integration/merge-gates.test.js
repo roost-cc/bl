@@ -20,7 +20,7 @@ import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { cleanupOneRepo } from '../../src/cleanup.js';
 import { extractSection } from '../../src/feature.js';
 import { mergeGates, unitBranch } from '../../src/merge-gates.js';
-import { writeBlockers } from '../../src/blockers.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
 
 const ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
@@ -111,7 +111,7 @@ function fixture({ review = {}, escalation = null, extraRepos = [], config = {},
   const repos = {};
   // Every repo has both branches, so a stray repo can hold a worktree on them.
   for (const r of all) repos[r] = initRepo(dir, r, ['s1-loose', 'f1-feat']);
-  if (edges) writeBlockers(dir, edges);
+  if (edges) writeBlockersLocked(dir, edges);
   writeFileSync(join(dir, '.gitignore'), `${all.map((r) => `${r}/\n${r}-origin.git/\n`).join('')}.bl/\n`);
   g(dir, 'init', '-q', '-b', 'main');
   g(dir, 'add', '.');

@@ -70,7 +70,7 @@ const CHECKS = [
       put(spec, '---\nstatus: draft\n---\n\n# Story\n');
       return {
         lockPath: specLockPath(spec),
-        blocked: () => refuses(() => updateSpecFileHeld(dir, spec, () => false), /the spec lock is not held/),
+        blocked: () => refuses(() => updateSpecFileHeld(dir, spec, () => false), /does not hold the spec lock/),
       };
     },
   ],

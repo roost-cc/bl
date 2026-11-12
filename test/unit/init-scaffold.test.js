@@ -11,15 +11,16 @@ import {
 } from '../../src/init.js';
 import { _hooks } from '../../src/atomic-write.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { underLock } from '../helpers/covering-lock.js';
 
 const SEED = new URL('../../templates/coding-dictionary.yaml', import.meta.url);
 
-/** Run `fn` with stderr (init's progress lines) silenced. */
-function quietly(fn) {
+/** Run `fn` with stderr (init's progress lines) silenced, under `dir`'s backlog lock as `bl init` runs it. */
+function quietly(dir, fn) {
   const orig = process.stderr.write;
   process.stderr.write = () => true;
   try {
-    return fn();
+    return underLock(dir, fn);
   } finally {
     process.stderr.write = orig;
   }
@@ -29,7 +30,7 @@ function quietly(fn) {
 function initOn(raw) {
   const dir = mkTempDir('bl-init-title-');
   writeFileSync(join(dir, 'backlog.json'), JSON.stringify(raw));
-  quietly(() => ensureReposBlock(dir, 'claude'));
+  quietly(dir, () => ensureReposBlock(dir, 'claude'));
   return JSON.parse(readFileSync(join(dir, 'backlog.json'), 'utf8'));
 }
 
@@ -43,7 +44,7 @@ test('bl init keeps a display name the backlog already sets', () => {
 
 test('bl init gives a new backlog an empty roadmap.md and priority.yaml and the coding dictionary seed, and keeps existing ones', () => {
   const fresh = mkTempDir('bl-init-docs-');
-  quietly(() => ensureBacklogDocs(fresh));
+  quietly(fresh, () => ensureBacklogDocs(fresh));
   assert.match(readFileSync(join(fresh, 'roadmap.md'), 'utf8'), /^---\nentries: \[\]\n---\n/);
   assert.equal(readFileSync(join(fresh, 'priority.yaml'), 'utf8'), '[]\n');
   assert.equal(readFileSync(join(fresh, 'coding-dictionary.yaml'), 'utf8'), readFileSync(SEED, 'utf8'));
@@ -59,7 +60,7 @@ test('bl init gives a new backlog an empty roadmap.md and priority.yaml and the 
   writeFileSync(join(kept, 'roadmap.md'), 'kept\n');
   writeFileSync(join(kept, 'priority.yaml'), 'kept too\n');
   writeFileSync(join(kept, 'coding-dictionary.yaml'), 'entries: [] # curated\n');
-  quietly(() => ensureBacklogDocs(kept));
+  quietly(kept, () => ensureBacklogDocs(kept));
   assert.equal(readFileSync(join(kept, 'roadmap.md'), 'utf8'), 'kept\n');
   assert.equal(readFileSync(join(kept, 'priority.yaml'), 'utf8'), 'kept too\n');
   assert.equal(readFileSync(join(kept, 'coding-dictionary.yaml'), 'utf8'), 'entries: [] # curated\n');
@@ -67,12 +68,12 @@ test('bl init gives a new backlog an empty roadmap.md and priority.yaml and the 
 
 test('bl init writes a missing root index.md with the title and its heading only, and leaves an existing one (F-79 D3)', () => {
   const fresh = mkTempDir('bl-init-index-');
-  quietly(() => ensureRootIndex({ backlogRoot: fresh, title: 'Acme: Web' }));
+  quietly(fresh, () => ensureRootIndex({ backlogRoot: fresh, title: 'Acme: Web' }));
   assert.equal(readFileSync(join(fresh, 'index.md'), 'utf8'), '---\ntitle: "Acme: Web"\n---\n\n# Acme: Web\n');
 
   const kept = mkTempDir('bl-init-index-');
   writeFileSync(join(kept, 'index.md'), '# Hand-written\n');
-  quietly(() => ensureRootIndex({ backlogRoot: kept, title: 'Backlog' }));
+  quietly(kept, () => ensureRootIndex({ backlogRoot: kept, title: 'Backlog' }));
   assert.equal(readFileSync(join(kept, 'index.md'), 'utf8'), '# Hand-written\n');
 });
 
@@ -81,7 +82,7 @@ test('init_seed_copy_failure_keeps_config_consistent:a failed seed copy leaves n
   /** bl init's two steps, in its order; the error code, or null. */
   const init = (dir) => {
     try {
-      quietly(() => (ensureReposBlock(dir, 'claude'), ensureBacklogDocs(dir)));
+      quietly(dir, () => (ensureReposBlock(dir, 'claude'), ensureBacklogDocs(dir)));
       return null;
     } catch (e) {
       return e.code;
@@ -124,7 +125,7 @@ test('init_seed_copy_failure_and_concurrent_create_preserve_dictionary: a seed i
       if (basename(tmp).startsWith(`${file}.`)) hook(tmp, join(dir, file));
     };
     try {
-      quietly(() => run(dir));
+      quietly(dir, () => run(dir));
       return { dir, error: null };
     } catch (e) {
       return { dir, error: e.code };
@@ -142,7 +143,7 @@ test('init_seed_copy_failure_and_concurrent_create_preserve_dictionary: a seed i
     assert.equal(partial.error, 'EIO', label);
     assert.equal(existsSync(join(partial.dir, file)), false, `${label}: no partial file`);
     assert.deepEqual(staged(partial.dir), [], `${label}: no staging file left`);
-    quietly(() => run(partial.dir));
+    quietly(partial.dir, () => run(partial.dir));
     assert.equal(readFileSync(join(partial.dir, file), 'utf8'), template(file), `${label}: the rerun copies it whole`);
 
     // Another process makes the file after the existence check.
@@ -171,7 +172,7 @@ test('bl init lists the coding dictionary in a new backlog.json, and adds no key
   const effort = { refine: 'high', review: 'high', default: 'high' };
   const existing = JSON.stringify({ repos: {}, worktrees: '../worktrees', effort }) + '\n';
   writeFileSync(join(dir, 'backlog.json'), existing);
-  quietly(() => ensureReposBlock(dir, 'claude'));
+  quietly(dir, () => ensureReposBlock(dir, 'claude'));
   assert.equal(readFileSync(join(dir, 'backlog.json'), 'utf8'), existing);
 });
 
@@ -203,7 +204,7 @@ test('init_adds_effort_to_existing_backlog_with_repos', () => {
     const path = join(dir, 'backlog.json');
     const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
     writeFileSync(path, text);
-    quietly(() => ensureReposBlock(dir, 'claude'));
+    quietly(dir, () => ensureReposBlock(dir, 'claude'));
     const after = readFileSync(path, 'utf8');
     if (want === null) assert.equal(after, text, `${label}: left as it was`);
     else if (want === 'new') assert.deepEqual(JSON.parse(after).effort, HIGH, label);
@@ -231,7 +232,7 @@ test('init_existing_repos_preserves_concurrent_config_edit', () => {
       };
       let error = null;
       try {
-        quietly(() => ensureReposBlock(dir, 'claude'));
+        quietly(dir, () => ensureReposBlock(dir, 'claude'));
       } catch (e) {
         error = e;
       } finally {

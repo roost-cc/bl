@@ -81,7 +81,7 @@ import { runHeadlessSession, launchSession, loadPrompt, loadSchema, takeSessionL
 import { cleanStderrLine } from './outcome.js';
 import { getProvider, hasProvider } from './agents/index.js';
 import { tokensStepKey } from './tokens.js';
-import { readSpecText, specText, updateSpecFile, withSpecLock } from './spec-file.js';
+import { readSpecText, specText, updateSpecFile, withSpecFileLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { readComponents, sessionLockPath } from './story.js';
 import { finalTabTitle, updateTabTitle } from './tab-title.js';
@@ -114,14 +114,14 @@ import {
   ensureChange,
   gateLine,
   readChange,
+  restoreChange,
   setRepo,
   updateChange,
-  writeChange,
 } from './change-doc.js';
 import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock, stopRequests } from './run-lock.js';
 import { takeUnitLocks } from './unit-lock.js';
-import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
+import { commitPaths } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
 import * as processScope from './process-scope.js';
@@ -335,14 +335,16 @@ const isTokenKey = (key) => key.startsWith('tokens_');
  * line end. A current file the session deleted, emptied or left without a
  * readable `---` block has no usage to keep: the snapshot goes back as it
  * was. A snapshot that is not a spec is refused with a `FrontmatterError`,
- * the current file left alone. Under the spec lock, so a token write that
- * lands meanwhile waits for it, and through `atomicWriteFile`, so a failed
- * write leaves the current file whole.
+ * the current file left alone. Under the file's covering lock
+ * (`withSpecFileLock`: its spec lock, and the backlog lock first when the
+ * session deleted it), so a token write that lands meanwhile waits for it,
+ * and through `atomicWriteFile`, so a failed write leaves the current file
+ * whole.
  */
 export async function restoreKeepingTokens(backlogRoot, indexPath, before) {
   const { content, crlf: snapCrlf } = readSpecText(before, indexPath);
   const { fm: snap, body } = parseFrontmatterOf(content, indexPath);
-  return withSpecLock(indexPath, () => {
+  return withSpecFileLock(backlogRoot, indexPath, () => {
     let raw;
     let current;
     let crlf = snapCrlf;
@@ -448,21 +450,23 @@ function describeUnit(ctx) {
 /**
  * The run's change document: an open one naming every repo the run prepared,
  * on the run's branch (created with the branch when the unit has none open),
- * with `## Description` written once. Returns whether it changed.
+ * with `## Description` written once. Resolves whether it changed.
  */
-function setupChange(ctx) {
+async function setupChange(ctx) {
   const { feature, prep, config } = ctx;
   const names = [prepRepo(ctx), ...(prep.otherWorktrees ?? []).map((w) => w.repoName)];
   const repos = names.filter((r, i) => r && names.indexOf(r) === i).map((repo) => ({ repo, branch: prep.branchName }));
-  const res = ensureChange(config.backlogRoot, dirname(feature.indexPath), {
+  const res = await ensureChange(config.backlogRoot, dirname(feature.indexPath), {
     changeOf: feature.id,
     title: feature.title,
     repos,
   });
   ctx.changePath = res.path;
   if (sectionHasContent(extractSection(res.doc.body, 'Description'))) return res.changed;
-  res.doc.body = appendSection(res.doc.body, 'Description', describeUnit(ctx));
-  writeChange(config.backlogRoot, res.path, res.doc);
+  await updateChange(config.backlogRoot, res.path, (doc) => {
+    if (sectionHasContent(extractSection(doc.body, 'Description'))) return false;
+    doc.body = appendSection(doc.body, 'Description', describeUnit(ctx));
+  });
   return true;
 }
 
@@ -486,7 +490,7 @@ async function recordGateLine(ctx, gate) {
     return gateLine({ date, repo: e.repo, command, verdict: e.verdict, detail: attempt });
   });
   try {
-    updateChange(ctx.config.backlogRoot, path, (doc) => {
+    await updateChange(ctx.config.backlogRoot, path, (doc) => {
       for (const line of lines) doc.body = appendSection(doc.body, 'Gate', line);
     });
   } catch (e) {
@@ -890,35 +894,16 @@ function checkStop(ctx) {
 }
 
 /**
- * Commit `paths` in the backlog and, with an `origin` remote, push (F-50
- * D4), holding the main sync lock a backlog pull takes (see
- * `backlog-commit.js` `commitPaths`); a push rejected because origin moved
- * is rebased and retried (`pushBacklog`). A failed push is a log line: the
- * next bl command that pulls pushes the commit.
+ * Commit `paths` in the backlog through `commitPaths` (`backlog-commit.js`,
+ * F-126 D1): under the main sync lock, pushed to an `origin` remote (F-50
+ * D4), and a failed push is its warning. A backlog with no repo of its own
+ * commits nothing and is no failure. A backlog commit that did not land is a
+ * failed event, not a silent one.
  */
-async function commitBacklog(ctx, paths, message) {
-  const root = ctx.config.backlogRoot;
-  const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
-  const commit = () => {
-    const add = ctx.runner.shell(`git add -- ${paths.map(q).join(' ')}`, root);
-    if (add.status !== 0) return false;
-    const c = ctx.runner.shell(`git commit -q -m ${q(message)} -- ${paths.map(q).join(' ')}`, root);
-    return c.status === 0;
-  };
-  if (!hasOriginRemote(root)) return commit();
-  const done = await withMainSyncLock(root, () => {
-    if (!commit()) return false;
-    const p = pushBacklog(root);
-    if (!p.pushed) ctx.runner.log(`  (${pushWarning(root, p)})`);
-    return true;
-  });
-  return done === true;
-}
-
-/** A backlog commit that did not land is a failed event, not a silent one. */
 async function commitUnitPaths(ctx, step, paths, message) {
-  if (await commitBacklog(ctx, paths, message)) return true;
-  const note = `backlog commit failed: "${message}" — ${paths.join(', ')} ${paths.length === 1 ? 'is' : 'are'} written but uncommitted`;
+  const c = await commitPaths(ctx.config.backlogRoot, paths, message);
+  if (c.committed || c.notRepo) return true;
+  const note = `backlog commit failed: "${message}" — ${paths.join(', ')} ${paths.length === 1 ? 'is' : 'are'} written but uncommitted${c.error ? ` (${c.error})` : ''}`;
   record(ctx, { step, ok: false, note });
   ctx.runner.log(`  (${note})`);
   return false;
@@ -2748,7 +2733,7 @@ async function refreshRepos(ctx) {
     prep.baseVars = { ...prep.baseVars, otherWorktrees: otherWorktreesLine(prep.otherWorktrees) };
     const names = [prepRepo(ctx), ...prep.otherWorktrees.map((w) => w.repoName)];
     try {
-      const res = ensureChange(config.backlogRoot, dirname(feature.indexPath), {
+      const res = await ensureChange(config.backlogRoot, dirname(feature.indexPath), {
         changeOf: feature.id,
         title: feature.title,
         repos: names.map((repo) => ({ repo, branch: prep.branchName })),
@@ -3598,7 +3583,7 @@ async function openPullRequest(ctx, t = gateTargets(ctx)[0]) {
     return { error };
   }
   try {
-    updateChange(config.backlogRoot, changeFile(ctx), (doc) =>
+    await updateChange(config.backlogRoot, changeFile(ctx), (doc) =>
       setRepo(doc, t.repo, { branch: prep.branchName, pr: number, url }),
     );
     await commitChangeFile(ctx, 'pr', `chore: ${feature.id} PR opened (${lead ? '' : t.repo}#${number})`);
@@ -3780,10 +3765,7 @@ async function reviewRoundLocked(ctx, { reReview, round, position, closing = fal
   // unit file as it ended, is kept (F-67 D6).
   const featureBefore = readFileSync(feature.indexPath, 'utf8');
   const changeBefore = existsSync(changeFile(ctx)) ? readFileSync(changeFile(ctx)) : null;
-  const restoreChange = () =>
-    changeBefore
-      ? atomicWriteFile(ctx.config.backlogRoot, changeFile(ctx), changeBefore)
-      : rmSync(changeFile(ctx), { force: true });
+  const restoreChangeDoc = async () => restoreChange(ctx.config.backlogRoot, changeFile(ctx), changeBefore);
   // The round's verdict is bl's (F-68 D3). bl records it in the unit's log
   // once, after the verifier returns one: a round that ends any other way (a
   // throw, an abort, a killed bl) records none, and the unit stays in
@@ -3815,7 +3797,7 @@ async function reviewRoundLocked(ctx, { reReview, round, position, closing = fal
     // A stopped round (no valid outcome, no agent) has no verdict: the change
     // document goes back to how the round found it. The unit file keeps the
     // escalation the stop wrote.
-    if (e instanceof RunStoppedError) restoreChange();
+    if (e instanceof RunStoppedError) await restoreChangeDoc();
     throw e;
   }
   // Each restore is tried, and the quarantine runs, whatever an earlier one
@@ -3824,7 +3806,7 @@ async function reviewRoundLocked(ctx, { reReview, round, position, closing = fal
   if (!rv.ok) {
     for (const restore of [
       async () => restoreKeepingTokens(ctx.config.backlogRoot, feature.indexPath, featureBefore),
-      restoreChange,
+      restoreChangeDoc,
     ]) {
       try {
         await restore();
@@ -4675,11 +4657,13 @@ export async function reviewFeature({
     // `bl review` records the PRs in the change document before it gets
     // here; a unit reviewed with none gets one now, for the verifier.
     if (!existsSync(changeFile(ctx))) {
-      ctx.changePath = ensureChange(config.backlogRoot, dirname(feature.indexPath), {
-        changeOf: feature.id,
-        title: feature.title,
-        repos: [{ repo: prepRepo(ctx), branch: prep.branchName }],
-      }).path;
+      ctx.changePath = (
+        await ensureChange(config.backlogRoot, dirname(feature.indexPath), {
+          changeOf: feature.id,
+          title: feature.title,
+          repos: [{ repo: prepRepo(ctx), branch: prep.branchName }],
+        })
+      ).path;
     }
     // The unit's review state, from its log (F-69 D5).
     const review = reviewState(ctx);
@@ -4953,7 +4937,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   const logged = await ensureLog(config.backlogRoot, { ...unitRef(ctx), change: readChange(changeFile(ctx)) });
   const runFields = isStory(feature) && (await recordStoryRunFields(ctx, maxRounds));
   if (logged || runFields) started.push(feature.featureRelPath);
-  if (setupChange(ctx)) started.push(changeRelPath(ctx));
+  if (await setupChange(ctx)) started.push(changeRelPath(ctx));
   if (started.length > 0)
     await commitUnitPaths(ctx, 'setup', started, `chore: ${feature.id} run started on ${prep.branchName}`);
   // A resumed run that already got as far as the PR has been self-reviewed;

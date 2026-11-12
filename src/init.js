@@ -7,7 +7,7 @@
  *   bl init [--agent <id> [--model <m>]]
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -23,6 +23,7 @@ import {
   EFFORT_KEYS,
 } from './config.js';
 import { LOCAL_TOOLS_FILE } from './permissions.js';
+import { ALLOWED_TOOLS_FILE } from './allowed-tools.js';
 import { FLOW_FILE } from './flow.js';
 import { ROADMAP_FILE } from './roadmap.js';
 import { PRIORITY_FILE } from './priority.js';
@@ -101,7 +102,7 @@ init"); edits you made before it stay uncommitted.`);
     ensureGitignored(config.backlogRoot);
     warnIfGhCredentialHelper();
 
-    copySeed(config.backlogRoot, 'allowed-tools.json');
+    copySeed(config.backlogRoot, ALLOWED_TOOLS_FILE);
     ensureFlowFile(config.backlogRoot);
     ensureBacklogDocs(config.backlogRoot);
     ensureRootIndex(config);
@@ -351,7 +352,7 @@ function ensureGitignored(backlogRoot) {
     GITIGNORED,
   );
   if (added.length === 0) return;
-  writeFileSync(gitignorePath, text);
+  atomicWriteFile(backlogRoot, gitignorePath, text);
   info(`Updated : .gitignore (+ ${added.join(', ')})`);
 }
 

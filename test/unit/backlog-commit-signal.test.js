@@ -21,6 +21,7 @@ import { mkTempDir } from '../helpers/tempdir.js';
 
 const BACKLOG_COMMIT = new URL('../../src/backlog-commit.js', import.meta.url).href;
 const SYNC = new URL('../../src/sync.js', import.meta.url).href;
+const MAIN_SYNC = new URL('../../src/main-sync.js', import.meta.url).href;
 const SIGNAL_EXIT = new URL('../../src/signal-exit.js', import.meta.url).href;
 
 // `KILL_ON`: the argument that ends the shim with `KILL_SIG`. `STOP_REBASE`:
@@ -72,6 +73,7 @@ function runScript(body, shimEnv) {
   const script = [
     `import * as bc from ${JSON.stringify(BACKLOG_COMMIT)};`,
     `import * as sync from ${JSON.stringify(SYNC)};`,
+    `import { withMainSyncLock } from ${JSON.stringify(MAIN_SYNC)};`,
     `import { exitOnSignal } from ${JSON.stringify(SIGNAL_EXIT)};`,
     'exitOnSignal();',
     body,
@@ -155,10 +157,13 @@ for (const signal of ['SIGKILL', 'SIGHUP', 'SIGUSR1']) {
       const head = g(alice, 'rev-parse', 'HEAD');
       const remote = g(bob, 'ls-remote', 'origin', 'refs/heads/main');
       const log = join(tmp, 'pushes');
-      const r = runScript(`console.log(JSON.stringify(bc.pushBacklog(${JSON.stringify(alice)})));`, {
-        REJECT_PUSH_LOG: log,
-        KILL_SIG: signal.slice(3),
-      });
+      const r = runScript(
+        `console.log(JSON.stringify(await withMainSyncLock(${JSON.stringify(alice)}, () => bc.pushBacklog(${JSON.stringify(alice)}))));`,
+        {
+          REJECT_PUSH_LOG: log,
+          KILL_SIG: signal.slice(3),
+        },
+      );
       assert.equal(r.status, 0, r.stderr);
       const res = JSON.parse(r.stdout.split('\n')[0]);
       assert.equal(res.pushed, false);
@@ -212,7 +217,10 @@ function pullFixture() {
 // the rebase: bl exits 130 with the checkout as the pull found it (D2a).
 const PULLS = [
   { name: 'pullBacklog', body: (root) => `await bc.pullBacklog(${JSON.stringify(root)});` },
-  { name: "pushBacklog's retry", body: (root) => `bc.pushBacklog(${JSON.stringify(root)});` },
+  {
+    name: "pushBacklog's retry",
+    body: (root) => `await withMainSyncLock(${JSON.stringify(root)}, () => bc.pushBacklog(${JSON.stringify(root)}));`,
+  },
 ];
 
 for (const c of PULLS) {
@@ -277,7 +285,8 @@ const UNSAFE = [
     abort: 'fail',
     signal: 'SIGINT',
     status: 130,
-    body: (root) => `console.log(JSON.stringify(bc.pushBacklog(${JSON.stringify(root)})));`,
+    body: (root) =>
+      `console.log(JSON.stringify(await withMainSyncLock(${JSON.stringify(root)}, () => bc.pushBacklog(${JSON.stringify(root)}))));`,
   },
 ];
 

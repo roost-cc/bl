@@ -3,12 +3,16 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { serializeFrontmatter } from '../../src/config.js';
-import { settle, writeRecord } from '../../src/feature-links.js';
+import { settleRecord, writeRecord } from '../../src/feature-links.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { withLock } from '../../src/lock.js';
+
+/** `settleRecord` as `settlePending` runs it: under the backlog lock. */
+const settleLocked = (root, path) => withLock(root, () => settleRecord(root, path));
 
 // Should fix 1 (review 2026-10-25): a record is settled from its recorded
 // bytes even when a story or the feature cannot be read as it is now.
-test('settle_restores_recorded_bytes_when_current_yaml_is_unreadable', () => {
+test('settle_restores_recorded_bytes_when_current_yaml_is_unreadable', async () => {
   const before = (id) => serializeFrontmatter({ story_id: id, status: 'backlog' });
   const linked = (id) => serializeFrontmatter({ story_id: id, status: 'backlog', feature: 'F-1' });
   const badYaml = (id) => `---\nstory_id: ${id}\nfeature: [\n---\n`;
@@ -47,7 +51,7 @@ test('settle_restores_recorded_bytes_when_current_yaml_is_unreadable', () => {
     put('stories/S1-one/index.md', s1);
     put('stories/S2-two/index.md', s2);
 
-    assert.deepEqual(settle(root, path), { state: 'rolled back', left: [] }, name);
+    assert.deepEqual(await settleLocked(root, path), { state: 'rolled back', left: [] }, name);
     assert.equal(readFileSync(join(root, 'stories/S1-one/index.md'), 'utf8'), before('S-1'), `${name}: S-1 restored`);
     assert.equal(readFileSync(join(root, 'stories/S2-two/index.md'), 'utf8'), before('S-2'), `${name}: S-2 restored`);
     assert.equal(existsSync(path), false, `${name}: the record is gone`);
@@ -55,7 +59,7 @@ test('settle_restores_recorded_bytes_when_current_yaml_is_unreadable', () => {
   }
 });
 
-test('settle keeps the record when a restore fails and the feature is not YAML, and a retry rolls back', () => {
+test('settle keeps the record when a restore fails and the feature is not YAML, and a retry rolls back', async () => {
   const before = (id) => serializeFrontmatter({ story_id: id, status: 'backlog' });
   const root = mkTempDir('bl-settle-unreadable-');
   const put = (rel, text) => {
@@ -72,17 +76,17 @@ test('settle keeps the record when a restore fails and the feature is not YAML, 
   put('stories/S1-one/index.md', '---\nstory_id: S-1\nfeature: [\n---\n');
   process.env.BL_INTERNAL_TEST_FAIL_ON_LINK = 'restore:S-1';
   try {
-    assert.deepEqual(settle(root, path), { state: 'kept', left: ['S-1'] });
+    assert.deepEqual(await settleLocked(root, path), { state: 'kept', left: ['S-1'] });
   } finally {
     delete process.env.BL_INTERNAL_TEST_FAIL_ON_LINK;
   }
   assert.equal(existsSync(path), true, 'the record stays for the next command');
-  assert.deepEqual(settle(root, path), { state: 'rolled back', left: [] });
+  assert.deepEqual(await settleLocked(root, path), { state: 'rolled back', left: [] });
   assert.equal(readFileSync(join(root, 'stories/S1-one/index.md'), 'utf8'), before('S-1'));
   assert.equal(existsSync(path), false);
 });
 
-test('settle keeps a feature whose every story names it, with no stories: list (F-77 D3)', () => {
+test('settle keeps a feature whose every story names it, with no stories: list (F-77 D3)', async () => {
   const before = (id) => serializeFrontmatter({ story_id: id, status: 'backlog' });
   const linked = (id) => serializeFrontmatter({ story_id: id, status: 'backlog', feature: 'F-1' });
   const root = mkTempDir('bl-settle-complete-');
@@ -98,7 +102,7 @@ test('settle keeps a feature whose every story names it, with no stories: list (
     stories: [{ id: 'S-1', path: 'stories/S1-one/index.md', before: before('S-1') }],
   });
   put('stories/S1-one/index.md', linked('S-1'));
-  assert.deepEqual(settle(root, path), { state: 'complete', left: [] });
+  assert.deepEqual(await settleLocked(root, path), { state: 'complete', left: [] });
   assert.equal(readFileSync(join(root, 'stories/S1-one/index.md'), 'utf8'), linked('S-1'));
   assert.equal(existsSync(join(root, 'features/F1-feat/index.md')), true);
   assert.equal(existsSync(path), false);

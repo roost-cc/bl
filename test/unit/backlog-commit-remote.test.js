@@ -292,7 +292,7 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
   }
 });
 
-test('bl inbox pulls; an allowed-tools.json conflict is regenerated, committed and pushed by bl', () => {
+test('bl inbox pulls; an allowed-tools.json conflict is regenerated, committed and pushed by bl', async () => {
   const { dir: alice, cleanup } = mkTempBacklog({
     components: [{ id: 'C01', title: 'Work' }],
     stories: [
@@ -303,7 +303,7 @@ test('bl inbox pulls; an allowed-tools.json conflict is regenerated, committed a
   const tmp = mkTempDir('bl-bc-remote-');
   try {
     initGitBacklog(alice);
-    ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
+    await ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
     g(alice, 'add', GENERATED);
     g(alice, 'commit', '-q', '-m', 'allowed tools');
     const remote = join(tmp, 'remote.git');

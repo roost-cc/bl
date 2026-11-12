@@ -27,7 +27,8 @@ import { info, warn } from './config.js';
 import { HEADLESS_ENV, isHeadless } from './agents/provider.js';
 import { PRIORITY_FILE } from './priority.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { MAIN_REFSPEC, withMainSyncLock } from './main-sync.js';
+import { ALLOWED_TOOLS_FILE } from './allowed-tools.js';
+import { MAIN_REFSPEC, assertMainSyncLock, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
 import { RUN_DIR, ensureRunDir } from './run-lock.js';
 import { describeExit, git as runGit, interruptKept, raiseAfter } from './child.js';
@@ -44,7 +45,8 @@ const git = (root, args) => runGit(root, args, { env: GIT_ENV });
  * `.git` (a directory, or a worktree's file). A backlog inside a parent
  * checkout is not: git would pull and commit the parent there, and name
  * paths from the parent's top (S-1330). `pullBeforeCommand`,
- * `syncAndCommit` and `commitChangedSince` skip such a backlog.
+ * `syncAndCommit`, `commitChangedSince` and `commitPaths` (`notRepo`) skip
+ * such a backlog.
  */
 export function hasOwnRepo(root) {
   return existsSync(join(root, '.git'));
@@ -342,25 +344,30 @@ function addablePaths(root, paths) {
  * `bl` (`src/child.js`); the rebase of a push retry puts the checkout back
  * first (`pullLocked`).
  *
- * With an `origin` remote the commit and push hold the main sync lock that
- * `pullBacklog` takes, so a commit never lands mid-rebase and a pull's
- * autostash never takes a file between its write and its commit: the pull
- * puts the stash back before it lets go. Callers that do not hold the
- * backlog lock (`change-doc.js` `openUnitChange`) rely on this.
+ * The add, the commit and the push hold the main sync lock that
+ * `pullBacklog` takes, with or without an `origin` remote (F-126 D1), so a
+ * commit never lands mid-rebase and a pull's autostash never takes a file
+ * between its write and its commit: the pull puts the stash back before it
+ * lets go. Callers that do not hold the backlog lock (`change-doc.js`
+ * `openUnitChange`) rely on this. It is the only backlog add, commit and
+ * push in bl; `feature-run.js` commits through it too.
+ * A backlog that is not a git repo of its own (`hasOwnRepo`) runs no git and
+ * returns `notRepo`.
  * Inside an agent bl started headless (`BL_HEADLESS`, F-78 D3) a commit
  * whose paths select `priority.yaml`, by name, directory or Git pathspec, is
  * refused before anything is staged: only a person ranks
  * (`headlessPriorityRefusal`).
- * @returns {Promise<{ committed: boolean, paths: string[], error?: string,
+ * @returns {Promise<{ committed: boolean, paths: string[], notRepo?: true, error?: string,
  *   pushed?: boolean, pushError?: string, pushConflicts?: string[],
  *   pushResolved?: string[] }>}
  */
 export async function commitPaths(root, paths, message) {
   if (paths.length === 0) return { committed: false, paths };
+  if (!hasOwnRepo(root)) return { committed: false, paths, notRepo: true };
   const refused = headlessPriorityRefusal(root, paths);
   if (refused) return { committed: false, paths, error: refused };
-  if (!hasOriginRemote(root)) return commitLocked(root, paths, message, false);
-  const res = await withMainSyncLock(root, () => commitLocked(root, paths, message, true));
+  const push = hasOriginRemote(root);
+  const res = await withMainSyncLock(root, () => commitLocked(root, paths, message, push));
   if (res.state === 'lock-timeout') {
     return { committed: false, paths, error: `timed out waiting for ${res.lockPath} (PID ${res.holder})` };
   }
@@ -411,6 +418,7 @@ export function headlessPriorityRefusal(root, paths, env = process.env) {
 }
 
 function commitLocked(root, paths, message, push) {
+  assertMainSyncLock(root);
   // `git add -A --` with an empty pathspec stages the whole work tree, so
   // when nothing is addable (every path is a `git mv` source) skip the add.
   const addable = addablePaths(root, paths);
@@ -429,6 +437,36 @@ function commitLocked(root, paths, message, push) {
     ...(p.paths ? { pushConflicts: p.paths } : {}),
     ...(p.resolved?.length ? { pushResolved: p.resolved } : {}),
   };
+}
+
+/**
+ * Unstage `paths` in the backlog (`git reset -q -- paths`): `bl rank`'s
+ * rollback of a commit that failed. Throws when this process does not hold
+ * the main sync lock (`assertMainSyncLock`).
+ * @param {string} root
+ * @param {string[]} paths  backlog-relative
+ * @returns {import('child_process').SpawnSyncReturns<string> | null} the failed git child, or null
+ */
+export function resetPaths(root, paths) {
+  assertMainSyncLock(root);
+  const r = git(root, ['reset', '-q', '--', ...paths]);
+  return r.status === 0 ? null : r;
+}
+
+/**
+ * Throw away every uncommitted change in the backlog: `git reset -q --hard
+ * HEAD`, then `git clean -q -fd` (ignored files stay); the clean runs even
+ * when the reset failed. The migration restore's undo (`migration-txn.js`).
+ * Throws when this process does not hold the main sync lock
+ * (`assertMainSyncLock`).
+ * @param {string} root
+ * @returns {import('child_process').SpawnSyncReturns<string> | null} the first failed git child, or null
+ */
+export function discardChanges(root) {
+  assertMainSyncLock(root);
+  const reset = git(root, ['reset', '-q', '--hard', 'HEAD']);
+  const clean = git(root, ['clean', '-q', '-fd']);
+  return [reset, clean].find((r) => r.status !== 0) ?? null;
 }
 
 /**
@@ -468,11 +506,13 @@ export function isNonFastForwardRejection(stderr) {
  * marker is written before the rebase and removed when nothing was settled,
  * so a marker that cannot be written fails the retry before anything moves
  * and `pushed` never holds settled paths without it. Without an `origin` remote there is
- * nothing to push (`skipped`).
+ * nothing to push (`skipped`). Throws when this process does not hold the
+ * main sync lock (`assertMainSyncLock`).
  * @param {string} root
  * @returns {BacklogPush}
  */
 export function pushBacklog(root) {
+  assertMainSyncLock(root);
   if (!hasOriginRemote(root)) return { pushed: false, skipped: true };
   const r = git(root, ['push', '-q', 'origin', 'main']);
   if (r.status === 0) return { pushed: true };
@@ -557,7 +597,7 @@ export async function pushIfAhead(root, opts = {}) {
 
 /**
  * The warning for a backlog commit whose push failed (`commitPaths`,
- * `pullBeforeCommand`, `feature-run.js`): why, in one line, and what carries
+ * `pullBeforeCommand`): why, in one line, and what carries
  * the commit. A conflict names its paths and the pull that settles it.
  * @param {string} root
  * @param {BacklogPush} p
@@ -755,7 +795,7 @@ export function commandPullsBacklog(command, argv) {
  * conflict in it is a real one.
  */
 export function isGeneratedPath(rel) {
-  return rel === 'allowed-tools.json';
+  return rel === ALLOWED_TOOLS_FILE;
 }
 
 function rebaseInProgress(root) {
@@ -846,11 +886,13 @@ export async function pullBacklog(root, opts = {}) {
  * it aborts the rebase, and one after it puts `main` back at its starting
  * commit; the index and the stash are put back. If that undo leaves the
  * checkout `unsafe`, the pull reports it (`reportBacklogPull`) before the
- * raise, because no caller sees the result after it.
+ * raise, because no caller sees the result after it. Throws when this
+ * process does not hold the main sync lock (`assertMainSyncLock`).
  * @param {string} root
  * @returns {BacklogPull}
  */
 function pullLocked(root) {
+  assertMainSyncLock(root);
   return raiseAfter(() => {
     const res = pullUndoable(root);
     if (res.state === 'unsafe' && interruptKept()) reportBacklogPull(res, root);

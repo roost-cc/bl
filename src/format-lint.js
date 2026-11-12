@@ -24,15 +24,18 @@
  * code repos a story spans (test/build/package/deploy) — that is the code
  * lifecycle `ci-cd` owns. Do not wire markdown format/lint into `ci-cd`.
  *
- * Files are dispatched to plugins via `language_dispatch[stage][ext]`,
- * batched by plugin to amortise spawn cost (one prettier invocation for all
- * .md files, not one per file).
+ * Files are dispatched to plugins via `language_dispatch[stage][ext]`. A
+ * backlog file runs on its own, inside its covering lock (`runPluginLocked`,
+ * F-126 D4), so the plugin never rewrites a file another `bl` is writing.
+ * The other files of a plugin go in one batch, to amortise spawn cost.
  */
 
 import { resolve, relative, isAbsolute, basename } from 'path';
 import { loadConfig, parseArgs, parsePluginCascade, runPluginBatch, info, warn } from './config.js';
 import { findStoryDir, normalizeId } from './story.js';
 import { normalizeFeatureId, findFeature } from './feature.js';
+import { runPluginLocked } from './spec-file.js';
+import { insideBacklog } from './write-lock.js';
 
 /**
  * Build the effective ext → Set<pluginName> map for a stage.
@@ -133,7 +136,12 @@ function extensionSummary(paths) {
   return [...exts].sort();
 }
 
-function applyStageInDirectory(stage, rootPath, paths, config, ctx) {
+/**
+ * Run each plugin of `stage` over the `paths` it dispatches to. A backlog
+ * file goes through `runPluginLocked`, one file per process under its
+ * covering lock (F-126 D4); the other files of a plugin go in one batch.
+ */
+async function applyStageInDirectory(stage, rootPath, paths, config, ctx) {
   const effective = buildEffectiveDispatch(stage, config, ctx);
   const buckets = bucketByEffectiveDispatch(paths, effective);
 
@@ -152,11 +160,20 @@ function applyStageInDirectory(stage, rootPath, paths, config, ctx) {
   for (const [name, bucketPaths] of buckets) {
     totalFiles += bucketPaths.length;
     const command = config.plugins[name][stage];
-    const result = runPluginBatch(name, command, bucketPaths, ctx.vars ?? {}, rootPath);
+    const inside = [];
+    const outside = [];
+    for (const p of bucketPaths)
+      (insideBacklog(config.backlogRoot, resolve(rootPath, p)) != null ? inside : outside).push(p);
+    const results = [];
+    if (outside.length > 0) results.push(runPluginBatch(name, command, outside, ctx.vars ?? {}, rootPath));
+    // After a missing binary, the backlog files would only warn again.
+    if (inside.length > 0 && !results[0]?.missing) {
+      results.push(await runPluginLocked(name, command, inside, ctx.vars ?? {}, rootPath, config.backlogRoot));
+    }
     // Missing-binary (`status: 127, missing: true`) is a non-zero outcome in
     // the explicit-invocation context: CI must not green-light an unformatted
     // / unlinted tree because the configured tool isn't installed.
-    if (!result.ok && result.status > worstStatus) worstStatus = result.status;
+    for (const result of results) if (!result.ok && result.status > worstStatus) worstStatus = result.status;
   }
   info(`  ${ctx.repoName ?? rootPath}: ${totalFiles} files via ${buckets.size} plugin(s) — exit ${worstStatus}`);
   return { status: worstStatus, files: totalFiles };
@@ -180,7 +197,7 @@ function backlogRelative(explicit, config) {
  * story layers; the feature file, which has none, under the backlog root's).
  * Explicit paths narrow it to those files, under the root cascade. Exits.
  */
-function runFeatureStage(stage, featureParsed, explicit, config) {
+async function runFeatureStage(stage, featureParsed, explicit, config) {
   const feature = findFeature(featureParsed, config);
   if (!feature) {
     console.error(`Feature ${featureParsed.id} not found`);
@@ -226,7 +243,7 @@ function runFeatureStage(stage, featureParsed, explicit, config) {
   }
   let worst = 0;
   for (const { paths, ctx } of groups) {
-    const { status } = applyStageInDirectory(stage, config.backlogRoot, paths, config, ctx);
+    const { status } = await applyStageInDirectory(stage, config.backlogRoot, paths, config, ctx);
     if (status > worst) worst = status;
   }
   process.exit(worst);
@@ -279,12 +296,12 @@ with {{path}} interpolated to the matched files.`);
       vars: { stage, roostDir: config.roostDir },
       repoName: relative(config.roostDir, cwd) || cwd,
     };
-    const { status } = applyStageInDirectory(stage, cwd, explicit, config, ctx);
+    const { status } = await applyStageInDirectory(stage, cwd, explicit, config, ctx);
     process.exit(status);
   }
 
   const featureParsed = normalizeFeatureId(storyId);
-  if (featureParsed) runFeatureStage(stage, featureParsed, explicit, config);
+  if (featureParsed) await runFeatureStage(stage, featureParsed, explicit, config);
 
   const parsed = normalizeId(storyId);
   if (!parsed) {
@@ -317,6 +334,6 @@ with {{path}} interpolated to the matched files.`);
     },
     repoName: 'backlog',
   };
-  const { status } = applyStageInDirectory(stage, config.backlogRoot, paths, config, ctx);
+  const { status } = await applyStageInDirectory(stage, config.backlogRoot, paths, config, ctx);
   process.exit(status);
 }

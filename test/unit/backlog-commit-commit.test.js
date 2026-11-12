@@ -13,7 +13,13 @@ import {
   failedCommitPending,
   hashPath,
   saveFailedCommit,
+  pushBacklog,
+  resetPaths,
+  discardChanges,
 } from '../../src/backlog-commit.js';
+import { mainSyncLockPath, withMainSyncLock } from '../../src/main-sync.js';
+import { setTimeout as delay } from 'timers/promises';
+import { holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { PRIORITY_FILE } from '../../src/priority.js';
 import { HEADLESS_ENV } from '../../src/agents/provider.js';
@@ -155,6 +161,51 @@ test('commitPaths reports a commit that fails without output as an error', async
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('commit_paths_waits_for_the_main_sync_lock_with_no_origin: the commit lands only after the holder ends (F-126 D1)', async () => {
+  const dir = changedSinceRepo();
+  const head = g(dir, 'rev-parse', 'HEAD');
+  writeFileSync(join(dir, 'x.md'), 'written by the command\n');
+  const holder = await holdLockInChild(mainSyncLockPath(dir));
+  let settled = false;
+  const pending = commitPaths(dir, ['x.md'], 'chore: waited').finally(() => (settled = true));
+  try {
+    await delay(400);
+    assert.equal(settled, false, 'commitPaths waits while another process holds the lock');
+    assert.equal(g(dir, 'rev-parse', 'HEAD'), head, 'no commit while the lock is held');
+  } finally {
+    await holder.kill();
+  }
+  const res = await pending;
+  assert.equal(res.committed, true, res.error);
+  assert.equal(g(dir, 'log', '-1', '--format=%s'), 'chore: waited');
+});
+
+test('commit_paths_returns_not_repo_without_a_repo_of_its_own: a plain directory, and one inside a parent checkout', async () => {
+  const parent = changedSinceRepo();
+  mkdirSync(join(parent, 'backlog'));
+  for (const root of [mkTempDir('bl-bc-plain-'), join(parent, 'backlog')]) {
+    writeFileSync(join(root, 'a.md'), 'written by the command\n');
+    const head = g(parent, 'rev-parse', 'HEAD');
+    assert.deepEqual(await commitPaths(root, ['a.md'], 'chore: a'), {
+      committed: false,
+      paths: ['a.md'],
+      notRepo: true,
+    });
+    assert.equal(g(parent, 'rev-parse', 'HEAD'), head, `${root}: no commit in the parent`);
+    assert.equal(g(parent, 'diff', '--cached', '--name-only'), '', `${root}: nothing staged in the parent`);
+  }
+});
+
+test('the backlog git chokepoints throw when this process does not hold the main sync lock (F-126 D1)', async () => {
+  const dir = changedSinceRepo();
+  const lock = mainSyncLockPath(dir);
+  const message = (e) => e.message === `${dir}: this process does not hold the main sync lock ${lock}`;
+  assert.throws(() => pushBacklog(dir), message);
+  assert.throws(() => resetPaths(dir, ['x.md']), message);
+  assert.throws(() => discardChanges(dir), message);
+  assert.equal(await withMainSyncLock(dir, () => pushBacklog(dir).skipped), true, 'held: no origin, nothing to push');
 });
 
 // ---------------------------------------------------------------------------
