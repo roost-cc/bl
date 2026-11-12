@@ -440,9 +440,9 @@ backlog lock and need `atomicWriteFile` only.
   create one of those, and for every other path (`blockers.json`, `priority.yaml`,
   `releases/`, `themes/`, `tasks/`, `updates/`, `.gitignore`, `flow.json`, a removed unit
   directory, …); none for a path outside the backlog, or in `.bl/` when git ignores it or the
-  backlog is no git repository. The
-  rule and the ignore check apply to the path the write changes: links in its directory are
-  resolved, and a link at the path itself is resolved only for a write through it
+  backlog is no git repository. The rule and the ignore check apply to the path the write
+  changes: links in its directory are resolved, and a link at the path itself is resolved only
+  for a write through it
   (`atomicWriteFile`'s `preserve`, a plugin), since a rename or removal replaces the link. The
   three write chokepoints in `atomic-write.js` call `assertCovered` before they change
   anything: `atomicWriteFile`, `removeBacklogPath` (a file or tree) and `moveIntoBacklog` (a
@@ -450,8 +450,8 @@ backlog lock and need `atomicWriteFile` only.
   that path, they throw `<path>: bl writes it without its covering lock (<kind> lock <lock path>)`.
   Each one then changes the path `assertCovered` returns, the one it checked, and a plugin
   gets the path its lock covers (`withCoveringLock`), never the link that reached it: a link
-  moved after the check cannot send the write to another file. The check runs in production. Synchronous code, which cannot await a lock wait, takes a spec
-  lock with one try: `withSpecLockNow(path, fn)` (`spec-file.js`, F-126 D7) throws
+  moved after the check cannot send the write to another file. The check runs in production.
+  Synchronous code, which cannot await a lock wait, takes a spec lock with one try: `withSpecLockNow(path, fn)` (`spec-file.js`, F-126 D7) throws
   `SpecLockError` naming the holder when another process holds it, and the caller decides
   what that means. `writeBacklogPathNow` (`atomic-write.js`) writes or removes a path that way,
   under the caller's backlog lock: `snapshot`'s undo and `bl side`'s exit-time undo leave a
