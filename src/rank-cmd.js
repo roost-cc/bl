@@ -58,6 +58,7 @@ import {
   marks,
   orderOf,
   readStaged,
+  resolveRanked,
 } from './priority.js';
 
 /** The last stderr line of a `--commit` conflict with no terminal to ask in (F-113 D3). */
@@ -461,7 +462,8 @@ async function reset(root) {
  * caller's lock: `{ refused }`; `{ clean, ids }` for a merge with no
  * conflict; or `{ conflict, ids, markers }` with the proposed list and
  * `git merge-file`'s output. `ids` has no closed unit (`closed` names them)
- * and each id once. `inputs` is the three files' text, so a caller can tell
+ * and each id once; an id that is no open feature or loose story
+ * (`resolveRanked`) makes it `{ refused }`. `inputs` is the three files' text, so a caller can tell
  * whether they changed since. The units are loaded here, under the lock, so
  * a unit closed during a lock wait or a question is taken out; `graph` is
  * that load.
@@ -511,6 +513,18 @@ function mergeStaged(root, config) {
   const graph = loadBacklog(config);
   const closed = closedIn(graph, list);
   const ids = [...new Set(list.filter((id) => !closed.includes(id)))];
+  // A hand-edited staged copy may name what is no unit: priority.yaml never gets it.
+  const { problems } = resolveRanked(
+    ids.map((unit, i) => ({ unit, position: i + 1 })),
+    graph,
+  );
+  if (problems.length > 0) {
+    return {
+      refused:
+        `in the merged order, ${problems.map((p) => p.message).join('; ')}. ` +
+        `Fix ${STAGED_FILE} (bl rank <unit> --remove) or run bl rank --reset. Nothing was committed.`,
+    };
+  }
   const inputs = [read(STAGED_FILE), read(BASE_FILE), mainText].join('\0');
   return {
     repo,

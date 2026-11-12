@@ -125,6 +125,52 @@ test('rank commit reloads work units after lock and answer', async () => {
   assert.equal(git(dir, 'log', '-1', '--format=%s'), `${SUBJECT}; S-2 out (done)`);
 });
 
+test('rank commit refuses invalid staged work units', () => {
+  const dir = backlog(list('S-1', 'F-2'));
+  // S-20: an update story.
+  const s2 = readFileSync(join(dir, 'stories', 'S2', 'index.md'), 'utf8');
+  mkdirSync(join(dir, 'stories', 'S20'));
+  writeFileSync(
+    join(dir, 'stories', 'S20', 'index.md'),
+    s2.replace('story_id: S-2', 'story_id: S-20').replace(/^status:/m, 'update_repo: bl\nstatus:'),
+  );
+  assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
+  const head = git(dir, 'rev-parse', 'HEAD');
+  for (const [bad, why] of [
+    ['garbage', /entry 2 \(garbage\) is not a feature \(F-<n>\) or story \(S-<n>\) id/],
+    ['F-9', /entry 2 \(F-9\) names no feature under features\//],
+    ['S-99', /entry 2 \(S-99\) names no story under stories\//],
+    ['T-1', /entry 2 \(T-1\) names a task/],
+    ['S-11', /entry 2 \(S-11\) is a story inside F-1/],
+    ['S-20', /entry 2 \(S-20\) is an update story/],
+  ]) {
+    const text = list('F-1', bad, 'S-1', 'F-2');
+    writeFileSync(join(dir, STAGED_FILE), text);
+    const r = bl(['rank', '--commit'], dir);
+    assert.equal(r.status, 1, bad);
+    assert.match(r.stderr, why, bad);
+    assert.match(r.stderr, /Nothing was committed\.$/m, bad);
+    assert.equal(read(dir), list('S-1', 'F-2'), bad);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, bad);
+    assert.equal(staged(dir), text, `${bad}: the staged copy stays`);
+  }
+
+  // A proposal on a conflict is checked too, before the question.
+  const conflict = conflicted();
+  writeFileSync(join(conflict, STAGED_FILE), list('S-1', 'garbage', 'S-2', 'F-2'));
+  const r = bl(['rank', '--commit'], conflict, TTY, 'y\n');
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /\(garbage\) is not a feature/);
+  assert.doesNotMatch(r.stderr, /\[y\/n\]/);
+  assert.equal(read(conflict), list('S-1', 'F-1', 'F-2'));
+
+  // A second entry of a unit is no refusal: it is dropped.
+  writeFileSync(join(dir, STAGED_FILE), list('F-1', 'S-1', 'F-1', 'F-2'));
+  const dup = bl(['rank', '--commit'], dir);
+  assert.equal(dup.status, 0, dup.stderr);
+  assert.equal(read(dir), list('F-1', 'S-1', 'F-2'));
+});
+
 test('--commit pulls first and merges a change on main cleanly', () => {
   const dir = backlog(list('S-1', 'F-2'));
   assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
