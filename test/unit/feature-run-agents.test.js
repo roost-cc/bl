@@ -21,7 +21,7 @@ import {
 } from '../../src/feature-run.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { holderOf } from '../../src/kernel-lock.js';
-import { stopRequestPath } from '../../src/run-lock.js';
+import { stopRequestDir, stopRequests, writeStopRequest } from '../../src/run-lock.js';
 import { unitLockPath } from '../../src/unit-lock.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
 import { accumulateTokensOnFile } from '../../src/tokens.js';
@@ -1790,8 +1790,11 @@ test("each headless step's session is in the run state before it spawns, with th
 /** The unit's status from its log, read now. */
 const unitStatusNow = (feature) => logStatusOf('feature', parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm);
 
-/** A stop request of `bl stop` (pid 1) for the run in this process, as `bl stop` writes it. */
-const stopRequest = (holder = process.pid) => `${JSON.stringify({ pid: 1, at: '2026-11-11T00:00:00Z', holder })}\n`;
+/** A stop request for the run in this process (or `holder`), as `bl stop` writes it. */
+const requestStop = (config, holder = process.pid) => writeStopRequest(config, 'F-1', holder);
+
+/** The holders of F-1's stop requests that are left. */
+const requestsLeft = (config) => stopRequests(config, 'F-1').map(({ request }) => request.holder);
 
 /** Whether the unit's `## Escalation` is still `None.`. */
 const noEscalation = (feature) =>
@@ -1800,7 +1803,6 @@ const noEscalation = (feature) =>
 test('stop_check_session: a session that returns while a stop request exists stops the run: no attempt, no escalation; --resume reruns the step', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
-    const request = stopRequestPath(config, 'F-1');
     let statusAtStop = null;
     // `bl stop` writes the request and ends the session: S-1's criteria stay open.
     const runner = fakeRunner({
@@ -1810,7 +1812,7 @@ test('stop_check_session: a session that returns while a stop request exists sto
         story: (o) => {
           if (o.vars.storyId !== 'S-1') return checkAll(o.vars.storyAbsPath);
           statusAtStop = unitStatusNow(feature);
-          writeFileSync(request, stopRequest());
+          requestStop(config);
         },
       },
     });
@@ -1825,7 +1827,7 @@ test('stop_check_session: a session that returns while a stop request exists sto
     assert.equal(last.note, 'stopped by bl stop at implement');
     assert.equal(state.history.filter((h) => h.step === 'implement').length, 0, 'the stopped session is no attempt');
     assert.equal(runner.calls.filter((c) => c.type === 'session').length, 1, 'no nudge retry, no next story');
-    assert.equal(existsSync(request), false, 'the loop deletes the request');
+    assert.deepEqual(requestsLeft(config), [], 'the loop deletes the request');
     assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the run lock is released');
     assert.equal(unitStatusNow(feature), statusAtStop, "the unit's status does not change");
     assert.ok(noEscalation(feature), 'no escalation');
@@ -1846,7 +1848,6 @@ test('stop_check_session: a session that returns while a stop request exists sto
 test('stop_check_wait: a stop request during a usage-limit wait stops the run within a slice, before the rerun', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
-    const request = stopRequestPath(config, 'F-1');
     let hits = 0;
     const runner = fakeRunner({
       dir,
@@ -1859,7 +1860,7 @@ test('stop_check_wait: a stop request during a usage-limit wait stops the run wi
     // `bl stop` writes its request during the first slice of the wait.
     const sleep = runner.sleep;
     runner.sleep = (ms) => {
-      writeFileSync(request, stopRequest());
+      requestStop(config);
       return sleep(ms);
     };
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
@@ -1868,7 +1869,7 @@ test('stop_check_wait: a stop request during a usage-limit wait stops the run wi
     assert.equal(state.history.at(-1).step, 'stopped');
     assert.equal(runner.calls.filter((c) => c.type === 'sleep').length, 1, 'one slice, not the whole wait');
     assert.equal(runner.calls.filter((c) => c.type === 'session').length, 1, 'only the refused spawn: no rerun');
-    assert.equal(existsSync(request), false);
+    assert.deepEqual(requestsLeft(config), []);
   } finally {
     cleanup();
   }
@@ -1877,19 +1878,18 @@ test('stop_check_wait: a stop request during a usage-limit wait stops the run wi
 test('stop_check_step_start: a stop request found at a step start stops the run before the step does anything', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
-    const request = stopRequestPath(config, 'F-1');
     const runner = fakeRunner({ dir, feature });
     const title = runner.title;
     runner.title = (fields, opts) => {
       // setStep sets the title, then checks the request.
-      if (fields.status === 'test' && !opts?.final) writeFileSync(request, stopRequest());
+      if (fields.status === 'test' && !opts?.final) requestStop(config);
       title(fields, opts);
     };
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'stopped');
     assert.equal(state.step, 'test');
     assert.equal(runner.calls.filter((c) => c.type === 'shell' && c.cmd === 'npm test').length, 0, 'no gate command');
-    assert.equal(existsSync(request), false);
+    assert.deepEqual(requestsLeft(config), []);
   } finally {
     cleanup();
   }
@@ -1898,14 +1898,13 @@ test('stop_check_step_start: a stop request found at a step start stops the run 
 test('stop_check_test_gate: a test-gate command that returns while a stop request exists is no failed attempt', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
-    const request = stopRequestPath(config, 'F-1');
     const runner = fakeRunner({
       dir,
       feature,
       behaviour: {
         shell: (cmd) => {
           if (cmd !== 'npm test') return null;
-          writeFileSync(request, stopRequest());
+          requestStop(config);
           return { status: 143, output: 'Terminated\n' };
         },
       },
@@ -1921,31 +1920,53 @@ test('stop_check_test_gate: a test-gate command that returns while a stop reques
   }
 });
 
-test('stop_leftover: bl run deletes a stop request left from an earlier run when it starts', async () => {
-  const { dir, cleanup, config, feature, prep } = setup();
-  try {
-    const request = stopRequestPath(config, 'F-1');
-    mkdirSync(join(dir, RUN_DIR), { recursive: true });
-    writeFileSync(request, '{}\n');
-    const runner = fakeRunner({ dir, feature });
-    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
-    assert.equal(state.status, 'clean');
-    assert.equal(existsSync(request), false);
-  } finally {
-    cleanup();
+test('stop_leftover: bl run deletes only the stop requests left for an earlier holder when it starts', async () => {
+  const hour = 3_600_000;
+  const cases = [
+    { what: 'no holder (not a request of bl stop)', request: {}, deleted: true },
+    {
+      what: 'another pid',
+      request: { holder: process.pid + 1, at: new Date(Date.now() + hour).toISOString() },
+      deleted: true,
+    },
+    {
+      what: 'this pid, written before the lock',
+      request: { holder: process.pid, at: '2020-01-01T00:00:00Z' },
+      deleted: true,
+    },
+    { what: 'this pid, no time', request: { holder: process.pid }, deleted: true },
+    {
+      what: 'this pid, written since the lock',
+      request: { holder: process.pid, at: new Date(Date.now() + hour).toISOString() },
+      deleted: false,
+    },
+  ];
+  for (const c of cases) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const path = join(stopRequestDir(config, 'F-1'), `1-${c.what.replace(/\W+/g, '-')}.json`);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `${JSON.stringify({ pid: 1, ...c.request })}\n`);
+      const runner = fakeRunner({ dir, feature });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      // A request for this run stops it at its first step, and the loop deletes it then.
+      assert.equal(state.status, c.deleted ? 'clean' : 'stopped', c.what);
+      assert.equal(existsSync(path), false, c.what);
+    } finally {
+      cleanup();
+    }
   }
 });
 
-test('stop_check_holder: a stop request for another holder (an earlier run) does not stop this run', async () => {
+test('stop_check_holder: a stop request for another holder (an earlier run) does not stop this run, and the loop leaves it', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
-    const request = stopRequestPath(config, 'F-1');
     const runner = fakeRunner({
       dir,
       feature,
       behaviour: {
         story: (o) => {
-          writeFileSync(request, stopRequest(process.pid + 1));
+          requestStop(config, process.pid + 1);
           checkAll(o.vars.storyAbsPath);
         },
       },
@@ -1953,6 +1974,31 @@ test('stop_check_holder: a stop request for another holder (an earlier run) does
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'clean');
     assert.ok(!state.history.some((h) => h.step === 'stopped'));
+    assert.deepEqual([...new Set(requestsLeft(config))], [process.pid + 1], 'not this run’s to delete');
+  } finally {
+    cleanup();
+  }
+});
+
+test('stop_check_own_requests_only: a stopped run deletes the requests for itself, and leaves the others', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        story: (o) => {
+          if (o.vars.storyId !== 'S-1') return checkAll(o.vars.storyAbsPath);
+          // Two bl stops for this run, and one for an earlier holder.
+          requestStop(config);
+          requestStop(config);
+          requestStop(config, process.pid + 1);
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'stopped');
+    assert.deepEqual(requestsLeft(config), [process.pid + 1]);
   } finally {
     cleanup();
   }
@@ -1967,11 +2013,12 @@ test('take_run_locks_releases_on_request_cleanup_failure: bl run, review and mer
   for (const [name, take] of Object.entries(takes)) {
     const { dir, cleanup, config, feature, prep } = setup({ pr: '7' });
     try {
-      // A directory where the stop request goes: rmSync with force alone cannot delete it.
-      const request = stopRequestPath(config, 'F-1');
-      mkdirSync(join(request, 'x'), { recursive: true });
+      // A file where the stop request directory goes: its listing throws.
+      const requests = stopRequestDir(config, 'F-1');
+      mkdirSync(dirname(requests), { recursive: true });
+      writeFileSync(requests, '');
       const runner = fakeRunner({ dir, feature });
-      await assert.rejects(take({ feature, config, prep, runner }), /EISDIR|directory/i, name);
+      await assert.rejects(take({ feature, config, prep, runner }), /ENOTDIR|directory/i, name);
       assert.equal(holderOf(runLockPath(config, 'F-1')), null, `${name}: the run lock is released`);
       assert.equal(holderOf(unitLockPath(dir, dirname(feature.indexPath))), null, `${name}: the unit lock is released`);
       assert.equal(runner.calls.filter((c) => c.type === 'session').length, 0, `${name}: no session`);

@@ -5,7 +5,8 @@
  * A run lock never waits: a held lock is refused.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { randomUUID } from 'crypto';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { holderFileOf, release, tryLockOnce } from './kernel-lock.js';
 
@@ -21,25 +22,66 @@ export function runLockPath(config, featureId) {
 }
 
 /**
- * `<backlog>/.bl/run/<id>.stop`: the stop request `bl stop` writes for the
- * bl that holds `id`'s run lock (F-87 D7a). The loop checks it at each step
- * start and after each scoped spawn; `takeRunLocks` deletes a leftover one.
+ * `<backlog>/.bl/run/<id>.stop/`: the stop requests that `bl stop` writes for
+ * the bl that holds `id`'s run lock (F-87 D7a), one file for each `bl stop`
+ * (`writeStopRequest`). The loop checks them at each step start and after
+ * each scoped spawn; `takeRunLocks` deletes the ones for an earlier holder.
  */
-export function stopRequestPath(config, featureId) {
+export function stopRequestDir(config, featureId) {
   return join(config.backlogRoot, RUN_DIR, `${featureId}.stop`);
 }
 
 /**
- * The stop request of `id` (`stopRequestPath`): `{ pid, at, holder }`, where
- * `holder` is the pid of the `bl run` it stops. Null when there is none, or
- * when it is not whole JSON yet (`bl stop` is writing it).
+ * Write the stop request of this `bl stop` for `holder`, the pid of the `bl
+ * run` it stops: `{ pid, at, holder }` in a new file of its own in
+ * `stopRequestDir` (`<pid>-<uuid>.json`), and return its path. So no other
+ * `bl stop` writes or deletes it. A write that fails deletes its own file and
+ * throws; every other request stays as it was.
+ *
+ * @returns {string}
  */
-export function readStopRequest(config, featureId) {
+export function writeStopRequest(config, featureId, holder) {
+  ensureRunDir(config);
+  const dir = stopRequestDir(config, featureId);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${process.pid}-${randomUUID()}.json`);
   try {
-    return JSON.parse(readFileSync(stopRequestPath(config, featureId), 'utf8'));
-  } catch {
-    return null;
+    writeFileSync(path, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString(), holder })}\n`, {
+      flag: 'wx',
+    });
+  } catch (e) {
+    rmSync(path, { force: true });
+    throw e;
   }
+  return path;
+}
+
+/**
+ * The stop requests of `id` (`stopRequestDir`): `[{ path, request }]`, where
+ * `request` is `{ pid, at, holder }`. A file that is gone, or not whole JSON
+ * yet (its `bl stop` is writing it), is left out. No directory: none.
+ *
+ * @returns {{ path: string, request: { pid?: number, at?: string, holder?: number } }[]}
+ */
+export function stopRequests(config, featureId) {
+  const dir = stopRequestDir(config, featureId);
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch (e) {
+    if (e.code === 'ENOENT') return [];
+    throw e;
+  }
+  const out = [];
+  for (const name of names.filter((n) => n.endsWith('.json'))) {
+    const path = join(dir, name);
+    try {
+      out.push({ path, request: JSON.parse(readFileSync(path, 'utf8')) });
+    } catch {
+      // Gone since the listing, or still being written.
+    }
+  }
+  return out;
 }
 
 /**

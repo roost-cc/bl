@@ -118,15 +118,7 @@ import {
   writeChange,
 } from './change-doc.js';
 import { otherHolder } from './kernel-lock.js';
-import {
-  RUN_DIR,
-  runLockPath,
-  ensureRunDir,
-  acquireRunLock,
-  releaseRunLock,
-  readStopRequest,
-  stopRequestPath,
-} from './run-lock.js';
+import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock, stopRequests } from './run-lock.js';
 import { takeUnitLocks } from './unit-lock.js';
 import { hasOriginRemote, pushBacklog, pushWarning } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
@@ -161,9 +153,10 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
  * Returns `{ refused }`, which names the other holder, with neither lock held;
  * or `{ refused: null, release }`, where `release()` gives back both. If the
  * take throws (the stories cannot be read), it holds neither either. With
- * both held, a stop request left by `bl stop` for an earlier holder is
- * deleted (F-87 D7a): it was not for this run. If that delete throws, it
- * releases both and throws.
+ * both held, each stop request left by `bl stop` for an earlier holder is
+ * deleted (F-87 D7a): one for another pid, or one written before this process
+ * took the run lock (an earlier holder with the same pid). A request for this
+ * run, written since, stays. If a delete throws, it releases both and throws.
  *
  * @param {object} config
  * @param {import('./unit-lock.js').WorkUnit} unit
@@ -171,6 +164,7 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
  * @returns {{ refused: string } | { refused: null, release: () => void }}
  */
 function takeRunLocks(config, unit, owner) {
+  const takenAt = Date.now();
   // The lock's info line names the owner, so `bl stop` stops only a `bl run` (`runHolder`).
   const run = acquireRunLock(config, unit.id, `bl ${owner}`);
   if (run.holder != null) return { refused: `a bl run (pid ${run.holder}) is running ${unit.id}` };
@@ -190,7 +184,9 @@ function takeRunLocks(config, unit, owner) {
     releaseRunLock(run.taken);
   };
   try {
-    rmSync(stopRequestPath(config, unit.id), { force: true });
+    for (const { path, request } of stopRequests(config, unit.id)) {
+      if (request.holder !== process.pid || !(Date.parse(request.at) >= takenAt)) rmSync(path, { force: true });
+    }
   } catch (e) {
     release();
     throw e;
@@ -863,20 +859,21 @@ export function markStopped(state, note) {
  * and after each spawn in `newScope(ctx)` returns, before the loop reads its
  * result, so the stopped session is not an attempt and does not escalate.
  * Marks the state stopped
- * (`markStopped`), saves it, deletes the request and throws a
+ * (`markStopped`), saves it, deletes the requests for this process and throws a
  * StopRequestError, which unwinds the step's cleanups to `runFeature`. The
  * locks go with it, and `bl run` exits 130. The unit's `status:` does not
  * change. Only a request for this process counts (its `holder`, the run lock
- * holder `bl stop` saw): a request for an earlier holder is not for this run.
+ * holder `bl stop` saw): a request for an earlier holder is not for this run,
+ * and it stays for its own `bl stop` or the next `takeRunLocks` to delete.
  */
 function checkStop(ctx) {
-  const request = stopRequestPath(ctx.config, ctx.feature.id);
-  if (readStopRequest(ctx.config, ctx.feature.id)?.holder !== process.pid) return;
+  const mine = stopRequests(ctx.config, ctx.feature.id).filter(({ request }) => request.holder === process.pid);
+  if (mine.length === 0) return;
   const { state } = ctx;
   const reason = `stopped by bl stop at ${state.step}`;
   markStopped(state, reason);
   saveRunState(ctx.config, state);
-  rmSync(request, { force: true });
+  for (const { path } of mine) rmSync(path, { force: true });
   finalTitle(ctx, 'stopped');
   safeLog(ctx.runner, `\n${ctx.feature.id} stopped at ${state.step}; resume: ${ctx.resumeHint}`);
   throw new StopRequestError(reason, state);

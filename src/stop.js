@@ -12,8 +12,9 @@
  *    stop` takes the run lock, reads the state again and writes `status:
  *    stopped` itself (`markDead`). A holder that is not a `bl run` (a review
  *    or a merge of a state a dead bl left `running`) gets no request.
- * 2. writes the stop request `.bl/run/<id>.stop` (`stopRequestPath`): JSON
- *    with its own pid, the time and `holder`, the pid of the run it stops.
+ * 2. writes its stop request, a file of its own in `.bl/run/<id>.stop/`
+ *    (`writeStopRequest`): JSON with its own pid, the time and `holder`, the
+ *    pid of the run it stops. It deletes no other `bl stop`'s request.
  * 3. stops each process scope of the holder (`scopesOf`), which ends the
  *    current session or test-gate command. The loop's spawn returns, and the
  *    loop finds the request (`checkStop` in feature-run.js), records
@@ -26,22 +27,14 @@
  * run it stops holds them. stdout stays empty; every line goes to stderr.
  */
 
-import { rmSync, writeFileSync } from 'fs';
+import { rmSync } from 'fs';
 import { setTimeout as delay } from 'timers/promises';
 import { loadConfig } from './config.js';
 import { loadRunState, markStopped, saveRunState } from './feature-run.js';
 import { otherHolder } from './kernel-lock.js';
 import { scopeAvailable, scopesOf, stopScope } from './process-scope.js';
 import { runArgs } from './run-arg.js';
-import {
-  acquireRunLock,
-  ensureRunDir,
-  readStopRequest,
-  releaseRunLock,
-  runHolder,
-  runLockPath,
-  stopRequestPath,
-} from './run-lock.js';
+import { acquireRunLock, releaseRunLock, runHolder, runLockPath, writeStopRequest } from './run-lock.js';
 
 /** How long `bl stop` waits for the run lock to go, in ms (F-87 D7a). */
 export const STOP_WAIT_MS = 30_000;
@@ -53,7 +46,7 @@ const HELP = `Usage: bl stop <F-id|S-id>
 
 Stop a running bl run cleanly. Continue it later with bl run <id> --resume.
 
-bl stop writes the stop request .bl/run/<id>.stop and stops the run's agent
+bl stop writes a stop request in .bl/run/<id>.stop/ and stops the run's agent
 session or test command (its user systemd scope). The run then records
 "stopped", releases its locks and exits 130. bl stop waits up to
 ${STOP_WAIT_MS / 1000} s for that. Without user systemd, the run stops when its
@@ -69,7 +62,8 @@ Output (stderr; stdout stays empty):
 Exit codes:
   0   The run stopped.
   1   No running run for the id (a bl review or bl merge holds it), a bad
-      argument, a holder that has not written its pid yet, or the run still
+      argument, a holder that has not written its pid yet, a stop request
+      that could not be written (nothing stopped), or the run still
       holds its lock after ${STOP_WAIT_MS / 1000} s: "stop requested: <id> (pid <n>) stops at its
       next check". The request stays, and the run stops at its next check.`;
 
@@ -141,9 +135,13 @@ export async function stopRun({ config, id, err, waitMs = STOP_WAIT_MS, pollMs =
     return 1;
   }
 
-  const request = stopRequestPath(config, id);
-  ensureRunDir(config);
-  writeFileSync(request, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString(), holder })}\n`);
+  let request;
+  try {
+    request = writeStopRequest(config, id, holder);
+  } catch (e) {
+    err(`bl stop: cannot write the stop request: ${e.message}; nothing stopped`);
+    return 1;
+  }
   if (scopeAvailable().ok) {
     let scopes = [];
     try {
@@ -177,9 +175,8 @@ export async function stopRun({ config, id, err, waitMs = STOP_WAIT_MS, pollMs =
     return 0;
   }
   // The run ended on its own before it read the request, which nobody reads
-  // now. A newer request (another bl stop's, for a later run) stays.
-  const left = readStopRequest(config, id);
-  if (left?.pid === process.pid && left.holder === holder) rmSync(request, { force: true });
+  // now. Only this bl stop's own file goes: another bl stop's request stays.
+  rmSync(request, { force: true });
   err(`${id} ended ${after?.status ?? 'with no run state'} at ${after?.step ?? '?'} before it read the stop request`);
   return 0;
 }

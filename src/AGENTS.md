@@ -3600,9 +3600,11 @@ to its bl would be handled only after the run ends. `bl stop` never sends one:
    which `takeRunLocks` writes) holds a state that a dead bl left `running`: `bl stop` exits 1
    and writes no request. `bl top` offers no stop action for it either. A holder whose lock
    file names no pid yet gets exit 1 and `try again`.
-2. It writes the stop request `.bl/run/<id>.stop` (`stopRequestPath()` in `src/run-lock.js`):
-   one JSON object, `{ pid, at, holder }`: its own pid, the time and the pid of the run it
-   stops. The loop honours only a request whose `holder` is its own pid.
+2. It writes its stop request, a new file of its own in `.bl/run/<id>.stop/`
+   (`writeStopRequest()` in `src/run-lock.js`): one JSON object, `{ pid, at, holder }`: its
+   own pid, the time and the pid of the run it stops. So two `bl stop`s never write or delete
+   each other's request, and a write that fails deletes only its own file and exits 1. The
+   loop honours only a request whose `holder` is its own pid.
 3. It stops each process scope of the holder (`scopesOf()` in `src/process-scope.js`, the scopes
    named `bl-<unit>-<holder pid>-<n>`) with `stopScope()`. That ends the current agent session
    or test-gate command, and the loop's spawn returns. Without user systemd there is no scope,
@@ -3614,18 +3616,19 @@ to its bl would be handled only after the run ends. `bl stop` never sends one:
    session is not an attempt and does not escalate, and its tokens are lost, as for a killed
    bl (**Tokens per step**). With the request there, the loop records a `{ step: "stopped" }`
    history entry, writes `status: stopped` and `stoppedAt` (`markStopped`), deletes the
-   request and throws a `StopRequestError`. Its step cleanups run, `runFeature` releases the
+   requests for its own pid and throws a `StopRequestError`. Its step cleanups run, `runFeature` releases the
    run lock and the work unit locks, and `bl run` exits 130.
 5. `bl stop` waits up to 30 s for that holder to let the run lock go, then prints
    `stopped <id> at <step>; resume: bl run <id> --resume` on stderr and exits 0. If the lock is
    still held, it exits 1 with `stop requested: <id> (pid <n>) stops at its next check`
    and the request stays. A run that ended on its own before it read the request gets a line
-   that says so, and the request is deleted, unless another `bl stop` has written a newer one.
+   that says so, and `bl stop` deletes its own request file.
 
 The work unit's `status:` does not change: `--resume` continues any run state (`driveFeature`
-sets it back to `running` and drops `stoppedAt`). `takeRunLocks` deletes a leftover stop
-request once it holds the locks, so a request never stops a later run, `bl review` or
-`bl merge`. `bl stop` is a short command (F-122 D2): it neither takes nor checks work unit
+sets it back to `running` and drops `stoppedAt`). `takeRunLocks` deletes each leftover stop
+request once it holds the locks: one for another pid, or one written before it took the run
+lock. So a request never stops a later run, `bl review` or `bl merge`, and a request for the
+new holder stays. `bl stop` is a short command (F-122 D2): it neither takes nor checks work unit
 locks, since the run it stops holds them. `bl status <id>` shows a stopped run as
 `run: stopped at <step> (<local time>)`.
 

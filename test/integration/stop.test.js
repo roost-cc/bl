@@ -4,12 +4,11 @@
 // Skipped, with the probe's reason, where user systemd scopes are unavailable.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'fs';
 import { join } from 'path';
 import { runFeature } from '../../src/feature-run.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { scopeAvailable, scopedSpawn, scopeProcesses, staleScopes, stopScope } from '../../src/process-scope.js';
-import { runLockPath, stopRequestPath } from '../../src/run-lock.js';
+import { runLockPath, stopRequests } from '../../src/run-lock.js';
 import { fakeRunner, setup } from '../helpers/feature-run-fixture.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
 import { BL_BIN, personEnv } from '../helpers/run-bl.js';
@@ -71,7 +70,7 @@ test(
       assert.equal(stop.stdout, '');
       assert.equal(stop.stderr, 'stopped F-1 at implement; resume: bl run F-1 --resume\n');
       assert.deepEqual(scopeProcesses(scope), [], 'the agent is gone');
-      assert.equal(existsSync(stopRequestPath(config, 'F-1')), false);
+      assert.deepEqual(stopRequests(config, 'F-1'), [], 'the loop deleted the request');
 
       const again = fakeRunner({ dir, feature });
       const resumed = await runFeature({
