@@ -21,7 +21,7 @@ import { runHolder, runStatus } from './run-lock.js';
 import { collectInbox } from './inbox.js';
 import { changeNextVerb } from './change-doc.js';
 import { nextPlan } from './next.js';
-import { STAGED_CONFLICT, StagedConflictError, marks, orderOf, readStaged } from './priority.js';
+import { PRIORITY_FILE, STAGED_CONFLICT, StagedConflictError, marks, orderOf, readStaged } from './priority.js';
 import { parseFilter } from './filter.js';
 import { capacityJson, capacityRows } from './capacity.js';
 import { addDays, buildHistory } from './history.js';
@@ -259,7 +259,7 @@ const rankedRow = (row) => ({ ...row, actions: [...RANK_ACTIONS, ...row.actions]
 /** Box ³'s actions while a staged copy exists (F-113 D7): commit it or reset it. */
 const STAGED_ACTIONS = [
   action('C', 'commit the staged order', ['bl', 'rank', '--commit'], {
-    about: ['bl rank --commit merges the staged order into priority.yaml, then commits and pushes it.'],
+    about: [`bl rank --commit merges the staged order into ${PRIORITY_FILE}, then commits and pushes it.`],
   }),
   action('R', 'drop the staged edits', ['bl', 'rank', '--reset'], {
     about: ['bl rank --reset deletes the staged copy. Every staged edit is lost.'],

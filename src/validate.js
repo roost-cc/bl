@@ -1374,8 +1374,8 @@ export function findDanglingFindings(graph) {
  * The priority findings, from the graph's problems (F-78 D1), each an error
  * at `priority.yaml`:
  *
- *   - `priority-file`: the file is missing, its frontmatter is not YAML, or
- *     it is not a list of work unit ids;
+ *   - `priority-file`: the file is missing, is not YAML, or is not a list of
+ *     work unit ids;
  *   - `priority-unit`: an entry that names no feature or story, names one
  *     twice, or names a story inside a feature, an update story or a task.
  *
