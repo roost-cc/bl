@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { delimiter, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { acquireLock, releaseLock } from '../../src/lock.js';
 import { STAGED_CONFLICT, STAGED_FILE } from '../../src/priority.js';
 import { NO_TERMINAL } from '../../src/rank-cmd.js';
 import { GIT_ENV, git } from '../helpers/git-backlog.js';
 import { startBlBehindLock } from '../helpers/run-bl.js';
+import { mkTempDir } from '../helpers/tempdir.js';
 import {
   CLOSED,
   HAND,
@@ -293,5 +294,75 @@ test('--commit refuses while priority.yaml has uncommitted edits; a failed commi
   assert.equal(r.status, 0, r.stderr);
   assert.equal(read(dir), list('F-1', 'S-1', 'F-2'));
   assert.equal(git(dir, 'log', '-1', '--format=%s'), SUBJECT);
+  assert.equal(staged(dir), null);
+});
+
+/** A directory whose `git` fails the subcommand `sub` and runs the real git otherwise. */
+function gitFailing(sub) {
+  const real = process.env.PATH.split(delimiter)
+    .map((d) => join(d, 'git'))
+    .find((p) => existsSync(p));
+  const bin = mkTempDir('bl-git-shim-');
+  const script = [
+    '#!/bin/sh',
+    `if [ "$1" = "${sub}" ]; then echo "${sub} denied" >&2; exit 1; fi`,
+    `exec "${real}" "$@"`,
+  ];
+  writeFileSync(join(bin, 'git'), `${script.join('\n')}\n`);
+  chmodSync(join(bin, 'git'), 0o755);
+  return { PATH: `${bin}${delimiter}${process.env.PATH}` };
+}
+
+test('rank commit keeps retryable state after push or rollback failure', () => {
+  // A rejected push: the commit stays local, and so do the copies; the next
+  // --commit pushes it and then drops them.
+  let dir = backlog(list('S-1', 'F-2'));
+  assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
+  const before = originHead(dir);
+  const hook = join(git(dir, 'remote', 'get-url', 'origin'), 'hooks', 'pre-receive');
+  writeFileSync(hook, '#!/bin/sh\necho injected-push-failure >&2\nexit 1\n');
+  chmodSync(hook, 0o755);
+  let r = bl(['rank', '--commit'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /backlog commit not pushed/);
+  assert.match(r.stderr, /kept the staged edits; bl rank --commit pushes the commit again/);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), SUBJECT);
+  assert.equal(originHead(dir), before, 'origin is behind');
+  assert.equal(staged(dir), list('F-1', 'S-1', 'F-2'));
+  assert.equal(base(dir), list('S-1', 'F-2'));
+  unlinkSync(hook);
+  r = bl(['rank', '--commit'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(originHead(dir), git(dir, 'rev-parse', 'HEAD'), 'the retry pushed it');
+  assert.equal(staged(dir), null);
+  assert.equal(base(dir), null);
+
+  // A failed commit whose rollback cannot use git checkout: priority.yaml is
+  // still put back, clean, and a retry commits.
+  dir = backlog(list('S-1', 'F-2'));
+  assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
+  const preCommit = join(dir, '.git', 'hooks', 'pre-commit');
+  mkdirSync(dirname(preCommit), { recursive: true });
+  writeFileSync(preCommit, '#!/bin/sh\necho injected-commit-failure >&2\nexit 1\n');
+  chmodSync(preCommit, 0o755);
+  r = bl(['rank', '--commit'], dir, gitFailing('checkout'));
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /backlog commit failed: injected-commit-failure/);
+  assert.equal(read(dir), list('S-1', 'F-2'));
+  assert.equal(git(dir, 'status', '--porcelain', '--', 'priority.yaml'), '', 'not dirty');
+  assert.equal(staged(dir), list('F-1', 'S-1', 'F-2'));
+
+  // The index reset fails too: the work tree is back, and the error names
+  // the command that unstages the file.
+  r = bl(['rank', '--commit'], dir, gitFailing('reset'));
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /priority\.yaml then stayed staged \(reset denied\): run git -C ".*" reset -- priority\.yaml/);
+  assert.equal(read(dir), list('S-1', 'F-2'));
+  git(dir, 'reset', '-q', '--', 'priority.yaml');
+
+  unlinkSync(preCommit);
+  r = bl(['rank', '--commit'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(read(dir), list('F-1', 'S-1', 'F-2'));
   assert.equal(staged(dir), null);
 });

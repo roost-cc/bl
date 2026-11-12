@@ -541,8 +541,11 @@ function mergeStaged(root, config) {
 /**
  * Write `plan.ids` to `priority.yaml`, commit it alone and delete both
  * copies, under the caller's lock. An order that is already main's commits
- * nothing. A failed commit puts `priority.yaml` back as HEAD has it and keeps
- * the copies, so `--commit` can run again.
+ * nothing. A failed commit puts `priority.yaml` back as HEAD has it, in the
+ * work tree and the index, and keeps the copies, so `--commit` can run again.
+ * A commit whose push failed keeps the copies too: the next `--commit` pulls,
+ * which pushes the commit (`pushIfAhead`), finds the order already main's and
+ * drops them.
  */
 async function commitPlan(root, plan) {
   const drop = () => {
@@ -559,8 +562,27 @@ async function commitPlan(root, plan) {
   }
   const out = plan.closed.length > 0 ? `; ${plan.closed.join(', ')} out (done)` : '';
   const commit = await commitPaths(root, [PRIORITY_FILE], `chore: commit the staged order of ${PRIORITY_FILE}${out}`);
-  if (commit.committed) drop();
-  else spawnSync('git', ['checkout', '-q', 'HEAD', '--', PRIORITY_FILE], { cwd: root, stdio: 'ignore' });
+  if (commit.committed) {
+    if (commit.pushed !== false) drop();
+    return { commit };
+  }
+  // HEAD's text is `plan.mainText` (`mergeStaged` refused uncommitted
+  // edits): the work tree gets it without git, then the index is reset.
+  atomicWriteFile(root, join(root, PRIORITY_FILE), plan.mainText);
+  const reset = spawnSync('git', ['reset', '-q', '--', PRIORITY_FILE], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (reset.status !== 0) {
+    const why = (reset.stderr || '').trim() || `git reset exited ${reset.status}`;
+    return {
+      commit: {
+        ...commit,
+        error: `${commit.error}; ${PRIORITY_FILE} then stayed staged (${why}): run git -C "${root}" reset -- ${PRIORITY_FILE}`,
+      },
+    };
+  }
   return { commit };
 }
 
@@ -585,6 +607,7 @@ function reportCommit(res, closed) {
   }
   info(`Committed the staged order of ${PRIORITY_FILE}.`);
   reportBacklogCommit(res.commit, 'bl rank');
+  if (res.commit.pushed === false) info('bl rank: kept the staged edits; bl rank --commit pushes the commit again.');
 }
 
 /**

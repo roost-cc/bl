@@ -3928,7 +3928,10 @@ snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FIL
   entry of a unit) and is committed alone (`commitPaths`, which pushes),
   `chore: commit the staged order of priority.yaml[; F-5 out (done)]`; both copies are then
   deleted. An order that is already `priority.yaml`'s commits nothing and deletes the copies. A
-  failed commit puts `priority.yaml` back as HEAD has it and keeps the copies. Each lock hold
+  failed commit puts `priority.yaml` back as HEAD has it (its text written back, then
+  `git reset` for the index; a failed reset is named with the command that finishes it) and
+  keeps the copies. A commit whose push failed keeps the copies too: the next `--commit` pulls,
+  which pushes the commit, and then drops them as an order already main's. Each lock hold
   loads the units again (`mergeStaged`), so a unit closed during a lock wait or the y/n question
   is taken out too. A merged order (or a proposal) that names anything but a feature or loose
   story (`resolveRanked`: an unknown id, a task, a story inside a feature, an update story, as a
