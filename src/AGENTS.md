@@ -4272,8 +4272,9 @@ a log that ends terminal (a task's are `task-field`'s). The migration sets both 
 for a unit that has neither. `legacy-status` (warning) is a
 `status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
 a log, which bl does not read. A closed unit, one whose status (`statusOf`) is in its type's
-`terminal` list in `flow.json`, gets neither warning: no verb moves it, so its old shape does no
-harm. This covers the closed update stories, which the migration leaves in the old shape; an open
+`terminal` list in `flow.json`, gets neither warning. A verb can still move it (`supersede` moves a story from `done` to
+`superseded`), but the move goes through `applyTransition`, which turns `status:` into a log
+first, so the old shape does no harm. This covers the closed update stories, which the migration leaves in the old shape; an open
 update story keeps the warning until the updates flow moves onto the transition log. A unit with a log needs no
 `status:` (`missing-required-key`).
 
