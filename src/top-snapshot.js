@@ -19,6 +19,7 @@ import { RUN_DIR, loadRunState, planSteps, runLockPath } from './feature-run.js'
 import { loadBacklog } from './backlog-graph.js';
 import { holderOf } from './kernel-lock.js';
 import { collectInbox } from './inbox.js';
+import { changeNextVerb } from './change-doc.js';
 import { nextPlan } from './next.js';
 import { parseFilter } from './filter.js';
 import { capacityJson, capacityRows } from './capacity.js';
@@ -211,6 +212,104 @@ export function deniedOf(history) {
 }
 
 /**
+ * The run statuses that `bl top` resumes with `bl run <id> --resume`
+ * (F-87 D7); any other run that is not live starts again with `bl run <id>`.
+ */
+export const RESUMED_STATUSES = ['stopped', 'stale', 'escalated', 'failed'];
+
+/**
+ * One action of a `bl top` row (F-87 D7): a key, a label, and what it runs.
+ * `argv` is a bl command (`["bl", …]`), which the view runs through its own
+ * bl; null for `url`, a page the view opens (`xdg-open`, `open`). `input` is
+ * null, `"note"` (optional text, added as the last word) or `"reason"`
+ * (needed text). `window` names the tmux window the command opens in; null
+ * runs it as a child, and the view shows its result. `about` are lines the
+ * y/n question shows, and `stops` is the run the action stops, whose
+ * `stopped` end the view does not notify (D8).
+ */
+const action = (key, label, argv, { input = null, window = null, url = null, about = [], stops = null } = {}) => ({
+  key,
+  label,
+  argv,
+  input,
+  window,
+  url,
+  about,
+  stops,
+});
+
+/** Every row's last action: an agent session in a new tmux window. */
+const agentAction = () => action('g', 'talk it through', ['bl', 'agent'], { window: 'agent' });
+
+/** A work unit row's (or a task's) page, in a new tmux window. */
+const viewAction = (id, label = 'open the page') => action('o', label, ['bl', 'view', id], { window: `${id} view` });
+
+/**
+ * The actions of an inbox item (D7): an escalation is read with `bl status`
+ * (in a tmux window: it prints the escalation to stdout, which a result box
+ * does not show), a task closed with `bl task done`, and a change answered
+ * by the verb of its `next:` (`changeNextVerb`). An item of a work unit also
+ * opens its page (a task its own); the runner line and an update item have
+ * only `bl agent`.
+ */
+export function itemActions(item) {
+  const { kind, id, unit } = item;
+  const out = [];
+  if (kind === 'escalation') {
+    out.push(
+      action('e', 'read the escalation', ['bl', 'status', unit], { window: `${unit} status` }),
+      viewAction(unit),
+    );
+  } else if (kind === 'task') {
+    out.push(
+      action('d', 'close the task', ['bl', 'task', 'done', id], { input: 'note' }),
+      viewAction(id, 'open the task page'),
+    );
+  } else if (kind === 'change') {
+    out.push(
+      changeNextVerb(item.status) === 'merge'
+        ? action('m', 'merge it', ['bl', 'merge', unit])
+        : action('r', 'run it', ['bl', 'run', unit], { window: `${unit} run` }),
+      viewAction(unit),
+    );
+  }
+  return [...out, agentAction()];
+}
+
+/**
+ * The actions of a `runs` row (D7): a live run (`running`, with a holder)
+ * stops with `bl stop`; any other starts with `bl run`, with `--resume` for
+ * RESUMED_STATUSES, in a tmux window. Then its page, its pull request when it
+ * has one, and `bl agent`.
+ */
+export function runActions(row) {
+  const { id, status } = row;
+  const out = [];
+  if (status === 'running') {
+    out.push(
+      action('s', 'stop the run', ['bl', 'stop', id], {
+        about: [
+          'bl stop ends the agent session and the run.',
+          'The work so far stays on the branch.',
+          `Resume it later with: bl run ${id} --resume`,
+        ],
+        stops: id,
+      }),
+    );
+  } else {
+    const resume = RESUMED_STATUSES.includes(status);
+    out.push(
+      action('r', resume ? 'resume the run' : 'start the run', ['bl', 'run', id, ...(resume ? ['--resume'] : [])], {
+        window: `${id} run`,
+      }),
+    );
+  }
+  out.push(viewAction(id));
+  if (row.pr?.url) out.push(action('p', 'open the pull request', null, { url: row.pr.url }));
+  return [...out, agentAction()];
+}
+
+/**
  * A run state as a `runs` row, or null when it is left out: not running or
  * stopped, and not updated in the last RUN_WINDOW_MS. A run state that says
  * `running` while nobody holds its run lock is `stale`. A holder whose PID the
@@ -225,6 +324,7 @@ function runRow(config, graph, state, now) {
   // The newest entry that names an agent: a round's summary entry names none.
   const session = state.history.findLast((h) => h.agent) ?? {};
   const status = state.status === 'running' && pid == null ? 'stale' : str(state.status);
+  const pr = prOf(state.pr);
   return {
     id: state.feature,
     title: str(graph?.get(state.feature)?.title),
@@ -236,7 +336,7 @@ function runRow(config, graph, state, now) {
     story: str(state.story),
     startedAt: str(state.startedAt),
     updatedAt: str(state.updatedAt),
-    pr: prOf(state.pr),
+    pr,
     usage: usageOf(state.usage),
     branch: str(state.branch),
     worktreePath: str(state.worktreePath),
@@ -246,6 +346,7 @@ function runRow(config, graph, state, now) {
     testAttempts: int(state.testAttempts),
     timeline: runTimeline(state, status, now),
     denied: deniedOf(state.history),
+    actions: runActions({ id: state.feature, status, pr }),
   };
 }
 
@@ -418,17 +519,18 @@ export function readTokens(states, now) {
   return { from: iso(from), minutes: minutes.map(Math.round), today };
 }
 
-/** `attention`: the inbox items in `KINDS` order, and the sources it could not read. */
+/** `attention`: the inbox items in `KINDS` order, each with its `actions`, and the sources it could not read. */
 function readAttention(config, now) {
   const { items, warnings } = collectInbox(config, { now });
-  return { items, warnings };
+  return { items: items.map((item) => ({ ...item, actions: itemActions(item) })), warnings };
 }
 
 /** `next`: `bl next`'s pick, the first NEXT_SHOWN ranked units, and how many are unranked. */
 function readNext(config) {
   // `parseFilter` with no flags: the filter that matches every unit.
   const plan = nextPlan(config, parseFilter({}));
-  const fields = ({ unit, ...e }) => e;
+  // A ranked unit is a work unit row: its page and `bl agent` (D7).
+  const fields = ({ unit, ...e }) => ({ ...e, actions: [viewAction(e.id), agentAction()] });
   return {
     pick: plan.pick && {
       id: plan.pick.unit.id,

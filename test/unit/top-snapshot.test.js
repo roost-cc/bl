@@ -12,6 +12,9 @@ import { loadConfig } from '../../src/config.js';
 import { TOKEN_KEYS } from '../../src/tokens.js';
 import {
   deniedOf,
+  itemActions,
+  runActions,
+  RESUMED_STATUSES,
   readActivity,
   readSection,
   runTimeline,
@@ -756,4 +759,98 @@ test("runs (S-1334): a row's title is its work unit's, from the backlog; no titl
       ['S-5', null],
     ],
   );
+});
+
+/** An action as `key: command [input] (window)`, for one-line checks. */
+const shown = (a) =>
+  `${a.key}: ${a.argv ? a.argv.join(' ') : a.url}${a.input ? ` [${a.input}]` : ''}${a.window ? ` (${a.window})` : ''}`;
+
+test('actions (S-1336): each inbox item kind gets the verbs of F-87 D7, then bl agent', () => {
+  const item = (kind, id, unit, more = {}) => itemActions({ kind, id, unit, line: '', next: '', path: '', ...more });
+  assert.deepEqual(item('escalation', 'F-83:esc', 'F-83').map(shown), [
+    'e: bl status F-83 (F-83 status)',
+    'o: bl view F-83 (F-83 view)',
+    'g: bl agent (agent)',
+  ]);
+  assert.deepEqual(item('task', 'T-52', 'F-81').map(shown), [
+    'd: bl task done T-52 [note]',
+    'o: bl view T-52 (T-52 view)',
+    'g: bl agent (agent)',
+  ]);
+  // A change's verb is changeNextVerb's: merge once ready_for_merge, else run.
+  assert.deepEqual(item('change', 'F-81:change', 'F-81', { status: 'ready_for_merge' }).map(shown), [
+    'm: bl merge F-81',
+    'o: bl view F-81 (F-81 view)',
+    'g: bl agent (agent)',
+  ]);
+  assert.deepEqual(item('change', 'S-1330:change', 'S-1330', { status: 'in_review' }).map(shown), [
+    'r: bl run S-1330 (S-1330 run)',
+    'o: bl view S-1330 (S-1330 view)',
+    'g: bl agent (agent)',
+  ]);
+  // The runner line and an update are no work unit: bl agent only.
+  assert.deepEqual(item('runner', 'updates:run', 'updates').map(shown), ['g: bl agent (agent)']);
+  assert.deepEqual(item('update', 'bl:renovate/ws-8.x', 'bl').map(shown), ['g: bl agent (agent)']);
+  const [done] = item('task', 'T-52', 'F-81');
+  assert.deepEqual(done, {
+    key: 'd',
+    label: 'close the task',
+    argv: ['bl', 'task', 'done', 'T-52'],
+    input: 'note',
+    window: null,
+    url: null,
+    about: [],
+    stops: null,
+  });
+});
+
+test('actions (S-1336): a live run stops; any other run starts, or resumes when stopped, stale, escalated or failed', () => {
+  const pr = { number: '15', url: 'https://example.invalid/pull/15' };
+  const live = runActions({ id: 'S-1330', status: 'running', pr });
+  assert.deepEqual(live.map(shown), [
+    's: bl stop S-1330',
+    'o: bl view S-1330 (S-1330 view)',
+    'p: https://example.invalid/pull/15',
+    'g: bl agent (agent)',
+  ]);
+  assert.equal(live[0].stops, 'S-1330');
+  assert.deepEqual(live[0].about, [
+    'bl stop ends the agent session and the run.',
+    'The work so far stays on the branch.',
+    'Resume it later with: bl run S-1330 --resume',
+  ]);
+  for (const status of RESUMED_STATUSES) {
+    assert.equal(shown(runActions({ id: 'F-83', status, pr: null })[0]), 'r: bl run F-83 --resume (F-83 run)', status);
+  }
+  for (const status of ['clean', 'reviewed', 'no-change', null]) {
+    const actions = runActions({ id: 'F-85', status, pr: null });
+    assert.equal(shown(actions[0]), 'r: bl run F-85 (F-85 run)', String(status));
+    assert.ok(!actions.some((a) => a.key === 'p'), 'no pull request, no p');
+  }
+});
+
+test('actions (S-1336): the runs rows, attention items and ranked units of a snapshot carry them', () => {
+  const { config } = runsBacklog();
+  const { rows } = runsReader(config)(NOW);
+  assert.deepEqual(
+    rows.map((r) => [r.id, r.actions[0].argv.join(' ')]),
+    [
+      ['F-1', 'bl stop F-1'],
+      ['S-4', 'bl run S-4 --resume'],
+      ['F-2', 'bl run F-2 --resume'],
+      ['S-5', 'bl run S-5 --resume'],
+    ],
+  );
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [{ id: 'S-4', component: 'C01', title: 'Every verb commits', status: 'approved' }],
+    priority: [{ unit: 'S-4', why: 'first' }],
+  });
+  const readers = sectionReaders(loadConfig({ backlogRoot: dir }));
+  const { ranked } = readers.next(NOW);
+  assert.ok(ranked.length > 0, 'a ranked unit');
+  for (const r of ranked) {
+    assert.deepEqual(r.actions.map(shown), [`o: bl view ${r.id} (${r.id} view)`, 'g: bl agent (agent)']);
+  }
+  for (const item of readers.attention(NOW).items) assert.equal(item.actions.at(-1).key, 'g', item.id);
 });
