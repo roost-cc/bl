@@ -144,12 +144,16 @@ func (w *Watch) read(stdout, stderr io.Reader) {
 	w.send(EndMsg{Gen: w.Gen, Reason: reason})
 }
 
-// lines calls each with each line of r that is not blank, until each returns false or r ends.
+// lines calls each with each line of r that is not blank, of any length, until each returns false
+// or r ends. A last line with no newline is a line too.
 func lines(r io.Reader, each func(string) bool) {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 64*1024), 4*1024*1024)
-	for s.Scan() {
-		if line := strings.TrimSpace(s.Text()); line != "" && !each(line) {
+	br := bufio.NewReader(r)
+	for {
+		line, err := br.ReadString('\n')
+		if t := strings.TrimSpace(line); t != "" && !each(t) {
+			return
+		}
+		if err != nil {
 			return
 		}
 	}

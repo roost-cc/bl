@@ -1,6 +1,8 @@
 package watch
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -122,5 +124,64 @@ func TestStopEndsTheWatchAndItsChildren(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Error("Stop took longer than 5 s")
+	}
+}
+
+// TestLinesKeepEveryLine: lines hands on every line that is not blank, of any length (a long agent
+// message), with or without its newline.
+func TestLinesKeepEveryLine(t *testing.T) {
+	long := strings.Repeat("x", 5*1024*1024)
+	cases := []struct {
+		name, in string
+		want     []string
+	}{
+		{"short lines", "a\nb\n", []string{"a", "b"}},
+		{"blank lines are skipped", "\n  \na\n\n", []string{"a"}},
+		{"a last line with no newline", "a\nb", []string{"a", "b"}},
+		{"a CRLF line", "a\r\n", []string{"a"}},
+		{"a 5 MiB line", long + "\nb\n", []string{long, "b"}},
+		{"a 5 MiB last line with no newline", "a\n" + long, []string{"a", long}},
+	}
+	for _, c := range cases {
+		var got []string
+		lines(strings.NewReader(c.in), func(s string) bool { got = append(got, s); return true })
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s: %d lines, want %d", c.name, len(got), len(c.want))
+		}
+	}
+}
+
+// TestAWatchKeepsALongEventAndALongNote: a 5 MiB event on stdout and a 5 MiB stderr line both reach
+// the TUI, and the watch ends with no reason.
+func TestAWatchKeepsALongEventAndALongNote(t *testing.T) {
+	text := strings.Repeat("y", 5*1024*1024)
+	dir := t.TempDir()
+	out, errf := filepath.Join(dir, "out"), filepath.Join(dir, "err")
+	if err := os.WriteFile(out, []byte(`{"kind":"text","text":"`+text+`"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(errf, []byte(text+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := Start([]string{"sh", "-c", `cat "$1"; cat "$2" >&2`, "sh", out, errf}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts, notes int
+	msgs := all(t, w)
+	for _, m := range msgs[:len(msgs)-1] {
+		ev := m.(EventMsg).Event
+		switch {
+		case ev.Kind == "text" && ev.Text == text:
+			texts++
+		case ev.Kind == "note" && ev.Text == text:
+			notes++
+		}
+	}
+	if texts != 1 || notes != 1 {
+		t.Errorf("%d long events and %d long notes, want 1 and 1", texts, notes)
+	}
+	if end := msgs[len(msgs)-1]; !reflect.DeepEqual(end, EndMsg{Gen: 1}) {
+		t.Errorf("end %#v, want an EndMsg with no reason", end)
 	}
 }
