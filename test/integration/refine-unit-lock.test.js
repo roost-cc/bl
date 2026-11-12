@@ -23,7 +23,7 @@ import { F1, S1, S2, originMain, refine, startRefine } from '../helpers/refine-s
 const F2 = 'features/F2-other/index.md';
 
 /** A git backlog with an `origin`: F-1 holds S-1, F-2 holds S-2, both drafts. */
-function twoFeatures() {
+async function twoFeatures() {
   const { dir } = mkTempBacklog({
     components: [{ id: 'C01', title: 'One', dirSuffix: 'one' }],
     stories: [
@@ -35,7 +35,7 @@ function twoFeatures() {
       { id: 'F-2', title: 'Other', dirSuffix: 'other', status: 'draft', stories: ['S-2'] },
     ],
   });
-  ensureAllowedTools(dir, loadConfig({ backlogRoot: dir }));
+  await ensureAllowedTools(dir, loadConfig({ backlogRoot: dir }));
   initGitBacklog(dir);
   addOrigin(dir);
   return dir;
@@ -47,7 +47,7 @@ function committed(dir, back = 0) {
 }
 
 test('refine_unit_lock_parallel: two refines of different features run at once, each commits its own', async () => {
-  const dir = twoFeatures();
+  const dir = await twoFeatures();
   const first = await startRefine(dir, ['F-1'], { write: [F1] });
   try {
     const second = refine(dir, ['F-2'], { write: [F2] });
@@ -72,7 +72,7 @@ for (const [label, holder, refused, lockedId] of [
   ['a batch with one story of a feature another process refines', ['F-1'], ['S-1', 'S-2'], 'S-1'],
 ]) {
   test(`refine_unit_lock_refuses: ${label} refuses, names the holder's pid, and writes nothing`, async () => {
-    const dir = twoFeatures();
+    const dir = await twoFeatures();
     const first = await startRefine(dir, holder);
     const head = git(dir, 'rev-parse', 'HEAD');
     const files = [S1, S2, F1, F2].map((p) => readFileSync(join(dir, p), 'utf8'));
@@ -99,7 +99,7 @@ for (const [label, holder, refused, lockedId] of [
 }
 
 test('refine_unit_lock_scope: a file another process changed during the refine stays out of its commit and is named', async () => {
-  const dir = twoFeatures();
+  const dir = await twoFeatures();
   const first = await startRefine(dir, ['S-1'], { write: [S1] });
   // Another process, during the refine: an edit to S-2, outside S-1's work unit.
   writeFileSync(join(dir, S2), '\nAnother session.\n', { flag: 'a' });
@@ -120,7 +120,7 @@ for (const [label, holdS2] of [
   ['nobody holds its lock', false],
 ]) {
   test(`feature_scope_excludes_newly_attached_locked_existing_story: refine, ${label}`, async () => {
-    const dir = twoFeatures();
+    const dir = await twoFeatures();
     const held = holdS2 ? holdLock(unitLockPath(dir, join(dir, 'stories', 'S2-two'))) : null;
     try {
       const first = await startRefine(dir, ['F-1'], { write: [F1] });
@@ -138,7 +138,7 @@ for (const [label, holdS2] of [
 }
 
 test('refine_scope_read_failure_records_dirty_paths: a feature refine whose stories cannot be read at the end records its edit', async () => {
-  const dir = twoFeatures();
+  const dir = await twoFeatures();
   const head = git(dir, 'rev-parse', 'HEAD');
   const first = await startRefine(dir, ['F-1'], { write: [F1] });
   writeFileSync(join(dir, 'blockers.json'), '{bad');
@@ -155,7 +155,7 @@ test('refine_scope_read_failure_records_dirty_paths: a feature refine whose stor
 });
 
 test('refine_unit_lock_scope: a feature refine commits a story tagged to the feature during the session', async () => {
-  const dir = twoFeatures();
+  const dir = await twoFeatures();
   const first = await startRefine(dir, ['F-1'], { write: [F1] });
   // `bl new --from F-1` during the session: a new story tagged `feature: F-1`.
   const S9 = 'stories/S9-new/index.md';

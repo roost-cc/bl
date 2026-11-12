@@ -243,7 +243,7 @@ async function regenerateAfterPull(root, config, pendingPath) {
       config.repoName,
     );
     // A no-op when the file is current for the pulled configuration.
-    ensureAllowedTools(root, fresh);
+    await ensureAllowedTools(root, fresh);
   } catch (err) {
     return { problem: err.message };
   }

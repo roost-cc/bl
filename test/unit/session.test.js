@@ -159,7 +159,7 @@ test('loadPrompt falls back to shared file when agent-specific file is absent', 
 // getDeniedTools — per-mode hard denials from the generated deny map
 // ---------------------------------------------------------------------------
 
-test("getDeniedTools returns the mode's deny list from allowed-tools.json", () => {
+test("getDeniedTools returns the mode's deny list from allowed-tools.json", async () => {
   const dir = mkTempDir('bl-denied-tools-');
   writeFileSync(
     join(dir, 'allowed-tools.json'),
@@ -169,14 +169,14 @@ test("getDeniedTools returns the mode's deny list from allowed-tools.json", () =
       deny: { review: ['gh pr merge:*', 'git push:*'] },
     }),
   );
-  assert.deepEqual(getDeniedTools('review', { backlogRoot: dir }), ['gh pr merge:*', 'git push:*']);
-  assert.deepEqual(getDeniedTools('workon', { backlogRoot: dir }), []);
+  assert.deepEqual(await getDeniedTools('review', { backlogRoot: dir }), ['gh pr merge:*', 'git push:*']);
+  assert.deepEqual(await getDeniedTools('workon', { backlogRoot: dir }), []);
 });
 
-test('getDeniedTools tolerates a legacy file with no deny map', () => {
+test('getDeniedTools tolerates a legacy file with no deny map', async () => {
   const dir = mkTempDir('bl-denied-tools-legacy-');
   writeFileSync(join(dir, 'allowed-tools.json'), JSON.stringify({ base: ['git:*'], review: ['gh pr:*'] }));
-  assert.deepEqual(getDeniedTools('review', { backlogRoot: dir }), []);
+  assert.deepEqual(await getDeniedTools('review', { backlogRoot: dir }), []);
 });
 
 // ---------------------------------------------------------------------------
@@ -189,14 +189,14 @@ function allowedToolsFixture(base) {
   return dir;
 }
 
-test('getAllowedTools resolves {{roostDir}} leaders and grants no session-stack rule of its own', () => {
+test('getAllowedTools resolves {{roostDir}} leaders and grants no session-stack rule of its own', async () => {
   const dir = allowedToolsFixture(['git:*', '{{roostDir}}/tools/bin/prettier:*']);
   // Local extras (`bl allow`'s gitignored file) are resolved the same way.
   writeFileSync(
     join(dir, 'allowed-tools.local.json'),
     JSON.stringify({ extra: ['my-tool:*', '{{roostDir}}/bin/hand:*'] }),
   );
-  const out = getAllowedTools('review', { backlogRoot: dir, roostDir: '/roost' });
+  const out = await getAllowedTools('review', { backlogRoot: dir, roostDir: '/roost' });
   assert.deepEqual(out, [
     'git:*',
     '/roost/tools/bin/prettier:*',
@@ -208,14 +208,14 @@ test('getAllowedTools resolves {{roostDir}} leaders and grants no session-stack 
   assert.ok(!out.some((t) => t.includes('{{')), 'no placeholder reaches the agent');
 });
 
-test('getAllowedTools drops a templated leader when no roostDir is available', () => {
+test('getAllowedTools drops a templated leader when no roostDir is available', async () => {
   const dir = allowedToolsFixture(['git:*', '{{roostDir}}/tools/bin/prettier:*']);
   // `""` is not nullish, so `config` cannot supply it.
-  const out = getAllowedTools('workon', { backlogRoot: dir, roostDir: '' });
+  const out = await getAllowedTools('workon', { backlogRoot: dir, roostDir: '' });
   assert.deepEqual(out, ['git:*']);
 });
 
-test('getAllowedTools takes roostDir from config when the argument is absent', () => {
+test('getAllowedTools takes roostDir from config when the argument is absent', async () => {
   const dir = allowedToolsFixture(['{{roostDir}}/tools/bin/prettier:*']);
   const config = {
     roostDir: '/from-config',
@@ -229,7 +229,7 @@ test('getAllowedTools takes roostDir from config when the argument is absent', (
   process.stderr.write = () => true;
   let out;
   try {
-    out = getAllowedTools('workon', { backlogRoot: dir, config });
+    out = await getAllowedTools('workon', { backlogRoot: dir, config });
   } finally {
     process.stderr.write = orig;
   }
@@ -238,7 +238,7 @@ test('getAllowedTools takes roostDir from config when the argument is absent', (
   assert.ok(!out.some((t) => t.includes('{{')));
 });
 
-test('getAllowedTools adds backlog.json session_stack.allow, resolved, before the worktree rule', () => {
+test('getAllowedTools adds backlog.json session_stack.allow, resolved, before the worktree rule', async () => {
   const dir = allowedToolsFixture(['git:*']);
   const config = {
     roostDir: '/ws',
@@ -250,7 +250,7 @@ test('getAllowedTools adds backlog.json session_stack.allow, resolved, before th
   process.stderr.write = () => true;
   let out;
   try {
-    out = getAllowedTools('workon', { backlogRoot: dir, config, worktreePath: '/wt' });
+    out = await getAllowedTools('workon', { backlogRoot: dir, config, worktreePath: '/wt' });
   } finally {
     process.stderr.write = orig;
   }

@@ -11,7 +11,7 @@
  *      the log `legacyLog` synthesizes, with git dates (`datedLog`), in place
  *      of `status:`; a unit that has a log only loses a stale `status:`;
  *   2. then each of the unit's change documents, under its lock
- *      (`updateChange`): `review_round` and `review_status` removed;
+ *      (`updateChangeHeld`): `review_round` and `review_status` removed;
  *   3. `flow.json` v2: bl's template with the backlog's own gates;
  *   4. one commit of the changed paths (`commitPaths`), with the counts.
  *

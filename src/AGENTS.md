@@ -454,6 +454,13 @@ backlog lock and need `atomicWriteFile` only.
   epic files, and the snapshot restores of `bl side`, `bl task` and `settle`, are written with
   `atomicWriteFile`. No spec in `src/` is written in place any more (`bl new --from` stages its
   stories in a temp directory and renames it into place; `bl migrate-*` is out of scope).
+  A change document and `allowed-tools.json` take a spec lock of their own too (F-126 D2, D3).
+  Every change document write is in `change-doc.js`: `updateChange` (async, through
+  `withSpecLock`), `updateChangeHeld` for a caller already in that hold, and `ensureChange`,
+  `recordMerge`, `addGateLine` and `restoreChange` on those or on `withSpecFileLock`.
+  `ensureAllowedTools` reads, regenerates and writes in `withSpecFileLock`. `withSpecFileLock`
+  (`spec-file.js`) is the spec lock for an existing file, and the backlog lock with the spec lock
+  inside it for a file it creates, as for a new spec file.
 - **A restore keeps the session's tokens.** When a review-verify session fails, the loop puts
   back the unit file it snapshotted before the session with `restoreKeepingTokens`
   (`feature-run.js`): the snapshot's frontmatter and body, under the spec lock and through
@@ -461,8 +468,10 @@ backlog lock and need `atomicWriteFile` only.
   `tokens_updated`, `tokens_by_step`) and line end kept, since the failed session already
   recorded its usage on that file. A current file the session deleted, emptied or left without a
   readable `---` block gets the snapshot back whole; a snapshot that is not a spec is refused and
-  the current file left alone. The change document beside it is put back with `atomicWriteFile`,
-  and the quarantine runs, whatever an earlier restore threw; the round aborts naming each failure.
+  the current file left alone. The change document beside it is put back with `restoreChange`
+  (`change-doc.js`, under its covering lock), and the quarantine runs, whatever an earlier
+  restore threw; the round aborts naming each failure. A round that `bl stop` stops puts back the
+  change document alone, the same way: the unit file keeps the escalation the stop wrote.
 
 ## Story Frontmatter
 
@@ -950,7 +959,7 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   `added` starts at the commit that added its file; no entry is before the one above it. It
   converts one unit at a time through `updateSpecFile` (`setLog` puts the log in `status:`'s
   place), then removes `review_round` and `review_status` from the unit's change documents
-  through `updateChange`, writes `flow.json` v2 (`migratedFlowText`: the template with the
+  through `updateChangeHeld` in each document's spec lock, writes `flow.json` v2 (`migratedFlowText`: the template with the
   backlog's gates), and commits the changed paths once (`commitPaths`) with the counts. It does
   not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
   (`liveSessionLocks`, by the worktree's branch) is held by another process (`otherHolder`; the
@@ -1290,6 +1299,13 @@ pass or fail), `## Review Log` (session blocks, newest first, written by the
 review prompts) and `## Merge` (one line per repo's merge commit, then the
 feature's tag and release manifest, written by `bl merge`). `bl run` records
 the PR it opens on its repo's entry; `bl review` records every repo's PR.
+
+`change-doc.js` is the only module that writes a change document, apart from
+`bl side`'s exit-time undo (F-126 D2). Each write holds the document's spec
+lock (`updateChange`, or `updateChangeHeld` inside a hold), and a write that
+creates the document holds the backlog lock first (`ensureChange` and
+`restoreChange` through `withSpecFileLock`). So a `## Gate` line from
+`bl merge S-n` and a run loop's write to the same document take turns.
 
 A unit that needs a second change (its last one `merged` or `dropped`) gets
 `change-2.md`; bl reads the highest-numbered open one, and `bl status` prints
@@ -5951,11 +5967,15 @@ trigger to stderr (`allowed-tools.json regenerated: config hash
 `atomicWriteFile` in `src/atomic-write.js`, the helper `bl merge` and the
 spec writers use too. The temp file is staged in the backlog's ignored
 `.bl/tmp/` (`.bl/tmp/allowed-tools.json.<pid>.<random>.tmp`), so a crash
-between write and rename leaves nothing in `git status`. Its name is
-per-process because concurrent `bl` processes regenerate the same file
-outside the backlog lock, and a fixed staging path let one rename consume
-the other's. The staging file is created exclusively (`wx`): a name that
-already exists belongs to another regeneration in this process that drew
+between write and rename leaves nothing in `git status`. The read, the
+regeneration and the write hold the file's covering lock
+(`withSpecFileLock`, F-126 D3): its spec lock, and the backlog lock first
+when the file is missing. So two `bl` processes regenerate it one after the
+other, and the second reads the first's file. `ensureAllowedTools`,
+`getAllowedTools` and `getDeniedTools` are async for that wait. The staging
+name is per-process all the same (`atomicWriteFile`), and the staging file
+is created exclusively (`wx`): a name that
+already exists belongs to another write in this process that drew
 the same random token, so a fresh name is tried instead of truncating
 theirs, up to `STAGING_ATTEMPTS` (10); after that the EEXIST propagates
 and the other caller's file is left alone. A write or rename that throws
@@ -5964,7 +5984,7 @@ failure other than ENOENT (the file is already gone) is reported on
 stderr with the staging path, never swallowed, since it leaves an orphan.
 `_hooks.beforeRename` (in `src/atomic-write.js`) is a
 private test seam that runs
-between the two steps so a unit test can interleave two regenerations;
+between the two steps so a unit test can start a second regeneration there;
 like the `BL_INTERNAL_TEST_*` seams it is not public surface. The
 `templates/allowed-tools.json` in the bl repo is a **seed** copied at
 `bl init`; it is never regenerated against bl source changes —

@@ -21,8 +21,8 @@ import { statusOf as logStatusOf } from '../../src/transition.js';
 const statusOf = (dir, rel) => logStatusOf('story', parseFrontmatter(readFileSync(join(dir, rel), 'utf8')).fm);
 const json = (o) => JSON.stringify(o);
 
-test('refined: true sets the story to refined, and bl commits the status', () => {
-  const dir = gitBacklog();
+test('refined: true sets the story to refined, and bl commits the status', async () => {
+  const dir = await gitBacklog();
   const r = refine(dir, ['S-1'], { outcome: json({ summary: 'Planned it.', refined: true }), outcomeUnit: 'S-1' });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'refined');
@@ -32,8 +32,8 @@ test('refined: true sets the story to refined, and bl commits the status', () =>
   assert.equal(existsSync(outcomePath(dir, 'S-1')), false, 'bl deletes the outcome file');
 });
 
-test('refined: false leaves the story in backlog and prints the reason', () => {
-  const dir = gitBacklog();
+test('refined: false leaves the story in backlog and prints the reason', async () => {
+  const dir = await gitBacklog();
   const head = git(dir, 'rev-parse', 'HEAD');
   const outcome = json({ summary: 'Stopped.', refined: false, reason: 'the API it needs is undecided' });
   const r = refine(dir, ['S-1'], { outcome, outcomeUnit: 'S-1' });
@@ -43,8 +43,8 @@ test('refined: false leaves the story in backlog and prints the reason', () => {
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
 });
 
-test('no outcome file leaves the status alone, prints the fault, and the session work is still committed', () => {
-  const dir = gitBacklog();
+test('no outcome file leaves the status alone, prints the fault, and the session work is still committed', async () => {
+  const dir = await gitBacklog();
   const r = refine(dir, ['S-1'], { write: [S1] });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'draft');
@@ -54,16 +54,16 @@ test('no outcome file leaves the status alone, prints the fault, and the session
   assert.deepEqual(statusLines(dir), []);
 });
 
-test('an outcome that does not match the schema leaves the status alone and names the violation', () => {
-  const dir = gitBacklog();
+test('an outcome that does not match the schema leaves the status alone and names the violation', async () => {
+  const dir = await gitBacklog();
   const r = refine(dir, ['S-1'], { outcome: json({ summary: 'Planned it.', refined: 'yes' }), outcomeUnit: 'S-1' });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'draft');
   assert.match(r.stderr, /No refine outcome \(schema violation at \$\/refined: must be boolean\)/);
 });
 
-test('a re-refine with refined: true keeps the story refined', () => {
-  const dir = gitBacklog();
+test('a re-refine with refined: true keeps the story refined', async () => {
+  const dir = await gitBacklog();
   const r = refine(dir, ['S-3'], {
     write: [S3],
     outcome: json({ summary: 'Replanned.', refined: true }),
@@ -74,8 +74,8 @@ test('a re-refine with refined: true keeps the story refined', () => {
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: re-refine S-3');
 });
 
-test('the batch sets each story from its entry, and prints the reason for the others', () => {
-  const dir = gitBacklog();
+test('the batch sets each story from its entry, and prints the reason for the others', async () => {
+  const dir = await gitBacklog();
   const outcome = json({
     summary: 'Two planned.',
     stories: { 'S-1': { refined: true }, 'S-2': { refined: false, reason: 'too large' } },
@@ -89,8 +89,8 @@ test('the batch sets each story from its entry, and prints the reason for the ot
   assert.deepEqual(statusLines(dir), []);
 });
 
-test('the batch leaves a story the outcome does not name, and says so', () => {
-  const dir = gitBacklog();
+test('the batch leaves a story the outcome does not name, and says so', async () => {
+  const dir = await gitBacklog();
   const outcome = json({ summary: 'One planned.', stories: { 'S-1': { refined: true } } });
   const r = refine(dir, ['S-1', 'S-2'], { outcome, outcomeUnit: refineBatchId(['S-1', 'S-2']) });
   assert.equal(r.status, 0, r.stderr);
@@ -99,8 +99,8 @@ test('the batch leaves a story the outcome does not name, and says so', () => {
   assert.match(r.stderr, /S-2 is not refined; its status is unchanged: the outcome has no entry for it/);
 });
 
-test('a batch of 60 stories starts, and bl sets each status from the outcome', () => {
-  const dir = gitBacklog({ extraStories: 60 });
+test('a batch of 60 stories starts, and bl sets each status from the outcome', async () => {
+  const dir = await gitBacklog({ extraStories: 60 });
   const ids = Array.from({ length: 60 }, (_, i) => `S-${101 + i}`);
   const stories = Object.fromEntries(ids.map((id) => [id, { refined: true }]));
   const r = refine(dir, ids, { outcome: json({ summary: 'All planned.', stories }), outcomeUnit: refineBatchId(ids) });
@@ -130,8 +130,8 @@ for (const [label, outcome, status, said] of [
     /F-1 is not refined; its status is unchanged: an open question blocks the cut/,
   ],
 ]) {
-  test(`bl refine F-n: ${label}`, () => {
-    const dir = gitBacklog();
+  test(`bl refine F-n: ${label}`, async () => {
+    const dir = await gitBacklog();
     // From refined, so a draft write and a left status differ.
     refine(dir, ['F-1'], {
       outcome: json({ summary: 'First.', premise_holds: true, refined: true }),
@@ -146,8 +146,8 @@ for (const [label, outcome, status, said] of [
   });
 }
 
-test('bl refine F-n without an outcome file leaves the feature in draft', () => {
-  const dir = gitBacklog();
+test('bl refine F-n without an outcome file leaves the feature in draft', async () => {
+  const dir = await gitBacklog();
   const r = refine(dir, ['F-1'], { write: [F1] });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, F1), 'draft');

@@ -114,7 +114,7 @@ const REGEN_FAILURES = [
   },
 ];
 
-test('pullBeforeCommand_retries_or_stops_after_regeneration_commit_failure', () => {
+test('pullBeforeCommand_retries_or_stops_after_regeneration_commit_failure', async () => {
   for (const c of REGEN_FAILURES) {
     const { dir: alice, cleanup } = mkTempBacklog({
       config: { plugins: { prettier: { format: 'prettier --write {{path}}' } } },
@@ -122,7 +122,7 @@ test('pullBeforeCommand_retries_or_stops_after_regeneration_commit_failure', () 
     const tmp = mkTempDir('bl-bc-remote-');
     try {
       initGitBacklog(alice);
-      ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
+      await ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
       g(alice, 'add', TOOLS);
       g(alice, 'commit', '-q', '-m', 'allowed tools');
       const remote = join(tmp, 'remote.git');
@@ -194,7 +194,7 @@ test('pullBeforeCommand regenerates allowed-tools after a pulled configuration c
     const tmp = mkTempDir('bl-bc-remote-');
     try {
       initGitBacklog(alice);
-      ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
+      await ensureAllowedTools(alice, loadConfig({ backlogRoot: alice }));
       g(alice, 'add', TOOLS);
       g(alice, 'commit', '-q', '-m', 'allowed tools');
       const remote = join(tmp, 'remote.git');

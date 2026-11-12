@@ -1324,7 +1324,7 @@ the main checkout as it was.`);
       const triageName = `${parsed.id}: triage — ${storyFm.title ?? storyEntry}`;
       updateTabTitle({ story: parsed.id, status: 'triage' });
       const provider = getProvider(config.agent);
-      const allowedTools = getAllowedTools('triage', {
+      const allowedTools = await getAllowedTools('triage', {
         backlogRoot: config.backlogRoot,
         roostDir: config.roostDir,
         config,

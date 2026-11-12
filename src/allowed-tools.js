@@ -27,10 +27,9 @@
  * per-process `<backlogRoot>/.bl/tmp/allowed-tools.json.<pid>.<random>.tmp`
  * and renamed over the file, so a crash between write and rename leaves the
  * prior file intact and its staging file only in the ignored `.bl/`, not in
- * `git status`. The per-process name matters here: concurrent `bl`
- * processes regenerate the same file outside the backlog lock, and a fixed
- * staging path let one process's rename consume the other's, which then
- * failed with ENOENT.
+ * `git status`. The read, the regeneration and the write hold the file's
+ * spec lock (`withSpecFileLock`, F-126 D3; the backlog lock too when the file
+ * is missing), so two `bl` processes regenerate it one after the other.
  *
  * Forge commands are bl's own (F-42 D4): `bl run`, `bl review`, `bl merge`
  * and `bl updates` make every forge call, so the configured forge plugin
@@ -42,6 +41,7 @@ import { join } from 'path';
 import { createHash } from 'crypto';
 import { atomicWriteFile } from './atomic-write.js';
 import { commandLeader, info } from './config.js';
+import { withSpecFileLock } from './spec-file.js';
 
 // Bump when the generator's output schema or baseline content rules change.
 // A bump triggers regeneration on every backlog repo on next bl invocation.
@@ -501,8 +501,13 @@ export function regenReason(existing, { hash, version }) {
 
 /**
  * Read the on-disk allowed-tools.json, regenerate atomically if stale, and
- * return the (possibly fresh) parsed object. Safe to call from every bl
+ * resolve the (possibly fresh) parsed object. Safe to call from every bl
  * subcommand that needs the allowlist.
+ *
+ * The read, the regeneration and the write run under the file's covering
+ * lock (`withSpecFileLock`, F-126 D3): its spec lock, and the backlog lock
+ * first when the file is missing. So a process that regenerates at the same
+ * time as another, or as `bl allow`, never writes over the other's file.
  *
  * The hash and the content come from `allowlistInput(config)`, so every
  * project computes the same file. A regen whose serialized bytes equal the
@@ -510,37 +515,39 @@ export function regenReason(existing, { hash, version }) {
  * writes prints its trigger through `info` (stderr), which is how an
  * unexpected rewrite gets traced.
  */
-export function ensureAllowedTools(backlogRoot, config) {
+export async function ensureAllowedTools(backlogRoot, config) {
   const path = join(backlogRoot, 'allowed-tools.json');
   const input = allowlistInput(config);
-  let current = null;
-  let existing = null;
+  return withSpecFileLock(backlogRoot, path, () => {
+    let current = null;
+    let existing = null;
 
-  if (existsSync(path)) {
-    current = readFileSync(path, 'utf8');
-    try {
-      existing = JSON.parse(current);
-      if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
-        throw new Error('allowed-tools.json is not a JSON object');
+    if (existsSync(path)) {
+      current = readFileSync(path, 'utf8');
+      try {
+        existing = JSON.parse(current);
+        if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+          throw new Error('allowed-tools.json is not a JSON object');
+        }
+      } catch (err) {
+        existing = err;
       }
-    } catch (err) {
-      existing = err;
     }
-  }
 
-  const reason = regenReason(existing, {
-    hash: configHash(input),
-    version: GENERATOR_VERSION,
+    const reason = regenReason(existing, {
+      hash: configHash(input),
+      version: GENERATOR_VERSION,
+    });
+    if (reason === null) return existing;
+
+    const parsed = existing instanceof Error ? null : existing;
+    const extra = recoverUserExtras(parsed, input);
+    const fresh = generateAllowedTools(input, { extra });
+    const text = JSON.stringify(fresh, null, 2) + '\n';
+    if (text === current) return fresh;
+
+    atomicWriteFile(backlogRoot, path, text);
+    info(`allowed-tools.json regenerated: ${reason}`);
+    return fresh;
   });
-  if (reason === null) return existing;
-
-  const parsed = existing instanceof Error ? null : existing;
-  const extra = recoverUserExtras(parsed, input);
-  const fresh = generateAllowedTools(input, { extra });
-  const text = JSON.stringify(fresh, null, 2) + '\n';
-  if (text === current) return fresh;
-
-  atomicWriteFile(backlogRoot, path, text);
-  info(`allowed-tools.json regenerated: ${reason}`);
-  return fresh;
 }

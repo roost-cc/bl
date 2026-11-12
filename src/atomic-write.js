@@ -66,10 +66,11 @@ let renameCallCount = 0;
  * throws. After `STAGING_ATTEMPTS` collisions the EEXIST propagates and
  * nothing is removed, since the file at that name is not ours.
  *
- * The per-process name matters because concurrent `bl` processes write
- * some targets outside the backlog lock (`allowed-tools.json`): with a fixed
- * name, one process's rename consumed the other's staging file, which then
- * failed with ENOENT or left a failed caller's partial bytes live. If the
+ * The per-process name matters because two writers of different targets
+ * hold different locks (a spec lock each, F-126) and so may stage at the
+ * same time: with a fixed name, one process's rename could consume the
+ * other's staging file, which then failed with ENOENT or left a failed
+ * caller's partial bytes live. If the
  * write or the rename throws, the staging file is removed before the error
  * propagates; when that removal fails for any reason other than the file
  * already being gone, the failure and the staging path are reported on
