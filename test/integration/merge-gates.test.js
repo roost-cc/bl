@@ -315,39 +315,56 @@ test('bl merge S-n finishes a story at ready_for_merge whose branch has no commi
   }
 });
 
-// The no-changes call site of `removeWorktreeAndBranch` (S-1463): a signal
-// that ends its worktree removal ends `bl merge` on that signal.
+// The no-changes path of `cleanupOneRepo`: a signal that ends one of its git
+// commands ends `bl merge` on that signal, and `src/child.js` names the
+// command (F-114 D2). `match` is the fake git's `case` pattern, `child` the
+// argv in the line, and `noChanges` whether `bl merge` got to "no changes".
 const REAL_GIT = spawnSync('sh', ['-c', 'command -v git'], {
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'pipe'],
 }).stdout.trim();
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  test(`the no-changes removal ended by ${signal} ends bl merge as ${signal}`, () => {
-    const fx = noCommitStory(NO_COMMIT_LOG);
-    const bin = mkTempDir('bl-sig-');
-    writeFileSync(
-      join(bin, 'git'),
-      `#!/bin/sh\ncase "$*" in 'worktree remove '*wt-s1) kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"\n`,
-      { mode: 0o755 },
-    );
-    try {
-      const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: { ...ENV, PATH: `${bin}:${process.env.PATH}` } });
-      assert.match(r.stdout + r.stderr, /no changes in code/);
-      assert.match(
-        r.stderr,
-        new RegExp(`code: \`git worktree remove [^\`]+\` was ended by ${signal}; rerun \`bl merge S-1\`\\.`),
+for (const { name, match, child, noChanges } of [
+  // `removeWorktreeAndBranch` (S-1463).
+  {
+    name: 'the no-changes removal',
+    match: `'worktree remove '*wt-s1`,
+    child: 'git worktree remove \\S+',
+    noChanges: true,
+  },
+  // `worktreeChanges` and `commitsAhead` (S-1468).
+  { name: 'the worktree status', match: `'status --porcelain'`, child: 'git status --porcelain', noChanges: false },
+  {
+    name: 'the count of commits ahead',
+    match: `'rev-list --count origin/main..s1-loose'`,
+    child: 'git rev-list --count origin/main\\.\\.s1-loose',
+    noChanges: false,
+  },
+]) {
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    test(`${name} ended by ${signal} ends bl merge as ${signal}`, () => {
+      const fx = noCommitStory(NO_COMMIT_LOG);
+      const bin = mkTempDir('bl-sig-');
+      writeFileSync(
+        join(bin, 'git'),
+        `#!/bin/sh\ncase "$*" in ${match}) kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"\n`,
+        { mode: 0o755 },
       );
-      assert.ok(
-        r.status === 128 + osConstants.signals[signal] || r.signal === signal,
-        `status ${r.status}, signal ${r.signal}\n${r.stderr}`,
-      );
-      // Stopped at the child: no `--force` remove, no branch deletion.
-      assert.ok(existsSync(fx.wt));
-      assert.notEqual(g(fx.repos.code, 'branch', '--list', 's1-loose'), '');
-    } finally {
-      fx.cleanup();
-    }
-  });
+      try {
+        const r = runBl(['merge', 'S-1'], { cwd: fx.dir, env: { ...ENV, PATH: `${bin}:${process.env.PATH}` } });
+        (noChanges ? assert.match : assert.doesNotMatch)(r.stdout + r.stderr, /no changes in code/);
+        assert.match(r.stderr, new RegExp(`^bl: ${child} was ended by ${signal}$`, 'm'));
+        assert.ok(
+          r.status === 128 + osConstants.signals[signal] || r.signal === signal,
+          `status ${r.status}, signal ${r.signal}\n${r.stderr}`,
+        );
+        // Stopped at the child: no `--force` remove, no branch deletion.
+        assert.ok(existsSync(fx.wt));
+        assert.notEqual(g(fx.repos.code, 'branch', '--list', 's1-loose'), '');
+      } finally {
+        fx.cleanup();
+      }
+    });
+  }
 }
 
 test('bl merge S-n refuses as never reviewed a ready_for_merge story whose branch has commits', () => {

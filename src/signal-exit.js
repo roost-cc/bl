@@ -13,14 +13,11 @@
  *
  * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
  * `raiseSignal` raises one of them again after a synchronous child ended on
- * it: `src/child.js` (F-114) for every child that runs through it, and these
- * callers until they move to it: `checkedMerge`, the push of main and the
- * install in `cleanupOneRepo`, `landedMergeCommit` and
- * `removeWorktreeAndBranch` in `cleanup.js`, `main-sync.js`'s git commands,
- * and `reportBacklogCommit` in `sync.js`. Those callers read the signal of their own git children through
- * `interruptOf(r)`, which is null when Node itself killed the child (`r.error`
- * set, such as `ENOBUFS`), so that kill is not raised. The signal that
- * `commitPaths` returns is not read through `interruptOf` yet.
+ * it. `src/child.js` (F-114 D2) is the one place that calls it for a child:
+ * at once, or when the outermost `raiseAfter` ends (D2a). It reads the
+ * child's signal through `interruptOf(r)`, which is null when Node itself
+ * killed the child (`r.error` set, such as `ETIMEDOUT`), so that kill is not
+ * raised.
  */
 
 let registered = false;

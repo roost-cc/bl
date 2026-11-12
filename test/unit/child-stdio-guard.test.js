@@ -567,8 +567,8 @@ const IMPORTERS = {
 
 // The src/ files not yet moved to src/child.js, with the names each imports.
 // A story that moves a file removes its entry; the test fails on an entry the
-// file no longer imports. S-1474 moves cleanup.js and feature-run.js; F-124
-// the rest, and ends the list with the asynchronous children
+// file no longer imports. F-124 moves the rest (feature-run.js's docker
+// calls among them), and ends the list with the asynchronous children
 // (codex-capacity.js, verbs.js's `spawn`).
 const ALLOWED = new Map([
   ['src/agent-run.js', ['spawnSync']],
@@ -579,7 +579,6 @@ const ALLOWED = new Map([
   ['src/agents/gemini.js', ['spawnSync']],
   ['src/block.js', ['spawnSync']],
   ['src/blockers-merge.js', ['spawnSync']],
-  ['src/cleanup.js', ['execFileSync', 'execSync', 'spawnSync']],
   ['src/config.js', ['spawnSync', 'spawnSyncFiles']],
   ['src/credential-helper.js', ['spawnSync']],
   ['src/done.js', ['execSync']],
@@ -704,13 +703,13 @@ const IMPORT_CASES = [
   },
   {
     name: 'a listed file with an unlisted name',
-    rel: 'src/cleanup.js',
+    rel: 'src/done.js',
     src: `import { spawn } from 'child_process';`,
     hits: 1,
   },
   {
     name: 'a listed file with a listed name',
-    rel: 'src/cleanup.js',
+    rel: 'src/done.js',
     src: `import { execSync } from 'child_process';`,
     hits: 0,
   },

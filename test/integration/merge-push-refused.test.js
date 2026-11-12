@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'fs';
 import { constants } from 'os';
 import { join } from 'path';
 import { extractSection } from '../../src/feature.js';
@@ -245,8 +245,17 @@ function backlogOrigin(fx) {
   g(fx.dir, 'push', '-q', 'origin', 'main');
 }
 const SIGNALS = ['SIGINT', 'SIGTERM'];
-/** A message RegExp: `code: <text> was ended by <signal>; rerun `bl merge S-1`.` */
-const endedBy = (text, signal) => new RegExp(`code: ${text} was ended by ${signal}; rerun \`bl merge S-1\`\\.`);
+/** A message RegExp: the line of `src/child.js` (F-114 D2), `bl: <child> was ended by <signal>`. */
+const endedBy = (child, signal) => new RegExp(`^bl: ${child} was ended by ${signal}$`, 'm');
+/** The S-1 story's merged-on-the-forge state: no local branch and no worktree, its commit on origin's main. */
+function mergedOnForge(fx) {
+  g(fx.repo, 'worktree', 'remove', '--force', fx.wts['s1-loose']);
+  g(fx.repo, 'merge', '-q', '--no-ff', '-m', 'Merge s1-loose on the forge', 's1-loose');
+  g(fx.repo, 'push', '-q', 'origin', 'main');
+  g(fx.repo, 'branch', '-q', '-D', 's1-loose');
+}
+/** Origin's main does not have S-1's merge: `bl merge` stopped before its push. */
+const notMerged = (fx) => assert.doesNotMatch(g(fx.repo, 'log', '--format=%s', 'origin/main'), /\(S-1\)/);
 for (const { child, signal, fail, npm, git, message, setup, after } of [
   {
     child: 'the install',
@@ -254,7 +263,7 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     fail: false,
     npm: 'kill -TERM $$',
     git: null,
-    message: /`npm ci` in the main checkout was interrupted/,
+    message: endedBy('npm ci', 'SIGTERM'),
   },
   {
     child: 'the merge-commit lookup',
@@ -262,7 +271,7 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     fail: true,
     npm: 'exit 0',
     git: `case "$*" in *--ancestry-path*) kill -TERM $$;; esac\nexec '${REAL_GIT}' "$@"`,
-    message: /Branch 's1-loose' is already merged into main\./,
+    message: endedBy('git rev-list --first-parent --ancestry-path --reverse \\S+', 'SIGTERM'),
   },
   ...['SIGINT', 'SIGTERM'].map((signal) => ({
     child: 'the push of main',
@@ -270,7 +279,7 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     fail: true,
     npm: 'exit 0',
     git: killingGit(`'push origin main'`, signal),
-    message: endedBy('the push of main to origin', signal),
+    message: endedBy('git push origin main', signal),
   })),
   ...SIGNALS.map((signal) => ({
     child: 'the fetch of main',
@@ -278,8 +287,47 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     fail: false,
     npm: 'exit 0',
     git: killingGit(`'fetch --prune origin'`, signal),
-    message: /Pulling latest main\.\.\./,
-    after: (fx) => assert.doesNotMatch(g(fx.repo, 'log', '--format=%s', 'origin/main'), /\(S-1\)/),
+    message: endedBy('git fetch --prune origin', signal),
+    after: notMerged,
+  })),
+  // `cleanupOneRepo`'s git commands before the merge (S-1468).
+  ...SIGNALS.map((signal) => ({
+    child: 'the current-branch lookup',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: killingGit(`'rev-parse --abbrev-ref HEAD'`, signal),
+    message: endedBy('git rev-parse --abbrev-ref HEAD', signal),
+    after: notMerged,
+  })),
+  ...SIGNALS.map((signal) => ({
+    child: 'the branch lookup',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: killingGit(`'rev-parse --verify s1-loose'`, signal),
+    message: endedBy('git rev-parse --verify s1-loose', signal),
+    after: notMerged,
+  })),
+  ...SIGNALS.map((signal) => ({
+    child: 'the count of unmerged commits',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: killingGit(`'rev-list main..s1-loose --count'`, signal),
+    message: endedBy('git rev-list main\\.\\.s1-loose --count', signal),
+    after: notMerged,
+  })),
+  // The branch is gone: `bl merge` records main's tip (S-868).
+  ...SIGNALS.map((signal) => ({
+    child: 'the main-tip lookup of a branch merged on the forge',
+    signal,
+    fail: false,
+    npm: 'exit 0',
+    git: killingGit(`'rev-parse --short HEAD'`, signal),
+    message: endedBy('git rev-parse --short HEAD', signal),
+    setup: mergedOnForge,
+    after: (fx, r) => assert.doesNotMatch(r.stderr, /assuming PR was merged/),
   })),
   // The pattern starts with `/`, so it does not match `checkedMerge`'s
   // `git worktree remove --force <throwaway>`.
@@ -289,7 +337,7 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     fail: false,
     npm: 'exit 0',
     git: killingGit(`'worktree remove /'*`, signal),
-    message: endedBy('`git worktree remove [^`]+`', signal),
+    message: endedBy('git worktree remove /\\S+', signal),
     // No `--force` remove.
     after: (fx) => assert.ok(existsSync(fx.wts['s1-loose'])),
   })),
@@ -299,7 +347,7 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     fail: false,
     npm: 'exit 0',
     git: killingGit(`'push origin --delete '*`, signal),
-    message: endedBy('`git push origin --delete s1-loose`', signal),
+    message: endedBy('git push origin --delete s1-loose', signal),
     // No `branch -d`.
     after: (fx) => assert.ok(ok(fx.repo, 'rev-parse', '--verify', 's1-loose')),
   })),
@@ -309,18 +357,18 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     fail: false,
     npm: 'exit 0',
     git: killingGit(`'branch -d '*`, signal),
-    message: endedBy('`git branch -d s1-loose`', signal),
+    message: endedBy('git branch -d s1-loose', signal),
     // No `branch -D`.
     after: (fx) => assert.ok(ok(fx.repo, 'rev-parse', '--verify', 's1-loose')),
   })),
-  // `checkedMerge`'s throwaway removal also prunes; only `removeWorktreeAndBranch` prints the message.
+  // The second prune: the first is `checkedMerge`'s, after its throwaway's removal.
   ...SIGNALS.map((signal) => ({
-    child: 'the worktree prune',
+    child: "the unit's worktree prune",
     signal,
     fail: false,
     npm: 'exit 0',
-    git: killingGit(`'worktree prune'`, signal),
-    message: endedBy('`git worktree prune`', signal),
+    git: `case "$*" in 'worktree prune') if [ -e "$0.pruned" ]; then kill -${signal.slice(3)} $$; fi; touch "$0.pruned";; esac\nexec '${REAL_GIT}' "$@"`,
+    message: endedBy('git worktree prune', signal),
     after: (fx) => {
       assert.ok(existsSync(fx.wts['s1-loose']));
       assert.ok(ok(fx.repo, 'rev-parse', '--verify', 's1-loose'));
@@ -333,7 +381,7 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     fail: false,
     npm: 'exit 0',
     git: `case "$*" in 'worktree remove --force '*/wt/s1-loose) kill -${signal.slice(3)} $$;; 'worktree remove '*/wt/s1-loose) exit 1;; esac\nexec '${REAL_GIT}' "$@"`,
-    message: endedBy('`git worktree remove --force [^`]+`', signal),
+    message: endedBy('git worktree remove --force \\S+', signal),
     // No remote branch deletion.
     after: (fx) => assert.ok(ok(fx.origin, 'rev-parse', '--verify', 's1-loose')),
   })),
@@ -343,9 +391,33 @@ for (const { child, signal, fail, npm, git, message, setup, after } of [
     fail: false,
     npm: 'exit 0',
     git: `case "$*" in 'branch -d '*) exit 1;; 'branch -D '*) kill -${signal.slice(3)} $$;; esac\nexec '${REAL_GIT}' "$@"`,
-    message: endedBy('`git branch -D s1-loose`', signal),
+    message: endedBy('git branch -D s1-loose', signal),
     after: (fx, r) => assert.doesNotMatch(r.stderr, /Could not delete branch/),
   })),
+  // The child `bl sync --commit` of a merged `bl` repo exits 130 on its own
+  // interrupt (S-1467's case 4): `runBl` reads it as SIGINT.
+  {
+    child: 'the child bl sync',
+    signal: 'SIGINT',
+    fail: false,
+    npm: 'exit 0',
+    git: null,
+    message: endedBy(
+      `\\S+ \\S+/code/src/bl\\.js sync --commit -m chore: mark S-1 done, sync backlog --story S-1`,
+      'SIGINT',
+    ),
+    // In the main checkout too: `bl merge` picks the sync runner before it pulls main.
+    setup: (fx) => {
+      mkdirSync(join(fx.repo, 'src'));
+      writeFileSync(join(fx.repo, 'package.json'), '{ "name": "bl" }\n');
+      writeFileSync(join(fx.repo, 'src', 'bl.js'), 'process.exit(130);\n');
+      g(fx.repo, 'add', '.');
+      g(fx.repo, 'commit', '-q', '-m', 'a bl that exits 130');
+      g(fx.repo, 'push', '-q', 'origin', 'main');
+    },
+    // The merge landed: the child ran after it.
+    after: (fx) => assert.match(g(fx.repo, 'log', '--format=%s', 'origin/main'), /\(S-1\)/),
+  },
   // Only the push of the commit that marks S-1 done: the integrate step
   // pushes the backlog earlier, and S-1467 covers that push. `src/child.js`
   // prints its line in place of the commit's report (F-114 D2).
