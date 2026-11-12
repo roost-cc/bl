@@ -708,8 +708,8 @@ commit (F-113 D3, see `bl rank`):
   its feature's place, so a listing sorts a feature's stories together at its rank; a closed
   unit, an update story, a task or an unknown id is `Infinity`, after every placed one.
 
-A missing file, or one that is not a list of non-empty id strings, is a `priority-file` problem
-and an empty order; one that is not YAML is thrown by a strict load (a `PriorityError`). Entries that name no unit are `priority-unit` problems and are
+A missing file, or one that is not a list of non-empty id strings (a blank or comment-only file
+too: an empty order is `[]`), is a `priority-file` problem and an empty order; one that is not YAML is thrown by a strict load (a `PriorityError`). Entries that name no unit are `priority-unit` problems and are
 skipped (see `bl validate`). The order is a preference, never a dependency.
 
 Every reader that orders work reads it (F-78 D2): `bl next` walks `priority` with hard

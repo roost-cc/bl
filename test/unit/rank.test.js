@@ -81,9 +81,10 @@ test('proposal: the staged order, less what main took out since the base, plus w
 test('rankedIds reads the ids as written, canonical; a file bl rank cannot edit is a RankFileError', () => {
   assert.deepEqual(rankedIds(HAND), ['S-1', 'F-2', 'F-3']);
   assert.deepEqual(rankedIds('[f3, s1]\n'), ['F-3', 'S-1']);
-  assert.deepEqual(rankedIds(''), []);
-  assert.deepEqual(rankedIds('# nothing yet\n'), []);
+  assert.deepEqual(rankedIds('[]\n'), []);
   for (const [bad, reason] of [
+    ['', /the file is not a YAML list of work unit ids/],
+    ['# nothing yet\n', /the file is not a YAML list of work unit ids/],
     ['- [\n', /priority\.yaml: the file is not YAML/],
     ['ranked: x\n', /the file is not a YAML list of work unit ids/],
     ['- unit: F-1\n  why: x\n', /entry 1 is not a work unit id/],

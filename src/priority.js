@@ -33,7 +33,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { parseDocument } from 'yaml';
-import { listValue, normalizeId } from './config.js';
+import { normalizeId } from './config.js';
 import { normalizeFeatureId } from './feature.js';
 import { normalizeTaskId } from './task.js';
 
@@ -71,17 +71,16 @@ export class PriorityError extends Error {
 
 /**
  * The priority file's list as entries `{ unit, position }`: each id as
- * written, trimmed, and `position` from 1. An empty file (YAML `null`) is an
- * empty order. Throws `PriorityError` on anything that is not a list of
- * non-empty strings.
+ * written, trimmed, and `position` from 1. An empty order is `[]`. Throws
+ * `PriorityError` on anything that is not a list of non-empty strings, a
+ * blank or comment-only file (YAML `null`) included.
  * @param {unknown} raw  the file's parsed YAML
  * @param {string} [file]  the file named in the error
  * @returns {Array<{ unit: string, position: number }>}
  */
 export function parseRanked(raw, file = PRIORITY_FILE) {
-  const list = listValue(raw);
-  if (list == null) throw new PriorityError('the file is not a YAML list of work unit ids', file);
-  return list.map((id, i) => {
+  if (!Array.isArray(raw)) throw new PriorityError('the file is not a YAML list of work unit ids', file);
+  return raw.map((id, i) => {
     if (typeof id !== 'string' || id.trim() === '') {
       throw new PriorityError(`entry ${i + 1} is not a work unit id`, file);
     }

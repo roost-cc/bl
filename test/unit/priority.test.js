@@ -90,13 +90,37 @@ const problems = (g) => g.problems.filter((p) => p.code.startsWith('priority')).
 // parseRanked
 // ---------------------------------------------------------------------------
 
-test('parseRanked reads a list of ids; an empty file is an empty order', () => {
+test('parseRanked reads a list of ids; an empty order is []', () => {
   assert.deepEqual(parseRanked([' S-1 ', 'F-2']), [
     { unit: 'S-1', position: 1 },
     { unit: 'F-2', position: 2 },
   ]);
-  assert.deepEqual(parseRanked(null), []);
   assert.deepEqual(parseRanked([]), []);
+});
+
+test('priority and staged copy reject YAML null', () => {
+  // Blank, comment-only, `null` and `~` all parse as YAML null: not a list.
+  const nulls = ['', '\n', '# empty\n', 'null\n', '~\n'];
+  for (const raw of [null, undefined, '']) {
+    assert.throws(() => parseRanked(raw), PriorityError, `parseRanked ${JSON.stringify(raw)}`);
+  }
+  const root = mkTempDir('bl-staged-null-');
+  mkdirSync(join(root, '.bl'), { recursive: true });
+  for (const text of nulls) {
+    const what = JSON.stringify(text);
+    assert.throws(() => listIds(text), PriorityError, `listIds ${what}`);
+    writeFileSync(join(root, STAGED_FILE), text);
+    assert.throws(() => readStaged(root), StagedConflictError, `readStaged ${what}`);
+    // priority.yaml: a priority-file problem (bl validate), an empty order.
+    const b = backlog(text);
+    try {
+      const g = loadBacklog(b.config);
+      assert.deepEqual(problems(g), ['priority-file: the file is not a YAML list of work unit ids'], what);
+      assert.deepEqual(g.ranked, [], what);
+    } finally {
+      b.cleanup();
+    }
+  }
 });
 
 test('parseRanked refuses every other shape', () => {
@@ -362,7 +386,7 @@ test('marks: one move marks only the unit that moved, not the rows it passed', (
 test('listIds reads the ids as written, canonical; anything else is a PriorityError naming the file', () => {
   assert.deepEqual(listIds('# x\n- S-1\n- f2\n'), ['S-1', 'F-2']);
   assert.deepEqual(listIds('[f3, s1]\n'), ['F-3', 'S-1']);
-  assert.deepEqual(listIds(''), []);
+  assert.deepEqual(listIds('[]\n'), []);
   for (const bad of ['- [\n', 'ranked: x\n', '- unit: F-1\n', '- F-1\n- 7\n']) {
     assert.throws(
       () => listIds(bad, STAGED_FILE),
