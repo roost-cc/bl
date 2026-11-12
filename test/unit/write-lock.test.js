@@ -182,6 +182,32 @@ test('a write needs the covering lock of the path it changes, whatever name reac
   }
 });
 
+// unignored_bl_path_requires_backlog_lock: `.bl/` is lock-free only where git
+// ignores it, whether or not git tracks anything there yet.
+test('a path in .bl/ needs the backlog lock unless git ignores it', async () => {
+  const backlogLock = (dir) => ({ kind: 'backlog', path: join(dir, LOCK_FILE) });
+  // [case, the backlog's .gitignore, the .bl/ path, whether it needs the lock]
+  const rows = [
+    ['an untracked file, no ignore rule', 'reports/\n', '.bl/unignored.txt', true],
+    ['an untracked directory, no ignore rule', 'reports/\n', '.bl/run', true],
+    ['an untracked file, .bl/ ignored', '.bl/\n', '.bl/run/x.json', false],
+    ['an untracked directory, .bl/ ignored', '.bl/\n', '.bl/run', false],
+    ['an untracked file, only another .bl/ file ignored', '.bl/other\n', '.bl/x.md', true],
+  ];
+  for (const [name, ignore, rel, needs] of rows) {
+    const b = backlog();
+    writeFileSync(join(b.dir, '.gitignore'), ignore);
+    const path = join(b.dir, rel);
+    assert.deepEqual(lockFor(b.dir, path), needs ? backlogLock(b.dir) : null, name);
+    if (needs) {
+      assert.throws(() => assertCovered(b.dir, path), /bl writes it without its covering lock/, name);
+      underLock(b.dir, () => assertCovered(b.dir, path));
+    } else assertCovered(b.dir, path);
+    const held = await withCoveringLock(b.dir, path, () => holderOf(join(b.dir, LOCK_FILE)));
+    assert.equal(held, needs ? process.pid : null, `${name}: withCoveringLock`);
+  }
+});
+
 test('a file in .bl/ of a backlog that is no git repository needs no lock', () => {
   const dir = mkTempDir('bl-write-lock-norepo-');
   assert.equal(lockFor(dir, join(dir, '.bl', 'run', 'x')), null);

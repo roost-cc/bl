@@ -439,7 +439,8 @@ backlog lock and need `atomicWriteFile` only.
   `index.md`, change document (`isChangeFile`) or `allowed-tools.json`; the backlog lock to
   create one of those, and for every other path (`blockers.json`, `priority.yaml`,
   `releases/`, `themes/`, `tasks/`, `updates/`, `.gitignore`, `flow.json`, a removed unit
-  directory, …); none for a path outside the backlog, or in `.bl/` unless git tracks it. The
+  directory, …); none for a path outside the backlog, or in `.bl/` when git ignores it or the
+  backlog is no git repository. The
   rule and the ignore check apply to the path the write changes: links in its directory are
   resolved, and a link at the path itself is resolved only for a write through it
   (`atomicWriteFile`'s `preserve`, a plugin), since a rename or removal replaces the link. The

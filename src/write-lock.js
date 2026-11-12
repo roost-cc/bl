@@ -79,16 +79,21 @@ function writtenPath(backlogRoot, path) {
   return relInside(backlogRoot, join(canonical(dirname(path)), basename(path)));
 }
 
-/** Whether git tracks `rel` (backlog-relative), or a file under it; false when the backlog is no git repository. */
-function tracked(backlogRoot, rel) {
-  return Boolean(git(backlogRoot, ['--literal-pathspecs', 'ls-files', '--', rel]).stdout?.trim());
+/**
+ * `git check-ignore`'s exit status for `rel` (backlog-relative): 0 when git
+ * ignores it (never a tracked file), 1 when it does not, 128 when the backlog
+ * is no git repository.
+ */
+function checkIgnore(backlogRoot, rel) {
+  return git(backlogRoot, ['check-ignore', '-q', '--', rel]).status;
 }
 
 /**
  * The covering lock of a write to `path` (`writtenPath`): null when that is
  * not inside `backlogRoot`, or is inside `.bl/`, bl's runtime directory, which
- * `bl init` adds to every backlog's `.gitignore` (`BL_DIR_LINE`), and git does
- * not track it (a file someone added with `git add -f`); the spec lock
+ * `bl init` adds to every backlog's `.gitignore` (`BL_DIR_LINE`), and git
+ * ignores it (not a file someone added with `git add -f`, nor a `.bl/` with no
+ * ignore rule) or the backlog is no git repository; the spec lock
  * (`specLockPath`) of an existing spec file (`isSpecFile`); else the backlog
  * lock (`LOCK_FILE`). It does not ask git about other ignored paths:
  * `assertCovered` does, and only when the lock is not held.
@@ -100,7 +105,7 @@ export function lockFor(backlogRoot, path) {
   const rel = writtenPath(backlogRoot, path);
   if (rel == null) return null;
   const parts = rel.split(sep);
-  if (parts[0] === dirname(STAGING_DIR) && !tracked(backlogRoot, rel)) return null;
+  if (parts[0] === dirname(STAGING_DIR) && checkIgnore(backlogRoot, rel) !== 1) return null;
   if (isSpecFile(parts) && existsSync(path)) return { kind: 'spec', path: specLockPath(path) };
   return { kind: 'backlog', path: join(backlogRoot, LOCK_FILE) };
 }
@@ -142,6 +147,6 @@ export function assertCovered(backlogRoot, path) {
   const lock = lockFor(backlogRoot, path);
   if (lock == null || holds(lock.path)) return;
   const rel = writtenPath(backlogRoot, path);
-  if (git(backlogRoot, ['check-ignore', '-q', '--', rel]).status === 0) return;
+  if (checkIgnore(backlogRoot, rel) === 0) return;
   throw new Error(`${rel}: bl writes it without its covering lock (${lock.kind} lock ${lock.path})`);
 }
