@@ -347,6 +347,12 @@ test('rank commit reports success only after the commit', () => {
   assert.equal(read(dir), list('F-1', 'S-1', 'F-2'));
 });
 
+/** The env under which the listed renames fail (`fail-renames.js`), stdin a terminal. */
+const FAIL_RENAMES = (...fails) => ({
+  NODE_OPTIONS: `${TTY.NODE_OPTIONS} --import=${fileURLToPath(new URL('../helpers/fail-renames.js', import.meta.url))}`,
+  BL_TEST_FAIL_RENAMES: fails.join(','),
+});
+
 /** A directory whose `git` fails the subcommand `sub` and runs the real git otherwise. */
 function gitFailing(sub) {
   const real = process.env.PATH.split(delimiter)
@@ -363,23 +369,28 @@ function gitFailing(sub) {
   return { PATH: `${bin}${delimiter}${process.env.PATH}` };
 }
 
-test('rank commit keeps retryable state after push or rollback failure', () => {
-  // A rejected push: the commit stays local, and so do the copies; the next
-  // --commit pushes it and then drops them.
+test('rank commit retains staged copies across repeated push failures and reports failed work-tree restore', () => {
+  // A rejected push, twice: the commit stays local, and so do the copies,
+  // also on the retry that finds the order already main's; once a push goes
+  // through, the next --commit drops them.
   let dir = backlog(list('S-1', 'F-2'));
   assert.equal(bl(['rank', 'F-1', '--top'], dir).status, 0);
   const before = originHead(dir);
   const hook = join(git(dir, 'remote', 'get-url', 'origin'), 'hooks', 'pre-receive');
   writeFileSync(hook, '#!/bin/sh\necho injected-push-failure >&2\nexit 1\n');
   chmodSync(hook, 0o755);
-  let r = bl(['rank', '--commit'], dir);
-  assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stderr, /backlog commit not pushed/);
-  assert.match(r.stderr, /kept the staged edits; bl rank --commit pushes the commit again/);
-  assert.equal(git(dir, 'log', '-1', '--format=%s'), SUBJECT);
-  assert.equal(originHead(dir), before, 'origin is behind');
-  assert.equal(staged(dir), list('F-1', 'S-1', 'F-2'));
-  assert.equal(base(dir), list('S-1', 'F-2'));
+  let r;
+  for (const attempt of [1, 2]) {
+    r = bl(['rank', '--commit'], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /backlog commit not pushed/, `attempt ${attempt}`);
+    assert.match(r.stderr, /kept the staged edits; bl rank --commit pushes the commit again/, `attempt ${attempt}`);
+    assert.equal(git(dir, 'log', '-1', '--format=%s'), SUBJECT);
+    assert.equal(originHead(dir), before, `attempt ${attempt}: origin is behind`);
+    assert.equal(staged(dir), list('F-1', 'S-1', 'F-2'), `attempt ${attempt}`);
+    assert.equal(base(dir), list('S-1', 'F-2'), `attempt ${attempt}`);
+  }
+  assert.match(r.stderr, /origin\/main does not have it yet/);
   unlinkSync(hook);
   r = bl(['rank', '--commit'], dir);
   assert.equal(r.status, 0, r.stderr);
@@ -402,13 +413,28 @@ test('rank commit keeps retryable state after push or rollback failure', () => {
   assert.equal(git(dir, 'status', '--porcelain', '--', 'priority.yaml'), '', 'not dirty');
   assert.equal(staged(dir), list('F-1', 'S-1', 'F-2'));
 
-  // The index reset fails too: the work tree is back, and the error names
-  // the command that unstages the file.
-  r = bl(['rank', '--commit'], dir, gitFailing('reset'));
-  assert.equal(r.status, 1, r.stderr);
-  assert.match(r.stderr, /priority\.yaml then stayed staged \(reset denied\): run git -C ".*" reset -- priority\.yaml/);
-  assert.equal(read(dir), list('S-1', 'F-2'));
-  git(dir, 'reset', '-q', '--', 'priority.yaml');
+  // The restore fails: the work-tree write (rename 2 onto priority.yaml; 1
+  // is the commit's write) or the index reset. The error names both
+  // failures and the command that puts the file back; the copies stay, and
+  // after that command a retry commits.
+  for (const [env, why, tree] of [
+    [FAIL_RENAMES('priority.yaml:2'), /injected failure of rename 2 onto priority\.yaml/, list('F-1', 'S-1', 'F-2')],
+    [gitFailing('reset'), /reset denied/, list('S-1', 'F-2')],
+  ]) {
+    r = bl(['rank', '--commit'], dir, env);
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /backlog commit failed: injected-commit-failure/);
+    assert.match(r.stderr, why);
+    const repair = r.stderr.match(
+      /could not be put back as HEAD has it \(.*\): run git -C "(.*)" checkout HEAD -- priority\.yaml/,
+    );
+    assert.ok(repair, r.stderr);
+    assert.equal(read(dir), tree);
+    assert.equal(staged(dir), list('F-1', 'S-1', 'F-2'), 'the staged copy stays');
+    assert.equal(base(dir), list('S-1', 'F-2'), 'the base copy stays');
+    git(repair[1], 'checkout', 'HEAD', '--', 'priority.yaml');
+    assert.equal(git(dir, 'status', '--porcelain', '--', 'priority.yaml'), '', 'the command puts it back');
+  }
 
   unlinkSync(preCommit);
   r = bl(['rank', '--commit'], dir);

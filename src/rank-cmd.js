@@ -39,7 +39,7 @@ import { parseArgs } from 'node:util';
 import { stringify } from 'yaml';
 import { atomicWriteFile } from './atomic-write.js';
 import { info, loadConfig, normalizeId } from './config.js';
-import { commitPaths } from './backlog-commit.js';
+import { commitPaths, hasOriginRemote, textAt } from './backlog-commit.js';
 import { withLock } from './lock.js';
 import { pullBeforeCommand, reportBacklogCommit } from './sync.js';
 import { loadBacklog } from './backlog-graph.js';
@@ -545,19 +545,37 @@ function mergeStaged(root, config) {
 }
 
 /**
+ * Whether the repo at `root` has an origin whose `origin/main` (as the last
+ * fetch left it) does not list `ids` in `priority.yaml`: a commit of `ids`
+ * is not pushed yet. A file origin lacks, or cannot be read as a list, is a
+ * lack too.
+ */
+function originLacks(root, ids) {
+  if (!hasOriginRemote(root)) return false;
+  try {
+    return !sameOrder(rankedIds(textAt(root, 'origin/main', PRIORITY_FILE) ?? ''), ids);
+  } catch (err) {
+    if (err instanceof RankFileError) return true;
+    throw err;
+  }
+}
+
+/**
  * Write `plan.ids` to `priority.yaml`, commit it alone and delete both
  * copies, under the caller's lock. An order that is already main's commits
  * nothing. A failed commit puts `priority.yaml` back as HEAD has it, in the
- * work tree and the index, and keeps the copies, so `--commit` can run again.
- * A commit whose push failed keeps the copies too: the next `--commit` pulls,
- * which pushes the commit (`pushIfAhead`), finds the order already main's and
- * drops them.
+ * work tree and the index, and keeps the copies, so `--commit` can run again;
+ * when that cannot be done, the error names the command that does it.
+ * A commit whose push failed keeps the copies too, and so does an order that
+ * is main's but not yet `origin/main`'s: the next `--commit` pulls, which
+ * pushes the commit (`pushIfAhead`), and drops them once origin has it.
  */
 async function commitPlan(root, plan) {
   const drop = () => {
     for (const f of [STAGED_FILE, BASE_FILE]) rmSync(join(root, f), { force: true });
   };
   if (sameOrder(plan.ids, plan.main)) {
+    if (plan.repo && originLacks(root, plan.ids)) return { same: true, unpushed: true };
     drop();
     return { same: true };
   }
@@ -574,22 +592,25 @@ async function commitPlan(root, plan) {
   }
   // HEAD's text is `plan.mainText` (`mergeStaged` refused uncommitted
   // edits): the work tree gets it without git, then the index is reset.
-  atomicWriteFile(root, join(root, PRIORITY_FILE), plan.mainText);
-  const reset = spawnSync('git', ['reset', '-q', '--', PRIORITY_FILE], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (reset.status !== 0) {
-    const why = (reset.stderr || '').trim() || `git reset exited ${reset.status}`;
-    return {
-      commit: {
-        ...commit,
-        error: `${commit.error}; ${PRIORITY_FILE} then stayed staged (${why}): run git -C "${root}" reset -- ${PRIORITY_FILE}`,
-      },
-    };
+  let why = null;
+  try {
+    atomicWriteFile(root, join(root, PRIORITY_FILE), plan.mainText);
+    const reset = spawnSync('git', ['reset', '-q', '--', PRIORITY_FILE], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (reset.status !== 0) why = (reset.stderr || '').trim() || `git reset exited ${reset.status}`;
+  } catch (err) {
+    why = err.message;
   }
-  return { commit };
+  if (why == null) return { commit };
+  return {
+    commit: {
+      ...commit,
+      error: `${commit.error}; ${PRIORITY_FILE} could not be put back as HEAD has it (${why}): run git -C "${root}" checkout HEAD -- ${PRIORITY_FILE}`,
+    },
+  };
 }
 
 /** Ask `question` on stderr and read one answer from stdin: whether it is yes. */
@@ -609,6 +630,12 @@ async function askYes(question) {
  * before any line says what was committed.
  */
 function reportCommit(res, closed) {
+  const kept = 'bl rank: kept the staged edits; bl rank --commit pushes the commit again.';
+  if (res.unpushed) {
+    info(`The staged order is ${PRIORITY_FILE}'s already, but origin/main does not have it yet.`);
+    info(kept);
+    return;
+  }
   if (res.same) {
     info(`The staged order is ${PRIORITY_FILE}'s already; dropped the staged edits.`);
     return;
@@ -617,7 +644,7 @@ function reportCommit(res, closed) {
   if (closed.length > 0) info(`bl rank: took out ${closed.join(', ')} (done).`);
   if (res.commit.notRepo) info(`Wrote the staged order to ${PRIORITY_FILE}.`);
   else info(`Committed the staged order of ${PRIORITY_FILE}.`);
-  if (res.commit.pushed === false) info('bl rank: kept the staged edits; bl rank --commit pushes the commit again.');
+  if (res.commit.pushed === false) info(kept);
 }
 
 /**
