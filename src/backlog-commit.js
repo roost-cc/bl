@@ -873,6 +873,9 @@ function pullUndoable(root) {
     putIndexBack(root, { before, stash, indexFile, indexBytes });
     return restored(root, { before, dirty, index, stash }, res);
   };
+  // An interrupt ended a step above (F-114 D2a), so what it read is not to be
+  // trusted. Nothing has moved yet: stop before the rebase.
+  if (interruptKept()) return { state: 'failed', message: 'interrupted before the rebase' };
   const resolved = [];
   // So the replay merges `blockers.json` by edge (F-66).
   configureMergeDriver(root);
@@ -882,13 +885,14 @@ function pullUndoable(root) {
     const conflicts = conflictedPaths(root);
     const human = conflicts.filter((p) => !isGeneratedPath(p));
     const settleError = conflicts.length > 0 && human.length === 0 ? takeReplayedSide(root, conflicts) : null;
-    if (conflicts.length === 0 || human.length > 0 || settleError) {
+    // After an interrupt the rebase does not go on: it is aborted.
+    if (conflicts.length === 0 || human.length > 0 || settleError || interruptKept()) {
       const message = settleError ?? describeExit(r, 'git rebase');
       const abort = git(root, ['rebase', '--abort']);
       const aborted =
         abort.status === 0 ? '' : `\n(git rebase --abort also failed: ${describeExit(abort, 'git rebase --abort')})`;
       return back(
-        conflicts.length === 0 || settleError
+        human.length === 0
           ? { state: 'failed', message: message + aborted }
           : { state: 'conflict', paths: human, message: message + aborted },
       );
@@ -896,10 +900,17 @@ function pullUndoable(root) {
     resolved.push(...conflicts.filter((p) => !resolved.includes(p)));
     r = git(root, ['rebase', '--continue']);
   }
+  let stashed = stashTip(root) !== stash;
+  const head = git(root, ['rev-parse', 'HEAD']).stdout.trim();
+  if (!stashed && !interruptKept()) return { state: 'pulled', before, head, resolved };
+  // An interrupt ended a step since the rebase went through (F-114 D2a), so
+  // `main` goes back where it was too. The stash is read once more: an
+  // interrupted read says nothing.
+  if (interruptKept()) stashed = stashTip(root) !== stash;
   // Re-applying the autostash conflicted: git kept the edits in the stash
   // and left conflict markers. Put `main` back where it was and the edits
   // back from the stash; the pulled commits wait for the next pull.
-  if (stashTip(root) !== stash) {
+  if (stashed) {
     const paths = conflictedPaths(root);
     const reset = git(root, ['reset', '-q', '--hard', before]);
     const pop = reset.status === 0 ? git(root, ['stash', 'pop', '-q', '--index']) : reset;
@@ -912,8 +923,13 @@ function pullUndoable(root) {
           : describeExit(pop, 'git stash pop'),
     });
   }
-  const head = git(root, ['rev-parse', 'HEAD']).stdout.trim();
-  return { state: 'pulled', before, head, resolved };
+  // The edits are in the work tree: `reset --keep` moves `main` back and
+  // keeps them, or refuses, and `restored` then reports the checkout unsafe.
+  const reset = git(root, ['reset', '-q', '--keep', before]);
+  return back({
+    state: 'failed',
+    message: reset.status === 0 ? 'interrupted after the rebase' : describeExit(reset, 'git reset --keep'),
+  });
 }
 
 /** The stash's top commit, or "" when there is none. */

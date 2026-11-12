@@ -30,10 +30,16 @@ const SIGNAL_EXIT = new URL('../../src/signal-exit.js', import.meta.url).href;
 // does nothing and exits 0 (`noop`), or fails with exit 91 (any other value).
 // `REJECT_PUSH_LOG`: each `git push` adds a line to that file,
 // writes git's non-fast-forward rejection, and ends itself with `KILL_SIG`.
+// `CALL_LOG`: each git call adds its arguments as a line to that file, and
+// the call whose line number is `KILL_NTH` ends itself with `KILL_SIG`.
 const shimDir = mkTempDir('bl-bc-signal-shim-');
 writeFileSync(
   join(shimDir, 'git'),
   `#!/bin/sh
+if [ -n "$CALL_LOG" ]; then
+  echo "$*" >> "$CALL_LOG"
+  if [ "$(wc -l < "$CALL_LOG")" -eq "\${KILL_NTH:-0}" ]; then kill -$KILL_SIG $$; fi
+fi
 if [ -n "$STOP_REBASE" ] && [ "$1 $2" = "rebase --autostash" ]; then
   shift
   "${REAL_GIT}" rebase -x false "$@"
@@ -190,6 +196,64 @@ test('SIGINT that ends the rebase of a backlog pull: the backlog is put back, th
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+// Alice has a commit of her own to replay and an uncommitted edit; origin is
+// one commit ahead, so her push is refused and her pull rebases.
+function pullFixture() {
+  const fx = twoClones({ 'a.md': '1\n', 'b.md': '1\n' });
+  writeFileSync(join(fx.alice, 'b.md'), 'alice\n');
+  g(fx.alice, 'commit', '-q', '-am', 'alice');
+  writeFileSync(join(fx.alice, 'a.md'), 'alice, uncommitted\n');
+  bobPushes(fx.bob, { 'c.md': 'bob\n' });
+  return fx;
+}
+
+// SIGINT ends one git step of a pull, each step in turn, before and after
+// the rebase: bl exits 130 with the checkout as the pull found it (D2a).
+const PULLS = [
+  { name: 'pullBacklog', body: (root) => `await bc.pullBacklog(${JSON.stringify(root)});` },
+  { name: "pushBacklog's retry", body: (root) => `bc.pushBacklog(${JSON.stringify(root)});` },
+];
+
+for (const c of PULLS) {
+  test(`${c.name}: SIGINT that ends any git step of the pull leaves the checkout as it was, then bl exits 130`, () => {
+    const count = pullFixture();
+    let steps;
+    try {
+      const log = join(count.tmp, 'calls');
+      const r = runScript(c.body(count.alice), { CALL_LOG: log });
+      assert.equal(r.status, 0, r.stderr);
+      steps = readFileSync(log, 'utf8').trim().split('\n');
+    } finally {
+      rmSync(count.tmp, { recursive: true, force: true });
+    }
+    assert.ok(
+      steps.some((s) => s.startsWith('rebase --autostash')),
+      steps.join('\n'),
+    );
+    // pushBacklog's second push comes after the pull went through.
+    const retry = c.name !== 'pullBacklog';
+    if (retry) assert.equal(steps.at(-1), 'push -q origin main', steps.join('\n'));
+    const last = steps.length - (retry ? 1 : 0);
+    for (let n = 1; n <= last; n++) {
+      const step = `step ${n}, git ${steps[n - 1]}`;
+      // `configureMergeDriver` (`blockers-merge.js`) runs `git config` outside
+      // `src/child.js` until F-124 moves it.
+      if (steps[n - 1].startsWith('config ')) continue;
+      const { tmp, alice } = pullFixture();
+      try {
+        const start = checkoutState(alice);
+        const r = runScript(c.body(alice), { CALL_LOG: join(tmp, 'calls'), KILL_NTH: String(n), KILL_SIG: 'INT' });
+        assert.equal(r.status, 130, `${step}\n${r.stderr}`);
+        assertRaised(r, 130, steps[n - 1].split(' ')[0], 'SIGINT');
+        assert.deepEqual(checkoutState(alice), start, step);
+        assert.equal(readFileSync(join(alice, 'a.md'), 'utf8'), 'alice, uncommitted\n', step);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  });
+}
 
 // The undo of an interrupted rebase fails: the pull reports the unsafe
 // checkout, once, and only then does bl exit on the interrupt (D2a).
