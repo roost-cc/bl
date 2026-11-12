@@ -18,10 +18,9 @@ import { join, sep, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir, tmpdir } from 'os';
 import assert from 'node:assert';
-import { gitOut } from './child.js';
+import { exitStatus, gitOut } from './child.js';
 import { appendTo as logAppendTo } from './log.js';
 import {
-  exitStatus,
   resolvePlugins,
   repoOf,
   runPlugins,

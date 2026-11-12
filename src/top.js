@@ -12,12 +12,11 @@
  * older than its sources.
  */
 
-import { spawnSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, statSync, utimesSync } from 'fs';
 import { join, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { parseArgs } from 'util';
-import { BL_PATH } from './child.js';
+import { BL_PATH, runChild } from './child.js';
 import { loadConfig, topSettings } from './config.js';
 import { ACTIVITY_SHOWN, HISTORY_DAYS, problemLines, TOKEN_MINUTES, TOP_SCHEMA, topSnapshot } from './top-snapshot.js';
 import { ATTENTION_MAX_AGE_MS, CAPACITY_EVERY_MS, HISTORY_EVERY_MS, runStream } from './top-stream.js';
@@ -178,7 +177,7 @@ function goVersion() {
  */
 function buildTui() {
   console.error('bl top: building the view (go build in top/)');
-  const r = spawnSync('go', ['build', '-o', TOP_BIN, '.'], { cwd: TOP_DIR, stdio: ['ignore', 2, 2] });
+  const r = runChild('go', ['build', '-o', TOP_BIN, '.'], { cwd: TOP_DIR, stdio: ['ignore', 2, 2] });
   if (r.error?.code === 'ENOENT') {
     console.error(`bl top: the view needs a build, and go is not on PATH; install Go ${goVersion()} (top/go.mod)`);
     process.exit(1);
@@ -232,7 +231,7 @@ function runTui(opts, interval) {
     process.exit(1);
   }
   if (tuiNeedsBuild()) buildTui();
-  const r = spawnSync(TOP_BIN, tuiArgs(opts, interval, push), { stdio: 'inherit', cwd });
+  const r = runChild(TOP_BIN, tuiArgs(opts, interval, push), { stdio: 'inherit', cwd });
   if (r.error) console.error(`bl top: cannot run ${TOP_BIN}: ${r.error.message}`);
   process.exit(r.status ?? 1);
 }

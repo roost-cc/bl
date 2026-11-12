@@ -41,11 +41,14 @@
  * before the raise.
  *
  * `describeExit(r, what)` words a failed child for every caller.
+ * `exitStatus(r)` is the exit status a child result stands for, and
+ * `reportExit(cmd, r)` says on stderr why a child could not start or was
+ * killed (F-124 D6).
  */
 
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from './child-stdio.js';
-import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal } from './signal-exit.js';
+import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal, signalExitCode } from './signal-exit.js';
 
 /** The path of this process's own `bl.js`. */
 export const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
@@ -182,6 +185,36 @@ export function describeExit(r, what) {
   const text = String(r.stderr ?? '').trim() || String(r.stdout ?? '').trim();
   if (r.signal) return `${what} was ended by ${r.signal}${text ? `: ${text}` : ''}`;
   return text || `${what} exited ${r.status}`;
+}
+
+/**
+ * The exit status a `spawnSync` result stands for, as a shell reports it
+ * (F-70 D3): 127 when the child could not be launched (`error`), 128 + the
+ * signal's number when a signal killed it (128 for a name this platform does
+ * not know), else its `status`. A result with none of the three (a test fake)
+ * is 0. Every caller that turns a child's result into bl's exit status or an
+ * `isError` goes through this, never `status ?? 0`, which reads a launch
+ * failure or a kill as success.
+ * @param {{ status?: number | null, signal?: string | null, error?: Error } | null | undefined} result
+ * @returns {number}
+ */
+export function exitStatus(result) {
+  if (result?.error) return 127;
+  if (result?.signal) return signalExitCode(result.signal);
+  return result?.status ?? 0;
+}
+
+/**
+ * Say on stderr why a child failed when its status alone would not: it could
+ * not be launched, or a signal killed it. A plain nonzero exit says nothing,
+ * since the child spoke for itself. Returns `exitStatus(result)`.
+ * @param {string} cmd — the command, as the operator would recognise it
+ * @param {{ status?: number | null, signal?: string | null, error?: Error }} result
+ */
+export function reportExit(cmd, result) {
+  if (result?.error) console.error(`bl: could not start ${cmd}: ${result.error.message}`);
+  else if (result?.signal) console.error(`bl: ${cmd} was killed by ${result.signal}`);
+  return exitStatus(result);
 }
 
 /**

@@ -25,10 +25,10 @@
  *   of the bl that holds the unit's run lock (`scopesOf`).
  * - Names are passed and returned without the `.scope` suffix.
  */
-import { spawnSync } from 'child_process';
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { spawnSyncFiles } from './child-stdio.js';
+import { describeExit, runChild } from './child.js';
 
 /** How long `systemctl stop` lets a scope's processes exit on SIGTERM before SIGKILL. */
 const STOP_TIMEOUT = 'TimeoutStopSec=10s';
@@ -53,21 +53,24 @@ const COMMAND_MAX = 120;
 let probed = null;
 
 function systemctl(args, timeout = 30_000) {
-  return spawnSync('systemctl', ['--user', ...args], {
+  return runChild('systemctl', ['--user', ...args], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout,
   });
 }
 
-/** The first line of a failed command's stderr, or its exit, for a reason. */
-function failureText(r) {
+/**
+ * The first line of a failed command's stderr, else `describeExit` of it,
+ * for a reason. `what` names the command (`systemctl`).
+ */
+function failureText(r, what = 'systemctl') {
   if (r.error) return r.error.code === 'ENOENT' ? `${r.error.path ?? 'command'} not found` : r.error.message;
   const line = String(r.stderr ?? '')
     .split('\n')
     .map((l) => l.trim())
     .find(Boolean);
-  return line ?? (r.signal ? `killed by ${r.signal}` : `exit ${r.status}`);
+  return line ?? describeExit(r, what);
 }
 
 /**
@@ -82,7 +85,7 @@ export function scopeAvailable() {
     probed = { ok: false, why: `user systemd scopes need Linux; this is ${process.platform}` };
     return probed;
   }
-  const r = spawnSync('systemd-run', ['--user', '--scope', '--quiet', '--collect', 'true'], {
+  const r = runChild('systemd-run', ['--user', '--scope', '--quiet', '--collect', 'true'], {
     encoding: 'utf8',
     stdio: ['ignore', 'ignore', 'pipe'],
     timeout: 30_000,
@@ -90,7 +93,10 @@ export function scopeAvailable() {
   probed =
     !r.error && r.status === 0
       ? { ok: true }
-      : { ok: false, why: `\`systemd-run --user --scope --quiet --collect true\` failed: ${failureText(r)}` };
+      : {
+          ok: false,
+          why: `\`systemd-run --user --scope --quiet --collect true\` failed: ${failureText(r, 'systemd-run')}`,
+        };
   return probed;
 }
 

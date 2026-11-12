@@ -550,25 +550,20 @@ const IMPORTERS = {
   [CHILD_STDIO]: new Set(['src/child.js']),
 };
 
-// The src/ files not yet moved to src/child.js, with the names each imports.
-// A story that moves a file removes its entry; the test fails on an entry the
-// file no longer imports. F-124 moves the rest (feature-run.js's docker
-// calls among them), and ends the list with the asynchronous children
-// (codex-capacity.js, verbs.js's `spawn`).
+// The src/ files that still start a child themselves, with the names each
+// imports (F-124 D7). The test fails on an entry the file no longer imports.
 const ALLOWED = new Map([
-  ['src/agent-run.js', ['spawnSync']],
+  // Asynchronous children (F-114 Out of Scope).
+  ['src/agents/codex-capacity.js', ['spawn']],
+  ['src/verbs.js', ['spawn']],
+  // The run loop's long children: each adapter's agent session, the capacity
+  // helper and the process scope. They move to an asynchronous calling
+  // pattern in F-128 (F-124 Decision A1).
   ['src/agents/capacity-helper.js', ['spawnSyncFiles']],
   ['src/agents/claude.js', ['spawnSync']],
-  ['src/agents/codex-capacity.js', ['spawn']],
   ['src/agents/codex.js', ['spawnSync']],
   ['src/agents/gemini.js', ['spawnSync']],
-  ['src/config.js', ['spawnSync', 'spawnSyncFiles']],
-  ['src/feature-run.js', ['spawnSync']],
-  ['src/process-scope.js', ['spawnSync', 'spawnSyncFiles']],
-  ['src/tab-title.js', ['spawnSync']],
-  ['src/top.js', ['spawnSync']],
-  ['src/updates-vulns.js', ['spawnSync']],
-  ['src/verbs.js', ['spawn', 'spawnSync']],
+  ['src/process-scope.js', ['spawnSyncFiles']],
 ]);
 
 /**

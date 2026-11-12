@@ -5377,10 +5377,13 @@ them.
   (D2a): the child's result returns to it, and the interrupt is raised when the outermost
   `raiseAfter` ends. While `bl` exits, an interrupt that ends a child of an `exit` listener is
   printed, not raised, so `bl` keeps its exit code and the other listeners run.
-  `describeExit(r, what)` words a failed child. A caller never reads a child's
+  `describeExit(r, what)` words a failed child, `exitStatus(r)` is the exit status a child's
+  result stands for (127, 128 + a signal's number, or its status), and `reportExit(cmd, r)` says
+  why a child could not start or was killed (F-124 D6). A caller never reads a child's
   `signal`. `test/unit/child-stdio-guard.test.js` fails on a `src/` import of `child_process` or
   `child-stdio.js` outside `src/child.js` (and `child-stdio.js`'s own import of `child_process`),
-  except the files its `ALLOWED` list names. F-124 moves those files and empties the list.
+  except the files its `ALLOWED` list names: the asynchronous children and the run loop's long
+  children, which F-128 moves (F-124 D7).
 - A call in `src/` to an async function of `src/` is awaited: it is the operand of `await`, or
   the value an async function returns outside a `try`. A missing `await` is silent, so
   `test/unit/awaited-calls.test.js` parses `src/` with `acorn` and checks this by name (F-105

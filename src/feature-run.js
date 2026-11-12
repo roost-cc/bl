@@ -49,8 +49,7 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
-import { spawnSync } from 'child_process';
-import { runCommandLine } from './child.js';
+import { runChild, runCommandLine } from './child.js';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -759,7 +758,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
      */
     listContainers() {
       if (process.env.BL_KEEP_TEST_CONTAINERS === '1') return null;
-      const r = spawnSync(
+      const r = runChild(
         'docker',
         [
           'ps',
@@ -774,7 +773,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       return parseContainerList(r.stdout, containerOwner);
     },
     removeContainers(ids) {
-      const r = spawnSync('docker', ['rm', '-f', ...ids], {
+      const r = runChild('docker', ['rm', '-f', ...ids], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 60_000,

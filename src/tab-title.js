@@ -49,8 +49,8 @@
  * back.
  */
 
-import { spawnSync } from 'child_process';
-import { exitOnSignal } from './signal-exit.js';
+import { runChild } from './child.js';
+import { EXIT_CODES, exitOnSignal } from './signal-exit.js';
 
 export const DEFAULT_TAB_TITLE_FORMAT = '{{feature}} : {{story}} : {{status}} {{next}}';
 
@@ -183,7 +183,7 @@ export function reassertTabTitle() {
  */
 export function captureTmuxWindowId() {
   if (!process.env.TMUX || process.env.BL_TMUX_WINDOW_ID) return;
-  const res = spawnSync('tmux', ['display-message', '-p', '#{window_id}'], {
+  const res = runChild('tmux', ['display-message', '-p', '#{window_id}'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -253,7 +253,7 @@ export function endTabTitle(code) {
 /** The title status for an exit code. */
 function exitStatus(code) {
   if (code === 0) return 'ended';
-  if (code === 130 || code === 143) return 'interrupted';
+  if (Object.values(EXIT_CODES).includes(code)) return 'interrupted';
   return `failed (exit ${code})`;
 }
 
@@ -264,5 +264,5 @@ function windowTarget() {
 }
 
 function tmux(...args) {
-  spawnSync('tmux', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  runChild('tmux', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 }
