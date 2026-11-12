@@ -126,8 +126,9 @@ export function atomicWriteFile(
       if (e.code !== 'ENOENT') throw e;
     }
   }
-  // After `preserve` resolves a link: the check is of the file replaced.
-  assertCovered(backlogRoot, path);
+  // After `preserve` resolves a link: the check is of the file replaced, and
+  // the write goes to the path checked, not through a link retargeted since.
+  path = assertCovered(backlogRoot, path);
   const dir = join(backlogRoot, STAGING_DIR);
   try {
     mkdirSync(join(backlogRoot, '.bl'));
@@ -216,8 +217,7 @@ export function atomicWriteFile(
  * @param {string} path
  */
 export function removeBacklogPath(backlogRoot, path) {
-  assertCovered(backlogRoot, path);
-  rmSync(path, { recursive: true, force: true });
+  rmSync(assertCovered(backlogRoot, path), { recursive: true, force: true });
 }
 
 /**
@@ -230,9 +230,7 @@ export function removeBacklogPath(backlogRoot, path) {
  * @param {string} to
  */
 export function moveIntoBacklog(backlogRoot, from, to) {
-  assertCovered(backlogRoot, from);
-  assertCovered(backlogRoot, to);
-  renameSync(from, to);
+  renameSync(assertCovered(backlogRoot, from), assertCovered(backlogRoot, to));
 }
 
 /**

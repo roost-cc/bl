@@ -6,10 +6,19 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'fs';
+import {
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
 import { dirname, join } from 'path';
 import { assertCovered, lockFor, withCoveringLock } from '../../src/write-lock.js';
-import { atomicWriteFile, removeBacklogPath } from '../../src/atomic-write.js';
+import { _hooks, atomicWriteFile, removeBacklogPath } from '../../src/atomic-write.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { specLockPath } from '../../src/spec-file.js';
@@ -206,6 +215,64 @@ test('a path in .bl/ needs the backlog lock unless git ignores it', async () => 
     const held = await withCoveringLock(b.dir, path, () => holderOf(join(b.dir, LOCK_FILE)));
     assert.equal(held, needs ? process.pid : null, `${name}: withCoveringLock`);
   }
+});
+
+// atomic_write_keeps_checked_directory_target: a write through `.bl/dir`, a
+// link to S-1's directory, holds S-1's locks. The link moves to S-2's
+// directory after the lock check and before the rename. The write still
+// changes the file in S-1's directory, which it checked, and leaves S-2's.
+test('a write changes the path it checked when a directory link moves before the rename', () => {
+  const b = backlog();
+  const s1 = dirname(b.story);
+  const s2 = dirname(b.put('stories/S2-two/index.md', 'second'));
+  b.put('stories/S2-two/notes.md', 'second notes');
+  const alias = join(b.dir, '.bl', 'dir');
+  mkdirSync(dirname(alias), { recursive: true });
+  const retarget = () => {
+    unlinkSync(alias);
+    symlinkSync(s2, alias);
+  };
+  // [case, the write through the link, the file in S-1 it changes, its text after]
+  const rows = [
+    ['a spec, replaced', () => atomicWriteFile(b.dir, join(alias, 'index.md'), 'w'), b.story, 'w'],
+    [
+      'a spec, unchanged since read',
+      () => atomicWriteFile(b.dir, join(alias, 'index.md'), 'w2', { unchanged: readFileSync(b.story, 'utf8') }),
+      b.story,
+      'w2',
+    ],
+    [
+      'a spec, through the link (preserve)',
+      () => atomicWriteFile(b.dir, join(alias, 'index.md'), 'w3', { preserve: true }),
+      b.story,
+      'w3',
+    ],
+    [
+      'an ordinary file, created (exclusive)',
+      () => atomicWriteFile(b.dir, join(alias, 'notes.md'), 'n', { exclusive: true }),
+      join(s1, 'notes.md'),
+      'n',
+    ],
+  ];
+  for (const [name, write, changed, text] of rows) {
+    rmSync(alias, { force: true });
+    symlinkSync(s1, alias);
+    _hooks.beforeRename = retarget;
+    try {
+      underLock(b.dir, write, [b.story]);
+    } finally {
+      _hooks.beforeRename = null;
+    }
+    assert.equal(readlinkSync(alias), s2, `${name}: the link moved`);
+    assert.equal(readFileSync(changed, 'utf8'), text, `${name}: written`);
+    assert.equal(readFileSync(join(s2, 'index.md'), 'utf8'), 'second', `${name}: S-2's spec kept`);
+    assert.equal(readFileSync(join(s2, 'notes.md'), 'utf8'), 'second notes', `${name}: S-2's notes kept`);
+  }
+  // removeBacklogPath and moveIntoBacklog change the path assertCovered
+  // returns: the one it checked, with the directory link resolved.
+  symlinkSync(s1, join(b.dir, '.bl', 'dir2'));
+  const checked = underLock(b.dir, () => assertCovered(b.dir, join(b.dir, '.bl', 'dir2', 'index.md')), [b.story]);
+  assert.equal(checked, join(realpathSync(s1), 'index.md'));
 });
 
 test('a file in .bl/ of a backlog that is no git repository needs no lock', () => {

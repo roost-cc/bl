@@ -76,7 +76,12 @@ function relInside(backlogRoot, target) {
  * @param {string} path
  */
 function writtenPath(backlogRoot, path) {
-  return relInside(backlogRoot, join(canonical(dirname(path)), basename(path)));
+  return relInside(backlogRoot, writeTarget(path));
+}
+
+/** Absolute `path` with the links in its directory resolved (`canonical`), not a link at `path` itself. */
+function writeTarget(path) {
+  return join(canonical(dirname(path)), basename(path));
 }
 
 /**
@@ -116,21 +121,24 @@ export function lockFor(backlogRoot, path) {
  * An existing spec file takes its spec lock (`withSpecFileLock`). Every other
  * path takes the backlog lock, and then its spec lock too: a missing spec
  * file that another process creates before the backlog lock frees is covered
- * by its spec lock once it exists. `fn` writes through a link at `path`, so
- * the lock is that of the link's target. Lock order (F-67 D4): the caller
- * holds no spec lock.
+ * by its spec lock once it exists. The lock is that of `path`'s target, with
+ * every link resolved (`canonical`), and `fn` gets that target to write:
+ * a link retargeted while this waits for the lock cannot send the write to
+ * a file whose lock it does not hold. Lock order (F-67 D4): the caller holds
+ * no spec lock.
  * @template T
  * @param {string} backlogRoot
  * @param {string} path
- * @param {() => T} fn
+ * @param {(target: string) => T} fn
  * @returns {Promise<T>}
  */
 export async function withCoveringLock(backlogRoot, path, fn) {
   const target = canonical(path);
+  const run = () => fn(target);
   const lock = lockFor(backlogRoot, target);
-  if (lock == null) return fn();
-  if (lock.kind === 'spec') return withSpecFileLock(backlogRoot, target, fn);
-  return withLock(backlogRoot, async () => withSpecLock(target, fn));
+  if (lock == null) return run();
+  if (lock.kind === 'spec') return withSpecFileLock(backlogRoot, target, run);
+  return withLock(backlogRoot, async () => withSpecLock(target, run));
 }
 
 /**
@@ -140,13 +148,18 @@ export async function withCoveringLock(backlogRoot, path, fn) {
  * tracked file; a backlog that is no git repository ignores nothing). The
  * error names that path and the lock:
  * `<rel>: bl writes it without its covering lock (<kind> lock <lock path>)`.
+ * Returns that path, absolute (`writeTarget`): the caller writes it, not
+ * `path`, so a directory link retargeted after the check cannot send the
+ * write to a file whose lock it does not hold.
  * @param {string} backlogRoot
  * @param {string} path
+ * @returns {string}
  */
 export function assertCovered(backlogRoot, path) {
-  const lock = lockFor(backlogRoot, path);
-  if (lock == null || holds(lock.path)) return;
-  const rel = writtenPath(backlogRoot, path);
-  if (checkIgnore(backlogRoot, rel) === 0) return;
+  const target = writeTarget(path);
+  const lock = lockFor(backlogRoot, target);
+  if (lock == null || holds(lock.path)) return target;
+  const rel = writtenPath(backlogRoot, target);
+  if (checkIgnore(backlogRoot, rel) === 0) return target;
   throw new Error(`${rel}: bl writes it without its covering lock (${lock.kind} lock ${lock.path})`);
 }

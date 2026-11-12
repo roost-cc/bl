@@ -21,13 +21,13 @@
 
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { isAbsolute, join, relative, resolve } from 'path';
 import { createHash } from 'crypto';
 import { FrontmatterError, info, parseFrontmatterOf, runPluginBatch, serializeFrontmatter } from './config.js';
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
 import { assertHeld, release, tryLock } from './kernel-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { withLock } from './lock.js';
+import { canonical, withLock } from './lock.js';
 import { withCoveringLock } from './write-lock.js';
 
 /** The spec lock could not be taken: held by a live process past the wait, or not creatable. */
@@ -189,7 +189,10 @@ export async function withSpecFileLock(backlogRoot, path, fn) {
 export async function runPluginLocked(name, command, paths, vars, cwd, backlogRoot) {
   let status = 0;
   for (const path of paths) {
-    const run = () => runPluginBatch(name, command, [path], vars, cwd);
+    // The plugin gets the file whose lock is held, not a link to it, written
+    // as `path` is: absolute, or relative to `cwd`.
+    const run = (target) =>
+      runPluginBatch(name, command, [isAbsolute(path) ? target : relative(canonical(cwd), target)], vars, cwd);
     const r = await withCoveringLock(backlogRoot, resolve(cwd, path), run);
     if (r.missing) return r;
     if (r.status > status) status = r.status;

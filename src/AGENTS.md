@@ -448,7 +448,9 @@ backlog lock and need `atomicWriteFile` only.
   anything: `atomicWriteFile`, `removeBacklogPath` (a file or tree) and `moveIntoBacklog` (a
   rename, both ends checked). Without the lock, and unless `git check-ignore` says git ignores
   that path, they throw `<path>: bl writes it without its covering lock (<kind> lock <lock path>)`.
-  The check runs in production. Synchronous code, which cannot await a lock wait, takes a spec
+  Each one then changes the path `assertCovered` returns, the one it checked, and a plugin
+  gets the path its lock covers (`withCoveringLock`), never the link that reached it: a link
+  moved after the check cannot send the write to another file. The check runs in production. Synchronous code, which cannot await a lock wait, takes a spec
   lock with one try: `withSpecLockNow(path, fn)` (`spec-file.js`, F-126 D7) throws
   `SpecLockError` naming the holder when another process holds it, and the caller decides
   what that means. `writeBacklogPathNow` (`atomic-write.js`) writes or removes a path that way,

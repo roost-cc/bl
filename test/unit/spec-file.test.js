@@ -1,7 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'fs';
 import { dirname, join } from 'path';
 import { FrontmatterError, parseFrontmatter } from '../../src/config.js';
 import { holderOf, holds } from '../../src/kernel-lock.js';
@@ -329,6 +338,53 @@ for (const [rel, exists, held] of [
       clearTimeout(timer);
       holder.release();
     }
+  });
+}
+
+// plugin_alias_retarget_keeps_covering_lock and
+// plugin_rechecks_link_after_lock_wait: the plugin writes through `.bl/dir`,
+// a link to the first directory. While runPluginLocked waits for the first
+// file's covering lock, the link moves to the second directory, and the
+// second file's lock stays held. The plugin writes the first file, whose lock
+// it holds, and leaves the second.
+for (const [kind, sub, held] of [
+  ['story spec', 'stories', (dir, path) => specLockPath(path)],
+  ['ordinary file', 'tasks', (dir) => join(dir, LOCK_FILE)],
+]) {
+  test(`runPluginLocked writes the ${kind} it locked when a link to it moves during the lock wait`, async () => {
+    const dir = mkTempDir('bl-plugin-retarget-');
+    const first = join(dir, sub, 'one', 'index.md');
+    const second = join(dir, sub, 'two', 'index.md');
+    for (const [path, text] of [
+      [first, 'first'],
+      [second, 'second'],
+    ]) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+    }
+    const alias = join(dir, '.bl', 'dir');
+    mkdirSync(dirname(alias), { recursive: true });
+    symlinkSync(dirname(first), alias);
+    const writer = join(dir, 'writer.mjs');
+    writeFileSync(writer, "import { writeFileSync } from 'fs';\nwriteFileSync(process.argv[2], 'plugin');\n");
+    const firstHolder = holdLock(held(dir, first), 'another writer');
+    const secondHolder = sub === 'stories' ? holdLock(held(dir, second), 'a third writer') : null;
+    const timer = setTimeout(() => {
+      unlinkSync(alias);
+      symlinkSync(dirname(second), alias);
+      firstHolder.release();
+    }, 100);
+    try {
+      const command = `${JSON.stringify(process.execPath)} ${writer} {{path}}`;
+      await runPluginLocked('md', command, ['.bl/dir/index.md'], {}, dir, dir);
+    } finally {
+      clearTimeout(timer);
+      firstHolder.release();
+      secondHolder?.release();
+    }
+    assert.equal(readlinkSync(alias), dirname(second), 'the link moved during the wait');
+    assert.equal(readFileSync(first, 'utf8'), 'plugin');
+    assert.equal(readFileSync(second, 'utf8'), 'second');
   });
 }
 
