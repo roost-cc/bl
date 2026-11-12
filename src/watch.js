@@ -38,7 +38,8 @@ session. It works for every agent bl runs headless (Claude, Codex).
 
 It reads .bl/run/<id>.json every ${WATCH_POLL_MS / 1000} s. When no bl holds the run
 any more (a bl run, review or merge), watch prints the final status (done,
-escalated, stopped, or stale: a run whose bl died) and exits 0. It takes no lock and writes nothing.
+escalated, stopped, or stale: a run whose bl died) and exits 0. It takes no
+lock and writes nothing.
 
 Lines (each cut to the terminal width):
   ── <step> [<story>] · <agent> · <session> ──   a step's session starts

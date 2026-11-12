@@ -86,15 +86,17 @@ func (m Model) showRun(id string) (Model, tea.Cmd) {
 }
 
 // resumeWatch restarts the watch of the run box ⁶ shows when that run resumed after its watch
-// ended: a snapshot after the end showed the run not running (rewatch), and this one shows it
-// running. The feed stays, and the new watch adds the resumed session's header to it.
+// ended, and this snapshot shows it running: a snapshot after the end showed the run not running
+// (rewatch), or this one was read after a watch that exited 0 (watchEnd). Such a watch ends only
+// when no bl holds the run, so a run read as running after it is a new holder. The feed stays,
+// and the new watch adds the resumed session's header to it.
 func (m Model) resumeWatch() (Model, tea.Cmd) {
 	r := m.run(m.detail)
 	switch {
 	case !m.watchDone || r == nil:
 	case r.Status != "running":
 		m.rewatch = true
-	case m.rewatch:
+	case m.rewatch, !m.watchEnd.IsZero() && m.snap.Runs.ReadAt.After(m.watchEnd):
 		return m.startWatch()
 	}
 	return m, nil
@@ -105,7 +107,7 @@ func (m Model) resumeWatch() (Model, tea.Cmd) {
 func (m Model) startWatch() (Model, tea.Cmd) {
 	m.stopWatch()
 	m.watchGen++
-	m.watchDone, m.rewatch = false, false
+	m.watchDone, m.watchEnd, m.rewatch = false, time.Time{}, false
 	argv, gen := watch.Command(m.blArgv, m.detail), m.watchGen
 	return m, func() tea.Msg {
 		w, err := watch.Start(argv, gen)
@@ -160,6 +162,8 @@ func (m Model) watchMsg(msg tea.Msg) (Model, tea.Cmd) {
 			m.watcher, m.watchDone = nil, true
 			if msg.Reason != "" {
 				m.feed = append(m.feed, watch.Event{Kind: "note", Text: msg.Reason})
+			} else {
+				m.watchEnd = time.Now()
 			}
 		}
 	}

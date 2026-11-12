@@ -69,8 +69,8 @@ Output (stderr; stdout stays empty):
 Exit codes:
   0   The run stopped.
   1   No running run for the id (a bl review or bl merge holds it), a bad
-      argument, a holder that has not written its pid yet, or the run still holds its
-      lock after ${STOP_WAIT_MS / 1000} s: "stop requested: <id> (pid <n>) stops at its
+      argument, a holder that has not written its pid yet, or the run still
+      holds its lock after ${STOP_WAIT_MS / 1000} s: "stop requested: <id> (pid <n>) stops at its
       next check". The request stays, and the run stops at its next check.`;
 
 /** The line `bl stop` ends with when the run stopped. */

@@ -71,6 +71,7 @@ type Model struct {
 	watcher       *watch.Watch // the `bl watch` of that run, while it runs
 	watchGen      int          // the generation of the watch the model reads
 	watchDone     bool         // whether that watch ended (resumeWatch)
+	watchEnd      time.Time    // when that watch ended with no reason (bl watch exited 0); else zero
 	rewatch       bool         // whether a snapshot after its end showed the run not running
 	feed          []watch.Event
 	follow        bool   // whether box ⁶'s feed shows its newest lines

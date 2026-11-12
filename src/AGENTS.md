@@ -3343,7 +3343,9 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   another run is shown or the view quits, and drops the messages of a watch it replaced. When
   the watch of the run shown has ended, and a later snapshot shows that run not running and then
   running again (a `--resume`), the view starts a new watch of it; the feed keeps its lines
-  (`resumeWatch`). Each line is a feed line, cut to the box:
+  (`resumeWatch`). After a watch that exited 0, the first snapshot read after the end that shows
+  the run running does the same: that watch ends only when no bl holds the run. Each line is a
+  feed line, cut to the box:
 
   | `bl watch --json` line | Feed line                                                       |
   | ---------------------- | --------------------------------------------------------------- |
@@ -3559,7 +3561,8 @@ reads its `--json` stream.
 3. When no bl holds the run lock any more (a `bl run`, a standalone `bl review` or a
    `bl merge` integration, whatever the saved `status` says while it works), it reads the
    session's last events, prints the end line with the run state's `status` (`stale` for one
-   that says `running`, as in `bl top`) and exits 0. With no run state for the id, it says so on stderr and exits 1.
+   that says `running`, as in `bl top`) and exits 0. With no run state for the id, it says so on
+   stderr and exits 1.
 
 The first session starts with its last 30 events (`--from-start`: all of them); every later
 session is new, so `watch` prints it from its start. `watch` takes no lock and writes nothing

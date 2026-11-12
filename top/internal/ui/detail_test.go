@@ -337,14 +337,17 @@ func TestHelpListsTheKeysOfBoxSix(t *testing.T) {
 
 // TestTheFeedFollowsARunThatResumesAfterItsWatchEnded: once the watch of the run box ⁶ shows has
 // ended, a snapshot that shows the run not running (stopped, escalated, clean, stale, failed), then
-// one that shows it running again, starts a new watch; the feed stays. A watch that has not ended,
-// a run still running at the end, and another run shown start none.
+// one that shows it running again, starts a new watch; the feed stays. So does a first snapshot
+// read after a watch that exited 0 that shows the run running (a resume between two snapshots). A
+// watch that has not ended, a snapshot read before the end, a watch that ended with a reason, and
+// another run shown start none.
 func TestTheFeedFollowsARunThatResumesAfterItsWatchEnded(t *testing.T) {
-	// at is the model after a snapshot in which F-1 has status; restarted says whether it started
-	// a new watch.
+	// readAt is the time the snapshots of at are read; restarted says whether one started a new watch.
+	readAt := time.Now()
+	// at is the model after a snapshot in which F-1 has status.
 	at := func(m Model, status string) (Model, bool) {
 		s := stream.Snapshot{Schema: stream.Schema}
-		s.Runs.ReadAt = time.Now()
+		s.Runs.ReadAt = readAt
 		s.Runs.Rows = []stream.Run{{ID: "F-1", Status: status}, {ID: "F-2", Status: "running"}}
 		gen := m.watchGen
 		m, cmds := m.snapshot(s)
@@ -353,7 +356,8 @@ func TestTheFeedFollowsARunThatResumesAfterItsWatchEnded(t *testing.T) {
 		}
 		return m, m.watchGen != gen
 	}
-	// shown is a model that shows F-1 with a feed, its watch of generation 3 running; ended, its end.
+	// shown is a model that shows F-1 with a feed, its watch of generation 3 running; ended, its end
+	// after the snapshots are read.
 	shown := func(ended bool) Model {
 		m := New([]string{"bl"}, 2000, false, nil)
 		m.detail, m.watchGen = "F-1", 3
@@ -364,9 +368,10 @@ func TestTheFeedFollowsARunThatResumesAfterItsWatchEnded(t *testing.T) {
 		return m
 	}
 	for _, status := range []string{"stopped", "escalated", "clean", "stale", "failed"} {
+		readAt = time.Now().Add(-time.Second)
 		m, restarted := at(shown(true), "running")
 		if restarted {
-			t.Errorf("%s: a run still running when its watch ended restarted it", status)
+			t.Errorf("%s: a snapshot read before the watch ended restarted it", status)
 		}
 		if m, restarted = at(m, status); restarted {
 			t.Errorf("%s: a run that is not running restarted its watch", status)
@@ -382,8 +387,24 @@ func TestTheFeedFollowsARunThatResumesAfterItsWatchEnded(t *testing.T) {
 			t.Errorf("%s: the new watch was started twice", status)
 		}
 	}
+	// A resume between two snapshots: the first one read after the end shows the run running.
+	m := shown(true)
+	readAt = time.Now().Add(time.Second)
+	m, restarted := at(m, "running")
+	if !restarted {
+		t.Error("a run read as running after its watch exited 0 got no new watch")
+	}
+	if len(m.feed) != 1 || m.feed[0].Text != "before" {
+		t.Errorf("a resume between two snapshots: the feed %v", m.feed)
+	}
+	// A watch that ended with a reason (bl watch failed) is not started again on each snapshot.
+	m, _ = shown(false).watchMsg(watch.EndMsg{Gen: 3, Reason: "bl watch: exit status 1"})
+	if _, restarted := at(m, "running"); restarted {
+		t.Error("a watch that failed was started again")
+	}
+	readAt = time.Now().Add(-time.Second)
 	// A watch that has not ended keeps following through a stop and a resume.
-	m, _ := at(shown(false), "stopped")
+	m, _ = at(shown(false), "stopped")
 	if _, restarted := at(m, "running"); restarted {
 		t.Error("a watch that had not ended was restarted")
 	}
