@@ -3387,9 +3387,12 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
     `--bl-argv`, a `url` through `xdg-open` (`open` on macOS). A box says it runs (`esc` hides
     it: `bl stop` takes up to 30 s, and the screen keeps its redraws), then a result box shows
     the command, `exit <code>` and its last stderr line, until any key. The next snapshot shows
-    the change.
+    the change. A result replaces only its own running box (each action has a number,
+    `dialog.seq`) or shows when no dialog is open; over a newer dialog it shows in the bottom
+    border instead.
   - an action with `stops` marks its run: the run's `stopped` end does not notify (D8,
-    `Differ.Quiet`). The mark goes when the run ends with any status.
+    `Differ.Quiet`). The mark goes when the run ends with any status, or when the stop failed
+    (it did not start or exited other than 0: `Differ.Unquiet`).
 - **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
   before. A new `escalation` or `task` item (by item id) and a run that gets an end status
   (every status but `running`, `stale` and none: `clean`, `no-change`, `reviewed`, `escalated`,

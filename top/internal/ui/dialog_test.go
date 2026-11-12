@@ -102,6 +102,8 @@ func TestActionDialogsGolden(t *testing.T) {
 	out = append(out, dialogText(m))
 	m, _ = press(t, atRow(t, 1, "S-1330"), text("s"))
 	out = append(out, dialogText(m))
+	// The result of an action whose box esc hid: it shows with no dialog open.
+	m.dialog = nil
 	m, _ = update(t, m, actionDoneMsg{words: []string{"bl", "task", "done", "T-52"},
 		result: actions.Result{Code: 0, Last: "committed tasks/T52-renovate-image (backlog 4f1c2a9)"}})
 	out = append(out, dialogText(m))
@@ -347,6 +349,62 @@ func TestAFailedStopLeavesALaterStopLoud(t *testing.T) {
 		if got := slices.ContainsFunc(notes, func(n notify.Note) bool { return n.ID == "S-1330" }); got != c.notify {
 			t.Errorf("%s: S-1330's stopped end notifies: %v, want %v", c.what, got, c.notify)
 		}
+	}
+}
+
+// TestALateResultKeepsTheNewerDialog: the result of an action whose box esc hid shows only in its
+// own running box or with no dialog open; a newer dialog of each stage, or another action's running
+// box, stays, and the result goes to the note line. A tmux window that opened late keeps the note.
+func TestALateResultKeepsTheNewerDialog(t *testing.T) {
+	fakeTools(t, true, "stopped S-1330 at review; resume: bl run S-1330 --resume", 0)
+	// started runs bl stop S-1330 after its y, hides its box, and returns its end.
+	started := func() (Model, tea.Msg) {
+		m, _ := press(t, atRow(t, 1, "S-1330"), text("s"))
+		m, cmd := press(t, m, text("y"))
+		m, _ = press(t, m, esc)
+		return m, cmd()
+	}
+	for _, stage := range []int{stageMenu, stageInput, stageAsk, stageRunning, stageResult} {
+		m, done := started()
+		newer := &dialog{stage: stage, row: "F-2", seq: 99}
+		m.dialog = newer
+		m, _ = update(t, m, done)
+		if m.dialog != newer {
+			t.Errorf("stage %d: the late result replaced the newer dialog", stage)
+		}
+		if !strings.Contains(m.note, "bl stop S-1330: exit 0 · stopped S-1330 at review") {
+			t.Errorf("stage %d: the note %q", stage, m.note)
+		}
+	}
+	// No dialog open: the hidden box's result shows.
+	m, done := started()
+	m, _ = update(t, m, done)
+	if m.dialog == nil || m.dialog.stage != stageResult {
+		t.Errorf("with no dialog, the result box did not show: %+v", m.dialog)
+	}
+	// Two overlapping actions: the first one's result does not replace the second one's running box;
+	// the second one's result does.
+	m, first := started()
+	m, _ = press(t, m, text("s"))
+	m, cmd := press(t, m, text("y"))
+	second := cmd()
+	m, _ = update(t, m, first)
+	if m.dialog == nil || m.dialog.stage != stageRunning {
+		t.Errorf("the first result replaced the second running box: %+v", m.dialog)
+	}
+	m, _ = update(t, m, second)
+	if m.dialog == nil || m.dialog.stage != stageResult {
+		t.Errorf("the second result did not replace its own running box: %+v", m.dialog)
+	}
+	// A tmux window that opened after a newer note leaves the note; one that failed says why.
+	m.note = "w needs tmux"
+	m, _ = update(t, m, tmuxDoneMsg{})
+	if m.note != "w needs tmux" {
+		t.Errorf("an opened window cleared the note: %q", m.note)
+	}
+	m, _ = update(t, m, tmuxDoneMsg{Err: "tmux: no server"})
+	if m.note != "tmux: no server" {
+		t.Errorf("a failed window: the note %q", m.note)
 	}
 }
 

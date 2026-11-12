@@ -76,6 +76,7 @@ type Model struct {
 	note          string // a red line in the bottom border until the next key (`w needs tmux`)
 	help          bool
 	dialog        *dialog // the action dialog (D7), while it is open
+	actionSeq     int     // how many actions ran as a child: the number of the last (dialog.seq)
 	snap          *stream.Snapshot
 	stream        *stream.Stream
 	gen           int // the generation of the stream the model reads
@@ -175,7 +176,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case watchStartedMsg, watch.EventMsg, watch.EndMsg:
 		return m.watchMsg(msg)
 	case tmuxDoneMsg:
-		m.note = msg.Err
+		// A window that opened leaves the note line as it is: a newer note stays.
+		if msg.Err != "" {
+			m.note = msg.Err
+		}
 	case actionDoneMsg:
 		return m.actionDone(msg), nil
 	}

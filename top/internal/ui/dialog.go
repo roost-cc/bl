@@ -40,6 +40,7 @@ type dialog struct {
 	text    string          // the typed note or reason
 	refused bool            // whether ↵ refused an empty reason
 	words   []string        // the command that runs or ran
+	seq     int             // the action's number (Model.actionSeq), from its y
 	result  actions.Result
 }
 
@@ -48,6 +49,7 @@ type dialog struct {
 type actionDoneMsg struct {
 	words  []string
 	stops  string
+	seq    int
 	result actions.Result
 }
 
@@ -226,20 +228,30 @@ func (m Model) runAction(d dialog) (Model, tea.Cmd) {
 	if d.action.Stops != "" {
 		m.differ.Quiet(d.action.Stops)
 	}
-	d.stage, d.words = stageRunning, words
+	m.actionSeq++
+	d.stage, d.words, d.seq = stageRunning, words, m.actionSeq
 	m.dialog = &d
-	stops := d.action.Stops
-	return m, func() tea.Msg { return actionDoneMsg{words: words, stops: stops, result: actions.Run(argv)} }
+	stops, seq := d.action.Stops, d.seq
+	return m, func() tea.Msg { return actionDoneMsg{words: words, stops: stops, seq: seq, result: actions.Run(argv)} }
 }
 
-// actionDone shows the result box of a child that ended, over any dialog. A stop that failed (it did
-// not start, exited other than 0, or timed out) takes its run's mark off, so that a later stop from
-// another shell notifies.
+// actionDone shows the result box of a child that ended: in place of its own running box, or when
+// no dialog is open (esc hid the box). A newer dialog (a menu, a text, a question, another result or
+// another action's running box) stays, and the result shows as the note line instead. A stop that
+// failed (it did not start, exited other than 0, or timed out) takes its run's mark off, so that a
+// later stop from another shell notifies.
 func (m Model) actionDone(msg actionDoneMsg) Model {
 	if msg.stops != "" && msg.result.Code != 0 {
 		m.differ.Unquiet(msg.stops)
 	}
-	m.dialog = &dialog{stage: stageResult, words: msg.words, result: msg.result}
+	if d := m.dialog; d == nil || (d.stage == stageRunning && d.seq == msg.seq) {
+		m.dialog = &dialog{stage: stageResult, words: msg.words, seq: msg.seq, result: msg.result}
+		return m
+	}
+	m.note = fmt.Sprintf("%s: exit %d", actions.Show(msg.words), msg.result.Code)
+	if msg.result.Last != "" {
+		m.note += " · " + msg.result.Last
+	}
 	return m
 }
 
