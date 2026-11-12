@@ -3813,11 +3813,12 @@ lock of each unit's directory and, for a feature, of each of its stories' direct
 `takeDirLock`. It never waits. If another process holds one, it releases what it took and
 refuses with `<id> is locked by a live bl process (pid <n>): <lock path>`. If a read throws, it
 releases what it took and throws again. A lock this process holds is taken again, one depth
-deeper. On success it returns `release` and `scope`; `scope()` returns the backlog-relative
-directories it locked and those of `unitLockDirs` read again that did not exist at the take, so
-a story created for the feature during the session is in the verb's commit scope (F-122 D3), and
-so is a locked story that the session took out of the feature. An existing story linked to the
-feature after the take is not: the verb does not hold its lock. The work unit lock sits beside
+deeper. On success it returns `release` and `scope`. `scope()` reads `unitLockDirs` again, takes
+the lock of each directory there that did not exist at the take, and returns the backlog-relative
+directories the verb holds. So a story created for the feature during the session is in the
+verb's commit scope (F-122 D3), and so is a locked story that the session took out of the feature.
+A created story whose lock another process holds is not, and neither is an existing story linked
+to the feature after the take: the verb does not hold their locks. The work unit lock sits beside
 the spec lock and does not replace it: the spec lock guards one write and waits up to 60 s, and
 the work unit lock is held for a whole session. Lock order: a verb takes its work unit locks
 first, and the backlog lock and the spec lock inside them, one write at a time. A work unit lock

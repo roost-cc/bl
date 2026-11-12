@@ -5,7 +5,9 @@ import { join } from 'path';
 import { loadConfig } from '../../src/config.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { takeUnitLocks, unitLockDirs, unitLockPath } from '../../src/unit-lock.js';
+import { commitChangedSince, dirtySnapshot } from '../../src/backlog-commit.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
+import { captureStderr, g } from '../helpers/backlog-commit-fixture.js';
 import { mkTempBacklog, STORY_INDEX_TEMPLATE } from '../helpers/tempdir.js';
 
 /** A backlog with feature F-1 (stories S-1, S-2) and a loose story S-3. */
@@ -98,23 +100,49 @@ test('takeUnitLocks is re-entrant within one process: the lock stays until the l
   }
 });
 
-test('scope() reads the feature again: a story tagged to it after the take is in it', () => {
-  const { dir, config, cleanup, unitDir, feature } = fixture();
-  try {
-    const got = takeUnitLocks(config, [feature], 'bl refine F-1');
-    const storyDir = unitDir('stories/S4-four');
-    mkdirSync(storyDir);
-    writeFileSync(
-      join(storyDir, 'index.md'),
-      STORY_INDEX_TEMPLATE({ id: 'S-4', component: 'C00', title: 'Four', feature: 'F-1' }),
-    );
-    assert.deepEqual(got.scope(), [...FEATURE_DIRS, 'stories/S4-four']);
-    assert.equal(holderOf(unitLockPath(dir, storyDir)), null, 'the new story is not locked (Out of Scope)');
-    got.release();
-  } finally {
-    cleanup();
-  }
-});
+// A story created for the feature after the take: scope() takes its lock and
+// the commit holds it; if another process holds its lock, scope() leaves it
+// out, and the commit holds none of its paths.
+for (const heldByOther of [false, true]) {
+  test(`feature_scope_does_not_commit_new_story_held_by_another_process: the new story's lock is ${heldByOther ? 'held by another process' : 'free'}`, async () => {
+    const { dir, config, cleanup, unitDir, feature } = fixture();
+    let child;
+    try {
+      g(dir, 'init', '-q', '-b', 'main');
+      g(dir, 'add', '.');
+      g(dir, 'commit', '-q', '-m', 'base');
+      const got = takeUnitLocks(config, [feature], 'bl refine F-1');
+      const before = dirtySnapshot(dir);
+      const storyDir = unitDir('stories/S4-four');
+      const lockPath = unitLockPath(dir, storyDir);
+      mkdirSync(storyDir);
+      writeFileSync(
+        join(storyDir, 'index.md'),
+        STORY_INDEX_TEMPLATE({ id: 'S-4', component: 'C00', title: 'Four', feature: 'F-1' }),
+      );
+      if (heldByOther) child = await holdLockInChild(lockPath);
+      writeFileSync(join(storyDir, 'notes.md'), 'an edit\n');
+
+      const [failed, err] = await captureStderr(() =>
+        commitChangedSince(dir, before, 'chore: refine F-1', { owner: 'refine F-1', scope: got.scope }),
+      );
+      assert.equal(failed, false, err);
+      const committed = g(dir, 'log', '-1', '--name-only', '--format=').split('\n').filter(Boolean);
+      const s4 = ['stories/S4-four/index.md', 'stories/S4-four/notes.md'];
+      assert.deepEqual(
+        committed.filter((p) => p.startsWith('stories/S4-four/')),
+        heldByOther ? [] : s4,
+      );
+      assert.deepEqual(got.scope(), heldByOther ? FEATURE_DIRS : [...FEATURE_DIRS, 'stories/S4-four']);
+      assert.equal(holderOf(lockPath), heldByOther ? child.pid : process.pid);
+      got.release();
+      if (!heldByOther) assert.equal(holderOf(lockPath), null, 'release() gives back the lock scope() took');
+    } finally {
+      await child?.kill();
+      cleanup();
+    }
+  });
+}
 
 test('scope() keeps a locked story that the session took out of the feature', () => {
   const { config, cleanup, unitDir, feature } = fixture();

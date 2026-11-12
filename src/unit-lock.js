@@ -72,12 +72,14 @@ export function unitLockDirs(config, unit) {
  * again, one depth deeper (`tryLock` is re-entrant), so `bl merge F-n` can run
  * the run loop's take under its own.
  *
- * On success, `release()` gives back every lock this call took, and `scope()`
- * returns the backlog-relative directories it locked, and those of
- * `unitLockDirs` read again that did not exist at the take: a story the
- * session created for a feature is in it (D3), and so is a locked story the
- * session took out of its feature. An existing story tagged to the feature
- * after the take is not: this call does not hold its lock.
+ * On success, `scope()` reads `unitLockDirs` again, takes the lock of each
+ * directory there that did not exist at the take, and returns the
+ * backlog-relative directories this call holds: a story the session created
+ * for a feature is in it (D3), and so is a locked story the session took out
+ * of its feature. A created story that another process holds is not, and
+ * neither is an existing story tagged to the feature after the take: this
+ * call does not hold their locks. `release()` gives back every lock this call
+ * and `scope()` took.
  *
  * @param {{ backlogRoot: string }} config
  * @param {WorkUnit[]} units
@@ -116,8 +118,18 @@ export function takeUnitLocks(config, units, info) {
     release();
     throw e;
   }
-  const created = () => units.flatMap((u) => unitLockDirs(config, u)).filter((d) => !existing.has(d));
-  const scope = () => [...new Set([...locked, ...created()].map((d) => relative(config.backlogRoot, d)))];
+  const scope = () => {
+    // A story created since the take joins `locked` once this call holds its
+    // lock; one that another process holds stays out of the scope.
+    const dirs = units.flatMap((u) => unitLockDirs(config, u));
+    for (const dir of new Set(dirs.filter((d) => !existing.has(d) && !locked.includes(d)))) {
+      const got = takeDirLock(config.backlogRoot, 'unit', dir, info);
+      if (got.refused != null) continue;
+      taken.push(got.release);
+      locked.push(dir);
+    }
+    return [...new Set(locked.map((d) => relative(config.backlogRoot, d)))];
+  };
   return { refused: null, release, scope };
 }
 
