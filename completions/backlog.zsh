@@ -123,6 +123,7 @@ _roost_bl() {
     'allow:Add permission patterns from agent logs'
     'capacity:Whether each agent configuration can take work now'
     'top:A live view of the runs, the inbox, bl next, capacity and history'
+    'watch:Follow the live agent session of a run, step by step'
     'help:Show help'
   )
 
@@ -192,6 +193,14 @@ _roost_bl() {
         '(--json --stream)--no-bell[Ring no bell for a notification]' \
         '(--json --stream)--no-desktop[Run no notify-send for a notification]' \
         '(--json --stream)--no-push[Run no phone push command]'
+      ;;
+    watch)
+      local -a ids
+      ids=( ${(f)"$(_roost_feature_ids)"} ${(f)"$(_roost_story_ids)"} )
+      _arguments -s \
+        '--from-start[Print the current session from its beginning]' \
+        '--json[Print one JSON object per line]' \
+        '1:feature or story id:(${ids})'
       ;;
     inbox)
       if [[ "${words[2]}" == done ]]; then

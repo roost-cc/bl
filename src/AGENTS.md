@@ -83,6 +83,8 @@ Per-command stdout contracts:
 | `bl top --json`      | one JSON object (schema `bl-top-json/v1`)                 |
 | `bl top --stream`    | one JSON object per line until stdin closes               |
 | `bl top`             | the view (a terminal UI); `--version`: one line           |
+| `bl watch`           | one line per header or event, then the end line           |
+| `bl watch --json`    | one JSON object per line, the last `{kind: "end"}`        |
 | `bl help`            | help text                                                 |
 | `bl <cmd> --help`    | help text                                                 |
 
@@ -1403,12 +1405,26 @@ review` prints the prompt-guidance note for one that does not (Codex).
   **Codex native approvals**), the others do nothing.
 - The headless result's outcome, `structured` and `structuredError` (see
   **Session outcomes** below).
-
-Nothing under `src/` outside `src/agents/` imports an adapter file or compares
-a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
-`test/unit/agent-boundary.test.js` fails on either and names its one
-exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
-a name as a literal (a default argument, a prompt variant) is allowed.
+- `followHandle({ cwd, eventsPath, sessionId })` → `{ id, path }` or null, and
+  `followSession(handle, { fromStart, signal })` → an async iterator of events (S-1272, see
+  `bl watch`). The handle says, before the spawn, where a headless session's events will be:
+  `path` is a JSON Lines file, `id` the session id when known. `spawn({ follow })` makes the
+  session write there. Claude: a new id passed as `--session-id` (a resume keeps its own), and
+  `path` the transcript, `<config dir>/projects/<slug of cwd>/<id>.jsonl`, which headless
+  `claude -p` sessions also write. Codex: `id` null and `path` the `eventsPath` the caller
+  gives (`.bl/run/<id>.<n>.<step>.events.jsonl`, `n` the run history's length); spawn gives
+  `codex exec --json` that file as its stdout, and reads the stream back from it when codex
+  exits. The base (Gemini) returns null and throws `<agent> cannot follow a session`. The
+  events are `{ kind: "text", at, text }` and `{ kind: "tool", at, tool, summary }`, `summary`
+  being the description, command, path or pattern on one line: a Claude text or `tool_use`
+  block of an assistant record (`claudeTranscriptEvents`), a Codex `agent_message`, command,
+  file change, MCP tool call or web search item (`codexStreamEvents`). Both adapters read
+  their file through `followJsonl` (`src/agents/follow.js`): the last 30 events first unless
+  `fromStart`, then every 500 ms, and once more when `signal` aborts. `src/agents/` imports an adapter file or compares
+  a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
+  `test/unit/agent-boundary.test.js` fails on either and names its one
+  exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
+  a name as a literal (a default argument, a prompt variant) is allowed.
 
 #### Session outcomes (F-68 D1, D5)
 
@@ -3413,6 +3429,47 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 - stdout carries only the JSON. A section that could not be read
   (`bl top: <section> not read: <message>`) and each inbox warning (`warning: …`) go to stderr,
   in `--stream` once when they first appear.
+
+### `bl watch`
+
+`bl watch <F-id|S-id> [--from-start] [--json]` (`src/watch.js`, S-1272) follows the live agent
+session of a headless `bl run`, `bl review` or `bl merge` integration: one line per agent
+message or tool call. When the run moves to its next step's session (implement, self-review,
+review, fix), it prints a new header and follows that session. `bl top`'s detail box (S-1334)
+reads its `--json` stream.
+
+1. Before each spawn, `runSession` (`recordSession` in `src/feature-run.js`) asks the step's
+   adapter for a follow handle (`followHandle()`, see **The adapter interface**), writes the
+   run state's `session` (`{ step, story, agent, model, id, path, startedAt }`) and saves the
+   run state. It passes the handle to the spawn (`runner.session({ follow })`, then
+   `runHeadlessSession({ follow })`, then `provider.spawn({ follow })`). An interactive session
+   and an adapter that cannot follow one have `id` and `path` null.
+2. `bl watch` reads `.bl/run/<id>.json` every 2 s. When its `session` names another file
+   than the one it follows, it prints the header and asks that agent's adapter for the events
+   (`followSession()`). A session with the same file is the same session: the outcome retry
+   resumes a Claude session in its own transcript. A read that races `saveRunState` is tried
+   again at the next poll.
+3. When the run state's `status` is no longer `running`, or says `running` while no bl holds
+   the run lock (`stale`, as in `bl top`), it reads the session's last events, prints the end
+   line and exits 0. With no run state for the id, it says so on stderr and exits 1.
+
+The first session starts with its last 30 events (`--from-start`: all of them); every later
+session is new, so `watch` prints it from its start. `watch` takes no lock and writes nothing
+to the backlog. It never reads an agent's files itself: the adapter knows where they are.
+
+| Line (text)                                          | `--json`                                             |
+| ---------------------------------------------------- | ---------------------------------------------------- |
+| `── <step> [<story>] · <agent> · <session> ──`       | `{kind: "step", step, story, agent, model, session}` |
+| `💬 <text>`                                          | `{kind: "text", at, text}`                           |
+| `🔧 <tool>  <description, command, path or pattern>` | `{kind: "tool", at, tool, summary}`                  |
+| `── <id> · <status> ──`                              | `{kind: "end", status}`, the last line               |
+
+A text line is on one line and cut to the terminal width (80 when stdout is not a terminal).
+The header's session is the session id, or the events file's name when the adapter knows no
+id before the spawn (Codex); `--json`'s `session` is the id or null. `at` is an ISO time:
+the transcript record's time for Claude, the time `watch` read the event for Codex. No
+thinking and no tool output is printed. A session with no live feed (interactive, or Gemini,
+which has no headless mode) gets its header and one stderr line that says so.
 
 ### `bl list`
 

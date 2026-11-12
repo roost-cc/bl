@@ -37,7 +37,7 @@ import {
   spendLimit,
 } from '../helpers/feature-run-fixture.js';
 import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
-import { claudeCapacity } from '../../src/agents/claude.js';
+import { claudeCapacity, pathToProjectSlug } from '../../src/agents/claude.js';
 import { codexCapacity } from '../../src/agents/codex.js';
 
 // ---------------------------------------------------------------------------
@@ -1724,6 +1724,58 @@ test('bl status names the configurations that reviewed the latest round', () => 
     assert.ok(out.includes('\n  round 2 reviewed by codex gpt-6-sol, claude sonnet\n'), out);
     assert.ok(!out.includes('round 1 reviewed by'), 'only the latest round');
   } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The step's session in the run state (S-1272): `bl watch` follows it
+// ---------------------------------------------------------------------------
+
+test("each headless step's session is in the run state before it spawns, with the adapter's follow handle", async () => {
+  const { dir, cleanup, config, feature, prep } = setup({}, { ...MODELS, ...REVIEWERS });
+  const claudeDir = mkTempDir('bl-claude-cfg-');
+  const prev = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = claudeDir;
+  try {
+    const runner = fakeRunner({ dir, feature });
+    const spawned = [];
+    const session = runner.session;
+    runner.session = (o) => {
+      // What `bl watch` reads at this moment: the run state on disk.
+      const onDisk = JSON.parse(readFileSync(runStatePath(config, 'F-1'), 'utf8')).session;
+      spawned.push({ o, onDisk });
+      return session(o);
+    };
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    assert.ok(spawned.length > 4);
+    const unitDir = spawned[0].o.unitDir ?? prep.worktreePath;
+    for (const { o, onDisk } of spawned) {
+      assert.equal(onDisk.agent, o.agent);
+      assert.equal(onDisk.model, o.model);
+      assert.deepEqual({ id: onDisk.id, path: onDisk.path }, o.follow, 'the handle the spawn writes to');
+    }
+    const implement = spawned.filter((s) => s.onDisk.step === 'implement').map((s) => s.onDisk);
+    assert.deepEqual(
+      implement.map((s) => s.story),
+      ['S-1', 'S-2'],
+    );
+    for (const s of implement) {
+      assert.equal(s.agent, 'claude');
+      assert.match(s.id, /^[0-9a-f-]{36}$/);
+      assert.equal(s.path, join(claudeDir, 'projects', pathToProjectSlug(unitDir), `${s.id}.jsonl`));
+    }
+    const reviews = spawned.filter((s) => s.onDisk.agent === 'codex').map((s) => s.onDisk);
+    assert.ok(reviews.length > 0);
+    for (const s of reviews) {
+      assert.equal(s.id, null);
+      assert.match(s.path, /\/\.bl\/run\/F-1\.\d+\.review-[a-z-]+\.events\.jsonl$/);
+    }
+    assert.equal(new Set(reviews.map((s) => s.path)).size, reviews.length, 'each spawn has a file of its own');
+  } finally {
+    if (prev == null) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = prev;
     cleanup();
   }
 });

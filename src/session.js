@@ -789,7 +789,9 @@ function sessionModel(model, agent, config) {
  * `sessionId`, the spawn resumes that session and sends `prompt` as it is:
  * the loop's one outcome retry (F-68 D5), whose session already has the
  * headless rules. `stderrTail` is the last 20 non-empty lines of the agent
- * CLI's stderr (S-1398), or `''`.
+ * CLI's stderr (S-1398), or `''`. `follow` is the adapter's follow handle
+ * for this session (`followHandle()`, S-1272), or null; the spawn writes the
+ * session's events where it says, for `bl watch`.
  *
  * @returns {Promise<{ status: number, output: string, isError: boolean,
  *             usage: object|null, sessionId: string|null, denials: string[],
@@ -815,6 +817,7 @@ export async function runHeadlessSession({
   effort = null,
   schema = null,
   sessionId = null,
+  follow = null,
   run = undefined,
   units = null,
   provider: providerOverride = null,
@@ -890,6 +893,7 @@ export async function runHeadlessSession({
       // The session's effort level (F-85 D4, `sessionEffort`); null for none.
       effort,
       schema,
+      follow,
       ...(run ? { run } : {}),
     });
   } finally {

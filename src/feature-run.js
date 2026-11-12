@@ -628,6 +628,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       scope = null,
       schema = null,
       retry = null,
+      follow = null,
     }) {
       // An interactive session returns its outcome in the outcome file (F-68 D1).
       const promptVars = interactive && schema ? { ...vars, outcomeCarrier: 'file' } : vars;
@@ -692,6 +693,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         effort,
         schema,
         sessionId: resume,
+        follow,
         // The agent and all it starts live in the step's scope (F-70 D4).
         run: scope ? processScope.scopedSpawn(scope) : undefined,
       });
@@ -1635,6 +1637,41 @@ function markOut(ctx, { step, configuration: c, kind, scope, message, until }) {
 }
 
 /**
+ * Record the session a step is about to spawn as the run state's `session`
+ * (S-1272), and save the state before the spawn, so `bl watch` follows it
+ * while it runs: `{ step, story, agent, model, id, path, startedAt }`.
+ * `path` and `id` are the adapter's follow handle (`followHandle()`): the
+ * file the session's events go to and the session id, when known. Both are
+ * null for an interactive session (the operator's terminal shows it) and for
+ * an adapter that cannot follow one. Returns the handle, for the spawn, or
+ * null. A Codex session's events go to
+ * `.bl/run/<id>.<n>.<step>.events.jsonl`, `n` the history's length, so each
+ * spawn of the run has a file of its own.
+ */
+function recordSession(ctx, { step, story, configuration: c, startedAt, cwd, sessionId }) {
+  const eventsPath = join(
+    ctx.config.backlogRoot,
+    RUN_DIR,
+    `${ctx.feature.id}.${ctx.state.history.length}.${step.replace(/[^A-Za-z0-9-]/g, '-')}.events.jsonl`,
+  );
+  const handle =
+    ctx.runner.interactive || !hasProvider(c.agent)
+      ? null
+      : getProvider(c.agent).followHandle({ cwd, eventsPath, sessionId });
+  ctx.state.session = {
+    step,
+    story: story ?? null,
+    agent: c.agent,
+    model: c.model ?? null,
+    id: handle?.id ?? null,
+    path: handle?.path ?? null,
+    startedAt,
+  };
+  saveRunState(ctx.config, ctx.state);
+  return handle;
+}
+
+/**
  * The adapter's capacity reading for `c` (F-64 D1), through the runner. An
  * `account`-scoped answer is the agent's for every model, so `asked` keeps
  * it and the agent is asked once per walk. A runner without `capacity`, or
@@ -1731,6 +1768,14 @@ export async function runSession(
   // retry's `{ sessionId, note }` (F-68 D5).
   const spawnRecorded = async (c, retry) => {
     const started = new Date().toISOString();
+    const follow = recordSession(ctx, {
+      step,
+      story,
+      configuration: c,
+      startedAt: started,
+      cwd: unitDir ?? prep.worktreePath,
+      sessionId: retry?.sessionId ?? null,
+    });
     const r = await runner.session({
       mode,
       agent: c.agent,
@@ -1754,6 +1799,7 @@ export async function runSession(
       scope: newScope(ctx),
       ...(schema ? { schema } : {}),
       ...(retry ? { retry } : {}),
+      ...(follow ? { follow } : {}),
     });
     // Usage first, on every spawn: the provider has already added it to the
     // unit file, and the run state must agree even when the spawn was a

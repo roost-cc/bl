@@ -1136,6 +1136,7 @@ const BOOLEAN_FLAGS = new Set([
   'force',
   'features',
   'home',
+  'from-start',
 ]);
 
 const SHORT_FLAGS = {

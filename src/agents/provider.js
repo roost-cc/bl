@@ -29,6 +29,9 @@
  *     and whether it has a per-session deny mechanism; the base says no.
  *   - syncNativeApprovals(): install granted patterns into the agent's own
  *     approval store (`bl allow`); the base does nothing.
+ *   - followHandle() / followSession(): where a headless session's live
+ *     events will be, decided before the spawn, and an iterator over them
+ *     (`bl watch`, S-1272); the base cannot follow (null, and a throw).
  *
  * A headless spawn's result carries `refusal` (see supportsHeadless()): the
  * adapter classifies its own refusals inside spawn(), and callers read the
@@ -201,6 +204,13 @@ export class AgentProvider {
    *                                       With `sessionId`, a headless spawn
    *                                       resumes that session (the loop's one
    *                                       outcome retry, F-68 D5).
+   * @param {{ id: string|null, path: string }|null} [opts.follow]
+   *                                     - Headless only: the handle
+   *                                       followHandle() returned for this
+   *                                       session. The spawn makes the session
+   *                                       write its events where the handle
+   *                                       says, so followSession() can read
+   *                                       them while it runs.
    */
   spawn(opts) {
     throw new Error('spawn() not implemented');
@@ -317,6 +327,44 @@ export class AgentProvider {
    */
   syncNativeApprovals(_patterns, _config, _opts = {}) {
     return null;
+  }
+
+  /**
+   * Where the events of a headless session will be, decided before the spawn
+   * (S-1272): `{ id, path }`, where `path` is the JSON Lines file
+   * followSession() reads and `id` the session id when the adapter knows it
+   * before the spawn, else null. The caller records the handle (`bl run`
+   * writes it in the run state) and passes it to `spawn({ follow })`. Null
+   * when the adapter cannot follow a session; the base cannot.
+   *
+   * @param {{ cwd: string, eventsPath: string, sessionId?: string|null }} _opts
+   *   `cwd` is the session's working directory, `eventsPath` a file the
+   *   adapter may use for the events, `sessionId` the session a resume
+   *   continues (the outcome retry), or null.
+   * @returns {{ id: string|null, path: string } | null}
+   */
+  followHandle(_opts) {
+    return null;
+  }
+
+  /**
+   * The events of the session that `handle` (from followHandle()) names, as
+   * the session writes them: an async iterator of
+   * `{ kind: 'text', at, text }` (an agent message) and
+   * `{ kind: 'tool', at, tool, summary }` (a tool call; `summary` is its
+   * description, command, path or pattern on one line, or ''). `at` is an
+   * ISO time. Thinking and tool output are never events.
+   *
+   * It starts with the last 30 events, or every event with `fromStart`, then
+   * waits for new ones. When `signal` aborts, it reads what the session wrote
+   * since and ends.
+   *
+   * @param {{ id: string|null, path: string }} _handle
+   * @param {{ fromStart?: boolean, signal?: AbortSignal }} [_opts]
+   * @returns {AsyncIterable<object>}
+   */
+  followSession(_handle, _opts = {}) {
+    throw new Error(`${this.name} cannot follow a session`);
   }
 
   /**
