@@ -16,7 +16,7 @@
  * place, and an id that names no work unit is dropped.
  *
  * This script and its test are the only files that name priority.md
- * (`test/unit/old-order-file-guard.test.js`); a cleanup story after F-113
+ * (`test/integration/old-order-file-guard.test.js`); a cleanup story after F-113
  * deletes them.
  *
  * Exit codes: 0 written, 1 priority.md is missing or unreadable (nothing is

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'url';
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 // Built so this file does not name it itself.
 const OLD = ['priority', 'md'].join('.');
-const CONVERSION = new Set(['scripts/priority-to-yaml.js', 'test/unit/priority-to-yaml.test.js']);
+const CONVERSION = new Set(['scripts/priority-to-yaml.js', 'test/integration/priority-to-yaml.test.js']);
 
 test('no tracked file outside the conversion names the old priority file', () => {
   const r = spawnSync('git', ['ls-files', '-z'], {

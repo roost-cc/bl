@@ -3975,7 +3975,7 @@ backlog's old priority markdown file, a list of `{ unit, why }`.
 `node scripts/priority-to-yaml.js [--dry-run] [--backlog <dir>]` reads that list and writes
 `priority.yaml`: the open ranked units, once each, in order, without `why`. It deletes nothing
 and commits nothing. It and its test are the only files that name the old file
-(`test/unit/old-order-file-guard.test.js`). A cleanup story after F-113 deletes the script, its
+(`test/integration/old-order-file-guard.test.js`). A cleanup story after F-113 deletes the script, its
 test, the guard's exceptions and the backlog's old file. F-78's migration from the feature order
 file before it is done and deleted; it is in git history.
 
