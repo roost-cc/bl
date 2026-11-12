@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from 'fs';
-import { join } from 'path';
+import { chmodSync, existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync, statSync } from 'fs';
+import { dirname, join } from 'path';
 import { spawnSync } from 'child_process';
 import {
   parsePorcelainZ,
@@ -419,6 +419,61 @@ for (const carried of [false, true]) {
     assert.equal(again, false, err2);
     assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [S1]);
   });
+}
+
+// The two recovery paths that record instead of committing (a scope that
+// throws, a snapshot before that failed), over each state of the record: an
+// unreadable record stays byte for byte, and bl claims a record only once it
+// wrote one.
+const RECORD_STATES = [
+  ['unreadable', (rec) => writeFileSync(rec, '{"commit":[["previous.md","truncated'), false],
+  ['a directory', (rec) => mkdirSync(rec), false],
+  ['not writable', (rec) => chmodSync(dirname(rec), 0o555), false],
+  ['absent', () => {}, true],
+];
+for (const [path, call] of [
+  [
+    'scope throws',
+    (dir, before, owner) =>
+      commitChangedSince(dir, before, 'chore: r', {
+        owner,
+        scope: () => {
+          throw new Error('bad');
+        },
+      }),
+  ],
+  ['snapshot before failed', (dir, _before, owner) => commitChangedSince(dir, null, 'chore: r', { owner })],
+]) {
+  for (const [state, setUp, recorded] of RECORD_STATES) {
+    const name =
+      state === 'unreadable'
+        ? 'commit_changed_since_scope_error_preserves_unreadable_record'
+        : 'commit_changed_since_scope_error_reports_failed_record_write';
+    test(`${name}: ${path}, the record ${state}`, async () => {
+      const dir = changedSinceRepo();
+      const owner = 'refine S-1';
+      const rec = join(dir, failedCommitRecord(owner));
+      mkdirSync(dirname(rec), { recursive: true });
+      setUp(rec);
+      const old = state === 'unreadable' ? readFileSync(rec, 'utf8') : null;
+      try {
+        const before = dirtySnapshot(dir);
+        writeFileSync(join(dir, 'x.md'), 'the command\n');
+        const [failed, err] = await captureStderr(() => call(dir, before, owner));
+        assert.equal(failed, true);
+        assert.equal(/bl recorded what changed/.test(err), recorded && path === 'scope throws', err);
+        if (state === 'unreadable') assert.equal(readFileSync(rec, 'utf8'), old, 'the unreadable record stays');
+        if (state === 'a directory') assert.ok(statSync(rec).isDirectory());
+        if (state === 'not writable') {
+          assert.match(err, /cannot write .* so no later bl run commits these paths: .*x\.md/);
+          assert.equal(existsSync(rec), false);
+        }
+        if (recorded) assert.ok(readFileSync(rec, 'utf8').includes('x.md'));
+      } finally {
+        chmodSync(dirname(rec), 0o755);
+      }
+    });
+  }
 }
 
 // A failed commit, then a retry that writes nothing new (its snapshot finds

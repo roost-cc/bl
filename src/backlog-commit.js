@@ -187,7 +187,8 @@ export function failedCommitRecord(owner) {
  * entry is committed. Each other changed path stays uncommitted and is named
  * in one line, and a carried path outside the scope stays in the record. If
  * `scope` throws, the call commits nothing and records every changed path, as
- * a failed commit does. Without `scope`, every changed path is committed
+ * a failed commit does (`recordChangedSince`); it says so only once the record
+ * is written. Without `scope`, every changed path is committed
  * (`bl init`).
  * Shared by feature `bl merge`, story `bl merge`'s triage, `bl refine` and
  * `bl init` (S-1330).
@@ -218,25 +219,18 @@ export async function commitChangedSince(root, before, message, { session = fals
   try {
     scopePaths = scope?.();
   } catch (e) {
-    console.error(
-      `  backlog commit failed: cannot read ${owner}'s work units (${e.message}); bl recorded what changed for a retry of the command\n` +
-        `  Commit its changes yourself: git -C "${root}" status`,
-    );
-    recordChangedSince(root, before, owner);
+    console.error(`  backlog commit failed: cannot read ${owner}'s work units (${e.message})`);
+    // Claimed only once the record is written.
+    if (recordChangedSince(root, before, owner)) {
+      console.error('  bl recorded what changed for a retry of the command.');
+    }
+    console.error(`  Commit its changes yourself: git -C "${root}" status`);
     return true;
   }
-  let failed = false;
   // A retry was dirty before it began, so the paths come from the record.
-  let pending = { commit: [], unsure: [] };
-  try {
-    pending = readFailedCommit(root, owner);
-  } catch (e) {
-    failed = true;
-    console.error(
-      `  backlog commit failed: cannot read ${failedCommitRecord(owner)}, the record of an earlier failed commit (${e.message}); its paths may still be uncommitted\n` +
-        `  Commit them yourself: git -C "${root}" status`,
-    );
-  }
+  const read = readFailedCommitOrReport(root, owner);
+  let failed = read == null;
+  const pending = read ?? { commit: [], unsure: [] };
   const still = (entries) => entries.filter(([p, h]) => after.get(p) === h).map(([p]) => p);
   const carried = still(pending.commit);
   // A failed snapshot before an earlier call left these: bl cannot tell
@@ -294,22 +288,20 @@ export async function commitChangedSince(root, before, message, { session = fals
  * wrote and before its commit (`bl init`, whose agent setup can fail). The
  * paths join `owner`'s record (`saveFailedCommit`, which reports a record it
  * cannot write); with no snapshot before, the paths dirty now are `unsure`.
- * A backlog with no repo of its own, or a failed snapshot after, records
- * nothing.
+ * A record that cannot be read is named and left as it is, and nothing is
+ * recorded. A backlog with no repo of its own, or a failed snapshot after,
+ * records nothing.
  * @param {string} root
  * @param {Map<string, string> | null} before
  * @param {string} owner
+ * @returns {boolean} whether `owner`'s record now holds the changed paths
  */
 export function recordChangedSince(root, before, owner) {
-  if (!hasOwnRepo(root)) return;
+  if (!hasOwnRepo(root)) return false;
   const after = dirtySnapshot(root);
-  if (!after) return;
-  let pending = { commit: [], unsure: [] };
-  try {
-    pending = readFailedCommit(root, owner);
-  } catch {
-    // Unreadable: this record replaces it.
-  }
+  if (!after) return false;
+  let pending = readFailedCommitOrReport(root, owner);
+  if (!pending) return false;
   if (before) {
     // A recorded path the command wrote again is recorded with its new content.
     const changed = new Set(pathsChangedSince(before, after));
@@ -322,7 +314,25 @@ export function recordChangedSince(root, before, owner) {
     const known = new Set([...pending.commit, ...pending.unsure].map(([p]) => p));
     pending.unsure.push(...[...after].filter(([p]) => !known.has(p)));
   }
-  saveFailedCommit(root, owner, pending);
+  return saveFailedCommit(root, owner, pending);
+}
+
+/**
+ * `owner`'s failed-commit record (`readFailedCommit`), or null after one
+ * error line when it cannot be read: its paths may still be uncommitted.
+ * @param {string} root
+ * @param {string} owner
+ */
+function readFailedCommitOrReport(root, owner) {
+  try {
+    return readFailedCommit(root, owner);
+  } catch (e) {
+    console.error(
+      `  backlog commit failed: cannot read ${failedCommitRecord(owner)}, the record of an earlier failed commit (${e.message}); its paths may still be uncommitted\n` +
+        `  Commit them yourself: git -C "${root}" status`,
+    );
+    return null;
+  }
 }
 
 /** Paths `git add` accepts: on disk, or still in the index (a deletion to stage). */
