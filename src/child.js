@@ -32,6 +32,8 @@
  * returns to its caller as a failed child, so the caller's undo (a rebase
  * abort) runs. The module prints its line when the child ends, keeps the first
  * interrupt, and raises it when the outermost `raiseAfter` ends.
+ * `interruptKept()` says whether it keeps one, so a failed undo is reported
+ * before the raise.
  *
  * `describeExit(r, what)` words a failed child for every caller.
  */
@@ -134,6 +136,16 @@ export function raiseAfter(fn) {
       raise(signal);
     }
   }
+}
+
+/**
+ * Whether a `raiseAfter` that is running keeps an interrupt, which it raises
+ * when the outermost one ends. A caller whose undo failed reports it before
+ * then: no caller sees a result after the raise.
+ * @returns {boolean}
+ */
+export function interruptKept() {
+  return kept !== null;
 }
 
 /**

@@ -30,7 +30,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { MAIN_REFSPEC, withMainSyncLock } from './main-sync.js';
 import { configureMergeDriver } from './blockers-merge.js';
 import { RUN_DIR, ensureRunDir } from './run-lock.js';
-import { describeExit, git as runGit, raiseAfter } from './child.js';
+import { describeExit, git as runGit, interruptKept, raiseAfter } from './child.js';
 
 // Never wait on a credential prompt; `GIT_EDITOR=true` keeps
 // `git rebase --continue` from opening an editor for the message.
@@ -842,12 +842,18 @@ export async function pullBacklog(root, opts = {}) {
  * The pull under the lock (`pullBacklog`, `pushBacklog`'s retry). SIGINT or
  * SIGTERM that ends one of its git children ends `bl` only once the pull
  * returns (`raiseAfter`, F-114 D2a): the rebase is aborted and the index and
- * the stash are put back first.
+ * the stash are put back first. If that undo leaves the checkout `unsafe`, the
+ * pull reports it (`reportBacklogPull`) before the raise, because no caller
+ * sees the result after it.
  * @param {string} root
  * @returns {BacklogPull}
  */
 function pullLocked(root) {
-  return raiseAfter(() => pullUndoable(root));
+  return raiseAfter(() => {
+    const res = pullUndoable(root);
+    if (res.state === 'unsafe' && interruptKept()) reportBacklogPull(res, root);
+    return res;
+  });
 }
 
 function pullUndoable(root) {

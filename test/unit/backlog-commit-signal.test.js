@@ -26,7 +26,9 @@ const SIGNAL_EXIT = new URL('../../src/signal-exit.js', import.meta.url).href;
 // `KILL_ON`: the argument that ends the shim with `KILL_SIG`. `STOP_REBASE`:
 // `git rebase --autostash` runs for real with `-x false`, so it stops with a
 // rebase in progress and the autostash held, and then the shim ends itself
-// with SIGINT. `REJECT_PUSH_LOG`: each `git push` adds a line to that file,
+// with `STOP_SIG` (SIGINT when unset). `ABORT_FAILS`: `git rebase --abort`
+// does nothing and exits 0 (`noop`), or fails with exit 91 (any other value).
+// `REJECT_PUSH_LOG`: each `git push` adds a line to that file,
 // writes git's non-fast-forward rejection, and ends itself with `KILL_SIG`.
 const shimDir = mkTempDir('bl-bc-signal-shim-');
 writeFileSync(
@@ -35,7 +37,12 @@ writeFileSync(
 if [ -n "$STOP_REBASE" ] && [ "$1 $2" = "rebase --autostash" ]; then
   shift
   "${REAL_GIT}" rebase -x false "$@"
-  kill -INT $$
+  kill -\${STOP_SIG:-INT} $$
+fi
+if [ -n "$ABORT_FAILS" ] && [ "$1 $2" = "rebase --abort" ]; then
+  if [ "$ABORT_FAILS" = noop ]; then exit 0; fi
+  echo 'injected abort failure' >&2
+  exit 91
 fi
 if [ -n "$REJECT_PUSH_LOG" ] && [ "$1" = push ]; then
   echo push >> "$REJECT_PUSH_LOG"
@@ -183,3 +190,50 @@ test('SIGINT that ends the rebase of a backlog pull: the backlog is put back, th
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+// The undo of an interrupted rebase fails: the pull reports the unsafe
+// checkout, once, and only then does bl exit on the interrupt (D2a).
+const UNSAFE = [
+  {
+    name: 'pullBacklog, the abort fails',
+    abort: 'fail',
+    signal: 'SIGINT',
+    status: 130,
+    body: (root) => `bc.reportBacklogPull(await bc.pullBacklog(${JSON.stringify(root)}), ${JSON.stringify(root)});`,
+  },
+  {
+    name: 'pullBacklog, the abort does nothing',
+    abort: 'noop',
+    signal: 'SIGTERM',
+    status: 143,
+    body: (root) => `bc.reportBacklogPull(await bc.pullBacklog(${JSON.stringify(root)}), ${JSON.stringify(root)});`,
+  },
+  {
+    name: "pushBacklog's retry, the abort fails",
+    abort: 'fail',
+    signal: 'SIGINT',
+    status: 130,
+    body: (root) => `console.log(JSON.stringify(bc.pushBacklog(${JSON.stringify(root)})));`,
+  },
+];
+
+for (const c of UNSAFE) {
+  test(`${c.name} after ${c.signal} ends the rebase: the unsafe checkout is reported before bl exits ${c.status}`, () => {
+    const { tmp, alice, bob } = twoClones({ 'a.md': '1\n', 'b.md': '1\n' });
+    try {
+      writeFileSync(join(alice, 'b.md'), 'alice\n');
+      g(alice, 'commit', '-q', '-am', 'alice');
+      writeFileSync(join(alice, 'a.md'), 'alice, uncommitted\n');
+      bobPushes(bob, { 'c.md': 'bob\n' });
+      const r = runScript(c.body(alice), { STOP_REBASE: '1', STOP_SIG: c.signal.slice(3), ABORT_FAILS: c.abort });
+      assertRaised(r, c.status, 'rebase', c.signal);
+      const unsafe = `error: backlog pull could not put the checkout back (a rebase is still in progress); not running the command.`;
+      const why = r.stderr;
+      assert.equal(r.stderr.split(unsafe).length - 1, 1, why);
+      assert.ok(r.stderr.indexOf(unsafe) > r.stderr.indexOf(`was ended by ${c.signal}`), why);
+      assert.equal(r.stdout, '', why);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+}
