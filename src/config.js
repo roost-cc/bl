@@ -1668,7 +1668,7 @@ export function enumeratePlugins(config) {
  *     is absent.
  *
  * On backlog files, `runPluginLocked` (`spec-file.js`) calls this with one
- * path at a time, inside the file's spec lock (F-126 D4).
+ * path at a time, inside the file's covering lock (F-126 D4).
  *
  * `shell: true` swallows ENOENT (the leader is found by the shell, not by
  * spawn), so status 127 is the canonical missing-binary signal.

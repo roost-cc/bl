@@ -25,7 +25,7 @@
  * lifecycle `ci-cd` owns. Do not wire markdown format/lint into `ci-cd`.
  *
  * Files are dispatched to plugins via `language_dispatch[stage][ext]`. A
- * backlog file runs on its own, inside its spec lock (`runPluginLocked`,
+ * backlog file runs on its own, inside its covering lock (`runPluginLocked`,
  * F-126 D4), so the plugin never rewrites a file another `bl` is writing.
  * The other files of a plugin go in one batch, to amortise spawn cost.
  */
