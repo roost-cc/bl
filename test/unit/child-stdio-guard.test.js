@@ -12,10 +12,16 @@
 // The check parses each file with acorn: an `input` key across lines or as a
 // `{ input }` shorthand needs a JavaScript parser, and acorn is the standard
 // one (F-70 D1).
+//
+// The import rule (F-114 D5): in src/, only src/child.js imports
+// `child_process` or `./child-stdio.js`, and only src/child-stdio.js besides
+// it imports `child_process`, so every synchronous child runs through
+// src/child.js and has its interrupt raised there. `ALLOWED` names each other
+// src/ file that still imports them, with the names it imports.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'fs';
-import { join, relative } from 'path';
+import { dirname, join, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { parse } from 'acorn';
 import { ancestor, simple } from 'acorn-walk';
@@ -550,3 +556,176 @@ test('guard: a finding names its line', () => {
     [3],
   );
 });
+
+// The import rule (F-114 D5). The modules it watches, each with the src/ files
+// that may import it.
+const CHILD_STDIO = 'src/child-stdio.js';
+const IMPORTERS = {
+  child_process: new Set(['src/child.js', CHILD_STDIO]),
+  [CHILD_STDIO]: new Set(['src/child.js']),
+};
+
+// The src/ files not yet moved to src/child.js, with the names each imports.
+// A story that moves a file removes its entry; the test fails on an entry the
+// file no longer imports. S-1473 moves backlog-commit.js, main-sync.js and
+// sync.js; S-1474 cleanup.js and feature-run.js; F-124 the rest, and ends the
+// list with the asynchronous children (codex-capacity.js, verbs.js's `spawn`).
+const ALLOWED = new Map([
+  ['src/agent-run.js', ['spawnSync']],
+  ['src/agents/capacity-helper.js', ['spawnSyncFiles']],
+  ['src/agents/claude.js', ['spawnSync']],
+  ['src/agents/codex-capacity.js', ['spawn']],
+  ['src/agents/codex.js', ['spawnSync']],
+  ['src/agents/gemini.js', ['spawnSync']],
+  ['src/backlog-commit.js', ['spawnSync']],
+  ['src/block.js', ['spawnSync']],
+  ['src/blockers-merge.js', ['spawnSync']],
+  ['src/cleanup.js', ['execFileSync', 'execSync', 'spawnSync']],
+  ['src/config.js', ['spawnSync', 'spawnSyncFiles']],
+  ['src/credential-helper.js', ['spawnSync']],
+  ['src/done.js', ['execSync']],
+  ['src/feature-cmd.js', ['execFileSync', 'execSync']],
+  ['src/feature-run.js', ['spawnSync']],
+  ['src/history.js', ['spawnSyncFiles']],
+  ['src/inbox.js', ['spawnSync']],
+  ['src/log.js', ['execSync']],
+  ['src/main-sync.js', ['spawnSync']],
+  ['src/migrate-transitions.js', ['spawnSync']],
+  ['src/migrate-worktree-layout.js', ['spawnSync']],
+  ['src/migration-script.js', ['spawnSync']],
+  ['src/migration-txn.js', ['spawnSync']],
+  ['src/plugin-binaries.js', ['spawnSync']],
+  ['src/process-scope.js', ['spawnSync', 'spawnSyncFiles']],
+  ['src/rank-cmd.js', ['spawnSync']],
+  ['src/release.js', ['spawnSync']],
+  ['src/review.js', ['execSync']],
+  ['src/schedule.js', ['execFileSync']],
+  ['src/session.js', ['execSync', 'spawnSync']],
+  ['src/side.js', ['spawnSync', 'spawnSyncFiles']],
+  ['src/story.js', ['execSync']],
+  ['src/sync.js', ['spawnSync']],
+  ['src/tab-title.js', ['spawnSync']],
+  ['src/top-stream.js', ['spawnSync']],
+  ['src/top.js', ['spawnSync']],
+  ['src/updates-run.js', ['spawnSync']],
+  ['src/updates-vulns.js', ['spawnSync']],
+  ['src/updates.js', ['spawnSync']],
+  ['src/verbs.js', ['spawn', 'spawnSync']],
+]);
+
+/**
+ * The imports of `child_process` and src/child-stdio.js in the src/ file
+ * `rel`: `[{ line, module, names }]`. A default import is `default`; a
+ * namespace import or an `import()` is `*`.
+ * @param {string} source
+ * @param {string} rel  the file's path from the bl root (`src/agents/claude.js`)
+ */
+export function childImports(source, rel) {
+  const ast = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
+  const moduleOf = (spec) => {
+    if (typeof spec !== 'string') return null;
+    if (spec === 'child_process' || spec === 'node:child_process') return 'child_process';
+    return spec.startsWith('.') && join(dirname(rel), spec) === CHILD_STDIO ? CHILD_STDIO : null;
+  };
+  const specName = (s) =>
+    s.type === 'ImportSpecifier'
+      ? (s.imported.name ?? s.imported.value)
+      : s.type === 'ImportDefaultSpecifier'
+        ? 'default'
+        : '*';
+  const out = [];
+  simple(ast, {
+    ImportDeclaration(n) {
+      const module = moduleOf(n.source.value);
+      if (module) out.push({ line: n.loc.start.line, module, names: n.specifiers.map(specName) });
+    },
+    ImportExpression(n) {
+      const module = n.source.type === 'Literal' ? moduleOf(n.source.value) : null;
+      if (module) out.push({ line: n.loc.start.line, module, names: ['*'] });
+    },
+  });
+  return out;
+}
+
+/**
+ * The import rule's findings in the src/ file `rel`: `[{ line, what }]`, one
+ * for each name it imports from a watched module when it is not an importer
+ * of that module (`IMPORTERS`) and `allowed` does not list the name for it.
+ */
+export function childImportViolations(source, rel, allowed = ALLOWED) {
+  const out = [];
+  for (const { line, module, names } of childImports(source, rel)) {
+    if (IMPORTERS[module].has(rel)) continue;
+    for (const name of names) {
+      if (allowed.get(rel)?.includes(name)) continue;
+      out.push({ line, what: `imports ${name} from ${module} (run the child through src/child.js)` });
+    }
+  }
+  return out;
+}
+
+test('in src/, only src/child.js imports child_process or child-stdio.js, besides child-stdio.js and ALLOWED', () => {
+  const files = jsFiles(join(ROOT, 'src')).map((file) => [file, relative(ROOT, file)]);
+  const found = [];
+  for (const [file, rel] of files) {
+    const source = readFileSync(file, 'utf8');
+    for (const v of childImportViolations(source, rel)) found.push(`${rel}:${v.line}: ${v.what}`);
+    const imported = childImports(source, rel).flatMap((i) => i.names);
+    for (const name of ALLOWED.get(rel) ?? []) {
+      if (!imported.includes(name)) found.push(`${rel}: ALLOWED lists ${name}, which it no longer imports`);
+    }
+  }
+  for (const rel of ALLOWED.keys()) {
+    if (!files.some(([, r]) => r === rel)) found.push(`${rel}: ALLOWED lists it, but it is gone`);
+  }
+  assert.deepEqual(found, []);
+});
+
+const IMPORT_CASES = [
+  {
+    name: 'a new file importing spawnSync',
+    rel: 'src/x.js',
+    src: `import { spawnSync } from 'child_process';`,
+    hits: 1,
+  },
+  { name: 'node:child_process', rel: 'src/x.js', src: `import { execSync } from 'node:child_process';`, hits: 1 },
+  { name: 'a namespace import', rel: 'src/x.js', src: `import * as cp from 'child_process';`, hits: 1 },
+  { name: 'a default import', rel: 'src/x.js', src: `import cp from 'child_process';`, hits: 1 },
+  { name: 'an import()', rel: 'src/x.js', src: `const cp = await import('child_process');`, hits: 1 },
+  { name: 'two unlisted names', rel: 'src/x.js', src: `import { spawn, spawnSync } from 'child_process';`, hits: 2 },
+  {
+    name: 'child-stdio.js from src/',
+    rel: 'src/x.js',
+    src: `import { spawnSyncFiles } from './child-stdio.js';`,
+    hits: 1,
+  },
+  {
+    name: 'child-stdio.js from a subdirectory',
+    rel: 'src/agents/x.js',
+    src: `import { spawnSyncFiles } from '../child-stdio.js';`,
+    hits: 1,
+  },
+  {
+    name: 'a listed file with an unlisted name',
+    rel: 'src/cleanup.js',
+    src: `import { spawn } from 'child_process';`,
+    hits: 1,
+  },
+  {
+    name: 'a listed file with a listed name',
+    rel: 'src/cleanup.js',
+    src: `import { execSync } from 'child_process';`,
+    hits: 0,
+  },
+  { name: 'src/child.js', rel: 'src/child.js', src: `import { spawnSyncFiles } from './child-stdio.js';`, hits: 0 },
+  { name: 'src/child-stdio.js', rel: 'src/child-stdio.js', src: `import { spawnSync } from 'child_process';`, hits: 0 },
+  { name: "src/child.js's entry points", rel: 'src/x.js', src: `import { git, runChild } from './child.js';`, hits: 0 },
+  { name: 'another child-stdio.js', rel: 'src/agents/x.js', src: `import { y } from './child-stdio.js';`, hits: 0 },
+];
+
+for (const c of IMPORT_CASES) {
+  test(`import rule: ${c.name} → ${c.hits} finding(s)`, () => {
+    const found = childImportViolations(c.src, c.rel);
+    assert.equal(found.length, c.hits, JSON.stringify(found));
+  });
+}
