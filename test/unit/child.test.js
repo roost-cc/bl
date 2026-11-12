@@ -252,3 +252,16 @@ test('describeExit words each kind of failed child', () => {
   ];
   for (const [r, want] of cases) assert.equal(describeExit(r, 'git fetch'), want, JSON.stringify(r));
 });
+
+test('describeExit names the signal that ended a child, with stderr, stdout or no output', () => {
+  const cases = [
+    ['kill -KILL $$', 'sh was ended by SIGKILL'],
+    ['echo error >&2; kill -KILL $$', 'sh was ended by SIGKILL: error'],
+    ['echo output; kill -KILL $$', 'sh was ended by SIGKILL: output'],
+    ['echo output; echo error >&2; kill -HUP $$', 'sh was ended by SIGHUP: error'],
+  ];
+  for (const [line, want] of cases) {
+    const r = runChild('sh', ['-c', line], { encoding: 'utf8' });
+    assert.equal(describeExit(r, 'sh'), want, line);
+  }
+});

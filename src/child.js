@@ -138,8 +138,10 @@ export function raiseAfter(fn) {
 
 /**
  * Words a failed child `r`: the error when Node could not start the child or
- * killed it; else its trimmed stderr; else its trimmed stdout; else
- * `<what> was ended by <signal>` or `<what> exited <n>`.
+ * killed it. A child that a signal ended starts with
+ * `<what> was ended by <signal>`, then `: ` and its trimmed stderr, else its
+ * trimmed stdout, when it wrote any. Any other child is its trimmed stderr,
+ * else its trimmed stdout, else `<what> exited <n>`.
  * @param {{ status?: number | null, signal?: string | null, error?: Error,
  *   stdout?: string | Buffer | null, stderr?: string | Buffer | null }} r
  * @param {string} what  the child, as the message names it (`git fetch`)
@@ -148,8 +150,8 @@ export function raiseAfter(fn) {
 export function describeExit(r, what) {
   if (r.error) return r.error.message;
   const text = String(r.stderr ?? '').trim() || String(r.stdout ?? '').trim();
-  if (text) return text;
-  return r.signal ? `${what} was ended by ${r.signal}` : `${what} exited ${r.status}`;
+  if (r.signal) return `${what} was ended by ${r.signal}${text ? `: ${text}` : ''}`;
+  return text || `${what} exited ${r.status}`;
 }
 
 /**
