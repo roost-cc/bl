@@ -113,6 +113,7 @@ import { commitChangedSince, dirtySnapshot, failedCommitPending, failedCommitRec
 import { loadBacklog } from './backlog-graph.js';
 import { commitAndRecord, reportBacklogCommit } from './sync.js';
 import { applyRefineStatus, refineAndCommit } from './refine.js';
+import { takeUnitLocks } from './unit-lock.js';
 import {
   applyFixOutcome,
   changeName,
@@ -1771,6 +1772,18 @@ export async function cmdMerge(args, config, feature) {
   const gates = mergeGates(unit, { config, args, repos: names });
   if (reportMergeGates(gates)) process.exit(1);
 
+  // The work unit locks of the feature and its stories, held to the end of
+  // the merge (F-122 D2, D4): a refine, a run or another merge of them
+  // refuses meanwhile, and a lock another process holds refuses this merge
+  // before any repo is touched. An early exit ends the process, which drops
+  // them.
+  const owner = `merge ${feature.id}`;
+  const lock = takeUnitLocks(config, [unit], owner);
+  if (lock.refused != null) {
+    console.error(`Error: ${lock.refused}`);
+    process.exit(1);
+  }
+
   info(`Feature : ${feature.id} — ${feature.title}`);
   info(`Branch  : ${branchName}`);
   const behind =
@@ -1889,6 +1902,7 @@ export async function cmdMerge(args, config, feature) {
   // The keep-or-replace decision for a tip is made from the feature file
   // re-read under the backlog lock, in the same hold as the story and feature
   // writes, so an exact SHA another merge records meanwhile is never replaced.
+  let themeFile = null;
   const shape = await withLock(config.backlogRoot, async () => {
     const recorded = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm.commit;
     const union = unionLandedCommits(recorded, landed, tips);
@@ -1902,7 +1916,7 @@ export async function cmdMerge(args, config, feature) {
     // `priority.md` is not touched (F-78 D3): a merged feature leaves the
     // order because it is closed, and its date is in this merge's commit.
     // Its theme's `## State` records it too (F-53 D4), in the same hold.
-    const themeFile = recordThemeState(config, feature, stamp);
+    themeFile = recordThemeState(config, feature, stamp);
     if (themeFile) info(`Recorded ${feature.id} in ${themeFile} (## State).`);
     return decided;
   });
@@ -1920,10 +1934,13 @@ export async function cmdMerge(args, config, feature) {
     }, completed=${stamp}`,
   );
 
+  // Only the work units' directories (read again, D3), and the two files bl
+  // wrote for this merge: another session's change stays out and is named.
   const commitFailed = await commitChangedSince(
     config.backlogRoot,
     backlogBefore,
     `chore: merge ${feature.id}, mark stories done`,
+    { owner, scope: [...lock.scope(), manifestRel, ...(themeFile ? [themeFile] : [])] },
   );
 
   runFeatureStagePlugins(
@@ -1943,6 +1960,7 @@ export async function cmdMerge(args, config, feature) {
     },
     primary.repoPath,
   );
+  lock.release();
 
   const deferred = extractSection(feature.body, 'Deferred');
   if (sectionHasContent(deferred)) {

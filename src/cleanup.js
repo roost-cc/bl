@@ -66,6 +66,7 @@ import { readSpecText, specText, withSpecLock } from './spec-file.js';
 import { syncMain, reportMainSync, MAIN_REFSPEC } from './main-sync.js';
 import { syncAndCommit, reportBacklogCommit, exitOnSyncError } from './sync.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
+import { takeUnitLocks } from './unit-lock.js';
 import { loadFlow } from './flow.js';
 import { applyMerged, startOf, statusOf } from './transition.js';
 
@@ -1412,62 +1413,78 @@ the main checkout as it was.`);
     reportMergeSync(res);
   }
 
-  if (allCleaned && deferredSection) {
-    // What the triage session, and bl for it, leave uncommitted is committed
-    // after it (S-1330); edits made before it stay out.
-    const backlogBefore = dirtySnapshot(config.backlogRoot);
-    const componentId = componentEntry.match(/^(C\d+)/)?.[1] ?? '';
-    info(`\nStory ${parsed.id} has a Deferred section — launching triage agent...\n`);
-    const triagePrompt = loadPrompt(
-      'cleanup-triage',
-      {
-        storyId: parsed.id,
-        title: storyFm.title ?? storyEntry,
-        deferredSection,
-        componentId,
-        componentEntry,
+  // The triage holds the merged story's work unit lock (F-122 D4). If another
+  // process holds it, the triage is skipped: the merge stays as it is.
+  const owner = `triage ${parsed.id}`;
+  const lock = allCleaned && deferredSection ? takeUnitLocks(config, [unit], owner) : null;
+  if (lock?.refused != null) info(`\nTriage of ${parsed.id}'s ## Deferred skipped: ${lock.refused}`);
+  if (lock?.refused === null) {
+    try {
+      // What the triage session, and bl for it, leave uncommitted in the
+      // story's directory is committed after it (S-1330, F-122 D3); edits made
+      // before it, and every path outside the directory, stay out.
+      const backlogBefore = dirtySnapshot(config.backlogRoot);
+      const componentId = componentEntry.match(/^(C\d+)/)?.[1] ?? '';
+      info(`\nStory ${parsed.id} has a Deferred section — launching triage agent...\n`);
+      const triagePrompt = loadPrompt(
+        'cleanup-triage',
+        {
+          storyId: parsed.id,
+          title: storyFm.title ?? storyEntry,
+          deferredSection,
+          componentId,
+          componentEntry,
+          roostDir: config.roostDir,
+          backlogDir: config.backlogRoot,
+          storyRepos: primaryRepoName,
+        },
+        { agent: config.agent, config },
+      );
+      const triageName = `${parsed.id}: triage — ${storyFm.title ?? storyEntry}`;
+      updateTabTitle({ story: parsed.id, status: 'triage' });
+      const provider = getProvider(config.agent);
+      const allowedTools = getAllowedTools('triage', {
+        backlogRoot: config.backlogRoot,
         roostDir: config.roostDir,
-        backlogDir: config.backlogRoot,
-        storyRepos: primaryRepoName,
-      },
-      { agent: config.agent, config },
-    );
-    const triageName = `${parsed.id}: triage — ${storyFm.title ?? storyEntry}`;
-    updateTabTitle({ story: parsed.id, status: 'triage' });
-    const provider = getProvider(config.agent);
-    const allowedTools = getAllowedTools('triage', {
-      backlogRoot: config.backlogRoot,
-      roostDir: config.roostDir,
-      config,
-    });
-    const translatedPermissions = provider.translatePermissions(allowedTools, {
-      mode: 'triage',
-      roostDir: config.roostDir,
-      backlogRoot: config.backlogRoot,
-      worktreePath: config.backlogRoot,
-    });
-    const triageResult = provider.spawn({
-      mode: 'triage',
-      name: triageName,
-      prompt: triagePrompt,
-      permissions: translatedPermissions,
-      worktreePath: config.backlogRoot,
-      roostDir: config.roostDir,
-      backlogRoot: config.backlogRoot,
-      topLevel: config.topLevel,
-      scopes: resolvePermissionScopes(config, {
-        unitDir: config.backlogRoot,
-      }),
-      model: config.agentModel,
-    });
-    reassertTabTitle(); // the agent had the terminal
-    if (triageResult.status !== 0) {
-      info('  (triage session ended — you may need to create stories manually)');
+        config,
+      });
+      const translatedPermissions = provider.translatePermissions(allowedTools, {
+        mode: 'triage',
+        roostDir: config.roostDir,
+        backlogRoot: config.backlogRoot,
+        worktreePath: config.backlogRoot,
+      });
+      const triageResult = provider.spawn({
+        mode: 'triage',
+        name: triageName,
+        prompt: triagePrompt,
+        permissions: translatedPermissions,
+        worktreePath: config.backlogRoot,
+        roostDir: config.roostDir,
+        backlogRoot: config.backlogRoot,
+        topLevel: config.topLevel,
+        scopes: resolvePermissionScopes(config, {
+          unitDir: config.backlogRoot,
+        }),
+        model: config.agentModel,
+      });
+      reassertTabTitle(); // the agent had the terminal
+      if (triageResult.status !== 0) {
+        info('  (triage session ended — you may need to create stories manually)');
+      }
+      const triageMessage = `chore: triage ${parsed.id} Deferred into new stories`;
+      if (
+        await commitChangedSince(config.backlogRoot, backlogBefore, triageMessage, {
+          session: true,
+          owner,
+          scope: lock.scope(),
+        })
+      )
+        process.exitCode = 1;
+      info('');
+    } finally {
+      lock.release();
     }
-    const triageMessage = `chore: triage ${parsed.id} Deferred into new stories`;
-    if (await commitChangedSince(config.backlogRoot, backlogBefore, triageMessage, { session: true }))
-      process.exitCode = 1;
-    info('');
   }
 
   if (allCleaned) {

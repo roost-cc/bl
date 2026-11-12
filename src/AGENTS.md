@@ -106,7 +106,11 @@ option (backlog-relative directories or files, F-122 D8), only a changed path eq
 an entry is committed. Each other changed path stays uncommitted and is named in one line,
 `Left uncommitted, outside <owner>'s work units: <paths>`. A path carried from a failed commit's
 record (`readFailedCommit`) and outside the scope stays in the record. Without `scope`
-(`bl init`), every changed path is committed.
+(`bl init`), every changed path is committed. Feature `bl merge`'s scope is its work units'
+directories (`scope()`), its release manifest (`writeReleaseManifest`) and its theme's `index.md`
+(`recordThemeState`), with the owner `merge F-n`. The triage's scope is the merged story's
+directory, with the owner `triage S-n`, so the agent commits the stories it creates itself
+(`prompts/cleanup-triage.md`). `bl refine`'s scope is its work units' directories.
 
 When adding a new command, ask: "what is the one piece of information
 the caller needs?" That goes on stdout. Everything else goes through
@@ -3816,6 +3820,11 @@ never waits, so it cannot wait in a cycle with them. Short commands (`bl new`, `
 `bl block`, `bl done`, `bl approve`, `bl task`) neither take nor check it, because a session's
 agent runs them as children, and a check would find the parent's lock. Every `bl refine`
 takes it (`refineAndCommit`, F-122 D4) and holds it in place of a session lock of the backlog root.
+`bl merge F-n` (`cmdMerge`) takes the work unit locks of the feature and its stories after its
+merge gates and before `integrateForMerge`, so a held lock refuses the merge before any repo is
+touched, and holds them to the end of the merge. `bl merge S-n` takes the merged story's work unit
+lock for its triage session only (`cleanup.js`), before the triage's `dirtySnapshot`. If another
+process holds it, bl skips the triage with one line that names the holder, and the merge stands.
 `bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
 [--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
 before S-1495. It writes `.bl/` to `.gitignore` before it deletes anything. It deletes each old

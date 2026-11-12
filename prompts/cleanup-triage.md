@@ -75,9 +75,10 @@ Deferred section :
    the path that `bl which {{storyId}}` prints (under `{{backlogDir}}/stories/`).
 
 5. Run `bl validate`, fix its findings and commit your work, by following **Backlog commits**
-   below. When this session ends, `bl` commits and pushes what you left uncommitted with
-   `chore: triage {{storyId}} Deferred into new stories`. (The parent `bl merge` already made its
-   own "mark done" commit before it started you.) Use the message
+   below. When this session ends, `bl` commits and pushes only what you left uncommitted in
+   {{storyId}}'s directory, with `chore: triage {{storyId}} Deferred into new stories`. It leaves
+   every other path uncommitted, a new story or feature included, so commit those yourself. (The
+   parent `bl merge` already made its own "mark done" commit before it started you.) Use the message
    `chore: triage {{storyId}} Deferred into new stories`. Pass `--story {{storyId}}` for the
    `## Deferred` removal, plus one `--story` for each new story you created. If step 3 created a
    feature, also pass `--path <feature directory>`, because a feature has no `--story`. The
