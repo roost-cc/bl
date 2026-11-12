@@ -85,9 +85,10 @@ let renameCallCount = 0;
  * `BL_INTERNAL_TEST_FAIL_ON_RENAME=<n>[,<n>...]` makes each listed n-th call
  * in this process fail before its rename (tests only).
  *
- * The write throws before it starts when `path` is a backlog path that git
- * does not ignore and this process does not hold its covering lock
- * (`assertCovered`, `write-lock.js`, F-126 D6).
+ * The write throws before it starts when the file it replaces (the link's
+ * target with `preserve`, else `path`) is a backlog path that git does not
+ * ignore and this process does not hold its covering lock (`assertCovered`,
+ * `write-lock.js`, F-126 D6).
  *
  * With `{ preserve: true }` an existing target keeps what it was: a symlink
  * stays a symlink and the file it resolves to is the one replaced, and the
@@ -116,7 +117,6 @@ export function atomicWriteFile(
   text,
   { preserve = false, exclusive = false, unchanged = undefined } = {},
 ) {
-  assertCovered(backlogRoot, path);
   let st = null;
   if (preserve) {
     try {
@@ -126,6 +126,8 @@ export function atomicWriteFile(
       if (e.code !== 'ENOENT') throw e;
     }
   }
+  // After `preserve` resolves a link: the check is of the file replaced.
+  assertCovered(backlogRoot, path);
   const dir = join(backlogRoot, STAGING_DIR);
   try {
     mkdirSync(join(backlogRoot, '.bl'));

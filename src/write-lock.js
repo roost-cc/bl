@@ -21,7 +21,7 @@
  */
 
 import { existsSync } from 'fs';
-import { dirname, isAbsolute, join, relative, sep } from 'path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'path';
 import { ALLOWED_TOOLS_FILE } from './allowed-tools.js';
 import { STAGING_DIR } from './atomic-write.js';
 import { isChangeFile } from './change-doc.js';
@@ -55,27 +55,52 @@ function isSpecFile(parts) {
  * @returns {string | null}
  */
 export function insideBacklog(backlogRoot, path) {
-  const rel = relative(canonical(backlogRoot), canonical(path));
+  return relInside(backlogRoot, canonical(path));
+}
+
+/** `target`, a `canonical` path, relative to `backlogRoot`'s, or null when it is the root or outside it. */
+function relInside(backlogRoot, target) {
+  const rel = relative(canonical(backlogRoot), target);
   return rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel) ? null : rel;
 }
 
 /**
- * The covering lock of `path`: null when `path` is not inside `backlogRoot`
- * (`insideBacklog`) or is inside `.bl/`, bl's runtime
- * directory, which `bl init` adds to every backlog's `.gitignore`
- * (`BL_DIR_LINE`); the spec lock (`specLockPath`) of an existing spec file
- * (`isSpecFile`); else the backlog lock (`LOCK_FILE`). It does not ask git
- * about other ignored paths: `assertCovered` does, and only when the lock is
- * not held.
+ * The backlog-relative path that a write to `path` changes, or null when it
+ * is not inside `backlogRoot`: `path` with the links in its directory
+ * resolved, but not a link at `path` itself, since a rename or a removal
+ * replaces that link and leaves its target. A writer that writes through the
+ * link (`atomicWriteFile`'s `preserve`, a plugin) passes the link's target.
+ * `lockFor` and `assertCovered`'s git check both use it, so the lock and the
+ * ignore rule are those of the one path the write changes.
+ * @param {string} backlogRoot
+ * @param {string} path
+ */
+function writtenPath(backlogRoot, path) {
+  return relInside(backlogRoot, join(canonical(dirname(path)), basename(path)));
+}
+
+/** Whether git tracks `rel` (backlog-relative), or a file under it; false when the backlog is no git repository. */
+function tracked(backlogRoot, rel) {
+  return Boolean(git(backlogRoot, ['--literal-pathspecs', 'ls-files', '--', rel]).stdout?.trim());
+}
+
+/**
+ * The covering lock of a write to `path` (`writtenPath`): null when that is
+ * not inside `backlogRoot`, or is inside `.bl/`, bl's runtime directory, which
+ * `bl init` adds to every backlog's `.gitignore` (`BL_DIR_LINE`), and git does
+ * not track it (a file someone added with `git add -f`); the spec lock
+ * (`specLockPath`) of an existing spec file (`isSpecFile`); else the backlog
+ * lock (`LOCK_FILE`). It does not ask git about other ignored paths:
+ * `assertCovered` does, and only when the lock is not held.
  * @param {string} backlogRoot
  * @param {string} path
  * @returns {CoveringLock | null}
  */
 export function lockFor(backlogRoot, path) {
-  const rel = insideBacklog(backlogRoot, path);
+  const rel = writtenPath(backlogRoot, path);
   if (rel == null) return null;
   const parts = rel.split(sep);
-  if (parts[0] === dirname(STAGING_DIR)) return null;
+  if (parts[0] === dirname(STAGING_DIR) && !tracked(backlogRoot, rel)) return null;
   if (isSpecFile(parts) && existsSync(path)) return { kind: 'spec', path: specLockPath(path) };
   return { kind: 'backlog', path: join(backlogRoot, LOCK_FILE) };
 }
@@ -86,8 +111,9 @@ export function lockFor(backlogRoot, path) {
  * An existing spec file takes its spec lock (`withSpecFileLock`). Every other
  * path takes the backlog lock, and then its spec lock too: a missing spec
  * file that another process creates before the backlog lock frees is covered
- * by its spec lock once it exists. Lock order (F-67 D4): the caller holds no
- * spec lock.
+ * by its spec lock once it exists. `fn` writes through a link at `path`, so
+ * the lock is that of the link's target. Lock order (F-67 D4): the caller
+ * holds no spec lock.
  * @template T
  * @param {string} backlogRoot
  * @param {string} path
@@ -95,17 +121,19 @@ export function lockFor(backlogRoot, path) {
  * @returns {Promise<T>}
  */
 export async function withCoveringLock(backlogRoot, path, fn) {
-  const lock = lockFor(backlogRoot, path);
+  const target = canonical(path);
+  const lock = lockFor(backlogRoot, target);
   if (lock == null) return fn();
-  if (lock.kind === 'spec') return withSpecFileLock(backlogRoot, path, fn);
-  return withLock(backlogRoot, async () => withSpecLock(path, fn));
+  if (lock.kind === 'spec') return withSpecFileLock(backlogRoot, target, fn);
+  return withLock(backlogRoot, async () => withSpecLock(target, fn));
 }
 
 /**
- * Throw unless this process may write `path` now: it is outside the backlog,
- * this process holds its covering lock (`lockFor`), or git ignores it
- * (`git check-ignore`; a backlog that is no git repository ignores nothing).
- * The error names the path and the lock:
+ * Throw unless this process may write `path` now: the path the write changes
+ * (`writtenPath`) is outside the backlog, this process holds its covering lock
+ * (`lockFor`), or git ignores it (`git check-ignore`, which never ignores a
+ * tracked file; a backlog that is no git repository ignores nothing). The
+ * error names that path and the lock:
  * `<rel>: bl writes it without its covering lock (<kind> lock <lock path>)`.
  * @param {string} backlogRoot
  * @param {string} path
@@ -113,8 +141,7 @@ export async function withCoveringLock(backlogRoot, path, fn) {
 export function assertCovered(backlogRoot, path) {
   const lock = lockFor(backlogRoot, path);
   if (lock == null || holds(lock.path)) return;
-  if (git(backlogRoot, ['check-ignore', '-q', '--', path]).status === 0) return;
-  throw new Error(
-    `${relative(backlogRoot, path)}: bl writes it without its covering lock (${lock.kind} lock ${lock.path})`,
-  );
+  const rel = writtenPath(backlogRoot, path);
+  if (git(backlogRoot, ['check-ignore', '-q', '--', rel]).status === 0) return;
+  throw new Error(`${rel}: bl writes it without its covering lock (${lock.kind} lock ${lock.path})`);
 }

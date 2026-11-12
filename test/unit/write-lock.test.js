@@ -6,12 +6,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, symlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { assertCovered, lockFor } from '../../src/write-lock.js';
+import { assertCovered, lockFor, withCoveringLock } from '../../src/write-lock.js';
+import { atomicWriteFile, removeBacklogPath } from '../../src/atomic-write.js';
+import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { specLockPath } from '../../src/spec-file.js';
-import { initGitBacklog } from '../helpers/git-backlog.js';
+import { git as gitIn, initGitBacklog } from '../helpers/git-backlog.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { underLock } from '../helpers/covering-lock.js';
 
@@ -99,4 +101,98 @@ test('assertCovered passes with the covering lock, or for a path git ignores, an
   assertCovered(b.dir, join(b.dir, 'reports', 'r.md'));
   assertCovered(b.dir, join(b.dir, '.bl', 'tmp', 'x'));
   assertCovered(b.dir, join(mkTempDir('bl-write-lock-outside-'), 'x.md'));
+});
+
+// tracked_bl_path_requires_covering_lock and
+// atomic_write_preserve_ignored_alias_requires_target_lock: the lock and the
+// ignore check are those of the path the write changes, not of its name.
+test('a write needs the covering lock of the path it changes, whatever name reaches it', () => {
+  const b = backlog();
+  const link = (rel, target) => {
+    mkdirSync(dirname(join(b.dir, rel)), { recursive: true });
+    symlinkSync(target, join(b.dir, rel));
+    return join(b.dir, rel);
+  };
+  const backlogLock = { kind: 'backlog', path: join(b.dir, LOCK_FILE) };
+  const storyLock = { kind: 'spec', path: specLockPath(b.story) };
+  const forced = b.put('.bl/tracked.txt');
+  gitIn(b.dir, 'add', '-f', '.bl/tracked.txt');
+  const ignored = b.put('.bl/run/x');
+  const blTarget = b.put('.bl/target.md');
+  const trackedLink = link('stories/S1-one/notes.md', '../../.bl/target.md');
+  gitIn(b.dir, 'add', 'stories/S1-one/notes.md');
+  const blAlias = link('.bl/alias', b.story);
+  const reportsAlias = link('reports/alias', b.story);
+  const blDir = link('.bl/dir', dirname(b.story));
+  // [case, write, the lock it needs (null: none), the file it changes, a file it must leave]
+  const rows = [
+    ['a file in .bl/ that git tracks', () => atomicWriteFile(b.dir, forced, 'w'), backlogLock, forced],
+    ['a file in .bl/ that git ignores', () => atomicWriteFile(b.dir, ignored, 'w'), null, ignored],
+    [
+      'an ignored .bl/ link to a story, written through (preserve)',
+      () => atomicWriteFile(b.dir, blAlias, 'w', { preserve: true }),
+      storyLock,
+      b.story,
+    ],
+    [
+      'an ignored reports/ link to a story, written through (preserve)',
+      () => atomicWriteFile(b.dir, reportsAlias, 'w', { preserve: true }),
+      storyLock,
+      b.story,
+    ],
+    [
+      'a file through an ignored .bl/ link to a story directory',
+      () => atomicWriteFile(b.dir, join(blDir, 'index.md'), 'w'),
+      storyLock,
+      b.story,
+    ],
+    ['a tracked link into .bl/, replaced', () => atomicWriteFile(b.dir, trackedLink, 'w'), backlogLock, trackedLink],
+    [
+      'a tracked link into .bl/, written through (preserve)',
+      () => atomicWriteFile(b.dir, link('stories/S1-one/notes2.md', '../../.bl/target.md'), 'w', { preserve: true }),
+      null,
+      blTarget,
+    ],
+    [
+      'an ignored .bl/ link to a story, replaced (no preserve)',
+      () => atomicWriteFile(b.dir, link('.bl/alias2', b.story), 'w2'),
+      null,
+      join(b.dir, '.bl', 'alias2'),
+      b.story,
+    ],
+    [
+      'an ignored .bl/ link to a story, removed',
+      () => removeBacklogPath(b.dir, link('.bl/alias3', b.story)),
+      null,
+      null,
+      b.story,
+    ],
+  ];
+  for (const [name, write, lock, changed, kept] of rows) {
+    const keptBefore = kept && readFileSync(kept, 'utf8');
+    if (lock == null) write();
+    else {
+      const before = readFileSync(changed, 'utf8');
+      assert.throws(write, /bl writes it without its covering lock/, name);
+      assert.equal(readFileSync(changed, 'utf8'), before, `${name}: unchanged without the lock`);
+      underLock(b.dir, write, lock.kind === 'spec' ? [b.story] : []);
+    }
+    if (changed) assert.match(readFileSync(changed, 'utf8'), /^w2?$/, `${name}: written`);
+    if (kept) assert.equal(readFileSync(kept, 'utf8'), keptBefore, `${name}: ${kept} kept`);
+  }
+});
+
+test('a file in .bl/ of a backlog that is no git repository needs no lock', () => {
+  const dir = mkTempDir('bl-write-lock-norepo-');
+  assert.equal(lockFor(dir, join(dir, '.bl', 'run', 'x')), null);
+  mkdirSync(join(dir, '.bl', 'run'), { recursive: true });
+  atomicWriteFile(dir, join(dir, '.bl', 'run', 'x'), 'w');
+});
+
+test('withCoveringLock takes the lock of the file a plugin writes through a link', async () => {
+  const b = backlog();
+  const alias = join(b.dir, '.bl', 'alias');
+  mkdirSync(dirname(alias), { recursive: true });
+  symlinkSync(b.story, alias);
+  assert.equal(await withCoveringLock(b.dir, alias, () => holderOf(specLockPath(b.story))), process.pid);
 });
