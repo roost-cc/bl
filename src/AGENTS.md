@@ -3389,7 +3389,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   or on the grouped update row opens or closes it; `f` turns follow on or off; `w` opens
   `bl watch <id>` of the detail box's run in a new tmux
   window, in bl top's directory, named `<id> watch` (D7's `tmux new-window`, then
-  `exec ${SHELL:-sh}`, so the window stays open after `bl watch` exits), and outside tmux
+  `exec ${SHELL:-sh}`, so the window stays open after `bl watch` exits), as an action of the
+  queue (below), and outside tmux
   (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
   opens the action menu of the selected row, and `r`, `s`, `o`, `p` and `g` pick its action
   with that key (below); `d` in the next box shows the unranked units newest or oldest first
@@ -3407,37 +3408,46 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   selected unit, ranked or not, and the next box marks it with a peach `↕` after its rank until a
   put or `esc`.
   `p`, `P` and `x` pick the selected row's action of that key; `C` and `R` pick the box's
-  (`next.actions`), whose question names no row. A key with no such action does nothing: an
+  (`next.actions`), which belong to no row. Each runs at once, as every action does (below). A
+  key with no such action does nothing: an
   unranked row has no `p`, `P` or `x`, and with no staged copy there is no `C` or `R`. While
   `next.conflict` is set, every ranking key but `R` refuses with its text in the bottom border.
   Each pick renders the action's argv (`actions.Render`, below) with `Selected` (the selected
   row's id) and `Yanked` (only while a unit is yanked): a put with nothing yanked refuses with
-  `yank a work unit first (y)`, and the menu shows that line in place of its command. A put that
-  runs after its `y` ends the yank. `bl rank --commit` runs with no stdin, so a merge conflict
-  ends it with `conflict: run bl rank --commit in a terminal`, which the result box shows.
-- **Actions** (D7, F-88 S-1336; `top/internal/ui/dialog.go`, `top/internal/actions`). The
+  `yank a work unit first (y)`, and the menu shows that line in place of its command. A put
+  takes the yanked id at the key press, and the yank ends then. `bl rank --commit` runs with no
+  stdin, so a merge conflict ends it with `conflict: run bl rank --commit in a terminal`, which
+  the note line shows.
+- **Actions** (D7, F-88 S-1336, F-127 Decisions 2 and 4; `top/internal/ui/dialog.go`,
+  `top/internal/ui/queue.go`, `top/internal/actions`). The
   selected row of the box with the focus (in the detail box, the run it shows) has the `actions` of its
   snapshot row (below). `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's
   key, pick one, and `esc` cancels. Keys `r`, `s`, `o`, `p` and `g` pick the action with that
   key directly; a row without one says `<key>: <id> has no such action (a lists its actions)`
-  in the bottom border. An action with `input` asks for its text first: `note` is optional,
-  `reason` refuses an empty one. Then the view shows the exact command (`runs: …`) and asks
-  y/n. After `y`:
+  in the bottom border. No action asks y/n: a pick runs at once (`pick`). An action with
+  `input` first opens its text box: `note` is optional, `reason` refuses an empty one; `enter`
+  runs it, and `esc` cancels it. The menu and the text box are the only action dialogs.
+  - **The queue.** bl top has at most one action child process (`Model.jobs`, a `job` each). An
+    action picked while another runs waits, and the queue runs in the order of the key presses
+    (`enqueue`, `jobDone`). The note line, at the right of the bottom border, shows the command
+    that runs (`command`), in the text color. On success the line clears and the next action
+    starts. On a failure it shows `<command>: exit <code> · <last stderr line>` in red until
+    the next key; the actions that waited are dropped, and the line adds
+    `dropped <n> queued action(s)`. A long child holds the queue: `bl merge` for minutes,
+    `bl stop` for up to 30 s. `q` quits while a child runs, and the child goes on. The next
+    snapshot shows the change.
   - an action with `window` opens a new tmux window of that name, in bl top's directory (the
     backlog root: `src/top.js` runs the view there), running the command and then
-    `exec ${SHELL:-sh}` (`actions.TmuxArgs`, which `w` uses too). Outside tmux the action says
-    `<key> needs tmux` before it asks, and does nothing. A tmux that fails says why in the
-    bottom border.
+    `exec ${SHELL:-sh}` (`actions.TmuxArgs`; `w` is such an action too). Its child is
+    `tmux new-window` (`actions.Window`), which ends at once, so the command in the window holds
+    no queue. Outside tmux the action says `<key> needs tmux` and does nothing. A tmux that
+    fails reports like any other failed action.
   - any other action runs as a child with no stdin and stdout: a bl command through
-    `--bl-argv`, a `url` through `xdg-open` (`open` on macOS). A box says it runs (`esc` hides
-    it: `bl stop` takes up to 30 s, and the screen keeps its redraws), then a result box shows
-    the command, `exit <code>` and its last stderr line, until any key. The next snapshot shows
-    the change. A result replaces only its own running box (each action has a number,
-    `dialog.seq`) or shows when no dialog is open; over a newer dialog it shows in the bottom
-    border instead.
+    `--bl-argv`, a `url` through `xdg-open` (`open` on macOS).
   - an action with `stops` marks its run with the pid of its `bl stop` child (D8,
-    `Differ.Quiet`). The view starts the child before it reads the next snapshot
-    (`actions.Start`), so the mark is there first. The run's `stopped` end does not notify when
+    `Differ.Quiet`), when the child starts. The view starts the child before it reads the next
+    snapshot (`actions.Start`), so the mark is there first. A stop that the queue drops never
+    starts and marks nothing. The run's `stopped` end does not notify when
     that pid is one of the run's `stoppedBy`, the pids of the `bl stop`s whose requests stopped
     it (`markStopped`). So a stop of this view that timed out and stops the run later stays quiet,
     and another shell's stop notifies, also while this view's stop runs or after it failed. The
@@ -3479,7 +3489,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   non-empty strings. Otherwise `bl top` exits 1 with an error that names `backlog.json "top"`
   and the key.
 - **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
-  `top/internal/ui/testdata/*.golden` hold Mockup C's four dialog boxes (`actions.golden`), the
+  `top/internal/ui/testdata/*.golden` hold the two action dialogs, the menu and the text box
+  (`actions.golden`), the
   empty frame at 171×63, 100×40 and 79×23, the
   frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
   exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
@@ -3490,7 +3501,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   its feed (`detail-*.golden`);
   `go test ./internal/ui -update` writes them again. `top/internal/watch`'s tests run a fake
   `bl` that prints those lines. The action tests put a fake `bl`, `tmux`, `xdg-open` and `open`
-  on `PATH`, each of which writes its arguments to a file.
+  on `PATH`, each of which writes its arguments to a file and adds them as a line to a log, so
+  a test reads the order of the queue's runs.
   `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
   then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
   and `--no-push`.
@@ -3535,22 +3547,22 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   - `title` comes from `loadBacklog()`, which reuses its graph while the backlog's files are
     unchanged; null for a unit the backlog does not hold, or when it cannot be loaded.
 - `actions` (F-87 D7, F-88 S-1336): each `runs` row, each `attention` item and each unit of
-  `next` carries a list of `{ key, label, argv, input, window, url, about, stops }`, which
+  `next` carries a list of `{ key, label, argv, input, window, url, stops }`, which
   `src/top-snapshot.js` builds (`runActions`, `itemActions`), so the view holds no backlog
   logic. `argv` is a bl command (`["bl", …]`) or null for `url` (a page the view opens);
   `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
-  word; `window` names the tmux window the command opens in, or is null for a child with a
-  result box; `about` are lines the y/n question shows; `stops` is the run the action stops.
+  word; `window` names the tmux window the command opens in, or is null for a child that
+  reports on the note line; `stops` is the run the action stops.
   Each `argv` element is a Go `text/template` (F-113 D7, Decision A4): the view renders it with
   `missingkey=error` against `Selected` (the selected row's id) and `Yanked` (the yanked unit's
   id, only while one is yanked). An element without `{{ }}` renders as itself.
 
   | Row                                     | Actions (key: command)                                                                                                                                |
   | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `runs`, live (`running`)                | `s`: `bl stop <id>`, with Mockup C's lines and `stops`                                                                                                |
+  | `runs`, live (`running`)                | `s`: `bl stop <id>`, with `stops`                                                                                                                     |
   | `runs`, not live                        | `r`: `bl run <id>` in window `<id> run`, with `--resume` when `stopped`, `stale`, `escalated` or `failed` (`RESUMED_STATUSES`)                        |
   | `runs`, every row                       | then `o`: `bl view <id>` (window `<id> view`); `p`: the pull request's URL, when the run has one                                                      |
-  | escalation                              | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which a result box does not show); `o`: `bl view <unit>`                      |
+  | escalation                              | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which the note line does not show); `o`: `bl view <unit>`                     |
   | task                                    | `d`: `bl task done <T-n>`, input `note`; `o`: `bl view <T-n>`                                                                                         |
   | change                                  | `m`: `bl merge <unit>`, or `r`: `bl run <unit>` in window `<unit> run`, by `changeNextVerb`; `o`: `bl view <unit>`                                    |
   | ranked unit (`ranked`, `staged.ranked`) | `p`: `bl rank {{.Yanked}} --after {{.Selected}}`; `P`: `bl rank {{.Yanked}} --before {{.Selected}}`; `x`: `bl rank {{.Selected}} --remove` (F-113 D7) |

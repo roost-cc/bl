@@ -59,11 +59,16 @@ through bl watch <id> --json.
 Actions: a opens the action menu of the selected row; r starts or resumes the
 selected run, s stops it (bl stop), o opens the row's page (bl view), p opens
 the run's pull request (xdg-open, or open on macOS), g opens bl agent. Each
-shows the exact command and asks y/n first; bl task done asks for an optional
-note. A verb that runs here ends in a result box with its exit code and last
-stderr line. bl run, bl view, bl status and bl agent open a new tmux window in
-the backlog root instead, which stays open after the command exits; outside
-tmux they say "needs tmux". A run that this view stopped does not notify.
+runs at once, with no y/n question; bl task done first asks for an optional
+note. Actions run one at a time, in the order of the key presses: one pressed
+while another runs waits in a queue. The bottom border's note line shows the
+command that runs. On success the line clears; on a failure it shows the
+command, its exit code and its last stderr line until the next key, and the
+actions that waited are dropped, with their count. bl run, bl view, bl status
+and bl agent open a new tmux window in the backlog root instead, which stays
+open after the command exits; they hold the queue only while tmux opens the
+window. Outside tmux they say "needs tmux". A run that this view stopped does
+not notify.
 
 The view notifies for a new escalation, a new task, and a run that ends
 (clean, no-change, reviewed, escalated, failed or stopped: every status but
