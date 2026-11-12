@@ -238,6 +238,10 @@ func TestFollowOffLetsArrowsScrollTheFeed(t *testing.T) {
 	if m.feedBack != 0 {
 		t.Errorf("↑ with follow on scrolled: %d", m.feedBack)
 	}
+	// f is a key of the detail box only (F-127, "Three kinds of keys").
+	if other, _ := press(t, focused(t, m, runsBox), text("f")); !other.follow {
+		t.Error("f outside the detail box turned follow off")
+	}
 	m, _ = press(t, m, text("f"))
 	if m.follow || !strings.Contains(screen(t, m), "follow off · ↑↓ scroll the feed · f follows") {
 		t.Fatal("f did not turn follow off")
@@ -273,11 +277,15 @@ func TestWOpensBlWatchInANewTmuxWindow(t *testing.T) {
 	getenv = func(k string) string { return env[k] }
 	t.Cleanup(func() { getenv = os.Getenv })
 	m, _ := update(t, sized(t, 171, 63), snapshot(t))
-	m, _ = press(t, m, text("w"))
+	// w is a key of the detail box only (F-127, "Three kinds of keys").
+	if m, cmd := press(t, m, text("w")); cmd != nil || m.note != "" {
+		t.Errorf("w in the runs box: note %q", m.note)
+	}
+	m, _ = press(t, focused(t, m, detailBox), text("w"))
 	if !strings.Contains(screen(t, m), "w: select a run (↑↓ in runs, then ↵)") {
 		t.Errorf("w with no run:\n%s", screen(t, m))
 	}
-	m = showing(t, 171, 63)
+	m = focused(t, showing(t, 171, 63), detailBox)
 	m, cmd := press(t, m, text("w"))
 	if cmd != nil || !strings.Contains(screen(t, m), "w needs tmux") {
 		t.Errorf("w outside tmux:\n%s", screen(t, m))

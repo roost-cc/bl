@@ -37,4 +37,4 @@
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
-╰┘↑↓└┘tab└┘↵└┘a└┘r└┘s└┘o└┘p└┘g└┘h└┘q└────────┐desktop failed: GDBus.Error: no notification daemon┌─╯
+╰┘tab└┘↑↓└┘↵└┘a└┘h└┘q└───────────────────────┐desktop failed: GDBus.Error: no notification daemon┌─╯

@@ -191,11 +191,13 @@ func TestOtherBoxesKeepTheirKeys(t *testing.T) {
 func TestHelpListsEachBoxsKeysUnderThatBox(t *testing.T) {
 	// The headings follow the help's border, not a box's. Each heading is the box's number in the
 	// layout that is drawn (F-127 Decision 1): ⁵next and ³detail in the full layout.
-	order := []string{"open the selected run's pull request", "read capacity now", "│  ⁵next", "yank the selected unit",
+	// The global keys, then each box's box keys, then the line about the row action keys (F-127
+	// Decision 5).
+	order := []string{"open the action menu of the selected row", "read capacity now", "│  ⁵next", "yank the selected unit",
 		"put the yanked unit after the selected ranked unit", "put the yanked unit before the selected ranked unit",
 		"unrank the selected ranked unit", "cancel the yank", "commit the staged edits (bl rank --commit)",
 		"drop the staged edits (bl rank --reset)", "show the unranked units newest or oldest first", "│  ³detail",
-		"follow the feed on or off", "any key closes this help"}
+		"follow the feed on or off", "the selected row's actions; a lists them", "any key closes this help"}
 	// One column where it fits.
 	m, _ := press(t, sized(t, 171, 63), text("h"))
 	out := screen(t, m)
@@ -217,7 +219,7 @@ func TestHelpListsEachBoxsKeysUnderThatBox(t *testing.T) {
 			t.Errorf("two columns: the help has no %q:\n%s", want, out)
 		}
 	}
-	for key, heading := range map[string]string{"hide or show the box at that position": "⁶next", "open bl agent in a tmux window": "³detail"} {
+	for key, heading := range map[string]string{"hide or show the box at that position": "⁶next", "q      quit": "³detail"} {
 		if l := ansi.Strip(lineWith(t, m, key)); !strings.Contains(l, heading) {
 			t.Errorf("two columns: %q is not beside %q: %q", heading, key, l)
 		}

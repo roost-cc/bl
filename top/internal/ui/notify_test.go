@@ -138,14 +138,15 @@ func TestAFailedPushWarnsInTheBottomBorder(t *testing.T) {
 
 func TestALongWarningFitsTheBottomBorder(t *testing.T) {
 	long := "desktop failed: " + strings.Repeat("x", 200)
+	keys := atRow(t, runsBox, "S-1330").barKeys()
 	for _, w := range []int{80, 171} {
-		got := ansi.Strip(keyBar(w, []string{long}))
-		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘↑↓└┘tab└┘↵└┘a└┘r└┘s└┘o└┘p└┘g└┘h└┘q└─┐desktop failed: x") || !strings.HasSuffix(got, "x…┌─╯") {
+		got := ansi.Strip(keyBar(w, keys, []string{long}))
+		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘s└┘o└┘p└┘g└┘tab└┘↑↓└┘↵└┘a└┘h└┘q└─┐desktop failed: x") || !strings.HasSuffix(got, "x…┌─╯") {
 			t.Errorf("keyBar(%d) with a long warning = %q", w, got)
 		}
 	}
-	short := ansi.Strip(keyBar(171, []string{"desktop failed: timeout"}))
-	if !strings.HasPrefix(short, "╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└─") || !strings.HasSuffix(short, "─┐desktop failed: timeout┌─╯") {
+	short := ansi.Strip(keyBar(171, keys, []string{"desktop failed: timeout"}))
+	if !strings.HasPrefix(short, "╰┘s stop└┘o page└┘p PR└┘g agent└"+globalBar+"─") || !strings.HasSuffix(short, "─┐desktop failed: timeout┌─╯") {
 		t.Errorf("keyBar(171) with a short warning = %q", short)
 	}
 }

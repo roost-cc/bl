@@ -37,4 +37,4 @@
 │ bl next → nothing can run                                                                        │
 │                                                                                                  │
 │                                                                                                  │
-╰┘↑↓└┘tab└┘↵└┘a└┘r└┘s└┘o└┘p└┘g└┘h└┘q└───────────────────────────┐push failed: ntfy: 403 forbidden┌─╯
+╰┘tab box└┘↑↓ select└┘↵ detail└┘a act└┘h help└┘q quit└──────────┐push failed: ntfy: 403 forbidden┌─╯

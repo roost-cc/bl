@@ -29,10 +29,11 @@ const (
 // with the new interval, so that a run of presses starts one stream, not one per press.
 const restartDelay = 400 * time.Millisecond
 
-// keyMap holds the keys of D6 that bl top has, and the next box's ranking keys (F-113 D6). The
-// help overlay lists them.
+// keyMap holds the global keys and the box keys of bl top (F-127, "Three kinds of keys"): the keys
+// of D6 and the next box's ranking keys (F-113 D6). The help overlay lists them. A row's action keys
+// come with its actions in the snapshot.
 type keyMap struct {
-	boxes, next, prev, move, open, act, run, stop, page, pr, agent, follow, watch, order, capacity, longer, shorter, help, quit key.Binding
+	boxes, next, prev, move, open, act, follow, watch, order, capacity, longer, shorter, help, quit key.Binding
 
 	yank, after, before, unrank, cancel, commit, reset key.Binding
 }
@@ -46,12 +47,7 @@ var keys = keyMap{
 	open: key.NewBinding(key.WithKeys("enter"),
 		key.WithHelp("↵", "show the selected run in the detail box; open the update group")),
 	act:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "open the action menu of the selected row")),
-	run:      key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "start or resume the selected run (bl run, in a tmux window)")),
-	stop:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "stop the selected run (bl stop)")),
-	page:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open the selected row's page (bl view, in a tmux window)")),
-	pr:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "open the selected run's pull request")),
-	agent:    key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "open bl agent in a tmux window")),
-	follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed on or off")),
+	follow:  key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow the feed on or off")),
 	watch:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "open bl watch of the run in a tmux window")),
 	order:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "show the unranked units newest or oldest first")),
 	capacity: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "read capacity now")),
@@ -68,16 +64,49 @@ var keys = keyMap{
 	reset:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "drop the staged edits (bl rank --reset)")),
 }
 
-// helpGroups are the help overlay's keys: the keys of every box (no box name), then each box's
-// own keys under that box.
+// helpKey is a key of helpGroups: its binding, and its word on the key bar (F-127 Decision 5). A
+// global key with no word is left off the bar.
+type helpKey struct {
+	key.Binding
+	short string
+}
+
+// helpGroups are the global keys (no box name), then each box's box keys under that box. The help
+// overlay lists them all, and the key bar shows the focused box's group and the global keys that
+// have a word (Model.barKeys).
 var helpGroups = []struct {
 	box  boxName
-	keys []key.Binding
+	keys []helpKey
 }{
-	{"", []key.Binding{keys.boxes, keys.next, keys.prev, keys.move, keys.open, keys.act, keys.run, keys.stop, keys.page, keys.pr,
-		keys.agent, keys.capacity, keys.longer, keys.shorter, keys.help, keys.quit}},
-	{nextBox, []key.Binding{keys.yank, keys.after, keys.before, keys.unrank, keys.cancel, keys.commit, keys.reset, keys.order}},
-	{detailBox, []key.Binding{keys.follow, keys.watch}},
+	{"", []helpKey{{keys.boxes, ""}, {keys.next, "box"}, {keys.prev, ""}, {keys.move, "select"}, {keys.open, "detail"},
+		{keys.act, "act"}, {keys.capacity, ""}, {keys.longer, ""}, {keys.shorter, ""}, {keys.help, "help"}, {keys.quit, "quit"}}},
+	{nextBox, []helpKey{{keys.yank, "yank"}, {keys.after, "put"}, {keys.before, "put before"}, {keys.unrank, "unrank"},
+		{keys.cancel, "cancel"}, {keys.commit, "commit"}, {keys.reset, "reset"}, {keys.order, "order"}}},
+	{detailBox, []helpKey{{keys.follow, "follow"}, {keys.watch, "watch"}}},
+}
+
+// groupKeys are the keys of box b's group in helpGroups: the global keys for "", none for a box
+// with no box keys.
+func groupKeys(b boxName) []helpKey {
+	for _, g := range helpGroups {
+		if g.box == b {
+			return g.keys
+		}
+	}
+	return nil
+}
+
+// boxKeys are the box keys of the box with the focus; none when every box is hidden.
+func (m Model) boxKeys() []helpKey {
+	if m.focus == "" {
+		return nil
+	}
+	return groupKeys(m.focus)
+}
+
+// bound says whether k is a key of one of group's bindings.
+func bound(k string, group []helpKey) bool {
+	return slices.ContainsFunc(group, func(h helpKey) bool { return slices.Contains(h.Keys(), k) })
 }
 
 // startedMsg carries a stream that has started.
@@ -278,8 +307,6 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch {
-	case m.focus == nextBox && key.Matches(msg, keys.yank, keys.after, keys.before, keys.unrank, keys.cancel, keys.commit, keys.reset):
-		return m.rankKey(msg.String())
 	case key.Matches(msg, keys.boxes):
 		// Key n toggles the box at position n of the drawn layout (F-127 Decision 3).
 		order := m.order()
@@ -322,14 +349,6 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, keys.act):
 		return m.openMenu()
-	case key.Matches(msg, keys.run, keys.stop, keys.page, keys.pr, keys.agent):
-		return m.actKey(msg.String())
-	case key.Matches(msg, keys.follow):
-		m.toggleFollow()
-	case key.Matches(msg, keys.watch):
-		return m.openWatch()
-	case m.focus == nextBox && key.Matches(msg, keys.order):
-		m.newestFirst = !m.newestFirst
 	case key.Matches(msg, keys.capacity):
 		if s := m.stream; s != nil {
 			return m, func() tea.Msg {
@@ -353,6 +372,27 @@ func (m Model) key(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(restartDelay, func(time.Time) tea.Msg { return restartMsg{press} })
 	case key.Matches(msg, keys.help):
 		m.help = true
+	default:
+		return m.localKey(msg)
+	}
+	return m, nil
+}
+
+// localKey handles a key that is no global key (F-127, "Three kinds of keys"): a box key of the box
+// with the focus, else the key of one of the selected row's actions, which picks it (actKey).
+func (m Model) localKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if !bound(msg.String(), m.boxKeys()) {
+		return m.actKey(msg.String())
+	}
+	switch {
+	case key.Matches(msg, keys.follow):
+		m.toggleFollow()
+	case key.Matches(msg, keys.watch):
+		return m.openWatch()
+	case key.Matches(msg, keys.order):
+		m.newestFirst = !m.newestFirst
+	default:
+		return m.rankKey(msg.String())
 	}
 	return m, nil
 }
@@ -380,9 +420,10 @@ func (m Model) View() tea.View {
 	return v
 }
 
-// helpBox draws the help overlay for a w×h screen: each key of keyMap and what it does, a box's own
-// keys under the box's current number and name (helpGroups). When one column is taller than the
-// screen and two fit its width, the boxes' own keys go in a second column.
+// helpBox draws the help overlay for a w×h screen (F-127 Decision 5): the global keys and what
+// they do, each box's box keys under the box's current number and name (helpGroups), then a line
+// about the row action keys. When one column is taller than the screen and two fit its width, the
+// box keys and that line go in a second column.
 func (m Model) helpBox(w, h int) []string {
 	var every, own []string
 	for _, g := range helpGroups {
@@ -398,6 +439,7 @@ func (m Model) helpBox(w, h int) []string {
 			}
 		}
 	}
+	own = append(own, "", styleText.Render("  the selected row's actions; a lists them"))
 	foot := []string{"", styleText.Render("  any key closes this help")}
 	lines := slices.Concat([]string{""}, every, own, foot)
 	if len(lines)+2 > h {

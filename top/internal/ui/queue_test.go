@@ -111,7 +111,7 @@ func TestAWindowHoldsTheQueueOnlyForItsTmuxCall(t *testing.T) {
 	m.detail = "S-1330"
 	m, window := press(t, m, text("g"))
 	m, x := press(t, m, text("x"))
-	m, w := press(t, m, text("w"))
+	m, w := press(t, focused(t, m, detailBox), text("w"))
 	if window == nil || x != nil || w != nil || len(m.jobs) != 3 || m.jobs[0].window == "" {
 		t.Fatalf("g, x, w: %+v", m.jobs)
 	}

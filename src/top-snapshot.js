@@ -216,7 +216,8 @@ export function deniedOf(history) {
 export const RESUMED_STATUSES = ['stopped', 'stale', 'escalated', 'failed'];
 
 /**
- * One action of a `bl top` row (F-87 D7): a key, a label, and what it runs.
+ * One action of a `bl top` row (F-87 D7): a key, a label, a short label for
+ * the key bar (F-127 D5; the `a` menu shows the long one), and what it runs.
  * `argv` is a bl command (`["bl", …]`), which the view runs through its own
  * bl; null for `url`, a page the view opens (`xdg-open`, `open`). `input` is
  * null, `"note"` (optional text, added as the last word) or `"reason"`
@@ -225,9 +226,10 @@ export const RESUMED_STATUSES = ['stopped', 'stale', 'escalated', 'failed'];
  * `stops` is the run the action stops, whose `stopped` end the view does not
  * notify (D8).
  */
-const action = (key, label, argv, { input = null, window = null, url = null, stops = null } = {}) => ({
+const action = (key, label, short, argv, { input = null, window = null, url = null, stops = null } = {}) => ({
   key,
   label,
+  short,
   argv,
   input,
   window,
@@ -236,10 +238,11 @@ const action = (key, label, argv, { input = null, window = null, url = null, sto
 });
 
 /** Every row's last action: an agent session in a new tmux window. */
-const agentAction = () => action('g', 'talk it through', ['bl', 'agent'], { window: 'agent' });
+const agentAction = () => action('g', 'talk it through', 'agent', ['bl', 'agent'], { window: 'agent' });
 
 /** A work unit row's (or a task's) page, in a new tmux window. */
-const viewAction = (id, label = 'open the page') => action('o', label, ['bl', 'view', id], { window: `${id} view` });
+const viewAction = (id, label = 'open the page') =>
+  action('o', label, 'page', ['bl', 'view', id], { window: `${id} view` });
 
 /**
  * The ranking actions of a ranked row of the next box (F-113 D6, D7). Each argv
@@ -247,9 +250,15 @@ const viewAction = (id, label = 'open the page') => action('o', label, ['bl', 'v
  * row's id (`Selected`) and the yanked unit's id (`Yanked`).
  */
 const RANK_ACTIONS = [
-  action('p', 'put the yanked unit after it', ['bl', 'rank', '{{.Yanked}}', '--after', '{{.Selected}}']),
-  action('P', 'put the yanked unit before it', ['bl', 'rank', '{{.Yanked}}', '--before', '{{.Selected}}']),
-  action('x', 'unrank it', ['bl', 'rank', '{{.Selected}}', '--remove']),
+  action('p', 'put the yanked unit after it', 'put', ['bl', 'rank', '{{.Yanked}}', '--after', '{{.Selected}}']),
+  action('P', 'put the yanked unit before it', 'put before', [
+    'bl',
+    'rank',
+    '{{.Yanked}}',
+    '--before',
+    '{{.Selected}}',
+  ]),
+  action('x', 'unrank it', 'unrank', ['bl', 'rank', '{{.Selected}}', '--remove']),
 ];
 
 /** A ranked row of the next box: its ranking actions, then the row's own. */
@@ -257,8 +266,8 @@ const rankedRow = (row) => ({ ...row, actions: [...RANK_ACTIONS, ...row.actions]
 
 /** The next box's actions while a staged copy exists (F-113 D7): commit it or reset it. */
 const STAGED_ACTIONS = [
-  action('C', 'commit the staged order', ['bl', 'rank', '--commit']),
-  action('R', 'drop the staged edits', ['bl', 'rank', '--reset']),
+  action('C', 'commit the staged order', 'commit', ['bl', 'rank', '--commit']),
+  action('R', 'drop the staged edits', 'reset', ['bl', 'rank', '--reset']),
 ];
 
 /**
@@ -274,19 +283,19 @@ export function itemActions(item) {
   const out = [];
   if (kind === 'escalation') {
     out.push(
-      action('e', 'read the escalation', ['bl', 'status', unit], { window: `${unit} status` }),
+      action('e', 'read the escalation', 'escalation', ['bl', 'status', unit], { window: `${unit} status` }),
       viewAction(unit),
     );
   } else if (kind === 'task') {
     out.push(
-      action('d', 'close the task', ['bl', 'task', 'done', id], { input: 'note' }),
+      action('d', 'close the task', 'done', ['bl', 'task', 'done', id], { input: 'note' }),
       viewAction(id, 'open the task page'),
     );
   } else if (kind === 'change') {
     out.push(
       changeNextVerb(item.status) === 'merge'
-        ? action('m', 'merge it', ['bl', 'merge', unit])
-        : action('r', 'run it', ['bl', 'run', unit], { window: `${unit} run` }),
+        ? action('m', 'merge it', 'merge', ['bl', 'merge', unit])
+        : action('r', 'run it', 'run', ['bl', 'run', unit], { window: `${unit} run` }),
       viewAction(unit),
     );
   }
@@ -305,17 +314,23 @@ export function runActions(row) {
   const out = [];
   if (status === 'running') {
     // Only a bl run stops: not a review or a merge of a state a dead bl left running.
-    if (row.stoppable) out.push(action('s', 'stop the run', ['bl', 'stop', id], { stops: id }));
+    if (row.stoppable) out.push(action('s', 'stop the run', 'stop', ['bl', 'stop', id], { stops: id }));
   } else {
     const resume = RESUMED_STATUSES.includes(status);
     out.push(
-      action('r', resume ? 'resume the run' : 'start the run', ['bl', 'run', id, ...(resume ? ['--resume'] : [])], {
-        window: `${id} run`,
-      }),
+      action(
+        'r',
+        resume ? 'resume the run' : 'start the run',
+        resume ? 'resume' : 'run',
+        ['bl', 'run', id, ...(resume ? ['--resume'] : [])],
+        {
+          window: `${id} run`,
+        },
+      ),
     );
   }
   out.push(viewAction(id));
-  if (row.pr?.url) out.push(action('p', 'open the pull request', null, { url: row.pr.url }));
+  if (row.pr?.url) out.push(action('p', 'open the pull request', 'PR', null, { url: row.pr.url }));
   return [...out, agentAction()];
 }
 

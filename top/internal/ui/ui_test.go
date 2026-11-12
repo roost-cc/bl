@@ -171,7 +171,7 @@ func TestHiddenBoxGivesItsSpace(t *testing.T) {
 		t.Fatal("the next or the detail box is drawn while hidden")
 	}
 	// The runs box takes the whole left column: its side runs to the line above the key bar.
-	if !strings.HasPrefix(lines[61], "│") || !strings.HasPrefix(lines[62], "╰┘↑↓ select└┘tab box└") {
+	if !strings.HasPrefix(lines[61], "│") || !strings.HasPrefix(lines[62], "╰"+globalBar) {
 		t.Errorf("left column ends: %q / %q", lines[61], lines[62])
 	}
 	// Hide the right column too: the runs box takes the whole width.
@@ -183,7 +183,7 @@ func TestHiddenBoxGivesItsSpace(t *testing.T) {
 	// Hide every box: the key bar stays.
 	m, _ = press(t, m, numberKey(m, runsBox))
 	lines = strings.Split(screen(t, m), "\n")
-	if strings.TrimSpace(lines[0]) != "" || !strings.HasPrefix(lines[62], "╰┘↑↓ select└┘tab box└") || m.focus != "" {
+	if strings.TrimSpace(lines[0]) != "" || !strings.HasPrefix(lines[62], "╰"+globalBar) || m.focus != "" {
 		t.Errorf("no box: %q / %q, focus %q", lines[0], lines[62], m.focus)
 	}
 }
@@ -341,7 +341,7 @@ func TestBoxGolden(t *testing.T) {
 func TestBoxColorsAreD5s(t *testing.T) {
 	plain := strings.Join(drawBox(1, "runs", nil, false, nil, 30, 3), "\n")
 	focus := strings.Join(drawBox(1, "runs", nil, true, nil, 30, 3), "\n")
-	bar := keyBar(80, nil)
+	bar := keyBar(80, sized(t, 80, 24).barKeys(), nil)
 	for _, c := range []struct {
 		what, out, color string
 	}{
@@ -357,19 +357,54 @@ func TestBoxColorsAreD5s(t *testing.T) {
 	}
 }
 
+// globalBar is the key bar's global keys, in its order (F-127 Decision 5).
+const globalBar = "┘tab box└┘↑↓ select└┘↵ detail└┘a act└┘h help└┘q quit└"
+
 func TestKeyBarFitsItsWidth(t *testing.T) {
+	keys := atRow(t, runsBox, "S-1330").barKeys()
 	for _, w := range []int{100, 171} {
-		if got := ansi.Strip(keyBar(w, nil)); lipgloss.Width(got) != w ||
-			!strings.HasPrefix(got, "╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└─") {
+		if got := ansi.Strip(keyBar(w, keys, nil)); lipgloss.Width(got) != w ||
+			!strings.HasPrefix(got, "╰┘s stop└┘o page└┘p PR└┘g agent└"+globalBar+"─") {
 			t.Errorf("keyBar(%d) = %q", w, got)
 		}
 	}
 	// At 80 the labels do not fit: the keys alone.
-	if got := ansi.Strip(keyBar(80, nil)); lipgloss.Width(got) != 80 || !strings.HasPrefix(got, "╰┘↑↓└┘tab└┘↵└┘a└┘r└┘s└┘o└┘p└┘g└┘h└┘q└─") {
+	if got := ansi.Strip(keyBar(80, keys, nil)); lipgloss.Width(got) != 80 || !strings.HasPrefix(got, "╰┘s└┘o└┘p└┘g└┘tab└┘↑↓└┘↵└┘a└┘h└┘q└─") {
 		t.Errorf("keyBar(80) = %q", got)
 	}
-	if got := ansi.Strip(keyBar(20, nil)); got != "╰┘↑↓└┘tab└┘↵└┘a└───╯" {
+	if got := ansi.Strip(keyBar(20, keys, nil)); got != "╰┘s└┘o└┘p└┘g└┘tab└─╯" {
 		t.Errorf("keyBar(20) = %q, want the keys alone, as many as fit", got)
+	}
+}
+
+// TestTheKeyBarFollowsTheFocusedBoxAndTheSelectedRow: the bar shows the focused box's box keys,
+// then the selected row's action keys, then the global keys (F-127 Decision 5).
+func TestTheKeyBarFollowsTheFocusedBoxAndTheSelectedRow(t *testing.T) {
+	bar := func(m Model) string { return ansi.Strip(keyBar(171, m.barKeys(), nil)) }
+	// A runs row: its actions by their short labels.
+	if got := bar(atRow(t, runsBox, "F-83")); !strings.HasPrefix(got, "╰┘r resume└┘o page└┘p PR└┘g agent└"+globalBar+"─") {
+		t.Errorf("runs, F-83: %q", got)
+	}
+	// The next box: its box keys, then the row's keys that are no box key; p puts, so no p PR.
+	got := bar(atRow(t, nextBox, "F-84"))
+	if !strings.HasPrefix(got, "╰┘y yank└┘p put└┘P put before└┘x unrank└┘esc cancel└┘C commit└┘R reset└┘d order└┘o page└┘g agent└"+globalBar+"─") ||
+		strings.Contains(got, "p PR") {
+		t.Errorf("next, F-84: %q", got)
+	}
+	// An attention item: its own keys, e and m among them.
+	if got := bar(atRow(t, attentionBox, "F-81:change")); !strings.HasPrefix(got, "╰┘m merge└┘o page└┘g agent└"+globalBar) {
+		t.Errorf("attention, F-81:change: %q", got)
+	}
+	// The detail box: f and w, then the shown run's actions.
+	if got := bar(focused(t, showing(t, 171, 63), detailBox)); !strings.HasPrefix(got, "╰┘f follow└┘w watch└┘s stop└┘o page└┘p PR└┘g agent└"+globalBar) {
+		t.Errorf("detail: %q", got)
+	}
+	// Tokens and activity have no box keys and no rows: the global keys alone.
+	m, _ := update(t, sized(t, 171, 63), snapshot(t))
+	for _, b := range []boxName{tokensBox, activityBox} {
+		if got := bar(focused(t, m, b)); !strings.HasPrefix(got, "╰"+globalBar+"─") {
+			t.Errorf("%s: %q", b, got)
+		}
 	}
 }
 

@@ -323,10 +323,10 @@ func TestRStartsOrResumesARunInANewTmuxWindow(t *testing.T) {
 			t.Errorf("r on %s ran bl itself", c.id)
 		}
 	}
-	// A live run has no r.
+	// A live run has no r: the key does nothing, and the key bar does not show it.
 	fakeTools(t, true, "", 0)
 	m, cmd := press(t, atRow(t, runsBox, "F-81"), text("r"))
-	if m.dialog != nil || cmd != nil || !strings.Contains(screen(t, m), "r: F-81 has no such action (a lists its actions)") {
+	if m.dialog != nil || cmd != nil || m.note != "" || strings.Contains(noteLine(t, m), "r run") {
 		t.Errorf("r on a live run:\n%s", screen(t, m))
 	}
 }
@@ -519,13 +519,38 @@ func TestOutsideTmuxTheWindowActionsSayNeedsTmux(t *testing.T) {
 	}
 }
 
+// TestHelpListsTheActionKeys: the help names the row action keys in one line, not as global keys
+// (F-127 Decision 5).
 func TestHelpListsTheActionKeys(t *testing.T) {
 	m, _ := press(t, sized(t, 171, 63), text("h"))
 	out := screen(t, m)
-	for _, want := range []string{"open the action menu of the selected row", "start or resume the selected run", "stop the selected run (bl stop)",
-		"open the selected row's page", "open the selected run's pull request", "open bl agent in a tmux window"} {
+	for _, want := range []string{"open the action menu of the selected row", "the selected row's actions; a lists them"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the help has no %q:\n%s", want, out)
 		}
+	}
+	for _, gone := range []string{"stop the selected run (bl stop)", "open the selected run's pull request"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("the help lists %q as a global key:\n%s", gone, out)
+		}
+	}
+}
+
+// TestAnyKeyOfTheSelectedRowsActionsPicksIt: e, d and m on attention items pick their actions,
+// though no global key or box key has them (F-127, "Three kinds of keys").
+func TestAnyKeyOfTheSelectedRowsActionsPicksIt(t *testing.T) {
+	fakeTools(t, true, "", 0)
+	m, cmd := press(t, atRow(t, attentionBox, "F-83:esc"), text("e"))
+	if len(m.jobs) != 1 || m.jobs[0].show != "bl status F-83  (new tmux window)" {
+		t.Errorf("e on an escalation: %+v", m.jobs)
+	}
+	settle(t, m, cmd)
+	m, cmd = press(t, atRow(t, attentionBox, "F-81:change"), text("m"))
+	if len(m.jobs) != 1 || m.jobs[0].show != "bl merge F-81" {
+		t.Errorf("m on a change: %+v", m.jobs)
+	}
+	settle(t, m, cmd)
+	if m, _ = press(t, atRow(t, attentionBox, "T-52"), text("d")); m.dialog == nil || m.dialog.stage != stageInput {
+		t.Errorf("d on a task did not open its note box: %+v", m.dialog)
 	}
 }

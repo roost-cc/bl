@@ -65,7 +65,8 @@ type Run struct {
 }
 
 // Action is one action of a row (F-87 D7, S-1336): `itemActions`, `runActions` and the units'
-// actions in src/top-snapshot.js build them. Argv is a bl command (`bl …`), which the view
+// actions in src/top-snapshot.js build them. Label is what the action menu shows, and Short its
+// word on the key bar (F-127 D5). Argv is a bl command (`bl …`), which the view
 // runs through its own bl; nil for URL, a page the view opens. Each argv element is a
 // text/template (F-113 D7), which actions.Render renders. Input is "", "note" (optional text)
 // or "reason" (needed text), added as the command's last word. Window names the tmux window the
@@ -74,6 +75,7 @@ type Run struct {
 type Action struct {
 	Key    string   `json:"key"`
 	Label  string   `json:"label"`
+	Short  string   `json:"short"`
 	Argv   []string `json:"argv"`
 	Input  string   `json:"input"`
 	Window string   `json:"window"`

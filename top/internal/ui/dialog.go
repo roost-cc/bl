@@ -110,19 +110,13 @@ func (m Model) openMenu() (Model, tea.Cmd) {
 	return m, nil
 }
 
-// actKey picks the action with key k of the selected row (keys r, s, o, p, g), as the menu does.
+// actKey picks the action with key k of the selected row, as the menu does (F-127, "Three kinds of
+// keys"). A key that none of the row's actions has does nothing: the key bar shows the row's keys.
 func (m Model) actKey(k string) (Model, tea.Cmd) {
-	id, _, list, ok := m.target()
-	if !ok {
-		m.note = k + ": select a row first"
-		return m, nil
+	id, _, list, _ := m.target()
+	if i := slices.IndexFunc(list, func(a stream.Action) bool { return a.Key == k }); i >= 0 {
+		return m.pick(list[i], id)
 	}
-	for _, a := range list {
-		if a.Key == k {
-			return m.pick(a, id)
-		}
-	}
-	m.note = k + ": " + id + " has no such action (a lists its actions)"
 	return m, nil
 }
 

@@ -60,4 +60,4 @@
 │                                                                                                        ││                                                               │
 │                                                                                                        ││                                                               │
 │                                                                                                        ││                                                               │
-╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└──────────────────────────────────────────────────────────────────────────────╯
+╰┘y yank└┘p put└┘P put before└┘x unrank└┘esc cancel└┘C commit└┘R reset└┘d order└┘o page└┘g agent└┘tab box└┘↑↓ select└┘↵ detail└┘a act└┘h help└┘q quit└────────────────────╯
