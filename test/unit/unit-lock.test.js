@@ -70,6 +70,17 @@ test("takeUnitLocks refuses when another process holds one story's lock, and kee
   }
 });
 
+test('take_unit_locks_releases_partial_take_on_target_read_error: a later unit that cannot be read keeps no lock', () => {
+  const { dir, config, cleanup, unitDir, feature, story } = fixture();
+  try {
+    writeFileSync(join(dir, 'blockers.json'), '{bad');
+    assert.throws(() => takeUnitLocks(config, [story, feature], 'bl refine S-3 F-1'));
+    assert.equal(holderOf(unitLockPath(dir, unitDir('stories/S3-three'))), null, 'the first take is given back');
+  } finally {
+    cleanup();
+  }
+});
+
 test('takeUnitLocks is re-entrant within one process: the lock stays until the last release', () => {
   const { dir, config, cleanup, unitDir, feature } = fixture();
   try {

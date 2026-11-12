@@ -151,7 +151,8 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
  * before its integration, `bl run` before its prep) is taken one depth deeper.
  *
  * Returns `{ refused }`, which names the other holder, with neither lock held;
- * or `{ refused: null, release }`, where `release()` gives back both.
+ * or `{ refused: null, release }`, where `release()` gives back both. If the
+ * take throws (the stories cannot be read), it holds neither either.
  *
  * @param {object} config
  * @param {import('./unit-lock.js').WorkUnit} unit
@@ -161,7 +162,13 @@ export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 function takeRunLocks(config, unit, owner) {
   const run = acquireRunLock(config, unit.id);
   if (run.holder != null) return { refused: `a bl run (pid ${run.holder}) is running ${unit.id}` };
-  const units = takeUnitLocks(config, [unit], owner);
+  let units;
+  try {
+    units = takeUnitLocks(config, [unit], owner);
+  } catch (e) {
+    releaseRunLock(run.taken);
+    throw e;
+  }
   if (units.refused != null) {
     releaseRunLock(run.taken);
     return { refused: units.refused };

@@ -15,6 +15,7 @@ import {
   acquireRunLock,
   releaseRunLock,
   reviewFeature,
+  integrateUnit,
   parseMaxRounds,
   RUN_DIR,
   looksFlaky,
@@ -1582,6 +1583,28 @@ test('run_unit_locks: a run and a review hold the work unit locks of the feature
     }
   }
 });
+
+// The feature's stories cannot be read (a malformed blockers.json): each
+// caller of the run lock take throws, and keeps neither the run lock nor a
+// work unit lock.
+for (const [caller, call] of [
+  ['runFeature', (a) => runFeature({ ...a, opts: { maxRounds: 2 } })],
+  ['reviewFeature', (a) => reviewFeature({ ...a, maxRounds: 2 })],
+  ['integrateUnit', (a) => integrateUnit({ ...a, unit: a.feature })],
+]) {
+  test(`take_run_locks_releases_run_lock_on_target_read_error: ${caller}`, async () => {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      writeFileSync(join(dir, 'blockers.json'), '{bad');
+      const runner = fakeRunner({ dir, feature });
+      await assert.rejects(() => call({ feature, config, prep, runner }));
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'run lock released');
+      assert.equal(holds(unitLockPath(dir, dirname(feature.indexPath))), false, 'no work unit lock kept');
+    } finally {
+      cleanup();
+    }
+  });
+}
 
 test('writeEscalation fills an Escalation heading with trailing whitespace', async () => {
   // Heading shapes extractSection accepts; the diagnosis must land in each.

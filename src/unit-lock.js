@@ -88,17 +88,23 @@ export function takeUnitLocks(config, units, info) {
   const release = () => {
     for (const give of taken.splice(0).reverse()) give();
   };
-  for (const unit of units) {
-    for (const { id, dir } of lockTargets(config, unit)) {
-      const got = takeDirLock(config.backlogRoot, 'unit', dir, info);
-      if (got.refused != null) {
-        release();
-        if (got.holder == null) return { refused: got.refused };
-        return { refused: `${id} is locked by a live bl process (pid ${got.holder}): ${got.path}` };
+  try {
+    for (const unit of units) {
+      for (const { id, dir } of lockTargets(config, unit)) {
+        const got = takeDirLock(config.backlogRoot, 'unit', dir, info);
+        if (got.refused != null) {
+          release();
+          if (got.holder == null) return { refused: got.refused };
+          return { refused: `${id} is locked by a live bl process (pid ${got.holder}): ${got.path}` };
+        }
+        taken.push(got.release);
+        locked.push(dir);
       }
-      taken.push(got.release);
-      locked.push(dir);
     }
+  } catch (e) {
+    // A later unit's read threw (`resolveFeatureStories`): keep none.
+    release();
+    throw e;
   }
   const scope = () => [
     ...new Set(
