@@ -67,9 +67,10 @@ export function unitLockDirs(config, unit) {
  * Take the work unit lock of every directory in `unitLockDirs` of each of
  * `units`, all or nothing (D2). If another process holds one, release the
  * locks this call took and refuse with `<id> is locked by a live bl process
- * (pid <n>): <lock path>`. A lock this process already holds is taken again,
- * one depth deeper (`tryLock` is re-entrant), so `bl merge F-n` can run the
- * run loop's take under its own.
+ * (pid <n>): <lock path>`. If a read throws (a malformed `blockers.json`),
+ * release them and throw again. A lock this process already holds is taken
+ * again, one depth deeper (`tryLock` is re-entrant), so `bl merge F-n` can run
+ * the run loop's take under its own.
  *
  * On success, `release()` gives back every lock this call took, and `scope()`
  * returns the backlog-relative directories it locked, and those of

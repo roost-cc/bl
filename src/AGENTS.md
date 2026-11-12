@@ -1453,7 +1453,7 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   each story of a batch, or the feature and its stories). If another process
   holds one, the refine prints the refusal and exits 1 before its
   `dirtySnapshot`: no outcome file, no status, no commit. It passes `units`
-  to `launchSession`, and `scope()` to `commitChangedSince`, so the commit
+  to `launchSession`, and `scope` to `commitChangedSince`, so the commit
   holds only the units' directories, a story made for the feature during the
   session included (F-122 D3). `refined: true` records the `refine` row's
   success, `refined`; `premise_holds: false` records its failure, a feature's
@@ -3811,13 +3811,13 @@ holds a session on a work unit takes it at start with `takeUnitLocks(config, uni
 lock of each unit's directory and, for a feature, of each of its stories' directories
 (`unitLockDirs`, read fresh from disk), all or nothing, with one try-lock each through
 `takeDirLock`. It never waits. If another process holds one, it releases what it took and
-refuses with `<id> is locked by a live bl process (pid <n>): <lock path>`. A lock this process
-holds is taken again, one depth deeper. On success it returns `release` and `scope`; `scope()`
-returns the backlog-relative directories it locked and those of `unitLockDirs` read again that
-did not exist at the take, so a story created for the feature during the session is in the
-verb's commit scope (F-122 D3), and so is a locked story that the session took out of the
-feature. An existing story linked to the feature after the take is not: the verb does not hold
-its lock. The work unit lock sits beside
+refuses with `<id> is locked by a live bl process (pid <n>): <lock path>`. If a read throws, it
+releases what it took and throws again. A lock this process holds is taken again, one depth
+deeper. On success it returns `release` and `scope`; `scope()` returns the backlog-relative
+directories it locked and those of `unitLockDirs` read again that did not exist at the take, so
+a story created for the feature during the session is in the verb's commit scope (F-122 D3), and
+so is a locked story that the session took out of the feature. An existing story linked to the
+feature after the take is not: the verb does not hold its lock. The work unit lock sits beside
 the spec lock and does not replace it: the spec lock guards one write and waits up to 60 s, and
 the work unit lock is held for a whole session. Lock order: a verb takes its work unit locks
 first, and the backlog lock and the spec lock inside them, one write at a time. A work unit lock
@@ -3834,9 +3834,9 @@ triage with one line that names the holder, and the merge stands. `bl run`, `bl 
 `bl implement` hold the work unit locks of their work unit and its stories for the whole run
 (F-122 D4, D9). `runFeature`, `reviewFeature` and `integrateUnit` (`feature-run.js`) take them
 through one helper, `takeRunLocks`: the run lock first, then the work unit locks; a refusal of
-either gives back what it took, and their `finally` releases both. The run lock refusal is
-`a bl run (pid <n>) is running <id>`. The commands take the work unit locks earlier too, before
-they write anything, with `takeUnitLocksOrExit` (`unit-lock.js`: print the refusal as
+either, or a take that throws, gives back what it took, and their `finally` releases both. The
+run lock refusal is `a bl run (pid <n>) is running <id>`. The commands take the work unit locks
+earlier too, before they write anything, with `takeUnitLocksOrExit` (`unit-lock.js`: print the refusal as
 `Error: <refusal>` and exit 1): `bl run` (`runUnit`) before its prep, `bl review` (`cmdReview`,
 `cmdReviewStory`) before it opens a PR or writes the change document, `bl implement F-n`
 (`cmdWorkon`) before its prep, and `bl implement S-n` (`workonOne`, `workon.js`) before its prep
