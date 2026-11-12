@@ -3380,29 +3380,45 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
 
 - Below an inner height of 12 lines, the tokens and the activity box leave out their axis and
   blank lines (Mockup B).
+- **Three kinds of keys** (F-127; `key`, `localKey`, `helpGroups` in `top/internal/ui/model.go`).
+  Global keys work in every box. Box keys belong to the box with the focus: in the next box `y`,
+  `p`, `P`, `x`, `esc`, `C`, `R`, `d`; in the detail box `f`, `w`. Row action keys are the keys of
+  the selected row's `actions` in the snapshot: any of them picks that action (`actKey`), and a
+  key that none of them has does nothing. The view checks the global keys first, then the
+  focused box's box keys, then the row's actions, so a box key wins over a row action key with
+  the same letter (`p` in the next box puts).
+- **Key bar** (F-127 Decision 5, `Model.barKeys`, `keyBar` in `top/internal/ui/box.go`). The
+  bottom border shows, in this order: the focused box's box keys with their word from
+  `helpGroups`; the selected row's action keys with their `short` label, each key once and none
+  that is a box key or a global key; then `tab box`, `↑↓ select`, `↵ detail`, `a act`,
+  `h help`, `q quit` (the global keys that have a word in `helpGroups`). The tokens and the
+  activity box have no rows, so they show the global keys alone. When the labels do not fit, the
+  bar shows the keys alone; when those do not fit either, it leaves out the keys at its end.
 - **Keys** (D6, F-127 Decision 3, `top/internal/ui/model.go`): key `n` (`1`–`6`) hides or shows
   the box at position `n` of the drawn layout; every box of the layout counts, hidden or not, so
   a second press shows the box again. The view keeps the hidden boxes by name (`hidden`), so a
   resize keeps the same boxes hidden under their new numbers. `tab` and `⇧tab` move the focus
   to the next or previous shown box in the drawn order; `↑` and `↓` select a row, and in the
   detail box with follow off scroll the feed; `↵` shows the selected row's run in the detail box,
-  or on the grouped update row opens or closes it; `f` turns follow on or off; `w` opens
+  or on the grouped update row opens or closes it; in the detail box, `f` turns follow on or
+  off and `w` opens
   `bl watch <id>` of the detail box's run in a new tmux
   window, in bl top's directory, named `<id> watch` (D7's `tmux new-window`, then
   `exec ${SHELL:-sh}`, so the window stays open after `bl watch` exits), as an action of the
   queue (below), and outside tmux
   (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
-  opens the action menu of the selected row, and `r`, `s`, `o`, `p` and `g` pick its action
-  with that key (below); `d` in the next box shows the unranked units newest or oldest first
+  opens the action menu of the selected row, and a row action key picks its action with that
+  key (below); `d` in the next box shows the unranked units newest or oldest first
   (`bl top` starts oldest first, and the choice lasts until it exits); in the next box, the
   ranking keys (below);
   `c` writes `capacity` to the
   stream's stdin, so
   the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
-  help, and any key closes it; `q` or `ctrl+c` quits. The help lists the keys of every box, then
-  each box's own keys under its current number and name (`helpGroups`, by box name); when that one column is taller
-  than the screen and two fit its width, the boxes' own keys go in a second column.
+  help, and any key closes it; `q` or `ctrl+c` quits. The help lists the global keys, then
+  each box's box keys under its current number and name (`helpGroups`, by box name), then the
+  line `the selected row's actions; a lists them`; when that one column is taller than the
+  screen and two fit its width, the box keys and that line go in a second column.
 - **Ranking keys** (F-113 D6, D7; `rankKey`, `top/internal/ui/dialog.go`). They act only while
   the next box has the focus, so `p` keeps F-88's meaning in the other boxes. `y` yanks the
   selected unit, ranked or not, and the next box marks it with a peach `↕` after its rank until a
@@ -3422,9 +3438,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `top/internal/ui/queue.go`, `top/internal/actions`). The
   selected row of the box with the focus (in the detail box, the run it shows) has the `actions` of its
   snapshot row (below). `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's
-  key, pick one, and `esc` cancels. Keys `r`, `s`, `o`, `p` and `g` pick the action with that
-  key directly; a row without one says `<key>: <id> has no such action (a lists its actions)`
-  in the bottom border. No action asks y/n: a pick runs at once (`pick`). An action with
+  key, pick one, and `esc` cancels. A row action key picks the action with that key directly;
+  a key that the row's actions do not have does nothing. No action asks y/n: a pick runs at once (`pick`). An action with
   `input` first opens its text box: `note` is optional, `reason` refuses an empty one; `enter`
   runs it, and `esc` cancels it. The menu and the text box are the only action dialogs.
   - **The queue.** bl top has at most one action child process (`Model.jobs`, a `job` each). An
@@ -3547,9 +3562,11 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   - `title` comes from `loadBacklog()`, which reuses its graph while the backlog's files are
     unchanged; null for a unit the backlog does not hold, or when it cannot be loaded.
 - `actions` (F-87 D7, F-88 S-1336): each `runs` row, each `attention` item and each unit of
-  `next` carries a list of `{ key, label, argv, input, window, url, stops }`, which
+  `next` carries a list of `{ key, label, short, argv, input, window, url, stops }`, which
   `src/top-snapshot.js` builds (`runActions`, `itemActions`), so the view holds no backlog
-  logic. `argv` is a bl command (`["bl", …]`) or null for `url` (a page the view opens);
+  logic. `label` is what the `a` menu shows; `short` is the action's word on the key bar
+  (F-127 Decision 5: `run`, `resume`, `stop`, `page`, `PR`, `agent`, `escalation`, `done`,
+  `merge`, `put`, `put before`, `unrank`, `commit`, `reset`). `argv` is a bl command (`["bl", …]`) or null for `url` (a page the view opens);
   `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
   word; `window` names the tmux window the command opens in, or is null for a child that
   reports on the note line; `stops` is the run the action stops.

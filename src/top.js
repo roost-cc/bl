@@ -46,21 +46,33 @@ With no --json or --stream, bl top runs the view, a terminal UI in btop's
 style. It builds the view with go build (top/ in bl) when top/bin/bl-top is
 missing or older than a file under top/; that build needs Go. Each box has a
 number in its border: its position on screen, left to right, then top to
-bottom. Keys: 1-6 hide or show the box at that position, tab and shift+tab
-move the focus in the same order, up and down select a row, enter shows the
-selected run in the detail box (from the runs box, or an attention or next
-row whose unit has a run) or opens or closes the grouped update row, f turns
-follow of the detail box's feed on or off (with follow off, up and down in the
-detail box scroll it), w opens bl watch <id> of the detail box's run in a new
-tmux window, c reads capacity now, + and - change the refresh interval, h
-shows the help, q quits. The detail box follows the run's agent session
-through bl watch <id> --json.
+bottom. The view has three kinds of keys, and the key bar at the bottom shows
+the ones that work in the box with the focus: its box keys, then the selected
+row's action keys, then the global keys.
 
-Actions: a opens the action menu of the selected row; r starts or resumes the
-selected run, s stops it (bl stop), o opens the row's page (bl view), p opens
-the run's pull request (xdg-open, or open on macOS), g opens bl agent. Each
-runs at once, with no y/n question; bl task done first asks for an optional
-note. Actions run one at a time, in the order of the key presses: one pressed
+Global keys work in every box: 1-6 hide or show the box at that position, tab
+and shift+tab move the focus in the same order, up and down select a row,
+enter shows the selected run in the detail box (from the runs box, or an
+attention or next row whose unit has a run) or opens or closes the grouped
+update row, a opens the action menu of the selected row, c reads capacity
+now, + and - change the refresh interval, h shows the help, q quits.
+
+Box keys work in their box only. In the next box: y yanks the selected unit,
+p and P put it after or before the selected ranked unit, x unranks it, esc
+cancels the yank, C commits the staged order, R drops it, d shows the
+unranked units newest or oldest first. In the detail box: f turns follow of
+the feed on or off (with follow off, up and down scroll it), w opens bl watch
+<id> of the box's run in a new tmux window. The detail box follows the run's
+agent session through bl watch <id> --json.
+
+Row action keys pick an action of the selected row; the a menu lists them.
+A box key wins over a row action key with the same letter. For a run: r
+starts or resumes it, s stops it (bl stop), o opens its page (bl view), p
+opens its pull request (xdg-open, or open on macOS), g opens bl agent. An
+attention item adds e (read the escalation), d (close the task) or m (merge).
+
+Each action runs at once, with no y/n question; bl task done first asks for
+an optional note. Actions run one at a time, in the order of the key presses: one pressed
 while another runs waits in a queue. The bottom border's note line shows the
 command that runs. On success the line clears; on a failure it shows the
 command, its exit code and its last stderr line until the next key, and the
