@@ -9,7 +9,10 @@
 // not name.
 //
 // A write call is a callee named `writeFileSync`, `rmSync` and the others in
-// `WRITE_CALLS`, or an `openSync` with a writing flag. A git call is found by
+// `WRITE_CALLS`, or an `openSync` or `open` (`fs.promises.open`) with a
+// writing flag (`w`, `a`, `+`). An fs export is followed under any local name:
+// an import alias (`writeFileSync as put`), a destructured name, or a plain
+// `const put = fs.writeFileSync`. A git call is found by
 // import binding (F-126 A2): `git` from src/child.js under any local name; a
 // `runChild`, `spawnSyncFiles` or `child_process` call whose command is
 // `'git'`; or a `runCommandLine`, `execSync`, `exec` or runner `shell` call
@@ -46,8 +49,19 @@ const WRITE_CALLS = new Set([
   'cpSync',
   'symlinkSync',
   'linkSync',
+  'truncateSync',
   'createWriteStream',
 ]);
+
+/**
+ * The promise forms of fs writes whose names bl's own functions also use
+ * (`link`): a write only when the callee is an fs import or a member call
+ * (`fs.promises.link`).
+ */
+const FS_ONLY_WRITE_CALLS = new Set(['rmdir', 'copyFile', 'cp', 'symlink', 'link', 'truncate']);
+
+/** The callees that open a file: a write when their flag (the second argument) writes (`writesFlag`). */
+const OPEN_CALLS = new Set(['openSync', 'open']);
 
 /** The git subcommands that change a repository's index, working tree, refs or config. */
 const GIT_STATE = new Set([
@@ -254,13 +268,17 @@ const ALLOWED = new Map([
   ['story.js removeUnitDirIfEmpty rmdirSync', 'removes an empty unit directory; git tracks no directory, only files'],
 ]);
 
+/** The specifiers of node's file system modules, whose imports the guard follows under any local name. */
+const FS_MODULES = new Set(['fs', 'node:fs', 'fs/promises', 'node:fs/promises']);
+
 /**
  * The module an import specifier names, as the guard watches it: `child.js`
- * (src/child.js), `child-stdio.js` (src/child-stdio.js), `child_process`, or
- * null for any other.
+ * (src/child.js), `child-stdio.js` (src/child-stdio.js), `child_process`,
+ * `fs` (`FS_MODULES`), or null for any other.
  */
 function watchedModule(spec, rel) {
   if (spec === 'child_process' || spec === 'node:child_process') return 'child_process';
+  if (FS_MODULES.has(spec)) return 'fs';
   if (!spec.startsWith('.')) return null;
   const target = join(dirname(rel), spec);
   if (target === 'src/child.js') return 'child.js';
@@ -270,7 +288,9 @@ function watchedModule(spec, rel) {
 
 /**
  * The local names a module binds to a watched module's exports: local name →
- * the export's name, `*` for a namespace or default import.
+ * the export's name, `*` for a namespace or default import. A name
+ * destructured from a namespace (`const { writeFileSync: put } = fs`, or from
+ * `fs.promises`) is bound to the property it takes.
  */
 function childBindings(ast, rel) {
   const out = new Map();
@@ -282,17 +302,32 @@ function childBindings(ast, rel) {
       }
     },
   });
+  simple(ast, {
+    VariableDeclarator(d) {
+      const from = d.init?.type === 'MemberExpression' ? d.init.object : d.init;
+      if (d.id.type !== 'ObjectPattern' || from?.type !== 'Identifier' || out.get(from.name) !== '*') return;
+      for (const p of d.id.properties) {
+        if (p.type === 'Property' && !p.computed && p.value.type === 'Identifier') out.set(p.value.name, p.key.name);
+      }
+    },
+  });
   return out;
 }
 
 /**
  * What a callee stands for: the watched export it is bound to (`git` for
- * `runGit` when `git as runGit` is imported, `spawnSync` for `cp.spawnSync`),
- * `shell` for a runner's `shell`, or its own name for any other.
+ * `runGit` when `git as runGit` is imported, `writeFileSync` for `put` when
+ * `writeFileSync as put` is, `spawnSync` for `cp.spawnSync`), what a name
+ * holds when it is a plain alias (`const put = fs.writeFileSync`), `shell`
+ * for a runner's `shell`, or its own name for any other.
  */
-function resolvedCallee(callee, bindings) {
+function resolvedCallee(callee, bindings, values = new Map()) {
   if (callee.type === 'Identifier') {
     const bound = bindings.get(callee.name);
+    const alias = values.get(callee.name);
+    if (bound === undefined && alias?.length === 1 && /^(Identifier|MemberExpression)$/.test(alias[0].type)) {
+      return resolvedCallee(alias[0], bindings);
+    }
     return { name: bound && bound !== '*' ? bound : callee.name, imported: bound !== undefined && bound !== '*' };
   }
   const name = calleeName(callee);
@@ -382,11 +417,14 @@ function enclosingName(ancestors) {
   return '<top>';
 }
 
-/** Whether an `openSync` flag argument opens for writing: a literal with `w` or `a`, or one the guard cannot read. */
+/**
+ * Whether an `openSync` or `open` flag argument opens for writing: a literal
+ * with `w`, `a` or `+` (`r+`, `rs+`), or one the guard cannot read.
+ */
 function writesFlag(node) {
   if (!node) return false;
   const t = leadingText(node);
-  return !t?.whole || /[wa]/.test(t.text);
+  return !t?.whole || /[wa+]/.test(t.text);
 }
 
 /**
@@ -402,10 +440,11 @@ export function backlogWriteCalls(source, rel) {
   const out = [];
   ancestor(ast, {
     CallExpression(call, _state, ancestors) {
-      const { name, imported } = resolvedCallee(call.callee, bindings);
+      const { name, imported } = resolvedCallee(call.callee, bindings, values);
       const args = call.arguments;
       let what = null;
-      if (WRITE_CALLS.has(name) || (name === 'openSync' && writesFlag(args[1]))) what = name;
+      const fsOnly = FS_ONLY_WRITE_CALLS.has(name) && (imported || call.callee.type === 'MemberExpression');
+      if (WRITE_CALLS.has(name) || fsOnly || (OPEN_CALLS.has(name) && writesFlag(args[1]))) what = name;
       else if (imported && name === 'git') what = gitCall(argvWords(args[1], values));
       else if (imported && ARGV_CALLS.has(name) && leadingText(args[0])?.text === 'git') {
         what = gitCall(argvWords(args[1], values));
@@ -466,6 +505,105 @@ test('guard: each write callee is reported once', () => {
     'openSync',
   ]);
   assert.deepEqual(keysIn(`openSync(p, 'r'); openSync(p); readFileSync(p); mkdirSync(p);`), []);
+});
+
+// guard_rejects_aliased_writes_and_all_writable_open_forms
+const FS = `import * as fs from 'fs';`;
+const ALIAS_CASES = [
+  {
+    name: 'an import alias',
+    src: 'put(p, x);',
+    imports: `import { writeFileSync as put } from 'fs';`,
+    keys: ['writeFileSync'],
+  },
+  {
+    name: 'a node: import alias',
+    src: 'add(p, x);',
+    imports: `import { appendFileSync as add } from 'node:fs';`,
+    keys: ['appendFileSync'],
+  },
+  {
+    name: 'an fs/promises alias',
+    src: 'w(p, x);',
+    imports: `import { writeFile as w } from 'fs/promises';`,
+    keys: ['writeFile'],
+  },
+  {
+    name: 'promises under an alias',
+    src: 'fsp.writeFile(p, x);',
+    imports: `import { promises as fsp } from 'fs';`,
+    keys: ['writeFile'],
+  },
+  {
+    name: 'a name destructured from fs',
+    src: 'const { writeFileSync: put } = fs;\nput(p, x);',
+    imports: FS,
+    keys: ['writeFileSync'],
+  },
+  {
+    name: 'a name destructured from fs.promises',
+    src: 'const { appendFile: add } = fs.promises;\nadd(p, x);',
+    imports: FS,
+    keys: ['appendFile'],
+  },
+  {
+    name: 'a plain alias of an fs member',
+    src: 'const put = fs.writeFileSync;\nput(p, x);',
+    imports: FS,
+    keys: ['writeFileSync'],
+  },
+  {
+    name: 'a plain alias of an fs import',
+    src: 'const put = writeFileSync;\nput(p, x);',
+    imports: `import { writeFileSync } from 'fs';`,
+    keys: ['writeFileSync'],
+  },
+  { name: 'openSync r+', src: `openSync(p, 'r+');`, keys: ['openSync'] },
+  { name: 'openSync rs+', src: `openSync(p, 'rs+');`, keys: ['openSync'] },
+  {
+    name: 'openSync w+, a, as+',
+    src: `openSync(p, 'w+'); openSync(p, 'a'); openSync(p, 'as+');`,
+    keys: ['openSync', 'openSync', 'openSync'],
+  },
+  {
+    name: 'openSync under an alias',
+    src: `o(p, 'r+');`,
+    imports: `import { openSync as o } from 'fs';`,
+    keys: ['openSync'],
+  },
+  { name: 'fs.promises.open w', src: `fs.promises.open(p, 'w');`, imports: FS, keys: ['open'] },
+  { name: 'fs.promises.open r+', src: `fs.promises.open(p, 'r+');`, imports: FS, keys: ['open'] },
+  {
+    name: 'an fs/promises open alias',
+    src: `o(p, 'a');`,
+    imports: `import { open as o } from 'node:fs/promises';`,
+    keys: ['open'],
+  },
+  { name: 'an open flag the guard cannot read', src: 'fs.promises.open(p, flags);', imports: FS, keys: ['open'] },
+  {
+    name: 'read-only opens',
+    src: `openSync(p, 'r'); openSync(p, 'rs'); fs.promises.open(p); fs.promises.open(p, 'r');`,
+    imports: FS,
+    keys: [],
+  },
+  { name: 'fs.promises.link', src: 'fs.promises.link(a, b);', imports: FS, keys: ['link'] },
+  {
+    name: 'an fs/promises symlink import',
+    src: 'symlink(a, b);',
+    imports: `import { symlink } from 'fs/promises';`,
+    keys: ['symlink'],
+  },
+  {
+    name: 'cp and truncate from fs',
+    src: 'fs.cp(a, b); fs.truncate(p); truncateSync(p);',
+    imports: FS,
+    keys: ['cp', 'truncate', 'truncateSync'],
+  },
+  { name: 'a local function named link', src: 'link(x);', keys: [] },
+];
+
+test('guard: a raw write through an alias and every writable open form is reported', () => {
+  for (const c of ALIAS_CASES) assert.deepEqual(keysIn(c.src, c.imports), c.keys, c.name);
 });
 
 const CHILD = `import { git, runChild, runCommandLine } from './child.js';`;

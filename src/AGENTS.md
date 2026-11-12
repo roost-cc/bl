@@ -455,8 +455,10 @@ backlog lock and need `atomicWriteFile` only.
   around it (`test/helpers/covering-lock.js`).
 - **The static guard (F-126 D6).** `test/unit/backlog-write-guard.test.js` parses every module
   in `src/` except the chokepoints (`atomic-write.js`, `backlog-commit.js`, `main-sync.js`,
-  `child.js`). It fails on each raw write call (`writeFileSync`, `rmSync`, `renameSync`, a
-  writing `openSync`, …) and each git call that changes state (`commit`, `reset`, `fetch`, …,
+  `child.js`). It fails on each raw write call (`writeFileSync`, `rmSync`, `renameSync`, an
+  `openSync` or `fs.promises.open` whose flag has `w`, `a` or `+`, …), under any local name
+  (an import alias, a destructured name, `const put = fs.writeFileSync`), and each git call
+  that changes state (`commit`, `reset`, `fetch`, …,
   or a subcommand it cannot read) that its `ALLOWED` map does not name. It finds git calls by
   import binding: `git` from `child.js` under any local name, `runChild`, `spawnSyncFiles`
   and the `child_process` calls with the command `'git'`, and command lines that start with
