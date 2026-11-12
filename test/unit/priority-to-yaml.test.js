@@ -4,15 +4,16 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { parse } from 'yaml';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { backlog } from '../helpers/rank-fixture.js';
 
 const SCRIPT = fileURLToPath(new URL('../../scripts/priority-to-yaml.js', import.meta.url));
-const run = (dir, ...args) => spawnSync(process.execPath, [SCRIPT, '--backlog', dir, ...args], { encoding: 'utf8' });
+const run = (dir, ...args) =>
+  spawnSyncFiles(process.execPath, [SCRIPT, '--backlog', dir, ...args], { encoding: 'utf8' });
 const written = (dir) => parse(readFileSync(join(dir, 'priority.yaml'), 'utf8'));
 
 /** A hand-written priority.md, the format before F-113: comments, a wrapped reason, a body. */
