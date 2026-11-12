@@ -1477,7 +1477,7 @@ the main checkout as it was.`);
         await commitChangedSince(config.backlogRoot, backlogBefore, triageMessage, {
           session: true,
           owner,
-          scope: lock.scope(),
+          scope: lock.scope,
         })
       )
         process.exitCode = 1;

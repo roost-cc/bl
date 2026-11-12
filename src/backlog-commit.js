@@ -182,17 +182,19 @@ export function failedCommitRecord(owner) {
  * call; a failed snapshot after leaves the record as it was; and a failed
  * snapshot before records every dirty path as `unsure`, which the next call
  * names as a failure and does not commit (`readFailedCommit`).
- * With `scope` (backlog-relative directories or files: the verb's work units,
- * F-122 D8), only a path equal to or under an entry is committed. Each other
- * changed path stays uncommitted and is named in one line, and a carried path
- * outside the scope stays in the record. Without `scope`, every changed path
- * is committed (`bl init`).
+ * With `scope` (a function that returns backlog-relative directories or
+ * files: the verb's work units, F-122 D8), only a path equal to or under an
+ * entry is committed. Each other changed path stays uncommitted and is named
+ * in one line, and a carried path outside the scope stays in the record. If
+ * `scope` throws, the call commits nothing and records every changed path, as
+ * a failed commit does. Without `scope`, every changed path is committed
+ * (`bl init`).
  * Shared by feature `bl merge`, story `bl merge`'s triage, `bl refine` and
  * `bl init` (S-1330).
  * @param {string} root
  * @param {Map<string, string> | null} before
  * @param {string} message
- * @param {{ session?: boolean, owner?: string, scope?: string[] }} [opts]
+ * @param {{ session?: boolean, owner?: string, scope?: () => string[] }} [opts]
  * @returns {Promise<boolean>} whether the commit failed
  */
 export async function commitChangedSince(root, before, message, { session = false, owner = message, scope } = {}) {
@@ -208,6 +210,19 @@ export async function commitChangedSince(root, before, message, { session = fals
     // the record keeps them as `unsure`, and the next call names them.
     // With none after, the record stays as it was.
     if (after) recordChangedSince(root, null, owner);
+    return true;
+  }
+  // The scope is read here, after the command wrote: a read that fails
+  // records what changed, as a failed commit does, for a retry to commit.
+  let scopePaths;
+  try {
+    scopePaths = scope?.();
+  } catch (e) {
+    console.error(
+      `  backlog commit failed: cannot read ${owner}'s work units (${e.message}); bl recorded what changed for a retry of the command\n` +
+        `  Commit its changes yourself: git -C "${root}" status`,
+    );
+    recordChangedSince(root, before, owner);
     return true;
   }
   let failed = false;
@@ -235,7 +250,7 @@ export async function commitChangedSince(root, before, message, { session = fals
     );
   }
   let touched = [...new Set([...pathsChangedSince(before, after), ...carried])].sort();
-  const inScope = (p) => !scope || scope.some((e) => p === e || p.startsWith(`${e}/`));
+  const inScope = (p) => !scopePaths || scopePaths.some((e) => p === e || p.startsWith(`${e}/`));
   const outside = touched.filter((p) => !inScope(p));
   touched = touched.filter(inScope);
   const held = session && touched.includes(PRIORITY_FILE);

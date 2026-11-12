@@ -1948,7 +1948,7 @@ export async function cmdMerge(args, config, feature) {
     config.backlogRoot,
     backlogBefore,
     `chore: merge ${feature.id}, mark stories done`,
-    { owner, scope: [...lock.scope(), manifestRel, ...(themeFile ? [themeFile] : [])] },
+    { owner, scope: () => [...lock.scope(), manifestRel, ...(themeFile ? [themeFile] : [])] },
   );
 
   runFeatureStagePlugins(

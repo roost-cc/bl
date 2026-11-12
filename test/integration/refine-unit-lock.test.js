@@ -13,6 +13,7 @@ import { join } from 'path';
 import { ensureAllowedTools } from '../../src/allowed-tools.js';
 import { loadConfig } from '../../src/config.js';
 import { outcomePath } from '../../src/outcome.js';
+import { failedCommitRecord } from '../../src/backlog-commit.js';
 import { unitLockPath } from '../../src/unit-lock.js';
 import { holdLock } from '../helpers/hold-lock.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
@@ -135,6 +136,23 @@ for (const [label, holdS2] of [
     }
   });
 }
+
+test('refine_scope_read_failure_records_dirty_paths: a feature refine whose stories cannot be read at the end records its edit', async () => {
+  const dir = twoFeatures();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const first = await startRefine(dir, ['F-1'], { write: [F1] });
+  writeFileSync(join(dir, 'blockers.json'), '{bad');
+  first.go();
+  const r = await first.closed;
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /backlog commit failed: cannot read refine F-1's work units/);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'nothing committed');
+  const record = JSON.parse(readFileSync(join(dir, failedCommitRecord('refine F-1')), 'utf8'));
+  assert.ok(
+    record.commit.some(([p]) => p === F1),
+    `the feature edit is recorded: ${JSON.stringify(record)}`,
+  );
+});
 
 test('refine_unit_lock_scope: a feature refine commits a story tagged to the feature during the session', async () => {
   const dir = twoFeatures();

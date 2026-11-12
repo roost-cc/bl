@@ -319,7 +319,7 @@ for (const scope of [undefined, ['stories/S1-a', 'roadmap.md']]) {
       writeFileSync(join(dir, p), 'the command\n');
     }
     const [failed, err] = await captureStderr(() =>
-      commitChangedSince(dir, before, 'chore: refine S-1', { owner: 'refine S-1', scope }),
+      commitChangedSince(dir, before, 'chore: refine S-1', { owner: 'refine S-1', scope: scope && (() => scope) }),
     );
     assert.equal(failed, false, err);
     const files = g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort();
@@ -349,7 +349,7 @@ test('commit_changed_since_scope_keeps_carried_paths_outside_it: a scoped retry 
   const dir = changedSinceRepo();
   const hook = join(dir, '.git', 'hooks', 'pre-commit');
   writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  const opts = { owner: 'refine S-1', scope: ['stories/S1-a'] };
+  const opts = { owner: 'refine S-1', scope: () => ['stories/S1-a'] };
   const first = dirtySnapshot(dir);
   mkdirSync(join(dir, 'stories', 'S1-a'), { recursive: true });
   writeFileSync(join(dir, 'stories', 'S1-a', 'index.md'), 'the command\n');
@@ -377,6 +377,49 @@ test('commit_changed_since_scope_keeps_carried_paths_outside_it: a scoped retry 
   assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['x.md']);
   assert.equal(existsSync(join(dir, failedCommitRecord(opts.owner))), false);
 });
+
+// The scope read throws after the command wrote (a malformed blockers.json in
+// `scope()`): nothing is committed, and every changed path, a carried one
+// included, is recorded, so the retry of the same owner commits its own.
+for (const carried of [false, true]) {
+  test(`refine_scope_read_failure_records_dirty_paths: ${carried ? 'a carried path and a new one' : 'a new path'}`, async () => {
+    const dir = changedSinceRepo();
+    const head = g(dir, 'rev-parse', 'HEAD');
+    const owner = 'refine S-1';
+    const scope = () => ['stories/S1-a'];
+    const S1 = 'stories/S1-a/index.md';
+    mkdirSync(join(dir, 'stories', 'S1-a'), { recursive: true });
+    if (carried) {
+      const hook = join(dir, '.git', 'hooks', 'pre-commit');
+      writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+      const first = dirtySnapshot(dir);
+      writeFileSync(join(dir, 'z.md'), 'the first call\n');
+      assert.equal((await captureStderr(() => commitChangedSince(dir, first, 'chore: r', { owner })))[0], true);
+      rmSync(hook);
+    }
+    const before = dirtySnapshot(dir);
+    writeFileSync(join(dir, S1), 'the command\n');
+    writeFileSync(join(dir, 'x.md'), 'another session\n');
+    const throws = () => {
+      throw new Error('blockers.json is malformed');
+    };
+    const [failed, err] = await captureStderr(() =>
+      commitChangedSince(dir, before, 'chore: r', { owner, scope: throws }),
+    );
+    assert.equal(failed, true);
+    assert.match(err, /backlog commit failed: cannot read refine S-1's work units \(blockers\.json is malformed\)/);
+    assert.equal(g(dir, 'rev-parse', 'HEAD'), head, 'nothing committed');
+    const record = JSON.parse(readFileSync(join(dir, failedCommitRecord(owner)), 'utf8'));
+    assert.deepEqual(record.commit.map(([p]) => p).sort(), [S1, 'x.md', ...(carried ? ['z.md'] : [])].sort());
+
+    // The retry commits the scope's path; the rest stays recorded.
+    const [again, err2] = await captureStderr(() =>
+      commitChangedSince(dir, dirtySnapshot(dir), 'chore: r', { owner, scope }),
+    );
+    assert.equal(again, false, err2);
+    assert.deepEqual(g(dir, 'show', '--name-only', '--format=', 'HEAD').split('\n'), [S1]);
+  });
+}
 
 // A failed commit, then a retry that writes nothing new (its snapshot finds
 // the failed paths dirty already): each path class after the failure.

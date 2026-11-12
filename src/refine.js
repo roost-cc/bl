@@ -220,7 +220,7 @@ export async function refineAndCommit(units, opts, message, apply) {
     const failed = await commitChangedSince(opts.backlogRoot, before, message, {
       session: true,
       owner,
-      scope: lock.scope(),
+      scope: lock.scope,
     });
     // A failed commit is 1 whatever the session ended with (S-1330).
     exitCode = failed || applyFailed ? 1 : status;
