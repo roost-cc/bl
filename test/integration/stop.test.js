@@ -2,18 +2,23 @@
 // in a real user systemd scope, a `bl stop` process that stops the scope, the
 // loop that records `stopped`, and a `--resume` that continues the run.
 // Skipped, with the probe's reason, where user systemd scopes are unavailable.
+// And the `bl stop` binary against a run lock that a child process holds.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'path';
-import { runFeature } from '../../src/feature-run.js';
+import { setTimeout as delay } from 'timers/promises';
+import { loadConfig } from '../../src/config.js';
+import { markStopped, newRunState, runFeature, saveRunState } from '../../src/feature-run.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { scopeAvailable, scopedSpawn, scopeProcesses, staleScopes, stopScope } from '../../src/process-scope.js';
 import { runLockPath, stopRequests } from '../../src/run-lock.js';
+import { unitLockPath } from '../../src/unit-lock.js';
 import { fakeRunner, setup } from '../helpers/feature-run-fixture.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
+import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 import { BL_BIN, personEnv } from '../helpers/run-bl.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 
 const probe = scopeAvailable();
 const skip = probe.ok ? false : probe.why;
@@ -93,3 +98,37 @@ test(
     }
   },
 );
+
+test('stop_short_command: bl stop goes ahead while another process holds the work unit lock and the run lock', async () => {
+  const { dir, cleanup } = mkTempBacklog({
+    repos: ['../demo-repo'],
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'in_progress' }],
+  });
+  const config = loadConfig({ backlogRoot: dir });
+  const unitLock = holdLock(unitLockPath(dir, join(dir, 'features', 'F1-feat')));
+  const holder = await holdLockInChild(runLockPath(config, 'F-1'), { info: 'bl run F-1' });
+  try {
+    const state = newRunState({ id: 'F-1' }, { branch: 'f1-feat', worktreePath: '/wt', maxRounds: 2 });
+    Object.assign(state, { status: 'running', step: 'implement', story: 'S-1' });
+    saveRunState(config, state);
+    const env = withNoAgent({ ...personEnv(), BL_BACKLOG_DIR: dir });
+    const run = spawnToFiles(BL_BIN, ['stop', 'F-1'], { cwd: dir, env });
+    let ended = false;
+    run.closed.then(() => (ended = true));
+    while (!ended && stopRequests(config, 'F-1').length === 0) await delay(10);
+    const [written] = stopRequests(config, 'F-1');
+    assert.equal(written?.request.holder, holder.pid, `the request is written: ${run.read().stderr}`);
+    // What the loop does at its check: mark stopped by that bl stop, save, exit.
+    markStopped(state, 'stopped by bl stop at implement', [written.request.pid]);
+    saveRunState(config, state);
+    await holder.kill();
+    const r = await run.closed;
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.equal(r.stderr, 'stopped F-1 at implement; resume: bl run F-1 --resume\n');
+  } finally {
+    await holder.kill();
+    unitLock.release();
+    cleanup();
+  }
+});
