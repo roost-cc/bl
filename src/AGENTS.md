@@ -106,7 +106,8 @@ option (a function that returns backlog-relative directories or files, F-122 D8)
 path equal to or under an entry is committed. `commitChangedSince` calls it after the command
 wrote; if it throws, nothing is committed and every changed path goes to the owner's record, as
 for a failed commit (`recordChangedSince`). A record that cannot be read stays as it is and is
-named, and bl says it recorded the paths only after it wrote the record. Each other changed path stays uncommitted and is named in one line,
+named, and bl says it recorded the paths only after it wrote the record. Each changed path
+outside the scope stays uncommitted and is named in one line,
 `Left uncommitted, outside <owner>'s work units: <paths>`. A path carried from a failed commit's
 record (`readFailedCommit`) and outside the scope stays in the record. Without `scope`
 (`bl init`), every changed path is committed. Feature `bl merge`'s scope is its work units'
