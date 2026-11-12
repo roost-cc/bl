@@ -564,7 +564,6 @@ const ALLOWED = new Map([
   ['src/agents/gemini.js', ['spawnSync']],
   ['src/config.js', ['spawnSync', 'spawnSyncFiles']],
   ['src/feature-run.js', ['spawnSync']],
-  ['src/plugin-binaries.js', ['spawnSync']],
   ['src/process-scope.js', ['spawnSync', 'spawnSyncFiles']],
   ['src/tab-title.js', ['spawnSync']],
   ['src/top.js', ['spawnSync']],

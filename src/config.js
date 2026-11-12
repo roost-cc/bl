@@ -24,6 +24,7 @@ import { constants as osConstants } from 'os';
 import { join, resolve, basename, dirname, relative, isAbsolute, sep } from 'path';
 import { spawnSync } from 'child_process';
 import { spawnSyncFiles } from './child-stdio.js';
+import { runCommandLine } from './child.js';
 import { reassertTabTitle } from './tab-title.js';
 import { Document, LineCounter, Scalar, isMap, isScalar, parseDocument, visit } from 'yaml';
 import { getProvider, hasProvider, PROVIDER_NAMES } from './agents/index.js';
@@ -1342,9 +1343,8 @@ export function runPlugins(plugins, vars, cwd) {
       cmd = cmd.replaceAll(`{{${k}}}`, v);
     }
     info(`  plugin ${name}: ${cmd}`);
-    const result = spawnSync(cmd, {
+    const result = runCommandLine(cmd, {
       cwd,
-      shell: true,
       // Plugins run fully non-interactively (stdin is ignored, no TTY), so
       // advertise that: `CI=true` stops tools like pnpm from aborting when
       // they'd otherwise prompt for confirmation — e.g.
@@ -1680,9 +1680,8 @@ export function runPluginBatch(name, command, paths, vars, cwd) {
     cmd = cmd.replaceAll(`{{${k}}}`, v);
   }
   info(`  plugin ${name}: ${cmd}`);
-  const result = spawnSync(cmd, {
+  const result = runCommandLine(cmd, {
     cwd,
-    shell: true,
     // See runPlugins: plugins are non-interactive (stdin ignored), so CI=true
     // keeps tools from aborting on would-be confirmation prompts.
     env: { CI: 'true', ...process.env },
@@ -1821,11 +1820,11 @@ export function runForgeOp(opName, vars = {}, opts = {}) {
     // which git allows in branch names and which would undo the quoting.
     cmd = cmd.replaceAll(`{{${k}}}`, () => shellQuoteForgeVar(v));
   }
-  // Through files: the configured command may be a Node program, whose
-  // output on a socket is lost inside Codex's sandbox (F-70 D1).
-  const result = spawnSyncFiles(cmd, {
+  // Through files (`runCommandLine` uses `spawnSyncFiles`): the configured
+  // command may be a Node program, whose output on a socket is lost inside
+  // Codex's sandbox (F-70 D1). Exit 130 or 143 stops bl (F-114 D2).
+  const result = runCommandLine(cmd, {
     cwd: repoPath,
-    shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
   });
@@ -1913,7 +1912,7 @@ export function runPager(source) {
     fd == null ? { input: source, stdio: ['pipe', 'inherit', 'inherit'] } : { stdio: [fd, 'inherit', 'inherit'] };
   try {
     const pager = process.env.PAGER?.trim();
-    if (pager) return spawnSyncFiles(pager, { ...opts, shell: true });
+    if (pager) return runCommandLine(pager, opts);
     return spawnSyncFiles('less', [], opts);
   } finally {
     if (fd != null) closeSync(fd);
@@ -1988,10 +1987,7 @@ export function editorCommand() {
  * unquoted.
  */
 export function runEditor(path) {
-  const res = spawnSync(`${editorCommand()} ${shellQuote(path)}`, {
-    stdio: 'inherit',
-    shell: true,
-  });
+  const res = runCommandLine(`${editorCommand()} ${shellQuote(path)}`, { stdio: 'inherit' });
   reassertTabTitle(); // an editor may have set the terminal title
   return res;
 }
