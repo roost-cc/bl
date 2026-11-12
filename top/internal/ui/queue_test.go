@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/roost-cc/bl/top/internal/actions"
+	"github.com/roost-cc/bl/top/internal/notify"
 )
 
 // The tests of the action queue (F-127 Decision 4). In the recorded snapshot's next box, F-84,
@@ -47,9 +50,56 @@ func TestARankKeyRunsAtOnceAndReportsOnTheNoteLine(t *testing.T) {
 	fakeTools(t, true, "F-84 is not ranked", 1)
 	m, cmd = press(t, atRow(t, nextBox, "F-84"), text("x"))
 	m, _ = update(t, m, cmd())
-	const want = "bl rank F-84 --remove: exit 1 · F-84 is not ranked"
+	const want = "exit 1: bl rank F-84 --remove: F-84 is not ranked"
 	if !strings.Contains(noteLine(t, m), "┐"+want+"┌") || !strings.Contains(m.render(), styleError.Render(want)) {
 		t.Errorf("after exit 1, the note line %q, want %q in red", noteLine(t, m), want)
+	}
+}
+
+// TestTheNotesComeBeforeTheKeysAtEveryFocus: at 80 columns, with the focus in each box, the keys
+// give way to the note line. A failure note that fits shows whole; a longer one is cut at its end,
+// so its exit code and dropped count always show. A sender's warning shows beside it, and beside
+// the command that runs.
+func TestTheNotesComeBeforeTheKeysAtEveryFocus(t *testing.T) {
+	base := atRow(t, runsBox, "S-1330")
+	models := map[string]Model{"runs, S-1330": base, "attention, T-52": atRow(t, attentionBox, "T-52"),
+		"next, F-84": atRow(t, nextBox, "F-84"), "detail": focused(t, base, detailBox),
+		"tokens": focused(t, base, tokensBox), "activity": focused(t, base, activityBox)}
+	long := "bl task done T-52 " + strings.Repeat("x", 60)
+	const sender = "desktop failed: timeout"
+	for name, m := range models {
+		m.width, m.height = minWidth, minHeight
+		for _, c := range []struct {
+			what, show, last string
+			senders          bool
+			want             []string
+		}{
+			{"a failure", "bl rank S-1466 --after F-98", "write failed", false,
+				[]string{"exit 1, dropped 1 queued action: bl rank S-1466 --after F-98: write failed"}},
+			{"a failure and a sender", "bl rank S-1466 --after F-98", "write failed", true,
+				[]string{"exit 1, dropped 1 queued action: bl rank", sender}},
+			{"a long failure", long, strings.Repeat("y", 100), false, []string{"exit 1, dropped 1 queued action: bl task done T-52 x"}},
+			{"a long failure and a sender", long, strings.Repeat("y", 100), true,
+				[]string{"exit 1, dropped 1 queued action: bl task done", sender}},
+			{"a long command that runs and a sender", long, "", true, []string{"┐bl task done T-52 x", sender}},
+		} {
+			m := m
+			m.note, m.failed, m.senders = "", nil, nil
+			if c.senders {
+				m.senders = []notify.Sender{{Name: "desktop"}}
+				m.failed = map[string]string{"desktop": "timeout"}
+			}
+			m.jobs = []job{{show: c.show}, {show: "bl rank F-85 --remove"}}
+			if c.last != "" {
+				m, _ = m.jobDone(jobDoneMsg{result: actions.Result{Code: 1, Last: c.last}})
+			}
+			line := noteLine(t, m)
+			for _, want := range c.want {
+				if !strings.Contains(line, want) {
+					t.Errorf("%s, %s: no %q in %q", name, c.what, want, line)
+				}
+			}
+		}
 	}
 }
 
@@ -98,7 +148,7 @@ func TestAFailureDropsTheQueuedActions(t *testing.T) {
 	if got := logOf(t, dir, "bl"); len(got) != 1 {
 		t.Errorf("bl ran %q, want the first x only", got)
 	}
-	if want := "bl rank F-84 --remove: exit 1 · F-84 is not ranked · dropped 2 queued actions"; m.note != want {
+	if want := "exit 1, dropped 2 queued actions: bl rank F-84 --remove: F-84 is not ranked"; m.note != want {
 		t.Errorf("the note %q, want %q", m.note, want)
 	}
 }

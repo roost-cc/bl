@@ -3391,8 +3391,10 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   `helpGroups`; the selected row's action keys with their `short` label, each key once and none
   that is a box key or a global key; then `tab box`, `↑↓ select`, `↵ detail`, `a act`,
   `h help`, `q quit` (the global keys that have a word in `helpGroups`). The tokens and the
-  activity box have no rows, so they show the global keys alone. When the labels do not fit, the
-  bar shows the keys alone; when those do not fit either, it leaves out the keys at its end.
+  activity box have no rows, so they show the global keys alone. The note line (below) comes
+  first: its notes share the bar, a note longer than its share is cut with `…`, and the keys take
+  the room the notes leave. When the labels do not fit, the bar shows the keys alone; when those
+  do not fit either, it leaves out the keys at its end.
 - **Keys** (D6, F-127 Decision 3, `top/internal/ui/model.go`): key `n` (`1`–`6`) hides or shows
   the box at position `n` of the drawn layout; every box of the layout counts, hidden or not, so
   a second press shows the box again. The view keeps the hidden boxes by name (`hidden`), so a
@@ -3441,9 +3443,10 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
     action picked while another runs waits, and the queue runs in the order of the key presses
     (`enqueue`, `jobDone`). The note line, at the right of the bottom border, shows the command
     that runs (`command`), in the text color. On success the line clears and the next action
-    starts. On a failure it shows `<command>: exit <code> · <last stderr line>` in red until
-    the next key; the actions that waited are dropped, and the line adds
-    `dropped <n> queued action(s)`. A long child holds the queue: `bl merge` for minutes,
+    starts. On a failure the actions that waited are dropped, and the line shows
+    `exit <code>[, dropped <n> queued action(s)]: <command>: <last stderr line>` in red until
+    the next key. The exit code and the count come first, so a cut never hides them. A long
+    child holds the queue: `bl merge` for minutes,
     `bl stop` for up to 30 s. `q` quits while a child runs, and the child goes on. The next
     snapshot shows the change.
   - an action with `window` opens a new tmux window of that name, in bl top's directory (the

@@ -136,12 +136,14 @@ func TestAFailedPushWarnsInTheBottomBorder(t *testing.T) {
 	}
 }
 
+// TestALongWarningFitsTheBottomBorder: the warnings come before the keys. A long one takes the
+// whole bar and is cut with `…`; a short one leaves the keys the rest.
 func TestALongWarningFitsTheBottomBorder(t *testing.T) {
 	long := "desktop failed: " + strings.Repeat("x", 200)
 	keys := atRow(t, runsBox, "S-1330").barKeys()
 	for _, w := range []int{80, 171} {
 		got := ansi.Strip(keyBar(w, keys, []string{long}))
-		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘s└┘o└┘p└┘g└┘tab└┘↑↓└┘↵└┘a└┘h└┘q└─┐desktop failed: x") || !strings.HasSuffix(got, "x…┌─╯") {
+		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰─┐desktop failed: x") || !strings.HasSuffix(got, "x…┌─╯") {
 			t.Errorf("keyBar(%d) with a long warning = %q", w, got)
 		}
 	}

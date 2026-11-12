@@ -60,8 +60,10 @@ func (m Model) startJob() (Model, tea.Cmd) {
 }
 
 // jobDone takes the job that ended off the queue. On success it starts the next job. On a failure
-// the note line says `<command>: exit <code> · <last stderr line>` until the next key, and the jobs
-// that wait are dropped, with their count.
+// the jobs that wait are dropped, and the note line says
+// `exit <code>[, dropped <n> queued action(s)]: <command>: <last stderr line>` until the next key.
+// The exit code and the count come first, so a long command or stderr line that the key bar cuts
+// never hides them.
 func (m Model) jobDone(msg jobDoneMsg) (Model, tea.Cmd) {
 	done, rest := m.jobs[0], m.jobs[1:]
 	m.jobs = rest
@@ -71,16 +73,17 @@ func (m Model) jobDone(msg jobDoneMsg) (Model, tea.Cmd) {
 		}
 		return m.startJob()
 	}
-	m.note = fmt.Sprintf("%s: exit %d", done.show, msg.result.Code)
-	if msg.result.Last != "" {
-		m.note += " · " + msg.result.Last
-	}
+	m.note = fmt.Sprintf("exit %d", msg.result.Code)
 	if n := len(rest); n > 0 {
-		m.note += fmt.Sprintf(" · dropped %d queued action", n)
+		m.note += fmt.Sprintf(", dropped %d queued action", n)
 		if n > 1 {
 			m.note += "s"
 		}
 		m.jobs = nil
+	}
+	m.note += ": " + done.show
+	if msg.result.Last != "" {
+		m.note += ": " + msg.result.Last
 	}
 	return m, nil
 }

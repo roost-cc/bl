@@ -330,7 +330,7 @@ func TestWOpensBlWatchInANewTmuxWindow(t *testing.T) {
 	}
 	m, cmd = press(t, m, text("w"))
 	m, _ = update(t, m, cmd())
-	if !strings.Contains(screen(t, m), "bl watch S-1330  (new tmux window): exit 1 · no server running") {
+	if !strings.Contains(screen(t, m), "exit 1: bl watch S-1330  (new tmux window): no server running") {
 		t.Errorf("a failed tmux:\n%s", screen(t, m))
 	}
 }

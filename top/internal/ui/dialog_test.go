@@ -268,7 +268,7 @@ func TestAFailedVerbShowsItsExitCodeAndLastStderrLineOnTheNoteLine(t *testing.T)
 		t.Fatalf("m: dialog %+v, the note line %q", m.dialog, noteLine(t, m))
 	}
 	m = settle(t, m, cmd)
-	const want = "bl merge F-81: exit 1 · bl merge: F-81 is not ready_for_merge"
+	const want = "exit 1: bl merge F-81: bl merge: F-81 is not ready_for_merge"
 	if m.dialog != nil || !strings.Contains(noteLine(t, m), "┐"+want+"┌") || !strings.Contains(m.render(), styleError.Render(want)) {
 		t.Errorf("the failure: dialog %+v, the note line %q, want %q in red", m.dialog, noteLine(t, m), want)
 	}
@@ -451,7 +451,7 @@ func TestAStopQueuedBehindAFailedStopIsDropped(t *testing.T) {
 		if got := logOf(t, dir, "bl"); !slices.Equal(got, []string{"stop S-1330"}) {
 			t.Errorf("bl ran %q, want the first stop only", got)
 		}
-		if want := "bl stop S-1330: exit 1 · bl stop: S-1330 did not stop in 30 s · dropped 1 queued action"; m.note != want || len(m.jobs) != 0 {
+		if want := "exit 1, dropped 1 queued action: bl stop S-1330: bl stop: S-1330 did not stop in 30 s"; m.note != want || len(m.jobs) != 0 {
 			t.Errorf("the note %q, want %q; %d jobs", m.note, want, len(m.jobs))
 		}
 		notes := m.differ.Diff(ended(m, map[string][]int{"S-1330": c.by(blPids(t, dir)[0])}))

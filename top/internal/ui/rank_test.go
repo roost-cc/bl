@@ -131,7 +131,7 @@ func TestCAndRRunCommitAndResetAtOnce(t *testing.T) {
 	if got := argsOf(t, dir, "bl"); !slices.Equal(got, []string{"rank", "--commit"}) {
 		t.Errorf("C: bl got %q", got)
 	}
-	if want := "bl rank --commit: exit 1 · " + noTerminal; m.note != want {
+	if want := "exit 1: bl rank --commit: " + noTerminal; m.note != want {
 		t.Errorf("C on a conflict: the note %q, want %q", m.note, want)
 	}
 	dir = fakeTools(t, true, "", 0)
