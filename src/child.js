@@ -72,7 +72,7 @@ process.on('exit', () => {
  * @returns {ChildResult}
  */
 export function runChild(command, args = [], opts = {}) {
-  return settle(spawnSyncFiles(command, args, opts), [command, ...args].join(' '));
+  return settle(spawnArgv(command, args, opts), [command, ...args].join(' '));
 }
 
 /**
@@ -94,7 +94,7 @@ export function runCommandLine(line, opts = {}) {
  */
 export function runBl(entry, args = [], opts = {}) {
   const argv = [entry, ...args];
-  return settle(spawnSyncFiles(process.execPath, argv, opts), [process.execPath, ...argv].join(' '), {
+  return settle(spawnArgv(process.execPath, argv, opts), [process.execPath, ...argv].join(' '), {
     codes: true,
   });
 }
@@ -174,6 +174,11 @@ function settle(r, child, { codes = false } = {}) {
     return r;
   }
   raise(signal);
+}
+
+/** Start the argv `command …args` with no shell, whatever `opts.shell` says. */
+function spawnArgv(command, args, opts) {
+  return spawnSyncFiles(command, args, { ...opts, shell: false });
 }
 
 /** The interrupt whose exit code (`EXIT_CODES`) is `status`, or null. */

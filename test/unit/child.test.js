@@ -93,6 +93,22 @@ test('runBl runs a bl entry under this Node with its arguments', () => {
   assert.equal(r.stdout, 'sync,--commit');
 });
 
+test('runChild, runBl and git run no shell, whatever opts.shell says', () => {
+  const dir = mkTempDir('bl-child-noshell-');
+  for (const shell of [undefined, false, true, '/bin/sh']) {
+    const rows = [
+      ['runChild', runChild('nonexistent; printf SHELL', [], { shell, encoding: 'utf8' })],
+      ['runBl', runBl('nonexistent; printf SHELL', [], { shell, encoding: 'utf8' })],
+      ['git', git(dir, ['--version; printf SHELL'], { shell })],
+    ];
+    for (const [name, r] of rows) {
+      const why = `${name} shell=${shell}: ${JSON.stringify(r.stdout)} ${r.error?.code}`;
+      assert.ok(!String(r.stdout ?? '').includes('SHELL'), why);
+      assert.notEqual(r.status, 0, why);
+    }
+  }
+});
+
 // (b) An interrupt that ends a runChild child is raised.
 for (const [signal, status] of [
   ['INT', 130],
