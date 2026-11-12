@@ -43,31 +43,22 @@ function isBusy(e) {
   return e?.code === 'EAGAIN' || e?.code === 'EWOULDBLOCK';
 }
 
-/** The PID on the first line of `path`, or 'unknown' when the file holds none yet (D4). */
-function pidIn(path) {
-  let first;
-  try {
-    first = readFileSync(path, 'utf8').split('\n', 1)[0];
-  } catch {
-    return 'unknown';
-  }
-  const pid = Number(first);
-  return Number.isInteger(pid) && pid > 0 ? pid : 'unknown';
-}
-
 /**
- * The info line of the lock file at `path` (its third line, `tryLock`'s
- * `info`), or null when it holds none. Information only, as the PID (D4).
+ * The PID on the first line of `path`, or 'unknown' when the file holds none
+ * yet (D4), and its info line (the third line, `tryLock`'s `info`), or null.
+ * Both come from one read, so they are always one holder's.
  *
- * @param {string} path
- * @returns {string | null}
+ * @returns {{ pid: number | 'unknown', info: string | null }}
  */
-export function infoOf(path) {
+function fileOf(path) {
+  let lines;
   try {
-    return readFileSync(resolve(path), 'utf8').split('\n')[2] || null;
+    lines = readFileSync(path, 'utf8').split('\n');
   } catch {
-    return null;
+    return { pid: 'unknown', info: null };
   }
+  const pid = Number(lines[0]);
+  return { pid: Number.isInteger(pid) && pid > 0 ? pid : 'unknown', info: lines[2] || null };
 }
 
 /**
@@ -94,7 +85,7 @@ export function tryLock(path, info) {
     flockSync(fd, 'exnb');
   } catch (e) {
     closeSync(fd);
-    if (isBusy(e)) return { holder: pidIn(key) };
+    if (isBusy(e)) return { holder: fileOf(key).pid };
     throw e;
   }
   try {
@@ -150,8 +141,21 @@ export function release(handle) {
  * @returns {number | 'unknown' | null}
  */
 export function holderOf(path) {
+  return holderFileOf(path)?.pid ?? null;
+}
+
+/**
+ * Who holds the lock on `path`, with the info line of the same holder: null
+ * when it is free or the file is missing (as `holderOf`); else `{ pid, info }`
+ * from one read of the lock file (`fileOf`), so the PID and the info line
+ * never come from two holders. `pid` is `process.pid` when this process holds it.
+ *
+ * @param {string} path
+ * @returns {{ pid: number | 'unknown', info: string | null } | null}
+ */
+export function holderFileOf(path) {
   const key = resolve(path);
-  if (held.has(key)) return process.pid;
+  if (held.has(key)) return { pid: process.pid, info: fileOf(key).info };
   let fd;
   try {
     fd = openSync(key, constants.O_RDONLY);
@@ -163,7 +167,7 @@ export function holderOf(path) {
     flockSync(fd, 'exnb');
     return null;
   } catch (e) {
-    if (isBusy(e)) return pidIn(key);
+    if (isBusy(e)) return fileOf(key);
     throw e;
   } finally {
     closeSync(fd);

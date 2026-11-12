@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { holderOf, infoOf, release, tryLockOnce } from './kernel-lock.js';
+import { holderFileOf, release, tryLockOnce } from './kernel-lock.js';
 
 /** The run directory under the backlog root: machine-local scratch. */
 export const RUN_DIR = join('.bl', 'run');
@@ -43,15 +43,15 @@ export function readStopRequest(config, featureId) {
 }
 
 /**
- * Who holds `id`'s run lock (`holderOf`): null when it is free; else
+ * Who holds `id`'s run lock (`holderFileOf`): null when it is free; else
  * `{ pid, run }`. `pid` is the holder's pid, or 'unknown'. `run` is true when
- * the holder is a `bl run` of `id`: the lock's info line (`infoOf`), which
+ * the holder is a `bl run` of `id`: the lock's info line, which
  * `takeRunLocks` writes as `bl run <id>`, `bl review <id>` or `bl merge <id>`.
+ * Both come from one read of the lock file, so they are one holder's.
  */
 export function runHolder(config, featureId) {
-  const path = runLockPath(config, featureId);
-  const pid = holderOf(path);
-  return pid == null ? null : { pid, run: infoOf(path) === `bl run ${featureId}` };
+  const holder = holderFileOf(runLockPath(config, featureId));
+  return holder == null ? null : { pid: holder.pid, run: holder.info === `bl run ${featureId}` };
 }
 
 /**
