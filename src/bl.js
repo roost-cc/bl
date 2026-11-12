@@ -194,7 +194,7 @@ Commands:
                --json         One JSON object per line
   stop       Stop a running bl run cleanly (<F-id|S-id>): ends its agent
                session, records "stopped"; bl run <id> --resume continues it
-  agent     Launch the configured agent with backlog allowed-tools applied
+  agent      Launch the configured agent with backlog allowed-tools applied
                [args...]      Passthrough args to the agent
 
 refine, approve, run, implement, review, status, merge and done take story
