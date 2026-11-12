@@ -151,6 +151,7 @@ test('edges: during included, * expanded, a during equal to the start left out, 
   assert.ok(story.some((e) => e.from === 'draft' && e.to === 'in_progress' && e.by === 'implement'));
   assert.ok(story.some((e) => e.from === 'draft' && e.to === 'in_progress' && e.by === 'side'));
   assert.ok(story.some((e) => e.from === 'escalated' && e.to === 'done' && e.by === 'done'));
+  assert.ok(!story.some((e) => e.from === 'done' && e.to === 'superseded'), 'no default edge moves a closed story');
   assert.deepEqual(flow.edges('task'), [
     { from: null, to: 'draft', by: 'new' },
     { from: 'draft', to: 'done', by: 'done' },

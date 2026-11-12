@@ -260,7 +260,7 @@ test('bl validate reports task-unit and task-field on hand-edited task files', (
   writeFileSync(join(dir, 'tasks', 'T10-bad.md'), '---\ntask_id: [\n---\n');
 
   const r = bl(['validate', '--json', '--skip', 'plugin-binary'], dir);
-  // The files keep `status:`, so each is also `legacy-status` (F-69 D4), which is not this test's.
+  // The files keep `status:`, so each open one is also `legacy-status` (F-69 D4; a closed one, such as T-6, is not), which is not this test's.
   const got = JSON.parse(r.stdout)
     .findings.filter((f) => f.location.startsWith('tasks/') && f.code !== 'legacy-status')
     .map((f) => `${f.location} ${f.severity} ${f.code}: ${f.message}`);
