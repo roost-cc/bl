@@ -1828,6 +1828,7 @@ test('stop_check_session: a session that returns while a stop request exists sto
     assert.equal(state.history.filter((h) => h.step === 'implement').length, 0, 'the stopped session is no attempt');
     assert.equal(runner.calls.filter((c) => c.type === 'session').length, 1, 'no nudge retry, no next story');
     assert.deepEqual(requestsLeft(config), [], 'the loop deletes the request');
+    assert.deepEqual(state.stoppedBy, [process.pid], 'the pid of the bl stop whose request it read');
     assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the run lock is released');
     assert.equal(unitStatusNow(feature), statusAtStop, "the unit's status does not change");
     assert.ok(noEscalation(feature), 'no escalation');
@@ -1838,6 +1839,7 @@ test('stop_check_session: a session that returns while a stop request exists sto
     const resumed = await runFeature({ feature, config, prep, runner: again, opts: { resume: true, maxRounds: 2 } });
     assert.equal(resumed.status, 'clean', JSON.stringify(resumed.history.slice(-4)));
     assert.equal(resumed.stoppedAt, undefined);
+    assert.equal(resumed.stoppedBy, undefined);
     const first = again.calls.find((c) => c.type === 'session');
     assert.deepEqual([first.prompt, first.story], ['feature-story', 'S-1'], 'resumes at the stopped step');
   } finally {
@@ -1999,6 +2001,8 @@ test('stop_check_own_requests_only: a stopped run deletes the requests for itsel
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'stopped');
     assert.deepEqual(requestsLeft(config), [process.pid + 1]);
+    // Each request names its bl stop (here this process twice): bl top matches its own (D8).
+    assert.deepEqual(state.stoppedBy, [process.pid, process.pid]);
   } finally {
     cleanup();
   }

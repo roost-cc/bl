@@ -49,6 +49,7 @@ type Run struct {
 	Story        string   `json:"story"`
 	StartedAt    string   `json:"startedAt"`
 	UpdatedAt    string   `json:"updatedAt"`
+	StoppedBy    []int    `json:"stoppedBy"` // the pids of the bl stops that stopped it (status stopped)
 	PR           *PR      `json:"pr"`
 	Usage        Usage    `json:"usage"`
 	Branch       string   `json:"branch"`

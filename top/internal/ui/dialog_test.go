@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -25,7 +26,8 @@ func fakeTools(t *testing.T, inTmux bool, stderr string, code int) string {
 	for _, name := range []string{"bl", "tmux", "xdg-open", "open"} {
 		body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %s\n", filepath.Join(dir, name+".args"))
 		if name == "bl" {
-			body += fmt.Sprintf("echo 'a first line' >&2\necho '%s' >&2\nexit %d\n", stderr, code)
+			body += fmt.Sprintf("echo $$ >> %s\necho 'a first line' >&2\necho '%s' >&2\nexit %d\n",
+				filepath.Join(dir, "bl.pids"), stderr, code)
 		}
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
 			t.Fatal(err)
@@ -50,6 +52,44 @@ func argsOf(t *testing.T, dir, name string) []string {
 	}
 	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 }
+
+// blPids are the pids of the runs of fakeTools' bl in dir, in the order they wrote them.
+func blPids(t *testing.T, dir string) []int {
+	t.Helper()
+	var pids []int
+	data, err := os.ReadFile(filepath.Join(dir, "bl.pids"))
+	if err != nil {
+		return nil
+	}
+	for _, l := range strings.Fields(string(data)) {
+		pid, err := strconv.Atoi(l)
+		if err != nil {
+			t.Fatalf("bl.pids: %v", err)
+		}
+		pids = append(pids, pid)
+	}
+	return pids
+}
+
+// ended is m's snapshot with each run of ends `stopped`, by the bl stop pids given.
+func ended(m Model, ends map[string][]int) *stream.Snapshot {
+	next := *m.snap
+	next.Runs.Rows = slices.Clone(next.Runs.Rows)
+	for i, r := range next.Runs.Rows {
+		if by, ok := ends[r.ID]; ok {
+			next.Runs.Rows[i].Status, next.Runs.Rows[i].StoppedBy = "stopped", by
+		}
+	}
+	return &next
+}
+
+// notifies says whether notes hold one about run id.
+func notifies(notes []notify.Note, id string) bool {
+	return slices.ContainsFunc(notes, func(n notify.Note) bool { return n.ID == id })
+}
+
+// external is the pid of a bl stop that another shell started.
+const external = 4242
 
 // typed are the key presses of s, one per character.
 func typed(s string) []tea.KeyPressMsg {
@@ -292,15 +332,9 @@ func TestSStopsALiveRunAfterMockupCsQuestionAndDoesNotNotify(t *testing.T) {
 	if !strings.Contains(dialogText(m), "stderr: stopped S-1330 at review; resume: bl run S-1330 --resume") {
 		t.Errorf("the result:\n%s", dialogText(m))
 	}
-	// The next snapshots: S-1330 (stopped here) does not notify; F-81 (stopped elsewhere) does.
-	next := *m.snap
-	next.Runs.Rows = slices.Clone(next.Runs.Rows)
-	for i, r := range next.Runs.Rows {
-		if r.ID == "S-1330" || r.ID == "F-81" {
-			next.Runs.Rows[i].Status = "stopped"
-		}
-	}
-	if notes := m.differ.Diff(&next); len(notes) != 1 || notes[0].ID != "F-81" {
+	// The next snapshots: S-1330 (stopped by this bl stop) does not notify; F-81 (stopped elsewhere) does.
+	next := ended(m, map[string][]int{"S-1330": blPids(t, dir), "F-81": {external}})
+	if notes := m.differ.Diff(next); len(notes) != 1 || notes[0].ID != "F-81" {
 		t.Errorf("notes after the stop: %v, want F-81's only", notes)
 	}
 	// A run that is not live has no s.
@@ -310,44 +344,130 @@ func TestSStopsALiveRunAfterMockupCsQuestionAndDoesNotNotify(t *testing.T) {
 	}
 }
 
-// TestAFailedStopLeavesALaterStopLoud: a stop from this view that failed (it did not start, exited
-// 1, or timed out with exit 1), with its result box shown or hidden, does not hide S-1330's later
-// `stopped` end, which then comes from another shell. A stop that worked does.
+// TestAFailedStopLeavesALaterStopLoud: whatever the end of a stop from this view (it did not start,
+// exited 1, timed out with exit 1, or exited 0), with its result box shown or hidden, S-1330's
+// `stopped` end is quiet only when that bl stop is one of the stops that stopped it. An end by
+// another shell's stop, or by no named stop, notifies.
 func TestAFailedStopLeavesALaterStopLoud(t *testing.T) {
+	type by int
+	const (
+		own by = iota
+		other
+		none
+	)
 	for _, c := range []struct {
 		what   string
 		code   int
 		noBl   bool // the command does not start
 		hidden bool // esc hides the running box before the result
-		notify bool
 	}{
-		{what: "the command did not start", noBl: true, notify: true},
-		{what: "exit 1", code: 1, notify: true},
-		{what: "exit 1 after the wait (stop requested)", code: 1, hidden: true, notify: true},
-		{what: "exit 0, hidden", code: 0, hidden: true, notify: false},
-		{what: "exit 0", code: 0, notify: false},
+		{what: "the command did not start", noBl: true},
+		{what: "exit 1", code: 1},
+		{what: "exit 1 after the wait (stop requested)", code: 1, hidden: true},
+		{what: "exit 0, hidden", code: 0, hidden: true},
+		{what: "exit 0", code: 0},
 	} {
-		fakeTools(t, true, "stop requested: S-1330 (pid 4242) stops at its next check", c.code)
-		m := atRow(t, 1, "S-1330")
-		if c.noBl {
-			m.blArgv = []string{filepath.Join(t.TempDir(), "no-bl")}
-		}
-		m, _ = press(t, m, text("s"))
-		m, cmd := press(t, m, text("y"))
-		if c.hidden {
-			m, _ = press(t, m, esc)
-		}
-		m, _ = update(t, m, cmd())
-		next := *m.snap
-		next.Runs.Rows = slices.Clone(next.Runs.Rows)
-		for i, r := range next.Runs.Rows {
-			if r.ID == "S-1330" {
-				next.Runs.Rows[i].Status = "stopped"
+		for _, who := range []by{own, other, none} {
+			if c.noBl && who == own {
+				continue // no child, no pid of its own
+			}
+			dir := fakeTools(t, true, "stop requested: S-1330 (pid 4242) stops at its next check", c.code)
+			m := atRow(t, 1, "S-1330")
+			if c.noBl {
+				m.blArgv = []string{filepath.Join(t.TempDir(), "no-bl")}
+			}
+			m, _ = press(t, m, text("s"))
+			m, cmd := press(t, m, text("y"))
+			if c.hidden {
+				m, _ = press(t, m, esc)
+			}
+			m, _ = update(t, m, cmd())
+			stoppers := map[by][]int{own: blPids(t, dir), other: {external}, none: nil}[who]
+			got := notifies(m.differ.Diff(ended(m, map[string][]int{"S-1330": stoppers})), "S-1330")
+			if want := who != own; got != want {
+				t.Errorf("%s, stopped by %v: S-1330's stopped end notifies: %v, want %v", c.what, stoppers, got, want)
 			}
 		}
-		notes := m.differ.Diff(&next)
-		if got := slices.ContainsFunc(notes, func(n notify.Note) bool { return n.ID == "S-1330" }); got != c.notify {
-			t.Errorf("%s: S-1330's stopped end notifies: %v, want %v", c.what, got, c.notify)
+	}
+}
+
+// TestExternalStopDuringFailedActionNotifies: another shell's stop ends S-1330 while this view's bl
+// stop still runs, and that bl stop then fails. The end notifies once, when the snapshot shows it.
+func TestExternalStopDuringFailedActionNotifies(t *testing.T) {
+	fakeTools(t, true, "bl stop: cannot write the stop request: ENOSPC; nothing stopped", 1)
+	m, _ := press(t, atRow(t, 1, "S-1330"), text("s"))
+	m, cmd := press(t, m, text("y"))
+	stopped := ended(m, map[string][]int{"S-1330": {external}})
+	first := m.differ.Diff(stopped)
+	m, _ = update(t, m, cmd())
+	later := m.differ.Diff(stopped)
+	if !notifies(first, "S-1330") || notifies(later, "S-1330") {
+		t.Errorf("the external stop's end: notes while the action ran %v, after it failed %v; want one, at once", first, later)
+	}
+}
+
+// TestTimedOutStopLaterCompletesQuietly: this view's bl stop exits 1 after its wait, and its request
+// stays; the run then stops at its next check, by that request. That end is quiet. After the end
+// the mark is gone: a later stop from another shell notifies.
+func TestTimedOutStopLaterCompletesQuietly(t *testing.T) {
+	dir := fakeTools(t, true, "stop requested: S-1330 (pid 4242) stops at its next check", 1)
+	m, _ := press(t, atRow(t, 1, "S-1330"), text("s"))
+	m, cmd := press(t, m, text("y"))
+	m, _ = update(t, m, cmd())
+	running := m.snap
+	if notes := m.differ.Diff(running); len(notes) != 0 {
+		t.Errorf("a snapshot while the run still runs: %v", notes)
+	}
+	if notes := m.differ.Diff(ended(m, map[string][]int{"S-1330": blPids(t, dir)})); notifies(notes, "S-1330") {
+		t.Errorf("the end by this view's request notified: %v", notes)
+	}
+	m.differ.Diff(running)
+	if notes := m.differ.Diff(ended(m, map[string][]int{"S-1330": {external}})); !notifies(notes, "S-1330") {
+		t.Errorf("a later stop from another shell: %v, want S-1330's end", notes)
+	}
+}
+
+// TestOverlappingStopActionsKeepSuccessQuiet: two stops of S-1330 from this view overlap (the first
+// box is hidden); the first fails and the second succeeds. The failure takes no mark off: an end by
+// either of them is quiet, and an end by another shell's stop alone notifies.
+func TestOverlappingStopActionsKeepSuccessQuiet(t *testing.T) {
+	for _, c := range []struct {
+		what   string
+		by     func(failed, ok int) []int
+		notify bool
+	}{
+		{"by the stop that succeeded", func(_, ok int) []int { return []int{ok} }, false},
+		{"by the stop that failed (its request was read)", func(failed, _ int) []int { return []int{failed} }, false},
+		{"by the one that succeeded and another shell's", func(_, ok int) []int { return []int{ok, external} }, false},
+		{"by another shell's stop alone", func(int, int) []int { return []int{external} }, true},
+	} {
+		dir := fakeTools(t, true, "", 0)
+		// The first bl stop to run fails, the other succeeds; each writes its pid to say which it is.
+		// The claim is sh's own O_EXCL create (set -C): two mkdir runs can both succeed in a race.
+		body := fmt.Sprintf("#!/bin/sh\nif (set -C; echo $$ > %[1]s/failed.pid) 2>/dev/null; then exit 1; fi\necho $$ > %[1]s/ok.pid\n", dir)
+		if err := os.WriteFile(filepath.Join(dir, "bl"), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		m, _ := press(t, atRow(t, 1, "S-1330"), text("s"))
+		m, first := press(t, m, text("y"))
+		m, _ = press(t, m, esc, text("s"))
+		m, second := press(t, m, text("y"))
+		m, _ = update(t, m, first())
+		m, _ = update(t, m, second())
+		pid := func(name string) int {
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+		notes := m.differ.Diff(ended(m, map[string][]int{"S-1330": c.by(pid("failed.pid"), pid("ok.pid"))}))
+		if got := notifies(notes, "S-1330"); got != c.notify {
+			t.Errorf("%s: notifies %v, want %v", c.what, got, c.notify)
 		}
 	}
 }

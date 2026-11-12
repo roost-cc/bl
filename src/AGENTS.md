@@ -3394,14 +3394,18 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
     the change. A result replaces only its own running box (each action has a number,
     `dialog.seq`) or shows when no dialog is open; over a newer dialog it shows in the bottom
     border instead.
-  - an action with `stops` marks its run: the run's `stopped` end does not notify (D8,
-    `Differ.Quiet`). The mark goes when the run ends with any status, or when the stop failed
-    (it did not start or exited other than 0: `Differ.Unquiet`).
+  - an action with `stops` marks its run with the pid of its `bl stop` child (D8,
+    `Differ.Quiet`). The view starts the child before it reads the next snapshot
+    (`actions.Start`), so the mark is there first. The run's `stopped` end does not notify when
+    that pid is one of the run's `stoppedBy`, the pids of the `bl stop`s whose requests stopped
+    it (`markStopped`). So a stop of this view that timed out and stops the run later stays quiet,
+    and another shell's stop notifies, also while this view's stop runs or after it failed. The
+    marks go when the run ends with any status.
 - **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
   before. A new `escalation` or `task` item (by item id) and a run that gets an end status
   (every status but `running`, `stale` and none: `clean`, `no-change`, `reviewed`, `escalated`,
-  `failed`, `stopped`; `stream.Ended`; by run id and status), except a `stopped` end of a run
-  that this view stopped, each make a note
+  `failed`, `stopped`; `stream.Ended`; by run id and status), except a `stopped` end by a
+  `bl stop` that this view started, each make a note
   `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)` (`ended` for a run
   with no step). The first read of a
   section only sets its baseline, so an item notifies once, and again only after it left the
@@ -3458,15 +3462,15 @@ read. A section whose read throws keeps its last good value and carries `error`,
 the next good read drops `error`. Each section comes from bl's own reader, in the same process
 (`src/top-snapshot.js`), so nothing else parses a backlog file:
 
-| Section     | Holds                                                                                                                                                                                                                                                                                                              | Read (`--stream`)                                        |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), `agent`, `model`, `effort` of its newest session entry, `title` (its unit's), `testAttempts`, `timeline` and `denied` (below) | every snapshot                                           |
-| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                              | when the backlog changes, and at least every 30 s        |
-| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                               | as `attention`                                           |
-| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                             | every 5 min, and at the snapshot after a `capacity` line |
-| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                              | every 5 min                                              |
-| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                                        | every snapshot                                           |
-| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date           | every snapshot                                           |
+| Section     | Holds                                                                                                                                                                                                                                                                                                                                                                                       | Read (`--stream`)                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), `agent`, `model`, `effort` of its newest session entry, `title` (its unit's), `testAttempts`, `stoppedBy` (the `bl stop` pids that stopped it; `[]` unless `stopped`), `timeline` and `denied` (below) | every snapshot                                           |
+| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                                                                                                       | when the backlog changes, and at least every 30 s        |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (the first 10 ranked units: `position`, `id`, `title`, `status`, `points`, `why`, `holds`, `heldBy`: the ids of the holders), `rankedCount`, `unrankedCount`: `nextPlan()`, the walk `bl next` prints                                                                                                                        | as `attention`                                           |
+| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                                                                                                      | every 5 min, and at the snapshot after a `capacity` line |
+| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                                                                                                       | every 5 min                                              |
+| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                                                                                                                 | every snapshot                                           |
+| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date                                                                                    | every snapshot                                           |
 
 - `activity` and `tokens` read the run states' history entries (F-87 D3b, D3c). A session that
   is still running counts only when it ends: its run state holds no usage until then. The
@@ -3615,7 +3619,8 @@ to its bl would be handled only after the run ends. `bl stop` never sends one:
    one-second slice of a usage-limit wait, which has no scope to stop. So the stopped
    session is not an attempt and does not escalate, and its tokens are lost, as for a killed
    bl (**Tokens per step**). With the request there, the loop records a `{ step: "stopped" }`
-   history entry, writes `status: stopped` and `stoppedAt` (`markStopped`), deletes the
+   history entry, writes `status: stopped`, `stoppedAt` and `stoppedBy` (the pids of the
+   `bl stop`s whose requests it read; `markStopped`), deletes the
    requests for its own pid and throws a `StopRequestError`. Its step cleanups run, `runFeature` releases the
    run lock and the work unit locks, and `bl run` exits 130.
 5. `bl stop` waits up to 30 s for that holder to let the run lock go, then prints
@@ -3625,7 +3630,7 @@ to its bl would be handled only after the run ends. `bl stop` never sends one:
    that says so, and `bl stop` deletes its own request file.
 
 The work unit's `status:` does not change: `--resume` continues any run state (`driveFeature`
-sets it back to `running` and drops `stoppedAt`). `takeRunLocks` deletes each leftover stop
+sets it back to `running` and drops `stoppedAt` and `stoppedBy`). `takeRunLocks` deletes each leftover stop
 request once it holds the locks: one for another pid, or one written before it took the run
 lock. So a request never stops a later run, `bl review` or `bl merge`, and a request for the
 new holder stays. `bl stop` is a short command (F-122 D2): it neither takes nor checks work unit

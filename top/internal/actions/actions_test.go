@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -68,18 +69,30 @@ func fake(t *testing.T, name, body string) string {
 	return path
 }
 
-func TestRunGivesTheExitCodeAndTheLastStderrLine(t *testing.T) {
-	ok := fake(t, "bl", "echo 'out' ; echo 'first' >&2; echo 'committed tasks/T52-x (backlog 4f1c2a9)' >&2\n")
-	if got := Run([]string{ok}); got != (Result{Code: 0, Last: "committed tasks/T52-x (backlog 4f1c2a9)"}) {
-		t.Errorf("exit 0: %#v", got)
+// run starts argv and waits for it: the pid Start gave and the Result.
+func run(argv []string) (int, Result) {
+	pid, wait := Start(argv)
+	return pid, wait()
+}
+
+func TestStartGivesThePidTheExitCodeAndTheLastStderrLine(t *testing.T) {
+	// The child prints its own pid first: Start gives the same one.
+	ok := fake(t, "bl", "echo $$ >&2; echo 'out' ; echo 'first' >&2; echo 'committed tasks/T52-x (backlog 4f1c2a9)' >&2\n")
+	pid, got := run([]string{ok})
+	if got != (Result{Code: 0, Last: "committed tasks/T52-x (backlog 4f1c2a9)"}) || pid <= 0 {
+		t.Errorf("exit 0: pid %d, %#v", pid, got)
+	}
+	self := fake(t, "bl", "echo $$ >&2\n")
+	if pid, got := run([]string{self}); got.Last != strconv.Itoa(pid) {
+		t.Errorf("the pid: Start gave %d, the child is %q", pid, got.Last)
 	}
 	bad := fake(t, "bl", "echo 'no running run for F-85' >&2; exit 1\n")
-	if got := Run([]string{bad}); got != (Result{Code: 1, Last: "no running run for F-85"}) {
+	if _, got := run([]string{bad}); got != (Result{Code: 1, Last: "no running run for F-85"}) {
 		t.Errorf("exit 1: %#v", got)
 	}
-	got := Run([]string{filepath.Join(t.TempDir(), "missing")})
-	if got.Code != -1 || !strings.Contains(got.Last, "no such file") {
-		t.Errorf("a command that does not start: %#v", got)
+	pid, got = run([]string{filepath.Join(t.TempDir(), "missing")})
+	if pid != 0 || got.Code != -1 || !strings.Contains(got.Last, "no such file") {
+		t.Errorf("a command that does not start: pid %d, %#v", pid, got)
 	}
 }
 

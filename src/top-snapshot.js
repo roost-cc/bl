@@ -340,6 +340,9 @@ function runRow(config, graph, state, now) {
     story: str(state.story),
     startedAt: str(state.startedAt),
     updatedAt: str(state.updatedAt),
+    // The pids of the bl stops that stopped it: bl top's quiet mark (D8) matches its own.
+    stoppedBy:
+      status === 'stopped' && Array.isArray(state.stoppedBy) ? state.stoppedBy.filter(Number.isSafeInteger) : [],
     pr,
     usage: usageOf(state.usage),
     branch: str(state.branch),

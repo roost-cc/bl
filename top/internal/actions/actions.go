@@ -100,15 +100,23 @@ type Result struct {
 // command left behind may hold it open.
 var waitDelay = time.Second
 
-// Run runs argv with no stdin and stdout, in bl top's directory, and returns its Result.
-func Run(argv []string) Result {
+// Start starts argv with no stdin and stdout, in bl top's directory. It returns the child's pid, or
+// 0 when it did not start, and wait, which waits for the end and returns its Result. The view
+// starts the child before it reads the next snapshot, so it knows the pid first (a stop's quiet
+// mark, D8).
+func Start(argv []string) (pid int, wait func() Result) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.WaitDelay = waitDelay
-	err := cmd.Run()
-	if cmd.ProcessState == nil {
-		return Result{Code: -1, Last: err.Error()}
+	if err := cmd.Start(); err != nil {
+		return 0, func() Result { return Result{Code: -1, Last: err.Error()} }
 	}
-	return Result{Code: cmd.ProcessState.ExitCode(), Last: stream.LastLine(&stderr)}
+	return cmd.Process.Pid, func() Result {
+		err := cmd.Wait()
+		if cmd.ProcessState == nil {
+			return Result{Code: -1, Last: err.Error()}
+		}
+		return Result{Code: cmd.ProcessState.ExitCode(), Last: stream.LastLine(&stderr)}
+	}
 }

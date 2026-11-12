@@ -44,11 +44,9 @@ type dialog struct {
 	result  actions.Result
 }
 
-// actionDoneMsg is the end of an action's child command; stops is the run the action stops, or
-// empty.
+// actionDoneMsg is the end of an action's child command.
 type actionDoneMsg struct {
 	words  []string
-	stops  string
 	seq    int
 	result actions.Result
 }
@@ -217,7 +215,9 @@ func (m Model) dialogKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 // runAction runs the action of d after its y: in a new tmux window, or as a child whose result box
-// follows. A stop marks its run, so the run's `stopped` end does not notify (D8).
+// follows. The child starts here, before the next snapshot is read. A stop marks its run with the
+// child's pid, so the run's `stopped` end by that bl stop does not notify (D8); an end by another
+// stop does.
 func (m Model) runAction(d dialog) (Model, tea.Cmd) {
 	words := actions.Words(d.action, d.text, goos)
 	argv := actions.Argv(words, m.blArgv)
@@ -225,25 +225,21 @@ func (m Model) runAction(d dialog) (Model, tea.Cmd) {
 		m.dialog = nil
 		return m, tmuxWindow(d.action.Window, argv)
 	}
-	if d.action.Stops != "" {
-		m.differ.Quiet(d.action.Stops)
+	pid, wait := actions.Start(argv)
+	if d.action.Stops != "" && pid > 0 {
+		m.differ.Quiet(d.action.Stops, pid)
 	}
 	m.actionSeq++
 	d.stage, d.words, d.seq = stageRunning, words, m.actionSeq
 	m.dialog = &d
-	stops, seq := d.action.Stops, d.seq
-	return m, func() tea.Msg { return actionDoneMsg{words: words, stops: stops, seq: seq, result: actions.Run(argv)} }
+	seq := d.seq
+	return m, func() tea.Msg { return actionDoneMsg{words: words, seq: seq, result: wait()} }
 }
 
 // actionDone shows the result box of a child that ended: in place of its own running box, or when
 // no dialog is open (esc hid the box). A newer dialog (a menu, a text, a question, another result or
-// another action's running box) stays, and the result shows as the note line instead. A stop that
-// failed (it did not start, exited other than 0, or timed out) takes its run's mark off, so that a
-// later stop from another shell notifies.
+// another action's running box) stays, and the result shows as the note line instead.
 func (m Model) actionDone(msg actionDoneMsg) Model {
-	if msg.stops != "" && msg.result.Code != 0 {
-		m.differ.Unquiet(msg.stops)
-	}
 	if d := m.dialog; d == nil || (d.stage == stageRunning && d.seq == msg.seq) {
 		m.dialog = &dialog{stage: stageResult, words: msg.words, seq: msg.seq, result: msg.result}
 		return m

@@ -90,7 +90,7 @@ export function markDead(config, id, err) {
       err(`no running run for ${id}`);
       return 1;
     }
-    markStopped(state, 'stopped by bl stop: no live bl held the run');
+    markStopped(state, 'stopped by bl stop: no live bl held the run', [process.pid]);
     saveRunState(config, state);
     err(stoppedLine(id, state.step, ' (no live bl held the run)'));
     return 0;

@@ -70,6 +70,7 @@ test('stop_dead_holder: no live holder and a running run state: bl stop marks it
     assert.equal(state.step, 'test');
     assert.ok(Number.isFinite(Date.parse(state.stoppedAt)));
     assert.equal(state.history.at(-1).step, 'stopped');
+    assert.deepEqual(state.stoppedBy, [process.pid], 'this bl stop stopped it');
     assert.deepEqual(requests(config), [], 'no request: nobody would read it');
   } finally {
     cleanup();
@@ -116,7 +117,7 @@ test('stop_live_holder: bl stop writes the request and waits; the run stops and 
     assert.equal(written.holder, holder.pid, 'and the run it stops');
     assert.ok(Number.isFinite(Date.parse(written.at)));
     // What the loop does at its check: mark stopped, save, delete the request, exit.
-    markStopped(state, 'stopped by bl stop at implement');
+    markStopped(state, 'stopped by bl stop at implement', [process.pid]);
     saveRunState(config, state);
     await holder.kill();
     assert.deepEqual(await stopping, { code: 0, lines: ['stopped F-1 at implement; resume: bl run F-1 --resume'] });
@@ -190,7 +191,7 @@ test('stop_short_command: bl stop goes ahead while another process holds the wor
     const run = spawnToFiles(BL_BIN, ['stop', 'F-1'], { cwd: dir, env });
     await Promise.race([untilRequests(config), run.closed]);
     assert.equal(requests(config).length, 1, `the request is written: ${run.read().stderr}`);
-    markStopped(state, 'stopped by bl stop at implement');
+    markStopped(state, 'stopped by bl stop at implement', [process.pid]);
     saveRunState(config, state);
     await holder.kill();
     const r = await run.closed;
@@ -318,7 +319,7 @@ test('stop_concurrent_failed_write_preserves_request: a bl stop whose write fail
     });
     assert.deepEqual(readdirSync(dir), [basename(before.path)], 'no half-written file of the second');
     assert.equal(readFileSync(before.path, 'utf8'), kept, 'the first request is whole');
-    markStopped(state, 'stopped by bl stop at implement');
+    markStopped(state, 'stopped by bl stop at implement', [process.pid]);
     saveRunState(config, state);
     held.release();
     assert.deepEqual(await first, { code: 0, lines: ['stopped F-1 at implement; resume: bl run F-1 --resume'] });

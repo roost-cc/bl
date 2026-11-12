@@ -260,7 +260,7 @@ export function newRunState(feature, { branch, worktreePath, maxRounds }) {
     worktreePath,
     startedAt: new Date().toISOString(),
     updatedAt: null,
-    // running | clean | escalated | failed | reviewed (bl review) | stopped (bl stop, with `stoppedAt`)
+    // running | clean | escalated | failed | reviewed (bl review) | stopped (bl stop, with `stoppedAt` and `stoppedBy`)
     status: 'running',
     step: 'setup',
     storyIndex: 0,
@@ -841,15 +841,20 @@ function setStep(ctx, step, extra = {}) {
 
 /**
  * Mark run state `state` stopped (F-87 D7a): a `{ step: "stopped" }` history
- * entry with `note`, `status: stopped` and `stoppedAt`. `step` keeps the step
- * the run stopped in, which `bl status` shows. The caller saves the state.
- * The loop (`checkStop`) and `bl stop` for a run no bl holds both use it.
+ * entry with `note`, `status: stopped`, `stoppedAt`, and `stoppedBy`, the
+ * pids of the `bl stop`s whose requests stopped it (`by`). So `bl top` knows
+ * whether its own stop did it (D8). `step` keeps the step the run stopped in,
+ * which `bl status` shows. The caller saves the state. The loop (`checkStop`)
+ * and `bl stop` for a run no bl holds both use it.
+ *
+ * @param {number[]} by
  */
-export function markStopped(state, note) {
+export function markStopped(state, note, by) {
   const at = new Date().toISOString();
   state.history.push({ step: 'stopped', ok: true, note, at });
   state.status = 'stopped';
   state.stoppedAt = at;
+  state.stoppedBy = by;
   state.lastError = null;
 }
 
@@ -871,7 +876,11 @@ function checkStop(ctx) {
   if (mine.length === 0) return;
   const { state } = ctx;
   const reason = `stopped by bl stop at ${state.step}`;
-  markStopped(state, reason);
+  markStopped(
+    state,
+    reason,
+    mine.map(({ request }) => request.pid),
+  );
   saveRunState(ctx.config, state);
   for (const { path } of mine) rmSync(path, { force: true });
   finalTitle(ctx, 'stopped');
@@ -4919,6 +4928,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     state.status = 'running';
     state.lastError = null;
     delete state.stoppedAt;
+    delete state.stoppedBy;
     state.maxRounds = maxRounds;
   }
   const implementPrompt = isStory(feature) ? 'story-run' : 'feature-story';

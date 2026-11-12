@@ -92,6 +92,28 @@ function runsBacklog() {
   return { dir, run, config: loadConfig({ backlogRoot: dir }) };
 }
 
+test('stopped_by: a stopped row names the bl stop pids of its run state; any other row, or a bad value, has none', () => {
+  const { dir } = mkTempBacklog();
+  const run = join(dir, '.bl', 'run');
+  mkdirSync(run, { recursive: true });
+  const recent = new Date(NOW - HOUR).toISOString();
+  const cases = [
+    ['S-1', { status: 'stopped', stoppedBy: [10, 11] }, [10, 11]],
+    ['S-2', { status: 'stopped', stoppedBy: ['10', 12, 1.5, null] }, [12]],
+    ['S-3', { status: 'stopped', stoppedBy: 12 }, []],
+    ['S-4', { status: 'stopped' }, []],
+    ['S-5', { status: 'escalated', stoppedBy: [10] }, []],
+  ];
+  for (const [id, more] of cases) {
+    writeFileSync(join(run, `${id}.json`), JSON.stringify(runState(id, { updatedAt: recent, ...more })));
+  }
+  const { rows } = runsReader(loadConfig({ backlogRoot: dir }))(NOW);
+  assert.deepEqual(
+    Object.fromEntries(rows.map((r) => [r.id, r.stoppedBy])),
+    Object.fromEntries(cases.map(([id, , want]) => [id, want])),
+  );
+});
+
 test('runs: running or stopped, or updated in the last 24 h; running with no holder is stale', () => {
   const { config } = runsBacklog();
   const { rows } = runsReader(config)(NOW);
