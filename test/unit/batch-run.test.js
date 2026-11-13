@@ -6,20 +6,21 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
-import { dirname } from 'path';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname, join, relative } from 'path';
+import { stringify as stringifyYaml } from 'yaml';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { findBatch, normalizeBatchId } from '../../src/batch.js';
 import { resolveFeatureStories } from '../../src/feature.js';
 import { listChanges, parseChange } from '../../src/change-doc.js';
-import { readPlan } from '../../src/execution-plan.js';
+import { planPath, readPlan } from '../../src/execution-plan.js';
 import { runFeature } from '../../src/feature-run.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
 import { batchUnit } from '../../src/unit.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
-import { initGitBacklog } from '../helpers/git-backlog.js';
+import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
-import { AC_BODY, CH, creates, fakeRunner } from '../helpers/feature-run-fixture.js';
+import { AC_BODY, CH, checkAll, creates, fakeRunner, storySetup } from '../helpers/feature-run-fixture.js';
 
 /** Batch B-1 of S-1 (repo demo-repo) and S-2 (repo other), S-2 after S-1 by an order edge. */
 function batchSetup() {
@@ -86,6 +87,96 @@ function batchSetup() {
   };
   return { dir, cleanup, config, batch, prep, lead, other };
 }
+
+/** The stories the run implemented, in order. */
+const implemented = (runner) =>
+  runner.calls.filter((c) => c.type === 'session' && c.vars.storyAbsPath).map((c) => c.story);
+
+/**
+ * Batch B-1 of three stories with no edge between them (S-3 a copy of S-2),
+ * so a session may put the untaken two in either order.
+ */
+function threeStoryBatch() {
+  const ctx = batchSetup();
+  writeBlockersLocked(ctx.dir, []);
+  const s2 = ctx.prep.ordered.find((s) => s.id === 'S-2');
+  const s3 = join(ctx.dir, 'stories', 'S3-third', 'index.md');
+  mkdirSync(dirname(s3), { recursive: true });
+  writeFileSync(s3, readFileSync(s2.indexPath, 'utf8').replaceAll('S-2', 'S-3').replaceAll('Second', 'Third'));
+  ctx.prep.ordered = resolveFeatureStories(ctx.batch, ctx.config).stories;
+  return { ...ctx, unit: ctx.batch };
+}
+
+/** A story run of S-5, as `storySetup` builds it. */
+function storyRun() {
+  const { cleanup, config, unit, prep } = storySetup();
+  return { dir: config.backlogRoot, cleanup, config, unit, prep };
+}
+
+// Review 2026-11-13 (round 2), Should 6: a batch run and a story run follow
+// plan.yaml after each session as a feature run does (`followStoredPlan`):
+// a valid edit is followed and committed, one bl cannot read escalates.
+test('plan_edit_is_followed_or_escalated_for_story_and_batch_runs', async () => {
+  const notYaml = 'order: [S-1\n';
+  const cases = [
+    // [name, setup, the plan the first session writes (from the stored one), status, implemented, message]
+    [
+      'batch: the untaken stories reordered',
+      threeStoryBatch,
+      (p) => {
+        const rest = p.order.slice(1).reverse();
+        return stringifyYaml({ ...p, order: [p.order[0], ...rest], groups: [[p.order[0]], rest] });
+      },
+      'clean',
+      (p) => [p.order[0], ...p.order.slice(1).reverse()],
+      null,
+    ],
+    ['batch: not YAML', threeStoryBatch, () => notYaml, 'escalated', (p) => [p.order[0]], /plan\.yaml: not YAML: /],
+    [
+      'story: a changes entry added',
+      storyRun,
+      (p) => stringifyYaml({ ...p, changes: [{ at: '2026-11-13T00:00:00Z', by: 'implement', what: 'x', why: 'y' }] }),
+      'clean',
+      () => ['S-5'],
+      null,
+    ],
+    ['story: not YAML', storyRun, () => notYaml, 'escalated', () => ['S-5'], /plan\.yaml: not YAML: /],
+  ];
+  for (const [name, setup, edit, status, want, message] of cases) {
+    const { dir, cleanup, config, unit, prep } = setup();
+    try {
+      initGitBacklog(dir);
+      const unitDir = dirname(unit.indexPath);
+      let stored = null;
+      const runner = fakeRunner({
+        dir,
+        feature: unit,
+        behaviour: {
+          story: (o) => {
+            checkAll(o.vars.storyAbsPath);
+            if (stored) return;
+            stored = readPlan(unitDir, unit.id);
+            writeFileSync(planPath(unitDir), edit(stored));
+          },
+        },
+      });
+      const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, status, `${name}: ${state.lastError}`);
+      assert.deepEqual(implemented(runner), want(stored), name);
+      if (message) {
+        assert.match(state.lastError, /the execution plan cannot be read after a session: /, name);
+        assert.match(state.lastError, message, name);
+        continue;
+      }
+      assert.equal(readFileSync(planPath(unitDir), 'utf8'), edit(stored), `${name}: the edit stays`);
+      assert.match(git(dir, 'log', '--format=%s'), new RegExp(`^chore: ${unit.id} plan as a session changed it$`, 'm'));
+      const rel = relative(dir, planPath(unitDir));
+      assert.equal(git(dir, 'status', '--porcelain', '--', rel), '', `${name}: committed`);
+    } finally {
+      cleanup();
+    }
+  }
+});
 
 test('bl run B-n: the batch goes through runFeature, each story on story-run.md in its repo, with one plan, change and PR', async () => {
   const { dir, cleanup, config, batch, prep, lead, other } = batchSetup();
