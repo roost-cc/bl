@@ -945,14 +945,18 @@ async function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
     };
   }
   const readyError = branch ? markReady(ctx, s, repoPath) : null;
-  const pushMain = g(['push', 'origin', 'main']);
-  if (pushMain.status !== 0) {
-    const back = rollback(g, ['reset', '--hard', before.stdout.trim()]);
+  const pushed = undoable(() => {
+    const pushMain = g(['push', 'origin', 'main']);
+    const back = pushMain.status === 0 ? null : rollback(g, ['reset', '--hard', before.stdout.trim()]);
+    return { pushMain, left: back && `${back}: local main of ${repoPath} still holds the unpushed merge` };
+  });
+  if (pushed.pushMain.status !== 0) {
+    const why = firstLine(pushed.pushMain.stderr);
     return {
       ok: false,
-      reason: back
-        ? `push of main failed: ${firstLine(pushMain.stderr)}; ${back}: local main of ${repoPath} still holds the unpushed merge`
-        : `push of main failed; local main reset: ${firstLine(pushMain.stderr)}`,
+      reason: pushed.left
+        ? `push of main failed: ${why}; ${pushed.left}`
+        : `push of main failed; local main reset: ${why}`,
     };
   }
   const commit = g(['rev-parse', '--short', 'HEAD']).stdout.trim() || '?';

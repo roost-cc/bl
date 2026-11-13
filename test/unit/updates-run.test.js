@@ -2783,8 +2783,9 @@ test('an empty run whose heartbeat commit fails fails the run, the report left o
   }
 });
 
-// F-124 D3: if SIGINT ends the merge into main or the rebase in the throwaway
-// worktree, the abort runs, then bl exits 130. Each row runs the update job
+// F-124 D3: if SIGINT ends the merge into main, the rebase in the throwaway
+// worktree or the push of main, the abort (for the push, the reset of local
+// main) runs, then bl exits 130. Each row runs the update job
 // in a Node child that calls `exitOnSignal()` (as bl.js does). The fake
 // runner's `git` for the step runs a child that SIGINT ends (`runChild`, so
 // src/child.js sees the interrupt) and returns a failed result; its `git`
@@ -2801,6 +2802,12 @@ const INTERRUPTED_STEPS = [
     step: ['rebase', 'origin/main'],
     abort: ['rebase', '--abort'],
     left: /^bl: `git rebase --abort` failed: injected: the worktree .*\/worktrees\/.* is left mid-rebase$/m,
+  },
+  {
+    name: 'the push of main',
+    step: ['push', 'origin'],
+    abort: ['reset', '--hard'],
+    left: /^bl: `git reset --hard .*` failed: injected: local main of .*\/repos\/bl still holds the unpushed merge$/m,
   },
 ];
 
@@ -2847,7 +2854,7 @@ for (const c of INTERRUPTED_STEPS) {
       const abort = r.stderr.indexOf('abort ran\n');
       assert.ok(d2 >= 0 && abort > d2, `the D2 line, then the abort: ${why}`);
       if (abortFails) assert.match(r.stderr, c.left, why);
-      else assert.doesNotMatch(r.stderr, /is left mid-/, why);
+      else assert.doesNotMatch(r.stderr, /is left mid-|still holds the unpushed merge/, why);
     });
   }
 }
