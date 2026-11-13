@@ -32,6 +32,7 @@ import { atomicWriteFile } from './atomic-write.js';
 import { syncAndCommit } from './sync.js';
 import { loadFlow } from './flow.js';
 import { isScripted } from './scripted.js';
+import { FIX_EXISTS, checkReport, ciBin, findingsTable } from './ci-cd.js';
 import {
   RUN_LOCK_ID,
   foreignCheckout,
@@ -44,23 +45,11 @@ import {
 } from './updates.js';
 import { appendReport } from './updates-run.js';
 
-/** The scanner's report statuses that say what is on the checkout. */
-const SCANNED = new Set(['findings', 'clean', 'no-lockfiles']);
-/** A `fix_state` that says a fix exists, so a `decide` story's question is over. */
-const FIX_EXISTS = new Set(['ready', 'young', 'overdue']);
-/** Every `fix_state` of `ci-cd-vulns/v1`. Any other would read as a finding that is gone. */
-const FIX_STATES = new Set([...FIX_EXISTS, 'decide', 'watching', 'unknown', 'no-age']);
-/** `ci-cd-vulns/v1`'s severities, lowest first, and the values a finding's `status` takes. */
-const SEVERITIES = ['none', 'low', 'medium', 'high', 'critical'];
-const FAIL_ON_LEVELS = new Set(SEVERITIES.slice(1));
-const STATUSES = new Set(['new', 'existing']);
 /**
  * Room for a title in a commit header: commitlint's 100 columns less
  * `chore: ` and ` (S-1234)`. A scripted story's title is its commit's subject.
  */
 const TITLE_MAX = 84;
-
-const FINDINGS_HEADER = ['Package', 'Version', 'Advisory', 'Severity', 'Fixed'];
 
 const TEMPLATES = { fix: 'story-vulns.md', decide: 'story-vulns-decide.md' };
 
@@ -91,20 +80,6 @@ function linked(findings, ids) {
     group.push(...hits);
     rest = rest.filter((f) => !hits.includes(f));
   }
-}
-
-/** The findings table of a story, in a stable order so a rescan compares equal. */
-export function findingsTable(findings) {
-  const rows = findings
-    .map((f) => [
-      f.package,
-      f.version,
-      [...(f.ids ?? [])].sort().join(', '),
-      f.severity ?? '',
-      (f.fixed ?? []).join(', ') || '(none)',
-    ])
-    .sort((a, b) => a[0].localeCompare(b[0]) || a[2].localeCompare(b[2]));
-  return renderTable(FINDINGS_HEADER, rows);
 }
 
 /** `vulns: <repo> <lockfile>: <pkg>@<ver> …`, cut to fit a commit header. */
@@ -236,61 +211,6 @@ export function defaultVulnsRunner() {
   };
 }
 
-const isText = (v) => typeof v === 'string' && v !== '';
-const isFinding = (f) =>
-  [f?.lockfile, f?.package, f?.version, f?.severity].every(isText) &&
-  FIX_STATES.has(f.fix_state) &&
-  Array.isArray(f.ids) &&
-  f.ids.length > 0 &&
-  f.ids.every(isText) &&
-  Array.isArray(f.fixed) &&
-  f.fixed.every(isText) &&
-  typeof f.at_fail_on === 'boolean' &&
-  typeof f.blocking === 'boolean';
-
-/**
- * Whether a finding's flags agree with each other and with `failOn`, as
- * `runVulns` sets them: `at_fail_on` follows from the severity, a `new` finding
- * at `fail_on` blocks, and only that or an `overdue` one can (an `overdue` one
- * need not: a branch that removes a finding passes).
- */
-function isConsistent(f, failOn) {
-  const atFailOn = SEVERITIES.indexOf(f.severity) >= SEVERITIES.indexOf(failOn);
-  const mustBlock = f.status === 'new' && atFailOn;
-  const overdue = f.fix_state === 'overdue';
-  return (
-    STATUSES.has(f.status) &&
-    SEVERITIES.includes(f.severity) &&
-    f.at_fail_on === atFailOn &&
-    (!FIX_EXISTS.has(f.fix_state) || f.fixed.length > 0) &&
-    (!overdue || atFailOn) &&
-    (f.blocking ? mustBlock || overdue : !mustBlock)
-  );
-}
-
-/**
- * What in a report a finished `bin/ci vulns --ages` cannot have written, or
- * null. Reconciling closes stories, so a report is taken only when each finding
- * is whole and agrees with itself, and all of them with the status and exit:
- * `findings` means one is at `fail_on`, and exit 1 means one is blocking.
- *
- * @returns {string | null}
- */
-export function reportProblem(report, exit) {
-  const { status, findings, fail_on: failOn } = report;
-  if (!Array.isArray(findings)) return 'findings is not a list';
-  const bad = findings.findIndex((f) => !isFinding(f));
-  if (bad !== -1) return `finding ${bad} is malformed`;
-  if (status === 'no-lockfiles' && findings.length > 0) return 'no-lockfiles with findings';
-  if (findings.length > 0 && !FAIL_ON_LEVELS.has(failOn)) return `fail_on ${failOn} is not a level`;
-  const wrong = findings.findIndex((f) => !isConsistent(f, failOn));
-  if (wrong !== -1) return `finding ${wrong} contradicts itself`;
-  if ((status === 'findings') !== findings.some((f) => f.at_fail_on))
-    return `status ${status} disagrees with its findings`;
-  if ((exit === 1) !== findings.some((f) => f.blocking)) return `exit ${exit} disagrees with its findings`;
-  return null;
-}
-
 /**
  * Scan one repo. Exit 1 with a report is a scan: `--ages` exits 1 on an
  * `overdue` finding. Anything else without a usable report is a failed scan.
@@ -313,11 +233,8 @@ export function scanRepo({ runner, ciBin, repoPath, jsonPath }) {
   } catch (e) {
     return failed(`unreadable report (${e.message})`);
   }
-  if (report?.schema !== 'ci-cd-vulns/v1') return failed(`unknown report schema ${report?.schema}`);
-  if (!SCANNED.has(report.status)) return { error: `scan ${report.status}: ${report.error ?? 'no detail'}` };
-  if (r.status > 1) return failed(`exit ${r.status}`);
-  const problem = reportProblem(report, r.status);
-  return problem ? failed(`invalid report (${problem})`) : { report };
+  const problem = checkReport(report, r.status, { ages: true });
+  return problem ? failed(problem) : { report };
 }
 
 // ---------------------------------------------------------------------------
@@ -514,7 +431,7 @@ export async function vulnsUpdates(config, opts = {}) {
   const now = new Date();
   const today = opts.today ?? now.toISOString().slice(0, 10);
   const at = opts.at ?? now.toISOString().replace(/\.\d{3}Z$/, 'Z');
-  const ciBin = opts.ciBin ?? join(config.roostDir, 'ci-cd', 'bin', 'ci');
+  const bin = opts.ciBin ?? ciBin(config);
   const dryRun = opts.dryRun === true;
   const result = { actions: [], reported: [], failures: [], report: null, commit: null };
 
@@ -545,7 +462,7 @@ export async function vulnsUpdates(config, opts = {}) {
       }
       info(`updates vulns: scanning ${repo.name}`);
       const jsonPath = join(config.backlogRoot, RUN_DIR, `updates.vulns.${repo.name}.json`);
-      const scan = scanRepo({ runner, ciBin, repoPath: repo.repoPath, jsonPath });
+      const scan = scanRepo({ runner, ciBin: bin, repoPath: repo.repoPath, jsonPath });
       if (scan.error) {
         warn(`updates vulns: ${repo.name}: ${scan.error}; its stories are left as they are`);
         out(`${'failed'.padEnd(10)} ${repo.name}  ${scan.error}`);

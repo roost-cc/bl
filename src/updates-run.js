@@ -72,6 +72,7 @@ import {
 } from './updates.js';
 import { loadFlow, statusWords } from './flow.js';
 import { GATE_TAIL_LINES, fenced, interpolateCommand, isScripted, runImplementPlugin, tail } from './scripted.js';
+import { ciBin } from './ci-cd.js';
 
 // `DEFAULT_MAX_MERGES`, `CONFLICT_NOTE` and `RUN_LOCK_ID` live in updates.js,
 // whose CLI help and sync use them without importing this module, and
@@ -1449,7 +1450,7 @@ export async function runUpdates(config, opts = {}) {
     runner,
     today,
     at,
-    ciBin: opts.ciBin ?? join(config.roostDir, 'ci-cd', 'bin', 'ci'),
+    ciBin: opts.ciBin ?? ciBin(config),
   };
   const result = { outcomes: [], report: null, commit: null };
 
