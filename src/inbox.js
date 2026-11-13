@@ -348,7 +348,7 @@ function byUnitNewest(a, b) {
  * @param {object} config
  * @param {{ now?: number }} [opts]  the clock the heartbeat's age is read by
  * @returns {{ items: Array<{ kind: string, id: string, unit: string,
- *   line: string, holds?: string[], status?: string, next: string, path: string }>,
+ *   line: string, holds?: string[], status?: string, verb?: string, next: string, path: string }>,
  *   warnings: string[] }}
  */
 export function collectInbox(config, { now = Date.now() } = {}) {
