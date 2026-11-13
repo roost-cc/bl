@@ -149,24 +149,61 @@ test('gateRecord: a fail record with no exit code, or with a vulns step and no b
       gateRun({ steps: ['vulns'], exit_code: 2, vulns: { ...clean, status: 'error', error: 'osv-scanner: network' } }),
       /vulns report is unusable \(scan error: osv-scanner: network\)/,
     ],
-    'error empty': [gateRun({ steps: ['lint'], error: '' }), /error is empty/],
-    'no step and no error': [gateRun({ steps: [] }), /names no step and no error/],
+    'error empty, no step': [gateRun({ steps: [], error: '' }), /names no step and no error text/],
+    'error whitespace, no step': [gateRun({ steps: [], error: '  ' }), /names no step and no error text/],
+    'no step and no error': [gateRun({ steps: [] }), /names no step and no error text/],
   };
   for (const [name, [record, why]] of Object.entries(none)) {
     const r = read(record);
     assert.match(r.none ?? '', why, `${name}: ${JSON.stringify(r)}`);
   }
-  // Every record gateRecord returns gives at least one lettered option.
-  const taken = [
-    gateRun(),
-    gateRun({ steps: [], error: 'push to main refused' }),
-    gateRun({ steps: ['vulns'], exit_code: 2, error: 'osv-scanner is not on PATH', vulns: { status: 'error' } }),
-    vulnsRun([finding()]),
-  ];
-  for (const record of taken) {
-    const gate = read(record);
-    assert.ok(gate.record, JSON.stringify(gate));
-    assert.match(render(gate), /\n- A\. /, JSON.stringify(record));
+});
+
+test('gateRecord: a negative exit_code is not a gate record', () => {
+  const clean = { schema: 'ci-cd-vulns/v1', status: 'clean', fail_on: 'high', findings: [] };
+  const none = {
+    'exit -1': [gateRun({ exit_code: -1 }), /exit_code is -1, not a failure's/],
+    'exit -1 with an error': [gateRun({ exit_code: -1, error: 'x' }), /exit_code is -1/],
+    'vulns last, exit -1, clean report': [
+      gateRun({ steps: ['vulns'], exit_code: -1, vulns: clean }),
+      /exit_code is -1/,
+    ],
+    'vulns last, exit 2, clean report': [
+      gateRun({ steps: ['vulns'], exit_code: 2, vulns: clean }),
+      /vulns report is unusable \(exit 2\)/,
+    ],
+  };
+  for (const [name, [record, why]] of Object.entries(none)) {
+    const r = read(record);
+    assert.match(r.none ?? '', why, `${name}: ${JSON.stringify(r)}`);
+  }
+});
+
+test('pushEscalation: every record gateRecord accepts has a problem and a decision', () => {
+  // Invariant: every record gateRecord returns gives pushEscalation at least
+  // one decision, and a problem with text after its heading.
+  const taken = {
+    'a failed step': [gateRun(), /`test` failed/],
+    'a large exit': [gateRun({ exit_code: 137 }), /`test` failed/],
+    'an error, no step': [gateRun({ steps: [], error: 'push to main refused' }), /could not run: push to main refused/],
+    'a scanner that could not run': [
+      gateRun({ steps: ['vulns'], exit_code: 2, error: 'osv-scanner is not on PATH', vulns: { status: 'error' } }),
+      /could not run: osv-scanner is not on PATH/,
+    ],
+    'a blocking finding': [vulnsRun([finding()]), /the vulnerability scan blocked the push/],
+    // ci-cd writes `error = thrown.message`: an error with no text reads the step's log.
+    'error empty, a failed step': [gateRun({ steps: ['lint'], error: '' }), /`lint` failed/],
+    'error whitespace, a failed step': [gateRun({ steps: ['lint'], error: '  ' }), /`lint` failed/],
+  };
+  for (const [name, [record, problem]] of Object.entries(taken)) {
+    const gate = read(record, 'the log\n');
+    assert.ok(gate.record, `${name}: ${JSON.stringify(gate)}`);
+    const text = render(gate);
+    assertShape(text, name);
+    const after = (heading, next) => text.slice(text.indexOf(heading) + heading.length, text.indexOf(next)).trim();
+    assert.match(after('**The problem:**', "**Why the agents can't fix it:**"), problem, `${name}\n${text}`);
+    assert.match(after('**The decision:**', '**Details:**'), /^- A\. /, `${name}\n${text}`);
+    assert.ok(!/could not run: \n|could not run: $/m.test(text), `${name}\n${text}`);
   }
 });
 

@@ -343,6 +343,15 @@ test("checkReport: a gate's report may leave fix_state out, an --ages report may
   assert.match(checkReport({ ...r, status: 'error', error: 'boom' }, 1, { ages: false }), /scan error: boom/);
 });
 
+test('checkReport: an exit other than 0 or 1 is refused, below 0 too', () => {
+  const clean = { schema: 'ci-cd-vulns/v1', status: 'clean', fail_on: 'high', findings: [] };
+  for (const exit of [-1, 2, null, 1.5]) {
+    for (const ages of [false, true])
+      assert.equal(checkReport(clean, exit, { ages }), `exit ${exit}`, `${exit} ${ages}`);
+  }
+  assert.equal(checkReport(clean, 0, { ages: false }), null);
+});
+
 test('reject-inconsistent-finding-flags-in-both-consumers: a contradiction closes no story', async () => {
   for (const [name, findings, exit] of inconsistentFindings) {
     const t = await backlog();

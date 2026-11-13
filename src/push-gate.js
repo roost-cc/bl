@@ -24,9 +24,10 @@ const isTextOrNull = (v) => v === null || typeof v === 'string';
 /**
  * The gate's check record of the commit at the worktree's HEAD, when it is
  * this push's: written by `gate`, a `fail`, started no earlier than the push,
- * and whole, with something to decide: a non-zero exit, and an `error` (not
- * empty), a step that failed, or a `vulns` report with a blocking finding.
- * Otherwise `none` says why there is none.
+ * and whole, with something to decide: an exit of 1 or more, and an `error`
+ * with text, a step that failed, or a `vulns` report with a blocking finding.
+ * An `error` with no text counts as null in the record returned, so a failed
+ * step's log is read. Otherwise `none` says why there is none.
  *
  * @param {{ runner: { shell: Function }, worktreePath: string, pushStartedAt: number }} opts
  *   `pushStartedAt` is the time the push began, in epoch milliseconds
@@ -66,19 +67,22 @@ export function gateRecord({ runner, worktreePath, pushStartedAt }) {
   if (!Array.isArray(steps) || !steps.every((s) => typeof s === 'string')) {
     return none("the check record's steps is not a list of names");
   }
-  if (!Number.isInteger(exit) || exit === 0) return none(`the check record's exit_code is ${exit}, not a failure's`);
+  if (!Number.isInteger(exit) || exit < 1) return none(`the check record's exit_code is ${exit}, not a failure's`);
   if (!isTextOrNull(error)) return none("the check record's error is not text");
-  if (error === '') return none("the check record's error is empty");
-  if (error === null && steps.length === 0) return none('the check record names no step and no error');
+  // ci-cd writes `error = thrown.message`, which can be empty: with a step,
+  // the log tells the cause, so an error with no text counts as none.
+  const said = error?.trim() ? error : null;
+  if (said === null && steps.length === 0) return none('the check record names no step and no error text');
   // With `error` set the scan may have thrown, and its report says so: the
   // error is the record's whole story. Without it, `checkReport` takes only
-  // exit 1 with a blocking finding, as exit 0 is refused above.
-  if (error === null && steps.at(-1) === 'vulns') {
+  // exit 1 with a blocking finding, and a report with none is refused too.
+  if (said === null && steps.at(-1) === 'vulns') {
     if (vulns == null) return none('the check record has no vulns report');
     const problem = checkReport(vulns, exit, { ages: false });
     if (problem) return none(`the check record's vulns report is unusable (${problem})`);
+    if (!vulns.findings.some((f) => f.blocking)) return none("the check record's vulns report has no blocking finding");
   }
-  return { record, commit, recordPath, logPath };
+  return { record: { ...record, error: said }, commit, recordPath, logPath };
 }
 
 const RULE = "a branch reaches origin only through its repo's pre-push gate, and bl never pushes past it.";

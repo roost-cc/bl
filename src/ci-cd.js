@@ -121,7 +121,7 @@ function reportProblem(report, exit, ages) {
 export function checkReport(report, exit, { ages }) {
   if (report?.schema !== 'ci-cd-vulns/v1') return `unknown report schema ${report?.schema}`;
   if (!SCANNED.has(report.status)) return `scan ${report.status}: ${report.error ?? 'no detail'}`;
-  if (exit > 1) return `exit ${exit}`;
+  if (exit !== 0 && exit !== 1) return `exit ${exit}`;
   const problem = reportProblem(report, exit, ages);
   return problem ? `invalid report (${problem})` : null;
 }

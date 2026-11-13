@@ -2060,8 +2060,9 @@ began. bl never reruns the gate and never parses the hook's output. The kinds:
   `<commit>.log`, and a note that bl did not check whether `main` fails the
   step too.
 - No usable record (none, `by` is `check`, an older `started`, a malformed
-  record, an `exit_code` that is not a non-zero integer, an empty `error`, no
-  step and no `error`, or a `vulns` report `checkReport()` refuses), and an
+  record, an `exit_code` that is not an integer of 1 or more, no step and no
+  `error` text, or a `vulns` report `checkReport()` refuses or that has no
+  blocking finding), and an
   `origin/<branch>` that lacks HEAD after the push: the problem line names
   what `gateRecord()` found and why, and the push output goes through
   `pushFailure()` under Details (its excerpt, left out when no marker
