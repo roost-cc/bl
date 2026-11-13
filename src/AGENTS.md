@@ -5361,7 +5361,8 @@ them.
   (its default) either: Node ends it with the same refused `shutdown`, the call reports
   `EPERM` from a child that succeeded, and `execFileSync`/`execSync` throw it. Give it
   `stdio: ['ignore', 'pipe', 'pipe']`. A command whose output `bl` reads and that may be a
-  Node program (a configured forge op) goes through `spawnSyncFiles`. Tests start an asynchronous Node child with
+  Node program (a configured forge op) goes through `runCommandLine`, which uses
+  `spawnSyncFiles`. Tests start an asynchronous Node child with
   `spawnToFiles` (`test/helpers/spawn-files.js`) and watch its files; a live two-way
   protocol with a Node child (the fake `codex app-server`) uses `fs.readSync(0)` and
   `fs.writeSync(1)` in the child. `test/unit/child-stdio-guard.test.js` parses `src/` and
@@ -5369,7 +5370,10 @@ them.
 - **A synchronous child runs through `src/child.js`** (F-114 D1): `runChild(command, args)` for an
   argv command, `runCommandLine(line)` for a configured command line (through a shell),
   `runBl(entry, args)` for a `bl` child, and `git(cwd, args)`. Each runs its child through `spawnSyncFiles` and
-  returns the `spawnSync` result. If SIGINT or SIGTERM ends the child, the module prints
+  returns the `spawnSync` result. `gitOut(cwd, args)` is `git()` for a git command that must
+  succeed: it returns the trimmed stdout, or throws `describeExit`'s message (F-124 D2).
+  `BL_PATH` is this process's own `bl.js`, the `entry` for a `runBl` of this `bl` (F-124 D5).
+  If SIGINT or SIGTERM ends the child, the module prints
   `bl: <child> was ended by <signal>` and raises the signal (D2), so `bl` exits 130 or 143 and the
   caller's next statement never runs. `runCommandLine` and `runBl` read exit 130 and 143 as those
   signals too. A child that Node killed past its `timeout` is a failure, not an interrupt. A caller
