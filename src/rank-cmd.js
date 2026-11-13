@@ -33,8 +33,8 @@
 
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
-import { createInterface } from 'readline';
 import { parseArgs } from 'node:util';
+import { askLine } from './ask-line.js';
 import { stringify } from 'yaml';
 import { atomicWriteFile } from './atomic-write.js';
 import { info, loadConfig, normalizeId } from './config.js';
@@ -613,14 +613,7 @@ async function commitPlan(root, plan) {
 
 /** Ask `question` on stderr and read one answer from stdin: whether it is yes. */
 async function askYes(question) {
-  const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: false });
-  process.stderr.write(question);
-  const answer = await new Promise((res) => {
-    rl.once('line', res);
-    rl.once('close', () => res(''));
-  });
-  rl.close();
-  return /^\s*y(es)?\s*$/i.test(answer);
+  return /^\s*y(es)?\s*$/i.test(await askLine(question));
 }
 
 /**
