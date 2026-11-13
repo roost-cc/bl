@@ -421,8 +421,8 @@ export function computePlan(stories, edges, { taken = [], kept = [] } = {}) {
 // The stored plan: plan.yaml
 // ---------------------------------------------------------------------------
 
-/** The format and version `plan.yaml` names in its `schema:` field. */
-export const PLAN_SCHEMA = 'bl-plan/v1';
+/** The format and version `plan.yaml` names in its `schema:` field: the `const` of `schemas/plan.json`. */
+export const PLAN_SCHEMA = loadSchema('plan').properties.schema.const;
 
 /** The plan file's name in a work unit's directory, beside its change document. */
 export const PLAN_FILE = 'plan.yaml';

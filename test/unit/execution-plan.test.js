@@ -453,6 +453,17 @@ test('schemas/plan.json accepts the Design 2 example and a null merge_order, and
   );
 });
 
+// Review 2026-11-13, Should 2: schemas/plan.json is the one source of the
+// format's name and of the fields newPlan writes.
+test('PLAN_SCHEMA and the fields newPlan writes come from schemas/plan.json', () => {
+  const schema = loadSchema('plan');
+  assert.equal(PLAN_SCHEMA, schema.properties.schema.const);
+  withStories((make) => {
+    const plan = newPlan('F-7', [make('S-1')], []);
+    assert.deepEqual(Object.keys(plan).sort(), [...schema.required].sort());
+  });
+});
+
 test('writePlan then readPlan gives the same object; readPlan of a unit with no plan is null', async () => {
   await withUnitDir(async (root, unitDir) => {
     assert.equal(readPlan(unitDir, 'F-125'), null);
