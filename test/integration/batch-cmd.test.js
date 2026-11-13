@@ -17,6 +17,8 @@ import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { BL_BIN, personEnv } from '../helpers/run-bl.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
+import { holdLockInChild } from '../helpers/hold-lock.js';
+import { unitLockPath } from '../../src/unit-lock.js';
 
 const PLAN = '## Implementation Plan\n\n1. Change src/two.js.\n';
 
@@ -222,6 +224,30 @@ test('bl batch names each path left changed when its rollback fails, and the nex
   assert.equal(fm(dir, 'stories/S1-one/index.md').batch, undefined);
   assert.equal(git(dir, 'status', '--porcelain'), '');
   assert.ok(!existsSync(join(dir, '.bl/run/B-2.links.json')));
+});
+
+// Review 2026-11-13 (round 2), Should 1: a story under a live session (its
+// work unit lock held) refuses the batch before anything is written, so a
+// retry is not refused for a batch whose pass never ran.
+test("bl batch refuses before it writes anything when a story's work unit lock is held", async () => {
+  const dir = await backlog();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const child = await holdLockInChild(unitLockPath(dir, join(dir, 'stories', 'S2-two')));
+  try {
+    const r = batch(dir, ['S-1', 'S-2', '--title', 'T']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /bl batch: refused; nothing written\./);
+    assert.match(r.stderr, new RegExp(`S-2 is locked by a live bl process \\(pid ${child.pid}\\)`));
+    assert.deepEqual(newBatches(dir), []);
+    for (const s of ['S1-one', 'S2-two']) assert.equal(fm(dir, `stories/${s}/index.md`).batch, undefined, s);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'nothing committed');
+    assert.ok(!existsSync(r.argvLog), 'no agent session');
+  } finally {
+    await child.kill();
+  }
+  // With the lock free, the same command builds the batch.
+  const again = batch(dir, ['S-1', 'S-2', '--title', 'T']);
+  assert.equal(again.status, 0, again.stderr);
 });
 
 // Review 2026-11-13 (round 2), Must 1: every story names the batch, but the

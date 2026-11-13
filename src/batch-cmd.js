@@ -6,7 +6,9 @@
  *    not started, in no feature and in no batch, and not held at its `run`
  *    gate by work outside the batch (`heldBy`). A refusal names each story
  *    and its reason. A run edge between two of the stories becomes an order
- *    edge when they join (F-111 D5), so it holds nothing.
+ *    edge when they join (F-111 D5), so it holds nothing. Then take each
+ *    story's work unit lock, held to the end; a story that another process
+ *    holds refuses the batch.
  * 2. Under the backlog lock: write `batches/B<n>-<slug>/index.md` from
  *    `templates/batch.md` with its `approved` transition by `new` (the flow's
  *    initial `batch` status), write `batch: B-<n>` on each story, turn the run
@@ -38,7 +40,7 @@ import { BATCHES_DIR, findBatch, normalizeBatchId } from './batch.js';
 import { graphOf } from './backlog-graph.js';
 import { DEFAULT_REVIEW_ROUNDS_MAX } from './feature.js';
 import { batchUnit } from './unit.js';
-import { takeUnitLocksOrExit } from './unit-lock.js';
+import { takeUnitLocks } from './unit-lock.js';
 import { loadPrompt, runHeadlessSession } from './session.js';
 import { sessionEffort } from './effort.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
@@ -170,7 +172,13 @@ async function writeBatch(config, { id, title, stories }) {
 async function crossStoryPass(config, batch, stories) {
   const root = config.backlogRoot;
   const owner = `batch ${batch.id}`;
-  const lock = takeUnitLocksOrExit(config, [batch], owner);
+  // The stories' locks are held since before the write (`main`); this takes
+  // them again, one depth deeper, and the batch directory's.
+  const lock = takeUnitLocks(config, [batch], owner);
+  if (lock.refused != null) {
+    console.error(`bl batch: ${batch.id} is built, but its cross-story pass did not run: ${lock.refused}.`);
+    process.exit(1);
+  }
   try {
     const before = dirtySnapshot(root);
     const prompt = loadPrompt(
@@ -243,6 +251,17 @@ export async function main(argv) {
     if (refusals.length > 0) fail(`bl batch: refused; nothing written.\n${refusals.map((r) => `  ${r}`).join('\n')}`);
   };
   check();
+  // Each story's work unit lock, from before the first write to the end of
+  // the cross-story pass: a story under a live session (`bl refine S-n`)
+  // refuses the batch while nothing is written yet. Held to the process's end.
+  const held = takeUnitLocks(
+    config,
+    readAllStories(config)
+      .filter((s) => ids.includes(s.id))
+      .map((s) => ({ id: s.id, kind: 'story', indexPath: s.indexPath })),
+    `bl batch ${ids.join(' ')}`,
+  );
+  if (held.refused != null) fail(`bl batch: refused; nothing written.\n  ${held.refused}`);
 
   let built;
   try {
