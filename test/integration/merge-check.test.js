@@ -817,7 +817,10 @@ test(
       assert.equal(r.status, 1, r.stdout);
       const [[commit]] = calls(fx);
       assert.match(r.stderr, new RegExp(`^ci-cd: push to main refused: no readable check record for ${commit}`, 'm'));
-      assert.match(r.stderr, new RegExp(`^ci-cd: run \`ci check ${commit}\`, then push again$`, 'm'));
+      assert.match(
+        r.stderr,
+        new RegExp(`^ci-cd: push to main refused: .*; run \`ci check ${commit}\`, then push again$`, 'm'),
+      );
       assert.match(
         r.stderr,
         new RegExp(`^code: the push of ${commit} to main was refused; nothing is pushed\\.$`, 'm'),
