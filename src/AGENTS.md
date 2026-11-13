@@ -3202,11 +3202,13 @@ repo the config does not know, stops the prep naming the story.
 **Repos added during a run (F-48 D3).** After every agent session (each
 story and its retry, fix-tests, the self-review, each review round, the fix
 and its self-review) `bl run F-n` calls `refreshRepos` (`feature-run.js`):
-it re-reads the feature's stories (every story whose `feature:` names it),
-adds any new story to `prep.ordered`
-after the stories the run has taken and puts those not taken yet in
-order-edge order again (`orderStoriesByDeps` on the current `readEdges`,
-as at the start), so the implement loop reaches each after its prerequisites
+it re-reads the unit's stories (every story whose `feature:`, or a batch's
+`batch:`, names it), adds any new story to the stored execution plan
+(`replan` on `plan.yaml` as the session left it, so the session's own
+`changes` entries stay) after the stories the run has taken, puts those not
+taken yet in dependency order again (on the current `readEdges`, as at the
+start), writes and commits `plan.yaml`, and makes `prep.ordered` follow its
+`order`, so the implement loop reaches each after its prerequisites
 and skips it when its criteria are checked; and for each repo of
 `featureRepoOrder` the run has not
 prepared, takes that repo's worktree on the branch (`git worktree list` in its

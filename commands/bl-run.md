@@ -114,16 +114,11 @@ before review. A repo without one is skipped by name; with none in any repo
 the suite is skipped and the run says so. The clean-worktree check still runs in
 every worktree.
 
-## Several targets
+## One target
 
-Before anything starts, `bl run` lists the targets that wait: one that depends on another
-target (or on a story outside them that is not done), naming the blocker, and one whose files
-overlap a lower-numbered target's, naming the shared files. A target's files are its branch
-diff once it has commits, else the backticked paths in its Implementation Plan; a path that is
-not backticked is not seen, nor is one under `### Sources of truth`, which is read, not changed.
-The rest run in parallel, each as a child `bl run <id>` with its
-output in `.bl/run/<id>.out`, and one line per target is printed when all are done. Re-run the
-same command after the first ones merge.
+`bl run` takes one target: a feature, a story batch or a loose story. `bl run S-1 S-2` is
+refused. To run several stories as one unit, group them first with
+`bl batch S-1 S-2 --title <t>`, then run the batch (`bl run B-n`).
 
 ## Adding stories
 
