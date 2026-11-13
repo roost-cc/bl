@@ -322,7 +322,7 @@ test("bl merge F-n refuses a plan.yaml whose merge_order does not name the featu
     assert.equal(r.status, 1);
     assert.match(
       r.stderr,
-      /F-1: merge_order in features\/F1-feat\/plan\.yaml \(bl\) does not name the feature's repos \(bl, ci-cd\)/,
+      /F-1: merge_order in features\/F1-feat\/plan\.yaml \(bl\) does not name its repos \(bl, ci-cd\)/,
     );
     for (const n of ['bl', 'ci-cd']) assert.equal(g(built[n].repo, 'rev-parse', 'main'), before[n], `${n} not merged`);
   } finally {

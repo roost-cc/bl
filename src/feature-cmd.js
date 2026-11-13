@@ -1763,7 +1763,7 @@ function storedMergeOrder(config, feature, names) {
   if (!order) return null;
   if (order.length !== names.length || !names.every((n) => order.includes(n))) {
     console.error(
-      `${unitLabel(feature)} ${feature.id}: merge_order in ${rel} (${order.join(', ')}) does not name the feature's repos (${names.join(', ')}). Correct it, with a changes entry that says why, or delete ${rel} to merge in the merge edges' order.`,
+      `${unitLabel(feature)} ${feature.id}: merge_order in ${rel} (${order.join(', ')}) does not name its repos (${names.join(', ')}). Correct it, with a changes entry that says why, or delete ${rel} to merge in the merge edges' order.`,
     );
     process.exit(1);
   }
