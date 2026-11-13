@@ -581,7 +581,6 @@ const ALLOWED = new Map([
   ['src/rank-cmd.js', ['spawnSync']],
   ['src/release.js', ['spawnSync']],
   ['src/review.js', ['execSync']],
-  ['src/schedule.js', ['execFileSync']],
   ['src/session.js', ['execSync', 'spawnSync']],
   ['src/side.js', ['spawnSync', 'spawnSyncFiles']],
   ['src/story.js', ['execSync']],

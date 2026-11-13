@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import { writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { pluginForExtension, bucketByPlugin, runPluginBatch, runPlugins } from '../../src/config.js';
-import { DISPATCH, GATED_VERBS, VERBS, flagsOf, heldTargets } from '../../src/verbs.js';
+import {
+  DISPATCH,
+  GATED_VERBS,
+  ONE_TARGET_VERBS,
+  VERBS,
+  dispatch,
+  flagsOf,
+  heldTargets,
+  oneTargetRefusal,
+} from '../../src/verbs.js';
 import * as featureCmd from '../../src/feature-cmd.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
@@ -248,6 +257,35 @@ test('runPlugins and runPluginBatch name a brace-grouped missing binary', () => 
 test('dispatch checks a gate at run and implement only; refine, review, status and the rest are never held', () => {
   assert.deepEqual([...GATED_VERBS].sort(), ['implement', 'run']);
 });
+
+// ---------------------------------------------------------------------------
+// One target (F-125 Decision A3): run and implement refuse several ids.
+// ---------------------------------------------------------------------------
+
+test('run and implement take one target; review, merge and the rest take several', () => {
+  assert.deepEqual([...ONE_TARGET_VERBS].sort(), ['implement', 'run']);
+});
+
+for (const verb of ['run', 'implement']) {
+  test(`dispatch refuses bl ${verb} S-1 S-2 before anything starts, naming bl batch`, async () => {
+    const exit = process.exit;
+    const error = console.error;
+    const lines = [];
+    console.error = (line) => lines.push(line);
+    process.exit = (code) => {
+      throw Object.assign(new Error('exit'), { code });
+    };
+    try {
+      // No backlog is read: the refusal comes before loadConfig and the gate check.
+      await assert.rejects(dispatch(verb, ['S-1', 'S-2']), (e) => e.code === 1);
+    } finally {
+      process.exit = exit;
+      console.error = error;
+    }
+    assert.deepEqual(lines, [oneTargetRefusal(verb)]);
+    assert.match(lines[0], new RegExp(`^bl ${verb}: takes one target; .*\\bbl batch\\b`));
+  });
+}
 
 test('heldTargets: each held target with its lines and blockers; an unheld one is not listed', () => {
   const { dir } = mkTempBacklog({

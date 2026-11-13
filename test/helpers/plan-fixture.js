@@ -1,6 +1,6 @@
 /**
  * plan-fixture.js — stories with Implementation Plans, for the tests of
- * `src/execution-plan.js` and `src/schedule.js`.
+ * `src/execution-plan.js`.
  */
 
 import { loadConfig } from '../../src/config.js';

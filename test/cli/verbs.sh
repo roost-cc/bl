@@ -141,8 +141,8 @@ blrun done F-1
 assert_exit "done F-1" 1 "$RC"
 assert_contains "done refuses a feature" "F-1 is a feature; bl merge F-1 marks it done." "$ERR"
 blrun run F-1 F-2 --plan
-assert_exit "run F-1 F-2 --plan" 0 "$RC"
-assert_contains "several targets go through the scheduler" "Starting: F-1, F-2" "$ERR"
+assert_exit "run F-1 F-2 --plan" 1 "$RC"
+assert_contains "run takes one target" "bl run: takes one target" "$ERR"
 blrun run X-1
 assert_exit "run X-1" 1 "$RC"
 assert_contains "malformed id" "Invalid id: X-1" "$ERR"

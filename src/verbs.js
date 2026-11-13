@@ -7,10 +7,9 @@
  * calls that kind's handler (F-35 Design §1). `bl status` with no arguments at
  * all has no target: it lists the open stories by status (list.js).
  *
- * Several ids (Design §5): `run` and `implement` start only the units that
- * neither depend on nor overlap another (schedule.js) and list the rest first;
- * `run` and `review` run each unit as a child `bl <verb> <id>` with its output
- * in `.bl/run/<id>.out`; `implement` opens a tmux window per unit; `merge`
+ * Several ids (Design §5): `run` and `implement` take one target and refuse
+ * several (F-125 D5: grouping stories is `bl batch`); `review` runs each unit
+ * as a child `bl review <id>` with its output in `.bl/run/<id>.out`; `merge`
  * goes in dependency order and stops at the first failure; `refine`,
  * `status`, `approve` and `done` take each target on its own.
  */
@@ -23,10 +22,8 @@ import { loadConfig, parseArgs, info, openTmuxWindow } from './config.js';
 import { renderTabTitle, TAB_TITLE_ENV, unitTitleFields } from './tab-title.js';
 import { readAllStories } from './story.js';
 import { classifyId, resolveTargets } from './targets.js';
-import { schedule } from './schedule.js';
-import { dependencyOrder, byId } from './execution-plan.js';
+import { dependencyOrder } from './execution-plan.js';
 import { heldBy, readEdges, readUnits } from './blockers.js';
-import { loadFlow } from './flow.js';
 import { RUN_DIR, ensureRunDir, escalationOpen, loadRunState, readFm, reviewEnd } from './feature-run.js';
 import { reviewOf } from './transition.js';
 import { currentChange } from './change-doc.js';
@@ -60,23 +57,20 @@ const STORY_REPO_REFUSED = new Set(['run', 'implement', 'review', 'merge']);
 /** The verbs whose feature handler once took `--repo` (F-52 D3 removed it). */
 const FEATURE_REPO_REFUSED = new Set(['run', 'implement']);
 
-export const NEED_TMUX =
-  'several targets need tmux: start a tmux session and rerun this, or run them one at a time, or use run';
-
 const VERB_HELP = {
-  run: `Usage: bl run <id...> [options]
+  run: `Usage: bl run <id> [options]
 
 Arguments:
-  <id...>              Features (F-3), or refined stories (S-34), each of
-                       which goes through the same loop on its own branch. A
+  <id>                 One target: a feature (F-3) or a refined story (S-34),
+                       which goes through the loop on its own branch. A
                        story that belongs to a feature is refused (run the
                        feature). A component is refused: make its stories a
-                       feature.
+                       feature. Several ids are refused: group stories with
+                       bl batch.
 
 Options:
   --resume             Continue from the saved run state
   --interactive        Attach each session instead of running it headless
-                       (one target)
   --plan               Print the steps and exit
   --max-rounds <n>     Review-round cap for this run
   -A, --agent <id>     Agent provider; replaces backlog.json's agent list,
@@ -89,32 +83,25 @@ repo of its stories, bl first, then by first story in dependency order, and
 starts in the first.
 
 The autonomous loop: implement, test gate, self-review, one PR, review → fix →
-re-review until clean or the round cap escalates. Stops before merge.
-
-Several targets: a target that depends on another target, or on a story that
-is not done, waits; so does one whose files overlap a lower-numbered target's.
-The waiting ones are listed first. The rest run in parallel, each as a child
-bl run with its output in .bl/run/<id>.out, and one line per target is printed
-when all are done. Exits 1 if any failed or escalated.`,
-  implement: `Usage: bl implement <id...> [options]
+re-review until clean or the round cap escalates. Stops before merge.`,
+  implement: `Usage: bl implement <id> [options]
 
 Arguments:
-  <id...>              Features (F-3) or stories (S-34). A story that
-                       belongs to a feature is refused (implement the
+  <id>                 One target: a feature (F-3) or a story (S-34). A story
+                       that belongs to a feature is refused (implement the
                        feature). A component is refused: make its stories a
-                       feature.
+                       feature. Several ids are refused: group stories with
+                       bl batch.
 
 Options:
   -A, --agent <id>     Agent provider
   --model <m>          Model of the -A configuration (needs -A)
-  -P, --prompt <text>  Discuss <text> with the agent first (one target)
+  -P, --prompt <text>  Discuss <text> with the agent first
   --help               Show this help
 
 No --repo: a feature prepares every repo of its stories, as bl run does, and
 starts in the first. Creates or resumes the worktree and opens an interactive agent session: the
-manual single step. Use bl run for the whole loop. Several targets are
-scheduled as bl run schedules them, and each started one opens in its own
-tmux window.`,
+manual single step. Use bl run for the whole loop.`,
   review: `Usage: bl review <id...> [options]
 
 Arguments:
@@ -285,6 +272,10 @@ export async function dispatch(verb, argv) {
     console.error(VERB_HELP[verb].split('\n')[0]);
     process.exit(1);
   }
+  if (ids.length > 1 && ONE_TARGET_VERBS.has(verb)) {
+    console.error(oneTargetRefusal(verb));
+    process.exit(1);
+  }
 
   // -A replaces the review list on `bl review`, the implementing list on
   // every other verb (F-64 D2).
@@ -316,15 +307,24 @@ export async function dispatch(verb, argv) {
   }
 
   // A target held at its `run` gate by an unmet edge does not start (F-66 D3).
+  // A gated verb takes one target (ONE_TARGET_VERBS).
   const held = GATED_VERBS.has(verb) ? heldTargets(verb, targets, config) : [];
-  if (targets.length === 1 && held.length === 1) {
+  if (held.length === 1) {
     for (const line of held[0].lines) console.error(line);
     for (const b of held[0].blockers) console.error(`next: bl status ${b}`);
     process.exit(1);
   }
 
-  if (targets.length > 1) return dispatchSeveral(verb, argv, args, config, targets, held);
+  if (targets.length > 1) return dispatchSeveral(verb, argv, args, config, targets);
   return runTarget(verb, targets[0], args, argv, config);
+}
+
+/** The verbs that take one target (F-125 Decision A3): grouping work is a batch, built on purpose. */
+export const ONE_TARGET_VERBS = new Set(['run', 'implement']);
+
+/** Why `bl <verb>` refuses several ids, and what to do instead. */
+export function oneTargetRefusal(verb) {
+  return `bl ${verb}: takes one target; give one id. To ${verb} several stories as one unit, group them with bl batch S-a S-b … --title <t>, then bl ${verb} the batch.`;
 }
 
 /**
@@ -383,39 +383,9 @@ function oneTargetOnly(verb, args, flags) {
 /**
  * Several targets (F-35 Design §5).
  */
-async function dispatchSeveral(verb, argv, args, config, targets, held = []) {
+async function dispatchSeveral(verb, argv, args, config, targets) {
   const flags = flagsOf(argv, args.positional);
   switch (verb) {
-    case 'run':
-    case 'implement': {
-      oneTargetOnly(verb, args, verb === 'run' ? ['interactive'] : ['prompt']);
-      const all = readAllStories(config);
-      // A held target waits like a scheduler deferral; the others start.
-      const heldIds = new Set(held.map((h) => h.id));
-      const { start, deferred } = schedule(
-        targets.filter((t) => !heldIds.has(t.id)),
-        all,
-        loadFlow(config.backlogRoot),
-        { config },
-      );
-      for (const h of held) deferred.push({ id: h.id, kind: h.kind, reason: h.lines.join('; '), blockers: h.blockers });
-      deferred.sort(byId);
-      printSchedule(start, deferred);
-      if (start.length === 0) {
-        console.error('Nothing to start: every target waits (see above).');
-        process.exit(1);
-      }
-      if (start.length === 1) return runOne(verb, start[0], flags, config);
-      if (verb === 'implement') return openWindows(verb, start, flags, NEED_TMUX);
-      if (args.plan) {
-        for (const t of start) {
-          console.log('');
-          await runOne(verb, t, flags, config);
-        }
-        return;
-      }
-      return runChildren(verb, start, flags, config);
-    }
     case 'review':
       oneTargetOnly(verb, args, ['interactive']);
       return runChildren(verb, targets, flags, config);
@@ -444,16 +414,6 @@ async function dispatchSeveral(verb, argv, args, config, targets, held = []) {
     default:
       return eachInTurn(verb, targets, flags);
   }
-}
-
-/** The schedule, printed before anything starts. */
-function printSchedule(start, deferred) {
-  if (deferred.length > 0) {
-    info('Deferred:');
-    for (const d of deferred) info(`  ${d.id}: ${d.reason}`);
-    info('');
-  }
-  info(`Starting: ${start.map((t) => t.id).join(', ') || '(none)'}`);
 }
 
 /** One detached tmux window per target, each running `bl <verb> <id>`. */
@@ -510,10 +470,6 @@ async function runChildren(verb, targets, flags, config) {
     const { line, ok } = outcomeLine(verb, r, config);
     console.log(line);
     if (!ok) failed = true;
-  }
-  if (verb === 'run') {
-    const { printInboxCount } = await import('./inbox.js');
-    printInboxCount(config);
   }
   process.exit(failed ? 1 : 0);
 }

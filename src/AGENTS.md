@@ -1176,11 +1176,11 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
   is named on the unit asked about). A file with no edges holds nothing and reads neither
   `flow.json` nor the units; with edges, a missing `flow.json` stops the verb with its
   `FlowError`.
-  - `bl run` and `bl implement`: `dispatch` (`verbs.js`) checks every target after they resolve
-    and before `dispatchSeveral` / `runTarget` (`GATED_VERBS`, `heldTargets`). One held target
-    is refused, one line per edge, then `next: bl status <blocker>` per blocker. With several,
-    a held target is listed under `Deferred:` beside the scheduler's deferrals and the others
-    start; when every one waits, nothing starts. `--plan` is held too.
+  - `bl run` and `bl implement`: `dispatch` (`verbs.js`) checks the one target after it
+    resolves and before `runTarget` (`GATED_VERBS`, `heldTargets`); both verbs take one target
+    (`ONE_TARGET_VERBS`, F-125 Decision A3), and several ids are refused before the check. A
+    held target is refused, one line per edge, then `next: bl status <blocker>` per blocker.
+    `--plan` is held too.
   - `bl merge`: `mergeGates` adds the finding `blocker` first, one per unmet edge on the unit or
     its stories, before any repo is touched, for a story and a feature alike.
   - No other verb is held: `bl refine`, `bl new`, `bl review`, `bl side`, `bl status`, `bl done`.
@@ -1200,7 +1200,7 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
   `featureGraph`, and for story dependencies `dependencyEdge` (the edge "S-a waits for S-b"
   stands for, `RUN_EDGE` or `ORDER_EDGE`), `dependsOnEdges`, `withDependsOn`, `readEdges` and
   `storyDependencies` (each story's dependencies from the run and order edges between two
-  stories, which the graph's `dependsOn`, `schedule`, `dependencyOrder` and `bl implement S-n`'s
+  stories, which the graph's `dependsOn`, `computePlan`, `dependencyOrder` and `bl implement S-n`'s
   deferral read).
 - **The deadlock graph** (`holdGraph`, D5). Nodes are features (each standing for its stories)
   and standalone stories; an arc says one node cannot pass a gate until another moves on.
@@ -3206,37 +3206,29 @@ bl review S34                 # alias: bl pr S34
 
 ### Several targets
 
-Every id-dispatched verb takes several ids (`schedule.js`, `verbs.js`; the plan
-paths, `planFiles`, and the merge order, `dependencyOrder`, are in `execution-plan.js`).
-`bl run` and `bl implement` first decide what starts: a target that waits for
-another target by a run or order edge (`storyDependencies` of `readEdges`; a
-feature through any of its stories), or a story
-outside the targets that is not done, waits; so does a target whose files
-overlap a lower-numbered started target's. A target's files are its branch diff
-against main (`git diff --name-only main...HEAD` in each worktree) once the
-branch has commits, else the backticked paths in its stories' Implementation
-Plans, keyed by repo; a path that is not backticked is not seen, nor is one under
-`### Sources of truth`, which is read, not changed. When a repo's worktree is missing or its diff fails, the plan paths count too. The waiting
-targets are listed first, each naming its blocker or the shared files.
+`bl run` and `bl implement` take one target (F-125 Decision A3). `dispatch` (`verbs.js`)
+refuses two or more ids before it reads the backlog or checks a gate
+(`ONE_TARGET_VERBS`, `oneTargetRefusal`); the message names `bl batch`, the deliberate way to
+group stories. Every other id-dispatched verb takes several ids (`dispatchSeveral`):
 
-- `run`, `review`: each started target runs as a child `bl run <id>` /
-  `bl review <id>` with its output in `.bl/run/<id>.out`; when all exit, one
-  line each (outcome, PR, next step). Exit 1 if any failed or escalated.
-  `--interactive` takes one target. Sibling children on one repo serialise
-  the `main` sync (fetch, ahead-of-origin check, `merge --ff-only origin/main`)
-  through `<git-common-dir>/bl-main-sync.lock` (`main-sync.js`), so none of
-  them races the other's `FETCH_HEAD`; a failed fetch is a warning naming the
-  local `main` commit the worktree is cut from, a failed fast-forward stops the
-  child.
-- `implement`: one tmux window per started target; outside tmux it exits 1.
-- `merge`: one at a time in dependency order, stopping at the first failure.
+- `review`: each target runs as a child `bl review <id>` with its output in
+  `.bl/run/<id>.out` (`runChildren`); when all exit, one line each (outcome, PR, next step).
+  Exit 1 if any failed or escalated. `--interactive` takes one target.
+- `merge`: one at a time in dependency order (`dependencyOrder`, `execution-plan.js`),
+  stopping at the first failure.
 - `refine`: stories and components go to the refine batch; with a feature among the
   targets, each opens its own tmux window.
 - `status`, `approve`, `done`: each target on its own; a component's status lists
   its open stories.
 
+Separate `bl` processes on one repo serialise the `main` sync (fetch, ahead-of-origin check,
+`merge --ff-only origin/main`) through `<git-common-dir>/bl-main-sync.lock` (`main-sync.js`),
+so none of them races the other's `FETCH_HEAD`; a failed fetch is a warning naming the local
+`main` commit the worktree is cut from, a failed fast-forward stops the process.
+
 ```bash
-bl run S-1 S-2 S-3            # S-2 depends on S-1: S-1 and S-3 start
+bl run S-1 S-2                # refused: bl run takes one target; group stories with bl batch
+bl merge S-2 S-1              # S-2 depends on S-1: S-1 merges first
 ```
 
 ### Tab titles (`src/tab-title.js`)
@@ -3268,7 +3260,7 @@ bl's prompts and plugin commands use, not a new format.
   editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
   its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
 - An empty `BL_TAB_TITLE` (`TAB_TITLE_ENV`) turns titles off; `verbs.js` `childEnv` sets it for
-  the child processes that `bl run` and `bl review` start in parallel for several targets
+  the child processes that `bl review` starts in parallel for several targets
   (`runChildren`), so the parent's window keeps the parent's title. `agentEnv` sets it for
   every agent session (S-1388): the tab belongs to the `bl` that started the session,
   so no `bl` the agent runs, and no test it starts, renames the window.

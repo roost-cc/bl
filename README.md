@@ -93,8 +93,8 @@ non-zero, for example after an escalation. Any other exit sets the status from t
 `bl` leaves the window's automatic rename off; `tmux set -w automatic-rename on` gives tmux's
 own name back.
 
-`bl` sets `BL_TAB_TITLE=''` for every agent session and for the child processes that `bl run`
-and `bl review` start in parallel for several targets.
+`bl` sets `BL_TAB_TITLE=''` for every agent session and for the child processes that
+`bl review` starts in parallel for several targets.
 
 ## Quickstart
 

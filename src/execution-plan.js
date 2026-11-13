@@ -168,7 +168,7 @@ function asPath(span) {
 }
 
 /** Two `repo:path` keys touch the same file: equal, or one is a directory holding the other. */
-export function sameFiles(a, b) {
+function sameFiles(a, b) {
   return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
@@ -227,18 +227,18 @@ export function planFiles(stories, defaultRepo = '') {
  * The stories a unit carries: a story itself, a feature the stories naming it.
  * @param {{ kind: string, id: string, record: object }} unit
  */
-export function unitStories(unit, config, all) {
+function unitStories(unit, config, all) {
   if (unit.kind === 'feature') return resolveFeatureStories(unit.record, config, all).stories;
   return [unit.record];
 }
 
 /** Lowest id first; a feature before a story of the same number. */
-export function byId(a, b) {
+function byId(a, b) {
   return idNum(a.id) - idNum(b.id) || (a.kind === b.kind ? 0 : a.kind === 'feature' ? -1 : 1);
 }
 
 /** Which target carries each story: story id → unit. */
-export function storyOwners(units, config, all) {
+function storyOwners(units, config, all) {
   const owner = new Map();
   const storiesOf = new Map();
   for (const u of units) {
