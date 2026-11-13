@@ -21,14 +21,15 @@
  * A batch needs no `bl approve`: it is approved when it is built.
  */
 
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'fs';
 import { join, relative } from 'path';
 import { info, loadConfig, normalizeId, parseArgs, slugify } from './config.js';
 import { readAllStories } from './story.js';
 import { loadFlow } from './flow.js';
 import { applyNew } from './transition.js';
 import { renderTemplate } from './template.js';
-import { atomicWriteFile, removeBacklogPath } from './atomic-write.js';
+import { atomicWriteFile } from './atomic-write.js';
+import { settleRecord, writeRecord } from './feature-links.js';
 import { updateSpecFile } from './spec-file.js';
 import { withLock } from './lock.js';
 import { heldBy, readUnits } from './blockers.js';
@@ -115,8 +116,12 @@ function storiesPlan(stories) {
 /**
  * Write the batch and each story's `batch:` key, under the backlog lock the
  * caller holds, and turn the run edges between the stories into order edges.
- * A failed write restores every story written and removes the batch
- * directory, then throws. Returns the batch record and the paths to commit.
+ * A repair record (`feature-links.js`) holds each story's bytes before the
+ * first write, so a crash is settled by the next bl command. A failed write
+ * restores every story and removes the batch directory (`settleRecord`), then
+ * throws the write's error. When a story cannot be restored, the error names
+ * it and has `left` set; the batch and the record stay for the next command.
+ * Returns the batch directory and the paths to commit.
  */
 async function writeBatch(config, { id, title, stories }) {
   const root = config.backlogRoot;
@@ -126,8 +131,16 @@ async function writeBatch(config, { id, title, stories }) {
   // The flow's initial batch status, `approved`, by `new`; a FlowError names a flow without the type.
   applyNew(loadFlow(root), 'batch', values);
   const content = renderTemplate('batch', { values, vars: { batchId: id, title } });
-  const before = new Map(stories.map((s) => [s.indexPath, readFileSync(s.indexPath, 'utf8')]));
-  const written = [];
+  const record = writeRecord(root, {
+    batch: id,
+    dir: relative(root, dir),
+    stories: stories.map((s) => ({
+      id: s.id,
+      path: relative(root, s.indexPath),
+      before: readFileSync(s.indexPath, 'utf8'),
+    })),
+  });
+  let edgePaths;
   try {
     mkdirSync(dir, { recursive: true });
     atomicWriteFile(root, join(dir, 'index.md'), content);
@@ -135,19 +148,42 @@ async function writeBatch(config, { id, title, stories }) {
       await updateSpecFile(root, s.indexPath, (fm) => {
         fm.batch = id;
       });
-      written.push(s.indexPath);
     }
-    const edgePaths =
+    edgePaths =
       orderJoinedEdges(
         config,
         stories.map((s) => s.id),
       ) ?? [];
-    return { dir, edgePaths };
   } catch (err) {
-    for (const p of written) atomicWriteFile(root, p, before.get(p));
-    removeBacklogPath(root, dir);
-    throw err;
+    throw await rolledBack(root, record, err);
   }
+  try {
+    unlinkSync(record);
+  } catch {
+    // The batch is complete: the next command finds it so and drops the record.
+  }
+  return { dir, edgePaths };
+}
+
+/**
+ * Settle `record` after the write failed with `err`, and return `err`
+ * with what is left: `left` (the paths still changed) when a story could not
+ * be restored or the record could not be settled.
+ */
+async function rolledBack(root, record, err) {
+  let res;
+  try {
+    res = await settleRecord(root, record, { rollback: true });
+  } catch (settleErr) {
+    err.left = [relative(root, record)];
+    err.message += `; could not settle ${relative(root, record)} (${settleErr.message}): the next bl command retries`;
+    return err;
+  }
+  if (res.left.length === 0) return err;
+  const { stories, dir } = JSON.parse(readFileSync(record, 'utf8'));
+  err.left = [dir, ...stories.filter((s) => res.left.includes(s.id)).map((s) => s.path)];
+  err.message += `; could not restore ${err.left.slice(1).join(', ')}, so ${dir} is kept with them; the next bl command rolls it back`;
+  return err;
 }
 
 /**
@@ -243,7 +279,7 @@ export async function main(argv) {
       return { id, dir, edgePaths };
     });
   } catch (err) {
-    fail(`bl batch: ${err.message}. Nothing written.`);
+    fail(`bl batch: ${err.message}.${err.left ? '' : ' Nothing written.'}`);
   }
   const batch = batchUnit(findBatch(normalizeBatchId(built.id), config));
   const rel = relative(root, batch.indexPath);

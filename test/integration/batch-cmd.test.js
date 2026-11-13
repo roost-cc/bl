@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { ensureAllowedTools } from '../../src/allowed-tools.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
@@ -21,7 +21,7 @@ import { writeBlockersLocked } from '../helpers/covering-lock.js';
 const PLAN = '## Implementation Plan\n\n1. Change src/two.js.\n';
 
 /** S-1 and S-2 refined and loose; S-3 a draft; S-4 in F-1; S-5 refined, held at run by S-6. */
-async function backlog() {
+async function backlog(edges = []) {
   const s = (id, slug, extra = {}) => ({
     id,
     component: 'C01',
@@ -47,7 +47,7 @@ async function backlog() {
     features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'approved', stories: ['S-4'] }],
     batches: [{ id: 'B-1', title: 'Old', dirSuffix: 'old' }],
   });
-  writeBlockersLocked(dir, [{ blocker: 'S-6', gate: 'run', unit: 'S-5', until: 'merged' }]);
+  writeBlockersLocked(dir, [{ blocker: 'S-6', gate: 'run', unit: 'S-5', until: 'merged' }, ...edges]);
   await ensureAllowedTools(dir, loadConfig({ backlogRoot: dir }));
   initGitBacklog(dir);
   addOrigin(dir);
@@ -72,7 +72,7 @@ function stubAgent() {
   return bin;
 }
 
-function batch(dir, args, argvLog = join(mkTempDir('bl-batch-argv-'), 'argv')) {
+function batch(dir, args, argvLog = join(mkTempDir('bl-batch-argv-'), 'argv'), env = {}) {
   const r = spawnSyncFiles(BL_BIN, ['batch', ...args], {
     cwd: dir,
     encoding: 'utf8',
@@ -83,6 +83,7 @@ function batch(dir, args, argvLog = join(mkTempDir('bl-batch-argv-'), 'argv')) {
       PATH: `${stubAgent()}:${process.env.PATH}`,
       STUB_BL: BL_BIN,
       STUB_ARGV: argvLog,
+      ...env,
     },
   });
   return { ...r, argvLog };
@@ -151,4 +152,74 @@ test('bl batch builds an approved batch, writes batch: on each story, runs the c
   const log = git(dir, 'log', '--format=%s', '-3');
   assert.match(log, /chore: add B-2/);
   assert.match(log, /chore: B-2 cross-story pass/);
+});
+
+/** The batch directories under `batches/`, the old B-1 left out. */
+const newBatches = (dir) =>
+  (existsSync(join(dir, 'batches')) ? readdirSync(join(dir, 'batches')) : []).filter((d) => d !== 'B1-old');
+
+// Review 2026-11-13, Must 1: a failed write leaves nothing behind, and the
+// error names its cause, wherever it fails (a story, the edge write).
+test('bl batch rolls back every story and the batch directory when a story write fails', async () => {
+  const cases = [
+    // [name, edges, env, the directory made read-only, the cause the error names]
+    [
+      'the second story write fails',
+      [],
+      {},
+      'stories/S2-two',
+      /EACCES: permission denied, rename .*stories\/S2-two\/index\.md/,
+    ],
+    [
+      'the edge write fails after every story',
+      [{ blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'merged' }],
+      // Renames: the batch, S-1, S-2, then blockers.json.
+      { BL_INTERNAL_TEST_FAIL_ON_RENAME: '4' },
+      null,
+      /BL_INTERNAL_TEST_FAIL_ON_RENAME triggered/,
+    ],
+  ];
+  for (const [name, edges, env, readOnly, cause] of cases) {
+    const dir = await backlog(edges);
+    const head = git(dir, 'rev-parse', 'HEAD');
+    if (readOnly) chmodSync(join(dir, readOnly), 0o555);
+    const r = batch(dir, ['S-1', 'S-2', '--title', 'T'], undefined, env);
+    if (readOnly) chmodSync(join(dir, readOnly), 0o755);
+    assert.equal(r.status, 1, name);
+    assert.match(r.stderr, cause, name);
+    assert.match(r.stderr, /Nothing written\./, name);
+    assert.deepEqual(newBatches(dir), [], `${name}: no batch directory`);
+    for (const s of ['S1-one', 'S2-two'])
+      assert.equal(fm(dir, `stories/${s}/index.md`).batch, undefined, `${name}: ${s}`);
+    assert.equal(git(dir, 'status', '--porcelain'), '', `${name}: clean`);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, `${name}: nothing committed`);
+    assert.ok(!existsSync(join(dir, '.bl/run/B-2.links.json')), `${name}: no repair record`);
+    assert.ok(!existsSync(r.argvLog), `${name}: no agent session`);
+  }
+});
+
+// A rollback that fails names each path left changed; the repair record
+// stays, and the next bl command rolls the batch back (as after a crash).
+test('bl batch names each path left changed when its rollback fails, and the next bl command rolls it back', async () => {
+  const dir = await backlog();
+  chmodSync(join(dir, 'stories/S2-two'), 0o555);
+  const r = batch(dir, ['S-1', 'S-2', '--title', 'T'], undefined, { BL_INTERNAL_TEST_FAIL_ON_LINK: 'restore:S-1' });
+  chmodSync(join(dir, 'stories/S2-two'), 0o755);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /EACCES: permission denied/);
+  assert.match(r.stderr, /could not restore stories\/S1-one\/index\.md, so batches\/B2-t is kept with them/);
+  assert.doesNotMatch(r.stderr, /Nothing written/);
+  assert.equal(fm(dir, 'stories/S1-one/index.md').batch, 'B-2');
+  assert.ok(existsSync(join(dir, '.bl/run/B-2.links.json')), 'the record stays');
+
+  const next = spawnSyncFiles(BL_BIN, ['list'], {
+    cwd: dir,
+    encoding: 'utf8',
+    env: { ...personEnv(), ...GIT_ENV, BL_BACKLOG_DIR: dir },
+  });
+  assert.match(next.stderr, /settled the interrupted bl batch of B-2: rolled back/);
+  assert.deepEqual(newBatches(dir), []);
+  assert.equal(fm(dir, 'stories/S1-one/index.md').batch, undefined);
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+  assert.ok(!existsSync(join(dir, '.bl/run/B-2.links.json')));
 });
