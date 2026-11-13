@@ -17,28 +17,6 @@
 │                                                                       │
 │  runs: bl task done T-52 'image rebuilt on 44.140, 0 high advisories' │
 │                                                                       │
-│  enter  go on     esc  cancel                                         │
+│  enter  run     esc  cancel                                           │
 │                                                                       │
 ╰───────────────────────────────────────────────────────────────────────╯
-
-╭─┐bl stop S-1330┌─────────────────────────────────────────╮
-│                                                          │
-│  S-1330 is in review r1 (codex gpt-6-sol), 4m in.        │
-│  bl stop ends the agent session and the run.             │
-│  The work so far stays on the branch.                    │
-│  Resume it later with: bl run S-1330 --resume            │
-│                                                          │
-│  runs: bl stop S-1330                                    │
-│                                                          │
-│  y  stop the run     n  cancel                           │
-│                                                          │
-╰──────────────────────────────────────────────────────────╯
-
-╭─┐done┌────────────────────────────────────────────────────────╮
-│                                                               │
-│  ✓ bl task done T-52   exit 0                                 │
-│  stderr: committed tasks/T52-renovate-image (backlog 4f1c2a9) │
-│                                                               │
-│  any key to close                                             │
-│                                                               │
-╰───────────────────────────────────────────────────────────────╯

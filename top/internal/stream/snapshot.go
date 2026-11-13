@@ -65,24 +65,25 @@ type Run struct {
 }
 
 // Action is one action of a row (F-87 D7, S-1336): `itemActions`, `runActions` and the units'
-// actions in src/top-snapshot.js build them. Argv is a bl command (`bl …`), which the view
+// actions in src/top-snapshot.js build them. Label is what the action menu shows, and Short its
+// word on the key bar (F-127 D5). Argv is a bl command (`bl …`), which the view
 // runs through its own bl; nil for URL, a page the view opens. Each argv element is a
 // text/template (F-113 D7), which actions.Render renders. Input is "", "note" (optional text)
 // or "reason" (needed text), added as the command's last word. Window names the tmux window the
-// command opens in; "" runs it as a child, with a result box. About are lines the y/n question
-// shows; Stops is the run whose `stopped` end does not notify (D8).
+// command opens in; "" runs it as a child, which reports on the note line. Stops is the run whose
+// `stopped` end does not notify (D8).
 type Action struct {
 	Key    string   `json:"key"`
 	Label  string   `json:"label"`
+	Short  string   `json:"short"`
 	Argv   []string `json:"argv"`
 	Input  string   `json:"input"`
 	Window string   `json:"window"`
 	URL    string   `json:"url"`
-	About  []string `json:"about"`
 	Stops  string   `json:"stops"`
 }
 
-// Stage is one stage of a run's step timeline (box ⁶, S-1334): `runTimeline` in
+// Stage is one stage of a run's step timeline (the detail box, S-1334): `runTimeline` in
 // src/top-snapshot.js builds it from the run state's history. State is `done`, `current` or
 // `pending`; DurationMs is nil when a time is missing; Tests counts its test-gate entries; Usage is
 // nil when no session of it reported usage.

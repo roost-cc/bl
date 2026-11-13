@@ -43,23 +43,43 @@ live agent feed.
 
 With no --json or --stream, bl top runs the view, a terminal UI in btop's
 style. It builds the view with go build (top/ in bl) when top/bin/bl-top is
-missing or older than a file under top/; that build needs Go. Keys: 1-6 hide
-or show a box, tab and shift+tab move the focus, up and down select a row,
-enter shows the selected run in box 6 (from the runs box, or an attention or
-next row whose unit has a run) or opens or closes the grouped update row, f
-turns follow of box 6's feed on or off (with follow off, up and down in box 6
-scroll it), w opens bl watch <id> of box 6's run in a new tmux window, c reads
-capacity now, + and - change the refresh interval, h shows the help, q quits.
-Box 6 follows the run's agent session through bl watch <id> --json.
+missing or older than a file under top/; that build needs Go. Each box has a
+number in its border: its position on screen, left to right, then top to
+bottom. The view has three kinds of keys, and the key bar at the bottom shows
+the ones that work in the box with the focus: its box keys, then the selected
+row's action keys, then the global keys.
 
-Actions: a opens the action menu of the selected row; r starts or resumes the
-selected run, s stops it (bl stop), o opens the row's page (bl view), p opens
-the run's pull request (xdg-open, or open on macOS), g opens bl agent. Each
-shows the exact command and asks y/n first; bl task done asks for an optional
-note. A verb that runs here ends in a result box with its exit code and last
-stderr line. bl run, bl view, bl status and bl agent open a new tmux window in
-the backlog root instead, which stays open after the command exits; outside
-tmux they say "needs tmux". A run that this view stopped does not notify.
+Global keys work in every box: 1-6 hide or show the box at that position, tab
+and shift+tab move the focus in the same order, up and down select a row,
+enter shows the selected run in the detail box (from the runs box, or an
+attention or next row whose unit has a run) or opens or closes the grouped
+update row, a opens the action menu of the selected row, c reads capacity
+now, + and - change the refresh interval, h shows the help, q quits.
+
+Box keys work in their box only. In the next box: y yanks the selected unit,
+p and P put it after or before the selected ranked unit, x unranks it, esc
+cancels the yank, C commits the staged order, R drops it, d shows the
+unranked units newest or oldest first. In the detail box: f turns follow of
+the feed on or off (with follow off, up and down scroll it), w opens bl watch
+<id> of the box's run in a new tmux window. The detail box follows the run's
+agent session through bl watch <id> --json.
+
+Row action keys pick an action of the selected row; the a menu lists them.
+A box key wins over a row action key with the same letter. For a run: r
+starts or resumes it, s stops it (bl stop), o opens its page (bl view), p
+opens its pull request (xdg-open, or open on macOS), g opens bl agent. An
+attention item adds e (read the escalation), d (close the task) or m (merge).
+
+Each action runs at once, with no y/n question; bl task done first asks for
+an optional note. Actions run one at a time, in the order of the key
+presses: one pressed while another runs waits in a queue. The bottom
+border's note line shows the command that runs. On success the line clears;
+on a failure it shows the command, its exit code and its last stderr line
+until the next key, and the actions that waited are dropped, with their
+count. bl run, bl view, bl status and bl agent open a new tmux window in the
+backlog root instead, which stays open after the command exits; they hold
+the queue only while tmux opens the window. Outside tmux they say "needs
+tmux". A run that this view stopped does not notify.
 
 The view notifies for a new escalation, a new task, and a run that ends
 (clean, no-change, reviewed, escalated, failed or stopped: every status but

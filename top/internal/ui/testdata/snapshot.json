@@ -111,35 +111,31 @@
           {
             "key": "s",
             "label": "stop the run",
+            "short": "stop",
             "argv": ["bl", "stop", "F-81"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [
-              "bl stop ends the agent session and the run.",
-              "The work so far stays on the branch.",
-              "Resume it later with: bl run F-81 --resume"
-            ],
             "stops": "F-81"
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-81"],
             "input": null,
             "window": "F-81 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -269,45 +265,41 @@
           {
             "key": "s",
             "label": "stop the run",
+            "short": "stop",
             "argv": ["bl", "stop", "S-1330"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [
-              "bl stop ends the agent session and the run.",
-              "The work so far stays on the branch.",
-              "Resume it later with: bl run S-1330 --resume"
-            ],
             "stops": "S-1330"
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "S-1330"],
             "input": null,
             "window": "S-1330 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "p",
             "label": "open the pull request",
+            "short": "PR",
             "argv": null,
             "input": null,
             "window": null,
             "url": "https://example.invalid/roost-cc/bl/pull/15",
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -347,41 +339,41 @@
           {
             "key": "r",
             "label": "start the run",
+            "short": "run",
             "argv": ["bl", "run", "F-85"],
             "input": null,
             "window": "F-85 run",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-85"],
             "input": null,
             "window": "F-85 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "p",
             "label": "open the pull request",
+            "short": "PR",
             "argv": null,
             "input": null,
             "window": null,
             "url": "https://example.invalid/roost-cc/bl/pull/14",
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -421,41 +413,41 @@
           {
             "key": "r",
             "label": "resume the run",
+            "short": "resume",
             "argv": ["bl", "run", "F-83", "--resume"],
             "input": null,
             "window": "F-83 run",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-83"],
             "input": null,
             "window": "F-83 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "p",
             "label": "open the pull request",
+            "short": "PR",
             "argv": null,
             "input": null,
             "window": null,
             "url": "https://example.invalid/roost-cc/bl/pull/12",
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -492,31 +484,31 @@
           {
             "key": "r",
             "label": "resume the run",
+            "short": "resume",
             "argv": ["bl", "run", "F-79", "--resume"],
             "input": null,
             "window": "F-79 run",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-79"],
             "input": null,
             "window": "F-79 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -537,11 +529,11 @@
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -557,31 +549,31 @@
           {
             "key": "e",
             "label": "read the escalation",
+            "short": "escalation",
             "argv": ["bl", "status", "F-83"],
             "input": null,
             "window": "F-83 status",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-83"],
             "input": null,
             "window": "F-83 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -597,31 +589,31 @@
           {
             "key": "d",
             "label": "close the task",
+            "short": "done",
             "argv": ["bl", "task", "done", "T-52"],
             "input": "note",
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the task page",
+            "short": "page",
             "argv": ["bl", "view", "T-52"],
             "input": null,
             "window": "T-52 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -637,31 +629,31 @@
           {
             "key": "d",
             "label": "close the task",
+            "short": "done",
             "argv": ["bl", "task", "done", "T-2"],
             "input": "note",
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the task page",
+            "short": "page",
             "argv": ["bl", "view", "T-2"],
             "input": null,
             "window": "T-2 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -677,31 +669,31 @@
           {
             "key": "m",
             "label": "merge it",
+            "short": "merge",
             "argv": ["bl", "merge", "F-81"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-81"],
             "input": null,
             "window": "F-81 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -717,31 +709,31 @@
           {
             "key": "r",
             "label": "run it",
+            "short": "run",
             "argv": ["bl", "run", "S-1330"],
             "input": null,
             "window": "S-1330 run",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "S-1330"],
             "input": null,
             "window": "S-1330 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -757,11 +749,11 @@
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -777,11 +769,11 @@
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -797,11 +789,11 @@
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -831,51 +823,51 @@
           {
             "key": "p",
             "label": "put the yanked unit after it",
+            "short": "put",
             "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "P",
             "label": "put the yanked unit before it",
+            "short": "put before",
             "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "x",
             "label": "unrank it",
+            "short": "unrank",
             "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-81"],
             "input": null,
             "window": "F-81 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -892,51 +884,51 @@
           {
             "key": "p",
             "label": "put the yanked unit after it",
+            "short": "put",
             "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "P",
             "label": "put the yanked unit before it",
+            "short": "put before",
             "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "x",
             "label": "unrank it",
+            "short": "unrank",
             "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-84"],
             "input": null,
             "window": "F-84 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -953,51 +945,51 @@
           {
             "key": "p",
             "label": "put the yanked unit after it",
+            "short": "put",
             "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "P",
             "label": "put the yanked unit before it",
+            "short": "put before",
             "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "x",
             "label": "unrank it",
+            "short": "unrank",
             "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-80"],
             "input": null,
             "window": "F-80 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -1014,51 +1006,51 @@
           {
             "key": "p",
             "label": "put the yanked unit after it",
+            "short": "put",
             "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "P",
             "label": "put the yanked unit before it",
+            "short": "put before",
             "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "x",
             "label": "unrank it",
+            "short": "unrank",
             "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-86"],
             "input": null,
             "window": "F-86 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -1075,51 +1067,51 @@
           {
             "key": "p",
             "label": "put the yanked unit after it",
+            "short": "put",
             "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "P",
             "label": "put the yanked unit before it",
+            "short": "put before",
             "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "x",
             "label": "unrank it",
+            "short": "unrank",
             "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-16"],
             "input": null,
             "window": "F-16 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]
@@ -1136,51 +1128,51 @@
           {
             "key": "p",
             "label": "put the yanked unit after it",
+            "short": "put",
             "argv": ["bl", "rank", "{{.Yanked}}", "--after", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "P",
             "label": "put the yanked unit before it",
+            "short": "put before",
             "argv": ["bl", "rank", "{{.Yanked}}", "--before", "{{.Selected}}"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "x",
             "label": "unrank it",
+            "short": "unrank",
             "argv": ["bl", "rank", "{{.Selected}}", "--remove"],
             "input": null,
             "window": null,
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "o",
             "label": "open the page",
+            "short": "page",
             "argv": ["bl", "view", "F-13"],
             "input": null,
             "window": "F-13 view",
             "url": null,
-            "about": [],
             "stops": null
           },
           {
             "key": "g",
             "label": "talk it through",
+            "short": "agent",
             "argv": ["bl", "agent"],
             "input": null,
             "window": "agent",
             "url": null,
-            "about": [],
             "stops": null
           }
         ]

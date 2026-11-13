@@ -1,4 +1,5 @@
-// Package watch runs `bl watch <id> --json` (S-1272) for box ⁶ and decodes its lines (S-1334).
+// Package watch runs `bl watch <id> --json` (S-1272) for the detail box and decodes its lines
+// (S-1334).
 // The TUI reads an agent's session only through it, and never reads a transcript.
 package watch
 

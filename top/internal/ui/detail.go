@@ -10,53 +10,50 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/roost-cc/bl/top/internal/actions"
 	"github.com/roost-cc/bl/top/internal/stream"
 	"github.com/roost-cc/bl/top/internal/watch"
 )
 
-// detailFullHeight is the inner height from which box ⁶ draws Mockup A's form (the header, the
-// timeline as columns, the counts); below it, Mockup B's three-line form.
+// detailFullHeight is the inner height from which the detail box draws Mockup A's form (the header,
+// the timeline as columns, the counts); below it, Mockup B's three-line form.
 const detailFullHeight = 12
 
-// maxFeed is how many feed events box ⁶ keeps; older ones are dropped.
+// maxFeed is how many feed events the detail box keeps; older ones are dropped.
 const maxFeed = 1000
 
-// deniedToolWidth is the most cells of the first denied tool that box ⁶ shows, so the test
+// deniedToolWidth is the most cells of the first denied tool that the detail box shows, so the test
 // attempts and step tokens after it stay on the line.
 const deniedToolWidth = 30
 
 // pathWidth is the most cells of the branch (its start) and of the lead worktree's path (its end)
-// that box ⁶ shows, so the pull request and the start time after them stay on the line.
+// that the detail box shows, so the pull request and the start time after them stay on the line.
 const pathWidth = 24
 
-// noRun is box ⁶'s line while no run is selected.
-const noRun = "select a run (↑↓ in ¹, then ↵)"
+// noRun is the detail box's line while no run is selected.
+const noRun = "select a run (↑↓ in runs, then ↵)"
 
 // watchStartedMsg carries a watch that has started.
 type watchStartedMsg struct{ w *watch.Watch }
 
-// tmuxDoneMsg is the end of a `tmux new-window`: Err is why it failed, or empty.
-type tmuxDoneMsg struct{ Err string }
-
-// selectedUnit is the work unit of the selected row of box num: the run's id in ¹, the item's
-// unit in ², the unit in ³; empty when the box has no selected row.
-func (m Model) selectedUnit(num int) string {
+// selectedUnit is the work unit of the selected row of box b: the run's id in the runs box, the
+// item's unit in the attention box, the unit in the next box; empty when the box has no selected
+// row.
+func (m Model) selectedUnit(b boxName) string {
 	if m.snap == nil {
 		return ""
 	}
-	i := m.selected(num)
+	i := m.selected(b)
 	if i < 0 {
 		return ""
 	}
-	switch num {
-	case 1:
+	switch b {
+	case runsBox:
 		return m.snap.Runs.Rows[i].ID
-	case 2:
+	case attentionBox:
 		if r := m.attentionRows()[i]; r.item != nil {
 			return r.item.Unit
 		}
-	case 3:
+	case nextBox:
 		return m.nextUnits()[i].ID
 	}
 	return ""
@@ -75,8 +72,8 @@ func (m Model) run(id string) *stream.Run {
 	return nil
 }
 
-// showRun makes box ⁶ show run id (D4, key ↵): it stops the watch of the run shown before, and
-// starts `bl watch <id> --json` of a new generation. The run shown already keeps its watch.
+// showRun makes the detail box show run id (D4, key ↵): it stops the watch of the run shown before,
+// and starts `bl watch <id> --json` of a new generation. The run shown already keeps its watch.
 func (m Model) showRun(id string) (Model, tea.Cmd) {
 	if id == m.detail && m.watcher != nil {
 		return m, nil
@@ -85,10 +82,10 @@ func (m Model) showRun(id string) (Model, tea.Cmd) {
 	return m.startWatch()
 }
 
-// resumeWatch restarts the watch of the run box ⁶ shows when that run resumed after its watch
-// ended, and this snapshot shows it running: a snapshot after the end showed the run not running
-// (rewatch), or this one was read after a watch that exited 0 (watchEnd). Such a watch ends only
-// when no bl holds the run, so a run read as running after it is a new holder. The feed stays,
+// resumeWatch restarts the watch of the run the detail box shows when that run resumed after its
+// watch ended, and this snapshot shows it running: a snapshot after the end showed the run not
+// running (rewatch), or this one was read after a watch that exited 0 (watchEnd). Such a watch ends
+// only when no bl holds the run, so a run read as running after it is a new holder. The feed stays,
 // and the new watch adds the resumed session's header to it.
 func (m Model) resumeWatch() (Model, tea.Cmd) {
 	r := m.run(m.detail)
@@ -102,8 +99,8 @@ func (m Model) resumeWatch() (Model, tea.Cmd) {
 	return m, nil
 }
 
-// startWatch stops the watch of box ⁶, when there is one, and starts `bl watch <id> --json` of the
-// run it shows, of a new generation.
+// startWatch stops the watch of the detail box, when there is one, and starts
+// `bl watch <id> --json` of the run it shows, of a new generation.
 func (m Model) startWatch() (Model, tea.Cmd) {
 	m.stopWatch()
 	m.watchGen++
@@ -123,7 +120,7 @@ func waitWatch(w *watch.Watch) tea.Cmd {
 	return func() tea.Msg { return w.Next() }
 }
 
-// stopWatch stops the watch of box ⁶, when there is one.
+// stopWatch stops the watch of the detail box, when there is one.
 func (m *Model) stopWatch() {
 	if m.watcher != nil {
 		m.watcher.Stop()
@@ -170,8 +167,8 @@ func (m Model) watchMsg(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// scroll moves the feed of box ⁶ one line back (dir -1, key ↑) or on (dir 1, key ↓) while follow
-// is off. With follow on, the feed stays at its newest line.
+// scroll moves the feed of the detail box one line back (dir -1, key ↑) or on (dir 1, key ↓) while
+// follow is off. With follow on, the feed stays at its newest line.
 func (m *Model) scroll(dir int) {
 	if m.follow {
 		return
@@ -190,31 +187,19 @@ func (m *Model) toggleFollow() {
 // getenv reads the environment; a test replaces it.
 var getenv = os.Getenv
 
-// openWatch opens `bl watch <id>` of the run box ⁶ shows in a new tmux window (key w).
+// openWatch opens `bl watch <id>` of the run the detail box shows in a new tmux window (key w), as
+// an action of the queue (F-127 Decision 4), with the `w needs tmux` refusal of every window action.
 func (m Model) openWatch() (Model, tea.Cmd) {
-	switch {
-	case m.detail == "":
+	if m.detail == "" {
 		m.note = "w: " + noRun
 		return m, nil
-	case getenv("TMUX") == "":
-		m.note = "w needs tmux"
-		return m, nil
 	}
-	return m, tmuxWindow(m.detail+" watch", append(append([]string{}, m.blArgv...), "watch", m.detail))
+	return m.pick(stream.Action{Key: "w", Argv: []string{"bl", "watch", m.detail}, Window: m.detail + " watch"}, m.detail)
 }
 
-// tmuxWindow opens a tmux window named name in bl top's directory (the backlog root) that runs
-// argv, then the operator's shell, so the window stays open after the command exits (F-87 D7).
-func tmuxWindow(name string, argv []string) tea.Cmd {
-	dir, _ := os.Getwd()
-	return func() tea.Msg {
-		return tmuxDoneMsg{Err: actions.Window(name, dir, argv)}
-	}
-}
-
-// drawDetail draws box ⁶ (D4, Mockups A and B) in w×h inner cells: the selected run's header, its
-// step timeline and counts, then the live feed of `bl watch --json`, and the keys on the last
-// line. With no run selected it says how to select one.
+// drawDetail draws the detail box (D4, Mockups A and B) in w×h inner cells: the selected run's
+// header, its step timeline and counts, then the live feed of `bl watch --json`, and the keys on
+// the last line. With no run selected it says how to select one.
 func (m Model) drawDetail(w, h int) []string {
 	foot := ""
 	var lines []string
@@ -240,7 +225,8 @@ func (m Model) drawDetail(w, h int) []string {
 	return margin(append(lines, foot))
 }
 
-// feedKeys is box ⁶'s line of keys, with the state of follow; short for Mockup B's box.
+// feedKeys is the detail box's line of keys, with the state of follow; short for Mockup B's box,
+// with the number key that hides the box.
 func (m Model) feedKeys(full bool) string {
 	state := "follow on · f stops it"
 	if !m.follow {
@@ -249,7 +235,7 @@ func (m Model) feedKeys(full bool) string {
 	if full {
 		return state + " · w opens bl watch in a tmux window"
 	}
-	return state + " · w bl watch · 6 hides ⁶"
+	return state + fmt.Sprintf(" · w bl watch · %d hides it", m.number(detailBox))
 }
 
 // feedLines are the room lines of the feed that show: the newest, or with follow off the ones
@@ -269,9 +255,9 @@ func (m Model) feedLines(room, w int) []string {
 	return lines
 }
 
-// feedLine is one feed event as box ⁶ draws it (Mockup A), w cells wide at most: a session's
-// header as a rule, an agent message (`say`) or tool call (`tool`) with its local time, a stderr
-// line of `bl watch`, or the run's end.
+// feedLine is one feed event as the detail box draws it (Mockup A), w cells wide at most: a
+// session's header as a rule, an agent message (`say`) or tool call (`tool`) with its local time, a
+// stderr line of `bl watch`, or the run's end.
 func feedLine(e watch.Event, w int) string {
 	rule := func(text string) string {
 		text = "── " + text + " "
@@ -296,9 +282,9 @@ func feedLine(e watch.Event, w int) string {
 	return styleDim.Render(strings.Join(strings.Fields(e.Text), " "))
 }
 
-// detailHeader is the top of box ⁶ in Mockup A's form, w cells wide: the run's id and title; its
-// branch, lead worktree, pull request and start time; its timeline as columns over a bar; its
-// denied tools, test attempts and the tokens of its current (or last) stage.
+// detailHeader is the top of the detail box in Mockup A's form, w cells wide: the run's id and
+// title; its branch, lead worktree, pull request and start time; its timeline as columns over a
+// bar; its denied tools, test attempts and the tokens of its current (or last) stage.
 func detailHeader(id string, r *stream.Run, now time.Time, w int) []string {
 	if r == nil {
 		return []string{styleText.Render(id + " · not in the runs list"), ""}
@@ -324,8 +310,8 @@ func detailHeader(id string, r *stream.Run, now time.Time, w int) []string {
 			count(float64(u.Input)), count(float64(u.Output)), count(float64(u.CacheRead)), count(float64(u.CacheCreation)))), "")
 }
 
-// compactHeader is box ⁶'s first line in Mockup B's form: the run's id, story and step, elapsed
-// time, and agent.
+// compactHeader is the detail box's first line in Mockup B's form: the run's id, story and step,
+// elapsed time, and agent.
 func compactHeader(id string, r *stream.Run, now time.Time) string {
 	if r == nil {
 		return styleText.Render(id + " · not in the runs list")
@@ -345,9 +331,9 @@ func stageLabel(s stream.Stage) string {
 	return s.Step
 }
 
-// stageMark is a stage's state as box ⁶ draws it: `✓` done and `●` current, with the duration or
-// elapsed time when long is true (and the test attempts when there were two or more), `·`
-// pending; and its style.
+// stageMark is a stage's state as the detail box draws it: `✓` done and `●` current, with the
+// duration or elapsed time when long is true (and the test attempts when there were two or more),
+// `·` pending; and its style.
 func stageMark(s stream.Stage, long bool) (string, lipgloss.Style) {
 	mark, style := "·", styleDim
 	switch s.State {

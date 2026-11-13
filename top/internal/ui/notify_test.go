@@ -32,7 +32,7 @@ func fakeNotifySend(t *testing.T, body string) notify.Sender {
 }
 
 // notifying is a model of a 100×40 terminal with that bell and those senders, with the local zone
-// fixed for the test (fixedLocal), so box ¹'s clock does not depend on the machine.
+// fixed for the test (fixedLocal), so the runs box's clock does not depend on the machine.
 func notifying(t *testing.T, bell bool, senders []notify.Sender) Model {
 	t.Helper()
 	fixedLocal(t)
@@ -136,24 +136,64 @@ func TestAFailedPushWarnsInTheBottomBorder(t *testing.T) {
 	}
 }
 
+// TestALongWarningFitsTheBottomBorder: the notes and the sender warnings come before the keys, and
+// one longer than its room is cut with `…`. A long note takes the whole bar; a long sender warning
+// leaves the keys without labels; a short one leaves the keys the rest.
 func TestALongWarningFitsTheBottomBorder(t *testing.T) {
-	long := "desktop failed: " + strings.Repeat("x", 200)
+	long := strings.Repeat("x", 200)
+	keys := atRow(t, runsBox, "S-1330").barKeys()
 	for _, w := range []int{80, 171} {
-		got := ansi.Strip(keyBar(w, []string{long}))
-		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘↑↓└┘tab└┘↵└┘a└┘r└┘s└┘o└┘p└┘g└┘h└┘q└─┐desktop failed: x") || !strings.HasSuffix(got, "x…┌─╯") {
-			t.Errorf("keyBar(%d) with a long warning = %q", w, got)
+		got := ansi.Strip(keyBar(w, keys, []string{"exit 1: " + long}, nil))
+		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰─┐exit 1: x") || !strings.HasSuffix(got, "x…┌─╯") {
+			t.Errorf("keyBar(%d) with a long note = %q", w, got)
+		}
+		got = ansi.Strip(keyBar(w, keys, nil, []string{"desktop failed: " + long}))
+		if lipgloss.Width(got) != w || !strings.HasPrefix(got, "╰┘s└┘o└┘p└┘g└┘tab└┘↑↓└┘↵└┘a└┘h└┘q└─┐desktop failed: x") || !strings.HasSuffix(got, "x…┌─╯") {
+			t.Errorf("keyBar(%d) with a long sender warning = %q", w, got)
 		}
 	}
-	short := ansi.Strip(keyBar(171, []string{"desktop failed: timeout"}))
-	if !strings.HasPrefix(short, "╰┘↑↓ select└┘tab box└┘↵ detail└┘a act└┘r run└┘s stop└┘o open└┘p PR└┘g agent└┘h help└┘q quit└─") || !strings.HasSuffix(short, "─┐desktop failed: timeout┌─╯") {
+	short := ansi.Strip(keyBar(171, keys, nil, []string{"desktop failed: timeout"}))
+	if !strings.HasPrefix(short, "╰┘s stop└┘o page└┘p PR└┘g agent└"+globalBar+"─") || !strings.HasSuffix(short, "─┐desktop failed: timeout┌─╯") {
 		t.Errorf("keyBar(171) with a short warning = %q", short)
 	}
 }
 
-// TestBoxOneAndTheNotesAgreeOnTheEndOfARun: for every status a runs row can have (those
-// src/feature-run.js writes, stale, and none), box ¹ shows a run that ended (✓ done, ■ stop, ✗)
-// exactly when a change to that status makes a note, and stream.Ended says the same.
-func TestBoxOneAndTheNotesAgreeOnTheEndOfARun(t *testing.T) {
+// TestALongSenderWarningLeavesTheGlobalKeys: a sender warning stays until its sender succeeds, so
+// at 80 columns, with the focus in each box and one or two 200-character sender failures, the bar
+// still shows `h` and `q` beside the warnings.
+func TestALongSenderWarningLeavesTheGlobalKeys(t *testing.T) {
+	base := atRow(t, runsBox, "S-1330")
+	models := map[string]Model{"runs, S-1330": base, "attention, T-52": atRow(t, attentionBox, "T-52"),
+		"next, F-84": atRow(t, nextBox, "F-84"), "detail": focused(t, base, detailBox),
+		"tokens": focused(t, base, tokensBox), "activity": focused(t, base, activityBox)}
+	why := strings.Repeat("x", 200)
+	for name, m := range models {
+		m.width, m.height = minWidth, minHeight
+		for _, senders := range [][]string{{"desktop"}, {"desktop", "push"}} {
+			m := m
+			m.senders, m.failed = nil, map[string]string{}
+			for _, s := range senders {
+				m.senders = append(m.senders, notify.Sender{Name: s})
+				m.failed[s] = why
+			}
+			line := noteLine(t, m)
+			want := []string{"┘h", "┘q"}
+			for _, s := range senders {
+				want = append(want, "┐"+s+" ")
+			}
+			for _, w := range want {
+				if lipgloss.Width(line) != minWidth || !strings.Contains(line, w) {
+					t.Errorf("%s, %d sender(s): no %q in %q", name, len(senders), w, line)
+				}
+			}
+		}
+	}
+}
+
+// TestTheRunsBoxAndTheNotesAgreeOnTheEndOfARun: for every status a runs row can have (those
+// src/feature-run.js writes, stale, and none), the runs box shows a run that ended (✓ done, ■ stop,
+// ✗) exactly when a change to that status makes a note, and stream.Ended says the same.
+func TestTheRunsBoxAndTheNotesAgreeOnTheEndOfARun(t *testing.T) {
 	read := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	runs := func(status string) *stream.Snapshot {
 		s := &stream.Snapshot{}
@@ -167,7 +207,7 @@ func TestBoxOneAndTheNotesAgreeOnTheEndOfARun(t *testing.T) {
 		var d notify.Differ
 		d.Diff(runs("running"))
 		if notes := d.Diff(runs(status)); goesOn != (len(notes) == 0) || goesOn == stream.Ended(status) {
-			t.Errorf("%s: box ¹ shows %q, %d notes, Ended %v", status, glyph, len(notes), stream.Ended(status))
+			t.Errorf("%s: the runs box shows %q, %d notes, Ended %v", status, glyph, len(notes), stream.Ended(status))
 		}
 	}
 }

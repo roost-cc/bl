@@ -3349,20 +3349,29 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   flicker. The stream runs in a process group of its own. A line that is not a `bl-top-json/v1`
   snapshot kills that group and ends the stream. When the stream ends, the view exits 1 with
   `bl top: the snapshot stream ended: <its last stderr line>`.
-- **Boxes and layout** (D4, `top/internal/ui/layout.go`). Box ¹ runs, ² attention, ³ next,
-  ⁴ tokens (sections `tokens` and `capacity`), ⁵ activity (sections `activity` and
-  `history`) and ⁶ detail (section `runs`, and `bl watch`). Each box's drawer is in the `boxes`
-  table. At
-  171×50 or larger the view draws the two columns of Mockup A; from 80×24 up to that it stacks
-  the boxes as in Mockup B; below 80×24 it prints `bl top needs at least 80x24`. Each node of a
-  layout takes its weight's share of its parent; a hidden box's share goes to the boxes left in
-  its split.
+- **Boxes and layout** (D4, F-127 Decision 1, `top/internal/ui/layout.go`). Each box has a
+  name, which is its identity (`boxName`): runs, attention, next, tokens (sections `tokens` and
+  `capacity`), activity (sections `activity` and `history`) and detail (section `runs`, and
+  `bl watch`). Code, help groups, comments and docs name a box by its name ("the next box"),
+  never by its number. Each box's drawer is in the `boxes` table, keyed by name. A layout is a
+  tree of box names. At 171×50 or larger the view draws the two columns of Mockup A
+  (`fullLayout`); from 80×24 up to that it stacks the boxes (`stackedLayout`): runs, attention,
+  detail, tokens beside activity, then next, each with Mockup B's height; below 80×24 it prints
+  `bl top needs at least 80x24`. Each node of a layout takes its weight's share of its parent; a
+  hidden box's share goes to the boxes left in its split.
+- **Box numbers and the Tab order** (F-127 Decisions 1 and 3, `order`). A box's number is its
+  position in the layout that is drawn: each box's top-left cell at the screen's size, as if no
+  box were hidden, sorted by row and then by column. Nothing stores a number. So the full layout
+  numbers ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ next, ⁶ activity, and the stacked one
+  ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ activity, ⁶ next: next and activity swap numbers
+  when the terminal crosses 171×50. `tab` and `⇧tab` follow the same order and skip hidden
+  boxes. Another layout tree changes the numbers and the Tab order with no other change.
 - **Look** (D5, `top/internal/ui/box.go`, `styles.go`). btop's rounded box, with the
   superscript number and the name in the top border and the options at its right; the key bar
   is the screen's bottom border. Colors are Catppuccin Mocha with logr's names: border surface2,
   number and name mauve, key letters peach, the screen's background base. The box with the
-  focus has a mauve border. Box ¹'s options are the time of the last snapshot and the interval
-  (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data, and its
+  focus has a mauve border. The runs box's options are the time of the last snapshot and the
+  interval (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data, and its
   box's top border shows a red `! <error>`.
 - **Graphs and meters** (`top/internal/ui/braille.go`, `meter.go`). A graph is a braille area
   graph: two samples per cell, four dot rows per cell, the highest sample at full height. A
@@ -3370,7 +3379,7 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   graph line takes btop's gradient by its height: green at the bottom, yellow in the middle, red
   at the top. A quota meter has a `■` for each share left and a `·` for each share used. Its
   `■` are green above 50 % left, yellow from 20 to 50 %, and red below 20 %.
-- **Box ¹ runs** (`runs.go`). A row per `runs` row: id, state (`● run`, `◌ stale`, `■ stop`,
+- **The runs box** (`runs.go`). A row per `runs` row: id, state (`● run`, `◌ stale`, `■ stop`,
   `✗ esc`, `✗ fail`, `? unk` for no status (a missing or mistyped one), and `✓ done` for every
   other status, such as `clean`), step, story, round
   (`1/2`), elapsed (to the snapshot while it runs or is stale, else to its last update), output
@@ -3378,11 +3387,11 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   request as `<repo>#<n>`. A done row is dim. The summary line counts the runs that are running,
   stopped and stale, and the stories and points of the newest `history` day, labelled
   `done today (UTC)`: `history` days are UTC dates, as `bl report` counts them.
-- **Box ² attention** (`attention.go`). A row per inbox item: its kind tag (`RUN` teal, `ESC`
+- **The attention box** (`attention.go`). A row per inbox item: its kind tag (`RUN` teal, `ESC`
   red, `TASK` yellow, `CHG` blue, `UPD` peach), id, unit and line. The last line is
   `next: <the selected item's next>`. In the stacked layout two or more update items fold into
   one row, `UPD   <n> red updates`; `↵` on it opens the group (the items follow it) or closes it.
-- **Box ³ next** (`next.go`, F-113 D4, D5). Every ranked unit, a divider line, then every
+- **The next box** (`next.go`, F-113 D4, D5). Every ranked unit, a divider line, then every
   unranked unit: rank (none for an unranked unit), id, status, points (`-` for none), held by
   (`heldBy`) and title. The divider names the unranked units' order, `not ranked · oldest first`
   (the snapshot's order, by `added:`) or `not ranked · newest first` after `d`. Without the
@@ -3392,28 +3401,29 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   the box's name is `next · staged edits`. The line under the list is the pick, the ranked unit it
   unblocks when that is another.
 - **Conflict line** (`layout.go`, F-113 Decision A3). While the `next` section's `conflict` is
-  set, the screen's first line is `! <conflict>` in red across the full width, also when box ³ is
-  hidden, and the boxes take the lines under it.
-- **Selection** (`selection.go`). Each of boxes ¹ to ³ has a selected row, kept by its id: after
-  a new snapshot the same row stays selected while its id is there, else the row at its place.
-  `↑` and `↓` move the selection of the box with the focus, and the box scrolls to keep it on
-  screen. Box ³'s divider is no row: `↑` and `↓` pass over it. The selected row has the surface0
-  background. A cell that does not fit is cut with `…`.
-- **Box ⁴ tokens** (`tokens.go`). The graph of output tokens per minute over 2 h, labelled
+  set, the screen's first line is `! <conflict>` in red across the full width, also when the next
+  box is hidden, and the boxes take the lines under it.
+- **Selection** (`selection.go`). The runs, the attention and the next box each have a selected
+  row, kept by its id (`sel`, by box name): after a new snapshot the same row stays selected
+  while its id is there, else the row at its place. `↑` and `↓` move the selection of the box
+  with the focus, and the box scrolls to keep it on screen. The next box's divider is no row:
+  `↑` and `↓` pass over it. The selected row has the surface0 background. A cell that does not fit is cut with `…`.
+- **The tokens box** (`tokens.go`). The graph of output tokens per minute over 2 h, labelled
   `ended sessions` (D3b), with its peak and an axis of the local half hours and `now`. Then
   one meter per quota window of `bl capacity`, with the percent left and the reset (local
   `15:04` within a day, else `Nov 12`). A window that two configurations report (Codex's
   account quota) shows once. A configuration with no window shows `<agent>  <state>: <message>`,
   for example `unknown: gemini cannot report capacity`, once per distinct line. Then today's
   totals of the four kinds, and the local time capacity was last read.
-- **Box ⁵ activity** (`activity.go`). The graph of points done per UTC day over the `history`
+- **The activity box** (`activity.go`). The graph of points done per UTC day over the `history`
   days (`points done / UTC day`), with the total of the last 7 days and a date axis. Then the
   `activity` events, newest first, as many as fit: local time, work unit, step with its story or
   round, `✓` or `✗` and the duration, then the agent, model and effort, or the note for a failed
   session or an event with no agent.
-- **Box ⁶ detail** (`detail.go`, F-88 S-1334). `↵` on a run row in ¹, or on a row of ² or ³
-  whose unit (an item's `unit`, a unit's id in ³) has a `runs` row, makes ⁶ show that run; its
-  id is in the box's top border. With no run shown, ⁶ says `select a run (↑↓ in ¹, then ↵)`.
+- **The detail box** (`detail.go`, F-88 S-1334). `↵` on a run row in the runs box, or on a row
+  of the attention or the next box whose unit (an item's `unit`, a unit's id in the next box)
+  has a `runs` row, makes the detail box show that run; its id is in the box's top border. With
+  no run shown, the detail box says `select a run (↑↓ in runs, then ↵)`.
   From an inner height of 12 (Mockup A): the run's id and title; its branch, lead worktree,
   pull request and local start time; the `timeline` as columns, `✓` done with its duration
   (and `(n att.)` for two or more test entries), `●` current with its elapsed time, `·` not
@@ -3439,64 +3449,98 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
 
   A stderr line of `bl watch`, and why it failed when it exits other than 0, show dim. The
   feed keeps its newest 1000 lines. With follow on (the default) it shows its newest lines; with
-  follow off, `↑` and `↓` in ⁶ scroll it, and a new line leaves the lines on screen where they
-  are.
+  follow off, `↑` and `↓` in the detail box scroll it, and a new line leaves the lines on screen
+  where they are.
 
-- Below an inner height of 12 lines, boxes ⁴ and ⁵ leave out their axis and blank lines (Mockup
-  B).
-- **Keys** (D6, `top/internal/ui/model.go`): `1`–`6` hide or show a box; `tab` and `⇧tab` move
-  the focus to the next or previous shown box; `↑` and `↓` select a row, and in ⁶ with follow
-  off scroll the feed; `↵` shows the selected row's run in ⁶, or on the grouped update row opens
-  or closes it; `f` turns follow on or off; `w` opens `bl watch <id>` of ⁶'s run in a new tmux
-  window, in bl top's directory, named `<id> watch` (D7's `tmux new-window`, then
-  `exec ${SHELL:-sh}`, so the window stays open after `bl watch` exits), and outside tmux
-  (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
-  opens the action menu of the selected row, and `r`, `s`, `o`, `p` and `g` pick its action
-  with that key (below); `d` in ³ shows the unranked units newest or oldest first (`bl top`
-  starts oldest first, and the choice lasts until it exits); in ³, the ranking keys (below);
-  `c` writes `capacity` to the
-  stream's stdin, so
-  the next snapshot reads capacity; `+` and `-` change the interval by 500 ms within
+- Below an inner height of 12 lines, the tokens and the activity box leave out their axis and
+  blank lines (Mockup B).
+- **Three kinds of keys** (F-127; `key`, `localKey`, `helpGroups` in `top/internal/ui/model.go`).
+  Global keys work in every box. Box keys belong to the box with the focus: in the next box `y`,
+  `p`, `P`, `x`, `esc`, `C`, `R`, `d`; in the detail box `f`, `w`. Row action keys are the keys of
+  the selected row's `actions` in the snapshot: any of them picks that action (`actKey`), and a
+  key that none of them has does nothing. The view checks the global keys first, then the
+  focused box's box keys, then the row's actions, so a box key wins over a row action key with
+  the same letter (`p` in the next box puts).
+- **Key bar** (F-127 Decision 5, `Model.barKeys`, `keyBar` in `top/internal/ui/box.go`). The
+  bottom border shows, in this order: the focused box's box keys with their word from
+  `helpGroups`; the selected row's action keys with their `short` label, each key once and none
+  that is a box key or a global key; then `tab box`, `↑↓ select`, `↵ detail`, `a act`,
+  `h help`, `q quit` (the global keys that have a word in `helpGroups`). The tokens and the
+  activity box have no rows, so they show the global keys alone. The note line (below) comes
+  first: its notes share the bar, a note longer than its share is cut with `…`, and the keys take
+  the room the notes leave. The command that runs and the note of the last key or failed action
+  clear when the job ends or at the next key, so they may take the whole bar. A sender warning
+  stays until its sender succeeds, so with neither of those the sender warnings share only the
+  room that every key without its label leaves, and `h` and `q` always show. When the labels do
+  not fit, the bar shows the keys alone; when those do not fit either, it leaves out the keys at
+  its end.
+- **Keys** (D6, F-127 Decision 3, `top/internal/ui/model.go`): key `n` (`1`–`6`) hides or shows
+  the box at position `n` of the drawn layout; every box of the layout counts, hidden or not, so
+  a second press shows the box again. The view keeps the hidden boxes by name (`hidden`), so a
+  resize keeps the same boxes hidden under their new numbers. `tab` and `⇧tab` move the focus
+  to the next or previous shown box in the drawn order; `↑` and `↓` select a row, and in the
+  detail box with follow off scroll the feed; `↵` shows the selected row's run in the detail box,
+  or on the grouped update row opens or closes it; in the detail box, `f` turns follow on or
+  off and `w` opens `bl watch <id>` of the detail box's run in a new tmux window, in bl top's
+  directory, named `<id> watch` (D7's `tmux new-window`, then `exec ${SHELL:-sh}`, so the
+  window stays open after `bl watch` exits), as an action of the queue (below), and outside
+  tmux (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
+  opens the action menu of the selected row, and a row action key picks its action with that
+  key (below); `d` in the next box shows the unranked units newest or oldest first
+  (`bl top` starts oldest first, and the choice lasts until it exits); in the next box, the
+  ranking keys (below); `c` writes `capacity` to the stream's stdin, so the next snapshot
+  reads capacity; `+` and `-` change the interval by 500 ms within
   500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
-  help, and any key closes it; `q` or `ctrl+c` quits. The help lists the keys of every box, then
-  each box's own keys under its number and name (`helpGroups`); when that one column is taller
-  than the screen and two fit its width, the boxes' own keys go in a second column.
+  help, and any key closes it; `q` or `ctrl+c` quits. The help lists the global keys, then
+  each box's box keys with its current number and name beside the first of them (`helpGroups`,
+  by box name), then the line `the selected row's actions; a lists them`. Its top border says
+  `any key closes this help`. Blank lines part the groups when the help fits the screen with
+  them; without them it fits from 80×24.
 - **Ranking keys** (F-113 D6, D7; `rankKey`, `top/internal/ui/dialog.go`). They act only while
-  box ³ has the focus, so `p` keeps F-88's meaning in the other boxes. `y` yanks the selected
-  unit, ranked or not, and box ³ marks it with a peach `↕` after its rank until a put or `esc`.
-  `p`, `P` and `x` pick the selected row's action of that key; `C` and `R` pick the box's
-  (`next.actions`), whose question names no row. A key with no such action does nothing: an
-  unranked row has no `p`, `P` or `x`, and with no staged copy there is no `C` or `R`. While
+  the next box has the focus, so `p` keeps F-88's meaning in the other boxes. `y` yanks the
+  selected unit, ranked or not, and the next box marks it with a peach `↕` after its rank until a
+  put or `esc`. `p`, `P` and `x` pick the selected row's action of that key; `C` and `R` pick
+  the box's (`next.actions`), which belong to no row. Each runs at once, as every action does
+  (below). A key with no such action does nothing: an unranked row has no `p`, `P` or `x`, and
+  with no staged copy there is no `C` or `R`. While
   `next.conflict` is set, every ranking key but `R` refuses with its text in the bottom border.
   Each pick renders the action's argv (`actions.Render`, below) with `Selected` (the selected
   row's id) and `Yanked` (only while a unit is yanked): a put with nothing yanked refuses with
-  `yank a work unit first (y)`, and the menu shows that line in place of its command. A put that
-  runs after its `y` ends the yank. `bl rank --commit` runs with no stdin, so a merge conflict
-  ends it with `conflict: run bl rank --commit in a terminal`, which the result box shows.
-- **Actions** (D7, F-88 S-1336; `top/internal/ui/dialog.go`, `top/internal/actions`). The
-  selected row of the box with the focus (in ⁶, the run it shows) has the `actions` of its
-  snapshot row (below). `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's
-  key, pick one, and `esc` cancels. Keys `r`, `s`, `o`, `p` and `g` pick the action with that
-  key directly; a row without one says `<key>: <id> has no such action (a lists its actions)`
-  in the bottom border. An action with `input` asks for its text first: `note` is optional,
-  `reason` refuses an empty one. Then the view shows the exact command (`runs: …`) and asks
-  y/n. After `y`:
+  `yank a work unit first (y)`, and the menu shows that line in place of its command. A put
+  takes the yanked id at the key press, and the yank ends then. `bl rank --commit` runs with no
+  stdin, so a merge conflict ends it with `conflict: run bl rank --commit in a terminal`, which
+  the note line shows.
+- **Actions** (D7, F-88 S-1336, F-127 Decisions 2 and 4; `top/internal/ui/dialog.go`,
+  `top/internal/ui/queue.go`, `top/internal/actions`). The selected row of the box with the
+  focus (in the detail box, the run it shows) has the `actions` of its snapshot row (below).
+  `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's key, pick one, and
+  `esc` cancels. A row action key picks the action with that key directly; a key that the
+  row's actions do not have does nothing. No action asks y/n: a pick runs at once (`pick`). An
+  action with `input` first opens its text box: `note` is optional, `reason` refuses an empty one; `enter`
+  runs it, and `esc` cancels it. The menu and the text box are the only action dialogs.
+  - **The queue.** bl top has at most one action child process (`Model.jobs`, a `job` each). An
+    action picked while another runs waits, and the queue runs in the order of the key presses
+    (`enqueue`, `jobDone`). The note line, at the right of the bottom border, shows the command
+    that runs (`command`), in the text color. On success the line clears and the next action
+    starts. On a failure the actions that waited are dropped, and the line shows
+    `exit <code>[, dropped <n> queued action(s)]: <command>: <last stderr line>` in red until
+    the next key. The exit code and the count come first, so a cut never hides them. A long
+    child holds the queue: `bl merge` for minutes,
+    `bl stop` for up to 30 s. `q` quits while a child runs, and the child goes on. The next
+    snapshot shows the change.
   - an action with `window` opens a new tmux window of that name, in bl top's directory (the
     backlog root: `src/top.js` runs the view there), running the command and then
-    `exec ${SHELL:-sh}` (`actions.TmuxArgs`, which `w` uses too). Outside tmux the action says
-    `<key> needs tmux` before it asks, and does nothing. A tmux that fails says why in the
-    bottom border.
+    `exec ${SHELL:-sh}` (`actions.TmuxArgs`; `w` is such an action too). Its child is
+    `tmux new-window` (`actions.Window`), which ends at once, so the command in the window holds
+    no queue. Outside tmux the action says `<key> needs tmux` and does nothing. A tmux that
+    fails reports like any other failed action.
   - any other action runs as a child with no stdin and stdout: a bl command through
-    `--bl-argv`, a `url` through `xdg-open` (`open` on macOS). A box says it runs (`esc` hides
-    it: `bl stop` takes up to 30 s, and the screen keeps its redraws), then a result box shows
-    the command, `exit <code>` and its last stderr line, until any key. The next snapshot shows
-    the change. A result replaces only its own running box (each action has a number,
-    `dialog.seq`) or shows when no dialog is open; over a newer dialog it shows in the bottom
-    border instead.
+    `--bl-argv`, a `url` through `xdg-open` (`open` on macOS).
   - an action with `stops` marks its run with the pid of its `bl stop` child (D8,
-    `Differ.Quiet`). The view starts the child before it reads the next snapshot
-    (`actions.Start`), so the mark is there first. The run's `stopped` end does not notify when
-    that pid is one of the run's `stoppedBy`, the pids of the `bl stop`s whose requests stopped
+    `Differ.Quiet`), when the child starts. The view starts the child before it reads the next
+    snapshot (`actions.Start`), so the mark is there first. A stop that the queue drops never
+    starts and marks nothing. The run's `stopped` end does not notify when that pid is one of
+    the run's `stoppedBy`, the pids of the `bl stop`s whose requests stopped
     it (`markStopped`). So a stop of this view that timed out and stops the run later stays quiet,
     and another shell's stop notifies, also while this view's stop runs or after it failed. The
     marks go when the run ends with any status.
@@ -3537,17 +3581,20 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   non-empty strings. Otherwise `bl top` exits 1 with an error that names `backlog.json "top"`
   and the key.
 - **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
-  `top/internal/ui/testdata/*.golden` hold Mockup C's four dialog boxes (`actions.golden`), the
+  `top/internal/ui/testdata/*.golden` hold the two action dialogs, the menu and the text box
+  (`actions.golden`), the
   empty frame at 171×63, 100×40 and 79×23, the
   frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
   exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
   `testdata/snapshot.json` (Mockup A's data) in a fixed zone (UTC−5), without colors, with a row
-  selected in boxes ¹ to ³, and the same screen with S-1330 shown in box ⁶ and the recorded
+  selected in the runs, the attention and the next box, and the same screen with S-1330 shown in
+  the detail box and the recorded
   `bl watch --json` lines of the S-1272 fixtures (`top/internal/watch/testdata/watch.jsonl`) as
   its feed (`detail-*.golden`);
   `go test ./internal/ui -update` writes them again. `top/internal/watch`'s tests run a fake
   `bl` that prints those lines. The action tests put a fake `bl`, `tmux`, `xdg-open` and `open`
-  on `PATH`, each of which writes its arguments to a file.
+  on `PATH`, each of which writes its arguments to a file and adds them as a line to a log, so
+  a test reads the order of the queue's runs.
   `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
   then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
   and `--no-push`.
@@ -3574,7 +3621,7 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 - `activity` and `tokens` read the run states' history entries (F-87 D3b, D3c). A session that
   is still running counts only when it ends: its run state holds no usage until then. The
   `runs`, `activity` and `tokens` readers share one parse cache (`runStatesReader`).
-- A `runs` row carries no `history` (F-88 S-1334); box ⁶ reads what it needs from it:
+- A `runs` row carries no `history` (F-88 S-1334); the detail box reads what it needs from it:
   - `timeline` (`runTimeline`): the stages of `planSteps()` (`src/feature-run.js`): setup,
     one implement stage for all stories, `fix-tests` (with the test gate), self-review, then
     `review` and `fix` (with its self-review) of each round, and `closing`. Each is
@@ -3592,22 +3639,23 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   - `title` comes from `loadBacklog()`, which reuses its graph while the backlog's files are
     unchanged; null for a unit the backlog does not hold, or when it cannot be loaded.
 - `actions` (F-87 D7, F-88 S-1336): each `runs` row, each `attention` item and each unit of
-  `next` carries a list of `{ key, label, argv, input, window, url, about, stops }`, which
+  `next` carries a list of `{ key, label, short, argv, input, window, url, stops }`, which
   `src/top-snapshot.js` builds (`runActions`, `itemActions`), so the view holds no backlog
-  logic. `argv` is a bl command (`["bl", …]`) or null for `url` (a page the view opens);
-  `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
-  word; `window` names the tmux window the command opens in, or is null for a child with a
-  result box; `about` are lines the y/n question shows; `stops` is the run the action stops.
+  logic. `label` is what the `a` menu shows; `short` is the action's word on the key bar
+  (F-127 Decision 5, for example `resume`, `page` or `PR`). `argv` is a bl command
+  (`["bl", …]`) or null for `url` (a page the view opens); `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
+  word; `window` names the tmux window the command opens in, or is null for a child that
+  reports on the note line; `stops` is the run the action stops.
   Each `argv` element is a Go `text/template` (F-113 D7, Decision A4): the view renders it with
   `missingkey=error` against `Selected` (the selected row's id) and `Yanked` (the yanked unit's
   id, only while one is yanked). An element without `{{ }}` renders as itself.
 
   | Row                                     | Actions (key: command)                                                                                                                                |
   | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `runs`, live (`running`)                | `s`: `bl stop <id>`, with Mockup C's lines and `stops`                                                                                                |
+  | `runs`, live (`running`)                | `s`: `bl stop <id>`, with `stops`                                                                                                                     |
   | `runs`, not live                        | `r`: `bl run <id>` in window `<id> run`, with `--resume` when `stopped`, `stale`, `escalated` or `failed` (`RESUMED_STATUSES`)                        |
   | `runs`, every row                       | then `o`: `bl view <id>` (window `<id> view`); `p`: the pull request's URL, when the run has one                                                      |
-  | escalation                              | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which a result box does not show); `o`: `bl view <unit>`                      |
+  | escalation                              | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which the note line does not show); `o`: `bl view <unit>`                     |
   | task                                    | `d`: `bl task done <T-n>`, input `note`; `o`: `bl view <T-n>`                                                                                         |
   | change                                  | `m`: `bl merge <unit>`, or `r`: `bl run <unit>` in window `<unit> run`, by `changeNextVerb`; `o`: `bl view <unit>`                                    |
   | ranked unit (`ranked`, `staged.ranked`) | `p`: `bl rank {{.Yanked}} --after {{.Selected}}`; `P`: `bl rank {{.Yanked}} --before {{.Selected}}`; `x`: `bl rank {{.Selected}} --remove` (F-113 D7) |

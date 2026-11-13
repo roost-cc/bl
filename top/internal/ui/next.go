@@ -10,15 +10,15 @@ import (
 	"github.com/roost-cc/bl/top/internal/stream"
 )
 
-// staging reports whether box ³ shows the staged order (F-113 D4): it has the focus and a staged
-// copy exists.
+// staging reports whether the next box shows the staged order (F-113 D4): it has the focus and a
+// staged copy exists.
 func (m Model) staging() bool {
-	return m.focus == 3 && m.snap.Next.Staged != nil
+	return m.focus == nextBox && m.snap.Next.Staged != nil
 }
 
-// nextOrder is the order box ³ shows: the staged order while staging, else the committed order. Its
-// unranked units are newest first after `d` (F-113 Decision A1); the snapshot sends them oldest
-// first.
+// nextOrder is the order the next box shows: the staged order while staging, else the committed
+// order. Its unranked units are newest first after `d` (F-113 Decision A1); the snapshot sends them
+// oldest first.
 func (m Model) nextOrder() stream.Order {
 	o := m.snap.Next.Order
 	if m.staging() {
@@ -31,7 +31,8 @@ func (m Model) nextOrder() stream.Order {
 	return o
 }
 
-// nextUnits are box ³'s units, top to bottom as it draws them: the ranked, then the unranked.
+// nextUnits are the next box's units, top to bottom as it draws them: the ranked, then the
+// unranked.
 func (m Model) nextUnits() []stream.Unit {
 	o := m.nextOrder()
 	return slices.Concat(o.Ranked, o.Unranked)
@@ -40,15 +41,15 @@ func (m Model) nextUnits() []stream.Unit {
 // markStyles color the staged order's marker column (F-113 D4): newly ranked, moved, taken out.
 var markStyles = map[string]lipgloss.Style{"+": styleOK, "~": styleWarn, "-": styleError}
 
-// drawNext draws box ³ (D4, Mockups A and B; F-113 D4, D5) in w×h inner cells: every ranked unit
-// with its rank, id, status, points, holders and title, the divider, every unranked unit, then the
-// pick line. While staging, a marker column comes first. The yanked unit has a peach `↕` after its
-// rank (F-113 D6). The rows scroll to keep the selected one shown.
+// drawNext draws the next box (D4, Mockups A and B; F-113 D4, D5) in w×h inner cells: every ranked
+// unit with its rank, id, status, points, holders and title, the divider, every unranked unit, then
+// the pick line. While staging, a marker column comes first. The yanked unit has a peach `↕` after
+// its rank (F-113 D6). The rows scroll to keep the selected one shown.
 func (m Model) drawNext(w, h int) []string {
 	o := m.nextOrder()
 	units := slices.Concat(o.Ranked, o.Unranked)
 	staging := m.staging()
-	sel := m.selected(3)
+	sel := m.selected(nextBox)
 	// The divider is line len(o.Ranked) of the list; the units after it are one line lower.
 	divider, line := len(o.Ranked), sel
 	if sel >= divider {
@@ -91,8 +92,8 @@ func (m Model) drawNext(w, h int) []string {
 	return rowsAndFoot(head, len(units)+1, line, h, draw, foot, false)
 }
 
-// dividerLine is the line between box ³'s ranked and unranked units, w cells with the row's margin:
-// it names the unranked units' order (F-113 Decision A1).
+// dividerLine is the line between the next box's ranked and unranked units, w cells with the row's
+// margin: it names the unranked units' order (F-113 Decision A1).
 func dividerLine(newestFirst bool, w int) string {
 	order := "oldest first"
 	if newestFirst {
@@ -102,8 +103,8 @@ func dividerLine(newestFirst bool, w int) string {
 	return label + strings.Repeat("─", max(w-1-lipgloss.Width(label), 0))
 }
 
-// pickLine is box ³'s line under the list: the unit `bl next` picks and its status, the ranked
-// unit it unblocks when that is another.
+// pickLine is the next box's line under the list: the unit `bl next` picks and its status, the
+// ranked unit it unblocks when that is another.
 func pickLine(n stream.Next) string {
 	if n.Pick == nil {
 		return "bl next → nothing can run"

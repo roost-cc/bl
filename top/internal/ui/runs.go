@@ -10,14 +10,14 @@ import (
 	"github.com/roost-cc/bl/top/internal/stream"
 )
 
-// agentColumnFrom is the inner width from which box ¹ has its Agent column: Mockup A has it,
+// agentColumnFrom is the inner width from which the runs box has its Agent column: Mockup A has it,
 // Mockup B (100 wide) does not.
 const agentColumnFrom = 103
 
-// runState is how box ¹ shows a run status (D4, D5): its glyph and word, their style, and whether
-// the row is dim. No status (a run state with a missing or mistyped `status`) is unknown. Every
-// other status that is not running, stale, stopped, escalated or failed is a run that ended well
-// (`clean`, `no-change`, `reviewed`); stream.Ended names the statuses that end a run.
+// runState is how the runs box shows a run status (D4, D5): its glyph and word, their style, and
+// whether the row is dim. No status (a run state with a missing or mistyped `status`) is unknown.
+// Every other status that is not running, stale, stopped, escalated or failed is a run that ended
+// well (`clean`, `no-change`, `reviewed`); stream.Ended names the statuses that end a run.
 func runState(status string) (string, lipgloss.Style, bool) {
 	switch status {
 	case "":
@@ -36,9 +36,9 @@ func runState(status string) (string, lipgloss.Style, bool) {
 	return "✓ done", styleOK, true
 }
 
-// drawRuns draws box ¹ (D4, Mockups A and B) in w×h inner cells: a row per run with its state,
-// step, story, round, elapsed time, output tokens, agent (when the box is wide enough) and pull
-// request, then the summary line.
+// drawRuns draws the runs box (D4, Mockups A and B) in w×h inner cells: a row per run with its
+// state, step, story, round, elapsed time, output tokens, agent (when the box is wide enough) and
+// pull request, then the summary line.
 func (m Model) drawRuns(w, h int) []string {
 	s := m.snap
 	agent := w >= agentColumnFrom
@@ -49,7 +49,7 @@ func (m Model) drawRuns(w, h int) []string {
 	}
 	head = append(head, cell{"Pull request", styleDim})
 	rows := s.Runs.Rows
-	sel := m.selected(1)
+	sel := m.selected(runsBox)
 	draw := func(i int) string {
 		r := rows[i]
 		glyph, style, dim := runState(r.Status)
@@ -74,9 +74,9 @@ func (m Model) drawRuns(w, h int) []string {
 	return rowsAndFoot(row(w, false, head...), len(rows), sel, h, draw, row(w, false, cell{runSummary(s), styleText}), false)
 }
 
-// runSummary is box ¹'s summary line: how many runs are running, stopped and stale, and the
+// runSummary is the runs box's summary line: how many runs are running, stopped and stale, and the
 // stories and points done today (the newest day of `history`, a UTC date as `bl report` counts
-// days; box ⁴'s `today` is the local date).
+// days; the tokens box's `today` is the local date).
 func runSummary(s *stream.Snapshot) string {
 	n := map[string]int{}
 	for _, r := range s.Runs.Rows {

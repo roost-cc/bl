@@ -298,7 +298,7 @@ test('a run state that fails to read keeps its last good row, and the section er
   }
 });
 
-test('history: the last day is the UTC date of now, in any zone (box ¹ and ⁵ label it UTC)', () => {
+test('history: the last day is the UTC date of now, in any zone (the runs and activity boxes label it UTC)', () => {
   const { dir } = mkTempBacklog();
   const git = (...args) =>
     spawnSync('git', ['-C', dir, ...args], {
@@ -820,11 +820,11 @@ test('actions (S-1336): each inbox item kind gets the verbs of F-87 D7, then bl 
   assert.deepEqual(done, {
     key: 'd',
     label: 'close the task',
+    short: 'done',
     argv: ['bl', 'task', 'done', 'T-52'],
     input: 'note',
     window: null,
     url: null,
-    about: [],
     stops: null,
   });
 });
@@ -839,11 +839,6 @@ test('actions (S-1336): a live run stops; any other run starts, or resumes when 
     'g: bl agent (agent)',
   ]);
   assert.equal(live[0].stops, 'S-1330');
-  assert.deepEqual(live[0].about, [
-    'bl stop ends the agent session and the run.',
-    'The work so far stays on the branch.',
-    'Resume it later with: bl run S-1330 --resume',
-  ]);
   // A review or a merge that holds a state a dead bl left running: no stop, and no start either.
   assert.deepEqual(
     runActions({ id: 'S-1330', status: 'running', pr, stoppable: false }).map(shown),
@@ -994,6 +989,41 @@ test('next (F-113 D7): ranked rows carry the x, p and P templates, unranked rows
   // In conflict, the staged copy still exists: C and R stay (the view refuses C itself).
   writeStaged(dir, '<<<<<<< staged\n- S-2\n=======\n- S-1\n>>>>>>> main\n');
   assert.deepEqual(next().actions.map(shown), ['C: bl rank --commit', 'R: bl rank --reset']);
+});
+
+test('actions (F-127 D5): every action has a short label for the key bar', () => {
+  const { dir, next } = nextBacklog(['S-1', 'S-2']);
+  writeStaged(dir, '- S-1\n- S-3\n');
+  const section = next();
+  const pr = { number: '15', url: 'https://example.invalid/pull/15' };
+  const all = [
+    ...['escalation', 'task', 'runner', 'update'].flatMap((kind) => itemActions({ kind, id: 'X', unit: 'F-1' })),
+    ...['ready_for_merge', 'in_review'].flatMap((status) =>
+      itemActions({ kind: 'change', id: 'X', unit: 'F-1', status }),
+    ),
+    ...runActions({ id: 'S-1', status: 'running', pr, stoppable: true }),
+    ...runActions({ id: 'S-1', status: 'stopped', pr }),
+    ...runActions({ id: 'S-1', status: 'clean', pr }),
+    ...section.staged.ranked.flatMap((r) => r.actions),
+    ...section.actions,
+  ];
+  for (const a of all) assert.ok(typeof a.short === 'string' && a.short !== '', `${a.key} ${a.label}`);
+  // Each key of the bar reads as its word: one short label per key and action.
+  const pairs = new Set(all.map((a) => `${a.key} ${a.short}`));
+  for (const p of [
+    'r run',
+    'r resume',
+    's stop',
+    'o page',
+    'p PR',
+    'g agent',
+    'm merge',
+    'd done',
+    'p put',
+    'x unrank',
+  ]) {
+    assert.ok(pairs.has(p), p);
+  }
 });
 
 test('next (F-113 Decision A3): a staged copy in conflict sends the committed lists, staged null and the conflict message', () => {
