@@ -1724,8 +1724,8 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
   const { printInboxCount } = await import('./inbox.js');
   printInboxCount(config);
   // A run `bl stop` stopped exits 130, as an interrupted command does (F-87 D7a).
-  const stopped = state.status === 'stopped' ? EXIT_CODES.SIGINT : 1;
-  process.exit(state.status === 'clean' || state.status === 'no-change' ? 0 : stopped);
+  const failed = state.status === 'stopped' ? EXIT_CODES.SIGINT : 1;
+  process.exit(state.status === 'clean' || state.status === 'no-change' ? 0 : failed);
 }
 
 // ---------------------------------------------------------------------------
