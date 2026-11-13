@@ -10,6 +10,7 @@
 
 import { execSync } from 'child_process';
 import { findExistingWorktree } from './story.js';
+import { unitLabel } from './unit.js';
 
 /**
  * Bring a story worktree's branch up to date with main before reviewing it.
@@ -89,14 +90,14 @@ export function syncBranchWithMain(worktreePath) {
  * a PR that already merged (S-788: it merged before review), else whether a
  * worktree exists and why the forge found nothing.
  *
- * @param {string} unitId
+ * @param {{ id: string, kind?: string }} unit  a story, batch or feature record
  * @param {{ searched: Array<{ repoName: string, repoPath: string, hasPR: boolean, reason?: string }>,
  *   merged: Array<{ repoName: string, number: number, url: string, headRefOid: string }> }} found
  *   what `findUnitPRs` returned
  * @param {string} branchName the unit's branch
  */
-export function reportNoOpenPR(unitId, { searched, merged }, branchName) {
-  console.error(`\nNo open PR found for ${unitId.startsWith('F-') ? 'feature' : 'story'} ${unitId}.`);
+export function reportNoOpenPR(unit, { searched, merged }, branchName) {
+  console.error(`\nNo open PR found for ${unitLabel(unit).toLowerCase()} ${unit.id}.`);
   const mergedByRepo = new Map(merged.map((m) => [m.repoName, m]));
   if (searched.length === 0) {
     console.error('  (no repos configured for this backlog)');
@@ -118,6 +119,6 @@ export function reportNoOpenPR(unitId, { searched, merged }, branchName) {
   if (merged.length > 0) {
     console.error('\nReview was skipped: the PR merged first. See S-789 for retrospective review.');
   } else {
-    console.error(`\nCommit and push the branch, then run \`bl review ${unitId}\` again: it opens the PR.`);
+    console.error(`\nCommit and push the branch, then run \`bl review ${unit.id}\` again: it opens the PR.`);
   }
 }

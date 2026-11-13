@@ -1357,7 +1357,7 @@ export async function cmdReview(args, config, feature, opts = {}) {
   const rank = (name) => (unit.repos.includes(name) ? unit.repos.indexOf(name) : unit.repos.length);
   found.prs.sort((a, b) => rank(a.repoName) - rank(b.repoName));
   if (found.prs.length === 0) {
-    reportNoOpenPR(feature.id, found, branchName);
+    reportNoOpenPR(feature, found, branchName);
     process.exit(1);
   }
   return reviewUnitPRs(args, config, feature, {
@@ -1466,7 +1466,7 @@ export async function cmdReviewStory(args, baseConfig, story, opts = {}) {
   const found = findUnitPRs(config, { ...unit, branch: branchName });
   openMissingPRs(config, unit, found, branchName, ordered);
   if (found.prs.length === 0) {
-    reportNoOpenPR(unit.id, found, branchName);
+    reportNoOpenPR(unit, found, branchName);
     process.exit(1);
   }
   return reviewUnitPRs(args, config, unit, { prs: found.prs, branchName, ordered, runner: opts.runner });

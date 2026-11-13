@@ -25,6 +25,7 @@ import { cmdReview, cmdReviewStory } from '../../src/feature-cmd.js';
 import { FLOW_TEMPLATE, AGENT_CONFIG, mkTempDir, reposConfig } from '../helpers/tempdir.js';
 import { reviewOutcome } from '../helpers/outcomes.js';
 import { reviewOf, transition } from '../../src/transition.js';
+import { reportNoOpenPR } from '../../src/review.js';
 
 function writeJsonShim(dir) {
   const path = join(dir, 'shim.mjs');
@@ -506,6 +507,19 @@ test('bl review S-n --repo is refused as an unknown option', async () => {
   assert.equal(exit, 1);
   assert.match(stderr, /bl review: unknown option "--repo" for a story: a story's repo is its component's\./);
   assert.equal(runner.sessions.length, 0);
+});
+
+// Review 2026-11-13, nit: the message names the unit's kind, a batch's too.
+test('reportNoOpenPR names a story, a batch and a feature by their kind', async () => {
+  const cases = [
+    [{ id: 'S-9', kind: 'story' }, /No open PR found for story S-9\./],
+    [{ id: 'B-1', kind: 'batch' }, /No open PR found for batch B-1\.[\s\S]*run `bl review B-1` again/],
+    [{ id: 'F-2' }, /No open PR found for feature F-2\./],
+  ];
+  for (const [unit, message] of cases) {
+    const { stderr } = await captureStderr(() => reportNoOpenPR(unit, { searched: [], merged: [] }, 'b'));
+    assert.match(stderr, message, unit.id);
+  }
 });
 
 test('bl review S-n: no PR → error names the repo searched', async () => {
