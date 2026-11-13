@@ -103,6 +103,52 @@ test('classifyCause: a window at 0% with no reset time is a used-up window', () 
 
 const base = { step: 'implement S-1', failedAt: NOW, roleKey: 'agent', resumeHint: 'bl run F-1 --resume' };
 
+test("classifyCause: a refusal's reset survives an unavailable reading with no until", () => {
+  // Invariant: the cause line never has less reset information than the
+  // refusal and the reading hold together. The reading's until wins when it
+  // is a time; else the refusal's.
+  const later = new Date(NOW + 5 * 3_600_000);
+  const at = `quota window used up until ${localTime(RESET)}`;
+  const cases = [
+    ['reading until null', { until: null }, RESET.toISOString(), RESET.getTime()],
+    ['reading until not a time', { until: 'garbage' }, RESET.toISOString(), RESET.getTime()],
+    ['reading until a time wins', { until: RESET }, later.toISOString(), RESET.getTime()],
+    ['neither has a time', { until: null }, null, null],
+    ['refusal until not a time', { until: null }, 'garbage', null],
+  ];
+  for (const [name, r, refusal, until] of cases) {
+    for (const kind of ['session', 'weekly', 'quota', 'capacity']) {
+      const got = classifyCause({
+        out: out(kind, refusal),
+        reading: reading('unavailable', { ...r, windows: [win('5h', 0, null)] }),
+      });
+      assert.equal(got.cause, 'window', `${name} ${kind}`);
+      assert.equal(got.until, until, `${name} ${kind}`);
+      assert.equal(
+        got.line,
+        `${until == null ? 'quota window used up, no reset time' : at} (5h at 0%)`,
+        `${name} ${kind}`,
+      );
+    }
+  }
+  // describeFailure ranks a window by the reset it carries, so the refusal's
+  // reset is waited for, not ranked last.
+  const { causeLine, text } = describeFailure({
+    ...base,
+    configurations: [
+      { agent: 'a', model: 'm', out: out('quota'), reading: reading('unavailable', { windows: [win('5h', 0, null)] }) },
+      {
+        agent: 'b',
+        model: 'n',
+        out: out('session', RESET.toISOString()),
+        reading: reading('unavailable', { windows: [win('5h', 0, null)] }),
+      },
+    ],
+  });
+  assert.equal(causeLine, `${at} (5h at 0%)`);
+  assert.equal(steps(text)[0], `Wait until the reset, ${localTime(RESET)}.`);
+});
+
 test('describeFailure: an available reading with no window at 0% is not a used-up window', () => {
   const { cause, causeLine, text } = describeFailure({
     ...base,

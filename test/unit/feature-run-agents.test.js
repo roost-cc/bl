@@ -272,7 +272,7 @@ test('a Codex usage limit with no reset time on the verifier under bl review esc
     assert.match(esc, /^\nagent unavailable: You've hit your usage limit\./);
     assert.match(
       esc,
-      /The review:verify session found every review configuration out: no configuration names a reset time\./,
+      /The review:verify session found every review configuration out: no refusal names a reset time\./,
     );
     assert.ok(
       esc.includes(`- codex (agent default): other — ${S865_LIMIT} (every codex configuration; no reset time)`),
@@ -313,7 +313,7 @@ test('a usage limit with no reset time escalates at once as agent unavailable', 
     assert.match(esc, /^\nagent unavailable: You've hit your monthly spend limit/);
     assert.match(
       esc,
-      /The implement session found every implementing configuration out: no configuration names a reset time\./,
+      /The implement session found every implementing configuration out: no refusal names a reset time\./,
     );
     assert.match(
       esc,
@@ -1576,7 +1576,7 @@ test("bl review: an unavailable agent on a review pass escalates, names bl revie
     const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
     assert.match(
       esc,
-      /The review:correctness session found every review configuration out: no configuration names a reset time\./,
+      /The review:correctness session found every review configuration out: no refusal names a reset time\./,
     );
     assert.match(esc, /\n4\. Run `bl review F-1`\.\n/);
   } finally {

@@ -55,8 +55,9 @@ export function classifyCause({ out, reading }) {
   }
   const refusedWindow = (kind === 'session' || kind === 'weekly') && state !== 'available';
   if (state === 'unavailable' || refusedWindow) {
-    const ms = timeMs(state === 'unavailable' ? reading.until : out.until);
-    const until = Number.isFinite(ms) ? ms : null;
+    // The reading's reset when it holds a time, else the refusal's.
+    const sources = state === 'unavailable' ? [reading.until, out?.until] : [out.until];
+    const until = sources.map(timeMs).find(Number.isFinite) ?? null;
     const names = zero.length ? ` (${zero.join(', ')} at 0%)` : '';
     const when = until == null ? ', no reset time' : ` until ${localTime(until)}`;
     return { cause: 'window', line: `quota window used up${when}${names}`, until };

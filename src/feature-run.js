@@ -2173,7 +2173,7 @@ function sessionFailure(ctx, step, r) {
  * until the earliest `until` on the out-list and return it (the caller walks
  * the list again), or escalate as "agent unavailable" and throw an
  * AgentUnavailableError that unwinds to runFeature / reviewFeature. It
- * escalates when no configuration names a reset time (a pure spend cap, a
+ * escalates when no refusal names a reset time (a pure spend cap, a
  * capacity refusal), when the earliest lies further away than
  * `run.limit_wait_max_hours`, and when this step already waited once: a
  * misread or inapplicable reset time costs at most one wait per step
@@ -2211,7 +2211,7 @@ async function waitOrEscalate(ctx, { step, story = null, role, list, excluded = 
   if (rows.every((row) => row.implemented || !row.headless) && rows.some((row) => row.implemented))
     why = `every ${roleName} configuration that can run ran an implementing step of this run, and the reviewer is never the implementer`;
   else if (waitedUntil != null) why = `every configuration was out again after waiting until ${localTime(waitedUntil)}`;
-  else if (next == null) why = 'no configuration names a reset time';
+  else if (next == null) why = 'no refusal names a reset time';
   else if (untilMs(next.out) - now > capHours * 3_600_000)
     why = `the earliest reset, ${localTime(next.out.until)}, is past the limit_wait_max_hours cap of ${capHours}`;
   if (why) {

@@ -1898,7 +1898,7 @@ awaits a timer in slices of at most a second until it (Ctrl+C ends the wait at o
 the top, asking capacity afresh — so a refusal never spends a nudge retry, a
 fix-tests rerun or a review round, and a refused spawn gets no step record of
 its own. A step waits at most once: exhausted again, with no reset time on any
-configuration (a spend cap, a capacity refusal), or with the earliest reset
+refusal (a spend cap, a capacity refusal), or with the earliest reset
 past the cap, it escalates as `agent unavailable: <message>` (one
 configuration) or `agent unavailable: every <role> configuration is out (<list>)`,
 followed by ` — <cause line>`. `bl status <id>` shows a
@@ -1944,7 +1944,9 @@ time>` or `no reset time`). An adapter that reports
    - `quota window used up until <local time>`, or `quota window used up, no
 reset time` (with the windows at 0%): any other reading `unavailable`, or
      refusal `kind` `session` or `weekly` with no reading or an `unknown` one;
-     with several, the earliest reset, and one with no reset time last;
+     the reset is the reading's `until` when it holds a time, else the
+     refusal's; with several, the earliest reset, and one with no reset time
+     last;
    - `provider overloaded, your quota is fine`: refusal `kind: capacity` and
      a reading `available`; `provider overloaded; quota could not be read`
      when the reading is `unknown`;
