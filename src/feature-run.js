@@ -88,8 +88,6 @@ import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
-  codeSpan,
-  fenced,
   isScripted,
   recordScriptedRun,
   reviewSkipped,
@@ -125,6 +123,7 @@ import { takeUnitLocks } from './unit-lock.js';
 import { commitPaths, dirtySnapshot } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { GATE_TAIL_LINES, outputParts, outputSections } from './command-output.js';
+import { codeSpan, fenced } from './escalation.js';
 import { gateRecord, pushEscalation } from './push-gate.js';
 import { describeFailure, localTime } from './agent-failure.js';
 import * as processScope from './process-scope.js';

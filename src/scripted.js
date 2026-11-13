@@ -17,16 +17,12 @@ import { createHash } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { appendSection, gateLine, restoreChange, updateChange } from './change-doc.js';
 import { parsePluginList, warn } from './config.js';
-import { GATE_TAIL_LINES, tail } from './command-output.js';
+import { tail } from './command-output.js';
 import { codeSpan, escalationText, fenced } from './escalation.js';
 import { appendSectionLine, checkCriteria, extractSection, replaceSection } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
 import { loadFlow } from './flow.js';
 import { applyTransition, statusOf } from './transition.js';
-
-// They moved to `escalation.js` (S-897) and `command-output.js` (B-1); their
-// importers keep this path.
-export { codeSpan, fenced, GATE_TAIL_LINES, tail };
 
 /**
  * `command` with `vars` filled in, or the error an unresolved one is. One pass

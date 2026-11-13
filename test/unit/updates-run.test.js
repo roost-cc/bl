@@ -34,9 +34,9 @@ import {
   storyIsMajor,
   storyPackages,
   storyTestPlugins,
-  tail,
   writeRunReport as writeRunReportHeld,
 } from '../../src/updates-run.js';
+import { tail } from '../../src/command-output.js';
 import { GIT_ENV, addOrigin, git as backlogGit, initGitBacklog, statusLines } from '../helpers/git-backlog.js';
 import {
   approveUpdate,

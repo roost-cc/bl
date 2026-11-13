@@ -49,7 +49,9 @@ import {
 import { getAllowedTools, loadPrompt } from './session.js';
 import { addGateLine, gateLine, recordMerge } from './change-doc.js';
 import { shellMerged } from './feature-run.js';
-import { GATE_TAIL_LINES, codeSpan, interpolateCommand, tail } from './scripted.js';
+import { GATE_TAIL_LINES, tail } from './command-output.js';
+import { codeSpan } from './escalation.js';
+import { interpolateCommand } from './scripted.js';
 import { storyUnit } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
 import { integrateForMerge } from './merge-integrate.js';
