@@ -11,14 +11,14 @@
  * that signal).
  */
 
-import { chmodSync, existsSync, symlinkSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, readFileSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { setTimeout as delay } from 'timers/promises';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { ensureAllowedTools } from '../../src/allowed-tools.js';
 import { loadConfig } from '../../src/config.js';
 import { outcomePath } from '../../src/outcome.js';
-import { mkTempBacklog, mkTempDir } from './tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from './tempdir.js';
 import { BL_BIN, personEnv } from './run-bl.js';
 import { GIT_ENV, addOrigin, git, initGitBacklog } from './git-backlog.js';
 import { spawnToFiles } from './spawn-files.js';
@@ -48,9 +48,10 @@ function writingClaude() {
 /**
  * A git backlog with an `origin`: S-1 and S-2 in backlog, S-3 refined, F-1 a
  * draft of S-1, and `extraStories` more stories in backlog from S-101 on
- * (`stories/S<n>/index.md`).
+ * (`stories/S<n>/index.md`). `flow`: the backlog's flow.json as an object, in
+ * place of the template.
  */
-export async function gitBacklog({ extraStories = 0 } = {}) {
+export async function gitBacklog({ extraStories = 0, flow } = {}) {
   const extra = Array.from({ length: extraStories }, (_, i) => ({
     id: `S-${101 + i}`,
     component: 'C01',
@@ -66,12 +67,30 @@ export async function gitBacklog({ extraStories = 0 } = {}) {
       ...extra,
     ],
     features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'draft', stories: ['S-1'] }],
+    ...(flow ? { flow } : {}),
   });
   // A real backlog has it committed; otherwise the session's launch writes it.
   await ensureAllowedTools(dir, loadConfig({ backlogRoot: dir }));
   initGitBacklog(dir);
   addOrigin(dir);
   return dir;
+}
+
+/**
+ * The template flow as it was before F-119: no `in_refinement`, and no
+ * `during` on the story and feature `refine` rows (a backlog whose own
+ * flow.json has not taken the seed's rows yet, F-119 R6).
+ */
+export function flowWithoutRefineDuring() {
+  const flow = JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
+  for (const type of ['story', 'feature']) {
+    const def = flow.types[type];
+    const during = def.verbs.refine.during;
+    def.statuses = def.statuses.filter((s) => s !== during);
+    def.verbs.refine.from = def.verbs.refine.from.filter((s) => s !== during);
+    delete def.verbs.refine.during;
+  }
+  return flow;
 }
 
 /**

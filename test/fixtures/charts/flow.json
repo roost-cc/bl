@@ -1,7 +1,7 @@
 {
   "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
   "title": "Cumulative flow",
-  "description": "Points by status per week, stacked: done, escalated, ready for merge, fixing, in review, in progress, refined and draft. A band that widens is work piling up in that status.",
+  "description": "Points by status per week, stacked: done, escalated, ready for merge, fixing, in review, in progress, refined, in refinement and draft. A band that widens is work piling up in that status.",
   "width": "container",
   "data": {
     "values": [
@@ -174,28 +174,52 @@
         "order": 6
       },
       {
+        "series": "in refinement",
+        "x": "2026-04-06",
+        "y": 0,
+        "order": 7
+      },
+      {
+        "series": "in refinement",
+        "x": "2026-04-13",
+        "y": 0,
+        "order": 7
+      },
+      {
+        "series": "in refinement",
+        "x": "2026-04-20",
+        "y": 0,
+        "order": 7
+      },
+      {
+        "series": "in refinement",
+        "x": "2026-04-27",
+        "y": 0,
+        "order": 7
+      },
+      {
         "series": "draft",
         "x": "2026-04-06",
         "y": 4,
-        "order": 7
+        "order": 8
       },
       {
         "series": "draft",
         "x": "2026-04-13",
         "y": 8,
-        "order": 7
+        "order": 8
       },
       {
         "series": "draft",
         "x": "2026-04-20",
         "y": 13,
-        "order": 7
+        "order": 8
       },
       {
         "series": "draft",
         "x": "2026-04-27",
         "y": 8,
-        "order": 7
+        "order": 8
       }
     ]
   },
@@ -213,6 +237,7 @@
               "in review",
               "in progress",
               "refined",
+              "in refinement",
               "draft"
             ]
           }
@@ -258,6 +283,7 @@
               "in review",
               "in progress",
               "refined",
+              "in refinement",
               "draft"
             ],
             "range": [
@@ -268,7 +294,8 @@
               "#56B4E9",
               "#D55E00",
               "#CC79A7",
-              "#F0E442"
+              "#F0E442",
+              "#882255"
             ]
           },
           "legend": {

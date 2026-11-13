@@ -128,13 +128,13 @@ test('attach on a story already in the feature still turns its run edges into or
       const v = JSON.parse(bl(['validate', '--json'], dir).stdout).findings.filter((f) => f.code === 'blockers-cycle');
       assert.deepEqual(
         v.map((f) => f.message),
-        ['deadlock: F-1 → F-1 (S-2 at run by S-1); bl attach S-2 F-1 turns it into an order edge'],
+        ['deadlock: F-1 → F-1 (S-2 at in_progress by S-1); bl attach S-2 F-1 turns it into an order edge'],
         `${name}: bl validate names the fix`,
       );
     }
     const r = bl(['attach', 'S-2', 'F-1'], dir);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /S-2 at run by S-1 is now the order edge S-1 → S-2/, name);
+    assert.match(r.stderr, /S-2 at in_progress by S-1 is now the order edge S-1 → S-2/, name);
     assert.doesNotMatch(r.stderr, /nothing to do/, name);
     assert.deepEqual(
       readBlockers(dir).edges,
@@ -162,7 +162,7 @@ test('attach_already_in_feature_non_repo_reports_turned_edges', () => {
     if (inGit) initGitBacklog(dir);
     const r = bl(['attach', 'S-2', 'F-1', ...extra], dir);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /S-2 at run by S-1 is now the order edge S-1 → S-2/, name);
+    assert.match(r.stderr, /S-2 at in_progress by S-1 is now the order edge S-1 → S-2/, name);
     assert.match(r.stderr, /^S-2 is already in F-1\.$/m, name);
     assert.doesNotMatch(r.stderr, /nothing to do/, name);
     assert.match(r.stderr, said, name);
@@ -181,7 +181,7 @@ test('attach_keeps_or_refuses_a_run_edge_with_active_when: a story already in th
   const dir = backlog({ story: { feature: 'F-1' } });
   const edge = {
     blocker: 'S-1',
-    gate: 'run',
+    gate: 'in_progress',
     unit: 'S-2',
     until: 'done',
     active_when: { unit: 'S-1', status: 'refined' },
@@ -192,12 +192,15 @@ test('attach_keeps_or_refuses_a_run_edge_with_active_when: a story already in th
   const v = JSON.parse(bl(['validate', '--json'], dir).stdout).findings.filter((f) => f.code === 'blockers-cycle');
   assert.deepEqual(
     v.map((f) => f.message),
-    ['deadlock: F-1 → F-1 (S-2 at run by S-1)'],
+    ['deadlock: F-1 → F-1 (S-2 at in_progress by S-1)'],
     'no bl attach hint for an edge it refuses',
   );
   const r = bl(['attach', 'S-2', 'F-1'], dir);
   assert.equal(r.status, 1, r.stderr);
-  assert.match(r.stderr, /S-2 at run by S-1 holds only once S-1 is refined, and an order edge takes no active_when/);
+  assert.match(
+    r.stderr,
+    /S-2 at in_progress by S-1 holds only once S-1 is refined, and an order edge takes no active_when/,
+  );
   assert.deepEqual(readBlockers(dir).edges, [edge]);
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
   assert.equal(git(dir, 'status', '--porcelain'), '');
@@ -238,11 +241,11 @@ test('bl attach refuses, writing nothing, for bad ids, missing units, closed fea
     },
     {
       opts: { story: { status: 'in_progress' } },
-      err: /^S-2 is in_progress; only a draft or refined story moves into a feature\.$/m,
+      err: /^S-2 is in_progress; only a draft, in_refinement or refined story moves into a feature\.$/m,
     },
     {
       opts: { story: { status: 'done' } },
-      err: /^S-2 is done; only a draft or refined story moves into a feature\.$/m,
+      err: /^S-2 is done; only a draft, in_refinement or refined story moves into a feature\.$/m,
     },
     {
       opts: { featureStatus: 'in_progress', story: { component: 'C02' } },
@@ -280,7 +283,11 @@ test('batch_story_cannot_join_feature_through_attach_or_new_from', () => {
     ['a story in a batch', { batch: 'B-1' }, /^S-2 is already in B-1\.$/m],
     ['a story in a batch that names the feature too', { batch: 'B-1', feature: 'F-1' }, /^S-2 is already in B-1\.$/m],
     ['a story in another feature', { feature: 'F-3' }, /^S-2 is already in F-3\.$/m],
-    ['a started story', { status: 'in_progress' }, /^S-2 is in_progress; only a draft or refined story moves/m],
+    [
+      'a started story',
+      { status: 'in_progress' },
+      /^S-2 is in_progress; only a draft, in_refinement or refined story moves/m,
+    ],
   ];
   for (const [path, args] of paths) {
     for (const [name, story, refusal] of stories) {
@@ -420,7 +427,7 @@ test('bl attach --help lists the flags and the refusals', () => {
     'bl-attach-json/v1',
     'done or superseded',
     'another feature',
-    'draft or refined',
+    'draft, in_refinement or refined',
     'bl side <repo> --from F-<n>',
   ]) {
     assert.ok(r.stdout.includes(s), s);

@@ -1240,10 +1240,10 @@ test('bad-status: a v1 word is a warning naming its current word; an unknown wor
   assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'draft' }, 'story'), []);
   assert.deepEqual(status({ feature_id: 'F-1', title: 'X', status: 'ready_for_merge' }, 'feature'), []);
   assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'approved' }, 'story'), [
-    'error: status "approved" not in known set (flow.json story statuses: draft, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+    'error: status "approved" not in known set (flow.json story statuses: draft, in_refinement, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
   ]);
   assert.deepEqual(status({ story_id: 'S-1', title: 'X', status: 'open' }, 'story'), [
-    'error: status "open" not in known set (flow.json story statuses: draft, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+    'error: status "open" not in known set (flow.json story statuses: draft, in_refinement, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
   ]);
 });
 

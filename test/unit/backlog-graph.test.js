@@ -282,7 +282,7 @@ test('batch links (F-125 D1): its stories from their batch:, in plan order, with
     g.edges.filter((e) => e.unit === 'S-12'),
     [
       { blocker: 'S-13', gate: 'order', unit: 'S-12', until: 'implemented' },
-      { blocker: 'S-1', gate: 'run', unit: 'S-12', until: 'done' },
+      { blocker: 'S-1', gate: 'in_progress', unit: 'S-12', until: 'done' },
     ],
   );
   assert.deepEqual(ids(g.list('batch')), ['B-1']);
@@ -312,7 +312,7 @@ test("blockers.json's run and order edges link stories as a depends_on: does; a 
   // S-3 before S-1 by an order edge; S-6 waits for S-4 by a run edge.
   const file = [
     { blocker: 'S-3', gate: 'order', unit: 'S-1', until: 'implemented' },
-    { blocker: 'S-4', gate: 'run', unit: 'S-6', until: 'done' },
+    { blocker: 'S-4', gate: 'in_progress', unit: 'S-6', until: 'done' },
   ];
   replace(join(root, BLOCKERS_FILE), formatBlockers(file));
   const g = loadBacklog(config);

@@ -28,16 +28,17 @@ import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { updateTabTitle } from './tab-title.js';
 import { launchSession, loadPrompt, loadSchema, spillSubagentPrompts } from './session.js';
 import { flowForHelp, loadFlow } from './flow.js';
-import { assertFrom, requireBranch, statusOf, transition } from './transition.js';
+import { enterVerb, logOf, requireBranch, startOf, transition } from './transition.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
 import { takeUnitLocksOrExit } from './unit-lock.js';
+import { snapshot } from './atomic-write.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
- * draft stories; explicitly-named story IDs are included when `flow.json`'s
- * `refine` row starts from their status (`assertFrom`), else skipped with
- * the table's message. Results are deduped by story ID —
+ * draft stories; a story is included when `refine` may start on it
+ * (`startOf`: the row's from and guards, and no hold on its nominal path),
+ * else skipped with the refusal. Results are deduped by story ID —
  * an explicitly-named story wins over the same story pulled in via a component, so
  * an already-refined story named on the command line is still re-refined.
  *
@@ -48,6 +49,12 @@ export function resolveRefineTargets(positionals, config) {
   const errors = [];
   const notices = [];
   const byId = new Map();
+  // `startOf`: the refine row's from, its guards and the holds (F-119 R4); a refused story is skipped.
+  const refusedOf = (id, found, fm) => {
+    const { refusal } = startOf(config, 'story', { id, indexPath: found.indexPath, fm }, 'refine');
+    if (refusal) notices.push(`${refusal} — skipping.`);
+    return refusal != null;
+  };
 
   const addStory = (found, fm, source) => {
     const id = fm.story_id ?? normalizeId(found.storyEntry)?.id ?? found.storyEntry;
@@ -80,7 +87,7 @@ export function resolveRefineTargets(positionals, config) {
         const found = parsed && findStoryDir(parsed, config);
         if (!found) continue;
         const { fm } = parseFrontmatter(readFileSync(found.indexPath, 'utf8'));
-        addStory(found, fm, 'component');
+        if (!refusedOf(parsed.id, found, fm)) addStory(found, fm, 'component');
       }
       continue;
     }
@@ -96,13 +103,7 @@ export function resolveRefineTargets(positionals, config) {
       continue;
     }
     const { fm } = parseFrontmatter(readFileSync(found.indexPath, 'utf8'));
-    const unit = { id: parsed.id, kind: 'story', status: statusOf('story', fm) };
-    const refused = assertFrom(loadFlow(config.backlogRoot), unit, 'refine', { config, ...unit });
-    if (refused) {
-      notices.push(`${refused} — skipping.`);
-      continue;
-    }
-    addStory(found, fm, 'named');
+    if (!refusedOf(parsed.id, found, fm)) addStory(found, fm, 'named');
   }
 
   const targets = [...byId.values()].sort(
@@ -127,7 +128,8 @@ function storyRefineContext(found, fm, config) {
   const primaryRepoName = unitRepo ?? '';
   const primaryRepoPath = primaryRepoName ? (config.reposByName[primaryRepoName] ?? '') : '';
 
-  const promptName = statusOf('story', fm) === 'refined' ? 're-refine' : 'refine';
+  const promptName =
+    statusBeforeRefine(loadFlow(config.backlogRoot), 'story', fm) === 'refined' ? 're-refine' : 'refine';
   const vars = {
     storyId: parsed.id,
     title,
@@ -140,6 +142,24 @@ function storyRefineContext(found, fm, config) {
     storyRepos: primaryRepoName || '(none)',
   };
   return { parsed, title, storyRelPath, promptName, vars };
+}
+
+/**
+ * The status a unit had before its refinement session (F-119 R1): its status,
+ * or, on a unit at the `refine` verb's `during` (`in_refinement`, a resumed
+ * refinement session), the status of the entry before the last one. The
+ * prompt (`refine` or `re-refine`) follows it.
+ * @param {import("./flow.js").Flow} flow
+ * @param {"story" | "feature"} kind
+ * @param {object} fm
+ * @param {{ fm: object } | null} [change]
+ * @returns {string}
+ */
+export function statusBeforeRefine(flow, kind, fm, change = null) {
+  const log = logOf(kind, fm, change);
+  const during = flow.verbOf(kind, 'refine')?.during;
+  const at = during != null && log.at(-1)?.to === during ? -2 : -1;
+  return log.at(at)?.to ?? '';
 }
 
 /**
@@ -177,14 +197,20 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
  * the session, and this catches the rest, the token totals `launchSession`
  * writes and the status `apply` writes included. The snapshot is taken here,
  * before the session starts (D3). A session without a valid outcome file
- * changes no status, and its fault is printed (F-68 D5). Exits with the
+ * records no outcome: each unit stays at the refine verb's `during`, where
+ * the session started it, and its fault is printed (F-68 D5). Exits with the
  * session's status, or 1 when the status write or the commit failed.
  * `bl refine S-n`, the batch and `bl refine F-n` (`feature-cmd.js`
  * `cmdRefine`) all end here.
  *
  * First it takes the work unit locks of `units` (`takeUnitLocksOrExit`, F-122 D2):
  * a lock another process holds refuses the refine with exit 1, before it
- * writes anything. The commit holds only the paths under the units'
+ * writes anything. Then it records the `refine` verb's `during` on each unit
+ * (`enterVerb`, F-119 R1), so an outcome with no status leaves the unit there.
+ * When one of those writes fails, it puts every unit back (`snapshot`),
+ * starts no session and commits nothing; a unit file it cannot put back is
+ * named, with what to do, and left changed.
+ * The commit holds only the paths under the units'
  * directories (`scope()`, read at the end, so a story the session made for
  * the feature is in it, D3); bl names each other changed path.
  * @param {import('./unit-lock.js').WorkUnit[]} units  the refined units: a
@@ -202,7 +228,27 @@ export async function refineAndCommit(units, opts, message, apply) {
   let exitCode;
   try {
     const before = dirtySnapshot(opts.backlogRoot);
-    const { status, structured, structuredError } = await launchSession({ ...opts, units, returnOnExit: true });
+    // The refine verb's `during` (`in_refinement`, F-119 R1), in the session's
+    // commit; nothing on a unit there already or a row with no `during`. All
+    // or nothing: a failed write puts back each unit an earlier one moved.
+    const undo = snapshot(
+      opts.backlogRoot,
+      units.map((u) => u.indexPath),
+      ' that started the refinement session',
+    );
+    let entered = true;
+    let leftChanged = false;
+    try {
+      for (const u of units) await enterVerb(opts.backlogRoot, u, 'refine');
+    } catch (e) {
+      entered = false;
+      const err = undo(e);
+      leftChanged = err.unrecovered != null;
+      console.error(`Error: cannot record the refinement session's start: ${err.message}`);
+    }
+    const { status, structured, structuredError } = entered
+      ? await launchSession({ ...opts, units, returnOnExit: true })
+      : { status: 1, structured: null, structuredError: 'the session did not start' };
     let applyFailed = false;
     if (structured) {
       try {
@@ -212,16 +258,24 @@ export async function refineAndCommit(units, opts, message, apply) {
         console.error(`Error: cannot set the status from the refine outcome: ${e.message}`);
       }
     } else {
+      // A started session left each unit at the refine verb's `during`.
+      const where = entered
+        ? 'each unit stays at the status the session started it in'
+        : leftChanged
+          ? 'each file named above is left changed'
+          : 'every status is unchanged';
       console.error(
-        `No refine outcome (${structuredError}); every status is unchanged.\n` +
-          `  Run \`bl refine ${ids.join(' ')}\` again to set it.`,
+        `No refine outcome (${structuredError}); ${where}.\n` + `  Run \`bl refine ${ids.join(' ')}\` again to set it.`,
       );
     }
-    const failed = await commitChangedSince(opts.backlogRoot, before, message, {
-      session: true,
-      owner,
-      scope: lock.scope,
-    });
+    // No session, nothing to commit: a start write is put back or named above, never committed.
+    const failed = entered
+      ? await commitChangedSince(opts.backlogRoot, before, message, {
+          session: true,
+          owner,
+          scope: lock.scope,
+        })
+      : false;
     // A failed commit is 1 whatever the session ended with (S-1330).
     exitCode = failed || applyFailed ? 1 : status;
   } finally {
@@ -235,7 +289,7 @@ async function refineOne(target, config, { additionalPrompt } = {}) {
   const { backlogRoot, roostDir } = config;
   const { parsed, title, storyRelPath, promptName, vars } = storyRefineContext(target.found, target.fm, config);
 
-  if (statusOf('story', target.fm) === 'refined') {
+  if (promptName === 're-refine') {
     info(`Story ${parsed.id} is already refined. Re-refining.\n`);
   }
 

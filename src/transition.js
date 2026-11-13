@@ -7,7 +7,7 @@
  *   transitions:
  *     - at: 2026-10-26T09:12:40Z    # ISO 8601, UTC
  *       to: draft                   # a status of the type
- *       by: new                     # the verb (`operator` for a hand edit)
+ *       by: new                     # the verb (`force`: `bl force`; `operator`: an old hand edit)
  *       via: refine                 # the last capability that ran (optional)
  *       outcome: clean              # one line from its outcome (optional)
  *       note: migrated              # optional
@@ -25,8 +25,9 @@
  * position from its change document's `review_round` and `review_status`.
  */
 
-import { FlowError, LEGACY_LOG, REVIEW, fromLegacy, loadFlow, statusWords } from './flow.js';
+import { FORCE, FlowError, LEGACY_LOG, REVIEW, fromLegacy, loadFlow, statusWords } from './flow.js';
 import { GUARDS } from './guards.js';
+import { holdRefusal } from './blockers.js';
 import { updateSpecFile } from './spec-file.js';
 
 /**
@@ -47,8 +48,18 @@ export const MIGRATED = 'migrated';
 /** The `by` of a synthesized entry after the first. */
 const MIGRATED_BY = 'migrated';
 
-/** The `by` of an entry the operator wrote by hand: any verb's edge allows it. */
+/**
+ * The `by` of an entry the operator wrote by hand before `bl force`: any
+ * verb's edge allows it (F-119 D2.4). New hand moves are `FORCE`.
+ */
 export const OPERATOR = 'operator';
+
+/**
+ * The `by` of `bl force`'s entry (F-119 D2): a move between any two
+ * different statuses of the type, terminal ones included. bl defines it, and
+ * `flow.json` does not list it (`flow.js`'s `FORCE`).
+ */
+export { FORCE };
 
 /**
  * The verbs `bl implement` starts: `implement`, or `fix` on a unit in
@@ -297,9 +308,36 @@ function idOf(kind, fm) {
   return str(fm.story_id) || str(fm.feature_id) || str(fm.batch_id) || str(fm.task_id) || `the ${kind}`;
 }
 
-/** Whether the type's table has the edge `from` → `to` under `by` (`operator`: under any verb). */
-function hasEdge(flow, kind, from, to, by) {
-  return flow.edges(kind).some((e) => e.from === from && e.to === to && (by === OPERATOR || e.by === by));
+/** The statuses a verb row's branches go to. */
+const branchTos = (row) => [...row.success, ...row.failure].map((b) => b.to);
+
+/**
+ * Whether the type's table has the edge `from` → `to` under `by` (`operator`:
+ * under any verb). `force` has an edge between any two different statuses of
+ * the type (F-119 D2). With `skipDuring`, a pair that skips a verb's `during`
+ * counts too: from a status in the verb's `from` straight to one of its
+ * branches' `to` (F-119 R2). A log written before the verb had a `during`
+ * holds such pairs, so `bl validate` reads them; the writer never passes it.
+ * @param {import("./flow.js").Flow} flow
+ * @param {string} kind
+ * @param {string | null} from
+ * @param {string} to
+ * @param {string} by
+ * @param {{ skipDuring?: boolean }} [opts]
+ * @returns {boolean}
+ */
+function hasEdge(flow, kind, from, to, by, { skipDuring = false } = {}) {
+  if (by === FORCE) {
+    const { statuses } = flow.typeOf(kind);
+    return from !== to && statuses.includes(from) && statuses.includes(to);
+  }
+  const byFits = (verb) => by === OPERATOR || verb === by;
+  if (flow.edges(kind).some((e) => e.from === from && e.to === to && byFits(e.by))) return true;
+  if (!skipDuring) return false;
+  return Object.entries(flow.typeOf(kind).verbs).some(
+    ([verb, row]) =>
+      row.during != null && byFits(verb) && flow.fromOf(kind, row).includes(from) && branchTos(row).includes(to),
+  );
 }
 
 /**
@@ -372,7 +410,8 @@ export function setLog(fm, log) {
  * A unit with no log first gets the log `legacyLog` synthesizes (each entry
  * with no `at` takes this entry's), and loses `status:`; `transitions:`
  * takes `status:`'s place. The first entry sets `added`, and an entry to a
- * terminal status sets `completed` (a task's `done`), each to `at`'s date.
+ * terminal status sets `completed` (a task's `done`), each to `at`'s date,
+ * and an entry from a terminal status to an open one removes it.
  * @param {import("./flow.js").Flow} flow
  * @param {"story" | "feature" | "task"} kind
  * @param {object} fm  the unit's frontmatter, changed in place
@@ -406,7 +445,10 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
   const next = [...log, entry];
   setLog(fm, next);
   if (next.length === 1 || !DATE_RE.test(str(fm.added))) fm.added = dayOf(next[0].at);
-  if (flow.typeOf(kind).terminal.includes(to)) fm[COMPLETED_KEY[kind]] = dayOf(when);
+  const { terminal } = flow.typeOf(kind);
+  if (terminal.includes(to)) fm[COMPLETED_KEY[kind]] = dayOf(when);
+  // A move out of a terminal status (`bl force` reopening `done`) leaves an open unit.
+  else if (terminal.includes(current)) delete fm[COMPLETED_KEY[kind]];
   return entry;
 }
 
@@ -532,14 +574,46 @@ export function assertFrom(flow, unit, verb, ctx) {
   const from = flow.fromOf(kind, row);
   if (!from.includes(status)) {
     const edges = flow.edges(kind).filter((e) => e.from === status && e.to !== status);
-    const reach = from.map((s) => edges.find((e) => e.to === s)).find(Boolean);
+    // An edge into a verb's `during` reaches its branches' statuses too:
+    // `draft → in_refinement` by refine reaches refined.
+    const reachesOf = (e) => {
+      const row = flow.verbOf(kind, e.by);
+      return row?.during === e.to ? [e.to, ...branchTos(row)] : [e.to];
+    };
+    const reach = from
+      .map((s) => {
+        const e = edges.find((x) => reachesOf(x).includes(s));
+        return e ? { by: e.by, to: s } : null;
+      })
+      .find(Boolean);
     const hint = reach ? ` (bl ${commandOf(reach.by)} ${id} reaches ${reach.to})` : '';
     return `${id} is ${status || '(no status)'}; ${verb} starts from ${statusWords(from)}${hint}`;
   }
-  for (const when of ctx ? row.when : []) {
-    if (!guardsHold(flow, [when], ctx)) return `${id}: ${verb} needs ${when}, and it does not hold`;
+  const failing = ctx ? failingGuards(flow, row.when, ctx, { first: true }) : [];
+  return failing.length > 0 ? guardRefusal(id, verb, failing[0]) : null;
+}
+
+/** `S-5: run needs escalation_cleared, and it does not hold`: a `when` guard that refuses a verb. */
+export const guardRefusal = (id, verb, when) => `${id}: ${verb} needs ${when}, and it does not hold`;
+
+/**
+ * The guards of a `when` list that do not hold on `ctx`, in the list's
+ * order; with `first`, it stops at the first. `assertFrom` refuses a verb on
+ * the first; `bl force` lists each as a guard the move skips.
+ * @param {import("./flow.js").Flow} flow
+ * @param {string[]} when
+ * @param {import("./guards.js").GuardContext} ctx
+ * @param {{ first?: boolean }} [opts]
+ * @returns {string[]}
+ */
+export function failingGuards(flow, when, ctx, { first = false } = {}) {
+  const out = [];
+  for (const w of when) {
+    if (guardsHold(flow, [w], ctx)) continue;
+    out.push(w);
+    if (first) break;
   }
-  return null;
+  return out;
 }
 
 /**
@@ -549,7 +623,9 @@ export function assertFrom(flow, unit, verb, ctx) {
  * with no log (D4). The verb is the first whose `from` holds the
  * status, checked with `assertFrom` (its `when` guards too). When none
  * does, `refusal` is the first verb's. A malformed `transitions:`
- * (`malformedLogRefusal`) refuses every verb. Every hand-written start-state check
+ * (`malformedLogRefusal`) refuses every verb. Then a hold on a status of the
+ * chosen verb's nominal path refuses it (`holdRefusal`, F-119 D6): the one
+ * hold check of every verb that calls this. Every hand-written start-state check
  * of a verb handler became this. `bl run` passes its `then` chain
  * (`Flow.chainOf`), so it resumes a unit in review or fixing.
  * @param {{ backlogRoot: string }} config
@@ -557,7 +633,7 @@ export function assertFrom(flow, unit, verb, ctx) {
  * @param {{ id: string, indexPath: string, fm: object, change?: { fm: object } | null }} unit
  * @param {string | string[]} verbs
  * @param {{ guards?: boolean }} [opts]  `guards: false`: the caller checks the
- *   `when` guards itself, with its own messages (`bl merge`'s `mergeGates`)
+ *   `when` guards and the holds itself, with its own messages (`bl merge`'s `mergeGates`)
  * @returns {{ verb: string | null, status: string, refusal: string | null }}
  */
 export function startOf(config, kind, unit, verbs, { guards = true } = {}) {
@@ -573,7 +649,9 @@ export function startOf(config, kind, unit, verbs, { guards = true } = {}) {
   // Every verb writes the unit's log, which a malformed one refuses.
   const refusal =
     malformedLogRefusal([{ id: unit.id, fm: unit.fm }]) ??
-    assertFrom(flow, { id: unit.id, kind, status }, verb ?? list[0], ctx);
+    assertFrom(flow, { id: unit.id, kind, status }, verb ?? list[0], ctx) ??
+    // The holds on the nominal path of the verb that starts (F-119 D6, R4).
+    (guards ? holdRefusal(config, unit.id, verb) : null);
   return { verb: refusal ? null : verb, status, refusal };
 }
 
@@ -626,11 +704,15 @@ export function requireBranch(flow, kind, verb, outcome, ctx) {
  * (`transition-log`): `transitions:` that is not a list of entries; an entry
  * with a field outside `ENTRY_FIELDS`, no `by`, or an `at` that is not ISO
  * 8601 UTC; a `to` that is not a status of the type; a consecutive pair no
- * verb defines (an entry with `note: migrated` is exempt); an `at` before
+ * verb defines (an entry with `note: migrated` is exempt, and a pair that
+ * skips a verb's `during` counts as the verb's: `hasEdge`'s `skipDuring`); an `at` before
  * the one above it; a first entry that is not the type's initial status by
  * `new`; an `added` or `completed` (a task's `done`) that disagrees with the
  * log, or a story's or feature's that is missing (no `added`, or no
- * `completed` on a log that ends terminal; a task's are `task-field`'s). Warnings (`legacy-status`): `status:` with no log,
+ * `completed` on a log that ends terminal; a task's are `task-field`'s); a
+ * `completed` on a log that ends at an open status (`bl force` reopened the
+ * unit and removes it). `by: force` is an edge between any two different
+ * statuses (`hasEdge`). Warnings (`legacy-status`): `status:` with no log,
  * and `status:` beside a log; neither for a closed unit (its status in its type's `terminal` list):
  * a custom flow.json edge that moves it goes through `applyTransition`, which turns `status:` into a log first.
  * @param {import("./flow.js").Flow} flow
@@ -680,7 +762,12 @@ export function findTransitionFindings(flow, kind, fm, location) {
       error(
         `${at} goes to "${str(e.to)}", which is not a ${kind} status (flow.json ${kind} statuses: ${statuses.join(', ')})`,
       );
-    } else if (i > 0 && !isMigrated(e) && str(e.by) && !hasEdge(flow, kind, prev?.to ?? null, e.to, e.by)) {
+    } else if (
+      i > 0 &&
+      !isMigrated(e) &&
+      str(e.by) &&
+      !hasEdge(flow, kind, prev?.to ?? null, e.to, e.by, { skipDuring: true })
+    ) {
       error(`${at}: no ${kind} verb "${e.by}" goes from ${prev?.to ?? '(no status)'} to ${e.to} (flow.json)`);
     }
     if (terminal.includes(e.to)) terminalAt = str(e.at);
@@ -707,6 +794,8 @@ export function findTransitionFindings(flow, kind, fm, location) {
     error(`${key}: is not set, and the log ends at ${last.to}`);
   } else if (completed && terminalAt == null) {
     error(`${key}: ${completed} is set, and the log has no entry to ${statusWords(terminal)}`);
+  } else if (completed && statuses.includes(last?.to) && !terminal.includes(last.to)) {
+    error(`${key}: ${completed} is set, and the log ends at ${last.to}, an open status; remove ${key}:`);
   } else if (completed && ISO_UTC_RE.test(terminalAt) && completed !== dayOf(terminalAt)) {
     error(`${key}: ${completed} disagrees with the log's entry to a terminal status (${dayOf(terminalAt)})`);
   }

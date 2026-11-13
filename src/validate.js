@@ -1472,7 +1472,7 @@ export function runAll(config, opts = {}) {
   const frontmatter = findFrontmatterFindings(config.backlogRoot, graph);
   config = { ...config, backlogGraph: graph };
 
-  // The statuses and gates per type (F-66 D1). A missing or unreadable
+  // The statuses and verbs per type (F-66 D1). A missing or unreadable
   // flow.json throws, naming the file: nothing below can check a status.
   const flow = loadFlow(config.backlogRoot);
 

@@ -49,6 +49,8 @@ Per-command stdout contracts:
 | `bl tree`            | the rendered tree                                         |
 | `bl history`         | the week table (`--json`: one object)                     |
 | `bl report`          | one line: the path of `index.md` (`--json`: one object)   |
+| `bl flow`            | one transition table per type (markdown)                  |
+| `bl force`           | nothing (skip list, question, progress → stderr)          |
 | `bl grep`            | match table                                               |
 | `bl what-next`       | one line: the suggested story ID (empty if no suggestion) |
 | `bl next`            | one line: the next unit ID, F-n or S-n (empty if none)    |
@@ -138,8 +140,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
                                   each, all by hand (F-53 D2)
   coding-dictionary.yaml        ← the coding dictionary: bl init's copy of
                                   bl's seed, curated by the project (F-82)
-  flow.json                     ← per type the statuses, the verbs between
-                                  them and the gates (F-66 D1, F-69 D1)
+  flow.json                     ← per type the statuses and the verbs between
+                                  them (F-66 D1, F-69 D1); no gates (F-119 D4)
   blockers.json                 ← every hold between units, one edge per line,
                                   sorted, written only by bl block (F-66 D2)
   tasks/
@@ -819,51 +821,13 @@ a page is read.
 
 ## Statuses and gates (`flow.json`, F-66 D1, F-69 D1)
 
-`flow.json`, at the backlog root, names per type (story, feature, task) its statuses in
-lifecycle order, the terminal ones, the verbs that move a unit between them, and the gates a
-unit can be held at. It is plain JSON, read by `src/flow.js`:
-
-```json
-{
-  "schema": "bl-flow/v2",
-  "types": {
-    "feature": {
-      "statuses": [
-        "draft",
-        "refined",
-        "approved",
-        "in_progress",
-        "in_review",
-        "fixing",
-        "ready_for_merge",
-        "escalated",
-        "done",
-        "superseded"
-      ],
-      "terminal": ["done", "superseded"],
-      "verbs": {
-        "run": {
-          "from": ["approved", "in_progress", "escalated"],
-          "when": ["gate_free:run", "escalation_cleared"],
-          "during": "in_progress",
-          "via": ["implement", "test", "self_review", "open_pr"],
-          "success": [{ "to": "in_review", "then": "review" }],
-          "failure": [{ "to": "escalated" }]
-        },
-        "review": {
-          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
-          "during": "in_review",
-          "via": ["review"],
-          "success": [{ "to": "ready_for_merge" }],
-          "failure": [{ "when": ["round_within_cap"], "to": "fixing", "then": "fix" }, { "to": "escalated" }]
-        },
-        "supersede": { "from": "*", "success": [{ "to": "superseded" }] }
-      },
-      "gates": { "run": { "verbs": ["run", "implement"] }, "merge": { "verbs": ["merge"] } }
-    }
-  }
-}
-```
+`flow.json`, at the backlog root, names per type (story, feature, batch, task) its statuses in
+lifecycle order, the terminal ones, and the verbs that move a unit between them. A hold in
+`blockers.json` can keep a unit out of any of its type's statuses (F-119 D4), so the file has
+no gates of its own. Its format (types, statuses, terminal, verb rows, branches, guards,
+`during`, meets, holds and the nominal path) has one document, `bl/templates/flow.schema.md`
+(`FLOW_DOC`, F-119 R7); `bl flow --help` and every `flow-json` finding name it. This section
+keeps the code notes.
 
 - **The tables.** The template's are F-69 D1's. Feature: `new`, `refine`, `approve`, `run`,
   `implement` (`bl implement F-n`), `review`, `fix`, `merge`, `supersede`. Story: the same
@@ -877,24 +841,18 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
   from `in_progress` too, for a resumed run that stopped with items open. `mergeGates` still
   refuses a merge with open review items, by the review position. A story uses
   the ten words of F-69 A3 except `approved`; a task uses `draft` and `done`.
-- **A verb row.** `from` is the statuses it starts from, or `*` for every status that is not
-  terminal. `when` names guards that must hold before it starts. `during` is the status recorded
-  when it starts; its `from` lists its own `during`, so invoking it again resumes it. `via` names
-  capabilities, in order; a verb without one is a hand transition. `success` and `failure` are
-  branches `{ when?, to, then? }`, tried in order. In F-69 bl validates `then` but does not
-  follow it: `bl run` chains in code.
-- **Meets.** A status meets `X` when it is `X` or comes after `X` in `statuses`. Terminal
-  statuses come last, so `superseded` meets `done` (F-66 A4), and `escalated` meets
-  `in_progress` but not `done`. Order, not reachability, decides: `refine`'s failure branch
-  makes `draft` and `refined` a cycle, and a draft unit must not meet `refined`.
 - **Guards and capabilities** are names of functions in two registries, `src/guards.js`
   (`GUARDS`: `gate_free:<gate>`, `escalation_cleared`, `round_within_cap`) and
   `src/capabilities.js` (`CAPABILITIES`: every `DISPATCH` cell of `src/verbs.js`, which
   `bl <verb> <id>` calls through it, and the steps the loop still runs in code). A `via` may
   name only a step (`VIA_CAPABILITIES`), not a `DISPATCH` handler. The file wires them; the
-  registries define them. A guard name may carry one argument after a colon.
-- **Gates** name what a unit of the type can be held at and the verbs that check each. bl
-  checks gates only at `run`, `implement` and `merge`.
+  registries define them. A guard name may carry one argument after a colon. In F-69 bl
+  validates a branch's `then` but does not follow it: `bl run` chains in code.
+- **The nominal path** of a verb (F-119 D6) is `nominalPath(type, verb)`. Every verb checks
+  the holds on it when it starts (`heldBy`, under **Holds between units**); bl's seed names no
+  `gate_free` guard, which stays registered for an older `flow.json`. A `gates` table
+  from before F-119 loads, and `flow.gateTables` names the types that still have one, for the
+  `flow-json` warning.
 - **`src/flow.js`.** `loadFlow(backlogRoot)` returns the parsed flow (cached while the file's
   mtime and size are unchanged) with `statusesOf(type)` (lifecycle order), `initial(type)` (the
   first status), `openStatusesOf(type)` (those that do not meet `done`, furthest along first),
@@ -904,28 +862,34 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
   `done`), `isUnstarted(type, status)` (a status of the type that does not meet `in_progress`;
   an unknown one is neither), `closedStatusesOf(type)`, `runnableStatusesOf(type)`,
   `unstartedStatusesOf(type)` (those sets in lifecycle order, which messages name through
-  `statusWords(names)`), `gatesOf(type)`, `verbOf(type, verb)` (the row with its optional keys
-  filled, or null), `fromOf(type, row)` (`from` with `*` expanded) and `edges(type)` (every
-  `{ from, to, by }` the table defines: each `from` to the `during`, unless they are equal, and
-  each branch's `to` from the `during`, or from each `from` when there is none; `new` gives
-  `from: null`). It throws a `FlowError` whose message starts with the file's path when the
+  `statusWords(names)`), `nominalPath(type, verb)`, `verbOf(type, verb)` (the row with its
+  optional keys filled, or null), `fromOf(type, row)` (`from` with `*` expanded) and
+  `edges(type)` (every `{ from, to, by }` the table defines: each `from` to the `during`,
+  unless they are equal, and each branch's `to` from the `during`, or from each `from` when
+  there is none; `new` gives `from: null`). It throws a `FlowError` whose message starts with
+  the file's path when the
   file is missing, not JSON, has a `schema` other than `bl-flow/v2` or `bl-flow/v1`, lacks the
   `story`, `feature` or `task` type (`FLOW_TYPES`), or has a part of the wrong shape; a command
   that reads it stops there. A backlog's flow is its own: code reads the running backlog's file
   through `loadFlow`, and a pure function takes `flow` as a parameter. `bl init` writes
   `templates/flow.json` into a backlog that has none and leaves an existing one alone; test
   fixtures (`mkTempBacklog`, `mk_temp_backlog`) copy the same file. `--help` falls back to the
-  template (`flowForHelp`), since help works outside a backlog. `bl report` and `bl history` read
-  the flow once in `main` and pass it down, so a run's parts agree.
+  template (`flowForHelp`), since help works outside a backlog; `flowForHelp({ strict: true })`
+  (`bl flow`) uses the template only outside a backlog and throws on a backlog's file it cannot
+  read. `bl report` and `bl history` read the flow once in `main` and pass it down, so a run's
+  parts agree.
+- **`bl flow`** (`src/flow-cmd.js`, F-119 D3) prints `flowTables(flow)` (`src/flow-view.js`):
+  per type a `### <type>` heading and one `formatTable` with a row per `Flow.edges` transition,
+  its verb's `when` as Guards and `nominalPath` as Gates; a `new` row's from is `(none)`. `force`
+  is no row, since `Flow.edges` does not give it (`hasEdge` does). `bl report`'s `## Workflow`
+  section is the same `flowTables(flow)`.
 - **A v1 file** (`bl-flow/v1`: statuses with `implies`, no verbs) still loads until the
-  migration rewrites it (F-69 D4): as the template with the file's own `gates`, and
-  `flow.legacy` set. `bl validate` reports it as one `flow-json` warning that names
-  `bl/scripts/migrate-transitions.js`. The v1 words map through `LEGACY_STATUSES`
-  (`fromLegacy(type, status)`: story `backlog`, feature `running` and task `open` read as
-  `draft`, `in_progress` and `draft`). `makeUnit` (`src/backlog-graph.js`) sets `.status`
+  migration rewrites it (F-69 D4): as the template, and `flow.legacy` set. `bl validate`
+  reports it as one `flow-json` warning that names `bl/scripts/migrate-transitions.js`. The v1
+  words map through `LEGACY_STATUSES` (`fromLegacy(type, status)`: story `backlog`, feature
+  `running` and task `open` read as `draft`, `in_progress` and `draft`). `makeUnit`
+  (`src/backlog-graph.js`) sets `.status`
   through it, and every `Flow` helper that takes a status reads one through it.
-- **The `task` type** (F-65 D1): `draft` and `done`, with `gates: {}`. A task can block a unit;
-  nothing holds a task.
 - **Who reads it.** `bl validate` takes story, feature and task statuses from it (`bad-status`,
   `task-field`), and reports `flow-json` for the file's own faults (see **`bl validate`**). Story
   status sets, closed checks and status tables all derive from it (S-1166), so a command that
@@ -943,9 +907,17 @@ unit can be held at. It is plain JSON, read by `src/flow.js`:
 
 A story's, feature's and task's frontmatter holds `transitions:`, an append-only list of entries
 `{ at, to, by, via?, outcome?, note? }`: `at` is ISO 8601 UTC, `to` a status of the type, `by`
-the verb (`operator` for a hand edit), `via` the last capability that ran, `outcome` one line
-from its outcome, `note` free text (`migrated` on a synthesized entry). An entry's `from` is the
-previous entry's `to`.
+the verb (`force` for a forced move, `operator` for a hand edit before `bl force`), `via` the
+last capability that ran, `outcome` one line from its outcome, `note` free text (`migrated` on a
+synthesized entry). An entry's `from` is the previous entry's `to`.
+
+- **Forced moves (F-119 D2).** `bl force <id> <status>` (see `### bl force`) writes an entry
+  `by: force` (`FORCE`). `force` is bl's own verb, and `flow.json` does not list it (the
+  reader leaves a type's `force` row out, `Flow.forceRows`, and `flow-json` reports it): it goes
+  between any two different statuses of the type, terminal ones included (`hasEdge`). An
+  entry out of a terminal status (reopening `done`) removes `completed:` (a task's `done:`),
+  and `bl validate` reports a `completed:` on a log that ends at an open status. The old hand
+  entries `by: operator` stay valid on any verb's edge; a new hand move is a `bl force`.
 
 - **Derived.** The status is the last entry's `to`, and the round is the number of entries into
   `in_review`, less the returns below. Neither is stored, and the change document holds no
@@ -966,9 +938,15 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   line; `updates.js`, `updates-run.js` and `updates-vulns.js` are exempt (Out of Scope).
 - **The writers (F-69 D3).** `applyNew` gives a new story, feature or task its first entry,
   `draft` by `new` (the templates hold `transitions:`, no `status:`). `bl refine` records
-  `refined` or `draft` by `refine`; `bl approve` `approved` by `approve` (`--force` on a draft
-  first records `refined` by `operator`); `bl side` `in_progress` by `side`; `bl done`
-  `done` by `done` or `superseded` by `supersede`; `bl task done` `done` by `done`; a scripted
+  `in_refinement` by `refine` before the session (`enterVerb` in `refineAndCommit`, F-119 R1;
+  nothing on a unit there already or on a `refine` row with no `during`). The start is all or
+  nothing: when one unit's write fails, bl puts back each unit it moved (`snapshot`), starts no
+  session and commits nothing; a unit file it cannot put back is named and left changed. Then `refined` or
+  `draft` by `refine` from the outcome; an outcome of `refined: false`, or none, leaves the
+  unit at `in_refinement`, and the next `bl refine` resumes from there with the prompt of the
+  status before (`statusBeforeRefine`). `bl approve` records `approved` by `approve`, and
+  `bl approve --force` refuses and names `bl force` (F-119 A2); `bl side` `in_progress` by
+  `side`; `bl done` `done` by `done` or `superseded` by `supersede`; `bl task done` `done` by `done`; a scripted
   run `in_progress` by `implement` or `done` by `done`. `enterVerb(backlogRoot, unit, verb)`
   records a verb's start, its `during` or a hand verb's success, unless the unit is there
   already: `bl implement` records `in_progress` by `implement` on the story (on each story of
@@ -994,8 +972,10 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   (`reviewOf`) is `fixing`, whatever its status, else `implement` (a `done` or `superseded`
   unit always gets `implement`, whose row refuses it); a started `fix` records
   `fixing`, its `during`;
-  `bl review`, `bl merge`, `bl refine` and `bl approve` their own verb. `bl merge` checks the
-  `when` guards in `mergeGates` with their own messages (`guards: false`). A malformed
+  `bl review`, `bl merge`, `bl refine` and `bl approve` their own verb. When the verb may
+  start, a hold on its nominal path refuses it (`holdRefusal`, F-119 R4): the one hold check
+  of every verb that calls `startOf`. `bl merge` checks the `when` guards and the holds in
+  `mergeGates` with their own messages (`guards: false`), so it names a hold once. A malformed
   `transitions:` (`malformedLogRefusal`) refuses every verb; `bl merge F-n` and
   `prepareFeatureWorktree` also refuse a feature whose story has one, before the first repo step.
 - **A unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the log the
@@ -1017,8 +997,8 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   `added` starts at the commit that added its file; no entry is before the one above it. It
   converts one unit at a time through `updateSpecFile` (`setLog` puts the log in `status:`'s
   place), then removes `review_round` and `review_status` from the unit's change documents
-  through `updateChangeHeld` in each document's spec lock, writes `flow.json` v2 (`migratedFlowText`: the template with the
-  backlog's gates), and commits the changed paths once (`commitPaths`) with the counts. It does
+  through `updateChangeHeld` in each document's spec lock, writes `flow.json` v2 (`migratedFlowText`: bl's template, which
+  has no gates since F-119), and commits the changed paths once (`commitPaths`) with the counts. It does
   not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
   (`liveSessionLocks`, by the worktree's branch) is held by another process (`otherHolder`; the
   PID in a lock file decides nothing, so a parent `bl` run's lock counts too) is skipped and listed, with the stories of such a feature, and so is a unit
@@ -1061,18 +1041,19 @@ review` and the loop read those, or `reviewOf`, and never the change document's 
 
 ## Holds between units (`blockers.json`, F-66 D2)
 
-`blockers.json`, at the backlog root, holds every edge: a unit held at a gate until another
-unit's status meets a status. Unit files hold none; `bl block list` derives each unit's view.
+`blockers.json`, at the backlog root, holds every edge: a unit kept out of a status (the
+edge's gate) until another unit's status meets a status. Unit files hold none; `bl block list`
+derives each unit's view.
 
 ```json
 {
   "schema": "bl-blockers/v2",
   "edges": [
     { "blocker": "F-1:ci-cd", "gate": "merge", "unit": "F-1:bl", "until": "merged" },
-    { "blocker": "S-1", "gate": "merge", "unit": "F-1", "until": "done" },
+    { "blocker": "S-1", "gate": "done", "unit": "F-1", "until": "done" },
     {
       "blocker": "S-2",
-      "gate": "run",
+      "gate": "in_progress",
       "unit": "*",
       "until": "done",
       "active_when": { "unit": "F-54", "status": "done" }
@@ -1081,11 +1062,28 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
 }
 ```
 
-- **An edge** holds `unit` at `gate` until `blocker`'s status meets `until` (`Flow.meets`, so
-  `superseded` meets `done`). Its identity is (`blocker`, `gate`, `unit`): no id, no
-  duplicates. `unit: "*"` holds every unit of every type that has the gate; `blocker` is never
-  `*`. `active_when` (optional) keeps the edge from holding anything until that unit's status
-  meets that status.
+- **An edge** (a hold) keeps `unit` out of the status `gate` until `blocker`'s status meets
+  `until` (`Flow.meets`, so `superseded` meets `done`), F-119 D4. The gate is a status of the
+  unit's type; any status can be one, for example `in_refinement` to hold a refinement session.
+  Its identity is (`blocker`, `gate`, `unit`): no id, no duplicates. `unit: "*"` holds every
+  unit of every type that has the status; `blocker` is never `*`. `active_when` (optional)
+  keeps the edge from holding anything until that unit's status meets that status.
+- **The gate names from before F-119** (R3). A hold's gate was `run` or `merge`, a name in
+  `flow.json`'s old `gates` table. The reader (`parseBlockers`, through `holdGate`) reads them as
+  the statuses they stand for, `OLD_GATES`: `run` as `in_progress` (what `run` and `implement`
+  enter), `merge` as `done` (what `merge` enters). A merge edge and an order edge keep their
+  gates, and so does a hold whose gate is a status of its unit's type (`typeOfId`, by the id's
+  prefix): an admin may name a status `run` or `merge` (`gateStatus`, which reads the flow
+  through `flowOrNull`). A status of that name in another type does not count. A wildcard edge
+  (`unit: "*"`) has no single type, so it keeps the name when any type has that status, and
+  then holds the units of each type that has it. With no
+  readable `flow.json`, every gate stays as written, so a writer (`bl block remove`,
+  `bl block list --fix`, `bl attach`, the merge driver) puts back the gates it read, and
+  `bl block add` refuses (`loadFlow`). So every reader sees statuses only, and the next write of the file stores them;
+  `bl block list --fix` rewrites it at once, and until then `bl validate` gives a
+  `blockers-order` warning that names the old names. `bl block add` and `bl block remove` read
+  `--gate run` and `--gate merge` the same way, and the `gate_free:<gate>` guard its argument
+  (`gateStatus`).
 - **A merge edge** (F-111 D1) joins two repos of one feature, each end `<feature>:<repo>`
   (`repoEnd`): `bl merge` merges the blocker's repo before the unit's (see `mergeOrder` under
   **Feature frontmatter**). Its gate is `merge` and its `until` is `merged` (`MERGE_EDGE`); neither
@@ -1115,9 +1113,9 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
 - **Story dependencies are edges** (F-111 D4, D5). `blockers.json` is the one place for
   holds and order; a unit file holds no `depends_on:` and no `required_for:`. "Story `S-a`
   waits for `S-b`" is `dependencyEdge(S-b, S-a, featureOf)`: the order edge `S-b → S-a` when
-  both are in one feature, else the run edge
-  `{"blocker":"S-b","gate":"run","unit":"S-a","until":"done"}`, which holds `S-a` (and its
-  feature) at `run` until `S-b` is done.
+  both are in one feature, else the run edge (`RUN_EDGE`)
+  `{"blocker":"S-b","gate":"in_progress","unit":"S-a","until":"done"}`, which keeps `S-a` (and
+  its feature) out of `in_progress` until `S-b` is done.
   - **The writers.** `bl new --depends-on` / `--required-for` and a spec's `depends_on` /
     `required_for` (input only) write these edges once the new stories are in place, through
     `writeEdges` (`block.js`: `writeEdge`'s checks for each, all or nothing), under the lock
@@ -1173,51 +1171,61 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
   sides added, is an empty graph). A merge can close a deadlock neither side had; `bl validate`
   reports it (`blockers-cycle`).
 - **Met edges stay** as history; nothing prunes them.
-- **A feature's gate** also checks the edges on each of its stories, since it runs and merges as
-  one unit (`gateIds`: the feature, and every story whose feature it is).
-- **The gate checks** (F-66 D3). `heldBy(config, id, verb)` is the one check: every active,
-  unmet edge on a member of `gateIds(units, id)` or on `*`, at a gate of that member's own type
-  whose `verbs` in `flow.json` name `verb` (`gatesAt`), so a feature honours its stories' gates
-  with the story type's verbs, each edge once with its line,
+- **A feature's hold check** also checks the edges on each of its stories, since it runs and
+  merges as one unit (`gateIds`: the feature, and every story whose feature it is).
+- **The hold checks** (F-66 D3, F-119 D6). `heldBy(config, id, verb)` is the one check: every
+  active, unmet edge on a member of `gateIds(units, id)` or on `*`, at a status on the nominal
+  path of `verb` in that member's own type (`Flow.nominalPath`), so a feature honours its
+  stories' holds with the story type's row of the verb, each edge once with its line,
   `<unit> is held at <gate> by <blocker> (<status>, needs <until>)` (`heldLine`; a wildcard edge
-  is named on the unit asked about). A file with no edges holds nothing and reads neither
-  `flow.json` nor the units; with edges, a missing `flow.json` stops the verb with its
-  `FlowError`.
-  - `bl run` and `bl implement`: `dispatch` (`verbs.js`) checks the one target after it
-    resolves and before `runTarget` (`GATED_VERBS`, `heldTargets`); both verbs take one target
-    (`ONE_TARGET_VERBS`, F-125 Decision A3), and several ids are refused before the check. A
-    held target is refused, one line per edge, then `next: bl status <blocker>` per blocker.
-    `--plan` is held too.
+  is named on the unit asked about). So a hold at `in_progress` holds `run` and `implement`, one
+  at `in_review` holds `run` and not `implement`, and one at `done` holds `merge` and not `run`.
+  `heldAt(config, id, status)` is the same check for one status. A file with no edges holds
+  nothing and reads neither `flow.json` nor the units; with edges, a missing `flow.json` stops
+  the verb with its `FlowError`.
+  - Every verb checks its holds when it starts (F-119 D6, R4), and only then: a hold added
+    while it runs does not stop it. `holdRefusal(config, id, verb)` is the refusal: one line per
+    edge, then `next: bl status <blocker>` per blocker. `startOf` checks it for the verb that
+    starts, so `bl run`, `bl implement`, `bl review`, `bl refine` (a story or a feature) and
+    `bl approve` refuse a held unit in their handler. `bl run` also checks `run`'s path in
+    `runUnit` before anything else, so `--plan` is held too. `bl done S-n` checks `done`
+    (`--superseded`: `supersede`), and `bl task done T-n` checks the task's `done`.
+  - Several ids: `dispatch` (`verbs.js`) checks nothing itself, so each target refuses in its
+    own handler (a child `bl <verb> <id>`, or a `bl refine` story batch that skips a held story
+    with a notice), and the others start. `bl run` and `bl implement` take one target
+    (`ONE_TARGET_VERBS`, F-125 Decision A3).
   - `bl merge`: `mergeGates` adds the finding `blocker` first, one per unmet edge on the unit or
-    its stories, before any repo is touched, for a story and a feature alike.
-  - No other verb is held: `bl refine`, `bl new`, `bl review`, `bl side`, `bl status`, `bl done`.
+    its stories, before any repo is touched, for a story and a feature alike (`startOf` with
+    `guards: false` adds none).
+  - No hold check: `bl new` and `bl side` make a new unit, which no edge can name yet
+    (`UNHELD_VERBS`), and `bl status` only reads.
   - No override flag: the blocker moving on (its status meets `until`) or `bl block remove`
     lifts the hold.
   - `bl status <id>` prints a `held: <line>` for each active, unmet edge on the unit (and a
-    feature's stories) at any gate of its type (`heldLines`), before its deferred count.
+    feature's stories) at any status of its type (`heldLines`), before its deferred count.
 - **`src/blockers.js`.** `readBlockers(backlogRoot)` (a `BlockersError` naming the file for one
   that is there but cannot be read, such as a directory or a dangling symlink, or that is not
   JSON, a wrong `schema`, or an edge of the wrong shape; only a missing file is an empty graph),
   `formatBlockers`,
   `writeBlockers`, `edgeKey`, `unitIndex` / `readUnits` (every story, feature and task by id, a
   story with the feature it runs with and its `unitRepo`), `isActive`, `isMet`, `unmetEdges`,
-  `gateIds`, `gatesAt`, `heldBy`, `heldLines`, `edgeProblems` (the per-edge checks `bl block add`
+  `gateIds`, `heldBy`, `holdRefusal`, `UNHELD_VERBS`, `heldAt`, `heldLines`, `OLD_GATES`,
+  `gateStatus`, `holdGate`, `edgeProblems` (the per-edge checks `bl block add`
   and `bl validate` share), `holdGraph`, `findHoldCycles`, `wouldCycle`, `findBlockersFindings`,
   for merge and order edges `repoEnd`, `edgeArrow`, `inFeature`, `featureMergeEdges` and
   `featureGraph`, and for story dependencies `dependencyEdge` (the edge "S-a waits for S-b"
   stands for, `RUN_EDGE` or `ORDER_EDGE`), `dependsOnEdges`, `withDependsOn`, `readEdges` and
   `storyDependencies` (each story's dependencies from the run and order edges between two
-  stories, which the graph's `dependsOn`, `computePlan`, `dependencyOrder` and `bl implement S-n`'s
-  deferral read).
+  stories, which the graph's `dependsOn`, `computePlan` and `dependencyOrder` read).
 - **The deadlock graph** (`holdGraph`, D5). Nodes are features (each standing for its stories)
   and standalone stories; an arc says one node cannot pass a gate until another moves on.
   Arcs come from every active, unmet edge of `readEdges` (so from a `depends_on:` outside a
   feature too), a wildcard expanded to every open unit (status not meeting `done`) whose type
-  has the gate. A cycle is a deadlock: two features whose stories depend on each other across
-  them (with no story cycle), two standalone stories that depend on each other, an edge and a
-  `depends_on:`, or a wildcard edge whose blocker has the gate itself (it holds its own
-  blocker). A task has no gates, so a wildcard edge from a task never holds the task, and is no
-  cycle.
+  has the gate's status. A cycle is a deadlock: two features whose stories depend on each other
+  across them (with no story cycle), two standalone stories that depend on each other, an edge
+  and a `depends_on:`, or a wildcard edge whose blocker's type has the status itself (it holds
+  its own blocker). A task has no `in_progress`, so a wildcard edge at `in_progress` from a task
+  (`bl task --gate next`) never holds the task, and is no cycle.
 
 ## Features
 
@@ -1466,15 +1474,15 @@ and adds a `changes` entry that says why (`prompts/_execution-inputs.md`).
 ### Lifecycle
 
 ```
-draft → refined → approved → in_progress → in_review ⇄ fixing → ready_for_merge → done
-                                        ↘ escalated ↗
+draft → in_refinement → refined → approved → in_progress → in_review ⇄ fixing → ready_for_merge → done
+                                                       ↘ escalated ↗
 ```
 
 | Command                      | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bl new --feature --title …` | Scaffolds `features/F<n>-<slug>/index.md` from `templates/feature.md`; `--rounds <n>` sets `review_rounds_max`; `--body-file` supplies the body. `--repo` is refused: a feature's repos are its stories'. Unless `--no-sync`, commits and pushes the feature file and each listed story's `index.md` as `chore: add F-<n>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `bl refine F-3`              | Agent session in the backlog repo (`prompts/feature-refine.md`): writes Premise (with the `Challenged:` check), Design, Acceptance, and cuts the stories via `bl new --from` with `"feature": "F-3"`. Sets `refined`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `bl approve F-3`             | **The human gate.** Requires `refined` and a consistent, non-empty story list; warns on dependencies outside the feature and on totals outside 8–20 points. Sets `approved`. Refuses while `## Escalation` is not `None.` (`--force` skips only the draft gate). Commits and pushes the feature file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `bl approve F-3`             | **The human gate.** Requires `refined` and a consistent, non-empty story list; warns on dependencies outside the feature and on totals outside 8–20 points. Sets `approved`. Refuses while `## Escalation` is not `None.`. `--force` refuses and names `bl force F-3 refined` (F-119 A2). Commits and pushes the feature file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `bl implement F-3`           | One worktree per repo at `worktrees/f3-<slug>/<repo>` on branch `f3-<slug>`; runs bootstrap/workon plugins; sets `in_progress`; launches `prompts/feature-workon.md` (stories in order-edge order, one PR at the end) or `feature-workon-review.md` when the feature is in `fixing`. Refuses while held.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `bl review F-3`              | Takes each repo's PR from the change document, else `change.find` by branch (a branch with commits and no PR gets one through `change.open`), syncs each branch with main (refuses on a conflict), then takes one review round over all of them — one verifier, one Review Log session, one verdict in the feature's transition log; the PRs are taken in the feature's repo order, and the lead repo's PR is the one run state keeps. The round is the same review step as `run`: the `review-correctness.md` and `review-failure-paths.md` passes and `review-verify.md`, on the review agent, headless unless `--interactive` (or the agent has no headless mode). Shares `run`'s state in `.bl/run/`, refuses while a run holds the feature and at the round cap. bl records the verdict (`fixing` or `ready_for_merge`, or `escalated` past the cap) from the verifier's outcome; the verifier writes `## Escalation` when the cap is hit with Must-fix items left.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `bl run F-3`                 | **The autonomous loop.** Same gates as `implement`, then: write the execution plan (`plan.yaml`) and implement each story in its work order (`feature-story.md`, headless) → test gate (`test` stage plugin; one `feature-fix-tests.md` attempt) → self-review (`feature-self-review.md`) → push + a PR per repo (the lead always, another repo when its branch has commits) → review (two dimension passes `review-correctness.md` / `review-failure-paths.md` writing findings files, then `review-verify.md` writing the session) → fix (`feature-workon-review.md`, minimal changes) → fix self-review (`feature-fix-self-review.md`, scoped to the fix diff) → re-review … until `ready_for_merge`. Items still open after the last full round (`review_rounds_max`) get one closing round: fix → fix self-review → test gate → `review-verify.md` alone, checking only those items (`closingRound`); anything still open → `escalated`. Every headless prompt ends with the headless rules (`withHeadlessRules`: no background commands, commit before ending). State in `.bl/run/F-3.json`; `--resume`, `--plan`, `--interactive`, `--max-rounds <n>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -1630,8 +1638,9 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   `draft`; otherwise the status stays and `reason` is printed
   (`applyRefineStatus`, through `transition`, with `reason` as the entry's
   `outcome`). A batch story the outcome does not name stays as it is. A
-  session without a valid outcome file changes no status and prints the
-  fault; the agent's own commit of the refinement is not affected. No refine
+  session without a valid outcome file records no outcome: each unit stays at
+  the status the session started it in (the `refine` row's `during`,
+  `in_refinement`), and bl prints the fault; the agent's own commit of the refinement is not affected. No refine
   prompt asks the agent to write a status
   (`test/unit/prompts-no-status-writes.test.js`).
 - **No valid outcome is an error, not a verdict (D5).** `runSession` in
@@ -2259,8 +2268,8 @@ added: 2026-11-13
   `bl validate` reports a story that names both (`feature-and-batch`, error)
   and one that names a batch that does not exist (`dangling-batch`, error).
 - **Status.** `flow.json`'s `batch` type: `new` records `approved`, then the
-  feature's `run`, `implement`, `review`, `fix`, `merge` and `supersede` rows
-  and gates. It has no `refine` or `approve`. bl reads a `flow.json` without
+  feature's `run`, `implement`, `review`, `fix`, `merge` and `supersede` rows.
+  It has no `refine` or `approve`. bl reads a `flow.json` without
   the type (`FLOW_TYPES` does not require it); a batch in such a backlog
   loads, and only its `done` throws the `FlowError` that names the type.
 - **The work unit of a story.** Every edge check asks `storyUnitOf(units,
@@ -2533,8 +2542,8 @@ Log` session has unchecked Must or Should items whatever the status (an
   `fixing`, `in_review` or an unchecked Must or Should box blocks,
   `ready_for_merge` and an open nit do not, and a unit with no session is
   refused unless `--no-review` (see `### bl merge`). `--force` is
-  intentionally absent; to bypass, record the status by hand as a log entry
-  `by: operator`.
+  intentionally absent; to bypass, the operator runs `bl force <id> done`
+  (see `### bl force`).
 - `bl implement` (story or feature) ends with
   `Next: bl review <id>, then bl merge <id>.` when its session exits 0.
 - `bl merge` runs one more round when its resolution agent resolved a
@@ -3046,12 +3055,12 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   `edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied first). The holds are
   F-66's checks (`mergeGates`, `dispatch`); `bl task` adds none.
 
-  - `merge`: `{ blocker: T-<n>, gate: merge, unit: <unit>, until: done }`. `bl merge <unit>`
+  - `merge`: `{ blocker: T-<n>, gate: done, unit: <unit>, until: done }`. `bl merge <unit>`
     refuses until `bl task done`: a step between the run and the merge (F-53's migration).
-  - `next`: `{ blocker: T-<n>, gate: run, unit: "*", until: done, active_when: … }` with
+  - `next`: `{ blocker: T-<n>, gate: in_progress, unit: "*", until: done, active_when: … }` with
     `active_when: { unit: <unit>, status: done }`. Nothing while the unit is open; once it is done, `bl run` and
-    `bl implement` of every unit refuse until `bl task done`. The `task` type has no gates, so
-    the wildcard never holds a task and is no `blockers-cycle`.
+    `bl implement` of every unit refuse until `bl task done`. The `task` type has no
+    `in_progress`, so the wildcard never holds a task and is no `blockers-cycle`.
   - `none`: no edge. Listed in the inbox, holds nothing: a dated reminder, or a fact the
     operator must see once; `bl task done` is the acknowledgement.
 
@@ -3077,12 +3086,13 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   Status, Done) from the task files' `unit:` when it is read (`renderPage`), after `## Stories`
   in a feature and after `## Dependencies` in a story, only when the unit has a task; nothing
   writes it into the unit's file. Holds names each edge the task is the blocker of in
-  `blockers.json` by its gate's verbs (`holdsText`): `bl merge F-3`, `bl run, bl implement
-(every unit) once F-54 is done`; `none` when it has none. A `bl block add T-<n> …` shows
-  there at the next read.
+  `blockers.json` by the verbs whose nominal path enters its gate's status (`holdsText`,
+  `Flow.nominalPath`, less `UNHELD_VERBS`), for example `bl merge F-3` or
+  `bl run, bl implement (every unit) once F-54 is done`; `none` when it has none. A
+  `bl block add T-<n> …` shows there at the next read.
 - **A task is a unit in the graph** (`unitIndex`): it can be the `blocker` of an edge or its
-  `active_when` unit (`bl block add T-7 --gate merge --unit F-53 --until done`). Its type has
-  no gates, so an edge whose `unit` is a task is `blockers-gate`.
+  `active_when` unit (`bl block add T-7 --gate done --unit F-53 --until done`). A hold on a
+  task can gate only a task status, `draft` or `done`; any other gate is `blockers-gate`.
 - `bl task` and `bl task done` pull the backlog first (`commandPullsBacklog`); `bl task list`
   does not.
 - `bl validate` checks the files: `task-unit` and `task-field` (see **`bl validate`**).
@@ -4105,6 +4115,9 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
   status, epics open or done (done once every feature is done or superseded), themes, the open
   total (what the top-level `index.md` calls the total backlog). Titles, links and grouping are
   the current tree's. Scope is the points of stories not `superseded`; done, of `done` ones.
+- **Workflow** (F-119 D3). After the Flow chart, `## Workflow` holds each type's transitions
+  as `bl flow` prints them: the same `flowTables(flow)` (`src/flow-view.js`), over the run's
+  one flow.
 - **Tables.** Themes, Epics, Features and Components: scope, done, remaining and percent done
   over each one's stories (`scopeStories`). Feature rows add stories done / in scope, the
   feature's status and its review round (`reviewRoundOf`: its log's, else the old
@@ -4189,9 +4202,9 @@ bl next --epic E62            # the first free feature of an epic
 `bl next` walks `backlog.priority` (see **Priority**: the open ranked units, then the unranked
 ones by `added:`) and prints on stdout the first unit, `F-<n>` or `S-<n>`, that nothing holds.
 A unit is held by what `bl run` would refuse it for, so `bl next` never offers what `bl run`
-refuses: an unmet edge at a gate `run` checks (`heldBy(config, id, 'run')` of `readEdges`:
-`blockers.json`'s, and the run edge of each `depends_on:` on a loose story or on a feature's
-story outside the feature).
+refuses: an unmet edge at a status on `run`'s nominal path (`heldBy(config, id, 'run')` of
+`readEdges`: `blockers.json`'s, and the run edge of each `depends_on:` on a loose story or on a
+feature's story outside the feature).
 
 - A unit held by an open story or feature gives way to the blocker's unit (the story's feature,
   or the story itself when loose), ranked or not, followed until one is free; stderr says
@@ -4337,6 +4350,36 @@ bl done S34 abc1234           # explicit commit hash
 bl done --superseded S34      # mark as superseded
 ```
 
+### `bl force`
+
+Moves a story, a feature or a story batch to any status of its type, past every transition
+rule, hold and guard (F-119 D2, `src/force.js`). It is the operator's way out of a stuck
+state, and the one way to force a move: `bl approve --force` names it (A2).
+
+```bash
+bl force S-12 done            # close a story no verb can close
+bl force S-12 in_progress     # reopen a done story
+bl force F-3 refined          # a feature past its refinement session, then bl approve F-3
+```
+
+1. It refuses under `BL_HEADLESS` or when stdin is not a terminal, before it prompts, so a
+   headless agent cannot force. It refuses a status the unit is at already and a status its
+   type lacks.
+2. It takes the unit's work unit lock (`takeUnitLocks`), so it refuses while a live session
+   holds the unit and names that process. A lock whose process has exited is free.
+3. It prints what the move skips (`skipsOf`): that `flow.json` has no transition from the
+   unit's status to the new one, each hold in `blockers.json` on the new status (`heldAt`),
+   and each failing `when` guard of the verbs that have the transition (`failingGuards`): on
+   the verb's row, and on its branches to the new status when none of them has all its guards
+   hold. The guards read the unit's round and round cap, as the review loop does.
+4. It reads one line. Any other input than the exact line `force <id> to <status>`, an empty
+   line or the end of input changes nothing and exits 1.
+5. On the exact line it takes the backlog lock and reads the unit's status and the skip list
+   again. If either changed while the operator typed (a hold added, a guard that changed, a
+   `flow.json` change, another move of the unit), it writes nothing, prints the new list and
+   exits 1. Otherwise it writes the entry `by: force` (`transition`) and commits the unit file
+   as `chore: force <id> to <status>`.
+
 ### `bl sync`
 
 Brings the backlog up to date with `origin`: it pulls, and pushes what is ahead. With
@@ -4417,6 +4460,8 @@ never waits, so it cannot wait in a cycle with them. Short commands (`bl new`, `
 `bl block`, `bl done`, `bl approve`, `bl task`) neither take nor check it, because a session's
 agent runs them as children, and a check would find the parent's lock. Every `bl refine`
 takes it (`refineAndCommit`, F-122 D4) and holds it in place of a session lock of the backlog root.
+`bl force` takes it too (F-119 R5), though it is a short command: it runs only in the operator's
+terminal, never as a session's child, and it must not move a unit that a live session works on.
 `bl merge F-n` (`cmdMerge`) takes the work unit locks of the feature and its stories after its
 merge gates and before `integrateForMerge`, so a held lock refuses the merge before any repo is
 touched, and holds them to the end of the merge. `bl merge S-n` takes the merged story's work unit
@@ -4601,10 +4646,15 @@ outside `at`, `to`, `by`, `via`, `outcome` and `note`, no `by`, an `at` that is 
 UTC or is before the entry above it, or a `to` that is not a status of the type. It is also a
 first entry that is not the type's initial status by `new`, and an entry after it whose pair
 with the entry above it is no edge of the table under its `by` (`by: operator` matches any
-verb), unless the entry has `note: migrated`. And it is an `added` that is not the first
-entry's date, or a `completed` (a task's `done`) that is not the date of the entry to a
-terminal status; for a story or a feature, also a missing `added`, or a missing `completed` on
-a log that ends terminal (a task's are `task-field`'s). The migration sets both from the log
+verb, and `by: force` any two different statuses of the type), unless the entry has
+`note: migrated`. A pair that skips a verb's `during` counts as
+that verb's edge (F-119 R2): from a status in the verb's `from` straight to one of its
+branches' `to`, by that verb or by `operator`. Logs written before `refine` had its `during`
+hold such pairs (`draft → refined` by `refine`); the writer (`applyTransition`) refuses them.
+And it is an `added` that is not the first entry's date, or a `completed` (a task's `done`)
+that is not the date of the entry to a terminal status; for a story or a feature, also a missing `added`, or a missing `completed` on
+a log that ends terminal (a task's are `task-field`'s), or a `completed` on a log that ends at
+an open status (`bl force` removes it when it reopens a unit). The migration sets both from the log
 for a unit that has neither. `legacy-status` (warning) is a
 `status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
 a log, which bl does not read. A closed unit, one whose status (`statusOf`) is in its type's
@@ -4646,8 +4696,9 @@ naming the file. `flow-json` (F-66 D1, F-69 D1, `findFlowFindings`, at
 is not a verb of the type, or one whose `from` lacks the branch's `to`; a status that is no
 branch's `to`; a terminal status before an open one, or one that a verb other than `supersede`
 starts from; a verb `DISPATCH` (`src/verbs.js`) has for a type whose table lacks it (`status`
-only reads, `READ_VERBS`); a gate verb other than `run`, `implement` and `merge`. A `bl-flow/v1`
-file is one `flow-json` warning that names `bl/scripts/migrate-transitions.js`.
+only reads, `READ_VERBS`). It is a warning for a `bl-flow/v1` file (one, naming
+`bl/scripts/migrate-transitions.js`) and for each type with a `gates` table (F-119 D4). Every
+`flow-json` message ends with `See bl/templates/flow.schema.md.` (`FLOW_DOC`, F-119 R7).
 
 The `blockers-*` findings (F-66 D5, `findBlockersFindings`) are at `blockers.json`; a missing
 file has none. All are errors except `blockers-order`:
@@ -4835,9 +4886,9 @@ no CI gate (D2): no repo has hosted CI since S-565, and the repo-local
 pre-push gate runs on `git push origin main`. In order:
 
 - **Blocker gate** (F-66 D3) — one `blocker` finding per unmet, active
-  `blockers.json` edge at the unit's `merge` gate, on the unit or, for a
+  `blockers.json` edge at a status on `merge`'s nominal path (`done`), on the unit or, for a
   feature, on one of its stories (`heldBy(config, id, "merge")`, injectable as
-  `held`): `<unit> is held at merge by <blocker> (<status>, needs <until>): <id>
+  `held`): `<unit> is held at done by <blocker> (<status>, needs <until>): <id>
 merges once <blocker> meets "<until>" (bl status <blocker>).` No flag
   bypasses it; the blocker moving on or `bl block remove` lifts it.
 - **Review gate** — `featureReviewGate` for both kinds: refused while the
@@ -4847,7 +4898,7 @@ merges once <blocker> meets "<until>" (bl status <blocker>).` No flag
   refusal names the status, the round and the next verb: `bl implement` for
   `fixing`, `bl review` for `in_review`. `ready_for_merge` and open nits pass,
   so a unit `bl run` ended `clean` always passes. No flag bypasses it; to
-  override, record the status by hand as a log entry `by: operator`. After the merge,
+  override, the operator runs `bl force <id> ready_for_merge` (see `### bl force`). After the merge,
   each repo's commit goes to its `merged:` entry and a `## Merge` line, and
   the change is `merged`; a story merged alone gets no tag and no release
   manifest.
@@ -5370,17 +5421,18 @@ Files, lifts and lists the holds in `blockers.json` (F-66 D4, `src/block.js`; se
 between units**).
 
 ```bash
-bl block add S-1 --gate merge --unit F-3 --until done     # F-3 does not merge until S-1 is done
-bl block add S-1 --gate run --unit '*' --until done --active-when F-54 --active-status done
-bl block remove S-1 --gate merge --unit F-3               # operator only
+bl block add S-1 --gate done --unit F-3 --until done      # F-3 does not merge until S-1 is done
+bl block add S-1 --gate in_progress --unit '*' --until done --active-when F-54 --active-status done
+bl block add F-118 --gate in_refinement --unit S-1486 --until refined  # S-1486 waits for F-118
+bl block remove S-1 --gate done --unit F-3                # operator only
 bl block list F-3        # edges on F-3, on its stories, on *, and by F-3: met, unmet or inactive
 bl block list --fix      # rewrite a hand-edited blockers.json sorted, and commit it
 ```
 
-- **`add`** checks every field (`edgeProblems`: known ids, a gate the unit's type has, `until`
-  and `--active-status` statuses of their units' types, a blocker not already closed short of
-  `until`), refuses a duplicate and an edge that
-  would close a cycle in the hold graph (`wouldCycle`; an edge not yet active adds no arc, and
+- **`add`** checks every field (`edgeProblems`: known ids, a gate that is a status of the unit's
+  type, `until` and `--active-status` statuses of their units' types, a blocker not already
+  closed short of `until`), refuses a duplicate and an edge that would close a cycle in the
+  hold graph (`wouldCycle`; an edge not yet active adds no arc, and
   `bl validate` reports the cycle once it is). It takes the backlog lock, rereads the file,
   writes it sorted and commits `blockers.json` alone as `chore: block <unit> at <gate> on
 <blocker>`. stdout is `blocked: <unit> at <gate> by <blocker> until <status>`; every refusal

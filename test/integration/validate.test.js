@@ -971,12 +971,12 @@ test('bl validate takes story and feature statuses from flow.json and reports fl
       [
         'bad-status',
         'stories/S1/index.md',
-        'status "refined" not in known set (flow.json story statuses: draft, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+        'status "refined" not in known set (flow.json story statuses: draft, in_refinement, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
       ],
       [
         'bad-status',
         'features/F1/index.md',
-        'status "approved" not in known set (flow.json feature statuses: draft, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
+        'status "approved" not in known set (flow.json feature statuses: draft, in_refinement, refined, in_progress, in_review, fixing, ready_for_merge, escalated, done, superseded)',
       ],
     ],
   );

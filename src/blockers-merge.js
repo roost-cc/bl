@@ -45,11 +45,13 @@ export function configureMergeDriver(root) {
 }
 
 async function main([basePath, oursPath, theirsPath]) {
-  const { formatBlockers, mergeEdges, parseBlockers } = await import('./blockers.js');
+  const { flowOrNull, formatBlockers, mergeEdges, parseBlockers } = await import('./blockers.js');
+  // git runs the driver at the top of the work tree: the backlog root, with its flow.json.
+  const flow = flowOrNull(process.cwd());
   // A base without the file (an add on both) is an empty graph.
   const read = (p, absentIsEmpty = false) => {
     const text = readFileSync(p, 'utf8');
-    return absentIsEmpty && text === '' ? [] : parseBlockers(text, p);
+    return absentIsEmpty && text === '' ? [] : parseBlockers(text, p, flow);
   };
   let merged = null;
   try {

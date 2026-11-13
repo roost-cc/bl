@@ -1,7 +1,9 @@
 /**
  * flow.js — the backlog's `flow.json` (F-66 D1, F-69 D1): per unit type, its
- * statuses in lifecycle order, the terminal ones, the verbs that move a unit
- * between them, and the gates a unit can be held at.
+ * statuses in lifecycle order, the terminal ones, and the verbs that move a
+ * unit between them. A hold in `blockers.json` can gate entry into any status
+ * (F-119 D4), so the file has no gates of its own; a verb checks the holds on
+ * its nominal path (`nominalPath`, D6).
  *
  *   {
  *     "schema": "bl-flow/v2",
@@ -12,8 +14,7 @@
  *         "verbs": {
  *           "refine": { "from": ["draft", "refined"], "via": ["refine"],
  *                       "success": [{ "to": "refined" }], "failure": [{ "to": "draft" }] }
- *         },
- *         "gates": { "run": { "verbs": ["run", "implement"] } }
+ *         }
  *       }
  *     }
  *   }
@@ -28,14 +29,15 @@
  * missing, or a shape that is not the one above.
  *
  * A `bl-flow/v1` file (statuses with `implies`, no verbs) still loads, until
- * the migration rewrites it (F-69 D4): as bl's v2 template with the file's own
- * gates, and `flow.legacy` set. `LEGACY_STATUSES` maps the v1 words.
+ * the migration rewrites it (F-69 D4): as bl's v2 template, with
+ * `flow.legacy` set. `LEGACY_STATUSES` maps the v1 words. A type's `gates`
+ * table, from before F-119, still loads and is not read; `flow-json` warns on
+ * it.
  */
 
 import { readFileSync, statSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { isDeepStrictEqual } from 'util';
 import { findBacklogRoot } from './config.js';
 
 /** The file's name, at the backlog root. */
@@ -43,8 +45,11 @@ export const FLOW_FILE = 'flow.json';
 
 export const FLOW_SCHEMA = 'bl-flow/v2';
 
-/** The schema before F-69: read as the template plus the file's gates. */
+/** The schema before F-69: read as the template. */
 export const LEGACY_FLOW_SCHEMA = 'bl-flow/v1';
+
+/** The one document of the file's format (F-119 R7); `bl flow --help` and each `flow-json` finding name it. */
+export const FLOW_DOC = 'bl/templates/flow.schema.md';
 
 /** The script that rewrites a v1 backlog (F-69 D4); `flow-json` names it. */
 export const MIGRATION_SCRIPT = 'bl/scripts/migrate-transitions.js';
@@ -52,11 +57,16 @@ export const MIGRATION_SCRIPT = 'bl/scripts/migrate-transitions.js';
 /** The types every backlog's flow names: `task` since F-65 (D1). */
 export const FLOW_TYPES = ['story', 'feature', 'task'];
 
-/** The verbs bl checks a gate at (F-66 D3); any other is `flow-json`. */
-export const GATE_VERBS = ['run', 'implement', 'merge'];
-
 /** The `bl` verbs that only read a unit, so no table has a row for them. */
 export const READ_VERBS = ['status'];
+
+/**
+ * The verb bl defines itself (F-119 D2.3): `bl force` moves a unit between
+ * any two statuses of its type. `flow.json` lists no row for it: the reader
+ * leaves a type's `force` row out (`forceRows`), so no reader of the table
+ * sees it, and `flow-json` reports it.
+ */
+export const FORCE = 'force';
 
 /** `from: "*"`: every status of the type that is not terminal. */
 export const ANY_OPEN = '*';
@@ -190,13 +200,24 @@ function readJson(path) {
 
 /**
  * The flow `--help` words its status lists from: the backlog's, or `bl init`'s
- * template where there is none to read, since help works anywhere.
+ * template where there is none to read, since help works anywhere. With
+ * `strict`, the template stands in only outside a backlog: a backlog's
+ * `flow.json` that `loadFlow` cannot read throws (`bl flow`, which shows the
+ * admin that file).
+ * @param {{ strict?: boolean }} [opts]
  * @returns {Flow}
  */
-export function flowForHelp() {
+export function flowForHelp({ strict = false } = {}) {
+  let root;
   try {
-    return loadFlow(findBacklogRoot());
+    root = findBacklogRoot();
   } catch {
+    return loadFlow(TEMPLATE_DIR);
+  }
+  try {
+    return loadFlow(root);
+  } catch (err) {
+    if (strict) throw err;
     return loadFlow(TEMPLATE_DIR);
   }
 }
@@ -220,47 +241,23 @@ const isStringList = (v) => Array.isArray(v) && v.every((s) => typeof s === 'str
  * @typedef {{ when: string[], to: string, then: string | null }} Branch
  * @typedef {{ from: string[] | "*", when: string[], during: string | null, via: string[],
  *   success: Branch[], failure: Branch[] }} Verb
- * @typedef {{ statuses: string[], terminal: string[], verbs: Record<string, Verb>,
- *   gates: Record<string, { verbs: string[] }> }} FlowType
+ * @typedef {{ statuses: string[], terminal: string[], verbs: Record<string, Verb> }} FlowType
  */
 
-/**
- * A v1 file as v2: bl's template, with the file's own gates per type. A
- * template type that v1 never had (`batch`, F-125 D1) keeps the template's
- * gates.
- * @param {string} path
- * @param {any} raw  a v1 file with every type in `FLOW_TYPES`
- */
-function legacyAsV2(path, raw) {
-  const template = readJson(join(TEMPLATE_DIR, FLOW_FILE));
-  const types = {};
-  for (const [type, def] of Object.entries(template.types)) {
-    if (!FLOW_TYPES.includes(type) && !Object.hasOwn(raw.types, type)) {
-      types[type] = def;
-      continue;
-    }
-    if (!isObject(raw.types[type])) throw new FlowError(path, `type "${type}" is not an object`);
-    types[type] = { ...def, gates: raw.types[type].gates };
-  }
-  return types;
+/** A v1 file's types as v2: bl's template alone (F-69 D4). */
+function legacyAsV2() {
+  return readJson(join(TEMPLATE_DIR, FLOW_FILE)).types;
 }
 
 /**
  * The `flow.json` text the migration writes over a v1 file (F-69 D4): bl's
- * template with the file's own gates per type, or null when the file is v2
- * already. When the gates are the template's, the text is the template's.
- * Throws `FlowError` as `loadFlow` does.
+ * template, or null when the file is v2 already. Throws `FlowError` as
+ * `loadFlow` does.
  * @param {string} backlogRoot
  * @returns {string | null}
  */
 export function migratedFlowText(backlogRoot) {
-  const flow = loadFlow(backlogRoot);
-  if (!flow.legacy) return null;
-  const templatePath = join(TEMPLATE_DIR, FLOW_FILE);
-  const template = readJson(templatePath);
-  const types = legacyAsV2(flow.path, readJson(flow.path));
-  if (isDeepStrictEqual(types, template.types)) return readFileSync(templatePath, 'utf8');
-  return `${JSON.stringify({ ...template, types }, null, 2)}\n`;
+  return loadFlow(backlogRoot).legacy ? readFileSync(join(TEMPLATE_DIR, FLOW_FILE), 'utf8') : null;
 }
 
 /** A branch list, checked; `at` names it in a message. */
@@ -311,15 +308,11 @@ function parseType(path, type, def) {
   }
   if (!isStringList(def.terminal)) throw new FlowError(path, `${at} has no "terminal" list`);
   if (!isObject(def.verbs)) throw new FlowError(path, `${at} has no "verbs" object`);
-  if (!isObject(def.gates)) throw new FlowError(path, `${at} has no "gates" object`);
-  for (const [gate, g] of Object.entries(def.gates)) {
-    if (!isObject(g) || !isStringList(g.verbs) || g.verbs.length === 0) {
-      throw new FlowError(path, `${at} gate "${gate}" has no "verbs" list`);
-    }
-  }
   const verbs = {};
-  for (const [verb, v] of Object.entries(def.verbs)) verbs[verb] = parseVerb(path, `${at} verb "${verb}"`, v);
-  return { statuses: def.statuses, terminal: def.terminal, verbs, gates: def.gates };
+  for (const [verb, v] of Object.entries(def.verbs)) {
+    if (verb !== FORCE) verbs[verb] = parseVerb(path, `${at} verb "${verb}"`, v);
+  }
+  return { statuses: def.statuses, terminal: def.terminal, verbs };
 }
 
 export class Flow {
@@ -337,9 +330,15 @@ export class Flow {
     for (const type of FLOW_TYPES) {
       if (!Object.hasOwn(raw.types, type)) throw new FlowError(path, `no "${type}" type in "types"`);
     }
-    /** Whether the file is v1, read as the template with its gates (F-69 D4). */
+    /** Whether the file is v1, read as the template (F-69 D4). */
     this.legacy = raw.schema === LEGACY_FLOW_SCHEMA;
-    const types = this.legacy ? legacyAsV2(path, raw) : raw.types;
+    const types = this.legacy ? legacyAsV2() : raw.types;
+    /** The types that still have a `gates` table, which bl does not read (F-119 D4). */
+    this.gateTables = Object.keys(types).filter((t) => isObject(types[t]) && Object.hasOwn(types[t], 'gates'));
+    /** The types with a `force` row, which bl does not read (F-119 D2.3). */
+    this.forceRows = Object.keys(types).filter(
+      (t) => isObject(types[t]?.verbs) && Object.hasOwn(types[t].verbs, FORCE),
+    );
     /** @type {Record<string, FlowType>} */
     this.types = {};
     for (const [type, def] of Object.entries(types)) this.types[type] = parseType(path, type, def);
@@ -479,16 +478,6 @@ export class Flow {
   }
 
   /**
-   * The type's gates: each name with the verbs that check it.
-   * @param {string} type
-   * @returns {Record<string, string[]>}
-   */
-  gatesOf(type) {
-    const { gates } = this.typeOf(type);
-    return Object.fromEntries(Object.entries(gates).map(([gate, g]) => [gate, [...g.verbs]]));
-  }
-
-  /**
    * The row of `verb` in the type's table, or null when it has none.
    * @param {string} type
    * @param {string} verb
@@ -526,6 +515,37 @@ export class Flow {
         if (b.then && !out.includes(b.then)) out.push(b.then);
       }
     }
+    return out;
+  }
+
+  /**
+   * The statuses a verb enters on its nominal path (F-119 D6), each once, in
+   * the order it enters them: the row's `during`, then each `success`
+   * branch's `to`, and the same for the verb a success branch chains to with
+   * `then`. A failure branch is no part of it. `run`'s is `in_progress`,
+   * `in_review`, `ready_for_merge`; `[]` for a verb the type lacks. A verb
+   * checks the holds on these statuses when it starts.
+   * @param {string} type
+   * @param {string} verb
+   * @returns {string[]}
+   */
+  nominalPath(type, verb) {
+    const out = [];
+    const add = (status) => {
+      if (status != null && !out.includes(status)) out.push(status);
+    };
+    const walked = new Set();
+    const walk = (name) => {
+      const row = this.verbOf(type, name);
+      if (!row || walked.has(name)) return;
+      walked.add(name);
+      add(row.during);
+      for (const b of row.success) {
+        add(b.to);
+        if (b.then) walk(b.then);
+      }
+    };
+    walk(verb);
     return out;
   }
 
@@ -571,9 +591,10 @@ export class Flow {
  * lacks; a `when` or `via` name bl does not register; a last `success` or
  * `failure` branch with a `when`; a `then` that is not a
  * verb of the type starting from the branch's `to`; a status no branch goes
- * to; a terminal status before an open one, or one a verb other than
+ * to and no verb records as its `during`; a terminal status before an open one, or one a verb other than
  * `supersede` starts from; a verb bl dispatches for a type that the type's
- * table lacks; a gate verb bl does not check. A warning: a v1 file.
+ * table lacks; a `force` row (F-119 D2.3). Warnings: a v1 file; a type with
+ * a `gates` table (F-119 D4).
  * @param {Flow} flow
  * @param {FlowWiring} wiring
  * @param {string} location  the file, relative to the backlog root
@@ -581,10 +602,16 @@ export class Flow {
  */
 export function findFlowFindings(flow, wiring, location = FLOW_FILE) {
   const findings = [];
-  const add = (message, severity = 'error') => findings.push({ severity, code: 'flow-json', message, location });
+  const add = (message, severity = 'error') =>
+    findings.push({
+      severity,
+      code: 'flow-json',
+      message: `${message.replace(/\.$/, '')}. See ${FLOW_DOC}.`,
+      location,
+    });
   if (flow.legacy) {
     add(
-      `${location} is ${LEGACY_FLOW_SCHEMA}; bl reads it as its ${FLOW_SCHEMA} template with this file's gates. ` +
+      `${location} is ${LEGACY_FLOW_SCHEMA}; bl reads it as its ${FLOW_SCHEMA} template. ` +
         `Run node ${MIGRATION_SCRIPT} to rewrite the backlog.`,
       'warning',
     );
@@ -607,7 +634,10 @@ export function findFlowFindings(flow, wiring, location = FLOW_FILE) {
           add(`${at} starts from terminal status "${f}"; only supersede may`);
         }
       }
-      if (row.during != null && !isStatus(row.during)) notStatus(`verb "${verb}" records during`, row.during);
+      if (row.during != null) {
+        reached.add(row.during);
+        if (!isStatus(row.during)) notStatus(`verb "${verb}" records during`, row.during);
+      }
       for (const g of row.when.filter((n) => !guardRegistered(n))) {
         add(`${at} checks guard "${g}", which bl does not register (bl/src/guards.js)`);
       }
@@ -638,16 +668,20 @@ export function findFlowFindings(flow, wiring, location = FLOW_FILE) {
       }
     }
     for (const s of def.statuses.filter((x) => !reached.has(x))) {
-      add(`${type} status "${s}" is no branch's "to"; no verb reaches it`);
+      add(`${type} status "${s}" is no branch's "to" and no verb's "during"; no verb reaches it`);
     }
     for (const [verb, kinds] of Object.entries(wiring.dispatch)) {
       if (READ_VERBS.includes(verb) || !kinds[type] || flow.verbOf(type, verb)) continue;
       add(`bl dispatches "${verb}" for a ${type}, and the ${type} table has no "${verb}" verb`);
     }
-    for (const [gate, { verbs }] of Object.entries(def.gates)) {
-      for (const verb of verbs.filter((v) => !GATE_VERBS.includes(v))) {
-        add(`${type} gate "${gate}" names verb "${verb}"; bl checks gates only at ${GATE_VERBS.join(', ')}`);
-      }
+    if (flow.forceRows.includes(type)) {
+      add(`${type} has a "${FORCE}" verb; bl defines ${FORCE} itself and does not read the row; remove it`);
+    }
+    if (flow.gateTables.includes(type)) {
+      add(
+        `${type} has a "gates" table, which bl no longer reads; remove it: a hold can gate any ${type} status`,
+        'warning',
+      );
     }
   }
   return findings;

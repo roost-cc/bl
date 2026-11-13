@@ -59,19 +59,20 @@ test('a wildcard run edge with active_when holds nothing until its unit is done,
     assert.doesNotMatch(bl(fx.dir, ['status', 'S-1']).stdout, /^held:/m);
 
     setStatus(fx.dir, 'S5-trigger', 'in_progress', 'done');
-    const want = 'S-1 is held at run by S-3 (in_progress, needs done)\nnext: bl status S-3\n';
+    const want = 'S-1 is held at in_progress by S-3 (in_progress, needs done)\nnext: bl status S-3\n';
     r = bl(fx.dir, ['run', '--plan', 'S-1']);
     assert.equal(r.status, 1);
     assert.equal(r.stderr, want);
     assert.equal(r.stdout, '');
+    // bl implement skips a story it cannot start, with the same lines.
     r = bl(fx.dir, ['implement', 'S-1']);
     assert.equal(r.status, 1);
-    assert.equal(r.stderr, want);
+    assert.equal(r.stderr, want.replace(/\n$/, ' — skipping.\n'));
 
     // bl status is never held, and shows the hold.
     r = bl(fx.dir, ['status', 'S-1']);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /^held: S-1 is held at run by S-3 \(in_progress, needs done\)$/m);
+    assert.match(r.stdout, /^held: S-1 is held at in_progress by S-3 \(in_progress, needs done\)$/m);
 
     // The blocker moving on lifts the hold.
     setStatus(fx.dir, 'S3-blocker', 'in_progress', 'done');
@@ -89,7 +90,7 @@ test('several targets are refused before the gate check, naming bl batch (F-125 
       const r = bl(fx.dir, [verb, '--plan', 'S-1', 'S-2']);
       assert.equal(r.status, 1, verb);
       assert.match(r.stderr, new RegExp(`^bl ${verb}: takes one target; .*bl batch`), verb);
-      assert.doesNotMatch(r.stderr, /held at run/, `${verb}: no gate check`);
+      assert.doesNotMatch(r.stderr, /held at in_progress/, `${verb}: no gate check`);
       assert.equal(r.stdout, '', verb);
     }
   } finally {
@@ -103,7 +104,7 @@ test('a next task (bl task --gate next) holds nothing while its unit is open, th
     let r = bl(fx.dir, ['task', 'S-5', '--gate', 'next', '--title', 'Reinstall the browsers']);
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(readFileSync(join(fx.dir, 'blockers.json'), 'utf8')).edges, [
-      { blocker: 'T-1', gate: 'run', unit: '*', until: 'done', active_when: { unit: 'S-5', status: 'done' } },
+      { blocker: 'T-1', gate: 'in_progress', unit: '*', until: 'done', active_when: { unit: 'S-5', status: 'done' } },
     ]);
     r = bl(fx.dir, ['run', '--plan', 'S-1']);
     assert.equal(r.status, 0, r.stderr);
@@ -116,7 +117,10 @@ test('a next task (bl task --gate next) holds nothing while its unit is open, th
     ]) {
       r = bl(fx.dir, args);
       assert.equal(r.status, 1, args.join(' '));
-      assert.match(r.stderr, /^S-[12] is held at run by T-1 \(draft, needs done\)\nnext: bl status T-1\n$/);
+      assert.match(
+        r.stderr,
+        /^S-[12] is held at in_progress by T-1 \(draft, needs done\)\nnext: bl status T-1( — skipping\.)?\n$/,
+      );
     }
     assert.match(
       bl(fx.dir, ['inbox']).stdout,

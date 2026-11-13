@@ -27,6 +27,9 @@ const EXEMPT = new Set(['src/flow.js']);
 const STATUSES = new Set(loadFlow(join(ROOT, 'templates')).statusesOf('story'));
 
 const ALLOWED = {
+  // `OLD_GATES` maps the two hold gate names from before F-119 to the status
+  // each stands for (F-119 R3): a translation of old words, not a set of statuses.
+  'src/blockers.js': 1,
   // A ternary choosing which closing status a write sets, not a set of statuses.
   'src/done.js': 1,
   // `ROADMAP_STATUSES` is `roadmap.md`'s own vocabulary; it shares two words with story statuses.

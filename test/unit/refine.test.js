@@ -7,7 +7,7 @@ import { resolveRefineTargets, refineBatchId, applyRefineStatus, applyBatchStatu
 import { loadPrompt } from '../../src/session.js';
 import { outcomePath } from '../../src/outcome.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
-import { statusOf } from '../../src/transition.js';
+import { statusOf, transition } from '../../src/transition.js';
 
 test('two batch refines with different stories use different outcome files', () => {
   const a = outcomePath('/b', refineBatchId(['S-1', 'S-2']));
@@ -49,6 +49,10 @@ test('a batch refine applies every story it can and names each one it could not'
     const path = (id) => `${dir}/stories/S${id.slice(2)}/index.md`;
     // S-2 and S-5 have no file: their writes fail, before and after the others.
     const targets = ['S-1', 'S-2', 'S-3', 'S-4', 'S-5'].map((id) => ({ id, found: { indexPath: path(id) } }));
+    // refineAndCommit records the refinement session's start first (F-119 R1).
+    for (const id of ['S-1', 'S-3', 'S-4']) {
+      await transition(dir, { kind: 'story', indexPath: path(id) }, 'in_refinement', { by: 'refine' });
+    }
     const outcome = {
       'S-1': { refined: true },
       'S-2': { refined: true },
@@ -67,7 +71,7 @@ test('a batch refine applies every story it can and names each one it could not'
     );
     const status = (id) => statusOf('story', parseFrontmatter(readFileSync(path(id), 'utf8')).fm);
     assert.equal(status('S-1'), 'refined');
-    assert.equal(status('S-3'), 'draft', 'not refined: unchanged, a v1 backlog read as draft');
+    assert.equal(status('S-3'), 'in_refinement', 'not refined: unchanged');
     assert.equal(status('S-4'), 'refined');
     const entry = parseFrontmatter(readFileSync(path('S-1'), 'utf8')).fm.transitions.at(-1);
     assert.deepEqual([entry.to, entry.by, entry.via], ['refined', 'refine', 'refine']);

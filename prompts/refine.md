@@ -40,7 +40,7 @@ Backlog repo : {{backlogDir}}
    - Estimate `points:` (1, 2, 3, 5, 8, or 13).
    - If this work needs other stories first, add one edge per story to `blockers.json`, the one
      place for holds and order:
-     `bl block add <S-id> --gate run --unit {{storyId}} --until done`. When both stories are in
+     `bl block add <S-id> --gate in_progress --unit {{storyId}} --until done`. When both stories are in
      one feature, use `--gate order --until implemented`. `bl block add` commits the edge. Never
      write `depends_on:` in the story file.
    - Set `effort:` by **Effort level** below, and write the `**Effort:** <level>: <reason>` line

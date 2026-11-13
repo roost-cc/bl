@@ -4,6 +4,7 @@ import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import {
+  FLOW_DOC,
   FLOW_FILE,
   FlowError,
   LEGACY_STATUSES,
@@ -15,7 +16,9 @@ import {
 import { GUARDS } from '../../src/guards.js';
 import { CAPABILITIES, VIA_CAPABILITIES } from '../../src/capabilities.js';
 import { DISPATCH } from '../../src/verbs.js';
-import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { flowTables } from '../../src/flow-view.js';
+import { skipsOf } from '../../src/force.js';
 
 /** A `bl-flow/v1` file: bl's template before F-69. */
 const V1_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'flow');
@@ -33,6 +36,7 @@ function backlogWith(content) {
 
 const STORY = [
   'draft',
+  'in_refinement',
   'refined',
   'in_progress',
   'in_review',
@@ -44,6 +48,7 @@ const STORY = [
 ];
 const FEATURE = [
   'draft',
+  'in_refinement',
   'refined',
   'approved',
   'in_progress',
@@ -55,7 +60,7 @@ const FEATURE = [
   'superseded',
 ];
 
-test('the template is bl-flow/v2: the ten words in lifecycle order, terminal last, no implies', () => {
+test('the template is bl-flow/v2: the words in lifecycle order, terminal last, no implies', () => {
   const raw = template();
   assert.equal(raw.schema, 'bl-flow/v2');
   assert.deepEqual(raw.types.feature.statuses, FEATURE);
@@ -89,7 +94,7 @@ test('the template is bl-flow/v2: the ten words in lifecycle order, terminal las
   ]);
 });
 
-test("the template's batch type (F-125 D1): new → approved, then the feature's run, implement, review, fix, merge and supersede rows and gates", () => {
+test("the template's batch type (F-125 D1): new → approved, then the feature's run, implement, review, fix, merge and supersede rows", () => {
   const raw = template();
   const { batch, feature } = raw.types;
   assert.deepEqual(batch.statuses, FEATURE.slice(FEATURE.indexOf('approved')));
@@ -98,7 +103,6 @@ test("the template's batch type (F-125 D1): new → approved, then the feature's
   const rows = ['run', 'implement', 'review', 'fix', 'merge', 'supersede'];
   assert.deepEqual(Object.keys(batch.verbs), ['new', ...rows]);
   for (const verb of rows) assert.deepEqual(batch.verbs[verb], feature.verbs[verb], verb);
-  assert.deepEqual(batch.gates, feature.gates);
   const flow = loadFlow(TEMPLATE_DIR);
   assert.equal(flow.initial('batch'), 'approved');
   assert.ok(flow.meets('batch', 'superseded', 'done'));
@@ -244,9 +248,9 @@ test('listRankOf: started first, then the other open statuses with any unknown o
 
 test('isRunnable, isUnstarted: the shipped story sets; an unknown or non-string status is neither', () => {
   const flow = loadFlow(TEMPLATE_DIR);
-  assert.deepEqual(flow.runnableStatusesOf('story'), STORY.slice(1, -2));
-  assert.deepEqual(flow.unstartedStatusesOf('story'), ['draft', 'refined']);
-  assert.deepEqual(flow.unstartedStatusesOf('feature'), ['draft', 'refined', 'approved']);
+  assert.deepEqual(flow.runnableStatusesOf('story'), STORY.slice(2, -2));
+  assert.deepEqual(flow.unstartedStatusesOf('story'), ['draft', 'in_refinement', 'refined']);
+  assert.deepEqual(flow.unstartedStatusesOf('feature'), ['draft', 'in_refinement', 'refined', 'approved']);
   const unknown = ['blocked', '__proto__', 'constructor', ['refined'], ['draft'], 7, true, null, undefined];
   assert.deepEqual(
     unknown.filter((s) => flow.isRunnable('story', s) || flow.isUnstarted('story', s)),
@@ -266,12 +270,20 @@ test('a custom status sorts by its place in statuses', () => {
   assert.ok(flow.listRankOf('story', 'wontfix') < flow.listRankOf('story', 'superseded'));
 });
 
-test('gatesOf names each gate with the verbs that check it', () => {
+test("nominalPath: a verb's during and success to, through each success then, each once (F-119 D6)", () => {
   const flow = loadFlow(TEMPLATE_DIR);
-  const gates = { run: ['run', 'implement'], merge: ['merge'] };
-  assert.deepEqual(flow.gatesOf('story'), gates);
-  assert.deepEqual(flow.gatesOf('feature'), gates);
-  assert.deepEqual(flow.gatesOf('task'), {});
+  for (const type of ['story', 'feature', 'batch']) {
+    assert.deepEqual(flow.nominalPath(type, 'run'), ['in_progress', 'in_review', 'ready_for_merge'], type);
+    assert.deepEqual(flow.nominalPath(type, 'implement'), ['in_progress'], type);
+    assert.deepEqual(flow.nominalPath(type, 'merge'), ['done'], type);
+  }
+  assert.deepEqual(flow.nominalPath('story', 'refine'), ['in_refinement', 'refined']);
+  assert.deepEqual(flow.nominalPath('feature', 'refine'), ['in_refinement', 'refined']);
+  // fix chains review, which chains fix only on failure: no part of the path.
+  assert.deepEqual(flow.nominalPath('story', 'fix'), ['fixing', 'in_review', 'ready_for_merge']);
+  assert.deepEqual(flow.nominalPath('task', 'done'), ['done']);
+  assert.deepEqual(flow.nominalPath('story', 'approve'), [], 'a verb the type lacks');
+  assert.deepEqual(flow.nominalPath('batch', 'refine'), [], 'a verb the type lacks');
 });
 
 test('a type the flow lacks throws naming the file', () => {
@@ -281,26 +293,30 @@ test('a type the flow lacks throws naming the file', () => {
   }
 });
 
-test('a v1 file loads as the v2 template with its own gates, and flow.legacy is set', () => {
+test('a v1 file loads as the v2 template, and flow.legacy is set', () => {
   const raw = v1();
   raw.types.story.gates = { hold: { verbs: ['run'] } };
   const flow = loadFlow(backlogWith(raw));
   assert.equal(flow.legacy, true);
   assert.deepEqual(flow.statusesOf('story'), STORY);
   assert.deepEqual(flow.verbOf('feature', 'run'), loadFlow(TEMPLATE_DIR).verbOf('feature', 'run'));
-  assert.deepEqual(flow.gatesOf('story'), { hold: ['run'] });
-  assert.deepEqual(flow.gatesOf('feature'), { run: ['run', 'implement'], merge: ['merge'] });
+  assert.deepEqual(flow.types, loadFlow(TEMPLATE_DIR).types, "the file's gates are not read");
 });
 
-test("migratedFlowText: the template with a v1 file's own gates, the template's text when they match, null for v2", () => {
+test("migratedFlowText: the template's text for a v1 file, whatever its gates; null for v2", () => {
   const raw = v1();
   raw.types.story.gates = { hold: { verbs: ['run'] } };
-  const text = migratedFlowText(backlogWith(raw));
-  const expected = template();
-  expected.types.story.gates = { hold: { verbs: ['run'] } };
-  assert.deepEqual(JSON.parse(text), expected);
+  assert.equal(migratedFlowText(backlogWith(raw)), readFileSync(FLOW_TEMPLATE, 'utf8'));
   assert.equal(migratedFlowText(backlogWith(v1())), readFileSync(FLOW_TEMPLATE, 'utf8'));
   assert.equal(migratedFlowText(TEMPLATE_DIR), null);
+});
+
+test('a v2 type with a gates table from before F-119 still loads, and its gates are not read', () => {
+  const raw = template();
+  raw.types.story.gates = { run: { verbs: ['run', 'implement'] }, merge: { verbs: ['merge'] } };
+  const flow = loadFlow(backlogWith(raw));
+  assert.deepEqual(flow.types, loadFlow(TEMPLATE_DIR).types);
+  assert.deepEqual(flow.gateTables, ['story']);
 });
 
 test('loadFlow throws naming the file when it is missing, unparsable, of a wrong schema or of a wrong shape', () => {
@@ -321,11 +337,9 @@ test('loadFlow throws naming the file when it is missing, unparsable, of a wrong
       /no "task" type/,
     ],
     [{ schema: 'bl-flow/v1', types: { story: v1().types.story, feature: v1().types.feature } }, /no "task" type/],
-    [{ ...v1(), types: { ...v1().types, story: { statuses: {} } } }, /type "story" has no "gates" object/],
     [withStory({ ...template().types.story, statuses: {} }), /type "story" has no "statuses" list/],
     [withStory({ ...template().types.story, terminal: 'done' }), /type "story" has no "terminal" list/],
     [withStory({ ...template().types.story, verbs: [] }), /type "story" has no "verbs" object/],
-    [withStory({ ...template().types.story, gates: undefined }), /type "story" has no "gates" object/],
     [withVerb({ from: 'refined' }), /verb "run" has no "from" list/],
     [withVerb({ from: [], via: 'implement' }), /verb "run" "via" is not a list/],
     [withVerb({ from: [], during: ['in_progress'] }), /verb "run" "during" is not a status/],
@@ -449,28 +463,83 @@ test('v1 and v2 agree over the live v1 shape, except that escalated now meets in
 // flow-json findings (F-69 D1)
 // ---------------------------------------------------------------------------
 
-/** The flow-json messages for the template with `change` applied. */
+/** The sentence every flow-json message ends with (F-119 R7). */
+const SEE_DOC = ` See ${FLOW_DOC}.`;
+
+/** The flow-json messages for the template with `change` applied, each without `SEE_DOC`. */
 function findingsAfter(change) {
   const raw = template();
   change(raw);
-  return findFlowFindings(loadFlow(backlogWith(raw)), WIRING).map((f) => `${f.severity}: ${f.message}`);
+  return findFlowFindings(loadFlow(backlogWith(raw)), WIRING).map((f) => {
+    assert.ok(f.message.endsWith(SEE_DOC), f.message);
+    return `${f.severity}: ${f.message.slice(0, -SEE_DOC.length).replace(/\.$/, '')}`;
+  });
 }
 
 test('flow-json: the shipped template has no findings', () => {
   assert.deepEqual(findFlowFindings(loadFlow(TEMPLATE_DIR), WIRING), []);
 });
 
-test('flow-json: a v1 file is one warning naming the migration script', () => {
+test('flow-json: a v1 file is one warning naming the migration script and the format document', () => {
   assert.deepEqual(findFlowFindings(loadFlow(V1_DIR), WIRING), [
     {
       severity: 'warning',
       code: 'flow-json',
       location: 'flow.json',
       message:
-        "flow.json is bl-flow/v1; bl reads it as its bl-flow/v2 template with this file's gates. " +
-        'Run node bl/scripts/migrate-transitions.js to rewrite the backlog.',
+        'flow.json is bl-flow/v1; bl reads it as its bl-flow/v2 template. ' +
+        'Run node bl/scripts/migrate-transitions.js to rewrite the backlog. ' +
+        'See bl/templates/flow.schema.md.',
     },
   ]);
+});
+
+test('flow-json: a message with no full stop gets one before the format document', () => {
+  const raw = template();
+  raw.types.task.gates = {};
+  assert.deepEqual(
+    findFlowFindings(loadFlow(backlogWith(raw)), WIRING).map((f) => f.message),
+    [
+      'task has a "gates" table, which bl no longer reads; remove it: a hold can gate any task status. See bl/templates/flow.schema.md.',
+    ],
+  );
+});
+
+test('flow_rejects_reserved_force_rows_for_each_type: a valid force row is a finding, and no reader of the table sees it (F-119 D2.3)', () => {
+  for (const type of Object.keys(template().types)) {
+    const raw = template();
+    // A row that would pass every other check.
+    raw.types[type].verbs.force = { from: '*', success: [{ to: 'done' }] };
+    const dir = mkTempBacklog({ flow: raw }).dir;
+    const flow = loadFlow(dir);
+    assert.deepEqual(
+      findFlowFindings(flow, WIRING).map((f) => f.message),
+      [
+        `${type} has a "force" verb; bl defines force itself and does not read the row; remove it. See bl/templates/flow.schema.md.`,
+      ],
+      type,
+    );
+    assert.equal(flow.verbOf(type, 'force'), null, `${type}: verbOf`);
+    assert.deepEqual(flow.nominalPath(type, 'force'), [], `${type}: nominalPath`);
+    assert.ok(!flow.edges(type).some((e) => e.by === 'force'), `${type}: edges`);
+    assert.doesNotMatch(flowTables(flow), /\| force /, `${type}: bl flow`);
+    // bl force's skip list is the template's: a move the table lacks, the force row's own included.
+    const from = flow.initial(type);
+    const listed = (to) => flow.edges(type).some((e) => e.from === from && e.to === to);
+    const to = flow.statusesOf(type).find((s) => s !== from && !listed(s)) ?? 'done';
+    const unit = { id: 'S-1', kind: type, status: from, indexPath: join(dir, 'x.md') };
+    const plain = mkTempBacklog({}).dir;
+    assert.deepEqual(
+      skipsOf({ backlogRoot: dir }, unit, to),
+      skipsOf({ backlogRoot: plain }, { ...unit, indexPath: join(plain, 'x.md') }, to),
+      `${type}: bl force`,
+    );
+    if (!listed(to)) {
+      assert.ok(
+        skipsOf({ backlogRoot: dir }, unit, to).includes(`flow.json has no ${type} transition from ${from} to ${to}`),
+      );
+    }
+  }
 });
 
 test('flow-json: a from, during, to or terminal status the type lacks', () => {
@@ -540,8 +609,39 @@ test("flow-json: a status that is no branch's to", () => {
     findingsAfter((raw) => {
       raw.types.story.statuses.splice(1, 0, 'blocked');
     }),
-    ['error: story status "blocked" is no branch\'s "to"; no verb reaches it'],
+    ['error: story status "blocked" is no branch\'s "to" and no verb\'s "during"; no verb reaches it'],
   );
+});
+
+test('flow-json: a status that only a during reaches is reached (F-119 S-1501)', () => {
+  assert.deepEqual(
+    findingsAfter((raw) => {
+      raw.types.story.statuses.splice(1, 0, 'blocked');
+      raw.types.story.verbs.side.during = 'blocked';
+      raw.types.story.verbs.side.from.push('blocked');
+      const branches = Object.values(raw.types.story.verbs).flatMap((v) => [
+        ...(v.success ?? []),
+        ...(v.failure ?? []),
+      ]);
+      assert.ok(!branches.some((b) => b.to === 'blocked'), 'no branch goes to blocked');
+    }),
+    [],
+  );
+});
+
+test('the template: refine records in_refinement, and the feature row starts from approved (F-119 D9)', () => {
+  const flow = loadFlow(TEMPLATE_DIR);
+  for (const type of ['story', 'feature']) {
+    assert.equal(flow.statusesOf(type)[1], 'in_refinement', type);
+    assert.equal(flow.verbOf(type, 'refine').during, 'in_refinement', type);
+  }
+  assert.deepEqual(flow.verbOf('story', 'refine').from, ['draft', 'in_refinement', 'refined']);
+  assert.deepEqual(flow.verbOf('feature', 'refine').from, ['draft', 'in_refinement', 'refined', 'approved']);
+  const has = (from, to) => flow.edges('feature').some((e) => e.from === from && e.to === to && e.by === 'refine');
+  assert.ok(has('approved', 'in_refinement'));
+  assert.ok(has('in_refinement', 'refined'));
+  assert.ok(has('in_refinement', 'draft'));
+  assert.ok(!has('draft', 'refined'), 'refine goes through its during');
 });
 
 test('flow-json: a terminal status before an open one, or one a verb other than supersede starts from', () => {
@@ -570,12 +670,16 @@ test('flow-json: a verb bl dispatches for a type that its table lacks; status re
   assert.equal(DISPATCH.status.feature != null, true, 'status dispatches, and no table has it');
 });
 
-test('flow-json: a gate verb bl does not check', () => {
+test('flow-json: a gates table from before F-119 is a warning, not an error, whatever it names', () => {
   assert.deepEqual(
     findingsAfter((raw) => {
-      raw.types.feature.gates.review = { verbs: ['review', 'merge'] };
+      raw.types.feature.gates = { run: { verbs: ['run', 'implement'] }, review: { verbs: ['review'] } };
+      raw.types.task.gates = {};
     }),
-    ['error: feature gate "review" names verb "review"; bl checks gates only at run, implement, merge'],
+    [
+      'warning: feature has a "gates" table, which bl no longer reads; remove it: a hold can gate any feature status',
+      'warning: task has a "gates" table, which bl no longer reads; remove it: a hold can gate any task status',
+    ],
   );
 });
 

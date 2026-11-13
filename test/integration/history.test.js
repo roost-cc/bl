@@ -243,16 +243,16 @@ test('bl history prints ISO weeks by points per status; an unknown scope exits 1
   const lines = r.stdout.trim().split('\n');
   assert.match(
     lines[0],
-    /^\| Week +\| Date +\| draft \| refined \| in_progress \| in_review \| fixing \| ready_for_merge \| escalated \| done \| superseded \| scope \|$/,
+    /^\| Week +\| Date +\| draft \| in_refinement \| refined \| in_progress \| in_review \| fixing \| ready_for_merge \| escalated \| done \| superseded \| scope \|$/,
   );
   // W17 ends on 2026-04-25, W18 holds 2026-04-28.
   assert.match(
     lines[2],
-    /^\| 2026-W17 \| 2026-04-25 +\| 13 +\| 3 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 1 +\| 0 +\| 17 +\|$/,
+    /^\| 2026-W17 \| 2026-04-25 +\| 13 +\| 0 +\| 3 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 1 +\| 0 +\| 17 +\|$/,
   );
   assert.match(
     lines[3],
-    /^\| 2026-W18 \| 2026-04-28 +\| 8 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 4 +\| 5 +\| 12 +\|$/,
+    /^\| 2026-W18 \| 2026-04-28 +\| 8 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 0 +\| 4 +\| 5 +\| 12 +\|$/,
   );
   assert.match(r.stderr, /1 index\.md blob\(s\) could not be read/);
 
@@ -280,6 +280,7 @@ test('bl history shows a story status flow.json adds as a column, in the file or
     'Date',
     'draft',
     'blocked',
+    'in_refinement',
     'refined',
     'in_progress',
     'in_review',
@@ -300,6 +301,7 @@ test("bl history keeps a status only an old commit holds, after the statuses tod
     'Week',
     'Date',
     'draft',
+    'in_refinement',
     'refined',
     'in_progress',
     'in_review',

@@ -43,7 +43,7 @@ const story = (id, { status = 'backlog', feature = '', ...keys } = {}) =>
 const BLOCKERS_BEFORE = `{
   "schema": "bl-blockers/v2",
   "edges": [
-    {"blocker":"S-5","gate":"run","unit":"S-6","until":"done"}
+    {"blocker":"S-5","gate":"in_progress","unit":"S-6","until":"done"}
   ]
 }
 `;
@@ -123,12 +123,12 @@ test('--dry-run prints the edges, the files, the kept file and the counts, and w
   const r = script(dir, '--dry-run');
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^would write {3}S-2 at order by S-1 until implemented$/m);
-  assert.match(r.stdout, /^would write {3}S-3 at run by S-1 until done$/m);
-  assert.match(r.stdout, /^would write {3}S-4 at run by S-1 until done$/m);
-  assert.match(r.stdout, /^cannot place S-4 at run by S-9: blocker S-9 is not a unit in the backlog$/m);
+  assert.match(r.stdout, /^would write {3}S-3 at in_progress by S-1 until done$/m);
+  assert.match(r.stdout, /^would write {3}S-4 at in_progress by S-1 until done$/m);
+  assert.match(r.stdout, /^cannot place S-4 at in_progress by S-9: blocker S-9 is not a unit in the backlog$/m);
   assert.match(r.stdout, /^would rewrite stories\/S5-five\/index\.md \(required_for, depends_on removed\)$/m);
   assert.match(r.stdout, /^would rewrite stories\/S6-six\/index\.md \(depends_on removed\)$/m);
-  assert.match(r.stdout, /^keep {4}stories\/S4-four\/index\.md depends_on: \(missing S-4 at run by S-9\)$/m);
+  assert.match(r.stdout, /^keep {4}stories\/S4-four\/index\.md depends_on: \(missing S-4 at in_progress by S-9\)$/m);
   assert.doesNotMatch(r.stdout, /rewrite stories\/S(1|4)-/);
   assert.match(r.stdout, new RegExp(`^${COUNTS}$`, 'm'));
   assert.equal(head(dir), before);
@@ -187,9 +187,9 @@ test('a run moves every depends_on into blockers.json in one commit, bl reads th
 
   assert.deepEqual(edges(dir), [
     'S-1 order S-2 implemented',
-    'S-1 run S-3 done',
-    'S-1 run S-4 done',
-    'S-5 run S-6 done',
+    'S-1 in_progress S-3 done',
+    'S-1 in_progress S-4 done',
+    'S-5 in_progress S-6 done',
   ]);
   for (const id of ['S1-one', 'S2-two', 'S3-three', 'S5-five', 'S6-six']) {
     const keys = fm(dir, `stories/${id}/index.md`);
@@ -203,7 +203,7 @@ test('a run moves every depends_on into blockers.json in one commit, bl reads th
   // S-4's edge to S-9 is missing: it keeps its key, and MIGRATION.md lists it.
   assert.equal(read(dir, 'stories/S4-four/index.md'), s4);
   assert.match(read(dir, 'MIGRATION.md'), /^## F-111 depends_on migration \(\d{4}-\d\d-\d\d\)$/m);
-  assert.match(read(dir, 'MIGRATION.md'), /^- S-4: missing S-4 at run by S-9$/m);
+  assert.match(read(dir, 'MIGRATION.md'), /^- S-4: missing S-4 at in_progress by S-9$/m);
 
   assert.deepEqual(views(dir), was);
 
@@ -227,7 +227,7 @@ test('a run moves every depends_on into blockers.json in one commit, bl reads th
     /run edges: 1, .*depends on removed: 1, required for removed: 0, files kept: 0, unplaced: 0/,
   );
   assert.equal(Object.hasOwn(fm(dir, 'stories/S4-four/index.md'), 'depends_on'), false);
-  assert.ok(edges(dir).includes('S-9 run S-4 done'));
+  assert.ok(edges(dir).includes('S-9 in_progress S-4 done'));
 });
 
 test('a commit that fails leaves the backlog as it was: every key and blockers.json kept', async () => {

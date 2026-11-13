@@ -7,8 +7,8 @@
  * It walks `backlog.priority` (`priority.yaml`'s open ranked units, then every
  * other open unit by `added:`, F-78 D1) and prints the first unit that nothing
  * holds. A unit is held by what `bl run` would refuse it for, so `bl next`
- * never offers what `bl run` refuses: an unmet edge at a gate `run` checks
- * (`heldBy` of `readEdges`: `blockers.json`'s, and the run edge of each
+ * never offers what `bl run` refuses: an unmet edge at a status on `run`'s
+ * nominal path (`heldBy` of `readEdges`: `blockers.json`'s, and the run edge of each
  * `depends_on:` on a loose story or outside a feature).
  *
  * A unit held by an open story or feature gives way to the blocker's unit
@@ -42,7 +42,7 @@ Print the next unit to run, a feature or a loose story, that is not ${statusWord
 that nothing holds, by the backlog's priority: the units ${PRIORITY_FILE} lists first,
 then every other unit, oldest "added:" first. Hard dependencies come first: a
 unit that bl run would refuse (an open story it depends on outside itself, or
-a blockers.json edge at a run gate) gives way to its blocker's unit, followed
+a blockers.json edge at a status on bl run's path) gives way to its blocker's unit, followed
 until one is free. A unit held only by a task is passed over.
 
 Options:

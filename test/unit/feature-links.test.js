@@ -6,6 +6,7 @@ import { serializeFrontmatter } from '../../src/config.js';
 import { settleFailedWrite, settlePending, settleRecord, writeRecord } from '../../src/feature-links.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
+import { RUN_EDGE } from '../../src/blockers.js';
 import { FEATURES_DIR } from '../../src/feature.js';
 import { BATCHES_DIR } from '../../src/batch.js';
 import { withLock } from '../../src/lock.js';
@@ -95,7 +96,8 @@ test('settle keeps the record when a restore fails and the feature is not YAML, 
 // complete. A feature keeps its links either way (`bl attach` finishes them).
 test('settlePending_rolls_back_a_batch_record_left_by_a_crash', async () => {
   const before = (id) => serializeFrontmatter({ story_id: id, status: 'refined' });
-  const run = { blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'merged' };
+  // A run edge as bl writes it (the backlog has no flow.json to read an old gate name by).
+  const run = { blocker: 'S-1', gate: RUN_EDGE.gate, unit: 'S-2', until: 'merged' };
   const order = { blocker: 'S-1', gate: 'order', unit: 'S-2', until: 'implemented' };
   const cases = [
     // [name, unit, its directory, blockers.json now (null: none; a string: its text), the settle]

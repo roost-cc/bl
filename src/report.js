@@ -28,6 +28,7 @@ import { readAllEpics, readAllThemes } from './theme.js';
 import { formatTable } from './render.js';
 import { addDays, isoWeek, pointsByStatus, scopeStories, weeklyDays } from './history.js';
 import { statusWords } from './flow.js';
+import { flowTables } from './flow-view.js';
 import { epicStatus } from './backlog-graph.js';
 import { roundOf, storedLog } from './transition.js';
 
@@ -813,14 +814,15 @@ function progressTable(rows, first, extra = []) {
 
 /**
  * `reports/index.md` from `buildReport`'s data: Summary, Backlog, Flow,
- * Throughput, Lead and cycle time, Themes, Epics, Features, Components,
+ * Workflow (`flowTables`, as `bl flow` prints it), Throughput, Lead and cycle time, Themes, Epics, Features, Components,
  * Cost, Token efficiency. Each chart is its markdown from `markdownById`
  * (the chart adapter's `renderCharts`), or its placeholder line; a theme,
  * epic or feature chart follows its section's table under a heading of its
  * own.
  * @param {ReturnType<typeof buildReport>} data
  * @param {Record<string, string>} markdownById
- * @param {import("./flow.js").Flow} flow  orders the status lists; a status it lacks follows them
+ * @param {import("./flow.js").Flow} flow  orders the status lists (a status it lacks follows
+ *   them) and gives the Workflow tables
  * @returns {string}
  */
 export function renderMarkdown(data, markdownById, flow) {
@@ -873,6 +875,11 @@ export function renderMarkdown(data, markdownById, flow) {
 
   section('Backlog', 'Scope, done and remaining points per week.', chart('burnup-backlog'));
   section('Flow', 'Points by status per week.', chart('flow'));
+  section(
+    'Workflow',
+    "Each type's transitions, from `flow.json`'s verb rows, as `bl flow` prints them. Guards are the verb's `when`; gates are the statuses on the verb's nominal path, which a hold can keep a unit out of.",
+    flowTables(flow),
+  );
 
   const t = data.throughput;
   section(

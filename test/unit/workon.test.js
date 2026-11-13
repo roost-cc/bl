@@ -73,18 +73,19 @@ function fixture() {
 
 const ids = (list) => list.map((t) => t.id);
 
-test('component expands to refined stories only, gated by dependencies', () => {
+test('component expands to refined stories only, each checked for its holds (F-119 R4)', () => {
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
-    const { startable, deferred, errors, notices } = resolveWorkonTargets(['C01'], cfg);
+    const { startable, errors, notices } = resolveWorkonTargets(['C01'], cfg);
     // backlog (S-13), in_progress (S-14), done (S-15) are excluded from the
-    // component expansion; only refined S-10/S-11/S-12 are considered.
+    // component expansion; only refined S-10/S-11/S-12 are considered, and
+    // S-11's depends_on: S-10 holds it.
     assert.deepEqual(ids(startable), ['S-10', 'S-12']);
-    assert.deepEqual(ids(deferred), ['S-11']);
-    assert.deepEqual(deferred[0].blockers, ['S-10']);
     assert.deepEqual(errors, []);
-    assert.deepEqual(notices, []);
+    assert.deepEqual(notices, [
+      'S-11 is held at in_progress by S-10 (refined, needs done)\nnext: bl status S-10 — skipping.',
+    ]);
     assert.ok(startable.every((t) => t.source === 'component'));
   } finally {
     cleanup();
@@ -95,24 +96,25 @@ test('a story whose dependency is already done is startable', () => {
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
-    const { startable, deferred } = resolveWorkonTargets(['S-12'], cfg);
+    const { startable, notices } = resolveWorkonTargets(['S-12'], cfg);
     assert.deepEqual(ids(startable), ['S-12']);
-    assert.deepEqual(ids(deferred), []);
+    assert.deepEqual(notices, []);
   } finally {
     cleanup();
   }
 });
 
-test('a same-batch dependency defers its dependent (not yet merged)', () => {
+test('a dependency not yet done holds its dependent, which is skipped naming the hold', () => {
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
     // Naming both S-10 and S-11: S-10 is startable, but S-11 depends on S-10,
-    // which is refined (not done), so S-11 defers this run.
-    const { startable, deferred } = resolveWorkonTargets(['S-10', 'S-11'], cfg);
+    // which is refined (not done), so a hold keeps S-11 from starting.
+    const { startable, notices } = resolveWorkonTargets(['S-10', 'S-11'], cfg);
     assert.deepEqual(ids(startable), ['S-10']);
-    assert.deepEqual(ids(deferred), ['S-11']);
-    assert.deepEqual(deferred[0].blockers, ['S-10']);
+    assert.deepEqual(notices, [
+      'S-11 is held at in_progress by S-10 (refined, needs done)\nnext: bl status S-10 — skipping.',
+    ]);
   } finally {
     cleanup();
   }
@@ -134,9 +136,8 @@ test("a named draft story starts: flow.json's implement row starts from draft (F
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
-    const { startable, deferred, notices } = resolveWorkonTargets(['S-13'], cfg);
+    const { startable, notices } = resolveWorkonTargets(['S-13'], cfg);
     assert.deepEqual(ids(startable), ['S-13']);
-    assert.deepEqual(ids(deferred), []);
     assert.deepEqual(notices, []);
   } finally {
     cleanup();
@@ -159,12 +160,15 @@ test('a named story outranks the same story pulled in via its component', () => 
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
-    // S-11 comes in via C01 (source component) and is also named (source named);
-    // the named source wins, and it stays deferred (blocked on S-10).
-    const { startable, deferred } = resolveWorkonTargets(['C01', 'S-11'], cfg);
+    // S-10 comes in via C01 (source component) and is also named (source named);
+    // the named source wins. S-11 is held, and named once in the notices.
+    const { startable, notices } = resolveWorkonTargets(['C01', 'S-10', 'S-11'], cfg);
     assert.deepEqual(ids(startable), ['S-10', 'S-12']);
-    assert.deepEqual(ids(deferred), ['S-11']);
-    assert.equal(deferred[0].source, 'named');
+    assert.equal(startable[0].source, 'named');
+    assert.equal(startable[1].source, 'component');
+    assert.deepEqual(notices, [
+      'S-11 is held at in_progress by S-10 (refined, needs done)\nnext: bl status S-10 — skipping.',
+    ]);
   } finally {
     cleanup();
   }
@@ -174,9 +178,8 @@ test('a component with no refined stories yields a notice, not an error', () => 
   const { dir, cleanup } = fixture();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
-    const { startable, deferred, errors, notices } = resolveWorkonTargets(['C02'], cfg);
+    const { startable, errors, notices } = resolveWorkonTargets(['C02'], cfg);
     assert.deepEqual(ids(startable), []);
-    assert.deepEqual(ids(deferred), []);
     assert.deepEqual(errors, []);
     assert.ok(notices.some((n) => n.includes('C02')));
   } finally {

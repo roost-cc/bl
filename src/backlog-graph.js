@@ -81,6 +81,7 @@ import {
   BLOCKERS_FILE,
   BlockersError,
   dependsOnEdges,
+  flowOrNull,
   parseBlockers,
   readBlockers,
   storyDependencies,
@@ -1342,7 +1343,7 @@ function blockersOf(root, slot, files) {
       // No permission, or gone since the listing: `readBlockers` names why.
       return { edges: readBlockers(root).edges, error: null };
     }
-    return { edges: parseBlockers(rec.text, path), error: null };
+    return { edges: parseBlockers(rec.text, path, flowOrNull(root)), error: null };
   } catch (e) {
     if (!(e instanceof BlockersError)) throw e;
     return { edges: [], error: e };

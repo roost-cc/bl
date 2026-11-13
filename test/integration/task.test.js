@@ -189,7 +189,7 @@ test('bl task refuses an unknown unit, a missing --title and a body with frontma
   assert.equal(git(dir, 'status', '--porcelain'), '');
 });
 
-test('a task is a blocker in blockers.json: bl block add accepts it, a task is never held, a wildcard is no cycle', () => {
+test('a task is a blocker in blockers.json: bl block add accepts it, a task is held only at a task status, a wildcard is no cycle', () => {
   const dir = backlog();
   assert.equal(bl(['task', 'F-1', '--title', 'Migrate', '--gate', 'none'], dir).stdout, 'T-1\n');
   let r = bl(['block', 'add', 'T-1', '--gate', 'merge', '--unit', 'F-1', '--until', 'done'], dir);
@@ -216,11 +216,12 @@ test('a task is a blocker in blockers.json: bl block add accepts it, a task is n
   // An unconditional wildcard from a task holds every unit, but never the task itself.
   r = bl(['block', 'add', 'T-1', '--gate', 'run', '--unit', 'S-2', '--until', 'done'], dir);
   assert.equal(r.status, 0, r.stderr);
-  r = bl(['block', 'add', 'S-1', '--gate', 'merge', '--unit', 'T-1', '--until', 'done'], dir);
+  // A task has no in_progress (F-119 D4).
+  r = bl(['block', 'add', 'S-1', '--gate', 'run', '--unit', 'T-1', '--until', 'done'], dir);
   assert.equal(r.status, 1);
-  assert.match(r.stderr, /a task has no gate "merge" in flow\.json \(blockers-gate\)/);
+  assert.match(r.stderr, /gate "in_progress" is not a task status in flow\.json \(blockers-gate\)/);
   assert.equal(
-    bl(['block', 'list', 'F-1'], dir).stdout.includes('F-1 held at merge by T-1 (draft, needs done): unmet'),
+    bl(['block', 'list', 'F-1'], dir).stdout.includes('F-1 held at done by T-1 (draft, needs done): unmet'),
     true,
   );
 
@@ -235,6 +236,25 @@ test('a task is a blocker in blockers.json: bl block add accepts it, a task is n
   assert.ok(!codes.includes('blockers-cycle'), v.stdout);
   assert.ok(!codes.some((c) => c.startsWith('task-')), v.stdout);
   assert.ok(!codes.includes('blockers-unit'), v.stdout);
+});
+
+test('bl task done refuses a task held at done and names the hold, writing nothing; the hold met, it closes (F-119 R4)', () => {
+  const dir = backlog();
+  initGitBacklog(dir);
+  assert.equal(bl(['task', 'F-1', '--title', 'Migrate', '--gate', 'none'], dir).stdout, 'T-1\n');
+  let r = bl(['block', 'add', 'S-1', '--gate', 'done', '--unit', 'T-1', '--until', 'done'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  const before = read(dir, 'tasks/T1-migrate.md');
+  r = bl(['task', 'done', 'T-1'], dir);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /T-1 is held at done by S-1 \(draft, needs done\)\nnext: bl status S-1/);
+  assert.equal(read(dir, 'tasks/T1-migrate.md'), before);
+
+  r = bl(['done', '--superseded', 'S-1', 'abcdef0'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  r = bl(['task', 'done', 'T-1'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(logStatusOf('task', parseFrontmatter(read(dir, 'tasks/T1-migrate.md')).fm), 'done');
 });
 
 test('bl validate reports task-unit and task-field on hand-edited task files', () => {
@@ -289,7 +309,8 @@ test('bl task --gate merge commits the task file, its edge in blockers.json and 
   initGitBacklog(dir);
   const r = bl(['task', 'F-1', '--gate', 'merge', '--title', 'Run the migration', '--json'], dir);
   assert.equal(r.status, 0, r.stderr);
-  const merge = { blocker: 'T-1', gate: 'merge', unit: 'F-1', until: 'done' };
+  // --gate merge keeps the unit out of done, --gate next every unit out of in_progress (F-119 R3).
+  const merge = { blocker: 'T-1', gate: 'done', unit: 'F-1', until: 'done' };
   assert.deepEqual(JSON.parse(r.stdout).edges, [merge]);
   assert.deepEqual(JSON.parse(read(dir, 'blockers.json')).edges, [merge]);
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: task T-1 (F-1)');
@@ -304,7 +325,7 @@ test('bl task --gate merge commits the task file, its edge in blockers.json and 
   const n = bl(['task', 'S-1', '--gate', 'next', '--title', 'Reinstall'], dir);
   assert.equal(n.status, 0, n.stderr);
   assert.deepEqual(JSON.parse(read(dir, 'blockers.json')).edges, [
-    { blocker: 'T-2', gate: 'run', unit: '*', until: 'done', active_when: { unit: 'S-1', status: 'done' } },
+    { blocker: 'T-2', gate: 'in_progress', unit: '*', until: 'done', active_when: { unit: 'S-1', status: 'done' } },
     merge,
   ]);
   assert.equal(git(dir, 'show', '--name-only', '--format=', 'HEAD'), 'blockers.json\ntasks/T2-reinstall.md');
@@ -351,7 +372,7 @@ test('bl task files a Decide: task with --gate merge only, refusing none and nex
 
   const r = bl(['task', 'F-1', '--title', 'Decide: pick A or B', '--gate', 'merge', '--json'], dir);
   assert.equal(r.status, 0, r.stderr);
-  const edge = { blocker: 'T-1', gate: 'merge', unit: 'F-1', until: 'done' };
+  const edge = { blocker: 'T-1', gate: 'done', unit: 'F-1', until: 'done' };
   assert.deepEqual(JSON.parse(r.stdout).edges, [edge]);
   assert.deepEqual(JSON.parse(read(dir, 'blockers.json')).edges, [edge]);
 });
@@ -382,7 +403,7 @@ test("an edge bl task cannot file refuses with bl block add's message and leaves
   writeBlockersLocked(dir, [{ blocker: 'T-1', gate: 'merge', unit: 'F-1', until: 'done' }]);
   const graph = read(dir, 'blockers.json');
   const dup = await createTask(config, { unit: { id: 'F-1', indexPath }, title: 'Twice', gate: 'merge' });
-  assert.deepEqual(dup.refused, ['F-1 at merge by T-1 is already an edge (see bl block list F-1)']);
+  assert.deepEqual(dup.refused, ['F-1 at done by T-1 is already an edge (see bl block list F-1)']);
   assert.deepEqual(tasksIn(dir), []);
   assert.equal(read(dir, 'blockers.json'), graph);
 });

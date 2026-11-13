@@ -24,7 +24,6 @@ import { renderTabTitle, TAB_TITLE_ENV, unitTitleFields } from './tab-title.js';
 import { readAllStories } from './story.js';
 import { classifyId, resolveTargets } from './targets.js';
 import { dependencyOrder } from './execution-plan.js';
-import { heldBy, readEdges, readUnits } from './blockers.js';
 import { RUN_DIR, ensureRunDir, escalationOpen, loadRunState, readFm, reviewEnd } from './feature-run.js';
 import { reviewOf } from './transition.js';
 import { currentChange } from './change-doc.js';
@@ -190,7 +189,6 @@ Arguments:
                        a refined story may run.
 
 Options:
-  --force              Approve a draft
   --help               Show this help
 
 The human gate before bl run. Refuses while ## Escalation is not "None.".
@@ -309,15 +307,8 @@ export async function dispatch(verb, argv) {
     process.exit(1);
   }
 
-  // A target held at its `run` gate by an unmet edge does not start (F-66 D3).
-  // A gated verb takes one target (ONE_TARGET_VERBS).
-  const held = GATED_VERBS.has(verb) ? heldTargets(verb, targets, config) : [];
-  if (held.length === 1) {
-    for (const line of held[0].lines) console.error(line);
-    for (const b of held[0].blockers) console.error(`next: bl status ${b}`);
-    process.exit(1);
-  }
-
+  // A held target refuses in its own handler (`startOf`, F-119 R4), so of
+  // several targets each held one is named and the others start.
   if (targets.length > 1) return dispatchSeveral(verb, argv, args, config, targets);
   return runTarget(verb, targets[0], args, argv, config);
 }
@@ -328,36 +319,6 @@ export const ONE_TARGET_VERBS = new Set(['run', 'implement']);
 /** Why `bl <verb>` refuses several ids, and what to do instead. */
 export function oneTargetRefusal(verb) {
   return `bl ${verb}: takes one target; give one id. To ${verb} several stories as one unit, group them with bl batch S-a S-b … --title <t>, then bl ${verb} the batch.`;
-}
-
-/**
- * The verbs `dispatch` checks a gate at. `bl merge` checks its own in
- * `mergeGates`, where a story and a feature merge alike.
- */
-export const GATED_VERBS = new Set(['run', 'implement']);
-
-/**
- * The targets an unmet edge (`readEdges`: `blockers.json`'s and the
- * `depends_on:` keys') holds at a gate `verb` checks (F-66 D3), each with
- * one line per edge and its blockers. Units are read once, and only when
- * there is an edge.
- * @returns {Array<{ id: string, kind: string, lines: string[], blockers: string[] }>}
- */
-export function heldTargets(verb, targets, config) {
-  if (readEdges(config).length === 0) return [];
-  const units = readUnits(config);
-  const out = [];
-  for (const t of targets) {
-    const holds = heldBy(config, t.id, verb, { units });
-    if (holds.length === 0) continue;
-    out.push({
-      id: t.id,
-      kind: t.kind,
-      lines: holds.map((h) => h.line),
-      blockers: [...new Set(holds.map((h) => h.edge.blocker))],
-    });
-  }
-  return out;
 }
 
 /** Run `verb` on one target, `argv` and `args` naming only it: its cell's capability. */

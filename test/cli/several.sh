@@ -81,10 +81,10 @@ assert_contains "one story still runs" "S-1 · story S-1 — run plan" "$OUT"
 # The gate check still holds a single target (F-66 D3).
 blrun run S-2
 assert_exit "run S-2 alone" 1 "$RC"
-assert_contains "a dependent is held, naming its blocker" "S-2 is held at run by S-1 (refined, needs done)" "$ERR"
+assert_contains "a dependent is held, naming its blocker" "S-2 is held at in_progress by S-1 (refined, needs done)" "$ERR"
 blrun implement S-6
 assert_exit "implement S-6 alone" 1 "$RC"
-assert_contains "implement checks the gate too" "S-6 is held at run by S-9 (draft, needs done)" "$ERR"
+assert_contains "implement checks the gate too" "S-6 is held at in_progress by S-9 (draft, needs done)" "$ERR"
 blrun implement S-1
 assert_exit "implement S-1 reaches its prep" 1 "$RC"
 assert_contains "implement S-1 runs in place" "Unknown repo: nope" "$ERR"

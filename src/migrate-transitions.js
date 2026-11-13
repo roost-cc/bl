@@ -12,7 +12,7 @@
  *      of `status:`; a unit that has a log only loses a stale `status:`;
  *   2. then each of the unit's change documents, under its lock
  *      (`updateChangeHeld`): `review_round` and `review_status` removed;
- *   3. `flow.json` v2: bl's template with the backlog's own gates;
+ *   3. `flow.json` v2: bl's template;
  *   4. one commit of the changed paths (`commitPaths`), with the counts.
  *
  * It does not use `applyMigration` (`migration-txn.js`), which refuses to

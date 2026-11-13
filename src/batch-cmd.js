@@ -54,8 +54,8 @@ bl run, implement, review, merge and status take B-<n> as they take a feature.
 
 Arguments:
   <S-id>...            Two or more stories. Each must be refined, in no
-                       feature and in no batch, and not held at its run gate
-                       by work outside the batch.
+                       feature and in no batch, and not held by work outside
+                       the batch at a status bl run enters.
 
 Options:
   --title <t>          The batch's title (required)
@@ -102,7 +102,7 @@ export function batchRefusals(config, ids, all, batchId) {
     if (s.batch) out.push(`${id}: it is in ${s.batch}.`);
     // A run edge between two of them becomes an order edge (F-111 D5).
     for (const h of heldBy(config, id, 'run', { units })) {
-      if (!ids.includes(h.edge.blocker)) out.push(`${id}: it is held at its run gate: ${h.line}`);
+      if (!ids.includes(h.edge.blocker)) out.push(`${id}: bl run would refuse it: ${h.line}`);
     }
   }
   const join = joinRefusal(config, ids, batchId);

@@ -698,7 +698,7 @@ test('refresh_rejects_unresolvable_story_scope: an unresolvable story list or st
           fm.depends_on = ['S-77'];
         });
       },
-      error: /S-3 is held at run by S-77 \(unknown, needs done\)/,
+      error: /S-3 is held at in_progress by S-77 \(unknown, needs done\)/,
     },
     {
       name: 'change document write fails',

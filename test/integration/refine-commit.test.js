@@ -15,7 +15,7 @@ import { join } from 'path';
 import { PRIORITY_FILE } from '../../src/priority.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { dirtyBystanders, git, statusLines } from '../helpers/git-backlog.js';
-import { F1, S1, S2, S3, gitBacklog, originMain, refine } from '../helpers/refine-session.js';
+import { F1, S1, S2, S3, flowWithoutRefineDuring, gitBacklog, originMain, refine } from '../helpers/refine-session.js';
 
 function assertCommitted(dir, message, files) {
   assert.deepEqual(statusLines(dir), []);
@@ -63,13 +63,22 @@ test('priority.yaml the session wrote stays uncommitted, named once as outside t
 });
 
 test('a session that writes nothing makes no commit and prints nothing about committing', async () => {
-  const dir = await gitBacklog();
+  // No `during` on refine, so bl writes nothing either (F-119 R1).
+  const dir = await gitBacklog({ flow: flowWithoutRefineDuring() });
   const head = git(dir, 'rev-parse', 'HEAD');
   const r = refine(dir, ['S-1']);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
   assert.deepEqual(statusLines(dir), []);
   assert.doesNotMatch(r.stderr, /Committing backlog changes|Left your uncommitted|backlog commit failed/);
+});
+
+test('a session that writes nothing commits the in_refinement entry bl wrote (F-119 R1)', async () => {
+  const dir = await gitBacklog();
+  const r = refine(dir, ['S-1']);
+  assert.equal(r.status, 0, r.stderr);
+  assertCommitted(dir, 'chore: refine S-1', [S1]);
+  assert.doesNotMatch(r.stderr, /Left your uncommitted|backlog commit failed/);
 });
 
 test('a session that exits 1 still has its work committed, and bl refine exits 1', async () => {

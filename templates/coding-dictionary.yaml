@@ -240,19 +240,20 @@ entries:
 
   - term: gate
     meaning: >-
-      A point where bl stops a work unit until a condition is met: the flow gates (`run`,
-      `merge`) that holds and tasks act on, the test gate before review, and the operator's
-      approve gate.
+      A point where bl stops a work unit until a condition is met: a status that a hold keeps
+      the work unit out of (F-119 D4; the old names `run` and `merge` read as `in_progress` and
+      `done`), the test gate before review, and the operator's approve gate.
     avoid: [checkpoint, barrier]
-    decided: bl src/AGENTS.md, "Statuses and gates" and "The test gate"
+    decided: bl src/AGENTS.md, "Holds between units" and "The test gate"; F-119 D4
 
   - term: hold
     meaning: >-
-      One edge in `blockers.json`: a work unit held at a gate until another work unit's status
-      meets a given status. `blockers.json` is the one place for holds and for order: a merge
-      edge or an order edge orders two parts of one feature and holds no verb.
+      One edge in `blockers.json`: a work unit kept out of a status (the edge's gate) until
+      another work unit's status meets a given status, whatever verb would make the move.
+      `blockers.json` is the one place for holds and for order: a merge edge or an order edge
+      orders two parts of one feature and holds no verb.
     avoid: [lock, freeze, wait]
-    decided: bl src/AGENTS.md, "Holds between units"; F-111 D1
+    decided: bl src/AGENTS.md, "Holds between units"; F-111 D1; F-119 D4
 
   - term: merge edge
     meaning: >-

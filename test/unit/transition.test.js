@@ -10,6 +10,8 @@ import { fileURLToPath } from 'url';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { FlowError, loadFlow } from '../../src/flow.js';
 import {
+  COMPLETED_KEY,
+  FORCE,
   NoEdgeError,
   applyMerged,
   applyNew,
@@ -32,7 +34,8 @@ import {
   transition,
 } from '../../src/transition.js';
 import { escalatingVerb } from '../../src/feature-run.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 
 const TEMPLATES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates');
 const flow = loadFlow(TEMPLATES);
@@ -129,7 +132,7 @@ test('applyTransition refuses an at that is not ISO 8601 UTC', () => {
       const fm = make();
       const before = structuredClone(fm);
       assert.throws(
-        () => applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: value }),
+        () => applyTransition(flow, 'story', fm, 'in_refinement', { by: 'refine', at: value }),
         /is not an ISO 8601 UTC time; no entry written/,
         `${name}: ${value}`,
       );
@@ -144,7 +147,7 @@ test('applyTransition refuses an at that is not ISO 8601 UTC', () => {
   for (const good of [AT, '2026-11-09T10:00:00.123Z']) {
     for (const [name, make] of Object.entries(units)) {
       const fm = make();
-      applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: good });
+      applyTransition(flow, 'story', fm, 'in_refinement', { by: 'refine', at: good });
       const errors = findTransitionFindings(flow, 'story', fm, 'x').filter((f) => f.severity === 'error');
       assert.deepEqual(errors, [], `${name}: ${good}`);
     }
@@ -184,12 +187,12 @@ test('the first write on a unit with no log writes the synthesized log, then the
 
   // With no `added`, every synthesized entry takes the new entry's time.
   const story = { story_id: 'S-5', status: 'backlog' };
-  applyTransition(flow, 'story', story, 'refined', { by: 'refine', at: AT });
+  applyTransition(flow, 'story', story, 'in_refinement', { by: 'refine', at: AT });
   assert.deepEqual(
     story.transitions.map((e) => [e.at, e.to]),
     [
       [AT, 'draft'],
-      [AT, 'refined'],
+      [AT, 'in_refinement'],
     ],
   );
   assert.equal(story.added, '2026-11-09');
@@ -516,6 +519,72 @@ test('startOf picks the first verb whose from holds the status, and refuses with
   assert.match(merge.refusal, /^F-5 is fixing; merge starts from /);
 });
 
+/**
+ * A backlog with refined S-1, S-2 at in_review, draft S-4, F-1 (refined) with
+ * its story S-5, and the blocker S-3 in progress; `edges` in blockers.json.
+ * `unit(id)` is the record `startOf` takes.
+ */
+function heldUnits(edges) {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'refined' },
+      { id: 'S-2', component: 'C01', title: 'Two', dirSuffix: 'two', status: 'in_review' },
+      { id: 'S-3', component: 'C01', title: 'Three', dirSuffix: 'three', status: 'in_progress' },
+      { id: 'S-4', component: 'C01', title: 'Four', dirSuffix: 'four', status: 'draft' },
+      { id: 'S-5', component: 'C01', title: 'Five', dirSuffix: 'five', status: 'draft', feature: 'F-1' },
+    ],
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'refined', stories: ['S-5'] }],
+  });
+  writeBlockersLocked(dir, edges);
+  const unit = (id) => {
+    const n = id.slice(2);
+    const suffix = { 'S-1': 'one', 'S-2': 'two', 'S-4': 'four', 'F-1': 'feat' }[id];
+    const indexPath = join(dir, id[0] === 'F' ? 'features' : 'stories', `${id[0]}${n}-${suffix}`, 'index.md');
+    return { id, indexPath, fm: parseFrontmatter(readFileSync(indexPath, 'utf8')).fm };
+  };
+  return { config: { backlogRoot: dir }, unit };
+}
+
+const hold = (gate, unit) => ({ blocker: 'S-3', gate, unit, until: 'done' });
+const heldLine = (id, gate) => `${id} is held at ${gate} by S-3 (in_progress, needs done)\nnext: bl status S-3`;
+
+test('startOf refuses a verb that a hold on its nominal path keeps from starting, naming the hold (F-119 D6, R4)', () => {
+  // A hold at in_progress: run and implement; at in_review: run and review, not implement.
+  let { config, unit } = heldUnits([hold('in_progress', 'S-1')]);
+  for (const verb of ['run', 'implement']) {
+    assert.deepEqual(startOf(config, 'story', unit('S-1'), verb), {
+      verb: null,
+      status: 'refined',
+      refusal: heldLine('S-1', 'in_progress'),
+    });
+  }
+  ({ config, unit } = heldUnits([hold('in_review', 'S-1'), hold('in_review', 'S-2')]));
+  assert.equal(startOf(config, 'story', unit('S-1'), 'run').refusal, heldLine('S-1', 'in_review'));
+  assert.equal(startOf(config, 'story', unit('S-1'), 'implement').refusal, null, 'implement does not enter in_review');
+  assert.equal(startOf(config, 'story', unit('S-2'), 'review').refusal, heldLine('S-2', 'in_review'));
+  // A hold at in_refinement: refine, on the story and, through its story, on the feature.
+  ({ config, unit } = heldUnits([hold('in_refinement', 'S-4'), hold('in_refinement', 'S-5')]));
+  assert.equal(startOf(config, 'story', unit('S-4'), 'refine').refusal, heldLine('S-4', 'in_refinement'));
+  assert.equal(startOf(config, 'feature', unit('F-1'), 'refine').refusal, heldLine('S-5', 'in_refinement'));
+  // guards: false leaves the holds to the caller (bl merge's mergeGates), so it refuses once.
+  ({ config, unit } = heldUnits([hold('done', 'S-2')]));
+  assert.equal(startOf(config, 'story', unit('S-2'), 'merge', { guards: false }).refusal, null);
+  // A status refusal comes first: a verb that cannot start names no hold.
+  ({ config, unit } = heldUnits([hold('in_progress', 'S-4')]));
+  assert.match(startOf(config, 'story', unit('S-4'), 'run').refusal, /^S-4 is draft; run starts from /);
+});
+
+test('a hold added after a verb starts does not stop it: the later hops record past it (F-119 D6.3)', async () => {
+  const { config, unit } = heldUnits([]);
+  const s1 = { kind: 'story', ...unit('S-1') };
+  assert.equal(startOf(config, 'story', s1, 'run').refusal, null);
+  assert.equal((await enterVerb(config.backlogRoot, s1, 'run')).to, 'in_progress');
+  writeBlockersLocked(config.backlogRoot, [hold('in_review', 'S-1'), hold('ready_for_merge', 'S-1')]);
+  assert.equal((await transition(config.backlogRoot, s1, 'in_review', { by: 'run' })).to, 'in_review');
+  assert.equal((await transition(config.backlogRoot, s1, 'ready_for_merge', { by: 'review' })).to, 'ready_for_merge');
+});
+
 test('branchOf takes the first branch whose guards hold', () => {
   const ctx = (round) => ({ round, maxRounds: 2 });
   assert.equal(branchOf(flow, 'feature', 'review', 'success', ctx(1)).to, 'ready_for_merge');
@@ -755,4 +824,92 @@ test('an entry with note: migrated, or by: operator along any verb, is exempt fr
   );
   assert.deepEqual(findings('story', log(entry(T0, 'draft', 'new'), entry(AT, 'refined', 'operator'))), []);
   assert.equal(findings('story', log(entry(T0, 'draft', 'new'), entry(AT, 'in_review', 'operator'))).length, 1);
+});
+
+test('a log written before refine had a during stays valid, and the writer refuses its pairs (F-119 R2)', () => {
+  const log = (...entries) => ({ added: '2026-11-01', transitions: [entry(T0, 'draft', 'new'), ...entries] });
+  const T1 = '2026-11-10T10:00:00Z';
+  const valid = [
+    ['story', log(entry(AT, 'refined', 'refine'))],
+    ['story', log(entry(AT, 'refined', 'refine'), entry(T1, 'refined', 'refine'))],
+    ['story', log(entry(AT, 'draft', 'refine'))],
+    [
+      'feature',
+      log(entry(AT, 'refined', 'refine'), entry(AT, 'approved', 'approve'), entry(T1, 'refined', 'operator')),
+    ],
+  ];
+  for (const [kind, fm] of valid) assert.deepEqual(findings(kind, fm), [], JSON.stringify(fm.transitions));
+  // A pair outside every verb's from still fails: refine does not start from in_progress.
+  const stray = log(entry(AT, 'in_progress', 'implement'), entry(T1, 'refined', 'refine'));
+  assert.match(findings('story', stray)[0][2], /no story verb "refine" goes from in_progress to refined/);
+  // The writer stays strict.
+  const fm = { story_id: 'S-1', added: '2026-11-01', transitions: [entry(T0, 'draft', 'new')] };
+  assert.throws(() => applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: AT }), NoEdgeError);
+  assert.equal(fm.transitions.length, 1);
+});
+
+test('by: force goes between any two different statuses of the type, terminal ones included (F-119 D2)', () => {
+  for (const kind of ['story', 'feature', 'task']) {
+    const { statuses, terminal } = flow.typeOf(kind);
+    // A valid log that ends at `from`: the initial status, then a force there.
+    const ending = (from) => ({
+      added: '2026-11-01',
+      transitions: [entry(T0, statuses[0], 'new'), ...(from === statuses[0] ? [] : [entry(T0, from, FORCE)])],
+      ...(terminal.includes(from) ? { [COMPLETED_KEY[kind]]: '2026-11-01' } : {}),
+    });
+    for (const from of statuses) {
+      for (const to of statuses) {
+        const fm = ending(from);
+        const move = () => applyTransition(flow, kind, fm, to, { by: FORCE, at: AT });
+        if (from === to) {
+          assert.throws(move, NoEdgeError, `${kind} ${from} → ${to}`);
+          continue;
+        }
+        assert.deepEqual(move(), { at: AT, to, by: FORCE }, `${kind} ${from} → ${to}`);
+        assert.deepEqual(findings(kind, fm), [], `${kind} ${from} → ${to}: ${JSON.stringify(fm)}`);
+      }
+    }
+  }
+  // A status the type lacks is no edge, forced or not.
+  assert.throws(
+    () => applyTransition(flow, 'task', at('task', 'draft'), 'refined', { by: FORCE, at: AT }),
+    NoEdgeError,
+  );
+});
+
+test('a force out of a terminal status removes completed:; bl validate reports completed: on an open log', () => {
+  const fm = {
+    story_id: 'S-1',
+    added: '2026-11-01',
+    completed: '2026-11-02',
+    transitions: [entry(T0, 'draft', 'new'), entry('2026-11-02T00:00:00Z', 'done', 'done')],
+  };
+  applyTransition(flow, 'story', fm, 'in_progress', { by: FORCE, at: AT });
+  assert.equal(Object.hasOwn(fm, 'completed'), false);
+  assert.deepEqual(findings('story', fm), []);
+  // A task's completed field is done:.
+  const task = { ...at('task', 'done'), done: '2026-11-01' };
+  applyTransition(flow, 'task', task, 'draft', { by: FORCE, at: AT });
+  assert.equal(Object.hasOwn(task, 'done'), false);
+  // Closing it again sets the date of the new terminal entry.
+  applyTransition(flow, 'story', fm, 'done', { by: FORCE, at: '2026-11-10T00:00:00Z' });
+  assert.equal(fm.completed, '2026-11-10');
+  assert.deepEqual(findings('story', fm), []);
+  // completed: left on a log that ends at an open status is an error.
+  const left = { ...fm, transitions: [...fm.transitions, entry('2026-11-11T00:00:00Z', 'in_progress', FORCE)] };
+  assert.deepEqual(findings('story', left), [
+    [
+      'error',
+      'transition-log',
+      'completed: 2026-11-10 is set, and the log ends at in_progress, an open status; remove completed:',
+    ],
+  ]);
+});
+
+test('bl validate still accepts the old by: operator entries on any verb’s edge, beside by: force', () => {
+  const fm = {
+    added: '2026-11-01',
+    transitions: [entry(T0, 'draft', 'new'), entry(AT, 'refined', 'operator'), entry(AT, 'escalated', FORCE)],
+  };
+  assert.deepEqual(findings('story', fm), []);
 });
