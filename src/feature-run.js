@@ -124,7 +124,7 @@ import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock, sto
 import { takeUnitLocks } from './unit-lock.js';
 import { commitPaths, dirtySnapshot } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
-import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
+import { GATE_TAIL_LINES, outputParts, outputSections } from './command-output.js';
 import { gateRecord, pushEscalation } from './push-gate.js';
 import { describeFailure, localTime } from './agent-failure.js';
 import * as processScope from './process-scope.js';
@@ -2607,9 +2607,6 @@ async function runTestGate(ctx) {
   return gate;
 }
 
-/** How many of a failed gate's last lines the fix-tests session and the escalation show. */
-const GATE_TAIL_LINES = 30;
-
 /**
  * Start a gate attempt: bump `testAttempts` (saved at once, so neither a
  * crash nor `--resume` reuses a number; a state file from before the counter
@@ -2690,40 +2687,6 @@ function gateDetails(gate) {
     `Full log: ${gate.logPath}`,
     ...outputSections(gate.excerpt, gate.tail, GATE_TAIL_LINES),
   ].join('\n\n');
-}
-
-/**
- * The "Failure excerpt" and "Last <lines> lines" sections of a failed
- * command's output, each fenced. A null `excerpt` leaves its section out.
- */
-function outputSections(excerpt, last, lines) {
-  return [
-    ...(excerpt == null ? [] : [`Failure excerpt:\n\n${fenced(excerpt)}`]),
-    `Last ${lines} lines:\n\n${fenced(last)}`,
-  ];
-}
-
-/**
- * The failure excerpt and the last `lines` lines of a failed command's
- * output, trailing whitespace dropped first.
- */
-function outputParts(output, lines) {
-  const shown = String(output ?? '').replace(/\s+$/, '');
-  return { excerpt: failureExcerpt(shown), tail: tail(shown, lines) };
-}
-
-/** How many of a failed push's last lines its reason shows. */
-const PUSH_TAIL_LINES = 10;
-
-/**
- * The output of a failed `git push`, or of the gate's log (S-897): the
- * failure excerpt (a pre-push gate's failed test and error, S-1499), then its
- * last `lines` lines. With no failure marker (a rejected push), the last
- * lines alone.
- */
-export function pushFailure(output, lines = PUSH_TAIL_LINES) {
-  const { excerpt, tail: last } = outputParts(output, lines);
-  return outputSections(excerpt === NO_MARKERS ? null : excerpt, last, lines).join('\n\n');
 }
 
 /**

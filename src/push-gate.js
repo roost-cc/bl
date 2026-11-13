@@ -16,8 +16,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { codeSpan, escalationText } from './escalation.js';
-import { pushFailure } from './feature-run.js';
-import { GATE_TAIL_LINES } from './scripted.js';
+import { GATE_TAIL_LINES, pushFailure } from './command-output.js';
 import { checkReport, findingsTable } from './ci-cd.js';
 
 const isTextOrNull = (v) => v === null || typeof v === 'string';

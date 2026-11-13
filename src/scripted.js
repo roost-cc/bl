@@ -17,25 +17,16 @@ import { createHash } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { appendSection, gateLine, restoreChange, updateChange } from './change-doc.js';
 import { parsePluginList, warn } from './config.js';
+import { GATE_TAIL_LINES, tail } from './command-output.js';
 import { codeSpan, escalationText, fenced } from './escalation.js';
 import { appendSectionLine, checkCriteria, extractSection, replaceSection } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
 import { loadFlow } from './flow.js';
 import { applyTransition, statusOf } from './transition.js';
 
-/** Lines of a command's output kept in a record (`## Gate result`, `## Gate`, an escalation). */
-export const GATE_TAIL_LINES = 30;
-
-/** The last `n` lines of `text`, trailing blanks dropped. */
-export function tail(text, n = GATE_TAIL_LINES) {
-  const lines = String(text ?? '')
-    .replace(/\s+$/, '')
-    .split('\n');
-  return lines.slice(Math.max(0, lines.length - n)).join('\n');
-}
-
-// They moved to `escalation.js` (S-897); their importers keep this path.
-export { codeSpan, fenced };
+// They moved to `escalation.js` (S-897) and `command-output.js` (B-1); their
+// importers keep this path.
+export { codeSpan, fenced, GATE_TAIL_LINES, tail };
 
 /**
  * `command` with `vars` filled in, or the error an unresolved one is. One pass
