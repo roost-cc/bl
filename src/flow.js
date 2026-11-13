@@ -60,6 +60,14 @@ export const FLOW_TYPES = ['story', 'feature', 'task'];
 /** The `bl` verbs that only read a unit, so no table has a row for them. */
 export const READ_VERBS = ['status'];
 
+/**
+ * The verb bl defines itself (F-119 D2.3): `bl force` moves a unit between
+ * any two statuses of its type. `flow.json` lists no row for it: the reader
+ * leaves a type's `force` row out (`forceRows`), so no reader of the table
+ * sees it, and `flow-json` reports it.
+ */
+export const FORCE = 'force';
+
 /** `from: "*"`: every status of the type that is not terminal. */
 export const ANY_OPEN = '*';
 
@@ -301,7 +309,9 @@ function parseType(path, type, def) {
   if (!isStringList(def.terminal)) throw new FlowError(path, `${at} has no "terminal" list`);
   if (!isObject(def.verbs)) throw new FlowError(path, `${at} has no "verbs" object`);
   const verbs = {};
-  for (const [verb, v] of Object.entries(def.verbs)) verbs[verb] = parseVerb(path, `${at} verb "${verb}"`, v);
+  for (const [verb, v] of Object.entries(def.verbs)) {
+    if (verb !== FORCE) verbs[verb] = parseVerb(path, `${at} verb "${verb}"`, v);
+  }
   return { statuses: def.statuses, terminal: def.terminal, verbs };
 }
 
@@ -325,6 +335,10 @@ export class Flow {
     const types = this.legacy ? legacyAsV2() : raw.types;
     /** The types that still have a `gates` table, which bl does not read (F-119 D4). */
     this.gateTables = Object.keys(types).filter((t) => isObject(types[t]) && Object.hasOwn(types[t], 'gates'));
+    /** The types with a `force` row, which bl does not read (F-119 D2.3). */
+    this.forceRows = Object.keys(types).filter(
+      (t) => isObject(types[t]?.verbs) && Object.hasOwn(types[t].verbs, FORCE),
+    );
     /** @type {Record<string, FlowType>} */
     this.types = {};
     for (const [type, def] of Object.entries(types)) this.types[type] = parseType(path, type, def);
@@ -579,7 +593,8 @@ export class Flow {
  * verb of the type starting from the branch's `to`; a status no branch goes
  * to and no verb records as its `during`; a terminal status before an open one, or one a verb other than
  * `supersede` starts from; a verb bl dispatches for a type that the type's
- * table lacks. Warnings: a v1 file; a type with a `gates` table (F-119 D4).
+ * table lacks; a `force` row (F-119 D2.3). Warnings: a v1 file; a type with
+ * a `gates` table (F-119 D4).
  * @param {Flow} flow
  * @param {FlowWiring} wiring
  * @param {string} location  the file, relative to the backlog root
@@ -658,6 +673,9 @@ export function findFlowFindings(flow, wiring, location = FLOW_FILE) {
     for (const [verb, kinds] of Object.entries(wiring.dispatch)) {
       if (READ_VERBS.includes(verb) || !kinds[type] || flow.verbOf(type, verb)) continue;
       add(`bl dispatches "${verb}" for a ${type}, and the ${type} table has no "${verb}" verb`);
+    }
+    if (flow.forceRows.includes(type)) {
+      add(`${type} has a "${FORCE}" verb; bl defines ${FORCE} itself and does not read the row; remove it`);
     }
     if (flow.gateTables.includes(type)) {
       add(

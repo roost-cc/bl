@@ -16,7 +16,9 @@ import {
 import { GUARDS } from '../../src/guards.js';
 import { CAPABILITIES, VIA_CAPABILITIES } from '../../src/capabilities.js';
 import { DISPATCH } from '../../src/verbs.js';
-import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { flowTables } from '../../src/flow-view.js';
+import { skipsOf } from '../../src/force.js';
 
 /** A `bl-flow/v1` file: bl's template before F-69. */
 const V1_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'flow');
@@ -501,6 +503,43 @@ test('flow-json: a message with no full stop gets one before the format document
       'task has a "gates" table, which bl no longer reads; remove it: a hold can gate any task status. See bl/templates/flow.schema.md.',
     ],
   );
+});
+
+test('flow_rejects_reserved_force_rows_for_each_type: a valid force row is a finding, and no reader of the table sees it (F-119 D2.3)', () => {
+  for (const type of Object.keys(template().types)) {
+    const raw = template();
+    // A row that would pass every other check.
+    raw.types[type].verbs.force = { from: '*', success: [{ to: 'done' }] };
+    const dir = mkTempBacklog({ flow: raw }).dir;
+    const flow = loadFlow(dir);
+    assert.deepEqual(
+      findFlowFindings(flow, WIRING).map((f) => f.message),
+      [
+        `${type} has a "force" verb; bl defines force itself and does not read the row; remove it. See bl/templates/flow.schema.md.`,
+      ],
+      type,
+    );
+    assert.equal(flow.verbOf(type, 'force'), null, `${type}: verbOf`);
+    assert.deepEqual(flow.nominalPath(type, 'force'), [], `${type}: nominalPath`);
+    assert.ok(!flow.edges(type).some((e) => e.by === 'force'), `${type}: edges`);
+    assert.doesNotMatch(flowTables(flow), /\| force /, `${type}: bl flow`);
+    // bl force's skip list is the template's: a move the table lacks, the force row's own included.
+    const from = flow.initial(type);
+    const listed = (to) => flow.edges(type).some((e) => e.from === from && e.to === to);
+    const to = flow.statusesOf(type).find((s) => s !== from && !listed(s)) ?? 'done';
+    const unit = { id: 'S-1', kind: type, status: from, indexPath: join(dir, 'x.md') };
+    const plain = mkTempBacklog({}).dir;
+    assert.deepEqual(
+      skipsOf({ backlogRoot: dir }, unit, to),
+      skipsOf({ backlogRoot: plain }, { ...unit, indexPath: join(plain, 'x.md') }, to),
+      `${type}: bl force`,
+    );
+    if (!listed(to)) {
+      assert.ok(
+        skipsOf({ backlogRoot: dir }, unit, to).includes(`flow.json has no ${type} transition from ${from} to ${to}`),
+      );
+    }
+  }
 });
 
 test('flow-json: a from, during, to or terminal status the type lacks', () => {

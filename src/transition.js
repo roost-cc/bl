@@ -25,7 +25,7 @@
  * position from its change document's `review_round` and `review_status`.
  */
 
-import { FlowError, LEGACY_LOG, REVIEW, fromLegacy, loadFlow, statusWords } from './flow.js';
+import { FORCE, FlowError, LEGACY_LOG, REVIEW, fromLegacy, loadFlow, statusWords } from './flow.js';
 import { GUARDS } from './guards.js';
 import { holdRefusal } from './blockers.js';
 import { updateSpecFile } from './spec-file.js';
@@ -57,9 +57,9 @@ export const OPERATOR = 'operator';
 /**
  * The `by` of `bl force`'s entry (F-119 D2): a move between any two
  * different statuses of the type, terminal ones included. bl defines it, and
- * `flow.json` does not list it.
+ * `flow.json` does not list it (`flow.js`'s `FORCE`).
  */
-export const FORCE = 'force';
+export { FORCE };
 
 /**
  * The verbs `bl implement` starts: `implement`, or `fix` on a unit in

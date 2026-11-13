@@ -113,7 +113,8 @@ that one chains to (`review`, `fix`). Each row is
 
 bl also has verbs of its own that the file does not list: `force` moves a unit from any status
 to any status (F-119 D2), and `status` only reads a unit. `bl validate` reports a verb that bl
-dispatches for a type when the type's table lacks it.
+dispatches for a type when the type's table lacks it, and a `force` row: bl does not read it, so
+it is not in `bl flow` either.
 
 ## Branches
 

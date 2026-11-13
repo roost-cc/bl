@@ -910,7 +910,8 @@ last capability that ran, `outcome` one line from its outcome, `note` free text 
 synthesized entry). An entry's `from` is the previous entry's `to`.
 
 - **Forced moves (F-119 D2).** `bl force <id> <status>` (see `### bl force`) writes an entry
-  `by: force` (`FORCE`). `force` is bl's own verb, and `flow.json` does not list it: it goes
+  `by: force` (`FORCE`). `force` is bl's own verb, and `flow.json` does not list it (the
+  reader leaves a type's `force` row out, `Flow.forceRows`, and `flow-json` reports it): it goes
   between any two different statuses of the type, terminal ones included (`hasEdge`). An
   entry out of a terminal status (reopening `done`) removes `completed:` (a task's `done:`),
   and `bl validate` reports a `completed:` on a log that ends at an open status. The old hand
