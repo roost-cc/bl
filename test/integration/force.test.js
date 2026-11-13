@@ -242,11 +242,22 @@ test('force_rechecks_skips_after_confirmation: a change to what the move skips w
         );
       },
     ],
+    [
+      "a feature's status",
+      ['F-1', 'refined'],
+      (dir) => {
+        const path = join(dir, F1);
+        writeFileSync(
+          path,
+          readFileSync(path, 'utf8').replace('to: in_refinement\n    by: refine', 'to: superseded\n    by: force'),
+        );
+      },
+    ],
   ]) {
     const dir = backlog();
     const head = git(dir, 'rev-parse', 'HEAD');
     const id = args[0];
-    const rel = id === 'S-1' ? S1 : S2;
+    const rel = { 'S-1': S1, 'S-2': S2, 'F-1': F1 }[id];
     let before = null;
     const code = await forceWhileTyping(dir, args, () => {
       during(dir);

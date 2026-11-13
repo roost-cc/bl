@@ -41,8 +41,9 @@ Options:
 The operator's way out of a stuck state (F-119 D2). bl force prints what the
 move skips: that flow.json has no transition for it, each hold in
 blockers.json on the status, and each failing "when" guard of the verbs that
-have the transition, on the verb's row or on its branch to the status. It then asks for the line "force <id> to <status>"; any
-other input, an empty line or the end of input changes nothing and exits 1.
+have the transition, on the verb's row or on its branch to the status. It
+then asks for the line "force <id> to <status>"; any other input, an empty
+line or the end of input changes nothing and exits 1.
 On the exact line it records the status in the unit's transition log as
 "by: force" and commits the unit file ("chore: force <id> to <status>"). A
 move out of done or superseded removes "completed:". If the unit's status or
@@ -181,8 +182,10 @@ export async function main(
     const res = await withLock(root, async () => {
       // The operator confirmed the list shown. A hold, a guard, flow.json or
       // the unit's status may have changed while they typed: then write nothing.
-      const now = unitOf(target, config);
-      const again = now.status === unit.status ? skipsOf(config, now, to) : null;
+      // Resolved again: a feature's or a batch's record holds the status read before the prompt.
+      const [fresh] = resolveTargets([unit.id], config, null).targets;
+      const now = fresh ? unitOf(fresh, config) : null;
+      const again = now?.status === unit.status ? skipsOf(config, now, to) : null;
       if (again == null || again.join('\n') !== skips.join('\n')) return { changed: again };
       await transition(root, unit, to, { by: FORCE });
       return syncAndCommit(config, {
