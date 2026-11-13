@@ -1500,7 +1500,7 @@ test('a failed push escalates with the failed test and its error, then the last 
       // S-897: with no gate record, the escalation shape holds the push output.
       assert.match(esc.trim(), /^push failed\n\n\*\*The rule at stake:\*\*/, name);
       assertHeadings(esc, name);
-      assert.ok(esc.includes('the gate left no record of a failure'), name);
+      assert.ok(esc.includes('bl found no gate record of this push that it can read the cause from: '), name);
       for (const s of c.has) assert.ok(esc.includes(s), `${name}: has ${s}\n${esc}`);
       for (const s of c.lacks) assert.ok(!esc.includes(s), `${name}: lacks ${s}\n${esc}`);
     } finally {

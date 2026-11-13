@@ -107,7 +107,7 @@ test("gateRecord reads a fresh gate record and refuses one that is not this push
     'no record': [undefined, /no check record/],
     'not JSON': ['{', /not JSON/],
     'not an object': ['[]', /not a JSON object/],
-    'written by check': [gateRun({ by: 'check' }), /written by check/],
+    'written by check': [gateRun({ by: 'check' }), /written by check \(verdict fail, last step test\)/],
     'no by (an old check record)': [gateRun({ by: undefined }), /written by check/],
     'a pass': [gateRun({ verdict: 'pass', exit_code: null }), /verdict is pass/],
     'started before the push': [gateRun({ started: '2026-11-13T09:59:59.000Z' }), /before this push/],
@@ -128,6 +128,74 @@ test("gateRecord reads a fresh gate record and refuses one that is not this push
     pushStartedAt: 0,
   });
   assert.match(noGit.none, /common directory/);
+});
+
+test('gateRecord: a fail record with no exit code, or with a vulns step and no blocking finding, is not a gate record', () => {
+  // Invariant: a record that gateRecord returns always leads to at least one decision.
+  const clean = { schema: 'ci-cd-vulns/v1', status: 'clean', fail_on: 'high', findings: [] };
+  const none = {
+    'exit_code null': [gateRun({ exit_code: null }), /exit_code is null, not a failure's/],
+    'exit_code 0': [gateRun({ exit_code: 0 }), /exit_code is 0, not a failure's/],
+    'exit_code 0 with an error': [gateRun({ exit_code: 0, error: 'x' }), /exit_code is 0/],
+    'vulns last, exit null, no finding': [
+      gateRun({ steps: ['lint', 'vulns'], exit_code: null, vulns: clean }),
+      /exit_code is null/,
+    ],
+    'vulns last, exit 1, no blocking finding': [
+      gateRun({ steps: ['lint', 'vulns'], vulns: clean }),
+      /vulns report is unusable \(invalid report \(exit 1 disagrees/,
+    ],
+    'vulns last, a report status error, no error text': [
+      gateRun({ steps: ['vulns'], exit_code: 2, vulns: { ...clean, status: 'error', error: 'osv-scanner: network' } }),
+      /vulns report is unusable \(scan error: osv-scanner: network\)/,
+    ],
+    'error empty': [gateRun({ steps: ['lint'], error: '' }), /error is empty/],
+    'no step and no error': [gateRun({ steps: [] }), /names no step and no error/],
+  };
+  for (const [name, [record, why]] of Object.entries(none)) {
+    const r = read(record);
+    assert.match(r.none ?? '', why, `${name}: ${JSON.stringify(r)}`);
+  }
+  // Every record gateRecord returns gives at least one lettered option.
+  const taken = [
+    gateRun(),
+    gateRun({ steps: [], error: 'push to main refused' }),
+    gateRun({ steps: ['vulns'], exit_code: 2, error: 'osv-scanner is not on PATH', vulns: { status: 'error' } }),
+    vulnsRun([finding()]),
+  ];
+  for (const record of taken) {
+    const gate = read(record);
+    assert.ok(gate.record, JSON.stringify(gate));
+    assert.match(render(gate), /\n- A\. /, JSON.stringify(record));
+  }
+});
+
+test('pushEscalation: an unusable gate record is not called no record', () => {
+  // Invariant: the problem line states what gateRecord found, and why.
+  const cases = {
+    'no record': [undefined, /no check record: /],
+    'a stale record': [gateRun({ started: '2026-11-12T00:00:00.000Z' }), /before this push/],
+    'a check record': [gateRun({ by: 'check' }), /written by check \(verdict fail, last step test\), not by the gate/],
+    'a scanner failure': [
+      gateRun({
+        steps: ['vulns'],
+        exit_code: 2,
+        vulns: { schema: 'ci-cd-vulns/v1', status: 'error', findings: [], error: 'osv-scanner: network' },
+      }),
+      /vulns report is unusable \(scan error: osv-scanner: network\)/,
+    ],
+  };
+  for (const [name, [record, why]] of Object.entries(cases)) {
+    const gate = read(record);
+    const text = render(gate);
+    const problem = text.split('\n').find((l) => l.startsWith('**The problem:**')) ?? '';
+    assert.ok(
+      problem.includes(`bl found no gate record of this push that it can read the cause from: ${gate.none}.`),
+      `${name}\n${text}`,
+    );
+    assert.match(problem, why, name);
+    assert.ok(!/wrote no record|left no record/.test(text), `${name}\n${text}`);
+  }
 });
 
 test('pushEscalation: a vulns failure lists each blocking finding by kind with its options (S-897)', () => {
@@ -242,8 +310,11 @@ test('pushEscalation: with no fresh record the push output stands in, in the sam
   for (const [name, gate] of Object.entries(cases)) {
     const text = render(gate, { status: 1, output: ' ! [rejected]        s1-x -> s1-x (fetch first)\n' });
     assertShape(text, name);
-    assert.ok(text.includes('`git push` exited 1, and the gate left no record of a failure'), `${name}\n${text}`);
-    assert.ok(text.includes('the cause is outside the code'), text);
+    assert.ok(
+      text.includes('`git push` exited 1. bl found no gate record of this push that it can read the cause from: '),
+      `${name}\n${text}`,
+    );
+    assert.ok(text.includes('it does not guess one from the push output'), text);
     assert.ok(text.includes(`- No gate record: ${gate.none}`), text);
     assert.ok(text.includes('Last 10 lines:'), text);
     assert.ok(text.includes('- A. Fix the cause (recommended)'), text);
@@ -256,7 +327,7 @@ test('pushEscalation: with no fresh record the push output stands in, in the sam
   assertShape(ahead, 'not contained');
   assert.ok(
     ahead.includes(
-      '**The problem:** origin/s1-x does not contain HEAD after the push (1 commit(s) ahead), and the gate',
+      '**The problem:** origin/s1-x does not contain HEAD after the push (1 commit(s) ahead). bl found no gate record',
     ),
     ahead,
   );

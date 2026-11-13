@@ -2054,11 +2054,15 @@ began. bl never reruns the gate and never parses the hook's output. The kinds:
 - Any other step: the excerpt and last 30 lines of the record's
   `<commit>.log`, and a note that bl did not check whether `main` fails the
   step too.
-- No fresh record (none, `by` is `check`, an older `started`, a malformed
-  record), and an `origin/<branch>` that lacks HEAD after the push: the push
-  output through `pushFailure()` under Details (its excerpt, left out when no
-  marker matches, then the last 10 lines; the pre-push gate prints its failed
-  test far above its summary, S-1499), and no guess at the cause.
+- No usable record (none, `by` is `check`, an older `started`, a malformed
+  record, an `exit_code` that is not a non-zero integer, an empty `error`, no
+  step and no `error`, or a `vulns` report `checkReport()` refuses), and an
+  `origin/<branch>` that lacks HEAD after the push: the problem line names
+  what `gateRecord()` found and why, and the push output goes through
+  `pushFailure()` under Details (its excerpt, left out when no marker
+  matches, then the last 10 lines; the pre-push gate prints its failed test
+  far above its summary, S-1499). bl does not guess at the cause. So every
+  record `gateRecord()` returns leads to at least one decision.
 
 No option bypasses the gate (`--no-verify`).
 

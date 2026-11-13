@@ -25,7 +25,9 @@ const isTextOrNull = (v) => v === null || typeof v === 'string';
 /**
  * The gate's check record of the commit at the worktree's HEAD, when it is
  * this push's: written by `gate`, a `fail`, started no earlier than the push,
- * and whole. Otherwise `none` says why there is none.
+ * and whole, with something to decide: a non-zero exit, and an `error` (not
+ * empty), a step that failed, or a `vulns` report with a blocking finding.
+ * Otherwise `none` says why there is none.
  *
  * @param {{ runner: { shell: Function }, worktreePath: string, pushStartedAt: number }} opts
  *   `pushStartedAt` is the time the push began, in epoch milliseconds
@@ -54,7 +56,10 @@ export function gateRecord({ runner, worktreePath, pushStartedAt }) {
     return none('the check record is not a JSON object');
   }
   const { by, verdict, started, steps, exit_code: exit, error, vulns } = record;
-  if (by !== 'gate') return none(`the check record was written by ${by ?? 'check'}, not by the gate`);
+  if (by !== 'gate') {
+    const last = Array.isArray(steps) && steps.length ? `, last step ${steps.at(-1)}` : '';
+    return none(`the check record was written by ${by ?? 'check'} (verdict ${verdict}${last}), not by the gate`);
+  }
   if (verdict !== 'fail') return none(`the check record's verdict is ${verdict}, not fail`);
   const at = typeof started === 'string' ? Date.parse(started) : NaN;
   if (Number.isNaN(at)) return none(`the check record's started is not a time: ${started}`);
@@ -62,10 +67,13 @@ export function gateRecord({ runner, worktreePath, pushStartedAt }) {
   if (!Array.isArray(steps) || !steps.every((s) => typeof s === 'string')) {
     return none("the check record's steps is not a list of names");
   }
-  if (exit !== null && typeof exit !== 'number') return none("the check record's exit_code is not a number");
+  if (!Number.isInteger(exit) || exit === 0) return none(`the check record's exit_code is ${exit}, not a failure's`);
   if (!isTextOrNull(error)) return none("the check record's error is not text");
+  if (error === '') return none("the check record's error is empty");
+  if (error === null && steps.length === 0) return none('the check record names no step and no error');
   // With `error` set the scan may have thrown, and its report says so: the
-  // error is the record's whole story.
+  // error is the record's whole story. Without it, `checkReport` takes only
+  // exit 1 with a blocking finding, as exit 0 is refused above.
   if (error === null && steps.at(-1) === 'vulns') {
     if (vulns == null) return none('the check record has no vulns report');
     const problem = checkReport(vulns, exit, { ages: false });
@@ -165,9 +173,9 @@ export function pushEscalation({ repo, branch, worktreePath, push, gate, next })
     const what = push.status === 0 ? String(push.output).trim() : `\`git push\` exited ${push.status}`;
     return escalationText({
       rule: RULE,
-      how: [pushes, HOOK, 'The push did not reach origin, and the gate wrote no record of a failure.'],
-      problem: `${what}, and the gate left no record of a failure. The push output is under Details.`,
-      why: 'the cause is outside the code: git, the network, the forge or the hook. bl does not repair those.',
+      how: [pushes, HOOK, 'The push did not reach origin.'],
+      problem: `${what}. bl found no gate record of this push that it can read the cause from: ${gate.none}. The push output is under Details.`,
+      why: 'bl reads the cause of a refused push only from the gate record, and it does not guess one from the push output.',
       decisions: [
         {
           options: [
