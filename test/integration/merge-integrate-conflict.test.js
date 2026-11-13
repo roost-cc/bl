@@ -341,6 +341,41 @@ test('a re-review that ends addressed but writes an escalation rolls back and sa
   }
 });
 
+test('merge-integrate-conflict: a resolution review aborted by a failed session escalates with the describeFailure text', async () => {
+  // S-1140 criterion 1: the step, the configuration, the cause line and the steps.
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const wt = fx.wts['f1-feat'];
+    const before = g(wt, 'rev-parse', 'HEAD');
+    const { runner } = scriptedRunner({ test: 'true', resolve: resolveBoth });
+    const session = runner.session;
+    runner.session = (opts) =>
+      opts.promptName === 'review-failure-paths'
+        ? { ...session(opts), ok: false, isError: true, error: 'provider crashed' }
+        : session(opts);
+    const res = await integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.escalated, true);
+    assert.match(
+      res.reason,
+      /^merge with main: the review of the resolution was aborted before a verdict: .* — unknown — not a capacity refusal bl recognised$/,
+    );
+    assert.equal(g(wt, 'rev-parse', 'HEAD'), before, 'the resolution is rolled back');
+    const esc = escalation(featureFile(fx));
+    assert.match(esc, /\nStep: review round \d+ failure-paths, failed at /);
+    assert.match(esc, /\nConfigurations \(backlog\.json "review_agent", in priority order\):\n/);
+    assert.match(esc, /\n\nError: provider crashed\n/);
+    assert.match(esc, /\nCause: unknown — not a capacity refusal bl recognised\n/);
+    assert.match(
+      esc,
+      /\n1\. Run `bl capacity`[^\n]*\n2\. Fix what that shows\.\n3\. Clear `## Escalation` to `None\.`\.\n4\. Run `bl merge F-1`\.$/,
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test("a conflict is aborted and escalated naming the file and both sides' commits", async () => {
   const fx = fixture();
   try {

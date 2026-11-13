@@ -1323,7 +1323,11 @@ test('a capacity refusal escalates with the step, the configuration, each window
       status,
       /\nrun: escalated at step implement — agent unavailable: .* — provider overloaded, your quota is fine \(/,
     );
-    assert.ok(status.includes(`\n  out: codex gpt-6-sol for the rest of the run — capacity: ${CAPACITY}\n`), status);
+    const out = status.indexOf(`\n  out: codex gpt-6-sol for the rest of the run — capacity: ${CAPACITY}\n`);
+    assert.ok(
+      out > status.indexOf('\nrun: escalated at step implement — '),
+      `the cause line, then the out-list\n${status}`,
+    );
   } finally {
     cleanup();
   }
