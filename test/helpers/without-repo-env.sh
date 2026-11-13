@@ -24,8 +24,8 @@
 # SIGINT, SIGTERM or SIGHUP. A suite run then leaves /tmp as it found it.
 # CLAUDE_CONFIG_DIR, where the claude provider writes its settings, is a
 # directory inside it. BL_CEILING_DIRECTORIES names it too, so bl's walk for
-# a backlog never looks above it (S-1155). "$@" runs as a child, not by exec, so that the EXIT
-# trap can run. The child runs in the background and the wrapper waits for
+# a backlog never looks above it (S-1155). "$@" runs as a child, not by exec,
+# so that the EXIT trap can run. The child runs in the background and the wrapper waits for
 # it, so a signal to the wrapper's pid alone runs its trap at once. The trap
 # sends the signal on to the child and waits for it before the EXIT trap
 # removes the directory. bash makes a background child ignore SIGINT and

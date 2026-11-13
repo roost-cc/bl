@@ -158,6 +158,16 @@ test('a ceiling list: relative entries are ignored, and an entry through a symli
   });
 });
 
+test('a ceiling entry with a trailing slash, or one that does not exist, still works', () => {
+  const root = mkTempDir('bl-find-');
+  backlogAt(root, 'real');
+  const mid = dirAt(root, 'mid');
+  const start = dirAt(mid, 'repo');
+  withEnv({ BL_CEILING_DIRECTORIES: [join(root, 'gone'), `${mid}/`].join(delimiter) }, () => {
+    assert.throws(() => findBacklogRoot(start), notFound(start, start));
+  });
+});
+
 test('BL_BACKLOG_DIR naming a backlog wins over a nearer one', () => {
   const root = mkTempDir('bl-find-');
   const named = backlogAt(mkTempDir('bl-find-named-'), 'named');

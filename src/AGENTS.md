@@ -3538,7 +3538,9 @@ bl's prompts and plugin commands use, not a new format.
   (`test/unit/tmux-free-env.test.js` guards it). The same wrapper unsets `BL_BACKLOG_DIR`
   and refuses a temporary directory (`os.tmpdir()`) inside a git repository, where git in a
   test's temp dir would act on that repository (S-1394; `test/unit/repo-free-env.test.js`
-  guards both). `openTmuxWindow` names a new window
+  guards both). It also sets `BL_CEILING_DIRECTORIES` to that temporary directory, so
+  `findBacklogRoot`'s walk never looks above it (S-1155; the same test guards it).
+  `openTmuxWindow` names a new window
   with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
 - When `bl` exits, the last title stays (S-1393): under tmux `rename-window` turned the
   window's `automatic-rename` off and bl leaves it off (`tmux set -w automatic-rename on`
