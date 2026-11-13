@@ -2851,3 +2851,72 @@ for (const c of INTERRUPTED_STEPS) {
     });
   }
 }
+
+// F-124 review round 1: a forge op that follows a local write runs in the
+// write's `undoable`. If its command line exits 130 or 143, the write is
+// undone before bl exits 130 or 143: a drop puts the request back when
+// `change.close` is interrupted, and a merge resets local main and pushes
+// nothing when `change.ready` is interrupted. The fake runner's forge op runs
+// the exit through `runCommandLine`, as `runForgeOp` does. At exit the child
+// prints the story's status and request and the merge, push and reset calls.
+const INTERRUPTED_FORGE_OPS = [
+  {
+    name: 'dropStory_restores_request_when_change_close_exits_130_or_143',
+    op: 'change.close',
+    drop: true,
+    check(r, story, calls, why) {
+      assert.deepEqual(story, ['status: refined', 'update_request: drop'], why);
+      assert.deepEqual(calls, [], why);
+    },
+  },
+  {
+    name: 'mergeBranch_resets_local_main_when_change_ready_exits_130_or_143',
+    op: 'change.ready',
+    drop: false,
+    check(r, story, calls, why) {
+      assert.deepEqual(story, ['status: refined'], why);
+      assert.ok(calls.at(-2)?.startsWith('merge --no-ff '), why);
+      assert.match(calls.at(-1) ?? '', /^reset --hard \S+$/, why);
+      assert.ok(!calls.includes('push origin main'), why);
+    },
+  },
+];
+
+for (const c of INTERRUPTED_FORGE_OPS) {
+  for (const code of [130, 143]) {
+    test(`${c.name}: ${c.op} exits ${code}`, () => {
+      const url = (p) => JSON.stringify(new URL(p, import.meta.url).href);
+      const r = runAfterExitOnSignal([
+        `import { readFileSync } from 'fs';`,
+        `import { runCommandLine } from ${url('../../src/child.js')};`,
+        `import { BRANCHES, fakeRunner, mkReport, run, setup } from ${url('../helpers/updates-run-fixture.js')};`,
+        `import { dropUpdate } from ${url('../../src/updates-answer.js')};`,
+        `import { readAllStories } from ${url('../../src/story.js')};`,
+        'const runner = fakeRunner({ gate: [0] });',
+        // Before `setup`: the exit listener that `setup` adds removes the backlog.
+        'let t;',
+        `process.on('exit', () => {`,
+        `  const story = readAllStories(t.config()).find((s) => s.id === 'S-1');`,
+        `  const lines = readFileSync(story.indexPath, 'utf8').split('\\n').filter((x) => /^(status|update_request):/.test(x));`,
+        `  const calls = runner.calls.filter((x) => x.type === 'git' && ['merge', 'push', 'reset'].includes(x.args[0]));`,
+        `  process.stderr.write('STORY ' + JSON.stringify(lines) + '\\n');`,
+        `  process.stderr.write('CALLS ' + JSON.stringify(calls.map((x) => x.args.join(' '))) + '\\n');`,
+        '});',
+        `t = await setup(mkReport({ 'roost-cc/bl': [BRANCHES.vitest] }));`,
+        ...(c.drop ? [`await dropUpdate(t.config(), { id: 'S-1', reason: 'test', out: () => {} });`] : []),
+        'const fake = runner.forge;',
+        'runner.forge = (op, vars, opts) => {',
+        `  if (op === ${JSON.stringify(c.op)}) return { configured: true, ...runCommandLine('exit ${code}', { encoding: 'utf8' }) };`,
+        '  return fake(op, vars, opts);',
+        '};',
+        'await run(t, runner);',
+      ]);
+      const why = `status ${r.status} signal ${r.signal}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+      assert.equal(r.status, code, why);
+      assert.ok(r.stderr.includes(`bl: exit ${code} was ended by ${code === 130 ? 'SIGINT' : 'SIGTERM'}\n`), why);
+      const story = JSON.parse(r.stderr.match(/^STORY (.*)$/m)?.[1] ?? 'null');
+      const calls = JSON.parse(r.stderr.match(/^CALLS (.*)$/m)?.[1] ?? 'null');
+      c.check(r, story, calls, why);
+    });
+  }
+}

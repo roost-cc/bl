@@ -51,7 +51,7 @@ import { finalTabTitle, updateTabTitle } from './tab-title.js';
 import { checkCriteria, extractSection, replaceSection, sectionHasContent } from './feature.js';
 import { RUN_DIR, ensureRunDir, shellMerged } from './feature-run.js';
 import { acquireRunLock, releaseRunLock, updatesLockRefusal } from './run-lock.js';
-import { updateSpecFile, withSpecLock } from './spec-file.js';
+import { updateSpecFile, updateSpecFileHeld, withSpecLock } from './spec-file.js';
 import { withLock } from './lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { syncAndCommit } from './sync.js';
@@ -944,12 +944,15 @@ async function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
       reason: `merge into main failed: ${firstLine(merge.stderr) || firstLine(merge.stdout)}${left ? `; ${left}` : ''}`,
     };
   }
-  const readyError = branch ? markReady(ctx, s, repoPath) : null;
+  // The ready op and the push run in one `undoable`: if an interrupt ends
+  // either, local main is reset before the raise, and main is not pushed.
   const pushed = undoable(() => {
-    const pushMain = g(['push', 'origin', 'main']);
-    const back = pushMain.status === 0 ? null : rollback(g, ['reset', '--hard', before.stdout.trim()]);
-    return { pushMain, left: back && `${back}: local main of ${repoPath} still holds the unpushed merge` };
+    const readyError = branch ? markReady(ctx, s, repoPath) : null;
+    const pushMain = interruptKept() ? null : g(['push', 'origin', 'main']);
+    const back = pushMain?.status === 0 ? null : rollback(g, ['reset', '--hard', before.stdout.trim()]);
+    return { readyError, pushMain, left: back && `${back}: local main of ${repoPath} still holds the unpushed merge` };
   });
+  const { readyError } = pushed;
   if (pushed.pushMain.status !== 0) {
     const why = firstLine(pushed.pushMain.stderr);
     return {
@@ -1242,50 +1245,55 @@ async function dropStory(ctx, s) {
     };
   }
   if (!pr) return held('drop requested, but the story has no update_pr');
-  // The snapshot a failed close puts back: no agent session runs between
-  // it and the restore, so its bytes are the story's (F-67 D6).
-  const text = readFileSync(s.indexPath, 'utf8');
-  await updateSpecFile(ctx.config.backlogRoot, s.indexPath, (fm, body) => {
-    fm.status = 'superseded';
-    fm.completed = ctx.today;
-    delete fm.update_request;
-    delete fm.update_request_reason;
-    const b = noteUnderSummary(body, `${ctx.today}: dropped by the operator: ${reason}. PR #${pr} closed.`);
-    return answerDecision(b, ctx.today, `dropped by the operator (\`bl updates drop\`): ${reason}`);
+  // The write, the close and the restore hold the story's spec lock, so the
+  // snapshot a failed close puts back is the story's bytes (F-67 D6). The
+  // close and the restore run in one `undoable`: a close that an interrupt
+  // ended still puts the request back before the raise.
+  return withSpecLock(s.indexPath, () => {
+    const text = readFileSync(s.indexPath, 'utf8');
+    updateSpecFileHeld(ctx.config.backlogRoot, s.indexPath, (fm, body) => {
+      fm.status = 'superseded';
+      fm.completed = ctx.today;
+      delete fm.update_request;
+      delete fm.update_request_reason;
+      const b = noteUnderSummary(body, `${ctx.today}: dropped by the operator: ${reason}. PR #${pr} closed.`);
+      return answerDecision(b, ctx.today, `dropped by the operator (\`bl updates drop\`): ${reason}`);
+    });
+    const { left, ...outcome } = undoable(() => {
+      let res;
+      try {
+        res = ctx.runner.forge(
+          'change.close',
+          { number: pr, comment: reason },
+          { config: ctx.config, repoPath: s.repo.repoPath },
+        );
+      } catch (e) {
+        res = { configured: false, reason: e.message };
+      }
+      const failed = !res?.configured
+        ? `cannot close PR #${pr}: forge op change.close is not available (${res?.reason ?? 'unknown'})`
+        : res.status !== 0
+          ? `closing PR #${pr} failed: ${firstLine(res.stderr) || firstLine(res.stdout) || `exit ${res.status}`}`
+          : null;
+      if (!failed) {
+        return {
+          kind: 'dropped',
+          reason,
+          written: true,
+          text: `${s.repo.name} #${pr} closed, story superseded. Reason: ${reason}`,
+          left: null,
+        };
+      }
+      try {
+        atomicWriteFile(ctx.config.backlogRoot, s.indexPath, text);
+      } catch (e) {
+        const left = `the story could not be put back (${e.message}): it reads superseded while PR #${pr} is open`;
+        return { ...held(`${failed}; and ${left}`, { written: true }), left: `${s.id}: ${left}` };
+      }
+      return { ...held(`drop requested: ${failed}`, { written: true }), left: null };
+    });
+    return outcome;
   });
-
-  let res;
-  try {
-    res = ctx.runner.forge(
-      'change.close',
-      { number: pr, comment: reason },
-      { config: ctx.config, repoPath: s.repo.repoPath },
-    );
-  } catch (e) {
-    res = { configured: false, reason: e.message };
-  }
-  const failed = !res?.configured
-    ? `cannot close PR #${pr}: forge op change.close is not available (${res?.reason ?? 'unknown'})`
-    : res.status !== 0
-      ? `closing PR #${pr} failed: ${firstLine(res.stderr) || firstLine(res.stdout) || `exit ${res.status}`}`
-      : null;
-  if (failed) {
-    try {
-      await withSpecLock(s.indexPath, () => atomicWriteFile(ctx.config.backlogRoot, s.indexPath, text));
-    } catch (e) {
-      return held(
-        `${failed}; and the story could not be put back (${e.message}): it reads superseded while PR #${pr} is open`,
-        { written: true },
-      );
-    }
-    return held(`drop requested: ${failed}`, { written: true });
-  }
-  return {
-    kind: 'dropped',
-    reason,
-    written: true,
-    text: `${s.repo.name} #${pr} closed, story superseded. Reason: ${reason}`,
-  };
 }
 
 /** Write an outcome to its story file; returns true when the file changed. */
