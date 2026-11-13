@@ -118,13 +118,23 @@ const usagePage = (c) =>
  * `{ checkCommand, billingUrl }` or null, `excluded` the steps it ran as the
  * implementer (F-64 D4) or null, `headless` false when its agent has no
  * headless mode. `error` is the raw error of a session that failed without a
- * refusal bl recognised: its cause is always `unknown`.
+ * refusal bl recognised: its cause is always `unknown`. `escalates` is false
+ * when the caller stops without writing `## Escalation` (a `bl review` round
+ * abort): the steps then have no step that clears it.
  *
  * @param {{ step: string, failedAt: Date|number|string, roleKey: string, resumeHint: string,
- *   configurations: object[], error?: string|null }} f
+ *   configurations: object[], error?: string|null, escalates?: boolean }} f
  * @returns {{ cause: string, causeLine: string, text: string }}
  */
-export function describeFailure({ step, failedAt, roleKey, resumeHint, configurations, error = null }) {
+export function describeFailure({
+  step,
+  failedAt,
+  roleKey,
+  resumeHint,
+  configurations,
+  error = null,
+  escalates = true,
+}) {
   const configs = configurations.map((c) => ({ ...c, error }));
   let chosen = null;
   if (error == null) {
@@ -159,7 +169,7 @@ export function describeFailure({ step, failedAt, roleKey, resumeHint, configura
       `Run \`bl capacity\`${check ? `, and \`${check}\`` : `, and check ${usagePage(who)}`}.`,
       'Fix what that shows.',
     ];
-  const steps = [...first, clear, resume];
+  const steps = [...first, ...(escalates ? [clear] : []), resume];
   const alternatives = [];
   if (cause === 'overloaded') alternatives.push(`add another configuration to "${roleKey}" in backlog.json`);
   if (cause === 'window') alternatives.push(`add a configuration of another agent to "${roleKey}" in backlog.json`);

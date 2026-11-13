@@ -1952,8 +1952,10 @@ reset time` (with the windows at 0%): any other reading `unavailable`, or
      `unknown — not a capacity refusal bl recognised`.
 4. **The steps:** `Next steps:`, numbered in execution order. Each list ends
    with "Clear `## Escalation` to `None.`." and then the resume command
-   (`ctx.resumeHint`, else `bl run <id> --resume`). The steps before those
-   two depend on the cause:
+   (`ctx.resumeHint`, else `bl run <id> --resume`). A `bl review` round that a
+   failed session aborts writes no `## Escalation` (the run stops as
+   `failed`), so its list has no clear step (`failsWithoutEscalation`). The
+   steps before those depend on the cause:
    - overloaded: wait about 30 minutes, then `bl capacity`;
    - window: wait until the reset, then `bl capacity` (when the reset has
      passed, check with `bl capacity`; with no reset time, `bl capacity`

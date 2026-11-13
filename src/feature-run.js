@@ -2150,7 +2150,9 @@ function stepLabel(ctx, step, story = null) {
  * `describeFailure` renders it: the step, its configuration, the time, the
  * raw error (`sessionError`), the cause `unknown` and its steps. No capacity
  * is read: `bl capacity` does that when the operator runs it. Null for a
- * result with no configuration (no session ran).
+ * result with no configuration (no session ran). `ctx.failsWithoutEscalation`
+ * (`bl review`, whose round abort writes no `## Escalation`) leaves out the
+ * step that clears it.
  */
 function sessionFailure(ctx, step, r) {
   if (!r?.configuration) return null;
@@ -2162,6 +2164,7 @@ function sessionFailure(ctx, step, r) {
     resumeHint: resumeCommand(ctx),
     configurations: [{ agent, model, out: null, reading: null, remediation: remediationOf(ctx.runner, agent) }],
     error: sessionError(r),
+    escalates: !ctx.failsWithoutEscalation,
   });
 }
 
@@ -4922,7 +4925,16 @@ export async function reviewFeature({
     state ??= newRunState(feature, { branch: prep.branchName, worktreePath: prep.worktreePath, maxRounds });
     state.maxRounds = maxRounds;
     if (pr?.number) state.pr = pr;
-    const ctx = { feature, config, prep, runner, state, resumeHint: `bl review ${feature.id}` };
+    // A round a session failure aborts stops as `failed`, with no ## Escalation.
+    const ctx = {
+      feature,
+      config,
+      prep,
+      runner,
+      state,
+      resumeHint: `bl review ${feature.id}`,
+      failsWithoutEscalation: true,
+    };
     clearUntimedOut(ctx);
     // `bl review` records the PRs in the change document before it gets
     // here; a unit reviewed with none gets one now, for the verifier.

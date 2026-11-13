@@ -811,7 +811,13 @@ console.log(t.taken ? "taken" : "held by " + t.holder);`;
       const step = failAt === 'review-verify' ? 'verifier' : failAt.slice('review-'.length);
       assert.ok(x.r.details.includes(`Step: review round 1 ${step}, failed at `), `${name}: ${x.r.details}`);
       assert.match(x.r.details, /\nError: .+\n/, name);
-      assert.match(x.r.details, /\n1\. Run `bl capacity`.*\n2\. Fix what that shows\.\n/, name);
+      // `bl review` writes no ## Escalation for an abort, so no step clears one.
+      assert.match(
+        x.r.details,
+        /\n1\. Run `bl capacity`.*\n2\. Fix what that shows\.\n3\. Run `bl review F-1`\.$/,
+        name,
+      );
+      assert.doesNotMatch(x.r.details, /## Escalation/, name);
       assert.equal(x.r.verdict, false, `${name}: no verdict`);
       assert.equal(x.r.status, 'in_review', `${name}: the unit stays in review`);
       assert.equal(x.r.round, 0, `${name}: the round is not spent`);

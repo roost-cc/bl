@@ -294,6 +294,16 @@ test('describeFailure: a session failure with no refusal is unknown, shows the r
   assert.match(steps(text)[0], /^Run `bl capacity`/);
 });
 
+test('describeFailure: a caller that writes no ## Escalation gets no step that clears it', () => {
+  // Invariant: a numbered step names only an action that applies to what bl wrote.
+  const configurations = [{ agent: 'a', model: 'm', out: null, reading: null, remediation: null }];
+  for (const escalates of [true, false]) {
+    const { text } = describeFailure({ ...base, configurations, error: 'provider crashed', escalates });
+    assert.equal(steps(text).includes('Clear `## Escalation` to `None.`.'), escalates, String(escalates));
+    assert.equal(steps(text).at(-1), 'Run `bl run F-1 --resume`.');
+  }
+});
+
 test('describeFailure: an excluded implementer keeps the F-64 D4 alternative', () => {
   const { text } = describeFailure({
     ...base,
