@@ -7,8 +7,8 @@
  * It walks `backlog.priority` (`priority.yaml`'s open ranked units, then every
  * other open unit by `added:`, F-78 D1) and prints the first unit that nothing
  * holds. A unit is held by what `bl run` would refuse it for, so `bl next`
- * never offers what `bl run` refuses: an unmet edge at a gate `run` checks
- * (`heldBy` of `readEdges`: `blockers.json`'s, and the run edge of each
+ * never offers what `bl run` refuses: an unmet edge at a status on `run`'s
+ * nominal path (`heldBy` of `readEdges`: `blockers.json`'s, and the run edge of each
  * `depends_on:` on a loose story or outside a feature).
  *
  * A unit held by an open story or feature gives way to the blocker's unit
