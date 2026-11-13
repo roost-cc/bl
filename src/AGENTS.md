@@ -1899,9 +1899,7 @@ its own. A step waits at most once: exhausted again, with no reset time on any
 configuration (a spend cap, a capacity refusal), or with the earliest reset
 past the cap, it escalates as `agent unavailable: <message>` (one
 configuration) or `agent unavailable: every <role> configuration is out (<list>)`,
-the details listing every configuration with its kind, message, scope and
-reset time in local time, and the command to resume with (`bl run <id>
---resume`, or `bl review <id>` for a review pass). `bl status <id>` shows a
+followed by ` — <cause line>`. `bl status <id>` shows a
 run that is waiting as `waiting until <local time> — <message>`, and each
 out-list entry still in force as `out: <configuration> until <local time> —
 <kind>: <message>`. An interactive run (`--interactive`, or a role with no
@@ -1909,6 +1907,67 @@ headless entry under `bl review` and `bl merge`) does not walk: each step
 attaches to its role's first configuration (the review role's first one that
 did not implement). `bl run` refuses at start when a role has no headless
 entry.
+
+#### What a failed headless step's escalation says (S-1140)
+
+`describeFailure` (`src/agent-failure.js`, pure, no agent names) writes the
+details of every escalation for a failed headless step: `agent unavailable`
+(`waitOrEscalate`), a review round aborted by a failed pass or verifier (the
+loop, `bl review`, and the review of a merge resolution), a failed merge
+resolution session, and a failed fix self-review session. The details have
+four parts, in this order:
+
+1. **The step line:** `Step: <step>, failed at <local time>.` The step is in
+   the operator's words (`stepLabel`): `implement S-n`, `fix-tests`,
+   `self-review`, `fix round N`, `fix self-review round N`, `review round N
+<pass>` (`correctness`, `failure-paths` or `verifier`), `merge resolution`.
+   The time is the runner's clock.
+2. **The configurations:** `Configurations (backlog.json "<agent|review_agent>",
+in priority order):`, one bullet each: `<agent> <model>` (`<agent> (agent
+default)` when `model` is null) with its out-list kind, message, scope and
+   reset time, or `not tried`, `excluded` (F-64 D4) or `no headless mode`.
+   Under each refused one, a capacity reading taken at escalation time
+   (`readCapacity`, an `account` reading asked once per agent): one line per
+   window the adapter reports (`<name>: <n>% left, resets <local time>` or `no
+reset time`), or `capacity: unknown — <message>`. An adapter that reports
+   no windows gets no window lines. A session that failed with no refusal
+   (`sessionFailure`) shows its configuration and `Error: <sessionError>`,
+   and no reading is taken.
+3. **The cause line:** `Cause: <cause>`, exactly one, the first that any
+   refused configuration has (`classifyCause`):
+   - `spend cap reached`: refusal `kind: spend`, or a reading `unavailable`
+     with no `until` and no window at 0%;
+   - `quota window used up until <local time>` (with the windows at 0%):
+     refusal `kind` `session` or `weekly` with a reset, or a reading
+     `unavailable` with an `until`; with several, the earliest reset;
+   - `provider overloaded, your quota is fine`: refusal `kind: capacity` and
+     a reading `available`; `provider overloaded; quota could not be read`
+     when the reading is `unknown`;
+   - `unknown`: anything else. A session failure with no refusal is always
+     `unknown — not a capacity refusal bl recognised`.
+4. **The steps:** `Next steps:`, numbered in execution order. Each list ends
+   with "Clear `## Escalation` to `None.`." and then the resume command
+   (`ctx.resumeHint`, else `bl run <id> --resume`). The steps before those
+   two depend on the cause:
+   - overloaded: wait about 30 minutes, then `bl capacity`;
+   - window: wait until the reset (or, when it has passed, check with `bl
+capacity`), then `bl capacity`;
+   - spend: raise the limit or buy credits on the adapter's `billingUrl`, then
+     `bl capacity`;
+   - unknown: `bl capacity` and the adapter's `checkCommand`, then fix what
+     that shows.
+
+   An `Alternative:` line follows for overloaded (another configuration in
+   the role's list), window (a configuration of another agent) and an
+   excluded implementer (a `review_agent` configuration that did not
+   implement this run).
+
+The adapter's `remediation()` gives `{ checkCommand, billingUrl }`. Where one
+is null, the step names "the agent's own usage page". The reason line, and so
+`lastError` and `bl status`'s `run:` line, ends with ` — <cause line>`. An
+abort with no failed session (a lock held, a snapshot failed) keeps its text.
+Inside `bl merge`'s integration the escalation also carries the integration's
+own `Next:` paragraph, and the resume command is `bl merge <id>`.
 
 ### The repo guard
 

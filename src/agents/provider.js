@@ -23,6 +23,8 @@
  *     without stable token transcripts should return null.
  *   - capacity(): whether a configuration ({ agent, model }) can take work
  *     now; the base answers `unknown`.
+ *   - remediation(): the agent's usage check command and billing page for
+ *     an escalation's steps (S-1140); the base names neither.
  *   - checkConfiguration(): why a configuration cannot be used, read when
  *     the config loader loads it; the base finds no reason.
  *   - supportsModel() / supportsDeny(): whether spawn() can select a model,
@@ -281,6 +283,20 @@ export class AgentProvider {
       windows: [],
       message: `${this.name} cannot report capacity`,
     };
+  }
+
+  /**
+   * What an escalation for a failed headless step tells the operator to use
+   * for this agent (S-1140): `checkCommand`, a shell command that shows the
+   * account's usage or limits, and `billingUrl`, the page where the operator
+   * raises a spend limit or buys credits. Each is a string or null. An
+   * adapter fills in only a value confirmed in the agent's own docs or
+   * `--help`; with null, the escalation names "the agent's own usage page".
+   *
+   * @returns {{ checkCommand: string|null, billingUrl: string|null }}
+   */
+  remediation() {
+    return { checkCommand: null, billingUrl: null };
   }
 
   /**

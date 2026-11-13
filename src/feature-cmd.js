@@ -1606,6 +1606,7 @@ async function reviewUnitPRs(
   else info(`\nReview round ${result.round} done: ${end.outcome}.${end.cap}`);
   if (end?.next) info(`Next: ${end.next}`);
   if (result.error) console.error(`bl review: ${result.error}`);
+  if (result.details) console.error(`\n${result.details}`);
   const ok = !result.error && !result.escalated && result.verdict;
   process.exit(ok ? 0 : 1);
 }

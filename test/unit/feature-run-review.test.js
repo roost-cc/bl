@@ -744,6 +744,9 @@ console.log(t.taken ? "taken" : "held by " + t.holder);`;
     const x = await scenario({ preLock: { at, hold: live } });
     assert.deepEqual(x.seen, [], `worktree ${at} held: no session ran`);
     assert.match(x.r.error, new RegExp(`a live session \\(pid ${pid}\\) holds`));
+    // No session failed: the error is today's, with no cause line and no failure text (S-1140).
+    assert.doesNotMatch(x.r.error, /not a capacity refusal/);
+    assert.equal(x.r.details, undefined);
     assert.equal(x.after, x.before, `worktree ${at} held: the feature file is untouched`);
     assert.deepEqual(
       x.locksAfter,
@@ -770,7 +773,12 @@ console.log(t.taken ? "taken" : "held by " + t.holder);`;
         PASSES.slice(0, PASSES.indexOf(failAt) + 1),
         `${name}: nothing runs after it`,
       );
-      assert.match(x.r.error, /failed: /, name);
+      assert.match(x.r.error, /failed: .* — unknown — not a capacity refusal bl recognised$/, name);
+      // The step, the time, the raw error and the steps to rule capacity in or out (S-1140).
+      const step = failAt === 'review-verify' ? 'verifier' : failAt.slice('review-'.length);
+      assert.ok(x.r.details.includes(`Step: review round 1 ${step}, failed at `), `${name}: ${x.r.details}`);
+      assert.match(x.r.details, /\nError: .+\n/, name);
+      assert.match(x.r.details, /\n1\. Run `bl capacity`.*\n2\. Fix what that shows\.\n/, name);
       assert.equal(x.r.verdict, false, `${name}: no verdict`);
       assert.equal(x.r.status, 'in_review', `${name}: the unit stays in review`);
       assert.equal(x.r.round, 0, `${name}: the round is not spent`);
@@ -804,7 +812,19 @@ test('the loop escalates a review round aborted by a failed pass instead of read
         : session(o);
     const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'escalated');
-    assert.match(state.lastError, /review round 1 aborted before a verdict/);
+    assert.equal(
+      state.lastError,
+      'review round 1 aborted before a verdict — unknown — not a capacity refusal bl recognised',
+    );
+    // The step, the configuration, the raw error and the unknown steps (S-1140).
+    const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    assert.ok(esc.includes('\nthe failure-paths pass failed: provider crashed\n'), esc);
+    assert.ok(esc.includes('\nStep: review round 1 failure-paths, failed at '), esc);
+    assert.match(esc, /\n- \S+ \S+[^\n]*\n\nError: provider crashed\n/);
+    assert.match(
+      esc,
+      /\n1\. Run `bl capacity`[^\n]*\n2\. Fix what that shows\.\n3\. Clear `## Escalation` to `None\.`\.\n4\. Run `bl run F-1 --resume`\.\n?$/,
+    );
     assert.equal(runner.calls.filter((c) => c.type === 'session' && c.prompt === 'review-verify').length, 0);
     assert.notEqual(parseFrontmatter(readFileSync(CH(feature), 'utf8')).fm.review_status, 'addressed');
   } finally {

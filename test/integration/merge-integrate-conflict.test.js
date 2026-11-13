@@ -136,6 +136,34 @@ test('an agent that leaves the merge unfinished is aborted and escalated, and ma
   }
 });
 
+test('a resolution session that fails with no refusal escalates with the step, configuration, error and steps (S-1140)', async () => {
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const { runner } = scriptedRunner({
+      test: 'true',
+      resolve: () => ({ ...RESOLVED, ok: false, isError: true, error: 'provider crashed' }),
+    });
+    const res = await integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.escalated, true);
+    assert.match(
+      res.reason,
+      /the resolution agent did not resolve it — unknown — not a capacity refusal bl recognised$/,
+    );
+    const esc = escalation(featureFile(fx));
+    assert.match(esc, /- the session failed: provider crashed/);
+    assert.match(esc, /\nStep: merge resolution, failed at /);
+    assert.match(esc, /\n\nError: provider crashed\n/);
+    assert.match(
+      esc,
+      /\n1\. Run `bl capacity`[^\n]*\n2\. Fix what that shows\.\n3\. [^\n]*\n4\. Run `bl merge F-1`\.$/,
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
 // Review 2026-11-13, Should 1: the resolution agent may change plan.yaml
 // (_execution-inputs.md); a change bl cannot read fails the resolution checks.
 test('a resolution agent that leaves a plan.yaml bl cannot read is rolled back and escalated with the message', async () => {

@@ -125,6 +125,7 @@ import { commitPaths, dirtySnapshot } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
 import { gateRecord, pushEscalation } from './push-gate.js';
+import { describeFailure, localTime } from './agent-failure.js';
 import * as processScope from './process-scope.js';
 import { regenerateConflicts, regeneratePlugins } from './regenerate.js';
 import { REVIEW, loadFlow } from './flow.js';
@@ -143,6 +144,8 @@ import {
 // The run directory, its run lock and its self-ignoring setup live in
 // run-lock.js; re-exported for the loop's callers.
 export { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock };
+// Its home is agent-failure.js; feature-cmd.js and capacity.js import it from here.
+export { localTime };
 export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 /**
@@ -713,6 +716,10 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     capacity(agent, model, topLevel) {
       return getProvider(agent).capacity({ model, topLevel });
     },
+    /** The adapter's `{ checkCommand, billingUrl }` for an escalation's steps (S-1140). */
+    remediation(agent) {
+      return getProvider(agent).remediation();
+    },
     async session({
       mode,
       agent,
@@ -1114,7 +1121,7 @@ function finalTitle(ctx, status) {
   let next = '';
   if (status === 'clean') next = '→ bl merge';
   else if (status === 'escalated') {
-    const hint = ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`;
+    const hint = resumeCommand(ctx);
     next = `→ fix, ${hint.endsWith(' --resume') ? '--resume' : hint.replace(` ${ctx.feature.id}`, '')}`;
   }
   const shown = status === 'no-change' ? 'done' : status;
@@ -2050,7 +2057,7 @@ export async function runSession(
           }
           return r;
         }
-        waitedUntil = await waitOrEscalate(ctx, { step, role, list, excluded, waitedUntil });
+        waitedUntil = await waitOrEscalate(ctx, { step, story, role, list, excluded, waitedUntil });
       }
     }),
   );
@@ -2080,7 +2087,7 @@ async function escalateNoOutcome(ctx, step, r) {
     .slice(-20)
     .map(cleanStderrLine)
     .join('\n');
-  const resume = ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`;
+  const resume = resumeCommand(ctx);
   const details = [
     `The ${step} session's final message was not the JSON object its schema describes, and the resumed session's was not either. The loop reads no outcome from text, so it stops.`,
     '',
@@ -2100,21 +2107,57 @@ async function escalateNoOutcome(ctx, step, r) {
 // a clock a little behind the agent's would otherwise hit it again.
 const LIMIT_WAIT_MARGIN_MS = 60_000;
 
-/**
- * `value` (an ISO string, a Date or epoch milliseconds) as local wall-clock
- * time for the operator: "2026-10-13 18:11 America/Los_Angeles".
- */
-export function localTime(value) {
-  const ms = value instanceof Date ? value.getTime() : new Date(value).getTime();
-  if (!Number.isFinite(ms)) return String(value);
-  const zone = Temporal.Now.timeZoneId();
-  const z = Temporal.Instant.fromEpochMilliseconds(ms).toZonedDateTimeISO(zone);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${z.year}-${p(z.month)}-${p(z.day)} ${p(z.hour)}:${p(z.minute)} ${zone}`;
-}
-
 function runnerNow(runner) {
   return typeof runner.now === 'function' ? runner.now() : new Date();
+}
+
+/** The command that starts the run again after an escalation. */
+function resumeCommand(ctx) {
+  return ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`;
+}
+
+/** The `backlog.json` key of a role's configuration list. */
+const roleKey = (role) => (role === 'review' ? 'review_agent' : 'agent');
+
+/** The adapter's `{ checkCommand, billingUrl }` through the runner; null on a runner without it. */
+function remediationOf(runner, agent) {
+  return typeof runner.remediation === 'function' ? runner.remediation(agent) : null;
+}
+
+/**
+ * The step bl was running, in the operator's words (S-1140): `implement S-n`,
+ * `fix round N`, `review round N failure-paths`, `merge resolution`. The
+ * round is the run state's, which setStep keeps.
+ */
+function stepLabel(ctx, step, story = null) {
+  const round = ctx.state.round;
+  if (step === 'implement') return story ? `implement ${story}` : 'implement';
+  if (step === 'fix') return `fix round ${round}`;
+  if (step === 'fix-self-review') return `fix self-review round ${round}`;
+  if (step === 'merge-resolve') return 'merge resolution';
+  if (step === 'review:verify') return `review round ${round} verifier`;
+  if (step.startsWith('review:')) return `review round ${round} ${step.slice('review:'.length)}`;
+  return step;
+}
+
+/**
+ * A session that ran and failed with no refusal bl recognised (S-1140), as
+ * `describeFailure` renders it: the step, its configuration, the time, the
+ * raw error (`sessionError`), the cause `unknown` and its steps. No capacity
+ * is read: `bl capacity` does that when the operator runs it. Null for a
+ * result with no configuration (no session ran).
+ */
+function sessionFailure(ctx, step, r) {
+  if (!r?.configuration) return null;
+  const { agent, model } = r.configuration;
+  return describeFailure({
+    step: stepLabel(ctx, step),
+    failedAt: runnerNow(ctx.runner),
+    roleKey: roleKey(step.startsWith('review:') ? 'review' : 'implement'),
+    resumeHint: resumeCommand(ctx),
+    configurations: [{ agent, model, out: null, reading: null, remediation: remediationOf(ctx.runner, agent) }],
+    error: sessionError(r),
+  });
 }
 
 /**
@@ -2126,12 +2169,14 @@ function runnerNow(runner) {
  * capacity refusal), when the earliest lies further away than
  * `run.limit_wait_max_hours`, and when this step already waited once: a
  * misread or inapplicable reset time costs at most one wait per step
- * invocation, never a loop. The details list every configuration with its
- * reason, its scope and its reset time in local time, and each one `excluded`
- * (F-64 D4: it implemented this run) with the steps it ran.
+ * invocation, never a loop. The details are `describeFailure`'s (S-1140):
+ * the step and the time, every configuration with its reason, scope and reset
+ * time in local time and a capacity reading taken now, each one `excluded`
+ * (F-64 D4: it implemented this run) with the steps it ran, the cause line
+ * and the ordered steps. The reason ends with the cause line.
  */
-async function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUntil }) {
-  const { runner, prep, config, feature } = ctx;
+async function waitOrEscalate(ctx, { step, story = null, role, list, excluded = [], waitedUntil }) {
+  const { runner, prep, config } = ctx;
   const cfg = prep.cfg ?? config;
   const capHours = cfg.limitWaitMaxHours ?? 8;
   const now = runnerNow(runner).getTime();
@@ -2163,30 +2208,28 @@ async function waitOrEscalate(ctx, { step, role, list, excluded = [], waitedUnti
     why = `the earliest reset, ${localTime(next.out.until)}, is past the limit_wait_max_hours cap of ${capHours}`;
   if (why) {
     const only = list.length === 1 && !rows[0].implemented ? rows[0].out : null;
-    const reason = only
+    const unavailable = only
       ? `agent unavailable: ${only.message}`
       : `agent unavailable: every ${roleName} configuration is out (${list.map(configurationLabel).join(', ')})`;
-    const resume = ctx.resumeHint ?? `bl run ${feature.id} --resume`;
-    const line = ({ c, out, headless, implemented }) => {
-      const name = configurationLabel(c);
-      if (implemented)
-        return `- ${name}: excluded — it ran ${implemented.steps.join(', ')} in this run, and the reviewer is never the implementer`;
-      if (!headless) return `- ${name}: its agent has no headless mode`;
-      if (!out) return `- ${name}: not tried`;
-      const when = out.until == null ? 'no reset time' : `until ${localTime(out.until)}`;
-      return `- ${name}: ${out.kind} — ${out.message} (${out.scope === 'account' ? `every ${out.agent} configuration` : 'this configuration'}; ${when})`;
-    };
-    const details = [
-      `The ${step} session found every ${roleName} configuration out: ${why}.`,
-      '',
-      `Configurations (backlog.json "${role === 'review' ? 'review_agent' : 'agent'}", in priority order):`,
-      '',
-      ...rows.map(line),
-      '',
-      rows.some((row) => row.implemented)
-        ? `Add a "review_agent" configuration that did not implement this run, or raise the limit${next != null ? ' (or wait for the reset)' : ''}, then run \`${resume}\`.`
-        : `Raise the limit${next != null ? ' (or wait for the reset)' : ''}, then run \`${resume}\`.`,
-    ].join('\n');
+    // A fresh reading of each refused configuration; an account-wide one is asked once.
+    const asked = new Map();
+    const failure = describeFailure({
+      step: stepLabel(ctx, step, story),
+      failedAt: now,
+      roleKey: roleKey(role),
+      resumeHint: resumeCommand(ctx),
+      configurations: rows.map(({ c, out, headless, implemented }) => ({
+        agent: c.agent,
+        model: c.model ?? null,
+        out,
+        reading: out && headless && !implemented ? readCapacity(runner, c, asked, config.topLevel) : null,
+        remediation: remediationOf(runner, c.agent),
+        excluded: implemented?.steps ?? null,
+        headless,
+      })),
+    });
+    const reason = `${unavailable} — ${failure.causeLine}`;
+    const details = `The ${step} session found every ${roleName} configuration out: ${why}.\n\n${failure.text}`;
     await finish(ctx, 'escalated', reason, details);
     throw new AgentUnavailableError(reason, ctx.state);
   }
@@ -3553,7 +3596,7 @@ async function testGateWithFix(ctx) {
  */
 function pushBranch(ctx, step) {
   const { runner, prep } = ctx;
-  const next = `set this section to "None.", then \`${ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`}\``;
+  const next = `set this section to "None.", then \`${resumeCommand(ctx)}\``;
   for (const t of publishTargets(ctx)) {
     const lead = t.repo === prepRepo(ctx);
     const pushStartedAt = runnerNow(runner).getTime();
@@ -3919,7 +3962,13 @@ async function reviewRoundLocked(ctx, { reReview, round, position, closing = fal
     if (q.error) return roundAborted(ctx, round, q.error);
     // The verifier weighs every dimension; with one missing, its verdict
     // would pass what nobody reviewed.
-    if (!r.ok) return roundAborted(ctx, round, `the ${dim} pass failed: ${sessionError(r)}`);
+    if (!r.ok)
+      return roundAborted(
+        ctx,
+        round,
+        `the ${dim} pass failed: ${sessionError(r)}`,
+        sessionFailure(ctx, `review:${dim}`, r),
+      );
     if (r.configuration) passes.push({ session: `review:${dim}`, ...r.configuration });
     if (!existsSync(findingsPath)) {
       writeFileSync(findingsPath, `# ${dim}\n\n(no findings file was produced by the ${dim} pass)\n`);
@@ -3987,7 +4036,8 @@ async function reviewRoundLocked(ctx, { reReview, round, position, closing = fal
   const qv = quarantineReviewerChanges(ctx, `r${round + 1}-verify`, beforeVerify.snaps);
   if (qv.error) restoreErrors.push(qv.error);
   if (!rv.ok) restoreErrors.unshift(`the verifier failed: ${sessionError(rv)}`);
-  if (restoreErrors.length > 0) return roundAborted(ctx, round, restoreErrors.join('; '));
+  if (restoreErrors.length > 0)
+    return roundAborted(ctx, round, restoreErrors.join('; '), rv.ok ? null : sessionFailure(ctx, 'review:verify', rv));
   if (rv.configuration) passes.push({ session: 'review:verify', ...rv.configuration });
   // The independence of the sign-off, on record (F-64 D4): `bl status` reads it.
   const reviewedBy = reviewersLabel(passes);
@@ -4042,11 +4092,25 @@ async function quarantineOnCleanupError(ctx, label, snaps, fn) {
  * A review round stopped before its verdict: a worktree lock was held
  * elsewhere, a worktree could not be snapshotted or put back (the next pass,
  * or the test gate, would inherit and be blamed for whatever is left), or a
- * session failed.
+ * session failed. `failure` is that session's `sessionFailure` (S-1140),
+ * kept as `abortFailure` for the escalation; null for every other abort.
  */
-function roundAborted(ctx, round, error) {
+function roundAborted(ctx, round, error, failure = null) {
   record(ctx, { step: 'review:abort', ok: false, note: error });
-  return { round, expected: round + 1, abortError: error };
+  return { round, expected: round + 1, abortError: error, abortFailure: failure };
+}
+
+/**
+ * An abort's reason and details with its session failure (S-1140): the
+ * reason ends with the cause line, and the details end with the failure's
+ * text. Without a failure (a lock held, a snapshot failed) both stay as given.
+ */
+function withFailure(reason, details, failure) {
+  if (!failure) return { reason, details };
+  return {
+    reason: `${reason} — ${failure.causeLine}`,
+    details: [details, failure.text].filter(Boolean).join('\n\n'),
+  };
 }
 
 export function sessionError(r) {
@@ -4411,24 +4475,32 @@ async function resolveIntegration(ctx, repos, { conflicts, gate }) {
     } catch (e) {
       problems.push(e.message);
     }
+    let failure = null;
     if (escalationOpen(unit.indexPath)) problems.unshift('the agent wrote an escalation');
-    else if (!r.ok || r.isError) problems.unshift(`the session failed: ${sessionError(r)}`);
-    else if (r.structured?.resolved === false)
+    else if (!r.ok || r.isError) {
+      problems.unshift(`the session failed: ${sessionError(r)}`);
+      failure = sessionFailure(ctx, 'merge-resolve', r);
+    } else if (r.structured?.resolved === false)
       problems.unshift(`the agent did not resolve it: ${r.structured.reason ?? '(no reason given)'}`);
     if (problems.length > 0) {
       const stuck = work.filter((e) => !abortIntegration(ctx, e.worktreePath));
       const left = agentCommits(ctx, repos);
       const restored = rolledBack();
-      const reason = `merge with main: ${what}, and ${session ? 'the resolution agent did not resolve it' : 'it fails the resolution checks'}`;
-      const details = [
-        blocks.join('\n\n'),
-        gate ? gateDetails(gate) : '',
-        `After the session:\n\n${problems.map((p) => `- ${p}`).join('\n')}`,
-        r.structured ? `The agent's outcome: ${r.structured.summary}` : '',
-        `${abortNote(stuck).trim()}${left}`.trim(),
-        restored,
-      ].filter(Boolean);
-      await escalateIntegration(ctx, reason, details.join('\n\n'), { save: true });
+      const { reason, details } = withFailure(
+        `merge with main: ${what}, and ${session ? 'the resolution agent did not resolve it' : 'it fails the resolution checks'}`,
+        [
+          blocks.join('\n\n'),
+          gate ? gateDetails(gate) : '',
+          `After the session:\n\n${problems.map((p) => `- ${p}`).join('\n')}`,
+          r.structured ? `The agent's outcome: ${r.structured.summary}` : '',
+          `${abortNote(stuck).trim()}${left}`.trim(),
+          restored,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        failure,
+      );
+      await escalateIntegration(ctx, reason, details, { save: true });
       return { ok: false, escalated: true, reason, repos };
     }
     for (const e of work) {
@@ -4486,8 +4558,12 @@ async function resolveIntegration(ctx, repos, { conflicts, gate }) {
     const why = result.abortError
       ? `was aborted before a verdict: ${result.abortError}`
       : 'ended addressed, but an escalation was written during it';
-    const reason = `merge with main: the review of the resolution ${why}`;
-    await escalateIntegration(ctx, reason, `${blocks.join('\n\n')}\n\n${restored}`, { save: true });
+    const { reason, details } = withFailure(
+      `merge with main: the review of the resolution ${why}`,
+      `${blocks.join('\n\n')}\n\n${restored}`,
+      result.abortFailure,
+    );
+    await escalateIntegration(ctx, reason, details, { save: true });
     return { ok: false, escalated: true, reason, repos };
   } finally {
     ctx.integration = null;
@@ -4808,7 +4884,9 @@ async function escalateIntegration(ctx, reason, details, { save = false } = {}) 
  * `{ status, round, verdict, escalated, error, end }` (`status` the unit's
  * after the round, `end` from `reviewEnd`, `null`
  * for a round that did not finish: `error` set and no escalation) or a
- * refusal.
+ * refusal. A round a session failure aborted also returns `details`, the
+ * failure's step, configuration, cause and steps (S-1140), and its `error`
+ * ends with the cause line.
  *
  * `prep` and `pr` are the lead repo's (the PR the run state keeps);
  * `otherRepos` (`[{ repoName, worktreePath, pr: { number, url } }]`) are the
@@ -4873,12 +4951,15 @@ export async function reviewFeature({
         end: escalated ? endOfReview(ctx, maxRounds, true) : null,
       };
     }
-    state.status = result.abortError ? 'failed' : 'reviewed';
-    state.lastError = result.abortError ?? null;
+    // A round a session failure aborted says why, and what to do (S-1140).
+    const failed = result.abortError ? withFailure(result.abortError, '', result.abortFailure) : null;
+    state.status = failed ? 'failed' : 'reviewed';
+    state.lastError = failed?.reason ?? null;
     saveRunState(config, state);
     const escalated = escalationOpen(feature.indexPath);
-    const error = result.abortError ?? null;
+    const error = failed?.reason ?? null;
     return {
+      ...(failed?.details ? { details: failed.details } : {}),
       status: unitStatus(ctx),
       round: result.round,
       // Whether the round reached a verdict, which the unit's log records.
@@ -5301,7 +5382,12 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
       if (others.error) return finish(ctx, 'escalated', 'no pull request could be opened', others.error);
       const result = await reviewRound(ctx, { reReview, closing });
       if (result.abortError) {
-        return finish(ctx, 'escalated', `review round ${result.expected} aborted before a verdict`, result.abortError);
+        const { reason, details } = withFailure(
+          `review round ${result.expected} aborted before a verdict`,
+          result.abortError,
+          result.abortFailure,
+        );
+        return finish(ctx, 'escalated', reason, details);
       }
       if (escalationOpen(feature.indexPath)) {
         return finish(ctx, 'escalated', `reviewer escalated in round ${result.round}`);
@@ -5393,13 +5479,14 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     // escalates" rule stopped a self-review that had recovered and done its
     // job (operator decision 2026-09-24).
     if (!selfReview.ok || selfReview.isError || !selfReview.structured.ok) {
-      const why = selfReview.structured?.ok === false ? selfReview.structured.summary : sessionError(selfReview);
-      return finish(
-        ctx,
-        'escalated',
+      const notReady = selfReview.structured?.ok === false;
+      const why = notReady ? selfReview.structured.summary : sessionError(selfReview);
+      const { reason, details } = withFailure(
         `the fix self-review for round ${fixRound} failed: ${why}`,
         openItemsSummary(ctx),
+        notReady ? null : sessionFailure(ctx, 'fix-self-review', selfReview),
       );
+      return finish(ctx, 'escalated', reason, details);
     }
     await hop(ctx, 'fix-self-review', 'in_review', {
       by: 'fix',
