@@ -16,8 +16,8 @@
  * A hold's gate is a status of its unit's type. The reader takes the gate
  * names from before F-119 as the statuses they stand for (`holdGate`:
  * `run` is `in_progress`, `merge` is `done`, unless `flow.json` has a status
- * of that name), so the next write stores statuses. `unit: "*"` holds every unit of every type that has the status;
- * `blocker` is never `*`. `active_when` keeps the edge from holding anything until
+ * of that name), so the next write stores statuses. `unit: "*"` holds every
+ * unit of every type that has the status; `blocker` is never `*`. `active_when` keeps the edge from holding anything until
  * that unit's status meets that status. Statuses meet through `flow.json`
  * (`Flow.meets`). Met edges stay as history; nothing prunes them.
  *
@@ -48,8 +48,8 @@
  * `blockers-cycle` share. `heldBy` is the hold check a verb makes on the
  * statuses of its nominal path (`Flow.nominalPath`, F-119 D6): every verb
  * makes it when it starts (`holdRefusal`, through `startOf`, `bl done` and
- * `bl task done`), except `bl new` and `bl side` (`UNHELD_VERBS`). `heldLines` is what
- * `bl status` prints.
+ * `bl task done`), except `bl new` and `bl side` (`UNHELD_VERBS`).
+ * `heldLines` is what `bl status` prints.
  */
 
 import { lstatSync, readFileSync } from 'fs';
