@@ -3,65 +3,14 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { loadConfig } from '../../src/config.js';
-import { readAllStories } from '../../src/story.js';
-import { resolveTargets } from '../../src/targets.js';
-import { schedule, dependencyOrder, planFiles, branchFiles, unitFiles } from '../../src/schedule.js';
+import { schedule, branchFiles, unitFiles } from '../../src/schedule.js';
+import { planFiles } from '../../src/execution-plan.js';
 import { reposForFeature } from '../../src/feature.js';
-import { FLOW_TEMPLATE, mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempDir } from '../helpers/tempdir.js';
+import { PATH_CASES, plan, withBacklog } from '../helpers/plan-fixture.js';
 import { loadFlow } from '../../src/flow.js';
 
 const flow = loadFlow(dirname(FLOW_TEMPLATE));
-
-const plan = (...lines) => `## Summary\n\nx\n\n## Implementation Plan\n\n${lines.join('\n')}\n`;
-const story = (id, extra = {}) => ({
-  id,
-  epic: 'E01',
-  epicDirSuffix: 'one',
-  title: `story ${id}`,
-  dirSuffix: id.toLowerCase(),
-  status: 'refined',
-  ...extra,
-});
-
-function fixture() {
-  return mkTempBacklog({
-    // A story's repo is its component's (F-52 D1).
-    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
-    stories: [
-      story('S-1', { body: plan('1. `src/a.js`: add it') }),
-      story('S-2', { depends_on: ['S-1'], body: plan('1. `src/b.js`') }),
-      story('S-3', { depends_on: ['S-9'] }),
-      story('S-4', { depends_on: ['S-10'] }),
-      story('S-5', { depends_on: ['S-8'] }),
-      story('S-8', { status: 'done' }),
-      story('S-9', { status: 'backlog' }),
-      story('S-10', {
-        feature: 'F-1',
-        depends_on: ['S-11'],
-        body: plan('- `src/x.js` and `test/unit/x.test.js` (~12)'),
-      }),
-      story('S-11', { feature: 'F-1', body: plan('- `./src/y.js`, `bl run`, `.bl/run/<id>.out`, src/not-seen.js') }),
-      story('S-12', { feature: 'F-2', depends_on: ['S-1'] }),
-    ],
-    features: [
-      { id: 'F-1', title: 'One', dirSuffix: 'one', status: 'approved', primary_repo: 'bl', stories: ['S-10', 'S-11'] },
-      { id: 'F-2', title: 'Two', dirSuffix: 'two', status: 'approved', primary_repo: 'bl', stories: ['S-12'] },
-    ],
-  });
-}
-
-function withBacklog(fn) {
-  const { dir, cleanup } = fixture();
-  try {
-    const config = loadConfig({ backlogRoot: dir });
-    const all = readAllStories(config);
-    const units = (...ids) => resolveTargets(ids, config, null).targets;
-    fn({ config, all, units });
-  } finally {
-    cleanup();
-  }
-}
 
 const noFiles = () => new Set();
 
@@ -168,15 +117,6 @@ test('shared files in several repos keep their repo names', () => {
     const files = { 'S-1': ['bl:a.js', 'tools:b.js'], 'S-5': ['bl:a.js', 'tools:b.js'] };
     const { deferred } = schedule(units('S-1', 'S-5'), all, flow, { config, files: (u) => new Set(files[u.id]) });
     assert.equal(deferred[0].reason, 'S-5 overlaps S-1 on bl:a.js, tools:b.js; run it after S-1 merges');
-  });
-});
-
-test('planFiles reads backticked paths from the Implementation Plan, keyed by repo', () => {
-  withBacklog(({ all }) => {
-    const byId = (id) => all.find((s) => s.id === id);
-    assert.deepEqual([...planFiles([byId('S-11')])], ['bl:src/y.js'], 'not commands, templated paths or bare text');
-    assert.deepEqual([...planFiles([byId('S-10')])].sort(), ['bl:src/x.js', 'bl:test/unit/x.test.js']);
-    assert.deepEqual([...planFiles([byId('S-3')])], [], 'no plan section');
   });
 });
 
@@ -301,174 +241,7 @@ test('unitFiles does not schedule from a partial multi-repository branch diff', 
   }
 });
 
-test('dependencyOrder puts a target after the targets it depends on', () => {
-  withBacklog(({ config, all, units }) => {
-    assert.deepEqual(
-      dependencyOrder(units('S-2', 'S-5', 'S-1'), all, { config }).map((u) => u.id),
-      ['S-1', 'S-2', 'S-5'],
-    );
-    // S-4 depends on S-10 in F-1; F-2 on S-1.
-    assert.deepEqual(
-      dependencyOrder(units('S-4', 'F-2', 'F-1', 'S-1'), all, { config }).map((u) => u.id),
-      ['F-1', 'S-1', 'F-2', 'S-4'],
-    );
-  });
-});
-
-// Every class of span a plan may backtick: kept (as git prints it) or dropped.
-const PATH_CASES = [
-  ['src/plain.js', 'src/plain.js', 'plain'],
-  ['src/with space.js', 'src/with space.js', 'whitespace in a name'],
-  ["src/name+variant (copy), #2 & 'q'.js", "src/name+variant (copy), #2 & 'q'.js", 'punctuation'],
-  ['src/file..js', 'src/file..js', '`..` inside a name is not traversal'],
-  ['src/..hidden/a.js', 'src/..hidden/a.js', '`..` starting a name'],
-  ['docs/café/naïve.md', 'docs/café/naïve.md', 'Unicode names'],
-  ['README.été', 'README.été', 'Unicode extension, no slash'],
-  ['  src/padded.js  ', 'src/padded.js', 'whitespace around the path inside backticks'],
-  ['./src/dot.js', 'src/dot.js', 'leading ./'],
-  ['src/dir/', 'src/dir', 'directory, trailing slash'],
-  ['src/dir', 'src/dir', 'directory, no slash'],
-  ['lib/', 'lib', 'top-level directory, trailing slash'],
-  ['Makefile.am', 'Makefile.am', 'top-level file with an extension'],
-  ['../outside.js', null, 'parent traversal'],
-  ['src/../x.js', null, 'parent traversal mid-path'],
-  ['src/./x.js', null, '`.` segment'],
-  ['src//x.js', null, 'empty segment'],
-  ['/etc/passwd', null, 'absolute'],
-  ['bl run', null, 'a command'],
-  ['Makefile', null, 'no slash and no extension'],
-  ['.bl/run/<id>.out', null, 'template'],
-  ['src/{a,b}.js', null, 'brace expansion'],
-  ['src/*.js', null, 'glob'],
-  ['$HOME/x.js', null, 'variable'],
-  ['', null, 'empty'],
-];
-
-test('planFiles skips paths under ### Sources of truth and keeps those after it', () => {
-  const sources = '### Sources of truth\n\n- Statuses: `src/flow.js`, read through `src/read-only.js`.\n';
-  const bodies = {
-    'S-1': plan('`src/before.js`', '', sources, '### Steps', '', '1. `src/after.js`'),
-    'S-2': plan(sources),
-    'S-3': plan(
-      '`src/before.js`',
-      '',
-      sources.replace('\n\n', ' \r\n\r\n'),
-      '#### Detail',
-      '`src/deep.js`',
-      '',
-      '## Next',
-    ),
-  };
-  const { dir, cleanup } = mkTempBacklog({
-    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
-    stories: Object.entries(bodies).map(([id, body]) => story(id, { body })),
-  });
-  try {
-    const stories = readAllStories(loadConfig({ backlogRoot: dir }));
-    const files = (id) => [...planFiles([stories.find((s) => s.id === id)])].sort();
-    assert.deepEqual(files('S-1'), ['bl:src/after.js', 'bl:src/before.js']);
-    assert.deepEqual(files('S-2'), []);
-    assert.deepEqual(files('S-3'), ['bl:src/before.js']);
-  } finally {
-    cleanup();
-  }
-});
-
-const READ = '- Read `src/read-only.js`.';
-const AFTER = '1. Change `src/after.js`.';
-const HEADING_FORMS = [
-  ['plain', ['### Sources of truth', READ, '### Steps', AFTER]],
-  ['closing hashes', ['### Sources of truth ###', READ, '### Steps ###', AFTER]],
-  ['closing hashes of another length', ['### Sources of truth #', READ, '### Steps ##########', AFTER]],
-  ['tab after the marker', ['###\tSources of truth', READ, '###\tSteps', AFTER]],
-  ['several spaces', ['###   Sources of truth   ', READ, '###   Steps', AFTER]],
-  ['up to three leading spaces', ['   ### Sources of truth', 'Read `src/read-only.js`.', '  ### Steps', AFTER]],
-  ['next heading level one', ['### Sources of truth', READ, '# Steps', AFTER]],
-  ['next heading setext', ['### Sources of truth', READ, 'Steps\n---', AFTER]],
-  ['an empty next heading', ['### Sources of truth', READ, '###', AFTER]],
-  ['a twin section', ['### Sources of truth', READ, '### Sources of truth', READ, '### Steps', AFTER]],
-  ['a deeper heading stays inside', ['### Sources of truth', '#### Detail', READ, '### Steps', AFTER]],
-  ['a fenced heading stays inside', ['### Sources of truth', '```\n### Steps\n```', READ, '### Steps', AFTER]],
-];
-const NOT_THE_HEADING = [
-  ['seven hashes', '####### Sources of truth'],
-  ['no space after the marker', '###Sources of truth'],
-  ['another level', '#### Sources of truth'],
-  ['longer text', '### Sources of truth and more'],
-  ['an escaped marker', String.raw`\### Sources of truth`],
-  ['another title in bold', '### **Sources of truth and more**'],
-  ['another title after a comment', '### Sources <!-- of truth --> of lies'],
-];
-
-const FORMATTED_TITLES = [
-  ['bold', '**Sources of truth**'],
-  ['bold with underscores', '__Sources of truth__'],
-  ['emphasis', '*Sources of truth*'],
-  ['partial emphasis', 'Sources of *truth*'],
-  ['partial bold', '**Sources** of truth'],
-  ['nested emphasis', '***Sources*** of _truth_'],
-  ['a link', '[Sources of truth](docs/guide.md)'],
-  ['a partial link', 'Sources of [truth](docs/guide.md)'],
-  ['a reference link', '[Sources of truth][guide]'],
-  ['inline code', '`Sources of truth`'],
-  ['partial inline code', 'Sources of `truth`'],
-  ['an image', '![Sources of truth](truth.png)'],
-  ['inline HTML', '<b>Sources of truth</b>'],
-  ['a trailing HTML comment', 'Sources of truth <!-- note -->'],
-  ['a leading HTML comment', '<!-- note --> Sources of truth'],
-  ['an HTML comment inside', 'Sources <!-- note --> of truth'],
-  ['a character reference', 'Sources&#32;of truth'],
-  ['closing hashes', '**Sources of truth** ###'],
-];
-
-test('planFiles_skips_formatted_sources_of_truth_headings', () => {
-  const REF = '[guide]: docs/guide.md';
-  const twin = '### Other\n\n1. Change `src/twin-after.js`.\n\n### *Sources* of truth\n\n- Read `src/twin.js`.';
-  const stories = FORMATTED_TITLES.flatMap(([, title], i) => [
-    story(`S-${i + 1}`, { body: plan(`### ${title}`, '', READ, '', '### Steps', '', AFTER, '', REF) }),
-    // The next heading ends the section whatever its own formatting.
-    story(`S-${i + 101}`, { body: plan(`### ${title}`, '', READ, '', '# **Next**', '', AFTER, '', REF) }),
-    story(`S-${i + 201}`, { body: plan(`### ${title}`, '', READ, '', '### [Steps](a.md)', '', AFTER, '', REF) }),
-    story(`S-${i + 301}`, { body: plan(`### ${title}`, '', READ, '', twin, '', '### `Steps`', '', AFTER, '', REF) }),
-  ]);
-  const { dir, cleanup } = mkTempBacklog({
-    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
-    stories,
-  });
-  try {
-    const all = readAllStories(loadConfig({ backlogRoot: dir }));
-    const files = (id) => [...planFiles([all.find((s) => s.id === id)])].sort();
-    FORMATTED_TITLES.forEach(([name], i) => {
-      assert.deepEqual(files(`S-${i + 1}`), ['bl:src/after.js'], name);
-      assert.deepEqual(files(`S-${i + 101}`), ['bl:src/after.js'], `${name}, level-one next heading`);
-      assert.deepEqual(files(`S-${i + 201}`), ['bl:src/after.js'], `${name}, linked next heading`);
-      assert.deepEqual(files(`S-${i + 301}`), ['bl:src/after.js', 'bl:src/twin-after.js'], `${name}, repeated`);
-    });
-  } finally {
-    cleanup();
-  }
-});
-
-test('planFiles_handles_valid_atx_heading_forms_and_next_sections', () => {
-  const stories = [
-    ...HEADING_FORMS.map(([, lines], i) => story(`S-${i + 1}`, { body: plan(...lines.join('\n\n').split('\n')) })),
-    ...NOT_THE_HEADING.map(([, heading], i) => story(`S-${i + 101}`, { body: plan(heading, '', READ) })),
-  ];
-  const { dir, cleanup } = mkTempBacklog({
-    epics: [{ id: 'E01', projectId: 'demo', title: 'One', dirSuffix: 'one', repo: 'bl' }],
-    stories,
-  });
-  try {
-    const all = readAllStories(loadConfig({ backlogRoot: dir }));
-    const files = (id) => [...planFiles([all.find((s) => s.id === id)])];
-    HEADING_FORMS.forEach(([name], i) => assert.deepEqual(files(`S-${i + 1}`), ['bl:src/after.js'], name));
-    NOT_THE_HEADING.forEach(([name], i) => assert.deepEqual(files(`S-${i + 101}`), ['bl:src/read-only.js'], name));
-  } finally {
-    cleanup();
-  }
-});
-
-test('planFiles preserves valid repository paths with spaces and punctuation and schedule defers their overlaps', () => {
+test('schedule defers the overlaps of valid repository paths with spaces and punctuation', () => {
   const root = mkTempDir('bl-schedule-paths-');
   const git = (cwd, ...args) =>
     execFileSync('git', ['-C', cwd, ...args], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
@@ -478,14 +251,6 @@ test('planFiles preserves valid repository paths with spaces and punctuation and
       writeFileSync(indexPath, `---\nstory_id: ${id}\n---\n\n${plan(...spans.map((s) => `- edit \`${s}\``))}`);
       return { id, indexPath, unitRepo: 'bl', status: 'refined' };
     };
-    for (const [span, want, why] of PATH_CASES) {
-      assert.deepEqual(
-        [...planFiles([make('S-1', [span])])],
-        want === null ? [] : [`bl:${want}`],
-        `${why}: \`${span}\``,
-      );
-    }
-
     // Each kept path, named by two targets, defers the later one; the union
     // over a feature's stories (`unitStories` → `planFiles`) keeps it too.
     const kept = PATH_CASES.filter(([, want]) => want !== null);

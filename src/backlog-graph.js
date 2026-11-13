@@ -74,7 +74,8 @@ import {
 } from './config.js';
 import { FlowError, loadFlow } from './flow.js';
 import { logOf, readsChange, roundOf, statusOf } from './transition.js';
-import { FEATURES_DIR, extractSection, normalizeFeatureId, orderStoriesByDeps } from './feature.js';
+import { FEATURES_DIR, extractSection, normalizeFeatureId } from './feature.js';
+import { orderStoriesByDeps } from './execution-plan.js';
 import {
   BLOCKERS_FILE,
   BlockersError,

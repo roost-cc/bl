@@ -54,15 +54,13 @@ import {
   featureBranchName,
   featureSessionVars,
   resolveFeatureStories,
-  featureRepoOrder,
-  mergeOrder,
   reposForFeature,
-  LEAD_REPO,
   extractSection,
   sectionHasContent,
   resolveFeaturePlugins,
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
+import { featureRepoOrder, mergeOrder, LEAD_REPO } from './execution-plan.js';
 import { edgeArrow, featureMergeEdges, heldBy, heldLines, readBlockers } from './blockers.js';
 import {
   ensureWorktree,

@@ -73,9 +73,8 @@ import {
   sectionHasContent,
   resolveFeaturePluginsReport,
   resolveFeatureStories,
-  featureRepoOrder,
-  orderStoriesByDeps,
 } from './feature.js';
+import { featureRepoOrder, orderStoriesByDeps } from './execution-plan.js';
 import { heldBy, readEdges } from './blockers.js';
 import { runHeadlessSession, launchSession, loadPrompt, loadSchema, takeSessionLock } from './session.js';
 import { cleanStderrLine } from './outcome.js';

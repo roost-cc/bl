@@ -34,7 +34,8 @@ import { CHECKBOX_RE } from './review-log.js';
 import { statusOf } from './transition.js';
 import { entryMatches, ownFm, readAllStories } from './story.js';
 import { graphOf } from './backlog-graph.js';
-import { ORDER_EDGE, featureGraph, findHoldCycles, readEdges, repoEnd } from './blockers.js';
+import { readEdges } from './blockers.js';
+import { featureRepoOrder, orderStoriesByDeps } from './execution-plan.js';
 
 export const FEATURES_DIR = 'features';
 
@@ -223,8 +224,8 @@ export function namesFeature(s, featureId) {
 /**
  * The stories of a feature: the records in `allStories` (read when null)
  * whose `feature:` names it, the only statement of membership (F-77 D3), in
- * the graph's order: order-edge order (`orderStoriesByDeps` of `readEdges`),
- * ties by story number.
+ * the graph's order: the order of the run and order edges between them
+ * (`orderStoriesByDeps` of `readEdges`), ties by story number.
  *
  * @returns {{ stories: Array<object> }}  readAllStories records
  */
@@ -232,94 +233,6 @@ export function resolveFeatureStories(feature, config, allStories = null) {
   const all = allStories ?? readAllStories(config);
   const own = all.filter((s) => namesFeature(s, feature.id));
   return { stories: orderStoriesByDeps(own, readEdges(config)) };
-}
-
-/**
- * Order a feature's stories by its order edges (F-111 D4): each story after
- * the blockers of the order edges on it, ties by story number. Only edges
- * between two of `stories` count. A cycle (`bl validate`'s
- * `blockers-cycle`) leaves the stuck remainder in number order.
- * @template {{ id: string }} S
- * @param {S[]} stories
- * @param {import("./blockers.js").Edge[]} edges  `readEdges`'s, or the graph's `edges`
- * @returns {S[]}
- */
-export function orderStoriesByDeps(stories, edges) {
-  const num = (s) => Number(String(s.id).match(/(\d+)$/)?.[1] ?? -1);
-  const ids = new Set(stories.map((s) => s.id));
-  const after = new Map();
-  for (const e of edges) {
-    if (e.gate !== ORDER_EDGE.gate || !ids.has(e.unit) || !ids.has(e.blocker)) continue;
-    after.set(e.unit, [...(after.get(e.unit) ?? []), e.blocker]);
-  }
-  const remaining = [...stories].sort((a, b) => num(a) - num(b));
-  const emitted = new Set();
-  const out = [];
-  while (remaining.length > 0) {
-    const idx = remaining.findIndex((s) => (after.get(s.id) ?? []).every((d) => emitted.has(d)));
-    if (idx === -1) {
-      out.push(...remaining);
-      break;
-    }
-    const [next] = remaining.splice(idx, 1);
-    emitted.add(next.id);
-    out.push(next);
-  }
-  return out;
-}
-
-/** The repo a feature's order puts first whenever one of its stories is in it (F-52 D3). */
-export const LEAD_REPO = 'bl';
-
-/**
- * A feature's repos in the one order every step uses (F-52 D3): its stories'
- * repos (`unitRepo`, each story's component's, D1), `bl` first when one is
- * there (S-864: a later repo's push gate reads backlog output the new `bl`
- * generates), then every other repo by its first story in the order given:
- * `resolveFeatureStories`'s (`orderStoriesByDeps`). A repo named twice keeps
- * its first place; an empty name is dropped. The first entry is the lead
- * repo. Pure: the stories are `readAllStories` records.
- *
- * @param {Array<{ id?: string, unitRepo?: string }>} stories
- * @returns {string[]}
- */
-export function featureRepoOrder(stories) {
-  const names = [];
-  for (const s of stories ?? []) {
-    const name = String(s.unitRepo ?? '').trim();
-    if (name && !names.includes(name)) names.push(name);
-  }
-  const lead = names.indexOf(LEAD_REPO);
-  if (lead > 0) names.unshift(...names.splice(lead, 1));
-  return names;
-}
-
-/**
- * The order `bl merge` merges a feature's repos in (F-111 D2): a
- * topological sort of `names` (`featureRepoOrder`) by the feature's merge
- * edges, each edge's blocker repo before its unit repo. Among the repos no
- * unmerged repo holds, `names`' order stays, so with no merge edge the order
- * is `names`. `edges` are the edges between two of `names`. A cycle gives no
- * order and the edges of one cycle.
- * @param {string[]} names
- * @param {import("./blockers.js").Edge[]} edges  the feature's merge edges (`featureMergeEdges`)
- * @returns {{ order: string[] | null, edges: import("./blockers.js").Edge[], cycle: import("./blockers.js").Edge[] | null }}
- */
-export function mergeOrder(names, edges) {
-  const repo = (id) => repoEnd(id)?.repo;
-  const used = edges.filter((e) => names.includes(repo(e.blocker)) && names.includes(repo(e.unit)));
-  const order = [];
-  const rest = [...names];
-  while (rest.length > 0) {
-    const free = rest.findIndex((n) => used.every((e) => repo(e.unit) !== n || order.includes(repo(e.blocker))));
-    if (free === -1) {
-      const stuck = used.filter((e) => !order.includes(repo(e.unit)) && !order.includes(repo(e.blocker)));
-      const [cycle] = findHoldCycles(featureGraph(stuck));
-      return { order: null, edges: used, cycle: cycle.map((arc) => arc.edge) };
-    }
-    order.push(...rest.splice(free, 1));
-  }
-  return { order, edges: used, cycle: null };
 }
 
 /**

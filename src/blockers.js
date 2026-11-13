@@ -19,7 +19,7 @@
  *
  * A merge edge (F-111 D1) joins two repos of one feature, each end
  * `<feature>:<repo>`: `bl merge` merges the blocker's repo before the
- * unit's (`mergeOrder` in `feature.js`). An order edge joins two stories of
+ * unit's (`mergeOrder` in `execution-plan.js`). An order edge joins two stories of
  * one feature (`{"blocker":"S-1446","gate":"order","unit":"S-1448",
  * "until":"implemented"}`): the implement loop takes the blocker first
  * (`orderStoriesByDeps`). Both are edges inside one feature (`inFeature`):
@@ -50,7 +50,8 @@ import { atomicWriteFile } from './atomic-write.js';
 import { loadFlow } from './flow.js';
 import { normalizeId } from './config.js';
 import { parseIdList, readAllStories } from './story.js';
-import { featureRepoOrder, normalizeFeatureId, readAllFeatures } from './feature.js';
+import { normalizeFeatureId, readAllFeatures } from './feature.js';
+import { featureRepoOrder } from './execution-plan.js';
 import { readAllTasks } from './task.js';
 import { graphOf } from './backlog-graph.js';
 

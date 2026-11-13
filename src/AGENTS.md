@@ -1097,7 +1097,8 @@ unit's status meets a status. Unit files hold none; `bl block list` derives each
   S-1446 before S-1448". Its gate is `order` and its `until` is `implemented` (`ORDER_EDGE`);
   neither is in `flow.json`. It is an edge inside one feature (`inFeature`), so like a merge
   edge it is never a hold and adds no arc to `holdGraph`. `orderStoriesByDeps(stories, edges)`
-  (`feature.js`) orders a feature's stories by its order edges, ties by number, and
+  (`execution-plan.js`, F-125 D2) orders a list of stories by the run and order edges between
+  two of them, ties by number, and
   `resolveFeatureStories`, `bl status F-n`, the implement loop and the graph's feature stories
   use that order. `edgeProblems` checks it (`blockers-unit`: an end that is `*`, not a story,
   in no feature, or ends in two features; `blockers-status`: an `until` other than
@@ -1227,8 +1228,8 @@ a feature may span components and repos:
 
 Stories name their feature with `feature: F-<n>`, and that is the only
 statement of membership (F-77 D3): a feature's stories are the stories whose
-`feature:` names it, in order-edge order (`orderStoriesByDeps`, ties by
-number), and they are what `bl run` runs, `bl sync` counts and `bl merge`
+`feature:` names it, in the order of the run and order edges between them
+(`orderStoriesByDeps`, ties by number), and they are what `bl run` runs, `bl sync` counts and `bl merge`
 marks done. The order carries no meaning: the feature is the unit that gets
 prioritized. A feature stores no `stories:`, `points:` or `components:`, an
 epic no `features:` or `status:`, and a story no `required_for:` (the stories
@@ -1267,14 +1268,14 @@ commit: # merge SHA (string) or <repo>: <sha> map
 A feature names no repo: no `primary_repo` (F-52 D3) and no `secondary_repos`
 (S-1010). Its repos are its stories' repos, each story's its component's
 (`unitRepo`, F-52 D1), in one order that every step uses,
-`featureRepoOrder(stories)` (`feature.js`):
+`featureRepoOrder(stories)` (`execution-plan.js`):
 
 1. `bl` first, when a story is in it (S-864: a later repo's push gate reads
    backlog output that the new `bl` generates);
 2. then every other repo by its first story in `orderStoriesByDeps`
    (`resolveFeatureStories` gives the stories in that order).
 
-`bl merge F-n` merges in `mergeOrder(names, edges)` (`feature.js`, F-111 D2):
+`bl merge F-n` merges in `mergeOrder(names, edges)` (`execution-plan.js`, F-111 D2):
 `names` is `featureRepoOrder(stories)` and `edges` the feature's merge edges in
 `blockers.json` (`featureMergeEdges`). It is a topological sort: each edge's
 blocker repo merges before its unit repo, and among the repos no unmerged repo
@@ -1286,6 +1287,17 @@ it: `Repos   : ci-cd, bl (merge edge F-1:ci-cd → F-1:bl)`. The backlog sync
 only the merge order: the lead repo stays `featureRepoOrder`'s first (F-111
 R3), for `bl run`, `bl review`, the merge gates, the integration step and
 `isSecondary` alike.
+
+`computePlan(stories, edges)` (`execution-plan.js`, F-125 D2) gives these
+orders for a list of stories in one object, the execution plan: `stories`,
+`dependencies` (each story's listed stories it waits for, by run and order
+edges), `order` (`orderStoriesByDeps`), `groups`, `repos`
+(`featureRepoOrder`) and `merge_order` (`mergeOrder` over the merge edges of
+the stories' feature; `null` on a cycle, with its edges in `merge_cycle`). A
+group holds the stories whose dependencies are in earlier groups and whose
+plan files (`planFiles`) overlap no other story of the group (same file, or a
+directory that holds it); a story that overlaps waits for the next group. No
+other module defines a story or repo ordering.
 
 Each repo appears once. The first is the **lead repo**: the session starts in
 its worktree, the review runs on `configForRepo(config, lead)`, the change
@@ -3143,7 +3155,8 @@ bl review S34                 # alias: bl pr S34
 
 ### Several targets
 
-Every id-dispatched verb takes several ids (`schedule.js`, `verbs.js`).
+Every id-dispatched verb takes several ids (`schedule.js`, `verbs.js`; the plan
+paths, `planFiles`, and the merge order, `dependencyOrder`, are in `execution-plan.js`).
 `bl run` and `bl implement` first decide what starts: a target that waits for
 another target by a run or order edge (`storyDependencies` of `readEdges`; a
 feature through any of its stories), or a story

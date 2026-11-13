@@ -19,24 +19,11 @@
  */
 
 import { execFileSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { fromMarkdown } from 'mdast-util-from-markdown';
-import { toString } from 'mdast-util-to-string';
-import { parseFrontmatter } from './config.js';
+import { existsSync } from 'fs';
 import { reposForStory } from './story.js';
 import { readEdges, storyDependencies } from './blockers.js';
-import { resolveFeatureStories, reposForFeature, featureRepoOrder, extractSection } from './feature.js';
-import { idNum } from './workon.js';
-import { loadFlow } from './flow.js';
-
-/**
- * The stories a unit carries: a story itself, a feature the stories naming it.
- * @param {{ kind: string, id: string, record: object }} unit
- */
-export function unitStories(unit, config, all) {
-  if (unit.kind === 'feature') return resolveFeatureStories(unit.record, config, all).stories;
-  return [unit.record];
-}
+import { reposForFeature } from './feature.js';
+import { byId, featureRepoOrder, planFiles, sameFiles, storyOwners, unitStories } from './execution-plan.js';
 
 /**
  * `repo:path` for every file the branches in `worktrees` change against
@@ -71,74 +58,6 @@ export function branchFiles(worktrees) {
 }
 
 /**
- * A backticked span that reads as a repository-relative path: a `/` or an
- * extension, no empty, `.` or `..` segment, not absolute, and no template or
- * glob marker (`<id>`, `{a,b}`, `*`, `$VAR`). Spaces, punctuation and
- * Unicode are kept as `git diff --name-only -z` prints them.
- */
-function asPath(span) {
-  const t = span.trim().replace(/^\.\//, '');
-  const p = t.replace(/\/$/, '');
-  if (!p || p.startsWith('/') || /[<>{}*?$|\\]/.test(p)) return null;
-  if (p.split('/').some((seg) => seg === '' || seg === '.' || seg === '..')) return null;
-  // A trailing `/` marks a directory, so `src/` is kept.
-  if (!t.includes('/') && !/\.[\p{L}\p{N}]+$/u.test(p)) return null;
-  return p;
-}
-
-/** Two `repo:path` keys touch the same file: equal, or one is a directory holding the other. */
-function sameFiles(a, b) {
-  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
-}
-
-/**
- * A plan without its `### Sources of truth` subsections, each running to the
- * next heading of level 1 to 3. Headings are mdast nodes, so every Markdown
- * form of one counts and a `#` line in a code block does not. A heading's
- * title is its text as read: inline formatting does not change it, and an
- * HTML comment is not part of it.
- */
-function withoutSourcesOfTruth(plan) {
-  const headings = fromMarkdown(plan).children.filter((n) => n.type === 'heading' && n.depth <= 3);
-  let kept = '';
-  let from = 0;
-  headings.forEach((h, i) => {
-    const title = toString(h, { includeHtml: false }).replace(/\s+/g, ' ').trim();
-    if (h.depth !== 3 || title !== 'Sources of truth') return;
-    kept += plan.slice(from, h.position.start.offset);
-    from = headings[i + 1]?.position.start.offset ?? plan.length;
-  });
-  return kept + plan.slice(from);
-}
-
-/**
- * `repo:path` for every backticked path in the stories' `## Implementation
- * Plan`, keyed by each story's repo (`unitRepo`, its component's; else
- * `defaultRepo`). A path that is not backticked is not seen, and neither is
- * one under `### Sources of truth`: those files are read, not changed, so
- * they hold back no other target.
- *
- * @param {{ indexPath: string, unitRepo?: string }[]} stories
- * @param {string} [defaultRepo]
- * @returns {Set<string>}
- */
-export function planFiles(stories, defaultRepo = '') {
-  const out = new Set();
-  for (const s of stories) {
-    if (!existsSync(s.indexPath)) continue;
-    const { body } = parseFrontmatter(readFileSync(s.indexPath, 'utf8'));
-    const plan = extractSection(body, 'Implementation Plan');
-    if (!plan) continue;
-    const repo = s.unitRepo || defaultRepo;
-    for (const [, span] of withoutSourcesOfTruth(plan).matchAll(/`([^`\n]+)`/g)) {
-      const p = asPath(span);
-      if (p) out.add(`${repo}:${p}`);
-    }
-  }
-  return out;
-}
-
-/**
  * The files a unit touches: its branch diff once the branch has commits in
  * a diff that read every repo, else its plan paths. A partial diff (a repo
  * missing or unreadable) is not the whole branch: it adds to the plan paths.
@@ -164,23 +83,6 @@ function describeFiles(keys) {
   const shown = keys.map((k) => (repos.size > 1 ? k : k.slice(k.indexOf(':') + 1)));
   if (shown.length <= 3) return shown.join(', ');
   return `${shown.slice(0, 3).join(', ')} and ${shown.length - 3} more`;
-}
-
-/** Lowest id first; a feature before a story of the same number. */
-export function byId(a, b) {
-  return idNum(a.id) - idNum(b.id) || (a.kind === b.kind ? 0 : a.kind === 'feature' ? -1 : 1);
-}
-
-/** Which target carries each story: story id → unit. */
-function storyOwners(units, config, all) {
-  const owner = new Map();
-  const storiesOf = new Map();
-  for (const u of units) {
-    const stories = unitStories(u, config, all);
-    storiesOf.set(u, stories);
-    for (const s of stories) if (!owner.has(s.id)) owner.set(s.id, u);
-  }
-  return { owner, storiesOf };
 }
 
 /**
@@ -251,38 +153,4 @@ export function schedule(units, all, flow, { config, files = (u) => unitFiles(u,
   }
   deferred.sort(byId);
   return { start, deferred };
-}
-
-/**
- * Units in dependency order (a unit after every target it depends on),
- * lowest id first among equals. A cycle falls back to id order for the rest.
- */
-export function dependencyOrder(units, all, { config }) {
-  const remaining = [...units].sort(byId);
-  const { owner, storiesOf } = storyOwners(remaining, config, all);
-  const waits = storyDependencies(readEdges(config));
-  const deps = new Map();
-  for (const u of remaining) {
-    const set = new Set();
-    for (const s of storiesOf.get(u)) {
-      for (const d of waits.get(s.id) ?? []) {
-        const other = owner.get(d);
-        if (other && other !== u) set.add(other);
-      }
-    }
-    deps.set(u, set);
-  }
-  const out = [];
-  const emitted = new Set();
-  while (remaining.length > 0) {
-    const i = remaining.findIndex((u) => [...deps.get(u)].every((d) => emitted.has(d)));
-    if (i === -1) {
-      out.push(...remaining);
-      break;
-    }
-    const [next] = remaining.splice(i, 1);
-    emitted.add(next);
-    out.push(next);
-  }
-  return out;
 }
