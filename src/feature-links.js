@@ -15,6 +15,8 @@
  * feature or its stories could undo what its rollback restores.
  *
  * `bl batch` writes the same record for a story batch (`B-<n>`, `batch:`).
+ * A batch is complete only when its edge write is done too: no run edge is
+ * left between two of its stories.
  */
 
 import {
@@ -34,6 +36,7 @@ import { withLock } from './lock.js';
 import { RUN_DIR } from './run-lock.js';
 import { atomicWriteFile, removeBacklogPath } from './atomic-write.js';
 import { withSpecLock } from './spec-file.js';
+import { RUN_EDGE, readBlockers } from './blockers.js';
 
 const SUFFIX = '.links.json';
 
@@ -143,6 +146,24 @@ export function dropRecord(path) {
 }
 
 /**
+ * Whether a run edge is left between two of the record's stories, so the
+ * edge write of `bl batch` (`orderJoinedEdges`, which turns each one into an
+ * order edge) did not finish. A `blockers.json` bl cannot read counts as one.
+ * `bl new --feature` keeps a feature after a failed edge write on purpose,
+ * so only a batch record asks.
+ */
+function runEdgeLeft(backlogRoot, record) {
+  const ids = new Set(record.stories.map((s) => s.id));
+  try {
+    return readBlockers(backlogRoot).edges.some(
+      (e) => e.gate === RUN_EDGE.gate && ids.has(e.blocker) && ids.has(e.unit),
+    );
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Settle one record; the caller holds the backlog lock. Each story is
  * restored under its spec lock (its covering lock, F-126). Rejects, before
  * anything is written, on a record `checkRecord` refuses.
@@ -174,8 +195,15 @@ export async function settleRecord(backlogRoot, path, { rollback = false } = {})
   const current = record.stories.map((s) => fmOf(join(backlogRoot, s.path)));
   const named = record.stories.filter((_, i) => current[i] == null || current[i][key] === unit);
   // Membership is each story's `feature:` or `batch:` (F-77 D3): complete is
-  // a readable unit file and every story naming it.
-  if (!rollback && existsSync(featurePath) && fmOf(featurePath) != null && current.every((fm) => fm?.[key] === unit)) {
+  // a readable unit file and every story naming it, and for a batch its
+  // second step, the edge write, done too.
+  if (
+    !rollback &&
+    existsSync(featurePath) &&
+    fmOf(featurePath) != null &&
+    current.every((fm) => fm?.[key] === unit) &&
+    (key !== 'batch' || !runEdgeLeft(backlogRoot, record))
+  ) {
     unlinkSync(path);
     return { state: 'complete', left: [] };
   }

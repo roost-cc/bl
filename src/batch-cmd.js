@@ -171,14 +171,16 @@ async function settleFailedWrite(root, record, err) {
   try {
     res = await settleRecord(root, record, { rollback: true });
   } catch (settleErr) {
-    err.left = [relative(root, record)];
+    err.left = [...(err.left ?? []), relative(root, record)];
     err.message += `; could not settle ${relative(root, record)} (${settleErr.message}): the next bl command retries`;
     return err;
   }
   if (res.left.length === 0) return err;
   const { stories, dir } = JSON.parse(readFileSync(record, 'utf8'));
-  err.left = [dir, ...stories.filter((s) => res.left.includes(s.id)).map((s) => s.path)];
-  err.message += `; could not restore ${err.left.slice(1).join(', ')}, so ${dir} is kept with them; the next bl command rolls it back`;
+  const paths = stories.filter((s) => res.left.includes(s.id)).map((s) => s.path);
+  // The edge write's own `left` (`allOrNothing`: `blockers.json`) stays.
+  err.left = [...(err.left ?? []), dir, ...paths];
+  err.message += `; could not restore ${paths.join(', ')}, so ${dir} is kept with them; the next bl command rolls it back`;
   return err;
 }
 

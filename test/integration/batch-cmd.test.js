@@ -223,3 +223,40 @@ test('bl batch names each path left changed when its rollback fails, and the nex
   assert.equal(git(dir, 'status', '--porcelain'), '');
   assert.ok(!existsSync(join(dir, '.bl/run/B-2.links.json')));
 });
+
+// Review 2026-11-13 (round 2), Must 1: every story names the batch, but the
+// edge write failed and was undone, so the batch is not complete.
+test('bl batch: after a failed edge write whose restores also fail, the next bl command rolls the batch back', async () => {
+  const run = { blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'merged' };
+  const dir = await backlog([run]);
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const r = batch(dir, ['S-1', 'S-2', '--title', 'T'], undefined, {
+    // Renames: the batch, S-1, S-2, then blockers.json.
+    BL_INTERNAL_TEST_FAIL_ON_RENAME: '4',
+    BL_INTERNAL_TEST_FAIL_ON_LINK: 'restore:S-1,restore:S-2',
+  });
+  assert.equal(r.status, 1);
+  assert.match(
+    r.stderr,
+    /could not restore stories\/S1-one\/index\.md, stories\/S2-two\/index\.md, so batches\/B2-t is kept with them; the next bl command rolls it back/,
+  );
+
+  const next = spawnSyncFiles(BL_BIN, ['list'], {
+    cwd: dir,
+    encoding: 'utf8',
+    env: { ...personEnv(), ...GIT_ENV, BL_BACKLOG_DIR: dir },
+  });
+  assert.equal(next.status, 0, next.stderr);
+  assert.match(next.stderr, /settled the interrupted bl batch of B-2: rolled back/);
+  assert.deepEqual(newBatches(dir), []);
+  for (const s of ['S1-one', 'S2-two']) assert.equal(fm(dir, `stories/${s}/index.md`).batch, undefined, s);
+  assert.ok(
+    readEdges(loadConfig({ backlogRoot: dir })).some(
+      (e) => e.blocker === 'S-1' && e.unit === 'S-2' && e.gate === 'run',
+    ),
+    'the run edge is as it was',
+  );
+  assert.equal(git(dir, 'status', '--porcelain'), '');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+  assert.ok(!existsSync(join(dir, '.bl/run/B-2.links.json')));
+});

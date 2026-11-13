@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { serializeFrontmatter } from '../../src/config.js';
-import { settleRecord, writeRecord } from '../../src/feature-links.js';
+import { settlePending, settleRecord, writeRecord } from '../../src/feature-links.js';
 import { mkTempDir } from '../helpers/tempdir.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { withLock } from '../../src/lock.js';
 
 /** `settleRecord` as `settlePending` runs it: under the backlog lock. */
@@ -84,6 +85,61 @@ test('settle keeps the record when a restore fails and the feature is not YAML, 
   assert.deepEqual(await settleLocked(root, path), { state: 'rolled back', left: [] });
   assert.equal(readFileSync(join(root, 'stories/S1-one/index.md'), 'utf8'), before('S-1'));
   assert.equal(existsSync(path), false);
+});
+
+// Review 2026-11-13 (round 2), Must 1: `bl batch` has a second step after the
+// story writes, the edge write. A batch record left by a crash before that
+// step is rolled back; one left after it, or with no run edge to turn, is
+// complete. A feature keeps its links either way (`bl attach` finishes them).
+test('settlePending_rolls_back_a_batch_record_left_by_a_crash', async () => {
+  const before = (id) => serializeFrontmatter({ story_id: id, status: 'refined' });
+  const run = { blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'merged' };
+  const order = { blocker: 'S-1', gate: 'order', unit: 'S-2', until: 'implemented' };
+  const cases = [
+    // [name, unit, its directory, blockers.json now (null: none; a string: its text), the settle]
+    ['a batch before its edge write', 'B-1', 'batches/B1-t', [run], 'rolled back'],
+    ['a batch after its edge write', 'B-1', 'batches/B1-t', [order], 'complete'],
+    ['a batch with no edge to turn', 'B-1', 'batches/B1-t', null, 'complete'],
+    ['a batch whose blockers.json bl cannot read', 'B-1', 'batches/B1-t', '{ not json', 'rolled back'],
+    ['a feature before its edge write', 'F-1', 'features/F1-t', [run], 'complete'],
+  ];
+  for (const [name, unit, dir, blockers, want] of cases) {
+    const root = mkTempDir('bl-settle-batch-');
+    const key = unit.startsWith('B') ? 'batch' : 'feature';
+    const put = (rel, text) => {
+      mkdirSync(dirname(join(root, rel)), { recursive: true });
+      writeFileSync(join(root, rel), text);
+    };
+    put('stories/S1-one/index.md', before('S-1'));
+    put('stories/S2-two/index.md', before('S-2'));
+    if (typeof blockers === 'string') put('blockers.json', blockers);
+    else if (blockers) writeBlockersLocked(root, blockers);
+    const path = writeRecord(root, {
+      [key]: unit,
+      dir,
+      stories: [
+        { id: 'S-1', path: 'stories/S1-one/index.md', before: before('S-1') },
+        { id: 'S-2', path: 'stories/S2-two/index.md', before: before('S-2') },
+      ],
+    });
+    // The crash: the unit and every story's key are written, the record stays.
+    put(`${dir}/index.md`, serializeFrontmatter({ [`${key}_id`]: unit, title: 'T' }));
+    for (const s of ['S1-one', 'S2-two']) {
+      put(`stories/${s}/index.md`, serializeFrontmatter({ story_id: `S-${s[1]}`, status: 'refined', [key]: unit }));
+    }
+    const linked = readFileSync(join(root, 'stories/S1-one/index.md'), 'utf8');
+
+    await settlePending(root);
+    assert.equal(existsSync(path), false, `${name}: the record is gone`);
+    if (want === 'rolled back') {
+      assert.equal(readFileSync(join(root, 'stories/S1-one/index.md'), 'utf8'), before('S-1'), `${name}: S-1`);
+      assert.equal(readFileSync(join(root, 'stories/S2-two/index.md'), 'utf8'), before('S-2'), `${name}: S-2`);
+      assert.equal(existsSync(join(root, dir)), false, `${name}: the unit is removed`);
+    } else {
+      assert.equal(readFileSync(join(root, 'stories/S1-one/index.md'), 'utf8'), linked, `${name}: S-1 kept`);
+      assert.equal(existsSync(join(root, dir, 'index.md')), true, `${name}: the unit is kept`);
+    }
+  }
 });
 
 test('settle keeps a feature whose every story names it, with no stories: list (F-77 D3)', async () => {
