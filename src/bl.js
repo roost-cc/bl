@@ -169,7 +169,7 @@ Commands:
                only, in a terminal); commits
   flow       Print each type's transitions from flow.json as a table: from,
                to, verb, guards and gates (bl's template outside a backlog)
-  sync      Pull and push the backlog; --commit commits the named paths
+  sync       Pull and push the backlog; --commit commits the named paths
   format     Run the configured format plugin per file extension
                --story <id>   Required (or --no-story with explicit paths)
   lint       Run the configured lint plugin per file extension
