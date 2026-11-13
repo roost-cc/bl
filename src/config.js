@@ -20,9 +20,10 @@
  *     `worktreePathFor`.
  */
 
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync } from 'fs';
 import { join, resolve, basename, delimiter, dirname, relative, isAbsolute, sep } from 'path';
 import { exitStatus, reportExit, runChild, runCommandLine } from './child.js';
+import { realOrResolved } from './real-path.js';
 import { reassertTabTitle } from './tab-title.js';
 import { Document, LineCounter, Scalar, isMap, isScalar, parseDocument, visit } from 'yaml';
 import { getProvider, hasProvider, PROVIDER_NAMES } from './agents/index.js';
@@ -112,15 +113,6 @@ function backlogsIn(dir) {
     .sort();
 }
 
-/** `path` with its symlinks resolved, or `path` itself when it does not exist. */
-function realPath(path) {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
 /**
  * The directories the walk does not move up into: `$BL_CEILING_DIRECTORIES`,
  * absolute paths split on `path.delimiter`, as git reads
@@ -131,7 +123,7 @@ function realPath(path) {
  */
 function ceilingDirs() {
   const raw = process.env.BL_CEILING_DIRECTORIES ?? '';
-  return new Set(raw.split(delimiter).filter(isAbsolute).map(realPath));
+  return new Set(raw.split(delimiter).filter(isAbsolute).map(realOrResolved));
 }
 
 /**
@@ -162,7 +154,7 @@ export function findBacklogRoot(start = process.cwd()) {
       throw new Error(`several backlogs under ${dir}: ${found.join(', ')} (set BL_BACKLOG_DIR to choose one)`);
     }
     const parent = dirname(dir);
-    if (parent === dir || ceilings.has(realPath(parent))) break;
+    if (parent === dir || ceilings.has(realOrResolved(parent))) break;
     dir = parent;
   }
   throw new Error(
