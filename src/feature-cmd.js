@@ -467,7 +467,8 @@ export function featureValueAxis(args, config) {
  * runs once its file is written, still under the lock:
  * `bl new --feature … S-1` moves its stories in there. If writing the feature
  * or `afterCreate` throws, the feature directory is removed and bl exits 1,
- * unless the error has `keepFeature` set (a story still names the feature).
+ * unless the error has `kept` set (`settleFailedWrite`: a story still names
+ * the feature).
  *
  * @param {object} args
  * @param {object} config
@@ -549,7 +550,7 @@ export async function cmdNew(args, config, { beforeCreate = null, afterCreate = 
     info(`Created: ${rel}`);
     if (afterCreate) await afterCreate(findFeature(normalizeFeatureId(id), config));
   } catch (err) {
-    if (err.keepFeature) {
+    if (err.kept) {
       console.error(`bl new --feature: ${err.message}.`);
       process.exit(1);
     }

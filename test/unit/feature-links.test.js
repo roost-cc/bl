@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { serializeFrontmatter } from '../../src/config.js';
-import { settlePending, settleRecord, writeRecord } from '../../src/feature-links.js';
+import { settleFailedWrite, settlePending, settleRecord, writeRecord } from '../../src/feature-links.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { withLock } from '../../src/lock.js';
@@ -139,6 +139,77 @@ test('settlePending_rolls_back_a_batch_record_left_by_a_crash', async () => {
       assert.equal(readFileSync(join(root, 'stories/S1-one/index.md'), 'utf8'), linked, `${name}: S-1 kept`);
       assert.equal(existsSync(join(root, dir, 'index.md')), true, `${name}: the unit is kept`);
     }
+  }
+});
+
+// Review 2026-11-13 (round 2), Should 5 and its nit: `bl new --feature` and
+// `bl batch` settle a failed write through one helper, which names what is
+// left for each outcome of the settle, the settle's own failure included.
+test('settleFailedWrite names what is left for each settle outcome', async () => {
+  const before = (id) => serializeFrontmatter({ story_id: id, status: 'refined' });
+  const linked = (id) => serializeFrontmatter({ story_id: id, status: 'refined', batch: 'B-1' });
+  const cases = [
+    // [name, rollback, S-2 written, fail, symlink S-1, kept, message, left]
+    ['rolled back', false, false, '', false, undefined, /^write$/, ['blockers.json']],
+    ['complete', false, true, '', false, true, /^write; every story names B-1$/, ['blockers.json']],
+    [
+      'a restore fails',
+      true,
+      true,
+      'restore:S-1',
+      false,
+      true,
+      /^write; could not restore stories\/S1-one\/index\.md, so batches\/B1-t is kept with them; the next bl command rolls it back$/,
+      ['blockers.json', 'batches/B1-t', 'stories/S1-one/index.md'],
+    ],
+    [
+      'the settle throws',
+      true,
+      true,
+      '',
+      true,
+      true,
+      /^write; could not settle \.bl\/run\/B-1\.links\.json \(not a valid repair record: stories\/S1-one\/index\.md is a link\): the next bl command retries$/,
+      ['blockers.json', '.bl/run/B-1.links.json'],
+    ],
+  ];
+  for (const [name, rollback, s2Written, fail, symlink, kept, message, left] of cases) {
+    const root = mkTempDir('bl-settle-failed-');
+    const put = (rel, text) => {
+      mkdirSync(dirname(join(root, rel)), { recursive: true });
+      writeFileSync(join(root, rel), text);
+    };
+    put('stories/S1-one/index.md', before('S-1'));
+    put('stories/S2-two/index.md', before('S-2'));
+    const path = writeRecord(root, {
+      batch: 'B-1',
+      dir: 'batches/B1-t',
+      stories: [
+        { id: 'S-1', path: 'stories/S1-one/index.md', before: before('S-1') },
+        { id: 'S-2', path: 'stories/S2-two/index.md', before: before('S-2') },
+      ],
+    });
+    put('batches/B1-t/index.md', serializeFrontmatter({ batch_id: 'B-1', title: 'T' }));
+    put('stories/S1-one/index.md', linked('S-1'));
+    if (s2Written) put('stories/S2-two/index.md', linked('S-2'));
+    if (symlink) {
+      put('elsewhere/index.md', linked('S-1'));
+      rmSync(join(root, 'stories/S1-one/index.md'));
+      symlinkSync(join(root, 'elsewhere/index.md'), join(root, 'stories/S1-one/index.md'));
+    }
+    // The error of the write, with what `allOrNothing` could not put back.
+    const err = Object.assign(new Error('write'), { left: ['blockers.json'] });
+    process.env.BL_INTERNAL_TEST_FAIL_ON_LINK = fail;
+    let out;
+    try {
+      out = await withLock(root, () => settleFailedWrite(root, path, err, { rollback }));
+    } finally {
+      delete process.env.BL_INTERNAL_TEST_FAIL_ON_LINK;
+    }
+    assert.equal(out, err, `${name}: the write's error`);
+    assert.equal(out.kept, kept, `${name}: kept`);
+    assert.match(out.message, message, name);
+    assert.deepEqual(out.left, left, `${name}: left`);
   }
 });
 

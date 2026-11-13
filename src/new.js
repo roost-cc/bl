@@ -62,7 +62,7 @@ import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { prepareBody } from './body.js';
 import { validateSpec, SpecError } from './spec.js';
 import { resolveTargets } from './targets.js';
-import { dropRecord, failPoint, settleRecord, writeRecord } from './feature-links.js';
+import { dropRecord, failPoint, settleFailedWrite, writeRecord } from './feature-links.js';
 import { atomicWriteFile, moveIntoBacklog, removeBacklogPath, STAGING_DIR } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { BLOCKERS_FILE, dependencyEdge, edgeKey, edgeLabel, readUnits, storyUnitOf } from './blockers.js';
@@ -476,24 +476,8 @@ async function newFeature(args, stories) {
             stories.map((s) => s.id),
           ) ?? [];
       } catch (err) {
-        let state, left;
-        try {
-          ({ state, left } = await settleRecord(root, record));
-        } catch (settleErr) {
-          // Unsettled: the feature and the record stay for the next command.
-          err.keepFeature = true;
-          err.message += `; could not settle ${relative(root, record)} (${settleErr.message}): the next bl command retries`;
-          throw err;
-        }
-        if (state === 'rolled back') throw err;
-        err.keepFeature = true;
-        if (state === 'complete') err.message += `; every story names ${feature.id}`;
-        else {
-          err.message +=
-            `; could not restore ${left.join(', ')}, so ${feature.id} is kept with it; ` +
-            `the next bl command rolls it back`;
-        }
-        throw err;
+        // `kept`: cmdNew keeps the feature, which a story still names.
+        throw await settleFailedWrite(root, record, err);
       }
       dropRecord(record);
     },

@@ -205,7 +205,11 @@ test('new --feature serializes eligibility validation and preserves bidirectiona
       assert.deepEqual(got, want, fail);
       // No story names a feature that is gone.
       for (const f of Object.values(got.stories)) if (f) assert.ok(got.features[f], `${fail}: ${f} exists`);
-      assert.match(r.stderr, /could not restore S-1, so F-1 is kept with it/, fail);
+      assert.match(
+        r.stderr,
+        /could not restore stories\/S1-[^/]+\/index\.md, so features\/F1-atomic is kept with them/,
+        fail,
+      );
       // It exits before the sync: the indexes are untouched.
       const after = tree(dir);
       for (const [p, bytes] of indexes) assert.equal(after[p], bytes, `${fail}: ${p}`);

@@ -29,7 +29,7 @@ import { loadFlow } from './flow.js';
 import { applyNew } from './transition.js';
 import { renderTemplate } from './template.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { dropRecord, settleRecord, writeRecord } from './feature-links.js';
+import { dropRecord, settleFailedWrite, writeRecord } from './feature-links.js';
 import { updateSpecFile } from './spec-file.js';
 import { withLock } from './lock.js';
 import { heldBy, readUnits } from './blockers.js';
@@ -118,7 +118,7 @@ function storiesPlan(stories) {
  * caller holds, and turn the run edges between the stories into order edges.
  * A repair record (`feature-links.js`) holds each story's bytes before the
  * first write, so a crash is settled by the next bl command. A failed write
- * restores every story and removes the batch directory (`settleRecord`), then
+ * restores every story and removes the batch directory (`settleFailedWrite`), then
  * throws the write's error. When a story cannot be restored, the error names
  * it and has `left` set; the batch and the record stay for the next command.
  * Returns the batch directory and the paths to commit.
@@ -155,33 +155,10 @@ async function writeBatch(config, { id, title, stories }) {
         stories.map((s) => s.id),
       ) ?? [];
   } catch (err) {
-    throw await settleFailedWrite(root, record, err);
+    throw await settleFailedWrite(root, record, err, { rollback: true });
   }
   dropRecord(record);
   return { dir, edgePaths };
-}
-
-/**
- * Settle `record` after the write failed with `err`, and return `err`
- * with what is left: `left` (the paths still changed) when a story could not
- * be restored or the record could not be settled.
- */
-async function settleFailedWrite(root, record, err) {
-  let res;
-  try {
-    res = await settleRecord(root, record, { rollback: true });
-  } catch (settleErr) {
-    err.left = [...(err.left ?? []), relative(root, record)];
-    err.message += `; could not settle ${relative(root, record)} (${settleErr.message}): the next bl command retries`;
-    return err;
-  }
-  if (res.left.length === 0) return err;
-  const { stories, dir } = JSON.parse(readFileSync(record, 'utf8'));
-  const paths = stories.filter((s) => res.left.includes(s.id)).map((s) => s.path);
-  // The edge write's own `left` (`allOrNothing`: `blockers.json`) stays.
-  err.left = [...(err.left ?? []), dir, ...paths];
-  err.message += `; could not restore ${paths.join(', ')}, so ${dir} is kept with them; the next bl command rolls it back`;
-  return err;
 }
 
 /**

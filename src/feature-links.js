@@ -228,6 +228,42 @@ export async function settleRecord(backlogRoot, path, { rollback = false } = {})
 }
 
 /**
+ * Settle the record at `path` after the write of `bl new --feature` or
+ * `bl batch` failed with `err` (`settleRecord`, under the caller's backlog
+ * lock), and return `err` with what is left. `kept` is set when the unit
+ * stays: its links are complete, a story could not be restored, or the
+ * record could not be settled. `left` adds the paths still changed to the
+ * ones `err` already names (`allOrNothing`'s `blockers.json`).
+ * @param {string} backlogRoot
+ * @param {string} path
+ * @param {Error & { left?: string[], kept?: boolean }} err
+ * @param {{ rollback?: boolean }} [opts]
+ */
+export async function settleFailedWrite(backlogRoot, path, err, { rollback = false } = {}) {
+  const rel = relative(backlogRoot, path);
+  let record, res;
+  try {
+    record = JSON.parse(readFileSync(path, 'utf8'));
+    res = await settleRecord(backlogRoot, path, { rollback });
+  } catch (settleErr) {
+    err.kept = true;
+    err.left = [...(err.left ?? []), rel];
+    err.message += `; could not settle ${rel} (${settleErr.message}): the next bl command retries`;
+    return err;
+  }
+  if (res.state === 'rolled back') return err;
+  err.kept = true;
+  if (res.state === 'complete') {
+    err.message += `; every story names ${unitOf(record)}`;
+    return err;
+  }
+  const paths = record.stories.filter((s) => res.left.includes(s.id)).map((s) => s.path);
+  err.left = [...(err.left ?? []), record.dir, ...paths];
+  err.message += `; could not restore ${paths.join(', ')}, so ${record.dir} is kept with them; the next bl command rolls it back`;
+  return err;
+}
+
+/**
  * Settle every record left in the backlog before a command runs. Exits 1
  * when a record is not settled (`kept`).
  *
