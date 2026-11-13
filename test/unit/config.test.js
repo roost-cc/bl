@@ -20,7 +20,6 @@ import {
   shellQuote,
   runPager,
   runEditor,
-  exitStatus,
   slugify,
 } from '../../src/config.js';
 
@@ -558,23 +557,6 @@ test("runPager passes the operator's LESS through untouched", () => {
   const { dir, record } = fakePagers();
   withEnv({ PATH: `${dir}${delimiter}${process.env.PATH}`, PAGER: 'less -R', LESS: '-S' }, () => runPager('t'));
   assert.equal(readFileSync(record, 'utf8'), 'less|-R|-S|t');
-});
-
-// ---------------------------------------------------------------------------
-// exitStatus (S-1110, F-70 D3)
-// ---------------------------------------------------------------------------
-
-test('exitStatus: 127 on a launch error, 128 + n on a signal, else the status', () => {
-  assert.equal(exitStatus({ error: new Error('spawn x ENOENT'), status: null, signal: null }), 127);
-  assert.equal(exitStatus({ status: null, signal: 'SIGTERM' }), 143);
-  assert.equal(exitStatus({ status: null, signal: 'SIGKILL' }), 137);
-  assert.equal(exitStatus({ status: 7, signal: null }), 7);
-  assert.equal(exitStatus({ status: 0, signal: null }), 0);
-  // A name this platform does not know is still a failure, never 0.
-  assert.equal(exitStatus({ status: null, signal: 'SIGNOTREAL' }), 128);
-  // A result that reports none of them (a test fake) is 0.
-  assert.equal(exitStatus({}), 0);
-  assert.equal(exitStatus(undefined), 0);
 });
 
 test('runEditor runs VISUAL with its arguments and a path with a space and a quote intact', () => {

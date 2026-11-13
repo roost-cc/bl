@@ -21,18 +21,18 @@
  * A story merged alone gets neither.
  */
 
-import { spawnSync } from 'child_process';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
+import { exitStatus, git as runGit } from './child.js';
 
 export const RELEASES_DIR = 'releases';
 
 /** `git <args>` in `cwd`: `{ status, stdout, stderr }`, status 127 when git could not start. */
 export function git(cwd, args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const r = runGit(cwd, args);
   return {
-    status: r.error ? 127 : (r.status ?? 1),
+    status: exitStatus(r),
     stdout: String(r.stdout ?? ''),
     stderr: String(r.stderr ?? r.error?.message ?? ''),
   };

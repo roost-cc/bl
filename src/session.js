@@ -16,12 +16,11 @@ import {
 } from 'fs';
 import { join, sep, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync, spawnSync } from 'child_process';
 import { homedir, tmpdir } from 'os';
 import assert from 'node:assert';
+import { exitStatus, gitOut } from './child.js';
 import { appendTo as logAppendTo } from './log.js';
 import {
-  exitStatus,
   resolvePlugins,
   repoOf,
   runPlugins,
@@ -381,17 +380,9 @@ export function applyAdditionalPrompt(
  * @param {string} repoPath — absolute path to the code repo's main checkout
  */
 export async function newWorktreeGuards(repoPath) {
-  const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-    cwd: repoPath,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
+  const currentBranch = gitOut(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
 
-  const status = execSync('git status --porcelain', {
-    cwd: repoPath,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
+  const status = gitOut(repoPath, ['status', '--porcelain']);
   if (status) {
     console.error(`Error: ${repoPath} has uncommitted changes. They will NOT be in the worktree.`);
     console.error('Commit or stash before starting a new story.\n');
@@ -447,10 +438,7 @@ export async function ensureWorktree(repoPath, branchName, worktreePath, backlog
 
     const branchExists = (() => {
       try {
-        execSync(`git rev-parse --verify "${branchName}"`, {
-          cwd: repoPath,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
+        gitOut(repoPath, ['rev-parse', '--verify', branchName]);
         return true;
       } catch {
         return false;
@@ -463,36 +451,25 @@ export async function ensureWorktree(repoPath, branchName, worktreePath, backlog
     const mainGitCrypt = join(repoPath, '.git', 'git-crypt');
     const usesGitCrypt = existsSync(join(mainGitCrypt, 'keys', 'default'));
 
+    // git's progress and errors go to stderr, as bl's own lines do.
+    const toStderr = { stdio: ['ignore', process.stderr, process.stderr] };
     if (branchExists) {
       info(`Creating worktree from existing branch '${branchName}'...`);
-      execSync(`git worktree add --no-checkout "${worktreePath}" "${branchName}"`, {
-        cwd: repoPath,
-        stdio: ['inherit', process.stderr, process.stderr],
-      });
+      gitOut(repoPath, ['worktree', 'add', '--no-checkout', worktreePath, branchName], toStderr);
     } else {
       info(`Creating new worktree + branch '${branchName}' from main...`);
-      execSync(`git worktree add --no-checkout -b "${branchName}" "${worktreePath}" main`, {
-        cwd: repoPath,
-        stdio: ['inherit', process.stderr, process.stderr],
-      });
+      gitOut(repoPath, ['worktree', 'add', '--no-checkout', '-b', branchName, worktreePath, 'main'], toStderr);
     }
 
     if (usesGitCrypt) {
-      const worktreeGitDir = execSync('git rev-parse --absolute-git-dir', {
-        cwd: worktreePath,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim();
+      const worktreeGitDir = gitOut(worktreePath, ['rev-parse', '--absolute-git-dir']);
       const linkPath = join(worktreeGitDir, 'git-crypt');
       if (!existsSync(linkPath)) {
         symlinkSync(mainGitCrypt, linkPath);
       }
     }
 
-    execSync('git checkout', {
-      cwd: worktreePath,
-      stdio: ['inherit', process.stderr, process.stderr],
-    });
+    gitOut(worktreePath, ['checkout'], toStderr);
     info('');
   } else {
     info(`Worktree already exists at ${existingWorktree.path}`);
@@ -589,11 +566,7 @@ export function installDeps(config, parsed, { componentEntry, storyEntry, repoNa
 
 /** The marker in a worktree's own git dir that its `workon` plugins are owed. */
 function workonMarker(worktreePath) {
-  const gitDir = execSync('git rev-parse --absolute-git-dir', {
-    cwd: worktreePath,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
+  const gitDir = gitOut(worktreePath, ['rev-parse', '--absolute-git-dir']);
   return join(gitDir, 'bl-workon-pending');
 }
 
@@ -633,11 +606,7 @@ export function workonDone(worktreePath) {
  * re-entrant (`tryLockOnce`): another task of this process waits too.
  */
 export async function prepareWorktreeOnce(repoPath, branchName, fn) {
-  const commonDir = execSync('git rev-parse --path-format=absolute --git-common-dir', {
-    cwd: repoPath,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
+  const commonDir = gitOut(repoPath, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   const lockPath = join(commonDir, `bl-prepare-${branchName.replace(/[^\w.-]/g, '_')}.lock`);
   const take = () => tryLockOnce(lockPath, `prepare ${branchName}`);
   const { taken } = await awaitLock(lockPath, take, { deadlineMs: null, pollMs: 100, announce: info });

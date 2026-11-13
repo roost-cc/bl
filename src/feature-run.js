@@ -49,9 +49,8 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
-import { spawnSync } from 'child_process';
 import { isDeepStrictEqual } from 'util';
-import { runCommandLine } from './child.js';
+import { exitStatus, runChild, runCommandLine } from './child.js';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -825,7 +824,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         maxBuffer: 64 * 1024 * 1024,
       });
       return {
-        status: r.error ? 127 : (r.status ?? 1),
+        status: exitStatus(r),
         output: `${r.stdout ?? ''}${r.stderr ?? ''}`,
       };
     },
@@ -843,7 +842,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
      */
     listContainers() {
       if (process.env.BL_KEEP_TEST_CONTAINERS === '1') return null;
-      const r = spawnSync(
+      const r = runChild(
         'docker',
         [
           'ps',
@@ -858,12 +857,12 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       return parseContainerList(r.stdout, containerOwner);
     },
     removeContainers(ids) {
-      const r = spawnSync('docker', ['rm', '-f', ...ids], {
+      const r = runChild('docker', ['rm', '-f', ...ids], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 60_000,
       });
-      return { status: r.error ? 127 : (r.status ?? 1), output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+      return { status: exitStatus(r), output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
     },
     // Process hygiene (F-70 D4, src/process-scope.js). A runner without these
     // methods (the unit tests' fake) skips it, as one without listContainers
@@ -1530,7 +1529,8 @@ function spawnShell(cmd, scope, { stdout, stderr, ...options }) {
  * keeps the order the command printed it: a pipe per stream would put every
  * stderr line after all of stdout, and a runner's error would land below its
  * teardown noise in the gate log. Returns the runner's `{ status, output }`.
- * A command ended by a signal that does not stop `bl` has `status` 1.
+ * A command ended by a signal that does not stop `bl` has `status` 128 + the
+ * signal's number (`exitStatus`).
  */
 export function shellMerged(cmd, cwd, { scope = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'bl-gate-'));
@@ -1543,7 +1543,7 @@ export function shellMerged(cmd, cwd, { scope = null } = {}) {
     fd = null;
     const output = readFileSync(file, 'utf8');
     return {
-      status: r.error ? 127 : (r.status ?? 1),
+      status: exitStatus(r),
       output: r.error ? `${output}${output && !output.endsWith('\n') ? '\n' : ''}${r.error.message}\n` : output,
     };
   } finally {

@@ -40,7 +40,6 @@
  * does not undo them; a rerun finishes the job.
  */
 
-import { spawnSync } from 'child_process';
 import {
   existsSync,
   lstatSync,
@@ -54,6 +53,7 @@ import {
 } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
+import { git, raiseAfter } from './child.js';
 import { loadConfig } from './config.js';
 import { canonical, withLock } from './lock.js';
 import { applyMigration } from './migration-txn.js';
@@ -96,11 +96,7 @@ export function rootOfTemplate(value) {
 
 /** The linked worktrees of the repo at `repoPath`: `{ path, branch|null }`, the main one left out. */
 export function linkedWorktrees(repoPath) {
-  const r = spawnSync('git', ['worktree', 'list', '--porcelain'], {
-    cwd: repoPath,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const r = git(repoPath, ['worktree', 'list', '--porcelain']);
   if (r.status !== 0) throw new Error(`git worktree list failed in ${repoPath}: ${(r.stderr || '').trim()}`);
   const entries = r.stdout.split('\n\n').filter((e) => e.trim());
   return entries.slice(1).map((entry) => {
@@ -378,13 +374,13 @@ function moveWorktree(m, runDir, backlogRoot) {
   const parent = dirname(m.to);
   const made = !existsSync(parent);
   mkdirSync(parent, { recursive: true });
-  const r = spawnSync('git', ['worktree', 'move', m.from, m.to], {
-    cwd: m.repoPath,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+  // The directory it made goes when the move fails, an interrupted move too (F-114 D2a).
+  const r = raiseAfter(() => {
+    const moved = git(m.repoPath, ['worktree', 'move', m.from, m.to]);
+    if (moved.status !== 0 && made && readdirSync(parent).length === 0) rmdirSync(parent);
+    return moved;
   });
   if (r.status !== 0) {
-    if (made && readdirSync(parent).length === 0) rmdirSync(parent);
     throw new Error(`git worktree move ${m.from} ${m.to} failed: ${(r.stderr || '').trim()}`);
   }
   rewriteRunStates([m], runDir, backlogRoot);

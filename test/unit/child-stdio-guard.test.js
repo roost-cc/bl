@@ -550,47 +550,20 @@ const IMPORTERS = {
   [CHILD_STDIO]: new Set(['src/child.js']),
 };
 
-// The src/ files not yet moved to src/child.js, with the names each imports.
-// A story that moves a file removes its entry; the test fails on an entry the
-// file no longer imports. F-124 moves the rest (feature-run.js's docker
-// calls among them), and ends the list with the asynchronous children
-// (codex-capacity.js, verbs.js's `spawn`).
+// The src/ files that still start a child themselves, with the names each
+// imports (F-124 D7). The test fails on an entry the file no longer imports.
 const ALLOWED = new Map([
-  ['src/agent-run.js', ['spawnSync']],
+  // Asynchronous children (F-114 Out of Scope).
+  ['src/agents/codex-capacity.js', ['spawn']],
+  ['src/verbs.js', ['spawn']],
+  // The run loop's long children: each adapter's agent session, the capacity
+  // helper and the process scope. They move to an asynchronous calling
+  // pattern in F-128 (F-124 Decision A1).
   ['src/agents/capacity-helper.js', ['spawnSyncFiles']],
   ['src/agents/claude.js', ['spawnSync']],
-  ['src/agents/codex-capacity.js', ['spawn']],
   ['src/agents/codex.js', ['spawnSync']],
   ['src/agents/gemini.js', ['spawnSync']],
-  ['src/block.js', ['spawnSync']],
-  ['src/blockers-merge.js', ['spawnSync']],
-  ['src/config.js', ['spawnSync', 'spawnSyncFiles']],
-  ['src/credential-helper.js', ['spawnSync']],
-  ['src/done.js', ['execSync']],
-  ['src/feature-cmd.js', ['execFileSync', 'execSync']],
-  ['src/feature-run.js', ['spawnSync']],
-  ['src/history.js', ['spawnSyncFiles']],
-  ['src/inbox.js', ['spawnSync']],
-  ['src/log.js', ['execSync']],
-  ['src/migrate-transitions.js', ['spawnSync']],
-  ['src/migrate-worktree-layout.js', ['spawnSync']],
-  ['src/migration-script.js', ['spawnSync']],
-  ['src/migration-txn.js', ['spawnSync']],
-  ['src/plugin-binaries.js', ['spawnSync']],
-  ['src/process-scope.js', ['spawnSync', 'spawnSyncFiles']],
-  ['src/rank-cmd.js', ['spawnSync']],
-  ['src/release.js', ['spawnSync']],
-  ['src/review.js', ['execSync']],
-  ['src/session.js', ['execSync', 'spawnSync']],
-  ['src/side.js', ['spawnSync', 'spawnSyncFiles']],
-  ['src/story.js', ['execSync']],
-  ['src/tab-title.js', ['spawnSync']],
-  ['src/top-stream.js', ['spawnSync']],
-  ['src/top.js', ['spawnSync']],
-  ['src/updates-run.js', ['spawnSync']],
-  ['src/updates-vulns.js', ['spawnSync']],
-  ['src/updates.js', ['spawnSync']],
-  ['src/verbs.js', ['spawn', 'spawnSync']],
+  ['src/process-scope.js', ['spawnSyncFiles']],
 ]);
 
 /**
@@ -700,14 +673,14 @@ const IMPORT_CASES = [
   },
   {
     name: 'a listed file with an unlisted name',
-    rel: 'src/done.js',
+    rel: 'src/agents/claude.js',
     src: `import { spawn } from 'child_process';`,
     hits: 1,
   },
   {
     name: 'a listed file with a listed name',
-    rel: 'src/done.js',
-    src: `import { execSync } from 'child_process';`,
+    rel: 'src/agents/claude.js',
+    src: `import { spawnSync } from 'child_process';`,
     hits: 0,
   },
   { name: 'src/child.js', rel: 'src/child.js', src: `import { spawnSyncFiles } from './child-stdio.js';`, hits: 0 },
@@ -734,8 +707,8 @@ const IMPORT_CASES = [
   },
   {
     name: 'a listed file re-exporting a listed name',
-    rel: 'src/done.js',
-    src: `export { execSync } from 'child_process';`,
+    rel: 'src/agents/claude.js',
+    src: `export { spawnSync } from 'child_process';`,
     hits: 0,
   },
   { name: 'a local export', rel: 'src/x.js', src: `const spawnSync = 1;\nexport { spawnSync };`, hits: 0 },

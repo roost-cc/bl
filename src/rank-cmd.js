@@ -31,7 +31,6 @@
  * of `priority.yaml` there too. Printing the order is allowed everywhere.
  */
 
-import { spawnSync } from 'child_process';
 import { existsSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { createInterface } from 'readline';
@@ -40,7 +39,7 @@ import { stringify } from 'yaml';
 import { atomicWriteFile } from './atomic-write.js';
 import { info, loadConfig, normalizeId } from './config.js';
 import { commitPaths, hasOriginRemote, resetPaths, textAt } from './backlog-commit.js';
-import { describeExit } from './child.js';
+import { describeExit, git } from './child.js';
 import { withMainSyncLock } from './main-sync.js';
 import { withLock } from './lock.js';
 import { pullBeforeCommand, reportBacklogCommit } from './sync.js';
@@ -280,21 +279,13 @@ function printOrder(graph, ids = null, title = 'Ranked:') {
 
 /** Whether the backlog root is a git work tree. */
 function inRepo(root) {
-  const r = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const r = git(root, ['rev-parse', '--is-inside-work-tree']);
   return r.status === 0 && r.stdout.trim() === 'true';
 }
 
 /** Whether `priority.yaml` differs from HEAD, in the index or the work tree. */
 function uncommitted(root) {
-  const r = spawnSync('git', ['status', '--porcelain', '--', PRIORITY_FILE], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const r = git(root, ['status', '--porcelain', '--', PRIORITY_FILE]);
   return r.status !== 0 || r.stdout.trim() !== '';
 }
 
@@ -498,11 +489,19 @@ function mergeStaged(root, config) {
     if (err instanceof RankFileError) return { refused: err.message };
     throw err;
   }
-  const merge = spawnSync(
-    'git',
-    ['merge-file', '-p', '-L', 'staged', '-L', 'base', '-L', 'main', STAGED_FILE, BASE_FILE, PRIORITY_FILE],
-    { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  );
+  const merge = git(root, [
+    'merge-file',
+    '-p',
+    '-L',
+    'staged',
+    '-L',
+    'base',
+    '-L',
+    'main',
+    STAGED_FILE,
+    BASE_FILE,
+    PRIORITY_FILE,
+  ]);
   // Negative (255) is an error; 1 to 127 counts the conflicts.
   if (merge.error || merge.status == null || merge.status > 127) {
     return { refused: `git merge-file failed: ${merge.error?.message ?? merge.stderr.trim()}` };

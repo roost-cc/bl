@@ -27,14 +27,15 @@
  * nothing: each kind is answered by its own verb, and it refuses naming it.
  */
 
-import { spawnSync } from 'child_process';
 import { dirname, relative } from 'path';
 // `bl merge` imports this module lazily, after its git merge. When the merge
 // is of bl itself, the process's other modules are still the pre-merge ones
 // (F-49 D6), so a named import of an export the merge added would not link,
 // and the merge's last step would fail. `updateSettings` came with F-80, so
 // it is read from the namespace: a pre-F-80 config.js leaves it undefined,
-// which collectInbox reports as a warning.
+// which collectInbox reports as a warning. `gitOut` came with F-124 and is
+// read from the namespace of child.js for the same reason.
+import * as child from './child.js';
 import * as configModule from './config.js';
 import { changeNextVerb, currentChange, isOpenChange } from './change-doc.js';
 import { extractSection, sectionHasContent } from './feature.js';
@@ -154,14 +155,6 @@ function firstContentLine(text) {
   );
 }
 
-/** A git command's stdout in `cwd`; throws with its stderr when it fails. */
-function gitOut(cwd, args) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  if (r.error) throw r.error;
-  if (r.status !== 0) throw new Error(`git ${args[0]}: ${(r.stderr ?? '').trim() || `exit ${r.status}`}`);
-  return r.stdout;
-}
-
 const isText = (v) => typeof v === 'string' && v.trim() !== '';
 
 /**
@@ -192,8 +185,8 @@ export function readHeartbeat(config) {
   const cwd = config.reposByName?.[repo];
   if (!cwd) throw new Error(`updates.heartbeat.repo ${repo} is not in backlog.json repos`);
   const tracking = `refs/remotes/origin/${branch}`;
-  gitOut(cwd, ['fetch', '--quiet', 'origin', `+refs/heads/${branch}:${tracking}`]);
-  const [at, subject = '', ...body] = gitOut(cwd, ['log', '-1', '--format=%cI%n%B', tracking]).split('\n');
+  child.gitOut(cwd, ['fetch', '--quiet', 'origin', `+refs/heads/${branch}:${tracking}`]);
+  const [at, subject = '', ...body] = child.gitOut(cwd, ['log', '-1', '--format=%cI%n%B', tracking]).split('\n');
   const notHeartbeat = (why) => new Error(`${ref}: the commit message is not a ${HEARTBEAT_SCHEMA} heartbeat: ${why}`);
   let hb;
   try {
@@ -280,7 +273,7 @@ function changeItems(config, units, warnings, flow) {
         const path = config.reposByName?.[repo];
         if (!path) throw new Error('not in backlog.json');
         names = new Set(
-          gitOut(path, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split('\n').filter(Boolean),
+          child.gitOut(path, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).split('\n').filter(Boolean),
         );
       } catch (e) {
         warnings.push(`repo ${repo} not read for unmerged changes: ${e.message}`);
@@ -304,7 +297,7 @@ function changeItems(config, units, warnings, flow) {
     for (const r of doc.repos) {
       if (!r.branch || !branchesOf(r.repo)?.has(r.branch)) continue;
       try {
-        const n = parseInt(gitOut(config.reposByName[r.repo], ['rev-list', '--count', `main..${r.branch}`]), 10);
+        const n = parseInt(child.gitOut(config.reposByName[r.repo], ['rev-list', '--count', `main..${r.branch}`]), 10);
         if (n > 0) ahead.push({ repo: r.repo, branch: r.branch, n });
       } catch (e) {
         warnings.push(`repo ${r.repo} not read for unmerged changes: ${e.message}`);

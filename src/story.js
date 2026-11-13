@@ -13,7 +13,7 @@
 
 import { existsSync, readdirSync, rmdirSync } from 'fs';
 import { join, matchesGlob } from 'path';
-import { execSync } from 'child_process';
+import { gitOut } from './child.js';
 import { graphOf } from './backlog-graph.js';
 import { holderOf } from './kernel-lock.js';
 import { dirLockPath } from './lock.js';
@@ -280,11 +280,7 @@ export function listWorktrees(repoPath) {
   const results = [];
   if (!existsSync(repoPath)) return results;
   try {
-    const output = execSync('git worktree list --porcelain', {
-      cwd: repoPath,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const output = gitOut(repoPath, ['worktree', 'list', '--porcelain']);
     for (const entry of output.split('\n\n').filter(Boolean)) {
       const lines = entry.split('\n');
       const pathLine = lines.find((l) => l.startsWith('worktree '));

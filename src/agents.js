@@ -7,7 +7,8 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { dictionariesOf, exitStatus, findBacklogRoot, loadConfig, showText, warn } from './config.js';
+import { exitStatus } from './child.js';
+import { dictionariesOf, findBacklogRoot, loadConfig, showText, warn } from './config.js';
 import { renderFragment } from './tool-guide.js';
 import { renderDictionaryGuide } from './session.js';
 

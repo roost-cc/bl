@@ -749,8 +749,9 @@ test('shellMerged keeps stdout and stderr in the order the command printed them'
   assert.equal(r.output, 'one\ntwo\nthree\nfour\n');
   const ok = shellMerged("printf 'no newline'", cwd);
   assert.deepEqual(ok, { status: 0, output: 'no newline' });
-  // A command ended by a signal other than SIGINT or SIGTERM has status 1.
-  assert.deepEqual(shellMerged('echo before; kill -KILL $$', cwd), { status: 1, output: 'before\n' });
+  // A command ended by a signal other than SIGINT or SIGTERM has status 128 +
+  // the signal's number, as `exitStatus` gives it (137 for SIGKILL).
+  assert.deepEqual(shellMerged('echo before; kill -KILL $$', cwd), { status: 137, output: 'before\n' });
   // A cwd that does not exist fails the spawn; the error is the output.
   const bad = shellMerged('true', join(cwd, 'missing'));
   assert.equal(bad.status, 127);

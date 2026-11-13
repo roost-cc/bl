@@ -6,7 +6,8 @@
  * backlog graph read it (`unit.text()`, F-77 D2): its frontmatter and body.
  */
 
-import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
+import { exitStatus } from './child.js';
+import { loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
 import { readAllStories, activeWorktreesByStory } from './story.js';
 import { byRank } from './priority.js';
 import { loadBacklog } from './backlog-graph.js';

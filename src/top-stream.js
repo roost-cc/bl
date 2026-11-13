@@ -24,10 +24,10 @@
  * goes back to the usual schedule.
  */
 
-import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { createInterface } from 'readline';
 import { backlogSignature, statKey } from './backlog-graph.js';
+import { git } from './child.js';
 import { STAGED_FILE } from './priority.js';
 import { problemLines, readSection, sectionReaders, snapshotOf } from './top-snapshot.js';
 
@@ -57,11 +57,7 @@ const NO_STAMP = Symbol('no stamp');
  * @returns {string}
  */
 export function backlogStamp(config) {
-  const head = spawnSync('git', ['rev-parse', 'HEAD'], {
-    cwd: config.backlogRoot,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const head = git(config.backlogRoot, ['rev-parse', 'HEAD']);
   const staged = statKey(join(config.backlogRoot, STAGED_FILE)) ?? '';
   return `${head.status === 0 ? head.stdout.trim() : ''}\n${backlogSignature(config)}\n${staged}`;
 }

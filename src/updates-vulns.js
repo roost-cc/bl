@@ -20,7 +20,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
-import { spawnSync } from 'child_process';
+import { exitStatus, runChild } from './child.js';
 import { parseFrontmatter, serializeFrontmatter, slugify, info, warn } from './config.js';
 import { findMaxStoryNum, homeComponent, storiesRoot } from './story.js';
 import { extractSection, replaceSection } from './feature.js';
@@ -230,8 +230,8 @@ export function defaultVulnsRunner() {
   return {
     /** The scanner, without a shell. Its report is the file it writes. */
     exec(file, args) {
-      const r = spawnSync(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-      return { status: r.error ? 127 : (r.status ?? 1), output: r.error ? r.error.message : `${r.stdout}${r.stderr}` };
+      const r = runChild(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      return { status: exitStatus(r), output: r.error ? r.error.message : `${r.stdout}${r.stderr}` };
     },
   };
 }

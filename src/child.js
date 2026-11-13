@@ -15,6 +15,11 @@
  *   says otherwise. It sets `cwd`, not `git -C`, so the argv stays what the
  *   tests' git shims match.
  *
+ * `gitOut(cwd, args, opts)` is `git()` for a git command that must succeed
+ * (F-124 D2): it returns the trimmed stdout, and throws `describeExit`'s
+ * message when the child failed. `BL_PATH` is this process's own `bl.js`
+ * (F-124 D5), the `entry` for a `runBl` of this `bl`.
+ *
  * **An interrupt is raised at once (D2).** If SIGINT or SIGTERM
  * (`INTERRUPT_SIGNALS`) ends a child, the module prints
  * `bl: <child> was ended by <signal>` on stderr and raises the signal
@@ -36,10 +41,17 @@
  * before the raise.
  *
  * `describeExit(r, what)` words a failed child for every caller.
+ * `exitStatus(r)` is the exit status a child result stands for, and
+ * `reportExit(cmd, r)` says on stderr why a child could not start or was
+ * killed (F-124 D6).
  */
 
+import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from './child-stdio.js';
-import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal } from './signal-exit.js';
+import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal, signalExitCode } from './signal-exit.js';
+
+/** The path of this process's own `bl.js`. */
+export const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 
 /** How many `raiseAfter` calls are running, and the first interrupt one of them kept. */
 let depth = 0;
@@ -98,7 +110,7 @@ export function runBl(entry, args = [], opts = {}) {
 /**
  * Run `git …args` in `cwd`: utf8 output, stdin ignored, stdout and stderr
  * captured, unless `opts` says otherwise.
- * @param {string} cwd
+ * @param {string | undefined} cwd  undefined runs it in `process.cwd()`
  * @param {readonly string[]} args
  * @param {ChildOptions} [opts]
  * @returns {import('child_process').SpawnSyncReturns<string>}
@@ -107,6 +119,21 @@ export function git(cwd, args, opts = {}) {
   return /** @type {import('child_process').SpawnSyncReturns<string>} */ (
     runChild('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts, cwd })
   );
+}
+
+/**
+ * Run `git …args` in `cwd` as `git()` does, for a command that must succeed:
+ * return its trimmed stdout (`''` when `opts.stdio` does not capture it), or
+ * throw an `Error` with `describeExit`'s message when the child failed.
+ * @param {string | undefined} cwd  undefined runs it in `process.cwd()`
+ * @param {readonly string[]} args
+ * @param {ChildOptions} [opts]
+ * @returns {string}
+ */
+export function gitOut(cwd, args, opts = {}) {
+  const r = git(cwd, args, opts);
+  if (r.error || r.status !== 0) throw new Error(describeExit(r, `git ${args.join(' ')}`));
+  return String(r.stdout ?? '').trim();
 }
 
 /**
@@ -158,6 +185,36 @@ export function describeExit(r, what) {
   const text = String(r.stderr ?? '').trim() || String(r.stdout ?? '').trim();
   if (r.signal) return `${what} was ended by ${r.signal}${text ? `: ${text}` : ''}`;
   return text || `${what} exited ${r.status}`;
+}
+
+/**
+ * The exit status a `spawnSync` result stands for, as a shell reports it
+ * (F-70 D3): 127 when the child could not be launched (`error`), 128 + the
+ * signal's number when a signal killed it (128 for a name this platform does
+ * not know), else its `status`. A result with none of the three (a test fake)
+ * is 0. Every caller that turns a child's result into bl's exit status or an
+ * `isError` goes through this, never `status ?? 0`, which reads a launch
+ * failure or a kill as success.
+ * @param {{ status?: number | null, signal?: string | null, error?: Error } | null | undefined} result
+ * @returns {number}
+ */
+export function exitStatus(result) {
+  if (result?.error) return 127;
+  if (result?.signal) return signalExitCode(result.signal);
+  return result?.status ?? 0;
+}
+
+/**
+ * Say on stderr why a child failed when its status alone would not: it could
+ * not be launched, or a signal killed it. A plain nonzero exit says nothing,
+ * since the child spoke for itself. Returns `exitStatus(result)`.
+ * @param {string} cmd — the command, as the operator would recognise it
+ * @param {{ status?: number | null, signal?: string | null, error?: Error }} result
+ */
+export function reportExit(cmd, result) {
+  if (result?.error) console.error(`bl: could not start ${cmd}: ${result.error.message}`);
+  else if (result?.signal) console.error(`bl: ${cmd} was killed by ${result.signal}`);
+  return exitStatus(result);
 }
 
 /**

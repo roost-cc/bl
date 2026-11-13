@@ -15,10 +15,10 @@
  * `status`, `approve` and `done` take each target on its own.
  */
 
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { closeSync, openSync } from 'fs';
 import { dirname, join, relative } from 'path';
-import { fileURLToPath } from 'url';
+import { BL_PATH, runBl } from './child.js';
 import { loadConfig, parseArgs, info, openTmuxWindow } from './config.js';
 import { renderTabTitle, TAB_TITLE_ENV, unitTitleFields } from './tab-title.js';
 import { readAllStories } from './story.js';
@@ -29,8 +29,6 @@ import { RUN_DIR, ensureRunDir, escalationOpen, loadRunState, readFm, reviewEnd 
 import { reviewOf } from './transition.js';
 import { currentChange } from './change-doc.js';
 import { featureUnit, storyUnit } from './unit.js';
-
-const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 
 /**
  * What each verb does with each kind of target. A cell starting `./` names
@@ -555,7 +553,7 @@ function mergeInOrder(targets, flags, config) {
   info(`Merging in dependency order: ${ordered.map((t) => t.id).join(', ')}`);
   for (const [i, t] of ordered.entries()) {
     info(`\n== bl merge ${t.id} ==`);
-    const res = spawnSync(process.execPath, [BL_PATH, 'merge', ...flags, t.id], { stdio: 'inherit' });
+    const res = runBl(BL_PATH, ['merge', ...flags, t.id], { stdio: 'inherit' });
     if (res.status !== 0) {
       const rest = ordered.slice(i + 1).map((u) => u.id);
       console.error(`\nbl merge: ${t.id} failed; stopped.${rest.length > 0 ? ` Not merged: ${rest.join(', ')}.` : ''}`);
@@ -569,7 +567,7 @@ function eachInTurn(verb, targets, flags) {
   const failed = [];
   for (const [i, t] of targets.entries()) {
     if (i > 0) console.log('');
-    const res = spawnSync(process.execPath, [BL_PATH, verb, ...flags, t.id], { stdio: 'inherit' });
+    const res = runBl(BL_PATH, [verb, ...flags, t.id], { stdio: 'inherit' });
     if (res.status !== 0) failed.push(t.id);
   }
   if (failed.length > 0) {

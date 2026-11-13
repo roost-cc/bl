@@ -17,7 +17,8 @@ import {
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { checkModel, exitStatus, info, isBlBranchPath, worktreeRoot } from '../config.js';
+import { exitStatus, runChild } from '../child.js';
+import { checkModel, info, isBlBranchPath, worktreeRoot } from '../config.js';
 import { checkEffort } from '../effort.js';
 import { runCapacityHelper } from './capacity-helper.js';
 import { CODEX_CAPACITY_TIMEOUT_MS } from './codex-capacity.js';
@@ -350,7 +351,7 @@ export function dedupeCodexWritableRoots({ worktreePath, backlogRoot, extraRoots
   return roots;
 }
 
-function gitRevParse(worktreePath, args, run = spawnSync) {
+function gitRevParse(worktreePath, args, run = runChild) {
   const result = run('git', ['rev-parse', ...args], {
     cwd: worktreePath,
     encoding: 'utf8',
@@ -361,7 +362,7 @@ function gitRevParse(worktreePath, args, run = spawnSync) {
   return result.stdout.trim() || null;
 }
 
-export function resolveCodexWritableGitRoots({ worktreePath, backlogRoot, run = spawnSync } = {}) {
+export function resolveCodexWritableGitRoots({ worktreePath, backlogRoot, run = runChild } = {}) {
   if (!worktreePath) return [];
 
   const gitdir = gitRevParse(worktreePath, ['--absolute-git-dir'], run);

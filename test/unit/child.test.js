@@ -14,7 +14,7 @@ import { chmodSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
-import { describeExit, git, runBl, runChild, runCommandLine } from '../../src/child.js';
+import { BL_PATH, describeExit, exitStatus, git, gitOut, runBl, runChild, runCommandLine } from '../../src/child.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 const CHILD = fileURLToPath(new URL('../../src/child.js', import.meta.url));
@@ -26,7 +26,7 @@ const SIGNAL_EXIT = fileURLToPath(new URL('../../src/signal-exit.js', import.met
  */
 function runScript(body, { env = process.env, listen = true } = {}) {
   const script = [
-    `import { git, raiseAfter, runBl, runChild, runCommandLine } from ${JSON.stringify(CHILD)};`,
+    `import { git, gitOut, raiseAfter, runBl, runChild, runCommandLine } from ${JSON.stringify(CHILD)};`,
     `import { exitOnSignal } from ${JSON.stringify(SIGNAL_EXIT)};`,
     listen ? 'exitOnSignal();' : '',
     `process.on('exit', (code) => process.stderr.write('exit listener ' + code + '\\n'));`,
@@ -76,6 +76,44 @@ test('git runs in cwd with utf8 output by default', () => {
   const failed = git(dir, ['rev-parse', 'no-such-ref']);
   assert.equal(failed.status, 128);
   assert.match(failed.stderr, /no-such-ref/);
+});
+
+// F-124 D2: gitOut, for a git command that must succeed.
+test('gitOut returns the trimmed stdout of a git command that succeeded', () => {
+  const dir = mkTempDir('bl-child-gitout-');
+  assert.equal(gitOut(dir, ['init', '-q']), '');
+  assert.equal(gitOut(dir, ['rev-parse', '--is-inside-work-tree']), 'true');
+});
+
+test("gitOut throws describeExit's message when git failed", () => {
+  const dir = mkTempDir('bl-child-gitout-');
+  gitOut(dir, ['init', '-q']);
+  const failed = git(dir, ['rev-parse', '--verify', 'no-such-ref']);
+  assert.throws(
+    () => gitOut(dir, ['rev-parse', '--verify', 'no-such-ref']),
+    (e) => e instanceof Error && e.message === describeExit(failed, 'git rev-parse --verify no-such-ref'),
+  );
+  const { dir: shimDir } = shim('git', 'exit 4');
+  const env = { ...process.env, PATH: `${shimDir}:${process.env.PATH}` };
+  assert.throws(() => gitOut(dir, ['status'], { env }), { message: 'git status exited 4' });
+});
+
+test("gitOut with a stdio that does not capture stdout returns ''", () => {
+  const dir = mkTempDir('bl-child-gitout-');
+  assert.equal(gitOut(dir, ['init', '-q'], { stdio: ['ignore', 'ignore', 'ignore'] }), '');
+  assert.equal(gitOut(dir, ['rev-parse', '--is-inside-work-tree'], { stdio: ['ignore', 'ignore', 'pipe'] }), '');
+});
+
+test('gitOut raises the SIGINT that ends git: bl exits 130', () => {
+  const { dir } = shim('git', 'kill -INT $$');
+  const r = runScript(`gitOut(process.cwd(), ['status', '--short']);`, {
+    env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+  });
+  assertRaised(r, 130, 'git status --short', 'SIGINT');
+});
+
+test("BL_PATH is the path of bl's own bl.js", () => {
+  assert.equal(BL_PATH, fileURLToPath(new URL('../../src/bl.js', import.meta.url)));
 });
 
 test('runCommandLine runs the line through a shell', () => {
@@ -345,4 +383,21 @@ test('describeExit names the signal that ended a child, with stderr, stdout or n
     const r = runChild('sh', ['-c', line], { encoding: 'utf8' });
     assert.equal(describeExit(r, 'sh'), want, line);
   }
+});
+
+// ---------------------------------------------------------------------------
+// exitStatus (S-1110, F-70 D3)
+// ---------------------------------------------------------------------------
+
+test('exitStatus: 127 on a launch error, 128 + n on a signal, else the status', () => {
+  assert.equal(exitStatus({ error: new Error('spawn x ENOENT'), status: null, signal: null }), 127);
+  assert.equal(exitStatus({ status: null, signal: 'SIGTERM' }), 143);
+  assert.equal(exitStatus({ status: null, signal: 'SIGKILL' }), 137);
+  assert.equal(exitStatus({ status: 7, signal: null }), 7);
+  assert.equal(exitStatus({ status: 0, signal: null }), 0);
+  // A name this platform does not know is still a failure, never 0.
+  assert.equal(exitStatus({ status: null, signal: 'SIGNOTREAL' }), 128);
+  // A result that reports none of them (a test fake) is 0.
+  assert.equal(exitStatus({}), 0);
+  assert.equal(exitStatus(undefined), 0);
 });

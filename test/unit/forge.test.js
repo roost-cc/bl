@@ -6,7 +6,7 @@
  *
  * Tests use real fake commands (`echo`, `node -e`, missing binary) rather
  * than mocking spawn, so the contract is exercised end-to-end against
- * `child_process.spawnSync`.
+ * `runCommandLine` (`src/child.js`).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,8 +16,10 @@ import { fileURLToPath } from 'url';
 import { runForgeOp, findChange, FORGE_OPS, BODY_READING_OP } from '../../src/config.js';
 import { generateAllowedTools } from '../../src/allowed-tools.js';
 import { findForgeFindings } from '../../src/validate.js';
+import { runAfterExitOnSignal } from '../helpers/exit-on-signal-script.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
+const CONFIG = new URL('../../src/config.js', import.meta.url).href;
 const TEMPLATE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates', 'forge-github.json');
 
 function fakeConfig({ forge, plugins } = {}) {
@@ -185,6 +187,18 @@ test("runForgeOp: declared op with absent binary returns 'missing-binary'", () =
   const result = runForgeOp('change.close', {}, { config: cfg, repoPath: tmpRepo() });
   assert.equal(result.configured, false);
   assert.equal(result.reason, 'missing-binary');
+});
+
+test('runForgeOp: an op that exits 143 stops bl with exit 143 (F-114 D2)', () => {
+  const cfg = fakeConfig({ forge: 'github', plugins: { github: { 'change.close': 'exit 143' } } });
+  const r = runAfterExitOnSignal([
+    `import { runForgeOp } from ${JSON.stringify(CONFIG)};`,
+    `runForgeOp('change.close', {}, { config: ${JSON.stringify(cfg)}, repoPath: ${JSON.stringify(tmpRepo())} });`,
+  ]);
+  const why = `status ${r.status} signal ${r.signal}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+  assert.equal(r.status, 143, why);
+  assert.match(r.stderr, /^bl: exit 143 was ended by SIGTERM$/m, why);
+  assert.equal(r.stdout, '', why);
 });
 
 test('runForgeOp: repoPath is required', () => {

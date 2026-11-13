@@ -245,9 +245,6 @@ for (const c of PULLS) {
     const last = steps.length - (retry ? 1 : 0);
     for (let n = 1; n <= last; n++) {
       const step = `step ${n}, git ${steps[n - 1]}`;
-      // `configureMergeDriver` (`blockers-merge.js`) runs `git config` outside
-      // `src/child.js` until F-124 moves it.
-      if (steps[n - 1].startsWith('config ')) continue;
       const { tmp, alice } = pullFixture();
       try {
         const start = checkoutState(alice);

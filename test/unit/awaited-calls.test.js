@@ -27,7 +27,6 @@ const EXCEPTIONS = new Map([
   ['credential-helper.js run', "a local synchronous `run`, not bl.js's"],
   ['release.js run', "a local synchronous `run`, not bl.js's"],
   ['report.js scoped', "a local synchronous `scoped`, not feature-run.js's"],
-  ['review.js run', "a local synchronous `run`, not bl.js's"],
   ['agents/capacity-helper.js run', "a local synchronous `run`, not bl.js's"],
   ['agents/claude.js run', "a local synchronous `run`, not bl.js's"],
   ['agents/codex.js run', "a local synchronous `run`, not bl.js's"],

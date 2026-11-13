@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
+import { runAfterExitOnSignal } from '../helpers/exit-on-signal-script.js';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { parseFrontmatter, serializeFrontmatter, worktreeRoot } from '../../src/config.js';
@@ -2781,3 +2782,245 @@ test('an empty run whose heartbeat commit fails fails the run, the report left o
     t.cleanup();
   }
 });
+
+// F-124 D3: if SIGINT ends the merge into main, the rebase in the throwaway
+// worktree or the push of main, the abort (for the push, the reset of local
+// main) runs, then bl exits 130. Each row runs the update job
+// in a Node child that calls `exitOnSignal()` (as bl.js does). The fake
+// runner's `git` for the step runs a child that SIGINT ends (`runChild`, so
+// src/child.js sees the interrupt) and returns a failed result; its `git`
+// for the abort writes `abort ran` and fails when the row says so.
+const INTERRUPTED_STEPS = [
+  {
+    name: 'the merge into main',
+    step: ['merge', '--no-ff'],
+    abort: ['merge', '--abort'],
+    left: /^bl: `git merge --abort` failed: injected: the main checkout .*\/repos\/bl is left mid-merge$/m,
+  },
+  {
+    name: 'the rebase in the throwaway worktree',
+    step: ['rebase', 'origin/main'],
+    abort: ['rebase', '--abort'],
+    left: /^bl: `git rebase --abort` failed: injected: the worktree .*\/worktrees\/.* is left mid-rebase$/m,
+  },
+  {
+    name: 'the push of main',
+    step: ['push', 'origin'],
+    abort: ['reset', '--hard'],
+    left: /^bl: `git reset --hard .*` failed: injected: local main of .*\/repos\/bl still holds the unpushed merge$/m,
+  },
+];
+
+function runInterrupted(c, abortFails) {
+  const url = (p) => JSON.stringify(new URL(p, import.meta.url).href);
+  return runAfterExitOnSignal([
+    `import { runChild } from ${url('../../src/child.js')};`,
+    `import { BRANCHES, fakeRunner, mkReport, run, setup } from ${url('../helpers/updates-run-fixture.js')};`,
+    `const t = await setup(mkReport({ 'roost-cc/bl': [BRANCHES.vitest] }));`,
+    `process.on('exit', () => t.cleanup());`,
+    'const runner = fakeRunner({ gate: [0] });',
+    'const fake = runner.git;',
+    'runner.git = (args, cwd) => {',
+    `  const is = (want) => args[0] === want[0] && args[1] === want[1];`,
+    `  if (is(${JSON.stringify(c.step)})) {`,
+    `    runChild('sh', ['-c', 'kill -INT $$']);`,
+    `    return { status: 1, stdout: '', stderr: 'interrupted' };`,
+    '  }',
+    `  if (is(${JSON.stringify(c.abort)})) {`,
+    `    process.stderr.write('abort ran\\n');`,
+    `    if (${abortFails}) return { status: 1, stdout: '', stderr: 'injected' };`,
+    '  }',
+    '  return fake(args, cwd);',
+    '};',
+    'await run(t, runner);',
+  ]);
+}
+
+for (const c of INTERRUPTED_STEPS) {
+  for (const abortFails of [false, true]) {
+    test(`SIGINT that ends ${c.name} runs the abort, then bl exits 130${abortFails ? ' (abort fails)' : ''}`, () => {
+      const r = runInterrupted(c, abortFails);
+      const why = `status ${r.status} signal ${r.signal}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+      assert.equal(r.status, 130, why);
+      assert.ok(!r.stdout.includes('after'), why);
+      const d2 = r.stderr.indexOf('bl: sh -c kill -INT $$ was ended by SIGINT\n');
+      const abort = r.stderr.indexOf('abort ran\n');
+      assert.ok(d2 >= 0 && abort > d2, `the D2 line, then the abort: ${why}`);
+      if (abortFails) assert.match(r.stderr, c.left, why);
+      else assert.doesNotMatch(r.stderr, /is left mid-|still holds the unpushed merge/, why);
+    });
+  }
+}
+
+// F-124 review round 1: a forge op that follows a local write runs in the
+// write's `undoable`. If its command line exits 130 or 143, the write is
+// undone before bl exits 130 or 143: a drop puts the request back when
+// `change.close` is interrupted, and a merge resets local main and pushes
+// nothing when `change.ready` is interrupted. The fake runner's forge op runs
+// the exit through `runCommandLine`, as `runForgeOp` does. At exit the child
+// prints the story's status and request and the merge, push and reset calls.
+const INTERRUPTED_FORGE_OPS = [
+  {
+    name: 'dropStory_restores_request_when_change_close_exits_130_or_143',
+    op: 'change.close',
+    drop: true,
+    check(r, story, calls, why) {
+      assert.deepEqual(story, ['status: refined', 'update_request: drop'], why);
+      assert.deepEqual(calls, [], why);
+    },
+  },
+  {
+    name: 'mergeBranch_resets_local_main_when_change_ready_exits_130_or_143',
+    op: 'change.ready',
+    drop: false,
+    check(r, story, calls, why) {
+      assert.deepEqual(story, ['status: refined'], why);
+      assert.ok(calls.at(-2)?.startsWith('merge --no-ff '), why);
+      assert.match(calls.at(-1) ?? '', /^reset --hard \S+$/, why);
+      assert.ok(!calls.includes('push origin main'), why);
+    },
+  },
+];
+
+for (const c of INTERRUPTED_FORGE_OPS) {
+  for (const code of [130, 143]) {
+    test(`${c.name}: ${c.op} exits ${code}`, () => {
+      const url = (p) => JSON.stringify(new URL(p, import.meta.url).href);
+      const r = runAfterExitOnSignal([
+        `import { readFileSync } from 'fs';`,
+        `import { runCommandLine } from ${url('../../src/child.js')};`,
+        `import { BRANCHES, fakeRunner, mkReport, run, setup } from ${url('../helpers/updates-run-fixture.js')};`,
+        `import { dropUpdate } from ${url('../../src/updates-answer.js')};`,
+        `import { readAllStories } from ${url('../../src/story.js')};`,
+        'const runner = fakeRunner({ gate: [0] });',
+        // Before `setup`: the exit listener that `setup` adds removes the backlog.
+        'let t;',
+        `process.on('exit', () => {`,
+        `  const story = readAllStories(t.config()).find((s) => s.id === 'S-1');`,
+        `  const lines = readFileSync(story.indexPath, 'utf8').split('\\n').filter((x) => /^(status|update_request):/.test(x));`,
+        `  const calls = runner.calls.filter((x) => x.type === 'git' && ['merge', 'push', 'reset'].includes(x.args[0]));`,
+        `  process.stderr.write('STORY ' + JSON.stringify(lines) + '\\n');`,
+        `  process.stderr.write('CALLS ' + JSON.stringify(calls.map((x) => x.args.join(' '))) + '\\n');`,
+        '});',
+        `t = await setup(mkReport({ 'roost-cc/bl': [BRANCHES.vitest] }));`,
+        ...(c.drop ? [`await dropUpdate(t.config(), { id: 'S-1', reason: 'test', out: () => {} });`] : []),
+        'const fake = runner.forge;',
+        'runner.forge = (op, vars, opts) => {',
+        `  if (op === ${JSON.stringify(c.op)}) return { configured: true, ...runCommandLine('exit ${code}', { encoding: 'utf8' }) };`,
+        '  return fake(op, vars, opts);',
+        '};',
+        'await run(t, runner);',
+      ]);
+      const why = `status ${r.status} signal ${r.signal}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+      assert.equal(r.status, code, why);
+      assert.ok(r.stderr.includes(`bl: exit ${code} was ended by ${code === 130 ? 'SIGINT' : 'SIGTERM'}\n`), why);
+      const story = JSON.parse(r.stderr.match(/^STORY (.*)$/m)?.[1] ?? 'null');
+      const calls = JSON.parse(r.stderr.match(/^CALLS (.*)$/m)?.[1] ?? 'null');
+      c.check(r, story, calls, why);
+    });
+  }
+}
+
+// F-124 review round 2: an interrupt that ends an external step leaves its
+// result unknown, since the remote may have done it before the child exited.
+// The undo asks the remote first. A drop whose PR the forge no longer shows
+// open stays dropped; a PR still open, or a `change.find` that fails, puts
+// the request back. A push of main that landed (origin's main is local HEAD)
+// keeps local main; one that did not resets it.
+const RESTORED = ['status: refined', 'update_request: drop'];
+const lastIsReset = (calls) => /^reset --hard \S+$/.test(calls.at(-1) ?? '');
+const UNKNOWN_RESULTS = [
+  {
+    name: 'drop: the forge shows the PR closed, so the story stays superseded',
+    drop: true,
+    find: '{ configured: true, status: 0, stdout: "[]", stderr: "" }',
+    check: (story) => assert.deepEqual(story, ['status: superseded']),
+  },
+  {
+    name: 'drop: the forge shows the PR open, so the request is put back',
+    drop: true,
+    find: '{ configured: true, status: 0, stdout: JSON.stringify([{ number: Number(closed), state: "OPEN" }]), stderr: "" }',
+    check: (story) => assert.deepEqual(story, RESTORED),
+  },
+  {
+    name: 'drop: change.find fails, so the request is put back',
+    drop: true,
+    find: '{ configured: true, status: 1, stdout: "", stderr: "offline" }',
+    check: (story) => assert.deepEqual(story, RESTORED),
+  },
+  {
+    name: 'merge: the push of main landed, so local main is kept',
+    drop: false,
+    remoteMain: 'main0000000',
+    check: (story, calls) => {
+      assert.deepEqual(story, ['status: refined']);
+      assert.equal(calls.at(-1), 'push origin main');
+    },
+  },
+  {
+    name: 'merge: the push of main did not land, so local main is reset',
+    drop: false,
+    remoteMain: 'other000000',
+    check: (story, calls) => {
+      assert.deepEqual(story, ['status: refined']);
+      assert.ok(lastIsReset(calls), JSON.stringify(calls));
+    },
+  },
+];
+
+for (const c of UNKNOWN_RESULTS) {
+  for (const code of [130, 143]) {
+    test(`drop_close_unknown_result_reconciles_pr_and_story: ${c.name} (exit ${code})`, () => {
+      const url = (p) => JSON.stringify(new URL(p, import.meta.url).href);
+      const exit = `runCommandLine('exit ${code}', { encoding: 'utf8' })`;
+      const r = runAfterExitOnSignal([
+        `import { readFileSync } from 'fs';`,
+        `import { runCommandLine } from ${url('../../src/child.js')};`,
+        `import { BRANCHES, fakeRunner, mkReport, run, setup } from ${url('../helpers/updates-run-fixture.js')};`,
+        `import { dropUpdate } from ${url('../../src/updates-answer.js')};`,
+        `import { readAllStories } from ${url('../../src/story.js')};`,
+        'const runner = fakeRunner({ gate: [0] });',
+        // Before `setup`: the exit listener that `setup` adds removes the backlog.
+        'let t;',
+        `process.on('exit', () => {`,
+        `  const story = readAllStories(t.config()).find((s) => s.id === 'S-1');`,
+        `  const lines = readFileSync(story.indexPath, 'utf8').split('\\n').filter((x) => /^(status|update_request):/.test(x));`,
+        `  const calls = runner.calls.filter((x) => x.type === 'git' && ['merge', 'push', 'reset'].includes(x.args[0]));`,
+        `  process.stderr.write('STORY ' + JSON.stringify(lines) + '\\n');`,
+        `  process.stderr.write('CALLS ' + JSON.stringify(calls.map((x) => x.args.join(' '))) + '\\n');`,
+        '});',
+        `t = await setup(mkReport({ 'roost-cc/bl': [BRANCHES.vitest] }));`,
+        ...(c.drop
+          ? [
+              `await dropUpdate(t.config(), { id: 'S-1', reason: 'test', out: () => {} });`,
+              'let closed;',
+              'const fake = runner.forge;',
+              'runner.forge = (op, vars, opts) => {',
+              `  if (op === 'change.close') { closed = vars.number; return { configured: true, ...${exit} }; }`,
+              `  if (op === 'change.find') return ${c.find};`,
+              '  return fake(op, vars, opts);',
+              '};',
+            ]
+          : [
+              'const fake = runner.git;',
+              'runner.git = (args, cwd) => {',
+              `  if (args.join(' ') === 'push origin main') { runner.calls.push({ type: 'git', args, cwd }); return ${exit}; }`,
+              `  if (args[0] === 'ls-remote' && args.at(-1) === 'refs/heads/main') return { status: 0, stdout: '${c.remoteMain}\\trefs/heads/main\\n', stderr: '' };`,
+              '  return fake(args, cwd);',
+              '};',
+            ]),
+        'await run(t, runner);',
+      ]);
+      const why = `status ${r.status} signal ${r.signal}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+      assert.equal(r.status, code, why);
+      const story = JSON.parse(r.stderr.match(/^STORY (.*)$/m)?.[1] ?? 'null');
+      const calls = JSON.parse(r.stderr.match(/^CALLS (.*)$/m)?.[1] ?? 'null');
+      try {
+        c.check(story, calls);
+      } catch (e) {
+        e.message += `\n${why}`;
+        throw e;
+      }
+    });
+  }
+}

@@ -33,12 +33,22 @@ let registered = false;
 export const INTERRUPT_SIGNALS = Object.freeze(['SIGINT', 'SIGTERM']);
 
 /**
- * The exit code of each interrupt: 128 + its number (130 for SIGINT, 143 for
- * SIGTERM), as a shell gives for a child it ended. `exitOnSignal` exits with
- * it, and `src/child.js` reads it back from a shell or a `bl` child.
+ * The exit code a shell gives for a child that `signal` ended: 128 + the
+ * signal's number, or 128 for a name this platform does not know.
+ * @param {string} signal
+ * @returns {number}
+ */
+export function signalExitCode(signal) {
+  return 128 + (constants.signals[signal] ?? 0);
+}
+
+/**
+ * The exit code of each interrupt (`signalExitCode`: 130 for SIGINT, 143 for
+ * SIGTERM). `exitOnSignal` exits with it, and `src/child.js` reads it back
+ * from a shell or a `bl` child.
  */
 export const EXIT_CODES = Object.freeze(
-  Object.fromEntries(INTERRUPT_SIGNALS.map((signal) => [signal, 128 + constants.signals[signal]])),
+  Object.fromEntries(INTERRUPT_SIGNALS.map((signal) => [signal, signalExitCode(signal)])),
 );
 
 /**
