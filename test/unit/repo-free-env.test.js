@@ -17,6 +17,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
 import { mkdirSync } from 'fs';
+import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { mkTempDir } from '../helpers/tempdir.js';
@@ -43,6 +44,14 @@ test('the suite runs with none of git’s repository variables set', () => {
 
 test('the suite runs without BL_BACKLOG_DIR', () => {
   assert.equal(process.env.BL_BACKLOG_DIR, undefined, 'run `npm run test:unit`, which unsets BL_BACKLOG_DIR');
+});
+
+test('the suite runs with BL_CEILING_DIRECTORIES at its own temporary directory', () => {
+  assert.equal(
+    process.env.BL_CEILING_DIRECTORIES,
+    tmpdir(),
+    'run `npm run test:unit`, which sets BL_CEILING_DIRECTORIES',
+  );
 });
 
 /**

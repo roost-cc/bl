@@ -9,9 +9,8 @@
  *
  * `--dry-run` prints how many pages of each kind it would change, and writes
  * nothing. A second run changes nothing. `--backlog` names the backlog root;
- * by default it is found as `bl` finds it ($BL_BACKLOG_DIR, else the nearest
- * ancestor or ancestor's `backlog/` with a backlog.json). The operator runs it
- * after `bl merge F-79`.
+ * by default it is found as `bl` finds it (`findBacklogRoot` in
+ * `src/config.js`). The operator runs it after `bl merge F-79`.
  *
  * Exit codes: 0 done (or nothing to do), 1 the backlog is not clean at
  * origin/main with no bl run active (nothing is done), or a step or the

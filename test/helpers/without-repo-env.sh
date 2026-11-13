@@ -23,7 +23,8 @@
 # suite writes inside it, and the wrapper removes it when "$@" ends, also on
 # SIGINT, SIGTERM or SIGHUP. A suite run then leaves /tmp as it found it.
 # CLAUDE_CONFIG_DIR, where the claude provider writes its settings, is a
-# directory inside it. "$@" runs as a child, not by exec, so that the EXIT
+# directory inside it. BL_CEILING_DIRECTORIES names it too, so bl's walk for
+# a backlog never looks above it (S-1155). "$@" runs as a child, not by exec, so that the EXIT
 # trap can run. The child runs in the background and the wrapper waits for
 # it, so a signal to the wrapper's pid alone runs its trap at once. The trap
 # sends the signal on to the child and waits for it before the EXIT trap
@@ -55,6 +56,9 @@ if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 TMPDIR=$(mktemp -d -t bl-test-XXXXXX) || exit 1
 export TMPDIR
+# bl's walk for a backlog stops below the suite's directory (S-1155), so no test
+# finds a backlog outside it, real or another suite's.
+export BL_CEILING_DIRECTORIES="$TMPDIR"
 child=
 pending=()
 trap 'rm -rf -- "$TMPDIR"' EXIT

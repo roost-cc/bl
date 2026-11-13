@@ -2,8 +2,9 @@
  * config.js — backlog-repo-aware configuration loader.
  *
  * Architecture:
- *   - One shared backlog repo at `<roostDir>/backlog/` (discovered by walking
- *     up from cwd or via $BL_BACKLOG_DIR).
+ *   - One shared backlog repo, a subdirectory of `<roostDir>`, found by
+ *     `findBacklogRoot`: `$BL_BACKLOG_DIR`, else a subdirectory of the cwd or
+ *     of a directory above it.
  *   - Top-level `backlog.json` registers the code repos in `repos`, keyed by
  *     repo name: each entry's `path` and `deployable`, the deprecated
  *     `update_tests`, and the optional per-repo layers `plugins-<stage>` and
@@ -19,8 +20,8 @@
  *     `worktreePathFor`.
  */
 
-import { closeSync, existsSync, openSync, readFileSync, realpathSync } from 'fs';
-import { join, resolve, basename, dirname, relative, isAbsolute, sep } from 'path';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { join, resolve, basename, delimiter, dirname, relative, isAbsolute, sep } from 'path';
 import { exitStatus, reportExit, runChild, runCommandLine } from './child.js';
 import { reassertTabTitle } from './tab-title.js';
 import { Document, LineCounter, Scalar, isMap, isScalar, parseDocument, visit } from 'yaml';
@@ -84,12 +85,53 @@ function isBacklogRoot(dir) {
   if (!existsSync(cfg)) return false;
   try {
     const raw = JSON.parse(readFileSync(cfg, 'utf8'));
-    // `projects` is the pre-F-51 registry: still found, so loadConfig can
-    // refuse it with the migration's name rather than "no backlog".
-    return Boolean(raw && typeof raw === 'object' && (raw.repos || raw.projects));
+    return Boolean(raw && typeof raw === 'object' && raw.repos);
   } catch {
     return false;
   }
+}
+
+/**
+ * The subdirectories of `dir` (one level down, hidden names skipped) whose
+ * backlog.json is bl's, sorted. A `dir` that cannot be read has none.
+ *
+ * @param {string} dir
+ * @returns {string[]} absolute paths
+ */
+function backlogsIn(dir) {
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => !name.startsWith('.'))
+    .map((name) => join(dir, name))
+    .filter(isBacklogRoot)
+    .sort();
+}
+
+/** `path` with its symlinks resolved, or `path` itself when it does not exist. */
+function realPath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * The directories the walk does not move up into: `$BL_CEILING_DIRECTORIES`,
+ * absolute paths split on `path.delimiter`, as git reads
+ * `GIT_CEILING_DIRECTORIES`. Relative entries are ignored. Real paths, so a
+ * symlinked temp directory (macOS `/var` → `/private/var`) still matches.
+ *
+ * @returns {Set<string>}
+ */
+function ceilingDirs() {
+  const raw = process.env.BL_CEILING_DIRECTORIES ?? '';
+  return new Set(raw.split(delimiter).filter(isAbsolute).map(realPath));
 }
 
 /**
@@ -97,8 +139,11 @@ function isBacklogRoot(dir) {
  *
  * Resolution order:
  *   1. `$BL_BACKLOG_DIR` env var, if set and valid.
- *   2. Walk up from `start`; at each ancestor, check the ancestor itself and
- *      its `backlog/` child for a `backlog.json` with a `repos` key.
+ *   2. For `start`, then each directory above it up to the filesystem root:
+ *      the one subdirectory that holds a backlog.json with a `repos` key.
+ *      The nearest level wins; two at one level is an error. The walk does
+ *      not move up into a directory in `$BL_CEILING_DIRECTORIES`; `start`
+ *      itself is always searched.
  *
  * @param {string} [start] — directory to start searching from (default cwd)
  * @returns {string} absolute path to backlog repo root
@@ -107,18 +152,21 @@ export function findBacklogRoot(start = process.cwd()) {
   const envDir = process.env.BL_BACKLOG_DIR;
   if (envDir && isBacklogRoot(envDir)) return resolve(envDir);
 
-  let dir = resolve(start);
+  const from = resolve(start);
+  const ceilings = ceilingDirs();
+  let dir = from;
   while (true) {
-    if (isBacklogRoot(dir)) return dir;
-    const child = join(dir, 'backlog');
-    if (isBacklogRoot(child)) return child;
-    const parent = resolve(dir, '..');
-    if (parent === dir) break;
+    const found = backlogsIn(dir);
+    if (found.length === 1) return found[0];
+    if (found.length > 1) {
+      throw new Error(`several backlogs under ${dir}: ${found.join(', ')} (set BL_BACKLOG_DIR to choose one)`);
+    }
+    const parent = dirname(dir);
+    if (parent === dir || ceilings.has(realPath(parent))) break;
     dir = parent;
   }
   throw new Error(
-    "Could not find backlog repo (no backlog.json with 'repos' key in any ancestor).\n" +
-      'Set BL_BACKLOG_DIR to the backlog directory or run bl from inside a known code repo.',
+    `no backlog found: no subdirectory of ${from} or of any directory above it up to ${dir} holds a backlog.json with "repos" (set BL_BACKLOG_DIR, or run bl at or under the backlog's parent directory)`,
   );
 }
 

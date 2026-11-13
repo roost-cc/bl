@@ -3,10 +3,15 @@
  * `BL_BACKLOG_DIR` names the backlog from a cwd outside it, and the variable
  * bl read before S-581 is ignored, so bl fails with the discovery error,
  * which names `BL_BACKLOG_DIR`.
+ *
+ * From the cwd (S-1155): bl finds the backlog as a subdirectory of a
+ * directory at or above the cwd, whatever its name.
  */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync } from 'fs';
+import { join } from 'path';
 import { BL_BIN } from '../helpers/run-bl.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
@@ -44,9 +49,26 @@ test('the pre-S-581 variable is ignored: discovery fails and names BL_BACKLOG_DI
   try {
     const r = listFrom(elsewhere, { [LEGACY]: dir });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /Could not find backlog repo/);
+    assert.match(r.stderr, /no backlog found/);
     assert.match(r.stderr, /BL_BACKLOG_DIR/);
     assert.doesNotMatch(r.stderr, new RegExp(LEGACY));
+  } finally {
+    cleanup();
+  }
+});
+
+test('with no BL_BACKLOG_DIR, bl finds the backlog as a subdirectory of a directory above the cwd', () => {
+  const parent = mkTempDir('bl-parent-');
+  const { cleanup } = mkTempBacklog(
+    { stories: [{ id: 'S-1', title: 'Found from the cwd', status: 'refined' }] },
+    { parent },
+  );
+  const cwd = join(parent, 'acme-web', 'src');
+  mkdirSync(cwd, { recursive: true });
+  try {
+    const r = listFrom(cwd, {});
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Found from the cwd/);
   } finally {
     cleanup();
   }

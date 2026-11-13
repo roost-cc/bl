@@ -30,9 +30,12 @@ acme/
   worktrees/        where bl puts each unit's worktrees (backlog.json "worktrees")
 ```
 
-`bl` finds the backlog by walking up from the current directory, checking each ancestor and
-its `backlog/` child for a `backlog.json`. Set `BL_BACKLOG_DIR` to the backlog directory to use
-it from anywhere else.
+`bl` finds the backlog by walking up from the current directory. In that directory and then in
+each directory above it, bl looks for a subdirectory whose `backlog.json` has a `repos` key, and
+the nearest one wins. Two at the same level are an error. Set `BL_BACKLOG_DIR` to the backlog
+directory to use it from anywhere else, or to choose between two. Set `BL_CEILING_DIRECTORIES`,
+as git's `GIT_CEILING_DIRECTORIES`, to directories the walk must not move up into: absolute paths
+separated by `:`. bl's test suite sets it to its own temp directory.
 
 ## `backlog.json`
 
