@@ -7,6 +7,7 @@ import { loadFlow } from '../../src/flow.js';
 import {
   BLOCKERS_FILE,
   BlockersError,
+  dependencyEdge,
   dependsOnEdges,
   describeCycle,
   findBlockersFindings,
@@ -28,6 +29,7 @@ import {
   readEdges,
   readUnits,
   repoEnd,
+  storyUnitOf,
   unitIndex,
   unmetEdges,
   wouldCycle,
@@ -71,9 +73,7 @@ function units({ status = {} } = {}) {
 
 /** The edges `depends_on:` keys over `units()`' stories stand for: `{ 'S-a': 'S-b' }` is S-a depends_on S-b. */
 const deps = (map) =>
-  dependsOnEdges(
-    Object.entries(FEATURE_OF).map(([id, feature]) => ({ id, feature, depends_on: map[id] ? [map[id]] : [] })),
-  );
+  dependsOnEdges(Object.entries(FEATURE_OF).map(([id, unit]) => ({ id, unit, depends_on: map[id] ? [map[id]] : [] })));
 
 test('formatBlockers sorts by unit, blocker, gate, one edge per line, and round-trips byte for byte', () => {
   const edges = [
@@ -640,10 +640,10 @@ test('edgeProblems: a merge edge joins two repos of one feature, at merge, until
     'blockers-unit: blocker F-1:app: no story of F-1 names repo app',
   ]);
   assert.deepEqual(codes(mergeEdge('F-1:ci-cd', 'S-x:bl')), [
-    'blockers-unit: unit S-x:bl: S-x is not a feature in the backlog',
+    'blockers-unit: unit S-x:bl: S-x is not a feature or batch in the backlog',
   ]);
   assert.deepEqual(codes(mergeEdge('F-1:ci-cd', 'F-9:bl')), [
-    'blockers-unit: unit F-9:bl: F-9 is not a feature in the backlog',
+    'blockers-unit: unit F-9:bl: F-9 is not a feature or batch in the backlog',
   ]);
   assert.deepEqual(codes(mergeEdge('F-1:ci-cd', '*')), [`blockers-unit: a merge edge's unit is never "*"`]);
   assert.deepEqual(codes(mergeEdge('F-1:ci-cd', 'F-1')), [
@@ -722,9 +722,9 @@ test('edgeProblems: an order edge joins two stories of one feature, until implem
   const codes = (e) => edgeProblems(e, u, flow).map((p) => `${p.code}: ${p.message}`);
   assert.deepEqual(codes(orderEdge('S-a', 'S-d')), []);
   assert.deepEqual(codes(orderEdge('S-a', 'S-b')), [
-    'blockers-unit: an order edge joins two stories of one feature, not of F-1 and F-2',
+    'blockers-unit: an order edge joins two stories of one feature or batch, not of F-1 and F-2',
   ]);
-  assert.deepEqual(codes(orderEdge('S-x', 'S-a')), ['blockers-unit: blocker S-x is in no feature']);
+  assert.deepEqual(codes(orderEdge('S-x', 'S-a')), ['blockers-unit: blocker S-x is in no feature or batch']);
   assert.deepEqual(codes(orderEdge('F-1', 'S-a')), ['blockers-unit: blocker F-1 is not a story in the backlog']);
   assert.deepEqual(codes(orderEdge('S-a', 'S-nope')), ['blockers-unit: unit S-nope is not a story in the backlog']);
   assert.deepEqual(codes(orderEdge('S-a', '*')), [`blockers-unit: an order edge's unit is never "*"`]);
@@ -769,13 +769,90 @@ test('an order edge is inside its feature: no holdGraph arc, never a hold; would
   assert.ok(wouldCycle(orderEdge('S-d', 'S-a'), deps({ 'S-d': 'S-a' }), u, flow));
 });
 
+/** F-1 (S-a), the story batch B-1 (S-p, S-q), and a loose S-x held at run by it (F-125 D1). */
+function batchUnits({ status = {} } = {}) {
+  return unitIndex(
+    [
+      { id: 'S-a', status: 'refined', feature: 'F-1' },
+      { id: 'S-p', status: 'refined', batch: 'B-1' },
+      { id: 'S-q', status: 'refined', batch: 'b1' },
+      { id: 'S-x', status: status['S-x'] ?? 'refined' },
+      { id: 'S-n', status: 'refined', batch: 'B-9' },
+    ],
+    [{ id: 'F-1', status: 'approved', stories: ['S-a'] }],
+    [],
+    [{ id: 'B-1', status: status['B-1'] ?? 'approved', stories: ['S-p', 'S-q'] }],
+  );
+}
+
+test('storyUnitOf: a story of a feature is its feature, of a batch its batch; a loose story, a missing batch and a non-story none', () => {
+  const u = batchUnits();
+  assert.deepEqual(
+    ['S-a', 'S-p', 'S-q', 'S-x', 'S-n', 'F-1', 'B-1', 'S-404'].map((id) => storyUnitOf(u, id)),
+    ['F-1', 'B-1', 'B-1', '', '', '', '', ''],
+  );
+});
+
+test('an order edge inside one batch is valid and inside it; one across a batch and a feature is refused (F-125 D1)', () => {
+  const u = batchUnits();
+  const codes = (e) => edgeProblems(e, u, flow).map((p) => `${p.code}: ${p.message}`);
+  const inside = orderEdge('S-p', 'S-q');
+  assert.deepEqual(codes(inside), []);
+  assert.equal(inFeature(inside, u), true);
+  assert.deepEqual([...holdGraph([inside], u, flow).keys()], []);
+  assert.deepEqual(codes(orderEdge('S-a', 'S-p')), [
+    'blockers-unit: an order edge joins two stories of one feature or batch, not of F-1 and B-1',
+  ]);
+  assert.equal(inFeature(orderEdge('S-a', 'S-p'), u), false);
+  // `bl new` and `bl block add` write an order edge between two stories of one batch.
+  const unitOf = (id) => storyUnitOf(u, id);
+  assert.deepEqual(dependencyEdge('S-p', 'S-q', unitOf), inside);
+  assert.deepEqual(dependencyEdge('S-a', 'S-q', unitOf), edge('S-a', 'run', 'S-q'));
+  // A depends_on: inside a batch is an order edge too.
+  assert.deepEqual(
+    dependsOnEdges([
+      { id: 'S-q', unit: 'B-1', depends_on: ['S-p'] },
+      { id: 'S-p', unit: 'B-1' },
+    ]),
+    [inside],
+  );
+});
+
+test("a batch's gate checks its stories' edges: a run edge on its story holds it until met (F-125 D1)", () => {
+  const u = batchUnits();
+  assert.deepEqual(gateIds(u, 'B-1'), ['B-1', 'S-p', 'S-q']);
+  // S-1 and S-2 in B-1; the loose S-3 holds S-2 at run.
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work', repo: 'bl' }],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'P', status: 'refined', batch: 'B-1' },
+      { id: 'S-2', component: 'C01', title: 'Q', status: 'refined', batch: 'B-1' },
+      { id: 'S-3', component: 'C01', title: 'X', status: 'refined' },
+    ],
+    batches: [{ id: 'B-1', title: 'Fixes' }],
+  });
+  writeBlockersLocked(dir, [edge('S-3', 'run', 'S-2')]);
+  const config = { backlogRoot: dir };
+  assert.deepEqual(gateIds(readUnits(config), 'B-1'), ['B-1', 'S-1', 'S-2']);
+  assert.deepEqual(
+    heldBy(config, 'B-1', 'run').map((h) => h.line),
+    ['S-2 is held at run by S-3 (refined, needs done)'],
+  );
+  assert.deepEqual(heldBy(config, 'B-1', 'merge'), []);
+  // A merge edge's end may be a batch's repo: `bl` is one, `nope` is not.
+  assert.deepEqual(
+    edgeProblems(mergeEdge('B-1:nope', 'B-1:bl'), readUnits(config), flow).map((p) => `${p.code}: ${p.message}`),
+    ['blockers-unit: blocker B-1:nope: no story of B-1 names repo nope'],
+  );
+});
+
 test('dependsOnEdges: an order edge between two stories of one feature, else a run edge; each entry once', () => {
   assert.deepEqual(
     dependsOnEdges([
-      { id: 'S-1', feature: 'F-1', depends_on: ['S-2', 'S-3', 'S-2', 'S-9'] },
-      { id: 'S-2', feature: 'F-1', depends_on: '' },
-      { id: 'S-3', feature: '', depends_on: ['S-1', 'S-4'] },
-      { id: 'S-4', feature: '', depends_on: [] },
+      { id: 'S-1', unit: 'F-1', depends_on: ['S-2', 'S-3', 'S-2', 'S-9'] },
+      { id: 'S-2', unit: 'F-1', depends_on: '' },
+      { id: 'S-3', unit: '', depends_on: ['S-1', 'S-4'] },
+      { id: 'S-4', unit: '', depends_on: [] },
     ]),
     [
       orderEdge('S-2', 'S-1'),

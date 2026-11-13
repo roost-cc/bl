@@ -126,6 +126,16 @@ test('computePlan: repos bl first then by first story in work order; merge_order
   });
 });
 
+test("computePlan: a batch's stories follow the batch's merge edges (F-125 D1)", () => {
+  withStories((make) => {
+    const inBatch = (id, unitRepo) => ({ ...make(id, [], { unitRepo, feature: '' }), batch: 'b2' });
+    const stories = [inBatch('S-1', 'app'), inBatch('S-2', 'bl')];
+    const p = computePlan(stories, [merge('B-2', 'app', 'bl'), merge('F-7', 'bl', 'app')]);
+    assert.deepEqual(p.repos, ['bl', 'app']);
+    assert.deepEqual(p.merge_order, ['app', 'bl']);
+  });
+});
+
 test('computePlan of a loose story is a plan of one story', () => {
   withStories((make) => {
     const p = computePlan([make('S-5', ['src/a.js'], { feature: '' })], [run('S-1', 'S-5')]);

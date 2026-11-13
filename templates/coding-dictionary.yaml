@@ -59,10 +59,27 @@ entries:
 
   - term: work unit
     meaning: >-
-      A feature or a story: the thing bl refines, runs, reviews and merges. In prose always write
-      "work unit", never a bare "unit". Code identifiers such as `unitKind` stay as they are.
+      A feature, a story batch or a loose story: the thing bl runs, reviews and merges. In prose
+      always write "work unit", never a bare "unit". Code identifiers such as `unitKind` stay as
+      they are.
     avoid: [unit, item, ticket, job]
-    decided: bl src/AGENTS.md, "Priority" (units) and "Features" (the execution unit)
+    decided: bl src/AGENTS.md, "Priority" (units) and "Features" (the execution unit); F-125 A1
+
+  - term: story batch
+    meaning: >-
+      A work unit that bundles refined stories by theme or component, each refined on its own.
+      `bl batch` builds it already approved; its id is `B-<n>`. It runs like a feature: one
+      branch, one pull request per repo, one review and one merge.
+    avoid: [bundle, group, set, feature]
+    decided: bl src/AGENTS.md, "Story batches" (F-125 Design 1, Decision A4)
+
+  - term: execution plan
+    meaning: >-
+      What `bl run` computes from a work unit's stories at run start and stores as `plan.yaml`:
+      the dependencies between the stories, the work order, the parallel groups and the repo and
+      merge order. During the run the stored plan wins over a new computation.
+    avoid: [schedule, run plan, implementation plan]
+    decided: bl src/AGENTS.md, "The execution plan" (F-125 Design 2)
 
   # --- People and sessions ---------------------------------------------------------------------
 

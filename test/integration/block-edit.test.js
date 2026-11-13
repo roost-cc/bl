@@ -226,8 +226,8 @@ test('bl block add writes an order edge inside one feature, refuses a bad one or
   const add = (blocker, unit, until = 'implemented') =>
     bl(['block', 'add', blocker, '--gate', 'order', '--unit', unit, '--until', until], dir);
   const refusals = [
-    [['S-3', 'S-1'], /an order edge joins two stories of one feature, not of F-2 and F-1 \(blockers-unit\)/],
-    [['S-5', 'S-1'], /blocker S-5 is in no feature \(blockers-unit\)/],
+    [['S-3', 'S-1'], /an order edge joins two stories of one feature or batch, not of F-2 and F-1 \(blockers-unit\)/],
+    [['S-5', 'S-1'], /blocker S-5 is in no feature or batch \(blockers-unit\)/],
     [['S-2', 'S-1', 'done'], /an order edge's until is "implemented", not "done" \(blockers-status\)/],
     [['S-2', '*'], /an order edge's unit is never "\*" \(blockers-unit\)/],
     // S-4's depends_on: S-2 is the order edge S-2 → S-4, so S-4 → S-2 closes a cycle.

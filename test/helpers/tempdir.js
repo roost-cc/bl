@@ -153,6 +153,23 @@ ${f.deferred ?? 'None.'}
 ${f.escalation ?? 'None.'}
 `;
 
+/** A story batch's `index.md` (F-125 D1): `bl batch` writes it at `approved`. */
+export const BATCH_INDEX_TEMPLATE = (b) => `${serializeFrontmatter({
+  batch_id: b.id,
+  title: b.title,
+  transitions: b.transitions ?? [{ at: '2026-11-12T00:00:00Z', to: 'approved', by: 'new' }],
+  review_rounds_max: b.review_rounds_max ?? 2,
+  added: b.added || undefined,
+})}
+# ${b.id} · ${b.title}
+
+## Notes
+
+## Escalation
+
+${b.escalation ?? 'None.'}
+`;
+
 /** The backlog's `priority.yaml` (F-113 D1): `ranked`, a list of work unit ids. */
 export const PRIORITY_TEMPLATE = (ranked = []) => stringify(ranked);
 
@@ -223,6 +240,7 @@ export const STORY_INDEX_TEMPLATE = (story) => `${serializeFrontmatter({
   required_for: refList(story.required_for),
   completed: story.completed || undefined,
   feature: story.feature || undefined,
+  batch: story.batch || undefined,
   primary_repo: story.primary_repo || undefined,
   secondary_repos: story.secondary_repos ?? undefined,
 })}
@@ -247,7 +265,7 @@ ${story.body ?? ''}
  *           effort?: string, status?: string, transitions?: object[], added?: string,
  *           depends_on?: string, required_for?: string,
  *           completed?: string, dirSuffix?: string, body?: string,
- *           feature?: string, primary_repo?: string,
+ *           feature?: string, batch?: string, primary_repo?: string,
  *           secondary_repos?: string[] }>} [stories]
  *           Written under stories/S<n>-<dirSuffix>/ whatever the status. A
  *           story or feature with `transitions` (F-69 D2) gets no `status:`.
@@ -264,6 +282,11 @@ ${story.body ?? ''}
  *           `branch`, `pr`, `review_status`, `review_round` and `reviewLog`
  *           (on a story too) go to the unit's change.md (CHANGE_TEMPLATE).
  *           `theme` defaults to `demo` (null writes none); `epic` is optional.
+ * @property {Array<{ id: string, title: string, dirSuffix?: string, transitions?: object[],
+ *           added?: string, escalation?: string }>} [batches]
+ *           Story batches (F-125 D1), written under batches/B<n>-<dirSuffix>/
+ *           (`batch` by default) at `approved`. A story joins one with its own
+ *           `batch:`.
  * @property {Array<{ id: string, title?: string, repos?: string[] | null,
  *           brief?: string[] | null }>} [themes]
  *           Written under themes/<id>/, beside the default `demo` theme
@@ -413,6 +436,12 @@ export function mkTempBacklog(fixture = {}, { keep = false } = {}) {
       const repo = f.changeRepo ?? f.primary_repo ?? Object.keys(reposConfig(fixture.repos))[0];
       writeFileSync(join(featureDir, 'change.md'), CHANGE_TEMPLATE(f.id, { repo, ...f }));
     }
+  }
+
+  for (const b of fixture.batches ?? []) {
+    const batchDir = join(dir, 'batches', `${b.id.replace(/^B-/, 'B')}-${b.dirSuffix ?? 'batch'}`);
+    mkdirSync(batchDir, { recursive: true });
+    writeFileSync(join(batchDir, 'index.md'), BATCH_INDEX_TEMPLATE(b));
   }
 
   if (fixture.priority !== null) {

@@ -152,6 +152,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
       index.md                  ← component: a code boundary in one repo
   features/
     F42-…/index.md              ← feature (+ change.md)
+  batches/
+    B2-…/index.md               ← story batch (+ change.md); see Story batches
   themes/
     backlog/index.md            ← theme: a value area that never finishes
   epics/
@@ -593,6 +595,7 @@ positional `[commit-hash]` and `--commit` are mutually exclusive.
 | `commit`            | on done  | short hash _or_ map `<repo>: <sha>`            | String for single-repo stories; map for multi-repo                                                                |
 | `completed`         | on done  | `YYYY-MM-DD`                                   | Set by the log's entry to `done` or `superseded`                                                                  |
 | `feature`           | no       | `F-<n>`                                        | The feature this story is part of (see **Features**); set by `bl new --feature`                                   |
+| `batch`             | no       | `B-<n>`                                        | The story batch this story is part of (see **Story batches**); never with `feature`                               |
 | `found_by`          | no       | `F-<n>` or `S-<n>`                             | The unit whose work found a side story; set by `bl side --from` (F-48 D2)                                         |
 | `review_rounds_max` | no       | integer                                        | Written by a story run; caps review rounds                                                                        |
 | `update_repo`       | no       | forge slug, e.g. `acme/tools`                  | Written by `bl updates sync`; with `update_branch` the key of an update story                                     |
@@ -1294,7 +1297,7 @@ orders for a list of stories in one object, the execution plan: `stories`,
 `dependencies` (each story's listed stories it waits for, by run and order
 edges), `order` (`orderStoriesByDeps`), `groups`, `repos`
 (`featureRepoOrder`) and `merge_order` (`mergeOrder` over the merge edges of
-the stories' feature; `null` on a cycle, with its edges in `merge_cycle`). A
+the stories' feature or story batch; `null` on a cycle, with its edges in `merge_cycle`). A
 group holds the stories whose dependencies are in earlier groups and whose
 plan files (`planFiles`) overlap no other story of the group (same file, or a
 directory that holds it); a story that overlaps waits for the next group. No
@@ -2196,6 +2199,61 @@ domain-specific module made generic, a helper now shared across services),
 code left in a package of its old role is a finding even when the diff never
 touches the file. They read the repo's AGENTS.md package map, where it has
 one, and its tenets.
+
+## Story batches
+
+A **story batch** (F-125 D1) is a work unit that bundles refined stories by
+theme or component, each refined on its own. It runs like a feature: one
+branch, one pull request per repo, one review and one merge. A feature binds
+its stories by one use case; a batch binds them by theme or component only,
+so it has no Premise, Goal or Design, and each story carries its own plan.
+
+```
+<backlog>/
+  batches/
+    B2-run-loop-fixes/index.md      ← the batch, open or merged
+  stories/S1408-…/index.md          ← its stories, each with batch: B-2
+```
+
+```yaml
+---
+batch_id: B-2
+title: Run loop fixes
+transitions: # approved | in_progress | in_review | fixing | ready_for_merge | escalated | done | superseded
+  - { at: 2026-11-13T09:12:40Z, to: approved, by: new }
+review_rounds_max: 2
+added: 2026-11-13
+---
+```
+
+- **Id and readers.** The id is `B-<n>` (`normalizeBatchId` reads `B3`, `b-3`
+  and `B-3`). `src/batch.js` holds `readAllBatches`, `findBatch` and
+  `namesBatch`, which share the feature readers' code (`readWorkUnits`,
+  `findWorkUnit`, `namesWorkUnit` in `feature.js`). A batch record has a
+  feature record's field names (`featureEntry`, `featureDir`,
+  `featureRelPath`, `stories`, `points`), so the run loop reads both alike.
+- **The graph.** `batch` is a kind of `loadBacklog` (`g.batches`,
+  `g.get('B-2')`). A batch's `stories`, `points`, `components` and `dependsOn`
+  are derived from the stories whose `batch:` names it, as a feature's are;
+  `stories` is in plan order (`orderStoriesByDeps`). A batch stores none of
+  them (`derived-key`).
+- **Membership.** A story names its batch with `batch: B-<n>`, the only
+  statement of membership. A story is in a feature or in a batch, not both.
+  `bl validate` reports a story that names both (`feature-and-batch`, error)
+  and one that names a batch that does not exist (`dangling-batch`, error).
+- **Status.** `flow.json`'s `batch` type: `new` records `approved`, then the
+  feature's `run`, `implement`, `review`, `fix`, `merge` and `supersede` rows
+  and gates. It has no `refine` or `approve`. bl reads a `flow.json` without
+  the type (`FLOW_TYPES` does not require it); a batch in such a backlog
+  loads, and only its `done` throws the `FlowError` that names the type.
+- **The work unit of a story.** Every edge check asks `storyUnitOf(units,
+id)` (`blockers.js`): the story's feature, else its batch. So an order edge
+  joins two stories of one batch as it does two of one feature (`inFeature`,
+  `dependencyEdge`), a merge edge's end may be `B-<n>:<repo>`, and a batch's
+  gate checks its stories' edges (`gateIds`).
+- **Template.** `templates/batch.md` (`bl new --print-template batch`):
+  `## Notes` and `## Escalation`. The run adds `change.md` and `plan.yaml`
+  beside it, as for a feature.
 
 ## Review Cycle
 
@@ -4446,7 +4504,7 @@ flow-json, blockers-json, blockers-unit, blockers-gate, blockers-status,
 blockers-duplicate, blockers-cycle, blockers-unmeetable, blockers-order,
 task-unit, task-field, deferred-unsized, deferred-duplicate, operator-tasks-retired,
 deferred-heading-retired, bad-tokens-by-step, agent-config, derived-key, dangling-feature,
-feature-no-stories, transition-log, legacy-status
+dangling-batch, feature-and-batch, feature-no-stories, transition-log, legacy-status
 
 `transition-log` (F-69 D2, `findTransitionFindings` in `src/transition.js`, error) is at a story,
 feature or task file whose `transitions:` is not a list of entries, or has an entry with a field
@@ -4575,7 +4633,8 @@ the config it hands its checks (`config.backlogGraph`, `graphOf`), so every read
 projects that one graph. Every other command loads the graph strictly and stops at the first
 such unit file, any unit's, with its `FrontmatterError` or `FrontmatterListError`.
 
-`duplicate-id`, `dangling-dep` and `dangling-feature` are the graph's problems too
+`duplicate-id`, `dangling-dep`, `dangling-feature`, `dangling-batch` and `feature-and-batch`
+(F-125 D1: a story that names both a feature and a story batch) are the graph's problems too
 (`findDuplicateFindings`, `findDanglingFindings`), in the words `bl validate` always used:
 a story's duplicate once per id at its first file listing every copy and title, a
 component's once per id at its second directory, an epic's or a feature's once per later

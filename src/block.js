@@ -44,6 +44,7 @@ import {
   readEdges,
   readUnits,
   repoEnd,
+  storyUnitOf,
   wouldCycle,
   writeBlockers,
 } from './blockers.js';
@@ -219,9 +220,9 @@ export function writeEdges(config, edges) {
 function joinedRunEdges(config, joined, feature = null) {
   const { edges } = readBlockers(config.backlogRoot);
   const units = readUnits(config);
-  const featureOf = (id) => (feature && joined.includes(id) ? feature : (units.get(id)?.feature ?? ''));
-  // The edge the pair stands for now: an order edge when both are in one feature.
-  const order = (e) => dependencyEdge(e.blocker, e.unit, featureOf);
+  const unitOf = (id) => (feature && joined.includes(id) ? feature : storyUnitOf(units, id));
+  // The edge the pair stands for now: an order edge when both are in one feature or batch.
+  const order = (e) => dependencyEdge(e.blocker, e.unit, unitOf);
   const turned = edges.filter(
     (e) =>
       e.gate === RUN_EDGE.gate &&

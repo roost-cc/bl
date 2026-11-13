@@ -110,24 +110,27 @@ function toInt(v, fallback = 0) {
 }
 
 /**
- * One feature unit of the graph (`loadBacklog`) in the record shape used
- * across bl, or null when it has no `feature_id`. The branch, PR, review
- * state and Review Log (`changeBody`) come from the feature's current change
- * document (`unit.change()`, read now), not its spec. The text is the
- * graph's, CRLF read as LF (S-896).
+ * One feature or story batch unit of the graph (`loadBacklog`) in the record
+ * shape used across bl, or null when it has no id key (`feature_id`,
+ * `batch_id`). A batch record has a feature's field names (F-125 D1), its
+ * `theme` and `epic` empty. The branch, PR, review state and Review Log
+ * (`changeBody`) come from the unit's current change document
+ * (`unit.change()`, read now), not its spec. The text is the graph's, CRLF
+ * read as LF (S-896).
  */
-function featureRecord(unit, config) {
-  if (!unit.fm.feature_id) return null;
+export function workUnitRecord(unit, config) {
+  const idKey = unit.kind === 'batch' ? 'batch_id' : 'feature_id';
+  if (!unit.fm[idKey]) return null;
   const fm = ownFm(unit);
   // No repo of its own (F-52 D3): the branch and PR are read off the change
   // document's first `repos:` entry, which is the lead repo's.
   const change = unit.change();
   return {
-    id: fm.feature_id,
+    id: fm[idKey],
     title: fm.title ?? '',
     // The log's last `to` and its review rounds (F-69 D2, D5); with no log,
     // `status:` (a v1 word mapped) placed by the change document (D4).
-    status: statusOf('feature', fm, change.change) || unit.status,
+    status: statusOf(unit.kind, fm, change.change) || unit.status,
     round: unit.round,
     // The value axis (F-51 D1): the theme slug and the epic id as written.
     theme: String(fm.theme ?? '').trim(),
@@ -154,25 +157,40 @@ function featureRecord(unit, config) {
   };
 }
 
-/** Read every feature, whatever its status. */
-export function readAllFeatures(config) {
+/**
+ * Every `kind` (`feature` or `batch`) work unit as a record, whatever its status.
+ * @param {"feature" | "batch"} kind
+ */
+export function readWorkUnits(kind, config) {
   const out = [];
-  for (const unit of graphOf(config).list('feature')) {
-    const f = featureRecord(unit, config);
+  for (const unit of graphOf(config).list(kind)) {
+    const f = workUnitRecord(unit, config);
     if (f) out.push(f);
   }
   return out;
 }
 
 /**
- * Find a feature by parsed ID: the first directory named for it.
- * @returns {ReturnType<typeof featureRecord> | null}
+ * Find a `kind` (`feature` or `batch`) work unit by parsed ID: the first
+ * directory named for it.
+ * @param {"feature" | "batch"} kind
+ * @returns {ReturnType<typeof workUnitRecord> | null}
  */
-export function findFeature(parsed, config) {
+export function findWorkUnit(kind, parsed, config) {
   const unit = graphOf(config)
-    .list('feature')
+    .list(kind)
     .find((u) => entryMatches(u.entry, parsed));
-  return unit ? featureRecord(unit, config) : null;
+  return unit ? workUnitRecord(unit, config) : null;
+}
+
+/** Read every feature, whatever its status. */
+export function readAllFeatures(config) {
+  return readWorkUnits('feature', config);
+}
+
+/** Find a feature by parsed ID: the first directory named for it. */
+export function findFeature(parsed, config) {
+  return findWorkUnit('feature', parsed, config);
 }
 
 /** The highest feature number: every feature directory's, readable or not (`maxNum`). */
@@ -215,10 +233,21 @@ export function storyMoveRefusal(id, fm, featureId, flow) {
   return null;
 }
 
+/**
+ * Whether `raw` (a story's `feature:` or `batch:`) names the work unit `id`
+ * in any spelling `normalize` reads.
+ * @param {unknown} raw
+ * @param {string} id
+ * @param {(raw: string) => { id: string } | null} normalize
+ */
+export function namesWorkUnit(raw, id, normalize) {
+  const named = String(raw ?? '').trim();
+  return named !== '' && (normalize(named)?.id ?? named) === id;
+}
+
 /** Whether the story record `s` names the feature `featureId` in its `feature:`. */
 export function namesFeature(s, featureId) {
-  const raw = String(s?.feature ?? '').trim();
-  return raw !== '' && (normalizeFeatureId(raw)?.id ?? raw) === featureId;
+  return namesWorkUnit(s?.feature, featureId, normalizeFeatureId);
 }
 
 /**

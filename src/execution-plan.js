@@ -33,6 +33,7 @@ import { toString } from 'mdast-util-to-string';
 import { parseFrontmatter } from './config.js';
 import { featureGraph, featureMergeEdges, findHoldCycles, readEdges, repoEnd, storyDependencies } from './blockers.js';
 import { extractSection, normalizeFeatureId, resolveFeatureStories } from './feature.js';
+import { normalizeBatchId } from './batch.js';
 import { idNum } from './workon.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { withCoveringLock } from './write-lock.js';
@@ -326,14 +327,14 @@ function parallelGroups(order, dependencies, files) {
  * reading each story's file for its plan paths (`planFiles`).
  *
  * The merge edges used are those of the stories' work unit
- * (`featureMergeEdges` of the feature the stories name). A merge-edge
+ * (`featureMergeEdges` of the feature or batch the stories name). A merge-edge
  * cycle gives `merge_order: null` and the cycle's edges in `merge_cycle`.
  *
  * `taken` are the ids of stories a run has already taken (`replan`): they
  * keep that order at the front, and the other stories follow in dependency
  * order.
  *
- * @param {Array<{ id: string, unitRepo?: string, indexPath: string, feature?: string }>} stories
+ * @param {Array<{ id: string, unitRepo?: string, indexPath: string, feature?: string, batch?: string }>} stories
  *   `readAllStories` records
  * @param {import("./blockers.js").Edge[]} edges  `readEdges`'s, or the graph's `edges`
  * @param {{ taken?: string[] }} [options]
@@ -355,7 +356,14 @@ export function computePlan(stories, edges, { taken = [] } = {}) {
   const order = ordered.map((s) => s.id);
   const repos = featureRepoOrder(ordered);
   const files = new Map(stories.map((s) => [s.id, planFiles([s], repos[0] ?? '')]));
-  const units = new Set(stories.map((s) => normalizeFeatureId(String(s.feature ?? '').trim())?.id).filter(Boolean));
+  const units = new Set(
+    stories
+      .map(
+        (s) =>
+          normalizeFeatureId(String(s.feature ?? '').trim())?.id ?? normalizeBatchId(String(s.batch ?? '').trim())?.id,
+      )
+      .filter(Boolean),
+  );
   const merge = mergeOrder(
     repos,
     [...units].flatMap((id) => featureMergeEdges(edges, id)),

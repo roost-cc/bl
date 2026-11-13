@@ -28,7 +28,7 @@ import { existsSync, readFileSync } from 'fs';
 import { isDeepStrictEqual } from 'util';
 import { join, relative } from 'path';
 import { parseFrontmatter, serializeFrontmatter } from './config.js';
-import { DERIVED_KEYS, loadBacklog } from './backlog-graph.js';
+import { DERIVED_KEYS, kindKeyOf, loadBacklog } from './backlog-graph.js';
 import { withLock } from './lock.js';
 import { applyMigration } from './migration-txn.js';
 import { syncAndCommit } from './sync.js';
@@ -106,7 +106,7 @@ function countsText(c) {
   return Object.entries(c)
     .map(
       ([kind, { files, keys }]) =>
-        `${kind === 'story' ? 'stories' : `${kind}s`}: ${files} (${Object.entries(keys)
+        `${kindKeyOf(kind)}: ${files} (${Object.entries(keys)
           .map(([k, n]) => `${k}: ${n}`)
           .join(', ')})`,
     )

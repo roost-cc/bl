@@ -70,7 +70,7 @@ function planEdges(config) {
   const graph = loadBacklog(config, { reload: true });
   const stories = graph.list('story');
   const fromKeys = dependsOnEdges(
-    stories.map((s) => ({ id: s.id, depends_on: s.fm.depends_on, feature: s.feature?.id ?? '' })),
+    stories.map((s) => ({ id: s.id, depends_on: s.fm.depends_on, unit: (s.feature ?? s.batch)?.id ?? '' })),
   );
   const keyEdges = new Map();
   for (const e of fromKeys) keyEdges.set(e.unit, [...(keyEdges.get(e.unit) ?? []), e]);
