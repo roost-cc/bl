@@ -267,6 +267,41 @@ test('bl attach refuses, writing nothing, for bad ids, missing units, closed fea
   }
 });
 
+// Review 2026-11-13, Must 2: a story is in a feature or in a batch (F-125
+// D1), on both paths that move an existing story into a feature.
+test('batch_story_cannot_join_feature_through_attach_or_new_from', () => {
+  const paths = [
+    ['bl attach', ['attach', 'S-2', 'F-1', '--no-sync']],
+    ['bl new --feature', ['new', '--feature', '--title', 'Joined', 'S-2', '--theme', 'demo', '--no-sync']],
+  ];
+  const stories = [
+    // [case, S-2's fields, the refusal (null: it joins)]
+    ['a loose refined story', {}, null],
+    ['a story in a batch', { batch: 'B-1' }, /^S-2 is already in B-1\.$/m],
+    ['a story in a batch that names the feature too', { batch: 'B-1', feature: 'F-1' }, /^S-2 is already in B-1\.$/m],
+    ['a story in another feature', { feature: 'F-3' }, /^S-2 is already in F-3\.$/m],
+    ['a started story', { status: 'in_progress' }, /^S-2 is in_progress; only a draft or refined story moves/m],
+  ];
+  for (const [path, args] of paths) {
+    for (const [name, story, refusal] of stories) {
+      const label = `${path}: ${name}`;
+      // A slugged directory: bl new --feature's repair record names stories/S<n>-<slug>.
+      const dir = backlog({ story: { dirSuffix: 'two', ...story }, features: [{ id: 'F-3', title: 'Three' }] });
+      const file = 'stories/S2-two/index.md';
+      const before = read(dir, file);
+      const r = bl(args, dir);
+      if (refusal == null) {
+        assert.equal(r.status, 0, `${label}: ${r.stderr}`);
+        assert.match(String(fm(dir, file).feature), /^F-\d+$/, label);
+        continue;
+      }
+      assert.equal(r.status, 1, `${label}: ${r.stderr}`);
+      assert.match(r.stderr, refusal, label);
+      assert.equal(read(dir, file), before, `${label}: story untouched`);
+    }
+  }
+});
+
 test('bl attach takes a story in a new repo into a feature that has not started', () => {
   for (const featureStatus of ['draft', 'refined', 'approved']) {
     const dir = backlog({ featureStatus, story: { component: 'C02' } });
