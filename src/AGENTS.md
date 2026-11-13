@@ -1408,6 +1408,10 @@ pre-F-49 layout (it is in git history before F-49).
 against `schemas/plan.json` by `readPlan` and `writePlan`
 (`execution-plan.js`) on every read and write; a plan that does not match
 throws, naming the file and the field (`schema violation at $/order: …`).
+`readPlan` also refuses a plan of another unit (its `unit` is not the id the
+caller expects), and fields that do not agree with `stories`: `order`,
+`groups`, `dependencies`, `merge_order` against `repos`, and, when the caller
+passes them, `repos` against the unit's repos.
 
 ```yaml
 schema: bl-plan/v1
@@ -1435,12 +1439,20 @@ changes: [] # each: { at, by, what, why }
 3. A story added during the run (`refreshRepos`) joins the plan after the
    stories the run has taken, through `replan`, with a `changes` entry by
    `bl`; the plan is written and committed (`chore: F-n plan adds S-x`).
-4. `bl merge F-n` merges in the plan's `merge_order` when `plan.yaml` has one
+   `replan` keeps the stored `order` of the stories not taken, an agent's
+   edit included, and places an added story by its dependencies.
+4. After every session the run reads `plan.yaml` again (`followStoredPlan`,
+   for a feature, a batch and a story run): it follows the stored `order`,
+   commits an edit the session made (`chore: F-n plan as a session changed
+it`), and escalates with `readPlan`'s message when it cannot read it.
+5. `bl merge F-n` merges in the plan's `merge_order` when `plan.yaml` has one
    (`Repos   : … (plan.yaml)`); it refuses a `merge_order` that does not name
    exactly the feature's repos, and a plan it cannot read, before any repo is
    touched. With no plan, or `merge_order: null`, it computes `mergeOrder`,
-   which names a cycle's edges.
-5. `bl run --plan` computes the plan and prints the dependencies, the work
+   which names a cycle's edges. It reads the plan again after the
+   integration, whose resolution agent may edit `merge_order`, and its final
+   commit takes that edit.
+6. `bl run --plan` computes the plan and prints the dependencies, the work
    order, the parallel groups and the repo and merge order (or the merge-edge
    cycle), then the step list (`formatPlan`, `planSteps`). It writes nothing.
 
@@ -2923,17 +2935,24 @@ bl batch <S-n> <S-n>… --title <t> [-A <agent>] [--model <m>]
   `run` gate by an edge whose blocker is not one of the stories
   (`heldBy`); and a run edge with `active_when` between two of them
   (`joinRefusal`). Each line names the story and the reason
-  (`batchRefusals`).
+  (`batchRefusals`). Then bl takes each story's work unit lock and holds it
+  to its end; a story that another process holds refuses the batch, with
+  nothing written.
 - **Writes** under the backlog lock: `batches/B<n>-<slug>/index.md` from
   `templates/batch.md`, with the flow's initial `batch` status (`approved`
   by `new`); `batch: B-<n>` on each story; and each run edge between two of
-  them turned into an order edge (`orderJoinedEdges`). A failed write
-  restores the stories and removes the directory. Then `syncAndCommit`
+  them turned into an order edge (`orderJoinedEdges`). A repair record
+  (`.bl/run/B-<n>.links.json`, `feature-links.js`, as `bl new --feature`
+  writes) holds each story's bytes before the first write. A failed write
+  restores the stories and removes the directory (`settleFailedWrite`). When
+  a restore fails, the record stays, and the next bl command rolls the batch
+  back: a batch record settles as complete only when every story names the
+  batch and no run edge is left between two of them. Then `syncAndCommit`
   commits them as `chore: add B-<n>`. A `flow.json` without the `batch` type
   refuses with the `FlowError` that names it.
 - **The cross-story pass.** One headless session on `prompts/batch-build.md`
   (mode `refine`, in the backlog root), under the work unit locks of the
-  batch and its stories. It carries `{{executionInputs}}`. It may correct the
+  batch and its stories (the stories' taken again, one depth deeper). It carries `{{executionInputs}}`. It may correct the
   stories' Implementation Plans and add order edges between them with
   `bl block add` (which commits `blockers.json`), and nothing else. bl then
   commits what changed in the batch's and the stories' directories
