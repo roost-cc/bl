@@ -73,8 +73,9 @@ function prLine(p) {
  * unit's review position (`reviewOf`) is `fixing` or `in_review`, whatever
  * its status (F-69 D5), or the latest Review Log
  * session has an open Must or Should box; `ready_for_merge` and open nits
- * pass. The refusal names `bl implement` for `fixing` and `bl review` for
- * `in_review`. A unit with no Review Log session
+ * pass. The refusal names `bl review` for `in_review` and for `ready_for_merge`
+ * with an open Must or Should box (`flow.json`'s `implement` row does not start
+ * from `ready_for_merge`), else `bl implement`. A unit with no Review Log session
  * is refused unless `args["no-review"]`; then `unreviewed` carries what the
  * change document's `## Merge` records (`noReviewLines`). A scripted story
  * without `review: true` is not refused: it has no review to wait for (F-71 D3).
@@ -127,8 +128,9 @@ export function mergeGates(
     position === REVIEW.clean &&
     repos.every((r) => commitsAhead(config.reposByName[r], branchName) === 0);
   if (blocked) {
-    const next =
-      position === 'in_review' ? `Review it (bl review ${id})` : `Address the review feedback (bl implement ${id})`;
+    const next = [REVIEW.open, REVIEW.clean].includes(position)
+      ? `Review it (bl review ${id})`
+      : `Address the review feedback (bl implement ${id})`;
     findings.push({
       gate: 'review',
       message: `${id} has unresolved review state (${unit.status}, round ${unit.round ?? 0}, latest session ${review?.date ?? 'unknown'}, ${review?.blocking ?? 0} unchecked Must/Should).\n${next} before merging.`,
