@@ -219,6 +219,7 @@ test('pushEscalation: a record with error says the step could not run, with one 
   assert.ok(!text.includes('- B.'), text);
   const refused = render(read(gateRun({ steps: [], error: 'push to main refused' })));
   assert.ok(refused.includes('**The problem:** the gate could not run: push to main refused'), refused);
+  assert.ok(refused.includes('3. The gate stopped before its first step, exit 1, and git refused the push.'), refused);
 });
 
 test('pushEscalation: with no fresh record the push output stands in, in the same shape (S-897)', () => {

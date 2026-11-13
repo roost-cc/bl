@@ -188,7 +188,7 @@ export function pushEscalation({ repo, branch, worktreePath, push, gate, next })
   if (record.error !== null) {
     return escalationText({
       rule: RULE,
-      how: how(`could not run ${named}`),
+      how: how(step ? `could not run ${named}` : 'stopped before its first step'),
       problem: `${named} could not run: ${record.error}`,
       why: WHY_GATE,
       decisions: [
