@@ -1443,8 +1443,9 @@ changes: [] # each: { at, by, what, why }
    edit included, and places an added story by its dependencies.
 4. After every session the run reads `plan.yaml` again (`followStoredPlan`,
    for a feature, a batch and a story run): it follows the stored `order`,
-   commits an edit the session made (`chore: F-n plan as a session changed
-it`), and escalates with `readPlan`'s message when it cannot read it.
+   commits an edit the session made
+   (`chore: F-n plan as a session changed it`), and escalates with
+   `readPlan`'s message when it cannot read it.
 5. `bl merge F-n` merges in the plan's `merge_order` when `plan.yaml` has one
    (`Repos   : … (plan.yaml)`); it refuses a `merge_order` that does not name
    exactly the feature's repos, and a plan it cannot read, before any repo is
@@ -2952,7 +2953,8 @@ bl batch <S-n> <S-n>… --title <t> [-A <agent>] [--model <m>]
   refuses with the `FlowError` that names it.
 - **The cross-story pass.** One headless session on `prompts/batch-build.md`
   (mode `refine`, in the backlog root), under the work unit locks of the
-  batch and its stories (the stories' taken again, one depth deeper). It carries `{{executionInputs}}`. It may correct the
+  batch and its stories (the stories' taken again, one depth deeper). It
+  carries `{{executionInputs}}`. It may correct the
   stories' Implementation Plans and add order edges between them with
   `bl block add` (which commits `blockers.json`), and nothing else. bl then
   commits what changed in the batch's and the stories' directories
