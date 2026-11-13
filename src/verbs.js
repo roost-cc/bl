@@ -190,7 +190,6 @@ Arguments:
                        a refined story may run.
 
 Options:
-  --force              Approve a draft
   --help               Show this help
 
 The human gate before bl run. Refuses while ## Escalation is not "None.".

@@ -4,7 +4,7 @@
  *   bl list --features [-a]
  *   bl new --feature --title <t> --theme <slug> [--epic <E-id>] [--rounds <n>] [--body-file <p>] [S-id…]
  *   bl refine    <F-id> [-P <text>] [-A <agent>]
- *   bl approve   <F-id> [--force]
+ *   bl approve   <F-id>
  *   bl status    <F-id|S-id|C-id>
  *   bl implement <F-id> [-P <text>] [-A <agent>]
  *   bl review    <F-id|S-id> [-P <text>] [-r <repo>] [-A <agent>]
@@ -120,7 +120,7 @@ import { readAllTasks, tasksOf } from './task.js';
 import { commitChangedSince, dirtySnapshot, failedCommitPending, failedCommitRecord } from './backlog-commit.js';
 import { loadBacklog } from './backlog-graph.js';
 import { commitAndRecord, reportBacklogCommit } from './sync.js';
-import { applyRefineStatus, refineAndCommit } from './refine.js';
+import { applyRefineStatus, refineAndCommit, statusBeforeRefine } from './refine.js';
 import { takeUnitLocksOrExit } from './unit-lock.js';
 import {
   applyFixOutcome,
@@ -138,7 +138,6 @@ import { deployableRepos, mainCommits, tagRepos, writeReleaseManifest } from './
 import { loadFlow } from './flow.js';
 import {
   IMPLEMENT_VERBS,
-  OPERATOR,
   applyMerged,
   applyNew,
   applyTransition,
@@ -583,7 +582,8 @@ export async function cmdRefine(args, config, feature) {
   info(`Repos   : ${storyReposList(feature, stories)}`);
   info(`File    : ${feature.featureRelPath}`);
   info('');
-  if (feature.status === 'refined') info(`Feature ${feature.id} is already refined. Re-refining.\n`);
+  const before = statusBeforeRefine(loadFlow(config.backlogRoot), 'feature', feature.fm, feature.change ?? null);
+  if (before === 'refined') info(`Feature ${feature.id} is already refined. Re-refining.\n`);
 
   const vars = {
     featureId: feature.id,
@@ -640,6 +640,11 @@ export async function cmdRefine(args, config, feature) {
 // ---------------------------------------------------------------------------
 
 export async function cmdApprove(args, config, feature) {
+  // bl force is the one way to force a move (F-119 A2): it lists what the move skips.
+  if (args.force) {
+    console.error(`use bl force ${feature.id} refined, then bl approve ${feature.id}`);
+    process.exit(1);
+  }
   // Held from the state check through the commit (S-1330): the feature is
   // read again under it, so a status another command wrote while approve
   // waited is the one checked, and no other command commits the approval
@@ -660,17 +665,14 @@ async function approveLocked(args, config, feature) {
     await retryApprovalCommit(config, feature);
     return;
   }
-  // --force approves a draft: the operator stands in for the refine.
   const flow = loadFlow(config.backlogRoot);
-  const forced = Boolean(args.force) && feature.status === flow.initial('feature');
-  const { refusal } = forced ? {} : startOf(config, 'feature', feature, 'approve');
+  const { refusal } = startOf(config, 'feature', feature, 'approve');
   if (refusal) {
-    console.error(feature.status === flow.initial('feature') ? `${refusal}; or pass --force` : refusal);
+    console.error(refusal);
     process.exit(1);
   }
   // An open escalation blocks `bl run`, so approving past it only
-  // moves the refusal later. Like the story-list gates, --force does not
-  // bypass it (--force only skips the draft gate).
+  // moves the refusal later.
   const escalation = extractSection(feature.body, 'Escalation');
   if (sectionHasContent(escalation)) {
     console.error(
@@ -704,7 +706,6 @@ async function approveLocked(args, config, feature) {
   // An edit outside bl since the read (an editor) is not approved over.
   const wrote = await updateFeature(config, feature, (fm) => {
     if (statusOf('feature', fm) !== feature.status) return false;
-    if (forced) applyTransition(flow, 'feature', fm, 'refined', { by: OPERATOR, note: 'bl approve --force' });
     applyTransition(flow, 'feature', fm, 'approved', { by: 'approve' });
     fm.approved = today();
   });

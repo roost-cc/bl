@@ -211,6 +211,6 @@ test('flowChart_keeps_distinct_statuses_with_equal_display_names', () => {
   const { series } = flowChart(history([]), flow);
   assert.deepEqual(
     series.map((s) => s.name),
-    ['done', 'escalated', 'ready for merge', 'fixing', 'in review', 'in progress', 'refined', 'draft'],
+    ['done', 'escalated', 'ready for merge', 'fixing', 'in review', 'in progress', 'refined', 'in refinement', 'draft'],
   );
 });

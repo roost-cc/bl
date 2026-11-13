@@ -129,7 +129,7 @@ test('applyTransition refuses an at that is not ISO 8601 UTC', () => {
       const fm = make();
       const before = structuredClone(fm);
       assert.throws(
-        () => applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: value }),
+        () => applyTransition(flow, 'story', fm, 'in_refinement', { by: 'refine', at: value }),
         /is not an ISO 8601 UTC time; no entry written/,
         `${name}: ${value}`,
       );
@@ -144,7 +144,7 @@ test('applyTransition refuses an at that is not ISO 8601 UTC', () => {
   for (const good of [AT, '2026-11-09T10:00:00.123Z']) {
     for (const [name, make] of Object.entries(units)) {
       const fm = make();
-      applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: good });
+      applyTransition(flow, 'story', fm, 'in_refinement', { by: 'refine', at: good });
       const errors = findTransitionFindings(flow, 'story', fm, 'x').filter((f) => f.severity === 'error');
       assert.deepEqual(errors, [], `${name}: ${good}`);
     }
@@ -184,12 +184,12 @@ test('the first write on a unit with no log writes the synthesized log, then the
 
   // With no `added`, every synthesized entry takes the new entry's time.
   const story = { story_id: 'S-5', status: 'backlog' };
-  applyTransition(flow, 'story', story, 'refined', { by: 'refine', at: AT });
+  applyTransition(flow, 'story', story, 'in_refinement', { by: 'refine', at: AT });
   assert.deepEqual(
     story.transitions.map((e) => [e.at, e.to]),
     [
       [AT, 'draft'],
-      [AT, 'refined'],
+      [AT, 'in_refinement'],
     ],
   );
   assert.equal(story.added, '2026-11-09');
@@ -755,4 +755,26 @@ test('an entry with note: migrated, or by: operator along any verb, is exempt fr
   );
   assert.deepEqual(findings('story', log(entry(T0, 'draft', 'new'), entry(AT, 'refined', 'operator'))), []);
   assert.equal(findings('story', log(entry(T0, 'draft', 'new'), entry(AT, 'in_review', 'operator'))).length, 1);
+});
+
+test('a log written before refine had a during stays valid, and the writer refuses its pairs (F-119 R2)', () => {
+  const log = (...entries) => ({ added: '2026-11-01', transitions: [entry(T0, 'draft', 'new'), ...entries] });
+  const T1 = '2026-11-10T10:00:00Z';
+  const valid = [
+    ['story', log(entry(AT, 'refined', 'refine'))],
+    ['story', log(entry(AT, 'refined', 'refine'), entry(T1, 'refined', 'refine'))],
+    ['story', log(entry(AT, 'draft', 'refine'))],
+    [
+      'feature',
+      log(entry(AT, 'refined', 'refine'), entry(AT, 'approved', 'approve'), entry(T1, 'refined', 'operator')),
+    ],
+  ];
+  for (const [kind, fm] of valid) assert.deepEqual(findings(kind, fm), [], JSON.stringify(fm.transitions));
+  // A pair outside every verb's from still fails: refine does not start from in_progress.
+  const stray = log(entry(AT, 'in_progress', 'implement'), entry(T1, 'refined', 'refine'));
+  assert.match(findings('story', stray)[0][2], /no story verb "refine" goes from in_progress to refined/);
+  // The writer stays strict.
+  const fm = { story_id: 'S-1', added: '2026-11-01', transitions: [entry(T0, 'draft', 'new')] };
+  assert.throws(() => applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: AT }), NoEdgeError);
+  assert.equal(fm.transitions.length, 1);
 });

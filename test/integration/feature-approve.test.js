@@ -24,13 +24,19 @@ test('bl approve gates on refined status and a non-empty, consistent story list,
     let before = head();
     let r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 1);
-    assert.match(
-      r.stderr,
-      /F-1 is draft; approve starts from refined \(bl refine F-1 reaches refined\); or pass --force/,
-    );
+    assert.match(r.stderr, /^F-1 is draft; approve starts from refined \(bl refine F-1 reaches refined\)$/m);
+    assert.equal(head(), before);
+    // --force is gone (F-119 A2): it names bl force, exits 1 and writes nothing
+    r = runBl(['approve', '--force', 'F-1'], { cwd: dir, env });
+    assert.equal(r.status, 1);
+    assert.equal(r.stderr, 'use bl force F-1 refined, then bl approve F-1\n');
+    assert.equal(logStatusOf('feature', fm(featurePath)), 'draft');
+    assert.deepEqual(statusLines(dir), []);
     assert.equal(head(), before);
     // refined but no stories → refuse, and no commit
-    await transition(dir, { kind: 'feature', indexPath: featurePath }, 'refined', { by: 'refine', via: 'refine' });
+    const unit = { kind: 'feature', indexPath: featurePath };
+    await transition(dir, unit, 'in_refinement', { by: 'refine' });
+    await transition(dir, unit, 'refined', { by: 'refine', via: 'refine' });
     r = runBl(['approve', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /has no stories/);
@@ -152,7 +158,7 @@ test('bl approve warns about open dependencies outside the feature', () => {
   }
 });
 
-test('bl approve refuses while ## Escalation has content, even with --force, and passes with None.', () => {
+test('bl approve refuses while ## Escalation has content, and passes with None.', () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,
     components: [{ id: 'C00', title: 'Core', dirSuffix: 'core' }],
@@ -170,16 +176,14 @@ test('bl approve refuses while ## Escalation has content, even with --force, and
   });
   const featurePath = join(dir, 'features/F1-feat/index.md');
   try {
-    for (const extra of [[], ['--force']]) {
-      const r = runBl(['approve', 'F-1', ...extra], { cwd: dir });
-      assert.equal(r.status, 1, extra.join(' '));
-      assert.match(r.stderr, /"Resolved 2026-10-04\. The operator chose A1, B2 and C1 \(see Premise\)\."/);
-      assert.match(
-        r.stderr,
-        /record the decision in the Design \(or the Review Log\) and set `## Escalation` to `None\.`/i,
-      );
-      assert.equal(logStatusOf('feature', fm(featurePath)), 'refined');
-    }
+    const refused = runBl(['approve', 'F-1'], { cwd: dir });
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /"Resolved 2026-10-04\. The operator chose A1, B2 and C1 \(see Premise\)\."/);
+    assert.match(
+      refused.stderr,
+      /record the decision in the Design \(or the Review Log\) and set `## Escalation` to `None\.`/i,
+    );
+    assert.equal(logStatusOf('feature', fm(featurePath)), 'refined');
     const text = readFileSync(featurePath, 'utf8');
     writeFileSync(featurePath, text.replace(/(## Escalation\n\n)[^\n]*/, '$1None.'));
     const r = runBl(['approve', 'F-1', '--no-sync'], { cwd: dir });

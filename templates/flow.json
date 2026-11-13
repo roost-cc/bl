@@ -4,6 +4,7 @@
     "story": {
       "statuses": [
         "draft",
+        "in_refinement",
         "refined",
         "in_progress",
         "in_review",
@@ -17,7 +18,8 @@
       "verbs": {
         "new": { "from": [], "success": [{ "to": "draft" }] },
         "refine": {
-          "from": ["draft", "refined"],
+          "from": ["draft", "in_refinement", "refined"],
+          "during": "in_refinement",
           "via": ["refine"],
           "success": [{ "to": "refined" }],
           "failure": [{ "to": "draft" }]
@@ -64,6 +66,7 @@
     "feature": {
       "statuses": [
         "draft",
+        "in_refinement",
         "refined",
         "approved",
         "in_progress",
@@ -78,7 +81,8 @@
       "verbs": {
         "new": { "from": [], "success": [{ "to": "draft" }] },
         "refine": {
-          "from": ["draft", "refined"],
+          "from": ["draft", "in_refinement", "refined", "approved"],
+          "during": "in_refinement",
           "via": ["refine"],
           "success": [{ "to": "refined" }],
           "failure": [{ "to": "draft" }]

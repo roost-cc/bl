@@ -238,11 +238,11 @@ test('bl attach refuses, writing nothing, for bad ids, missing units, closed fea
     },
     {
       opts: { story: { status: 'in_progress' } },
-      err: /^S-2 is in_progress; only a draft or refined story moves into a feature\.$/m,
+      err: /^S-2 is in_progress; only a draft, in_refinement or refined story moves into a feature\.$/m,
     },
     {
       opts: { story: { status: 'done' } },
-      err: /^S-2 is done; only a draft or refined story moves into a feature\.$/m,
+      err: /^S-2 is done; only a draft, in_refinement or refined story moves into a feature\.$/m,
     },
     {
       opts: { featureStatus: 'in_progress', story: { component: 'C02' } },
@@ -280,7 +280,11 @@ test('batch_story_cannot_join_feature_through_attach_or_new_from', () => {
     ['a story in a batch', { batch: 'B-1' }, /^S-2 is already in B-1\.$/m],
     ['a story in a batch that names the feature too', { batch: 'B-1', feature: 'F-1' }, /^S-2 is already in B-1\.$/m],
     ['a story in another feature', { feature: 'F-3' }, /^S-2 is already in F-3\.$/m],
-    ['a started story', { status: 'in_progress' }, /^S-2 is in_progress; only a draft or refined story moves/m],
+    [
+      'a started story',
+      { status: 'in_progress' },
+      /^S-2 is in_progress; only a draft, in_refinement or refined story moves/m,
+    ],
   ];
   for (const [path, args] of paths) {
     for (const [name, story, refusal] of stories) {
@@ -420,7 +424,7 @@ test('bl attach --help lists the flags and the refusals', () => {
     'bl-attach-json/v1',
     'done or superseded',
     'another feature',
-    'draft or refined',
+    'draft, in_refinement or refined',
     'bl side <repo> --from F-<n>',
   ]) {
     assert.ok(r.stdout.includes(s), s);

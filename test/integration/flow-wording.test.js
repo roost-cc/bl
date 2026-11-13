@@ -45,7 +45,10 @@ const RUNNABLE = {
   shipped: 'refined, in_progress, in_review, fixing, ready_for_merge or escalated',
   custom: 'refined, in_progress, in_test, in_review, fixing, ready_for_merge or escalated',
 };
-const UNSTARTED = { shipped: 'draft or refined', custom: 'draft, parked or refined' };
+const UNSTARTED = {
+  shipped: 'draft, in_refinement or refined',
+  custom: 'draft, parked, in_refinement or refined',
+};
 
 const flows = [
   ['shipped', () => undefined],
@@ -138,7 +141,10 @@ test('help words its status lists from the flow, and from the template outside a
 
 test('wrapped help keeps its line break on the shipped flow', () => {
   const cwd = committedBacklog([['S-1', 'draft']]);
-  assert.match(runBl(['new', '--help'], { cwd }).stdout, /stories \(draft or\n {23}refined, in no feature\)/);
+  assert.match(
+    runBl(['new', '--help'], { cwd }).stdout,
+    /stories \(draft, in_refinement or\n {23}refined, in no feature\)/,
+  );
   assert.match(
     runBl(['updates', '--help'], { cwd }).stdout,
     /\(else every refined, in_progress, in_review, fixing, ready_for_merge or\n {33}escalated update story\)/,

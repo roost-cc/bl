@@ -40,7 +40,7 @@ test('moveRefusal: backlog and refined move; every other status is refused', () 
   for (const status of ['in_progress', 'done', 'superseded']) {
     assert.equal(
       moveRefusal({ ...base, fm: { status } }),
-      `S-2 is ${status}; only a draft or refined story moves to another component.`,
+      `S-2 is ${status}; only a draft, in_refinement or refined story moves to another component.`,
     );
   }
   assert.match(moveRefusal({ ...base, fm: {} }), /S-2 is \(no status\)/);

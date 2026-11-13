@@ -33,6 +33,7 @@ function backlogWith(content) {
 
 const STORY = [
   'draft',
+  'in_refinement',
   'refined',
   'in_progress',
   'in_review',
@@ -44,6 +45,7 @@ const STORY = [
 ];
 const FEATURE = [
   'draft',
+  'in_refinement',
   'refined',
   'approved',
   'in_progress',
@@ -55,7 +57,7 @@ const FEATURE = [
   'superseded',
 ];
 
-test('the template is bl-flow/v2: the ten words in lifecycle order, terminal last, no implies', () => {
+test('the template is bl-flow/v2: the words in lifecycle order, terminal last, no implies', () => {
   const raw = template();
   assert.equal(raw.schema, 'bl-flow/v2');
   assert.deepEqual(raw.types.feature.statuses, FEATURE);
@@ -244,9 +246,9 @@ test('listRankOf: started first, then the other open statuses with any unknown o
 
 test('isRunnable, isUnstarted: the shipped story sets; an unknown or non-string status is neither', () => {
   const flow = loadFlow(TEMPLATE_DIR);
-  assert.deepEqual(flow.runnableStatusesOf('story'), STORY.slice(1, -2));
-  assert.deepEqual(flow.unstartedStatusesOf('story'), ['draft', 'refined']);
-  assert.deepEqual(flow.unstartedStatusesOf('feature'), ['draft', 'refined', 'approved']);
+  assert.deepEqual(flow.runnableStatusesOf('story'), STORY.slice(2, -2));
+  assert.deepEqual(flow.unstartedStatusesOf('story'), ['draft', 'in_refinement', 'refined']);
+  assert.deepEqual(flow.unstartedStatusesOf('feature'), ['draft', 'in_refinement', 'refined', 'approved']);
   const unknown = ['blocked', '__proto__', 'constructor', ['refined'], ['draft'], 7, true, null, undefined];
   assert.deepEqual(
     unknown.filter((s) => flow.isRunnable('story', s) || flow.isUnstarted('story', s)),
@@ -540,8 +542,39 @@ test("flow-json: a status that is no branch's to", () => {
     findingsAfter((raw) => {
       raw.types.story.statuses.splice(1, 0, 'blocked');
     }),
-    ['error: story status "blocked" is no branch\'s "to"; no verb reaches it'],
+    ['error: story status "blocked" is no branch\'s "to" and no verb\'s "during"; no verb reaches it'],
   );
+});
+
+test('flow-json: a status that only a during reaches is reached (F-119 S-1501)', () => {
+  assert.deepEqual(
+    findingsAfter((raw) => {
+      raw.types.story.statuses.splice(1, 0, 'blocked');
+      raw.types.story.verbs.side.during = 'blocked';
+      raw.types.story.verbs.side.from.push('blocked');
+      const branches = Object.values(raw.types.story.verbs).flatMap((v) => [
+        ...(v.success ?? []),
+        ...(v.failure ?? []),
+      ]);
+      assert.ok(!branches.some((b) => b.to === 'blocked'), 'no branch goes to blocked');
+    }),
+    [],
+  );
+});
+
+test('the template: refine records in_refinement, and the feature row starts from approved (F-119 D9)', () => {
+  const flow = loadFlow(TEMPLATE_DIR);
+  for (const type of ['story', 'feature']) {
+    assert.equal(flow.statusesOf(type)[1], 'in_refinement', type);
+    assert.equal(flow.verbOf(type, 'refine').during, 'in_refinement', type);
+  }
+  assert.deepEqual(flow.verbOf('story', 'refine').from, ['draft', 'in_refinement', 'refined']);
+  assert.deepEqual(flow.verbOf('feature', 'refine').from, ['draft', 'in_refinement', 'refined', 'approved']);
+  const has = (from, to) => flow.edges('feature').some((e) => e.from === from && e.to === to && e.by === 'refine');
+  assert.ok(has('approved', 'in_refinement'));
+  assert.ok(has('in_refinement', 'refined'));
+  assert.ok(has('in_refinement', 'draft'));
+  assert.ok(!has('draft', 'refined'), 'refine goes through its during');
 });
 
 test('flow-json: a terminal status before an open one, or one a verb other than supersede starts from', () => {

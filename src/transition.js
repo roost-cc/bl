@@ -297,9 +297,31 @@ function idOf(kind, fm) {
   return str(fm.story_id) || str(fm.feature_id) || str(fm.batch_id) || str(fm.task_id) || `the ${kind}`;
 }
 
-/** Whether the type's table has the edge `from` → `to` under `by` (`operator`: under any verb). */
-function hasEdge(flow, kind, from, to, by) {
-  return flow.edges(kind).some((e) => e.from === from && e.to === to && (by === OPERATOR || e.by === by));
+/** The statuses a verb row's branches go to. */
+const branchTos = (row) => [...row.success, ...row.failure].map((b) => b.to);
+
+/**
+ * Whether the type's table has the edge `from` → `to` under `by` (`operator`:
+ * under any verb). With `skipDuring`, a pair that skips a verb's `during`
+ * counts too: from a status in the verb's `from` straight to one of its
+ * branches' `to` (F-119 R2). A log written before the verb had a `during`
+ * holds such pairs, so `bl validate` reads them; the writer never passes it.
+ * @param {import("./flow.js").Flow} flow
+ * @param {string} kind
+ * @param {string | null} from
+ * @param {string} to
+ * @param {string} by
+ * @param {{ skipDuring?: boolean }} [opts]
+ * @returns {boolean}
+ */
+function hasEdge(flow, kind, from, to, by, { skipDuring = false } = {}) {
+  const byFits = (verb) => by === OPERATOR || verb === by;
+  if (flow.edges(kind).some((e) => e.from === from && e.to === to && byFits(e.by))) return true;
+  if (!skipDuring) return false;
+  return Object.entries(flow.typeOf(kind).verbs).some(
+    ([verb, row]) =>
+      row.during != null && byFits(verb) && flow.fromOf(kind, row).includes(from) && branchTos(row).includes(to),
+  );
 }
 
 /**
@@ -532,7 +554,18 @@ export function assertFrom(flow, unit, verb, ctx) {
   const from = flow.fromOf(kind, row);
   if (!from.includes(status)) {
     const edges = flow.edges(kind).filter((e) => e.from === status && e.to !== status);
-    const reach = from.map((s) => edges.find((e) => e.to === s)).find(Boolean);
+    // An edge into a verb's `during` reaches its branches' statuses too:
+    // `draft → in_refinement` by refine reaches refined.
+    const reachesOf = (e) => {
+      const row = flow.verbOf(kind, e.by);
+      return row?.during === e.to ? [e.to, ...branchTos(row)] : [e.to];
+    };
+    const reach = from
+      .map((s) => {
+        const e = edges.find((x) => reachesOf(x).includes(s));
+        return e ? { by: e.by, to: s } : null;
+      })
+      .find(Boolean);
     const hint = reach ? ` (bl ${commandOf(reach.by)} ${id} reaches ${reach.to})` : '';
     return `${id} is ${status || '(no status)'}; ${verb} starts from ${statusWords(from)}${hint}`;
   }
@@ -626,7 +659,8 @@ export function requireBranch(flow, kind, verb, outcome, ctx) {
  * (`transition-log`): `transitions:` that is not a list of entries; an entry
  * with a field outside `ENTRY_FIELDS`, no `by`, or an `at` that is not ISO
  * 8601 UTC; a `to` that is not a status of the type; a consecutive pair no
- * verb defines (an entry with `note: migrated` is exempt); an `at` before
+ * verb defines (an entry with `note: migrated` is exempt, and a pair that
+ * skips a verb's `during` counts as the verb's: `hasEdge`'s `skipDuring`); an `at` before
  * the one above it; a first entry that is not the type's initial status by
  * `new`; an `added` or `completed` (a task's `done`) that disagrees with the
  * log, or a story's or feature's that is missing (no `added`, or no
@@ -680,7 +714,12 @@ export function findTransitionFindings(flow, kind, fm, location) {
       error(
         `${at} goes to "${str(e.to)}", which is not a ${kind} status (flow.json ${kind} statuses: ${statuses.join(', ')})`,
       );
-    } else if (i > 0 && !isMigrated(e) && str(e.by) && !hasEdge(flow, kind, prev?.to ?? null, e.to, e.by)) {
+    } else if (
+      i > 0 &&
+      !isMigrated(e) &&
+      str(e.by) &&
+      !hasEdge(flow, kind, prev?.to ?? null, e.to, e.by, { skipDuring: true })
+    ) {
       error(`${at}: no ${kind} verb "${e.by}" goes from ${prev?.to ?? '(no status)'} to ${e.to} (flow.json)`);
     }
     if (terminal.includes(e.to)) terminalAt = str(e.at);

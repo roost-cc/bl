@@ -68,7 +68,7 @@ assert_contains "status F-1 → feature status" "F-1 · Feat" "$OUT"
 
 blrun approve F-3
 assert_exit "approve F-3" 1 "$RC"
-assert_contains "approve F-3 → feature approve" 'F-3 is draft; approve starts from refined (bl refine F-3 reaches refined); or pass --force' "$ERR"
+assert_contains "approve F-3 → feature approve" 'F-3 is draft; approve starts from refined (bl refine F-3 reaches refined)' "$ERR"
 
 blrun run F-1 --plan
 assert_exit "run F-1 --plan" 0 "$RC"
@@ -92,7 +92,7 @@ assert_contains "merge F-2 → feature merge" "F-2 is refined; merge starts from
 
 blrun refine F-4
 assert_exit "refine F-4" 1 "$RC"
-assert_contains "refine F-4 → feature refine" "F-4 is done; refine starts from draft or refined" "$ERR"
+assert_contains "refine F-4 → feature refine" "F-4 is done; refine starts from draft, in_refinement, refined or approved" "$ERR"
 
 # --- Story cells: today's story commands ----------------------------------
 blrun implement S-3
@@ -111,7 +111,7 @@ assert_contains "merge S-4 hint uses the new verb" "(bl implement S-4 reaches in
 
 blrun refine S-5
 assert_exit "refine S-5" 1 "$RC"
-assert_contains "refine S-5 → story refine" "S-5 is done; refine starts from draft or refined — skipping." "$ERR"
+assert_contains "refine S-5 → story refine" "S-5 is done; refine starts from draft, in_refinement or refined — skipping." "$ERR"
 
 # --- Refusals --------------------------------------------------------------
 for verb in run implement; do

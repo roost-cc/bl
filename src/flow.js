@@ -571,7 +571,7 @@ export class Flow {
  * lacks; a `when` or `via` name bl does not register; a last `success` or
  * `failure` branch with a `when`; a `then` that is not a
  * verb of the type starting from the branch's `to`; a status no branch goes
- * to; a terminal status before an open one, or one a verb other than
+ * to and no verb records as its `during`; a terminal status before an open one, or one a verb other than
  * `supersede` starts from; a verb bl dispatches for a type that the type's
  * table lacks; a gate verb bl does not check. A warning: a v1 file.
  * @param {Flow} flow
@@ -607,7 +607,10 @@ export function findFlowFindings(flow, wiring, location = FLOW_FILE) {
           add(`${at} starts from terminal status "${f}"; only supersede may`);
         }
       }
-      if (row.during != null && !isStatus(row.during)) notStatus(`verb "${verb}" records during`, row.during);
+      if (row.during != null) {
+        reached.add(row.during);
+        if (!isStatus(row.during)) notStatus(`verb "${verb}" records during`, row.during);
+      }
       for (const g of row.when.filter((n) => !guardRegistered(n))) {
         add(`${at} checks guard "${g}", which bl does not register (bl/src/guards.js)`);
       }
@@ -638,7 +641,7 @@ export function findFlowFindings(flow, wiring, location = FLOW_FILE) {
       }
     }
     for (const s of def.statuses.filter((x) => !reached.has(x))) {
-      add(`${type} status "${s}" is no branch's "to"; no verb reaches it`);
+      add(`${type} status "${s}" is no branch's "to" and no verb's "during"; no verb reaches it`);
     }
     for (const [verb, kinds] of Object.entries(wiring.dispatch)) {
       if (READ_VERBS.includes(verb) || !kinds[type] || flow.verbOf(type, verb)) continue;

@@ -785,12 +785,23 @@ test('a story status flow.json adds shows in the status table and the flow chart
   const chart = data.charts.find((c) => c.id === 'flow');
   assert.deepEqual(
     chart.series.map((s) => s.name),
-    ['done', 'escalated', 'ready for merge', 'fixing', 'in review', 'in progress', 'refined', 'blocked', 'draft'],
+    [
+      'done',
+      'escalated',
+      'ready for merge',
+      'fixing',
+      'in review',
+      'in progress',
+      'refined',
+      'in refinement',
+      'blocked',
+      'draft',
+    ],
   );
   assert.equal(chart.series.find((s) => s.name === 'blocked').values.at(-1).y, 2);
   assert.match(
     chart.desc,
-    /stacked: done, escalated, ready for merge, fixing, in review, in progress, refined, blocked and draft\./,
+    /stacked: done, escalated, ready for merge, fixing, in review, in progress, refined, in refinement, blocked and draft\./,
   );
 });
 
@@ -798,7 +809,7 @@ test("the flow chart's description reads as it always did on the template flow",
   const { dir } = scriptedBacklog();
   assert.equal(
     report(dir).charts.find((c) => c.id === 'flow').desc,
-    'Points by status per week, stacked: done, escalated, ready for merge, fixing, in review, in progress, refined and draft. A band that widens is work piling up in that status.',
+    'Points by status per week, stacked: done, escalated, ready for merge, fixing, in review, in progress, refined, in refinement and draft. A band that widens is work piling up in that status.',
   );
 });
 

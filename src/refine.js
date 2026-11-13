@@ -28,7 +28,7 @@ import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { updateTabTitle } from './tab-title.js';
 import { launchSession, loadPrompt, loadSchema, spillSubagentPrompts } from './session.js';
 import { flowForHelp, loadFlow } from './flow.js';
-import { assertFrom, requireBranch, statusOf, transition } from './transition.js';
+import { assertFrom, enterVerb, logOf, requireBranch, statusOf, transition } from './transition.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
 import { takeUnitLocksOrExit } from './unit-lock.js';
@@ -127,7 +127,8 @@ function storyRefineContext(found, fm, config) {
   const primaryRepoName = unitRepo ?? '';
   const primaryRepoPath = primaryRepoName ? (config.reposByName[primaryRepoName] ?? '') : '';
 
-  const promptName = statusOf('story', fm) === 'refined' ? 're-refine' : 'refine';
+  const promptName =
+    statusBeforeRefine(loadFlow(config.backlogRoot), 'story', fm) === 'refined' ? 're-refine' : 'refine';
   const vars = {
     storyId: parsed.id,
     title,
@@ -140,6 +141,24 @@ function storyRefineContext(found, fm, config) {
     storyRepos: primaryRepoName || '(none)',
   };
   return { parsed, title, storyRelPath, promptName, vars };
+}
+
+/**
+ * The status a unit had before its refinement session (F-119 R1): its status,
+ * or, on a unit at the `refine` verb's `during` (`in_refinement`, a resumed
+ * refinement session), the status of the entry before the last one. The
+ * prompt (`refine` or `re-refine`) follows it.
+ * @param {import("./flow.js").Flow} flow
+ * @param {"story" | "feature"} kind
+ * @param {object} fm
+ * @param {{ fm: object } | null} [change]
+ * @returns {string}
+ */
+export function statusBeforeRefine(flow, kind, fm, change = null) {
+  const log = logOf(kind, fm, change);
+  const during = flow.verbOf(kind, 'refine')?.during;
+  const at = during != null && log.at(-1)?.to === during ? -2 : -1;
+  return log.at(at)?.to ?? '';
 }
 
 /**
@@ -184,7 +203,9 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
  *
  * First it takes the work unit locks of `units` (`takeUnitLocksOrExit`, F-122 D2):
  * a lock another process holds refuses the refine with exit 1, before it
- * writes anything. The commit holds only the paths under the units'
+ * writes anything. Then it records the `refine` verb's `during` on each unit
+ * (`enterVerb`, F-119 R1), so an outcome with no status leaves the unit there.
+ * The commit holds only the paths under the units'
  * directories (`scope()`, read at the end, so a story the session made for
  * the feature is in it, D3); bl names each other changed path.
  * @param {import('./unit-lock.js').WorkUnit[]} units  the refined units: a
@@ -202,7 +223,18 @@ export async function refineAndCommit(units, opts, message, apply) {
   let exitCode;
   try {
     const before = dirtySnapshot(opts.backlogRoot);
-    const { status, structured, structuredError } = await launchSession({ ...opts, units, returnOnExit: true });
+    // The refine verb's `during` (`in_refinement`, F-119 R1), in the session's
+    // commit; nothing on a unit there already or a row with no `during`.
+    let entered = true;
+    try {
+      for (const u of units) await enterVerb(opts.backlogRoot, u, 'refine');
+    } catch (e) {
+      entered = false;
+      console.error(`Error: cannot record the refinement session's start: ${e.message}`);
+    }
+    const { status, structured, structuredError } = entered
+      ? await launchSession({ ...opts, units, returnOnExit: true })
+      : { status: 1, structured: null, structuredError: 'the session did not start' };
     let applyFailed = false;
     if (structured) {
       try {
@@ -235,7 +267,7 @@ async function refineOne(target, config, { additionalPrompt } = {}) {
   const { backlogRoot, roostDir } = config;
   const { parsed, title, storyRelPath, promptName, vars } = storyRefineContext(target.found, target.fm, config);
 
-  if (statusOf('story', target.fm) === 'refined') {
+  if (promptName === 're-refine') {
     info(`Story ${parsed.id} is already refined. Re-refining.\n`);
   }
 
