@@ -48,6 +48,9 @@ export const FLOW_SCHEMA = 'bl-flow/v2';
 /** The schema before F-69: read as the template. */
 export const LEGACY_FLOW_SCHEMA = 'bl-flow/v1';
 
+/** The one document of the file's format (F-119 R7); `bl flow --help` and each `flow-json` finding name it. */
+export const FLOW_DOC = 'bl/templates/flow.schema.md';
+
 /** The script that rewrites a v1 backlog (F-69 D4); `flow-json` names it. */
 export const MIGRATION_SCRIPT = 'bl/scripts/migrate-transitions.js';
 
@@ -189,13 +192,24 @@ function readJson(path) {
 
 /**
  * The flow `--help` words its status lists from: the backlog's, or `bl init`'s
- * template where there is none to read, since help works anywhere.
+ * template where there is none to read, since help works anywhere. With
+ * `strict`, the template stands in only outside a backlog: a backlog's
+ * `flow.json` that `loadFlow` cannot read throws (`bl flow`, which shows the
+ * admin that file).
+ * @param {{ strict?: boolean }} [opts]
  * @returns {Flow}
  */
-export function flowForHelp() {
+export function flowForHelp({ strict = false } = {}) {
+  let root;
   try {
-    return loadFlow(findBacklogRoot());
+    root = findBacklogRoot();
   } catch {
+    return loadFlow(TEMPLATE_DIR);
+  }
+  try {
+    return loadFlow(root);
+  } catch (err) {
+    if (strict) throw err;
     return loadFlow(TEMPLATE_DIR);
   }
 }
@@ -573,7 +587,13 @@ export class Flow {
  */
 export function findFlowFindings(flow, wiring, location = FLOW_FILE) {
   const findings = [];
-  const add = (message, severity = 'error') => findings.push({ severity, code: 'flow-json', message, location });
+  const add = (message, severity = 'error') =>
+    findings.push({
+      severity,
+      code: 'flow-json',
+      message: `${message.replace(/\.$/, '')}. See ${FLOW_DOC}.`,
+      location,
+    });
   if (flow.legacy) {
     add(
       `${location} is ${LEGACY_FLOW_SCHEMA}; bl reads it as its ${FLOW_SCHEMA} template. ` +

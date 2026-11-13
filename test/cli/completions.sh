@@ -109,28 +109,27 @@ assert_eq "feature completions ignore malformed directory names" "F-1" "$(comple
 assert_eq "bl implement completes story and feature ids" "S-1 F-1" "$(complete_bash implement "")"
 assert_eq "bl inbox completes its subcommand and flag" "done --json" "$(complete_bash inbox "")"
 assert_eq "bl capacity completes its flags" "--json --help" "$(complete_bash capacity "")"
-first_word=$(bash -c '
-  source "$1"
-  COMP_WORDS=(bl cap); COMP_CWORD=1
-  _roost_bl 2>/dev/null || true
-  printf "%s\n" "${COMPREPLY[*]:-}"
-' _ "$COMPLETIONS/backlog.bash")
-assert_eq "bl cap<TAB> completes to capacity" "capacity" "$first_word"
+# The verbs bash completes for `bl <prefix><TAB>`.
+complete_verb() {
+  bash -c '
+    source "$1"
+    COMP_WORDS=(bl "$2"); COMP_CWORD=1
+    _roost_bl 2>/dev/null || true
+    printf "%s\n" "${COMPREPLY[*]:-}"
+  ' _ "$COMPLETIONS/backlog.bash" "$1"
+}
+assert_eq "bl cap<TAB> completes to capacity" "capacity" "$(complete_verb cap)"
 for file in "$COMPLETIONS/_bl" "$COMPLETIONS/backlog.zsh"; do
   if grep -q "'capacity:" "$file"; then pass; else fail "$(basename "$file") lists the capacity verb"; fi
   if grep -q "'rank:" "$file"; then pass; else fail "$(basename "$file") lists the rank verb"; fi
   if grep -q "'top:" "$file"; then pass; else fail "$(basename "$file") lists the top verb"; fi
   if grep -q "'watch:" "$file"; then pass; else fail "$(basename "$file") lists the watch verb"; fi
   if grep -q "'force:" "$file"; then pass; else fail "$(basename "$file") lists the force verb"; fi
+  if grep -q "'flow:" "$file"; then pass; else fail "$(basename "$file") lists the flow verb"; fi
 done
-force_word=$(bash -c '
-  source "$1"
-  COMP_WORDS=(bl forc); COMP_CWORD=1
-  _roost_bl 2>/dev/null || true
-  printf "%s\n" "${COMPREPLY[*]:-}"
-' _ "$COMPLETIONS/backlog.bash")
-assert_eq "bl forc<TAB> completes to force" "force" "$force_word"
+assert_eq "bl forc<TAB> completes to force" "force" "$(complete_verb forc)"
 assert_eq "bl force completes story and feature ids" "S-1 F-1" "$(complete_bash force "")"
+assert_eq "bl flo<TAB> completes to flow" "flow" "$(complete_verb flo)"
 assert_eq "bl top completes its flags" "--json --stream --interval --version --no-bell --no-desktop --no-push --help" "$(complete_bash top "")"
 assert_eq "bl watch completes feature and story ids" "F-1 S-1" "$(complete_bash watch "")"
 assert_eq "bl watch completes its flags" "--from-start --json --help" "$(complete_bash watch "-")"

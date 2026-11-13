@@ -819,51 +819,13 @@ a page is read.
 
 ## Statuses and gates (`flow.json`, F-66 D1, F-69 D1)
 
-`flow.json`, at the backlog root, names per type (story, feature, task) its statuses in
+`flow.json`, at the backlog root, names per type (story, feature, batch, task) its statuses in
 lifecycle order, the terminal ones, and the verbs that move a unit between them. A hold in
 `blockers.json` can keep a unit out of any of its type's statuses (F-119 D4), so the file has
-no gates of its own. It is plain JSON, read by `src/flow.js`:
-
-```json
-{
-  "schema": "bl-flow/v2",
-  "types": {
-    "feature": {
-      "statuses": [
-        "draft",
-        "refined",
-        "approved",
-        "in_progress",
-        "in_review",
-        "fixing",
-        "ready_for_merge",
-        "escalated",
-        "done",
-        "superseded"
-      ],
-      "terminal": ["done", "superseded"],
-      "verbs": {
-        "run": {
-          "from": ["approved", "in_progress", "escalated"],
-          "when": ["gate_free:run", "escalation_cleared"],
-          "during": "in_progress",
-          "via": ["implement", "test", "self_review", "open_pr"],
-          "success": [{ "to": "in_review", "then": "review" }],
-          "failure": [{ "to": "escalated" }]
-        },
-        "review": {
-          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
-          "during": "in_review",
-          "via": ["review"],
-          "success": [{ "to": "ready_for_merge" }],
-          "failure": [{ "when": ["round_within_cap"], "to": "fixing", "then": "fix" }, { "to": "escalated" }]
-        },
-        "supersede": { "from": "*", "success": [{ "to": "superseded" }] }
-      }
-    }
-  }
-}
-```
+no gates of its own. Its format (types, statuses, terminal, verb rows, branches, guards,
+`during`, meets, holds and the nominal path) has one document, `bl/templates/flow.schema.md`
+(`FLOW_DOC`, F-119 R7); `bl flow --help` and every `flow-json` finding name it. This section
+keeps the code notes.
 
 - **The tables.** The template's are F-69 D1's. Feature: `new`, `refine`, `approve`, `run`,
   `implement` (`bl implement F-n`), `review`, `fix`, `merge`, `supersede`. Story: the same
@@ -877,30 +839,17 @@ no gates of its own. It is plain JSON, read by `src/flow.js`:
   from `in_progress` too, for a resumed run that stopped with items open. `mergeGates` still
   refuses a merge with open review items, by the review position. A story uses
   the ten words of F-69 A3 except `approved`; a task uses `draft` and `done`.
-- **A verb row.** `from` is the statuses it starts from, or `*` for every status that is not
-  terminal. `when` names guards that must hold before it starts. `during` is the status recorded
-  when it starts; its `from` lists its own `during`, so invoking it again resumes it. `via` names
-  capabilities, in order; a verb without one is a hand transition. `success` and `failure` are
-  branches `{ when?, to, then? }`, tried in order. In F-69 bl validates `then` but does not
-  follow it: `bl run` chains in code.
-- **Meets.** A status meets `X` when it is `X` or comes after `X` in `statuses`. Terminal
-  statuses come last, so `superseded` meets `done` (F-66 A4), and `escalated` meets
-  `in_progress` but not `done`. Order, not reachability, decides: `refine`'s failure branch
-  makes `draft` and `refined` a cycle, and a draft unit must not meet `refined`.
 - **Guards and capabilities** are names of functions in two registries, `src/guards.js`
   (`GUARDS`: `gate_free:<gate>`, `escalation_cleared`, `round_within_cap`) and
   `src/capabilities.js` (`CAPABILITIES`: every `DISPATCH` cell of `src/verbs.js`, which
   `bl <verb> <id>` calls through it, and the steps the loop still runs in code). A `via` may
   name only a step (`VIA_CAPABILITIES`), not a `DISPATCH` handler. The file wires them; the
-  registries define them. A guard name may carry one argument after a colon.
-- **The nominal path** of a verb (F-119 D6, `nominalPath(type, verb)`) is the statuses it
-  enters when all goes well: its `during`, each `success` branch's `to`, and the same for the
-  verb a success branch chains to with `then`, each once. `run`'s is `in_progress`,
-  `in_review`, `ready_for_merge`; `implement`'s `in_progress`; `merge`'s `done`; `refine`'s
-  `in_refinement`, `refined`. A verb that checks holds checks the statuses on it (`heldBy`, under
-  **Holds between units**). There is no `gates` table: a `flow.json` written before F-119 that
-  still has one loads, bl does not read it, and `bl validate` gives a `flow-json` warning for
-  each type that has one.
+  registries define them. A guard name may carry one argument after a colon. In F-69 bl
+  validates a branch's `then` but does not follow it: `bl run` chains in code.
+- **The nominal path** of a verb (F-119 D6) is `nominalPath(type, verb)`. A verb that checks
+  holds checks the statuses on it (`heldBy`, under **Holds between units**). A `gates` table
+  from before F-119 loads, and `flow.gateTables` names the types that still have one, for the
+  `flow-json` warning.
 - **`src/flow.js`.** `loadFlow(backlogRoot)` returns the parsed flow (cached while the file's
   mtime and size are unchanged) with `statusesOf(type)` (lifecycle order), `initial(type)` (the
   first status), `openStatusesOf(type)` (those that do not meet `done`, furthest along first),
@@ -922,8 +871,15 @@ no gates of its own. It is plain JSON, read by `src/flow.js`:
   through `loadFlow`, and a pure function takes `flow` as a parameter. `bl init` writes
   `templates/flow.json` into a backlog that has none and leaves an existing one alone; test
   fixtures (`mkTempBacklog`, `mk_temp_backlog`) copy the same file. `--help` falls back to the
-  template (`flowForHelp`), since help works outside a backlog. `bl report` and `bl history` read
-  the flow once in `main` and pass it down, so a run's parts agree.
+  template (`flowForHelp`), since help works outside a backlog; `flowForHelp({ strict: true })`
+  (`bl flow`) uses the template only outside a backlog and throws on a backlog's file it cannot
+  read. `bl report` and `bl history` read the flow once in `main` and pass it down, so a run's
+  parts agree.
+- **`bl flow`** (`src/flow-cmd.js`, F-119 D3) prints `flowTables(flow)` (`src/flow-view.js`):
+  per type a `### <type>` heading and one `formatTable` with a row per `Flow.edges` transition,
+  its verb's `when` as Guards and `nominalPath` as Gates; a `new` row's from is `(none)`. `force`
+  is no row, since `Flow.edges` does not give it (`hasEdge` does). `bl report`'s `## Workflow`
+  section is the same `flowTables(flow)`.
 - **A v1 file** (`bl-flow/v1`: statuses with `implies`, no verbs) still loads until the
   migration rewrites it (F-69 D4): as the template, and `flow.legacy` set. `bl validate`
   reports it as one `flow-json` warning that names `bl/scripts/migrate-transitions.js`. The v1
@@ -931,8 +887,6 @@ no gates of its own. It is plain JSON, read by `src/flow.js`:
   `running` and task `open` read as `draft`, `in_progress` and `draft`). `makeUnit`
   (`src/backlog-graph.js`) sets `.status`
   through it, and every `Flow` helper that takes a status reads one through it.
-- **The `task` type** (F-65 D1): `draft` and `done`. A task can block a unit, and a hold can
-  keep a task out of `done`.
 - **Who reads it.** `bl validate` takes story, feature and task statuses from it (`bad-status`,
   `task-field`), and reports `flow-json` for the file's own faults (see **`bl validate`**). Story
   status sets, closed checks and status tables all derive from it (S-1166), so a command that
@@ -4137,6 +4091,9 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
   status, epics open or done (done once every feature is done or superseded), themes, the open
   total (what the top-level `index.md` calls the total backlog). Titles, links and grouping are
   the current tree's. Scope is the points of stories not `superseded`; done, of `done` ones.
+- **Workflow** (F-119 D3). After the Flow chart, `## Workflow` holds each type's transitions
+  as `bl flow` prints them: the same `flowTables(flow)` (`src/flow-view.js`), over the run's
+  one flow.
 - **Tables.** Themes, Epics, Features and Components: scope, done, remaining and percent done
   over each one's stories (`scopeStories`). Feature rows add stories done / in scope, the
   feature's status and its review round (`reviewRoundOf`: its log's, else the old
@@ -4709,8 +4666,9 @@ naming the file. `flow-json` (F-66 D1, F-69 D1, `findFlowFindings`, at
 is not a verb of the type, or one whose `from` lacks the branch's `to`; a status that is no
 branch's `to`; a terminal status before an open one, or one that a verb other than `supersede`
 starts from; a verb `DISPATCH` (`src/verbs.js`) has for a type whose table lacks it (`status`
-only reads, `READ_VERBS`); a gate verb other than `run`, `implement` and `merge`. A `bl-flow/v1`
-file is one `flow-json` warning that names `bl/scripts/migrate-transitions.js`.
+only reads, `READ_VERBS`). It is a warning for a `bl-flow/v1` file (one, naming
+`bl/scripts/migrate-transitions.js`) and for each type with a `gates` table (F-119 D4). Every
+`flow-json` message ends with `See bl/templates/flow.schema.md.` (`FLOW_DOC`, F-119 R7).
 
 The `blockers-*` findings (F-66 D5, `findBlockersFindings`) are at `blockers.json`; a missing
 file has none. All are errors except `blockers-order`:

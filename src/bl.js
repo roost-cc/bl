@@ -167,7 +167,9 @@ Commands:
                past every transition rule, hold and guard: lists what the
                move skips, then asks for "force <id> to <status>" (operator
                only, in a terminal); commits
-  sync       Pull and push the backlog; --commit commits the named paths
+  flow       Print each type's transitions from flow.json as a table: from,
+               to, verb, guards and gates (bl's template outside a backlog)
+  sync      Pull and push the backlog; --commit commits the named paths
   format     Run the configured format plugin per file extension
                --story <id>   Required (or --no-story with explicit paths)
   lint       Run the configured lint plugin per file extension
@@ -321,6 +323,11 @@ async function run() {
     }
     case 'force': {
       const { main } = await import('./force.js');
+      process.exitCode = await main(subArgv);
+      return;
+    }
+    case 'flow': {
+      const { main } = await import('./flow-cmd.js');
       process.exitCode = await main(subArgv);
       return;
     }

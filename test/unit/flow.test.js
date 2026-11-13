@@ -4,6 +4,7 @@ import { readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import {
+  FLOW_DOC,
   FLOW_FILE,
   FlowError,
   LEGACY_STATUSES,
@@ -460,18 +461,24 @@ test('v1 and v2 agree over the live v1 shape, except that escalated now meets in
 // flow-json findings (F-69 D1)
 // ---------------------------------------------------------------------------
 
-/** The flow-json messages for the template with `change` applied. */
+/** The sentence every flow-json message ends with (F-119 R7). */
+const SEE_DOC = ` See ${FLOW_DOC}.`;
+
+/** The flow-json messages for the template with `change` applied, each without `SEE_DOC`. */
 function findingsAfter(change) {
   const raw = template();
   change(raw);
-  return findFlowFindings(loadFlow(backlogWith(raw)), WIRING).map((f) => `${f.severity}: ${f.message}`);
+  return findFlowFindings(loadFlow(backlogWith(raw)), WIRING).map((f) => {
+    assert.ok(f.message.endsWith(SEE_DOC), f.message);
+    return `${f.severity}: ${f.message.slice(0, -SEE_DOC.length).replace(/\.$/, '')}`;
+  });
 }
 
 test('flow-json: the shipped template has no findings', () => {
   assert.deepEqual(findFlowFindings(loadFlow(TEMPLATE_DIR), WIRING), []);
 });
 
-test('flow-json: a v1 file is one warning naming the migration script', () => {
+test('flow-json: a v1 file is one warning naming the migration script and the format document', () => {
   assert.deepEqual(findFlowFindings(loadFlow(V1_DIR), WIRING), [
     {
       severity: 'warning',
@@ -479,9 +486,21 @@ test('flow-json: a v1 file is one warning naming the migration script', () => {
       location: 'flow.json',
       message:
         'flow.json is bl-flow/v1; bl reads it as its bl-flow/v2 template. ' +
-        'Run node bl/scripts/migrate-transitions.js to rewrite the backlog.',
+        'Run node bl/scripts/migrate-transitions.js to rewrite the backlog. ' +
+        'See bl/templates/flow.schema.md.',
     },
   ]);
+});
+
+test('flow-json: a message with no full stop gets one before the format document', () => {
+  const raw = template();
+  raw.types.task.gates = {};
+  assert.deepEqual(
+    findFlowFindings(loadFlow(backlogWith(raw)), WIRING).map((f) => f.message),
+    [
+      'task has a "gates" table, which bl no longer reads; remove it: a hold can gate any task status. See bl/templates/flow.schema.md.',
+    ],
+  );
 });
 
 test('flow-json: a from, during, to or terminal status the type lacks', () => {

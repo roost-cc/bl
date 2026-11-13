@@ -116,6 +116,7 @@ _roost_bl() {
     'what-next:Suggest the next story to start by walking the dep graph'
     'done:Mark a story as done'
     'force:Move a unit to any status, past every rule (operator only)'
+    'flow:Print the transitions of each type in flow.json as a table'
     'inbox:Everything waiting on you: escalations, tasks, changes, red updates'
     'block:Holds between units in blockers.json: add, remove, list'
     'task:An action for the operator in tasks/: file one, done, list'

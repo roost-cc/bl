@@ -13,6 +13,7 @@ import { basename, dirname, join, resolve } from 'path';
 import { loadBacklog } from '../../src/backlog-graph.js';
 import { loadConfig } from '../../src/config.js';
 import { loadFlow } from '../../src/flow.js';
+import { flowTables } from '../../src/flow-view.js';
 import { addDays, buildHistory } from '../../src/history.js';
 import { buildReport, readTree, renderMarkdown, units } from '../../src/report.js';
 import { registerAdapter } from '../../src/chart.js';
@@ -262,13 +263,21 @@ test('report since preserves first transitions and open ages across cutoff bound
 
 test('renderMarkdown lays the sections out in Design D5 order, a placeholder for each chart it was not given', () => {
   const { dir } = reportBacklog();
-  const page = renderMarkdown(report(dir), {}, loadFlow(dir));
+  const flow = loadFlow(dir);
+  const page = renderMarkdown(report(dir), {}, flow);
+  // The Workflow tables are bl flow's, from the one renderer (F-119 D3).
+  assert.ok(page.includes(`\n\n${flowTables(flow)}\n\n## Throughput`), 'Workflow holds flowTables(flow)');
   const headings = page.split('\n').filter((l) => /^#{1,3} /.test(l));
   assert.deepEqual(headings, [
     '# Backlog progress report',
     '## Summary',
     '## Backlog',
     '## Flow',
+    '## Workflow',
+    '### story',
+    '### feature',
+    '### batch',
+    '### task',
     '## Throughput',
     '## Lead and cycle time',
     '### Work item age',
