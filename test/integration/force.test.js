@@ -168,6 +168,27 @@ test('bl force refuses while a live process holds the work unit lock, and names 
   assert.equal(readFileSync(join(dir, S1), 'utf8'), before);
 });
 
+test('bl force moves a story batch on its own type, which has no draft', () => {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [{ id: 'S-1', component: 'C01', title: 'One', batch: 'B-1' }],
+    batches: [{ id: 'B-1', title: 'Batch' }],
+  });
+  initGitBacklog(dir);
+  let r = force(dir, ['B-1', 'draft'], 'force B-1 to draft\n');
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /bl force: draft is not a batch status/);
+  r = force(dir, ['B-1', 'done'], 'force B-1 to done\n');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /bl force B-1: approved → done\. The move skips:/);
+  const rel = 'batches/B1-batch/index.md';
+  const fm = fmOf(dir, rel);
+  assert.equal(fm.transitions.at(-1).to, 'done');
+  assert.equal(fm.transitions.at(-1).by, 'force');
+  assert.deepEqual(findTransitionFindings(loadFlow(dir), 'batch', fm, rel), []);
+  assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: force B-1 to done');
+});
+
 test('bl force refuses the current status and a status the type lacks', () => {
   const dir = backlog();
   let r = force(dir, ['S-1', 'done'], 'force S-1 to done\n');
