@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { spawnSyncFiles } from './child-stdio.js';
+import { git as runGit } from './child.js';
 import { parse } from 'yaml';
 import { normalizeId, parseFrontmatter } from './config.js';
 import { atomicWriteFile } from './atomic-write.js';
@@ -43,15 +43,15 @@ const FEATURE_ID_RE = /^F-\d+$/;
  *   features: Record<string, { epic: string, theme: string }> }} Groups
  */
 
-// Through files, not sockets: `cat-file --batch` reads its stdin to EOF, which a
-// socket never delivers inside Codex's sandbox (`spawnSyncFiles`, F-70 D1).
+// `input` goes through a file, not a socket: `cat-file --batch` reads its stdin
+// to EOF, which a socket never delivers inside Codex's sandbox (F-70 D1).
 function git(root, args, input) {
-  const r = spawnSyncFiles('git', args, {
-    cwd: root,
-    input,
+  const r = runGit(
+    root,
+    args,
     // With input, stdout stays a Buffer: cat-file's sizes count bytes.
-    ...(input === undefined ? { encoding: 'utf8' } : {}),
-  });
+    input === undefined ? {} : { input, stdio: ['pipe', 'pipe', 'pipe'], encoding: 'buffer' },
+  );
   if (r.error) throw new Error(`git ${args[0]}: ${r.error.message}`);
   if (r.status !== 0) {
     throw new Error(`git ${args.join(' ')} failed: ${String(r.stderr).trim()}`);

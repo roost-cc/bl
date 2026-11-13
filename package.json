@@ -20,6 +20,7 @@
   "engines": {
     "node": ">=26"
   },
+  "packageManager": "npm@11.16.0",
   "dependencies": {
     "ajv": "8.20.0",
     "fs-ext": "2.1.1",

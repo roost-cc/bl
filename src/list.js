@@ -12,7 +12,8 @@
  *   bl status                   Open stories by status (listByStatus; verbs.js)
  */
 
-import { exitStatus, loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
+import { exitStatus } from './child.js';
+import { loadConfig, parseArgs, showText, info, buildHighlightRegex, highlightMatches } from './config.js';
 import { readAllStories, activeWorktreesByStory } from './story.js';
 import { filterContext, filterFromArgs, filterStories, storyThemes } from './filter.js';
 import { loadBacklog } from './backlog-graph.js';

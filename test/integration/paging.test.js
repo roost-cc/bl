@@ -13,7 +13,8 @@ import { simple } from 'acorn-walk';
 import { parseSource } from '../helpers/source-ast.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { fakePagers, withEnv } from '../helpers/fake-pagers.js';
-import { showText, exitStatus } from '../../src/config.js';
+import { exitStatus } from '../../src/child.js';
+import { showText } from '../../src/config.js';
 
 /**
  * Run `fn` with stdout faked as a terminal of `rows` rows (`isTTY` false when

@@ -309,7 +309,8 @@ test('view_primary_and_fallback_failures_exit_nonzero', async (t) => {
     const PATH = barePath({ more: 'kill -TERM $$' });
     const r = bl(['view', 'S-1'], dir, { ...tty('chmod'), PAGER: undefined, PATH });
     assert.equal(r.status, 143, r.stderr);
-    assert.match(r.stderr, /bl: more was killed by SIGTERM/);
+    // `src/child.js` raises the interrupt that ended more (F-114 D2).
+    assert.match(r.stderr, /^bl: more was ended by SIGTERM$/m);
   });
 
   await t.test('less and more both missing', () => {

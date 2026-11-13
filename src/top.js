@@ -12,11 +12,11 @@
  * older than its sources.
  */
 
-import { spawnSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync, statSync, utimesSync } from 'fs';
 import { join, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { parseArgs } from 'util';
+import { BL_PATH, runChild } from './child.js';
 import { loadConfig, topSettings } from './config.js';
 import { ACTIVITY_SHOWN, HISTORY_DAYS, problemLines, TOKEN_MINUTES, TOP_SCHEMA, topSnapshot } from './top-snapshot.js';
 import { ATTENTION_MAX_AGE_MS, CAPACITY_EVERY_MS, HISTORY_EVERY_MS, runStream } from './top-stream.js';
@@ -26,10 +26,9 @@ export const DEFAULT_INTERVAL_MS = 2000;
 const MIN_INTERVAL_MS = 500;
 const MAX_INTERVAL_MS = 10000;
 
-/** The Go TUI's module, its binary, and the bl the TUI runs for its stream. */
+/** The Go TUI's module and its binary; the TUI runs `BL_PATH` for its stream. */
 const TOP_DIR = fileURLToPath(new URL('../top/', import.meta.url));
 const TOP_BIN = join(TOP_DIR, 'bin', 'bl-top');
-const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 
 /** `30 s`, `5 min`. */
 const s = (ms) => (ms >= 60000 ? `${ms / 60000} min` : `${ms / 1000} s`);
@@ -198,7 +197,7 @@ function goVersion() {
  */
 function buildTui() {
   console.error('bl top: building the view (go build in top/)');
-  const r = spawnSync('go', ['build', '-o', TOP_BIN, '.'], { cwd: TOP_DIR, stdio: ['ignore', 2, 2] });
+  const r = runChild('go', ['build', '-o', TOP_BIN, '.'], { cwd: TOP_DIR, stdio: ['ignore', 2, 2] });
   if (r.error?.code === 'ENOENT') {
     console.error(`bl top: the view needs a build, and go is not on PATH; install Go ${goVersion()} (top/go.mod)`);
     process.exit(1);
@@ -252,7 +251,7 @@ function runTui(opts, interval) {
     process.exit(1);
   }
   if (tuiNeedsBuild()) buildTui();
-  const r = spawnSync(TOP_BIN, tuiArgs(opts, interval, push), { stdio: 'inherit', cwd });
+  const r = runChild(TOP_BIN, tuiArgs(opts, interval, push), { stdio: 'inherit', cwd });
   if (r.error) console.error(`bl top: cannot run ${TOP_BIN}: ${r.error.message}`);
   process.exit(r.status ?? 1);
 }

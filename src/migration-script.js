@@ -10,7 +10,7 @@
  * failed) or 2 (bad arguments).
  */
 
-import { spawnSync } from 'child_process';
+import { git } from './child.js';
 import { loadConfig } from './config.js';
 
 /**
@@ -50,11 +50,7 @@ export async function runMigrationScript(name, migrate, loadOpts = {}) {
     process.exit(1);
   }
   if (commit?.committed) {
-    const head = spawnSync('git', ['log', '-1', '--format=%h %s'], {
-      cwd: config.backlogRoot,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).stdout.trim();
+    const head = git(config.backlogRoot, ['log', '-1', '--format=%h %s']).stdout.trim();
     console.log(`committed ${commit.paths.length} backlog path(s) in ${head}`);
   }
 }

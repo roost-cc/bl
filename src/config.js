@@ -20,10 +20,8 @@
  */
 
 import { closeSync, existsSync, openSync, readFileSync, realpathSync } from 'fs';
-import { constants as osConstants } from 'os';
 import { join, resolve, basename, dirname, relative, isAbsolute, sep } from 'path';
-import { spawnSync } from 'child_process';
-import { spawnSyncFiles } from './child-stdio.js';
+import { exitStatus, reportExit, runChild, runCommandLine } from './child.js';
 import { reassertTabTitle } from './tab-title.js';
 import { Document, LineCounter, Scalar, isMap, isScalar, parseDocument, visit } from 'yaml';
 import { getProvider, hasProvider, PROVIDER_NAMES } from './agents/index.js';
@@ -1342,9 +1340,8 @@ export function runPlugins(plugins, vars, cwd) {
       cmd = cmd.replaceAll(`{{${k}}}`, v);
     }
     info(`  plugin ${name}: ${cmd}`);
-    const result = spawnSync(cmd, {
+    const result = runCommandLine(cmd, {
       cwd,
-      shell: true,
       // Plugins run fully non-interactively (stdin is ignored, no TTY), so
       // advertise that: `CI=true` stops tools like pnpm from aborting when
       // they'd otherwise prompt for confirmation — e.g.
@@ -1680,9 +1677,8 @@ export function runPluginBatch(name, command, paths, vars, cwd) {
     cmd = cmd.replaceAll(`{{${k}}}`, v);
   }
   info(`  plugin ${name}: ${cmd}`);
-  const result = spawnSync(cmd, {
+  const result = runCommandLine(cmd, {
     cwd,
-    shell: true,
     // See runPlugins: plugins are non-interactive (stdin ignored), so CI=true
     // keeps tools from aborting on would-be confirmation prompts.
     env: { CI: 'true', ...process.env },
@@ -1747,7 +1743,7 @@ const shellQuoteForgeVar = shellQuote;
  */
 export function openTmuxWindow(name, argv, { cwd = process.cwd() } = {}) {
   const innerCmd = `unset BL_TMUX_WINDOW_ID; cd ${shellQuote(cwd)} && bl ${argv.map(shellQuote).join(' ')}; exec $SHELL`;
-  const res = spawnSync('tmux', ['new-window', '-d', '-n', name, innerCmd], { stdio: 'inherit' });
+  const res = runChild('tmux', ['new-window', '-d', '-n', name, innerCmd], { stdio: 'inherit' });
   if (res.error || res.status !== 0) {
     throw new Error(`tmux new-window failed for ${name}${res.error ? `: ${res.error.message}` : ''}`);
   }
@@ -1821,11 +1817,11 @@ export function runForgeOp(opName, vars = {}, opts = {}) {
     // which git allows in branch names and which would undo the quoting.
     cmd = cmd.replaceAll(`{{${k}}}`, () => shellQuoteForgeVar(v));
   }
-  // Through files: the configured command may be a Node program, whose
-  // output on a socket is lost inside Codex's sandbox (F-70 D1).
-  const result = spawnSyncFiles(cmd, {
+  // Through files (`runCommandLine` uses `spawnSyncFiles`): the configured
+  // command may be a Node program, whose output on a socket is lost inside
+  // Codex's sandbox (F-70 D1). Exit 130 or 143 stops bl (F-114 D2).
+  const result = runCommandLine(cmd, {
     cwd: repoPath,
-    shell: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
   });
@@ -1902,7 +1898,8 @@ export function findChange(branch, { config, repoPath, runOp = runForgeOp }) {
 /**
  * Run text through $PAGER exactly as set, through the shell (default `less`).
  * bl adds no flags of its own: how less behaves is the operator's `$LESS`.
- * The text reaches the pager through a file (`spawnSyncFiles`, F-70 D1).
+ * The text reaches the pager through a file (`src/child.js` runs every child
+ * through `spawnSyncFiles`, F-70 D1).
  * `{ path }` pages that file as it is, on the pager's stdin, with no temp file:
  * `bl view` falls back to it exactly when a temp file cannot be made.
  * @param {string | { path: string }} source
@@ -1913,8 +1910,8 @@ export function runPager(source) {
     fd == null ? { input: source, stdio: ['pipe', 'inherit', 'inherit'] } : { stdio: [fd, 'inherit', 'inherit'] };
   try {
     const pager = process.env.PAGER?.trim();
-    if (pager) return spawnSyncFiles(pager, { ...opts, shell: true });
-    return spawnSyncFiles('less', [], opts);
+    if (pager) return runCommandLine(pager, opts);
+    return runChild('less', [], opts);
   } finally {
     if (fd != null) closeSync(fd);
   }
@@ -1958,13 +1955,13 @@ export function showText(source) {
     return result;
   }
   if (typeof source === 'string') {
-    const more = spawnSyncFiles('more', [], { input: source, stdio: ['pipe', 'inherit', 'inherit'] });
+    const more = runChild('more', [], { input: source, stdio: ['pipe', 'inherit', 'inherit'] });
     reportExit('more', more);
     return more;
   }
   const fd = openSync(source.path, 'r');
   try {
-    const more = spawnSyncFiles('more', [], { stdio: [fd, 'inherit', 'inherit'] });
+    const more = runChild('more', [], { stdio: [fd, 'inherit', 'inherit'] });
     reportExit('more', more);
     return more;
   } finally {
@@ -1988,40 +1985,7 @@ export function editorCommand() {
  * unquoted.
  */
 export function runEditor(path) {
-  const res = spawnSync(`${editorCommand()} ${shellQuote(path)}`, {
-    stdio: 'inherit',
-    shell: true,
-  });
+  const res = runCommandLine(`${editorCommand()} ${shellQuote(path)}`, { stdio: 'inherit' });
   reassertTabTitle(); // an editor may have set the terminal title
   return res;
-}
-
-/**
- * The exit status a `spawnSync` result stands for, as a shell reports it
- * (F-70 D3): 127 when the child could not be launched (`error`), 128 + the
- * signal's number when a signal killed it (128 for a name this platform does
- * not know), else its `status`. A result with none of the three (a test fake)
- * is 0. Every caller that turns a child's result into bl's exit status or an
- * `isError` goes through this, never `status ?? 0`, which reads a launch
- * failure or a kill as success.
- * @param {{ status?: number | null, signal?: string | null, error?: Error } | null | undefined} result
- * @returns {number}
- */
-export function exitStatus(result) {
-  if (result?.error) return 127;
-  if (result?.signal) return 128 + (osConstants.signals[result.signal] ?? 0);
-  return result?.status ?? 0;
-}
-
-/**
- * Say on stderr why a child failed when its status alone would not: it could
- * not be launched, or a signal killed it. A plain nonzero exit says nothing,
- * since the child spoke for itself. Returns `exitStatus(result)`.
- * @param {string} cmd — the command, as the operator would recognise it
- * @param {{ status?: number | null, signal?: string | null, error?: Error }} result
- */
-export function reportExit(cmd, result) {
-  if (result?.error) console.error(`bl: could not start ${cmd}: ${result.error.message}`);
-  else if (result?.signal) console.error(`bl: ${cmd} was killed by ${result.signal}`);
-  return exitStatus(result);
 }

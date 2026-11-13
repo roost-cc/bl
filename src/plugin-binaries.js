@@ -12,7 +12,7 @@
  * actually run.
  */
 
-import { spawnSync } from 'child_process';
+import { runChild } from './child.js';
 import { enumeratePlugins } from './config.js';
 
 const probeCache = new Map();
@@ -37,7 +37,7 @@ export function probeBinary(firstToken) {
   // entries — same surface the shell uses to dispatch a plugin command. The
   // token goes in as the script's `$1`, never concatenated into its text
   // (`shell: true` with args is DEP0190, and would let a token run as shell).
-  const result = spawnSync('/bin/sh', ['-c', 'command -v -- "$1"', 'sh', firstToken], {
+  const result = runChild('/bin/sh', ['-c', 'command -v -- "$1"', 'sh', firstToken], {
     stdio: ['ignore', 'pipe', 'ignore'],
     encoding: 'utf8',
   });

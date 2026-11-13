@@ -18,8 +18,8 @@
  * keyed by repo.
  */
 
-import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
+import { git } from './child.js';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { toString } from 'mdast-util-to-string';
 import { parseFrontmatter } from './config.js';
@@ -54,18 +54,14 @@ export function branchFiles(worktrees) {
       complete = false;
       continue;
     }
-    let diff;
-    try {
-      // -z: paths verbatim, not C-quoted, so they compare equal to plan paths.
-      diff = execFileSync('git', ['-C', worktreePath, 'diff', '--name-only', '-z', 'main...HEAD'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-    } catch {
+    // -z: paths verbatim, not C-quoted, so they compare equal to plan paths.
+    // git(), not gitOut(): a trim would take the spaces a first path starts with.
+    const diff = git(worktreePath, ['diff', '--name-only', '-z', 'main...HEAD']);
+    if (diff.error || diff.status !== 0) {
       complete = false;
       continue;
     }
-    for (const path of diff.split('\0').filter(Boolean)) out.add(`${repoName}:${path}`);
+    for (const path of diff.stdout.split('\0').filter(Boolean)) out.add(`${repoName}:${path}`);
   }
   return { files: out, complete };
 }

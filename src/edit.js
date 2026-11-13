@@ -3,7 +3,8 @@
  * $VISUAL/$EDITOR/vi: the committed file, never the rendered page.
  */
 
-import { editorCommand, loadConfig, parseArgs, reportExit, runEditor } from './config.js';
+import { reportExit } from './child.js';
+import { editorCommand, loadConfig, parseArgs, runEditor } from './config.js';
 import { findUnitFile } from './unit-file.js';
 
 export async function main(argv) {

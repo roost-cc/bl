@@ -29,11 +29,9 @@
  * stays and the message names the command that prepares the worktree.
  */
 
-import { spawnSync } from 'child_process';
-import { spawnSyncFiles } from './child-stdio.js';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
-import { fileURLToPath } from 'url';
+import { BL_PATH, describeExit, git, runBl } from './child.js';
 import {
   loadConfig,
   configForRepo,
@@ -74,8 +72,6 @@ import { unitFiles } from './backlog-graph.js';
 import { insertAfter } from './template.js';
 import { LOCK_FD_ENV, withLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
-
-const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 
 export const SIDE_JSON_SCHEMA = 'bl-side-json/v1';
 
@@ -217,11 +213,10 @@ function readSideBody(bodyFile) {
  * lock: `lock`'s locked descriptor is the child's fd 3, named in `BL_LOCK_FD`
  * (F-104 D5). The body goes on its stdin; return its JSON record.
  * The body and the JSON go through files: a Node child cannot use a socket
- * for its stdio inside Codex's sandbox (`spawnSyncFiles`, F-70 D1).
+ * for its stdio inside Codex's sandbox (`runBl`, F-70 D1).
  */
 function newStory({ feature, component, title, points, type, body, lock }) {
   const argv = [
-    BL_PATH,
     'new',
     ...(feature ? [feature.id] : []),
     component.id,
@@ -232,13 +227,13 @@ function newStory({ feature, component, title, points, type, body, lock }) {
     '--no-sync',
     '--json',
   ];
-  const res = spawnSyncFiles(process.execPath, argv, {
+  const res = runBl(BL_PATH, argv, {
     stdio: [body != null ? 'pipe' : 'ignore', 'pipe', 'inherit', lock.fd],
     ...(body != null ? { input: body } : {}),
     env: { ...process.env, [LOCK_FD_ENV]: '3' },
     encoding: 'utf8',
   });
-  if (res.status !== 0) fail(`bl side: bl new failed (exit ${res.status ?? res.signal}).`);
+  if (res.error || res.status !== 0) fail(`bl side: bl new failed: ${describeExit(res, 'bl new')}`);
   try {
     return JSON.parse(res.stdout.trim().split('\n').pop());
   } catch {
@@ -312,10 +307,6 @@ async function exitOnThrow(fn) {
   }
 }
 
-function git(cwd, ...args) {
-  return spawnSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-}
-
 /**
  * Undo for a worktree on `branch` in `repoPath`: removes the worktree, and the
  * branch, only when they did not exist before this call and nobody has taken
@@ -327,17 +318,17 @@ function git(cwd, ...args) {
  */
 function worktreeUndo(repoPath, branch, unitDir, adopted = () => false) {
   const existed = findExistingWorktree(repoPath, branch) != null;
-  const branchExisted = git(repoPath, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`).status === 0;
+  const branchExisted = git(repoPath, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).status === 0;
   return () => {
     if (existed || adopted()) return;
     const wt = findExistingWorktree(repoPath, branch);
     if (wt) {
-      const r = git(repoPath, 'worktree', 'remove', wt.path);
+      const r = git(repoPath, ['worktree', 'remove', wt.path]);
       if (r.status !== 0) throw new Error(r.stderr.trim());
       removeUnitDirIfEmpty(unitDir);
     }
-    if (!branchExisted && git(repoPath, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`).status === 0) {
-      const r = git(repoPath, 'branch', '-d', branch);
+    if (!branchExisted && git(repoPath, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).status === 0) {
+      const r = git(repoPath, ['branch', '-d', branch]);
       if (r.status !== 0) throw new Error(r.stderr.trim());
     }
   };
@@ -380,7 +371,7 @@ function backlogUndo(root, featureDir) {
   const files = new Map(ownedFiles(featureDir).map((p) => [p, read(p)]));
   return () => {
     const added = storyEntries(root).filter((d) => !storiesBefore.has(d));
-    const tracked = added.filter((d) => git(root, 'ls-files', '--', join('stories', d)).stdout.trim() !== '');
+    const tracked = added.filter((d) => git(root, ['ls-files', '--', join('stories', d)]).stdout.trim() !== '');
     if (tracked.length > 0) {
       throw new Error(
         `${tracked.join(', ')} is committed, so it is left as it is; check it with bl validate and bl status`,

@@ -15,7 +15,7 @@
 // plain aliases (`const a = fs.promises.link; const b = a`). A name bl's own
 // functions also use (`link`, `open`) counts only when it comes from an fs
 // import. A git call is found by
-// import binding (F-126 A2): `git` from src/child.js under any local name; a
+// import binding (F-126 A2): `git` or `gitOut` from src/child.js under any local name; a
 // `runChild`, `spawnSyncFiles` or `child_process` call whose command is
 // `'git'`; or a `runCommandLine`, `execSync`, `exec` or runner `shell` call
 // whose command line starts with `git `. It changes state when its subcommand
@@ -139,7 +139,7 @@ const ALLOWED = new Map([
   ['cleanup.js git git ?', `the throwaway merge worktree's and the branch's git: ${CODE_REPO}`],
   ['cleanup.js cleanupOneRepo git push', `pushes a code repo's main: ${CODE_REPO}`],
   ['cleanup.js checkedMerge git push', `pushes a code repo's main: ${CODE_REPO}`],
-  ['feature-cmd.js git git ?', `reads a story worktree's branch: ${CODE_REPO}`],
+  ['feature-cmd.js openMissingPRs git push', `pushes a unit's branch to open its PR: ${CODE_REPO}`],
   ['feature-run.js pushBranch git push', `pushes the feature branch: ${CODE_REPO}`],
   ['feature-run.js integrateLocked git merge', `merges main into the feature branch: ${CODE_REPO}`],
   ['feature-run.js pushIntegrated git push', `pushes the integrated branch: ${CODE_REPO}`],
@@ -151,17 +151,21 @@ const ALLOWED = new Map([
   ['regenerate.js regenerateConflicts git checkout', `resolves a regenerated file's conflict: ${CODE_REPO}`],
   ['regenerate.js regenerateConflicts git add', `stages regenerated files: ${CODE_REPO}`],
   ['release.js git git ?', `tags and reads the deployable repos: ${CODE_REPO}`],
+  ['review.js syncBranchWithMain git fetch', `fetches main into a story worktree: ${CODE_REPO}`],
+  ['review.js syncBranchWithMain git merge', `merges main into a story branch, or aborts it: ${CODE_REPO}`],
+  ['review.js syncBranchWithMain git push', `pushes a story branch: ${CODE_REPO}`],
   ['scripted.js runImplementPlugin git add', `commits a scripted implement step: ${CODE_REPO}`],
   ['scripted.js runImplementPlugin git commit', `commits a scripted implement step: ${CODE_REPO}`],
   ['session.js ensureWorktree git worktree', `adds a story worktree: ${CODE_REPO}`],
   ['session.js ensureWorktree git checkout', `checks out a new story worktree: ${CODE_REPO}`],
-  ['side.js git git ?', `adds and removes a side story's worktree and branch: ${CODE_REPO}`],
+  ['side.js worktreeUndo git worktree', `removes a side story's worktree: ${CODE_REPO}`],
+  ['side.js worktreeUndo git branch', `deletes a side story's branch: ${CODE_REPO}`],
   ['updates-run.js git git ?', `the updates runner's git, in the guest's update worktrees: ${CODE_REPO}`],
   ['migrate-worktree-layout.js moveWorktree git worktree', `moves a code worktree: ${CODE_REPO}`],
   // Git that reads the backlog, through a runner the guard cannot see into.
   ['history.js git git ?', 'reads the backlog history only: log, ls-tree, cat-file'],
-  ['inbox.js gitOut git ?', "fetches the heartbeat branch into a code repo and reads code repos' branches"],
-  ['migrate-transitions.js gitOut git ?', 'reads the backlog history only: log'],
+  ['inbox.js readHeartbeat git fetch', `fetches the heartbeat branch: ${CODE_REPO}`],
+  ['migrate-transitions.js gitOutOrEmpty git ?', 'reads the backlog history only: log'],
   [
     'migration-txn.js gitIn git ?',
     "reads the backlog only (rev-parse, status); the fetch is main-sync.js's fetchMainNow",
@@ -448,7 +452,7 @@ export function backlogWriteCalls(source, rel) {
       const fsOnly = imported && FS_ONLY_WRITE_CALLS.has(name);
       const opens = name === 'openSync' || (imported && name === 'open');
       if (WRITE_CALLS.has(name) || fsOnly || (opens && writesFlag(args[1]))) what = name;
-      else if (imported && name === 'git') what = gitCall(argvWords(args[1], values));
+      else if (imported && (name === 'git' || name === 'gitOut')) what = gitCall(argvWords(args[1], values));
       else if (imported && ARGV_CALLS.has(name) && leadingText(args[0])?.text === 'git') {
         what = gitCall(argvWords(args[1], values));
       } else if ((imported && LINE_CALLS.has(name)) || name === 'shell') {
@@ -669,6 +673,18 @@ const GIT_CASES = [
     rel: 'src/agents/x.js',
     keys: ['git push'],
   },
+  {
+    name: 'gitOut from child.js',
+    src: `gitOut(root, ['fetch', 'origin']);`,
+    imports: `import { gitOut } from './child.js';`,
+    keys: ['git fetch'],
+  },
+  {
+    name: 'gitOut through a namespace',
+    src: `child.gitOut(root, ['tag', 'x']);`,
+    imports: `import * as child from './child.js';`,
+    keys: ['git tag'],
+  },
   { name: 'a read', src: `git(root, ['rev-parse', 'HEAD']);`, imports: CHILD, keys: [] },
   { name: 'a read form of a writing subcommand', src: `git(root, ['worktree', 'list']);`, imports: CHILD, keys: [] },
   {
@@ -777,9 +793,10 @@ test('guard: a raw blockers.json write in src/block.js fails the test, naming th
 });
 
 test('guard: a raw git commit from ./child.js in src/rank-cmd.js fails the test, naming the file, function and call', () => {
+  // rank-cmd.js imports `git` from ./child.js itself (F-124 S-1521).
   const found = findingsWith(
     'src/rank-cmd.js',
-    `import { git } from './child.js';\nfunction commitRaw(root) {\n  git(root, ['commit', '-m', 'rank']);\n}`,
+    `function commitRaw(root) {\n  git(root, ['commit', '-m', 'rank']);\n}`,
   );
   assert.equal(found.length, 1, found.join('\n'));
   assert.match(found[0], /^src\/rank-cmd\.js:\d+: rank-cmd\.js commitRaw git commit /);

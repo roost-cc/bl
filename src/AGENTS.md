@@ -339,7 +339,9 @@ Every frontmatter block in the backlog is YAML under the failsafe schema (F-62 D
 only by `parseFrontmatter` and written only by `serializeFrontmatter` (`config.js`), both
 through the `yaml` package, bl's one runtime dependency (pinned, `package-lock.json`
 committed; `bin/bl` stops with `npm ci --prefix <bl>` when `fs-ext`'s native module is
-missing, which also catches an install from before `fs-ext`).
+missing, which also catches an install from before `fs-ext`). `package.json` names npm in
+`packageManager`, so pnpm refuses to run in bl (`ERR_PNPM_OTHER_PM_EXPECTED`): `pnpm exec`
+would otherwise reinstall `node_modules` in its own layout without `fs-ext`'s build.
 Every scalar is a string (`points: 5` reads `"5"`, an empty `key:` reads `""`); mappings and
 sequences are objects and arrays at any depth. The writer keeps the keys in object order,
 writes a sequence of scalars in flow style (`[S-1, S-2]`, `[]` when empty), mappings and
@@ -4996,8 +4998,9 @@ produced. Per story:
    the PR marked ready through the forge op `change.ready` (Renovate opens
    drafts, F-50 D6; a no-op on a ready PR, and a failure is a note on the
    story, not a hold);
-   `git push origin main` (a failed push resets local main to where it was;
-   every rollback the run makes, the merge abort and that reset in the main
+   `git push origin main` (a failed push resets local main to where it was,
+   except that an interrupted push that `ls-remote` shows on origin's main
+   keeps it; every rollback the run makes, the merge abort and that reset in the main
    checkout and the rebase abort in the worktree, is checked, and
    one that fails is reported on the story with what the checkout is left
    holding, never claimed);
@@ -5054,6 +5057,8 @@ closes the PR through the forge op `change.close` with the reason as the
 comment. The story goes first so a failure after the close never leaves an
 open story for a closed PR; a forge that is not configured or a failed close
 puts the story back, request and all, and the story is held for this run.
+An interrupt that ends the close leaves its result unknown: the story stays
+dropped when `change.find` no longer shows the PR open, and goes back otherwise.
 Renovate does not reopen a PR a user closed, and the sync keeps the
 superseded story for that PR number. A drop on a story already merged
 (`commit` set) only finishes the merge.
@@ -5409,7 +5414,8 @@ them.
   (its default) either: Node ends it with the same refused `shutdown`, the call reports
   `EPERM` from a child that succeeded, and `execFileSync`/`execSync` throw it. Give it
   `stdio: ['ignore', 'pipe', 'pipe']`. A command whose output `bl` reads and that may be a
-  Node program (a configured forge op) goes through `spawnSyncFiles`. Tests start an asynchronous Node child with
+  Node program (a configured forge op) goes through `runCommandLine`, which uses
+  `spawnSyncFiles`. Tests start an asynchronous Node child with
   `spawnToFiles` (`test/helpers/spawn-files.js`) and watch its files; a live two-way
   protocol with a Node child (the fake `codex app-server`) uses `fs.readSync(0)` and
   `fs.writeSync(1)` in the child. `test/unit/child-stdio-guard.test.js` parses `src/` and
@@ -5417,7 +5423,10 @@ them.
 - **A synchronous child runs through `src/child.js`** (F-114 D1): `runChild(command, args)` for an
   argv command, `runCommandLine(line)` for a configured command line (through a shell),
   `runBl(entry, args)` for a `bl` child, and `git(cwd, args)`. Each runs its child through `spawnSyncFiles` and
-  returns the `spawnSync` result. If SIGINT or SIGTERM ends the child, the module prints
+  returns the `spawnSync` result. `gitOut(cwd, args)` is `git()` for a git command that must
+  succeed: it returns the trimmed stdout, or throws `describeExit`'s message (F-124 D2).
+  `BL_PATH` is this process's own `bl.js`, the `entry` for a `runBl` of this `bl` (F-124 D5).
+  If SIGINT or SIGTERM ends the child, the module prints
   `bl: <child> was ended by <signal>` and raises the signal (D2), so `bl` exits 130 or 143 and the
   caller's next statement never runs. `runCommandLine` and `runBl` read exit 130 and 143 as those
   signals too. A child that Node killed past its `timeout` is a failure, not an interrupt. A caller
@@ -5425,10 +5434,13 @@ them.
   (D2a): the child's result returns to it, and the interrupt is raised when the outermost
   `raiseAfter` ends. While `bl` exits, an interrupt that ends a child of an `exit` listener is
   printed, not raised, so `bl` keeps its exit code and the other listeners run.
-  `describeExit(r, what)` words a failed child. A caller never reads a child's
+  `describeExit(r, what)` words a failed child, `exitStatus(r)` is the exit status a child's
+  result stands for (127, 128 + a signal's number, or its status), and `reportExit(cmd, r)` says
+  why a child could not start or was killed (F-124 D6). A caller never reads a child's
   `signal`. `test/unit/child-stdio-guard.test.js` fails on a `src/` import of `child_process` or
   `child-stdio.js` outside `src/child.js` (and `child-stdio.js`'s own import of `child_process`),
-  except the files its `ALLOWED` list names. F-124 moves those files and empties the list.
+  except the files its `ALLOWED` list names: the asynchronous children and the run loop's long
+  children, which F-128 moves (F-124 D7).
 - A call in `src/` to an async function of `src/` is awaited: it is the operand of `await`, or
   the value an async function returns outside a `try`. A missing `await` is silent, so
   `test/unit/awaited-calls.test.js` parses `src/` with `acorn` and checks this by name (F-105

@@ -6,6 +6,7 @@ import { pluginForExtension, bucketByPlugin, runPluginBatch, runPlugins } from '
 import { DISPATCH, GATED_VERBS, VERBS, flagsOf, heldTargets } from '../../src/verbs.js';
 import * as featureCmd from '../../src/feature-cmd.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
+import { runAfterExitOnSignal } from '../helpers/exit-on-signal-script.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 
 // ---------------------------------------------------------------------------
@@ -189,7 +190,7 @@ test("runPlugins warns and continues when a plugin's binary is missing (implicit
     process.stderr.write = origWrite;
   }
   assert.equal(ok, true, 'runPlugins must return true when the only failure was missing binary');
-  assert.match(captured, /command not found/);
+  assert.equal(captured.match(/command not found/g)?.length, 1, 'one warning for the missing binary');
   assert.match(captured, /\(this-binary-does-not-exist-440\)/);
   assert.ok(existsSync(marker), 'subsequent plugin must still run after a missing-binary skip');
 });
@@ -239,6 +240,22 @@ test('runPlugins and runPluginBatch name a brace-grouped missing binary', () => 
   assert.deepEqual(result, { ok: false, status: 127, missing: true });
   assert.match(captured, /plugin grouped-run: command not found \(definitely-not-a-real-binary-859\)/);
   assert.match(captured, /plugin grouped-batch: command not found \(definitely-not-a-real-binary-859\)/);
+});
+
+test('runPlugins and runPluginBatch: a plugin that exits 130 stops bl with exit 130 (F-114 D2)', () => {
+  const config = new URL('../../src/config.js', import.meta.url).href;
+  const calls = {
+    runPlugins: `runPlugins([{ name: 'stop', command: 'exit 130' }], {}, process.cwd());`,
+    runPluginBatch: `runPluginBatch('stop', 'exit 130', ['x'], {}, process.cwd());`,
+  };
+  for (const [name, call] of Object.entries(calls)) {
+    const r = runAfterExitOnSignal([`import { ${name} } from ${JSON.stringify(config)};`, call]);
+    const why = `${name}: status ${r.status} signal ${r.signal}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+    assert.equal(r.status, 130, why);
+    assert.match(r.stderr, /^bl: exit 130 was ended by SIGINT$/m, why);
+    assert.doesNotMatch(r.stderr, /failed/, why);
+    assert.equal(r.stdout, '', why);
+  }
 });
 
 // ---------------------------------------------------------------------------

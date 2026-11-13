@@ -22,16 +22,8 @@
  *                           (filter.js, F-51 D2)
  */
 
-import {
-  exitStatus,
-  loadConfig,
-  parseArgs,
-  showText,
-  info,
-  highlightMatches,
-  colorEnabled,
-  componentIdHint,
-} from './config.js';
+import { exitStatus } from './child.js';
+import { loadConfig, parseArgs, showText, info, highlightMatches, colorEnabled, componentIdHint } from './config.js';
 import { readAllStories, normalizeId, normalizeComponentId, findComponentDir } from './story.js';
 import { filterFromArgs, filterStories, hasFilter, filterLabel } from './filter.js';
 import { flowForHelp, loadFlow } from './flow.js';

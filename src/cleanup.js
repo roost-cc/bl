@@ -18,7 +18,7 @@
 
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { basename, dirname, join } from 'path';
-import { describeExit, git as runGit, raiseAfter, runBl, runChild } from './child.js';
+import { describeExit, git as runGit, gitOut, raiseAfter, runBl, runChild } from './child.js';
 import {
   loadConfig,
   configForRepo,
@@ -324,11 +324,7 @@ const AHEAD_CAP = 10;
  * @returns {(args: string[]) => string}
  */
 function gitIn(repoPath) {
-  return (args) => {
-    const r = runGit(repoPath, args);
-    if (r.status !== 0) throw new Error(describeExit(r, `git ${args.join(' ')}`));
-    return r.stdout.trim();
-  };
+  return (args) => gitOut(repoPath, args);
 }
 
 /** Quote a word for display in a copy-pasteable command, only when needed. */

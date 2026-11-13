@@ -8,7 +8,7 @@
  * with main before the round, and saying why there is no open PR to review.
  */
 
-import { execSync } from 'child_process';
+import { gitOut, interruptKept, raiseAfter } from './child.js';
 import { findExistingWorktree } from './story.js';
 
 /**
@@ -24,59 +24,68 @@ import { findExistingWorktree } from './story.js';
  * diff; a push failure (offline, no remote, non-fast-forward) is non-fatal and
  * recorded in `pushed`.
  *
- * Never throws and never exits: a fetch/merge failure degrades to "review the
- * branch as-is". Conflicts are deliberately left UNRESOLVED — the merge is
- * aborted and resolution is the implementing agent's job, not the reviewer's. A
- * dirty worktree (e.g. an in-flight workon session) is skipped untouched.
+ * Never throws, and exits only on an interrupt: a fetch/merge failure degrades
+ * to "review the branch as-is". Conflicts are deliberately left UNRESOLVED — the
+ * merge is aborted and resolution is the implementing agent's job, not the
+ * reviewer's. A dirty worktree (e.g. an in-flight workon session) is skipped
+ * untouched.
+ *
+ * Each git child runs through `src/child.js`, so SIGINT or SIGTERM that ends
+ * one ends `bl` (F-114 D2). The merge and its abort run in one `raiseAfter`
+ * (F-124 D3): an interrupted merge is aborted first, then raised.
  *
  * @returns {{ status: "merged"|"current"|"conflict"|"dirty"|"skip",
  *             ref: string, pushed?: boolean }}
  */
 export function syncBranchWithMain(worktreePath) {
-  const run = (cmd) => execSync(cmd, { cwd: worktreePath, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
-
   // Prefer the freshest remote main; fall back to local main when offline or
   // there's no origin (local-only development).
   let ref = 'main';
   try {
-    run('git fetch origin main');
-    run('git rev-parse --verify origin/main');
+    gitOut(worktreePath, ['fetch', 'origin', 'main']);
+    gitOut(worktreePath, ['rev-parse', '--verify', 'origin/main']);
     ref = 'origin/main';
   } catch {
     // no origin / offline — local main it is
   }
 
   try {
-    if (run('git status --porcelain').trim()) return { status: 'dirty', ref };
+    if (gitOut(worktreePath, ['status', '--porcelain'])) return { status: 'dirty', ref };
   } catch {
     return { status: 'skip', ref };
   }
 
   try {
-    if (run(`git rev-list --count HEAD..${ref}`).trim() === '0') {
+    if (gitOut(worktreePath, ['rev-list', '--count', `HEAD..${ref}`]) === '0') {
       return { status: 'current', ref };
     }
   } catch {
     return { status: 'skip', ref };
   }
 
-  try {
-    run(`git merge --no-edit ${ref}`);
-  } catch {
+  const merged = raiseAfter(() => {
     try {
-      run('git merge --abort');
+      gitOut(worktreePath, ['merge', '--no-edit', ref]);
+      return true;
     } catch {
-      // nothing to abort / already clean
+      try {
+        gitOut(worktreePath, ['merge', '--abort']);
+      } catch (e) {
+        // Nothing to abort, or already clean. Under an interrupt the line goes
+        // out before the raise, since no caller sees the result then.
+        if (interruptKept()) process.stderr.write(`bl: ${worktreePath}: ${e.message}\n`);
+      }
+      return false;
     }
-    return { status: 'conflict', ref };
-  }
+  });
+  if (!merged) return { status: 'conflict', ref };
 
   // Clean merge: push so the open PR shows the integrated diff. A push failure
   // (offline, no origin, non-fast-forward) keeps the local merge and is just
   // reported — the review still runs against the integrated tree.
   let pushed = false;
   try {
-    run('git push origin HEAD');
+    gitOut(worktreePath, ['push', 'origin', 'HEAD']);
     pushed = true;
   } catch {
     // non-fatal — leave the merge local

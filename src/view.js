@@ -11,7 +11,8 @@
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { basename, dirname, join } from 'path';
-import { editorCommand, exitStatus, loadConfig, parseArgs, reportExit, runEditor, showText } from './config.js';
+import { exitStatus, reportExit } from './child.js';
+import { editorCommand, loadConfig, parseArgs, runEditor, showText } from './config.js';
 import { loadBacklog } from './backlog-graph.js';
 import { renderPage } from './render.js';
 import { findUnitFile } from './unit-file.js';

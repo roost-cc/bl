@@ -14,11 +14,11 @@
  * `remove` (`MODE_DENY`, F-66 A7): lifting a hold is the operator's.
  */
 
-import { spawnSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { parseArgs } from 'node:util';
 import { atomicWriteFile, snapshot } from './atomic-write.js';
+import { git } from './child.js';
 import { info, loadConfig } from './config.js';
 import { commitPaths } from './backlog-commit.js';
 import { acquireLock, releaseLock, withLock } from './lock.js';
@@ -58,11 +58,7 @@ import {
  * @returns {string[] | null}
  */
 function prepareCommit(root) {
-  const inRepo = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const inRepo = git(root, ['rev-parse', '--is-inside-work-tree']);
   if (inRepo.status !== 0 || inRepo.stdout.trim() !== 'true') return null;
   configureMergeDriver(root);
   const mapped = (text) => text.split('\n').includes(GITATTRIBUTES_LINE);
@@ -75,11 +71,7 @@ function prepareCommit(root) {
       `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}${GITATTRIBUTES_LINE}\n`,
     );
   }
-  const head = spawnSync('git', ['show', 'HEAD:.gitattributes'], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const head = git(root, ['show', 'HEAD:.gitattributes']);
   return head.status === 0 && mapped(head.stdout) ? [BLOCKERS_FILE] : [BLOCKERS_FILE, '.gitattributes'];
 }
 
