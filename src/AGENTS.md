@@ -4950,8 +4950,9 @@ produced. Per story:
    the PR marked ready through the forge op `change.ready` (Renovate opens
    drafts, F-50 D6; a no-op on a ready PR, and a failure is a note on the
    story, not a hold);
-   `git push origin main` (a failed push resets local main to where it was;
-   every rollback the run makes, the merge abort and that reset in the main
+   `git push origin main` (a failed push resets local main to where it was,
+   except that an interrupted push that `ls-remote` shows on origin's main
+   keeps it; every rollback the run makes, the merge abort and that reset in the main
    checkout and the rebase abort in the worktree, is checked, and
    one that fails is reported on the story with what the checkout is left
    holding, never claimed);
@@ -5008,6 +5009,8 @@ closes the PR through the forge op `change.close` with the reason as the
 comment. The story goes first so a failure after the close never leaves an
 open story for a closed PR; a forge that is not configured or a failed close
 puts the story back, request and all, and the story is held for this run.
+An interrupt that ends the close leaves its result unknown: the story stays
+dropped when `change.find` no longer shows the PR open, and goes back otherwise.
 Renovate does not reopen a PR a user closed, and the sync keeps the
 superseded story for that PR number. A drop on a story already merged
 (`commit` set) only finishes the merge.
