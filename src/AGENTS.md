@@ -339,7 +339,9 @@ Every frontmatter block in the backlog is YAML under the failsafe schema (F-62 D
 only by `parseFrontmatter` and written only by `serializeFrontmatter` (`config.js`), both
 through the `yaml` package, bl's one runtime dependency (pinned, `package-lock.json`
 committed; `bin/bl` stops with `npm ci --prefix <bl>` when `fs-ext`'s native module is
-missing, which also catches an install from before `fs-ext`).
+missing, which also catches an install from before `fs-ext`). `package.json` names npm in
+`packageManager`, so pnpm refuses to run in bl (`ERR_PNPM_OTHER_PM_EXPECTED`): `pnpm exec`
+would otherwise reinstall `node_modules` in its own layout without `fs-ext`'s build.
 Every scalar is a string (`points: 5` reads `"5"`, an empty `key:` reads `""`); mappings and
 sequences are objects and arrays at any depth. The writer keeps the keys in object order,
 writes a sequence of scalars in flow style (`[S-1, S-2]`, `[]` when empty), mappings and
