@@ -1851,12 +1851,10 @@ export async function cmdMerge(args, config, feature) {
   info(`Repos   : ${plan.order.join(', ')}${behind}`);
   info(`Stories : ${stories.map((s) => s.id).join(', ') || '(none)'}`);
 
-  // Snapshot the backlog before merge touches it, so the final commit takes
-  // only what merge and sync changed — never the operator's own uncommitted
-  // edits (a story in progress, a regenerated allowed-tools.json). The
-  // integration is part of merge: a `plan.yaml` its resolution agent changed
-  // goes in the final commit (F-125 D2).
-  const backlogBefore = dirtySnapshot(config.backlogRoot);
+  // `plan.yaml` as it is before the integration, whose resolution agent may
+  // change it (F-125 D2): that change goes in the final commit.
+  const planRel = relative(config.backlogRoot, planPath(feature.featureDir));
+  const planBefore = dirtySnapshot(config.backlogRoot)?.get(planRel);
 
   // Every branch is brought up to date with main in its worktree, gated and
   // pushed before any main checkout is touched (F-36 D4).
@@ -1866,6 +1864,14 @@ export async function cmdMerge(args, config, feature) {
   if (plan.order.join(', ') !== order)
     info(`Repos   : ${plan.order.join(', ')} (${PLAN_FILE}, changed by the integration)`);
 
+  // Snapshot the backlog before merge touches it, so the final commit takes
+  // only what merge and sync changed — never the operator's own uncommitted
+  // edits (a story in progress, a regenerated allowed-tools.json). Taken
+  // after the integration, which runs for minutes; `plan.yaml` keeps its
+  // state from before it.
+  const backlogBefore = dirtySnapshot(config.backlogRoot);
+  if (planBefore === undefined) backlogBefore?.delete(planRel);
+  else backlogBefore?.set(planRel, planBefore);
   await recordFeatureTokens(feature, config);
 
   const parsed = parsedFor(feature);

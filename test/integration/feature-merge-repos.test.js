@@ -378,6 +378,33 @@ test('bl_merge_uses_merge_order_edited_by_resolution_agent', async () => {
   }
 });
 
+// Review 2026-11-13 (round 2), Should 4: the integration runs for minutes; an
+// edit the operator makes meanwhile stays out of the merge commit, and the
+// integration's own plan.yaml edit goes in.
+test('merge_commit_leaves_an_operator_edit_made_during_integration', async () => {
+  const fx = await integratedMergeFixture();
+  try {
+    writeFileSync(
+      join(fx.scratch, 'edited.yaml'),
+      readFileSync(fx.plan, 'utf8').replace(/merge_order:\n {2}- bl\n {2}- ci-cd/, 'merge_order:\n  - ci-cd\n  - bl'),
+    );
+    const notes = join(fx.dir, 'features', 'F1-feat', 'notes.md');
+    writeFileSync(
+      join(fx.scratch, 'gate.sh'),
+      `cp ${join(fx.scratch, 'edited.yaml')} ${fx.plan}\necho 'the operator writes' > ${notes}\n`,
+    );
+    const r = runBl(['merge', 'F-1'], { cwd: fx.dir, env: fx.env });
+    assert.equal(r.status, 0, r.stderr);
+    const merge = fx.g(fx.dir, 'log', '-1', '--format=%H', '--grep', '^chore: merge F-1');
+    const files = fx.g(fx.dir, 'show', '--name-only', '--format=', merge).split('\n');
+    assert.ok(files.includes('features/F1-feat/plan.yaml'), files.join(', '));
+    assert.ok(!files.includes('features/F1-feat/notes.md'), files.join(', '));
+    assert.equal(fx.g(fx.dir, 'status', '--porcelain', '--', 'features'), '?? features/F1-feat/notes.md');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 // Review 2026-11-13, Must 3. The resume half is in feature-run-loop.test.js.
 test('stored_plan_rejects_another_work_unit_for_resume_and_merge (merge)', async () => {
   const cases = [
