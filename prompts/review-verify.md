@@ -67,10 +67,13 @@ absolute path, for example `{{worktreePath}}/src/<module>.js`. Quote the command
    pass left it out. Keep the strongest severity. Reject a candidate that has no repro and no
    named test, unless you can write them yourself.
 
-4. **Route by origin.** Check each remaining finding's `Origin:` tag against
-   `git diff {{mainRef}}...HEAD` (or `git blame`), and correct it if it is wrong. Tag untagged
-   findings yourself. Only `introduced` findings go into the session. Every `pre-existing` finding
-   goes to **## Deferred** in the {{unitKind}} file as
+4. **Route by origin.** Check each remaining finding's `Origin:` tag by this rule, and correct it
+   if it is wrong. Tag untagged findings yourself.
+{{originRule}}
+   Route each instance of a class by its own origin. If one item's instances have different
+   origins, split it: the introduced instances stay in the item, and the pre-existing instances
+   are routed as pre-existing findings. Only `introduced` findings go into the session. Every
+   `pre-existing` finding goes to **## Deferred** in the {{unitKind}} file as
    `- [points: N] (pre-existing, review round {{nextRound}}) <finding>`. It never blocks this
    {{unitKind}}, never counts toward the round cap, and never goes to the fix round. Drop a
    pre-existing nit with a reason; never defer it. Pre-existing instances of one class are one

@@ -2232,11 +2232,15 @@ holding. Instances in code the branch did not change go to `## Deferred`.
 ### Finding origin and test-container cleanup
 
 Both review passes tag every finding `Origin: introduced` (in lines the branch
-changed against main, or a pre-existing defect the branch newly makes
-reachable) or `Origin: pre-existing`. The verifier checks the tags, puts only
-`introduced` findings into the session, and writes `pre-existing` ones to the
-feature's `## Deferred` list, so a round-cap escalation can only concern code
-the feature introduced.
+added or changed against main, or a pre-existing defect the branch newly makes
+reachable or worse) or `Origin: pre-existing` (neither). `introduced` wins: a
+defect in lines the branch changed is `introduced`, even if main shows the same
+behavior (S-1442). The rule lives in one fragment, `prompts/_origin-rule.md`,
+which both passes and the verifier render. The verifier checks the tags and
+routes each instance of a class by its own origin. It puts only `introduced`
+findings into the session, and writes `pre-existing` ones to the feature's
+`## Deferred` list, so a round-cap escalation can only concern code the feature
+introduced.
 
 Around every headless session and every test-gate run, the loop lists
 containers before and after and removes the new ones that carry no
@@ -5896,6 +5900,7 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_simplicity.md`                 | `{{simplicityGuide}}`: build what the criteria ask, abstractions follow shared behaviour, every changed line traces to the story or a named finding. Wherever `{{selfConsistencyGuide}}` is.                                             |
 | `_effort.md`                     | `{{effortGuide}}`: the effort-level rubric (F-85 D6); the refiner picks the lowest level that fits and writes the `**Effort:**` line. `refine`, `re-refine` and `feature-refine`.                                                        |
 | `_execution-inputs.md`           | `{{executionInputs}}`: the planning rules that feed the execution plan (F-125 D3): changed files in backticks, dependencies as edges, the plan wins during a run. Every refine prompt, `feature-story`, `story-run` and `merge-resolve`. |
+| `_origin-rule.md`                | `{{originRule}}`: the finding-origin rule; `introduced` wins when the branch added or changed the lines, even if main shows the same behavior (S-1442). `review-correctness`, `review-failure-paths` and `review-verify`.                |
 | `_plain-writing.md`              | `{{writingGuide}}`: about 80% of ASD-STE100, so the operator or the next agent reads the text right once. Every top-level prompt; `bl agents` prints it after this reference.                                                            |
 | `_collaboration.md`              | `{{collaborationGuide}}`: the nine rules for a discussion with the operator (F-97). `agent`, the refines and `_pre-task-discussion`; `bl agents` prints it after the writing guide.                                                      |
 | `_dictionaries.md`               | `{{dictionaryGuide}}` in `_plain-writing.md`, under "Give each thing one name": names each listed dictionary (`renderDictionaryGuide`); "" when none are listed or there is no config.                                                   |

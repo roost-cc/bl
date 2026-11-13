@@ -34,12 +34,9 @@ absolute path, for example `{{worktreePath}}/src/<module>.js`. Quote the command
    "handle the null case".
 4. **Nits are recorded, never fixed this round.** Tag a nit `[safe]` only when its fix cannot
    change logic.
-5. **Tag every finding's origin.** Write `Origin: introduced` in two cases: the defect is in lines
-   this branch added or changed (`git diff {{mainRef}}...HEAD`), or the branch makes a
-   pre-existing defect newly reachable or worse. Write `Origin: pre-existing` when the defect
-   would be there on `{{mainRef}}` just the same. Check with the diff or `git blame`; do not
-   guess. Report pre-existing findings too: the verifier routes them to the backlog, not to this
-   branch.
+5. **Tag every finding's origin.**
+{{originRule}}
+   Report pre-existing findings too: the verifier routes them to the backlog, not to this branch.
 6. **Name the class, and hunt it.** Every Must and Should item carries
    `Class: <defect class> — also check: <where else it could live>`. A class is the kind of
    mistake, not the line. Examples: "a check applied on only one of two paired paths", "input not
