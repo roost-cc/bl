@@ -225,17 +225,18 @@ export function planFiles(stories, defaultRepo = '') {
 // ---------------------------------------------------------------------------
 
 /**
- * The stories a unit carries: a story itself, a feature the stories naming it.
+ * The stories a unit carries: a story itself, a feature or a batch the
+ * stories naming it.
  * @param {{ kind: string, id: string, record: object }} unit
  */
 function unitStories(unit, config, all) {
-  if (unit.kind === 'feature') return resolveFeatureStories(unit.record, config, all).stories;
-  return [unit.record];
+  if (unit.kind === 'story') return [unit.record];
+  return resolveFeatureStories(unit.record, config, all).stories;
 }
 
-/** Lowest id first; a feature before a story of the same number. */
+/** Lowest id first; a feature or a batch before a story of the same number. */
 function byId(a, b) {
-  return idNum(a.id) - idNum(b.id) || (a.kind === b.kind ? 0 : a.kind === 'feature' ? -1 : 1);
+  return idNum(a.id) - idNum(b.id) || (a.kind === b.kind ? 0 : a.kind === 'story' ? 1 : b.kind === 'story' ? -1 : 0);
 }
 
 /** Which target carries each story: story id → unit. */

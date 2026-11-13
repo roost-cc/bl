@@ -3,8 +3,9 @@
  *
  *   bl run|implement|review|merge|refine|status|approve|done <id...>
  *
- * Each id resolves to a story, a feature or a component (targets.js), and the verb
- * calls that kind's handler (F-35 Design §1). `bl status` with no arguments at
+ * Each id resolves to a story, a feature, a story batch or a component
+ * (targets.js), and the verb calls that kind's handler (F-35 Design §1). A
+ * batch uses the feature handlers (F-125 D1). `bl status` with no arguments at
  * all has no target: it lists the open stories by status (list.js).
  *
  * Several ids (Design §5): `run` and `implement` take one target and refuse
@@ -36,17 +37,18 @@ const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
  * the module whose `main(argv)` is today's story command; any other cell is a
  * handler exported by feature-cmd.js, called with `(args, config, record)`:
  * the feature handlers, and the story handlers that run a story through the
- * feature loop. null: targets.js refuses the kind.
+ * feature loop. A story batch takes the feature handlers (F-125 D1). null:
+ * targets.js refuses the kind.
  */
 export const DISPATCH = {
-  run: { story: 'cmdRunStory', feature: 'cmdRun', component: null },
-  implement: { story: './workon.js', feature: 'cmdWorkon', component: null },
-  review: { story: 'cmdReviewStory', feature: 'cmdReview', component: null },
-  merge: { story: './cleanup.js', feature: 'cmdMerge', component: null },
-  refine: { story: './refine.js', feature: 'cmdRefine', component: './refine.js' },
-  status: { story: 'cmdStatusStory', feature: 'cmdStatus', component: 'cmdStatusComponent' },
-  approve: { story: null, feature: 'cmdApprove', component: null },
-  done: { story: './done.js', feature: null, component: null },
+  run: { story: 'cmdRunStory', feature: 'cmdRun', batch: 'cmdRun', component: null },
+  implement: { story: './workon.js', feature: 'cmdWorkon', batch: 'cmdWorkon', component: null },
+  review: { story: 'cmdReviewStory', feature: 'cmdReview', batch: 'cmdReview', component: null },
+  merge: { story: './cleanup.js', feature: 'cmdMerge', batch: 'cmdMerge', component: null },
+  refine: { story: './refine.js', feature: 'cmdRefine', batch: null, component: './refine.js' },
+  status: { story: 'cmdStatusStory', feature: 'cmdStatus', batch: 'cmdStatus', component: 'cmdStatusComponent' },
+  approve: { story: null, feature: 'cmdApprove', batch: null, component: null },
+  done: { story: './done.js', feature: null, batch: null, component: null },
 };
 
 export const VERBS = Object.keys(DISPATCH);
@@ -54,19 +56,19 @@ export const VERBS = Object.keys(DISPATCH);
 /** The verbs whose story handler once took `--repo` (F-52 D1 removed it). */
 const STORY_REPO_REFUSED = new Set(['run', 'implement', 'review', 'merge']);
 
-/** The verbs whose feature handler once took `--repo` (F-52 D3 removed it). */
+/** The verbs whose feature (and batch) handler once took `--repo` (F-52 D3 removed it). */
 const FEATURE_REPO_REFUSED = new Set(['run', 'implement']);
 
 const VERB_HELP = {
   run: `Usage: bl run <id> [options]
 
 Arguments:
-  <id>                 One target: a feature (F-3) or a refined story (S-34),
-                       which goes through the loop on its own branch. A
-                       story that belongs to a feature is refused (run the
-                       feature). A component is refused: make its stories a
-                       feature. Several ids are refused: group stories with
-                       bl batch.
+  <id>                 One target: a feature (F-3), a story batch (B-2) or a
+                       refined story (S-34), which goes through the loop on
+                       its own branch. A story that belongs to a feature or
+                       a batch is refused (run that unit). A component is
+                       refused: make its stories a feature. Several ids are
+                       refused: group stories with bl batch.
 
 Options:
   --resume             Continue from the saved run state
@@ -80,18 +82,19 @@ Options:
 
 No --repo: a story's repo is its component's, and a feature prepares every
 repo of its stories, bl first, then by first story in dependency order, and
-starts in the first.
+starts in the first. A batch runs as a feature does, each story with its own
+plan.
 
 The autonomous loop: implement, test gate, self-review, one PR, review → fix →
 re-review until clean or the round cap escalates. Stops before merge.`,
   implement: `Usage: bl implement <id> [options]
 
 Arguments:
-  <id>                 One target: a feature (F-3) or a story (S-34). A story
-                       that belongs to a feature is refused (implement the
-                       feature). A component is refused: make its stories a
-                       feature. Several ids are refused: group stories with
-                       bl batch.
+  <id>                 One target: a feature (F-3), a story batch (B-2) or a
+                       story (S-34). A story that belongs to a feature or a
+                       batch is refused (implement that unit). A component
+                       is refused: make its stories a feature. Several ids
+                       are refused: group stories with bl batch.
 
 Options:
   -A, --agent <id>     Agent provider
@@ -99,17 +102,18 @@ Options:
   -P, --prompt <text>  Discuss <text> with the agent first
   --help               Show this help
 
-No --repo: a feature prepares every repo of its stories, as bl run does, and
+No --repo: a feature or a batch prepares every repo of its stories, as bl run does, and
 starts in the first. Creates or resumes the worktree and opens an interactive agent session: the
 manual single step. Use bl run for the whole loop.`,
   review: `Usage: bl review <id...> [options]
 
 Arguments:
-  <id...>              Stories (S-34) or features (F-3). A story that belongs
-                       to a feature is refused (review the feature).
+  <id...>              Stories (S-34), features (F-3) or story batches (B-2).
+                       A story that belongs to a feature or a batch is
+                       refused (review that unit).
 
 Options:
-  -r, --repo <name>    Feature: restrict the review to one repo's PR.
+  -r, --repo <name>    Feature or batch: restrict the review to one repo's PR.
                        Refused for a story: it has one repo
   -A, --agent <id>     Agent provider; replaces backlog.json's review_agent
                        list
@@ -125,8 +129,9 @@ child bl review with its output in .bl/run/<id>.out.`,
   merge: `Usage: bl merge <id...> [options]
 
 Arguments:
-  <id...>              Stories (S-34) or features (F-3). A story that belongs
-                       to a feature is refused (merge the feature).
+  <id...>              Stories (S-34), features (F-3) or story batches (B-2).
+                       A story that belongs to a feature or a batch is
+                       refused (merge that unit).
 
 Options:
   --keep               Keep the branch after merging
@@ -168,9 +173,9 @@ refuses with that process's pid.`,
   status: `Usage: bl status [<id...>]
 
 Arguments:
-  [<id...>]            A feature (F-3): its stories in dependency order,
-                       review state, blockers, deferred items, escalation and
-                       run state. A story (S-34): its status, branch, PR,
+  [<id...>]            A feature (F-3) or a story batch (B-2): its stories in
+                       dependency order, review state, blockers, deferred
+                       items, escalation and run state. A story (S-34): its status, branch, PR,
                        review state and round, escalation and run state. A
                        component (C01): its open stories.
 
@@ -293,15 +298,15 @@ export async function dispatch(verb, argv) {
     const { refuseStoryRepo } = await import('./story.js');
     refuseStoryRepo(verb, args);
   }
-  // A feature's repos are its stories', and it starts in the lead (F-52 D3).
+  // A feature's repos are its stories', and it starts in the lead (F-52 D3); a batch's too.
   if (
-    targets.some((t) => t.kind === 'feature') &&
+    targets.some((t) => t.kind === 'feature' || t.kind === 'batch') &&
     FEATURE_REPO_REFUSED.has(verb) &&
     args.repo != null &&
     args.repo !== false
   ) {
     console.error(
-      `bl ${verb}: unknown option "--repo" for a feature: it prepares every repo of its stories and starts in the first (bl, else its first story's).`,
+      `bl ${verb}: unknown option "--repo" for a ${targets[0].kind === 'batch' ? 'story batch' : 'feature'}: it prepares every repo of its stories and starts in the first (bl, else its first story's).`,
     );
     process.exit(1);
   }
@@ -498,14 +503,15 @@ export function outcomeLine(verb, { target, code, outPath, error = null }, confi
       // child ran, so the review state is read from the log now (F-69 D5).
       let review;
       try {
-        review = reviewOf(target.kind === 'feature' ? 'feature' : 'story', readFm(target.record.indexPath), change);
+        // A target's kind (story, feature, batch) is its type in flow.json.
+        review = reviewOf(target.kind, readFm(target.record.indexPath), change);
       } catch {
         // An unreadable unit file has no review state to show.
         return { line: `${id}: reviewed, its file cannot be read${pr}`, ok: true };
       }
       let unit = null;
       try {
-        unit = target.kind === 'feature' ? featureUnit(target.record) : storyUnit(target.record, config);
+        unit = target.kind === 'story' ? storyUnit(target.record, config) : featureUnit(target.record);
       } catch {
         // an unreadable story file leaves the line without a next command
       }

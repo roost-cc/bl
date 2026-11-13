@@ -38,6 +38,7 @@ Per-command stdout contracts:
 | `bl side --json`     | one JSON object (schema `bl-side-json/v1`)                |
 | `bl attach`          | nothing (progress → stderr)                               |
 | `bl attach --json`   | one JSON object (schema `bl-attach-json/v1`)              |
+| `bl batch`           | one line: relative path of the new batch `index.md`       |
 | `bl move`            | nothing (progress → stderr)                               |
 | `bl move --json`     | one JSON object (schema `bl-move-json/v1`)                |
 | `bl next-id`         | one ID per line                                           |
@@ -90,7 +91,7 @@ Per-command stdout contracts:
 | `bl <cmd> --help`    | help text                                                 |
 
 `bl done`, `bl new` (unless `--no-sync` or `--dry-run`), `bl side`, `bl attach`
-and `bl move` (each unless `--no-sync`), and `bl merge`
+and `bl move` (each unless `--no-sync`), `bl batch`, and `bl merge`
 commit their own backlog changes on the backlog's current branch: the story
 they touched and a new component dir or appended feature file. No command
 writes an index or table (F-79). They commit through `syncAndCommit` (`src/sync.js`)
@@ -115,7 +116,8 @@ outside the scope stays uncommitted and is named in one line,
 record (`readFailedCommit`) and outside the scope stays in the record. Without `scope`
 (`bl init`), every changed path is committed. Feature `bl merge`'s scope is its work units'
 directories (`scope()`), its release manifest (`writeReleaseManifest`) and its theme's `index.md`
-(`recordThemeState`), with the owner `merge F-n`. The triage's scope is the merged story's
+(`recordThemeState`), with the owner `merge F-n`. `bl batch`'s cross-story pass commits the same
+way, with the owner `batch B-n` and its work units' directories as the scope. The triage's scope is the merged story's
 directory, with the owner `triage S-n`, so the agent commits the stories it creates itself
 (`prompts/cleanup-triage.md`). `bl refine`'s scope is its work units' directories.
 
@@ -2254,6 +2256,32 @@ id)` (`blockers.js`): the story's feature, else its batch. So an order edge
 - **Template.** `templates/batch.md` (`bl new --print-template batch`):
   `## Notes` and `## Escalation`. The run adds `change.md` and `plan.yaml`
   beside it, as for a feature.
+- **Building one.** `bl batch S-a S-b … --title <t>` (see **Tooling**) writes
+  the batch at `approved`, sets `batch:` on each story and runs the
+  cross-story pass. There is no `bl approve` step.
+- **The verbs.** `bl run`, `implement`, `review`, `merge` and `status` take
+  `B-<n>`: `classifyId` and `resolveTargets` (`targets.js`) resolve it, and
+  the record is `batchUnit`'s (`unit.js`, `kind: 'batch'`). `DISPATCH`'s
+  `batch` column names the feature handlers, which take the flow type from
+  `flowKind` (`story`, `batch` or `feature`) and the stories from
+  `resolveFeatureStories`, which reads `batch:` for a batch. `refine`,
+  `approve` and `done` refuse a batch; `run`, `implement`, `review` and
+  `merge` refuse a story of one and name the batch.
+- **Implementing.** Each story runs on `prompts/story-run.md`: a batch has no
+  premise or design, and each story carries its own plan. The session works
+  as a story run's does (`batchStoryVars`, `feature-run.js`): in its story's
+  repo worktree, with the story partials (`unitKind: story`, `featureId` the
+  story), so an ad-hoc fix goes in the story's `## Notes` and `bl side --from
+S-n` stands alone. Its unit file (`{{featureAbsPath}}`) is the batch's, and
+  an escalation goes there. The batch-level sessions (gate, self-review,
+  review, fix) read `{{unitKind}}` as `batch`.
+- **Merging.** `bl merge B-n` merges as a feature does: the tag and the
+  release manifest are named `B-<n>` (`releases/B-<n>.json`), and the batch
+  and its stories are marked `done`. A batch has no theme, so no theme
+  `## State` records it.
+- **Not yet.** `bl task`, `bl side --from`, `bl new` and `bl attach` take no
+  `B-<n>`. A batch-level session's ad-hoc story guidance (`_blocked-by-bug`)
+  names commands that refuse a batch.
 
 ## Review Cycle
 
@@ -2815,7 +2843,8 @@ side` then records `in_progress` by `side` in its log and sets `found_by:`
   fails (the bootstrap), the committed story stays and the message says
   `bl implement S-<n>` prepares the worktree, not another `bl side`.
 - A change across N repos is N `bl side` calls with the same `--from`, then
-  `bl run S-a S-b …` and `bl merge S-a S-b …`.
+  `bl run` on each story (it takes one target, F-125 A3) and
+  `bl merge S-a S-b …`.
 
 ### `bl attach`
 
@@ -2876,6 +2905,38 @@ bl attach <S-n> <F-n> [--no-sync] [--json]
   (naming the existing story); any other refusal or failure leaves the bug
   fixed and recorded as an operator task (`bl task … --gate none`), never a
   second story. None of attach's refusals is an escalation.
+
+### `bl batch`
+
+Build a story batch (F-125 D1, `src/batch-cmd.js`):
+
+```bash
+bl batch <S-n> <S-n>… --title <t> [-A <agent>] [--model <m>]
+```
+
+- **Refusals** (exit 1, nothing written), checked once before the backlog
+  lock and again under it: fewer than two stories, no `--title`, a story not
+  found, not refined and unstarted, in a feature, in a batch, or held at its
+  `run` gate by an edge whose blocker is not one of the stories
+  (`heldBy`); and a run edge with `active_when` between two of them
+  (`joinRefusal`). Each line names the story and the reason
+  (`batchRefusals`).
+- **Writes** under the backlog lock: `batches/B<n>-<slug>/index.md` from
+  `templates/batch.md`, with the flow's initial `batch` status (`approved`
+  by `new`); `batch: B-<n>` on each story; and each run edge between two of
+  them turned into an order edge (`orderJoinedEdges`). A failed write
+  restores the stories and removes the directory. Then `syncAndCommit`
+  commits them as `chore: add B-<n>`. A `flow.json` without the `batch` type
+  refuses with the `FlowError` that names it.
+- **The cross-story pass.** One headless session on `prompts/batch-build.md`
+  (mode `refine`, in the backlog root), under the work unit locks of the
+  batch and its stories. It carries `{{executionInputs}}`. It may correct the
+  stories' Implementation Plans and add order edges between them with
+  `bl block add` (which commits `blockers.json`), and nothing else. bl then
+  commits what changed in the batch's and the stories' directories
+  (`commitChangedSince`, `chore: B-<n> cross-story pass`). A session that
+  fails leaves the batch built and exits 1.
+- **stdout** is the new batch's `index.md`, relative to the backlog root.
 
 ### `bl move`
 

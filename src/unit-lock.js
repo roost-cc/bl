@@ -19,9 +19,10 @@ import { readAllStories } from './story.js';
 
 /**
  * A unit with no `kind` is a feature, as the run loop reads one (a
- * `findFeature` record carries none; `isStory`, `feature-run.js`).
+ * `findFeature` record carries none; `flowKind`, `unit.js`). A batch
+ * (`batchUnit`) locks its stories as a feature does.
  *
- * @typedef {{ id: string, kind?: 'story' | 'feature', indexPath: string }} WorkUnit
+ * @typedef {{ id: string, kind?: 'story' | 'feature' | 'batch', indexPath: string }} WorkUnit
  */
 
 /**

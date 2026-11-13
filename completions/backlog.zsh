@@ -94,6 +94,7 @@ _roost_bl() {
     'new:Create a new story'
     'side:A change to another repo: a story in its component, with its worktree'
     'attach:List an existing story in a feature'
+    'batch:Build an approved story batch from refined stories, with a cross-story pass'
     'move:Move backlog stories to another component'
     'next-id:Print the next available story, component or epic ID'
     'run:The loop for a feature or story: implement, test gate, review, PR'
@@ -356,6 +357,16 @@ _roost_bl() {
         '*:story or feature id:(${units})' \
         '--no-sync[Write both files, commit nothing]' \
         '--json[Emit JSON to stdout (schema bl-attach-json/v1)]' \
+        '--help[Show help]'
+      ;;
+    batch)
+      local -a stories
+      stories=( ${(f)"$(_roost_story_ids)"} )
+      _arguments -s \
+        '*:story id:(${stories})' \
+        '--title[The batch title]:title:' \
+        '(-A --agent)'{-A,--agent}'[Agent provider for the cross-story pass]:agent:(claude codex gemini local)' \
+        '--model[Model of the -A configuration]:model:' \
         '--help[Show help]'
       ;;
     move)

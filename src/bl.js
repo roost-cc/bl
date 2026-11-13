@@ -58,6 +58,9 @@ Commands:
                --json         Print {schema, story, feature, changed}
                Refuses a closed feature, a story in another feature or not
                ${unstarted}, and a repo a started feature does not span
+  batch      Build a story batch from refined stories (<S-n> <S-n>…
+               --title <t>): approved at once, then one agent session
+               checks the stories' file lists and order edges; commits
   move       Move stories to another component (<S-n>… <C-n>, any order):
                sets each story's component:, commits
                --no-sync      Write the stories, commit nothing
@@ -76,8 +79,8 @@ Commands:
                stories) for implementation
                -P, --prompt <text>  Discuss <text> with the agent first
   approve    Approve a refined feature: the human gate before run
-  run        The loop for a feature: implement, test gate, self-review, PR,
-               review rounds; stops before merge
+  run        The loop for a feature, a story batch or a story: implement,
+               test gate, self-review, PR, review rounds; stops before merge
                --resume, --interactive, --plan, --max-rounds <n>
   implement  Start/resume an interactive session on a story or feature
                worktree: the manual single step
@@ -291,6 +294,10 @@ async function run() {
     }
     case 'move': {
       const { main } = await import('./move.js');
+      return main(subArgv);
+    }
+    case 'batch': {
+      const { main } = await import('./batch-cmd.js');
       return main(subArgv);
     }
     case 'task': {

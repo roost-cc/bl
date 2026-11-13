@@ -42,6 +42,13 @@ test('every Feature cell but done is a feature-cmd.js handler', async () => {
   }
 });
 
+test('a story batch (B-3) takes the feature handlers of run, implement, review, merge and status, and no other verb (F-125 D1)', () => {
+  const takes = ['run', 'implement', 'review', 'merge', 'status'];
+  for (const verb of VERBS) {
+    assert.equal(DISPATCH[verb].batch, takes.includes(verb) ? DISPATCH[verb].feature : null, verb);
+  }
+});
+
 test("every Story and Component cell names today's command or the story's loop handler", async () => {
   const expected = {
     run: ['cmdRunStory', null],

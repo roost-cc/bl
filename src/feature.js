@@ -36,6 +36,7 @@ import { entryMatches, ownFm, readAllStories } from './story.js';
 import { graphOf } from './backlog-graph.js';
 import { readEdges } from './blockers.js';
 import { featureRepoOrder, orderStoriesByDeps } from './execution-plan.js';
+import { namesBatch } from './batch.js';
 
 export const FEATURES_DIR = 'features';
 
@@ -251,16 +252,18 @@ export function namesFeature(s, featureId) {
 }
 
 /**
- * The stories of a feature: the records in `allStories` (read when null)
- * whose `feature:` names it, the only statement of membership (F-77 D3), in
- * the graph's order: the order of the run and order edges between them
+ * The stories of a feature, or of a story batch (`batchUnit`, F-125 D1): the
+ * records in `allStories` (read when null) whose `feature:` (a batch's:
+ * `batch:`) names it, the only statement of membership (F-77 D3), in the
+ * graph's order: the order of the run and order edges between them
  * (`orderStoriesByDeps` of `readEdges`), ties by story number.
  *
  * @returns {{ stories: Array<object> }}  readAllStories records
  */
 export function resolveFeatureStories(feature, config, allStories = null) {
   const all = allStories ?? readAllStories(config);
-  const own = all.filter((s) => namesFeature(s, feature.id));
+  const names = feature.kind === 'batch' ? namesBatch : namesFeature;
+  const own = all.filter((s) => names(s, feature.id));
   return { stories: orderStoriesByDeps(own, readEdges(config)) };
 }
 

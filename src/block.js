@@ -383,8 +383,8 @@ order edge takes neither.
 A merge edge joins two repos of one feature and holds nothing: bl merge
 merges the blocker's repo before the unit's, as in
   bl block add F-96:ci-cd --gate merge --unit F-96:bl --until merged
-An order edge joins two stories of one feature and holds nothing: the
-feature's implement loop takes the blocker before the unit, as in
+An order edge joins two stories of one feature or story batch and holds
+nothing: the unit's implement loop takes the blocker before the unit, as in
   bl block add S-1446 --gate order --unit S-1448 --until implemented
 
   add      Check every field against flow.json and the backlog, refuse a

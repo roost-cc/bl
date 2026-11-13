@@ -1,12 +1,14 @@
-You are implementing story {{storyId}} — "{{storyTitle}}" ({{storyPoints}} pts) on its own
-branch. `bl run` drives the story. After you, it runs the test gate and a self-review, opens the
-pull request and takes it through review.
+You are implementing story {{storyId}} — "{{storyTitle}}" ({{storyPoints}} pts). `bl run`
+drives the work unit: the story on its own branch, or a story batch whose stories share one
+branch. After you, it runs the test gate and a self-review, opens the pull request and takes it
+through review.
 
 Primary repo : {{primaryRepo}}
 Unit dir     : {{unitDir}} (your working directory)
 Worktree     : {{worktreePath}} ({{targetRepo}})
 Branch       : {{branchName}}
 Story file   : {{storyAbsPath}}
+Unit file    : {{featureAbsPath}}
 Backlog repo : {{backlogDir}}
 
 {{nudge}}
@@ -23,7 +25,7 @@ Backlog repo : {{backlogDir}}
 
 A story works in one repo, its component's: `{{targetRepo}}`. You work only in this worktree.
 Before you started, `bl run` created it on `{{branchName}}` with its dependencies installed.
-There is no secondary worktree; `bl merge` merges this one repo.
+This story's work is in this one repo.
 
 A change in another repo is another story in a component of that repo (one story per repo), not
 part of this one. Do not make it here, and never edit that repo's main checkout. Make it with
@@ -84,18 +86,18 @@ instead and name the repo (see **Writing an escalation**).
 
    If the story's **Summary** turns out to be false, stop. A false Summary means the story rests
    on something the code does not support. Write what you found under **## Escalation** in the
-   story file, as **Writing an escalation** below describes. Commit the backlog and end the
-   session. That is the right outcome.
+   unit file, `{{featureAbsPath}}`, as **Writing an escalation** below describes. Commit the
+   backlog and end the session. That is the right outcome.
 
 7. When you are done, make **one** backlog commit for the story:
 
    ```
-   bl sync --commit -m "chore: {{storyId}} implemented" --story {{storyId}}
+   bl sync --commit -m "chore: {{storyId}} implemented" --story {{storyId}} --path {{featureRelPath}}
    ```
 
-   It takes the backlog lock, commits only the story's directory, and pushes. It never commits
-   what another session has staged. Never run `git add` or
-   `git commit` in the backlog repo.
+   It takes the backlog lock, commits only the story's directory and the unit file, and pushes.
+   It never commits what another session has staged. Never run `git add` or `git commit` in the
+   backlog repo.
 
 8. Format the files you changed (see **Format and lint** below).
 

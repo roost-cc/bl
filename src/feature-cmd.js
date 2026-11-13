@@ -80,7 +80,7 @@ import {
   prepareWorktreeOnce,
 } from './session.js';
 import { syncBranchWithMain, reportNoOpenPR } from './review.js';
-import { featureUnit, storyUnit, storyAsOrdered, unitVars } from './unit.js';
+import { featureUnit, flowKind, storyUnit, storyAsOrdered, unitLabel, unitVars } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
 import { integrateForMerge } from './merge-integrate.js';
 import { prepareStoryRun, otherWorktreesLine, implementNextSteps } from './workon.js';
@@ -180,6 +180,8 @@ export async function updateFeature(config, feature, mutate) {
  */
 export async function markFeatureMerged(config, feature, stories, { decided, at = nowAt() }) {
   const flow = loadFlow(config.backlogRoot);
+  // A story batch is marked as a feature is, by its own type (F-125 D1).
+  const kind = flowKind(feature);
   const tokens = { input: 0n, output: 0n, cache_creation: 0n, cache_read: 0n };
   let anyTokens = false;
   let storySteps = {};
@@ -200,20 +202,21 @@ export async function markFeatureMerged(config, feature, stories, { decided, at 
     // The stories are folded in once, by the merge that marks the feature
     // done: a caller that loaded it before another merge finished finds it
     // closed here, under the lock, and adds nothing again.
-    if (!flow.meets('feature', statusOf('feature', fm, feature.change), 'done')) {
+    if (!flow.meets(kind, statusOf(kind, fm, feature.change), 'done')) {
       if (addTokenTotals(tokens, fm)) anyTokens = true;
       if (anyTokens) applyTokensToFrontmatter(fm, tokens);
       // Per step as well, key by key (S-904): the feature's own keys first.
       const steps = mergeStepTokens(fm.tokens_by_step, storySteps);
       if (Object.keys(steps).length > 0) fm.tokens_by_step = steps;
-      applyMerged(flow, 'feature', fm, { at, change: feature.change, note });
+      applyMerged(flow, kind, fm, { at, change: feature.change, note });
     }
     if (decided !== null) fm.commit = decided;
   });
 }
 
+/** A feature's or a batch's id as `normalizeFeatureId` parses one: `{ id, num }`. */
 function parsedFor(feature) {
-  const m = feature.id.match(/^F-(\d+)$/);
+  const m = feature.id.match(/^[FB]-(\d+)$/);
   return { id: feature.id, num: m ? m[1] : '0' };
 }
 
@@ -247,7 +250,7 @@ function exitOnStoryWithoutRepo(feature, stories) {
   const noRepo = stories.filter((s) => !s.unitRepo);
   if (noRepo.length > 0) {
     console.error(
-      `Feature ${feature.id}: ${noRepo.map((s) => `${s.id} (component ${s.componentId || '(none)'})`).join(', ')} has no repo; a story's repo is its component's, so give the component a repo or move the story to one that has it.`,
+      `${unitLabel(feature)} ${feature.id}: ${noRepo.map((s) => `${s.id} (component ${s.componentId || '(none)'})`).join(', ')} has no repo; a story's repo is its component's, so give the component a repo or move the story to one that has it.`,
     );
     process.exit(1);
   }
@@ -302,7 +305,7 @@ export async function recordFeatureTokens(feature, config) {
       updateSpecFileHeld(config.backlogRoot, feature.indexPath, (fm) => {
         // A merged feature's totals hold its stories' too, folded in once by
         // `bl merge`: a re-read of its own transcripts must not replace them.
-        if (!loadFlow(config.backlogRoot).meets('feature', statusOf('feature', fm), 'done'))
+        if (!loadFlow(config.backlogRoot).meets(flowKind(feature), statusOf(flowKind(feature), fm), 'done'))
           applyFeatureTokens(fm, totals);
       });
     });
@@ -952,7 +955,7 @@ function printChanges(unit) {
 export function cmdStatus(args, config, feature) {
   const all = readAllStories(config);
   const { stories } = resolveFeatureStories(feature, config, all);
-  printUnitHead(feature, featureRepoOrder(stories).join(', '), 'feature');
+  printUnitHead(feature, featureRepoOrder(stories).join(', '), flowKind(feature));
   console.log('');
   if (stories.length > 0) {
     printTable(
@@ -1112,9 +1115,9 @@ export async function prepareFeatureRepo(config, feature, repoName, { strict = f
  *             otherWorktrees }}
  */
 export async function prepareFeatureWorktree(config, feature, verb = 'run') {
-  const verbs =
-    verb === 'run' ? loadFlow(config.backlogRoot).chainOf('feature', 'run') : implementVerbOf('feature', feature);
-  const start = startOf(config, 'feature', feature, verbs);
+  const kind = flowKind(feature);
+  const verbs = verb === 'run' ? loadFlow(config.backlogRoot).chainOf(kind, 'run') : implementVerbOf(kind, feature);
+  const start = startOf(config, kind, feature, verbs);
   if (start.refusal) {
     console.error(start.refusal);
     process.exit(1);
@@ -1130,7 +1133,7 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
   // stops here naming the story.
   if (stories.length === 0) {
     console.error(
-      `Feature ${feature.id} has no stories, so it has no repo to work in. Cut its stories first (\`bl refine ${feature.id}\`), each in a component of the repo it changes.`,
+      `${unitLabel(feature)} ${feature.id} has no stories, so it has no repo to work in. Cut its stories first (\`bl refine ${feature.id}\`), each in a component of the repo it changes.`,
     );
     process.exit(1);
   }
@@ -1153,7 +1156,7 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
   const unitDir = unitDirFor(cfg, branchName);
   const parsed = parsedFor(feature);
 
-  info(`Feature  : ${feature.id} — ${feature.title}`);
+  info(`${unitLabel(feature).padEnd(9)}: ${feature.id} — ${feature.title}`);
   info(`Repos    : ${names.join(', ')} (lead: ${targetRepoName})`);
   info(`Branch   : ${branchName}`);
   info(`Unit dir : ${unitDir}`);
@@ -1181,8 +1184,7 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
   const sessionVars = featureSessionVars(feature);
 
   // `fix` from `escalated` or `in_progress` goes back to `fixing`, its `during`.
-  if (IMPLEMENT_VERBS.includes(start.verb))
-    await enterVerb(config.backlogRoot, { ...feature, kind: 'feature' }, start.verb);
+  if (IMPLEMENT_VERBS.includes(start.verb)) await enterVerb(config.backlogRoot, { ...feature, kind }, start.verb);
   // The branch is recorded in the change document, with every repo prepared.
   const change = await openUnitChange(cfg.backlogRoot, feature, branchName, names);
   const reviewPending = start.verb === 'fix';
@@ -1286,7 +1288,7 @@ export async function cmdWorkon(args, config, feature) {
   const status = reviewPending ? ret.status : ret;
   await recordFeatureTokens(feature, cfg);
   if (reviewPending) {
-    const unit = { id: feature.id, kind: 'feature', indexPath: feature.indexPath };
+    const unit = { id: feature.id, kind: flowKind(feature), indexPath: feature.indexPath };
     await applyFixOutcome(cfg.backlogRoot, unit, ret, changeBefore);
   }
   if (!status) info(implementNextSteps(feature.id));
@@ -1317,11 +1319,11 @@ function reviewAgentOrExit(config) {
 export async function cmdReview(args, config, feature, opts = {}) {
   if (!feature.branch) {
     console.error(
-      `Feature ${feature.id} has no branch yet — run \`bl run ${feature.id}\` or \`bl implement ${feature.id}\` first.`,
+      `${unitLabel(feature)} ${feature.id} has no branch yet — run \`bl run ${feature.id}\` or \`bl implement ${feature.id}\` first.`,
     );
     process.exit(1);
   }
-  const { refusal } = startOf(config, 'feature', feature, 'review');
+  const { refusal } = startOf(config, flowKind(feature), feature, 'review');
   if (refusal) {
     console.error(refusal);
     process.exit(1);
@@ -1483,11 +1485,7 @@ async function reviewUnitPRs(
   const reviewAgent = config.reviewAgent;
   const parsed = unit.kind === 'story' ? normalizeId(unit.id) : parsedFor(unit);
   // The rounds with a verdict, and whether the open one re-reviews fixes (F-69 D5).
-  const {
-    reviewed: round,
-    position,
-    fixed,
-  } = reviewOf(unit.kind === 'story' ? 'story' : 'feature', unit.fm, unit.change ?? null);
+  const { reviewed: round, position, fixed } = reviewOf(flowKind(unit), unit.fm, unit.change ?? null);
   // The same review step `bl run` takes: two dimension passes and a
   // verifier, headless unless the agent has no headless mode or
   // --interactive asks to attach each session.
@@ -1505,7 +1503,7 @@ async function reviewUnitPRs(
   // primary repo's PR (else the first found) is the one the run state keeps.
   const primary = prs.find((p) => p.isPrimary) ?? prs[0];
   const targets = [primary, ...prs.filter((p) => p !== primary)];
-  info(`${unit.kind === 'story' ? 'Story   ' : 'Feature '} : ${unit.id} — ${unit.title}`);
+  info(`${unitLabel(unit).padEnd(8)} : ${unit.id} — ${unit.title}`);
   info(`Branch   : ${branchName}`);
   info(
     `Round    : ${round + 1} of ${unit.reviewRoundsMax}${position === 'in_review' && fixed ? ' (re-review of claimed fixes)' : ''}`,
@@ -1666,7 +1664,7 @@ export async function cmdRunStory(args, baseConfig, story) {
 async function runUnit(args, config, unit, { ordered, prepare }) {
   const { planSteps, formatPlan, runFeature, defaultRunner, escalationOpen, runLockPath, parseMaxRounds } =
     await import('./feature-run.js');
-  const kind = unit.kind === 'story' ? 'Story' : 'Feature';
+  const kind = unitLabel(unit);
   const maxRounds = parseMaxRounds(args['max-rounds'], unit.reviewRoundsMax);
   if (!Number.isInteger(maxRounds) || maxRounds < 1) {
     console.error('bl run: --max-rounds must be a positive integer.');
@@ -1758,13 +1756,13 @@ function storedMergeOrder(config, feature, names) {
   try {
     order = readPlan(feature.featureDir)?.merge_order;
   } catch (e) {
-    console.error(`Feature ${feature.id}: ${e.message}`);
+    console.error(`${unitLabel(feature)} ${feature.id}: ${e.message}`);
     process.exit(1);
   }
   if (!order) return null;
   if (order.length !== names.length || !names.every((n) => order.includes(n))) {
     console.error(
-      `Feature ${feature.id}: merge_order in ${rel} (${order.join(', ')}) does not name the feature's repos (${names.join(', ')}). Correct it, with a changes entry that says why, or delete ${rel} to merge in the merge edges' order.`,
+      `${unitLabel(feature)} ${feature.id}: merge_order in ${rel} (${order.join(', ')}) does not name the feature's repos (${names.join(', ')}). Correct it, with a changes entry that says why, or delete ${rel} to merge in the merge edges' order.`,
     );
     process.exit(1);
   }
@@ -1773,7 +1771,7 @@ function storedMergeOrder(config, feature, names) {
 
 export async function cmdMerge(args, config, feature) {
   // The status from the table; the merge gate's blockers are `mergeGates`'.
-  const { refusal } = startOf(config, 'feature', feature, 'merge', { guards: false });
+  const { refusal } = startOf(config, flowKind(feature), feature, 'merge', { guards: false });
   if (refusal) {
     console.error(refusal);
     process.exit(1);
@@ -1796,12 +1794,12 @@ export async function cmdMerge(args, config, feature) {
   const unknown = names.filter((n) => !config.reposByName[n]);
   if (unknown.length > 0) {
     console.error(
-      `Feature ${feature.id}: unknown repo ${unknown.map((n) => `${n} (named by ${repoSource(stories, n)})`).join(', ')}. Known: ${Object.keys(config.reposByName).join(', ')}`,
+      `${unitLabel(feature)} ${feature.id}: unknown repo ${unknown.map((n) => `${n} (named by ${repoSource(stories, n)})`).join(', ')}. Known: ${Object.keys(config.reposByName).join(', ')}`,
     );
     process.exit(1);
   }
   if (names.length === 0) {
-    console.error(`Feature ${feature.id} has no story with a repo, so there is nothing to merge.`);
+    console.error(`${unitLabel(feature)} ${feature.id} has no story with a repo, so there is nothing to merge.`);
     process.exit(1);
   }
   // The merge order: the stored execution plan's `merge_order` when it has
@@ -1815,7 +1813,7 @@ export async function cmdMerge(args, config, feature) {
     mergeOrder(names, featureMergeEdges(readBlockers(config.backlogRoot).edges, feature.id));
   if (plan.cycle) {
     console.error(
-      `Feature ${feature.id}: its merge edges form a cycle, so no repo can merge first: ${plan.cycle.map(edgeArrow).join(', ')}.\nRemove one with bl block remove <blocker> --gate merge --unit <unit>.`,
+      `${unitLabel(feature)} ${feature.id}: its merge edges form a cycle, so no repo can merge first: ${plan.cycle.map(edgeArrow).join(', ')}.\nRemove one with bl block remove <blocker> --gate merge --unit <unit>.`,
     );
     process.exit(1);
   }
@@ -1839,7 +1837,7 @@ export async function cmdMerge(args, config, feature) {
   const owner = `merge ${feature.id}`;
   const lock = takeUnitLocksOrExit(config, [unit], owner);
 
-  info(`Feature : ${feature.id} — ${feature.title}`);
+  info(`${unitLabel(feature).padEnd(7)} : ${feature.id} — ${feature.title}`);
   info(`Branch  : ${branchName}`);
   const behind = plan.stored
     ? ` (${PLAN_FILE})`
@@ -1973,8 +1971,9 @@ export async function cmdMerge(args, config, feature) {
     });
     // `priority.yaml` is not touched (F-78 D3): a merged feature leaves the
     // order because it is closed, and its date is in this merge's commit.
-    // Its theme's `## State` records it too (F-53 D4), in the same hold.
-    themeFile = recordThemeState(config, feature, stamp);
+    // Its theme's `## State` records it too (F-53 D4), in the same hold. A
+    // story batch has no theme (F-125 D1).
+    themeFile = flowKind(feature) === 'batch' ? null : recordThemeState(config, feature, stamp);
     if (themeFile) info(`Recorded ${feature.id} in ${themeFile} (## State).`);
     return decided;
   });

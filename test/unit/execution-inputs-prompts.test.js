@@ -22,6 +22,7 @@ const CARRIERS = [
   're-refine',
   'feature-refine',
   'refine-batch',
+  'batch-build',
   'feature-story',
   'story-run',
   'merge-resolve',
