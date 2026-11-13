@@ -1,5 +1,5 @@
 /**
- * stop.js — `bl stop <F-id|S-id>`: stop a running `bl run` cleanly, so that
+ * stop.js — `bl stop <F-id|B-id|S-id>`: stop a running `bl run` cleanly, so that
  * `bl run <id> --resume` continues it (F-87 Design D7a, Decision A4; S-1335).
  *
  * The run loop is synchronous (agents start through `spawnSync`), so a signal
@@ -42,7 +42,7 @@ export const STOP_WAIT_MS = 30_000;
 /** How often `bl stop` checks the run lock while it waits, in ms. */
 const STOP_POLL_MS = 200;
 
-const HELP = `Usage: bl stop <F-id|S-id>
+const HELP = `Usage: bl stop <F-id|B-id|S-id>
 
 Stop a running bl run cleanly. Continue it later with bl run <id> --resume.
 

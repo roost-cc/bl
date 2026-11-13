@@ -193,12 +193,13 @@ Commands:
                --json         Print one snapshot (schema bl-top-json/v1)
                --stream       One snapshot per line until stdin closes
                               (--interval <ms>, default 2000)
-  watch      Follow a run's live agent session, step by step (<F-id|S-id>):
-               one line per agent message or tool call
+  watch      Follow a run's live agent session, step by step
+               (<F-id|B-id|S-id>): one line per agent message or tool call
                --from-start   The current session from its beginning
                --json         One JSON object per line
-  stop       Stop a running bl run cleanly (<F-id|S-id>): ends its agent
-               session, records "stopped"; bl run <id> --resume continues it
+  stop       Stop a running bl run cleanly (<F-id|B-id|S-id>): ends its
+               agent session, records "stopped"; bl run <id> --resume
+               continues it
   agent      Launch the configured agent with backlog allowed-tools applied
                [args...]      Passthrough args to the agent
 

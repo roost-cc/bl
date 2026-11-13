@@ -3874,7 +3874,7 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
 
 ### `bl watch`
 
-`bl watch <F-id|S-id> [--from-start] [--json]` (`src/watch.js`, S-1272) follows the live agent
+`bl watch <F-id|B-id|S-id> [--from-start] [--json]` (`src/watch.js`, S-1272) follows the live agent
 session of a headless `bl run`, `bl review` or `bl merge` integration: one line per agent
 message or tool call. When the run moves to its next step's session (implement, self-review,
 review, fix), it prints a new header and follows that session. `bl top`'s detail box (S-1334)
@@ -3917,7 +3917,7 @@ which has no headless mode) gets its header and one stderr line that says so.
 
 ### `bl stop`
 
-`bl stop <F-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly, so
+`bl stop <F-id|B-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly, so
 that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s stop action
 runs it. The run loop is synchronous (agent sessions start through `spawnSync`), so a signal
 to its bl would be handled only after the run ends. `bl stop` never sends one:
