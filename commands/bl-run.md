@@ -25,7 +25,8 @@ The same verbs take a story (`bl run S-34`, `bl review S-34`, `bl status S-34`,
 `bl merge S-34`). `review` and `merge` also take several targets (`bl merge S-1 S-2 F-3`);
 `run` and `implement` take one, and group stories with `bl batch`. A component is refused by `run` and
 `implement`: make the stories you want into a feature with `bl new --feature`. A story that
-belongs to a feature is refused by `run`, `implement`, `review` and `merge`: use the feature.
+belongs to a feature or a batch is refused by `run`, `implement`, `review` and `merge`: use the
+feature or the batch.
 
 ## Where things live
 

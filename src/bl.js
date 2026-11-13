@@ -204,10 +204,11 @@ Commands:
                [args...]      Passthrough args to the agent
 
 refine, approve, run, implement, review, status, merge and done take story
-(S-34), feature (F-3) or component (C01) ids and act by the id's kind. A story that
-belongs to a feature goes through its feature. Given several ids, run and
-implement start the independent ones and list the targets that depend on or
-overlap another first; merge goes in dependency order.
+(S-34), feature (F-3) or component (C01) ids and act by the id's kind; run,
+implement, review, status and merge also take a story batch (B-2). A story that
+belongs to a feature or a batch goes through it. run and implement take one id
+(group stories with bl batch); review and merge take several, and merge goes in
+dependency order.
 
 Filters (list, tree, what-next): --theme <slug>, --epic <E-id>, --feature <F-id>
 and --component <C-id> combine, and every one given must match. A story is in

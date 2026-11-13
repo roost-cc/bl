@@ -18,9 +18,9 @@ bl implement F-3                    # a feature: one worktree/branch, stories in
 
 ## Arguments
 
-| Arg    | Description                                                                                                                                                                                                 |
-| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<id>` | One story (S34, S-34, s34) or feature (F-3) ID. A component is refused: make its stories a feature. A story that belongs to a feature is refused: use the feature. Several IDs are refused: use `bl batch`. |
+| Arg    | Description                                                                                                                                                                                                                         |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<id>` | One story (S34, S-34, s34) or feature (F-3) ID. A component is refused: make its stories a feature. A story that belongs to a feature or a batch is refused: use the feature or the batch. Several IDs are refused: use `bl batch`. |
 
 `flow.json`'s `implement` row names the statuses it starts from: a story `draft`, `refined`,
 `in_progress` or `escalated`; a feature `approved`, `in_progress` or `escalated`. A unit whose
