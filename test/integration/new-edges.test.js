@@ -12,7 +12,7 @@ import {
   gitNewBacklog,
   writeSpec,
 } from '../helpers/new-fixture.js';
-import { formatBlockers, parseBlockers } from '../../src/blockers.js';
+import { flowOrNull, formatBlockers, parseBlockers } from '../../src/blockers.js';
 
 // F-111 D5: a dependency is an edge in blockers.json, never a key. `bl new
 // --depends-on` / `--required-for` and a spec's `depends_on` / `required_for`
@@ -24,7 +24,9 @@ import { formatBlockers, parseBlockers } from '../../src/blockers.js';
 const edgesOf = (dir) => {
   const path = join(dir, 'blockers.json');
   if (!existsSync(path)) return null;
-  return parseBlockers(readFileSync(path, 'utf8')).map((e) => `${e.blocker} ${e.gate} ${e.unit} ${e.until}`);
+  return parseBlockers(readFileSync(path, 'utf8'), path, flowOrNull(dir)).map(
+    (e) => `${e.blocker} ${e.gate} ${e.unit} ${e.until}`,
+  );
 };
 
 /** A spec in `dir`/plan; its path. */

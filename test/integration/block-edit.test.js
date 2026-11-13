@@ -435,19 +435,27 @@ test('bl block reads a gate name from before F-119 as its status: add writes it,
   assert.equal(gone.stdout, 'unblocked: S-1 at done by S-2\n');
 });
 
+/**
+ * An admin's flow.json in `dir`: each type of `byType` gets a status of that
+ * name before `done`. Returns flow.json's text from before.
+ */
+function addStatuses(dir, byType) {
+  const flowFile = join(dir, 'flow.json');
+  const before = readFileSync(flowFile, 'utf8');
+  const custom = JSON.parse(before);
+  for (const [type, name] of Object.entries(byType)) {
+    const { statuses } = custom.types[type];
+    statuses.splice(statuses.indexOf('done'), 0, name);
+  }
+  writeFileSync(flowFile, JSON.stringify(custom, null, 2) + '\n');
+  return before;
+}
+
 test('custom_status_names_survive_hold_gate_read_and_write: a status named run or merge keeps its gate (F-119 R3)', () => {
   const { dir } = backlog();
   initGitBacklog(dir);
   // An admin's flow.json: the story type has a status run, the feature type one named merge.
-  const flowFile = join(dir, 'flow.json');
-  const custom = JSON.parse(readFileSync(flowFile, 'utf8'));
-  const addStatus = (type, name) => {
-    const { statuses } = custom.types[type];
-    statuses.splice(statuses.indexOf('done'), 0, name);
-  };
-  addStatus('story', 'run');
-  addStatus('feature', 'merge');
-  writeFileSync(flowFile, JSON.stringify(custom, null, 2) + '\n');
+  addStatuses(dir, { story: 'run', feature: 'merge' });
   const config = { backlogRoot: dir };
   const flow = loadFlow(dir);
   // In the file's order: by unit.
@@ -507,6 +515,117 @@ test('custom_status_names_survive_hold_gate_read_and_write: a status named run o
   const gone = bl(['block', 'remove', 'S-2', '--gate', 'merge', '--unit', 'F-1'], dir);
   assert.equal(gone.status, 0, gone.stderr);
   assert.equal(gone.stdout, 'unblocked: F-1 at merge by S-2\n');
+});
+
+test('old_gate_name_reads_per_unit_type_when_only_one_type_has_that_status (F-119 R3)', () => {
+  const { dir } = backlog();
+  initGitBacklog(dir);
+  // Only the story type has a status run, only the feature type one named merge.
+  addStatuses(dir, { story: 'run', feature: 'merge' });
+  const config = { backlogRoot: dir };
+  const old = (blocker, gate, unit) => ({ blocker, gate, unit, until: 'done' });
+  // Each input class: the unit's type has the name or not, for each old name; a wildcard keeps
+  // the name when any type has it.
+  const cases = [
+    [old('S-1', 'run', 'F-1'), 'in_progress'],
+    [old('S-1', 'run', 'S-2'), 'run'],
+    [old('S-2', 'merge', 'S-1'), 'done'],
+    [old('S-2', 'merge', 'F-2'), 'merge'],
+    [old('S-9', 'run', '*'), 'run'],
+    [old('S-9', 'merge', '*'), 'merge'],
+  ];
+  writeFileSync(join(dir, BLOCKERS_FILE), formatBlockers(cases.map(([e]) => e)));
+  // readBlockers keeps the file's order, which is the cases' sorted by unit, blocker and gate.
+  const read = readBlockers(dir).edges;
+  const raw = JSON.parse(readFileSync(join(dir, BLOCKERS_FILE), 'utf8')).edges;
+  for (const [e, gate] of cases) {
+    const i = raw.findIndex((r) => JSON.stringify(r) === JSON.stringify(e));
+    assert.equal(read[i].gate, gate, `${e.blocker} ${e.gate} ${e.unit}`);
+  }
+  const findings = JSON.parse(bl(['validate', '--json'], dir).stdout).findings;
+  assert.deepEqual(
+    findings.filter((f) => f.code === 'blockers-gate'),
+    [],
+    'no gate is read as a status its type lacks',
+  );
+
+  // The hold check and the gate_free guard read the name for the unit's own type.
+  assert.deepEqual(
+    heldAt(config, 'F-1', 'in_progress').map((h) => h.line),
+    ['F-1 is held at in_progress by S-1 (draft, needs done)'],
+  );
+  const free = GUARDS.get('gate_free');
+  for (const [id, gate] of [
+    ['F-1', 'run'],
+    ['S-2', 'run'],
+    ['S-1', 'merge'],
+    ['F-2', 'merge'],
+  ]) {
+    assert.equal(free({ config, id }, gate), false, `gate_free:${gate} on ${id}`);
+  }
+
+  // The writers read it the same way.
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'old gate names');
+  const add = bl(['block', 'add', 'S-2', '--gate', 'run', '--unit', 'F-2', '--until', 'done'], dir);
+  assert.equal(add.status, 0, add.stderr);
+  assert.equal(add.stdout, 'blocked: F-2 at in_progress by S-2 until done\n');
+  const gone = bl(['block', 'remove', 'S-1', '--gate', 'run', '--unit', 'F-1'], dir);
+  assert.equal(gone.status, 0, gone.stderr);
+  assert.equal(gone.stdout, 'unblocked: F-1 at in_progress by S-1\n');
+});
+
+test('custom_status_gates_survive_a_rewrite_while_flow_json_is_unreadable: every writer (F-119 R3)', () => {
+  const kept = [
+    { blocker: 'S-9', gate: 'run', unit: '*', until: 'done' },
+    { blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done' },
+  ];
+  const other = { blocker: 'S-1', gate: 'in_progress', unit: 'S-12', until: 'done' };
+  /** A backlog whose story type has a status run, those edges committed, then flow.json cut short. */
+  const setup = ({ unsorted = false } = {}) => {
+    const { dir } = backlog();
+    initGitBacklog(dir);
+    const good = addStatuses(dir, { story: 'run' });
+    const text = formatBlockers([...kept, other]);
+    // A hand-edited file: the same edges on one line.
+    writeFileSync(join(dir, BLOCKERS_FILE), unsorted ? JSON.stringify(JSON.parse(text)) + '\n' : text);
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'custom run status');
+    writeFileSync(join(dir, 'flow.json'), good.slice(0, good.length - 20));
+    return dir;
+  };
+  const keepsRun = (text, what) => {
+    const edges = JSON.parse(text).edges;
+    for (const e of kept)
+      assert.ok(
+        edges.some((x) => JSON.stringify(x) === JSON.stringify(e)),
+        `${what}: ${text}`,
+      );
+  };
+  for (const [name, args, opts] of [
+    ['bl block remove of another edge', ['block', 'remove', 'S-1', '--gate', 'in_progress', '--unit', 'S-12']],
+    ['bl block list --fix', ['block', 'list', '--fix'], { unsorted: true }],
+    ['bl block add', ['block', 'add', 'S-2', '--gate', 'in_progress', '--unit', 'S-13', '--until', 'done']],
+    ['bl attach', ['attach', 'S-2', 'F-2']],
+  ]) {
+    const dir = setup(opts);
+    bl(args, dir);
+    keepsRun(readFileSync(join(dir, BLOCKERS_FILE), 'utf8'), `${name}: the file`);
+    keepsRun(git(dir, 'show', `HEAD:${BLOCKERS_FILE}`), `${name}: the commit`);
+  }
+
+  // The merge driver, which git runs at the backlog root.
+  const dir = setup();
+  const scratch = mkTempDir('bl-blockers-driver-');
+  const paths = ['base', 'ours', 'theirs'].map((p) => join(scratch, p));
+  const text = formatBlockers([...kept, other]);
+  [text, text, formatBlockers([...kept, other, { ...other, unit: 'S-13' }])].forEach((t, i) =>
+    writeFileSync(paths[i], t),
+  );
+  const driver = fileURLToPath(new URL('../../src/blockers-merge.js', import.meta.url));
+  const merged = spawnSyncFiles(process.execPath, [driver, ...paths], { cwd: dir, encoding: 'utf8' });
+  assert.equal(merged.status, 0, merged.stderr);
+  keepsRun(readFileSync(paths[1], 'utf8'), 'the merge driver');
 });
 
 test('bl block add takes any status of the unit as its gate: in_refinement holds refine (F-119 D4)', () => {

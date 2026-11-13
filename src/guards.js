@@ -12,7 +12,7 @@
  * checks a verb's `when`, and `branchOf` a branch's (`transition.js`).
  */
 
-import { flowOrNull, gateStatus, heldAt } from './blockers.js';
+import { flowOrNull, gateStatus, heldAt, typeOfId } from './blockers.js';
 import { escalationOpen } from './feature.js';
 
 /**
@@ -26,7 +26,8 @@ export const GUARDS = new Map([
   // the status; an old gate name reads as its status (`run`: `in_progress`, F-119 R3).
   [
     'gate_free',
-    (ctx, gate) => heldAt(ctx.config, ctx.id, gateStatus(gate, flowOrNull(ctx.config.backlogRoot))).length === 0,
+    (ctx, gate) =>
+      heldAt(ctx.config, ctx.id, gateStatus(gate, flowOrNull(ctx.config.backlogRoot), typeOfId(ctx.id))).length === 0,
   ],
   // The unit's `## Escalation` section is `None.` or empty.
   ['escalation_cleared', (ctx) => !escalationOpen(ctx.indexPath)],

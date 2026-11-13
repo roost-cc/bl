@@ -15,8 +15,8 @@
  * An edge's identity is (`blocker`, `gate`, `unit`): no id, no duplicates.
  * A hold's gate is a status of its unit's type. The reader takes the gate
  * names from before F-119 as the statuses they stand for (`holdGate`:
- * `run` is `in_progress`, `merge` is `done`, unless `flow.json` has a status
- * of that name), so the next write stores statuses. `unit: "*"` holds every
+ * `run` is `in_progress`, `merge` is `done`, unless the unit's type in
+ * `flow.json` has a status of that name), so the next write stores statuses. `unit: "*"` holds every
  * unit of every type that has the status; `blocker` is never `*`. `active_when` keeps the edge from holding anything until
  * that unit's status meets that status. Statuses meet through `flow.json`
  * (`Flow.meets`). Met edges stay as history; nothing prunes them.
@@ -94,18 +94,35 @@ export const OLD_GATES = Object.freeze({ run: 'in_progress', merge: 'done' });
 export const RUN_EDGE = { gate: OLD_GATES.run, until: 'done' };
 
 /**
- * The status gate name `gate` stands for: an old name (`OLD_GATES`) mapped,
- * unless a type of `flow` has a status of that name (an admin may name one
- * `run` or `merge`); any other name unchanged. With no flow (`flowOrNull`
- * could not read it), an old name is mapped.
+ * The type of the unit an id names, by its prefix; null for `*` and any
+ * other id.
+ * @param {string} id
+ * @returns {string | null}
+ */
+export function typeOfId(id) {
+  if (/^F-/.test(id)) return 'feature';
+  if (/^S-/.test(id)) return 'story';
+  if (/^T-/.test(id)) return 'task';
+  if (/^B-/.test(id)) return 'batch';
+  return null;
+}
+
+/**
+ * The status gate name `gate` stands for, on a unit of `type`: an old name
+ * (`OLD_GATES`) mapped, unless `type` has a status of that name (an admin
+ * may name one `run` or `merge`); any other name unchanged. With no `type`
+ * (a wildcard edge, or an id of no type) the name is kept when any type has
+ * that status. With no flow (`flowOrNull` could not read it) every name is
+ * unchanged, so a writer puts back the gates it read.
  * @param {string} gate
- * @param {import("./flow.js").Flow | null} [flow]
+ * @param {import("./flow.js").Flow | null} flow
+ * @param {string | null} type
  * @returns {string}
  */
-export function gateStatus(gate, flow = null) {
-  if (!Object.hasOwn(OLD_GATES, gate)) return gate;
-  const own = flow != null && Object.keys(flow.types).some((t) => flow.statusesOf(t).includes(gate));
-  return own ? gate : OLD_GATES[gate];
+export function gateStatus(gate, flow, type) {
+  if (flow == null || !Object.hasOwn(OLD_GATES, gate)) return gate;
+  const types = type != null && Object.hasOwn(flow.types, type) ? [type] : Object.keys(flow.types);
+  return types.some((t) => flow.statusesOf(t).includes(gate)) ? gate : OLD_GATES[gate];
 }
 
 /**
@@ -139,7 +156,7 @@ function isRepoEdge(e) {
  * @returns {Edge}
  */
 export function holdGate(e, flow) {
-  return isRepoEdge(e) ? e : { ...e, gate: gateStatus(e.gate, flow) };
+  return isRepoEdge(e) ? e : { ...e, gate: gateStatus(e.gate, flow, typeOfId(e.unit)) };
 }
 
 /** The `unit` that holds every unit of every type with the gate (F-66 A3). */

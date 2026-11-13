@@ -133,7 +133,7 @@ test('the old gate names read as statuses: run is in_progress, merge done; merge
     `{"blocker":"S-a","gate":"order","unit":"S-d","until":"implemented"}`,
   ];
   const text = `{"schema":"bl-blockers/v2","edges":[\n${old.join(',\n')}\n]}\n`;
-  assert.deepEqual(parseBlockers(text), [
+  assert.deepEqual(parseBlockers(text, BLOCKERS_FILE, flow), [
     edge('S-y', 'in_progress', 'S-x'),
     edge('T-1', 'done', 'F-1'),
     edge('T-2', 'in_progress', '*', 'done', { unit: 'F-1', status: 'done' }),
@@ -143,6 +143,7 @@ test('the old gate names read as statuses: run is in_progress, merge done; merge
 
   // bl validate names the old names; the next write stores the statuses.
   const dir = mkTempDir('bl-blockers-');
+  writeFileSync(join(dir, 'flow.json'), readFileSync(FLOW_TEMPLATE));
   writeFileSync(join(dir, BLOCKERS_FILE), text);
   assert.equal(readBlockers(dir).renamed, true);
   assert.deepEqual(

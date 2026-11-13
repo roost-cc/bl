@@ -378,9 +378,10 @@ starts, the holds on each status its nominal path enters (bl refine, bl run,
 bl implement, bl merge, bl done, bl task done and the others; bl new and
 bl side make a new unit and check none). --unit * holds every unit whose
 type has the status. The gate names run and merge read as in_progress and
-done, unless a type in flow.json has a status of that name. --active-when and
---active-status keep the edge from holding anything until that unit meets
-that status; a merge or order edge takes neither.
+done, unless <unit>'s type (for --unit *, any type) in flow.json has a
+status of that name. --active-when and --active-status keep the edge from
+holding anything until that unit meets that status; a merge or order edge
+takes neither.
 
   bl block add S-1 --gate in_refinement --unit S-2 --until done
 

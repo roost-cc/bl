@@ -1070,9 +1070,14 @@ derives each unit's view.
   `flow.json`'s old `gates` table. The reader (`parseBlockers`, through `holdGate`) reads them as
   the statuses they stand for, `OLD_GATES`: `run` as `in_progress` (what `run` and `implement`
   enter), `merge` as `done` (what `merge` enters). A merge edge and an order edge keep their
-  gates, and so does a hold whose gate is a status that some type in `flow.json` has: an admin
-  may name a status `run` or `merge` (`gateStatus`, which reads the flow through `flowOrNull`;
-  with no readable flow it maps). So every reader sees statuses only, and the next write of the file stores them;
+  gates, and so does a hold whose gate is a status of its unit's type (`typeOfId`, by the id's
+  prefix): an admin may name a status `run` or `merge` (`gateStatus`, which reads the flow
+  through `flowOrNull`). A status of that name in another type does not count. A wildcard edge
+  (`unit: "*"`) has no single type, so it keeps the name when any type has that status, and
+  then holds the units of each type that has it. With no
+  readable `flow.json`, every gate stays as written, so a writer (`bl block remove`,
+  `bl block list --fix`, `bl attach`, the merge driver) puts back the gates it read, and
+  `bl block add` refuses (`loadFlow`). So every reader sees statuses only, and the next write of the file stores them;
   `bl block list --fix` rewrites it at once, and until then `bl validate` gives a
   `blockers-order` warning that names the old names. `bl block add` and `bl block remove` read
   `--gate run` and `--gate merge` the same way, and the `gate_free:<gate>` guard its argument

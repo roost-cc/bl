@@ -37,7 +37,7 @@ import { graphOf } from './backlog-graph.js';
 import { findFeature, normalizeFeatureId } from './feature.js';
 import { findBatch, normalizeBatchId } from './batch.js';
 import { withLock } from './lock.js';
-import { BLOCKERS_FILE, RUN_EDGE, UNHELD_VERBS, WILDCARD, gateStatus, holdRefusal } from './blockers.js';
+import { BLOCKERS_FILE, OLD_GATES, RUN_EDGE, UNHELD_VERBS, WILDCARD, holdRefusal, typeOfId } from './blockers.js';
 import { loadFlow, statusWordProblem } from './flow.js';
 import { applyNew, applyTransition, nowAt, storedLog } from './transition.js';
 
@@ -91,7 +91,7 @@ export function decisionGateProblem(title, gate) {
  * @returns {import("./blockers.js").Edge[]}
  */
 export function gateEdges(taskId, unitId, gate) {
-  if (gate === 'merge') return [{ blocker: taskId, gate: gateStatus('merge'), unit: unitId, until: 'done' }];
+  if (gate === 'merge') return [{ blocker: taskId, gate: OLD_GATES.merge, unit: unitId, until: 'done' }];
   if (gate === 'next') {
     return [{ blocker: taskId, ...RUN_EDGE, unit: WILDCARD, active_when: { unit: unitId, status: 'done' } }];
   }
@@ -347,14 +347,6 @@ export async function markTaskDone(config, rawId, note = '', { at = nowAt() } = 
 // ---------------------------------------------------------------------------
 // The derived `## Tasks` table (F-65 D1)
 // ---------------------------------------------------------------------------
-
-/** The type of the unit an id names, by its prefix. */
-function typeOfId(id) {
-  if (/^F-/.test(id)) return 'feature';
-  if (/^S-/.test(id)) return 'story';
-  if (/^T-/.test(id)) return 'task';
-  return null;
-}
 
 /**
  * What one edge of a task holds, in the words `bl inbox` and the `## Tasks`
