@@ -373,9 +373,10 @@ const HELP = `Usage: bl block add <blocker> --gate <gate> --unit <id|*> --until 
 Holds between units, kept in ${BLOCKERS_FILE} at the backlog root (one
 edge per line, sorted by unit, blocker and gate). A hold's <gate> is a
 status of <unit>'s type in flow.json: the edge keeps <unit> out of that
-status until <blocker>'s status meets <until>. bl run, bl implement and
-bl merge check, when they start, the holds on each status their nominal
-path enters. --unit * holds every unit whose type has the status. The gate
+status until <blocker>'s status meets <until>. Every verb checks, when it
+starts, the holds on each status its nominal path enters (bl refine, bl run,
+bl implement, bl merge, bl done, bl task done and the others; bl new and
+bl side make a new unit and check none). --unit * holds every unit whose type has the status. The gate
 names run and merge read as in_progress and done. --active-when and
 --active-status keep the edge from holding anything until that unit meets
 that status; a merge or order edge takes neither.

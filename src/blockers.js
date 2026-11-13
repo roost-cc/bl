@@ -46,8 +46,9 @@
  * graph. `findBlockersFindings` is `bl validate`'s D5 checks;
  * `holdGraph` and `wouldCycle` are the deadlock graph `bl block add` and
  * `blockers-cycle` share. `heldBy` is the hold check a verb makes on the
- * statuses of its nominal path (`Flow.nominalPath`, F-119 D6): today
- * `bl run`, `bl implement` and `bl merge` make it. `heldLines` is what
+ * statuses of its nominal path (`Flow.nominalPath`, F-119 D6): every verb
+ * makes it when it starts (`holdRefusal`, through `startOf`, `bl done` and
+ * `bl task done`), except `bl new` and `bl side` (`UNHELD_VERBS`). `heldLines` is what
  * `bl status` prints.
  */
 

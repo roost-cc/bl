@@ -49,6 +49,8 @@ Per-command stdout contracts:
 | `bl tree`            | the rendered tree                                         |
 | `bl history`         | the week table (`--json`: one object)                     |
 | `bl report`          | one line: the path of `index.md` (`--json`: one object)   |
+| `bl flow`            | one transition table per type (markdown)                  |
+| `bl force`           | nothing (skip list, question, progress → stderr)          |
 | `bl grep`            | match table                                               |
 | `bl what-next`       | one line: the suggested story ID (empty if no suggestion) |
 | `bl next`            | one line: the next unit ID, F-n or S-n (empty if none)    |
@@ -138,8 +140,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
                                   each, all by hand (F-53 D2)
   coding-dictionary.yaml        ← the coding dictionary: bl init's copy of
                                   bl's seed, curated by the project (F-82)
-  flow.json                     ← per type the statuses, the verbs between
-                                  them and the gates (F-66 D1, F-69 D1)
+  flow.json                     ← per type the statuses and the verbs between
+                                  them (F-66 D1, F-69 D1); no gates (F-119 D4)
   blockers.json                 ← every hold between units, one edge per line,
                                   sorted, written only by bl block (F-66 D2)
   tasks/
@@ -993,8 +995,8 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   `added` starts at the commit that added its file; no entry is before the one above it. It
   converts one unit at a time through `updateSpecFile` (`setLog` puts the log in `status:`'s
   place), then removes `review_round` and `review_status` from the unit's change documents
-  through `updateChangeHeld` in each document's spec lock, writes `flow.json` v2 (`migratedFlowText`: the template with the
-  backlog's gates), and commits the changed paths once (`commitPaths`) with the counts. It does
+  through `updateChangeHeld` in each document's spec lock, writes `flow.json` v2 (`migratedFlowText`: bl's template, which
+  has no gates since F-119), and commits the changed paths once (`commitPaths`) with the counts. It does
   not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
   (`liveSessionLocks`, by the worktree's branch) is held by another process (`otherHolder`; the
   PID in a lock file decides nothing, so a parent `bl` run's lock counts too) is skipped and listed, with the stories of such a feature, and so is a unit
@@ -2258,8 +2260,8 @@ added: 2026-11-13
   `bl validate` reports a story that names both (`feature-and-batch`, error)
   and one that names a batch that does not exist (`dangling-batch`, error).
 - **Status.** `flow.json`'s `batch` type: `new` records `approved`, then the
-  feature's `run`, `implement`, `review`, `fix`, `merge` and `supersede` rows
-  and gates. It has no `refine` or `approve`. bl reads a `flow.json` without
+  feature's `run`, `implement`, `review`, `fix`, `merge` and `supersede` rows.
+  It has no `refine` or `approve`. bl reads a `flow.json` without
   the type (`FLOW_TYPES` does not require it); a batch in such a backlog
   loads, and only its `done` throws the `FlowError` that names the type.
 - **The work unit of a story.** Every edge check asks `storyUnitOf(units,
