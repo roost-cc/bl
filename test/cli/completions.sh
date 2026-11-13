@@ -121,7 +121,16 @@ for file in "$COMPLETIONS/_bl" "$COMPLETIONS/backlog.zsh"; do
   if grep -q "'rank:" "$file"; then pass; else fail "$(basename "$file") lists the rank verb"; fi
   if grep -q "'top:" "$file"; then pass; else fail "$(basename "$file") lists the top verb"; fi
   if grep -q "'watch:" "$file"; then pass; else fail "$(basename "$file") lists the watch verb"; fi
+  if grep -q "'force:" "$file"; then pass; else fail "$(basename "$file") lists the force verb"; fi
 done
+force_word=$(bash -c '
+  source "$1"
+  COMP_WORDS=(bl forc); COMP_CWORD=1
+  _roost_bl 2>/dev/null || true
+  printf "%s\n" "${COMPREPLY[*]:-}"
+' _ "$COMPLETIONS/backlog.bash")
+assert_eq "bl forc<TAB> completes to force" "force" "$force_word"
+assert_eq "bl force completes story and feature ids" "S-1 F-1" "$(complete_bash force "")"
 assert_eq "bl top completes its flags" "--json --stream --interval --version --no-bell --no-desktop --no-push --help" "$(complete_bash top "")"
 assert_eq "bl watch completes feature and story ids" "F-1 S-1" "$(complete_bash watch "")"
 assert_eq "bl watch completes its flags" "--from-start --json --help" "$(complete_bash watch "-")"

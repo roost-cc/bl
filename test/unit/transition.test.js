@@ -10,6 +10,8 @@ import { fileURLToPath } from 'url';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import { FlowError, loadFlow } from '../../src/flow.js';
 import {
+  COMPLETED_KEY,
+  FORCE,
   NoEdgeError,
   applyMerged,
   applyNew,
@@ -777,4 +779,70 @@ test('a log written before refine had a during stays valid, and the writer refus
   const fm = { story_id: 'S-1', added: '2026-11-01', transitions: [entry(T0, 'draft', 'new')] };
   assert.throws(() => applyTransition(flow, 'story', fm, 'refined', { by: 'refine', at: AT }), NoEdgeError);
   assert.equal(fm.transitions.length, 1);
+});
+
+test('by: force goes between any two different statuses of the type, terminal ones included (F-119 D2)', () => {
+  for (const kind of ['story', 'feature', 'task']) {
+    const { statuses, terminal } = flow.typeOf(kind);
+    // A valid log that ends at `from`: the initial status, then a force there.
+    const ending = (from) => ({
+      added: '2026-11-01',
+      transitions: [entry(T0, statuses[0], 'new'), ...(from === statuses[0] ? [] : [entry(T0, from, FORCE)])],
+      ...(terminal.includes(from) ? { [COMPLETED_KEY[kind]]: '2026-11-01' } : {}),
+    });
+    for (const from of statuses) {
+      for (const to of statuses) {
+        const fm = ending(from);
+        const move = () => applyTransition(flow, kind, fm, to, { by: FORCE, at: AT });
+        if (from === to) {
+          assert.throws(move, NoEdgeError, `${kind} ${from} → ${to}`);
+          continue;
+        }
+        assert.deepEqual(move(), { at: AT, to, by: FORCE }, `${kind} ${from} → ${to}`);
+        assert.deepEqual(findings(kind, fm), [], `${kind} ${from} → ${to}: ${JSON.stringify(fm)}`);
+      }
+    }
+  }
+  // A status the type lacks is no edge, forced or not.
+  assert.throws(
+    () => applyTransition(flow, 'task', at('task', 'draft'), 'refined', { by: FORCE, at: AT }),
+    NoEdgeError,
+  );
+});
+
+test('a force out of a terminal status removes completed:; bl validate reports completed: on an open log', () => {
+  const fm = {
+    story_id: 'S-1',
+    added: '2026-11-01',
+    completed: '2026-11-02',
+    transitions: [entry(T0, 'draft', 'new'), entry('2026-11-02T00:00:00Z', 'done', 'done')],
+  };
+  applyTransition(flow, 'story', fm, 'in_progress', { by: FORCE, at: AT });
+  assert.equal(Object.hasOwn(fm, 'completed'), false);
+  assert.deepEqual(findings('story', fm), []);
+  // A task's completed field is done:.
+  const task = { ...at('task', 'done'), done: '2026-11-01' };
+  applyTransition(flow, 'task', task, 'draft', { by: FORCE, at: AT });
+  assert.equal(Object.hasOwn(task, 'done'), false);
+  // Closing it again sets the date of the new terminal entry.
+  applyTransition(flow, 'story', fm, 'done', { by: FORCE, at: '2026-11-10T00:00:00Z' });
+  assert.equal(fm.completed, '2026-11-10');
+  assert.deepEqual(findings('story', fm), []);
+  // completed: left on a log that ends at an open status is an error.
+  const left = { ...fm, transitions: [...fm.transitions, entry('2026-11-11T00:00:00Z', 'in_progress', FORCE)] };
+  assert.deepEqual(findings('story', left), [
+    [
+      'error',
+      'transition-log',
+      'completed: 2026-11-10 is set, and the log ends at in_progress, an open status; remove completed:',
+    ],
+  ]);
+});
+
+test('bl validate still accepts the old by: operator entries on any verb’s edge, beside by: force', () => {
+  const fm = {
+    added: '2026-11-01',
+    transitions: [entry(T0, 'draft', 'new'), entry(AT, 'refined', 'operator'), entry(AT, 'escalated', FORCE)],
+  };
+  assert.deepEqual(findings('story', fm), []);
 });

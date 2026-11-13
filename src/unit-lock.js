@@ -10,6 +10,7 @@
  * lock guards one write and waits, and this one is held for a whole session.
  * Short commands (`bl new`, `bl sync --commit`, `bl approve` and the rest)
  * neither take nor check it, because a session's agent runs them as children.
+ * `bl force` takes it (F-119 R5): only the operator runs it, in a terminal.
  */
 
 import { dirname, relative } from 'path';

@@ -950,9 +950,16 @@ no gates of its own. It is plain JSON, read by `src/flow.js`:
 
 A story's, feature's and task's frontmatter holds `transitions:`, an append-only list of entries
 `{ at, to, by, via?, outcome?, note? }`: `at` is ISO 8601 UTC, `to` a status of the type, `by`
-the verb (`operator` for a hand edit), `via` the last capability that ran, `outcome` one line
-from its outcome, `note` free text (`migrated` on a synthesized entry). An entry's `from` is the
-previous entry's `to`.
+the verb (`force` for a forced move, `operator` for a hand edit before `bl force`), `via` the
+last capability that ran, `outcome` one line from its outcome, `note` free text (`migrated` on a
+synthesized entry). An entry's `from` is the previous entry's `to`.
+
+- **Forced moves (F-119 D2).** `bl force <id> <status>` (see `### bl force`) writes an entry
+  `by: force` (`FORCE`). `force` is bl's own verb, and `flow.json` does not list it: it goes
+  between any two different statuses of the type, terminal ones included (`hasEdge`). An
+  entry out of a terminal status (reopening `done`) removes `completed:` (a task's `done:`),
+  and `bl validate` reports a `completed:` on a log that ends at an open status. The old hand
+  entries `by: operator` stay valid on any verb's edge; a new hand move is a `bl force`.
 
 - **Derived.** The status is the last entry's `to`, and the round is the number of entries into
   `in_review`, less the returns below. Neither is stored, and the change document holds no
@@ -2558,8 +2565,8 @@ Log` session has unchecked Must or Should items whatever the status (an
   `fixing`, `in_review` or an unchecked Must or Should box blocks,
   `ready_for_merge` and an open nit do not, and a unit with no session is
   refused unless `--no-review` (see `### bl merge`). `--force` is
-  intentionally absent; to bypass, record the status by hand as a log entry
-  `by: operator`.
+  intentionally absent; to bypass, the operator runs `bl force <id> done`
+  (see `### bl force`).
 - `bl implement` (story or feature) ends with
   `Next: bl review <id>, then bl merge <id>.` when its session exits 0.
 - `bl merge` runs one more round when its resolution agent resolved a
@@ -4362,6 +4369,30 @@ bl done S34 abc1234           # explicit commit hash
 bl done --superseded S34      # mark as superseded
 ```
 
+### `bl force`
+
+Moves a story, a feature or a story batch to any status of its type, past every transition
+rule, hold and guard (F-119 D2, `src/force.js`). It is the operator's way out of a stuck
+state, and the one way to force a move: `bl approve --force` names it (A2).
+
+```bash
+bl force S-12 done            # close a story no verb can close
+bl force S-12 in_progress     # reopen a done story
+bl force F-3 refined          # a feature past its refinement session, then bl approve F-3
+```
+
+1. It refuses under `BL_HEADLESS` or when stdin is not a terminal, before it prompts, so a
+   headless agent cannot force. It refuses a status the unit is at already and a status its
+   type lacks.
+2. It takes the unit's work unit lock (`takeUnitLocks`), so it refuses while a live session
+   holds the unit and names that process. A lock whose process has exited is free.
+3. It prints what the move skips (`skipsOf`): that `flow.json` has no transition from the
+   unit's status to the new one, each hold in `blockers.json` on the new status (`heldAt`),
+   and each failing `when` guard of the verbs that have the transition (`failingGuards`).
+4. It reads one line. Only the exact line `force <id> to <status>` writes the entry
+   `by: force` (`transition`) and commits the unit file as `chore: force <id> to <status>`.
+   Any other input, an empty line or the end of input changes nothing and exits 1.
+
 ### `bl sync`
 
 Brings the backlog up to date with `origin`: it pulls, and pushes what is ahead. With
@@ -4442,6 +4473,8 @@ never waits, so it cannot wait in a cycle with them. Short commands (`bl new`, `
 `bl block`, `bl done`, `bl approve`, `bl task`) neither take nor check it, because a session's
 agent runs them as children, and a check would find the parent's lock. Every `bl refine`
 takes it (`refineAndCommit`, F-122 D4) and holds it in place of a session lock of the backlog root.
+`bl force` takes it too (F-119 R5), though it is a short command: it runs only in the operator's
+terminal, never as a session's child, and it must not move a unit that a live session works on.
 `bl merge F-n` (`cmdMerge`) takes the work unit locks of the feature and its stories after its
 merge gates and before `integrateForMerge`, so a held lock refuses the merge before any repo is
 touched, and holds them to the end of the merge. `bl merge S-n` takes the merged story's work unit
@@ -4626,13 +4659,15 @@ outside `at`, `to`, `by`, `via`, `outcome` and `note`, no `by`, an `at` that is 
 UTC or is before the entry above it, or a `to` that is not a status of the type. It is also a
 first entry that is not the type's initial status by `new`, and an entry after it whose pair
 with the entry above it is no edge of the table under its `by` (`by: operator` matches any
-verb), unless the entry has `note: migrated`. A pair that skips a verb's `during` counts as
+verb, and `by: force` any two different statuses of the type), unless the entry has
+`note: migrated`. A pair that skips a verb's `during` counts as
 that verb's edge (F-119 R2): from a status in the verb's `from` straight to one of its
 branches' `to`, by that verb or by `operator`. Logs written before `refine` had its `during`
 hold such pairs (`draft → refined` by `refine`); the writer (`applyTransition`) refuses them.
 And it is an `added` that is not the first entry's date, or a `completed` (a task's `done`)
 that is not the date of the entry to a terminal status; for a story or a feature, also a missing `added`, or a missing `completed` on
-a log that ends terminal (a task's are `task-field`'s). The migration sets both from the log
+a log that ends terminal (a task's are `task-field`'s), or a `completed` on a log that ends at
+an open status (`bl force` removes it when it reopens a unit). The migration sets both from the log
 for a unit that has neither. `legacy-status` (warning) is a
 `status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
 a log, which bl does not read. A closed unit, one whose status (`statusOf`) is in its type's
@@ -4875,7 +4910,7 @@ merges once <blocker> meets "<until>" (bl status <blocker>).` No flag
   refusal names the status, the round and the next verb: `bl implement` for
   `fixing`, `bl review` for `in_review`. `ready_for_merge` and open nits pass,
   so a unit `bl run` ended `clean` always passes. No flag bypasses it; to
-  override, record the status by hand as a log entry `by: operator`. After the merge,
+  override, the operator runs `bl force <id> ready_for_merge` (see `### bl force`). After the merge,
   each repo's commit goes to its `merged:` entry and a `## Merge` line, and
   the change is `merged`; a story merged alone gets no tag and no release
   manifest.

@@ -115,6 +115,7 @@ _roost_bl() {
     'rank:Change priority.yaml, the one ranked list of units (operator only)'
     'what-next:Suggest the next story to start by walking the dep graph'
     'done:Mark a story as done'
+    'force:Move a unit to any status, past every rule (operator only)'
     'inbox:Everything waiting on you: escalations, tasks, changes, red updates'
     'block:Holds between units in blockers.json: add, remove, list'
     'task:An action for the operator in tasks/: file one, done, list'
@@ -244,6 +245,13 @@ _roost_bl() {
         '--open[list: only open tasks]' \
         '1:unit or subcommand:(done list ${ids})' \
         '2:task or unit id:'
+      ;;
+    force)
+      local -a ids
+      ids=( ${(f)"$(_roost_story_ids)"} ${(f)"$(_roost_feature_ids)"} )
+      _arguments -s \
+        '1:story or feature id:(${ids})' \
+        '2:status:'
       ;;
     done)
       local -a ids

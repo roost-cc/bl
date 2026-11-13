@@ -163,6 +163,10 @@ Commands:
                list [<id>] [--fix]  Edges on and by a unit, met and unmet
   done       Mark a story as done (a feature is done by merge)
                --superseded   Mark as superseded instead
+  force      Move a story, feature or batch to any status (<id> <status>),
+               past every transition rule, hold and guard: lists what the
+               move skips, then asks for "force <id> to <status>" (operator
+               only, in a terminal); commits
   sync       Pull and push the backlog; --commit commits the named paths
   format     Run the configured format plugin per file extension
                --story <id>   Required (or --no-story with explicit paths)
@@ -314,6 +318,11 @@ async function run() {
     case 'done': {
       const { dispatch } = await import('./verbs.js');
       return dispatch(command, subArgv);
+    }
+    case 'force': {
+      const { main } = await import('./force.js');
+      process.exitCode = await main(subArgv);
+      return;
     }
     case 'refine': {
       const detach = subArgv.includes('-t');
