@@ -4379,6 +4379,12 @@ async function resolveIntegration(ctx, repos, { conflicts, gate }) {
           schema: loadSchema('merge-resolve'),
         });
     const problems = checked.flatMap((e) => resolutionProblems(ctx, e));
+    // The agent may change plan.yaml (`_execution-inputs.md`); `bl merge` commits it.
+    try {
+      readPlan(dirname(unit.indexPath), unit.id);
+    } catch (e) {
+      problems.push(e.message);
+    }
     if (escalationOpen(unit.indexPath)) problems.unshift('the agent wrote an escalation');
     else if (!r.ok || r.isError) problems.unshift(`the session failed: ${sessionError(r)}`);
     else if (r.structured?.resolved === false)

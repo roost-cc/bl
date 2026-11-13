@@ -1845,14 +1845,17 @@ export async function cmdMerge(args, config, feature) {
   info(`Repos   : ${plan.order.join(', ')}${behind}`);
   info(`Stories : ${stories.map((s) => s.id).join(', ') || '(none)'}`);
 
+  // Snapshot the backlog before merge touches it, so the final commit takes
+  // only what merge and sync changed — never the operator's own uncommitted
+  // edits (a story in progress, a regenerated allowed-tools.json). The
+  // integration is part of merge: a `plan.yaml` its resolution agent changed
+  // goes in the final commit (F-125 D2).
+  const backlogBefore = dirtySnapshot(config.backlogRoot);
+
   // Every branch is brought up to date with main in its worktree, gated and
   // pushed before any main checkout is touched (F-36 D4).
   if (!(await integrateForMerge(config, unit, names))) process.exit(1);
 
-  // Snapshot the backlog before merge touches it, so the final commit takes
-  // only what merge and sync changed — never the operator's own uncommitted
-  // edits (a story in progress, a regenerated allowed-tools.json).
-  const backlogBefore = dirtySnapshot(config.backlogRoot);
   await recordFeatureTokens(feature, config);
 
   const parsed = parsedFor(feature);
