@@ -34,8 +34,16 @@ function jsonBlocks(promptName) {
   return [...text.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]));
 }
 
-test('every schema has a prompt that shows its object', () => {
-  const names = readdirSync(join(ROOT, 'schemas')).map((f) => f.replace(/\.json$/, ''));
+/**
+ * The schemas of files bl writes and reads itself, not of a session outcome:
+ * no prompt shows their object. `plan` is `plan.yaml`'s (F-125 D2).
+ */
+const STORED = ['plan'];
+
+test('every outcome schema has a prompt that shows its object', () => {
+  const names = readdirSync(join(ROOT, 'schemas'))
+    .map((f) => f.replace(/\.json$/, ''))
+    .filter((n) => !STORED.includes(n));
   assert.deepEqual(names.sort(), Object.keys(EXAMPLES).sort());
 });
 

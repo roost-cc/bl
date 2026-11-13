@@ -73,6 +73,10 @@ assert_contains "approve F-3 → feature approve" 'F-3 is draft; approve starts 
 blrun run F-1 --plan
 assert_exit "run F-1 --plan" 0 "$RC"
 assert_contains "run F-1 → feature run" "1. setup" "$OUT"
+# The execution plan comes first (F-125 D2), and --plan writes no plan.yaml.
+assert_contains "run F-1 --plan prints the work order" "Work order  : S-2" "$OUT"
+assert_contains "run F-1 --plan prints the merge order" "Merge order : " "$OUT"
+if [[ -e "$DIR/features/F1-feat/plan.yaml" ]]; then fail "run F-1 --plan writes no plan.yaml"; else pass; fi
 
 blrun implement F-2
 assert_exit "implement F-2" 1 "$RC"
@@ -148,6 +152,8 @@ blrun run S-1 --plan
 assert_exit "run S-1 --plan" 0 "$RC"
 assert_contains "run S-1 → the loop's plan for the story" "S-1 · loose — run plan" "$OUT"
 assert_contains "run S-1 plan implements the story" " 2. implement S-1" "$OUT"
+assert_contains "run S-1 --plan prints the story's dependencies" "  S-1 waits for (none)" "$OUT"
+if [[ -e "$DIR/stories/S1-loose/plan.yaml" ]]; then fail "run S-1 --plan writes no plan.yaml"; else pass; fi
 
 blrun run S-3
 assert_exit "run S-3" 1 "$RC"

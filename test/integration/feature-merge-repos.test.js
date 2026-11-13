@@ -11,6 +11,7 @@ import { loadConfig } from '../../src/config.js';
 import { HOME, REPOS, fm, initFeatureRepo } from '../helpers/feature-fixture.js';
 import { statusOf as logStatusOf } from '../../src/transition.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
+import { stringify as stringifyYaml } from 'yaml';
 
 /** Land an unrelated commit on origin's main and leave the clone behind it. */
 function advanceOriginMain(g, repo) {
@@ -268,6 +269,76 @@ test('bl merge F-n refuses a cycle of merge edges before it touches any repo, na
     assert.doesNotMatch(r.stderr, /^Repos /m);
     for (const n of ['bl', 'ci-cd']) assert.equal(g(built[n].repo, 'rev-parse', 'main'), before[n], `${n} not merged`);
     assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'in_progress');
+  } finally {
+    cleanup();
+  }
+});
+
+/** F-1's stored plan (F-125 D2) over stories S-1..S-<n> in `repos`, with `merge_order`, committed. */
+function storePlan(dir, g, repos, mergeOrder) {
+  const stories = repos.map((_, i) => `S-${i + 1}`);
+  const plan = {
+    schema: 'bl-plan/v1',
+    unit: 'F-1',
+    computed_at: '2026-11-12T18:00:00Z',
+    stories,
+    dependencies: Object.fromEntries(stories.map((s) => [s, []])),
+    order: stories,
+    groups: [stories],
+    repos,
+    merge_order: mergeOrder,
+    changes: [],
+  };
+  writeFileSync(join(dir, 'features', 'F1-feat', 'plan.yaml'), stringifyYaml(plan));
+  g(dir, 'add', '.');
+  g(dir, 'commit', '-q', '-m', 'plan');
+}
+
+test("bl merge F-n merges in plan.yaml's merge_order when the plan has one, over the merge edges", async () => {
+  const { dir, cleanup, env, g } = await mergeFixture(['bl', 'ci-cd', 'app'], { edges: [mergeEdge('ci-cd', 'bl')] });
+  try {
+    storePlan(dir, g, ['bl', 'ci-cd', 'app'], ['app', 'ci-cd', 'bl']);
+    const r = runBl(['merge', 'F-1'], { cwd: dir, env });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^Repos {3}: app, ci-cd, bl \(plan\.yaml\)$/m);
+    const at = (s) => {
+      const i = r.stderr.indexOf(s);
+      assert.notEqual(i, -1, `missing ${s}`);
+      return i;
+    };
+    assert.ok(at('=== app ===') < at('=== ci-cd ===') && at('=== ci-cd ===') < at('=== bl ==='), 'app, ci-cd, bl');
+    assert.equal(logStatusOf('feature', fm(join(dir, 'features', 'F1-feat', 'index.md'))), 'done');
+  } finally {
+    cleanup();
+  }
+});
+
+test("bl merge F-n refuses a plan.yaml whose merge_order does not name the feature's repos, and merges nothing", async () => {
+  const { dir, cleanup, env, g, built } = await mergeFixture(['bl', 'ci-cd']);
+  try {
+    storePlan(dir, g, ['bl', 'ci-cd'], ['bl']);
+    const before = Object.fromEntries(['bl', 'ci-cd'].map((n) => [n, g(built[n].repo, 'rev-parse', 'main')]));
+    const r = runBl(['merge', 'F-1'], { cwd: dir, env });
+    assert.equal(r.status, 1);
+    assert.match(
+      r.stderr,
+      /F-1: merge_order in features\/F1-feat\/plan\.yaml \(bl\) does not name the feature's repos \(bl, ci-cd\)/,
+    );
+    for (const n of ['bl', 'ci-cd']) assert.equal(g(built[n].repo, 'rev-parse', 'main'), before[n], `${n} not merged`);
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl merge F-n refuses a plan.yaml that does not match its schema, naming the file and the field', async () => {
+  const { dir, cleanup, env, g } = await mergeFixture(['bl']);
+  try {
+    writeFileSync(join(dir, 'features', 'F1-feat', 'plan.yaml'), 'schema: bl-plan/v1\n');
+    g(dir, 'add', '.');
+    g(dir, 'commit', '-q', '-m', 'plan');
+    const r = runBl(['merge', 'F-1'], { cwd: dir, env });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /F-1: .*features\/F1-feat\/plan\.yaml: schema violation at \$\/unit: /);
   } finally {
     cleanup();
   }

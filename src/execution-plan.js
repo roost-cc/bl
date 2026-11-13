@@ -18,15 +18,26 @@
  * The module also holds the orderings bl used before the plan existed:
  * `dependencyOrder` (targets of a multi-story `bl merge`) and the plan-file
  * reader `planFiles`. No other module defines a story or repo ordering.
+ *
+ * `bl run` stores the plan as `plan.yaml` in the work unit's directory
+ * (`writePlan`, checked against `schemas/plan.json`), and the run, `--resume`
+ * and `bl merge` read it back (`readPlan`). During the run the stored plan,
+ * not a new sort, decides the order.
  */
 
 import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { toString } from 'mdast-util-to-string';
 import { parseFrontmatter } from './config.js';
 import { featureGraph, featureMergeEdges, findHoldCycles, readEdges, repoEnd, storyDependencies } from './blockers.js';
 import { extractSection, normalizeFeatureId, resolveFeatureStories } from './feature.js';
 import { idNum } from './workon.js';
+import { atomicWriteFile } from './atomic-write.js';
+import { withCoveringLock } from './write-lock.js';
+import { validateOutcome } from './outcome.js';
+import { loadSchema } from './session.js';
 
 // ---------------------------------------------------------------------------
 // Story order
@@ -318,17 +329,29 @@ function parallelGroups(order, dependencies, files) {
  * (`featureMergeEdges` of the feature the stories name). A merge-edge
  * cycle gives `merge_order: null` and the cycle's edges in `merge_cycle`.
  *
+ * `taken` are the ids of stories a run has already taken (`replan`): they
+ * keep that order at the front, and the other stories follow in dependency
+ * order.
+ *
  * @param {Array<{ id: string, unitRepo?: string, indexPath: string, feature?: string }>} stories
  *   `readAllStories` records
  * @param {import("./blockers.js").Edge[]} edges  `readEdges`'s, or the graph's `edges`
+ * @param {{ taken?: string[] }} [options]
  * @returns {{ stories: string[], dependencies: Record<string, string[]>, order: string[],
  *   groups: string[][], repos: string[], merge_order: string[] | null,
  *   merge_cycle: import("./blockers.js").Edge[] | null }}
  */
-export function computePlan(stories, edges) {
+export function computePlan(stories, edges, { taken = [] } = {}) {
   const ids = stories.map((s) => s.id);
   const dependencies = listedDependencies(ids, edges);
-  const ordered = orderStoriesByDeps(stories, edges);
+  const first = taken.map((id) => stories.find((s) => s.id === id)).filter(Boolean);
+  const ordered = [
+    ...first,
+    ...orderStoriesByDeps(
+      stories.filter((s) => !first.includes(s)),
+      edges,
+    ),
+  ];
   const order = ordered.map((s) => s.id);
   const repos = featureRepoOrder(ordered);
   const files = new Map(stories.map((s) => [s.id, planFiles([s], repos[0] ?? '')]));
@@ -346,4 +369,98 @@ export function computePlan(stories, edges) {
     merge_order: merge.order,
     merge_cycle: merge.cycle,
   };
+}
+
+// ---------------------------------------------------------------------------
+// The stored plan: plan.yaml
+// ---------------------------------------------------------------------------
+
+/** The format and version `plan.yaml` names in its `schema:` field. */
+export const PLAN_SCHEMA = 'bl-plan/v1';
+
+/** The plan file's name in a work unit's directory, beside its change document. */
+export const PLAN_FILE = 'plan.yaml';
+
+/** The plan file of the work unit whose directory is `unitDir`. */
+export function planPath(unitDir) {
+  return join(unitDir, PLAN_FILE);
+}
+
+/**
+ * The plan of `stories` for the unit `unitId` as `plan.yaml` stores it:
+ * `computePlan`'s fields and no changes. `merge_cycle` is not stored: on a
+ * cycle `merge_order` is null, and `bl merge` computes the merge order again
+ * and names the cycle's edges.
+ * @param {string} unitId
+ * @param {Parameters<typeof computePlan>[0]} stories
+ * @param {import("./blockers.js").Edge[]} edges
+ * @param {string} [at]  ISO 8601
+ */
+export function newPlan(unitId, stories, edges, at = new Date().toISOString()) {
+  const { merge_cycle: _cycle, ...plan } = computePlan(stories, edges);
+  return { schema: PLAN_SCHEMA, unit: unitId, computed_at: at, ...plan, changes: [] };
+}
+
+/**
+ * `plan` for the stories `stories`, when they are not the plan's stories:
+ * computed again with the `taken` stories first in their order (a story
+ * added during a run goes after the stories the run has taken), and one
+ * `changes` entry by `bl` that names the stories added and removed and
+ * says `why`. With the same stories it returns `plan` unchanged.
+ * @param {object} plan  a stored plan (`readPlan`, `newPlan`)
+ * @param {Parameters<typeof computePlan>[0]} stories
+ * @param {import("./blockers.js").Edge[]} edges
+ * @param {{ taken?: string[], why: string, at?: string }} change
+ */
+export function replan(plan, stories, edges, { taken = [], why, at = new Date().toISOString() }) {
+  const ids = stories.map((s) => s.id);
+  const added = ids.filter((id) => !plan.stories.includes(id));
+  const removed = plan.stories.filter((id) => !ids.includes(id));
+  if (added.length === 0 && removed.length === 0) return plan;
+  const { merge_cycle: _cycle, ...next } = computePlan(stories, edges, { taken });
+  const what = [added.length > 0 && `added ${added.join(', ')}`, removed.length > 0 && `removed ${removed.join(', ')}`]
+    .filter(Boolean)
+    .join('; ');
+  return { ...plan, ...next, changes: [...plan.changes, { at, by: 'bl', what, why }] };
+}
+
+/** `plan` when it matches `schemas/plan.json`; else an error that names `path` and the field. */
+function checkedPlan(path, plan) {
+  if (plan == null) throw new Error(`${path}: the file holds no plan`);
+  const { structuredError } = validateOutcome(loadSchema('plan'), plan);
+  if (structuredError) throw new Error(`${path}: ${structuredError}`);
+  return plan;
+}
+
+/**
+ * The plan stored in `unitDir`, or null when it has none. Throws, naming
+ * the file and the field, when the file is not YAML or does not match
+ * `schemas/plan.json`.
+ * @param {string} unitDir
+ */
+export function readPlan(unitDir) {
+  const path = planPath(unitDir);
+  if (!existsSync(path)) return null;
+  let plan;
+  try {
+    plan = parseYaml(readFileSync(path, 'utf8'));
+  } catch (e) {
+    throw new Error(`${path}: not YAML: ${e.message}`, { cause: e });
+  }
+  return checkedPlan(path, plan);
+}
+
+/**
+ * Write `plan` to `unitDir`'s `plan.yaml` through `atomicWriteFile`, under
+ * its covering lock. Throws, naming the file and the field, when `plan`
+ * does not match `schemas/plan.json`, and writes nothing. Returns the path.
+ * @param {string} backlogRoot
+ * @param {string} unitDir
+ * @param {object} plan
+ */
+export async function writePlan(backlogRoot, unitDir, plan) {
+  const path = planPath(unitDir);
+  const text = stringifyYaml(checkedPlan(path, plan));
+  await withCoveringLock(backlogRoot, path, (target) => atomicWriteFile(backlogRoot, target, text));
+  return path;
 }

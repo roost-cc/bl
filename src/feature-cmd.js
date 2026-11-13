@@ -60,8 +60,16 @@ import {
   resolveFeaturePlugins,
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
-import { featureRepoOrder, mergeOrder, LEAD_REPO } from './execution-plan.js';
-import { edgeArrow, featureMergeEdges, heldBy, heldLines, readBlockers } from './blockers.js';
+import {
+  computePlan,
+  featureRepoOrder,
+  mergeOrder,
+  planPath,
+  readPlan,
+  LEAD_REPO,
+  PLAN_FILE,
+} from './execution-plan.js';
+import { edgeArrow, featureMergeEdges, heldBy, heldLines, readBlockers, readEdges } from './blockers.js';
 import {
   ensureWorktree,
   launchSession,
@@ -1664,8 +1672,14 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
     console.error('bl run: --max-rounds must be a positive integer.');
     process.exit(1);
   }
+  // The plan is computed and printed, and nothing is written (F-125 D2).
   if (args.plan) {
-    console.log(formatPlan(unit, planSteps(ordered(), maxRounds)));
+    const plan = computePlan(ordered(), readEdges(config));
+    const steps = planSteps(
+      plan.order.map((id) => ({ id })),
+      maxRounds,
+    );
+    console.log(formatPlan(unit, plan, steps));
     return;
   }
   const interactive = args.interactive === true;
@@ -1730,6 +1744,33 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
 // merge
 // ---------------------------------------------------------------------------
 
+/**
+ * The merge order of the feature's stored execution plan (`plan.yaml`,
+ * F-125 D2) in `mergeOrder`'s shape, with `stored: true`; null when there is
+ * no plan, or its `merge_order` is null (the merge edges formed a cycle at
+ * run start, and `mergeOrder` names it). A plan that cannot be read, or whose
+ * `merge_order` does not name exactly the feature's repos `names`, stops the
+ * merge before any repo is touched.
+ */
+function storedMergeOrder(config, feature, names) {
+  const rel = relative(config.backlogRoot, planPath(feature.featureDir));
+  let order;
+  try {
+    order = readPlan(feature.featureDir)?.merge_order;
+  } catch (e) {
+    console.error(`Feature ${feature.id}: ${e.message}`);
+    process.exit(1);
+  }
+  if (!order) return null;
+  if (order.length !== names.length || !names.every((n) => order.includes(n))) {
+    console.error(
+      `Feature ${feature.id}: merge_order in ${rel} (${order.join(', ')}) does not name the feature's repos (${names.join(', ')}). Correct it, with a changes entry that says why, or delete ${rel} to merge in the merge edges' order.`,
+    );
+    process.exit(1);
+  }
+  return { order, edges: [], cycle: null, stored: true };
+}
+
 export async function cmdMerge(args, config, feature) {
   // The status from the table; the merge gate's blockers are `mergeGates`'.
   const { refusal } = startOf(config, 'feature', feature, 'merge', { guards: false });
@@ -1763,11 +1804,15 @@ export async function cmdMerge(args, config, feature) {
     console.error(`Feature ${feature.id} has no story with a repo, so there is nothing to merge.`);
     process.exit(1);
   }
-  // The merge order (F-111 D2): the feature's merge edges put a repo after
-  // the repos it waits for; otherwise `names`, so `bl` merges first and syncs
-  // the backlog before a later repo's push gate reads it (S-864). A cycle is
-  // refused before any repo is touched.
-  const plan = mergeOrder(names, featureMergeEdges(readBlockers(config.backlogRoot).edges, feature.id));
+  // The merge order: the stored execution plan's `merge_order` when it has
+  // one (F-125 D2: during the run the plan wins). Otherwise (F-111 D2) the
+  // feature's merge edges put a repo after the repos it waits for, else
+  // `names`, so `bl` merges first and syncs the backlog before a later
+  // repo's push gate reads it (S-864). A cycle is refused before any repo is
+  // touched.
+  const plan =
+    storedMergeOrder(config, feature, names) ??
+    mergeOrder(names, featureMergeEdges(readBlockers(config.backlogRoot).edges, feature.id));
   if (plan.cycle) {
     console.error(
       `Feature ${feature.id}: its merge edges form a cycle, so no repo can merge first: ${plan.cycle.map(edgeArrow).join(', ')}.\nRemove one with bl block remove <blocker> --gate merge --unit <unit>.`,
@@ -1796,8 +1841,9 @@ export async function cmdMerge(args, config, feature) {
 
   info(`Feature : ${feature.id} — ${feature.title}`);
   info(`Branch  : ${branchName}`);
-  const behind =
-    plan.edges.length === 0
+  const behind = plan.stored
+    ? ` (${PLAN_FILE})`
+    : plan.edges.length === 0
       ? ''
       : ` (merge edge${plan.edges.length > 1 ? 's' : ''} ${plan.edges.map(edgeArrow).join(', ')})`;
   info(`Repos   : ${plan.order.join(', ')}${behind}`);

@@ -74,8 +74,8 @@ import {
   resolveFeaturePluginsReport,
   resolveFeatureStories,
 } from './feature.js';
-import { featureRepoOrder, orderStoriesByDeps } from './execution-plan.js';
-import { heldBy, readEdges } from './blockers.js';
+import { featureRepoOrder, newPlan, planPath, readPlan, replan, writePlan } from './execution-plan.js';
+import { edgeArrow, heldBy, readEdges } from './blockers.js';
 import { runHeadlessSession, launchSession, loadPrompt, loadSchema, takeSessionLock } from './session.js';
 import { cleanStderrLine } from './outcome.js';
 import { getProvider, hasProvider } from './agents/index.js';
@@ -407,6 +407,57 @@ function changeRelPath(ctx) {
   return relative(ctx.config.backlogRoot, changeFile(ctx));
 }
 
+/** The unit's `plan.yaml` (F-125 D2), beside its change document, relative to the backlog. */
+function planRelPath(ctx) {
+  return relative(ctx.config.backlogRoot, planPath(dirname(ctx.feature.indexPath)));
+}
+
+/**
+ * The run's execution plan: the one the run holds, else the stored one,
+ * else computed from `prep.ordered` (a `bl review` or `bl merge` of a unit
+ * run before F-125). Throws when the stored plan cannot be read.
+ */
+function runPlan(ctx) {
+  ctx.plan ??=
+    readPlan(dirname(ctx.feature.indexPath)) ?? newPlan(ctx.feature.id, ctx.prep.ordered ?? [], readEdges(ctx.config));
+  return ctx.plan;
+}
+
+/** `prep.ordered` in the plan's work order, each story as `stories` has it. */
+function followPlan(ctx, stories) {
+  const byId = new Map(stories.map((s) => [s.id, s]));
+  const ordered = runPlan(ctx)
+    .order.map((id) => byId.get(id))
+    .filter(Boolean);
+  ctx.prep.ordered ??= [];
+  // In place: the implement loop's index points into this array.
+  ctx.prep.ordered.splice(0, ctx.prep.ordered.length, ...ordered);
+}
+
+/**
+ * The plan at run start (F-125 D2). A fresh run computes it from the unit's
+ * stories (`prep.ordered`) and `readEdges`, and writes it. `--resume` reads
+ * the stored plan and does not compute it again, unless the unit's stories
+ * changed between the runs (`replan`, with a `changes` entry); a resumed run
+ * with no `plan.yaml` computes and writes one. `prep.ordered` then follows
+ * the plan's `order`. Returns whether it wrote the file; throws when the
+ * stored plan cannot be read or the plan cannot be written.
+ */
+async function setupPlan(ctx, resume) {
+  const { feature, config, prep } = ctx;
+  const dir = dirname(feature.indexPath);
+  const stories = prep.ordered ?? [];
+  const stored = resume ? readPlan(dir) : null;
+  const plan = stored
+    ? replan(stored, stories, readEdges(config), { why: `the stories of ${feature.id} changed between runs` })
+    : newPlan(feature.id, stories, readEdges(config));
+  ctx.plan = plan;
+  followPlan(ctx, stories);
+  if (plan === stored) return false;
+  await writePlan(config.backlogRoot, dir, plan);
+  return true;
+}
+
 /** The change document's frontmatter and body; empty while there is none. */
 function readChangeText(ctx) {
   const p = changeFile(ctx);
@@ -575,8 +626,27 @@ export function planSteps(ordered, maxRounds) {
   return steps;
 }
 
-export function formatPlan(feature, steps) {
-  const lines = [`${feature.id} · ${feature.title} — run plan`];
+/**
+ * What `bl run --plan` prints: the execution plan (`computePlan`'s: the
+ * dependencies, the work order, the parallel groups, the repo order and the
+ * merge order, or the merge-edge cycle that leaves none), then the step list
+ * (`planSteps`).
+ */
+export function formatPlan(unit, plan, steps) {
+  const list = (ids) => (ids.length > 0 ? ids.join(', ') : '(none)');
+  const merge = plan.merge_order
+    ? list(plan.merge_order)
+    : `none: the merge edges form a cycle (${(plan.merge_cycle ?? []).map(edgeArrow).join(', ')})`;
+  const lines = [
+    `${unit.id} · ${unit.title} — run plan`,
+    'Dependencies:',
+    ...plan.stories.map((id) => `  ${id} waits for ${list(plan.dependencies[id] ?? [])}`),
+    `Work order  : ${list(plan.order)}`,
+    `Groups      : ${plan.groups.map((g, i) => `${i + 1}. ${g.join(', ')}`).join(' · ')}`,
+    `Repos       : ${list(plan.repos)}`,
+    `Merge order : ${merge}`,
+    'Steps:',
+  ];
   steps.forEach((s, i) => {
     const extra = s.story ? ` ${s.story}` : s.round ? ` (round ${s.round})` : s.note ? ` — ${s.note}` : '';
     lines.push(`${String(i + 1).padStart(2)}. ${s.step}${extra}`);
@@ -2672,11 +2742,12 @@ function withCurrentEffort(backlogRoot, s) {
 /**
  * Re-read the feature's stories after an agent session (F-48 D3): the
  * session may have added one (`bl side`), possibly in a repo the run did not
- * prepare. A new story joins `prep.ordered` after the stories the run has
- * taken, and those not taken yet are put in order-edge order again
- * (`orderStoriesByDeps`, as `bl run` orders them at the start, on the
- * current `readEdges`), so the implement loop reaches each after its
- * prerequisites and the repo guard knows its component. A new repo's worktree
+ * prepare. A new story joins the execution plan after the stories the run
+ * has taken, and those not taken yet are put in dependency order again
+ * (`replan`, on the current `readEdges`, with a `changes` entry by `bl`).
+ * The plan is written and committed, and `prep.ordered` follows its order,
+ * so the implement loop reaches each story after its prerequisites and the
+ * repo guard knows its component. A new repo's worktree
  * on the branch (`bl side` prepares it with the story) joins
  * `prep.otherWorktrees` and the change document's `repos:`, so from then on
  * the gate, the repo guard, the push, the PR step, the review and the
@@ -2721,11 +2792,22 @@ async function refreshRepos(ctx) {
   if (added.length === 0 && repos.length === 0) return null;
   if (added.length > 0) {
     const current = new Map(stories.map((s) => [s.id, s]));
-    const taken = prep.ordered.filter((s) => ctx.implemented.has(s.id));
-    const rest = [...prep.ordered.filter((s) => !ctx.implemented.has(s.id)), ...added].map(
-      (s) => current.get(s.id) ?? s,
-    );
-    prep.ordered.splice(0, prep.ordered.length, ...taken, ...orderStoriesByDeps(rest, scope.edges));
+    const held = [...prep.ordered, ...added].map((s) => (ctx.implemented.has(s.id) ? s : (current.get(s.id) ?? s)));
+    const ids = added.map((s) => s.id).join(', ');
+    let changed;
+    try {
+      const plan = runPlan(ctx);
+      ctx.plan = replan(plan, held, scope.edges, {
+        taken: prep.ordered.filter((s) => ctx.implemented.has(s.id)).map((s) => s.id),
+        why: `a session added ${ids} to ${feature.id} during the run`,
+      });
+      changed = ctx.plan !== plan;
+      if (changed) await writePlan(config.backlogRoot, dirname(feature.indexPath), ctx.plan);
+    } catch (e) {
+      return finish(ctx, 'escalated', `${ids} could not join the execution plan: ${e.message}`);
+    }
+    followPlan(ctx, held);
+    if (changed) await commitUnitPaths(ctx, 'repos', [planRelPath(ctx)], `chore: ${feature.id} plan adds ${ids}`);
   }
   if (repos.length > 0) {
     prep.otherWorktrees.push(...repos.map(({ repoName, worktreePath }) => ({ repoName, worktreePath })));
@@ -4930,6 +5012,13 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   };
   clearUntimedOut(ctx);
   const started = [];
+  // The execution plan, made after worktree preparation and before the first
+  // implement step; the `run started` commit carries it.
+  try {
+    if (await setupPlan(ctx, opts.resume)) started.push(planRelPath(ctx));
+  } catch (e) {
+    return refuse(runner, feature, `${e.message}${opts.resume ? ' — fix it, or delete it to compute a new plan' : ''}`);
+  }
   // A unit with no log gets the one its status and change document give
   // (F-69 D4) before the run records a hop: the document as it is now, since
   // its review fields place the unit (D5).

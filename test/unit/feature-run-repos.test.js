@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { basename, dirname, join } from 'path';
 import { loadConfig, serializeFrontmatter, configForRepo } from '../../src/config.js';
+import { readPlan } from '../../src/execution-plan.js';
+import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { readAllStories } from '../../src/story.js';
 import {
   findFeature,
@@ -702,12 +704,24 @@ test('refresh_rejects_unresolvable_story_scope: an unresolvable story list or st
       edit: ({ addSide }) => {
         addSide();
         atomicHooks.beforeRename = (tmp) => {
-          if (!readFileSync(tmp, 'utf8').includes('repo-b')) return;
+          if (!basename(tmp).startsWith('change.md') || !readFileSync(tmp, 'utf8').includes('repo-b')) return;
           atomicHooks.beforeRename = null;
           throw new Error('injected change write failure');
         };
       },
       error: /could not name repo-b: injected change write failure/,
+    },
+    {
+      name: 'plan write fails',
+      edit: ({ addSide }) => {
+        addSide();
+        atomicHooks.beforeRename = (tmp) => {
+          if (!basename(tmp).startsWith('plan.yaml')) return;
+          atomicHooks.beforeRename = null;
+          throw new Error('injected plan write failure');
+        };
+      },
+      error: /S-3 could not join the execution plan: injected plan write failure/,
     },
   ];
   for (const c of cases) {
@@ -1109,8 +1123,43 @@ test('late_stories_follow_dependency_order: an existing story not taken yet wait
       await runFeature({ feature, config, prep, runner, opts: { maxRounds: 3 } });
       const order = [...new Set(runner.calls.filter((x) => x.prompt === 'feature-story').map((x) => x.story))];
       assert.deepEqual(order, ['S-1', 'S-4', 'S-2'], component);
+      // The stored plan says the same (F-125 D2).
+      const plan = readPlan(dirname(feature.indexPath));
+      assert.deepEqual(plan.order, ['S-1', 'S-4', 'S-2'], component);
+      assert.deepEqual(plan.dependencies['S-2'], ['S-4'], component);
     } finally {
       cleanup();
     }
+  }
+});
+
+test('a story added during the run joins plan.yaml after the stories taken, with a changes entry by bl, and is committed', async () => {
+  const { dir, cleanup, config, feature, prep, addSide, sideShell } = setupSide();
+  try {
+    initGitBacklog(dir);
+    const behaviour = {
+      story: (o) => {
+        checkAll(o.vars.storyAbsPath);
+        if (o.vars.storyId === 'S-1') addSide();
+      },
+    };
+    const runner = sideShell(fakeRunner({ dir, feature, behaviour }));
+    await runFeature({ feature, config, prep, runner, opts: { maxRounds: 3 } });
+    const plan = readPlan(dirname(feature.indexPath));
+    assert.deepEqual(plan.stories, ['S-1', 'S-3']);
+    assert.deepEqual(plan.order, ['S-1', 'S-3']);
+    assert.deepEqual(plan.repos, ['demo-repo', 'repo-b']);
+    assert.deepEqual(plan.merge_order, ['demo-repo', 'repo-b']);
+    assert.equal(plan.changes.length, 1);
+    const [change] = plan.changes;
+    assert.deepEqual(
+      { by: change.by, what: change.what, why: change.why },
+      { by: 'bl', what: 'added S-3', why: 'a session added S-3 to F-1 during the run' },
+    );
+    assert.match(change.at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(git(dir, 'log', '--format=%s'), /^chore: F-1 plan adds S-3$/m);
+    assert.equal(git(dir, 'status', '--porcelain', '--', 'features/F1-feat/plan.yaml'), '', 'committed');
+  } finally {
+    cleanup();
   }
 });

@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
+import { copyFileSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 import { loadConfig, normalizeId } from '../../src/config.js';
@@ -128,7 +128,15 @@ test("bl run S-n --plan prints the loop's steps for the story and touches nothin
   const { backlog, repo } = build();
   const { exit, out } = await run(backlog, { plan: true });
   assert.equal(exit, null);
-  assert.match(out, /^S-7 · Loose — run plan\n 1\. setup\n 2\. implement S-7\n 3\. test/);
+  assert.match(
+    out,
+    /^S-7 · Loose — run plan\nDependencies:\n {2}S-7 waits for \(none\)\nWork order {2}: S-7\nGroups {6}: 1\. S-7\nRepos {7}: repoA\nMerge order : repoA\nSteps:\n 1\. setup\n 2\. implement S-7\n 3\. test/,
+  );
+  // --plan writes no plan.yaml (F-125 D2).
+  assert.equal(
+    readdirSync(join(backlog, 'stories')).some((d) => existsSync(join(backlog, 'stories', d, 'plan.yaml'))),
+    false,
+  );
   assert.ok(
     !execSync('git worktree list', { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).includes(
       's7-loose',

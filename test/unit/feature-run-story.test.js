@@ -11,6 +11,7 @@ import { initGitBacklog, git as backlogGit } from '../helpers/git-backlog.js';
 import { parseChange } from '../../src/change-doc.js';
 import { unitVars } from '../../src/unit.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
+import { computePlan, readPlan } from '../../src/execution-plan.js';
 import { CH, creates, editFile, fakeRunner, storySetup, captureLog } from '../helpers/feature-run-fixture.js';
 import { reviewOutcome } from '../helpers/outcomes.js';
 import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
@@ -44,12 +45,13 @@ test("story unit: the loop's field names, read from the story file", () => {
 test('bl run S-n --plan prints the same steps as a one-story feature', () => {
   const { cleanup, unit, prep } = storySetup();
   try {
-    const story = formatPlan(unit, planSteps(prep.ordered, 2));
-    const feature = formatPlan({ id: 'S-5', title: 'Loose' }, planSteps([{ id: 'S-5' }], 2));
+    const plan = computePlan(prep.ordered, []);
+    const story = formatPlan(unit, plan, planSteps(prep.ordered, 2));
+    const feature = formatPlan({ id: 'S-5', title: 'Loose' }, plan, planSteps([{ id: 'S-5' }], 2));
     assert.equal(story, feature);
     assert.match(
       story,
-      /^S-5 · Loose — run plan\n 1\. setup\n 2\. implement S-5\n 3\. test\n 4\. self-review\n 5\. pr\n 6\. review \(round 1\)/,
+      /^S-5 · Loose — run plan\nDependencies:\n {2}S-5 waits for \(none\)\nWork order {2}: S-5\nGroups {6}: 1\. S-5\nRepos {7}: demo-repo\nMerge order : demo-repo\nSteps:\n 1\. setup\n 2\. implement S-5\n 3\. test\n 4\. self-review\n 5\. pr\n 6\. review \(round 1\)/,
     );
   } finally {
     cleanup();
@@ -98,6 +100,12 @@ test('a story run: implement, gate, self-review, one PR titled S-n: <title>, rev
     assert.match(extractSection(change.body, 'Description'), /^\nStory S-5: Loose \(3 pts\)\n/);
     assert.ok(existsSync(runStatePath(config, 'S-5')), 'run state keyed by the story id');
     assert.match(backlogGit(config.backlogRoot, 'log', '--format=%s'), /S-5 run started on s5-loose/);
+    // A loose story's run computes and stores its plan too (F-125 A5).
+    assert.deepEqual(readPlan(dirname(unit.indexPath)).order, ['S-5']);
+    assert.match(
+      backlogGit(config.backlogRoot, 'log', '--name-only', '--format=', '--grep=run started'),
+      /^stories\/S5-loose\/plan\.yaml$/m,
+    );
   } finally {
     cleanup();
   }

@@ -1,17 +1,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadConfig } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
 import {
+  PLAN_SCHEMA,
   computePlan,
   dependencyOrder,
   featureRepoOrder,
   mergeOrder,
+  newPlan,
   orderStoriesByDeps,
   planFiles,
+  planPath,
+  readPlan,
+  replan,
+  writePlan,
 } from '../../src/execution-plan.js';
+import { validateOutcome } from '../../src/outcome.js';
+import { loadSchema } from '../../src/session.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { PATH_CASES, plan, story, withBacklog } from '../helpers/plan-fixture.js';
 
@@ -383,4 +391,122 @@ test('planFiles_handles_valid_atx_heading_forms_and_next_sections', () => {
   } finally {
     cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// The stored plan: plan.yaml (F-125 D2)
+// ---------------------------------------------------------------------------
+
+/** The example plan of F-125 Design 2. */
+const DESIGN_EXAMPLE = {
+  schema: 'bl-plan/v1',
+  unit: 'F-125',
+  computed_at: '2026-11-12T18:00:00Z',
+  stories: ['S-1', 'S-2', 'S-3'],
+  dependencies: { 'S-1': [], 'S-2': ['S-1'], 'S-3': [] },
+  order: ['S-1', 'S-3', 'S-2'],
+  groups: [['S-1', 'S-3'], ['S-2']],
+  repos: ['bl'],
+  merge_order: ['bl'],
+  changes: [],
+};
+
+/** A temp backlog and a unit directory in it. */
+async function withUnitDir(fn) {
+  const { dir, cleanup } = mkTempBacklog({});
+  const unitDir = join(dir, 'features', 'F125-x');
+  mkdirSync(unitDir, { recursive: true });
+  try {
+    await fn(dir, unitDir);
+  } finally {
+    cleanup();
+  }
+}
+
+test('schemas/plan.json accepts the Design 2 example and a null merge_order, and refuses a plan with no order', () => {
+  const schema = loadSchema('plan');
+  assert.equal(validateOutcome(schema, DESIGN_EXAMPLE).structuredError, null);
+  assert.equal(validateOutcome(schema, { ...DESIGN_EXAMPLE, merge_order: null }).structuredError, null);
+  const { order: _order, ...noOrder } = DESIGN_EXAMPLE;
+  assert.match(validateOutcome(schema, noOrder).structuredError, /^schema violation at \$\/order: /);
+  const change = { at: '2026-11-13T00:00:00Z', by: 'bl', what: 'added S-4', why: 'a session added it' };
+  assert.equal(validateOutcome(schema, { ...DESIGN_EXAMPLE, changes: [change] }).structuredError, null);
+  const { why: _why, ...noWhy } = change;
+  assert.match(
+    validateOutcome(schema, { ...DESIGN_EXAMPLE, changes: [noWhy] }).structuredError,
+    /^schema violation at \$\/changes\/0\/why: /,
+  );
+  assert.match(
+    validateOutcome(schema, { ...DESIGN_EXAMPLE, schema: 'bl-plan/v2' }).structuredError,
+    /^schema violation at \$\/schema: /,
+  );
+});
+
+test('writePlan then readPlan gives the same object; readPlan of a unit with no plan is null', async () => {
+  await withUnitDir(async (root, unitDir) => {
+    assert.equal(readPlan(unitDir), null);
+    const path = await writePlan(root, unitDir, DESIGN_EXAMPLE);
+    assert.equal(path, planPath(unitDir));
+    assert.equal(path, join(unitDir, 'plan.yaml'));
+    assert.deepEqual(readPlan(unitDir), DESIGN_EXAMPLE);
+  });
+});
+
+test('readPlan and writePlan throw on a plan that does not match, naming the file and the field', async () => {
+  await withUnitDir(async (root, unitDir) => {
+    const path = planPath(unitDir);
+    const { order: _order, ...noOrder } = DESIGN_EXAMPLE;
+    await assert.rejects(writePlan(root, unitDir, noOrder), (e) =>
+      e.message.startsWith(`${path}: schema violation at $/order: `),
+    );
+    assert.equal(existsSync(path), false, 'nothing written');
+    writeFileSync(path, 'schema: bl-plan/v1\nunit: F-125\n');
+    assert.throws(
+      () => readPlan(unitDir),
+      (e) => e.message.startsWith(`${path}: schema violation at $/computed_at: `),
+    );
+    writeFileSync(path, 'order: [S-1\n');
+    assert.throws(
+      () => readPlan(unitDir),
+      (e) => e.message.startsWith(`${path}: not YAML: `),
+    );
+    writeFileSync(path, '');
+    assert.throws(() => readPlan(unitDir), { message: `${path}: the file holds no plan` });
+  });
+});
+
+test('newPlan stores computePlan without merge_cycle; replan puts the taken stories first and records the change', () => {
+  withStories((make) => {
+    const stories = ['S-1', 'S-2', 'S-3'].map((id) => make(id));
+    const edges = [order('S-1', 'S-2')];
+    const plan = newPlan('F-7', stories, edges, '2026-11-13T00:00:00Z');
+    const { merge_cycle: _cycle, ...computed } = computePlan(stories, edges);
+    assert.deepEqual(plan, {
+      schema: PLAN_SCHEMA,
+      unit: 'F-7',
+      computed_at: '2026-11-13T00:00:00Z',
+      ...computed,
+      changes: [],
+    });
+    assert.equal(validateOutcome(loadSchema('plan'), plan).structuredError, null);
+    assert.equal(replan(plan, stories, edges, { why: 'w' }), plan, 'the same stories: unchanged');
+    // S-3 was taken first; S-4, which S-2 now waits for, is added; S-1 stays.
+    const added = [...stories, make('S-4')];
+    const next = replan(plan, added, [...edges, order('S-4', 'S-2')], {
+      taken: ['S-3'],
+      why: 'a session added S-4 to F-7 during the run',
+      at: '2026-11-13T01:00:00Z',
+    });
+    assert.deepEqual(next.order, ['S-3', 'S-1', 'S-4', 'S-2']);
+    assert.deepEqual(next.stories, ['S-1', 'S-2', 'S-3', 'S-4']);
+    assert.deepEqual(next.dependencies['S-2'], ['S-1', 'S-4']);
+    assert.equal(next.computed_at, plan.computed_at);
+    assert.deepEqual(next.changes, [
+      { at: '2026-11-13T01:00:00Z', by: 'bl', what: 'added S-4', why: 'a session added S-4 to F-7 during the run' },
+    ]);
+    // A story gone from the unit is removed and named.
+    const fewer = replan(next, added.slice(1), [], { why: 'the stories changed', at: 'later' });
+    assert.deepEqual(fewer.stories, ['S-2', 'S-3', 'S-4']);
+    assert.equal(fewer.changes.at(-1).what, 'removed S-1');
+  });
 });
