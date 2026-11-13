@@ -8,7 +8,9 @@
  * takes the work unit lock (`unit-lock.js`), so it refuses while a live
  * session holds the unit. It prints what the move skips (`skipsOf`) and reads
  * one line; only the exact line `force <id> to <status>` writes the entry
- * `by: force` (`transition.js`) and commits the unit file.
+ * `by: force` (`transition.js`) and commits the unit file. Under the backlog
+ * lock it reads the unit's status and the skip list again: if either changed
+ * while the operator typed, it writes nothing.
  */
 
 import { relative } from 'path';
@@ -43,7 +45,9 @@ have the transition. It then asks for the line "force <id> to <status>"; any
 other input, an empty line or the end of input changes nothing and exits 1.
 On the exact line it records the status in the unit's transition log as
 "by: force" and commits the unit file ("chore: force <id> to <status>"). A
-move out of done or superseded removes "completed:".
+move out of done or superseded removes "completed:". If the unit's status or
+what the move skips changed after the list was shown (a hold added while you
+typed), it writes nothing, prints the new list and exits 1.
 
 It needs a terminal: it refuses under ${HEADLESS_ENV} or when stdin is not a
 terminal, so a headless agent cannot force. It refuses while a live bl session
@@ -83,6 +87,9 @@ export function skipsOf(config, unit, to) {
   }
   return skips;
 }
+
+/** The skip list's one line when the move skips nothing. */
+const NOTHING_SKIPPED = 'nothing: flow.json has the transition, and no hold or guard refuses it';
 
 /** Print `message` on stderr and return the exit code 1. */
 function refuse(message) {
@@ -148,9 +155,9 @@ export async function main(
   if (lock.refused != null) return refuse(lock.refused);
   try {
     const skips = skipsOf(config, unit, to);
-    if (skips.length === 0) skips.push('nothing: flow.json has the transition, and no hold or guard refuses it');
     info(`bl force ${unit.id}: ${unit.status} → ${to}. The move skips:`);
-    for (const line of skips) info(`  - ${line}`);
+    const shown = (list) => (list.length > 0 ? list : [NOTHING_SKIPPED]);
+    for (const line of shown(skips)) info(`  - ${line}`);
     const confirmation = `force ${unit.id} to ${to}`;
     const answer = await readLine(`Type "${confirmation}" to force it; anything else cancels: `);
     if (answer !== confirmation) {
@@ -159,12 +166,24 @@ export async function main(
     }
     const root = config.backlogRoot;
     const res = await withLock(root, async () => {
+      // The operator confirmed the list shown. A hold, a guard, flow.json or
+      // the unit's status may have changed while they typed: then write nothing.
+      const now = unitOf(target, config);
+      const again = now.status === unit.status ? skipsOf(config, now, to) : null;
+      if (again == null || again.join('\n') !== skips.join('\n')) return { changed: again };
       await transition(root, unit, to, { by: FORCE });
       return syncAndCommit(config, {
         message: `chore: force ${unit.id} to ${to}`,
         extraPaths: [relative(root, unit.indexPath)],
       });
     });
+    if (Object.hasOwn(res ?? {}, 'changed')) {
+      const what = res.changed == null ? [`${unit.id} is no longer ${unit.status}`] : shown(res.changed);
+      return refuse(
+        `what the move skips changed after the list was shown; nothing was written. Run bl force again.\n` +
+          what.map((line) => `  - ${line}`).join('\n'),
+      );
+    }
     info(`${unit.id} is ${to} (by: force).`);
     reportBacklogCommit(res, 'bl force');
     return 0;

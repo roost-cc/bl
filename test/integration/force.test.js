@@ -8,10 +8,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from '../../src/config.js';
 import { loadFlow } from '../../src/flow.js';
+import { main as forceMain } from '../../src/force.js';
 import { findTransitionFindings } from '../../src/transition.js';
 import { unitLockPath } from '../../src/unit-lock.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
@@ -137,6 +138,81 @@ for (const [label, input] of [
     assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
   });
 }
+
+/**
+ * `bl force <args>` in this process, with `during()` run while it waits for
+ * the confirmation, which it then gets. Returns the exit code.
+ */
+async function forceWhileTyping(dir, args, during) {
+  const saved = process.env.BL_BACKLOG_DIR;
+  process.env.BL_BACKLOG_DIR = dir;
+  try {
+    const readLine = async () => {
+      during();
+      return `force ${args[0]} to ${args[1]}`;
+    };
+    return await forceMain(args, { interactive: true, readLine, env: {} });
+  } finally {
+    if (saved === undefined) delete process.env.BL_BACKLOG_DIR;
+    else process.env.BL_BACKLOG_DIR = saved;
+  }
+}
+
+test('force_rechecks_skips_after_confirmation: a change to what the move skips while the operator types writes nothing', async () => {
+  for (const [label, args, during] of [
+    [
+      'a hold added on the status',
+      ['S-1', 'in_progress'],
+      (dir) =>
+        writeBlockersLocked(dir, [
+          { blocker: 'S-3', gate: 'done', unit: 'S-2', until: 'done' },
+          { blocker: 'S-3', gate: 'in_progress', unit: 'S-1', until: 'done' },
+        ]),
+    ],
+    [
+      'a guard that now holds',
+      ['S-2', 'in_progress'],
+      (dir) => {
+        const path = join(dir, S2);
+        writeFileSync(path, readFileSync(path, 'utf8').replace('Stuck on a decision.', 'None.'));
+      },
+    ],
+    [
+      'a flow.json change that lists the transition',
+      ['S-1', 'in_progress'],
+      (dir) => {
+        const path = join(dir, 'flow.json');
+        const raw = JSON.parse(readFileSync(path, 'utf8'));
+        raw.types.story.verbs.run.from.push('done');
+        writeFileSync(path, JSON.stringify(raw, null, 2));
+      },
+    ],
+    [
+      "the unit's status",
+      ['S-1', 'in_progress'],
+      (dir) => {
+        const path = join(dir, S1);
+        writeFileSync(
+          path,
+          readFileSync(path, 'utf8').replace('to: done\n    by: done', 'to: superseded\n    by: force'),
+        );
+      },
+    ],
+  ]) {
+    const dir = backlog();
+    const head = git(dir, 'rev-parse', 'HEAD');
+    const id = args[0];
+    const rel = id === 'S-1' ? S1 : S2;
+    let before = null;
+    const code = await forceWhileTyping(dir, args, () => {
+      during(dir);
+      before = readFileSync(join(dir, rel), 'utf8');
+    });
+    assert.equal(code, 1, label);
+    assert.equal(readFileSync(join(dir, rel), 'utf8'), before, `${label}: the unit file is as the change left it`);
+    assert.equal(git(dir, 'rev-parse', 'HEAD'), head, `${label}: no commit`);
+  }
+});
 
 test('bl force refuses before it prompts under BL_HEADLESS, or when stdin is not a terminal', () => {
   const dir = backlog();
