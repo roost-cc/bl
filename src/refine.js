@@ -206,8 +206,9 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
  * a lock another process holds refuses the refine with exit 1, before it
  * writes anything. Then it records the `refine` verb's `during` on each unit
  * (`enterVerb`, F-119 R1), so an outcome with no status leaves the unit there.
- * When one of those writes fails, it puts every unit back (`snapshot`) and
- * starts no session.
+ * When one of those writes fails, it puts every unit back (`snapshot`),
+ * starts no session and commits nothing; a unit file it cannot put back is
+ * named, with what to do, and left changed.
  * The commit holds only the paths under the units'
  * directories (`scope()`, read at the end, so a story the session made for
  * the feature is in it, D3); bl names each other changed path.
@@ -235,11 +236,14 @@ export async function refineAndCommit(units, opts, message, apply) {
       ' that started the refinement session',
     );
     let entered = true;
+    let leftChanged = false;
     try {
       for (const u of units) await enterVerb(opts.backlogRoot, u, 'refine');
     } catch (e) {
       entered = false;
-      console.error(`Error: cannot record the refinement session's start: ${undo(e).message}`);
+      const err = undo(e);
+      leftChanged = err.unrecovered != null;
+      console.error(`Error: cannot record the refinement session's start: ${err.message}`);
     }
     const { status, structured, structuredError } = entered
       ? await launchSession({ ...opts, units, returnOnExit: true })
@@ -254,16 +258,23 @@ export async function refineAndCommit(units, opts, message, apply) {
       }
     } else {
       // A started session left each unit at the refine verb's `during`.
-      const where = entered ? 'each unit stays at the status the session started it in' : 'every status is unchanged';
+      const where = entered
+        ? 'each unit stays at the status the session started it in'
+        : leftChanged
+          ? 'each file named above is left changed'
+          : 'every status is unchanged';
       console.error(
         `No refine outcome (${structuredError}); ${where}.\n` + `  Run \`bl refine ${ids.join(' ')}\` again to set it.`,
       );
     }
-    const failed = await commitChangedSince(opts.backlogRoot, before, message, {
-      session: true,
-      owner,
-      scope: lock.scope,
-    });
+    // No session, nothing to commit: a start write is put back or named above, never committed.
+    const failed = entered
+      ? await commitChangedSince(opts.backlogRoot, before, message, {
+          session: true,
+          owner,
+          scope: lock.scope,
+        })
+      : false;
     // A failed commit is 1 whatever the session ended with (S-1330).
     exitCode = failed || applyFailed ? 1 : status;
   } finally {

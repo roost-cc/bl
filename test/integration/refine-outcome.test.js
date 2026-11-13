@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { parseFrontmatter } from '../../src/config.js';
 import { specLockPath } from '../../src/spec-file.js';
 import { outcomePath } from '../../src/outcome.js';
@@ -157,6 +158,37 @@ test('refine_second_start_write_failure_keeps_all_units_at_their_previous_status
   }
   assert.deepEqual(statusLines(dir), [], 'nothing left to commit');
   assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'no commit');
+});
+
+test('refine_failed_put_back_is_not_committed_and_not_called_unchanged (F-119 R1)', async () => {
+  const dir = await gitBacklog();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  // S-2's start write fails (a directory at its spec lock's path), and so does the put-back of
+  // S-1: the preload fails each write of S-1 whose text has no in_refinement.
+  const blocked = specLockPath(join(dir, S2));
+  mkdirSync(blocked);
+  let r;
+  try {
+    r = refine(dir, ['S-1', 'S-2'], {
+      outcome: json({ summary: 'Both.', stories: { 'S-1': { refined: true }, 'S-2': { refined: true } } }),
+      outcomeUnit: refineBatchId(['S-1', 'S-2']),
+      stubEnv: {
+        NODE_OPTIONS: `--import=${fileURLToPath(new URL('../helpers/partial-write-preload.js', import.meta.url))}`,
+        BL_PARTIAL_WRITE_VERB: 'refine',
+        BL_PARTIAL_WRITE_TARGET: join(dir, S1),
+        BL_PARTIAL_WRITE_MATCH: '^(?![\\s\\S]*in_refinement)[\\s\\S]*story_id: S-1\\n',
+      },
+    });
+  } finally {
+    rmSync(blocked, { recursive: true, force: true });
+  }
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /could not undo the write that started the refinement session: .*S1-one\/index\.md/);
+  assert.doesNotMatch(r.stderr, /unchanged/);
+  assert.match(r.stderr, /No refine outcome \(the session did not start\); each file named above is left changed/);
+  assert.equal(statusOf(dir, S1), 'in_refinement', 'S-1 is left changed in the work tree');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'no commit');
+  assert.doesNotMatch(git(dir, 'show', `HEAD:${S1}`), /in_refinement/, 'the commit leaves S-1 out');
 });
 
 test('the batch leaves a story the outcome does not name, and says so', async () => {
