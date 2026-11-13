@@ -886,7 +886,7 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
   } else if (kind === 'feature') {
     Object.assign(unit, { stories: [], points: 0, components: [], epic: null, theme: null, dependsOn: [], tasks: [] });
   } else if (kind === 'batch') {
-    Object.assign(unit, { stories: [], points: 0, components: [], dependsOn: [] });
+    Object.assign(unit, { stories: [], points: 0, components: [], dependsOn: [], tasks: [] });
   } else if (kind === 'component') {
     Object.assign(unit, {
       repo: str(fm.repo),
@@ -1287,9 +1287,12 @@ function linkUnits(maps, flow, problem, fileEdges) {
     const raw = str(t.fm.unit);
     if (!raw) continue;
     const fid = normalizeFeatureId(raw)?.id;
+    const bid = normalizeBatchId(raw)?.id;
     const sid = normalizeId(raw)?.id;
-    t.unit = (fid && features.get(fid)) || (sid && stories.get(sid)) || null;
-    if (!t.unit) dangling(t, 'task-unit', 'unit', raw, `unit ${raw} is not a feature or story in the backlog`);
+    t.unit = (fid && features.get(fid)) || (bid && batches.get(bid)) || (sid && stories.get(sid)) || null;
+    if (!t.unit) {
+      dangling(t, 'task-unit', 'unit', raw, `unit ${raw} is not a feature, story batch or story in the backlog`);
+    }
     t.unit?.tasks.push(t);
   }
   return edges;

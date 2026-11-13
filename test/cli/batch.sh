@@ -88,6 +88,15 @@ blrun approve B-1
 assert_exit "approve B-1" 1 "$RC"
 assert_contains "approve refuses a batch" "B-1 is a story batch" "$ERR"
 
+# A batch-level session files an operator task on the batch, as on a feature.
+blrun task B-1 --title "Restart the service" --gate merge
+assert_exit "task B-1" 0 "$RC"
+assert_eq "task B-1 prints its id" "T-1" "$OUT"
+blrun task list B-1
+assert_contains "task list B-1 lists it" "Restart the service" "$OUT"
+blrun status B-1
+assert_contains "status B-1 counts its task" "task" "$OUT"
+
 # --- Refusals -----------------------------------------------------------
 blrun batch S-1 S-2 --title "Again"
 assert_exit "batch of batched stories" 1 "$RC"

@@ -2279,9 +2279,12 @@ S-n` stands alone. Its unit file (`{{featureAbsPath}}`) is the batch's, and
   release manifest are named `B-<n>` (`releases/B-<n>.json`), and the batch
   and its stories are marked `done`. A batch has no theme, so no theme
   `## State` records it.
-- **Not yet.** `bl task`, `bl side --from`, `bl new` and `bl attach` take no
-  `B-<n>`. A batch-level session's ad-hoc story guidance (`_blocked-by-bug`)
-  names commands that refuse a batch.
+- **Tasks.** `bl task B-<n>` files an operator task on the batch, as on a
+  feature (`findTaskUnit`); its `--gate merge` holds `bl merge B-<n>`.
+- **Not yet.** `bl side --from`, `bl new` and `bl attach` take no `B-<n>`
+  (adding stories to a batch is out of F-125's scope). A batch-level
+  session's ad-hoc story guidance (`_blocked-by-bug`) therefore ends at its
+  fallback, a `bl task B-<n>` for the operator.
 
 ## Review Cycle
 
@@ -3005,7 +3008,7 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
 - **Ids** come from a global counter like stories': one past the highest `T<n>` file or
   `task_id` (`bl next-id task`). `bl task` takes the next one under the backlog lock, so two
   calls in a row get consecutive ids.
-- **`bl task <F-n|S-n> --title <t> --gate <merge|next|none> [--body-file <path>|-] [--json]`**
+- **`bl task <F-n|B-n|S-n> --title <t> --gate <merge|next|none> [--body-file <path>|-] [--json]`**
   checks the unit exists, takes the backlog lock, writes the file (the log's first entry,
   `draft` by `new`; `owner: operator`; `added: <today>`), then the task's edge in `blockers.json` (below), and
   commits the task file and `blockers.json` (with `.gitattributes` while HEAD lacks the merge

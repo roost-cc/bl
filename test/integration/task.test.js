@@ -158,7 +158,7 @@ test('bl task refuses an unknown unit, a missing --title and a body with frontma
   const cases = [
     [
       ['task', 'F-9', '--title', 'x', '--gate', 'none'],
-      /^bl task: F-9 is not a feature \(F-<n>\) or story \(S-<n>\) in the backlog\n$/,
+      /^bl task: F-9 is not a feature \(F-<n>\), story batch \(B-<n>\) or story \(S-<n>\) in the backlog\n$/,
     ],
     [['task', 'S-99', '--title', 'x', '--gate', 'none'], /S-99 is not a feature/],
     [['task', 'T-1', '--title', 'x', '--gate', 'none'], /T-1 is not a feature/],
@@ -269,8 +269,8 @@ test('bl validate reports task-unit and task-field on hand-edited task files', (
     [
       'tasks/T10-bad.md error frontmatter-yaml: ' +
         got.find((g) => g.startsWith('tasks/T10')).split('frontmatter-yaml: ')[1],
-      'tasks/T2-no-unit.md error task-unit: unit F-9 is not a feature or story in the backlog',
-      'tasks/T3-a-task.md error task-unit: unit T-1 is not a feature or story in the backlog',
+      'tasks/T2-no-unit.md error task-unit: unit F-9 is not a feature, story batch or story in the backlog',
+      'tasks/T3-a-task.md error task-unit: unit T-1 is not a feature, story batch or story in the backlog',
       'tasks/T4-owner.md error task-field: owner "agent" is not one of operator',
       'tasks/T5-status.md error task-field: status "closed" not in known set (flow.json task statuses: draft, done)',
       'tasks/T6-undated.md error task-field: a done task needs its done: date',

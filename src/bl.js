@@ -68,7 +68,7 @@ Commands:
                Refuses an unknown id, a story not ${unstarted}, and a
                repo change for a story in a started feature
   task       An action for the operator, with no branch, in tasks/ (F-65)
-               <F-n|S-n> --title <t> --gate <merge|next|none>
+               <F-n|B-n|S-n> --title <t> --gate <merge|next|none>
                  [--body-file <p>] [--json]  File one; prints T-<n>
                done <T-n> [note]  Close it (operator only)
                list [--open] [<F-n|S-n>]  The tasks
